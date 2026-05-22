@@ -60,6 +60,14 @@ The worktree may be dirty. Do not revert user changes. If unrelated files are mo
 - Do not add tools that can mutate files or run commands without tests for approval/denial paths.
 - Preserve session redaction for secret-bearing text.
 
+## Logging Rules
+
+- Use `tracing` for diagnostics; avoid `println!`/`eprintln!` except CLI user output.
+- Keep logs compact by default: lifecycle, retries, errors, timings, provider/model ids, tool names, and redacted summaries.
+- Do not log raw API keys, Authorization headers, credential-store values, full prompts, or full tool outputs.
+- TUI logging should happen on state transitions and async events, not inside render hot paths.
+- If a new diagnostic can help users debug a stuck run, add it to the Debug modal's recent diagnostics list as well as the structured log.
+
 ## Recommended Verification
 
 Small TUI change:

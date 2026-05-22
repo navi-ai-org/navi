@@ -147,6 +147,12 @@ impl AgentRuntime {
     }
 
     pub async fn submit_task(&mut self, task: String) -> Result<ModelResponse> {
+        tracing::info!(
+            project = %self.project_dir.display(),
+            provider = %self.loaded_config.config.model.provider,
+            model = %self.loaded_config.config.model.name,
+            "agent task submitted"
+        );
         self.events
             .push(AgentEvent::UserTaskSubmitted { text: task.clone() });
 
@@ -182,6 +188,12 @@ impl AgentRuntime {
                     &request, policy,
                 )));
 
+            tracing::info!(
+                model = %request.model,
+                messages = request.messages.len(),
+                tools = request.tools.len(),
+                "model request started"
+            );
             let mut stream = self.model_provider.stream(request);
             let mut text = String::new();
             let mut tool_call = None;
@@ -191,6 +203,11 @@ impl AgentRuntime {
                         text.push_str(&delta)
                     }
                     crate::model::ModelStreamEvent::ToolCall(invocation) => {
+                        tracing::info!(
+                            tool = %invocation.tool_name,
+                            invocation_id = %invocation.id,
+                            "model requested tool"
+                        );
                         tool_call = Some(invocation);
                         break;
                     }
@@ -224,6 +241,12 @@ impl AgentRuntime {
                     }
                 };
 
+                tracing::info!(
+                    tool = %invocation.tool_name,
+                    invocation_id = %invocation.id,
+                    ok = result.ok,
+                    "tool completed"
+                );
                 self.events.push(AgentEvent::ToolCompleted(result.clone()));
                 let observation = compact_tool_observation(&invocation, &result, policy);
                 messages.push(ModelMessage::tool_result(
@@ -238,6 +261,7 @@ impl AgentRuntime {
         };
 
         let response = ModelResponse { text: final_text };
+        tracing::info!(chars = response.text.len(), "agent task completed");
         self.events.push(AgentEvent::ModelOutput {
             text: response.text.clone(),
             thinking: None,

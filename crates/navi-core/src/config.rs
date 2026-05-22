@@ -11,6 +11,7 @@ pub struct NaviConfig {
     pub harness: HarnessConfig,
     pub approvals: ApprovalConfig,
     pub security: SecurityConfig,
+    pub logging: LoggingConfig,
     pub providers: Vec<ProviderConfig>,
     pub plugins: Vec<PluginConfig>,
 }
@@ -56,6 +57,18 @@ pub struct SecurityConfig {
     pub redact_secrets_in_sessions: bool,
     pub allow_external_plugins: bool,
     pub blocked_commands: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct LoggingConfig {
+    pub enabled: bool,
+    pub level: String,
+    pub file_enabled: bool,
+    pub stdout_enabled: bool,
+    pub retention_days: u64,
+    pub max_files: usize,
+    pub include_payloads: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -140,6 +153,7 @@ impl NaviConfig {
         self.harness = other.harness;
         self.approvals = other.approvals;
         self.security = other.security;
+        self.logging = other.logging;
         merge_provider_configs(&mut self.providers, other.providers);
         self.plugins.extend(other.plugins);
     }
@@ -175,6 +189,7 @@ impl Default for NaviConfig {
             harness: HarnessConfig::default(),
             approvals: ApprovalConfig::default(),
             security: SecurityConfig::default(),
+            logging: LoggingConfig::default(),
             providers: Vec::new(),
             plugins: Vec::new(),
         }
@@ -220,6 +235,20 @@ impl Default for SecurityConfig {
             redact_secrets_in_sessions: true,
             allow_external_plugins: false,
             blocked_commands: default_blocked_commands(),
+        }
+    }
+}
+
+impl Default for LoggingConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            level: "info".to_string(),
+            file_enabled: true,
+            stdout_enabled: false,
+            retention_days: 14,
+            max_files: 30,
+            include_payloads: false,
         }
     }
 }
@@ -910,6 +939,7 @@ mod tests {
                 require_for_commands: true,
             },
             security: SecurityConfig::default(),
+            logging: LoggingConfig::default(),
             providers: Vec::new(),
             plugins: vec![PluginConfig {
                 path: PathBuf::from("/global/plugin.so"),
@@ -929,6 +959,10 @@ mod tests {
                 require_for_commands: true,
             },
             security: SecurityConfig::default(),
+            logging: LoggingConfig {
+                level: "debug".to_string(),
+                ..LoggingConfig::default()
+            },
             providers: Vec::new(),
             plugins: vec![PluginConfig {
                 path: PathBuf::from("./project-plugin.so"),
@@ -938,7 +972,19 @@ mod tests {
 
         assert_eq!(global.model.name, "gpt-5.4");
         assert!(!global.approvals.require_for_writes);
+        assert_eq!(global.logging.level, "debug");
         assert_eq!(global.plugins.len(), 2);
+    }
+
+    #[test]
+    fn logging_defaults_are_compact_and_file_backed() {
+        let config = NaviConfig::default();
+
+        assert!(config.logging.enabled);
+        assert_eq!(config.logging.level, "info");
+        assert!(config.logging.file_enabled);
+        assert!(!config.logging.stdout_enabled);
+        assert!(!config.logging.include_payloads);
     }
 
     #[test]

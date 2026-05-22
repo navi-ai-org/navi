@@ -81,6 +81,13 @@ blocked_commands = ["rm", "rmdir", "shred", "mkfs", "dd", "sudo"]
 
 [harness]
 profile = "auto" # auto, small, or medium
+
+[logging]
+enabled = true
+level = "info"
+file_enabled = true
+stdout_enabled = false
+include_payloads = false
 ```
 
 API keys are resolved from environment variables first, then from NAVI's credential store. If a selected provider has no key, the TUI asks for it from the model picker instead of blocking startup.
@@ -112,6 +119,21 @@ Built-in tools are registered by `ToolExecutor` in `navi-core`:
 The security layer validates tool kind, paths, commands, plugin paths, and approval requirements before execution. See [docs/tools-security.md](docs/tools-security.md).
 
 Native plugins configured under `[[plugins]]` are loaded at startup through `libloading`. A plugin must export `navi_plugin_entrypoint`, return metadata with the current `NAVI_PLUGIN_API_VERSION`, and register executable `Tool` implementations. Invalid plugins are reported as warnings and skipped so NAVI can continue with the remaining tools.
+
+## Logs
+
+NAVI writes compact structured diagnostics to `<data_dir>/logs/navi.log` by default. The log directory is private on Unix (`0700`) and the log file is restricted (`0600`). Logs include provider/tool lifecycle events, retries, cancellations, plugin warnings, and timing/status metadata. Secrets are redacted and raw provider payloads are disabled unless explicitly requested with `--debug-payloads`.
+
+Useful flags:
+
+```bash
+navi --print-log-path
+navi --log-level debug
+navi --no-log-file
+navi --debug-payloads --no-tui "inspect the project"
+```
+
+In the TUI, `ctrl+d` opens the Debug modal with the current log path, session id, provider/model, active state, and recent diagnostics.
 
 ## Workspace
 

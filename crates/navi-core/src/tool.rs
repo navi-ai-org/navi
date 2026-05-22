@@ -77,15 +77,32 @@ impl ToolExecutor {
 
     pub fn validate(&self, invocation: &ToolInvocation) -> SecurityDecision {
         let Some(definition) = self.definition(&invocation.tool_name) else {
+            tracing::warn!(tool = %invocation.tool_name, "unknown tool validation denied");
             return SecurityDecision::Deny(format!("unknown tool `{}`", invocation.tool_name));
         };
-        self.policy
-            .validate_tool_invocation(&definition, invocation)
+        let decision = self
+            .policy
+            .validate_tool_invocation(&definition, invocation);
+        match &decision {
+            SecurityDecision::Allow => {
+                tracing::debug!(tool = %invocation.tool_name, invocation_id = %invocation.id, "tool validation allowed");
+            }
+            SecurityDecision::NeedsApproval(_) => {
+                tracing::info!(tool = %invocation.tool_name, invocation_id = %invocation.id, "tool validation requires approval");
+            }
+            SecurityDecision::Deny(reason) => {
+                tracing::warn!(tool = %invocation.tool_name, invocation_id = %invocation.id, reason = %reason, "tool validation denied");
+            }
+        }
+        decision
     }
 
     pub async fn invoke(&self, invocation: ToolInvocation) -> ToolResult {
         let invocation_id = invocation.id.clone();
+        let tool_name = invocation.tool_name.clone();
+        let started_at = std::time::Instant::now();
         if let SecurityDecision::Deny(reason) = self.validate(&invocation) {
+            tracing::warn!(tool = %tool_name, invocation_id = %invocation_id, reason = %reason, "tool invocation blocked");
             return ToolResult {
                 invocation_id,
                 ok: false,
@@ -93,6 +110,7 @@ impl ToolExecutor {
             };
         }
         let Some(tool) = self.tools.get(&invocation.tool_name).cloned() else {
+            tracing::warn!(tool = %tool_name, invocation_id = %invocation_id, "unknown tool invocation");
             return ToolResult {
                 invocation_id,
                 ok: false,
@@ -100,14 +118,23 @@ impl ToolExecutor {
             };
         };
 
-        match tool.invoke(invocation).await {
+        tracing::info!(tool = %tool_name, invocation_id = %invocation_id, "tool invocation started");
+        let result = match tool.invoke(invocation).await {
             Ok(result) => truncate_tool_result(result),
             Err(err) => ToolResult {
                 invocation_id,
                 ok: false,
                 output: json!({ "error": format!("{err:#}") }),
             },
-        }
+        };
+        tracing::info!(
+            tool = %tool_name,
+            invocation_id = %result.invocation_id,
+            ok = result.ok,
+            duration_ms = started_at.elapsed().as_millis() as u64,
+            "tool invocation finished"
+        );
+        result
     }
 
     fn register(&mut self, tool: impl Tool + 'static) {
