@@ -118,6 +118,24 @@ impl CompactState {
         ((input_tokens * 100) / self.context_window).min(100) as u8
     }
 
+    pub fn usage_label(&self) -> String {
+        let pct = self.context_percentage();
+        let format_tokens = |t: u64| {
+            if t >= 1_000_000 {
+                format!("{:.1}M", t as f64 / 1_000_000.0)
+            } else if t >= 1_000 {
+                format!("{}k", t / 1_000)
+            } else {
+                t.to_string()
+            }
+        };
+
+        let used = self.last_input_tokens.unwrap_or(0);
+        let total = self.context_window;
+
+        format!("{} / {} ({}%)", format_tokens(used), format_tokens(total), pct)
+    }
+
     pub fn update_usage(&mut self, input_tokens: u64) {
         self.last_input_tokens = Some(input_tokens);
     }

@@ -4208,12 +4208,23 @@ fn welcome_text(app: &TuiApp, width: usize) -> Text<'static> {
     let model = app.loaded_config.config.model.name.clone();
     let provider = selected_provider_label(app).to_string();
     let thinking = app.thinking_level.label();
-    let context = format!("{}%", app.compact_state.context_percentage());
+    let context = app.compact_state.usage_label();
+    let mode = format!("{:?}", app.loaded_config.config.harness.profile).to_lowercase();
+    let router = "auto".to_string();
+    let tools = "shell read write grep patch".to_string();
+    let session = if app.conversation_history.len() <= 1 { "new" } else { "resumed" }.to_string();
+    let cost = "$0.00".to_string();
+
     let status_width = [
         project.chars().count() + 10,
         model.chars().count() + provider.chars().count() + 9,
         thinking.len() + 13,
         context.len() + 9,
+        mode.len() + 9,
+        router.len() + 9,
+        tools.len() + 9,
+        session.len() + 9,
+        cost.len() + 9,
     ]
     .into_iter()
     .max()
@@ -4223,25 +4234,40 @@ fn welcome_text(app: &TuiApp, width: usize) -> Text<'static> {
 
     lines.push(Line::from(""));
 
-    for (index, logo_line) in NAVI_COMPACT_LOGO.iter().enumerate() {
-        let color = match (app.tick / 5 + index as u64) % 4 {
-            0 => PINK,
-            1 => ACCENT,
-            2 => Color::Rgb(236, 218, 255),
-            _ => Color::Rgb(132, 20, 204),
-        };
-        let mut spans = vec![Span::styled(
-            format!("{}{logo_line}", " ".repeat(left_pad)),
-            Style::default().fg(color).add_modifier(Modifier::BOLD),
-        )];
+    let total_lines = std::cmp::max(NAVI_COMPACT_LOGO.len(), 10);
+
+    for index in 0..total_lines {
+        let mut spans = Vec::new();
+        
+        if let Some(logo_line) = NAVI_COMPACT_LOGO.get(index) {
+            let color = match (app.tick / 5 + index as u64) % 4 {
+                0 => PINK,
+                1 => ACCENT,
+                2 => Color::Rgb(236, 218, 255),
+                _ => Color::Rgb(132, 20, 204),
+            };
+            spans.push(Span::styled(
+                format!("{}{logo_line}", " ".repeat(left_pad)),
+                Style::default().fg(color).add_modifier(Modifier::BOLD),
+            ));
+        } else {
+            spans.push(Span::raw(format!("{}{}", " ".repeat(left_pad), " ".repeat(logo_width))));
+        }
+
         if let Some(status) =
-            welcome_status_line(index, &project, &provider, &model, thinking, &context)
+            welcome_status_line(index, &project, &provider, &model, thinking, &context, &mode, &router, &tools, &session, &cost)
         {
             spans.push(Span::raw("      "));
             spans.extend(status);
         }
         lines.push(Line::from(spans));
     }
+
+    lines.push(Line::from(""));
+    lines.push(Line::from(vec![Span::styled(
+        format!("{}NAVI · wired code agent for local-first builders", " ".repeat(left_pad)),
+        Style::default().fg(MUTED)
+    )]));
 
     Text::from(lines)
 }
@@ -4253,6 +4279,11 @@ fn welcome_status_line(
     model: &str,
     thinking: &str,
     context: &str,
+    mode: &str,
+    router: &str,
+    tools: &str,
+    session: &str,
+    cost: &str,
 ) -> Option<Vec<Span<'static>>> {
     match index {
         0 => Some(vec![
@@ -4283,6 +4314,26 @@ fn welcome_status_line(
         4 => Some(vec![
             Span::styled("context ", Style::default().fg(MUTED)),
             Span::styled(context.to_string(), Style::default().fg(TEXT)),
+        ]),
+        5 => Some(vec![
+            Span::styled("mode    ", Style::default().fg(MUTED)),
+            Span::styled(mode.to_string(), Style::default().fg(TEXT)),
+        ]),
+        6 => Some(vec![
+            Span::styled("router  ", Style::default().fg(MUTED)),
+            Span::styled(router.to_string(), Style::default().fg(TEXT)),
+        ]),
+        7 => Some(vec![
+            Span::styled("tools   ", Style::default().fg(MUTED)),
+            Span::styled(tools.to_string(), Style::default().fg(TEXT)),
+        ]),
+        8 => Some(vec![
+            Span::styled("session ", Style::default().fg(MUTED)),
+            Span::styled(session.to_string(), Style::default().fg(TEXT)),
+        ]),
+        9 => Some(vec![
+            Span::styled("cost    ", Style::default().fg(MUTED)),
+            Span::styled(cost.to_string(), Style::default().fg(TEXT)),
         ]),
         _ => None,
     }
@@ -4432,6 +4483,15 @@ fn split_input_spans<'a>(spans: Vec<Span<'a>>, continuation: &str) -> Vec<Line<'
 }
 
 fn shortcut_tips(app: &TuiApp, width: usize) -> Line<'static> {
+    if app.messages.is_empty() && app.conversation_history.len() <= 1 && app.input.is_empty() {
+        return Line::from(vec![
+            Span::styled(" ", Style::default().fg(MUTED)),
+            Span::styled("type a task, /plan, /edit, /review, or ", Style::default().fg(MUTED)),
+            Span::styled("ctrl+p", Style::default().fg(TEXT).add_modifier(Modifier::BOLD)),
+            Span::styled(" for commands", Style::default().fg(MUTED)),
+        ]);
+    }
+
     let items = [
         ("?", "for shortcuts", TEXT),
         ("ctrl+p", "commands", TEXT),
@@ -4471,9 +4531,8 @@ fn shortcut_tips(app: &TuiApp, width: usize) -> Line<'static> {
     }
 
     let compact_state = &app.compact_state;
-    let pct = compact_state.context_percentage();
     let threshold = compact_state.threshold_level();
-    let pct_label = format!(" {pct:.0}%");
+    let pct_label = format!(" {}", compact_state.usage_label());
     let pct_color = match threshold {
         navi_core::CompactThreshold::CircuitOpen => SIGNAL,
         navi_core::CompactThreshold::Error => SIGNAL,
