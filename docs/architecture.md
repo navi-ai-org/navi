@@ -6,7 +6,7 @@ NAVI is a Rust workspace using edition 2024 and resolver 3. The repo root has no
 
 | Crate | Responsibility |
 |---|---|
-| `navi-cli` | CLI entry point. Loads config, dispatches to TUI or headless runtime, prints config/provider diagnostics. |
+| `navi-cli` | CLI entry point. Loads config, dispatches to TUI, headless runtime, or ACP stdio server, prints config/provider diagnostics. |
 | `navi-core` | Shared domain layer: config, provider catalog, model abstractions, tool definitions/execution, security policy, sessions, events, runtime. |
 | `navi-openai` | The only current `ModelProvider` implementation. It speaks OpenAI Responses, Chat Completions, Anthropic Messages, and Gemini Generate Content through provider adapters. |
 | `navi-plugin-api` | Public plugin trait/types and `NAVI_PLUGIN_API_VERSION`. |
@@ -18,13 +18,17 @@ NAVI is a Rust workspace using edition 2024 and resolver 3. The repo root has no
 1. `navi-cli` loads `NaviConfig` from defaults, global config, and project config.
 2. The selected provider config is resolved from the built-in catalog plus user overrides.
 3. Credentials are resolved from environment variables first, then the credential store.
-4. TUI mode creates a `TuiApp`; headless mode creates `AgentRuntime`.
+4. TUI mode creates a `TuiApp`; headless mode creates `AgentRuntime`; ACP mode serves JSON-RPC over stdio and creates `SessionRuntime` sessions.
 5. The harness layer selects a `small` or `medium` profile, builds the system prompt, and applies loop/observation limits.
 6. A user prompt becomes a `ModelRequest` containing conversation history, selected model, thinking mode, and available tool definitions.
 7. `navi-openai` streams `ModelStreamEvent` values back to the caller.
 8. Text/thinking deltas update the active assistant message; tool calls go through `ToolExecutor` and `SecurityPolicy`.
 9. Tool calls and tool results are sent back using provider tool-message protocol, not fake user text.
 10. Completed assistant output, tool results, and harness traces are persisted as session events.
+
+## ACP Mode
+
+`navi --acp` exposes NAVI as an Agent Client Protocol server over stdin/stdout. It supports initialization, new sessions, prompt turns, prompt cancellation, model/thinking text chunks, tool call updates, and permission requests. The ACP adapter reuses `SessionRuntime`, `ToolExecutor`, provider adapters, plugins, and `SecurityPolicy`; it does not run the TUI and must not write diagnostics to stdout.
 
 ## Logging
 

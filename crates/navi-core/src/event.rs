@@ -28,6 +28,20 @@ pub enum AgentEvent {
     Error {
         message: String,
     },
+    UsageReported {
+        input_tokens: u64,
+        output_tokens: u64,
+    },
+    MicroCompactApplied {
+        messages_cleared: usize,
+    },
+    AutoCompactStarted,
+    AutoCompactCompleted {
+        tokens_saved: u64,
+    },
+    AutoCompactFailed {
+        reason: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

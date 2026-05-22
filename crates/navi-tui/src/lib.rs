@@ -4,7 +4,10 @@ use crossterm::event::{
     PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
 };
 use crossterm::execute;
-use crossterm::terminal::{disable_raw_mode, enable_raw_mode, supports_keyboard_enhancement};
+use crossterm::terminal::{
+    disable_raw_mode, enable_raw_mode, supports_keyboard_enhancement, EnterAlternateScreen,
+    LeaveAlternateScreen,
+};
 use navi_core::{
     AgentEvent, AgentRunState, ApprovalDecision, CredentialStore, HarnessPolicy, LoadedConfig,
     ModelMessage, ModelOption, ModelProvider, ModelRole, ProviderConfig, SecurityPolicy, SessionId,
@@ -77,6 +80,7 @@ pub struct ChatMessage {
     pub thinking_content: String,
     pub tool_invocation: Option<ToolInvocation>,
     pub tool_result: Option<ToolResult>,
+    pub is_compact_summary: bool,
 }
 
 impl ChatMessage {
@@ -92,6 +96,7 @@ impl ChatMessage {
             thinking_content: String::new(),
             tool_invocation: None,
             tool_result: None,
+            is_compact_summary: false,
         }
     }
 }
@@ -180,6 +185,7 @@ pub struct TuiApp {
 
     // stats
     total_tokens_estimate: usize,
+    compact_state: navi_core::compact::CompactState,
 
     // persistence
     session_store: SessionStore,
@@ -279,6 +285,7 @@ enum CommandAction {
     SwitchModel,
     RetryLast,
     OpenThinking,
+    Compact,
     InitializeProject,
     SyncModels,
     Quit,
@@ -324,6 +331,7 @@ impl TuiApp {
         let harness_policy = select_harness_policy(&loaded_config.config);
         let system_prompt = build_system_prompt(&loaded_config.config, &project_dir);
         let log_path = log_path(&loaded_config.data_dir);
+        let context_window = navi_core::config::effective_context_window(&loaded_config.config);
 
         let mut app = Self {
             loaded_config,
@@ -367,6 +375,7 @@ impl TuiApp {
             pending_model_selection: None,
             pending_provider_setup: None,
             total_tokens_estimate: 0,
+            compact_state: navi_core::compact::CompactState::new(context_window),
             session_store,
             events: Vec::new(),
             session_id,
@@ -427,6 +436,11 @@ const COMMANDS: &[CommandItem] = &[
         action: CommandAction::OpenThinking,
     },
     CommandItem {
+        label: "Compact Context",
+        shortcut: None,
+        action: CommandAction::Compact,
+    },
+    CommandItem {
         label: "Initialize Layer",
         shortcut: None,
         action: CommandAction::InitializeProject,
@@ -455,6 +469,7 @@ const COMMANDS: &[CommandItem] = &[
 pub fn run(app: TuiApp) -> Result<()> {
     enable_raw_mode()?;
     let mut stdout = io::stdout();
+    execute!(stdout, EnterAlternateScreen)?;
 
     // Enable the kitty keyboard protocol so the terminal can distinguish
     // Ctrl+Enter from plain Enter (and report other modifier combos).
@@ -475,6 +490,7 @@ pub fn run(app: TuiApp) -> Result<()> {
     if enhanced_keyboard {
         execute!(terminal.backend_mut(), PopKeyboardEnhancementFlags)?;
     }
+    execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
     disable_raw_mode()?;
     terminal.show_cursor()?;
 
@@ -600,7 +616,83 @@ fn run_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, mut app: TuiA
                         navi_core::AgentEvent::PatchProposed(patch) => {
                             app.events.push(navi_core::AgentEvent::PatchProposed(patch));
                         }
-                        _ => {}
+                        navi_core::AgentEvent::UsageReported {
+                            input_tokens,
+                            output_tokens,
+                        } => {
+                            app.compact_state.update_usage(input_tokens);
+                            if let Some(msg) = app.messages.last_mut() {
+                                if msg.role == ChatRole::Assistant && msg.usage_label.is_none() {
+                                    msg.usage_label = Some(format!(
+                                        "{}k in · {}k out",
+                                        input_tokens / 1000,
+                                        output_tokens / 1000,
+                                    ));
+                                }
+                            }
+                            app.events.push(navi_core::AgentEvent::UsageReported {
+                                input_tokens,
+                                output_tokens,
+                            });
+                        }
+                        navi_core::AgentEvent::MicroCompactApplied { messages_cleared } => {
+                            show_notification(
+                                &mut app,
+                                "Micro-Compact",
+                                format!(
+                                    "{} old tool results cleared (60+ min gap)",
+                                    messages_cleared
+                                ),
+                            );
+                            app.events.push(navi_core::AgentEvent::MicroCompactApplied {
+                                messages_cleared,
+                            });
+                        }
+                        navi_core::AgentEvent::AutoCompactStarted => {
+                            push_diagnostic(
+                                &mut app,
+                                "Auto-compact: context threshold reached, summarizing..."
+                                    .to_string(),
+                            );
+                            app.events.push(navi_core::AgentEvent::AutoCompactStarted);
+                        }
+                        navi_core::AgentEvent::AutoCompactCompleted { tokens_saved } => {
+                            show_notification(
+                                &mut app,
+                                "Auto-Compact",
+                                format!(
+                                    "Context compacted ({}k tokens saved)",
+                                    tokens_saved / 1000
+                                ),
+                            );
+                            app.compact_state.consecutive_failures = 0;
+                            if let Some(summary) = &app.compact_state.summary {
+                                app.messages.push(ChatMessage {
+                                    status: Some("compacted".to_string()),
+                                    is_compact_summary: true,
+                                    content: format!(
+                                        "[Context compacted — {}k tokens saved]\n\n{}",
+                                        tokens_saved / 1000,
+                                        summary,
+                                    ),
+                                    ..ChatMessage::new(ChatRole::Assistant, String::new())
+                                });
+                            }
+                            app.events
+                                .push(navi_core::AgentEvent::AutoCompactCompleted { tokens_saved });
+                        }
+                        navi_core::AgentEvent::AutoCompactFailed { reason } => {
+                            push_diagnostic(&mut app, format!("Auto-compact failed: {reason}"));
+                            app.compact_state.consecutive_failures =
+                                app.compact_state.consecutive_failures.saturating_add(1);
+                            app.events
+                                .push(navi_core::AgentEvent::AutoCompactFailed { reason });
+                        }
+                        navi_core::AgentEvent::UserTaskSubmitted { text: _ } => {}
+                        navi_core::AgentEvent::ModelOutput {
+                            text: _,
+                            thinking: _,
+                        } => {}
                     }
                 }
                 AsyncEvent::TurnCompleted(res) => {
@@ -826,6 +918,8 @@ fn start_streaming_request(app: &mut TuiApp) {
         model_name: request_model_name,
         event_tx: Some(event_tx),
         pending_approvals: pending_approvals.clone(),
+        compact_state: Arc::new(tokio::sync::Mutex::new(app.compact_state.clone())),
+        harness_config: app.loaded_config.config.harness.clone(),
     });
 
     app.turn_context = Some(ctx.clone());
@@ -838,8 +932,22 @@ fn start_streaming_request(app: &mut TuiApp) {
         String::new()
     };
 
-    let session_runtime =
-        navi_core::session::SessionRuntime::spawn(ctx, app.harness_policy, initial_messages);
+    let memory_injection = if app.loaded_config.config.memory.session_memory_enabled
+        && app.conversation_history.is_empty()
+    {
+        app.session_store
+            .load_memory(&app.project_dir)
+            .and_then(|m| m.format_injection(app.loaded_config.config.memory.max_memory_entries))
+    } else {
+        None
+    };
+
+    let session_runtime = navi_core::session::SessionRuntime::spawn(
+        ctx,
+        app.harness_policy,
+        initial_messages,
+        memory_injection,
+    );
     app.session_runtime = Some(session_runtime.clone());
 
     let tx = app.async_tx.clone();
@@ -2033,7 +2141,8 @@ fn handle_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyModifiers) -> bool 
         }
     }
 
-    if code == KeyCode::Esc
+    if app.mode == Mode::Normal
+        && code == KeyCode::Esc
         && (app.is_loading || app.stream_task.is_some() || app.tool_task.is_some())
     {
         cancel_stream(app);
@@ -2606,6 +2715,19 @@ fn run_selected_command(app: &mut TuiApp) -> bool {
         }
         CommandAction::OpenThinking => {
             open_thinking_picker(app);
+        }
+        CommandAction::Compact => {
+            if app.is_loading {
+                show_notification(app, "Compact", "Cannot compact while a request is active.");
+            } else {
+                show_notification(
+                    app,
+                    "Compact",
+                    "Compaction will trigger on next request if context is full.",
+                );
+                app.compact_state.last_input_tokens = Some(app.compact_state.context_window);
+            }
+            app.mode = Mode::Normal;
         }
         CommandAction::Sessions => {
             open_sessions_picker(app);
@@ -3231,6 +3353,9 @@ fn chat_render_signature(app: &TuiApp) -> String {
         signature.push_str(msg.model_label.as_deref().unwrap_or_default());
         signature.push(':');
         signature.push_str(msg.provider_label.as_deref().unwrap_or_default());
+        if msg.is_compact_summary {
+            signature.push_str(":compact");
+        }
         if let Some(result) = &msg.tool_result {
             signature.push(':');
             signature.push_str(if result.ok { "ok" } else { "err" });
@@ -3241,9 +3366,23 @@ fn chat_render_signature(app: &TuiApp) -> String {
 }
 
 fn build_chat_lines(app: &TuiApp, chat_width: usize) -> Vec<Line<'static>> {
+    build_chat_lines_for_messages(
+        app.messages.iter(),
+        chat_width,
+        app.full_tool_view,
+        app.show_thinking,
+    )
+}
+
+fn build_chat_lines_for_messages<'a>(
+    messages: impl IntoIterator<Item = &'a ChatMessage>,
+    chat_width: usize,
+    full_tool_view: bool,
+    show_thinking: bool,
+) -> Vec<Line<'static>> {
     let mut rendered_lines: Vec<Line<'static>> = Vec::new();
 
-    for msg in &app.messages {
+    for msg in messages {
         if is_empty_tool_placeholder(msg) {
             continue;
         }
@@ -3262,8 +3401,20 @@ fn build_chat_lines(app: &TuiApp, chat_width: usize) -> Vec<Line<'static>> {
                 ));
             }
             ChatRole::Assistant => {
+                if msg.is_compact_summary {
+                    rendered_lines.push(Line::from(vec![
+                        Span::styled(
+                            " ◈ compacted ",
+                            Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+                        ),
+                        Span::styled(
+                            "─".repeat(chat_width.saturating_sub(14)),
+                            Style::default().fg(GHOST),
+                        ),
+                    ]));
+                }
                 if let Some((invocation, result)) = tool_result_parts(msg) {
-                    if app.full_tool_view {
+                    if full_tool_view {
                         rendered_lines.extend(render_markdown_lines(
                             &tool_full_content(invocation, result),
                             chat_width.saturating_sub(2),
@@ -3275,7 +3426,7 @@ fn build_chat_lines(app: &TuiApp, chat_width: usize) -> Vec<Line<'static>> {
                         rendered_lines.push(render_compact_tool_line(invocation, result));
                     }
                 } else {
-                    if app.show_thinking && !msg.thinking_content.is_empty() {
+                    if show_thinking && !msg.thinking_content.is_empty() {
                         rendered_lines.extend(render_markdown_lines(
                             &msg.thinking_content,
                             chat_width.saturating_sub(4),
@@ -4082,14 +4233,14 @@ fn split_input_spans<'a>(spans: Vec<Span<'a>>, continuation: &str) -> Vec<Line<'
     lines
 }
 
-fn shortcut_tips(_app: &TuiApp, width: usize) -> Line<'static> {
+fn shortcut_tips(app: &TuiApp, width: usize) -> Line<'static> {
     let items = [
         ("?", "for shortcuts", TEXT),
         ("ctrl+p", "commands", TEXT),
         ("ctrl+c", "quit", TEXT),
     ];
 
-    let mut spans = vec![Span::styled("   ", Style::default().fg(MUTED))];
+    let mut spans = vec![Span::styled(" ", Style::default().fg(MUTED))];
     let mut used = 3usize;
 
     for (index, (key, label, key_color)) in items.iter().enumerate() {
@@ -4104,7 +4255,7 @@ fn shortcut_tips(_app: &TuiApp, width: usize) -> Line<'static> {
             break;
         }
         if index > 0 {
-            spans.push(Span::styled("  ·  ", Style::default().fg(GHOST)));
+            spans.push(Span::styled(" · ", Style::default().fg(GHOST)));
             used += separator_width;
         }
         spans.push(Span::styled(
@@ -4118,6 +4269,40 @@ fn shortcut_tips(_app: &TuiApp, width: usize) -> Line<'static> {
                 Style::default().fg(MUTED),
             ));
             used += 1 + label.chars().count();
+        }
+    }
+
+    let compact_state = &app.compact_state;
+    let pct = compact_state.context_percentage();
+    let threshold = compact_state.threshold_level();
+    let pct_label = format!(" {pct:.0}%");
+    let pct_color = match threshold {
+        navi_core::CompactThreshold::CircuitOpen => SIGNAL,
+        navi_core::CompactThreshold::Error => SIGNAL,
+        navi_core::CompactThreshold::Warning => ACCENT,
+        navi_core::CompactThreshold::Normal => MUTED,
+    };
+    let threshold_label = match threshold {
+        navi_core::CompactThreshold::CircuitOpen => " ⚠circuit",
+        navi_core::CompactThreshold::Error => " ⚠compact",
+        navi_core::CompactThreshold::Warning => " ~compact",
+        navi_core::CompactThreshold::Normal => "",
+    };
+    let context_text = format!("ctx:{pct_label}{threshold_label}");
+    let context_width = context_text.chars().count();
+    if used + context_width + 2 < width {
+        let padding = width.saturating_sub(used + context_width + 1);
+        spans.push(Span::styled(
+            " ".repeat(padding),
+            Style::default().fg(MUTED),
+        ));
+        spans.push(Span::styled(format!("ctx:"), Style::default().fg(MUTED)));
+        spans.push(Span::styled(pct_label, Style::default().fg(pct_color)));
+        if !threshold_label.is_empty() {
+            spans.push(Span::styled(
+                threshold_label.to_string(),
+                Style::default().fg(pct_color),
+            ));
         }
     }
 
@@ -5131,9 +5316,21 @@ fn save_current_session(app: &mut TuiApp) {
         created_at: session_created_at(&app.session_id).unwrap_or(now),
         updated_at: now,
         events: app.events.clone(),
+        memory: None,
     };
     if let Err(err) = app.session_store.save(&snapshot) {
         eprintln!("failed to save session: {err:#}");
+    }
+    if app.loaded_config.config.memory.session_memory_enabled {
+        if let Some(summary) = &app.compact_state.summary {
+            if let Err(err) = app.session_store.add_memory_entry(
+                &app.project_dir,
+                &app.session_id,
+                summary.clone(),
+            ) {
+                tracing::warn!("failed to save project memory: {err:#}");
+            }
+        }
     }
     app.session_id = SessionStore::create_id();
     app.events.clear();
@@ -5357,6 +5554,7 @@ mod tests {
             models: vec![navi_core::ProviderModelConfig {
                 name: "test-large".to_string(),
                 task_size: navi_core::ModelTaskSize::Large,
+                context_window_tokens: None,
             }],
             ..Default::default()
         }];
@@ -5867,6 +6065,18 @@ mod tests {
     }
 
     #[test]
+    fn esc_closes_modal_without_canceling_active_model() {
+        let mut app = test_app("");
+        app.mode = Mode::Settings;
+        app.is_loading = true;
+
+        assert!(!handle_key(&mut app, KeyCode::Esc, KeyModifiers::empty()));
+
+        assert_eq!(app.mode, Mode::Normal);
+        assert!(app.is_loading);
+    }
+
+    #[test]
     fn ctrl_d_opens_debug_modal() {
         let mut app = test_app("");
 
@@ -6348,6 +6558,7 @@ mod tests {
             provider_label: "OpenCode Zen".to_string(),
             provider_description: "Recommended".to_string(),
             task_size: navi_core::ModelTaskSize::Small,
+            context_window_tokens: None,
         };
 
         assert!(model_is_available_for_selection(&app, &model));

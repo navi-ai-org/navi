@@ -1,4 +1,5 @@
 use crate::agent::AgentControl;
+use crate::compact::{self, CompactState};
 use crate::event::AgentEvent;
 use crate::harness::{
     HarnessPolicy, build_system_prompt, compact_tool_observation, tool_error_result,
@@ -29,6 +30,8 @@ pub struct TurnContext {
             >,
         >,
     >,
+    pub compact_state: Arc<tokio::sync::Mutex<CompactState>>,
+    pub harness_config: crate::config::HarnessConfig,
 }
 
 impl TurnContext {
@@ -89,6 +92,57 @@ pub async fn run_turn(
             break "Loop execution limit reached".to_string();
         }
 
+        // Micro-compact: clear old tool results if gap exceeds threshold
+        {
+            let cleared =
+                compact::micro_compact(messages, ctx.harness_config.micro_compact_gap_minutes);
+            if cleared > 0 {
+                tracing::info!(cleared, "micro-compact applied");
+                if let Some(ref tx) = ctx.event_tx {
+                    let _ = tx.send(AgentEvent::MicroCompactApplied {
+                        messages_cleared: cleared,
+                    });
+                }
+            }
+        }
+
+        // Auto-compact: summarize if context threshold reached
+        {
+            let should = {
+                let state = ctx.compact_state.lock().await;
+                state.should_autocompact(ctx.harness_config.autocompact_buffer_tokens)
+            };
+            if should {
+                if let Some(ref tx) = ctx.event_tx {
+                    let _ = tx.send(AgentEvent::AutoCompactStarted);
+                }
+                let mut state = ctx.compact_state.lock().await;
+                match state
+                    .auto_compact(
+                        messages,
+                        ctx.model_provider.as_ref(),
+                        &ctx.model_name,
+                        &ctx.harness_config,
+                    )
+                    .await
+                {
+                    Ok(()) => {
+                        let tokens_saved = state.last_input_tokens.unwrap_or(0);
+                        if let Some(ref tx) = ctx.event_tx {
+                            let _ = tx.send(AgentEvent::AutoCompactCompleted { tokens_saved });
+                        }
+                    }
+                    Err(e) => {
+                        if let Some(ref tx) = ctx.event_tx {
+                            let _ = tx.send(AgentEvent::AutoCompactFailed {
+                                reason: e.to_string(),
+                            });
+                        }
+                    }
+                }
+            }
+        }
+
         // Prompt Construction
         let request = ModelRequest {
             model: ctx.model_name.clone(),
@@ -140,8 +194,25 @@ pub async fn run_turn(
                     }
                     tool_calls.push(invocation);
                 }
+                ModelStreamEvent::Usage {
+                    input_tokens,
+                    output_tokens,
+                } => {
+                    let in_tok = input_tokens.unwrap_or(0);
+                    let out_tok = output_tokens.unwrap_or(0);
+                    if let Some(ref tx) = ctx.event_tx {
+                        let _ = tx.send(AgentEvent::UsageReported {
+                            input_tokens: in_tok,
+                            output_tokens: out_tok,
+                        });
+                    }
+                    {
+                        let mut state = ctx.compact_state.lock().await;
+                        state.update_usage(in_tok);
+                    }
+                }
                 ModelStreamEvent::Done => break,
-                _ => {}
+                ModelStreamEvent::Status { .. } => {}
             }
         }
 
@@ -361,6 +432,8 @@ mod tests {
             model_name: "gpt-4".to_string(),
             event_tx: None,
             pending_approvals: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+            compact_state: Arc::new(tokio::sync::Mutex::new(CompactState::new(128_000))),
+            harness_config: crate::config::HarnessConfig::default(),
         };
 
         let mut messages = vec![];
