@@ -1,17 +1,27 @@
 use crate::patch::PatchProposal;
 use crate::tool::{ToolInvocation, ToolResult};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum AgentEvent {
-    UserTaskSubmitted { text: String },
-    ModelOutput { text: String },
+    UserTaskSubmitted {
+        text: String,
+    },
+    ModelOutput {
+        text: String,
+        #[serde(default)]
+        thinking: Option<String>,
+    },
     ToolRequested(ToolInvocation),
     ToolCompleted(ToolResult),
+    HarnessTrace(Value),
     PatchProposed(PatchProposal),
     ApprovalRequested(ApprovalRequest),
     ApprovalResolved(ApprovalDecision),
-    Error { message: String },
+    Error {
+        message: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

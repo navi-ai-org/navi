@@ -1,37 +1,140 @@
+use crate::tool::{ToolDefinition, ToolInvocation};
 use anyhow::Result;
 use async_trait::async_trait;
+use futures_util::StreamExt;
+use futures_util::stream::BoxStream;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 #[async_trait]
 pub trait ModelProvider: Send + Sync {
-    async fn complete(&self, request: ModelRequest) -> Result<ModelResponse>;
+    fn stream(&self, request: ModelRequest) -> ModelStream;
+
+    async fn complete(&self, request: ModelRequest) -> Result<ModelResponse> {
+        let mut stream = self.stream(request);
+        let mut text = String::new();
+
+        while let Some(event) = stream.next().await {
+            match event? {
+                ModelStreamEvent::TextDelta { text: delta } => text.push_str(&delta),
+                ModelStreamEvent::Done => break,
+                ModelStreamEvent::Status { .. }
+                | ModelStreamEvent::Usage { .. }
+                | ModelStreamEvent::ThinkingDelta { .. }
+                | ModelStreamEvent::ToolCall(_) => {}
+            }
+        }
+
+        Ok(ModelResponse { text })
+    }
+
+    async fn list_models(&self) -> Result<Vec<String>> {
+        anyhow::bail!("listing models is not supported by this provider")
+    }
 }
+
+pub type ModelStream = BoxStream<'static, Result<ModelStreamEvent>>;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelRequest {
     pub model: String,
     pub messages: Vec<ModelMessage>,
     pub thinking: ThinkingConfig,
+    #[serde(default)]
+    pub tools: Vec<ToolDefinition>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelMessage {
     pub role: ModelRole,
     pub content: String,
+    #[serde(default)]
+    pub tool_call_id: Option<String>,
+    #[serde(default)]
+    pub tool_name: Option<String>,
+    #[serde(default)]
+    pub tool_calls: Vec<ToolInvocation>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ModelRole {
     System,
     User,
     Assistant,
+    Tool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelResponse {
     pub text: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum ModelStreamEvent {
+    TextDelta {
+        text: String,
+    },
+    ThinkingDelta {
+        text: String,
+    },
+    Status {
+        label: String,
+    },
+    Usage {
+        input_tokens: Option<u64>,
+        output_tokens: Option<u64>,
+    },
+    ToolCall(ToolInvocation),
+    Done,
+}
+
+impl ModelMessage {
+    pub fn system(content: impl Into<String>) -> Self {
+        Self::new(ModelRole::System, content)
+    }
+
+    pub fn user(content: impl Into<String>) -> Self {
+        Self::new(ModelRole::User, content)
+    }
+
+    pub fn assistant(content: impl Into<String>) -> Self {
+        Self::new(ModelRole::Assistant, content)
+    }
+
+    pub fn tool_result(
+        tool_call_id: impl Into<String>,
+        tool_name: impl Into<String>,
+        content: impl Into<String>,
+    ) -> Self {
+        Self {
+            role: ModelRole::Tool,
+            content: content.into(),
+            tool_call_id: Some(tool_call_id.into()),
+            tool_name: Some(tool_name.into()),
+            tool_calls: Vec::new(),
+        }
+    }
+
+    pub fn assistant_tool_call(invocation: ToolInvocation) -> Self {
+        Self {
+            role: ModelRole::Assistant,
+            content: String::new(),
+            tool_call_id: None,
+            tool_name: None,
+            tool_calls: vec![invocation],
+        }
+    }
+
+    fn new(role: ModelRole, content: impl Into<String>) -> Self {
+        Self {
+            role,
+            content: content.into(),
+            tool_call_id: None,
+            tool_name: None,
+            tool_calls: Vec::new(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

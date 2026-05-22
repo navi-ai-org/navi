@@ -15,4 +15,5 @@ serde_json.workspace = true
 tokio.workspace = true
 navi-core.workspace = true
 navi-openai.workspace = true
+navi-plugin-host.workspace = true
 navi-tui.workspace = true
