@@ -4255,13 +4255,19 @@ fn render_sessions_picker(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
                     Style::default().fg(TEXT).bg(PANEL)
                 };
 
-                let event_count = snapshot.events.len();
                 let project = snapshot
                     .project
                     .file_name()
                     .map(|n| n.to_string_lossy().to_string())
                     .unwrap_or_else(|| snapshot.project.to_string_lossy().to_string());
-                let label = format!("{project}  ({event_count} events)");
+                let title = snapshot
+                    .title
+                    .as_deref()
+                    .and_then(clean_session_title)
+                    .unwrap_or_else(|| project.clone());
+                let timestamp = format_session_timestamp(snapshot.updated_at);
+                let event_count = snapshot.events.len();
+                let label = format!("{timestamp}  {title}  ·  {project}  ·  {event_count} events");
 
                 ListItem::new(Span::styled(label, style)).style(style)
             })
@@ -4731,9 +4737,13 @@ fn save_current_session(app: &mut TuiApp) {
     if app.messages.is_empty() && app.events.is_empty() {
         return;
     }
+    let now = navi_core::session::current_unix_timestamp();
     let snapshot = SessionSnapshot {
         id: app.session_id.clone(),
+        title: session_title_from_events(&app.events),
         project: app.project_dir.clone(),
+        created_at: session_created_at(&app.session_id).unwrap_or(now),
+        updated_at: now,
         events: app.events.clone(),
     };
     if let Err(err) = app.session_store.save(&snapshot) {
@@ -4741,6 +4751,114 @@ fn save_current_session(app: &mut TuiApp) {
     }
     app.session_id = SessionStore::create_id();
     app.events.clear();
+}
+
+fn session_title_from_events(events: &[AgentEvent]) -> Option<String> {
+    events
+        .iter()
+        .find_map(|event| match event {
+            AgentEvent::ModelOutput { text, .. } => title_from_model_text(text),
+            _ => None,
+        })
+        .or_else(|| {
+            events.iter().find_map(|event| match event {
+                AgentEvent::UserTaskSubmitted { text } => title_from_user_text(text),
+                _ => None,
+            })
+        })
+}
+
+fn title_from_model_text(text: &str) -> Option<String> {
+    let heading = text.lines().find_map(|line| {
+        let trimmed = line.trim();
+        if trimmed.starts_with('#') {
+            Some(trimmed.trim_start_matches('#').trim())
+        } else {
+            None
+        }
+    });
+
+    heading
+        .and_then(clean_session_title)
+        .or_else(|| text.lines().find_map(clean_session_title))
+}
+
+fn title_from_user_text(text: &str) -> Option<String> {
+    clean_session_title(text)
+}
+
+fn clean_session_title(text: &str) -> Option<String> {
+    let cleaned = text
+        .trim()
+        .trim_matches('`')
+        .trim_matches('"')
+        .trim_matches('\'')
+        .trim_start_matches(['#', '-', '*', '>'])
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+
+    if cleaned.is_empty() {
+        return None;
+    }
+
+    Some(truncate_title(&cleaned, 72))
+}
+
+fn truncate_title(text: &str, max_chars: usize) -> String {
+    if text.chars().count() <= max_chars {
+        return text.to_string();
+    }
+
+    let mut out = text
+        .chars()
+        .take(max_chars.saturating_sub(3))
+        .collect::<String>();
+    out.push_str("...");
+    out
+}
+
+fn session_created_at(session_id: &SessionId) -> Option<u64> {
+    session_id
+        .0
+        .strip_prefix("session-")?
+        .parse::<u128>()
+        .ok()
+        .map(|millis| (millis / 1000) as u64)
+}
+
+fn format_session_timestamp(timestamp: u64) -> String {
+    if timestamp == 0 {
+        return "unknown time".to_string();
+    }
+
+    let (year, month, day, hour, minute) = unix_timestamp_parts(timestamp);
+    format!("{year:04}-{month:02}-{day:02} {hour:02}:{minute:02}")
+}
+
+fn unix_timestamp_parts(timestamp: u64) -> (i64, u32, u32, u32, u32) {
+    let days = (timestamp / 86_400) as i64;
+    let seconds = timestamp % 86_400;
+    let hour = (seconds / 3_600) as u32;
+    let minute = ((seconds % 3_600) / 60) as u32;
+    let (year, month, day) = civil_from_days(days);
+    (year, month, day, hour, minute)
+}
+
+fn civil_from_days(days_since_unix_epoch: i64) -> (i64, u32, u32) {
+    let z = days_since_unix_epoch + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let mut year = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = mp + if mp < 10 { 3 } else { -9 };
+    if month <= 2 {
+        year += 1;
+    }
+    (year, month as u32, day as u32)
 }
 
 fn save_preferences(app: &mut TuiApp) {
@@ -5295,6 +5413,30 @@ mod tests {
         handle_key(&mut app, KeyCode::Char('?'), KeyModifiers::NONE);
         assert_eq!(app.mode, Mode::Normal);
         assert_eq!(app.input, "hello?");
+    }
+
+    #[test]
+    fn session_title_prefers_model_heading() {
+        let events = vec![
+            AgentEvent::UserTaskSubmitted {
+                text: "make a dashboard".to_string(),
+            },
+            AgentEvent::ModelOutput {
+                text: "## Cyberpunk Analytics Dashboard\n\nImplemented.".to_string(),
+                thinking: None,
+            },
+        ];
+
+        assert_eq!(
+            session_title_from_events(&events).as_deref(),
+            Some("Cyberpunk Analytics Dashboard")
+        );
+    }
+
+    #[test]
+    fn session_timestamp_formats_date_and_time() {
+        assert_eq!(format_session_timestamp(0), "unknown time");
+        assert_eq!(format_session_timestamp(1_700_000_000), "2023-11-14 22:13");
     }
 
     #[test]

@@ -219,7 +219,10 @@ async fn run_headless(
     );
     store.save(&SessionSnapshot {
         id: SessionStore::create_id(),
+        title: None,
         project: cwd,
+        created_at: navi_core::session::current_unix_timestamp(),
+        updated_at: navi_core::session::current_unix_timestamp(),
         events: runtime.events().to_vec(),
     })?;
 
