@@ -87,6 +87,47 @@ impl SessionStore {
     }
 }
 
+pub struct Submission {
+    pub task: String,
+    pub response_tx: tokio::sync::oneshot::Sender<Result<String>>,
+}
+
+#[derive(Clone)]
+pub struct SessionRuntime {
+    pub submission_tx: tokio::sync::mpsc::UnboundedSender<Submission>,
+}
+
+impl SessionRuntime {
+    pub fn spawn(
+        ctx: std::sync::Arc<crate::turn::TurnContext>,
+        policy: crate::harness::HarnessPolicy,
+        initial_messages: Vec<crate::model::ModelMessage>,
+    ) -> Self {
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<Submission>();
+
+        tokio::spawn(async move {
+            let mut messages = if initial_messages.is_empty() {
+                vec![crate::model::ModelMessage::system(
+                    crate::harness::build_system_prompt(
+                        &crate::config::NaviConfig::default(),
+                        &ctx.project_dir,
+                    ),
+                )]
+            } else {
+                initial_messages
+            };
+
+            while let Some(submission) = rx.recv().await {
+                messages.push(crate::model::ModelMessage::user(submission.task));
+                let res = crate::turn::run_turn(&ctx, &mut messages, policy).await;
+                let _ = submission.response_tx.send(res);
+            }
+        });
+
+        Self { submission_tx: tx }
+    }
+}
+
 #[cfg(unix)]
 fn set_private_dir_permissions(path: &PathBuf) -> Result<()> {
     use std::os::unix::fs::PermissionsExt;
@@ -195,5 +236,61 @@ mod tests {
         let content = fs::read_to_string(path).expect("read session");
 
         assert!(content.contains("sk-proj-1234567890abcdef"));
+    }
+
+    struct MockProvider;
+
+    #[async_trait::async_trait]
+    impl crate::model::ModelProvider for MockProvider {
+        fn stream(&self, _request: crate::model::ModelRequest) -> crate::model::ModelStream {
+            Box::pin(futures_util::stream::iter(vec![
+                Ok(crate::model::ModelStreamEvent::TextDelta {
+                    text: "mock task response".to_string(),
+                }),
+                Ok(crate::model::ModelStreamEvent::Done),
+            ]))
+        }
+    }
+
+    #[tokio::test]
+    async fn test_session_runtime_background_loop() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let security_policy = crate::SecurityPolicy::new(
+            tempdir.path().to_path_buf(),
+            tempdir.path().to_path_buf(),
+            crate::SecurityConfig::default(),
+        )
+        .unwrap();
+        let tool_executor = std::sync::Arc::new(crate::ToolExecutor::new(security_policy));
+
+        let ctx = std::sync::Arc::new(crate::turn::TurnContext {
+            model_provider: std::sync::Arc::new(MockProvider),
+            tool_executor,
+            agent_control: crate::agent::AgentControl::new(),
+            project_dir: tempdir.path().to_path_buf(),
+            model_name: "test-model".to_string(),
+            event_tx: None,
+            pending_approvals: std::sync::Arc::new(std::sync::Mutex::new(
+                std::collections::HashMap::new(),
+            )),
+        });
+
+        let policy = crate::harness::HarnessPolicy {
+            profile: crate::config::HarnessProfile::Small,
+            observation_max_bytes: 1000,
+        };
+
+        let runtime = SessionRuntime::spawn(ctx, policy, Vec::new());
+
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let submission = Submission {
+            task: "hello world".to_string(),
+            response_tx: tx,
+        };
+
+        runtime.submission_tx.send(submission).unwrap();
+
+        let result = rx.await.unwrap().unwrap();
+        assert_eq!(result, "mock task response");
     }
 }

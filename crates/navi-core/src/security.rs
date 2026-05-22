@@ -165,6 +165,12 @@ pub fn redact_agent_event(event: &AgentEvent) -> AgentEvent {
             text: redact_secrets(text),
             thinking: thinking.as_ref().map(|t| redact_secrets(t)),
         },
+        AgentEvent::ModelDelta { text } => AgentEvent::ModelDelta {
+            text: redact_secrets(text),
+        },
+        AgentEvent::ModelThinkingDelta { text } => AgentEvent::ModelThinkingDelta {
+            text: redact_secrets(text),
+        },
         AgentEvent::Error { message } => AgentEvent::Error {
             message: redact_secrets(message),
         },

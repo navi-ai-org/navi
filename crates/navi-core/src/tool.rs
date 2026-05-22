@@ -410,34 +410,104 @@ impl Tool for BashTool {
         let timeout_ms = optional_u64(&invocation.input, "timeout_ms")
             .unwrap_or(30_000)
             .min(120_000);
-        let output = match tokio::time::timeout(
-            Duration::from_millis(timeout_ms),
-            tokio::process::Command::new("bash")
-                .arg("-lc")
-                .arg(command)
-                .output(),
-        )
-        .await
-        {
-            Ok(output) => output.context("failed to run command")?,
-            Err(_) => {
-                return Ok(ToolResult {
-                    invocation_id: invocation.id,
-                    ok: false,
-                    output: json!({ "error": "command timed out: deadline has elapsed" }),
-                });
+
+        let mut child = tokio::process::Command::new("bash")
+            .arg("-lc")
+            .arg(&command)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .kill_on_drop(true)
+            .spawn()
+            .context("failed to spawn bash")?;
+
+        let mut stdout_pipe = child.stdout.take().unwrap();
+        let mut stderr_pipe = child.stderr.take().unwrap();
+
+        let stdout_data = Arc::new(tokio::sync::Mutex::new(Vec::new()));
+        let stderr_data = Arc::new(tokio::sync::Mutex::new(Vec::new()));
+
+        let stdout_data_clone = stdout_data.clone();
+        let mut stdout_task = tokio::spawn(async move {
+            use tokio::io::AsyncReadExt;
+            let mut buf = [0; 4096];
+            while let Ok(n) = stdout_pipe.read(&mut buf).await {
+                if n == 0 {
+                    break;
+                }
+                let mut data = stdout_data_clone.lock().await;
+                if data.len() < 64 * 1024 {
+                    data.extend_from_slice(&buf[..n]);
+                }
             }
+        });
+
+        let stderr_data_clone = stderr_data.clone();
+        let mut stderr_task = tokio::spawn(async move {
+            use tokio::io::AsyncReadExt;
+            let mut buf = [0; 4096];
+            while let Ok(n) = stderr_pipe.read(&mut buf).await {
+                if n == 0 {
+                    break;
+                }
+                let mut data = stderr_data_clone.lock().await;
+                if data.len() < 64 * 1024 {
+                    data.extend_from_slice(&buf[..n]);
+                }
+            }
+        });
+
+        let timeout_duration = Duration::from_millis(timeout_ms);
+        let status_result = tokio::time::timeout(timeout_duration, child.wait()).await;
+
+        let (ok, status_code, error_msg) = match status_result {
+            Ok(Ok(status)) => (status.success(), status.code(), None),
+            Ok(Err(e)) => (
+                false,
+                None,
+                Some(format!("failed to wait for command: {e}")),
+            ),
+            Err(_) => (
+                false,
+                None,
+                Some("command timed out: deadline has elapsed".to_string()),
+            ),
         };
 
-        Ok(ToolResult {
-            invocation_id: invocation.id,
-            ok: output.status.success(),
-            output: json!({
-                "status": output.status.code(),
-                "stdout": truncate_string(String::from_utf8_lossy(&output.stdout).to_string(), 64 * 1024),
-                "stderr": truncate_string(String::from_utf8_lossy(&output.stderr).to_string(), 64 * 1024),
-            }),
+        let _ = tokio::time::timeout(Duration::from_millis(50), async {
+            let _ = tokio::join!(&mut stdout_task, &mut stderr_task);
         })
+        .await;
+
+        stdout_task.abort();
+        stderr_task.abort();
+
+        let stdout_bytes = stdout_data.lock().await.clone();
+        let stderr_bytes = stderr_data.lock().await.clone();
+
+        let stdout_str = String::from_utf8_lossy(&stdout_bytes).into_owned();
+        let stderr_str = String::from_utf8_lossy(&stderr_bytes).into_owned();
+
+        if let Some(err) = error_msg {
+            Ok(ToolResult {
+                invocation_id: invocation.id,
+                ok: false,
+                output: json!({
+                    "error": err,
+                    "stdout": truncate_string(stdout_str, 64 * 1024),
+                    "stderr": truncate_string(stderr_str, 64 * 1024),
+                }),
+            })
+        } else {
+            Ok(ToolResult {
+                invocation_id: invocation.id,
+                ok,
+                output: json!({
+                    "status": status_code,
+                    "stdout": truncate_string(stdout_str, 64 * 1024),
+                    "stderr": truncate_string(stderr_str, 64 * 1024),
+                }),
+            })
+        }
     }
 }
 

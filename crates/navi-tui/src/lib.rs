@@ -9,13 +9,11 @@ use crossterm::terminal::{
     supports_keyboard_enhancement,
 };
 use navi_core::{
-    AgentEvent, AgentRunState, ApprovalDecision, ApprovalRequest, ApprovalRisk, CredentialStore,
-    HarnessPolicy, LoadedConfig, ModelMessage, ModelOption, ModelProvider, ModelRequest, ModelRole,
-    ModelStreamEvent, SecurityDecision, SecurityPolicy, SessionId, SessionSnapshot, SessionStore,
-    ThinkingConfig, ToolExecutor, ToolInvocation, ToolLoopDecision, ToolResult,
+    AgentEvent, AgentRunState, ApprovalDecision, CredentialStore, HarnessPolicy, LoadedConfig,
+    ModelMessage, ModelOption, ModelProvider, ModelRole, SecurityPolicy, SessionId,
+    SessionSnapshot, SessionStore, ThinkingConfig, ToolExecutor, ToolInvocation, ToolResult,
     available_model_options, build_system_prompt, compact_tool_observation, log_path,
-    record_tool_call, resolve_provider_config, save_global_config, select_harness_policy,
-    tool_error_result, trace_request_summary,
+    resolve_provider_config, save_global_config, select_harness_policy,
 };
 use navi_openai::OpenAiProvider;
 use navi_plugin_host::{LoadedPlugin, load_configured_plugins};
@@ -109,28 +107,6 @@ pub enum ChatRole {
 
 // ─── async bridge ──────────────────────────────────────────────────────────────
 enum AsyncEvent {
-    ModelDelta {
-        text: String,
-    },
-    ModelThinkingDelta {
-        text: String,
-    },
-    ModelStatus {
-        label: String,
-    },
-    ModelUsage {
-        label: String,
-    },
-    ToolCall {
-        invocation: ToolInvocation,
-    },
-    ToolCompleted {
-        invocation: ToolInvocation,
-        result: ToolResult,
-    },
-    ModelDone {
-        elapsed_ms: u64,
-    },
     ModelError {
         message: String,
     },
@@ -138,6 +114,8 @@ enum AsyncEvent {
         loaded_config: LoadedConfig,
         message: String,
     },
+    Agent(navi_core::AgentEvent),
+    TurnCompleted(Result<String, String>),
 }
 
 // ─── app state ─────────────────────────────────────────────────────────────────
@@ -172,10 +150,16 @@ pub struct TuiApp {
     _loaded_plugins: Vec<LoadedPlugin>,
     harness_policy: HarnessPolicy,
     run_state: AgentRunState,
-    pending_tool: Option<ToolInvocation>,
     yolo_mode: bool,
     skip_next_model_done: bool,
     model_retry_attempts: usize,
+
+    // orchestration
+    session_runtime: Option<navi_core::session::SessionRuntime>,
+    turn_context: Option<Arc<navi_core::turn::TurnContext>>,
+    running_tools: std::collections::HashMap<String, ToolInvocation>,
+    pending_approvals: Vec<navi_core::ApprovalRequest>,
+    tool_invocations: std::collections::HashMap<String, ToolInvocation>,
 
     // provider
     model_provider: Option<Arc<dyn ModelProvider>>,
@@ -364,10 +348,14 @@ impl TuiApp {
             _loaded_plugins: loaded_plugins,
             harness_policy,
             run_state: AgentRunState::default(),
-            pending_tool: None,
             yolo_mode: false,
             skip_next_model_done: false,
             model_retry_attempts: 0,
+            session_runtime: None,
+            turn_context: None,
+            running_tools: std::collections::HashMap::new(),
+            pending_approvals: Vec::new(),
+            tool_invocations: std::collections::HashMap::new(),
             model_provider,
             credential_store,
             api_key_input: String::new(),
@@ -509,50 +497,127 @@ fn run_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, mut app: TuiA
         // Check for async model stream events (non-blocking)
         while let Ok(event) = app.async_rx.try_recv() {
             match event {
-                AsyncEvent::ModelDelta { text } => {
-                    if let Some(message) = active_assistant_message(&mut app) {
-                        message.content.push_str(&text);
-                        message.status = Some("receiving".to_string());
+                AsyncEvent::Agent(agent_event) => {
+                    match agent_event {
+                        navi_core::AgentEvent::ModelDelta { text } => {
+                            if let Some(message) = active_assistant_message(&mut app) {
+                                message.content.push_str(&text);
+                                message.status = Some("receiving".to_string());
+                            }
+                            app.scroll_offset = 0;
+                        }
+                        navi_core::AgentEvent::ModelThinkingDelta { text } => {
+                            if let Some(message) = active_assistant_message(&mut app) {
+                                message.thinking_content.push_str(&text);
+                                message.status = Some("thinking".to_string());
+                            }
+                            app.scroll_offset = 0;
+                        }
+                        navi_core::AgentEvent::ToolRequested(invocation) => {
+                            app.tool_invocations
+                                .insert(invocation.id.clone(), invocation.clone());
+                            app.running_tools
+                                .insert(invocation.id.clone(), invocation.clone());
+
+                            // finalize assistant response if any
+                            let active_content = active_assistant_message(&mut app)
+                                .map(|active| active.content.clone())
+                                .unwrap_or_default();
+                            if !active_content.trim().is_empty() {
+                                app.conversation_history
+                                    .push(ModelMessage::assistant(active_content));
+                            }
+                            app.conversation_history
+                                .push(ModelMessage::assistant_tool_call(invocation.clone()));
+                            app.events
+                                .push(navi_core::AgentEvent::ToolRequested(invocation));
+                            update_active_assistant_status(&mut app);
+                        }
+                        navi_core::AgentEvent::ToolCompleted(result) => {
+                            app.running_tools.remove(&result.invocation_id);
+                            if let Some(invocation) =
+                                app.tool_invocations.get(&result.invocation_id).cloned()
+                            {
+                                remove_active_tool_placeholder(&mut app);
+                                app.messages.push(ChatMessage {
+                                    status: Some("tool result".to_string()),
+                                    tool_invocation: Some(invocation.clone()),
+                                    tool_result: Some(result.clone()),
+                                    ..ChatMessage::new(ChatRole::Assistant, String::new())
+                                });
+                                let observation = compact_tool_observation(
+                                    &invocation,
+                                    &result,
+                                    app.harness_policy,
+                                );
+                                app.conversation_history.push(ModelMessage::tool_result(
+                                    invocation.id.clone(),
+                                    invocation.tool_name.clone(),
+                                    observation,
+                                ));
+                            }
+                            app.events
+                                .push(navi_core::AgentEvent::ToolCompleted(result));
+                            update_active_assistant_status(&mut app);
+                        }
+                        navi_core::AgentEvent::ApprovalRequested(request) => {
+                            if app.yolo_mode {
+                                if let Some(ctx) = &app.turn_context {
+                                    let decision = navi_core::ApprovalDecision::Approved {
+                                        id: request.id.clone(),
+                                    };
+                                    ctx.resolve_approval(decision);
+                                }
+                            } else {
+                                app.pending_approvals.push(request.clone());
+                                app.events
+                                    .push(navi_core::AgentEvent::ApprovalRequested(request));
+                                update_active_assistant_status(&mut app);
+                            }
+                        }
+                        navi_core::AgentEvent::ApprovalResolved(decision) => {
+                            let id = match &decision {
+                                navi_core::ApprovalDecision::Approved { id } => id,
+                                navi_core::ApprovalDecision::Denied { id } => id,
+                            };
+                            app.pending_approvals.retain(|r| &r.id != id);
+                            app.events
+                                .push(navi_core::AgentEvent::ApprovalResolved(decision));
+                            update_active_assistant_status(&mut app);
+                        }
+                        navi_core::AgentEvent::Error { message } => {
+                            handle_model_error(&mut app, message);
+                        }
+                        navi_core::AgentEvent::HarnessTrace(value) => {
+                            app.events.push(navi_core::AgentEvent::HarnessTrace(value));
+                        }
+                        navi_core::AgentEvent::PatchProposed(patch) => {
+                            app.events.push(navi_core::AgentEvent::PatchProposed(patch));
+                        }
+                        _ => {}
                     }
-                    app.scroll_offset = 0;
                 }
-                AsyncEvent::ModelThinkingDelta { text } => {
-                    if let Some(message) = active_assistant_message(&mut app) {
-                        message.thinking_content.push_str(&text);
-                        message.status = Some("thinking".to_string());
+                AsyncEvent::TurnCompleted(res) => {
+                    let elapsed_ms = app
+                        .loading_start
+                        .map(|start| start.elapsed().as_millis() as u64)
+                        .unwrap_or(0);
+                    match res {
+                        Ok(_) => {
+                            finalize_active_assistant(&mut app, elapsed_ms);
+                        }
+                        Err(err) => {
+                            handle_model_error(&mut app, err);
+                        }
                     }
-                    app.scroll_offset = 0;
-                }
-                AsyncEvent::ModelStatus { label } => {
-                    if let Some(message) = active_assistant_message(&mut app) {
-                        message.status = Some(label);
-                    }
-                }
-                AsyncEvent::ModelUsage { label } => {
-                    if let Some(message) = active_assistant_message(&mut app) {
-                        message.usage_label = Some(label);
-                    }
-                }
-                AsyncEvent::ToolCall { invocation } => {
-                    handle_tool_call(&mut app, invocation);
-                }
-                AsyncEvent::ToolCompleted { invocation, result } => {
-                    app.tool_task = None;
-                    handle_tool_completed(&mut app, invocation, result);
-                }
-                AsyncEvent::ModelDone { elapsed_ms } => {
-                    let waiting_for_tool = app.skip_next_model_done;
-                    if waiting_for_tool {
-                        app.skip_next_model_done = false;
-                    } else if app.pending_tool.is_none() && !active_assistant_is_tool_wait(&app) {
-                        finalize_active_assistant(&mut app, elapsed_ms);
-                    }
-                    app.is_loading =
-                        waiting_for_tool && (app.pending_tool.is_some() || app.tool_task.is_some());
+                    app.is_loading = false;
                     app.loading_start = None;
                     app.stream_task = None;
                     app.scroll_offset = 0;
+                    app.running_tools.clear();
+                    app.pending_approvals.clear();
                 }
+
                 AsyncEvent::ModelError { message } => {
                     handle_model_error(&mut app, message);
                 }
@@ -675,61 +740,92 @@ fn start_streaming_request(app: &mut TuiApp) {
         ..ChatMessage::new(ChatRole::Assistant, String::new())
     });
 
-    let request = ModelRequest {
-        model: app.loaded_config.config.model.name.clone(),
-        messages: app.conversation_history.clone(),
-        thinking: app.thinking_level.into(),
-        tools: app.tool_executor.definitions(),
+    let (event_tx, mut event_rx) = tokio::sync::mpsc::unbounded_channel();
+    let pending_approvals = Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()));
+
+    let ctx = Arc::new(navi_core::turn::TurnContext {
+        model_provider: provider,
+        tool_executor: app.tool_executor.clone(),
+        agent_control: navi_core::agent::AgentControl::new(),
+        project_dir: app.project_dir.clone(),
+        model_name: app.loaded_config.config.model.name.clone(),
+        event_tx: Some(event_tx),
+        pending_approvals: pending_approvals.clone(),
+    });
+
+    app.turn_context = Some(ctx.clone());
+
+    let mut initial_messages = app.conversation_history.clone();
+    let user_prompt = if !initial_messages.is_empty() {
+        let last = initial_messages.pop().unwrap();
+        last.content
+    } else {
+        String::new()
     };
-    app.events
-        .push(AgentEvent::HarnessTrace(trace_request_summary(
-            &request,
-            app.harness_policy,
-        )));
+
+    let session_runtime =
+        navi_core::session::SessionRuntime::spawn(ctx, app.harness_policy, initial_messages);
+    app.session_runtime = Some(session_runtime.clone());
 
     let tx = app.async_tx.clone();
 
+    // Send the submission
+    let (response_tx, response_rx) = tokio::sync::oneshot::channel();
+    if let Err(e) = session_runtime
+        .submission_tx
+        .send(navi_core::session::Submission {
+            task: user_prompt,
+            response_tx,
+        })
+    {
+        tracing::error!("Failed to send submission: {}", e);
+        let _ = tx.send(AsyncEvent::ModelError {
+            message: format!("Failed to send submission: {e}"),
+        });
+        return;
+    }
+
     app.stream_task = Some(tokio::spawn(async move {
-        use futures_util::StreamExt;
-        let start = Instant::now();
-        let mut stream = provider.stream(request);
-        while let Some(event) = stream.next().await {
-            match event {
-                Ok(ModelStreamEvent::TextDelta { text }) => {
-                    let _ = tx.send(AsyncEvent::ModelDelta { text });
+        let mut response_rx = response_rx;
+        loop {
+            tokio::select! {
+                event_opt = event_rx.recv() => {
+                    if let Some(event) = event_opt {
+                        let _ = tx.send(AsyncEvent::Agent(event));
+                    } else {
+                        break;
+                    }
                 }
-                Ok(ModelStreamEvent::ThinkingDelta { text }) => {
-                    let _ = tx.send(AsyncEvent::ModelThinkingDelta { text });
-                }
-                Ok(ModelStreamEvent::Status { label }) => {
-                    let _ = tx.send(AsyncEvent::ModelStatus { label });
-                }
-                Ok(ModelStreamEvent::Usage {
-                    input_tokens,
-                    output_tokens,
-                }) => {
-                    let _ = tx.send(AsyncEvent::ModelUsage {
-                        label: usage_label(input_tokens, output_tokens),
-                    });
-                }
-                Ok(ModelStreamEvent::ToolCall(invocation)) => {
-                    let _ = tx.send(AsyncEvent::ToolCall { invocation });
-                }
-                Ok(ModelStreamEvent::Done) => {
-                    let elapsed_ms = start.elapsed().as_millis() as u64;
-                    let _ = tx.send(AsyncEvent::ModelDone { elapsed_ms });
-                    return;
-                }
-                Err(err) => {
-                    let _ = tx.send(AsyncEvent::ModelError {
-                        message: format!("{err:#}"),
-                    });
+                res = &mut response_rx => {
+                    match res {
+                        Ok(Ok(text)) => {
+                            let _ = tx.send(AsyncEvent::TurnCompleted(Ok(text)));
+                        }
+                        Ok(Err(err)) => {
+                            let _ = tx.send(AsyncEvent::TurnCompleted(Err(format!("{err:#}"))));
+                        }
+                        Err(_) => {
+                            let _ = tx.send(AsyncEvent::TurnCompleted(Err("Turn cancelled or panicked".to_string())));
+                        }
+                    }
                     return;
                 }
             }
         }
-        let elapsed_ms = start.elapsed().as_millis() as u64;
-        let _ = tx.send(AsyncEvent::ModelDone { elapsed_ms });
+
+        match response_rx.await {
+            Ok(Ok(text)) => {
+                let _ = tx.send(AsyncEvent::TurnCompleted(Ok(text)));
+            }
+            Ok(Err(err)) => {
+                let _ = tx.send(AsyncEvent::TurnCompleted(Err(format!("{err:#}"))));
+            }
+            Err(_) => {
+                let _ = tx.send(AsyncEvent::TurnCompleted(Err(
+                    "Turn cancelled or panicked".to_string()
+                )));
+            }
+        }
     }));
 }
 
@@ -740,13 +836,45 @@ fn active_assistant_message(app: &mut TuiApp) -> Option<&mut ChatMessage> {
         .find(|message| message.role == ChatRole::Assistant)
 }
 
-fn active_assistant_is_tool_wait(app: &TuiApp) -> bool {
-    app.messages
-        .iter()
-        .rev()
-        .find(|message| message.role == ChatRole::Assistant)
-        .and_then(|message| message.status.as_deref())
-        .is_some_and(|status| status.starts_with("tool:") || status.starts_with("approval:"))
+fn update_active_assistant_status(app: &mut TuiApp) {
+    let status = if !app.pending_approvals.is_empty() {
+        if app.pending_approvals.len() == 1 {
+            let req = &app.pending_approvals[0];
+            let name = app
+                .tool_invocations
+                .get(&req.id)
+                .map(|inv| inv.tool_name.as_str())
+                .unwrap_or("tool");
+            Some(format!("approval: {}", name))
+        } else {
+            Some(format!("approval: {} tools", app.pending_approvals.len()))
+        }
+    } else if !app.running_tools.is_empty() {
+        if app.running_tools.len() == 1 {
+            let name = app
+                .running_tools
+                .values()
+                .next()
+                .map(|inv| inv.tool_name.as_str())
+                .unwrap_or("tool");
+            Some(format!("tool: {}", name))
+        } else {
+            let names: Vec<&str> = app
+                .running_tools
+                .values()
+                .map(|inv| inv.tool_name.as_str())
+                .collect();
+            Some(format!("tool: {}", names.join(", ")))
+        }
+    } else if app.is_loading {
+        Some("thinking".to_string())
+    } else {
+        None
+    };
+
+    if let Some(msg) = active_assistant_message(app) {
+        msg.status = status;
+    }
 }
 
 fn finalize_active_assistant(app: &mut TuiApp, elapsed_ms: u64) {
@@ -781,131 +909,6 @@ fn finalize_active_assistant(app: &mut TuiApp, elapsed_ms: u64) {
     tracing::info!(elapsed_ms, "TUI model stream finalized");
 }
 
-fn usage_label(input_tokens: Option<u64>, output_tokens: Option<u64>) -> String {
-    match (input_tokens, output_tokens) {
-        (Some(input), Some(output)) => format!("usage {input} in / {output} out"),
-        (Some(input), None) => format!("usage {input} in"),
-        (None, Some(output)) => format!("usage {output} out"),
-        (None, None) => "usage updated".to_string(),
-    }
-}
-
-fn handle_tool_call(app: &mut TuiApp, invocation: ToolInvocation) {
-    tracing::info!(
-        tool = %invocation.tool_name,
-        invocation_id = %invocation.id,
-        "TUI tool call received"
-    );
-    app.skip_next_model_done = true;
-    let active_content = active_assistant_message(app)
-        .map(|active| active.content.clone())
-        .unwrap_or_default();
-    if !active_content.trim().is_empty() {
-        app.conversation_history
-            .push(ModelMessage::assistant(active_content));
-    }
-    app.conversation_history
-        .push(ModelMessage::assistant_tool_call(invocation.clone()));
-    app.events
-        .push(AgentEvent::ToolRequested(invocation.clone()));
-    match record_tool_call(&mut app.run_state, app.harness_policy, &invocation) {
-        ToolLoopDecision::Continue => {}
-        ToolLoopDecision::RepeatedCall(reason) => {
-            let result = tool_error_result(&invocation, reason);
-            handle_tool_completed(app, invocation, result);
-            return;
-        }
-    }
-    let decision = app.tool_executor.validate(&invocation);
-    match decision {
-        SecurityDecision::Allow => execute_tool_async(app, invocation),
-        SecurityDecision::NeedsApproval(_) if app.yolo_mode => {
-            app.events
-                .push(AgentEvent::ApprovalResolved(ApprovalDecision::Approved {
-                    id: invocation.id.clone(),
-                }));
-            execute_tool_async(app, invocation)
-        }
-        SecurityDecision::NeedsApproval(_) => {
-            tracing::info!(
-                tool = %invocation.tool_name,
-                invocation_id = %invocation.id,
-                "TUI tool approval requested"
-            );
-            app.events
-                .push(AgentEvent::ApprovalRequested(ApprovalRequest {
-                    id: invocation.id.clone(),
-                    summary: format!("Run tool `{}`", invocation.tool_name),
-                    risk: tool_approval_risk(&invocation.tool_name),
-                }));
-            app.pending_tool = Some(invocation.clone());
-            if let Some(active) = active_assistant_message(app) {
-                active.status = Some(format!("approval: {}", invocation.tool_name));
-            }
-            app.messages.push(ChatMessage {
-                status: Some("press y approve / n deny".to_string()),
-                ..ChatMessage::new(
-                    ChatRole::Assistant,
-                    format!(
-                        "Tool `{}` wants to run with input:\n{}",
-                        invocation.tool_name,
-                        serde_json::to_string_pretty(&invocation.input)
-                            .unwrap_or_else(|_| invocation.input.to_string())
-                    ),
-                )
-            });
-        }
-        SecurityDecision::Deny(reason) => {
-            let result = ToolResult {
-                invocation_id: invocation.id.clone(),
-                ok: false,
-                output: serde_json::json!({ "error": reason }),
-            };
-            handle_tool_completed(app, invocation, result);
-        }
-    }
-}
-
-fn execute_tool_async(app: &mut TuiApp, invocation: ToolInvocation) {
-    if let Some(active) = active_assistant_message(app) {
-        active.status = Some(format!("tool: {}", invocation.tool_name));
-    }
-    let executor = app.tool_executor.clone();
-    let tx = app.async_tx.clone();
-    tracing::info!(tool = %invocation.tool_name, invocation_id = %invocation.id, "TUI tool task spawned");
-    app.tool_task = Some(tokio::spawn(async move {
-        let result = executor.invoke(invocation.clone()).await;
-        let _ = tx.send(AsyncEvent::ToolCompleted { invocation, result });
-    }));
-}
-
-fn handle_tool_completed(app: &mut TuiApp, invocation: ToolInvocation, result: ToolResult) {
-    tracing::info!(
-        tool = %invocation.tool_name,
-        invocation_id = %invocation.id,
-        ok = result.ok,
-        "TUI tool completed"
-    );
-    app.pending_tool = None;
-    app.events.push(AgentEvent::ToolCompleted(result.clone()));
-    remove_active_tool_placeholder(app);
-    let content = tool_full_content(&invocation, &result);
-
-    app.messages.push(ChatMessage {
-        status: Some("tool result".to_string()),
-        tool_invocation: Some(invocation.clone()),
-        tool_result: Some(result.clone()),
-        ..ChatMessage::new(ChatRole::Assistant, content.trim_end().to_string())
-    });
-    let observation = compact_tool_observation(&invocation, &result, app.harness_policy);
-    app.conversation_history.push(ModelMessage::tool_result(
-        invocation.id,
-        invocation.tool_name,
-        observation,
-    ));
-    start_streaming_request(app);
-}
-
 fn handle_model_error(app: &mut TuiApp, message: String) {
     if should_retry_model_error(&message) && app.model_retry_attempts < max_model_retries(app) {
         tracing::warn!(
@@ -917,7 +920,6 @@ fn handle_model_error(app: &mut TuiApp, message: String) {
         push_diagnostic(app, format!("Retrying transient provider error: {message}"));
         app.model_retry_attempts += 1;
         app.skip_next_model_done = false;
-        app.pending_tool = None;
         app.is_loading = false;
         app.loading_start = None;
         app.stream_task = None;
@@ -941,7 +943,6 @@ fn handle_model_error(app: &mut TuiApp, message: String) {
     tracing::error!(error = %message, "model stream failed");
     push_diagnostic(app, format!("Model error: {message}"));
     app.skip_next_model_done = false;
-    app.pending_tool = None;
     app.messages.push(ChatMessage {
         status: Some("error".to_string()),
         ..ChatMessage::new(ChatRole::Assistant, format!("⚠ Error: {message}"))
@@ -1011,7 +1012,7 @@ fn tool_full_content(invocation: &ToolInvocation, result: &ToolResult) -> String
     let output =
         serde_json::to_string_pretty(&result.output).unwrap_or_else(|_| result.output.to_string());
     let mut content = format!(
-        "{} {}\n\nInput\n{}\n\nOutput\n",
+        "{} {}\n\nInput\n```json\n{}\n```\n\nOutput\n",
         if result.ok { "✓" } else { "✗" },
         tool_compact_text(invocation, result),
         input
@@ -1020,18 +1021,44 @@ fn tool_full_content(invocation: &ToolInvocation, result: &ToolResult) -> String
     if let Some(formatted) = formatted_tool_output(invocation, result) {
         content.push_str(&formatted);
     } else {
-        content.push_str(&output);
+        content.push_str(&format!("```json\n{}\n```\n", output));
     }
 
     content
 }
 
 fn formatted_tool_output(invocation: &ToolInvocation, result: &ToolResult) -> Option<String> {
-    if !result.ok {
-        return None;
-    }
     let obj = result.output.as_object()?;
     let mut content = String::new();
+
+    if let Some(error) = obj.get("error").and_then(|v| v.as_str()) {
+        content.push_str(&format!("Error: {error}\n"));
+        if invocation.tool_name == "bash" {
+            let stdout = obj.get("stdout").and_then(|v| v.as_str()).unwrap_or("");
+            let stderr = obj.get("stderr").and_then(|v| v.as_str()).unwrap_or("");
+            if !stdout.is_empty() {
+                content.push_str("\nStdout:\n```\n");
+                content.push_str(stdout);
+                if !stdout.ends_with('\n') {
+                    content.push('\n');
+                }
+                content.push_str("```\n");
+            }
+            if !stderr.is_empty() {
+                content.push_str("\nStderr:\n```\n");
+                content.push_str(stderr);
+                if !stderr.ends_with('\n') {
+                    content.push('\n');
+                }
+                content.push_str("```\n");
+            }
+        }
+        return Some(content);
+    }
+
+    if !result.ok && invocation.tool_name != "bash" {
+        return None;
+    }
 
     if invocation.tool_name == "read_file" || invocation.tool_name == "view_file" {
         let path = obj.get("path").and_then(|v| v.as_str())?;
@@ -1044,6 +1071,88 @@ fn formatted_tool_output(invocation: &ToolInvocation, result: &ToolResult) -> Op
                 content.push('\n');
             }
             content.push_str("```\n");
+        }
+    } else if invocation.tool_name == "write_file" {
+        let path = obj.get("path").and_then(|v| v.as_str())?;
+        if let Some(bytes) = obj.get("bytes").and_then(|v| v.as_u64()) {
+            content.push_str(&format!("Wrote {bytes} bytes to {path}\n\n"));
+        } else {
+            content.push_str(&format!("Wrote to {path}\n\n"));
+        }
+        if let Some(file_content) = invocation.input.get("content").and_then(|v| v.as_str()) {
+            let language = language_for_path(path);
+            content.push_str(&format!("```{language}\n"));
+            content.push_str(file_content);
+            if !file_content.ends_with('\n') {
+                content.push('\n');
+            }
+            content.push_str("```\n");
+        }
+    } else if invocation.tool_name == "apply_patch" {
+        if let Some(patch) = invocation.input.get("patch").and_then(|v| v.as_str()) {
+            content.push_str("Applied patch:\n\n```diff\n");
+            content.push_str(patch);
+            if !patch.ends_with('\n') {
+                content.push('\n');
+            }
+            content.push_str("```\n");
+        } else {
+            content.push_str("Applied patch successfully\n");
+        }
+        let stdout = obj.get("stdout").and_then(|v| v.as_str()).unwrap_or("");
+        let stderr = obj.get("stderr").and_then(|v| v.as_str()).unwrap_or("");
+        if !stdout.is_empty() {
+            content.push_str("\nStdout:\n```\n");
+            content.push_str(stdout);
+            if !stdout.ends_with('\n') {
+                content.push('\n');
+            }
+            content.push_str("```\n");
+        }
+        if !stderr.is_empty() {
+            content.push_str("\nStderr:\n```\n");
+            content.push_str(stderr);
+            if !stderr.ends_with('\n') {
+                content.push('\n');
+            }
+            content.push_str("```\n");
+        }
+    } else if invocation.tool_name == "bash" {
+        let status = obj.get("status").and_then(|v| v.as_i64());
+        if let Some(status_code) = status {
+            content.push_str(&format!("Command exited with status {status_code}\n"));
+        } else {
+            content.push_str("Command completed\n");
+        }
+        let stdout = obj.get("stdout").and_then(|v| v.as_str()).unwrap_or("");
+        let stderr = obj.get("stderr").and_then(|v| v.as_str()).unwrap_or("");
+        if !stdout.is_empty() {
+            content.push_str("\nStdout:\n```\n");
+            content.push_str(stdout);
+            if !stdout.ends_with('\n') {
+                content.push('\n');
+            }
+            content.push_str("```\n");
+        }
+        if !stderr.is_empty() {
+            content.push_str("\nStderr:\n```\n");
+            content.push_str(stderr);
+            if !stderr.ends_with('\n') {
+                content.push('\n');
+            }
+            content.push_str("```\n");
+        }
+    } else if invocation.tool_name == "grep" {
+        content.push_str("Found matches:\n\n");
+        if let Some(matches) = obj.get("matches").and_then(|v| v.as_array()) {
+            for m in matches {
+                if let Some(m_obj) = m.as_object() {
+                    let path = m_obj.get("path").and_then(|v| v.as_str()).unwrap_or("");
+                    let line = m_obj.get("line").and_then(|v| v.as_u64()).unwrap_or(0);
+                    let text = m_obj.get("text").and_then(|v| v.as_str()).unwrap_or("");
+                    content.push_str(&format!("{path}:{line}: {text}\n"));
+                }
+            }
         }
     } else if invocation.tool_name == "list_files" {
         content.push_str("List files\n\n");
@@ -1095,38 +1204,31 @@ fn language_for_path(path: &str) -> &'static str {
 }
 
 fn approve_pending_tool(app: &mut TuiApp) {
-    if let Some(invocation) = app.pending_tool.take() {
-        tracing::info!(tool = %invocation.tool_name, invocation_id = %invocation.id, "tool approval accepted");
-        app.events
-            .push(AgentEvent::ApprovalResolved(ApprovalDecision::Approved {
-                id: invocation.id.clone(),
-            }));
-        execute_tool_async(app, invocation);
+    if !app.pending_approvals.is_empty() {
+        let request = app.pending_approvals.remove(0);
+        tracing::info!(invocation_id = %request.id, "tool approval accepted via pending_approvals");
+        if let Some(ctx) = &app.turn_context {
+            let decision = ApprovalDecision::Approved {
+                id: request.id.clone(),
+            };
+            ctx.resolve_approval(decision);
+        }
+        update_active_assistant_status(app);
     }
 }
 
 fn deny_pending_tool(app: &mut TuiApp) {
-    if let Some(invocation) = app.pending_tool.take() {
-        tracing::warn!(tool = %invocation.tool_name, invocation_id = %invocation.id, "tool approval denied");
-        push_diagnostic(app, format!("Denied tool: {}", invocation.tool_name));
-        app.events
-            .push(AgentEvent::ApprovalResolved(ApprovalDecision::Denied {
-                id: invocation.id.clone(),
-            }));
-        let result = ToolResult {
-            invocation_id: invocation.id.clone(),
-            ok: false,
-            output: serde_json::json!({ "error": "user denied tool execution" }),
-        };
-        handle_tool_completed(app, invocation, result);
-    }
-}
-
-fn tool_approval_risk(tool_name: &str) -> ApprovalRisk {
-    match tool_name {
-        "bash" => ApprovalRisk::Command,
-        "write_file" | "apply_patch" => ApprovalRisk::Write,
-        _ => ApprovalRisk::ExternalPlugin,
+    if !app.pending_approvals.is_empty() {
+        let request = app.pending_approvals.remove(0);
+        tracing::warn!(invocation_id = %request.id, "tool approval denied via pending_approvals");
+        push_diagnostic(app, format!("Denied tool ID: {}", request.id));
+        if let Some(ctx) = &app.turn_context {
+            let decision = ApprovalDecision::Denied {
+                id: request.id.clone(),
+            };
+            ctx.resolve_approval(decision);
+        }
+        update_active_assistant_status(app);
     }
 }
 
@@ -1145,7 +1247,10 @@ fn cancel_stream(app: &mut TuiApp) {
     }
     app.is_loading = false;
     app.loading_start = None;
-    app.pending_tool = None;
+    app.session_runtime = None;
+    app.turn_context = None;
+    app.pending_approvals.clear();
+    app.running_tools.clear();
     app.skip_next_model_done = false;
     if let Some(active) = active_assistant_message(app) {
         active.status = Some("cancelled".to_string());
@@ -1343,7 +1448,7 @@ fn visible_notification(app: &TuiApp) -> Option<&Notification> {
 
 // ─── key handling ──────────────────────────────────────────────────────────────
 fn handle_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyModifiers) -> bool {
-    if app.pending_tool.is_some() {
+    if !app.pending_approvals.is_empty() {
         match code {
             KeyCode::Char('y') | KeyCode::Char('Y') => {
                 approve_pending_tool(app);
@@ -2412,7 +2517,7 @@ fn render(frame: &mut Frame<'_>, app: &TuiApp) {
         Mode::Normal => {}
     }
 
-    if app.pending_tool.is_some() {
+    if !app.pending_approvals.is_empty() {
         render_tool_approval(frame, app, modal_rect(area, 72, 12));
     }
 
@@ -2589,20 +2694,18 @@ fn build_chat_lines(app: &TuiApp, chat_width: usize) -> Vec<Line<'static>> {
                 ));
             }
             ChatRole::Assistant => {
-                let is_tool_result = msg.status.as_deref() == Some("tool result");
-                if is_tool_result && !app.full_tool_view {
-                    let compact = match (&msg.tool_invocation, &msg.tool_result) {
-                        (Some(invocation), Some(result)) => tool_compact_text(invocation, result),
-                        _ => "tool called · unknown".to_string(),
-                    };
-                    let ok = msg.tool_result.as_ref().map(|res| res.ok).unwrap_or(false);
-                    rendered_lines.push(Line::from(vec![
-                        Span::styled(
-                            "● ",
-                            Style::default().fg(if ok { Color::Green } else { Color::Red }),
-                        ),
-                        Span::styled(compact, Style::default().fg(TEXT)),
-                    ]));
+                if let Some((invocation, result)) = tool_result_parts(msg) {
+                    if app.full_tool_view {
+                        rendered_lines.extend(render_markdown_lines(
+                            &tool_full_content(invocation, result),
+                            chat_width.saturating_sub(2),
+                            TEXT,
+                            TEXT,
+                            false,
+                        ));
+                    } else {
+                        rendered_lines.push(render_compact_tool_line(invocation, result));
+                    }
                 } else {
                     if app.show_thinking && !msg.thinking_content.is_empty() {
                         rendered_lines.extend(render_markdown_lines(
@@ -2676,6 +2779,26 @@ fn is_empty_tool_placeholder(message: &ChatMessage) -> bool {
                 || status == "thinking"
                 || status == "receiving"
         })
+}
+
+fn tool_result_parts(message: &ChatMessage) -> Option<(&ToolInvocation, &ToolResult)> {
+    match (&message.tool_invocation, &message.tool_result) {
+        (Some(invocation), Some(result)) => Some((invocation, result)),
+        _ => None,
+    }
+}
+
+fn render_compact_tool_line(invocation: &ToolInvocation, result: &ToolResult) -> Line<'static> {
+    Line::from(vec![
+        Span::styled(
+            "● ",
+            Style::default().fg(if result.ok { Color::Green } else { Color::Red }),
+        ),
+        Span::styled(
+            tool_compact_text(invocation, result),
+            Style::default().fg(TEXT),
+        ),
+    ])
 }
 
 fn render_markdown_lines(
@@ -3558,8 +3681,19 @@ fn render_api_key_entry(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
 
 // ─── thinking picker ───────────────────────────────────────────────────────────
 fn render_tool_approval(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
-    let Some(invocation) = app.pending_tool.as_ref() else {
+    let Some(req) = app.pending_approvals.first() else {
         return;
+    };
+    let default_inv;
+    let invocation = if let Some(inv) = app.tool_invocations.get(&req.id) {
+        inv
+    } else {
+        default_inv = ToolInvocation {
+            id: req.id.clone(),
+            tool_name: "unknown".to_string(),
+            input: serde_json::json!({ "summary": req.summary }),
+        };
+        &default_inv
     };
     frame.render_widget(Clear, area);
     let block = modal_block("Tool Approval");
@@ -4360,12 +4494,11 @@ fn load_session(app: &mut TuiApp, snapshot: &SessionSnapshot) {
             }
             AgentEvent::ToolCompleted(result) => {
                 if let Some(invocation) = tool_invocations.get(&result.invocation_id) {
-                    let content = tool_full_content(invocation, result);
                     app.messages.push(ChatMessage {
                         status: Some("tool result".to_string()),
                         tool_invocation: Some(invocation.clone()),
                         tool_result: Some(result.clone()),
-                        ..ChatMessage::new(ChatRole::Assistant, content.trim_end().to_string())
+                        ..ChatMessage::new(ChatRole::Assistant, String::new())
                     });
                 }
             }
@@ -4417,6 +4550,7 @@ mod tests {
                 name: "test-large".to_string(),
                 task_size: navi_core::ModelTaskSize::Large,
             }],
+            ..Default::default()
         }];
 
         TuiApp::new(
@@ -4429,6 +4563,13 @@ mod tests {
             PathBuf::from("/tmp/test-project"),
             None,
         )
+    }
+
+    fn line_text(line: &Line<'_>) -> String {
+        line.spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect::<String>()
     }
 
     #[test]
@@ -4669,13 +4810,6 @@ mod tests {
         }
 
         assert!(colors.len() >= 3);
-    }
-
-    fn line_text(line: &Line<'_>) -> String {
-        line.spans
-            .iter()
-            .map(|span| span.content.as_ref())
-            .collect::<String>()
     }
 
     #[test]
@@ -5000,6 +5134,35 @@ mod tests {
     }
 
     #[test]
+    fn write_file_tool_full_content_uses_fenced_code_for_highlighting() {
+        let invocation = ToolInvocation {
+            id: "call-1".to_string(),
+            tool_name: "write_file".to_string(),
+            input: serde_json::json!({
+                "path": "src/index.html",
+                "content": "<!doctype html>\n"
+            }),
+        };
+        let result = ToolResult {
+            invocation_id: "call-1".to_string(),
+            ok: true,
+            output: serde_json::json!({
+                "path": "src/index.html",
+                "bytes": 16,
+            }),
+        };
+
+        let content = tool_full_content(&invocation, &result);
+
+        assert!(content.contains("Input"));
+        assert!(content.contains("```json"));
+        assert!(content.contains("Output"));
+        assert!(content.contains("Wrote 16 bytes to src/index.html"));
+        assert!(content.contains("```html"));
+        assert!(content.contains("<!doctype html>"));
+    }
+
+    #[test]
     fn completed_tool_removes_empty_tool_placeholder() {
         let mut app = test_app("");
         app.messages.push(ChatMessage {
@@ -5020,7 +5183,22 @@ mod tests {
             output: serde_json::json!({ "path": "Cargo.toml", "content": "" }),
         };
 
-        handle_tool_completed(&mut app, invocation, result);
+        app.tool_invocations
+            .insert(invocation.id.clone(), invocation.clone());
+        app.running_tools
+            .insert(invocation.id.clone(), invocation.clone());
+
+        // Process ToolCompleted event logic directly as in the main event loop
+        app.running_tools.remove(&result.invocation_id);
+        if let Some(invocation) = app.tool_invocations.get(&result.invocation_id).cloned() {
+            remove_active_tool_placeholder(&mut app);
+            app.messages.push(ChatMessage {
+                status: Some("tool result".to_string()),
+                tool_invocation: Some(invocation.clone()),
+                tool_result: Some(result.clone()),
+                ..ChatMessage::new(ChatRole::Assistant, String::new())
+            });
+        }
 
         assert_eq!(
             app.messages
@@ -5030,6 +5208,77 @@ mod tests {
             1
         );
         assert!(!app.messages.iter().any(is_empty_tool_placeholder));
+    }
+
+    #[test]
+    fn compact_tool_render_hides_full_input_and_output() {
+        let mut app = test_app("");
+        let invocation = ToolInvocation {
+            id: "call-1".to_string(),
+            tool_name: "list_files".to_string(),
+            input: serde_json::json!({ "path": "/tmp/project" }),
+        };
+        let result = ToolResult {
+            invocation_id: "call-1".to_string(),
+            ok: true,
+            output: serde_json::json!({
+                "files": ["/tmp/project/package.json", "/tmp/project/src/App.tsx"]
+            }),
+        };
+        app.messages.push(ChatMessage {
+            status: Some("tool result".to_string()),
+            tool_invocation: Some(invocation),
+            tool_result: Some(result),
+            ..ChatMessage::new(
+                ChatRole::Assistant,
+                "stale full tool content should not render in compact mode\n\nInput\nOutput"
+                    .to_string(),
+            )
+        });
+
+        let text = build_chat_lines(&app, 80)
+            .iter()
+            .map(line_text)
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(text.contains("list_files called · success"));
+        assert!(!text.contains("Input"));
+        assert!(!text.contains("Output"));
+        assert!(!text.contains("stale full tool content"));
+    }
+
+    #[test]
+    fn full_tool_render_generates_input_and_output_from_metadata() {
+        let mut app = test_app("");
+        app.full_tool_view = true;
+        let invocation = ToolInvocation {
+            id: "call-1".to_string(),
+            tool_name: "grep".to_string(),
+            input: serde_json::json!({ "pattern": "NAVI" }),
+        };
+        let result = ToolResult {
+            invocation_id: "call-1".to_string(),
+            ok: false,
+            output: serde_json::json!({ "error": "denied" }),
+        };
+        app.messages.push(ChatMessage {
+            status: Some("tool result".to_string()),
+            tool_invocation: Some(invocation),
+            tool_result: Some(result),
+            ..ChatMessage::new(ChatRole::Assistant, String::new())
+        });
+
+        let text = build_chat_lines(&app, 80)
+            .iter()
+            .map(line_text)
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(text.contains("grep called · error"));
+        assert!(text.contains("Input"));
+        assert!(text.contains("Output"));
+        assert!(text.contains("denied"));
     }
 
     #[tokio::test]

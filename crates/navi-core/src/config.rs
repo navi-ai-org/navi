@@ -80,6 +80,64 @@ pub struct ProviderConfig {
     pub base_url: Option<String>,
     #[serde(default)]
     pub models: Vec<ProviderModelConfig>,
+    #[serde(default)]
+    pub request_timeout_ms: Option<u64>,
+    #[serde(default)]
+    pub stream_idle_timeout_ms: Option<u64>,
+    #[serde(default)]
+    pub request_max_retries: Option<u32>,
+    #[serde(default)]
+    pub stream_max_retries: Option<u32>,
+    #[serde(default)]
+    pub websocket_connect_timeout_ms: Option<u64>,
+    #[serde(default)]
+    pub retry_429: Option<bool>,
+}
+
+impl Default for ProviderConfig {
+    fn default() -> Self {
+        Self {
+            id: String::new(),
+            label: String::new(),
+            description: String::new(),
+            kind: ProviderKind::OpenAiResponses,
+            api_key_env: String::new(),
+            base_url: None,
+            models: Vec::new(),
+            request_timeout_ms: None,
+            stream_idle_timeout_ms: None,
+            request_max_retries: None,
+            stream_max_retries: None,
+            websocket_connect_timeout_ms: None,
+            retry_429: None,
+        }
+    }
+}
+
+impl ProviderConfig {
+    pub fn request_timeout_ms(&self) -> Option<u64> {
+        self.request_timeout_ms
+    }
+
+    pub fn stream_idle_timeout_ms(&self) -> u64 {
+        self.stream_idle_timeout_ms.unwrap_or(300_000)
+    }
+
+    pub fn request_max_retries(&self) -> u32 {
+        self.request_max_retries.unwrap_or(4)
+    }
+
+    pub fn stream_max_retries(&self) -> u32 {
+        self.stream_max_retries.unwrap_or(5)
+    }
+
+    pub fn websocket_connect_timeout_ms(&self) -> u64 {
+        self.websocket_connect_timeout_ms.unwrap_or(15_000)
+    }
+
+    pub fn retry_429(&self) -> bool {
+        self.retry_429.unwrap_or(false)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -366,6 +424,7 @@ fn built_in_providers() -> Vec<ProviderConfig> {
                 model("gpt-oss-120b", ModelTaskSize::Large),
                 model("gpt-oss-20b", ModelTaskSize::Small),
             ],
+            ..Default::default()
         },
         ProviderConfig {
             id: "anthropic".to_string(),
@@ -392,6 +451,7 @@ fn built_in_providers() -> Vec<ProviderConfig> {
                 model("claude-3-sonnet-20240229", ModelTaskSize::Large),
                 model("claude-3-haiku-20240307", ModelTaskSize::Small),
             ],
+            ..Default::default()
         },
         ProviderConfig {
             id: "google-gemini".to_string(),
@@ -415,6 +475,7 @@ fn built_in_providers() -> Vec<ProviderConfig> {
                 model("gemini-1.5-flash-002", ModelTaskSize::Small),
                 model("gemini-1.5-flash-8b", ModelTaskSize::Small),
             ],
+            ..Default::default()
         },
         ProviderConfig {
             id: "xai".to_string(),
@@ -437,6 +498,7 @@ fn built_in_providers() -> Vec<ProviderConfig> {
                 model("grok-2-vision-1212", ModelTaskSize::Large),
                 model("grok-build-0.1", ModelTaskSize::Large),
             ],
+            ..Default::default()
         },
         ProviderConfig {
             id: "mistral".to_string(),
@@ -474,6 +536,7 @@ fn built_in_providers() -> Vec<ProviderConfig> {
                 model("ministral-8b-latest", ModelTaskSize::Small),
                 model("ministral-3b-latest", ModelTaskSize::Small),
             ],
+            ..Default::default()
         },
         // ─── Tier 2: High-quality specialized ─────────────────────────────────────
         ProviderConfig {
@@ -496,6 +559,7 @@ fn built_in_providers() -> Vec<ProviderConfig> {
                 model("deepseek-v3.2", ModelTaskSize::Large),
                 model("deepseek-r1", ModelTaskSize::Large),
             ],
+            ..Default::default()
         },
         ProviderConfig {
             id: "moonshot".to_string(),
@@ -517,6 +581,7 @@ fn built_in_providers() -> Vec<ProviderConfig> {
                 model("moonshot-v1-8k", ModelTaskSize::Small),
                 model("moonshot-v1-auto", ModelTaskSize::Large),
             ],
+            ..Default::default()
         },
         ProviderConfig {
             id: "zai".to_string(),
@@ -542,6 +607,7 @@ fn built_in_providers() -> Vec<ProviderConfig> {
                 model("glm-4-airx", ModelTaskSize::Small),
                 model("glm-4-0520", ModelTaskSize::Large),
             ],
+            ..Default::default()
         },
         ProviderConfig {
             id: "zai-coding".to_string(),
@@ -555,6 +621,7 @@ fn built_in_providers() -> Vec<ProviderConfig> {
                 model("glm-5", ModelTaskSize::Large),
                 model("glm-5-turbo", ModelTaskSize::Small),
             ],
+            ..Default::default()
         },
         ProviderConfig {
             id: "minimax".to_string(),
@@ -574,6 +641,7 @@ fn built_in_providers() -> Vec<ProviderConfig> {
                 model("abab6.5s-chat", ModelTaskSize::Small),
                 model("abab6.5t-chat", ModelTaskSize::Small),
             ],
+            ..Default::default()
         },
         ProviderConfig {
             id: "groq".to_string(),
@@ -602,6 +670,7 @@ fn built_in_providers() -> Vec<ProviderConfig> {
                 model("mistral-saba-24b", ModelTaskSize::Small),
                 model("gemma2-9b-it", ModelTaskSize::Small),
             ],
+            ..Default::default()
         },
         ProviderConfig {
             id: "openrouter".to_string(),
@@ -633,6 +702,7 @@ fn built_in_providers() -> Vec<ProviderConfig> {
                 model("z-ai/glm-4.5", ModelTaskSize::Large),
                 model("moonshotai/kimi-k2", ModelTaskSize::Large),
             ],
+            ..Default::default()
         },
         ProviderConfig {
             id: "stepfun".to_string(),
@@ -653,6 +723,7 @@ fn built_in_providers() -> Vec<ProviderConfig> {
                 model("step-1v", ModelTaskSize::Small),
                 model("step-1", ModelTaskSize::Small),
             ],
+            ..Default::default()
         },
         ProviderConfig {
             id: "xiaomi".to_string(),
@@ -668,6 +739,7 @@ fn built_in_providers() -> Vec<ProviderConfig> {
                 model("mimo-v2", ModelTaskSize::Small),
                 model("mimo-v1", ModelTaskSize::Small),
             ],
+            ..Default::default()
         },
         ProviderConfig {
             id: "nvidia".to_string(),
@@ -690,6 +762,7 @@ fn built_in_providers() -> Vec<ProviderConfig> {
                 model("deepseek-ai/deepseek-r1", ModelTaskSize::Large),
                 model("microsoft/phi-4", ModelTaskSize::Small),
             ],
+            ..Default::default()
         },
         // ─── Tier 3: Local / self-hosted ──────────────────────────────────────────
         ProviderConfig {
@@ -720,6 +793,7 @@ fn built_in_providers() -> Vec<ProviderConfig> {
                 model("phi4", ModelTaskSize::Small),
                 model("phi4-mini", ModelTaskSize::Small),
             ],
+            ..Default::default()
         },
         ProviderConfig {
             id: "lmstudio".to_string(),
@@ -739,6 +813,7 @@ fn built_in_providers() -> Vec<ProviderConfig> {
                 model("gemma-3-27b-it", ModelTaskSize::Large),
                 model("llama-3.2-3b-instruct", ModelTaskSize::Small),
             ],
+            ..Default::default()
         },
         ProviderConfig {
             id: "llamacpp".to_string(),
@@ -757,6 +832,7 @@ fn built_in_providers() -> Vec<ProviderConfig> {
                 model("mistral", ModelTaskSize::Small),
                 model("tinyllama", ModelTaskSize::Small),
             ],
+            ..Default::default()
         },
         // ─── Tier 4: Aggregators / value ──────────────────────────────────────────
         ProviderConfig {
@@ -779,6 +855,7 @@ fn built_in_providers() -> Vec<ProviderConfig> {
                 model("gpt-oss-120b", ModelTaskSize::Large),
                 model("gpt-oss-20b", ModelTaskSize::Small),
             ],
+            ..Default::default()
         },
         ProviderConfig {
             id: "opencode-zen".to_string(),
@@ -788,12 +865,13 @@ fn built_in_providers() -> Vec<ProviderConfig> {
             api_key_env: "OPENCODE_ZEN_API_KEY".to_string(),
             base_url: None,
             models: vec![
-                model("DeepSeek V4 Flash", ModelTaskSize::Small),
-                model("DeepSeek V4 Pro", ModelTaskSize::Large),
-                model("Kimi K2.5", ModelTaskSize::Large),
-                model("Qwen 3 32B", ModelTaskSize::Small),
-                model("GLM-5", ModelTaskSize::Large),
+                model("deepseek-v4-flash-free", ModelTaskSize::Small),
+                model("qwen3.6-plus", ModelTaskSize::Large),
+                model("kimi-k2.5", ModelTaskSize::Large),
+                model("glm-5", ModelTaskSize::Large),
+                model("minimax-m2.5", ModelTaskSize::Small),
             ],
+            ..Default::default()
         },
         ProviderConfig {
             id: "opencode-go".to_string(),
@@ -803,13 +881,14 @@ fn built_in_providers() -> Vec<ProviderConfig> {
             api_key_env: "OPENCODE_GO_API_KEY".to_string(),
             base_url: None,
             models: vec![
-                model("DeepSeek V4 Flash", ModelTaskSize::Small),
-                model("DeepSeek V4 Pro", ModelTaskSize::Large),
-                model("Qwen 3 32B", ModelTaskSize::Small),
-                model("GLM-5", ModelTaskSize::Large),
-                model("Kimi K2.5", ModelTaskSize::Large),
-                model("Gemma 4 26B A4B", ModelTaskSize::Small),
+                model("deepseek-v4-flash", ModelTaskSize::Small),
+                model("deepseek-v4-pro", ModelTaskSize::Large),
+                model("qwen3.6-plus", ModelTaskSize::Large),
+                model("glm-5", ModelTaskSize::Large),
+                model("kimi-k2.5", ModelTaskSize::Large),
+                model("minimax-m2.5", ModelTaskSize::Small),
             ],
+            ..Default::default()
         },
         ProviderConfig {
             id: "custom".to_string(),
@@ -819,6 +898,7 @@ fn built_in_providers() -> Vec<ProviderConfig> {
             api_key_env: "CUSTOM_API_KEY".to_string(),
             base_url: None,
             models: vec![model("custom-model", ModelTaskSize::Large)],
+            ..Default::default()
         },
     ]
 }
@@ -890,6 +970,7 @@ impl NaviConfig {
                     ),
                     base_url: None,
                     models: new_models,
+                    ..Default::default()
                 });
             }
         }
@@ -1028,6 +1109,7 @@ mod tests {
             api_key_env: "CUSTOM_CHARM_KEY".to_string(),
             base_url: Some("https://example.test/v1".to_string()),
             models: vec![model("Custom Model", ModelTaskSize::Large)],
+            ..Default::default()
         });
 
         let provider = resolve_provider_config(&config, "charm-hyper").expect("provider");
