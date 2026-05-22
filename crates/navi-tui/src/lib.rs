@@ -1,28 +1,42 @@
 use anyhow::Result;
-use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
+use crossterm::event::{
+    self, Event, KeyCode, KeyEventKind, KeyModifiers, KeyboardEnhancementFlags,
+    PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
+};
 use crossterm::execute;
 use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
+    supports_keyboard_enhancement,
 };
 use navi_core::{
-    CredentialStore, LoadedConfig, ModelMessage, ModelOption, ModelProvider, ModelRequest,
-    ModelResponse, ModelRole, ModelTaskSize, ThinkingConfig, available_model_options,
-    resolve_provider_config, save_global_config, AgentEvent, SessionId, SessionSnapshot,
-    SessionStore,
+    AgentEvent, AgentRunState, ApprovalDecision, ApprovalRequest, ApprovalRisk, CredentialStore,
+    HarnessPolicy, LoadedConfig, ModelMessage, ModelOption, ModelProvider, ModelRequest, ModelRole,
+    ModelStreamEvent, SecurityDecision, SecurityPolicy, SessionId, SessionSnapshot, SessionStore,
+    ThinkingConfig, ToolExecutor, ToolInvocation, ToolLoopDecision, ToolResult,
+    available_model_options, build_system_prompt, compact_tool_observation, record_tool_call,
+    resolve_provider_config, save_global_config, select_harness_policy, tool_error_result,
+    trace_request_summary,
 };
 use navi_openai::OpenAiProvider;
-use ratatui::layout::{Alignment, Constraint, Direction, Layout, Margin, Rect};
+use navi_plugin_host::{LoadedPlugin, load_configured_plugins};
+use ratatui::layout::{Constraint, Direction, Layout, Margin, Rect};
 use ratatui::prelude::{CrosstermBackend, Frame, Line, Span, Terminal};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::Text;
 use ratatui::widgets::{
     Block, BorderType, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap,
 };
+use std::cell::RefCell;
 use std::io;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::OnceLock;
 use std::time::{Duration, Instant};
+use syntect::easy::HighlightLines;
+use syntect::highlighting::{Style as SyntectStyle, Theme, ThemeSet};
+use syntect::parsing::SyntaxSet;
 use tokio::sync::mpsc;
+use tokio::task::JoinHandle;
 
 // ─── palette ───────────────────────────────────────────────────────────────────
 const ACCENT: Color = Color::Rgb(176, 34, 255);
@@ -35,6 +49,16 @@ const PANEL: Color = Color::Rgb(19, 13, 26);
 const BG: Color = Color::Rgb(9, 5, 13);
 const GHOST: Color = Color::Rgb(58, 38, 74);
 const USER_ACCENT: Color = Color::Rgb(176, 34, 255);
+const CODE_KEYWORD: Color = Color::Rgb(220, 96, 255);
+const CODE_STRING: Color = Color::Rgb(205, 166, 255);
+const CODE_COMMENT: Color = Color::Rgb(124, 100, 146);
+const CODE_NUMBER: Color = Color::Rgb(160, 220, 255);
+const CODE_PUNCT: Color = Color::Rgb(185, 145, 220);
+const CODE_TYPE: Color = Color::Rgb(111, 214, 255);
+const CODE_FUNC: Color = Color::Rgb(190, 146, 255);
+const CODE_CONST: Color = Color::Rgb(255, 199, 112);
+const CODE_OPERATOR: Color = Color::Rgb(255, 118, 214);
+const NOTIFICATION_TTL: Duration = Duration::from_secs(2);
 
 const NAVI_COMPACT_LOGO: &[&str] = &[
     r"███╗   ██╗ █████╗ ██╗   ██╗██╗",
@@ -53,6 +77,28 @@ pub struct ChatMessage {
     pub model_label: Option<String>,
     pub provider_label: Option<String>,
     pub elapsed_ms: Option<u64>,
+    pub status: Option<String>,
+    pub usage_label: Option<String>,
+    pub thinking_content: String,
+    pub tool_invocation: Option<ToolInvocation>,
+    pub tool_result: Option<ToolResult>,
+}
+
+impl ChatMessage {
+    pub fn new(role: ChatRole, content: String) -> Self {
+        Self {
+            role,
+            content,
+            model_label: None,
+            provider_label: None,
+            elapsed_ms: None,
+            status: None,
+            usage_label: None,
+            thinking_content: String::new(),
+            tool_invocation: None,
+            tool_result: None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -63,13 +109,33 @@ pub enum ChatRole {
 
 // ─── async bridge ──────────────────────────────────────────────────────────────
 enum AsyncEvent {
-    ModelResponse {
-        response: ModelResponse,
+    ModelDelta {
+        text: String,
+    },
+    ModelThinkingDelta {
+        text: String,
+    },
+    ModelStatus {
+        label: String,
+    },
+    ModelUsage {
+        label: String,
+    },
+    ToolCall {
+        invocation: ToolInvocation,
+    },
+    ToolCompleted {
+        invocation: ToolInvocation,
+        result: ToolResult,
+    },
+    ModelDone {
         elapsed_ms: u64,
-        model_label: String,
-        provider_label: String,
     },
     ModelError {
+        message: String,
+    },
+    SyncCompleted {
+        loaded_config: LoadedConfig,
         message: String,
     },
 }
@@ -86,7 +152,6 @@ pub struct TuiApp {
     selected_model: usize,
     model_scroll: usize,
     model_filter: String,
-    large_task: bool,
     thinking_level: ThinkingLevel,
     selected_thinking: usize,
     tick: u64,
@@ -101,6 +166,16 @@ pub struct TuiApp {
     // async bridge
     async_tx: mpsc::UnboundedSender<AsyncEvent>,
     async_rx: mpsc::UnboundedReceiver<AsyncEvent>,
+    stream_task: Option<JoinHandle<()>>,
+    tool_task: Option<JoinHandle<()>>,
+    tool_executor: Arc<ToolExecutor>,
+    _loaded_plugins: Vec<LoadedPlugin>,
+    harness_policy: HarnessPolicy,
+    run_state: AgentRunState,
+    pending_tool: Option<ToolInvocation>,
+    yolo_mode: bool,
+    skip_next_model_done: bool,
+    model_retry_attempts: usize,
 
     // provider
     model_provider: Option<Arc<dyn ModelProvider>>,
@@ -124,6 +199,29 @@ pub struct TuiApp {
     saved_sessions: Vec<SessionSnapshot>,
     selected_session: usize,
     session_scroll: usize,
+
+    full_tool_view: bool,
+    show_thinking: bool,
+    selected_setting: usize,
+    notification: Option<Notification>,
+    chat_render_cache: RefCell<ChatRenderCache>,
+}
+
+#[derive(Debug, Clone)]
+struct Notification {
+    title: String,
+    message: String,
+    created_at: Instant,
+    ttl: Duration,
+}
+
+#[derive(Default)]
+struct ChatRenderCache {
+    width: usize,
+    full_tool_view: bool,
+    show_thinking: bool,
+    signature: String,
+    lines: Vec<Line<'static>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -134,6 +232,7 @@ enum Mode {
     ApiKeyEntry,
     Thinking,
     Sessions,
+    Settings,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -187,10 +286,13 @@ enum CommandAction {
     NewSession,
     Sessions,
     SwitchModel,
+    RetryLast,
     ToggleVimMode,
     OpenThinking,
     InitializeProject,
+    SyncModels,
     Quit,
+    Settings,
 }
 
 impl TuiApp {
@@ -207,9 +309,29 @@ impl TuiApp {
         let (async_tx, async_rx) = mpsc::unbounded_channel();
         let credential_store = CredentialStore::new(loaded_config.data_dir.clone());
         let model_provider = build_provider(&loaded_config, &credential_store);
-        let session_store = SessionStore::new(loaded_config.data_dir.clone());
+        let session_store = SessionStore::with_redaction(
+            loaded_config.data_dir.clone(),
+            loaded_config.config.security.redact_secrets_in_sessions,
+        );
         let session_id = SessionStore::create_id();
         let saved_sessions = load_saved_sessions(&session_store);
+        let tool_policy = SecurityPolicy::new(
+            project_dir.clone(),
+            loaded_config.data_dir.clone(),
+            loaded_config.config.security.clone(),
+        )
+        .expect("failed to initialize security policy");
+        let mut tool_executor = ToolExecutor::new(tool_policy.clone());
+        let plugin_report = load_configured_plugins(
+            &loaded_config.config.plugins,
+            &tool_policy,
+            &mut tool_executor,
+        );
+        let plugin_warning = plugin_report.warnings.first().cloned();
+        let loaded_plugins = plugin_report.loaded_plugins;
+        let tool_executor = Arc::new(tool_executor);
+        let harness_policy = select_harness_policy(&loaded_config.config);
+        let system_prompt = build_system_prompt(&loaded_config.config, &project_dir);
 
         let mut app = Self {
             loaded_config,
@@ -222,7 +344,6 @@ impl TuiApp {
             selected_model,
             model_scroll: 0,
             model_filter: String::new(),
-            large_task: true,
             thinking_level: ThinkingLevel::High,
             selected_thinking: 1,
             tick: 0,
@@ -230,12 +351,19 @@ impl TuiApp {
             scroll_offset: 0,
             is_loading: false,
             loading_start: None,
-            conversation_history: vec![ModelMessage {
-                role: ModelRole::System,
-                content: default_system_prompt(),
-            }],
+            conversation_history: vec![ModelMessage::system(system_prompt)],
             async_tx,
             async_rx,
+            stream_task: None,
+            tool_task: None,
+            tool_executor,
+            _loaded_plugins: loaded_plugins,
+            harness_policy,
+            run_state: AgentRunState::default(),
+            pending_tool: None,
+            yolo_mode: false,
+            skip_next_model_done: false,
+            model_retry_attempts: 0,
             model_provider,
             credential_store,
             api_key_input: String::new(),
@@ -251,7 +379,16 @@ impl TuiApp {
             saved_sessions,
             selected_session: 0,
             session_scroll: 0,
+            full_tool_view: false,
+            show_thinking: true,
+            selected_setting: 0,
+            notification: None,
+            chat_render_cache: RefCell::new(ChatRenderCache::default()),
         };
+
+        if let Some(warning) = plugin_warning {
+            show_notification(&mut app, "Plugins", warning);
+        }
 
         // If a task was passed via CLI, pre-fill input
         if let Some(task_text) = task {
@@ -280,6 +417,11 @@ const COMMANDS: &[CommandItem] = &[
         action: CommandAction::SwitchModel,
     },
     CommandItem {
+        label: "Retry Last Response",
+        shortcut: None,
+        action: CommandAction::RetryLast,
+    },
+    CommandItem {
         label: "Toggle Vim Mode",
         shortcut: None,
         action: CommandAction::ToggleVimMode,
@@ -293,6 +435,16 @@ const COMMANDS: &[CommandItem] = &[
         label: "Initialize Layer",
         shortcut: None,
         action: CommandAction::InitializeProject,
+    },
+    CommandItem {
+        label: "Sync Models",
+        shortcut: None,
+        action: CommandAction::SyncModels,
+    },
+    CommandItem {
+        label: "Settings",
+        shortcut: None,
+        action: CommandAction::Settings,
     },
     CommandItem {
         label: "Quit",
@@ -309,11 +461,26 @@ pub fn run(app: TuiApp) -> Result<()> {
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen)?;
+
+    // Enable the kitty keyboard protocol so the terminal can distinguish
+    // Ctrl+Enter from plain Enter (and report other modifier combos).
+    let enhanced_keyboard = supports_keyboard_enhancement().unwrap_or(false);
+    if enhanced_keyboard {
+        execute!(
+            stdout,
+            PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES)
+        )?;
+    }
+
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
     let result = run_loop(&mut terminal, app);
 
+    // Restore keyboard mode before leaving.
+    if enhanced_keyboard {
+        execute!(terminal.backend_mut(), PopKeyboardEnhancementFlags)?;
+    }
     disable_raw_mode()?;
     execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
     terminal.show_cursor()?;
@@ -330,54 +497,93 @@ fn run_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, mut app: TuiA
     loop {
         terminal.draw(|frame| render(frame, &app))?;
         app.tick = app.tick.wrapping_add(1);
+        expire_notification(&mut app);
 
-        // Check for async model responses (non-blocking)
+        // Check for async model stream events (non-blocking)
         while let Ok(event) = app.async_rx.try_recv() {
             match event {
-                AsyncEvent::ModelResponse {
-                    response,
-                    elapsed_ms,
-                    model_label,
-                    provider_label,
-                } => {
-                    let word_count = response.text.split_whitespace().count();
-                    app.total_tokens_estimate += word_count * 4 / 3;
-                    app.messages.push(ChatMessage {
-                        role: ChatRole::Assistant,
-                        content: response.text.clone(),
-                        model_label: Some(model_label),
-                        provider_label: Some(provider_label),
-                        elapsed_ms: Some(elapsed_ms),
-                    });
-                    app.conversation_history.push(ModelMessage {
-                        role: ModelRole::Assistant,
-                        content: response.text.clone(),
-                    });
-                    app.events.push(AgentEvent::ModelOutput {
-                        text: response.text,
-                    });
-                    app.is_loading = false;
+                AsyncEvent::ModelDelta { text } => {
+                    if let Some(message) = active_assistant_message(&mut app) {
+                        message.content.push_str(&text);
+                        message.status = Some("receiving".to_string());
+                    }
+                    app.scroll_offset = 0;
+                }
+                AsyncEvent::ModelThinkingDelta { text } => {
+                    if let Some(message) = active_assistant_message(&mut app) {
+                        message.thinking_content.push_str(&text);
+                        message.status = Some("thinking".to_string());
+                    }
+                    app.scroll_offset = 0;
+                }
+                AsyncEvent::ModelStatus { label } => {
+                    if let Some(message) = active_assistant_message(&mut app) {
+                        message.status = Some(label);
+                    }
+                }
+                AsyncEvent::ModelUsage { label } => {
+                    if let Some(message) = active_assistant_message(&mut app) {
+                        message.usage_label = Some(label);
+                    }
+                }
+                AsyncEvent::ToolCall { invocation } => {
+                    handle_tool_call(&mut app, invocation);
+                }
+                AsyncEvent::ToolCompleted { invocation, result } => {
+                    app.tool_task = None;
+                    handle_tool_completed(&mut app, invocation, result);
+                }
+                AsyncEvent::ModelDone { elapsed_ms } => {
+                    let waiting_for_tool = app.skip_next_model_done;
+                    if waiting_for_tool {
+                        app.skip_next_model_done = false;
+                    } else if app.pending_tool.is_none() && !active_assistant_is_tool_wait(&app) {
+                        finalize_active_assistant(&mut app, elapsed_ms);
+                    }
+                    app.is_loading =
+                        waiting_for_tool && (app.pending_tool.is_some() || app.tool_task.is_some());
                     app.loading_start = None;
+                    app.stream_task = None;
                     app.scroll_offset = 0;
                 }
                 AsyncEvent::ModelError { message } => {
+                    handle_model_error(&mut app, message);
+                }
+                AsyncEvent::SyncCompleted {
+                    loaded_config,
+                    message,
+                } => {
+                    app.loaded_config = loaded_config;
+                    app.models = available_model_options(&app.loaded_config.config);
+                    let selected_name = app.loaded_config.config.model.name.clone();
+                    let selected_provider = app.loaded_config.config.model.provider.clone();
+                    app.selected_model = app
+                        .models
+                        .iter()
+                        .position(|model| {
+                            model.name == selected_name && model.provider_id == selected_provider
+                        })
+                        .unwrap_or(0);
+                    rebuild_provider(&mut app);
                     app.messages.push(ChatMessage {
-                        role: ChatRole::Assistant,
-                        content: format!("⚠ Error: {message}"),
-                        model_label: None,
-                        provider_label: None,
-                        elapsed_ms: None,
-                    });
-                    app.events.push(AgentEvent::Error {
-                        message: message.clone(),
+                        status: Some("synced".to_string()),
+                        ..ChatMessage::new(ChatRole::Assistant, message)
                     });
                     app.is_loading = false;
                     app.loading_start = None;
+                    app.stream_task = None;
+                    app.scroll_offset = 0;
                 }
             }
         }
 
-        if event::poll(Duration::from_millis(80))? {
+        let timeout = if app.is_loading {
+            Duration::from_millis(16)
+        } else {
+            Duration::from_millis(80)
+        };
+
+        if event::poll(timeout)? {
             if let Event::Key(key) = event::read()? {
                 if key.kind != KeyEventKind::Press {
                     continue;
@@ -405,34 +611,33 @@ fn submit_message(app: &mut TuiApp) {
     let word_count = text.split_whitespace().count();
     app.total_tokens_estimate += word_count * 4 / 3;
 
-    app.messages.push(ChatMessage {
-        role: ChatRole::User,
-        content: text.clone(),
-        model_label: None,
-        provider_label: None,
-        elapsed_ms: None,
-    });
+    app.messages
+        .push(ChatMessage::new(ChatRole::User, text.clone()));
 
-    app.conversation_history.push(ModelMessage {
-        role: ModelRole::User,
-        content: text.clone(),
-    });
+    app.conversation_history
+        .push(ModelMessage::user(text.clone()));
 
-    app.events.push(AgentEvent::UserTaskSubmitted { text: text.clone() });
+    app.events
+        .push(AgentEvent::UserTaskSubmitted { text: text.clone() });
 
     app.input.clear();
     app.input_cursor = 0;
     app.scroll_offset = 0;
+    app.run_state = AgentRunState::default();
+    app.model_retry_attempts = 0;
 
+    start_streaming_request(app);
+}
+
+fn start_streaming_request(app: &mut TuiApp) {
     let Some(provider) = app.model_provider.clone() else {
         app.messages.push(ChatMessage {
-            role: ChatRole::Assistant,
-            content:
+            status: Some("missing key".to_string()),
+            ..ChatMessage::new(
+                ChatRole::Assistant,
                 "⚠ No API key configured. Press ctrl+m, choose a protocol, then enter its key."
                     .to_string(),
-            model_label: None,
-            provider_label: None,
-            elapsed_ms: None,
+            )
         });
         return;
     };
@@ -440,35 +645,493 @@ fn submit_message(app: &mut TuiApp) {
     app.is_loading = true;
     app.loading_start = Some(Instant::now());
 
+    let model_label = app.loaded_config.config.model.name.clone();
+    let provider_label = selected_provider_label(app).to_string();
+    app.messages.push(ChatMessage {
+        model_label: Some(model_label.clone()),
+        provider_label: Some(provider_label),
+        status: Some("thinking".to_string()),
+        ..ChatMessage::new(ChatRole::Assistant, String::new())
+    });
+
     let request = ModelRequest {
         model: app.loaded_config.config.model.name.clone(),
         messages: app.conversation_history.clone(),
         thinking: app.thinking_level.into(),
+        tools: app.tool_executor.definitions(),
     };
+    app.events
+        .push(AgentEvent::HarnessTrace(trace_request_summary(
+            &request,
+            app.harness_policy,
+        )));
 
-    let model_label = app.loaded_config.config.model.name.clone();
-    let provider_label = selected_provider_label(app).to_string();
     let tx = app.async_tx.clone();
 
-    tokio::spawn(async move {
+    app.stream_task = Some(tokio::spawn(async move {
+        use futures_util::StreamExt;
         let start = Instant::now();
-        match provider.complete(request).await {
-            Ok(response) => {
-                let elapsed_ms = start.elapsed().as_millis() as u64;
-                let _ = tx.send(AsyncEvent::ModelResponse {
-                    response,
-                    elapsed_ms,
-                    model_label,
-                    provider_label,
-                });
-            }
-            Err(err) => {
-                let _ = tx.send(AsyncEvent::ModelError {
-                    message: format!("{err:#}"),
-                });
+        let mut stream = provider.stream(request);
+        while let Some(event) = stream.next().await {
+            match event {
+                Ok(ModelStreamEvent::TextDelta { text }) => {
+                    let _ = tx.send(AsyncEvent::ModelDelta { text });
+                }
+                Ok(ModelStreamEvent::ThinkingDelta { text }) => {
+                    let _ = tx.send(AsyncEvent::ModelThinkingDelta { text });
+                }
+                Ok(ModelStreamEvent::Status { label }) => {
+                    let _ = tx.send(AsyncEvent::ModelStatus { label });
+                }
+                Ok(ModelStreamEvent::Usage {
+                    input_tokens,
+                    output_tokens,
+                }) => {
+                    let _ = tx.send(AsyncEvent::ModelUsage {
+                        label: usage_label(input_tokens, output_tokens),
+                    });
+                }
+                Ok(ModelStreamEvent::ToolCall(invocation)) => {
+                    let _ = tx.send(AsyncEvent::ToolCall { invocation });
+                }
+                Ok(ModelStreamEvent::Done) => {
+                    let elapsed_ms = start.elapsed().as_millis() as u64;
+                    let _ = tx.send(AsyncEvent::ModelDone { elapsed_ms });
+                    return;
+                }
+                Err(err) => {
+                    let _ = tx.send(AsyncEvent::ModelError {
+                        message: format!("{err:#}"),
+                    });
+                    return;
+                }
             }
         }
+        let elapsed_ms = start.elapsed().as_millis() as u64;
+        let _ = tx.send(AsyncEvent::ModelDone { elapsed_ms });
+    }));
+}
+
+fn active_assistant_message(app: &mut TuiApp) -> Option<&mut ChatMessage> {
+    app.messages
+        .iter_mut()
+        .rev()
+        .find(|message| message.role == ChatRole::Assistant)
+}
+
+fn active_assistant_is_tool_wait(app: &TuiApp) -> bool {
+    app.messages
+        .iter()
+        .rev()
+        .find(|message| message.role == ChatRole::Assistant)
+        .and_then(|message| message.status.as_deref())
+        .is_some_and(|status| status.starts_with("tool:") || status.starts_with("approval:"))
+}
+
+fn finalize_active_assistant(app: &mut TuiApp, elapsed_ms: u64) {
+    app.model_retry_attempts = 0;
+    let (text, thinking) = {
+        let Some(active) = active_assistant_message(app) else {
+            return;
+        };
+        active.elapsed_ms = Some(elapsed_ms);
+        active.status = None;
+        (
+            active.content.clone(),
+            if active.thinking_content.is_empty() {
+                None
+            } else {
+                Some(active.thinking_content.clone())
+            },
+        )
+    };
+    if text.trim().is_empty() {
+        if let Some(active) = active_assistant_message(app) {
+            active.content = "No response.".to_string();
+        }
+        return;
+    }
+
+    let word_count = text.split_whitespace().count();
+    app.total_tokens_estimate += word_count * 4 / 3;
+    app.conversation_history
+        .push(ModelMessage::assistant(text.clone()));
+    app.events.push(AgentEvent::ModelOutput { text, thinking });
+}
+
+fn usage_label(input_tokens: Option<u64>, output_tokens: Option<u64>) -> String {
+    match (input_tokens, output_tokens) {
+        (Some(input), Some(output)) => format!("usage {input} in / {output} out"),
+        (Some(input), None) => format!("usage {input} in"),
+        (None, Some(output)) => format!("usage {output} out"),
+        (None, None) => "usage updated".to_string(),
+    }
+}
+
+fn handle_tool_call(app: &mut TuiApp, invocation: ToolInvocation) {
+    app.skip_next_model_done = true;
+    let active_content = active_assistant_message(app)
+        .map(|active| active.content.clone())
+        .unwrap_or_default();
+    if !active_content.trim().is_empty() {
+        app.conversation_history
+            .push(ModelMessage::assistant(active_content));
+    }
+    app.conversation_history
+        .push(ModelMessage::assistant_tool_call(invocation.clone()));
+    app.events
+        .push(AgentEvent::ToolRequested(invocation.clone()));
+    match record_tool_call(&mut app.run_state, app.harness_policy, &invocation) {
+        ToolLoopDecision::Continue => {}
+        ToolLoopDecision::RepeatedCall(reason) | ToolLoopDecision::IterationLimit(reason) => {
+            let result = tool_error_result(&invocation, reason);
+            handle_tool_completed(app, invocation, result);
+            return;
+        }
+    }
+    let decision = app.tool_executor.validate(&invocation);
+    match decision {
+        SecurityDecision::Allow => execute_tool_async(app, invocation),
+        SecurityDecision::NeedsApproval(_) if app.yolo_mode => {
+            app.events
+                .push(AgentEvent::ApprovalResolved(ApprovalDecision::Approved {
+                    id: invocation.id.clone(),
+                }));
+            execute_tool_async(app, invocation)
+        }
+        SecurityDecision::NeedsApproval(_) => {
+            app.events
+                .push(AgentEvent::ApprovalRequested(ApprovalRequest {
+                    id: invocation.id.clone(),
+                    summary: format!("Run tool `{}`", invocation.tool_name),
+                    risk: tool_approval_risk(&invocation.tool_name),
+                }));
+            app.pending_tool = Some(invocation.clone());
+            if let Some(active) = active_assistant_message(app) {
+                active.status = Some(format!("approval: {}", invocation.tool_name));
+            }
+            app.messages.push(ChatMessage {
+                status: Some("press y approve / n deny".to_string()),
+                ..ChatMessage::new(
+                    ChatRole::Assistant,
+                    format!(
+                        "Tool `{}` wants to run with input:\n{}",
+                        invocation.tool_name,
+                        serde_json::to_string_pretty(&invocation.input)
+                            .unwrap_or_else(|_| invocation.input.to_string())
+                    ),
+                )
+            });
+        }
+        SecurityDecision::Deny(reason) => {
+            let result = ToolResult {
+                invocation_id: invocation.id.clone(),
+                ok: false,
+                output: serde_json::json!({ "error": reason }),
+            };
+            handle_tool_completed(app, invocation, result);
+        }
+    }
+}
+
+fn execute_tool_async(app: &mut TuiApp, invocation: ToolInvocation) {
+    if let Some(active) = active_assistant_message(app) {
+        active.status = Some(format!("tool: {}", invocation.tool_name));
+    }
+    let executor = app.tool_executor.clone();
+    let tx = app.async_tx.clone();
+    app.tool_task = Some(tokio::spawn(async move {
+        let result = executor.invoke(invocation.clone()).await;
+        let _ = tx.send(AsyncEvent::ToolCompleted { invocation, result });
+    }));
+}
+
+fn handle_tool_completed(app: &mut TuiApp, invocation: ToolInvocation, result: ToolResult) {
+    app.pending_tool = None;
+    app.events.push(AgentEvent::ToolCompleted(result.clone()));
+    remove_active_tool_placeholder(app);
+    let content = tool_full_content(&invocation, &result);
+
+    app.messages.push(ChatMessage {
+        status: Some("tool result".to_string()),
+        tool_invocation: Some(invocation.clone()),
+        tool_result: Some(result.clone()),
+        ..ChatMessage::new(ChatRole::Assistant, content.trim_end().to_string())
     });
+    let observation = compact_tool_observation(&invocation, &result, app.harness_policy);
+    app.conversation_history.push(ModelMessage::tool_result(
+        invocation.id,
+        invocation.tool_name,
+        observation,
+    ));
+    start_streaming_request(app);
+}
+
+fn handle_model_error(app: &mut TuiApp, message: String) {
+    if should_retry_model_error(&message) && app.model_retry_attempts < max_model_retries(app) {
+        app.model_retry_attempts += 1;
+        app.skip_next_model_done = false;
+        app.pending_tool = None;
+        app.is_loading = false;
+        app.loading_start = None;
+        app.stream_task = None;
+        remove_active_tool_placeholder(app);
+        remove_active_empty_generation_placeholder(app);
+        app.messages.push(ChatMessage {
+            status: Some("retrying".to_string()),
+            ..ChatMessage::new(
+                ChatRole::Assistant,
+                format!(
+                    "Transient provider error: {message}\nRetrying agent step {}/{}.",
+                    app.model_retry_attempts,
+                    max_model_retries(app)
+                ),
+            )
+        });
+        start_streaming_request(app);
+        return;
+    }
+
+    app.skip_next_model_done = false;
+    app.pending_tool = None;
+    app.messages.push(ChatMessage {
+        status: Some("error".to_string()),
+        ..ChatMessage::new(ChatRole::Assistant, format!("⚠ Error: {message}"))
+    });
+    app.events.push(AgentEvent::Error { message });
+    app.is_loading = false;
+    app.loading_start = None;
+    app.stream_task = None;
+}
+
+fn remove_active_empty_generation_placeholder(app: &mut TuiApp) {
+    let Some(index) = app.messages.iter().rposition(|message| {
+        message.role == ChatRole::Assistant
+            && message.content.trim().is_empty()
+            && message.thinking_content.trim().is_empty()
+            && message.status.as_deref().is_some_and(|status| {
+                status == "thinking" || status == "receiving" || status.starts_with("tool:")
+            })
+    }) else {
+        return;
+    };
+    app.messages.remove(index);
+}
+
+fn should_retry_model_error(message: &str) -> bool {
+    let message = message.to_ascii_lowercase();
+    message.contains("429")
+        || message.contains("too many requests")
+        || message.contains("unexpected eof")
+        || message.contains("connection")
+        || message.contains("timeout")
+        || message.contains("timed out")
+}
+
+fn max_model_retries(app: &TuiApp) -> usize {
+    match app.harness_policy.profile {
+        navi_core::HarnessProfile::Small => 2,
+        _ => 3,
+    }
+}
+
+fn remove_active_tool_placeholder(app: &mut TuiApp) {
+    let Some(index) = app.messages.iter().rposition(|message| {
+        message.role == ChatRole::Assistant
+            && message.content.trim().is_empty()
+            && message.thinking_content.trim().is_empty()
+            && message.status.as_deref().is_some_and(|status| {
+                status.starts_with("tool:") || status.starts_with("approval:")
+            })
+    }) else {
+        return;
+    };
+    app.messages.remove(index);
+}
+
+fn tool_compact_text(invocation: &ToolInvocation, result: &ToolResult) -> String {
+    format!(
+        "{} called · {}",
+        invocation.tool_name,
+        if result.ok { "success" } else { "error" }
+    )
+}
+
+fn tool_full_content(invocation: &ToolInvocation, result: &ToolResult) -> String {
+    let input = serde_json::to_string_pretty(&invocation.input)
+        .unwrap_or_else(|_| invocation.input.to_string());
+    let output =
+        serde_json::to_string_pretty(&result.output).unwrap_or_else(|_| result.output.to_string());
+    let mut content = format!(
+        "{} {}\n\nInput\n{}\n\nOutput\n",
+        if result.ok { "✓" } else { "✗" },
+        tool_compact_text(invocation, result),
+        input
+    );
+
+    if let Some(formatted) = formatted_tool_output(invocation, result) {
+        content.push_str(&formatted);
+    } else {
+        content.push_str(&output);
+    }
+
+    content
+}
+
+fn formatted_tool_output(invocation: &ToolInvocation, result: &ToolResult) -> Option<String> {
+    if !result.ok {
+        return None;
+    }
+    let obj = result.output.as_object()?;
+    let mut content = String::new();
+
+    if invocation.tool_name == "read_file" || invocation.tool_name == "view_file" {
+        let path = obj.get("path").and_then(|v| v.as_str())?;
+        content.push_str(&format!("View {path}\n\n"));
+        if let Some(file_content) = obj.get("content").and_then(|v| v.as_str()) {
+            let language = language_for_path(path);
+            content.push_str(&format!("```{language}\n"));
+            content.push_str(file_content);
+            if !file_content.ends_with('\n') {
+                content.push('\n');
+            }
+            content.push_str("```\n");
+        }
+    } else if invocation.tool_name == "list_files" {
+        content.push_str("List files\n\n");
+        if let Some(files) = obj.get("files").and_then(|v| v.as_array()) {
+            for (i, file) in files.iter().enumerate() {
+                if let Some(file) = file.as_str() {
+                    content.push_str(&format!("{:>4}  {}\n", i + 1, file));
+                }
+            }
+        }
+    } else {
+        return None;
+    }
+
+    if obj.get("truncated").and_then(|v| v.as_bool()) == Some(true) {
+        content.push_str("... (truncated)\n");
+    }
+    Some(content)
+}
+
+fn language_for_path(path: &str) -> &'static str {
+    match path
+        .rsplit_once('.')
+        .map(|(_, ext)| ext)
+        .unwrap_or_default()
+    {
+        "rs" => "rust",
+        "toml" => "toml",
+        "json" => "json",
+        "js" | "mjs" | "cjs" => "javascript",
+        "ts" | "tsx" => "typescript",
+        "jsx" => "javascript",
+        "py" => "python",
+        "go" => "go",
+        "java" => "java",
+        "c" | "h" => "c",
+        "cc" | "cpp" | "hpp" => "cpp",
+        "sh" | "bash" => "bash",
+        "zsh" => "zsh",
+        "fish" => "fish",
+        "md" | "markdown" => "markdown",
+        "yaml" | "yml" => "yaml",
+        "html" => "html",
+        "css" => "css",
+        "xml" => "xml",
+        "sql" => "sql",
+        _ => "",
+    }
+}
+
+fn approve_pending_tool(app: &mut TuiApp) {
+    if let Some(invocation) = app.pending_tool.take() {
+        app.events
+            .push(AgentEvent::ApprovalResolved(ApprovalDecision::Approved {
+                id: invocation.id.clone(),
+            }));
+        execute_tool_async(app, invocation);
+    }
+}
+
+fn deny_pending_tool(app: &mut TuiApp) {
+    if let Some(invocation) = app.pending_tool.take() {
+        app.events
+            .push(AgentEvent::ApprovalResolved(ApprovalDecision::Denied {
+                id: invocation.id.clone(),
+            }));
+        let result = ToolResult {
+            invocation_id: invocation.id.clone(),
+            ok: false,
+            output: serde_json::json!({ "error": "user denied tool execution" }),
+        };
+        handle_tool_completed(app, invocation, result);
+    }
+}
+
+fn tool_approval_risk(tool_name: &str) -> ApprovalRisk {
+    match tool_name {
+        "bash" => ApprovalRisk::Command,
+        "write_file" | "apply_patch" => ApprovalRisk::Write,
+        _ => ApprovalRisk::ExternalPlugin,
+    }
+}
+
+fn cancel_stream(app: &mut TuiApp) {
+    if let Some(task) = app.stream_task.take() {
+        task.abort();
+    }
+    if let Some(task) = app.tool_task.take() {
+        task.abort();
+    }
+    app.is_loading = false;
+    app.loading_start = None;
+    app.pending_tool = None;
+    app.skip_next_model_done = false;
+    if let Some(active) = active_assistant_message(app) {
+        active.status = Some("cancelled".to_string());
+        if active.content.is_empty() {
+            active.content = "Cancelled.".to_string();
+        }
+    }
+}
+
+fn retry_last_response(app: &mut TuiApp) {
+    if app.is_loading {
+        cancel_stream(app);
+    }
+
+    if app
+        .messages
+        .last()
+        .is_some_and(|message| message.role == ChatRole::Assistant)
+    {
+        app.messages.pop();
+    }
+    if app
+        .conversation_history
+        .last()
+        .is_some_and(|message| matches!(message.role, ModelRole::Assistant))
+    {
+        app.conversation_history.pop();
+    }
+    if app
+        .events
+        .last()
+        .is_some_and(|event| matches!(event, AgentEvent::ModelOutput { .. }))
+    {
+        app.events.pop();
+    }
+
+    if app
+        .conversation_history
+        .last()
+        .is_some_and(|message| matches!(message.role, ModelRole::User))
+    {
+        start_streaming_request(app);
+    }
 }
 
 fn build_provider(
@@ -490,6 +1153,28 @@ fn build_provider(
 
 fn rebuild_provider(app: &mut TuiApp) {
     app.model_provider = build_provider(&app.loaded_config, &app.credential_store);
+    app.harness_policy = select_harness_policy(&app.loaded_config.config);
+    refresh_system_context(app);
+}
+
+fn reset_system_context(app: &mut TuiApp) {
+    app.conversation_history = vec![ModelMessage::system(build_system_prompt(
+        &app.loaded_config.config,
+        &app.project_dir,
+    ))];
+    app.run_state = AgentRunState::default();
+}
+
+fn refresh_system_context(app: &mut TuiApp) {
+    let system = ModelMessage::system(build_system_prompt(
+        &app.loaded_config.config,
+        &app.project_dir,
+    ));
+    if let Some(first) = app.conversation_history.first_mut() {
+        *first = system;
+    } else {
+        app.conversation_history.push(system);
+    }
 }
 
 fn provider_has_api_key(app: &TuiApp, provider_id: &str) -> bool {
@@ -535,23 +1220,13 @@ fn save_api_key_and_rebuild(app: &mut TuiApp) {
 
     let provider_id = selected_or_pending_provider_id(app);
     if let Err(err) = app.credential_store.set_api_key(&provider_id, &key) {
-        app.messages.push(ChatMessage {
-            role: ChatRole::Assistant,
-            content: format!("⚠ Failed to save key: {err:#}"),
-            model_label: None,
-            provider_label: None,
-            elapsed_ms: None,
-        });
+        show_notification(app, "Credentials", format!("Failed to save key: {err:#}"));
     } else {
-        app.messages.push(ChatMessage {
-            role: ChatRole::Assistant,
-            content: format!(
-                "✓ API key saved for provider \"{provider_id}\". Credentials stored securely."
-            ),
-            model_label: None,
-            provider_label: None,
-            elapsed_ms: None,
-        });
+        show_notification(
+            app,
+            "Credentials",
+            format!("API key saved for provider \"{provider_id}\"."),
+        );
     }
 
     if let Some(model_index) = app.pending_model_selection.take() {
@@ -571,16 +1246,69 @@ fn current_provider_env_var(app: &TuiApp) -> String {
         .unwrap_or_else(|| "API_KEY".to_string())
 }
 
-fn default_system_prompt() -> String {
-    "You are NAVI, an autonomous code agent inside a terminal. Be concise and helpful. When showing code, use markdown code blocks."
-        .to_string()
+fn show_notification(app: &mut TuiApp, title: impl Into<String>, message: impl Into<String>) {
+    app.notification = Some(Notification {
+        title: title.into(),
+        message: message.into(),
+        created_at: Instant::now(),
+        ttl: NOTIFICATION_TTL,
+    });
+}
+
+fn expire_notification(app: &mut TuiApp) {
+    let expired = app
+        .notification
+        .as_ref()
+        .is_some_and(|notification| notification.created_at.elapsed() >= notification.ttl);
+    if expired {
+        app.notification = None;
+    }
+}
+
+fn visible_notification(app: &TuiApp) -> Option<&Notification> {
+    app.notification
+        .as_ref()
+        .filter(|notification| notification.created_at.elapsed() < notification.ttl)
 }
 
 // ─── key handling ──────────────────────────────────────────────────────────────
 fn handle_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyModifiers) -> bool {
+    if app.pending_tool.is_some() {
+        match code {
+            KeyCode::Char('y') | KeyCode::Char('Y') => {
+                approve_pending_tool(app);
+                return false;
+            }
+            KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+                deny_pending_tool(app);
+                return false;
+            }
+            _ => {}
+        }
+    }
+
+    if code == KeyCode::Esc
+        && (app.is_loading || app.stream_task.is_some() || app.tool_task.is_some())
+    {
+        cancel_stream(app);
+        return false;
+    }
+
     if modifiers.contains(KeyModifiers::CONTROL) {
         match code {
             KeyCode::Char('c') => return true,
+            KeyCode::Char('g') => {
+                app.yolo_mode = !app.yolo_mode;
+                show_notification(
+                    app,
+                    "Tools",
+                    format!(
+                        "YOLO mode {}.",
+                        if app.yolo_mode { "enabled" } else { "disabled" }
+                    ),
+                );
+                return false;
+            }
             KeyCode::Char('p') => {
                 app.mode = Mode::Commands;
                 app.command_filter.clear();
@@ -591,11 +1319,20 @@ fn handle_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyModifiers) -> bool 
                 open_model_picker(app);
                 return false;
             }
-            KeyCode::Char('j') => {
-                insert_input_char(app, '\n');
+            KeyCode::Char('o') | KeyCode::Char('O') => {
+                app.full_tool_view = !app.full_tool_view;
+                show_notification(
+                    app,
+                    "Tools",
+                    if app.full_tool_view {
+                        "Full tool view enabled."
+                    } else {
+                        "Compact tool view enabled."
+                    },
+                );
                 return false;
             }
-            KeyCode::Enter => {
+            KeyCode::Char('j') | KeyCode::Char('\n') | KeyCode::Char('\r') | KeyCode::Enter => {
                 if !app.input.trim().is_empty() && !app.is_loading {
                     submit_message(app);
                 }
@@ -603,14 +1340,12 @@ fn handle_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyModifiers) -> bool 
             }
             KeyCode::Char('n') => {
                 app.messages.clear();
-                app.conversation_history = vec![ModelMessage {
-                    role: ModelRole::System,
-                    content: default_system_prompt(),
-                }];
+                reset_system_context(app);
                 app.input.clear();
                 app.input_cursor = 0;
                 app.scroll_offset = 0;
                 app.total_tokens_estimate = 0;
+                show_notification(app, "Layer", "New layer started.");
                 return false;
             }
             _ => {}
@@ -620,10 +1355,11 @@ fn handle_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyModifiers) -> bool 
     match app.mode {
         Mode::Normal => handle_normal_key(app, code, modifiers),
         Mode::Commands => handle_command_key(app, code),
-        Mode::Models => handle_model_key(app, code),
+        Mode::Models => handle_model_key(app, code, modifiers),
         Mode::ApiKeyEntry => handle_api_key_key(app, code, modifiers),
         Mode::Thinking => handle_thinking_key(app, code),
         Mode::Sessions => handle_sessions_key(app, code),
+        Mode::Settings => handle_settings_key(app, code),
     }
 }
 
@@ -662,12 +1398,57 @@ fn handle_thinking_key(app: &mut TuiApp, code: KeyCode) -> bool {
         KeyCode::Enter => {
             let level = THINKING_OPTIONS[app.selected_thinking];
             app.thinking_level = level;
-            app.large_task = matches!(level, ThinkingLevel::Max | ThinkingLevel::High);
             app.mode = Mode::Normal;
+            show_notification(
+                app,
+                "Thinking",
+                format!("Thinking set to {}.", level.label()),
+            );
         }
         _ => {}
     }
 
+    false
+}
+
+fn handle_settings_key(app: &mut TuiApp, code: KeyCode) -> bool {
+    match code {
+        KeyCode::Esc => app.mode = Mode::Normal,
+        KeyCode::Down => {
+            app.selected_setting = (app.selected_setting + 1).min(1);
+        }
+        KeyCode::Up => {
+            app.selected_setting = app.selected_setting.saturating_sub(1);
+        }
+        KeyCode::Char(' ') | KeyCode::Enter => match app.selected_setting {
+            0 => {
+                app.show_thinking = !app.show_thinking;
+                show_notification(
+                    app,
+                    "Settings",
+                    if app.show_thinking {
+                        "Thinking text visible."
+                    } else {
+                        "Thinking text hidden."
+                    },
+                );
+            }
+            1 => {
+                app.full_tool_view = !app.full_tool_view;
+                show_notification(
+                    app,
+                    "Settings",
+                    if app.full_tool_view {
+                        "Full tool output visible."
+                    } else {
+                        "Tool output compacted."
+                    },
+                );
+            }
+            _ => {}
+        },
+        _ => {}
+    }
     false
 }
 
@@ -682,7 +1463,8 @@ fn handle_sessions_key(app: &mut TuiApp, code: KeyCode) -> bool {
     match code {
         KeyCode::Esc => app.mode = Mode::Normal,
         KeyCode::Down => {
-            app.selected_session = (app.selected_session + 1).min(app.saved_sessions.len().saturating_sub(1));
+            app.selected_session =
+                (app.selected_session + 1).min(app.saved_sessions.len().saturating_sub(1));
         }
         KeyCode::Up => {
             app.selected_session = app.selected_session.saturating_sub(1);
@@ -696,11 +1478,16 @@ fn handle_sessions_key(app: &mut TuiApp, code: KeyCode) -> bool {
         }
         KeyCode::Delete => {
             if let Some(snapshot) = app.saved_sessions.get(app.selected_session) {
-                let path = app.session_store.root().join(format!("{}.json", snapshot.id.0));
+                let path = app
+                    .session_store
+                    .root()
+                    .join(format!("{}.json", snapshot.id.0));
                 let _ = std::fs::remove_file(&path);
             }
             app.saved_sessions = load_saved_sessions(&app.session_store);
-            app.selected_session = app.selected_session.min(app.saved_sessions.len().saturating_sub(1));
+            app.selected_session = app
+                .selected_session
+                .min(app.saved_sessions.len().saturating_sub(1));
         }
         _ => {}
     }
@@ -793,7 +1580,9 @@ fn handle_normal_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyModifiers) -
             insert_input_char(app, '\n');
         }
         KeyCode::Esc => {
-            if app.vim_enabled {
+            if app.is_loading {
+                cancel_stream(app);
+            } else if app.vim_enabled {
                 app.vim_mode = VimMode::Normal;
             } else {
                 app.scroll_offset = 0;
@@ -876,17 +1665,34 @@ fn handle_command_key(app: &mut TuiApp, code: KeyCode) -> bool {
     false
 }
 
-fn handle_model_key(app: &mut TuiApp, code: KeyCode) -> bool {
+fn handle_model_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyModifiers) -> bool {
     let rows = build_model_rows(app);
     // List visible height is approximately modal height (22) minus decoration (~7 rows)
     let visible_rows = 14u16;
     match code {
         KeyCode::Esc => app.mode = Mode::Normal,
+        KeyCode::Char('r') if modifiers.contains(KeyModifiers::CONTROL) => {
+            sync_models_tui(app);
+            app.mode = Mode::Normal;
+        }
+        KeyCode::Char('e') if modifiers.contains(KeyModifiers::CONTROL) => {
+            if selected_model_in_rows(&rows, app.selected_model).is_some() {
+                app.pending_model_selection = Some(app.selected_model);
+                app.mode = Mode::ApiKeyEntry;
+                app.api_key_input.clear();
+                app.api_key_cursor = 0;
+            }
+        }
         KeyCode::Tab => {
-            app.large_task = !app.large_task;
-            app.model_scroll = 0;
-            app.selected_model =
-                first_model_index(&build_model_rows(app)).unwrap_or(app.selected_model);
+            // Sync just the provider that owns the currently selected model
+            let provider_id = app
+                .models
+                .get(app.selected_model)
+                .map(|m| m.provider_id.clone());
+            if let Some(pid) = provider_id {
+                sync_provider_tui(app, &pid);
+            }
+            app.mode = Mode::Normal;
         }
         KeyCode::Char(ch) => {
             app.model_filter.push(ch);
@@ -1005,10 +1811,7 @@ fn run_selected_command(app: &mut TuiApp) -> bool {
     match command.action {
         CommandAction::NewSession => {
             app.messages.clear();
-            app.conversation_history = vec![ModelMessage {
-                role: ModelRole::System,
-                content: default_system_prompt(),
-            }];
+            reset_system_context(app);
             app.input.clear();
             app.input_cursor = 0;
             app.scroll_offset = 0;
@@ -1018,6 +1821,9 @@ fn run_selected_command(app: &mut TuiApp) -> bool {
         CommandAction::SwitchModel => {
             open_model_picker(app);
         }
+        CommandAction::RetryLast => {
+            retry_last_response(app);
+        }
         CommandAction::ToggleVimMode => {
             app.vim_enabled = !app.vim_enabled;
             app.vim_mode = if app.vim_enabled {
@@ -1026,6 +1832,15 @@ fn run_selected_command(app: &mut TuiApp) -> bool {
                 VimMode::Insert
             };
             app.mode = Mode::Normal;
+            show_notification(
+                app,
+                "Editor",
+                if app.vim_enabled {
+                    "Vim mode enabled."
+                } else {
+                    "Vim mode disabled."
+                },
+            );
         }
         CommandAction::OpenThinking => {
             open_thinking_picker(app);
@@ -1033,11 +1848,196 @@ fn run_selected_command(app: &mut TuiApp) -> bool {
         CommandAction::Sessions => {
             open_sessions_picker(app);
         }
+        CommandAction::SyncModels => {
+            sync_models_tui(app);
+            app.mode = Mode::Normal;
+        }
         CommandAction::Quit => return true,
+        CommandAction::Settings => {
+            app.mode = Mode::Settings;
+            app.selected_setting = 0;
+        }
         _ => app.mode = Mode::Normal,
     }
 
     false
+}
+
+fn sync_models_tui(app: &mut TuiApp) {
+    if app.is_loading {
+        return;
+    }
+    app.is_loading = true;
+    app.loading_start = Some(Instant::now());
+
+    app.messages.push(ChatMessage {
+        status: Some("syncing".to_string()),
+        ..ChatMessage::new(
+            ChatRole::Assistant,
+            "Syncing models from providers...".to_string(),
+        )
+    });
+
+    let tx = app.async_tx.clone();
+    let mut loaded_config = app.loaded_config.clone();
+    let cwd = app.project_dir.clone();
+
+    app.stream_task = Some(tokio::spawn(async move {
+        let credential_store = CredentialStore::new(loaded_config.data_dir.clone());
+        let catalog = navi_core::provider_catalog(&loaded_config.config);
+        let mut updated_any = false;
+        let mut synced_providers = Vec::new();
+        let mut failed_providers = Vec::new();
+
+        for provider_config in catalog {
+            if let Some(api_key) =
+                credential_store.resolve_api_key(&provider_config.id, &provider_config.api_key_env)
+            {
+                match OpenAiProvider::from_provider_config_with_key(&provider_config, api_key) {
+                    Ok(provider) => match provider.list_models().await {
+                        Ok(models) => {
+                            if !models.is_empty() {
+                                loaded_config
+                                    .config
+                                    .update_provider_models(&provider_config.id, &models);
+                                updated_any = true;
+                                synced_providers.push(provider_config.id.clone());
+                            }
+                        }
+                        Err(e) => {
+                            failed_providers.push(format!("{}: {}", provider_config.id, e));
+                        }
+                    },
+                    Err(e) => {
+                        failed_providers.push(format!("{}: {}", provider_config.id, e));
+                    }
+                }
+            }
+        }
+
+        let message = if updated_any {
+            let save_result = if let Some(_) = &loaded_config.project_config_path {
+                navi_core::save_project_config(&cwd, &loaded_config.config)
+            } else if let Some(global_path) = &loaded_config.global_config_path {
+                navi_core::save_global_config(global_path, &loaded_config.config)
+            } else {
+                Err(anyhow::anyhow!("no config file path found to save"))
+            };
+
+            match save_result {
+                Ok(path) => {
+                    let synced_str = synced_providers.join(", ");
+                    let mut msg = format!(
+                        "Successfully synced models for: {synced_str}.\nSaved configuration to {}",
+                        path.display()
+                    );
+                    if !failed_providers.is_empty() {
+                        msg.push_str(&format!(
+                            "\nFailed to sync some providers:\n- {}",
+                            failed_providers.join("\n- ")
+                        ));
+                    }
+                    msg
+                }
+                Err(e) => {
+                    format!("Synced models, but failed to save configuration: {}", e)
+                }
+            }
+        } else {
+            if failed_providers.is_empty() {
+                "No providers had credentials configured for model synchronization.".to_string()
+            } else {
+                format!(
+                    "Failed to sync models:\n- {}",
+                    failed_providers.join("\n- ")
+                )
+            }
+        };
+
+        let _ = tx.send(AsyncEvent::SyncCompleted {
+            loaded_config,
+            message,
+        });
+    }));
+}
+
+fn sync_provider_tui(app: &mut TuiApp, provider_id: &str) {
+    if app.is_loading {
+        return;
+    }
+    app.is_loading = true;
+    app.loading_start = Some(Instant::now());
+
+    app.messages.push(ChatMessage {
+        status: Some("syncing".to_string()),
+        ..ChatMessage::new(
+            ChatRole::Assistant,
+            format!("Syncing models for provider '{provider_id}'..."),
+        )
+    });
+
+    let tx = app.async_tx.clone();
+    let mut loaded_config = app.loaded_config.clone();
+    let cwd = app.project_dir.clone();
+    let target_provider = provider_id.to_string();
+
+    app.stream_task = Some(tokio::spawn(async move {
+        let credential_store = CredentialStore::new(loaded_config.data_dir.clone());
+        let catalog = navi_core::provider_catalog(&loaded_config.config);
+
+        let message = if let Some(provider_config) =
+            catalog.iter().find(|pc| pc.id == target_provider)
+        {
+            if let Some(api_key) =
+                credential_store.resolve_api_key(&provider_config.id, &provider_config.api_key_env)
+            {
+                match OpenAiProvider::from_provider_config_with_key(provider_config, api_key) {
+                    Ok(provider) => match provider.list_models().await {
+                        Ok(models) if !models.is_empty() => {
+                            loaded_config
+                                .config
+                                .update_provider_models(&target_provider, &models);
+
+                            let save_result = if loaded_config.project_config_path.is_some() {
+                                navi_core::save_project_config(&cwd, &loaded_config.config)
+                            } else if let Some(global_path) = &loaded_config.global_config_path {
+                                navi_core::save_global_config(global_path, &loaded_config.config)
+                            } else {
+                                Err(anyhow::anyhow!("no config file path found to save"))
+                            };
+
+                            match save_result {
+                                Ok(path) => format!(
+                                    "Synced {} models for '{target_provider}'.\nSaved to {}",
+                                    models.len(),
+                                    path.display()
+                                ),
+                                Err(e) => format!(
+                                    "Synced models for '{target_provider}', but failed to save: {e}"
+                                ),
+                            }
+                        }
+                        Ok(_) => {
+                            format!("No models returned by provider '{target_provider}'.")
+                        }
+                        Err(e) => format!("Failed to sync '{target_provider}': {e}"),
+                    },
+                    Err(e) => format!("Failed to initialize provider '{target_provider}': {e}"),
+                }
+            } else {
+                format!(
+                    "No API key configured for provider '{target_provider}'. Set it via ctrl+m."
+                )
+            }
+        } else {
+            format!("Provider '{target_provider}' not found in the catalog.")
+        };
+
+        let _ = tx.send(AsyncEvent::SyncCompleted {
+            loaded_config,
+            message,
+        });
+    }));
 }
 
 // ─── input editing helpers ─────────────────────────────────────────────────────
@@ -1314,8 +2314,62 @@ fn render(frame: &mut Frame<'_>, app: &TuiApp) {
         Mode::ApiKeyEntry => render_api_key_entry(frame, app, modal_rect(area, 72, 11)),
         Mode::Thinking => render_thinking_picker(frame, app, modal_rect(area, 40, 10)),
         Mode::Sessions => render_sessions_picker(frame, app, modal_rect(area, 72, 16)),
+        Mode::Settings => render_settings(frame, app, modal_rect(area, 50, 10)),
         Mode::Normal => {}
     }
+
+    if app.pending_tool.is_some() {
+        render_tool_approval(frame, app, modal_rect(area, 72, 12));
+    }
+
+    render_notification(frame, app, area);
+}
+
+fn render_notification(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
+    let Some(notification) = visible_notification(app) else {
+        return;
+    };
+
+    let message_width = notification
+        .message
+        .chars()
+        .count()
+        .max(notification.title.chars().count())
+        .saturating_add(8);
+    let available_width = area.width.saturating_sub(4).max(1);
+    let width = (message_width.clamp(26, 68) as u16).min(available_width);
+    let height = area.height.min(3).max(1);
+    let x = area.x + area.width.saturating_sub(width + 2);
+    let y = area.y
+        + area
+            .height
+            .saturating_sub(9)
+            .min(area.height.saturating_sub(height));
+    let rect = Rect::new(x, y, width, height);
+    let inner = rect.inner(Margin {
+        horizontal: 2,
+        vertical: 1,
+    });
+
+    frame.render_widget(Clear, rect);
+    frame.render_widget(
+        Block::new()
+            .title(Line::from(vec![Span::styled(
+                format!(" {} ", notification.title),
+                Style::default().fg(PINK).add_modifier(Modifier::BOLD),
+            )]))
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .border_style(Style::default().fg(ACCENT))
+            .style(Style::default().bg(PANEL)),
+        rect,
+    );
+    frame.render_widget(
+        Paragraph::new(notification.message.clone())
+            .style(Style::default().fg(TEXT).bg(PANEL))
+            .wrap(Wrap { trim: true }),
+        inner,
+    );
 }
 
 // ─── chat area ─────────────────────────────────────────────────────────────────
@@ -1336,30 +2390,145 @@ fn render_chat_area(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
         return;
     }
 
-    // Build rendered lines from messages
     let chat_width = inner.width as usize;
-    let mut rendered_lines: Vec<Line<'_>> = Vec::new();
+    ensure_chat_cache(app, chat_width);
+    let cache = app.chat_render_cache.borrow();
+    let rendered_lines = &cache.lines;
+
+    // Apply scroll offset (from bottom)
+    let visible_height = inner.height as usize;
+    let total_lines = rendered_lines.len();
+    let max_scroll = total_lines.saturating_sub(visible_height);
+    let effective_scroll = app.scroll_offset.min(max_scroll);
+    let start = total_lines
+        .saturating_sub(visible_height)
+        .saturating_sub(effective_scroll);
+    let end = (start + visible_height).min(total_lines);
+
+    let visible_lines: Vec<Line<'static>> = rendered_lines[start..end].to_vec();
+
+    frame.render_widget(
+        Paragraph::new(Text::from(visible_lines))
+            .style(Style::default().bg(BG))
+            .wrap(Wrap { trim: false }),
+        inner,
+    );
+}
+
+fn ensure_chat_cache(app: &TuiApp, chat_width: usize) {
+    let signature = chat_render_signature(app);
+    {
+        let cache = app.chat_render_cache.borrow();
+        if cache.width == chat_width
+            && cache.full_tool_view == app.full_tool_view
+            && cache.show_thinking == app.show_thinking
+            && cache.signature == signature
+        {
+            return;
+        }
+    }
+
+    let lines = build_chat_lines(app, chat_width);
+    let mut cache = app.chat_render_cache.borrow_mut();
+    cache.width = chat_width;
+    cache.full_tool_view = app.full_tool_view;
+    cache.show_thinking = app.show_thinking;
+    cache.signature = signature;
+    cache.lines = lines;
+}
+
+fn chat_render_signature(app: &TuiApp) -> String {
+    let mut signature = String::with_capacity(app.messages.len() * 48);
+    signature.push_str(if app.full_tool_view {
+        "full|"
+    } else {
+        "compact|"
+    });
+    signature.push_str(if app.show_thinking { "think|" } else { "hide|" });
+    for msg in &app.messages {
+        signature.push(match msg.role {
+            ChatRole::User => 'u',
+            ChatRole::Assistant => 'a',
+        });
+        signature.push(':');
+        signature.push_str(&msg.content.len().to_string());
+        signature.push(':');
+        signature.push_str(&msg.thinking_content.len().to_string());
+        signature.push(':');
+        signature.push_str(msg.status.as_deref().unwrap_or_default());
+        signature.push(':');
+        signature.push_str(msg.usage_label.as_deref().unwrap_or_default());
+        signature.push(':');
+        signature.push_str(&msg.elapsed_ms.unwrap_or_default().to_string());
+        signature.push(':');
+        signature.push_str(msg.model_label.as_deref().unwrap_or_default());
+        signature.push(':');
+        signature.push_str(msg.provider_label.as_deref().unwrap_or_default());
+        if let Some(result) = &msg.tool_result {
+            signature.push(':');
+            signature.push_str(if result.ok { "ok" } else { "err" });
+        }
+        signature.push('|');
+    }
+    signature
+}
+
+fn build_chat_lines(app: &TuiApp, chat_width: usize) -> Vec<Line<'static>> {
+    let mut rendered_lines: Vec<Line<'static>> = Vec::new();
 
     for msg in &app.messages {
-        rendered_lines.push(Line::from(""));
+        if is_empty_tool_placeholder(msg) {
+            continue;
+        }
+        if !rendered_lines.is_empty() {
+            rendered_lines.push(Line::from(""));
+        }
 
         match msg.role {
             ChatRole::User => {
-                let wrapped = wrap_text(&msg.content, chat_width.saturating_sub(4));
-                for line_text in &wrapped {
-                    rendered_lines.push(Line::from(vec![
-                        Span::styled("│ ", Style::default().fg(USER_ACCENT)),
-                        Span::styled(line_text.clone(), Style::default().fg(TEXT)),
-                    ]));
-                }
+                rendered_lines.extend(render_markdown_lines(
+                    &msg.content,
+                    chat_width.saturating_sub(4),
+                    USER_ACCENT,
+                    TEXT,
+                    false,
+                ));
             }
             ChatRole::Assistant => {
-                let wrapped = wrap_text(&msg.content, chat_width.saturating_sub(2));
-                for line_text in &wrapped {
-                    rendered_lines.push(Line::from(Span::styled(
-                        line_text.clone(),
-                        Style::default().fg(TEXT),
-                    )));
+                let is_tool_result = msg.status.as_deref() == Some("tool result");
+                if is_tool_result && !app.full_tool_view {
+                    let compact = match (&msg.tool_invocation, &msg.tool_result) {
+                        (Some(invocation), Some(result)) => tool_compact_text(invocation, result),
+                        _ => "tool called · unknown".to_string(),
+                    };
+                    let ok = msg.tool_result.as_ref().map(|res| res.ok).unwrap_or(false);
+                    rendered_lines.push(Line::from(vec![
+                        Span::styled(
+                            "● ",
+                            Style::default().fg(if ok { Color::Green } else { Color::Red }),
+                        ),
+                        Span::styled(compact, Style::default().fg(TEXT)),
+                    ]));
+                } else {
+                    if app.show_thinking && !msg.thinking_content.is_empty() {
+                        rendered_lines.extend(render_markdown_lines(
+                            &msg.thinking_content,
+                            chat_width.saturating_sub(4),
+                            MUTED,
+                            MUTED,
+                            true,
+                        ));
+                        if !msg.content.is_empty() {
+                            rendered_lines.push(Line::from(""));
+                        }
+                    }
+                    rendered_lines.extend(render_markdown_lines(
+                        &msg.content,
+                        chat_width.saturating_sub(2),
+                        TEXT,
+                        TEXT,
+                        false,
+                    ));
                 }
 
                 if let (Some(model_label), Some(provider_label)) =
@@ -1376,7 +2545,18 @@ fn render_chat_area(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
                         })
                         .unwrap_or_default();
 
-                    let attr_text = format!("◇ {model_label} via {provider_label} {elapsed}");
+                    let status = msg
+                        .status
+                        .as_ref()
+                        .map(|status| format!(" • {status}"))
+                        .unwrap_or_default();
+                    let usage = msg
+                        .usage_label
+                        .as_ref()
+                        .map(|usage| format!(" • {usage}"))
+                        .unwrap_or_default();
+                    let attr_text =
+                        format!("◇ {model_label} via {provider_label} {elapsed}{status}{usage}");
                     let attr_len = attr_text.chars().count();
                     let dash_count = chat_width.saturating_sub(attr_len + 2);
                     let dashes: String = std::iter::repeat('─').take(dash_count).collect();
@@ -1389,50 +2569,498 @@ fn render_chat_area(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
             }
         }
     }
+    rendered_lines
+}
 
-    // Loading indicator
-    if app.is_loading {
-        rendered_lines.push(Line::from(""));
-        let dots = match (app.tick / 3) % 4 {
-            0 => "⠋",
-            1 => "⠙",
-            2 => "⠹",
-            _ => "⠸",
-        };
-        let elapsed_str = app
-            .loading_start
-            .map(|start| {
-                let secs = start.elapsed().as_secs();
-                format!(" {secs}s")
-            })
-            .unwrap_or_default();
-        rendered_lines.push(Line::from(vec![
-            Span::styled(dots, Style::default().fg(SIGNAL)),
-            Span::styled(
-                format!(" thinking{elapsed_str}"),
-                Style::default().fg(MUTED),
-            ),
-        ]));
+fn is_empty_tool_placeholder(message: &ChatMessage) -> bool {
+    message.role == ChatRole::Assistant
+        && message.content.trim().is_empty()
+        && message.thinking_content.trim().is_empty()
+        && message.status.as_deref().is_some_and(|status| {
+            status.starts_with("tool:")
+                || status.starts_with("approval:")
+                || status == "thinking"
+                || status == "receiving"
+        })
+}
+
+fn render_markdown_lines(
+    text: &str,
+    max_width: usize,
+    marker_color: Color,
+    text_color: Color,
+    italic: bool,
+) -> Vec<Line<'static>> {
+    let mut lines = Vec::new();
+    let mut in_code = false;
+    let mut language = String::new();
+    let show_marker = marker_color != text_color || italic;
+
+    let raw_lines = text.lines().collect::<Vec<_>>();
+    let mut index = 0;
+    while index < raw_lines.len() {
+        let raw_line = raw_lines[index];
+        let trimmed = raw_line.trim_start();
+        if let Some(rest) = trimmed.strip_prefix("```") {
+            in_code = !in_code;
+            language = if in_code {
+                rest.split_whitespace()
+                    .next()
+                    .unwrap_or_default()
+                    .to_string()
+            } else {
+                String::new()
+            };
+            lines.push(markdown_boundary_line(
+                if in_code { rest.trim() } else { "" },
+                show_marker,
+                marker_color,
+            ));
+            index += 1;
+            continue;
+        }
+
+        if in_code {
+            lines.push(code_line(raw_line, &language, show_marker, marker_color));
+            index += 1;
+            continue;
+        }
+
+        if is_table_line(trimmed) {
+            let mut table_rows = Vec::new();
+            while index < raw_lines.len() && is_table_line(raw_lines[index].trim_start()) {
+                let table_line = raw_lines[index].trim_start();
+                if !is_table_separator(table_line) {
+                    table_rows.push(table_line.to_string());
+                }
+                index += 1;
+            }
+            lines.extend(table_block_lines(&table_rows, show_marker, marker_color));
+            continue;
+        }
+
+        let wrapped = wrap_text(raw_line, max_width);
+        for line in wrapped {
+            lines.push(text_line(
+                line,
+                show_marker,
+                marker_color,
+                text_color,
+                italic,
+            ));
+        }
+        index += 1;
     }
 
-    // Apply scroll offset (from bottom)
-    let visible_height = inner.height as usize;
-    let total_lines = rendered_lines.len();
-    let max_scroll = total_lines.saturating_sub(visible_height);
-    let effective_scroll = app.scroll_offset.min(max_scroll);
-    let start = total_lines
-        .saturating_sub(visible_height)
-        .saturating_sub(effective_scroll);
-    let end = (start + visible_height).min(total_lines);
+    if text.is_empty() {
+        lines.push(text_line(
+            String::new(),
+            show_marker,
+            marker_color,
+            text_color,
+            italic,
+        ));
+    }
 
-    let visible_lines: Vec<Line<'_>> = rendered_lines[start..end].to_vec();
+    lines
+}
 
-    frame.render_widget(
-        Paragraph::new(Text::from(visible_lines))
-            .style(Style::default().bg(BG))
-            .wrap(Wrap { trim: false }),
-        inner,
-    );
+fn text_line(
+    text: String,
+    show_marker: bool,
+    marker_color: Color,
+    text_color: Color,
+    italic: bool,
+) -> Line<'static> {
+    let mut spans = marker_spans(show_marker, marker_color);
+    if !italic {
+        if let Some(markdown_line) = markdown_prose_line(&text, text_color) {
+            spans.extend(markdown_line);
+            return Line::from(spans);
+        }
+    }
+
+    let mut style = Style::default().fg(text_color);
+    if italic {
+        style = style.add_modifier(Modifier::ITALIC);
+    }
+    spans.push(Span::styled(text, style));
+    Line::from(spans)
+}
+
+fn markdown_prose_line(text: &str, fallback: Color) -> Option<Vec<Span<'static>>> {
+    let trimmed = text.trim_start();
+    let indent = text.len().saturating_sub(trimmed.len());
+    let mut spans = Vec::new();
+    if indent > 0 {
+        spans.push(Span::styled(
+            " ".repeat(indent),
+            Style::default().fg(fallback),
+        ));
+    }
+
+    let heading = trimmed.chars().take_while(|ch| *ch == '#').count();
+    if (1..=6).contains(&heading) && trimmed.chars().nth(heading) == Some(' ') {
+        let prefix = match heading {
+            1 => "█ ",
+            2 => "▣ ",
+            3 => "◆ ",
+            _ => "◇ ",
+        };
+        spans.push(Span::styled(
+            prefix,
+            Style::default().fg(PINK).add_modifier(Modifier::BOLD),
+        ));
+        spans.extend(
+            inline_text_spans(&trimmed[heading + 1..], TEXT)
+                .into_iter()
+                .map(|mut span| {
+                    span.style = span.style.add_modifier(Modifier::BOLD);
+                    span
+                }),
+        );
+        return Some(spans);
+    }
+
+    if let Some(rest) = trimmed.strip_prefix("> ") {
+        spans.push(Span::styled(
+            "▌ ",
+            Style::default().fg(PINK).add_modifier(Modifier::BOLD),
+        ));
+        spans.extend(inline_text_spans(rest, MUTED));
+        return Some(spans);
+    }
+
+    if trimmed.starts_with('|') && trimmed.ends_with('|') {
+        spans.extend(table_row_spans(&table_cells(trimmed), &[]));
+        return Some(spans);
+    }
+
+    if trimmed.starts_with("- ") || trimmed.starts_with("* ") {
+        spans.push(Span::styled(
+            "• ",
+            Style::default().fg(PINK).add_modifier(Modifier::BOLD),
+        ));
+        spans.extend(inline_text_spans(&trimmed[2..], fallback));
+        return Some(spans);
+    }
+
+    if let Some((marker, rest)) = ordered_list_marker(trimmed) {
+        spans.push(Span::styled(
+            marker,
+            Style::default().fg(PINK).add_modifier(Modifier::BOLD),
+        ));
+        spans.extend(inline_text_spans(rest, fallback));
+        return Some(spans);
+    }
+
+    let inline = inline_text_spans(trimmed, fallback);
+    (inline.len() > 1).then(|| {
+        spans.extend(inline);
+        spans
+    })
+}
+
+fn is_table_line(text: &str) -> bool {
+    text.starts_with('|') && text.ends_with('|') && text.matches('|').count() >= 2
+}
+
+fn is_table_separator(text: &str) -> bool {
+    is_table_line(text)
+        && table_cells(text).iter().all(|cell| {
+            let cell = cell.trim();
+            !cell.is_empty() && cell.chars().all(|ch| matches!(ch, '-' | ':' | ' '))
+        })
+}
+
+fn table_cells(text: &str) -> Vec<String> {
+    text.trim_matches('|')
+        .split('|')
+        .map(|cell| cell.trim().to_string())
+        .collect()
+}
+
+fn table_block_lines(
+    table_rows: &[String],
+    show_marker: bool,
+    marker_color: Color,
+) -> Vec<Line<'static>> {
+    let rows = table_rows
+        .iter()
+        .map(|row| table_cells(row))
+        .collect::<Vec<_>>();
+    let column_count = rows.iter().map(Vec::len).max().unwrap_or(0);
+    let mut widths = vec![0; column_count];
+    for row in &rows {
+        for (index, cell) in row.iter().enumerate() {
+            widths[index] = widths[index].max(rendered_inline_width(cell));
+        }
+    }
+
+    rows.iter()
+        .enumerate()
+        .map(|(row_index, cells)| {
+            let mut spans = marker_spans(show_marker, marker_color);
+            spans.extend(table_row_spans_with_header(cells, &widths, row_index == 0));
+            Line::from(spans)
+        })
+        .collect()
+}
+
+fn table_row_spans(cells: &[String], widths: &[usize]) -> Vec<Span<'static>> {
+    table_row_spans_with_header(cells, widths, false)
+}
+
+fn table_row_spans_with_header(
+    cells: &[String],
+    widths: &[usize],
+    header: bool,
+) -> Vec<Span<'static>> {
+    let mut spans = Vec::new();
+    for (index, cell) in cells.iter().enumerate() {
+        if index > 0 {
+            spans.push(Span::styled("  ", Style::default().fg(GHOST)));
+        }
+        let mut style = Style::default().fg(if header { CODE_TYPE } else { TEXT });
+        if header {
+            style = style.add_modifier(Modifier::BOLD);
+        }
+        spans.extend(inline_text_spans(
+            cell,
+            if header { CODE_TYPE } else { TEXT },
+        ));
+        let width = widths.get(index).copied().unwrap_or(0);
+        let padding = width.saturating_sub(rendered_inline_width(cell));
+        if padding > 0 {
+            spans.push(Span::styled(" ".repeat(padding), style));
+        }
+    }
+    spans
+}
+
+fn rendered_inline_width(text: &str) -> usize {
+    inline_text_spans(text, TEXT)
+        .iter()
+        .map(|span| span.content.chars().count())
+        .sum()
+}
+
+fn ordered_list_marker(text: &str) -> Option<(String, &str)> {
+    let digit_len = text.chars().take_while(|ch| ch.is_ascii_digit()).count();
+    if digit_len == 0 {
+        return None;
+    }
+
+    let after_digits = text.get(digit_len..)?;
+    let marker_len = if after_digits.starts_with(". ") || after_digits.starts_with(") ") {
+        digit_len + 2
+    } else {
+        return None;
+    };
+
+    Some((text[..marker_len].to_string(), &text[marker_len..]))
+}
+
+fn inline_text_spans(text: &str, fallback: Color) -> Vec<Span<'static>> {
+    let mut spans = Vec::new();
+    let mut plain = String::new();
+    let mut index = 0;
+
+    while index < text.len() {
+        let rest = &text[index..];
+
+        if let Some((marker_len, content, modifier, color)) = inline_delimited(rest) {
+            push_plain_span(&mut spans, &mut plain, fallback);
+            spans.push(Span::styled(
+                content.to_string(),
+                Style::default().fg(color).add_modifier(modifier),
+            ));
+            index += marker_len + content.len() + marker_len;
+            continue;
+        }
+
+        if let Some((label, url, consumed)) = inline_link(rest) {
+            push_plain_span(&mut spans, &mut plain, fallback);
+            spans.push(Span::styled(
+                label.to_string(),
+                Style::default().fg(CODE_TYPE).add_modifier(Modifier::BOLD),
+            ));
+            spans.push(Span::styled(
+                format!(" ({url})"),
+                Style::default().fg(MUTED),
+            ));
+            index += consumed;
+            continue;
+        }
+
+        if let Some(ch) = rest.chars().next() {
+            plain.push(ch);
+            index += ch.len_utf8();
+        } else {
+            break;
+        }
+    }
+    push_plain_span(&mut spans, &mut plain, fallback);
+    spans
+}
+
+fn inline_delimited(rest: &str) -> Option<(usize, &str, Modifier, Color)> {
+    let patterns = [
+        ("`", Modifier::empty(), CODE_STRING),
+        ("**", Modifier::BOLD, TEXT),
+        ("__", Modifier::BOLD, TEXT),
+        ("*", Modifier::ITALIC, MUTED),
+        ("_", Modifier::ITALIC, MUTED),
+    ];
+
+    for (marker, modifier, color) in patterns {
+        if let Some(after_start) = rest.strip_prefix(marker) {
+            if let Some(end) = after_start.find(marker) {
+                if end > 0 {
+                    return Some((marker.len(), &after_start[..end], modifier, color));
+                }
+            }
+        }
+    }
+
+    None
+}
+
+fn inline_link(rest: &str) -> Option<(&str, &str, usize)> {
+    let after_open = rest.strip_prefix('[')?;
+    let label_end = after_open.find("](")?;
+    let label = &after_open[..label_end];
+    let after_label = &after_open[label_end + 2..];
+    let url_end = after_label.find(')')?;
+    let url = &after_label[..url_end];
+    if label.is_empty() || url.is_empty() {
+        return None;
+    }
+    Some((label, url, 1 + label_end + 2 + url_end + 1))
+}
+
+fn push_plain_span(spans: &mut Vec<Span<'static>>, plain: &mut String, fallback: Color) {
+    if plain.is_empty() {
+        return;
+    }
+    spans.push(Span::styled(
+        std::mem::take(plain),
+        Style::default().fg(fallback),
+    ));
+}
+
+fn markdown_boundary_line(language: &str, show_marker: bool, marker_color: Color) -> Line<'static> {
+    let mut spans = marker_spans(show_marker, marker_color);
+    let label = if language.is_empty() {
+        "```".to_string()
+    } else {
+        format!("```{language}")
+    };
+    spans.push(Span::styled(label, Style::default().fg(GHOST)));
+    Line::from(spans)
+}
+
+fn code_line(
+    raw_line: &str,
+    language: &str,
+    show_marker: bool,
+    marker_color: Color,
+) -> Line<'static> {
+    let mut spans = marker_spans(show_marker, marker_color);
+    spans.extend(highlight_code_line(raw_line, language));
+    Line::from(spans)
+}
+
+fn marker_spans(show_marker: bool, marker_color: Color) -> Vec<Span<'static>> {
+    if show_marker {
+        vec![Span::styled("│ ", Style::default().fg(marker_color))]
+    } else {
+        Vec::new()
+    }
+}
+
+fn highlight_code_line(raw_line: &str, language: &str) -> Vec<Span<'static>> {
+    let syntax_set = syntax_set();
+    let syntax = syntax_set
+        .find_syntax_by_token(language)
+        .or_else(|| syntax_set.find_syntax_by_extension(language))
+        .unwrap_or_else(|| syntax_set.find_syntax_plain_text());
+    let mut highlighter = HighlightLines::new(syntax, syntax_theme());
+
+    match highlighter.highlight_line(raw_line, syntax_set) {
+        Ok(ranges) => ranges
+            .into_iter()
+            .map(|(style, text)| Span::styled(text.to_string(), syntect_style(style)))
+            .collect(),
+        Err(_) => vec![Span::styled(
+            raw_line.to_string(),
+            Style::default().fg(TEXT),
+        )],
+    }
+}
+
+fn syntect_style(style: SyntectStyle) -> Style {
+    Style::default().fg(lain_code_color(style))
+}
+
+fn lain_code_color(style: SyntectStyle) -> Color {
+    let color = style.foreground;
+    if style
+        .font_style
+        .contains(syntect::highlighting::FontStyle::ITALIC)
+        || (color.r < 118 && color.g < 118 && color.b < 118)
+    {
+        CODE_COMMENT
+    } else if style
+        .font_style
+        .contains(syntect::highlighting::FontStyle::BOLD)
+    {
+        CODE_FUNC
+    } else if color.r > 190 && color.b > 165 && color.g < 170 {
+        CODE_KEYWORD
+    } else if color.g > color.r.saturating_add(25) && color.g > color.b.saturating_add(5) {
+        Color::Rgb(143, 232, 173)
+    } else if color.b > color.r.saturating_add(25) && color.g > color.r.saturating_add(10) {
+        CODE_TYPE
+    } else if color.b > color.r.saturating_add(25) {
+        CODE_NUMBER
+    } else if color.r > 175 && color.g > 145 && color.b < 145 {
+        CODE_CONST
+    } else if color.r > 180 && color.b > 95 && color.g < 135 {
+        CODE_OPERATOR
+    } else if color.r < 175 && color.g < 175 && color.b < 175 {
+        CODE_PUNCT
+    } else if color.r > 200 && color.g > 200 && color.b > 200 {
+        TEXT
+    } else {
+        Color::Rgb(
+            boost_code_channel(color.r),
+            boost_code_channel(color.g),
+            boost_code_channel(color.b),
+        )
+    }
+}
+
+fn boost_code_channel(value: u8) -> u8 {
+    value.max(96).saturating_add(22)
+}
+
+fn syntax_set() -> &'static SyntaxSet {
+    static SYNTAX_SET: OnceLock<SyntaxSet> = OnceLock::new();
+    SYNTAX_SET.get_or_init(SyntaxSet::load_defaults_newlines)
+}
+
+fn syntax_theme() -> &'static Theme {
+    static THEME: OnceLock<Theme> = OnceLock::new();
+    THEME.get_or_init(|| {
+        let themes = ThemeSet::load_defaults();
+        themes
+            .themes
+            .get("base16-ocean.dark")
+            .or_else(|| themes.themes.values().next())
+            .cloned()
+            .unwrap_or_default()
+    })
 }
 
 fn welcome_text(app: &TuiApp, width: usize) -> Text<'static> {
@@ -1691,6 +3319,11 @@ fn shortcut_tips(app: &TuiApp, width: usize) -> Line<'static> {
         ("ctrl+enter", "send prompt", TEXT),
         ("ctrl+j", "newline", TEXT),
         ("ctrl+m", "models", TEXT),
+        (
+            "ctrl+g",
+            if app.yolo_mode { "yolo:on" } else { "yolo" },
+            TEXT,
+        ),
         ("ctrl+p", "commands", TEXT),
         ("ctrl+c", "quit", TEXT),
         (vim_state, "", ACCENT),
@@ -1838,6 +3471,54 @@ fn render_api_key_entry(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
 }
 
 // ─── thinking picker ───────────────────────────────────────────────────────────
+fn render_tool_approval(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
+    let Some(invocation) = app.pending_tool.as_ref() else {
+        return;
+    };
+    frame.render_widget(Clear, area);
+    let block = modal_block("Tool Approval");
+    let inner = area.inner(Margin {
+        horizontal: 2,
+        vertical: 1,
+    });
+    frame.render_widget(block, area);
+
+    let input = serde_json::to_string_pretty(&invocation.input)
+        .unwrap_or_else(|_| invocation.input.to_string());
+    let text = Text::from(vec![
+        Line::from(vec![
+            Span::styled("Tool: ", Style::default().fg(MUTED)),
+            Span::styled(
+                invocation.tool_name.clone(),
+                Style::default().fg(TEXT).add_modifier(Modifier::BOLD),
+            ),
+        ]),
+        Line::from(""),
+        Line::from(Span::styled(
+            truncate_display(&input, 420),
+            Style::default().fg(SIGNAL),
+        )),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled("y", Style::default().fg(TEXT).add_modifier(Modifier::BOLD)),
+            Span::styled(" approve  •  ", Style::default().fg(MUTED)),
+            Span::styled("n", Style::default().fg(TEXT).add_modifier(Modifier::BOLD)),
+            Span::styled(" deny  •  ", Style::default().fg(MUTED)),
+            Span::styled(
+                "ctrl+g",
+                Style::default().fg(TEXT).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(" yolo mode", Style::default().fg(MUTED)),
+        ]),
+    ]);
+    frame.render_widget(
+        Paragraph::new(text)
+            .wrap(Wrap { trim: false })
+            .style(Style::default().bg(PANEL)),
+        inner,
+    );
+}
+
 fn render_thinking_picker(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
     frame.render_widget(Clear, area);
     let block = modal_block("Thinking Mode");
@@ -1849,10 +3530,7 @@ fn render_thinking_picker(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
     });
     let rows = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Min(5),
-            Constraint::Length(1),
-        ])
+        .constraints([Constraint::Min(5), Constraint::Length(1)])
         .split(inner);
 
     let items = THINKING_OPTIONS
@@ -1871,17 +3549,59 @@ fn render_thinking_picker(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
             };
 
             let marker = if current { "● " } else { "  " };
-            ListItem::new(Span::styled(
-                format!("{}{}", marker, level.label()),
-                style,
-            ))
-            .style(style)
+            ListItem::new(Span::styled(format!("{}{}", marker, level.label()), style)).style(style)
         })
         .collect::<Vec<_>>();
 
     frame.render_widget(List::new(items).style(Style::default().bg(PANEL)), rows[0]);
     frame.render_widget(
         Paragraph::new("↑↓ choose  •  enter confirm  •  esc cancel")
+            .style(Style::default().fg(MUTED).bg(PANEL)),
+        rows[1],
+    );
+}
+
+fn render_settings(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
+    frame.render_widget(Clear, area);
+    let block = modal_block("Settings");
+    frame.render_widget(block, area);
+
+    let inner = area.inner(Margin {
+        horizontal: 2,
+        vertical: 1,
+    });
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(4), Constraint::Length(1)])
+        .split(inner);
+
+    let settings_list = [
+        ("Show Thinking Text", app.show_thinking),
+        ("Expand Tool Outputs (Ctrl+O)", app.full_tool_view),
+    ];
+
+    let items = settings_list
+        .iter()
+        .enumerate()
+        .map(|(index, (label, val))| {
+            let selected = index == app.selected_setting;
+            let style = if selected {
+                Style::default()
+                    .fg(Color::White)
+                    .bg(ACCENT)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(TEXT).bg(PANEL)
+            };
+
+            let checkbox = if *val { "[x] " } else { "[ ] " };
+            ListItem::new(Span::styled(format!("{}{}", checkbox, label), style)).style(style)
+        })
+        .collect::<Vec<_>>();
+
+    frame.render_widget(List::new(items).style(Style::default().bg(PANEL)), rows[0]);
+    frame.render_widget(
+        Paragraph::new("↑↓ choose  •  space/enter toggle  •  esc close")
             .style(Style::default().fg(MUTED).bg(PANEL)),
         rows[1],
     );
@@ -1899,10 +3619,7 @@ fn render_sessions_picker(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
     });
     let rows = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Min(10),
-            Constraint::Length(1),
-        ])
+        .constraints([Constraint::Min(10), Constraint::Length(1)])
         .split(inner);
 
     if app.saved_sessions.is_empty() {
@@ -1945,10 +3662,7 @@ fn render_sessions_picker(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
             })
             .collect::<Vec<_>>();
 
-        frame.render_widget(
-            List::new(items).style(Style::default().bg(PANEL)),
-            rows[0],
-        );
+        frame.render_widget(List::new(items).style(Style::default().bg(PANEL)), rows[0]);
     }
 
     frame.render_widget(
@@ -2084,8 +3798,6 @@ fn render_model_picker(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
     let rows = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(2),
-            Constraint::Length(1),
             Constraint::Length(1),
             Constraint::Min(8),
             Constraint::Length(1),
@@ -2098,64 +3810,23 @@ fn render_model_picker(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
         app.model_filter.as_str()
     };
     frame.render_widget(
-        Paragraph::new(Text::from(vec![
-            Line::from(vec![
-                Span::styled("> ", Style::default().fg(SIGNAL)),
-                Span::styled(
-                    filter_text,
-                    Style::default().fg(if app.model_filter.is_empty() {
-                        MUTED
-                    } else {
-                        TEXT
-                    }),
-                ),
-            ]),
-            Line::from(Span::styled(
-                if app.large_task {
-                    "large, complex tasks"
+        Paragraph::new(Text::from(vec![Line::from(vec![
+            Span::styled("> ", Style::default().fg(SIGNAL)),
+            Span::styled(
+                filter_text,
+                Style::default().fg(if app.model_filter.is_empty() {
+                    MUTED
                 } else {
-                    "quick, small tasks"
-                },
-                Style::default().fg(MUTED),
-            )),
-        ]))
+                    TEXT
+                }),
+            ),
+        ])]))
         .style(Style::default().bg(PANEL)),
         rows[0],
     );
 
-    let tabs = Line::from(vec![
-        Span::styled(
-            if app.large_task {
-                "◉ Large Task"
-            } else {
-                "○ Large Task"
-            },
-            Style::default().fg(TEXT),
-        ),
-        Span::styled("    ", Style::default().fg(MUTED)),
-        Span::styled(
-            if app.large_task {
-                "○ Small Task"
-            } else {
-                "◉ Small Task"
-            },
-            Style::default().fg(TEXT),
-        ),
-    ]);
-    frame.render_widget(
-        Paragraph::new(tabs)
-            .alignment(Alignment::Right)
-            .style(Style::default().bg(PANEL)),
-        rows[1],
-    );
-
-    frame.render_widget(
-        Paragraph::new("Provider protocols").style(Style::default().fg(MUTED).bg(PANEL)),
-        rows[2],
-    );
-
     let list_rows = build_model_rows(app);
-    let list_area = rows[3];
+    let list_area = rows[1];
     let row_width = list_area.width as usize;
 
     let selected_row = selected_model_in_rows(&list_rows, app.selected_model).unwrap_or(0);
@@ -2166,24 +3837,16 @@ fn render_model_picker(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
     let items = list_rows
         .iter()
         .map(|row| match row {
-            ListRow::Header { label, description } => {
+            ListRow::Header { label, .. } => {
                 let header_style = Style::default()
                     .fg(TEXT)
                     .bg(PANEL)
                     .add_modifier(Modifier::BOLD);
-                let desc_style = Style::default().fg(MUTED).bg(PANEL);
+                let refresh_style = Style::default().fg(GHOST).bg(PANEL);
 
-                if description.is_empty() {
-                    ListItem::new(Span::styled(format!("  {}", label), header_style))
-                        .style(header_style)
-                } else {
-                    ListItem::new(Line::from(vec![
-                        Span::styled(format!("  {}", label), header_style),
-                        Span::styled("  ", desc_style),
-                        Span::styled(format!("({})", description), desc_style),
-                    ]))
-                    .style(header_style)
-                }
+                let mut spans = vec![Span::styled(format!("  {}", label), header_style)];
+                spans.push(Span::styled("  ↻ tab", refresh_style));
+                ListItem::new(Line::from(spans)).style(header_style)
             }
             ListRow::Model { index } => {
                 let model = &app.models[*index];
@@ -2215,10 +3878,10 @@ fn render_model_picker(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
     );
     frame.render_widget(
         Paragraph::new(
-            "type search  •  ↑↓ choose  •  tab task size  •  enter confirm  •  esc exit",
+            "type search  •  ↑↓ choose  •  ctrl+e edit setup  •  tab refresh provider  •  ctrl+r refresh all  •  enter confirm  •  esc exit",
         )
         .style(Style::default().fg(MUTED).bg(PANEL)),
-        rows[4],
+        rows[2],
     );
 }
 
@@ -2233,6 +3896,14 @@ fn modal_block(title: &'static str) -> Block<'static> {
         .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(ACCENT))
         .style(Style::default().fg(TEXT).bg(PANEL))
+}
+
+fn truncate_display(value: &str, max_chars: usize) -> String {
+    let mut result = value.chars().take(max_chars).collect::<String>();
+    if value.chars().count() > max_chars {
+        result.push_str("\n<truncated>");
+    }
+    result
 }
 
 fn command_row(label: &str, shortcut: &str, width: usize) -> String {
@@ -2323,17 +3994,19 @@ fn filtered_commands(app: &TuiApp) -> Vec<CommandItem> {
 
 // ─── model picker rows (provider-grouped) ─────────────────────────────────────
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 enum ListRow {
-    Header { label: String, description: String },
-    Model { index: usize },
+    Header {
+        label: String,
+        description: String,
+        provider_id: String,
+    },
+    Model {
+        index: usize,
+    },
 }
 
 fn build_model_rows(app: &TuiApp) -> Vec<ListRow> {
-    let task_size = if app.large_task {
-        ModelTaskSize::Large
-    } else {
-        ModelTaskSize::Small
-    };
     let filter = app.model_filter.trim().to_lowercase();
 
     // Group visible models by provider label
@@ -2341,9 +4014,6 @@ fn build_model_rows(app: &TuiApp) -> Vec<ListRow> {
     let mut current_provider: Option<&str> = None;
 
     for (index, model) in app.models.iter().enumerate() {
-        if model.task_size != task_size {
-            continue;
-        }
         if !filter.is_empty()
             && !model.name.to_lowercase().contains(&filter)
             && !model.provider_id.to_lowercase().contains(&filter)
@@ -2357,6 +4027,7 @@ fn build_model_rows(app: &TuiApp) -> Vec<ListRow> {
             rows.push(ListRow::Header {
                 label: model.provider_label.clone(),
                 description: model.provider_description.clone(),
+                provider_id: model.provider_id.clone(),
             });
         }
         rows.push(ListRow::Model { index });
@@ -2424,14 +4095,24 @@ fn previous_model_index(app: &TuiApp, rows: &[ListRow]) -> usize {
 }
 
 fn sync_scroll_to_selection(app: &mut TuiApp, rows: &[ListRow], visible_rows: u16) {
-    if let Some(selected_row) = selected_model_in_rows(rows, app.selected_model) {
-        let selected_row_u16 = selected_row as u16;
-        if selected_row_u16 < app.model_scroll as u16 {
-            app.model_scroll = selected_row;
-        } else if selected_row_u16 >= app.model_scroll as u16 + visible_rows.saturating_sub(1) {
-            app.model_scroll = (selected_row_u16 - visible_rows + 4) as usize;
+    let Some(selected_row) = selected_model_in_rows(rows, app.selected_model) else {
+        return;
+    };
+
+    let visible_rows = usize::from(visible_rows).max(1);
+    if selected_row < app.model_scroll {
+        app.model_scroll = selected_row;
+    } else {
+        let bottom = app
+            .model_scroll
+            .saturating_add(visible_rows.saturating_sub(1));
+        if selected_row >= bottom {
+            app.model_scroll = selected_row.saturating_sub(visible_rows.saturating_sub(4));
         }
     }
+
+    let max_scroll = rows.len().saturating_sub(visible_rows);
+    app.model_scroll = app.model_scroll.min(max_scroll);
 }
 
 // ─── persistence ───────────────────────────────────────────────────────────────
@@ -2456,14 +4137,22 @@ fn save_current_session(app: &mut TuiApp) {
 }
 
 fn save_preferences(app: &mut TuiApp) {
-    app.loaded_config.config.model.name = app.models.get(app.selected_model)
+    app.loaded_config.config.model.name = app
+        .models
+        .get(app.selected_model)
         .map(|m| m.name.clone())
         .unwrap_or_else(|| app.loaded_config.config.model.name.clone());
-    app.loaded_config.config.model.provider = app.models.get(app.selected_model)
+    app.loaded_config.config.model.provider = app
+        .models
+        .get(app.selected_model)
         .map(|m| m.provider_id.clone())
         .unwrap_or_else(|| app.loaded_config.config.model.provider.clone());
 
-    let global_path = app.loaded_config.global_config_path.as_ref().expect("global config path");
+    let global_path = app
+        .loaded_config
+        .global_config_path
+        .as_ref()
+        .expect("global config path");
     if let Err(err) = save_global_config(global_path, &app.loaded_config.config) {
         eprintln!("failed to save preferences: {err:#}");
     }
@@ -2471,44 +4160,45 @@ fn save_preferences(app: &mut TuiApp) {
 
 fn load_session(app: &mut TuiApp, snapshot: &SessionSnapshot) {
     app.messages.clear();
-    app.conversation_history = vec![ModelMessage {
-        role: ModelRole::System,
-        content: default_system_prompt(),
-    }];
+    reset_system_context(app);
     app.events.clear();
     app.total_tokens_estimate = 0;
+
+    let mut tool_invocations = std::collections::HashMap::new();
 
     for event in &snapshot.events {
         match event {
             AgentEvent::UserTaskSubmitted { text } => {
                 let word_count = text.split_whitespace().count();
                 app.total_tokens_estimate += word_count * 4 / 3;
-                app.messages.push(ChatMessage {
-                    role: ChatRole::User,
-                    content: text.clone(),
-                    model_label: None,
-                    provider_label: None,
-                    elapsed_ms: None,
-                });
-                app.conversation_history.push(ModelMessage {
-                    role: ModelRole::User,
-                    content: text.clone(),
-                });
+                app.messages
+                    .push(ChatMessage::new(ChatRole::User, text.clone()));
+                app.conversation_history
+                    .push(ModelMessage::user(text.clone()));
             }
-            AgentEvent::ModelOutput { text } => {
+            AgentEvent::ModelOutput { text, thinking } => {
                 let word_count = text.split_whitespace().count();
                 app.total_tokens_estimate += word_count * 4 / 3;
                 app.messages.push(ChatMessage {
-                    role: ChatRole::Assistant,
-                    content: text.clone(),
-                    model_label: None,
-                    provider_label: None,
-                    elapsed_ms: None,
+                    thinking_content: thinking.clone().unwrap_or_default(),
+                    ..ChatMessage::new(ChatRole::Assistant, text.clone())
                 });
-                app.conversation_history.push(ModelMessage {
-                    role: ModelRole::Assistant,
-                    content: text.clone(),
-                });
+                app.conversation_history
+                    .push(ModelMessage::assistant(text.clone()));
+            }
+            AgentEvent::ToolRequested(invocation) => {
+                tool_invocations.insert(invocation.id.clone(), invocation.clone());
+            }
+            AgentEvent::ToolCompleted(result) => {
+                if let Some(invocation) = tool_invocations.get(&result.invocation_id) {
+                    let content = tool_full_content(invocation, result);
+                    app.messages.push(ChatMessage {
+                        status: Some("tool result".to_string()),
+                        tool_invocation: Some(invocation.clone()),
+                        tool_result: Some(result.clone()),
+                        ..ChatMessage::new(ChatRole::Assistant, content.trim_end().to_string())
+                    });
+                }
             }
             _ => {}
         }
@@ -2556,7 +4246,7 @@ mod tests {
             base_url: Some("https://example.com/v1".to_string()),
             models: vec![navi_core::ProviderModelConfig {
                 name: "test-large".to_string(),
-                task_size: ModelTaskSize::Large,
+                task_size: navi_core::ModelTaskSize::Large,
             }],
         }];
 
@@ -2706,6 +4396,120 @@ mod tests {
     }
 
     #[test]
+    fn markdown_renderer_wraps_plain_text() {
+        let lines = render_markdown_lines("hello world from navi", 12, TEXT, TEXT, false);
+        let rendered = lines.iter().map(line_text).collect::<Vec<_>>();
+
+        assert_eq!(rendered, vec!["hello world", "from navi"]);
+    }
+
+    #[test]
+    fn markdown_renderer_preserves_fenced_code_blocks() {
+        let lines = render_markdown_lines(
+            "before\n```rust\nfn main() {}\n```\nafter",
+            80,
+            TEXT,
+            TEXT,
+            false,
+        );
+        let rendered = lines.iter().map(line_text).collect::<Vec<_>>();
+
+        assert_eq!(
+            rendered,
+            vec!["before", "```rust", "fn main() {}", "```", "after"]
+        );
+    }
+
+    #[test]
+    fn markdown_renderer_handles_unclosed_fence() {
+        let lines = render_markdown_lines("```unknown\n  value", 80, TEXT, TEXT, false);
+        let rendered = lines.iter().map(line_text).collect::<Vec<_>>();
+
+        assert_eq!(rendered, vec!["```unknown", "  value"]);
+    }
+
+    #[test]
+    fn markdown_renderer_renders_inline_markup() {
+        let lines = render_markdown_lines(
+            "**NAVI** is `wired` and [documented](https://example.test)",
+            120,
+            TEXT,
+            TEXT,
+            false,
+        );
+        let rendered = lines.iter().map(line_text).collect::<Vec<_>>();
+
+        assert_eq!(
+            rendered,
+            vec!["NAVI is wired and documented (https://example.test)"]
+        );
+        assert!(
+            lines[0].spans[0]
+                .style
+                .add_modifier
+                .contains(Modifier::BOLD)
+        );
+    }
+
+    #[test]
+    fn markdown_renderer_handles_lists_and_quotes() {
+        let lines = render_markdown_lines(
+            "1. **Architecture**\n> signal in prose",
+            120,
+            TEXT,
+            TEXT,
+            false,
+        );
+        let rendered = lines.iter().map(line_text).collect::<Vec<_>>();
+
+        assert_eq!(rendered, vec!["1. Architecture", "▌ signal in prose"]);
+    }
+
+    #[test]
+    fn markdown_renderer_consumes_headings_and_table_pipes() {
+        let lines = render_markdown_lines(
+            "## Project Overview\n\n| Crate | Purpose |\n|---|---|\n| `navi-cli` | Entry binary |",
+            120,
+            TEXT,
+            TEXT,
+            false,
+        );
+        let rendered = lines.iter().map(line_text).collect::<Vec<_>>();
+
+        assert_eq!(
+            rendered,
+            vec![
+                "▣ Project Overview",
+                "",
+                "Crate     Purpose     ",
+                "navi-cli  Entry binary",
+            ]
+        );
+        assert!(!rendered.iter().any(|line| line.contains("##")));
+        assert!(!rendered.iter().skip(2).any(|line| line.contains('|')));
+    }
+
+    #[test]
+    fn code_highlighting_uses_varied_colors() {
+        let spans = highlight_code_line("fn main() { let value = \"x\"; }", "rust");
+        let mut colors = Vec::new();
+        for color in spans.iter().filter_map(|span| span.style.fg) {
+            if !colors.contains(&color) {
+                colors.push(color);
+            }
+        }
+
+        assert!(colors.len() >= 3);
+    }
+
+    fn line_text(line: &Line<'_>) -> String {
+        line.spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect::<String>()
+    }
+
+    #[test]
     fn submit_without_provider_adds_error_message() {
         let mut app = test_app("hello");
         app.model_provider = None;
@@ -2730,7 +4534,7 @@ mod tests {
         let mut app = app_with_missing_provider_key();
         app.mode = Mode::Models;
 
-        handle_model_key(&mut app, KeyCode::Enter);
+        handle_model_key(&mut app, KeyCode::Enter, KeyModifiers::NONE);
 
         assert_eq!(app.mode, Mode::ApiKeyEntry);
         assert_eq!(app.pending_model_selection, Some(app.selected_model));
@@ -2740,7 +4544,6 @@ mod tests {
     fn model_picker_filters_by_model_and_provider_text() {
         let mut app = test_app("");
         open_model_picker(&mut app);
-        app.large_task = true;
 
         app.model_filter = "gemini".to_string();
         let rows = build_model_rows(&app);
@@ -2755,7 +4558,41 @@ mod tests {
     }
 
     #[test]
-    fn enter_shift_enter_and_ctrl_j_insert_newlines() {
+    fn model_scroll_sync_does_not_underflow_near_top() {
+        let mut app = test_app("");
+        open_model_picker(&mut app);
+        let rows = build_model_rows(&app);
+        let (selected_row, selected_model) = rows
+            .iter()
+            .enumerate()
+            .find_map(|(row, item)| match item {
+                ListRow::Model { index } if row >= 13 => Some((row, *index)),
+                _ => None,
+            })
+            .expect("model near viewport edge");
+        app.selected_model = selected_model;
+        app.model_scroll = 0;
+
+        sync_scroll_to_selection(&mut app, &rows, 14);
+
+        assert!(app.model_scroll <= selected_row);
+    }
+
+    #[test]
+    fn model_scroll_sync_clamps_large_scroll_values() {
+        let mut app = test_app("");
+        open_model_picker(&mut app);
+        let rows = build_model_rows(&app);
+        app.selected_model = first_model_index(&rows).expect("model");
+        app.model_scroll = usize::MAX;
+
+        sync_scroll_to_selection(&mut app, &rows, 14);
+
+        assert!(app.model_scroll <= rows.len().saturating_sub(14));
+    }
+
+    #[test]
+    fn enter_and_shift_enter_insert_newlines() {
         let mut app = test_app("one");
 
         handle_normal_key(&mut app, KeyCode::Enter, KeyModifiers::NONE);
@@ -2768,9 +4605,8 @@ mod tests {
         insert_input_char(&mut app, 'r');
         insert_input_char(&mut app, 'e');
         insert_input_char(&mut app, 'e');
-        handle_key(&mut app, KeyCode::Char('j'), KeyModifiers::CONTROL);
 
-        assert_eq!(app.input, "one\ntwo\nthree\n");
+        assert_eq!(app.input, "one\ntwo\nthree");
         assert_eq!(app.input_cursor, app.input.len());
     }
 
@@ -2778,10 +4614,26 @@ mod tests {
     fn ctrl_enter_sends_non_empty_message() {
         let mut app = test_app("one");
         app.model_provider = None;
-
         handle_key(&mut app, KeyCode::Enter, KeyModifiers::CONTROL);
-
         assert_eq!(app.messages[0].content, "one");
+        assert!(app.input.is_empty());
+
+        let mut app = test_app("two");
+        app.model_provider = None;
+        handle_key(&mut app, KeyCode::Char('j'), KeyModifiers::CONTROL);
+        assert_eq!(app.messages[0].content, "two");
+        assert!(app.input.is_empty());
+
+        let mut app = test_app("three");
+        app.model_provider = None;
+        handle_key(&mut app, KeyCode::Char('\n'), KeyModifiers::CONTROL);
+        assert_eq!(app.messages[0].content, "three");
+        assert!(app.input.is_empty());
+
+        let mut app = test_app("four");
+        app.model_provider = None;
+        handle_key(&mut app, KeyCode::Char('\r'), KeyModifiers::CONTROL);
+        assert_eq!(app.messages[0].content, "four");
         assert!(app.input.is_empty());
     }
 
@@ -2805,6 +4657,318 @@ mod tests {
 
         assert!(app.vim_enabled);
         assert_eq!(app.vim_mode, VimMode::Normal);
+        assert!(app.notification.is_some());
+    }
+
+    #[test]
+    fn ctrl_o_toggles_full_tool_view() {
+        let mut app = test_app("");
+        assert!(!app.full_tool_view);
+
+        handle_key(&mut app, KeyCode::Char('o'), KeyModifiers::CONTROL);
+        assert!(app.full_tool_view);
+        assert!(app.notification.is_some());
+
+        handle_key(&mut app, KeyCode::Char('O'), KeyModifiers::CONTROL);
+        assert!(!app.full_tool_view);
+    }
+
+    #[test]
+    fn yolo_toggle_uses_notification_not_chat() {
+        let mut app = test_app("");
+        let message_count = app.messages.len();
+
+        handle_key(&mut app, KeyCode::Char('g'), KeyModifiers::CONTROL);
+
+        assert!(app.yolo_mode);
+        assert_eq!(app.messages.len(), message_count);
+        let notification = app.notification.as_ref().expect("notification");
+        assert_eq!(notification.title, "Tools");
+        assert!(notification.message.contains("YOLO mode enabled"));
+    }
+
+    #[test]
+    fn notification_expires_after_ttl() {
+        let mut app = test_app("");
+        app.notification = Some(Notification {
+            title: "Tools".to_string(),
+            message: "YOLO mode enabled.".to_string(),
+            created_at: Instant::now() - NOTIFICATION_TTL - Duration::from_millis(1),
+            ttl: NOTIFICATION_TTL,
+        });
+
+        expire_notification(&mut app);
+
+        assert!(app.notification.is_none());
+    }
+
+    #[test]
+    fn settings_toggles_thinking_visibility() {
+        let mut app = test_app("");
+        app.mode = Mode::Settings;
+        app.selected_setting = 0;
+        assert!(app.show_thinking);
+
+        handle_settings_key(&mut app, KeyCode::Enter);
+        assert!(!app.show_thinking);
+        assert!(app.notification.is_some());
+    }
+
+    #[test]
+    fn tool_compact_text_is_one_line_with_status() {
+        let invocation = ToolInvocation {
+            id: "call-1".to_string(),
+            tool_name: "grep".to_string(),
+            input: serde_json::json!({ "pattern": "NAVI" }),
+        };
+        let ok_result = ToolResult {
+            invocation_id: "call-1".to_string(),
+            ok: true,
+            output: serde_json::json!({ "matches": [] }),
+        };
+        let err_result = ToolResult {
+            invocation_id: "call-1".to_string(),
+            ok: false,
+            output: serde_json::json!({ "error": "denied" }),
+        };
+
+        assert_eq!(
+            tool_compact_text(&invocation, &ok_result),
+            "grep called · success"
+        );
+        assert_eq!(
+            tool_compact_text(&invocation, &err_result),
+            "grep called · error"
+        );
+        assert!(!tool_compact_text(&invocation, &ok_result).contains('\n'));
+    }
+
+    #[test]
+    fn tool_full_content_includes_input_and_output() {
+        let invocation = ToolInvocation {
+            id: "call-1".to_string(),
+            tool_name: "read_file".to_string(),
+            input: serde_json::json!({ "path": "Cargo.toml" }),
+        };
+        let result = ToolResult {
+            invocation_id: "call-1".to_string(),
+            ok: true,
+            output: serde_json::json!({
+                "path": "Cargo.toml",
+                "content": "[workspace]\n",
+                "truncated": false,
+            }),
+        };
+
+        let content = tool_full_content(&invocation, &result);
+        assert!(content.contains("Input"));
+        assert!(content.contains("\"path\": \"Cargo.toml\""));
+        assert!(content.contains("Output"));
+        assert!(content.contains("[workspace]"));
+    }
+
+    #[test]
+    fn read_file_tool_full_content_uses_fenced_code_for_highlighting() {
+        let invocation = ToolInvocation {
+            id: "call-1".to_string(),
+            tool_name: "read_file".to_string(),
+            input: serde_json::json!({ "path": "src/lib.rs" }),
+        };
+        let result = ToolResult {
+            invocation_id: "call-1".to_string(),
+            ok: true,
+            output: serde_json::json!({
+                "path": "src/lib.rs",
+                "content": "fn main() {}\n",
+            }),
+        };
+
+        let content = tool_full_content(&invocation, &result);
+
+        assert!(content.contains("```rust"));
+        assert!(content.contains("fn main() {}"));
+    }
+
+    #[test]
+    fn completed_tool_removes_empty_tool_placeholder() {
+        let mut app = test_app("");
+        app.messages.push(ChatMessage {
+            model_label: Some("model".to_string()),
+            provider_label: Some("provider".to_string()),
+            status: Some("tool: read_file".to_string()),
+            ..ChatMessage::new(ChatRole::Assistant, String::new())
+        });
+
+        let invocation = ToolInvocation {
+            id: "call-1".to_string(),
+            tool_name: "read_file".to_string(),
+            input: serde_json::json!({ "path": "Cargo.toml" }),
+        };
+        let result = ToolResult {
+            invocation_id: "call-1".to_string(),
+            ok: true,
+            output: serde_json::json!({ "path": "Cargo.toml", "content": "" }),
+        };
+
+        handle_tool_completed(&mut app, invocation, result);
+
+        assert_eq!(
+            app.messages
+                .iter()
+                .filter(|message| message.status.as_deref() == Some("tool result"))
+                .count(),
+            1
+        );
+        assert!(!app.messages.iter().any(is_empty_tool_placeholder));
+    }
+
+    #[tokio::test]
+    async fn command_palette_sync_models_starts_sync() {
+        let mut app = test_app("");
+        app.command_filter = "sync".to_string();
+        app.selected_command = 0;
+
+        let commands = filtered_commands(&app);
+        assert!(
+            commands
+                .iter()
+                .any(|c| matches!(c.action, CommandAction::SyncModels))
+        );
+
+        sync_models_tui(&mut app);
+
+        assert!(app.is_loading);
+        assert!(app.loading_start.is_some());
+        assert_eq!(app.messages.len(), 1);
+        assert_eq!(app.messages[0].content, "Syncing models from providers...");
+        assert_eq!(app.messages[0].status, Some("syncing".to_string()));
+    }
+
+    #[tokio::test]
+    async fn model_picker_tab_triggers_per_provider_sync() {
+        let mut app = test_app("");
+        app.mode = Mode::Models;
+
+        let provider_id = app.models[app.selected_model].provider_id.clone();
+
+        // Press Tab to trigger per-provider sync
+        handle_model_key(&mut app, KeyCode::Tab, KeyModifiers::NONE);
+
+        assert!(app.is_loading);
+        assert_eq!(app.mode, Mode::Normal);
+        assert_eq!(app.messages.len(), 1);
+        assert!(
+            app.messages[0].content.contains(&provider_id),
+            "Tab sync message should mention the provider: got '{}'",
+            app.messages[0].content
+        );
+    }
+
+    #[tokio::test]
+    async fn model_picker_ctrl_r_triggers_all_provider_sync() {
+        let mut app = test_app("");
+        app.mode = Mode::Models;
+
+        // Press Ctrl+r to trigger all-provider sync
+        handle_model_key(&mut app, KeyCode::Char('r'), KeyModifiers::CONTROL);
+
+        assert!(app.is_loading);
+        assert_eq!(app.mode, Mode::Normal);
+        assert_eq!(app.messages.len(), 1);
+        assert_eq!(app.messages[0].content, "Syncing models from providers...");
+    }
+
+    #[test]
+    fn model_picker_ctrl_e_opens_provider_setup() {
+        let mut app = test_app("");
+        app.mode = Mode::Models;
+        let selected = app.selected_model;
+
+        handle_model_key(&mut app, KeyCode::Char('e'), KeyModifiers::CONTROL);
+
+        assert_eq!(app.mode, Mode::ApiKeyEntry);
+        assert_eq!(app.pending_model_selection, Some(selected));
+        assert!(app.api_key_input.is_empty());
+        assert_eq!(app.api_key_cursor, 0);
+    }
+
+    #[test]
+    fn model_error_is_rendered_as_separate_message() {
+        let mut app = test_app("");
+        app.messages.push(ChatMessage {
+            status: Some("tool result".to_string()),
+            ..ChatMessage::new(
+                ChatRole::Assistant,
+                "✓ write_file called · success".to_string(),
+            )
+        });
+        app.messages.push(ChatMessage {
+            status: Some("thinking".to_string()),
+            ..ChatMessage::new(ChatRole::Assistant, String::new())
+        });
+        app.is_loading = true;
+        app.skip_next_model_done = true;
+
+        handle_model_error(
+            &mut app,
+            "provider request failed with 400 Bad Request".to_string(),
+        );
+
+        assert_eq!(app.messages[0].status.as_deref(), Some("tool result"));
+        assert_eq!(app.messages[2].status.as_deref(), Some("error"));
+        assert!(app.messages[2].content.contains("400"));
+        assert!(!app.is_loading);
+        assert!(!app.skip_next_model_done);
+    }
+
+    #[test]
+    fn transient_model_error_retries_without_final_error() {
+        let mut app = test_app("");
+        app.model_provider = None;
+        app.messages.push(ChatMessage {
+            status: Some("thinking".to_string()),
+            ..ChatMessage::new(ChatRole::Assistant, String::new())
+        });
+        app.is_loading = true;
+
+        handle_model_error(
+            &mut app,
+            "failed to read chat completions stream: unexpected EOF during chunk size line"
+                .to_string(),
+        );
+
+        assert_eq!(app.model_retry_attempts, 1);
+        assert!(
+            app.messages
+                .iter()
+                .any(|message| message.status.as_deref() == Some("retrying"))
+        );
+        assert!(
+            app.messages
+                .iter()
+                .all(|message| message.status.as_deref() != Some("thinking"))
+        );
+    }
+
+    #[test]
+    fn escape_cancels_active_tool_task_state() {
+        let mut app = test_app("");
+        app.is_loading = true;
+        app.skip_next_model_done = true;
+        app.messages.push(ChatMessage {
+            status: Some("tool: bash".to_string()),
+            ..ChatMessage::new(ChatRole::Assistant, String::new())
+        });
+
+        let should_quit = handle_key(&mut app, KeyCode::Esc, KeyModifiers::NONE);
+
+        assert!(!should_quit);
+        assert!(!app.is_loading);
+        assert!(!app.skip_next_model_done);
+        assert_eq!(
+            active_assistant_message(&mut app).and_then(|message| message.status.clone()),
+            Some("cancelled".to_string())
+        );
     }
 
     #[test]

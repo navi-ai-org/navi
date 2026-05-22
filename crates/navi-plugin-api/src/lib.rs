@@ -1,5 +1,6 @@
 use anyhow::Result;
-use navi_core::ToolDefinition;
+use navi_core::Tool;
+use std::sync::Arc;
 
 pub const NAVI_PLUGIN_API_VERSION: u32 = 1;
 pub const NAVI_PLUGIN_ENTRYPOINT: &[u8] = b"navi_plugin_entrypoint";
@@ -12,7 +13,7 @@ pub trait NaviPlugin: Send + Sync {
 }
 
 pub trait PluginRegistry {
-    fn register_tool(&mut self, definition: ToolDefinition);
+    fn register_tool(&mut self, tool: Arc<dyn Tool>);
     fn register_agent_policy(&mut self, name: &str);
     fn register_tui_component(&mut self, name: &str);
 }

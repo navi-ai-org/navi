@@ -8,7 +8,9 @@ use std::path::{Path, PathBuf};
 #[serde(default)]
 pub struct NaviConfig {
     pub model: ModelConfig,
+    pub harness: HarnessConfig,
     pub approvals: ApprovalConfig,
+    pub security: SecurityConfig,
     pub providers: Vec<ProviderConfig>,
     pub plugins: Vec<PluginConfig>,
 }
@@ -22,10 +24,38 @@ pub struct ModelConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
+pub struct HarnessConfig {
+    pub profile: HarnessProfile,
+    pub max_tool_iterations_small: usize,
+    pub max_tool_iterations_medium: usize,
+    pub observation_bytes_small: usize,
+    pub observation_bytes_medium: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum HarnessProfile {
+    Auto,
+    Small,
+    Medium,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct ApprovalConfig {
     pub allow_reads: bool,
     pub require_for_writes: bool,
     pub require_for_commands: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SecurityConfig {
+    pub restrict_paths_to_project: bool,
+    pub protect_git_metadata: bool,
+    pub redact_secrets_in_sessions: bool,
+    pub allow_external_plugins: bool,
+    pub blocked_commands: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -107,7 +137,9 @@ impl NaviConfig {
         if other.model != ModelConfig::default() {
             self.model = other.model;
         }
+        self.harness = other.harness;
         self.approvals = other.approvals;
+        self.security = other.security;
         merge_provider_configs(&mut self.providers, other.providers);
         self.plugins.extend(other.plugins);
     }
@@ -118,8 +150,7 @@ pub fn save_global_config(global_path: &Path, config: &NaviConfig) -> Result<Pat
         fs::create_dir_all(parent)
             .with_context(|| format!("failed to create {}", parent.display()))?;
     }
-    let content = toml::to_string_pretty(config)
-        .context("failed to serialize config")?;
+    let content = toml::to_string_pretty(config).context("failed to serialize config")?;
     fs::write(global_path, &content)
         .with_context(|| format!("failed to write {}", global_path.display()))?;
     Ok(global_path.to_path_buf())
@@ -131,8 +162,7 @@ pub fn save_project_config(cwd: &Path, config: &NaviConfig) -> Result<PathBuf> {
         fs::create_dir_all(parent)
             .with_context(|| format!("failed to create {}", parent.display()))?;
     }
-    let content = toml::to_string_pretty(config)
-        .context("failed to serialize config")?;
+    let content = toml::to_string_pretty(config).context("failed to serialize config")?;
     fs::write(&project_path, &content)
         .with_context(|| format!("failed to write {}", project_path.display()))?;
     Ok(project_path)
@@ -142,7 +172,9 @@ impl Default for NaviConfig {
     fn default() -> Self {
         Self {
             model: ModelConfig::default(),
+            harness: HarnessConfig::default(),
             approvals: ApprovalConfig::default(),
+            security: SecurityConfig::default(),
             providers: Vec::new(),
             plugins: Vec::new(),
         }
@@ -158,6 +190,18 @@ impl Default for ModelConfig {
     }
 }
 
+impl Default for HarnessConfig {
+    fn default() -> Self {
+        Self {
+            profile: HarnessProfile::Auto,
+            max_tool_iterations_small: 24,
+            max_tool_iterations_medium: 48,
+            observation_bytes_small: 12 * 1024,
+            observation_bytes_medium: 48 * 1024,
+        }
+    }
+}
+
 impl Default for ApprovalConfig {
     fn default() -> Self {
         Self {
@@ -166,6 +210,28 @@ impl Default for ApprovalConfig {
             require_for_commands: true,
         }
     }
+}
+
+impl Default for SecurityConfig {
+    fn default() -> Self {
+        Self {
+            restrict_paths_to_project: true,
+            protect_git_metadata: true,
+            redact_secrets_in_sessions: true,
+            allow_external_plugins: false,
+            blocked_commands: default_blocked_commands(),
+        }
+    }
+}
+
+fn default_blocked_commands() -> Vec<String> {
+    [
+        "rm", "rmdir", "shred", "mkfs", "dd", "sudo", "su", "doas", "chmod", "chown", "chgrp",
+        "mount", "umount", "reboot", "shutdown", "poweroff",
+    ]
+    .into_iter()
+    .map(str::to_string)
+    .collect()
 }
 
 fn merge_from_file(config: &mut NaviConfig, path: &Path) -> Result<Option<PathBuf>> {
@@ -584,7 +650,7 @@ fn built_in_providers() -> Vec<ProviderConfig> {
             description: "NIM inference microservices".to_string(),
             kind: ProviderKind::OpenAiChatCompletions,
             api_key_env: "NVIDIA_API_KEY".to_string(),
-            base_url: Some("https://api.nvcf.nvidia.com/v1".to_string()),
+            base_url: Some("https://integrate.api.nvidia.com/v1".to_string()),
             models: vec![
                 model("meta/llama-3.3-70b-instruct", ModelTaskSize::Large),
                 model("meta/llama-3.1-8b-instruct", ModelTaskSize::Small),
@@ -745,6 +811,87 @@ impl PartialEq for ModelConfig {
     }
 }
 
+impl NaviConfig {
+    pub fn update_provider_models(&mut self, provider_id: &str, model_names: &[String]) {
+        let mut existing_models = std::collections::HashMap::new();
+
+        // Check built-in models
+        if let Some(built_in) = built_in_providers()
+            .into_iter()
+            .find(|p| p.id == provider_id)
+        {
+            for m in built_in.models {
+                existing_models.insert(m.name.clone(), m.task_size);
+            }
+        }
+
+        // Check current config models
+        if let Some(existing_override) = self.providers.iter().find(|p| p.id == provider_id) {
+            for m in &existing_override.models {
+                existing_models.insert(m.name.clone(), m.task_size);
+            }
+        }
+
+        // Build the new list of model configs
+        let mut new_models = Vec::new();
+        for name in model_names {
+            let task_size = if let Some(&size) = existing_models.get(name) {
+                size
+            } else {
+                determine_task_size(name)
+            };
+            new_models.push(ProviderModelConfig {
+                name: name.clone(),
+                task_size,
+            });
+        }
+
+        // Update the provider in self.providers
+        if let Some(p) = self.providers.iter_mut().find(|p| p.id == provider_id) {
+            p.models = new_models;
+        } else {
+            if let Some(mut resolved) = resolve_provider_config(self, provider_id) {
+                resolved.models = new_models;
+                self.providers.push(resolved);
+            } else {
+                self.providers.push(ProviderConfig {
+                    id: provider_id.to_string(),
+                    label: provider_id.to_string(),
+                    description: "Synced dynamically".to_string(),
+                    kind: ProviderKind::OpenAiChatCompletions,
+                    api_key_env: format!(
+                        "{}_API_KEY",
+                        provider_id.to_uppercase().replace('-', "_")
+                    ),
+                    base_url: None,
+                    models: new_models,
+                });
+            }
+        }
+    }
+}
+
+fn determine_task_size(name: &str) -> ModelTaskSize {
+    let name_lower = name.to_lowercase();
+    if name_lower.contains("mini")
+        || name_lower.contains("flash")
+        || name_lower.contains("haiku")
+        || name_lower.contains("nano")
+        || name_lower.contains("instant")
+        || name_lower.contains("lite")
+        || name_lower.contains("scout")
+        || name_lower.contains("small")
+        || name_lower.contains("8b")
+        || name_lower.contains("7b")
+        || name_lower.contains("3b")
+        || name_lower.contains("12b")
+    {
+        ModelTaskSize::Small
+    } else {
+        ModelTaskSize::Large
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -756,11 +903,13 @@ mod tests {
                 provider: "openai".to_string(),
                 name: "gpt-5.5".to_string(),
             },
+            harness: HarnessConfig::default(),
             approvals: ApprovalConfig {
                 allow_reads: true,
                 require_for_writes: true,
                 require_for_commands: true,
             },
+            security: SecurityConfig::default(),
             providers: Vec::new(),
             plugins: vec![PluginConfig {
                 path: PathBuf::from("/global/plugin.so"),
@@ -773,11 +922,13 @@ mod tests {
                 provider: "openai".to_string(),
                 name: "gpt-5.4".to_string(),
             },
+            harness: HarnessConfig::default(),
             approvals: ApprovalConfig {
                 allow_reads: true,
                 require_for_writes: false,
                 require_for_commands: true,
             },
+            security: SecurityConfig::default(),
             providers: Vec::new(),
             plugins: vec![PluginConfig {
                 path: PathBuf::from("./project-plugin.so"),
@@ -805,6 +956,14 @@ mod tests {
             providers
                 .iter()
                 .any(|provider| provider.id == "opencode-zen")
+        );
+        let nvidia = providers
+            .iter()
+            .find(|provider| provider.id == "nvidia")
+            .expect("nvidia provider");
+        assert_eq!(
+            nvidia.base_url.as_deref(),
+            Some("https://integrate.api.nvidia.com/v1")
         );
         assert!(providers.iter().all(|provider| !provider.models.is_empty()));
         assert!(

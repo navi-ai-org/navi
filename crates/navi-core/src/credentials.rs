@@ -34,6 +34,8 @@ impl CredentialStore {
     }
 
     pub fn set_api_key(&self, provider_id: &str, api_key: &str) -> Result<()> {
+        ensure_private_parent_dir(&self.path)?;
+
         let mut file = if self.path.exists() {
             let content =
                 fs::read_to_string(&self.path).context("failed to read credentials file")?;
@@ -48,10 +50,6 @@ impl CredentialStore {
                 api_key: api_key.to_string(),
             },
         );
-
-        if let Some(parent) = self.path.parent() {
-            fs::create_dir_all(parent).context("failed to create credentials directory")?;
-        }
 
         let content = toml::to_string_pretty(&file).context("failed to serialize credentials")?;
         fs::write(&self.path, &content)
@@ -76,6 +74,19 @@ impl CredentialStore {
         }
         self.get_api_key(provider_id)
     }
+}
+
+fn ensure_private_parent_dir(path: &PathBuf) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).context("failed to create credentials directory")?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(parent, fs::Permissions::from_mode(0o700))?;
+        }
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]
@@ -145,5 +156,31 @@ mod tests {
             .expect("save");
         let result = store.resolve_api_key("test-provider", "NAVI_NONEXISTENT_ENV_VAR_98765");
         assert_eq!(result.as_deref(), Some("stored-key"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn credentials_file_and_directory_are_private() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let data_dir = tempdir.path().join("navi-data");
+        let store = CredentialStore::new(data_dir.clone());
+
+        store.set_api_key("openai", "sk-test").expect("save");
+
+        let dir_mode = fs::metadata(&data_dir)
+            .expect("dir metadata")
+            .permissions()
+            .mode()
+            & 0o777;
+        let file_mode = fs::metadata(data_dir.join("credentials.toml"))
+            .expect("file metadata")
+            .permissions()
+            .mode()
+            & 0o777;
+
+        assert_eq!(dir_mode, 0o700);
+        assert_eq!(file_mode, 0o600);
     }
 }
