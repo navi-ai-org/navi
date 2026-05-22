@@ -462,6 +462,22 @@ fn built_in_providers() -> Vec<ProviderConfig> {
             ..Default::default()
         },
         ProviderConfig {
+            id: "github-copilot".to_string(),
+            label: "GitHub Copilot".to_string(),
+            description: "GitHub Copilot OAuth device sign-in".to_string(),
+            kind: ProviderKind::OpenAiChatCompletions,
+            api_key_env: "GITHUB_COPILOT_TOKEN".to_string(),
+            base_url: Some("https://api.githubcopilot.com".to_string()),
+            models: vec![
+                model("gpt-5.1-codex", ModelTaskSize::Large),
+                model("gpt-5.1", ModelTaskSize::Large),
+                model("gpt-5-mini", ModelTaskSize::Small),
+                model("claude-sonnet-4.5", ModelTaskSize::Large),
+                model("claude-haiku-4.5", ModelTaskSize::Small),
+            ],
+            ..Default::default()
+        },
+        ProviderConfig {
             id: "google-gemini".to_string(),
             label: "Google Gemini".to_string(),
             description: "Gemini API key".to_string(),

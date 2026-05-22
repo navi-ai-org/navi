@@ -7,7 +7,7 @@ use crossterm::execute;
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode, supports_keyboard_enhancement};
 use navi_core::{
     AgentEvent, AgentRunState, ApprovalDecision, CredentialStore, HarnessPolicy, LoadedConfig,
-    ModelMessage, ModelOption, ModelProvider, ModelRole, SecurityPolicy, SessionId,
+    ModelMessage, ModelOption, ModelProvider, ModelRole, ProviderConfig, SecurityPolicy, SessionId,
     SessionSnapshot, SessionStore, ThinkingConfig, ToolExecutor, ToolInvocation, ToolResult,
     available_model_options, build_system_prompt, canonical_provider_id, compact_tool_observation,
     log_path, resolve_provider_config, save_global_config, select_harness_policy,
@@ -111,6 +111,15 @@ enum AsyncEvent {
         loaded_config: LoadedConfig,
         message: String,
     },
+    OAuthDeviceStarted {
+        provider_id: String,
+        verification_uri: String,
+        user_code: String,
+    },
+    OAuthCompleted {
+        provider_id: String,
+        result: Result<(), String>,
+    },
     Agent(navi_core::AgentEvent),
     TurnCompleted(Result<String, String>),
     RetryModel,
@@ -167,6 +176,7 @@ pub struct TuiApp {
     api_key_input: String,
     api_key_cursor: usize,
     pending_model_selection: Option<usize>,
+    pending_provider_setup: Option<String>,
 
     // stats
     total_tokens_estimate: usize,
@@ -183,6 +193,8 @@ pub struct TuiApp {
     full_tool_view: bool,
     show_thinking: bool,
     selected_setting: usize,
+    selected_provider_setting: usize,
+    provider_settings_scroll: usize,
     notification: Option<Notification>,
     diagnostics: Vec<String>,
     log_path: PathBuf,
@@ -215,6 +227,7 @@ enum Mode {
     Thinking,
     Sessions,
     Settings,
+    Providers,
     Debug,
     Help,
 }
@@ -352,6 +365,7 @@ impl TuiApp {
             api_key_input: String::new(),
             api_key_cursor: 0,
             pending_model_selection: None,
+            pending_provider_setup: None,
             total_tokens_estimate: 0,
             session_store,
             events: Vec::new(),
@@ -363,6 +377,8 @@ impl TuiApp {
             full_tool_view: false,
             show_thinking: true,
             selected_setting: 0,
+            selected_provider_setting: 0,
+            provider_settings_scroll: 0,
             notification: None,
             diagnostics: Vec::new(),
             log_path,
@@ -649,6 +665,51 @@ fn run_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, mut app: TuiA
                     app.loading_start = None;
                     app.stream_task = None;
                     app.scroll_offset = 0;
+                }
+                AsyncEvent::OAuthDeviceStarted {
+                    provider_id,
+                    verification_uri,
+                    user_code,
+                } => {
+                    show_notification(
+                        &mut app,
+                        "OAuth",
+                        format!("{provider_id}: open {verification_uri} and enter {user_code}"),
+                    );
+                    app.messages.push(ChatMessage {
+                        status: Some("oauth".to_string()),
+                        ..ChatMessage::new(
+                            ChatRole::Assistant,
+                            format!(
+                                "OAuth started for {provider_id}.\nOpen {verification_uri}\nEnter code: {user_code}"
+                            ),
+                        )
+                    });
+                }
+                AsyncEvent::OAuthCompleted {
+                    provider_id,
+                    result,
+                } => {
+                    app.is_loading = false;
+                    app.loading_start = None;
+                    app.stream_task = None;
+                    match result {
+                        Ok(()) => {
+                            rebuild_provider(&mut app);
+                            show_notification(
+                                &mut app,
+                                "OAuth",
+                                format!("{provider_id} connected."),
+                            );
+                        }
+                        Err(err) => {
+                            show_notification(
+                                &mut app,
+                                "OAuth",
+                                format!("{provider_id} failed: {err}"),
+                            );
+                        }
+                    }
                 }
             }
         }
@@ -1631,13 +1692,21 @@ fn apply_model_selection(app: &mut TuiApp, model_index: usize) {
 }
 
 fn selected_or_pending_provider_id(app: &TuiApp) -> String {
-    app.pending_model_selection
-        .and_then(|index| app.models.get(index))
-        .map(|model| model.provider_id.clone())
-        .unwrap_or_else(|| app.loaded_config.config.model.provider.clone())
+    app.pending_provider_setup.clone().unwrap_or_else(|| {
+        app.pending_model_selection
+            .and_then(|index| app.models.get(index))
+            .map(|model| model.provider_id.clone())
+            .unwrap_or_else(|| app.loaded_config.config.model.provider.clone())
+    })
 }
 
 fn selected_or_pending_provider_label(app: &TuiApp) -> String {
+    if let Some(provider_id) = &app.pending_provider_setup {
+        return resolve_provider_config(&app.loaded_config.config, provider_id)
+            .map(|provider| provider.label)
+            .unwrap_or_else(|| provider_id.clone());
+    }
+
     app.pending_model_selection
         .and_then(|index| app.models.get(index))
         .map(|model| model.provider_label.clone())
@@ -1661,6 +1730,7 @@ fn save_api_key_and_rebuild(app: &mut TuiApp) {
         );
     }
 
+    let return_to_providers = app.pending_provider_setup.take().is_some();
     if let Some(model_index) = app.pending_model_selection.take() {
         apply_model_selection(app, model_index);
     } else {
@@ -1668,7 +1738,11 @@ fn save_api_key_and_rebuild(app: &mut TuiApp) {
     }
     app.api_key_input.clear();
     app.api_key_cursor = 0;
-    app.mode = Mode::Normal;
+    app.mode = if return_to_providers {
+        Mode::Providers
+    } else {
+        Mode::Normal
+    };
 }
 
 fn current_provider_env_var(app: &TuiApp) -> String {
@@ -1717,6 +1791,196 @@ fn current_provider_credential_status(app: &TuiApp) -> String {
     } else {
         "missing".to_string()
     }
+}
+
+struct ProviderAuthStatus {
+    configured: bool,
+    label: String,
+}
+
+fn provider_auth_status(app: &TuiApp, provider_config: &ProviderConfig) -> ProviderAuthStatus {
+    if canonical_provider_id(&provider_config.id) == "opencode" {
+        if provider_env_api_key("OPENCODE_API_KEY").is_some() {
+            return ProviderAuthStatus {
+                configured: true,
+                label: "env".to_string(),
+            };
+        }
+        if provider_env_api_key("OPENCODE_ZEN_API_KEY").is_some() {
+            return ProviderAuthStatus {
+                configured: true,
+                label: "env".to_string(),
+            };
+        }
+        if app.credential_store.get_opencode_api_key().is_some() {
+            return ProviderAuthStatus {
+                configured: true,
+                label: "opencode".to_string(),
+            };
+        }
+    } else if provider_env_api_key(&provider_config.api_key_env).is_some() {
+        return ProviderAuthStatus {
+            configured: true,
+            label: "env".to_string(),
+        };
+    }
+
+    if resolve_provider_api_key(&app.credential_store, provider_config, &provider_config.id)
+        .is_some()
+    {
+        ProviderAuthStatus {
+            configured: true,
+            label: "stored".to_string(),
+        }
+    } else {
+        ProviderAuthStatus {
+            configured: false,
+            label: "missing".to_string(),
+        }
+    }
+}
+
+fn provider_supports_oauth(provider_id: &str) -> bool {
+    canonical_provider_id(provider_id) == "github-copilot"
+}
+
+fn sync_provider_settings_scroll(app: &mut TuiApp, visible_rows: usize) {
+    if app.selected_provider_setting < app.provider_settings_scroll {
+        app.provider_settings_scroll = app.selected_provider_setting;
+    } else if app.selected_provider_setting >= app.provider_settings_scroll + visible_rows {
+        app.provider_settings_scroll = app
+            .selected_provider_setting
+            .saturating_sub(visible_rows.saturating_sub(1));
+    }
+}
+
+fn start_provider_oauth(app: &mut TuiApp, provider: &ProviderConfig) {
+    if !provider_supports_oauth(&provider.id) {
+        show_notification(
+            app,
+            "OAuth",
+            format!("{} uses API key setup.", provider.label),
+        );
+        return;
+    }
+    if app.is_loading {
+        return;
+    }
+
+    app.is_loading = true;
+    app.loading_start = Some(Instant::now());
+    let tx = app.async_tx.clone();
+    let credential_store = app.credential_store.clone();
+    let provider_id = provider.id.clone();
+    app.stream_task = Some(tokio::spawn(async move {
+        let result = github_copilot_device_oauth(&tx, &provider_id, credential_store).await;
+        let _ = tx.send(AsyncEvent::OAuthCompleted {
+            provider_id,
+            result,
+        });
+    }));
+}
+
+async fn github_copilot_device_oauth(
+    tx: &mpsc::UnboundedSender<AsyncEvent>,
+    provider_id: &str,
+    credential_store: CredentialStore,
+) -> Result<(), String> {
+    const CLIENT_ID: &str = "Ov23li8tweQw6odWQebz";
+    let client = reqwest::Client::new();
+    let device_response = client
+        .post("https://github.com/login/device/code")
+        .header("Accept", "application/json")
+        .header("User-Agent", "navi/0.1.0")
+        .json(&serde_json::json!({
+            "client_id": CLIENT_ID,
+            "scope": "read:user",
+        }))
+        .send()
+        .await
+        .map_err(|err| err.to_string())?;
+
+    if !device_response.status().is_success() {
+        return Err(format!(
+            "device authorization failed: {}",
+            device_response.status()
+        ));
+    }
+
+    let device_data: serde_json::Value = device_response
+        .json()
+        .await
+        .map_err(|err| err.to_string())?;
+    let verification_uri = device_data
+        .get("verification_uri")
+        .and_then(|value| value.as_str())
+        .ok_or_else(|| "missing verification URL".to_string())?
+        .to_string();
+    let user_code = device_data
+        .get("user_code")
+        .and_then(|value| value.as_str())
+        .ok_or_else(|| "missing user code".to_string())?
+        .to_string();
+    let device_code = device_data
+        .get("device_code")
+        .and_then(|value| value.as_str())
+        .ok_or_else(|| "missing device code".to_string())?
+        .to_string();
+    let mut interval = device_data
+        .get("interval")
+        .and_then(|value| value.as_u64())
+        .unwrap_or(5)
+        .max(1);
+
+    let _ = tx.send(AsyncEvent::OAuthDeviceStarted {
+        provider_id: provider_id.to_string(),
+        verification_uri,
+        user_code,
+    });
+
+    for _ in 0..120 {
+        tokio::time::sleep(Duration::from_secs(interval + 3)).await;
+        let token_response = client
+            .post("https://github.com/login/oauth/access_token")
+            .header("Accept", "application/json")
+            .header("User-Agent", "navi/0.1.0")
+            .json(&serde_json::json!({
+                "client_id": CLIENT_ID,
+                "device_code": device_code,
+                "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
+            }))
+            .send()
+            .await
+            .map_err(|err| err.to_string())?;
+
+        if !token_response.status().is_success() {
+            return Err(format!(
+                "token exchange failed: {}",
+                token_response.status()
+            ));
+        }
+
+        let token_data: serde_json::Value =
+            token_response.json().await.map_err(|err| err.to_string())?;
+        if let Some(access_token) = token_data
+            .get("access_token")
+            .and_then(|value| value.as_str())
+        {
+            credential_store
+                .set_api_key(provider_id, access_token)
+                .map_err(|err| err.to_string())?;
+            return Ok(());
+        }
+
+        match token_data.get("error").and_then(|value| value.as_str()) {
+            Some("authorization_pending") => {}
+            Some("slow_down") => interval += 5,
+            Some(error) => return Err(error.to_string()),
+            None => {}
+        }
+    }
+
+    Err("device authorization timed out".to_string())
 }
 
 fn show_notification(app: &mut TuiApp, title: impl Into<String>, message: impl Into<String>) {
@@ -1848,6 +2112,7 @@ fn handle_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyModifiers) -> bool 
         Mode::Thinking => handle_thinking_key(app, code),
         Mode::Sessions => handle_sessions_key(app, code),
         Mode::Settings => handle_settings_key(app, code),
+        Mode::Providers => handle_providers_key(app, code),
         Mode::Debug => handle_debug_key(app, code),
         Mode::Help => handle_help_key(app, code),
     }
@@ -1923,10 +2188,11 @@ fn handle_thinking_key(app: &mut TuiApp, code: KeyCode) -> bool {
 }
 
 fn handle_settings_key(app: &mut TuiApp, code: KeyCode) -> bool {
+    const SETTINGS_COUNT: usize = 3;
     match code {
         KeyCode::Esc => app.mode = Mode::Normal,
         KeyCode::Down => {
-            app.selected_setting = (app.selected_setting + 1).min(1);
+            app.selected_setting = (app.selected_setting + 1).min(SETTINGS_COUNT - 1);
         }
         KeyCode::Up => {
             app.selected_setting = app.selected_setting.saturating_sub(1);
@@ -1956,8 +2222,51 @@ fn handle_settings_key(app: &mut TuiApp, code: KeyCode) -> bool {
                     },
                 );
             }
+            2 => {
+                app.mode = Mode::Providers;
+                app.selected_provider_setting = 0;
+                app.provider_settings_scroll = 0;
+            }
             _ => {}
         },
+        _ => {}
+    }
+    false
+}
+
+fn handle_providers_key(app: &mut TuiApp, code: KeyCode) -> bool {
+    let providers = navi_core::provider_catalog(&app.loaded_config.config);
+    let max_index = providers.len().saturating_sub(1);
+    match code {
+        KeyCode::Esc => app.mode = Mode::Settings,
+        KeyCode::Down => {
+            app.selected_provider_setting = (app.selected_provider_setting + 1).min(max_index);
+            sync_provider_settings_scroll(app, 12);
+        }
+        KeyCode::Up => {
+            app.selected_provider_setting = app.selected_provider_setting.saturating_sub(1);
+            sync_provider_settings_scroll(app, 12);
+        }
+        KeyCode::Enter | KeyCode::Char('k') => {
+            if let Some(provider) = providers.get(app.selected_provider_setting) {
+                app.pending_provider_setup = Some(provider.id.clone());
+                app.pending_model_selection = None;
+                app.api_key_input.clear();
+                app.api_key_cursor = 0;
+                app.mode = Mode::ApiKeyEntry;
+            }
+        }
+        KeyCode::Char('o') | KeyCode::Char('O') => {
+            if let Some(provider) = providers.get(app.selected_provider_setting) {
+                start_provider_oauth(app, provider);
+            }
+        }
+        KeyCode::Char('r') | KeyCode::Char('R') => {
+            if let Some(provider) = providers.get(app.selected_provider_setting) {
+                let provider_id = provider.id.clone();
+                sync_provider_tui(app, &provider_id);
+            }
+        }
         _ => {}
     }
     false
@@ -2228,7 +2537,12 @@ fn handle_api_key_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyModifiers) 
             app.api_key_input.clear();
             app.api_key_cursor = 0;
             app.pending_model_selection = None;
-            app.mode = Mode::Normal;
+            let return_to_providers = app.pending_provider_setup.take().is_some();
+            app.mode = if return_to_providers {
+                Mode::Providers
+            } else {
+                Mode::Normal
+            };
         }
         KeyCode::Enter => {
             save_api_key_and_rebuild(app);
@@ -2765,6 +3079,7 @@ fn render(frame: &mut Frame<'_>, app: &TuiApp) {
         Mode::Thinking => render_thinking_picker(frame, app, modal_rect(area, 40, 10)),
         Mode::Sessions => render_sessions_picker(frame, app, modal_rect(area, 72, 16)),
         Mode::Settings => render_settings(frame, app, modal_rect(area, 50, 10)),
+        Mode::Providers => render_provider_settings(frame, app, modal_rect(area, 76, 20)),
         Mode::Debug => render_debug_modal(frame, app, modal_rect(area, 76, 18)),
         Mode::Help => render_help_modal(frame, modal_rect(area, 62, 16)),
         Mode::Normal => {}
@@ -4041,8 +4356,9 @@ fn render_settings(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
         .split(inner);
 
     let settings_list = [
-        ("Show Thinking Text", app.show_thinking),
-        ("Expand Tool Outputs (Ctrl+O)", app.full_tool_view),
+        ("Show Reasoning", Some(app.show_thinking)),
+        ("Verbose Tool Output", Some(app.full_tool_view)),
+        ("Provider Accounts", None),
     ];
 
     let items = settings_list
@@ -4059,16 +4375,86 @@ fn render_settings(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
                 Style::default().fg(TEXT).bg(PANEL)
             };
 
-            let checkbox = if *val { "[x] " } else { "[ ] " };
-            ListItem::new(Span::styled(format!("{}{}", checkbox, label), style)).style(style)
+            let prefix = match val {
+                Some(true) => "[x] ",
+                Some(false) => "[ ] ",
+                None => "› ",
+            };
+            ListItem::new(Span::styled(format!("{}{}", prefix, label), style)).style(style)
         })
         .collect::<Vec<_>>();
 
     frame.render_widget(List::new(items).style(Style::default().bg(PANEL)), rows[0]);
     frame.render_widget(
-        Paragraph::new("↑↓ choose  •  space/enter toggle  •  esc close")
+        Paragraph::new("↑↓ choose  •  enter configure/toggle  •  esc close")
             .style(Style::default().fg(MUTED).bg(PANEL)),
         rows[1],
+    );
+}
+
+fn render_provider_settings(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
+    frame.render_widget(Clear, area);
+    frame.render_widget(modal_block("Provider Accounts"), area);
+
+    let inner = area.inner(Margin {
+        horizontal: 2,
+        vertical: 1,
+    });
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(2),
+            Constraint::Min(10),
+            Constraint::Length(2),
+        ])
+        .split(inner);
+
+    frame.render_widget(
+        Paragraph::new("Configure API keys or OAuth sign-in for supported providers.")
+            .style(Style::default().fg(MUTED).bg(PANEL)),
+        rows[0],
+    );
+
+    let providers = navi_core::provider_catalog(&app.loaded_config.config);
+    let height = rows[1].height as usize;
+    let start = app.provider_settings_scroll.min(providers.len());
+    let end = (start + height).min(providers.len());
+    let items = providers[start..end]
+        .iter()
+        .enumerate()
+        .map(|(offset, provider)| {
+            let index = start + offset;
+            let selected = index == app.selected_provider_setting;
+            let status = provider_auth_status(app, provider);
+            let oauth = if provider_supports_oauth(&provider.id) {
+                "OAuth"
+            } else {
+                "API key"
+            };
+            let line = format!(
+                "{:<18} {:<12} {:<10} {}",
+                provider.label, status.label, oauth, provider.description
+            );
+            let style = if selected {
+                Style::default()
+                    .fg(Color::White)
+                    .bg(ACCENT)
+                    .add_modifier(Modifier::BOLD)
+            } else if status.configured {
+                Style::default().fg(SIGNAL).bg(PANEL)
+            } else {
+                Style::default().fg(MUTED).bg(PANEL)
+            };
+            ListItem::new(Span::styled(line, style)).style(style)
+        })
+        .collect::<Vec<_>>();
+
+    frame.render_widget(List::new(items).style(Style::default().bg(PANEL)), rows[1]);
+
+    frame.render_widget(
+        Paragraph::new("enter/k API key  •  o OAuth  •  r sync models  •  esc settings")
+            .style(Style::default().fg(MUTED).bg(PANEL)),
+        rows[2],
     );
 }
 
