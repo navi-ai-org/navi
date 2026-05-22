@@ -4,16 +4,13 @@ use crossterm::event::{
     PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
 };
 use crossterm::execute;
-use crossterm::terminal::{
-    EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
-    supports_keyboard_enhancement,
-};
+use crossterm::terminal::{disable_raw_mode, enable_raw_mode, supports_keyboard_enhancement};
 use navi_core::{
     AgentEvent, AgentRunState, ApprovalDecision, CredentialStore, HarnessPolicy, LoadedConfig,
     ModelMessage, ModelOption, ModelProvider, ModelRole, SecurityPolicy, SessionId,
     SessionSnapshot, SessionStore, ThinkingConfig, ToolExecutor, ToolInvocation, ToolResult,
-    available_model_options, build_system_prompt, compact_tool_observation, log_path,
-    resolve_provider_config, save_global_config, select_harness_policy,
+    available_model_options, build_system_prompt, canonical_provider_id, compact_tool_observation,
+    log_path, resolve_provider_config, save_global_config, select_harness_policy,
 };
 use navi_openai::OpenAiProvider;
 use navi_plugin_host::{LoadedPlugin, load_configured_plugins};
@@ -116,6 +113,7 @@ enum AsyncEvent {
     },
     Agent(navi_core::AgentEvent),
     TurnCompleted(Result<String, String>),
+    RetryModel,
 }
 
 // ─── app state ─────────────────────────────────────────────────────────────────
@@ -169,8 +167,6 @@ pub struct TuiApp {
     api_key_input: String,
     api_key_cursor: usize,
     pending_model_selection: Option<usize>,
-    vim_enabled: bool,
-    vim_mode: VimMode,
 
     // stats
     total_tokens_estimate: usize,
@@ -220,12 +216,7 @@ enum Mode {
     Sessions,
     Settings,
     Debug,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum VimMode {
-    Insert,
-    Normal,
+    Help,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -274,7 +265,6 @@ enum CommandAction {
     Sessions,
     SwitchModel,
     RetryLast,
-    ToggleVimMode,
     OpenThinking,
     InitializeProject,
     SyncModels,
@@ -285,11 +275,12 @@ enum CommandAction {
 impl TuiApp {
     pub fn new(loaded_config: LoadedConfig, project_dir: PathBuf, task: Option<String>) -> Self {
         let models = available_model_options(&loaded_config.config);
+        let selected_provider = canonical_provider_id(&loaded_config.config.model.provider);
         let selected_model = models
             .iter()
             .position(|model| {
                 model.name == loaded_config.config.model.name
-                    && model.provider_id == loaded_config.config.model.provider
+                    && canonical_provider_id(&model.provider_id) == selected_provider
             })
             .unwrap_or(0);
 
@@ -361,8 +352,6 @@ impl TuiApp {
             api_key_input: String::new(),
             api_key_cursor: 0,
             pending_model_selection: None,
-            vim_enabled: false,
-            vim_mode: VimMode::Insert,
             total_tokens_estimate: 0,
             session_store,
             events: Vec::new(),
@@ -417,11 +406,6 @@ const COMMANDS: &[CommandItem] = &[
         action: CommandAction::RetryLast,
     },
     CommandItem {
-        label: "Toggle Vim Mode",
-        shortcut: None,
-        action: CommandAction::ToggleVimMode,
-    },
-    CommandItem {
         label: "Thinking Mode",
         shortcut: None,
         action: CommandAction::OpenThinking,
@@ -455,7 +439,6 @@ const COMMANDS: &[CommandItem] = &[
 pub fn run(app: TuiApp) -> Result<()> {
     enable_raw_mode()?;
     let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen)?;
 
     // Enable the kitty keyboard protocol so the terminal can distinguish
     // Ctrl+Enter from plain Enter (and report other modifier combos).
@@ -477,7 +460,6 @@ pub fn run(app: TuiApp) -> Result<()> {
         execute!(terminal.backend_mut(), PopKeyboardEnhancementFlags)?;
     }
     disable_raw_mode()?;
-    execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
     terminal.show_cursor()?;
 
     result
@@ -489,13 +471,21 @@ fn run_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, mut app: TuiA
         submit_message(&mut app);
     }
 
+    let mut needs_draw = true;
     loop {
-        terminal.draw(|frame| render(frame, &app))?;
-        app.tick = app.tick.wrapping_add(1);
-        expire_notification(&mut app);
+        if needs_draw {
+            terminal.draw(|frame| render(frame, &app))?;
+            app.tick = app.tick.wrapping_add(1);
+            needs_draw = false;
+        }
+
+        if expire_notification(&mut app) {
+            needs_draw = true;
+        }
 
         // Check for async model stream events (non-blocking)
         while let Ok(event) = app.async_rx.try_recv() {
+            needs_draw = true;
             match event {
                 AsyncEvent::Agent(agent_event) => {
                     match agent_event {
@@ -605,21 +595,33 @@ fn run_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, mut app: TuiA
                     match res {
                         Ok(_) => {
                             finalize_active_assistant(&mut app, elapsed_ms);
+                            app.is_loading = false;
+                            app.loading_start = None;
+                            app.stream_task = None;
+                            app.scroll_offset = 0;
+                            app.running_tools.clear();
+                            app.pending_approvals.clear();
                         }
                         Err(err) => {
+                            app.is_loading = false;
+                            app.loading_start = None;
+                            app.stream_task = None;
+                            app.scroll_offset = 0;
+                            app.running_tools.clear();
+                            app.pending_approvals.clear();
                             handle_model_error(&mut app, err);
                         }
                     }
-                    app.is_loading = false;
-                    app.loading_start = None;
-                    app.stream_task = None;
-                    app.scroll_offset = 0;
-                    app.running_tools.clear();
-                    app.pending_approvals.clear();
                 }
 
                 AsyncEvent::ModelError { message } => {
                     handle_model_error(&mut app, message);
+                }
+                AsyncEvent::RetryModel => {
+                    app.stream_task = None;
+                    if app.is_loading {
+                        start_streaming_request(&mut app);
+                    }
                 }
                 AsyncEvent::SyncCompleted {
                     loaded_config,
@@ -628,12 +630,14 @@ fn run_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, mut app: TuiA
                     app.loaded_config = loaded_config;
                     app.models = available_model_options(&app.loaded_config.config);
                     let selected_name = app.loaded_config.config.model.name.clone();
-                    let selected_provider = app.loaded_config.config.model.provider.clone();
+                    let selected_provider =
+                        canonical_provider_id(&app.loaded_config.config.model.provider);
                     app.selected_model = app
                         .models
                         .iter()
                         .position(|model| {
-                            model.name == selected_name && model.provider_id == selected_provider
+                            model.name == selected_name
+                                && canonical_provider_id(&model.provider_id) == selected_provider
                         })
                         .unwrap_or(0);
                     rebuild_provider(&mut app);
@@ -651,8 +655,10 @@ fn run_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, mut app: TuiA
 
         let timeout = if app.is_loading {
             Duration::from_millis(16)
-        } else {
+        } else if app.messages.is_empty() || visible_notification(&app).is_some() {
             Duration::from_millis(80)
+        } else {
+            Duration::from_millis(250)
         };
 
         if event::poll(timeout)? {
@@ -661,10 +667,14 @@ fn run_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, mut app: TuiA
                     continue;
                 }
 
+                needs_draw = true;
                 if handle_key(&mut app, key.code, key.modifiers) {
                     break;
                 }
             }
+        } else if app.is_loading || app.messages.is_empty() || visible_notification(&app).is_some()
+        {
+            needs_draw = true;
         }
     }
 
@@ -732,6 +742,10 @@ fn start_streaming_request(app: &mut TuiApp) {
     );
 
     let model_label = app.loaded_config.config.model.name.clone();
+    let request_model_name = provider_request_model_name(
+        &app.loaded_config.config.model.provider,
+        &app.loaded_config.config.model.name,
+    );
     let provider_label = selected_provider_label(app).to_string();
     app.messages.push(ChatMessage {
         model_label: Some(model_label.clone()),
@@ -748,7 +762,7 @@ fn start_streaming_request(app: &mut TuiApp) {
         tool_executor: app.tool_executor.clone(),
         agent_control: navi_core::agent::AgentControl::new(),
         project_dir: app.project_dir.clone(),
-        model_name: app.loaded_config.config.model.name.clone(),
+        model_name: request_model_name,
         event_tx: Some(event_tx),
         pending_approvals: pending_approvals.clone(),
     });
@@ -910,19 +924,24 @@ fn finalize_active_assistant(app: &mut TuiApp, elapsed_ms: u64) {
 }
 
 fn handle_model_error(app: &mut TuiApp, message: String) {
-    if should_retry_model_error(&message) && app.model_retry_attempts < max_model_retries(app) {
+    if should_retry_model_error(&message)
+        && !is_usage_limit_error(&message)
+        && app.model_retry_attempts < max_model_retries(app)
+    {
+        let next_attempt = app.model_retry_attempts + 1;
+        let retry_delay = model_retry_delay(&message, next_attempt);
         tracing::warn!(
             error = %message,
-            attempt = app.model_retry_attempts + 1,
+            attempt = next_attempt,
             max = max_model_retries(app),
+            retry_delay_ms = retry_delay.as_millis() as u64,
             "transient model error retrying"
         );
         push_diagnostic(app, format!("Retrying transient provider error: {message}"));
-        app.model_retry_attempts += 1;
+        app.model_retry_attempts = next_attempt;
         app.skip_next_model_done = false;
-        app.is_loading = false;
+        app.is_loading = true;
         app.loading_start = None;
-        app.stream_task = None;
         remove_active_tool_placeholder(app);
         remove_active_empty_generation_placeholder(app);
         app.messages.push(ChatMessage {
@@ -930,13 +949,14 @@ fn handle_model_error(app: &mut TuiApp, message: String) {
             ..ChatMessage::new(
                 ChatRole::Assistant,
                 format!(
-                    "Transient provider error: {message}\nRetrying agent step {}/{}.",
+                    "Transient provider error: {message}\nRetrying agent step {}/{} in {}.",
                     app.model_retry_attempts,
-                    max_model_retries(app)
+                    max_model_retries(app),
+                    human_duration(retry_delay),
                 ),
             )
         });
-        start_streaming_request(app);
+        schedule_model_retry(app, retry_delay);
         return;
     }
 
@@ -945,12 +965,23 @@ fn handle_model_error(app: &mut TuiApp, message: String) {
     app.skip_next_model_done = false;
     app.messages.push(ChatMessage {
         status: Some("error".to_string()),
-        ..ChatMessage::new(ChatRole::Assistant, format!("⚠ Error: {message}"))
+        ..ChatMessage::new(
+            ChatRole::Assistant,
+            format_model_error_message(app, &message),
+        )
     });
     app.events.push(AgentEvent::Error { message });
     app.is_loading = false;
     app.loading_start = None;
     app.stream_task = None;
+}
+
+fn schedule_model_retry(app: &mut TuiApp, delay: Duration) {
+    let tx = app.async_tx.clone();
+    app.stream_task = Some(tokio::spawn(async move {
+        tokio::time::sleep(delay).await;
+        let _ = tx.send(AsyncEvent::RetryModel);
+    }));
 }
 
 fn remove_active_empty_generation_placeholder(app: &mut TuiApp) {
@@ -977,10 +1008,120 @@ fn should_retry_model_error(message: &str) -> bool {
         || message.contains("timed out")
 }
 
+fn is_usage_limit_error(message: &str) -> bool {
+    let message = message.to_ascii_lowercase();
+    message.contains("freeusagelimiterror")
+        || message.contains("free usage limit")
+        || message.contains("usage limit exceeded")
+}
+
+fn format_model_error_message(app: &TuiApp, message: &str) -> String {
+    if is_usage_limit_error(message) {
+        let model = app.loaded_config.config.model.name.as_str();
+        let provider = selected_provider_label(app);
+        let free_hint = if is_free_model_name(model) {
+            "This selected model is a free-tier model. Free-tier quota can be exhausted even when the provider account still has paid/regular capacity."
+        } else {
+            "The selected provider reported a usage-limit error for this request."
+        };
+        format!(
+            "⚠ Usage limit reached for {model} via {provider}.\n\n{free_hint}\n\n{message}\n\nUse ctrl+m and select a non-free model, or wait for the provider limit window to reset."
+        )
+    } else {
+        format!("⚠ Error: {message}")
+    }
+}
+
+fn is_free_model_name(model: &str) -> bool {
+    let model = model.to_ascii_lowercase();
+    model.ends_with("-free") || model.contains(" free")
+}
+
+fn provider_request_model_name(provider_id: &str, model: &str) -> String {
+    if canonical_provider_id(provider_id) == "opencode" {
+        opencode_zen_model_id(model).unwrap_or_else(|| model.to_string())
+    } else {
+        model.to_string()
+    }
+}
+
+fn opencode_zen_model_id(model: &str) -> Option<String> {
+    let normalized = model
+        .trim()
+        .trim_start_matches("opencode/")
+        .to_ascii_lowercase()
+        .replace([' ', '_'], "-");
+    let collapsed = normalized
+        .split('-')
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join("-");
+
+    match collapsed.as_str() {
+        "deepseek-v4-flash-free" => Some("deepseek-v4-flash-free".to_string()),
+        "nemotron-3-super-free" => Some("nemotron-3-super-free".to_string()),
+        "big-pickle" => Some("big-pickle".to_string()),
+        "qwen3.6-plus" | "qwen-3.6-plus" => Some("qwen3.6-plus".to_string()),
+        "qwen3.5-plus" | "qwen-3.5-plus" => Some("qwen3.5-plus".to_string()),
+        "minimax-m2.7" | "mini-max-m2.7" => Some("minimax-m2.7".to_string()),
+        "minimax-m2.5" | "mini-max-m2.5" => Some("minimax-m2.5".to_string()),
+        "glm-5.1" => Some("glm-5.1".to_string()),
+        "glm-5" => Some("glm-5".to_string()),
+        "kimi-k2.6" => Some("kimi-k2.6".to_string()),
+        "kimi-k2.5" => Some("kimi-k2.5".to_string()),
+        "grok-build-0.1" => Some("grok-build-0.1".to_string()),
+        _ => None,
+    }
+}
+
 fn max_model_retries(app: &TuiApp) -> usize {
     match app.harness_policy.profile {
         navi_core::HarnessProfile::Small => 2,
         _ => 3,
+    }
+}
+
+fn model_retry_delay(message: &str, attempt: usize) -> Duration {
+    if let Some(delay) = parse_requested_retry_delay(message) {
+        return delay.min(Duration::from_secs(60));
+    }
+
+    if message.to_ascii_lowercase().contains("429")
+        || message.to_ascii_lowercase().contains("too many requests")
+    {
+        return Duration::from_secs((attempt as u64).saturating_mul(10).min(60));
+    }
+
+    Duration::from_secs(
+        2_u64
+            .saturating_pow(attempt.saturating_sub(1) as u32)
+            .min(15),
+    )
+}
+
+fn parse_requested_retry_delay(message: &str) -> Option<Duration> {
+    let marker = "requested delay: Some(";
+    let start = message.find(marker)? + marker.len();
+    let end = message[start..].find(')')? + start;
+    parse_duration_fragment(&message[start..end])
+}
+
+fn parse_duration_fragment(fragment: &str) -> Option<Duration> {
+    let value = fragment.trim();
+    if let Some(ms) = value.strip_suffix("ms") {
+        return ms.trim().parse::<u64>().ok().map(Duration::from_millis);
+    }
+    if let Some(secs) = value.strip_suffix('s') {
+        return secs.trim().parse::<f64>().ok().map(Duration::from_secs_f64);
+    }
+    None
+}
+
+fn human_duration(duration: Duration) -> String {
+    if duration.as_secs() > 0 {
+        format!("{}s", duration.as_secs())
+    } else {
+        format!("{}ms", duration.as_millis())
     }
 }
 
@@ -1007,21 +1148,16 @@ fn tool_compact_text(invocation: &ToolInvocation, result: &ToolResult) -> String
 }
 
 fn tool_full_content(invocation: &ToolInvocation, result: &ToolResult) -> String {
-    let input = serde_json::to_string_pretty(&invocation.input)
-        .unwrap_or_else(|_| invocation.input.to_string());
-    let output =
-        serde_json::to_string_pretty(&result.output).unwrap_or_else(|_| result.output.to_string());
     let mut content = format!(
-        "{} {}\n\nInput\n```json\n{}\n```\n\nOutput\n",
+        "{} {}\n\n",
         if result.ok { "✓" } else { "✗" },
         tool_compact_text(invocation, result),
-        input
     );
 
     if let Some(formatted) = formatted_tool_output(invocation, result) {
         content.push_str(&formatted);
     } else {
-        content.push_str(&format!("```json\n{}\n```\n", output));
+        content.push_str(&generic_tool_summary(invocation, result));
     }
 
     content
@@ -1074,28 +1210,24 @@ fn formatted_tool_output(invocation: &ToolInvocation, result: &ToolResult) -> Op
         }
     } else if invocation.tool_name == "write_file" {
         let path = obj.get("path").and_then(|v| v.as_str())?;
-        if let Some(bytes) = obj.get("bytes").and_then(|v| v.as_u64()) {
-            content.push_str(&format!("Wrote {bytes} bytes to {path}\n\n"));
-        } else {
-            content.push_str(&format!("Wrote to {path}\n\n"));
-        }
-        if let Some(file_content) = invocation.input.get("content").and_then(|v| v.as_str()) {
-            let language = language_for_path(path);
-            content.push_str(&format!("```{language}\n"));
-            content.push_str(file_content);
-            if !file_content.ends_with('\n') {
-                content.push('\n');
-            }
-            content.push_str("```\n");
-        }
+        let added = invocation
+            .input
+            .get("content")
+            .and_then(|v| v.as_str())
+            .map(count_changed_lines)
+            .unwrap_or(0);
+        content.push_str(&format!("Edited {path} (+{added} -0)\n"));
     } else if invocation.tool_name == "apply_patch" {
         if let Some(patch) = invocation.input.get("patch").and_then(|v| v.as_str()) {
-            content.push_str("Applied patch:\n\n```diff\n");
-            content.push_str(patch);
-            if !patch.ends_with('\n') {
-                content.push('\n');
+            let summaries = patch_edit_summaries(patch);
+            if summaries.is_empty() {
+                content.push_str("Applied patch\n");
+            } else {
+                for summary in summaries {
+                    content.push_str(&summary);
+                    content.push('\n');
+                }
             }
-            content.push_str("```\n");
         } else {
             content.push_str("Applied patch successfully\n");
         }
@@ -1171,6 +1303,73 @@ fn formatted_tool_output(invocation: &ToolInvocation, result: &ToolResult) -> Op
         content.push_str("... (truncated)\n");
     }
     Some(content)
+}
+
+fn generic_tool_summary(invocation: &ToolInvocation, result: &ToolResult) -> String {
+    if result.ok {
+        format!("{} completed successfully\n", invocation.tool_name)
+    } else if let Some(error) = result.output.get("error").and_then(|v| v.as_str()) {
+        format!("Error: {error}\n")
+    } else {
+        format!("{} failed\n", invocation.tool_name)
+    }
+}
+
+fn count_changed_lines(content: &str) -> usize {
+    if content.is_empty() {
+        0
+    } else {
+        content.lines().count().max(1)
+    }
+}
+
+fn patch_edit_summaries(patch: &str) -> Vec<String> {
+    let mut summaries = Vec::new();
+    let mut current_path: Option<String> = None;
+    let mut added = 0usize;
+    let mut removed = 0usize;
+
+    for line in patch.lines() {
+        if let Some(path) = line.strip_prefix("+++ b/") {
+            flush_patch_summary(&mut summaries, &mut current_path, &mut added, &mut removed);
+            current_path = Some(path.to_string());
+            continue;
+        }
+        if current_path.is_none() {
+            if let Some(path) = line.strip_prefix("*** Update File: ") {
+                current_path = Some(path.to_string());
+                continue;
+            }
+            if let Some(path) = line.strip_prefix("*** Add File: ") {
+                current_path = Some(path.to_string());
+                continue;
+            }
+        }
+        if line.starts_with("+++") || line.starts_with("---") {
+            continue;
+        }
+        if line.starts_with('+') {
+            added += 1;
+        } else if line.starts_with('-') {
+            removed += 1;
+        }
+    }
+    flush_patch_summary(&mut summaries, &mut current_path, &mut added, &mut removed);
+
+    summaries
+}
+
+fn flush_patch_summary(
+    summaries: &mut Vec<String>,
+    current_path: &mut Option<String>,
+    added: &mut usize,
+    removed: &mut usize,
+) {
+    if let Some(path) = current_path.take() {
+        summaries.push(format!("Edited {path} (+{} -{})", *added, *removed));
+        *added = 0;
+        *removed = 0;
+    }
 }
 
 fn language_for_path(path: &str) -> &'static str {
@@ -1303,14 +1502,65 @@ fn build_provider(
     let provider_config =
         resolve_provider_config(&loaded_config.config, &loaded_config.config.model.provider)?;
 
-    // Try to resolve the key: env var first, then stored credential
-    let api_key =
-        credential_store.resolve_api_key(&provider_config.id, &provider_config.api_key_env)?;
+    let api_key = resolve_provider_api_key(
+        credential_store,
+        &provider_config,
+        &loaded_config.config.model.provider,
+    )
+    .or_else(|| {
+        if model_can_run_publicly(&provider_config.id, &loaded_config.config.model.name) {
+            Some("public".to_string())
+        } else {
+            None
+        }
+    })?;
 
     match OpenAiProvider::from_provider_config_with_key(&provider_config, api_key) {
         Ok(provider) => Some(Arc::new(provider)),
         Err(_) => None,
     }
+}
+
+fn resolve_provider_api_key(
+    credential_store: &CredentialStore,
+    provider_config: &navi_core::ProviderConfig,
+    requested_provider_id: &str,
+) -> Option<String> {
+    provider_env_api_key_for_config(provider_config)
+        .or_else(|| opencode_auth_json_api_key(credential_store, &provider_config.id))
+        .or_else(|| credential_store.get_api_key(&provider_config.id))
+        .or_else(|| {
+            if requested_provider_id != provider_config.id {
+                credential_store.get_api_key(requested_provider_id)
+            } else {
+                None
+            }
+        })
+}
+
+fn provider_env_api_key_for_config(provider_config: &navi_core::ProviderConfig) -> Option<String> {
+    if canonical_provider_id(&provider_config.id) == "opencode" {
+        provider_env_api_key("OPENCODE_API_KEY")
+            .or_else(|| provider_env_api_key("OPENCODE_ZEN_API_KEY"))
+    } else {
+        provider_env_api_key(&provider_config.api_key_env)
+    }
+}
+
+fn opencode_auth_json_api_key(
+    credential_store: &CredentialStore,
+    provider_id: &str,
+) -> Option<String> {
+    if canonical_provider_id(provider_id) == "opencode" {
+        credential_store.get_opencode_api_key()
+    } else {
+        None
+    }
+}
+
+fn provider_env_api_key(env_var: &str) -> Option<String> {
+    let key = std::env::var(env_var).ok()?;
+    if key.is_empty() { None } else { Some(key) }
 }
 
 fn rebuild_provider(app: &mut TuiApp) {
@@ -1347,10 +1597,18 @@ fn refresh_system_context(app: &mut TuiApp) {
 fn provider_has_api_key(app: &TuiApp, provider_id: &str) -> bool {
     resolve_provider_config(&app.loaded_config.config, provider_id)
         .and_then(|provider_config| {
-            app.credential_store
-                .resolve_api_key(&provider_config.id, &provider_config.api_key_env)
+            resolve_provider_api_key(&app.credential_store, &provider_config, provider_id)
         })
         .is_some()
+}
+
+fn model_can_run_publicly(provider_id: &str, model: &str) -> bool {
+    canonical_provider_id(provider_id) == "opencode" && is_free_model_name(model)
+}
+
+fn model_is_available_for_selection(app: &TuiApp, model: &ModelOption) -> bool {
+    provider_has_api_key(app, &model.provider_id)
+        || model_can_run_publicly(&model.provider_id, &model.name)
 }
 
 fn apply_model_selection(app: &mut TuiApp, model_index: usize) {
@@ -1362,6 +1620,13 @@ fn apply_model_selection(app: &mut TuiApp, model_index: usize) {
     app.loaded_config.config.model.name = model.name.clone();
     app.selected_model = model_index;
     app.model_scroll = 0;
+    if canonical_provider_id(&model.provider_id) == "opencode" && is_free_model_name(&model.name) {
+        show_notification(
+            app,
+            "OpenCode Zen",
+            "Free model selected. NAVI will use your Zen key when configured.",
+        );
+    }
     rebuild_provider(app);
 }
 
@@ -1413,6 +1678,47 @@ fn current_provider_env_var(app: &TuiApp) -> String {
         .unwrap_or_else(|| "API_KEY".to_string())
 }
 
+fn current_provider_credential_status(app: &TuiApp) -> String {
+    let provider_id = selected_or_pending_provider_id(app);
+    let Some(provider_config) = resolve_provider_config(&app.loaded_config.config, &provider_id)
+    else {
+        return "unknown provider".to_string();
+    };
+    let model_name = app
+        .pending_model_selection
+        .and_then(|index| app.models.get(index))
+        .map(|model| model.name.as_str())
+        .unwrap_or(app.loaded_config.config.model.name.as_str());
+
+    if canonical_provider_id(&provider_config.id) == "opencode" {
+        if provider_env_api_key("OPENCODE_API_KEY").is_some() {
+            "env OPENCODE_API_KEY".to_string()
+        } else if provider_env_api_key("OPENCODE_ZEN_API_KEY").is_some() {
+            "env OPENCODE_ZEN_API_KEY".to_string()
+        } else if app.credential_store.get_opencode_api_key().is_some() {
+            "OpenCode auth.json".to_string()
+        } else if resolve_provider_api_key(&app.credential_store, &provider_config, &provider_id)
+            .is_some()
+        {
+            "stored credential".to_string()
+        } else if model_can_run_publicly(&provider_id, model_name) {
+            "free model access without key".to_string()
+        } else {
+            "missing".to_string()
+        }
+    } else if provider_env_api_key(&provider_config.api_key_env).is_some() {
+        format!("env {}", provider_config.api_key_env)
+    } else if resolve_provider_api_key(&app.credential_store, &provider_config, &provider_id)
+        .is_some()
+    {
+        "stored credential".to_string()
+    } else if model_can_run_publicly(&provider_id, model_name) {
+        "free model access without key".to_string()
+    } else {
+        "missing".to_string()
+    }
+}
+
 fn show_notification(app: &mut TuiApp, title: impl Into<String>, message: impl Into<String>) {
     app.notification = Some(Notification {
         title: title.into(),
@@ -1430,7 +1736,7 @@ fn push_diagnostic(app: &mut TuiApp, message: impl Into<String>) {
     }
 }
 
-fn expire_notification(app: &mut TuiApp) {
+fn expire_notification(app: &mut TuiApp) -> bool {
     let expired = app
         .notification
         .as_ref()
@@ -1438,6 +1744,7 @@ fn expire_notification(app: &mut TuiApp) {
     if expired {
         app.notification = None;
     }
+    expired
 }
 
 fn visible_notification(app: &TuiApp) -> Option<&Notification> {
@@ -1542,6 +1849,7 @@ fn handle_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyModifiers) -> bool 
         Mode::Sessions => handle_sessions_key(app, code),
         Mode::Settings => handle_settings_key(app, code),
         Mode::Debug => handle_debug_key(app, code),
+        Mode::Help => handle_help_key(app, code),
     }
 }
 
@@ -1550,6 +1858,16 @@ fn handle_debug_key(app: &mut TuiApp, code: KeyCode) -> bool {
         KeyCode::Esc | KeyCode::Enter => {
             app.mode = Mode::Normal;
             tracing::info!("debug modal closed");
+        }
+        _ => {}
+    }
+    false
+}
+
+fn handle_help_key(app: &mut TuiApp, code: KeyCode) -> bool {
+    match code {
+        KeyCode::Esc | KeyCode::Enter | KeyCode::Char('?') => {
+            app.mode = Mode::Normal;
         }
         _ => {}
     }
@@ -1689,10 +2007,6 @@ fn handle_sessions_key(app: &mut TuiApp, code: KeyCode) -> bool {
 }
 
 fn handle_normal_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyModifiers) -> bool {
-    if app.vim_enabled && app.vim_mode == VimMode::Normal {
-        return handle_vim_normal_key(app, code);
-    }
-
     if modifiers.contains(KeyModifiers::CONTROL) {
         match code {
             KeyCode::Left | KeyCode::Char('b') => move_input_previous_control_stop(app),
@@ -1732,10 +2046,13 @@ fn handle_normal_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyModifiers) -
     }
 
     match code {
-        KeyCode::Char('/') | KeyCode::Char('?') if app.input.is_empty() => {
+        KeyCode::Char('/') if app.input.is_empty() => {
             app.mode = Mode::Commands;
             app.command_filter.clear();
             app.selected_command = 0;
+        }
+        KeyCode::Char('?') if app.input.is_empty() => {
+            app.mode = Mode::Help;
         }
         KeyCode::Char('q') if app.input.is_empty() && app.messages.is_empty() => return true,
         KeyCode::Char(ch) => insert_input_char(app, ch),
@@ -1775,59 +2092,10 @@ fn handle_normal_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyModifiers) -
         KeyCode::Esc => {
             if app.is_loading {
                 cancel_stream(app);
-            } else if app.vim_enabled {
-                app.vim_mode = VimMode::Normal;
             } else {
                 app.scroll_offset = 0;
             }
         }
-        _ => {}
-    }
-
-    false
-}
-
-fn handle_vim_normal_key(app: &mut TuiApp, code: KeyCode) -> bool {
-    match code {
-        KeyCode::Char('i') => app.vim_mode = VimMode::Insert,
-        KeyCode::Char('a') => {
-            move_input_next_char(app);
-            app.vim_mode = VimMode::Insert;
-        }
-        KeyCode::Char('A') => {
-            app.input_cursor = app.input.len();
-            app.vim_mode = VimMode::Insert;
-        }
-        KeyCode::Char('I') => {
-            app.input_cursor = 0;
-            app.vim_mode = VimMode::Insert;
-        }
-        KeyCode::Char('h') | KeyCode::Left => move_input_previous_char(app),
-        KeyCode::Char('l') | KeyCode::Right => move_input_next_char(app),
-        KeyCode::Char('b') => move_input_previous_hump(app),
-        KeyCode::Char('w') => move_input_next_hump(app),
-        KeyCode::Char('0') | KeyCode::Home => app.input_cursor = 0,
-        KeyCode::Char('$') | KeyCode::End => app.input_cursor = app.input.len(),
-        KeyCode::Char('x') | KeyCode::Delete => delete_input_next_char(app),
-        KeyCode::Char('X') | KeyCode::Backspace => delete_input_previous_char(app),
-        KeyCode::Char('o') => {
-            app.input_cursor = app.input.len();
-            insert_input_char(app, '\n');
-            app.vim_mode = VimMode::Insert;
-        }
-        KeyCode::Enter => {
-            if !app.input.trim().is_empty() && !app.is_loading {
-                submit_message(app);
-            } else if app.input.is_empty() {
-                open_model_picker(app);
-            }
-        }
-        KeyCode::Char('/') | KeyCode::Char('?') => {
-            app.mode = Mode::Commands;
-            app.command_filter.clear();
-            app.selected_command = 0;
-        }
-        KeyCode::Esc => {}
         _ => {}
     }
 
@@ -1917,7 +2185,7 @@ fn handle_model_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyModifiers) ->
                 return false;
             }
             let model = &app.models[app.selected_model];
-            if provider_has_api_key(app, &model.provider_id) {
+            if model_is_available_for_selection(app, model) {
                 apply_model_selection(app, app.selected_model);
                 app.pending_model_selection = None;
                 app.mode = Mode::Normal;
@@ -2022,24 +2290,6 @@ fn run_selected_command(app: &mut TuiApp) -> bool {
         CommandAction::RetryLast => {
             retry_last_response(app);
         }
-        CommandAction::ToggleVimMode => {
-            app.vim_enabled = !app.vim_enabled;
-            app.vim_mode = if app.vim_enabled {
-                VimMode::Normal
-            } else {
-                VimMode::Insert
-            };
-            app.mode = Mode::Normal;
-            show_notification(
-                app,
-                "Editor",
-                if app.vim_enabled {
-                    "Vim mode enabled."
-                } else {
-                    "Vim mode disabled."
-                },
-            );
-        }
         CommandAction::OpenThinking => {
             open_thinking_picker(app);
         }
@@ -2089,7 +2339,7 @@ fn sync_models_tui(app: &mut TuiApp) {
 
         for provider_config in catalog {
             if let Some(api_key) =
-                credential_store.resolve_api_key(&provider_config.id, &provider_config.api_key_env)
+                resolve_provider_api_key(&credential_store, &provider_config, &provider_config.id)
             {
                 match OpenAiProvider::from_provider_config_with_key(&provider_config, api_key) {
                     Ok(provider) => match provider.list_models().await {
@@ -2183,11 +2433,12 @@ fn sync_provider_tui(app: &mut TuiApp, provider_id: &str) {
         let credential_store = CredentialStore::new(loaded_config.data_dir.clone());
         let catalog = navi_core::provider_catalog(&loaded_config.config);
 
-        let message = if let Some(provider_config) =
-            catalog.iter().find(|pc| pc.id == target_provider)
+        let message = if let Some(provider_config) = catalog
+            .iter()
+            .find(|pc| canonical_provider_id(&pc.id) == canonical_provider_id(&target_provider))
         {
             if let Some(api_key) =
-                credential_store.resolve_api_key(&provider_config.id, &provider_config.api_key_env)
+                resolve_provider_api_key(&credential_store, provider_config, &target_provider)
             {
                 match OpenAiProvider::from_provider_config_with_key(provider_config, api_key) {
                     Ok(provider) => match provider.list_models().await {
@@ -2499,12 +2750,13 @@ fn render(frame: &mut Frame<'_>, app: &TuiApp) {
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Min(6),    // chat area
-            Constraint::Length(6), // input area
+            Constraint::Length(1), // breathing room between transcript and prompt
+            Constraint::Length(7), // input area
         ])
         .split(area);
 
     render_chat_area(frame, app, vertical[0]);
-    render_input(frame, app, vertical[1]);
+    render_input(frame, app, vertical[2]);
 
     match app.mode {
         Mode::Commands => render_command_palette(frame, app, modal_rect(area, 68, 15)),
@@ -2514,6 +2766,7 @@ fn render(frame: &mut Frame<'_>, app: &TuiApp) {
         Mode::Sessions => render_sessions_picker(frame, app, modal_rect(area, 72, 16)),
         Mode::Settings => render_settings(frame, app, modal_rect(area, 50, 10)),
         Mode::Debug => render_debug_modal(frame, app, modal_rect(area, 76, 18)),
+        Mode::Help => render_help_modal(frame, modal_rect(area, 62, 16)),
         Mode::Normal => {}
     }
 
@@ -2575,7 +2828,7 @@ fn render_notification(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
 fn render_chat_area(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
     let inner = area.inner(Margin {
         horizontal: 2,
-        vertical: 0,
+        vertical: 1,
     });
 
     if app.messages.is_empty() && !app.is_loading {
@@ -3420,7 +3673,7 @@ fn wrap_text(text: &str, max_width: usize) -> Vec<String> {
 fn render_input(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
     let inner = area.inner(Margin {
         horizontal: 2,
-        vertical: 0,
+        vertical: 1,
     });
     let rows = Layout::default()
         .direction(Direction::Vertical)
@@ -3452,14 +3705,7 @@ fn visible_input_lines(lines: Vec<Line<'_>>, height: usize) -> Vec<Line<'_>> {
 }
 
 fn input_lines(app: &TuiApp) -> Vec<Line<'_>> {
-    let prompt = if app.vim_enabled {
-        match app.vim_mode {
-            VimMode::Insert => "> i ",
-            VimMode::Normal => "> n ",
-        }
-    } else {
-        "> "
-    };
+    let prompt = "> ";
     let continuation = " ".repeat(prompt.chars().count());
     let mut spans = vec![Span::styled(
         prompt,
@@ -3521,21 +3767,11 @@ fn split_input_spans<'a>(spans: Vec<Span<'a>>, continuation: &str) -> Vec<Line<'
     lines
 }
 
-fn shortcut_tips(app: &TuiApp, width: usize) -> Line<'static> {
-    let vim_state = if app.vim_enabled {
-        match app.vim_mode {
-            VimMode::Insert => "vim:insert",
-            VimMode::Normal => "vim:normal",
-        }
-    } else {
-        "vim:off"
-    };
-
+fn shortcut_tips(_app: &TuiApp, width: usize) -> Line<'static> {
     let items = [
         ("?", "for shortcuts", TEXT),
         ("ctrl+p", "commands", TEXT),
         ("ctrl+c", "quit", TEXT),
-        (vim_state, "", ACCENT),
     ];
 
     let mut spans = vec![Span::styled("   ", Style::default().fg(MUTED))];
@@ -3660,6 +3896,15 @@ fn render_api_key_entry(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
     let status = if provider_has_api_key(app, &provider_id) {
         Line::from(Span::styled(
             "● Provider connected",
+            Style::default().fg(SIGNAL),
+        ))
+    } else if app
+        .pending_model_selection
+        .and_then(|index| app.models.get(index))
+        .is_some_and(|model| model_can_run_publicly(&model.provider_id, &model.name))
+    {
+        Line::from(Span::styled(
+            "● Free model access available without key",
             Style::default().fg(SIGNAL),
         ))
     } else {
@@ -3878,6 +4123,13 @@ fn render_debug_modal(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
             ),
         ]),
         Line::from(vec![
+            Span::styled("API key:  ", Style::default().fg(MUTED)),
+            Span::styled(
+                current_provider_credential_status(app),
+                Style::default().fg(ACCENT),
+            ),
+        ]),
+        Line::from(vec![
             Span::styled("State:    ", Style::default().fg(MUTED)),
             Span::styled(active_state, Style::default().fg(ACCENT)),
         ]),
@@ -3906,6 +4158,56 @@ fn render_debug_modal(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
     );
     frame.render_widget(
         Paragraph::new("esc close").style(Style::default().fg(MUTED).bg(PANEL)),
+        rows[1],
+    );
+}
+
+fn render_help_modal(frame: &mut Frame<'_>, area: Rect) {
+    frame.render_widget(Clear, area);
+    let block = modal_block("Shortcuts");
+    frame.render_widget(block, area);
+
+    let inner = area.inner(Margin {
+        horizontal: 2,
+        vertical: 1,
+    });
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(12), Constraint::Length(1)])
+        .split(inner);
+    let shortcuts = [
+        ("ctrl+p", "commands"),
+        ("ctrl+m", "models"),
+        ("ctrl+n", "new layer"),
+        ("ctrl+s", "memory"),
+        ("ctrl+o", "compact/full tool output"),
+        ("ctrl+d", "debug"),
+        ("ctrl+g", "toggle YOLO mode"),
+        ("ctrl+enter", "send prompt"),
+        ("enter", "new line"),
+        ("ctrl+j", "new line"),
+        ("/", "commands when input is empty"),
+        ("?", "shortcuts"),
+        ("esc", "cancel/close"),
+    ];
+    let lines = shortcuts
+        .iter()
+        .map(|(key, label)| {
+            Line::from(vec![
+                Span::styled(format!("{key:<12}"), Style::default().fg(SIGNAL)),
+                Span::styled(*label, Style::default().fg(TEXT)),
+            ])
+        })
+        .collect::<Vec<_>>();
+
+    frame.render_widget(
+        Paragraph::new(lines)
+            .style(Style::default().fg(TEXT).bg(PANEL))
+            .wrap(Wrap { trim: false }),
+        rows[0],
+    );
+    frame.render_widget(
+        Paragraph::new("enter/?/esc close").style(Style::default().fg(MUTED).bg(PANEL)),
         rows[1],
     );
 }
@@ -4155,7 +4457,8 @@ fn render_model_picker(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
                 let model = &app.models[*index];
                 let selected = *index == app.selected_model;
                 let configured = model.name == app.loaded_config.config.model.name
-                    && model.provider_id == app.loaded_config.config.model.provider;
+                    && canonical_provider_id(&model.provider_id)
+                        == canonical_provider_id(&app.loaded_config.config.model.provider);
                 let style = if selected {
                     Style::default()
                         .fg(Color::White)
@@ -4232,9 +4535,10 @@ fn model_row_simple(name: &str, configured: bool, width: usize) -> String {
 }
 
 fn selected_provider_label(app: &TuiApp) -> &str {
+    let current_provider = canonical_provider_id(&app.loaded_config.config.model.provider);
     app.models
         .iter()
-        .find(|model| model.provider_id == app.loaded_config.config.model.provider)
+        .find(|model| canonical_provider_id(&model.provider_id) == current_provider)
         .map(|model| model.provider_label.as_str())
         .unwrap_or(app.loaded_config.config.model.provider.as_str())
 }
@@ -4951,19 +5255,6 @@ mod tests {
     }
 
     #[test]
-    fn command_palette_toggles_vim_mode() {
-        let mut app = test_app("abc");
-        app.command_filter = "vim".to_string();
-        app.selected_command = 0;
-
-        run_selected_command(&mut app);
-
-        assert!(app.vim_enabled);
-        assert_eq!(app.vim_mode, VimMode::Normal);
-        assert!(app.notification.is_some());
-    }
-
-    #[test]
     fn ctrl_o_toggles_full_tool_view() {
         let mut app = test_app("");
         assert!(!app.full_tool_view);
@@ -4977,13 +5268,16 @@ mod tests {
     }
 
     #[test]
-    fn question_mark_and_slash_open_command_palette() {
+    fn slash_opens_commands_and_question_mark_opens_help() {
         let mut app = test_app("");
         assert_eq!(app.mode, Mode::Normal);
 
-        // '?' with empty input opens command palette
+        // '?' with empty input opens shortcuts help
         handle_key(&mut app, KeyCode::Char('?'), KeyModifiers::NONE);
-        assert_eq!(app.mode, Mode::Commands);
+        assert_eq!(app.mode, Mode::Help);
+
+        handle_help_key(&mut app, KeyCode::Char('?'));
+        assert_eq!(app.mode, Mode::Normal);
 
         // Esc goes back to normal
         app.mode = Mode::Normal;
@@ -4995,7 +5289,7 @@ mod tests {
         // Escape goes back to normal
         app.mode = Mode::Normal;
 
-        // Pressing '?' when input is NOT empty inserts it as a char
+        // Pressing '?' when input is NOT empty inserts it as text
         app.input = "hello".to_string();
         app.input_cursor = 5;
         handle_key(&mut app, KeyCode::Char('?'), KeyModifiers::NONE);
@@ -5027,7 +5321,7 @@ mod tests {
             ttl: NOTIFICATION_TTL,
         });
 
-        expire_notification(&mut app);
+        assert!(expire_notification(&mut app));
 
         assert!(app.notification.is_none());
     }
@@ -5088,7 +5382,7 @@ mod tests {
     }
 
     #[test]
-    fn tool_full_content_includes_input_and_output() {
+    fn tool_full_content_sanitizes_read_file_without_json_io() {
         let invocation = ToolInvocation {
             id: "call-1".to_string(),
             tool_name: "read_file".to_string(),
@@ -5105,10 +5399,12 @@ mod tests {
         };
 
         let content = tool_full_content(&invocation, &result);
-        assert!(content.contains("Input"));
-        assert!(content.contains("\"path\": \"Cargo.toml\""));
-        assert!(content.contains("Output"));
+        assert!(content.contains("read_file called · success"));
+        assert!(content.contains("View Cargo.toml"));
         assert!(content.contains("[workspace]"));
+        assert!(!content.contains("Input"));
+        assert!(!content.contains("Output"));
+        assert!(!content.contains("\"path\""));
     }
 
     #[test]
@@ -5134,13 +5430,13 @@ mod tests {
     }
 
     #[test]
-    fn write_file_tool_full_content_uses_fenced_code_for_highlighting() {
+    fn write_file_tool_full_content_uses_edit_summary() {
         let invocation = ToolInvocation {
             id: "call-1".to_string(),
             tool_name: "write_file".to_string(),
             input: serde_json::json!({
                 "path": "src/index.html",
-                "content": "<!doctype html>\n"
+                "content": "<!doctype html>\n<html></html>\n"
             }),
         };
         let result = ToolResult {
@@ -5154,12 +5450,12 @@ mod tests {
 
         let content = tool_full_content(&invocation, &result);
 
-        assert!(content.contains("Input"));
-        assert!(content.contains("```json"));
-        assert!(content.contains("Output"));
-        assert!(content.contains("Wrote 16 bytes to src/index.html"));
-        assert!(content.contains("```html"));
-        assert!(content.contains("<!doctype html>"));
+        assert!(content.contains("write_file called · success"));
+        assert!(content.contains("Edited src/index.html (+2 -0)"));
+        assert!(!content.contains("Input"));
+        assert!(!content.contains("Output"));
+        assert!(!content.contains("```json"));
+        assert!(!content.contains("<!doctype html>"));
     }
 
     #[test]
@@ -5249,7 +5545,7 @@ mod tests {
     }
 
     #[test]
-    fn full_tool_render_generates_input_and_output_from_metadata() {
+    fn full_tool_render_generates_sanitized_metadata_view() {
         let mut app = test_app("");
         app.full_tool_view = true;
         let invocation = ToolInvocation {
@@ -5276,9 +5572,34 @@ mod tests {
             .join("\n");
 
         assert!(text.contains("grep called · error"));
-        assert!(text.contains("Input"));
-        assert!(text.contains("Output"));
         assert!(text.contains("denied"));
+        assert!(!text.contains("Input"));
+        assert!(!text.contains("Output"));
+        assert!(!text.contains("```json"));
+    }
+
+    #[test]
+    fn apply_patch_tool_full_content_uses_edit_summary() {
+        let invocation = ToolInvocation {
+            id: "call-1".to_string(),
+            tool_name: "apply_patch".to_string(),
+            input: serde_json::json!({
+                "patch": "*** Begin Patch\n*** Update File: crates/navi-tui/src/lib.rs\n@@\n-    old\n+    new\n+    added\n*** End Patch\n"
+            }),
+        };
+        let result = ToolResult {
+            invocation_id: "call-1".to_string(),
+            ok: true,
+            output: serde_json::json!({ "status": 0 }),
+        };
+
+        let content = tool_full_content(&invocation, &result);
+
+        assert!(content.contains("apply_patch called · success"));
+        assert!(content.contains("Edited crates/navi-tui/src/lib.rs (+2 -1)"));
+        assert!(!content.contains("*** Begin Patch"));
+        assert!(!content.contains("Input"));
+        assert!(!content.contains("Output"));
     }
 
     #[tokio::test]
@@ -5380,8 +5701,8 @@ mod tests {
         assert!(!app.skip_next_model_done);
     }
 
-    #[test]
-    fn transient_model_error_retries_without_final_error() {
+    #[tokio::test]
+    async fn transient_model_error_retries_without_final_error() {
         let mut app = test_app("");
         app.model_provider = None;
         app.messages.push(ChatMessage {
@@ -5397,6 +5718,8 @@ mod tests {
         );
 
         assert_eq!(app.model_retry_attempts, 1);
+        assert!(app.is_loading);
+        assert!(app.stream_task.is_some());
         assert!(
             app.messages
                 .iter()
@@ -5406,6 +5729,103 @@ mod tests {
             app.messages
                 .iter()
                 .all(|message| message.status.as_deref() != Some("thinking"))
+        );
+    }
+
+    #[test]
+    fn model_retry_delay_uses_rate_limit_backoff_without_requested_delay() {
+        let delay = model_retry_delay(
+            "API error 429 Too Many Requests: {\"status\":429} (requested delay: None)",
+            2,
+        );
+
+        assert_eq!(delay, Duration::from_secs(20));
+    }
+
+    #[test]
+    fn model_retry_delay_uses_requested_delay_when_present() {
+        let delay = model_retry_delay(
+            "API error 429 Too Many Requests: {} (requested delay: Some(1500ms))",
+            1,
+        );
+
+        assert_eq!(delay, Duration::from_millis(1500));
+    }
+
+    #[test]
+    fn model_retry_delay_caps_large_requested_delay() {
+        let delay = model_retry_delay(
+            "API error 429 Too Many Requests: {} (requested delay: Some(64649s))",
+            1,
+        );
+
+        assert_eq!(delay, Duration::from_secs(60));
+    }
+
+    #[test]
+    fn free_usage_limit_error_does_not_schedule_retry() {
+        let mut app = test_app("");
+        app.messages.push(ChatMessage {
+            status: Some("thinking".to_string()),
+            ..ChatMessage::new(ChatRole::Assistant, String::new())
+        });
+        app.is_loading = true;
+
+        handle_model_error(
+            &mut app,
+            "API error 429 Too Many Requests: {\"type\":\"error\",\"error\":{\"type\":\"FreeUsageLimitError\",\"message\":\"Rate limit exceeded.\"}} (requested delay: Some(64649s))".to_string(),
+        );
+
+        assert_eq!(app.model_retry_attempts, 0);
+        assert!(!app.is_loading);
+        assert!(app.stream_task.is_none());
+        assert!(
+            app.messages
+                .last()
+                .unwrap()
+                .content
+                .contains("Usage limit reached for")
+        );
+        assert!(
+            app.messages
+                .last()
+                .unwrap()
+                .content
+                .contains("select a non-free model")
+        );
+    }
+
+    #[test]
+    fn opencode_zen_model_names_are_canonicalized_for_api_requests() {
+        assert_eq!(
+            provider_request_model_name("opencode", "DeepSeek V4 Flash Free"),
+            "deepseek-v4-flash-free"
+        );
+        assert_eq!(
+            provider_request_model_name("opencode-zen", "opencode/Nemotron 3 Super Free"),
+            "nemotron-3-super-free"
+        );
+        assert_eq!(
+            provider_request_model_name("openrouter", "DeepSeek V4 Flash Free"),
+            "DeepSeek V4 Flash Free"
+        );
+    }
+
+    #[test]
+    fn opencode_free_models_can_use_public_access_without_key() {
+        let app = test_app("");
+        let model = ModelOption {
+            name: "deepseek-v4-flash-free".to_string(),
+            provider_id: "opencode".to_string(),
+            provider_label: "OpenCode Zen".to_string(),
+            provider_description: "Recommended".to_string(),
+            task_size: navi_core::ModelTaskSize::Small,
+        };
+
+        assert!(model_is_available_for_selection(&app, &model));
+        assert_eq!(
+            provider_request_model_name("opencode", "deepseek-v4-flash-free"),
+            "deepseek-v4-flash-free"
         );
     }
 
@@ -5428,20 +5848,6 @@ mod tests {
             active_assistant_message(&mut app).and_then(|message| message.status.clone()),
             Some("cancelled".to_string())
         );
-    }
-
-    #[test]
-    fn vim_normal_mode_moves_and_returns_to_insert() {
-        let mut app = test_app("abc");
-        app.vim_enabled = true;
-        app.vim_mode = VimMode::Normal;
-        app.input_cursor = app.input.len();
-
-        handle_normal_key(&mut app, KeyCode::Char('h'), KeyModifiers::NONE);
-        assert_eq!(app.input_cursor, 2);
-
-        handle_normal_key(&mut app, KeyCode::Char('i'), KeyModifiers::NONE);
-        assert_eq!(app.vim_mode, VimMode::Insert);
     }
 
     #[test]

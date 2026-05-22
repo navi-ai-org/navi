@@ -15,6 +15,13 @@ pub enum OpenAiApiKind {
     ChatCompletions,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StreamRoute {
+    Responses,
+    ChatCompletions,
+    AnthropicMessages,
+}
+
 #[derive(Clone)]
 pub struct OpenAiProvider {
     client: Client,
@@ -44,6 +51,7 @@ impl OpenAiProvider {
         let base_url = match &provider.base_url {
             Some(url) => url.clone(),
             None => match provider.id.as_str() {
+                "opencode" => "https://opencode.ai/zen/v1".to_string(),
                 "opencode-zen" => "https://opencode.ai/zen/v1".to_string(),
                 "opencode-go" => "https://opencode.ai/zen/go/v1".to_string(),
                 _ => anyhow::bail!("provider {} requires base_url", provider.id),
@@ -93,6 +101,14 @@ impl OpenAiProvider {
     }
 
     fn stream_inner(&self, request: ModelRequest) -> ModelStream {
+        if self.provider_id == "opencode" {
+            return match opencode_stream_route(&request.model) {
+                StreamRoute::Responses => self.stream_responses(request),
+                StreamRoute::AnthropicMessages => self.stream_anthropic_messages(request),
+                StreamRoute::ChatCompletions => self.stream_chat_completions(request),
+            };
+        }
+
         match self.api_kind {
             OpenAiApiKind::Responses => self.stream_responses(request),
             OpenAiApiKind::ChatCompletions => match self.provider_id.as_str() {
@@ -132,14 +148,7 @@ impl OpenAiProvider {
                             return Err(err);
                         }
 
-                        let mut delay = get_backoff_delay(attempt);
-                        if let ProviderError::Api {
-                            requested_delay: Some(req_delay),
-                            ..
-                        } = &err
-                        {
-                            delay = *req_delay;
-                        }
+                        let delay = retry_delay_for_error(&err, attempt);
 
                         tracing::warn!(?delay, attempt, "retrying request after delay");
                         tokio::time::sleep(delay).await;
@@ -157,6 +166,21 @@ impl OpenAiProvider {
                 }
             }
         }
+    }
+}
+
+fn opencode_stream_route(model: &str) -> StreamRoute {
+    let model = model
+        .trim()
+        .trim_start_matches("opencode/")
+        .to_ascii_lowercase();
+
+    if model.starts_with("gpt-") {
+        StreamRoute::Responses
+    } else if model.starts_with("claude-") {
+        StreamRoute::AnthropicMessages
+    } else {
+        StreamRoute::ChatCompletions
     }
 }
 
@@ -211,10 +235,7 @@ impl ModelProvider for OpenAiProvider {
                                 break;
                             }
 
-                            let mut delay = get_backoff_delay(attempt);
-                            if let ProviderError::Api { requested_delay: Some(req_delay), .. } = provider_err {
-                                delay = *req_delay;
-                            }
+                            let delay = retry_delay_for_error(provider_err, attempt);
 
                             tracing::info!(?delay, attempt, "retrying stream after delay");
                             tokio::time::sleep(delay).await;
@@ -298,7 +319,7 @@ impl OpenAiProvider {
         }
         apply_thinking_to_body(
             &mut body,
-            request.thinking.adapter_for_provider(&provider_id),
+            thinking_adapter_for_api(&provider_id, request.thinking, OpenAiApiKind::Responses),
             OpenAiApiKind::Responses,
         );
         body["stream"] = json!(true);
@@ -361,7 +382,11 @@ impl OpenAiProvider {
         }
         apply_thinking_to_body(
             &mut body,
-            request.thinking.adapter_for_provider(&provider_id),
+            thinking_adapter_for_api(
+                &provider_id,
+                request.thinking,
+                OpenAiApiKind::ChatCompletions,
+            ),
             OpenAiApiKind::ChatCompletions,
         );
         body["stream"] = json!(true);
@@ -679,6 +704,21 @@ fn apply_thinking_to_body(body: &mut Value, adapter: ThinkingAdapter, api_kind: 
     }
 }
 
+fn thinking_adapter_for_api(
+    provider_id: &str,
+    thinking: navi_core::ThinkingConfig,
+    api_kind: OpenAiApiKind,
+) -> ThinkingAdapter {
+    if provider_id == "opencode" && matches!(api_kind, OpenAiApiKind::Responses) {
+        return thinking
+            .to_openai_effort()
+            .map(|effort| ThinkingAdapter::OpenAiResponses(json!({ "effort": effort })))
+            .unwrap_or(ThinkingAdapter::Unsupported);
+    }
+
+    thinking.adapter_for_provider(provider_id)
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum ProviderError {
     #[error("API error {status}: {body} (requested delay: {requested_delay:?})")]
@@ -702,10 +742,33 @@ fn should_retry_status(status: reqwest::StatusCode, retry_429: bool) -> bool {
 fn should_retry_error(err: &ProviderError, retry_429: bool) -> bool {
     match err {
         ProviderError::Transport(_) => true,
-        ProviderError::Api { status, .. } => should_retry_status(*status, retry_429),
+        ProviderError::Api { status, body, .. } => {
+            should_retry_status(*status, retry_429) && !is_usage_limit_error(body)
+        }
         ProviderError::StreamIdleTimeout(_) => true,
         ProviderError::Other(_) => false,
     }
+}
+
+fn retry_delay_for_error(err: &ProviderError, attempt: u32) -> std::time::Duration {
+    const MAX_REQUESTED_RETRY_DELAY: std::time::Duration = std::time::Duration::from_secs(60);
+
+    if let ProviderError::Api {
+        requested_delay: Some(delay),
+        ..
+    } = err
+    {
+        return (*delay).min(MAX_REQUESTED_RETRY_DELAY);
+    }
+
+    get_backoff_delay(attempt)
+}
+
+fn is_usage_limit_error(body: &str) -> bool {
+    let body = body.to_ascii_lowercase();
+    body.contains("freeusagelimiterror")
+        || body.contains("free usage limit")
+        || body.contains("usage limit exceeded")
 }
 
 fn get_jitter() -> f64 {
@@ -1625,6 +1688,17 @@ mod tests {
         assert!(!should_retry_error(&rate_limit_err, false));
         assert!(should_retry_error(&rate_limit_err, true));
 
+        let free_usage_limit_err = ProviderError::Api {
+            status: StatusCode::TOO_MANY_REQUESTS,
+            body: r#"{"type":"error","error":{"type":"FreeUsageLimitError","message":"Rate limit exceeded."}}"#.to_string(),
+            requested_delay: Some(std::time::Duration::from_secs(64_649)),
+        };
+        assert!(!should_retry_error(&free_usage_limit_err, true));
+        assert_eq!(
+            retry_delay_for_error(&free_usage_limit_err, 1),
+            std::time::Duration::from_secs(60)
+        );
+
         // 400 bad request should never be retried
         let client_err = ProviderError::Api {
             status: StatusCode::BAD_REQUEST,
@@ -1695,6 +1769,136 @@ mod tests {
             }
         }
         assert_eq!(text, "hello world");
+    }
+
+    #[tokio::test]
+    async fn test_opencode_zen_chat_request_uses_bearer_api_key() {
+        use wiremock::matchers::{header, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .and(header("Authorization", "Bearer zen_test_key"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_string(
+                        "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n",
+                    )
+                    .insert_header("content-type", "text/event-stream"),
+            )
+            .expect(1)
+            .mount(&mock_server)
+            .await;
+
+        let mut config = ProviderConfig::default();
+        config.id = "opencode".to_string();
+        config.kind = ProviderKind::OpenAiChatCompletions;
+
+        let provider = OpenAiProvider::new("zen_test_key".to_string())
+            .with_base_url(mock_server.uri())
+            .with_api_kind(OpenAiApiKind::ChatCompletions)
+            .with_provider_id("opencode".to_string())
+            .with_config(config);
+
+        let request = ModelRequest {
+            model: "deepseek-v4-flash-free".to_string(),
+            messages: vec![ModelMessage::user("Hi".to_string())],
+            thinking: navi_core::ThinkingConfig::Off,
+            tools: vec![],
+        };
+
+        let mut stream = provider.stream(request);
+        while let Some(event) = stream.next().await {
+            event.unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn test_opencode_zen_gpt_models_use_responses_endpoint() {
+        use wiremock::matchers::{header, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/responses"))
+            .and(header("Authorization", "Bearer zen_test_key"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_string(
+                        "data: {\"type\":\"response.output_text.delta\",\"delta\":\"ok\"}\n\ndata: {\"type\":\"response.completed\"}\n\n",
+                    )
+                    .insert_header("content-type", "text/event-stream"),
+            )
+            .expect(1)
+            .mount(&mock_server)
+            .await;
+
+        let mut config = ProviderConfig::default();
+        config.id = "opencode".to_string();
+        config.kind = ProviderKind::OpenAiChatCompletions;
+
+        let provider = OpenAiProvider::new("zen_test_key".to_string())
+            .with_base_url(mock_server.uri())
+            .with_api_kind(OpenAiApiKind::ChatCompletions)
+            .with_provider_id("opencode".to_string())
+            .with_config(config);
+
+        let request = ModelRequest {
+            model: "gpt-5.5".to_string(),
+            messages: vec![ModelMessage::user("Hi".to_string())],
+            thinking: navi_core::ThinkingConfig::Off,
+            tools: vec![],
+        };
+
+        let mut stream = provider.stream(request);
+        while let Some(event) = stream.next().await {
+            event.unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn test_opencode_zen_claude_models_use_messages_endpoint() {
+        use wiremock::matchers::{header, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/messages"))
+            .and(header("x-api-key", "zen_test_key"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_string("event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"delta\":{\"type\":\"text_delta\",\"text\":\"ok\"}}\n\nevent: message_stop\ndata: {\"type\":\"message_stop\"}\n\n")
+                    .insert_header("content-type", "text/event-stream"),
+            )
+            .expect(1)
+            .mount(&mock_server)
+            .await;
+
+        let mut config = ProviderConfig::default();
+        config.id = "opencode".to_string();
+        config.kind = ProviderKind::OpenAiChatCompletions;
+
+        let provider = OpenAiProvider::new("zen_test_key".to_string())
+            .with_base_url(mock_server.uri())
+            .with_api_kind(OpenAiApiKind::ChatCompletions)
+            .with_provider_id("opencode".to_string())
+            .with_config(config);
+
+        let request = ModelRequest {
+            model: "claude-sonnet-4.5".to_string(),
+            messages: vec![ModelMessage::user("Hi".to_string())],
+            thinking: navi_core::ThinkingConfig::Off,
+            tools: vec![],
+        };
+
+        let mut stream = provider.stream(request);
+        while let Some(event) = stream.next().await {
+            event.unwrap();
+        }
     }
 
     #[tokio::test]

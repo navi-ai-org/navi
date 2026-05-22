@@ -344,10 +344,18 @@ pub fn provider_catalog(config: &NaviConfig) -> Vec<ProviderConfig> {
     providers
 }
 
+pub fn canonical_provider_id(id: &str) -> &str {
+    match id {
+        "opencode-zen" => "opencode",
+        other => other,
+    }
+}
+
 pub fn resolve_provider_config(config: &NaviConfig, id: &str) -> Option<ProviderConfig> {
+    let canonical_id = canonical_provider_id(id);
     provider_catalog(config)
         .into_iter()
-        .find(|provider| provider.id == id)
+        .find(|provider| canonical_provider_id(&provider.id) == canonical_id)
 }
 
 pub fn available_model_options(config: &NaviConfig) -> Vec<ModelOption> {
@@ -372,11 +380,11 @@ pub fn available_model_options(config: &NaviConfig) -> Vec<ModelOption> {
 
 fn merge_provider_configs(providers: &mut Vec<ProviderConfig>, overrides: Vec<ProviderConfig>) {
     for override_config in overrides {
-        if let Some(existing) = providers
-            .iter_mut()
-            .find(|provider| provider.id == override_config.id)
-        {
+        if let Some(existing) = providers.iter_mut().find(|provider| {
+            canonical_provider_id(&provider.id) == canonical_provider_id(&override_config.id)
+        }) {
             *existing = override_config;
+            existing.id = canonical_provider_id(&existing.id).to_string();
         } else {
             providers.push(override_config);
         }
@@ -858,18 +866,25 @@ fn built_in_providers() -> Vec<ProviderConfig> {
             ..Default::default()
         },
         ProviderConfig {
-            id: "opencode-zen".to_string(),
+            id: "opencode".to_string(),
             label: "OpenCode Zen".to_string(),
             description: "Recommended".to_string(),
             kind: ProviderKind::OpenAiChatCompletions,
-            api_key_env: "OPENCODE_ZEN_API_KEY".to_string(),
+            api_key_env: "OPENCODE_API_KEY".to_string(),
             base_url: None,
             models: vec![
+                model("big-pickle", ModelTaskSize::Large),
                 model("deepseek-v4-flash-free", ModelTaskSize::Small),
+                model("nemotron-3-super-free", ModelTaskSize::Small),
                 model("qwen3.6-plus", ModelTaskSize::Large),
+                model("qwen3.5-plus", ModelTaskSize::Large),
+                model("kimi-k2.6", ModelTaskSize::Large),
                 model("kimi-k2.5", ModelTaskSize::Large),
+                model("glm-5.1", ModelTaskSize::Large),
                 model("glm-5", ModelTaskSize::Large),
+                model("minimax-m2.7", ModelTaskSize::Small),
                 model("minimax-m2.5", ModelTaskSize::Small),
+                model("grok-build-0.1", ModelTaskSize::Small),
             ],
             ..Default::default()
         },
@@ -921,9 +936,11 @@ impl NaviConfig {
         let mut existing_models = std::collections::HashMap::new();
 
         // Check built-in models
+        let provider_id = canonical_provider_id(provider_id).to_string();
+
         if let Some(built_in) = built_in_providers()
             .into_iter()
-            .find(|p| p.id == provider_id)
+            .find(|p| canonical_provider_id(&p.id) == provider_id)
         {
             for m in built_in.models {
                 existing_models.insert(m.name.clone(), m.task_size);
@@ -931,7 +948,11 @@ impl NaviConfig {
         }
 
         // Check current config models
-        if let Some(existing_override) = self.providers.iter().find(|p| p.id == provider_id) {
+        if let Some(existing_override) = self
+            .providers
+            .iter()
+            .find(|p| canonical_provider_id(&p.id) == provider_id)
+        {
             for m in &existing_override.models {
                 existing_models.insert(m.name.clone(), m.task_size);
             }
@@ -952,10 +973,15 @@ impl NaviConfig {
         }
 
         // Update the provider in self.providers
-        if let Some(p) = self.providers.iter_mut().find(|p| p.id == provider_id) {
+        if let Some(p) = self
+            .providers
+            .iter_mut()
+            .find(|p| canonical_provider_id(&p.id) == provider_id)
+        {
+            p.id = provider_id.clone();
             p.models = new_models;
         } else {
-            if let Some(mut resolved) = resolve_provider_config(self, provider_id) {
+            if let Some(mut resolved) = resolve_provider_config(self, &provider_id) {
                 resolved.models = new_models;
                 self.providers.push(resolved);
             } else {
@@ -1075,10 +1101,30 @@ mod tests {
                 .iter()
                 .any(|provider| provider.id == "charm-hyper")
         );
+        assert!(providers.iter().any(|provider| provider.id == "opencode"));
+        assert_eq!(canonical_provider_id("opencode-zen"), "opencode");
+        assert_eq!(
+            resolve_provider_config(&config, "opencode-zen")
+                .expect("opencode alias")
+                .id,
+            "opencode"
+        );
+        let opencode = providers
+            .iter()
+            .find(|provider| provider.id == "opencode")
+            .expect("opencode provider");
+        assert_eq!(opencode.api_key_env, "OPENCODE_API_KEY");
         assert!(
-            providers
+            opencode
+                .models
                 .iter()
-                .any(|provider| provider.id == "opencode-zen")
+                .any(|model| model.name == "big-pickle")
+        );
+        assert!(
+            opencode
+                .models
+                .iter()
+                .any(|model| model.name == "nemotron-3-super-free")
         );
         let nvidia = providers
             .iter()
