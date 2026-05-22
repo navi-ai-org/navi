@@ -552,9 +552,12 @@ fn run_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, mut app: TuiA
                                 .map(|active| active.content.clone())
                                 .unwrap_or_default();
                             if !active_content.trim().is_empty() {
+                                app.compact_state.add_unsent_bytes(active_content.len());
                                 app.conversation_history
                                     .push(ModelMessage::assistant(active_content));
                             }
+                            let invocation_json = serde_json::to_string(&invocation).unwrap_or_default();
+                            app.compact_state.add_unsent_bytes(invocation_json.len());
                             app.conversation_history
                                 .push(ModelMessage::assistant_tool_call(invocation.clone()));
                             app.events
@@ -578,6 +581,7 @@ fn run_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, mut app: TuiA
                                     &result,
                                     app.harness_policy,
                                 );
+                                app.compact_state.add_unsent_bytes(observation.len());
                                 app.conversation_history.push(ModelMessage::tool_result(
                                     invocation.id.clone(),
                                     invocation.tool_name.clone(),
@@ -863,6 +867,7 @@ fn submit_message(app: &mut TuiApp) {
     app.messages
         .push(ChatMessage::new(ChatRole::User, text.clone()));
 
+    app.compact_state.add_unsent_bytes(text.len());
     app.conversation_history
         .push(ModelMessage::user(text.clone()));
 
@@ -4208,7 +4213,7 @@ fn welcome_text(app: &TuiApp, width: usize) -> Text<'static> {
     let model = app.loaded_config.config.model.name.clone();
     let provider = selected_provider_label(app).to_string();
     let thinking = app.thinking_level.label();
-    let context = app.compact_state.usage_label();
+    let context = app.compact_state.usage_label(app.input.len());
     let mode = format!("{:?}", app.loaded_config.config.harness.profile).to_lowercase();
     let router = "auto".to_string();
     let tools = "shell read write grep patch".to_string();
@@ -4531,8 +4536,8 @@ fn shortcut_tips(app: &TuiApp, width: usize) -> Line<'static> {
     }
 
     let compact_state = &app.compact_state;
-    let threshold = compact_state.threshold_level();
-    let pct_label = format!(" {}", compact_state.usage_label());
+    let threshold = compact_state.threshold_level(app.input.len());
+    let pct_label = format!(" {}", compact_state.usage_label(app.input.len()));
     let pct_color = match threshold {
         navi_core::CompactThreshold::CircuitOpen => SIGNAL,
         navi_core::CompactThreshold::Error => SIGNAL,

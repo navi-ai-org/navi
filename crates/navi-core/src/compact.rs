@@ -67,6 +67,7 @@ impl std::fmt::Display for CompactThreshold {
 #[derive(Debug, Clone, Default)]
 pub struct CompactState {
     pub last_input_tokens: Option<u64>,
+    pub estimated_unsent_bytes: usize,
     pub context_window: u64,
     pub consecutive_failures: u32,
     pub summary: Option<String>,
@@ -81,14 +82,30 @@ impl CompactState {
         }
     }
 
-    pub fn threshold_level(&self) -> CompactThreshold {
+    pub fn add_unsent_bytes(&mut self, bytes: usize) {
+        self.estimated_unsent_bytes += bytes;
+    }
+
+    pub fn clear_unsent_bytes(&mut self) {
+        self.estimated_unsent_bytes = 0;
+    }
+
+    pub fn total_estimated_tokens(&self, pending_input_bytes: usize) -> u64 {
+        let server_tokens = self.last_input_tokens.unwrap_or(0);
+        let client_bytes = self.estimated_unsent_bytes + pending_input_bytes;
+        let client_tokens = (client_bytes.saturating_add(3) / 4) as u64;
+        server_tokens + client_tokens
+    }
+
+    pub fn threshold_level(&self, pending_input_bytes: usize) -> CompactThreshold {
         if self.consecutive_failures >= MAX_CONSECUTIVE_FAILURES {
             return CompactThreshold::CircuitOpen;
         }
-        let Some(input_tokens) = self.last_input_tokens else {
+        let total_tokens = self.total_estimated_tokens(pending_input_bytes);
+        if total_tokens == 0 {
             return CompactThreshold::Normal;
-        };
-        let remaining = self.context_window.saturating_sub(input_tokens);
+        }
+        let remaining = self.context_window.saturating_sub(total_tokens);
         if remaining <= ERROR_THRESHOLD_BUFFER_TOKENS {
             CompactThreshold::Error
         } else if remaining <= WARNING_THRESHOLD_BUFFER_TOKENS + AUTOCOMPACT_BUFFER_TOKENS {
@@ -108,18 +125,24 @@ impl CompactState {
         input_tokens + buffer_tokens >= self.context_window
     }
 
-    pub fn context_percentage(&self) -> u8 {
-        let Some(input_tokens) = self.last_input_tokens else {
-            return 0;
-        };
+    pub fn context_percentage(&self, pending_input_bytes: usize) -> u8 {
         if self.context_window == 0 {
             return 0;
         }
-        ((input_tokens * 100) / self.context_window).min(100) as u8
+        let total_tokens = self.total_estimated_tokens(pending_input_bytes);
+        let effective_window = self.context_window.saturating_sub(12000);
+        if effective_window == 0 {
+            return 0;
+        }
+        let used = total_tokens.saturating_sub(12000);
+        let remaining = effective_window.saturating_sub(used);
+        
+        let percentage = (remaining as f64 / effective_window as f64) * 100.0;
+        percentage.clamp(0.0, 100.0) as u8
     }
 
-    pub fn usage_label(&self) -> String {
-        let pct = self.context_percentage();
+    pub fn usage_label(&self, pending_input_bytes: usize) -> String {
+        let pct = self.context_percentage(pending_input_bytes);
         let format_tokens = |t: u64| {
             if t >= 1_000_000 {
                 format!("{:.1}M", t as f64 / 1_000_000.0)
@@ -130,14 +153,16 @@ impl CompactState {
             }
         };
 
-        let used = self.last_input_tokens.unwrap_or(0);
-        let total = self.context_window;
+        let total_tokens = self.total_estimated_tokens(pending_input_bytes);
+        let used = total_tokens.saturating_sub(12000);
+        let effective_window = self.context_window.saturating_sub(12000);
 
-        format!("{} / {} ({}%)", format_tokens(used), format_tokens(total), pct)
+        format!("{} / {} ({}%)", format_tokens(used), format_tokens(effective_window), pct)
     }
 
     pub fn update_usage(&mut self, input_tokens: u64) {
         self.last_input_tokens = Some(input_tokens);
+        self.clear_unsent_bytes();
     }
 
     pub async fn auto_compact(
@@ -376,7 +401,7 @@ mod tests {
             context_window: 200_000,
             ..Default::default()
         };
-        assert_eq!(state.threshold_level(), CompactThreshold::Normal);
+        assert_eq!(state.threshold_level(0), CompactThreshold::Normal);
     }
 
     #[test]
@@ -386,7 +411,7 @@ mod tests {
             context_window: 200_000,
             ..Default::default()
         };
-        assert_eq!(state.threshold_level(), CompactThreshold::Warning);
+        assert_eq!(state.threshold_level(0), CompactThreshold::Warning);
     }
 
     #[test]
@@ -396,7 +421,7 @@ mod tests {
             context_window: 200_000,
             ..Default::default()
         };
-        assert_eq!(state.threshold_level(), CompactThreshold::Error);
+        assert_eq!(state.threshold_level(0), CompactThreshold::Error);
     }
 
     #[test]
@@ -407,7 +432,7 @@ mod tests {
             consecutive_failures: 3,
             ..Default::default()
         };
-        assert_eq!(state.threshold_level(), CompactThreshold::CircuitOpen);
+        assert_eq!(state.threshold_level(0), CompactThreshold::CircuitOpen);
         assert!(!state.should_autocompact(AUTOCOMPACT_BUFFER_TOKENS));
     }
 
@@ -428,7 +453,7 @@ mod tests {
             context_window: 200_000,
             ..Default::default()
         };
-        assert_eq!(state.context_percentage(), 50);
+        assert_eq!(state.context_percentage(0), 53);
     }
 
     #[test]
@@ -438,7 +463,7 @@ mod tests {
             context_window: 200_000,
             ..Default::default()
         };
-        assert_eq!(state.context_percentage(), 0);
+        assert_eq!(state.context_percentage(0), 100);
     }
 
     #[test]
