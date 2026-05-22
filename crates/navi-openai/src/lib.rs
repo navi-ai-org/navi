@@ -1028,7 +1028,6 @@ fn parse_chat_completions_sse_with_state(
         .is_some()
     {
         events.extend(tool_calls.drain_complete());
-        events.push(Ok(ModelStreamEvent::Done));
     }
     events
 }
@@ -1546,7 +1545,6 @@ mod tests {
                     tool_name: "read_file".to_string(),
                     input: json!({ "path": "Cargo.toml" }),
                 }),
-                ModelStreamEvent::Done,
             ]
         );
     }
