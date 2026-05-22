@@ -185,7 +185,6 @@ pub struct TuiApp {
     pending_provider_setup: Option<String>,
 
     // stats
-    total_tokens_estimate: usize,
     compact_state: navi_core::compact::CompactState,
 
     // persistence
@@ -377,7 +376,6 @@ impl TuiApp {
             api_key_cursor: 0,
             pending_model_selection: None,
             pending_provider_setup: None,
-            total_tokens_estimate: 0,
             compact_state: navi_core::compact::CompactState::new(context_window),
             session_store,
             events: Vec::new(),
@@ -862,9 +860,6 @@ fn submit_message(app: &mut TuiApp) {
         "TUI prompt submitted"
     );
 
-    let word_count = text.split_whitespace().count();
-    app.total_tokens_estimate += word_count * 4 / 3;
-
     app.messages
         .push(ChatMessage::new(ChatRole::User, text.clone()));
 
@@ -1097,8 +1092,6 @@ fn finalize_active_assistant(app: &mut TuiApp, elapsed_ms: u64) {
         return;
     }
 
-    let word_count = text.split_whitespace().count();
-    app.total_tokens_estimate += word_count * 4 / 3;
     app.conversation_history
         .push(ModelMessage::assistant(text.clone()));
     app.events.push(AgentEvent::ModelOutput { text, thinking });
@@ -2363,7 +2356,6 @@ fn handle_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyModifiers) -> bool 
                 app.input.clear();
                 app.input_cursor = 0;
                 app.scroll_offset = 0;
-                app.total_tokens_estimate = 0;
                 show_notification(app, "Layer", "New layer started.");
                 return false;
             }
@@ -2862,7 +2854,6 @@ fn run_selected_command(app: &mut TuiApp) -> bool {
             app.input.clear();
             app.input_cursor = 0;
             app.scroll_offset = 0;
-            app.total_tokens_estimate = 0;
             app.mode = Mode::Normal;
         }
         CommandAction::SwitchModel => {
@@ -4215,7 +4206,7 @@ fn welcome_text(app: &TuiApp, width: usize) -> Text<'static> {
     let model = app.loaded_config.config.model.name.clone();
     let provider = selected_provider_label(app).to_string();
     let thinking = app.thinking_level.label();
-    let context = format!("{}%", app.total_tokens_estimate.min(100_000) / 1000);
+    let context = format!("{}%", app.compact_state.context_percentage());
     let status_width = [
         project.chars().count() + 10,
         model.chars().count() + provider.chars().count() + 9,
@@ -5675,23 +5666,18 @@ fn load_session(app: &mut TuiApp, snapshot: &SessionSnapshot) {
     app.messages.clear();
     reset_system_context(app);
     app.events.clear();
-    app.total_tokens_estimate = 0;
 
     let mut tool_invocations = std::collections::HashMap::new();
 
     for event in &snapshot.events {
         match event {
             AgentEvent::UserTaskSubmitted { text } => {
-                let word_count = text.split_whitespace().count();
-                app.total_tokens_estimate += word_count * 4 / 3;
                 app.messages
                     .push(ChatMessage::new(ChatRole::User, text.clone()));
                 app.conversation_history
                     .push(ModelMessage::user(text.clone()));
             }
             AgentEvent::ModelOutput { text, thinking } => {
-                let word_count = text.split_whitespace().count();
-                app.total_tokens_estimate += word_count * 4 / 3;
                 app.messages.push(ChatMessage {
                     thinking_content: thinking.clone().unwrap_or_default(),
                     ..ChatMessage::new(ChatRole::Assistant, text.clone())
@@ -5711,6 +5697,12 @@ fn load_session(app: &mut TuiApp, snapshot: &SessionSnapshot) {
                         ..ChatMessage::new(ChatRole::Assistant, String::new())
                     });
                 }
+            }
+            AgentEvent::UsageReported {
+                input_tokens,
+                output_tokens: _,
+            } => {
+                app.compact_state.update_usage(*input_tokens);
             }
             _ => {}
         }
