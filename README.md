@@ -4,7 +4,7 @@ NAVI is an opinionated, extensible code agent with a terminal UI. It is built in
 
 ## Current Capabilities
 
-- Interactive TUI with chat, command palette, model picker, thinking controls, settings, session history, vim mode, and markdown/code rendering.
+- Interactive TUI with chat, command palette, model picker, thinking controls, settings, session history, and markdown/code rendering.
 - Streaming model responses with visible thinking text when providers expose it.
 - Shared small/medium model harness with compact observations, loop limits, and provider-correct tool transcripts.
 - Tool calling for project work: `read_file`, `write_file`, `apply_patch`, `list_files`, `grep`, and `bash`.
@@ -48,9 +48,8 @@ cargo run -p navi-cli -- --print-providers
 | `enter` | Insert newline |
 | `ctrl+j` | Insert newline |
 | `ctrl+c` | Quit |
-| `/` or `?` with empty input | Open command palette / shortcuts |
-
-Vim mode is opt-in through the command palette. When enabled, input starts in Normal mode.
+| `/` with empty input | Open command palette |
+| `?` with empty input | Open shortcuts |
 
 ## Configuration
 

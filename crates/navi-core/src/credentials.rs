@@ -1,8 +1,10 @@
 use anyhow::{Context, Result};
+use directories::BaseDirs;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::collections::HashMap;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 struct CredentialsFile {
@@ -31,6 +33,18 @@ impl CredentialStore {
         let content = fs::read_to_string(&self.path).ok()?;
         let file: CredentialsFile = toml::from_str(&content).ok()?;
         file.providers.get(provider_id).map(|c| c.api_key.clone())
+    }
+
+    pub fn get_opencode_api_key(&self) -> Option<String> {
+        if let Ok(content) = std::env::var("OPENCODE_AUTH_CONTENT") {
+            if let Some(key) = opencode_key_from_auth_content(&content) {
+                return Some(key);
+            }
+        }
+
+        opencode_auth_paths()
+            .into_iter()
+            .find_map(|path| opencode_key_from_auth_file(&path))
     }
 
     pub fn set_api_key(&self, provider_id: &str, api_key: &str) -> Result<()> {
@@ -73,6 +87,49 @@ impl CredentialStore {
             }
         }
         self.get_api_key(provider_id)
+    }
+}
+
+fn opencode_auth_paths() -> Vec<PathBuf> {
+    let mut paths = Vec::new();
+
+    if let Ok(data_home) = std::env::var("XDG_DATA_HOME") {
+        if !data_home.is_empty() {
+            paths.push(PathBuf::from(data_home).join("opencode").join("auth.json"));
+        }
+    }
+
+    if let Some(base_dirs) = BaseDirs::new() {
+        paths.push(base_dirs.data_dir().join("opencode").join("auth.json"));
+    }
+
+    paths.sort();
+    paths.dedup();
+    paths
+}
+
+fn opencode_key_from_auth_file(path: &Path) -> Option<String> {
+    let content = fs::read_to_string(path).ok()?;
+    opencode_key_from_auth_content(&content)
+}
+
+fn opencode_key_from_auth_content(content: &str) -> Option<String> {
+    let data: Value = serde_json::from_str(content).ok()?;
+    ["opencode", "opencode/"]
+        .into_iter()
+        .find_map(|provider_id| api_key_from_opencode_auth_entry(data.get(provider_id)?))
+}
+
+fn api_key_from_opencode_auth_entry(entry: &Value) -> Option<String> {
+    if entry.get("type")?.as_str()? != "api" {
+        return None;
+    }
+
+    let key = entry.get("key")?.as_str()?.trim();
+    if key.is_empty() {
+        None
+    } else {
+        Some(key.to_string())
     }
 }
 
@@ -156,6 +213,39 @@ mod tests {
             .expect("save");
         let result = store.resolve_api_key("test-provider", "NAVI_NONEXISTENT_ENV_VAR_98765");
         assert_eq!(result.as_deref(), Some("stored-key"));
+    }
+
+    #[test]
+    fn reads_opencode_api_key_from_auth_content() {
+        let content = r#"{
+            "opencode": {
+                "type": "api",
+                "key": "zen-key"
+            },
+            "openai": {
+                "type": "api",
+                "key": "openai-key"
+            }
+        }"#;
+
+        assert_eq!(
+            opencode_key_from_auth_content(content).as_deref(),
+            Some("zen-key")
+        );
+    }
+
+    #[test]
+    fn ignores_non_api_opencode_auth_content() {
+        let content = r#"{
+            "opencode": {
+                "type": "oauth",
+                "access": "access-token",
+                "refresh": "refresh-token",
+                "expires": 999999
+            }
+        }"#;
+
+        assert!(opencode_key_from_auth_content(content).is_none());
     }
 
     #[cfg(unix)]

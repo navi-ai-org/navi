@@ -24,7 +24,7 @@ Rust workspace, edition 2024, resolver 3. All implementation lives under `crates
 | `navi-openai` | `ModelProvider` implementation for OpenAI-compatible APIs and provider adapters. |
 | `navi-plugin-api` | Plugin trait and `NAVI_PLUGIN_API_VERSION = 1`. |
 | `navi-plugin-host` | Dynamic `.so`/`.dylib` loading via `libloading`. |
-| `navi-tui` | Terminal UI with chat, model picker, thinking/settings/session modals, vim mode, markdown/code rendering. |
+| `navi-tui` | Terminal UI with chat, model picker, thinking/settings/session modals, markdown/code rendering. |
 
 ## Commands
 
@@ -105,7 +105,6 @@ Native plugins are loaded with `libloading` from configured `[[plugins]]` entrie
 - Ctrl shortcuts: `ctrl+p` commands, `ctrl+m` models, `ctrl+n` new session, `ctrl+s` sessions, `ctrl+o` full tool view, `ctrl+c` quit.
 - `ctrl+d` opens the Debug modal with log path, session id, provider/model, active state, and recent diagnostics.
 - Prompt sending is `ctrl+enter`; plain `enter` inserts a newline.
-- Vim mode is opt-in through the command palette.
 - Chat rendering uses cached markdown/code rendering. If rendered output depends on new message fields, update `chat_render_signature`.
 - Avoid expensive work in draw functions.
 

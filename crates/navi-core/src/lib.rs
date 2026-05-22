@@ -16,8 +16,8 @@ pub use agent::{AgentControl, AgentMessage};
 pub use config::{
     ApprovalConfig, HarnessConfig, HarnessProfile, LoadedConfig, LoggingConfig, ModelConfig,
     ModelOption, ModelTaskSize, NaviConfig, PluginConfig, ProviderConfig, ProviderKind,
-    ProviderModelConfig, SecurityConfig, available_model_options, provider_catalog,
-    resolve_provider_config, save_global_config, save_project_config,
+    ProviderModelConfig, SecurityConfig, available_model_options, canonical_provider_id,
+    provider_catalog, resolve_provider_config, save_global_config, save_project_config,
 };
 pub use credentials::CredentialStore;
 pub use event::{AgentEvent, ApprovalDecision, ApprovalRequest, ApprovalRisk};
