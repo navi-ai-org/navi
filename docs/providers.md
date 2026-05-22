@@ -20,6 +20,7 @@ Provider configuration is defined in `navi-core/src/config.rs`. Runtime provider
 - Anthropic Messages adapter for provider id `anthropic`
 - Gemini Generate Content adapter for provider id `google-gemini`
 - OpenRouter headers for provider id `openrouter`
+- GitHub Copilot OAuth bearer tokens and request headers for provider id `github-copilot`
 
 `list_models()` calls the provider's `/models` endpoint when supported. The model picker can sync one provider or all providers.
 
@@ -28,9 +29,22 @@ Provider configuration is defined in `navi-core/src/config.rs`. Runtime provider
 Provider keys are resolved in this order:
 
 1. Environment variable declared by `ProviderConfig.api_key_env`
-2. Credential store under NAVI's data directory
+2. Provider-specific external auth sources, for example OpenCode Zen's `auth.json`
+3. Credential store under NAVI's data directory
 
-The TUI should not ask for API keys on startup. It asks only when the user selects a model whose provider has no resolved key.
+The TUI should not ask for API keys on startup. It asks only when the user selects a model whose provider has no resolved key. Settings includes `Provider Accounts`, a provider configuration modal that shows configured/unconfigured status, opens API key setup, syncs provider models, and starts OAuth for compatible providers.
+
+## OAuth
+
+OAuth is provider-specific. Do not add a generic OAuth toggle unless the provider documents a compatible authorization flow and the request adapter knows how to use the resulting token.
+
+Currently implemented:
+
+| Provider | Flow | Storage | Runtime usage |
+|---|---|---|---|
+| GitHub Copilot | GitHub device authorization | NAVI credential store as bearer token | `Authorization: Bearer`, `Openai-Intent: conversation-edits`, `x-initiator` |
+
+Most API providers still use API keys. In the provider modal, `OAuth` is shown only for providers with a real implementation; otherwise setup uses the provider's API key.
 
 ## Thinking Adapter
 

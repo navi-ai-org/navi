@@ -89,7 +89,7 @@ stdout_enabled = false
 include_payloads = false
 ```
 
-API keys are resolved from environment variables first, then from NAVI's credential store. If a selected provider has no key, the TUI asks for it from the model picker instead of blocking startup.
+API keys are resolved from environment variables first, then from NAVI's credential store. If a selected provider has no key, the TUI asks for it from the model picker instead of blocking startup. The Settings modal also has `Provider Accounts`, which shows configured/unconfigured providers and opens API key setup or OAuth for compatible providers.
 
 ## Providers
 
@@ -99,6 +99,8 @@ All configured providers route through the `navi-openai` crate. NAVI supports tw
 - `openai-chat-completions`
 
 Some providers need request/stream adapters even when they expose an OpenAI-compatible surface. The thinking selector uses user-facing levels `max`, `high`, `medium`, `low`, and `off`, then maps those to provider-specific request fields.
+
+GitHub Copilot is available as an OAuth-capable provider. The OAuth flow uses GitHub device login, stores the returned bearer token in NAVI's private credential store, and sends Copilot-specific request headers.
 
 See [docs/providers.md](docs/providers.md) for provider behavior and configuration notes.
 

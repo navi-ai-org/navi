@@ -402,6 +402,10 @@ impl OpenAiProvider {
         if provider_id == "openrouter" {
             req = req.header("HTTP-Referer", "https://github.com/enrell/navi")
                      .header("X-Title", "Navi");
+        } else if provider_id == "github-copilot" {
+            req = req.header("User-Agent", "navi/0.1.0")
+                     .header("Openai-Intent", "conversation-edits")
+                     .header("x-initiator", "user");
         }
 
         let response = req
@@ -1848,6 +1852,52 @@ mod tests {
 
         let request = ModelRequest {
             model: "gpt-5.5".to_string(),
+            messages: vec![ModelMessage::user("Hi".to_string())],
+            thinking: navi_core::ThinkingConfig::Off,
+            tools: vec![],
+        };
+
+        let mut stream = provider.stream(request);
+        while let Some(event) = stream.next().await {
+            event.unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn test_github_copilot_request_uses_oauth_headers() {
+        use wiremock::matchers::{header, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .and(header("Authorization", "Bearer copilot_token"))
+            .and(header("Openai-Intent", "conversation-edits"))
+            .and(header("x-initiator", "user"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_string(
+                        "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n",
+                    )
+                    .insert_header("content-type", "text/event-stream"),
+            )
+            .expect(1)
+            .mount(&mock_server)
+            .await;
+
+        let mut config = ProviderConfig::default();
+        config.id = "github-copilot".to_string();
+        config.kind = ProviderKind::OpenAiChatCompletions;
+
+        let provider = OpenAiProvider::new("copilot_token".to_string())
+            .with_base_url(mock_server.uri())
+            .with_api_kind(OpenAiApiKind::ChatCompletions)
+            .with_provider_id("github-copilot".to_string())
+            .with_config(config);
+
+        let request = ModelRequest {
+            model: "gpt-5.1".to_string(),
             messages: vec![ModelMessage::user("Hi".to_string())],
             thinking: navi_core::ThinkingConfig::Off,
             tools: vec![],

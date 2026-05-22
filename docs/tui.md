@@ -6,7 +6,7 @@ The TUI lives in `crates/navi-tui/src/lib.rs`. It uses a synchronous ratatui/cro
 
 - `TuiApp` stores UI state, provider state, credentials, sessions, tool approval state, and async channels.
 - `AsyncEvent` carries provider stream events, tool completion events, and model-sync results back into the event loop.
-- `Mode` selects modal behavior: normal chat, commands, models, API key entry, thinking, sessions, settings.
+- `Mode` selects modal behavior: normal chat, commands, models, API key entry, thinking, sessions, settings, provider accounts.
 - `ChatMessage` is display-oriented and may contain model labels, status, usage, thinking text, tool invocation/result metadata, or normal content.
 
 ## Keybindings
@@ -77,8 +77,15 @@ The model picker includes provider/model search and refresh actions:
 
 The settings modal currently controls:
 
-- `Show Thinking Text`
-- `Expand Tool Outputs (Ctrl+O)`
+- `Show Reasoning`
+- `Verbose Tool Output`
+- `Provider Accounts`
+
+`Provider Accounts` opens the provider configuration modal. It lists all configured providers, shows whether each one is backed by an env var, stored credential, OpenCode auth, or is missing credentials, and supports:
+
+- `enter` / `k` for API key setup.
+- `o` for OAuth on supported providers.
+- `r` to sync models for the selected provider.
 
 The Debug modal (`ctrl+d`) shows the log path, session id, project, selected model/provider, active state, and recent diagnostics. It is intentionally read-only and should not render raw payloads or secrets.
 

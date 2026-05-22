@@ -60,7 +60,7 @@ Key sections:
 - `providers`: built-in provider overrides or custom providers.
 - `plugins`: native plugin library paths.
 
-API keys are read from env vars first, then the credential store. The TUI must not ask for API keys on startup; it prompts from the model picker when selecting a provider without a resolved key.
+API keys are read from env vars first, provider-specific external auth sources next, then the credential store. The TUI must not ask for API keys on startup; it prompts from the model picker when selecting a provider without a resolved key. Settings has `Provider Accounts`, which lists configured/unconfigured providers and opens API key or OAuth setup.
 
 ## Providers
 
@@ -74,6 +74,7 @@ Some provider ids have special adapters:
 - `anthropic` uses Anthropic Messages streaming.
 - `google-gemini` uses Gemini Generate Content streaming.
 - `openrouter` adds required OpenRouter headers and reasoning config.
+- `github-copilot` uses GitHub device OAuth bearer tokens and Copilot request headers.
 - `openai` and `xai` use Responses-style reasoning effort.
 
 The UI thinking levels are `max`, `high`, `medium`, `low`, and `off`. `ThinkingConfig::adapter_for_provider` maps them to provider-specific request fields.
