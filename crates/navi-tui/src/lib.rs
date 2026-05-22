@@ -1,7 +1,8 @@
 use anyhow::Result;
 use crossterm::event::{
-    self, Event, KeyCode, KeyEventKind, KeyModifiers, KeyboardEnhancementFlags,
-    PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
+    self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind, KeyModifiers,
+    KeyboardEnhancementFlags, MouseButton, MouseEvent, MouseEventKind, PopKeyboardEnhancementFlags,
+    PushKeyboardEnhancementFlags,
 };
 use crossterm::execute;
 use crossterm::terminal::{
@@ -205,6 +206,7 @@ pub struct TuiApp {
     diagnostics: Vec<String>,
     log_path: PathBuf,
     chat_render_cache: RefCell<ChatRenderCache>,
+    selection: Option<SelectionState>,
 }
 
 #[derive(Debug, Clone)]
@@ -222,6 +224,7 @@ struct ChatRenderCache {
     show_thinking: bool,
     signature: String,
     lines: Vec<Line<'static>>,
+    chat_rect: Option<Rect>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -392,6 +395,7 @@ impl TuiApp {
             diagnostics: Vec::new(),
             log_path,
             chat_render_cache: RefCell::new(ChatRenderCache::default()),
+            selection: None,
         };
 
         if let Some(warning) = plugin_warning {
@@ -469,7 +473,7 @@ const COMMANDS: &[CommandItem] = &[
 pub fn run(app: TuiApp) -> Result<()> {
     enable_raw_mode()?;
     let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen)?;
+    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
 
     // Enable the kitty keyboard protocol so the terminal can distinguish
     // Ctrl+Enter from plain Enter (and report other modifier combos).
@@ -490,7 +494,11 @@ pub fn run(app: TuiApp) -> Result<()> {
     if enhanced_keyboard {
         execute!(terminal.backend_mut(), PopKeyboardEnhancementFlags)?;
     }
-    execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
+    execute!(
+        terminal.backend_mut(),
+        LeaveAlternateScreen,
+        DisableMouseCapture
+    )?;
     disable_raw_mode()?;
     terminal.show_cursor()?;
 
@@ -815,15 +823,20 @@ fn run_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, mut app: TuiA
         };
 
         if event::poll(timeout)? {
-            if let Event::Key(key) = event::read()? {
-                if key.kind != KeyEventKind::Press {
-                    continue;
+            match event::read()? {
+                Event::Key(key) => {
+                    if key.kind == KeyEventKind::Press {
+                        needs_draw = true;
+                        if handle_key(&mut app, key.code, key.modifiers) {
+                            break;
+                        }
+                    }
                 }
-
-                needs_draw = true;
-                if handle_key(&mut app, key.code, key.modifiers) {
-                    break;
+                Event::Mouse(mouse_event) => {
+                    needs_draw = true;
+                    handle_mouse(&mut app, mouse_event);
                 }
+                _ => {}
             }
         } else if app.is_loading || app.messages.is_empty() || visible_notification(&app).is_some()
         {
@@ -2125,6 +2138,151 @@ fn visible_notification(app: &TuiApp) -> Option<&Notification> {
         .filter(|notification| notification.created_at.elapsed() < notification.ttl)
 }
 
+// ─── mouse handling ────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SelectionState {
+    pub start: (usize, usize),
+    pub end: (usize, usize),
+    pub active: bool,
+}
+
+fn map_mouse_to_text(app: &TuiApp, col: u16, row: u16) -> Option<(usize, usize)> {
+    let cache = app.chat_render_cache.borrow();
+    let inner = cache.chat_rect?;
+    if col < inner.x || col >= inner.x + inner.width || row < inner.y || row >= inner.y + inner.height {
+        return None;
+    }
+    let visible_y = (row - inner.y) as usize;
+    
+    let total_lines = cache.lines.len();
+    let visible_height = inner.height as usize;
+    let max_scroll = total_lines.saturating_sub(visible_height);
+    let effective_scroll = app.scroll_offset.min(max_scroll);
+    let start = total_lines
+        .saturating_sub(visible_height)
+        .saturating_sub(effective_scroll);
+        
+    let line_index = start + visible_y;
+    if line_index >= total_lines {
+        return None;
+    }
+    
+    let char_index = (col - inner.x) as usize;
+    Some((line_index, char_index))
+}
+
+fn copy_selection_to_clipboard(app: &mut TuiApp) {
+    let selection = if let Some(sel) = &app.selection {
+        sel
+    } else {
+        return;
+    };
+
+    let start = selection.start.min(selection.end);
+    let end = selection.start.max(selection.end);
+
+    let cache = app.chat_render_cache.borrow();
+    let mut selected_text = String::new();
+
+    for line_idx in start.0..=end.0 {
+        if let Some(line) = cache.lines.get(line_idx) {
+            let mut line_text = String::new();
+            for span in &line.spans {
+                line_text.push_str(&span.content);
+            }
+
+            let start_char = if line_idx == start.0 { start.1 } else { 0 };
+            let end_char = if line_idx == end.0 { end.1 } else { line_text.chars().count() };
+
+            let substr: String = line_text.chars().skip(start_char).take(end_char.saturating_sub(start_char).max(1)).collect();
+            selected_text.push_str(&substr);
+
+            if line_idx != end.0 {
+                selected_text.push('\n');
+            }
+        }
+    }
+    drop(cache);
+
+    if !selected_text.is_empty() {
+        // ALWAYS send OSC 52 as a robust fallback for terminals
+        use base64::prelude::*;
+        let b64 = BASE64_STANDARD.encode(&selected_text);
+        print!("\x1B]52;c;{}\x07", b64);
+        let _ = std::io::Write::flush(&mut std::io::stdout());
+
+        let mut copied_arboard = false;
+        if let Ok(mut clipboard) = arboard::Clipboard::new() {
+            if clipboard.set_text(selected_text.clone()).is_ok() {
+                copied_arboard = true;
+            }
+        }
+        
+        if copied_arboard {
+            show_notification(app, "Clipboard", "Texto copiado com sucesso!".to_string());
+        } else {
+            show_notification(app, "Clipboard", "Texto copiado (OSC 52)".to_string());
+        }
+    }
+}
+
+fn handle_mouse(app: &mut TuiApp, mouse: MouseEvent) {
+    match mouse.kind {
+        MouseEventKind::ScrollDown => {
+            app.scroll_offset = app.scroll_offset.saturating_sub(3);
+        }
+        MouseEventKind::ScrollUp => {
+            app.scroll_offset = app.scroll_offset.saturating_add(3);
+        }
+        MouseEventKind::Down(MouseButton::Left) => {
+            if let Some(pos) = map_mouse_to_text(app, mouse.column, mouse.row) {
+                app.selection = Some(SelectionState {
+                    start: pos,
+                    end: pos,
+                    active: true,
+                });
+            } else {
+                app.selection = None;
+            }
+        }
+        MouseEventKind::Drag(MouseButton::Left) => {
+            if let Some(pos) = map_mouse_to_text(app, mouse.column, mouse.row) {
+                if let Some(selection) = &mut app.selection {
+                    if selection.active {
+                        selection.end = pos;
+                    }
+                }
+            }
+            if app.selection.as_ref().map(|s| s.active).unwrap_or(false) {
+                if let Some(inner) = app.chat_render_cache.borrow().chat_rect {
+                    if mouse.row <= inner.y + 1 {
+                        app.scroll_offset = app.scroll_offset.saturating_add(1);
+                    } else if mouse.row >= inner.y + inner.height.saturating_sub(2) {
+                        app.scroll_offset = app.scroll_offset.saturating_sub(1);
+                    }
+                }
+            }
+        }
+        MouseEventKind::Up(MouseButton::Left) => {
+            let mut execute_copy = false;
+            if let Some(pos) = map_mouse_to_text(app, mouse.column, mouse.row) {
+                if let Some(selection) = &mut app.selection {
+                    if selection.active {
+                        selection.end = pos;
+                        selection.active = false;
+                        execute_copy = true;
+                    }
+                }
+            }
+            if execute_copy {
+                copy_selection_to_clipboard(app);
+            }
+        }
+        _ => {}
+    }
+}
+
 // ─── key handling ──────────────────────────────────────────────────────────────
 fn handle_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyModifiers) -> bool {
     if !app.pending_approvals.is_empty() {
@@ -3267,6 +3425,7 @@ fn render_chat_area(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
         horizontal: 2,
         vertical: 1,
     });
+    app.chat_render_cache.borrow_mut().chat_rect = Some(inner);
 
     if app.messages.is_empty() && !app.is_loading {
         let welcome = welcome_text(app, inner.width as usize);
@@ -3294,7 +3453,53 @@ fn render_chat_area(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
         .saturating_sub(effective_scroll);
     let end = (start + visible_height).min(total_lines);
 
-    let visible_lines: Vec<Line<'static>> = rendered_lines[start..end].to_vec();
+    let mut visible_lines: Vec<Line<'static>> = rendered_lines[start..end].to_vec();
+
+    if let Some(selection) = &app.selection {
+        let sel_start = selection.start.min(selection.end);
+        let sel_end = selection.start.max(selection.end);
+        
+        for (idx, line) in visible_lines.iter_mut().enumerate() {
+            let global_idx = start + idx;
+            if global_idx >= sel_start.0 && global_idx <= sel_end.0 {
+                let start_char = if global_idx == sel_start.0 { sel_start.1 } else { 0 };
+                let end_char = if global_idx == sel_end.0 { sel_end.1 } else { usize::MAX };
+                
+                let mut new_spans = Vec::new();
+                let mut current_char = 0;
+                for span in line.spans.iter() {
+                    let span_len = span.content.chars().count();
+                    let span_end = current_char + span_len;
+                    
+                    if span_end <= start_char || current_char >= end_char {
+                        new_spans.push(span.clone());
+                    } else if current_char >= start_char && span_end <= end_char {
+                        new_spans.push(Span::styled(span.content.clone(), span.style.bg(Color::DarkGray)));
+                    } else {
+                        let c1 = start_char.saturating_sub(current_char).min(span_len);
+                        let c2 = end_char.saturating_sub(current_char).min(span_len);
+                        
+                        let s: String = span.content.chars().collect();
+                        
+                        if c1 > 0 {
+                            let p1: String = s.chars().take(c1).collect();
+                            new_spans.push(Span::styled(p1, span.style));
+                        }
+                        if c2 > c1 {
+                            let p2: String = s.chars().skip(c1).take(c2 - c1).collect();
+                            new_spans.push(Span::styled(p2, span.style.bg(Color::DarkGray)));
+                        }
+                        if span_len > c2 {
+                            let p3: String = s.chars().skip(c2).collect();
+                            new_spans.push(Span::styled(p3, span.style));
+                        }
+                    }
+                    current_char = span_end;
+                }
+                *line = Line::from(new_spans);
+            }
+        }
+    }
 
     frame.render_widget(
         Paragraph::new(Text::from(visible_lines))

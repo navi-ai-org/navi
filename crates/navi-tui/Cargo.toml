@@ -17,3 +17,5 @@ tracing.workspace = true
 navi-core.workspace = true
 navi-openai.workspace = true
 navi-plugin-host.workspace = true
+base64 = "0.22.1"
+arboard = "3.6.1"
