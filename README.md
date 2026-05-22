@@ -13,6 +13,7 @@ NAVI is an opinionated, extensible code agent with a terminal UI. It is built in
 - Secure credential store with env-var precedence and per-provider API key prompting from the model picker.
 - Security policy for tool invocations, path restrictions, command blocking, approvals, and session secret redaction.
 - Native plugin loading through `.so`/`.dylib` libraries with API version validation.
+- ACP stdio server mode for editor/client integration.
 - Headless mode for scripted use.
 
 ## Quick Start
@@ -34,6 +35,14 @@ Useful inspection commands:
 cargo run -p navi-cli -- --print-config
 cargo run -p navi-cli -- --print-providers
 ```
+
+ACP server mode is for editors and clients that speak the Agent Client Protocol:
+
+```bash
+navi --acp
+```
+
+`--acp` uses stdout/stdin for JSON-RPC, so diagnostics stay in the log file and the flag cannot be combined with `--no-tui` or a task argument.
 
 ## TUI Controls
 

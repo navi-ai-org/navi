@@ -54,6 +54,8 @@ pub struct ModelMessage {
     pub tool_name: Option<String>,
     #[serde(default)]
     pub tool_calls: Vec<ToolInvocation>,
+    #[serde(default, skip_serializing, skip_deserializing)]
+    pub created_at: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -113,6 +115,7 @@ impl ModelMessage {
             tool_call_id: Some(tool_call_id.into()),
             tool_name: Some(tool_name.into()),
             tool_calls: Vec::new(),
+            created_at: Some(current_unix_millis()),
         }
     }
 
@@ -123,6 +126,7 @@ impl ModelMessage {
             tool_call_id: None,
             tool_name: None,
             tool_calls: vec![invocation],
+            created_at: Some(current_unix_millis()),
         }
     }
 
@@ -133,8 +137,16 @@ impl ModelMessage {
             tool_call_id: None,
             tool_name: None,
             tool_calls: Vec::new(),
+            created_at: Some(current_unix_millis()),
         }
     }
+}
+
+fn current_unix_millis() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

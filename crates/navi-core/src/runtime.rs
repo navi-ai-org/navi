@@ -176,9 +176,13 @@ impl AgentRuntime {
             model_name: self.loaded_config.config.model.name.clone(),
             event_tx: Some(event_tx),
             pending_approvals: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+            compact_state: Arc::new(tokio::sync::Mutex::new(crate::compact::CompactState::new(
+                crate::config::effective_context_window(&self.loaded_config.config),
+            ))),
+            harness_config: self.loaded_config.config.harness.clone(),
         });
 
-        let session_runtime = crate::session::SessionRuntime::spawn(ctx, policy, Vec::new());
+        let session_runtime = crate::session::SessionRuntime::spawn(ctx, policy, Vec::new(), None);
         let (tx, rx) = tokio::sync::oneshot::channel();
         session_runtime
             .submission_tx

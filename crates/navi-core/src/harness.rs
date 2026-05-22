@@ -59,13 +59,21 @@ fn infer_profile(config: &NaviConfig) -> HarnessProfile {
 }
 
 pub fn build_system_prompt(config: &NaviConfig, cwd: &Path) -> String {
+    build_system_prompt_with_memory(config, cwd, None)
+}
+
+pub fn build_system_prompt_with_memory(
+    config: &NaviConfig,
+    cwd: &Path,
+    memory_injection: Option<&str>,
+) -> String {
     let policy = select_harness_policy(config);
     let profile = match policy.profile {
         HarnessProfile::Auto => "medium",
         HarnessProfile::Small => "small",
         HarnessProfile::Medium => "medium",
     };
-    format!(
+    let mut prompt = format!(
         concat!(
             "You are NAVI, an autonomous code agent running in a terminal.\n",
             "Harness profile: {profile}. Current project: {cwd}.\n",
@@ -91,7 +99,13 @@ pub fn build_system_prompt(config: &NaviConfig, cwd: &Path) -> String {
         ),
         profile = profile,
         cwd = cwd.display(),
-    )
+    );
+    if let Some(memory) = memory_injection {
+        prompt.push_str("\n");
+        prompt.push_str(memory);
+        prompt.push_str("\n");
+    }
+    prompt
 }
 
 pub fn record_tool_call(

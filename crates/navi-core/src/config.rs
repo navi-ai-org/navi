@@ -14,6 +14,7 @@ pub struct NaviConfig {
     pub logging: LoggingConfig,
     pub providers: Vec<ProviderConfig>,
     pub plugins: Vec<PluginConfig>,
+    pub memory: MemoryConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -29,6 +30,12 @@ pub struct HarnessConfig {
     pub profile: HarnessProfile,
     pub observation_bytes_small: usize,
     pub observation_bytes_medium: usize,
+    pub micro_compact_gap_minutes: u64,
+    pub autocompact_buffer_tokens: u64,
+    pub autocompact_warning_buffer_tokens: u64,
+    pub autocompact_error_buffer_tokens: u64,
+    pub autocompact_max_output_tokens: u64,
+    pub autocompact_max_consecutive_failures: u32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -151,6 +158,8 @@ pub enum ProviderKind {
 pub struct ProviderModelConfig {
     pub name: String,
     pub task_size: ModelTaskSize,
+    #[serde(default)]
+    pub context_window_tokens: Option<u64>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -167,6 +176,7 @@ pub struct ModelOption {
     pub provider_label: String,
     pub provider_description: String,
     pub task_size: ModelTaskSize,
+    pub context_window_tokens: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -174,6 +184,22 @@ pub struct PluginConfig {
     pub path: PathBuf,
     #[serde(default = "default_true")]
     pub enabled: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct MemoryConfig {
+    pub session_memory_enabled: bool,
+    pub max_memory_entries: usize,
+}
+
+impl Default for MemoryConfig {
+    fn default() -> Self {
+        Self {
+            session_memory_enabled: false,
+            max_memory_entries: 3,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -210,6 +236,7 @@ impl NaviConfig {
         self.approvals = other.approvals;
         self.security = other.security;
         self.logging = other.logging;
+        self.memory = other.memory;
         merge_provider_configs(&mut self.providers, other.providers);
         self.plugins.extend(other.plugins);
     }
@@ -248,6 +275,7 @@ impl Default for NaviConfig {
             logging: LoggingConfig::default(),
             providers: Vec::new(),
             plugins: Vec::new(),
+            memory: MemoryConfig::default(),
         }
     }
 }
@@ -267,6 +295,12 @@ impl Default for HarnessConfig {
             profile: HarnessProfile::Auto,
             observation_bytes_small: 12 * 1024,
             observation_bytes_medium: 48 * 1024,
+            micro_compact_gap_minutes: 60,
+            autocompact_buffer_tokens: 13_000,
+            autocompact_warning_buffer_tokens: 20_000,
+            autocompact_error_buffer_tokens: 20_000,
+            autocompact_max_output_tokens: 20_000,
+            autocompact_max_consecutive_failures: 3,
         }
     }
 }
@@ -373,9 +407,20 @@ pub fn available_model_options(config: &NaviConfig) -> Vec<ModelOption> {
                     provider_label: provider.label.clone(),
                     provider_description: desc.clone(),
                     task_size: model.task_size,
+                    context_window_tokens: model.context_window_tokens,
                 })
         })
         .collect()
+}
+
+pub fn effective_context_window(config: &NaviConfig) -> u64 {
+    let selected_provider = &config.model.provider;
+    let selected_model = &config.model.name;
+    available_model_options(config)
+        .into_iter()
+        .find(|m| m.provider_id == *selected_provider && m.name == *selected_model)
+        .and_then(|m| m.context_window_tokens)
+        .unwrap_or(DEFAULT_CONTEXT_WINDOW)
 }
 
 fn merge_provider_configs(providers: &mut Vec<ProviderConfig>, overrides: Vec<ProviderConfig>) {
@@ -402,35 +447,35 @@ fn built_in_providers() -> Vec<ProviderConfig> {
             api_key_env: "OPENAI_API_KEY".to_string(),
             base_url: Some("https://api.openai.com/v1".to_string()),
             models: vec![
-                model("gpt-5.5", ModelTaskSize::Large),
-                model("gpt-5.4", ModelTaskSize::Large),
-                model("gpt-5.4-codex", ModelTaskSize::Large),
-                model("gpt-5.4-mini", ModelTaskSize::Small),
-                model("gpt-5.3-codex", ModelTaskSize::Large),
-                model("gpt-5.2", ModelTaskSize::Large),
-                model("gpt-5.1-codex", ModelTaskSize::Large),
-                model("gpt-5.1-codex-mini", ModelTaskSize::Small),
-                model("gpt-5.1", ModelTaskSize::Large),
-                model("gpt-5.1-mini", ModelTaskSize::Small),
-                model("gpt-5", ModelTaskSize::Large),
-                model("gpt-5-mini", ModelTaskSize::Small),
-                model("gpt-5-nano", ModelTaskSize::Small),
-                model("gpt-4.1", ModelTaskSize::Large),
-                model("gpt-4.1-mini", ModelTaskSize::Small),
-                model("gpt-4.1-nano", ModelTaskSize::Small),
-                model("gpt-4o", ModelTaskSize::Large),
-                model("gpt-4o-mini", ModelTaskSize::Small),
-                model("chatgpt-4o-latest", ModelTaskSize::Large),
-                model("gpt-4.5-preview", ModelTaskSize::Large),
-                model("o3", ModelTaskSize::Large),
-                model("o3-pro", ModelTaskSize::Large),
-                model("o3-mini", ModelTaskSize::Small),
-                model("o4-mini", ModelTaskSize::Small),
-                model("o1", ModelTaskSize::Large),
-                model("o1-pro", ModelTaskSize::Large),
-                model("o1-mini", ModelTaskSize::Small),
-                model("gpt-oss-120b", ModelTaskSize::Large),
-                model("gpt-oss-20b", ModelTaskSize::Small),
+                model_ctx("gpt-5.5", ModelTaskSize::Large, 1_000_000),
+                model_ctx("gpt-5.4", ModelTaskSize::Large, 1_000_000),
+                model_ctx("gpt-5.4-codex", ModelTaskSize::Large, 1_000_000),
+                model_ctx("gpt-5.4-mini", ModelTaskSize::Small, 512_000),
+                model_ctx("gpt-5.3-codex", ModelTaskSize::Large, 1_000_000),
+                model_ctx("gpt-5.2", ModelTaskSize::Large, 1_000_000),
+                model_ctx("gpt-5.1-codex", ModelTaskSize::Large, 1_000_000),
+                model_ctx("gpt-5.1-codex-mini", ModelTaskSize::Small, 512_000),
+                model_ctx("gpt-5.1", ModelTaskSize::Large, 1_000_000),
+                model_ctx("gpt-5.1-mini", ModelTaskSize::Small, 512_000),
+                model_ctx("gpt-5", ModelTaskSize::Large, 1_000_000),
+                model_ctx("gpt-5-mini", ModelTaskSize::Small, 512_000),
+                model_ctx("gpt-5-nano", ModelTaskSize::Small, 256_000),
+                model_ctx("gpt-4.1", ModelTaskSize::Large, 1_000_000),
+                model_ctx("gpt-4.1-mini", ModelTaskSize::Small, 512_000),
+                model_ctx("gpt-4.1-nano", ModelTaskSize::Small, 256_000),
+                model_ctx("gpt-4o", ModelTaskSize::Large, 128_000),
+                model_ctx("gpt-4o-mini", ModelTaskSize::Small, 128_000),
+                model_ctx("chatgpt-4o-latest", ModelTaskSize::Large, 128_000),
+                model_ctx("gpt-4.5-preview", ModelTaskSize::Large, 128_000),
+                model_ctx("o3", ModelTaskSize::Large, 200_000),
+                model_ctx("o3-pro", ModelTaskSize::Large, 200_000),
+                model_ctx("o3-mini", ModelTaskSize::Small, 200_000),
+                model_ctx("o4-mini", ModelTaskSize::Small, 200_000),
+                model_ctx("o1", ModelTaskSize::Large, 200_000),
+                model_ctx("o1-pro", ModelTaskSize::Large, 200_000),
+                model_ctx("o1-mini", ModelTaskSize::Small, 128_000),
+                model_ctx("gpt-oss-120b", ModelTaskSize::Large, 128_000),
+                model_ctx("gpt-oss-20b", ModelTaskSize::Small, 128_000),
             ],
             ..Default::default()
         },
@@ -442,22 +487,22 @@ fn built_in_providers() -> Vec<ProviderConfig> {
             api_key_env: "ANTHROPIC_API_KEY".to_string(),
             base_url: Some("https://api.anthropic.com/v1".to_string()),
             models: vec![
-                model("claude-opus-4", ModelTaskSize::Large),
-                model("claude-opus-4-1-20250805", ModelTaskSize::Large),
-                model("claude-opus-4-20250514", ModelTaskSize::Large),
-                model("claude-sonnet-4", ModelTaskSize::Large),
-                model("claude-sonnet-4-20250514", ModelTaskSize::Large),
-                model("claude-haiku-4", ModelTaskSize::Small),
-                model("claude-3.7-sonnet", ModelTaskSize::Large),
-                model("claude-3-7-sonnet-20250219", ModelTaskSize::Large),
-                model("claude-3.5-sonnet", ModelTaskSize::Large),
-                model("claude-3-5-sonnet-20241022", ModelTaskSize::Large),
-                model("claude-3-5-sonnet-20240620", ModelTaskSize::Large),
-                model("claude-3.5-haiku", ModelTaskSize::Small),
-                model("claude-3-5-haiku-20241022", ModelTaskSize::Small),
-                model("claude-3-opus-20240229", ModelTaskSize::Large),
-                model("claude-3-sonnet-20240229", ModelTaskSize::Large),
-                model("claude-3-haiku-20240307", ModelTaskSize::Small),
+                model_ctx("claude-opus-4", ModelTaskSize::Large, 200_000),
+                model_ctx("claude-opus-4-1-20250805", ModelTaskSize::Large, 200_000),
+                model_ctx("claude-opus-4-20250514", ModelTaskSize::Large, 200_000),
+                model_ctx("claude-sonnet-4", ModelTaskSize::Large, 200_000),
+                model_ctx("claude-sonnet-4-20250514", ModelTaskSize::Large, 200_000),
+                model_ctx("claude-haiku-4", ModelTaskSize::Small, 200_000),
+                model_ctx("claude-3.7-sonnet", ModelTaskSize::Large, 200_000),
+                model_ctx("claude-3-7-sonnet-20250219", ModelTaskSize::Large, 200_000),
+                model_ctx("claude-3.5-sonnet", ModelTaskSize::Large, 200_000),
+                model_ctx("claude-3-5-sonnet-20241022", ModelTaskSize::Large, 200_000),
+                model_ctx("claude-3-5-sonnet-20240620", ModelTaskSize::Large, 200_000),
+                model_ctx("claude-3.5-haiku", ModelTaskSize::Small, 200_000),
+                model_ctx("claude-3-5-haiku-20241022", ModelTaskSize::Small, 200_000),
+                model_ctx("claude-3-opus-20240229", ModelTaskSize::Large, 200_000),
+                model_ctx("claude-3-sonnet-20240229", ModelTaskSize::Large, 200_000),
+                model_ctx("claude-3-haiku-20240307", ModelTaskSize::Small, 200_000),
             ],
             ..Default::default()
         },
@@ -485,19 +530,27 @@ fn built_in_providers() -> Vec<ProviderConfig> {
             api_key_env: "GEMINI_API_KEY".to_string(),
             base_url: Some("https://generativelanguage.googleapis.com/v1beta/openai/".to_string()),
             models: vec![
-                model("gemini-2.5-pro", ModelTaskSize::Large),
-                model("gemini-2.5-pro-preview-06-05", ModelTaskSize::Large),
-                model("gemini-2.5-flash", ModelTaskSize::Small),
-                model("gemini-2.5-flash-preview-05-20", ModelTaskSize::Small),
-                model("gemini-2.5-flash-lite", ModelTaskSize::Small),
-                model("gemini-2.0-flash", ModelTaskSize::Small),
-                model("gemini-2.0-flash-001", ModelTaskSize::Small),
-                model("gemini-2.0-flash-lite", ModelTaskSize::Small),
-                model("gemini-1.5-pro", ModelTaskSize::Large),
-                model("gemini-1.5-pro-002", ModelTaskSize::Large),
-                model("gemini-1.5-flash", ModelTaskSize::Small),
-                model("gemini-1.5-flash-002", ModelTaskSize::Small),
-                model("gemini-1.5-flash-8b", ModelTaskSize::Small),
+                model_ctx("gemini-2.5-pro", ModelTaskSize::Large, 1_000_000),
+                model_ctx(
+                    "gemini-2.5-pro-preview-06-05",
+                    ModelTaskSize::Large,
+                    1_000_000,
+                ),
+                model_ctx("gemini-2.5-flash", ModelTaskSize::Small, 1_000_000),
+                model_ctx(
+                    "gemini-2.5-flash-preview-05-20",
+                    ModelTaskSize::Small,
+                    1_000_000,
+                ),
+                model_ctx("gemini-2.5-flash-lite", ModelTaskSize::Small, 1_000_000),
+                model_ctx("gemini-2.0-flash", ModelTaskSize::Small, 1_000_000),
+                model_ctx("gemini-2.0-flash-001", ModelTaskSize::Small, 1_000_000),
+                model_ctx("gemini-2.0-flash-lite", ModelTaskSize::Small, 1_000_000),
+                model_ctx("gemini-1.5-pro", ModelTaskSize::Large, 2_000_000),
+                model_ctx("gemini-1.5-pro-002", ModelTaskSize::Large, 2_000_000),
+                model_ctx("gemini-1.5-flash", ModelTaskSize::Small, 1_000_000),
+                model_ctx("gemini-1.5-flash-002", ModelTaskSize::Small, 1_000_000),
+                model_ctx("gemini-1.5-flash-8b", ModelTaskSize::Small, 1_000_000),
             ],
             ..Default::default()
         },
@@ -509,18 +562,18 @@ fn built_in_providers() -> Vec<ProviderConfig> {
             api_key_env: "XAI_API_KEY".to_string(),
             base_url: Some("https://api.x.ai/v1".to_string()),
             models: vec![
-                model("grok-4.3", ModelTaskSize::Large),
-                model("grok-4", ModelTaskSize::Large),
-                model("grok-4-fast", ModelTaskSize::Small),
-                model("grok-4-fast-reasoning", ModelTaskSize::Large),
-                model("grok-4-fast-non-reasoning", ModelTaskSize::Small),
-                model("grok-3", ModelTaskSize::Large),
-                model("grok-3-fast", ModelTaskSize::Small),
-                model("grok-3-mini", ModelTaskSize::Small),
-                model("grok-3-mini-fast", ModelTaskSize::Small),
-                model("grok-2-1212", ModelTaskSize::Large),
-                model("grok-2-vision-1212", ModelTaskSize::Large),
-                model("grok-build-0.1", ModelTaskSize::Large),
+                model_ctx("grok-4.3", ModelTaskSize::Large, 256_000),
+                model_ctx("grok-4", ModelTaskSize::Large, 256_000),
+                model_ctx("grok-4-fast", ModelTaskSize::Small, 131_072),
+                model_ctx("grok-4-fast-reasoning", ModelTaskSize::Large, 256_000),
+                model_ctx("grok-4-fast-non-reasoning", ModelTaskSize::Small, 131_072),
+                model_ctx("grok-3", ModelTaskSize::Large, 131_072),
+                model_ctx("grok-3-fast", ModelTaskSize::Small, 131_072),
+                model_ctx("grok-3-mini", ModelTaskSize::Small, 131_072),
+                model_ctx("grok-3-mini-fast", ModelTaskSize::Small, 131_072),
+                model_ctx("grok-2-1212", ModelTaskSize::Large, 131_072),
+                model_ctx("grok-2-vision-1212", ModelTaskSize::Large, 131_072),
+                model_ctx("grok-build-0.1", ModelTaskSize::Large, 256_000),
             ],
             ..Default::default()
         },
@@ -571,17 +624,17 @@ fn built_in_providers() -> Vec<ProviderConfig> {
             api_key_env: "DEEPSEEK_API_KEY".to_string(),
             base_url: Some("https://api.deepseek.com".to_string()),
             models: vec![
-                model("deepseek-v4-pro", ModelTaskSize::Large),
-                model("deepseek-v4-flash", ModelTaskSize::Small),
-                model("deepseek-chat", ModelTaskSize::Large),
-                model("deepseek-reasoner", ModelTaskSize::Large),
-                model("deepseek-coder", ModelTaskSize::Large),
-                model("deepseek-coder-v2", ModelTaskSize::Large),
-                model("deepseek-coder-v2-lite", ModelTaskSize::Small),
-                model("deepseek-v3", ModelTaskSize::Large),
-                model("deepseek-v3.1", ModelTaskSize::Large),
-                model("deepseek-v3.2", ModelTaskSize::Large),
-                model("deepseek-r1", ModelTaskSize::Large),
+                model_ctx("deepseek-v4-pro", ModelTaskSize::Large, 128_000),
+                model_ctx("deepseek-v4-flash", ModelTaskSize::Small, 128_000),
+                model_ctx("deepseek-chat", ModelTaskSize::Large, 128_000),
+                model_ctx("deepseek-reasoner", ModelTaskSize::Large, 128_000),
+                model_ctx("deepseek-coder", ModelTaskSize::Large, 128_000),
+                model_ctx("deepseek-coder-v2", ModelTaskSize::Large, 128_000),
+                model_ctx("deepseek-coder-v2-lite", ModelTaskSize::Small, 128_000),
+                model_ctx("deepseek-v3", ModelTaskSize::Large, 128_000),
+                model_ctx("deepseek-v3.1", ModelTaskSize::Large, 128_000),
+                model_ctx("deepseek-v3.2", ModelTaskSize::Large, 128_000),
+                model_ctx("deepseek-r1", ModelTaskSize::Large, 128_000),
             ],
             ..Default::default()
         },
@@ -938,8 +991,19 @@ fn model(name: &str, task_size: ModelTaskSize) -> ProviderModelConfig {
     ProviderModelConfig {
         name: name.to_string(),
         task_size,
+        context_window_tokens: None,
     }
 }
+
+fn model_ctx(name: &str, task_size: ModelTaskSize, ctx: u64) -> ProviderModelConfig {
+    ProviderModelConfig {
+        name: name.to_string(),
+        task_size,
+        context_window_tokens: Some(ctx),
+    }
+}
+
+pub const DEFAULT_CONTEXT_WINDOW: u64 = 128_000;
 
 impl PartialEq for ModelConfig {
     fn eq(&self, other: &Self) -> bool {
@@ -951,7 +1015,6 @@ impl NaviConfig {
     pub fn update_provider_models(&mut self, provider_id: &str, model_names: &[String]) {
         let mut existing_models = std::collections::HashMap::new();
 
-        // Check built-in models
         let provider_id = canonical_provider_id(provider_id).to_string();
 
         if let Some(built_in) = built_in_providers()
@@ -959,36 +1022,37 @@ impl NaviConfig {
             .find(|p| canonical_provider_id(&p.id) == provider_id)
         {
             for m in built_in.models {
-                existing_models.insert(m.name.clone(), m.task_size);
+                existing_models.insert(m.name.clone(), (m.task_size, m.context_window_tokens));
             }
         }
 
-        // Check current config models
         if let Some(existing_override) = self
             .providers
             .iter()
             .find(|p| canonical_provider_id(&p.id) == provider_id)
         {
             for m in &existing_override.models {
-                existing_models.insert(m.name.clone(), m.task_size);
+                existing_models.insert(m.name.clone(), (m.task_size, m.context_window_tokens));
             }
         }
 
-        // Build the new list of model configs
         let mut new_models = Vec::new();
         for name in model_names {
-            let task_size = if let Some(&size) = existing_models.get(name) {
-                size
+            if let Some(&(size, ctx)) = existing_models.get(name) {
+                new_models.push(ProviderModelConfig {
+                    name: name.clone(),
+                    task_size: size,
+                    context_window_tokens: ctx,
+                });
             } else {
-                determine_task_size(name)
-            };
-            new_models.push(ProviderModelConfig {
-                name: name.clone(),
-                task_size,
-            });
+                new_models.push(ProviderModelConfig {
+                    name: name.clone(),
+                    task_size: determine_task_size(name),
+                    context_window_tokens: None,
+                });
+            }
         }
 
-        // Update the provider in self.providers
         if let Some(p) = self
             .providers
             .iter_mut()
@@ -1064,6 +1128,7 @@ mod tests {
                 path: PathBuf::from("/global/plugin.so"),
                 enabled: true,
             }],
+            memory: MemoryConfig::default(),
         };
 
         global.merge(NaviConfig {
@@ -1087,6 +1152,7 @@ mod tests {
                 path: PathBuf::from("./project-plugin.so"),
                 enabled: true,
             }],
+            memory: MemoryConfig::default(),
         });
 
         assert_eq!(global.model.name, "gpt-5.4");
@@ -1104,6 +1170,14 @@ mod tests {
         assert!(config.logging.file_enabled);
         assert!(!config.logging.stdout_enabled);
         assert!(!config.logging.include_payloads);
+    }
+
+    #[test]
+    fn memory_defaults_are_disabled_with_max_3_entries() {
+        let config = NaviConfig::default();
+
+        assert!(!config.memory.session_memory_enabled);
+        assert_eq!(config.memory.max_memory_entries, 3);
     }
 
     #[test]
