@@ -235,8 +235,7 @@ impl AgentRuntime {
                         ),
                         SecurityDecision::Deny(reason) => tool_error_result(&invocation, reason),
                     },
-                    ToolLoopDecision::RepeatedCall(reason)
-                    | ToolLoopDecision::IterationLimit(reason) => {
+                    ToolLoopDecision::RepeatedCall(reason) => {
                         tool_error_result(&invocation, reason)
                     }
                 };

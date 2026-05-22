@@ -7,7 +7,6 @@ use std::path::Path;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct HarnessPolicy {
     pub profile: HarnessProfile,
-    pub max_tool_iterations: usize,
     pub observation_max_bytes: usize,
 }
 
@@ -22,7 +21,6 @@ pub struct AgentRunState {
 pub enum ToolLoopDecision {
     Continue,
     RepeatedCall(String),
-    IterationLimit(String),
 }
 
 pub fn select_harness_policy(config: &NaviConfig) -> HarnessPolicy {
@@ -38,12 +36,10 @@ pub fn policy_for_profile(config: &HarnessConfig, profile: HarnessProfile) -> Ha
         HarnessProfile::Auto => policy_for_profile(config, HarnessProfile::Medium),
         HarnessProfile::Small => HarnessPolicy {
             profile,
-            max_tool_iterations: config.max_tool_iterations_small,
             observation_max_bytes: config.observation_bytes_small,
         },
         HarnessProfile::Medium => HarnessPolicy {
             profile,
-            max_tool_iterations: config.max_tool_iterations_medium,
             observation_max_bytes: config.observation_bytes_medium,
         },
     }
@@ -100,16 +96,9 @@ pub fn build_system_prompt(config: &NaviConfig, cwd: &Path) -> String {
 
 pub fn record_tool_call(
     state: &mut AgentRunState,
-    policy: HarnessPolicy,
+    _policy: HarnessPolicy,
     invocation: &ToolInvocation,
 ) -> ToolLoopDecision {
-    if state.tool_iterations >= policy.max_tool_iterations {
-        return ToolLoopDecision::IterationLimit(format!(
-            "tool iteration limit reached ({})",
-            policy.max_tool_iterations
-        ));
-    }
-
     let signature = tool_signature(invocation);
     if state.last_tool_signature.as_deref() == Some(signature.as_str()) {
         state.repeated_tool_calls += 1;
@@ -159,7 +148,6 @@ pub fn trace_request_summary(request: &ModelRequest, policy: HarnessPolicy) -> V
         "profile": format!("{:?}", policy.profile).to_lowercase(),
         "messages": request.messages.len(),
         "tools": request.tools.len(),
-        "max_tool_iterations": policy.max_tool_iterations,
         "observation_max_bytes": policy.observation_max_bytes,
     })
 }
@@ -199,8 +187,6 @@ mod tests {
     #[test]
     fn profile_policy_uses_configured_limits() {
         let config = HarnessConfig {
-            max_tool_iterations_small: 3,
-            max_tool_iterations_medium: 9,
             observation_bytes_small: 10,
             observation_bytes_medium: 20,
             ..HarnessConfig::default()
@@ -209,9 +195,7 @@ mod tests {
         let small = policy_for_profile(&config, HarnessProfile::Small);
         let medium = policy_for_profile(&config, HarnessProfile::Medium);
 
-        assert_eq!(small.max_tool_iterations, 3);
         assert_eq!(small.observation_max_bytes, 10);
-        assert_eq!(medium.max_tool_iterations, 9);
         assert_eq!(medium.observation_max_bytes, 20);
     }
 
@@ -219,7 +203,6 @@ mod tests {
     fn repeated_tool_call_is_flagged() {
         let policy = HarnessPolicy {
             profile: HarnessProfile::Small,
-            max_tool_iterations: 4,
             observation_max_bytes: 100,
         };
         let invocation = ToolInvocation {
@@ -243,7 +226,6 @@ mod tests {
     fn compact_observation_is_bounded() {
         let policy = HarnessPolicy {
             profile: HarnessProfile::Small,
-            max_tool_iterations: 4,
             observation_max_bytes: 16,
         };
         let invocation = ToolInvocation {

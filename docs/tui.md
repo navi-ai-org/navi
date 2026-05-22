@@ -23,7 +23,7 @@ The TUI lives in `crates/navi-tui/src/lib.rs`. It uses a synchronous ratatui/cro
 | `enter` | Insert newline |
 | `ctrl+j` | Insert newline |
 | `ctrl+c` | Quit |
-| `/` on empty input | Command palette |
+| `/` or `?` on empty input | Command palette / shortcuts |
 
 Vim mode is toggled in the command palette. When enabled, input starts in Normal mode and uses the local vim-ish input handlers.
 

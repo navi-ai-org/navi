@@ -27,8 +27,6 @@ pub struct ModelConfig {
 #[serde(default)]
 pub struct HarnessConfig {
     pub profile: HarnessProfile,
-    pub max_tool_iterations_small: usize,
-    pub max_tool_iterations_medium: usize,
     pub observation_bytes_small: usize,
     pub observation_bytes_medium: usize,
 }
@@ -209,8 +207,6 @@ impl Default for HarnessConfig {
     fn default() -> Self {
         Self {
             profile: HarnessProfile::Auto,
-            max_tool_iterations_small: 24,
-            max_tool_iterations_medium: 48,
             observation_bytes_small: 12 * 1024,
             observation_bytes_medium: 48 * 1024,
         }

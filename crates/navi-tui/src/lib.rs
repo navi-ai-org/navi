@@ -810,7 +810,7 @@ fn handle_tool_call(app: &mut TuiApp, invocation: ToolInvocation) {
         .push(AgentEvent::ToolRequested(invocation.clone()));
     match record_tool_call(&mut app.run_state, app.harness_policy, &invocation) {
         ToolLoopDecision::Continue => {}
-        ToolLoopDecision::RepeatedCall(reason) | ToolLoopDecision::IterationLimit(reason) => {
+        ToolLoopDecision::RepeatedCall(reason) => {
             let result = tool_error_result(&invocation, reason);
             handle_tool_completed(app, invocation, result);
             return;
@@ -1627,7 +1627,7 @@ fn handle_normal_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyModifiers) -
     }
 
     match code {
-        KeyCode::Char('/') if app.input.is_empty() => {
+        KeyCode::Char('/') | KeyCode::Char('?') if app.input.is_empty() => {
             app.mode = Mode::Commands;
             app.command_filter.clear();
             app.selected_command = 0;
@@ -1716,6 +1716,11 @@ fn handle_vim_normal_key(app: &mut TuiApp, code: KeyCode) -> bool {
             } else if app.input.is_empty() {
                 open_model_picker(app);
             }
+        }
+        KeyCode::Char('/') | KeyCode::Char('?') => {
+            app.mode = Mode::Commands;
+            app.command_filter.clear();
+            app.selected_command = 0;
         }
         KeyCode::Esc => {}
         _ => {}
@@ -3404,15 +3409,7 @@ fn shortcut_tips(app: &TuiApp, width: usize) -> Line<'static> {
     };
 
     let items = [
-        ("enter", "newline", TEXT),
-        ("ctrl+enter", "send prompt", TEXT),
-        ("ctrl+j", "newline", TEXT),
-        ("ctrl+m", "models", TEXT),
-        (
-            "ctrl+g",
-            if app.yolo_mode { "yolo:on" } else { "yolo" },
-            TEXT,
-        ),
+        ("?", "for shortcuts", TEXT),
         ("ctrl+p", "commands", TEXT),
         ("ctrl+c", "quit", TEXT),
         (vim_state, "", ACCENT),
@@ -4843,6 +4840,33 @@ mod tests {
 
         handle_key(&mut app, KeyCode::Char('O'), KeyModifiers::CONTROL);
         assert!(!app.full_tool_view);
+    }
+
+    #[test]
+    fn question_mark_and_slash_open_command_palette() {
+        let mut app = test_app("");
+        assert_eq!(app.mode, Mode::Normal);
+
+        // '?' with empty input opens command palette
+        handle_key(&mut app, KeyCode::Char('?'), KeyModifiers::NONE);
+        assert_eq!(app.mode, Mode::Commands);
+
+        // Esc goes back to normal
+        app.mode = Mode::Normal;
+
+        // '/' with empty input opens command palette
+        handle_key(&mut app, KeyCode::Char('/'), KeyModifiers::NONE);
+        assert_eq!(app.mode, Mode::Commands);
+
+        // Escape goes back to normal
+        app.mode = Mode::Normal;
+
+        // Pressing '?' when input is NOT empty inserts it as a char
+        app.input = "hello".to_string();
+        app.input_cursor = 5;
+        handle_key(&mut app, KeyCode::Char('?'), KeyModifiers::NONE);
+        assert_eq!(app.mode, Mode::Normal);
+        assert_eq!(app.input, "hello?");
     }
 
     #[test]
