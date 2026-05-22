@@ -48,7 +48,7 @@ cargo run -p navi-cli -- --print-providers
 | `enter` | Insert newline |
 | `ctrl+j` | Insert newline |
 | `ctrl+c` | Quit |
-| `/` with empty input | Open command palette |
+| `/` or `?` with empty input | Open command palette / shortcuts |
 
 Vim mode is opt-in through the command palette. When enabled, input starts in Normal mode.
 
