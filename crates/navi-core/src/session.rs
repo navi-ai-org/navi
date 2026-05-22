@@ -18,7 +18,13 @@ pub struct SessionStore {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionSnapshot {
     pub id: SessionId,
+    #[serde(default)]
+    pub title: Option<String>,
     pub project: PathBuf,
+    #[serde(default)]
+    pub created_at: u64,
+    #[serde(default)]
+    pub updated_at: u64,
     pub events: Vec<AgentEvent>,
 }
 
@@ -39,10 +45,7 @@ impl SessionStore {
     }
 
     pub fn create_id() -> SessionId {
-        let millis = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|duration| duration.as_millis())
-            .unwrap_or_default();
+        let millis = current_unix_millis();
         SessionId(format!("session-{millis}"))
     }
 
@@ -55,7 +58,10 @@ impl SessionStore {
         let snapshot = if self.redact_secrets {
             SessionSnapshot {
                 id: snapshot.id.clone(),
+                title: snapshot.title.clone(),
                 project: snapshot.project.clone(),
+                created_at: snapshot.created_at,
+                updated_at: snapshot.updated_at,
                 events: redact_snapshot_events(&snapshot.events),
             }
         } else {
@@ -82,9 +88,27 @@ impl SessionStore {
                 }
             }
         }
-        sessions.sort_by(|a, b| b.id.0.cmp(&a.id.0));
+        sessions.sort_by(|a, b| {
+            b.updated_at
+                .cmp(&a.updated_at)
+                .then_with(|| b.id.0.cmp(&a.id.0))
+        });
         sessions
     }
+}
+
+pub fn current_unix_timestamp() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .unwrap_or_default()
+}
+
+fn current_unix_millis() -> u128 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis())
+        .unwrap_or_default()
 }
 
 pub struct Submission {
@@ -162,7 +186,10 @@ mod tests {
         let store = SessionStore::new(tempdir.path().to_path_buf());
         let snapshot = SessionSnapshot {
             id: SessionId("test-session".to_string()),
+            title: Some("Test session".to_string()),
             project: PathBuf::from("/tmp/project"),
+            created_at: 1,
+            updated_at: 2,
             events: Vec::new(),
         };
 
@@ -181,7 +208,10 @@ mod tests {
         let store = SessionStore::new(data_dir);
         let snapshot = SessionSnapshot {
             id: SessionId("private-session".to_string()),
+            title: None,
             project: PathBuf::from("/tmp/project"),
+            created_at: 1,
+            updated_at: 2,
             events: Vec::new(),
         };
 
@@ -207,7 +237,10 @@ mod tests {
         let store = SessionStore::new(tempdir.path().to_path_buf());
         let snapshot = SessionSnapshot {
             id: SessionId("redacted-session".to_string()),
+            title: None,
             project: PathBuf::from("/tmp/project"),
+            created_at: 1,
+            updated_at: 2,
             events: vec![AgentEvent::UserTaskSubmitted {
                 text: "OPENAI_API_KEY=sk-proj-1234567890abcdef".to_string(),
             }],
@@ -226,7 +259,10 @@ mod tests {
         let store = SessionStore::with_redaction(tempdir.path().to_path_buf(), false);
         let snapshot = SessionSnapshot {
             id: SessionId("unredacted-session".to_string()),
+            title: None,
             project: PathBuf::from("/tmp/project"),
+            created_at: 1,
+            updated_at: 2,
             events: vec![AgentEvent::UserTaskSubmitted {
                 text: "OPENAI_API_KEY=sk-proj-1234567890abcdef".to_string(),
             }],
