@@ -134,11 +134,9 @@ impl OpenAiProvider {
                 ProviderError::Other("failed to clone RequestBuilder".to_string())
             })?;
 
-            let req = if let Some(timeout_ms) = self.config.request_timeout_ms() {
-                req.timeout(std::time::Duration::from_millis(timeout_ms))
-            } else {
-                req
-            };
+            let req = req.timeout(std::time::Duration::from_millis(
+                self.config.request_timeout_ms(),
+            ));
 
             match req.send().await {
                 Ok(resp) => match ensure_success(resp).await {

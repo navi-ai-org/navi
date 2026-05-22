@@ -115,8 +115,8 @@ impl Default for ProviderConfig {
 }
 
 impl ProviderConfig {
-    pub fn request_timeout_ms(&self) -> Option<u64> {
-        self.request_timeout_ms
+    pub fn request_timeout_ms(&self) -> u64 {
+        self.request_timeout_ms.unwrap_or(120_000)
     }
 
     pub fn stream_idle_timeout_ms(&self) -> u64 {
