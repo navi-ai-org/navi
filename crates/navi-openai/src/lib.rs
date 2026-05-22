@@ -1552,6 +1552,21 @@ mod tests {
     }
 
     #[test]
+    fn parses_chat_completions_ollama_usage() {
+        let events = parse_chat_completions_sse(
+            r#"{"choices":[],"usage":{"prompt_tokens":123,"completion_tokens":45}}"#,
+        );
+
+        assert_eq!(
+            events.into_iter().map(Result::unwrap).collect::<Vec<_>>(),
+            vec![ModelStreamEvent::Usage {
+                input_tokens: Some(123),
+                output_tokens: Some(45),
+            }]
+        );
+    }
+
+    #[test]
     fn parses_anthropic_text_and_thinking_delta() {
         let text = parse_anthropic_sse(
             r#"{"type":"content_block_delta","delta":{"type":"text_delta","text":"hello"}}"#,

@@ -1741,6 +1741,8 @@ fn provider_env_api_key(env_var: &str) -> Option<String> {
 fn rebuild_provider(app: &mut TuiApp) {
     app.model_provider = build_provider(&app.loaded_config, &app.credential_store);
     app.harness_policy = select_harness_policy(&app.loaded_config.config);
+    app.compact_state.context_window =
+        navi_core::config::effective_context_window(&app.loaded_config.config);
     refresh_system_context(app);
     tracing::info!(
         provider = %app.loaded_config.config.model.provider,

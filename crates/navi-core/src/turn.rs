@@ -126,12 +126,12 @@ pub async fn run_turn(
                     )
                     .await
                 {
-                    Ok(()) => {
-                        let tokens_saved = state.last_input_tokens.unwrap_or(0);
+                    Ok(Some(tokens_saved)) => {
                         if let Some(ref tx) = ctx.event_tx {
                             let _ = tx.send(AgentEvent::AutoCompactCompleted { tokens_saved });
                         }
                     }
+                    Ok(None) => {}
                     Err(e) => {
                         if let Some(ref tx) = ctx.event_tx {
                             let _ = tx.send(AgentEvent::AutoCompactFailed {

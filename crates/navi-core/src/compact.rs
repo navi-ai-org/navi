@@ -128,14 +128,14 @@ impl CompactState {
         model_provider: &dyn ModelProvider,
         model_name: &str,
         harness_config: &HarnessConfig,
-    ) -> Result<()> {
+    ) -> Result<Option<u64>> {
         if !self.should_autocompact(harness_config.autocompact_buffer_tokens) {
-            return Ok(());
+            return Ok(None);
         }
 
         let conversation_text = build_conversation_text(messages);
         if conversation_text.trim().is_empty() {
-            return Ok(());
+            return Ok(None);
         }
 
         let prompt = if let Some(ref prev_summary) = self.summary {
@@ -183,7 +183,7 @@ impl CompactState {
                     previous_tokens.saturating_sub(harness_config.autocompact_max_output_tokens);
                 tracing::info!(tokens_saved, "auto-compact completed");
 
-                Ok(())
+                Ok(Some(tokens_saved))
             }
             Err(e) => {
                 self.consecutive_failures += 1;
