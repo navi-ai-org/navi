@@ -35,6 +35,7 @@ tracing = "0.1"
 tracing-appender = "0.2"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tempfile = "3"
+wiremock = "0.6"
 navi-core = { path = "crates/navi-core" }
 navi-openai = { path = "crates/navi-openai" }
 navi-plugin-api = { path = "crates/navi-plugin-api" }

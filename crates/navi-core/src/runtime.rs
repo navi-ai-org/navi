@@ -1,14 +1,10 @@
 use crate::config::LoadedConfig;
 use crate::event::AgentEvent;
-use crate::harness::{
-    AgentRunState, ToolLoopDecision, build_system_prompt, compact_tool_observation,
-    record_tool_call, select_harness_policy, tool_error_result, trace_request_summary,
-};
-use crate::model::{ModelMessage, ModelProvider, ModelRequest, ModelResponse, ThinkingConfig};
-use crate::security::{SecurityDecision, SecurityPolicy};
+use crate::harness::select_harness_policy;
+use crate::model::{ModelProvider, ModelResponse};
+use crate::security::SecurityPolicy;
 use crate::tool::ToolExecutor;
 use anyhow::Result;
-use futures_util::StreamExt;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -31,7 +27,8 @@ pub struct AgentRuntime {
 mod tests {
     use super::*;
     use crate::{
-        ApprovalConfig, HarnessConfig, ModelStream, NaviConfig, SecurityConfig, ToolInvocation,
+        ApprovalConfig, HarnessConfig, ModelRequest, ModelStream, NaviConfig, SecurityConfig,
+        ToolInvocation,
     };
     use anyhow::Result;
     use async_trait::async_trait;
@@ -168,103 +165,50 @@ impl AgentRuntime {
                 Arc::new(ToolExecutor::new(security_policy))
             }
         };
-        let mut run_state = AgentRunState::default();
-        let mut messages = vec![
-            ModelMessage::system(build_system_prompt(
-                &self.loaded_config.config,
-                &self.project_dir,
-            )),
-            ModelMessage::user(task),
-        ];
-        let final_text = loop {
-            let request = ModelRequest {
-                model: self.loaded_config.config.model.name.clone(),
-                messages: messages.clone(),
-                thinking: ThinkingConfig::High,
-                tools: tool_executor.definitions(),
-            };
-            self.events
-                .push(AgentEvent::HarnessTrace(trace_request_summary(
-                    &request, policy,
-                )));
 
-            tracing::info!(
-                model = %request.model,
-                messages = request.messages.len(),
-                tools = request.tools.len(),
-                "model request started"
-            );
-            let mut stream = self.model_provider.stream(request);
-            let mut text = String::new();
-            let mut tool_call = None;
-            while let Some(event) = stream.next().await {
-                match event? {
-                    crate::model::ModelStreamEvent::TextDelta { text: delta } => {
-                        text.push_str(&delta)
-                    }
-                    crate::model::ModelStreamEvent::ToolCall(invocation) => {
-                        tracing::info!(
-                            tool = %invocation.tool_name,
-                            invocation_id = %invocation.id,
-                            "model requested tool"
-                        );
-                        tool_call = Some(invocation);
-                        break;
-                    }
-                    crate::model::ModelStreamEvent::Done => break,
-                    crate::model::ModelStreamEvent::Status { .. }
-                    | crate::model::ModelStreamEvent::Usage { .. }
-                    | crate::model::ModelStreamEvent::ThinkingDelta { .. } => {}
-                }
-            }
+        let (event_tx, mut event_rx) = tokio::sync::mpsc::unbounded_channel();
 
-            if let Some(invocation) = tool_call {
-                if !text.trim().is_empty() {
-                    messages.push(ModelMessage::assistant(text.clone()));
-                }
-                messages.push(ModelMessage::assistant_tool_call(invocation.clone()));
-                self.events
-                    .push(AgentEvent::ToolRequested(invocation.clone()));
-
-                let result = match record_tool_call(&mut run_state, policy, &invocation) {
-                    ToolLoopDecision::Continue => match tool_executor.validate(&invocation) {
-                        SecurityDecision::Allow => tool_executor.invoke(invocation.clone()).await,
-                        SecurityDecision::NeedsApproval(_) => tool_error_result(
-                            &invocation,
-                            "approval required in headless mode; rerun in TUI or enable an explicit approval policy",
-                        ),
-                        SecurityDecision::Deny(reason) => tool_error_result(&invocation, reason),
-                    },
-                    ToolLoopDecision::RepeatedCall(reason) => {
-                        tool_error_result(&invocation, reason)
-                    }
-                };
-
-                tracing::info!(
-                    tool = %invocation.tool_name,
-                    invocation_id = %invocation.id,
-                    ok = result.ok,
-                    "tool completed"
-                );
-                self.events.push(AgentEvent::ToolCompleted(result.clone()));
-                let observation = compact_tool_observation(&invocation, &result, policy);
-                messages.push(ModelMessage::tool_result(
-                    invocation.id,
-                    invocation.tool_name,
-                    observation,
-                ));
-                continue;
-            }
-
-            break text;
-        };
-
-        let response = ModelResponse { text: final_text };
-        tracing::info!(chars = response.text.len(), "agent task completed");
-        self.events.push(AgentEvent::ModelOutput {
-            text: response.text.clone(),
-            thinking: None,
+        let ctx = Arc::new(crate::turn::TurnContext {
+            model_provider: self.model_provider.clone(),
+            tool_executor,
+            agent_control: crate::agent::AgentControl::new(),
+            project_dir: self.project_dir.clone(),
+            model_name: self.loaded_config.config.model.name.clone(),
+            event_tx: Some(event_tx),
+            pending_approvals: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
         });
+
+        let session_runtime = crate::session::SessionRuntime::spawn(ctx, policy, Vec::new());
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        session_runtime
+            .submission_tx
+            .send(crate::session::Submission {
+                task,
+                response_tx: tx,
+            })
+            .map_err(|e| anyhow::anyhow!("failed to send submission: {}", e))?;
+
+        let mut final_text = None;
+        let mut rx_fut = rx;
+        while final_text.is_none() {
+            tokio::select! {
+                res = &mut rx_fut => {
+                    final_text = Some(res??);
+                }
+                Some(event) = event_rx.recv() => {
+                    self.events.push(event);
+                }
+            }
+        }
+
+        while let Ok(event) = event_rx.try_recv() {
+            self.events.push(event);
+        }
+
+        let response = ModelResponse {
+            text: final_text.unwrap(),
+        };
+        tracing::info!(chars = response.text.len(), "agent task completed");
         Ok(response)
     }
 }

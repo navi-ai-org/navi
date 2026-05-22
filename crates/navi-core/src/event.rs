@@ -13,6 +13,12 @@ pub enum AgentEvent {
         #[serde(default)]
         thinking: Option<String>,
     },
+    ModelDelta {
+        text: String,
+    },
+    ModelThinkingDelta {
+        text: String,
+    },
     ToolRequested(ToolInvocation),
     ToolCompleted(ToolResult),
     HarnessTrace(Value),

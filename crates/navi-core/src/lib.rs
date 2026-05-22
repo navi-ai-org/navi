@@ -1,3 +1,4 @@
+pub mod agent;
 pub mod config;
 pub mod credentials;
 pub mod event;
@@ -9,7 +10,9 @@ pub mod runtime;
 pub mod security;
 pub mod session;
 pub mod tool;
+pub mod turn;
 
+pub use agent::{AgentControl, AgentMessage};
 pub use config::{
     ApprovalConfig, HarnessConfig, HarnessProfile, LoadedConfig, LoggingConfig, ModelConfig,
     ModelOption, ModelTaskSize, NaviConfig, PluginConfig, ProviderConfig, ProviderKind,
@@ -35,5 +38,6 @@ pub use security::{
     SecurityDecision, SecurityPolicy, SecurityRisk, redact_agent_event, redact_secrets,
     redact_snapshot_events,
 };
-pub use session::{SessionId, SessionSnapshot, SessionStore};
+pub use session::{SessionId, SessionRuntime, SessionSnapshot, SessionStore, Submission};
 pub use tool::{Tool, ToolDefinition, ToolExecutor, ToolInvocation, ToolKind, ToolResult};
+pub use turn::{Prompt, TurnContext, run_turn};
