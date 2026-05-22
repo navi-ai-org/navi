@@ -26,6 +26,14 @@ NAVI is a Rust workspace using edition 2024 and resolver 3. The repo root has no
 9. Tool calls and tool results are sent back using provider tool-message protocol, not fake user text.
 10. Completed assistant output, tool results, and harness traces are persisted as session events.
 
+## Logging
+
+`navi-core::logging` initializes process-wide `tracing` output from `[logging]` config. File logs default to `<data_dir>/logs/navi.log`; stdout logging is off for TUI by default so it does not corrupt the alternate screen.
+
+Logging is for diagnostics, while `AgentEvent` and `SessionSnapshot` remain user/session history. Instrument lifecycle boundaries such as provider requests, stream errors, retries, approvals, tool execution, plugin loading, and cancellation. Avoid hot draw-path logs unless they are behind debug-level diagnostics.
+
+Log fields must stay compact and redacted. Do not log raw API keys, Authorization headers, credential-store contents, full prompts, or full tool output by default.
+
 ## Model Abstractions
 
 `ModelProvider` exposes:

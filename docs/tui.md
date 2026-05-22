@@ -18,6 +18,7 @@ The TUI lives in `crates/navi-tui/src/lib.rs`. It uses a synchronous ratatui/cro
 | `ctrl+n` | New session |
 | `ctrl+s` | Session picker |
 | `ctrl+o` | Toggle compact/full tool output view |
+| `ctrl+d` | Debug modal |
 | `ctrl+enter` | Send prompt |
 | `enter` | Insert newline |
 | `ctrl+j` | Insert newline |
@@ -80,12 +81,15 @@ The settings modal currently controls:
 - `Show Thinking Text`
 - `Expand Tool Outputs (Ctrl+O)`
 
+The Debug modal (`ctrl+d`) shows the log path, session id, project, selected model/provider, active state, and recent diagnostics. It is intentionally read-only and should not render raw payloads or secrets.
+
 ## Performance Rules
 
 - Do not run syntax highlighting, model filtering, provider sync, file IO, or network IO in the draw path without caching.
 - Keep `render_*` functions deterministic and fast.
 - Use async tasks for model/provider operations and report back through `AsyncEvent`.
 - Avoid rebuilding full chat render output on scroll-only frames.
+- Do not emit normal logs from draw functions; log state transitions and async lifecycle events instead.
 
 ## Verification
 

@@ -56,6 +56,7 @@ Key sections:
 - `harness`: `auto`, `small`, or `medium` profile plus tool-loop and observation budgets.
 - `approvals`: read/write/command approval behavior.
 - `security`: path restrictions, `.git` protection, session redaction, plugin trust, blocked commands.
+- `logging`: structured diagnostics, log level, file/stdout logging, debug payload opt-in.
 - `providers`: built-in provider overrides or custom providers.
 - `plugins`: native plugin library paths.
 
@@ -102,6 +103,7 @@ Native plugins are loaded with `libloading` from configured `[[plugins]]` entrie
 - Do not create a second Tokio runtime in the TUI.
 - The shared harness lives in `navi-core/src/harness.rs`; do not add separate TUI-only prompts or loop policy.
 - Ctrl shortcuts: `ctrl+p` commands, `ctrl+m` models, `ctrl+n` new session, `ctrl+s` sessions, `ctrl+o` full tool view, `ctrl+c` quit.
+- `ctrl+d` opens the Debug modal with log path, session id, provider/model, active state, and recent diagnostics.
 - Prompt sending is `ctrl+enter`; plain `enter` inserts a newline.
 - Vim mode is opt-in through the command palette.
 - Chat rendering uses cached markdown/code rendering. If rendered output depends on new message fields, update `chat_render_signature`.
@@ -110,6 +112,10 @@ Native plugins are loaded with `libloading` from configured `[[plugins]]` entrie
 ## Persistence
 
 `SessionStore` saves `SessionSnapshot` JSON under `<data_dir>/sessions/`. Secret redaction is enabled by default. If you add event fields containing user/model/tool text, update redaction and session replay logic.
+
+## Logging
+
+NAVI uses `tracing` through `navi-core::logging`. File logs default to `<data_dir>/logs/navi.log` with private permissions on Unix. Logs are diagnostics, not session history. Keep them compact and redacted by default; raw payload logging is only for explicit debug mode. Do not log secrets, Authorization headers, credential-store values, full prompts, or full tool output. Avoid logging from TUI draw paths.
 
 ## Testing Expectations
 

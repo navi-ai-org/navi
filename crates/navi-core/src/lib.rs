@@ -2,6 +2,7 @@ pub mod config;
 pub mod credentials;
 pub mod event;
 pub mod harness;
+pub mod logging;
 pub mod model;
 pub mod patch;
 pub mod runtime;
@@ -10,16 +11,19 @@ pub mod session;
 pub mod tool;
 
 pub use config::{
-    ApprovalConfig, HarnessConfig, HarnessProfile, LoadedConfig, ModelConfig, ModelOption,
-    ModelTaskSize, NaviConfig, PluginConfig, ProviderConfig, ProviderKind, ProviderModelConfig,
-    SecurityConfig, available_model_options, provider_catalog, resolve_provider_config,
-    save_global_config, save_project_config,
+    ApprovalConfig, HarnessConfig, HarnessProfile, LoadedConfig, LoggingConfig, ModelConfig,
+    ModelOption, ModelTaskSize, NaviConfig, PluginConfig, ProviderConfig, ProviderKind,
+    ProviderModelConfig, SecurityConfig, available_model_options, provider_catalog,
+    resolve_provider_config, save_global_config, save_project_config,
 };
 pub use credentials::CredentialStore;
 pub use event::{AgentEvent, ApprovalDecision, ApprovalRequest, ApprovalRisk};
 pub use harness::{
     AgentRunState, HarnessPolicy, ToolLoopDecision, build_system_prompt, compact_tool_observation,
     record_tool_call, select_harness_policy, tool_error_result, trace_request_summary,
+};
+pub use logging::{
+    LoggingGuard, LoggingRuntimeConfig, init_logging, log_dir, log_path, redact_log_value,
 };
 pub use model::{
     ModelMessage, ModelProvider, ModelRequest, ModelResponse, ModelRole, ModelStream,

@@ -100,6 +100,7 @@ impl ModelProvider for OpenAiProvider {
     async fn list_models(&self) -> Result<Vec<String>> {
         let base_url = self.base_url.trim_end_matches('/');
         let url = format!("{}/models", base_url);
+        tracing::info!(provider = %self.provider_id, "provider model list request started");
 
         let mut req = self.client.get(&url);
 
@@ -112,6 +113,7 @@ impl ModelProvider for OpenAiProvider {
         }
 
         let res = req.send().await.context("failed to send models request")?;
+        tracing::debug!(provider = %self.provider_id, status = %res.status(), "provider model list response received");
         let res = ensure_success(res).await?;
 
         #[derive(serde::Deserialize)]
@@ -129,9 +131,9 @@ impl ModelProvider for OpenAiProvider {
             .await
             .context("failed to parse models JSON response")?;
 
-        Ok(unique_sorted_model_ids(
-            list.data.into_iter().map(|item| item.id),
-        ))
+        let models = unique_sorted_model_ids(list.data.into_iter().map(|item| item.id));
+        tracing::info!(provider = %self.provider_id, models = models.len(), "provider model list completed");
+        Ok(models)
     }
 }
 
@@ -150,6 +152,8 @@ impl OpenAiProvider {
         let provider_id = self.provider_id.clone();
 
         Box::pin(try_stream! {
+        let model = request.model.clone();
+        tracing::info!(provider = %provider_id, model = %model, api = "responses", tools = request.tools.len(), "provider stream started");
         let mut body = json!({
             "model": request.model,
             "input": request.messages.iter().flat_map(responses_input_item_to_json).collect::<Vec<_>>(),
@@ -173,6 +177,7 @@ impl OpenAiProvider {
             .await
             .context("failed to send OpenAI Responses API request")?;
 
+        tracing::debug!(provider = %provider_id, model = %model, status = %response.status(), "provider stream response received");
         let response = ensure_success(response).await?;
         let mut decoder = SseDecoder::default();
         let mut chunks = response.bytes_stream();
@@ -183,6 +188,7 @@ impl OpenAiProvider {
                 }
             }
         }
+        tracing::info!(provider = %provider_id, model = %model, "provider stream completed");
         yield ModelStreamEvent::Done;
         })
     }
@@ -194,6 +200,8 @@ impl OpenAiProvider {
         let provider_id = self.provider_id.clone();
 
         Box::pin(try_stream! {
+        let model = request.model.clone();
+        tracing::info!(provider = %provider_id, model = %model, api = "chat-completions", tools = request.tools.len(), "provider stream started");
         let mut body = json!({
             "model": request.model,
             "messages": request.messages.iter().map(message_to_json).collect::<Vec<_>>(),
@@ -228,6 +236,7 @@ impl OpenAiProvider {
             .await
             .context("failed to send OpenAI-compatible chat completions request")?;
 
+        tracing::debug!(provider = %provider_id, model = %model, status = %response.status(), "provider stream response received");
         let response = ensure_success(response).await?;
         let mut decoder = SseDecoder::default();
         let mut tool_calls = ChatToolCallAccumulator::default();
@@ -239,6 +248,7 @@ impl OpenAiProvider {
                 }
             }
         }
+        tracing::info!(provider = %provider_id, model = %model, "provider stream completed");
         yield ModelStreamEvent::Done;
         })
     }
@@ -247,8 +257,11 @@ impl OpenAiProvider {
         let client = self.client.clone();
         let api_key = self.api_key.clone();
         let base_url = self.base_url.clone();
+        let provider_id = self.provider_id.clone();
 
         Box::pin(try_stream! {
+            let model = request.model.clone();
+            tracing::info!(provider = %provider_id, model = %model, api = "anthropic-messages", tools = request.tools.len(), "provider stream started");
             if !request.tools.is_empty() {
                 Err(anyhow::anyhow!("native Anthropic tool calling is not implemented yet"))?;
             }
@@ -282,6 +295,7 @@ impl OpenAiProvider {
                 .await
                 .context("failed to send Anthropic Messages stream request")?;
 
+            tracing::debug!(provider = %provider_id, model = %model, status = %response.status(), "provider stream response received");
             let response = ensure_success(response).await?;
             let mut decoder = SseDecoder::default();
             let mut chunks = response.bytes_stream();
@@ -292,6 +306,7 @@ impl OpenAiProvider {
                     }
                 }
             }
+            tracing::info!(provider = %provider_id, model = %model, "provider stream completed");
             yield ModelStreamEvent::Done;
         })
     }
@@ -299,8 +314,11 @@ impl OpenAiProvider {
     fn stream_gemini_generate_content(&self, request: ModelRequest) -> ModelStream {
         let client = self.client.clone();
         let api_key = self.api_key.clone();
+        let provider_id = self.provider_id.clone();
 
         Box::pin(try_stream! {
+            let model_name = request.model.clone();
+            tracing::info!(provider = %provider_id, model = %model_name, api = "gemini-generate-content", tools = request.tools.len(), "provider stream started");
             if !request.tools.is_empty() {
                 Err(anyhow::anyhow!("native Gemini tool calling is not implemented yet"))?;
             }
@@ -326,6 +344,7 @@ impl OpenAiProvider {
                 .await
                 .context("failed to send Gemini stream request")?;
 
+            tracing::debug!(provider = %provider_id, model = %model_name, status = %response.status(), "provider stream response received");
             let response = ensure_success(response).await?;
             let mut decoder = SseDecoder::default();
             let mut chunks = response.bytes_stream();
@@ -336,6 +355,7 @@ impl OpenAiProvider {
                     }
                 }
             }
+            tracing::info!(provider = %provider_id, model = %model_name, "provider stream completed");
             yield ModelStreamEvent::Done;
         })
     }
@@ -476,6 +496,7 @@ async fn ensure_success(response: Response) -> Result<Response> {
         .text()
         .await
         .unwrap_or_else(|_| "<failed to read error body>".to_string());
+    tracing::warn!(status = %status, "provider request failed");
     anyhow::bail!("provider request failed with {status}: {body}");
 }
 

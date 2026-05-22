@@ -12,6 +12,7 @@ ratatui.workspace = true
 serde_json.workspace = true
 syntect.workspace = true
 tokio.workspace = true
+tracing.workspace = true
 navi-core.workspace = true
 navi-openai.workspace = true
 navi-plugin-host.workspace = true

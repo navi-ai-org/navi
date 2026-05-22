@@ -13,9 +13,9 @@ use navi_core::{
     HarnessPolicy, LoadedConfig, ModelMessage, ModelOption, ModelProvider, ModelRequest, ModelRole,
     ModelStreamEvent, SecurityDecision, SecurityPolicy, SessionId, SessionSnapshot, SessionStore,
     ThinkingConfig, ToolExecutor, ToolInvocation, ToolLoopDecision, ToolResult,
-    available_model_options, build_system_prompt, compact_tool_observation, record_tool_call,
-    resolve_provider_config, save_global_config, select_harness_policy, tool_error_result,
-    trace_request_summary,
+    available_model_options, build_system_prompt, compact_tool_observation, log_path,
+    record_tool_call, resolve_provider_config, save_global_config, select_harness_policy,
+    tool_error_result, trace_request_summary,
 };
 use navi_openai::OpenAiProvider;
 use navi_plugin_host::{LoadedPlugin, load_configured_plugins};
@@ -204,6 +204,8 @@ pub struct TuiApp {
     show_thinking: bool,
     selected_setting: usize,
     notification: Option<Notification>,
+    diagnostics: Vec<String>,
+    log_path: PathBuf,
     chat_render_cache: RefCell<ChatRenderCache>,
 }
 
@@ -233,6 +235,7 @@ enum Mode {
     Thinking,
     Sessions,
     Settings,
+    Debug,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -332,6 +335,7 @@ impl TuiApp {
         let tool_executor = Arc::new(tool_executor);
         let harness_policy = select_harness_policy(&loaded_config.config);
         let system_prompt = build_system_prompt(&loaded_config.config, &project_dir);
+        let log_path = log_path(&loaded_config.data_dir);
 
         let mut app = Self {
             loaded_config,
@@ -383,10 +387,13 @@ impl TuiApp {
             show_thinking: true,
             selected_setting: 0,
             notification: None,
+            diagnostics: Vec::new(),
+            log_path,
             chat_render_cache: RefCell::new(ChatRenderCache::default()),
         };
 
         if let Some(warning) = plugin_warning {
+            push_diagnostic(&mut app, format!("Plugin warning: {warning}"));
             show_notification(&mut app, "Plugins", warning);
         }
 
@@ -607,6 +614,12 @@ fn submit_message(app: &mut TuiApp) {
     if text.is_empty() {
         return;
     }
+    tracing::info!(
+        model = %app.loaded_config.config.model.name,
+        provider = %app.loaded_config.config.model.provider,
+        chars = text.len(),
+        "TUI prompt submitted"
+    );
 
     let word_count = text.split_whitespace().count();
     app.total_tokens_estimate += word_count * 4 / 3;
@@ -631,6 +644,8 @@ fn submit_message(app: &mut TuiApp) {
 
 fn start_streaming_request(app: &mut TuiApp) {
     let Some(provider) = app.model_provider.clone() else {
+        tracing::warn!(provider = %app.loaded_config.config.model.provider, "cannot start stream without API key");
+        push_diagnostic(app, "No API key configured for selected provider.");
         app.messages.push(ChatMessage {
             status: Some("missing key".to_string()),
             ..ChatMessage::new(
@@ -644,6 +659,12 @@ fn start_streaming_request(app: &mut TuiApp) {
 
     app.is_loading = true;
     app.loading_start = Some(Instant::now());
+    tracing::info!(
+        provider = %app.loaded_config.config.model.provider,
+        model = %app.loaded_config.config.model.name,
+        history = app.conversation_history.len(),
+        "TUI model stream started"
+    );
 
     let model_label = app.loaded_config.config.model.name.clone();
     let provider_label = selected_provider_label(app).to_string();
@@ -757,6 +778,7 @@ fn finalize_active_assistant(app: &mut TuiApp, elapsed_ms: u64) {
     app.conversation_history
         .push(ModelMessage::assistant(text.clone()));
     app.events.push(AgentEvent::ModelOutput { text, thinking });
+    tracing::info!(elapsed_ms, "TUI model stream finalized");
 }
 
 fn usage_label(input_tokens: Option<u64>, output_tokens: Option<u64>) -> String {
@@ -769,6 +791,11 @@ fn usage_label(input_tokens: Option<u64>, output_tokens: Option<u64>) -> String 
 }
 
 fn handle_tool_call(app: &mut TuiApp, invocation: ToolInvocation) {
+    tracing::info!(
+        tool = %invocation.tool_name,
+        invocation_id = %invocation.id,
+        "TUI tool call received"
+    );
     app.skip_next_model_done = true;
     let active_content = active_assistant_message(app)
         .map(|active| active.content.clone())
@@ -800,6 +827,11 @@ fn handle_tool_call(app: &mut TuiApp, invocation: ToolInvocation) {
             execute_tool_async(app, invocation)
         }
         SecurityDecision::NeedsApproval(_) => {
+            tracing::info!(
+                tool = %invocation.tool_name,
+                invocation_id = %invocation.id,
+                "TUI tool approval requested"
+            );
             app.events
                 .push(AgentEvent::ApprovalRequested(ApprovalRequest {
                     id: invocation.id.clone(),
@@ -840,6 +872,7 @@ fn execute_tool_async(app: &mut TuiApp, invocation: ToolInvocation) {
     }
     let executor = app.tool_executor.clone();
     let tx = app.async_tx.clone();
+    tracing::info!(tool = %invocation.tool_name, invocation_id = %invocation.id, "TUI tool task spawned");
     app.tool_task = Some(tokio::spawn(async move {
         let result = executor.invoke(invocation.clone()).await;
         let _ = tx.send(AsyncEvent::ToolCompleted { invocation, result });
@@ -847,6 +880,12 @@ fn execute_tool_async(app: &mut TuiApp, invocation: ToolInvocation) {
 }
 
 fn handle_tool_completed(app: &mut TuiApp, invocation: ToolInvocation, result: ToolResult) {
+    tracing::info!(
+        tool = %invocation.tool_name,
+        invocation_id = %invocation.id,
+        ok = result.ok,
+        "TUI tool completed"
+    );
     app.pending_tool = None;
     app.events.push(AgentEvent::ToolCompleted(result.clone()));
     remove_active_tool_placeholder(app);
@@ -869,6 +908,13 @@ fn handle_tool_completed(app: &mut TuiApp, invocation: ToolInvocation, result: T
 
 fn handle_model_error(app: &mut TuiApp, message: String) {
     if should_retry_model_error(&message) && app.model_retry_attempts < max_model_retries(app) {
+        tracing::warn!(
+            error = %message,
+            attempt = app.model_retry_attempts + 1,
+            max = max_model_retries(app),
+            "transient model error retrying"
+        );
+        push_diagnostic(app, format!("Retrying transient provider error: {message}"));
         app.model_retry_attempts += 1;
         app.skip_next_model_done = false;
         app.pending_tool = None;
@@ -892,6 +938,8 @@ fn handle_model_error(app: &mut TuiApp, message: String) {
         return;
     }
 
+    tracing::error!(error = %message, "model stream failed");
+    push_diagnostic(app, format!("Model error: {message}"));
     app.skip_next_model_done = false;
     app.pending_tool = None;
     app.messages.push(ChatMessage {
@@ -1048,6 +1096,7 @@ fn language_for_path(path: &str) -> &'static str {
 
 fn approve_pending_tool(app: &mut TuiApp) {
     if let Some(invocation) = app.pending_tool.take() {
+        tracing::info!(tool = %invocation.tool_name, invocation_id = %invocation.id, "tool approval accepted");
         app.events
             .push(AgentEvent::ApprovalResolved(ApprovalDecision::Approved {
                 id: invocation.id.clone(),
@@ -1058,6 +1107,8 @@ fn approve_pending_tool(app: &mut TuiApp) {
 
 fn deny_pending_tool(app: &mut TuiApp) {
     if let Some(invocation) = app.pending_tool.take() {
+        tracing::warn!(tool = %invocation.tool_name, invocation_id = %invocation.id, "tool approval denied");
+        push_diagnostic(app, format!("Denied tool: {}", invocation.tool_name));
         app.events
             .push(AgentEvent::ApprovalResolved(ApprovalDecision::Denied {
                 id: invocation.id.clone(),
@@ -1080,6 +1131,12 @@ fn tool_approval_risk(tool_name: &str) -> ApprovalRisk {
 }
 
 fn cancel_stream(app: &mut TuiApp) {
+    tracing::warn!(
+        had_stream = app.stream_task.is_some(),
+        had_tool = app.tool_task.is_some(),
+        "active operation cancelled"
+    );
+    push_diagnostic(app, "Cancelled active operation.");
     if let Some(task) = app.stream_task.take() {
         task.abort();
     }
@@ -1155,6 +1212,11 @@ fn rebuild_provider(app: &mut TuiApp) {
     app.model_provider = build_provider(&app.loaded_config, &app.credential_store);
     app.harness_policy = select_harness_policy(&app.loaded_config.config);
     refresh_system_context(app);
+    tracing::info!(
+        provider = %app.loaded_config.config.model.provider,
+        model = %app.loaded_config.config.model.name,
+        "provider rebuilt"
+    );
 }
 
 fn reset_system_context(app: &mut TuiApp) {
@@ -1255,6 +1317,14 @@ fn show_notification(app: &mut TuiApp, title: impl Into<String>, message: impl I
     });
 }
 
+fn push_diagnostic(app: &mut TuiApp, message: impl Into<String>) {
+    app.diagnostics.push(message.into());
+    if app.diagnostics.len() > 20 {
+        let overflow = app.diagnostics.len() - 20;
+        app.diagnostics.drain(0..overflow);
+    }
+}
+
 fn expire_notification(app: &mut TuiApp) {
     let expired = app
         .notification
@@ -1297,8 +1367,14 @@ fn handle_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyModifiers) -> bool 
     if modifiers.contains(KeyModifiers::CONTROL) {
         match code {
             KeyCode::Char('c') => return true,
+            KeyCode::Char('d') => {
+                app.mode = Mode::Debug;
+                tracing::info!("debug modal opened");
+                return false;
+            }
             KeyCode::Char('g') => {
                 app.yolo_mode = !app.yolo_mode;
+                tracing::info!(enabled = app.yolo_mode, "yolo mode toggled");
                 show_notification(
                     app,
                     "Tools",
@@ -1360,7 +1436,19 @@ fn handle_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyModifiers) -> bool 
         Mode::Thinking => handle_thinking_key(app, code),
         Mode::Sessions => handle_sessions_key(app, code),
         Mode::Settings => handle_settings_key(app, code),
+        Mode::Debug => handle_debug_key(app, code),
     }
+}
+
+fn handle_debug_key(app: &mut TuiApp, code: KeyCode) -> bool {
+    match code {
+        KeyCode::Esc | KeyCode::Enter => {
+            app.mode = Mode::Normal;
+            tracing::info!("debug modal closed");
+        }
+        _ => {}
+    }
+    false
 }
 
 fn open_model_picker(app: &mut TuiApp) {
@@ -2315,6 +2403,7 @@ fn render(frame: &mut Frame<'_>, app: &TuiApp) {
         Mode::Thinking => render_thinking_picker(frame, app, modal_rect(area, 40, 10)),
         Mode::Sessions => render_sessions_picker(frame, app, modal_rect(area, 72, 16)),
         Mode::Settings => render_settings(frame, app, modal_rect(area, 50, 10)),
+        Mode::Debug => render_debug_modal(frame, app, modal_rect(area, 76, 18)),
         Mode::Normal => {}
     }
 
@@ -3607,6 +3696,89 @@ fn render_settings(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
     );
 }
 
+fn render_debug_modal(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
+    frame.render_widget(Clear, area);
+    let block = modal_block("Debug");
+    frame.render_widget(block, area);
+
+    let inner = area.inner(Margin {
+        horizontal: 2,
+        vertical: 1,
+    });
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(12), Constraint::Length(1)])
+        .split(inner);
+
+    let active_state = if app.stream_task.is_some() {
+        "streaming"
+    } else if app.tool_task.is_some() {
+        "tool"
+    } else if app.is_loading {
+        "loading"
+    } else {
+        "idle"
+    };
+    let provider = selected_provider_label(app);
+    let mut lines = vec![
+        Line::from(vec![
+            Span::styled("Log file: ", Style::default().fg(MUTED)),
+            Span::styled(
+                app.log_path.display().to_string(),
+                Style::default().fg(TEXT),
+            ),
+        ]),
+        Line::from(vec![
+            Span::styled("Session:  ", Style::default().fg(MUTED)),
+            Span::styled(app.session_id.0.clone(), Style::default().fg(TEXT)),
+        ]),
+        Line::from(vec![
+            Span::styled("Project:  ", Style::default().fg(MUTED)),
+            Span::styled(
+                app.project_dir.display().to_string(),
+                Style::default().fg(TEXT),
+            ),
+        ]),
+        Line::from(vec![
+            Span::styled("Model:    ", Style::default().fg(MUTED)),
+            Span::styled(
+                format!("{} via {}", app.loaded_config.config.model.name, provider),
+                Style::default().fg(TEXT),
+            ),
+        ]),
+        Line::from(vec![
+            Span::styled("State:    ", Style::default().fg(MUTED)),
+            Span::styled(active_state, Style::default().fg(ACCENT)),
+        ]),
+        Line::from(""),
+        Line::from(Span::styled(
+            "Recent diagnostics",
+            Style::default().fg(PINK),
+        )),
+    ];
+    if app.diagnostics.is_empty() {
+        lines.push(Line::from(Span::styled("none", Style::default().fg(MUTED))));
+    } else {
+        for diagnostic in app.diagnostics.iter().rev().take(8) {
+            lines.push(Line::from(Span::styled(
+                diagnostic.clone(),
+                Style::default().fg(TEXT),
+            )));
+        }
+    }
+
+    frame.render_widget(
+        Paragraph::new(lines)
+            .style(Style::default().fg(TEXT).bg(PANEL))
+            .wrap(Wrap { trim: false }),
+        rows[0],
+    );
+    frame.render_widget(
+        Paragraph::new("esc close").style(Style::default().fg(MUTED).bg(PANEL)),
+        rows[1],
+    );
+}
+
 // ─── sessions picker ───────────────────────────────────────────────────────────
 fn render_sessions_picker(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
     frame.render_widget(Clear, area);
@@ -4712,6 +4884,20 @@ mod tests {
         handle_settings_key(&mut app, KeyCode::Enter);
         assert!(!app.show_thinking);
         assert!(app.notification.is_some());
+    }
+
+    #[test]
+    fn ctrl_d_opens_debug_modal() {
+        let mut app = test_app("");
+
+        assert!(!handle_key(
+            &mut app,
+            KeyCode::Char('d'),
+            KeyModifiers::CONTROL
+        ));
+
+        assert_eq!(app.mode, Mode::Debug);
+        assert!(app.log_path.ends_with("logs/navi.log"));
     }
 
     #[test]
