@@ -321,6 +321,7 @@ impl OpenAiProvider {
             OpenAiApiKind::Responses,
         );
         body["stream"] = json!(true);
+        body["stream_options"] = json!({ "include_usage": true });
 
         let response = client
             .post(format!("{}/responses", base_url.trim_end_matches('/')))
@@ -388,6 +389,7 @@ impl OpenAiProvider {
             OpenAiApiKind::ChatCompletions,
         );
         body["stream"] = json!(true);
+        body["stream_options"] = json!({ "include_usage": true });
 
         let mut req = client
             .post(format!(
