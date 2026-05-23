@@ -17,10 +17,18 @@ impl RuntimeEvent {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum RuntimeEventKind {
-    SessionStarted { session_id: String },
-    TurnStarted { turn_id: String },
-    AssistantDelta { text: String },
-    AssistantThinkingDelta { text: String },
+    SessionStarted {
+        session_id: String,
+    },
+    TurnStarted {
+        turn_id: String,
+    },
+    AssistantDelta {
+        text: String,
+    },
+    AssistantThinkingDelta {
+        text: String,
+    },
     ToolRequested(ToolInvocation),
     ApprovalRequired(ApprovalRequest),
     ToolStarted(ToolInvocation),
@@ -30,10 +38,19 @@ pub enum RuntimeEventKind {
         input_tokens: u64,
         output_tokens: u64,
     },
-    SessionSaved { session_id: String },
-    TurnCompleted { turn_id: String, text: String },
-    SessionFinished { session_id: String },
-    Error { message: String },
+    SessionSaved {
+        session_id: String,
+    },
+    TurnCompleted {
+        turn_id: String,
+        text: String,
+    },
+    SessionFinished {
+        session_id: String,
+    },
+    Error {
+        message: String,
+    },
     LegacyAgentEvent(AgentEvent),
 }
 

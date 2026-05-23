@@ -5,6 +5,7 @@ members = [
     "crates/navi-openai",
     "crates/navi-plugin-api",
     "crates/navi-plugin-host",
+    "crates/navi-sdk",
     "crates/navi-tui",
 ]
 resolver = "3"
@@ -42,4 +43,5 @@ navi-core = { path = "crates/navi-core" }
 navi-openai = { path = "crates/navi-openai" }
 navi-plugin-api = { path = "crates/navi-plugin-api" }
 navi-plugin-host = { path = "crates/navi-plugin-host" }
+navi-sdk = { path = "crates/navi-sdk" }
 navi-tui = { path = "crates/navi-tui" }

@@ -2094,6 +2094,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "navi-sdk"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "navi-core",
+ "navi-openai",
+ "navi-plugin-host",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "navi-tui"
 version = "0.1.0"
 dependencies = [

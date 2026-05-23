@@ -74,13 +74,27 @@ impl AgentMode {
 
     pub fn runtime_instructions(self) -> &'static str {
         match self {
-            Self::Plan => "Agent mode: Plan. Inspect and reason before proposing action. Prefer outlining steps and constraints before editing.",
-            Self::Edit => "Agent mode: Edit. Make targeted project changes using available tools, then verify them.",
-            Self::Review => "Agent mode: Review. Prioritize bugs, regressions, risks, and missing tests. Findings lead.",
-            Self::Tutor => "Agent mode: Tutor. Help the user learn actively. Explain enough to guide thinking without taking over.",
-            Self::Socratic => "Agent mode: Socratic. Ask focused questions that expose assumptions and guide the next reasoning step.",
-            Self::Recall => "Agent mode: Recall. Prompt retrieval practice and check understanding before adding new material.",
-            Self::Focus => "Agent mode: Focus. Keep attention on the current focus thread and defer unrelated ideas.",
+            Self::Plan => {
+                "Agent mode: Plan. Inspect and reason before proposing action. Prefer outlining steps and constraints before editing."
+            }
+            Self::Edit => {
+                "Agent mode: Edit. Make targeted project changes using available tools, then verify them."
+            }
+            Self::Review => {
+                "Agent mode: Review. Prioritize bugs, regressions, risks, and missing tests. Findings lead."
+            }
+            Self::Tutor => {
+                "Agent mode: Tutor. Help the user learn actively. Explain enough to guide thinking without taking over."
+            }
+            Self::Socratic => {
+                "Agent mode: Socratic. Ask focused questions that expose assumptions and guide the next reasoning step."
+            }
+            Self::Recall => {
+                "Agent mode: Recall. Prompt retrieval practice and check understanding before adding new material."
+            }
+            Self::Focus => {
+                "Agent mode: Focus. Keep attention on the current focus thread and defer unrelated ideas."
+            }
         }
     }
 }

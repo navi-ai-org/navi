@@ -1539,13 +1539,11 @@ mod tests {
         assert!(first.is_empty());
         assert_eq!(
             second.into_iter().map(Result::unwrap).collect::<Vec<_>>(),
-            vec![
-                ModelStreamEvent::ToolCall(ToolInvocation {
-                    id: "call_1".to_string(),
-                    tool_name: "read_file".to_string(),
-                    input: json!({ "path": "Cargo.toml" }),
-                }),
-            ]
+            vec![ModelStreamEvent::ToolCall(ToolInvocation {
+                id: "call_1".to_string(),
+                tool_name: "read_file".to_string(),
+                input: json!({ "path": "Cargo.toml" }),
+            }),]
         );
     }
 
