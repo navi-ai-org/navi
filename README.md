@@ -98,7 +98,7 @@ stdout_enabled = false
 include_payloads = false
 ```
 
-API keys are resolved from environment variables first, then from NAVI's credential store. If a selected provider has no key, the TUI asks for it from the model picker instead of blocking startup. The Settings modal also has `Provider Accounts`, which shows configured/unconfigured providers and opens API key setup or OAuth for compatible providers.
+API keys are resolved from environment variables first, then from NAVI's credential store. If a selected provider has no key, the TUI asks for it from the model picker instead of blocking startup. Provider account management lives in the command palette as `Providers`, which shows configured/unconfigured providers and opens API key setup or OAuth for compatible providers.
 
 ## Providers
 

@@ -130,14 +130,7 @@ impl CompactState {
             return 0;
         }
         let total_tokens = self.total_estimated_tokens(pending_input_bytes);
-        let effective_window = self.context_window.saturating_sub(12000);
-        if effective_window == 0 {
-            return 0;
-        }
-        let used = total_tokens.saturating_sub(12000);
-        let remaining = effective_window.saturating_sub(used);
-        
-        let percentage = (remaining as f64 / effective_window as f64) * 100.0;
+        let percentage = (total_tokens as f64 / self.context_window as f64) * 100.0;
         percentage.clamp(0.0, 100.0) as u8
     }
 
@@ -154,10 +147,13 @@ impl CompactState {
         };
 
         let total_tokens = self.total_estimated_tokens(pending_input_bytes);
-        let used = total_tokens.saturating_sub(12000);
-        let effective_window = self.context_window.saturating_sub(12000);
 
-        format!("{} / {} ({}%)", format_tokens(used), format_tokens(effective_window), pct)
+        format!(
+            "{} / {} ({}%)",
+            format_tokens(total_tokens),
+            format_tokens(self.context_window),
+            pct
+        )
     }
 
     pub fn update_usage(&mut self, input_tokens: u64) {
@@ -453,7 +449,7 @@ mod tests {
             context_window: 200_000,
             ..Default::default()
         };
-        assert_eq!(state.context_percentage(0), 53);
+        assert_eq!(state.context_percentage(0), 50);
     }
 
     #[test]
@@ -463,7 +459,17 @@ mod tests {
             context_window: 200_000,
             ..Default::default()
         };
-        assert_eq!(state.context_percentage(0), 100);
+        assert_eq!(state.context_percentage(0), 0);
+    }
+
+    #[test]
+    fn compact_state_usage_label_shows_real_context_usage() {
+        let state = CompactState {
+            last_input_tokens: Some(2_000),
+            context_window: 128_000,
+            ..Default::default()
+        };
+        assert_eq!(state.usage_label(0), "2k / 128k (1%)");
     }
 
     #[test]

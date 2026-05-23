@@ -1,9 +1,12 @@
+use crate::agent::AgentMode;
 use crate::config::LoadedConfig;
+use crate::context::ContextPacket;
 use crate::event::AgentEvent;
 use crate::harness::select_harness_policy;
 use crate::model::{ModelProvider, ModelResponse};
 use crate::security::SecurityPolicy;
-use crate::tool::ToolExecutor;
+use crate::tool::{Tool, ToolExecutor};
+use crate::{ModelOption, available_model_options, canonical_provider_id};
 use anyhow::Result;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -13,6 +16,9 @@ pub struct AgentRuntimeOptions {
     pub model_provider: Arc<dyn ModelProvider>,
     pub project_dir: PathBuf,
     pub tool_executor: Option<Arc<ToolExecutor>>,
+    pub agent_mode: Option<AgentMode>,
+    pub context_packets: Vec<ContextPacket>,
+    pub event_tx: Option<tokio::sync::mpsc::UnboundedSender<AgentEvent>>,
 }
 
 pub struct AgentRuntime {
@@ -20,8 +26,13 @@ pub struct AgentRuntime {
     model_provider: Arc<dyn ModelProvider>,
     project_dir: PathBuf,
     tool_executor: Option<Arc<ToolExecutor>>,
+    agent_mode: Option<AgentMode>,
+    context_packets: Vec<ContextPacket>,
+    event_tx: Option<tokio::sync::mpsc::UnboundedSender<AgentEvent>>,
     events: Vec<AgentEvent>,
 }
+
+pub type NaviRuntime = AgentRuntime;
 
 #[cfg(test)]
 mod tests {
@@ -52,6 +63,8 @@ mod tests {
             if call_number == 1 {
                 assert!(!request.tools.is_empty());
                 assert!(request.messages[0].content.contains("Workflow contract"));
+                assert!(request.messages[0].content.contains("Agent mode: Plan"));
+                assert!(request.messages[0].content.contains("runtime context"));
                 Box::pin(stream::iter(vec![Ok(
                     crate::model::ModelStreamEvent::ToolCall(ToolInvocation {
                         id: "call-1".to_string(),
@@ -105,6 +118,16 @@ mod tests {
             model_provider: provider,
             project_dir: tempdir.path().to_path_buf(),
             tool_executor: None,
+            agent_mode: Some(crate::AgentMode::Plan),
+            context_packets: vec![crate::ContextPacket {
+                id: Some("ctx-1".to_string()),
+                source: crate::ContextSource::FocusThread,
+                title: Some("focus".to_string()),
+                content: "runtime context".to_string(),
+                priority: 10,
+                metadata: json!({}),
+            }],
+            event_tx: None,
         });
 
         let response = runtime
@@ -135,12 +158,78 @@ impl AgentRuntime {
             model_provider: options.model_provider,
             project_dir: options.project_dir,
             tool_executor: options.tool_executor,
+            agent_mode: options.agent_mode,
+            context_packets: options.context_packets,
+            event_tx: options.event_tx,
             events: Vec::new(),
         }
     }
 
     pub fn events(&self) -> &[AgentEvent] {
         &self.events
+    }
+
+    pub fn agent_mode(&self) -> Option<AgentMode> {
+        self.agent_mode
+    }
+
+    pub fn set_agent_mode(&mut self, mode: Option<AgentMode>) {
+        self.agent_mode = mode;
+    }
+
+    pub fn add_context_packet(&mut self, packet: ContextPacket) {
+        self.context_packets.push(packet);
+    }
+
+    pub fn clear_context_packets(&mut self) {
+        self.context_packets.clear();
+    }
+
+    pub fn context_packets(&self) -> &[ContextPacket] {
+        &self.context_packets
+    }
+
+    pub fn list_models(&self) -> Vec<ModelOption> {
+        available_model_options(&self.loaded_config.config)
+    }
+
+    pub fn set_model(&mut self, provider: impl Into<String>, model: impl Into<String>) {
+        self.loaded_config.config.model.provider =
+            canonical_provider_id(&provider.into()).to_string();
+        self.loaded_config.config.model.name = model.into();
+    }
+
+    pub fn register_host_tool(&mut self, tool: Arc<dyn Tool>) -> Result<()> {
+        if self.tool_executor.is_none() {
+            let security_policy = SecurityPolicy::new(
+                self.project_dir.clone(),
+                self.loaded_config.data_dir.clone(),
+                self.loaded_config.config.security.clone(),
+            )?;
+            self.tool_executor = Some(Arc::new(ToolExecutor::new(security_policy)));
+        }
+
+        let Some(executor) = self.tool_executor.as_mut() else {
+            return Err(anyhow::anyhow!("tool executor unavailable"));
+        };
+        let Some(executor) = Arc::get_mut(executor) else {
+            return Err(anyhow::anyhow!(
+                "cannot register host tool while tool executor is shared"
+            ));
+        };
+        executor.register_tool(tool);
+        Ok(())
+    }
+
+    pub async fn send_turn(&mut self, task: String) -> Result<ModelResponse> {
+        self.submit_task(task).await
+    }
+
+    fn record_event(&mut self, event: AgentEvent) {
+        if let Some(tx) = &self.event_tx {
+            let _ = tx.send(event.clone());
+        }
+        self.events.push(event);
     }
 
     pub async fn submit_task(&mut self, task: String) -> Result<ModelResponse> {
@@ -150,8 +239,7 @@ impl AgentRuntime {
             model = %self.loaded_config.config.model.name,
             "agent task submitted"
         );
-        self.events
-            .push(AgentEvent::UserTaskSubmitted { text: task.clone() });
+        self.record_event(AgentEvent::UserTaskSubmitted { text: task.clone() });
 
         let policy = select_harness_policy(&self.loaded_config.config);
         let tool_executor = match self.tool_executor.clone() {
@@ -180,6 +268,11 @@ impl AgentRuntime {
                 crate::config::effective_context_window(&self.loaded_config.config),
             ))),
             harness_config: self.loaded_config.config.harness.clone(),
+            include_tool_prompt_manifest: crate::config::effective_tool_prompt_manifest(
+                &self.loaded_config.config,
+            ),
+            agent_mode: self.agent_mode,
+            context_packets: self.context_packets.clone(),
         });
 
         let session_runtime = crate::session::SessionRuntime::spawn(ctx, policy, Vec::new(), None);
@@ -200,13 +293,13 @@ impl AgentRuntime {
                     final_text = Some(res??);
                 }
                 Some(event) = event_rx.recv() => {
-                    self.events.push(event);
+                    self.record_event(event);
                 }
             }
         }
 
         while let Ok(event) = event_rx.try_recv() {
-            self.events.push(event);
+            self.record_event(event);
         }
 
         let response = ModelResponse {

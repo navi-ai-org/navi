@@ -231,6 +231,9 @@ async fn run_headless(
         model_provider: provider,
         project_dir: cwd.clone(),
         tool_executor: Some(Arc::new(tool_executor)),
+        agent_mode: None,
+        context_packets: Vec::new(),
+        event_tx: None,
     });
     tracing::info!(
         provider = %loaded_config.config.model.provider,

@@ -252,6 +252,11 @@ async fn run_prompt_task(
             )),
         )),
         harness_config: loaded_config.config.harness.clone(),
+        include_tool_prompt_manifest: navi_core::effective_tool_prompt_manifest(
+            &loaded_config.config,
+        ),
+        agent_mode: None,
+        context_packets: Vec::new(),
     });
 
     let policy = navi_core::harness::select_harness_policy(&loaded_config.config);

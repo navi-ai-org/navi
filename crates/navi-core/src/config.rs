@@ -28,6 +28,7 @@ pub struct ModelConfig {
 #[serde(default)]
 pub struct HarnessConfig {
     pub profile: HarnessProfile,
+    pub tool_prompt_manifest: ToolPromptManifest,
     pub observation_bytes_small: usize,
     pub observation_bytes_medium: usize,
     pub micro_compact_gap_minutes: u64,
@@ -44,6 +45,14 @@ pub enum HarnessProfile {
     Auto,
     Small,
     Medium,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ToolPromptManifest {
+    Auto,
+    Always,
+    Never,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -99,6 +108,8 @@ pub struct ProviderConfig {
     pub websocket_connect_timeout_ms: Option<u64>,
     #[serde(default)]
     pub retry_429: Option<bool>,
+    #[serde(default)]
+    pub tool_prompt_manifest: Option<bool>,
 }
 
 impl Default for ProviderConfig {
@@ -117,6 +128,7 @@ impl Default for ProviderConfig {
             stream_max_retries: None,
             websocket_connect_timeout_ms: None,
             retry_429: None,
+            tool_prompt_manifest: None,
         }
     }
 }
@@ -160,6 +172,8 @@ pub struct ProviderModelConfig {
     pub task_size: ModelTaskSize,
     #[serde(default)]
     pub context_window_tokens: Option<u64>,
+    #[serde(default)]
+    pub tool_prompt_manifest: Option<bool>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -293,6 +307,7 @@ impl Default for HarnessConfig {
     fn default() -> Self {
         Self {
             profile: HarnessProfile::Auto,
+            tool_prompt_manifest: ToolPromptManifest::Auto,
             observation_bytes_small: 12 * 1024,
             observation_bytes_medium: 48 * 1024,
             micro_compact_gap_minutes: 60,
@@ -421,6 +436,31 @@ pub fn effective_context_window(config: &NaviConfig) -> u64 {
         .find(|m| m.provider_id == *selected_provider && m.name == *selected_model)
         .and_then(|m| m.context_window_tokens)
         .unwrap_or(DEFAULT_CONTEXT_WINDOW)
+}
+
+pub fn effective_tool_prompt_manifest(config: &NaviConfig) -> bool {
+    match config.harness.tool_prompt_manifest {
+        ToolPromptManifest::Always => return true,
+        ToolPromptManifest::Never => return false,
+        ToolPromptManifest::Auto => {}
+    }
+
+    let selected_provider = &config.model.provider;
+    let selected_model = &config.model.name;
+    provider_catalog(config)
+        .into_iter()
+        .find(|provider| {
+            canonical_provider_id(&provider.id) == canonical_provider_id(selected_provider)
+        })
+        .and_then(|provider| {
+            provider
+                .models
+                .iter()
+                .find(|model| model.name == *selected_model)
+                .and_then(|model| model.tool_prompt_manifest)
+                .or(provider.tool_prompt_manifest)
+        })
+        .unwrap_or(false)
 }
 
 fn merge_provider_configs(providers: &mut Vec<ProviderConfig>, overrides: Vec<ProviderConfig>) {
@@ -992,6 +1032,7 @@ fn model(name: &str, task_size: ModelTaskSize) -> ProviderModelConfig {
         name: name.to_string(),
         task_size,
         context_window_tokens: None,
+        tool_prompt_manifest: None,
     }
 }
 
@@ -1000,6 +1041,7 @@ fn model_ctx(name: &str, task_size: ModelTaskSize, ctx: u64) -> ProviderModelCon
         name: name.to_string(),
         task_size,
         context_window_tokens: Some(ctx),
+        tool_prompt_manifest: None,
     }
 }
 
@@ -1022,7 +1064,10 @@ impl NaviConfig {
             .find(|p| canonical_provider_id(&p.id) == provider_id)
         {
             for m in built_in.models {
-                existing_models.insert(m.name.clone(), (m.task_size, m.context_window_tokens));
+                existing_models.insert(
+                    m.name.clone(),
+                    (m.task_size, m.context_window_tokens, m.tool_prompt_manifest),
+                );
             }
         }
 
@@ -1032,23 +1077,28 @@ impl NaviConfig {
             .find(|p| canonical_provider_id(&p.id) == provider_id)
         {
             for m in &existing_override.models {
-                existing_models.insert(m.name.clone(), (m.task_size, m.context_window_tokens));
+                existing_models.insert(
+                    m.name.clone(),
+                    (m.task_size, m.context_window_tokens, m.tool_prompt_manifest),
+                );
             }
         }
 
         let mut new_models = Vec::new();
         for name in model_names {
-            if let Some(&(size, ctx)) = existing_models.get(name) {
+            if let Some(&(size, ctx, tool_prompt_manifest)) = existing_models.get(name) {
                 new_models.push(ProviderModelConfig {
                     name: name.clone(),
                     task_size: size,
                     context_window_tokens: ctx,
+                    tool_prompt_manifest,
                 });
             } else {
                 new_models.push(ProviderModelConfig {
                     name: name.clone(),
                     task_size: determine_task_size(name),
                     context_window_tokens: None,
+                    tool_prompt_manifest: None,
                 });
             }
         }
@@ -1232,6 +1282,42 @@ mod tests {
                 .sum::<usize>()
                 >= 160
         );
+    }
+
+    #[test]
+    fn tool_prompt_manifest_defaults_to_disabled_for_native_models() {
+        let config = NaviConfig::default();
+        assert!(!effective_tool_prompt_manifest(&config));
+    }
+
+    #[test]
+    fn tool_prompt_manifest_can_be_forced_or_model_enabled() {
+        let mut config = NaviConfig::default();
+        config.harness.tool_prompt_manifest = ToolPromptManifest::Always;
+        assert!(effective_tool_prompt_manifest(&config));
+
+        config.harness.tool_prompt_manifest = ToolPromptManifest::Never;
+        assert!(!effective_tool_prompt_manifest(&config));
+
+        config.harness.tool_prompt_manifest = ToolPromptManifest::Auto;
+        config.model.provider = "compat".to_string();
+        config.model.name = "compat-model".to_string();
+        config.providers.push(ProviderConfig {
+            id: "compat".to_string(),
+            label: "Compat".to_string(),
+            description: "compat provider".to_string(),
+            kind: ProviderKind::OpenAiChatCompletions,
+            api_key_env: "COMPAT_KEY".to_string(),
+            base_url: Some("https://example.com".to_string()),
+            models: vec![ProviderModelConfig {
+                name: "compat-model".to_string(),
+                task_size: ModelTaskSize::Small,
+                context_window_tokens: None,
+                tool_prompt_manifest: Some(true),
+            }],
+            ..Default::default()
+        });
+        assert!(effective_tool_prompt_manifest(&config));
     }
 
     #[test]

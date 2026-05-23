@@ -1,9 +1,10 @@
 use crate::agent::AgentControl;
 use crate::compact::{self, CompactState};
+use crate::context::{ContextPacket, render_context_packets};
 use crate::event::AgentEvent;
 use crate::harness::{
-    HarnessPolicy, build_system_prompt, compact_tool_observation, tool_error_result,
-    trace_request_summary,
+    AgentRunState, HarnessPolicy, ToolLoopDecision, build_system_prompt_with_tools,
+    compact_tool_observation, record_tool_call, tool_error_result, trace_request_summary,
 };
 use crate::model::{
     ModelMessage, ModelProvider, ModelRequest, ModelRole, ModelStreamEvent, ThinkingConfig,
@@ -32,6 +33,9 @@ pub struct TurnContext {
     >,
     pub compact_state: Arc<tokio::sync::Mutex<CompactState>>,
     pub harness_config: crate::config::HarnessConfig,
+    pub include_tool_prompt_manifest: bool,
+    pub agent_mode: Option<crate::agent::AgentMode>,
+    pub context_packets: Vec<ContextPacket>,
 }
 
 impl TurnContext {
@@ -70,11 +74,25 @@ pub async fn run_turn(
     };
 
     // Ensure first message is the combined system prompt if it exists, or insert it.
-    let system_content = format!(
+    let mut system_content = format!(
         "{}\n\n=== AGENTS.md / Project Instructions ===\n{}",
-        build_system_prompt(&crate::config::NaviConfig::default(), &ctx.project_dir),
+        build_system_prompt_with_tools(
+            &crate::config::NaviConfig::default(),
+            &ctx.project_dir,
+            None,
+            &ctx.tool_executor.definitions(),
+            ctx.include_tool_prompt_manifest,
+        ),
         base_instructions
     );
+    if let Some(mode) = ctx.agent_mode {
+        system_content.push_str("\n\n=== Agent Mode ===\n");
+        system_content.push_str(mode.runtime_instructions());
+    }
+    if let Some(context) = render_context_packets(&ctx.context_packets) {
+        system_content.push_str("\n\n");
+        system_content.push_str(&context);
+    }
 
     if messages.is_empty() {
         messages.push(ModelMessage::system(system_content));
@@ -86,6 +104,7 @@ pub async fn run_turn(
 
     // Keep loop execution bounded
     let mut loop_count = 0;
+    let mut run_state = AgentRunState::default();
     let final_text = loop {
         loop_count += 1;
         if loop_count > 10 {
@@ -227,12 +246,37 @@ pub async fn run_turn(
                 messages.push(ModelMessage::assistant_tool_call(invocation.clone()));
             }
 
+            let mut executable_calls = Vec::new();
+            let mut immediate_results = Vec::new();
+            for invocation in tool_calls {
+                match record_tool_call(&mut run_state, policy, &invocation) {
+                    ToolLoopDecision::Continue => executable_calls.push(invocation),
+                    ToolLoopDecision::RepeatedCall(reason) => {
+                        let result = tool_error_result(&invocation, reason);
+                        if let Some(ref tx) = ctx.event_tx {
+                            let _ = tx.send(AgentEvent::ToolCompleted(result.clone()));
+                        }
+                        let observation = compact_tool_observation(&invocation, &result, policy);
+                        immediate_results.push((invocation, result, observation));
+                    }
+                }
+            }
+
             // Parallel tool execution pipeline with pre/post-execution hooks
-            let tool_futures = tool_calls.into_iter().map(|invocation| {
+            let tool_futures = executable_calls.into_iter().map(|invocation| {
                 let tool_executor = ctx.tool_executor.clone();
                 let event_tx = ctx.event_tx.clone();
                 let pending_approvals = ctx.pending_approvals.clone();
                 async move {
+                    if let Err(invalid) = tool_executor.validate_arguments(&invocation) {
+                        let result = tool_executor.invalid_tool_result(&invocation, invalid);
+                        if let Some(ref tx) = event_tx {
+                            let _ = tx.send(AgentEvent::ToolCompleted(result.clone()));
+                        }
+                        let observation = compact_tool_observation(&invocation, &result, policy);
+                        return (invocation, result, observation);
+                    }
+
                     // Pre-execution hook: Security & Approvals
                     let decision = tool_executor.validate(&invocation);
                     let result = match decision {
@@ -313,7 +357,8 @@ pub async fn run_turn(
                 }
             });
 
-            let executed_results = futures_util::future::join_all(tool_futures).await;
+            let mut executed_results = immediate_results;
+            executed_results.extend(futures_util::future::join_all(tool_futures).await);
 
             // Feed results back to history
             for (invocation, _result, observation) in executed_results {
@@ -434,6 +479,9 @@ mod tests {
             pending_approvals: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
             compact_state: Arc::new(tokio::sync::Mutex::new(CompactState::new(128_000))),
             harness_config: crate::config::HarnessConfig::default(),
+            include_tool_prompt_manifest: false,
+            agent_mode: None,
+            context_packets: Vec::new(),
         };
 
         let mut messages = vec![];
