@@ -108,7 +108,44 @@ Rust workspace, edition 2024, resolver 3. All implementation lives under `crates
 | `navi-openai` | `ModelProvider` implementation for OpenAI-compatible APIs and provider adapters. |
 | `navi-plugin-api` | Plugin trait and `NAVI_PLUGIN_API_VERSION = 1`. |
 | `navi-plugin-host` | Dynamic `.so`/`.dylib` loading via `libloading`. |
+| `navi-sdk` | Public embedding facade for local clients such as NAVI Tutor. Wraps core runtime, provider setup, plugin loading, host tools, sessions and events. |
 | `navi-tui` | Terminal UI with chat, model picker, thinking/settings/session modals, markdown/code rendering. |
+
+## Current Integration State
+
+Latest important commits:
+
+- `d7f0f46 Add NAVI SDK integration surface` in this repo.
+- `3efb238 Connect Tutor backend to NAVI SDK` in `/home/enrell/projects/navi-tutor`.
+
+`navi-sdk` exists locally and is not published to crates.io. NAVI Tutor currently consumes it by path dependency:
+
+```toml
+navi-sdk = { path = "../../navi/crates/navi-sdk" }
+navi-core = { path = "../../navi/crates/navi-core" }
+```
+
+The SDK is the intended public Rust boundary for Tutor integration. Do not make Tutor depend on `navi-tui`. Do not assume the `navi` binary exists in `PATH`.
+
+Implemented SDK/runtime capabilities:
+
+- `NaviEngineBuilder::from_project(...)`
+- `NaviEngine::start_session(...)`
+- `NaviEngine::send_turn(...)`
+- `NaviEngine::cancel_turn(...)`
+- `NaviEngine::resolve_approval(...)`
+- `NaviEngine::add_context_packet(...)`
+- `NaviEngine::snapshot_session(...)`
+- `NaviEngine::list_models(...)`
+- `NaviEngine::set_model(...)`
+- `NaviEngine::subscribe_events(...)`
+- host tools through `SdkHostTool` and `HostToolHandler`
+
+`navi-core` now has embeddable runtime state for session lifecycle, cancellation, approval resolution, event streaming and snapshots. Approval and cancellation have lightweight handles so a client can resolve approval or cancel while a turn is active.
+
+Next integration target:
+
+- Build the Tutor frontend loop on top of existing Tauri commands: start a NAVI session, send a turn, listen to `navi-runtime-event`, render assistant deltas, show approval prompts, and verify host tools mutate Tutor SQLite/canvas state.
 
 ## Commands
 
