@@ -418,6 +418,9 @@ mod tests {
                 crate::compact::CompactState::new(128_000),
             )),
             harness_config: crate::config::HarnessConfig::default(),
+            include_tool_prompt_manifest: false,
+            agent_mode: None,
+            context_packets: Vec::new(),
         });
 
         let policy = crate::harness::HarnessPolicy {

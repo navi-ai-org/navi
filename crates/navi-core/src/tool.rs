@@ -50,13 +50,34 @@ pub struct ToolResult {
 
 pub struct ToolExecutor {
     tools: HashMap<String, Arc<dyn Tool>>,
+    validators: HashMap<String, Arc<jsonschema::Validator>>,
+    invalid_schemas: HashMap<String, String>,
     policy: SecurityPolicy,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ToolCallInvalid {
+    UnknownTool {
+        tool_name: String,
+        available_tools: Vec<String>,
+    },
+    InvalidSchema {
+        tool_name: String,
+        message: String,
+    },
+    InvalidArguments {
+        tool_name: String,
+        problems: Vec<String>,
+        example: Value,
+    },
 }
 
 impl ToolExecutor {
     pub fn new(policy: SecurityPolicy) -> Self {
         let mut executor = Self {
             tools: HashMap::new(),
+            validators: HashMap::new(),
+            invalid_schemas: HashMap::new(),
             policy,
         };
         executor.register_builtin_tools();
@@ -72,10 +93,91 @@ impl ToolExecutor {
     }
 
     pub fn register_tool(&mut self, tool: Arc<dyn Tool>) -> Option<Arc<dyn Tool>> {
-        self.tools.insert(tool.definition().name, tool)
+        let definition = tool.definition();
+        let name = definition.name.clone();
+        match jsonschema::validator_for(&definition.input_schema) {
+            Ok(validator) => {
+                self.validators.insert(name.clone(), Arc::new(validator));
+                self.invalid_schemas.remove(&name);
+            }
+            Err(err) => {
+                self.validators.remove(&name);
+                self.invalid_schemas.insert(name.clone(), err.to_string());
+                tracing::warn!(tool = %name, error = %err, "tool input schema is invalid");
+            }
+        }
+        self.tools.insert(name, tool)
+    }
+
+    pub fn validate_arguments(&self, invocation: &ToolInvocation) -> std::result::Result<(), ToolCallInvalid> {
+        let Some(_definition) = self.definition(&invocation.tool_name) else {
+            return Err(ToolCallInvalid::UnknownTool {
+                tool_name: invocation.tool_name.clone(),
+                available_tools: self.tool_names(),
+            });
+        };
+        if let Some(error) = self.invalid_schemas.get(&invocation.tool_name) {
+            return Err(ToolCallInvalid::InvalidSchema {
+                tool_name: invocation.tool_name.clone(),
+                message: error.clone(),
+            });
+        }
+        let Some(validator) = self.validators.get(&invocation.tool_name) else {
+            return Err(ToolCallInvalid::InvalidSchema {
+                tool_name: invocation.tool_name.clone(),
+                message: "missing input schema validator".to_string(),
+            });
+        };
+        let errors = validator
+            .iter_errors(&invocation.input)
+            .take(4)
+            .map(|error| {
+                let path = error.instance_path().to_string();
+                if path.is_empty() {
+                    error.to_string()
+                } else {
+                    format!("{error} at {path}")
+                }
+            })
+            .collect::<Vec<_>>();
+        if !errors.is_empty() {
+            let example = self
+                .definition(&invocation.tool_name)
+                .map(|definition| example_from_schema(&definition.input_schema))
+                .unwrap_or_else(|| json!({}));
+            return Err(ToolCallInvalid::InvalidArguments {
+                tool_name: invocation.tool_name.clone(),
+                problems: errors,
+                example,
+            });
+        }
+        Ok(())
+    }
+
+    pub fn tool_names(&self) -> Vec<String> {
+        let mut names = self.tools.keys().cloned().collect::<Vec<_>>();
+        names.sort();
+        names
+    }
+
+    pub fn invalid_tool_result(
+        &self,
+        invocation: &ToolInvocation,
+        invalid: ToolCallInvalid,
+    ) -> ToolResult {
+        ToolResult {
+            invocation_id: invocation.id.clone(),
+            ok: false,
+            output: tool_call_advice(invalid),
+        }
     }
 
     pub fn validate(&self, invocation: &ToolInvocation) -> SecurityDecision {
+        if let Err(err) = self.validate_arguments(invocation) {
+            let message = tool_call_advice_message(&err);
+            tracing::warn!(tool = %invocation.tool_name, invocation_id = %invocation.id, error = %message, "tool argument validation denied");
+            return SecurityDecision::Deny(message);
+        }
         let Some(definition) = self.definition(&invocation.tool_name) else {
             tracing::warn!(tool = %invocation.tool_name, "unknown tool validation denied");
             return SecurityDecision::Deny(format!("unknown tool `{}`", invocation.tool_name));
@@ -101,6 +203,10 @@ impl ToolExecutor {
         let invocation_id = invocation.id.clone();
         let tool_name = invocation.tool_name.clone();
         let started_at = std::time::Instant::now();
+        if let Err(invalid) = self.validate_arguments(&invocation) {
+            tracing::warn!(tool = %tool_name, invocation_id = %invocation_id, error = %tool_call_advice_message(&invalid), "tool argument validation denied");
+            return self.invalid_tool_result(&invocation, invalid);
+        }
         if let SecurityDecision::Deny(reason) = self.validate(&invocation) {
             tracing::warn!(tool = %tool_name, invocation_id = %invocation_id, reason = %reason, "tool invocation blocked");
             return ToolResult {
@@ -149,6 +255,89 @@ impl ToolExecutor {
         self.register(GrepTool);
         self.register(BashTool);
     }
+}
+
+fn tool_call_advice(invalid: ToolCallInvalid) -> Value {
+    match invalid {
+        ToolCallInvalid::UnknownTool {
+            tool_name,
+            available_tools,
+        } => json!({
+            "error_code": "unknown_tool",
+            "tool": tool_name,
+            "message": "Requested tool is not registered. Use one of the available tool names.",
+            "available_tools": available_tools,
+        }),
+        ToolCallInvalid::InvalidSchema { tool_name, message } => json!({
+            "error_code": "invalid_schema",
+            "tool": tool_name,
+            "message": format!("Tool schema is invalid: {message}"),
+        }),
+        ToolCallInvalid::InvalidArguments {
+            tool_name,
+            problems,
+            example,
+        } => json!({
+            "error_code": "invalid_arguments",
+            "tool": tool_name,
+            "message": "Tool arguments do not match the JSON schema. Fix the arguments and call the tool again.",
+            "problems": problems,
+            "example": example,
+        }),
+    }
+}
+
+fn tool_call_advice_message(invalid: &ToolCallInvalid) -> String {
+    match invalid {
+        ToolCallInvalid::UnknownTool { tool_name, .. } => {
+            format!("unknown tool `{tool_name}`")
+        }
+        ToolCallInvalid::InvalidSchema { tool_name, message } => {
+            format!("invalid input schema for tool `{tool_name}`: {message}")
+        }
+        ToolCallInvalid::InvalidArguments {
+            tool_name,
+            problems,
+            ..
+        } => {
+            format!(
+                "invalid arguments for tool `{}`: {}",
+                tool_name,
+                problems.join("; ")
+            )
+        }
+    }
+}
+
+pub fn example_from_schema(schema: &Value) -> Value {
+    let Some(properties) = schema.get("properties").and_then(Value::as_object) else {
+        return json!({});
+    };
+    let required = schema
+        .get("required")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .collect::<Vec<_>>();
+    let mut example = serde_json::Map::new();
+    for field in required {
+        let value = properties
+            .get(field)
+            .and_then(|property| property.get("type"))
+            .and_then(Value::as_str)
+            .map(|kind| match kind {
+                "integer" => json!(1),
+                "number" => json!(1.0),
+                "boolean" => json!(true),
+                "array" => json!([]),
+                "object" => json!({}),
+                _ => json!("example"),
+            })
+            .unwrap_or_else(|| json!("example"));
+        example.insert(field.to_string(), value);
+    }
+    Value::Object(example)
 }
 
 struct ReadFileTool;
@@ -778,6 +967,85 @@ mod tests {
                 .as_array()
                 .unwrap()
                 .contains(&json!("path"))
+        );
+    }
+
+    #[test]
+    fn validates_tool_arguments_against_input_schema() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let executor = executor(tempdir.path());
+
+        let valid = ToolInvocation {
+            id: "read".to_string(),
+            tool_name: "read_file".to_string(),
+            input: json!({ "path": "README.md" }),
+        };
+        assert!(executor.validate_arguments(&valid).is_ok());
+
+        let missing_required = ToolInvocation {
+            id: "read".to_string(),
+            tool_name: "read_file".to_string(),
+            input: json!({}),
+        };
+        let err = executor
+            .validate_arguments(&missing_required)
+            .expect_err("missing path should fail");
+        assert!(matches!(err, ToolCallInvalid::InvalidArguments { .. }));
+
+        let extra_property = ToolInvocation {
+            id: "read".to_string(),
+            tool_name: "read_file".to_string(),
+            input: json!({ "path": "README.md", "unexpected": true }),
+        };
+        assert!(executor.validate_arguments(&extra_property).is_err());
+    }
+
+    #[tokio::test]
+    async fn invalid_tool_arguments_return_structured_error() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let executor = executor(tempdir.path());
+
+        let result = executor
+            .invoke(ToolInvocation {
+                id: "bad-read".to_string(),
+                tool_name: "read_file".to_string(),
+                input: json!({ "start_line": 1 }),
+            })
+            .await;
+
+        assert!(!result.ok);
+        assert_eq!(result.output["error_code"], "invalid_arguments");
+        assert_eq!(result.output["tool"], "read_file");
+        assert_eq!(result.output["example"], json!({ "path": "example" }));
+        assert!(
+            result.output["problems"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|problem| problem.as_str().unwrap().contains("path"))
+        );
+    }
+
+    #[tokio::test]
+    async fn unknown_tool_returns_available_tools_advice() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let executor = executor(tempdir.path());
+
+        let result = executor
+            .invoke(ToolInvocation {
+                id: "bad-tool".to_string(),
+                tool_name: "nope".to_string(),
+                input: json!({}),
+            })
+            .await;
+
+        assert!(!result.ok);
+        assert_eq!(result.output["error_code"], "unknown_tool");
+        assert!(
+            result.output["available_tools"]
+                .as_array()
+                .unwrap()
+                .contains(&json!("read_file"))
         );
     }
 }

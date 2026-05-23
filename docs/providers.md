@@ -32,7 +32,7 @@ Provider keys are resolved in this order:
 2. Provider-specific external auth sources, for example OpenCode Zen's `auth.json`
 3. Credential store under NAVI's data directory
 
-The TUI should not ask for API keys on startup. It asks only when the user selects a model whose provider has no resolved key. Settings includes `Provider Accounts`, a provider configuration modal that shows configured/unconfigured status, opens API key setup, syncs provider models, and starts OAuth for compatible providers.
+The TUI should not ask for API keys on startup. It asks only when the user selects a model whose provider has no resolved key. Provider configuration lives in the command palette as `Providers`, a modal that shows configured/unconfigured status, opens API key setup, syncs provider models, and starts OAuth for compatible providers.
 
 ## OAuth
 

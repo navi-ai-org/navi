@@ -1,6 +1,6 @@
 use crate::config::{HarnessConfig, HarnessProfile, ModelTaskSize, NaviConfig};
 use crate::model::ModelRequest;
-use crate::tool::{ToolInvocation, ToolResult};
+use crate::tool::{ToolDefinition, ToolInvocation, ToolResult, example_from_schema};
 use serde_json::{Value, json};
 use std::path::Path;
 
@@ -67,6 +67,26 @@ pub fn build_system_prompt_with_memory(
     cwd: &Path,
     memory_injection: Option<&str>,
 ) -> String {
+    build_system_prompt_inner(config, cwd, memory_injection, &[], false)
+}
+
+pub fn build_system_prompt_with_tools(
+    config: &NaviConfig,
+    cwd: &Path,
+    memory_injection: Option<&str>,
+    tools: &[ToolDefinition],
+    include_tool_manifest: bool,
+) -> String {
+    build_system_prompt_inner(config, cwd, memory_injection, tools, include_tool_manifest)
+}
+
+fn build_system_prompt_inner(
+    config: &NaviConfig,
+    cwd: &Path,
+    memory_injection: Option<&str>,
+    tools: &[ToolDefinition],
+    include_tool_manifest: bool,
+) -> String {
     let policy = select_harness_policy(config);
     let profile = match policy.profile {
         HarnessProfile::Auto => "medium",
@@ -91,6 +111,7 @@ pub fn build_system_prompt_with_memory(
             "- Use bash for tests, builds, and commands that cannot be expressed by other tools.\n",
             "- File paths should be project-relative when possible.\n",
             "- Writes and commands may require approval.\n",
+            "- Use native tool calling when available; do not write tool calls in markdown, XML, or prose.\n",
             "\n",
             "Response rules:\n",
             "- Be concise.\n",
@@ -105,7 +126,41 @@ pub fn build_system_prompt_with_memory(
         prompt.push_str(memory);
         prompt.push_str("\n");
     }
+    if include_tool_manifest && !tools.is_empty() {
+        prompt.push_str("\nAvailable tools (compatibility manifest; still use native tool calling):\n");
+        prompt.push_str(&tool_prompt_manifest(tools));
+    }
     prompt
+}
+
+pub fn tool_prompt_manifest(tools: &[ToolDefinition]) -> String {
+    let mut tools = tools.to_vec();
+    tools.sort_by(|a, b| a.name.cmp(&b.name));
+    tools
+        .iter()
+        .map(|tool| {
+            let required = tool
+                .input_schema
+                .get("required")
+                .and_then(serde_json::Value::as_array)
+                .map(|items| {
+                    items
+                        .iter()
+                        .filter_map(serde_json::Value::as_str)
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                })
+                .filter(|value| !value.is_empty())
+                .unwrap_or_else(|| "none".to_string());
+            let example = example_from_schema(&tool.input_schema);
+            format!(
+                "- {}: {} Required: {}. Example input: {}",
+                tool.name, tool.description, required, example
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+        + "\n"
 }
 
 pub fn record_tool_call(
@@ -257,5 +312,29 @@ mod tests {
 
         assert!(observation.contains("<truncated>"));
         assert!(observation.contains("status: success"));
+    }
+
+    #[test]
+    fn tool_prompt_manifest_lists_required_fields_and_examples() {
+        let tool = ToolDefinition {
+            name: "read_file".to_string(),
+            description: "Read a file.".to_string(),
+            kind: crate::tool::ToolKind::Read,
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "path": { "type": "string" },
+                    "start_line": { "type": "integer" }
+                },
+                "required": ["path"],
+                "additionalProperties": false
+            }),
+        };
+
+        let manifest = tool_prompt_manifest(&[tool]);
+
+        assert!(manifest.contains("read_file"));
+        assert!(manifest.contains("Required: path"));
+        assert!(manifest.contains(r#"{"path":"example"}"#));
     }
 }

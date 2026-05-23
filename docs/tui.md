@@ -75,13 +75,14 @@ The model picker includes provider/model search and refresh actions:
 - `ctrl+r` refreshes all providers.
 - selecting a model from a provider without a stored key opens the API key entry modal.
 
+In the normal input flow, `tab` cycles the active agent mode (`/plan`, `/edit`, `/review`) rather than moving focus inside the input.
+
 The settings modal currently controls:
 
 - `Show Reasoning`
 - `Verbose Tool Output`
-- `Provider Accounts`
 
-`Provider Accounts` opens the provider configuration modal. It lists all configured providers, shows whether each one is backed by an env var, stored credential, OpenCode auth, or is missing credentials, and supports:
+Provider configuration is now in the command palette as `Providers`. That modal lists configured providers, shows whether each one is backed by an env var, stored credential, OpenCode auth, or is missing credentials, and supports:
 
 - `enter` / `k` for API key setup.
 - `o` for OAuth on supported providers.
