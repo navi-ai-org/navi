@@ -127,7 +127,9 @@ fn build_system_prompt_inner(
         prompt.push_str("\n");
     }
     if include_tool_manifest && !tools.is_empty() {
-        prompt.push_str("\nAvailable tools (compatibility manifest; still use native tool calling):\n");
+        prompt.push_str(
+            "\nAvailable tools (compatibility manifest; still use native tool calling):\n",
+        );
         prompt.push_str(&tool_prompt_manifest(tools));
     }
     prompt

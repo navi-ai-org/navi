@@ -14,7 +14,11 @@ use crate::tool::ToolExecutor;
 use anyhow::Result;
 use futures_util::StreamExt;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
+use tokio::sync::Notify;
 
 pub struct TurnContext {
     pub model_provider: Arc<dyn ModelProvider>,
@@ -36,9 +40,15 @@ pub struct TurnContext {
     pub include_tool_prompt_manifest: bool,
     pub agent_mode: Option<crate::agent::AgentMode>,
     pub context_packets: Vec<ContextPacket>,
+    pub cancel_requested: Arc<AtomicBool>,
+    pub cancel_notify: Arc<Notify>,
 }
 
 impl TurnContext {
+    pub fn cancellation_requested(&self) -> bool {
+        self.cancel_requested.load(Ordering::SeqCst)
+    }
+
     pub fn resolve_approval(&self, decision: crate::event::ApprovalDecision) -> bool {
         let id = match &decision {
             crate::event::ApprovalDecision::Approved { id } => id,
@@ -64,6 +74,10 @@ pub async fn run_turn(
     messages: &mut Vec<ModelMessage>,
     policy: HarnessPolicy,
 ) -> Result<String> {
+    if ctx.cancellation_requested() {
+        return Err(anyhow::anyhow!("turn cancelled"));
+    }
+
     // 1. Resolve base instructions from AGENTS.md if it exists, otherwise fall back to build_system_prompt
     let agents_md_path = ctx.project_dir.join("AGENTS.md");
     let base_instructions = if agents_md_path.exists() {
@@ -109,6 +123,9 @@ pub async fn run_turn(
         loop_count += 1;
         if loop_count > 10 {
             break "Loop execution limit reached".to_string();
+        }
+        if ctx.cancellation_requested() {
+            return Err(anyhow::anyhow!("turn cancelled"));
         }
 
         // Micro-compact: clear old tool results if gap exceeds threshold
@@ -162,6 +179,10 @@ pub async fn run_turn(
             }
         }
 
+        if ctx.cancellation_requested() {
+            return Err(anyhow::anyhow!("turn cancelled"));
+        }
+
         // Prompt Construction
         let request = ModelRequest {
             model: ctx.model_name.clone(),
@@ -189,6 +210,9 @@ pub async fn run_turn(
         let mut tool_calls = Vec::new();
 
         while let Some(event) = stream.next().await {
+            if ctx.cancellation_requested() {
+                return Err(anyhow::anyhow!("turn cancelled"));
+            }
             match event? {
                 ModelStreamEvent::TextDelta { text: delta } => {
                     text.push_str(&delta);
@@ -235,6 +259,10 @@ pub async fn run_turn(
             }
         }
 
+        if ctx.cancellation_requested() {
+            return Err(anyhow::anyhow!("turn cancelled"));
+        }
+
         if !tool_calls.is_empty() {
             // Append assistant response if any
             if !text.trim().is_empty() {
@@ -267,7 +295,14 @@ pub async fn run_turn(
                 let tool_executor = ctx.tool_executor.clone();
                 let event_tx = ctx.event_tx.clone();
                 let pending_approvals = ctx.pending_approvals.clone();
+                let cancelled = ctx.cancel_requested.clone();
+                let cancel_notify = ctx.cancel_notify.clone();
                 async move {
+                    if cancelled.load(Ordering::SeqCst) {
+                        let result = tool_error_result(&invocation, "turn cancelled");
+                        let observation = compact_tool_observation(&invocation, &result, policy);
+                        return (invocation, result, observation);
+                    }
                     if let Err(invalid) = tool_executor.validate_arguments(&invocation) {
                         let result = tool_executor.invalid_tool_result(&invocation, invalid);
                         if let Some(ref tx) = event_tx {
@@ -312,8 +347,17 @@ pub async fn run_turn(
                                     },
                                 ));
 
-                                match approve_rx.await {
-                                    Ok(decision) => {
+                                let approved = tokio::select! {
+                                    decision = approve_rx => {
+                                        decision.ok()
+                                    }
+                                    _ = cancel_notify.notified() => {
+                                        None
+                                    }
+                                };
+
+                                match approved {
+                                    Some(decision) => {
                                         let is_approved = matches!(
                                             decision,
                                             crate::event::ApprovalDecision::Approved { .. }
@@ -334,7 +378,7 @@ pub async fn run_turn(
                                                 id: invocation.id.clone(),
                                             },
                                         ));
-                                        tool_error_result(&invocation, "user denied tool execution")
+                                        tool_error_result(&invocation, "turn cancelled")
                                     }
                                 }
                             } else {
@@ -346,6 +390,12 @@ pub async fn run_turn(
                         }
                         SecurityDecision::Deny(reason) => tool_error_result(&invocation, reason),
                     };
+
+                    if cancelled.load(Ordering::SeqCst) {
+                        let result = tool_error_result(&invocation, "turn cancelled");
+                        let observation = compact_tool_observation(&invocation, &result, policy);
+                        return (invocation, result, observation);
+                    }
 
                     if let Some(ref tx) = event_tx {
                         let _ = tx.send(AgentEvent::ToolCompleted(result.clone()));
@@ -482,6 +532,8 @@ mod tests {
             include_tool_prompt_manifest: false,
             agent_mode: None,
             context_packets: Vec::new(),
+            cancel_requested: Arc::new(AtomicBool::new(false)),
+            cancel_notify: Arc::new(Notify::new()),
         };
 
         let mut messages = vec![];

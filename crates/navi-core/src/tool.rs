@@ -109,7 +109,10 @@ impl ToolExecutor {
         self.tools.insert(name, tool)
     }
 
-    pub fn validate_arguments(&self, invocation: &ToolInvocation) -> std::result::Result<(), ToolCallInvalid> {
+    pub fn validate_arguments(
+        &self,
+        invocation: &ToolInvocation,
+    ) -> std::result::Result<(), ToolCallInvalid> {
         let Some(_definition) = self.definition(&invocation.tool_name) else {
             return Err(ToolCallInvalid::UnknownTool {
                 tool_name: invocation.tool_name.clone(),

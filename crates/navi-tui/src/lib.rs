@@ -6,16 +6,16 @@ use crossterm::event::{
 };
 use crossterm::execute;
 use crossterm::terminal::{
-    disable_raw_mode, enable_raw_mode, supports_keyboard_enhancement, EnterAlternateScreen,
-    LeaveAlternateScreen,
+    EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
+    supports_keyboard_enhancement,
 };
 use navi_core::{
     AgentEvent, AgentMode, AgentRunState, ApprovalDecision, CredentialStore, HarnessPolicy,
     LoadedConfig, ModelMessage, ModelOption, ModelProvider, ModelRole, ProviderConfig,
     SecurityPolicy, SessionId, SessionSnapshot, SessionStore, ThinkingConfig, ToolExecutor,
-    ToolInvocation, ToolResult,
-    available_model_options, build_system_prompt, canonical_provider_id, compact_tool_observation,
-    log_path, resolve_provider_config, save_global_config, select_harness_policy,
+    ToolInvocation, ToolResult, available_model_options, build_system_prompt,
+    canonical_provider_id, compact_tool_observation, log_path, resolve_provider_config,
+    save_global_config, select_harness_policy,
 };
 use navi_openai::OpenAiProvider;
 use navi_plugin_host::{LoadedPlugin, load_configured_plugins};
@@ -569,7 +569,8 @@ fn run_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, mut app: TuiA
                                 app.conversation_history
                                     .push(ModelMessage::assistant(active_content));
                             }
-                            let invocation_json = serde_json::to_string(&invocation).unwrap_or_default();
+                            let invocation_json =
+                                serde_json::to_string(&invocation).unwrap_or_default();
                             app.compact_state.add_unsent_bytes(invocation_json.len());
                             app.conversation_history
                                 .push(ModelMessage::assistant_tool_call(invocation.clone()));
@@ -961,6 +962,8 @@ fn start_streaming_request(app: &mut TuiApp) {
         ),
         agent_mode: app.selected_agent,
         context_packets: Vec::new(),
+        cancel_requested: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        cancel_notify: Arc::new(tokio::sync::Notify::new()),
     });
 
     app.turn_context = Some(ctx.clone());
@@ -1056,11 +1059,7 @@ fn is_model_response_message(message: &ChatMessage) -> bool {
 }
 
 fn tail_model_response(app: &mut TuiApp) -> Option<&mut ChatMessage> {
-    if app
-        .messages
-        .last()
-        .is_some_and(is_model_response_message)
-    {
+    if app.messages.last().is_some_and(is_model_response_message) {
         app.messages.last_mut()
     } else {
         None
@@ -1094,7 +1093,9 @@ fn ensure_tail_model_response(app: &mut TuiApp) -> &mut ChatMessage {
         let message = model_response_placeholder(app);
         app.messages.push(message);
     }
-    app.messages.last_mut().expect("model response was inserted")
+    app.messages
+        .last_mut()
+        .expect("model response was inserted")
 }
 
 fn update_active_assistant_status(app: &mut TuiApp) {
@@ -2231,11 +2232,15 @@ pub struct SelectionState {
 fn map_mouse_to_text(app: &TuiApp, col: u16, row: u16) -> Option<(usize, usize)> {
     let cache = app.chat_render_cache.borrow();
     let inner = cache.chat_rect?;
-    if col < inner.x || col >= inner.x + inner.width || row < inner.y || row >= inner.y + inner.height {
+    if col < inner.x
+        || col >= inner.x + inner.width
+        || row < inner.y
+        || row >= inner.y + inner.height
+    {
         return None;
     }
     let visible_y = (row - inner.y) as usize;
-    
+
     let total_lines = cache.lines.len();
     let visible_height = inner.height as usize;
     let max_scroll = total_lines.saturating_sub(visible_height);
@@ -2243,12 +2248,12 @@ fn map_mouse_to_text(app: &TuiApp, col: u16, row: u16) -> Option<(usize, usize)>
     let start = total_lines
         .saturating_sub(visible_height)
         .saturating_sub(effective_scroll);
-        
+
     let line_index = start + visible_y;
     if line_index >= total_lines {
         return None;
     }
-    
+
     let char_index = (col - inner.x) as usize;
     Some((line_index, char_index))
 }
@@ -2274,9 +2279,17 @@ fn copy_selection_to_clipboard(app: &mut TuiApp) {
             }
 
             let start_char = if line_idx == start.0 { start.1 } else { 0 };
-            let end_char = if line_idx == end.0 { end.1 } else { line_text.chars().count() };
+            let end_char = if line_idx == end.0 {
+                end.1
+            } else {
+                line_text.chars().count()
+            };
 
-            let substr: String = line_text.chars().skip(start_char).take(end_char.saturating_sub(start_char).max(1)).collect();
+            let substr: String = line_text
+                .chars()
+                .skip(start_char)
+                .take(end_char.saturating_sub(start_char).max(1))
+                .collect();
             selected_text.push_str(&substr);
 
             if line_idx != end.0 {
@@ -2299,7 +2312,7 @@ fn copy_selection_to_clipboard(app: &mut TuiApp) {
                 copied_arboard = true;
             }
         }
-        
+
         if copied_arboard {
             show_notification(app, "Clipboard", "Texto copiado com sucesso!".to_string());
         } else {
@@ -3570,29 +3583,40 @@ fn render_chat_area(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
     if let Some(selection) = &app.selection {
         let sel_start = selection.start.min(selection.end);
         let sel_end = selection.start.max(selection.end);
-        
+
         for (idx, line) in visible_lines.iter_mut().enumerate() {
             let global_idx = start + idx;
             if global_idx >= sel_start.0 && global_idx <= sel_end.0 {
-                let start_char = if global_idx == sel_start.0 { sel_start.1 } else { 0 };
-                let end_char = if global_idx == sel_end.0 { sel_end.1 } else { usize::MAX };
-                
+                let start_char = if global_idx == sel_start.0 {
+                    sel_start.1
+                } else {
+                    0
+                };
+                let end_char = if global_idx == sel_end.0 {
+                    sel_end.1
+                } else {
+                    usize::MAX
+                };
+
                 let mut new_spans = Vec::new();
                 let mut current_char = 0;
                 for span in line.spans.iter() {
                     let span_len = span.content.chars().count();
                     let span_end = current_char + span_len;
-                    
+
                     if span_end <= start_char || current_char >= end_char {
                         new_spans.push(span.clone());
                     } else if current_char >= start_char && span_end <= end_char {
-                        new_spans.push(Span::styled(span.content.clone(), span.style.bg(Color::DarkGray)));
+                        new_spans.push(Span::styled(
+                            span.content.clone(),
+                            span.style.bg(Color::DarkGray),
+                        ));
                     } else {
                         let c1 = start_char.saturating_sub(current_char).min(span_len);
                         let c2 = end_char.saturating_sub(current_char).min(span_len);
-                        
+
                         let s: String = span.content.chars().collect();
-                        
+
                         if c1 > 0 {
                             let p1: String = s.chars().take(c1).collect();
                             new_spans.push(Span::styled(p1, span.style));
@@ -4331,7 +4355,12 @@ fn welcome_text(app: &TuiApp, width: usize) -> Text<'static> {
     let mode = format!("{:?}", app.loaded_config.config.harness.profile).to_lowercase();
     let router = "auto".to_string();
     let tools = "shell read write grep patch".to_string();
-    let session = if app.conversation_history.len() <= 1 { "new" } else { "resumed" }.to_string();
+    let session = if app.conversation_history.len() <= 1 {
+        "new"
+    } else {
+        "resumed"
+    }
+    .to_string();
     let cost = "$0.00".to_string();
 
     let status_width = [
@@ -4357,7 +4386,7 @@ fn welcome_text(app: &TuiApp, width: usize) -> Text<'static> {
 
     for index in 0..total_lines {
         let mut spans = Vec::new();
-        
+
         if let Some(logo_line) = NAVI_COMPACT_LOGO.get(index) {
             let color = match (app.tick / 5 + index as u64) % 4 {
                 0 => PINK,
@@ -4370,12 +4399,17 @@ fn welcome_text(app: &TuiApp, width: usize) -> Text<'static> {
                 Style::default().fg(color).add_modifier(Modifier::BOLD),
             ));
         } else {
-            spans.push(Span::raw(format!("{}{}", " ".repeat(left_pad), " ".repeat(logo_width))));
+            spans.push(Span::raw(format!(
+                "{}{}",
+                " ".repeat(left_pad),
+                " ".repeat(logo_width)
+            )));
         }
 
-        if let Some(status) =
-            welcome_status_line(index, &project, &provider, &model, thinking, &context, &mode, &router, &tools, &session, &cost)
-        {
+        if let Some(status) = welcome_status_line(
+            index, &project, &provider, &model, thinking, &context, &mode, &router, &tools,
+            &session, &cost,
+        ) {
             spans.push(Span::raw("      "));
             spans.extend(status);
         }
@@ -4384,8 +4418,11 @@ fn welcome_text(app: &TuiApp, width: usize) -> Text<'static> {
 
     lines.push(Line::from(""));
     lines.push(Line::from(vec![Span::styled(
-        format!("{}NAVI · wired code agent for local-first builders", " ".repeat(left_pad)),
-        Style::default().fg(MUTED)
+        format!(
+            "{}NAVI · wired code agent for local-first builders",
+            " ".repeat(left_pad)
+        ),
+        Style::default().fg(MUTED),
     )]));
 
     Text::from(lines)
@@ -4602,17 +4639,23 @@ fn split_input_spans<'a>(spans: Vec<Span<'a>>, continuation: &str) -> Vec<Line<'
 }
 
 fn shortcut_tips(app: &TuiApp, width: usize) -> Line<'static> {
-    let agent_label = app
-        .selected_agent
-        .map(AgentMode::label)
-        .unwrap_or("none");
+    let agent_label = app.selected_agent.map(AgentMode::label).unwrap_or("none");
     if app.messages.is_empty() && app.conversation_history.len() <= 1 && app.input.is_empty() {
         return Line::from(vec![
             Span::styled(" ", Style::default().fg(MUTED)),
-            Span::styled("type a task, /plan, /edit, /review, or ", Style::default().fg(MUTED)),
-            Span::styled("ctrl+p", Style::default().fg(TEXT).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "type a task, /plan, /edit, /review, or ",
+                Style::default().fg(MUTED),
+            ),
+            Span::styled(
+                "ctrl+p",
+                Style::default().fg(TEXT).add_modifier(Modifier::BOLD),
+            ),
             Span::styled(" for commands; ", Style::default().fg(MUTED)),
-            Span::styled("tab", Style::default().fg(TEXT).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "tab",
+                Style::default().fg(TEXT).add_modifier(Modifier::BOLD),
+            ),
             Span::styled(
                 format!(" changes agent ({agent_label})"),
                 Style::default().fg(MUTED),
@@ -5321,9 +5364,7 @@ fn render_command_palette(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
     );
 
     let commands = filtered_commands(app);
-    let selected_command = app
-        .selected_command
-        .min(commands.len().saturating_sub(1));
+    let selected_command = app.selected_command.min(commands.len().saturating_sub(1));
     let command_width = rows[1].width as usize;
     let items = commands
         .iter()
@@ -5349,7 +5390,10 @@ fn render_command_palette(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
         .collect::<Vec<_>>();
 
     let mut list_state = ListState::default()
-        .with_offset(command_scroll_offset(selected_command, rows[1].height as usize))
+        .with_offset(command_scroll_offset(
+            selected_command,
+            rows[1].height as usize,
+        ))
         .with_selected((!commands.is_empty()).then_some(selected_command));
     frame.render_stateful_widget(
         List::new(items).style(Style::default().bg(PANEL)),
@@ -6637,10 +6681,11 @@ mod tests {
         app.input_cursor = app.input.len();
         submit_message(&mut app);
 
-        assert!(app
-            .messages
-            .iter()
-            .any(|message| message.content == "/plan inspect first"));
+        assert!(
+            app.messages
+                .iter()
+                .any(|message| message.content == "/plan inspect first")
+        );
     }
 
     #[test]

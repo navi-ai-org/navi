@@ -46,7 +46,9 @@ pub use model::{
     ModelStreamEvent, ThinkingAdapter, ThinkingConfig,
 };
 pub use patch::PatchProposal;
-pub use runtime::{AgentRuntime, AgentRuntimeOptions, NaviRuntime};
+pub use runtime::{
+    AgentRuntime, AgentRuntimeOptions, ApprovalResolver, NaviRuntime, TurnCanceller,
+};
 pub use security::{
     SecurityDecision, SecurityPolicy, SecurityRisk, redact_agent_event, redact_secrets,
     redact_snapshot_events,

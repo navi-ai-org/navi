@@ -22,6 +22,65 @@ pub struct MemoryEntry {
     pub session_id: String,
 }
 
+pub fn session_title_from_events(events: &[AgentEvent]) -> Option<String> {
+    events
+        .iter()
+        .find_map(|event| match event {
+            AgentEvent::ModelOutput { text, .. } => title_from_model_text(text),
+            _ => None,
+        })
+        .or_else(|| {
+            events.iter().find_map(|event| match event {
+                AgentEvent::UserTaskSubmitted { text } => title_from_user_text(text),
+                _ => None,
+            })
+        })
+}
+
+fn title_from_model_text(text: &str) -> Option<String> {
+    let heading = text.lines().find_map(|line| {
+        let trimmed = line.trim();
+        if trimmed.starts_with('#') {
+            Some(trimmed.trim_start_matches('#').trim())
+        } else {
+            None
+        }
+    });
+
+    heading
+        .and_then(clean_session_title)
+        .or_else(|| text.lines().find_map(clean_session_title))
+}
+
+fn title_from_user_text(text: &str) -> Option<String> {
+    clean_session_title(text)
+}
+
+fn clean_session_title(text: &str) -> Option<String> {
+    let cleaned = text
+        .trim()
+        .trim_matches('`')
+        .trim_matches('"')
+        .trim_matches('\'')
+        .trim_start_matches(['#', '-', '*', '>'])
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+
+    if cleaned.is_empty() {
+        return None;
+    }
+
+    Some(
+        cleaned
+            .chars()
+            .take(80)
+            .collect::<String>()
+            .trim()
+            .to_string(),
+    )
+}
+
 impl ProjectMemory {
     pub fn recent_entries(&self, max: usize) -> &[MemoryEntry] {
         let start = self.entries.len().saturating_sub(max);
@@ -421,6 +480,8 @@ mod tests {
             include_tool_prompt_manifest: false,
             agent_mode: None,
             context_packets: Vec::new(),
+            cancel_requested: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            cancel_notify: std::sync::Arc::new(tokio::sync::Notify::new()),
         });
 
         let policy = crate::harness::HarnessPolicy {

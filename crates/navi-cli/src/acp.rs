@@ -257,6 +257,8 @@ async fn run_prompt_task(
         ),
         agent_mode: None,
         context_packets: Vec::new(),
+        cancel_requested: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        cancel_notify: Arc::new(tokio::sync::Notify::new()),
     });
 
     let policy = navi_core::harness::select_harness_policy(&loaded_config.config);
