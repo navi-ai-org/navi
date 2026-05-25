@@ -11,23 +11,24 @@ use agent_client_protocol::{
 };
 use anyhow::Result;
 use navi_core::{
-    AgentEvent, ApprovalDecision, LoadedConfig, SessionId as NaviSessionId, SessionRuntime,
-    SessionSnapshot, SessionStore, Submission, ToolResult,
+    AgentEvent, ApprovalDecision, LoadedConfig, RuntimeEvent, RuntimeEventKind, SessionStore,
+    ToolInvocation, ToolResult,
 };
-use navi_sdk::{build_local_tooling, build_model_provider, configured_active_skills};
+use navi_sdk::{NaviEngine, NaviEngineBuilder, NaviSessionRequest, NaviTurnRequest};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 #[derive(Clone)]
 struct AcpState {
-    loaded_config: LoadedConfig,
+    engine: NaviEngine,
     default_project_dir: PathBuf,
     sessions: Arc<Mutex<HashMap<String, AcpSession>>>,
 }
 
 struct AcpSession {
     project_dir: PathBuf,
+    sdk_started: bool,
     task: Option<ActivePrompt>,
 }
 
@@ -39,8 +40,11 @@ pub async fn run_acp_server(
     loaded_config: LoadedConfig,
     default_project_dir: PathBuf,
 ) -> Result<()> {
+    let engine = NaviEngineBuilder::from_project(default_project_dir.clone())
+        .loaded_config(loaded_config)
+        .build()?;
     let state = AcpState {
-        loaded_config,
+        engine,
         default_project_dir,
         sessions: Arc::new(Mutex::new(HashMap::new())),
     };
@@ -117,6 +121,7 @@ async fn handle_new_session(
         session_id.clone(),
         AcpSession {
             project_dir: cwd,
+            sdk_started: false,
             task: None,
         },
     );
@@ -141,6 +146,7 @@ async fn handle_prompt(
             .entry(session_id.clone())
             .or_insert_with(|| AcpSession {
                 project_dir: state.default_project_dir.clone(),
+                sdk_started: false,
                 task: None,
             });
         if session.task.is_some() {
@@ -151,16 +157,44 @@ async fn handle_prompt(
         session.project_dir.clone()
     };
 
+    let should_start_sdk = {
+        let sessions = state.sessions.lock().unwrap();
+        sessions
+            .get(&session_id)
+            .map(|session| !session.sdk_started)
+            .unwrap_or(true)
+    };
+    if should_start_sdk {
+        state
+            .engine
+            .start_session(NaviSessionRequest {
+                project_dir: Some(project_dir.clone()),
+                session_id: Some(session_id.clone()),
+                agent_mode: None,
+                context_packets: Vec::new(),
+                active_skills: Vec::new(),
+                initial_messages: Vec::new(),
+            })
+            .await
+            .map_err(|error| {
+                agent_client_protocol::util::internal_error(format!(
+                    "failed to start NAVI runtime session: {error:#}"
+                ))
+            })?;
+        if let Some(session) = state.sessions.lock().unwrap().get_mut(&session_id) {
+            session.sdk_started = true;
+        }
+    }
+
     let (cancel_tx, cancel_rx) = tokio::sync::oneshot::channel();
     let sessions = state.sessions.clone();
-    let loaded_config = state.loaded_config.clone();
+    let engine = state.engine.clone();
     let connection_for_task = connection.clone();
     let session_id_for_task = session_id.clone();
 
     tokio::spawn(async move {
         let run = run_prompt_task(
-            loaded_config,
-            project_dir,
+            engine.clone(),
             session_id_for_task.clone(),
             prompt,
             connection_for_task,
@@ -178,7 +212,10 @@ async fn handle_prompt(
                     StopReason::Refusal
                 }
             },
-            _ = cancel_rx => StopReason::Cancelled,
+            _ = cancel_rx => {
+                let _ = engine.cancel_turn(&session_id_for_task).await;
+                StopReason::Cancelled
+            },
         };
 
         let _ = responder.respond(PromptResponse::new(stop_reason));
@@ -199,113 +236,59 @@ async fn handle_prompt(
 
 async fn handle_cancel(state: AcpState, notification: CancelNotification) -> AcpResult<()> {
     let session_id = notification.session_id.0.to_string();
-    if let Some(active) = state
+    let active = state
         .sessions
         .lock()
         .unwrap()
         .get_mut(&session_id)
-        .and_then(|session| session.task.take())
-    {
+        .and_then(|session| session.task.take());
+    if let Some(active) = active {
         let _ = active.cancel_tx.send(());
+        let _ = state.engine.cancel_turn(&session_id).await;
     }
     Ok(())
 }
 
 async fn run_prompt_task(
-    loaded_config: LoadedConfig,
-    project_dir: PathBuf,
+    engine: NaviEngine,
     acp_session_id: String,
     prompt: String,
     connection: ConnectionTo<Client>,
 ) -> Result<()> {
-    let provider = build_model_provider(&loaded_config)?;
-    let tooling = build_local_tooling(&loaded_config, project_dir.clone())?;
-    for warning in &tooling.warnings {
-        tracing::warn!(warning = %warning, "plugin load warning");
-    }
-    let active_skills = configured_active_skills(&loaded_config, &project_dir, &[]);
-
-    let (event_tx, mut event_rx) = tokio::sync::mpsc::unbounded_channel();
-    let ctx = Arc::new(navi_core::turn::TurnContext {
-        model_provider: provider,
-        tool_executor: tooling.tool_executor.clone(),
-        agent_control: navi_core::agent::AgentControl::new(),
-        project_dir: project_dir.clone(),
-        model_name: loaded_config.config.model.name.clone(),
-        event_tx: Some(event_tx),
-        pending_approvals: Arc::new(Mutex::new(HashMap::new())),
-        compact_state: Arc::new(tokio::sync::Mutex::new(
-            navi_core::compact::CompactState::new(navi_core::config::effective_context_window(
-                &loaded_config.config,
-            )),
-        )),
-        harness_config: loaded_config.config.harness.clone(),
-        include_tool_prompt_manifest: navi_core::effective_tool_prompt_manifest(
-            &loaded_config.config,
-        ),
-        agent_mode: None,
+    let mut events = engine.subscribe_events(&acp_session_id)?;
+    let turn = engine.send_turn(NaviTurnRequest {
+        session_id: acp_session_id.clone(),
+        message: prompt,
         context_packets: Vec::new(),
-        active_skills,
-        cancel_requested: Arc::new(std::sync::atomic::AtomicBool::new(false)),
-        cancel_notify: Arc::new(tokio::sync::Notify::new()),
     });
+    tokio::pin!(turn);
 
-    let policy = navi_core::harness::select_harness_policy(&loaded_config.config);
-    let runtime = SessionRuntime::spawn(ctx.clone(), policy, Vec::new(), None);
-    let (response_tx, response_rx) = tokio::sync::oneshot::channel();
-    runtime
-        .submission_tx
-        .send(Submission {
-            task: prompt,
-            response_tx,
-        })
-        .map_err(|e| anyhow::anyhow!("failed to submit ACP prompt: {e}"))?;
-
-    let mut events = Vec::new();
-    let mut response_rx = response_rx;
+    let mut saw_text_delta = false;
     let final_text = loop {
         tokio::select! {
-            response = &mut response_rx => {
-                break response??;
+            response = &mut turn => {
+                break response?.text;
             }
-            Some(event) = event_rx.recv() => {
-                forward_event(&connection, &acp_session_id, &event)?;
-                if let AgentEvent::ApprovalRequested(request) = &event {
+            event = events.recv() => {
+                let Ok(event) = event else { continue };
+                saw_text_delta |= forward_runtime_event(&connection, &acp_session_id, &event)?;
+                if let RuntimeEventKind::ApprovalRequired(request) = &event.kind {
                     let decision = request_permission(&connection, &acp_session_id, request).await?;
-                    ctx.resolve_approval(decision);
+                    engine.resolve_approval(&acp_session_id, decision).await?;
                 }
-                events.push(event);
             }
         }
     };
 
-    while let Ok(event) = event_rx.try_recv() {
-        forward_event(&connection, &acp_session_id, &event)?;
-        events.push(event);
+    while let Ok(event) = events.try_recv() {
+        saw_text_delta |= forward_runtime_event(&connection, &acp_session_id, &event)?;
     }
 
-    if !events
-        .iter()
-        .any(|event| matches!(event, AgentEvent::ModelDelta { .. }))
-        && !final_text.trim().is_empty()
-    {
+    if !saw_text_delta && !final_text.trim().is_empty() {
         send_text_update(&connection, &acp_session_id, final_text, false)?;
     }
 
-    let store = SessionStore::with_redaction(
-        loaded_config.data_dir,
-        loaded_config.config.security.redact_secrets_in_sessions,
-    );
-    let now = navi_core::session::current_unix_timestamp();
-    store.save(&SessionSnapshot {
-        id: NaviSessionId(acp_session_id),
-        title: None,
-        project: project_dir,
-        created_at: now,
-        updated_at: now,
-        events,
-        memory: None,
-    })?;
+    engine.snapshot_session(&acp_session_id).await?;
 
     Ok(())
 }
@@ -387,6 +370,64 @@ fn forward_event(
         }
         _ => Ok(false),
     }
+}
+
+fn forward_runtime_event(
+    connection: &ConnectionTo<Client>,
+    session_id: &str,
+    event: &RuntimeEvent,
+) -> Result<bool> {
+    match &event.kind {
+        RuntimeEventKind::AssistantDelta { text } => {
+            send_text_update(connection, session_id, text.clone(), false)?;
+            Ok(true)
+        }
+        RuntimeEventKind::AssistantThinkingDelta { text } => {
+            send_text_update(connection, session_id, text.clone(), true)?;
+            Ok(false)
+        }
+        RuntimeEventKind::ToolRequested(invocation) => {
+            send_tool_requested(connection, session_id, invocation)?;
+            Ok(false)
+        }
+        RuntimeEventKind::ToolCompleted(result) => {
+            send_tool_completed(connection, session_id, result)?;
+            Ok(false)
+        }
+        RuntimeEventKind::LegacyAgentEvent(event) => forward_event(connection, session_id, event),
+        _ => Ok(false),
+    }
+}
+
+fn send_tool_requested(
+    connection: &ConnectionTo<Client>,
+    session_id: &str,
+    invocation: &ToolInvocation,
+) -> Result<()> {
+    connection
+        .send_notification(SessionNotification::new(
+            session_id.to_string(),
+            SessionUpdate::ToolCall(
+                ToolCall::new(invocation.id.clone(), invocation.tool_name.clone())
+                    .kind(acp_tool_kind(&invocation.tool_name))
+                    .status(ToolCallStatus::InProgress)
+                    .raw_input(invocation.input.clone()),
+            ),
+        ))
+        .map_err(acp_error_to_anyhow)
+}
+
+fn send_tool_completed(
+    connection: &ConnectionTo<Client>,
+    session_id: &str,
+    result: &ToolResult,
+) -> Result<()> {
+    connection
+        .send_notification(SessionNotification::new(
+            session_id.to_string(),
+            SessionUpdate::ToolCallUpdate(tool_result_update(result)),
+        ))
+        .map_err(acp_error_to_anyhow)
 }
 
 fn send_text_update(

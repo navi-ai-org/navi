@@ -4,8 +4,8 @@ The TUI lives in `crates/navi-tui/src/lib.rs`. It uses a synchronous ratatui/cro
 
 ## Main Concepts
 
-- `TuiApp` stores UI state, provider state, credentials, sessions, tool approval state, and async channels.
-- `AsyncEvent` carries provider stream events, tool completion events, and model-sync results back into the event loop.
+- `TuiApp` stores UI state, credentials, session display state, tool approval UI state, an SDK engine handle, and async channels.
+- `AsyncEvent` carries SDK runtime events, tool completion events, and model-sync results back into the event loop.
 - `Mode` selects modal behavior: normal chat, commands, models, API key entry, thinking, sessions, settings, provider accounts.
 - `ChatMessage` is display-oriented and may contain model labels, status, usage, thinking text, tool invocation/result metadata, or normal content.
 
@@ -94,7 +94,7 @@ The Debug modal (`ctrl+d`) shows the log path, session id, project, selected mod
 
 - Do not run syntax highlighting, model filtering, provider sync, file IO, or network IO in the draw path without caching.
 - Keep `render_*` functions deterministic and fast.
-- Use async tasks for model/provider operations and report back through `AsyncEvent`.
+- Use async tasks for SDK runtime/model/provider operations and report back through `AsyncEvent`.
 - Avoid rebuilding full chat render output on scroll-only frames.
 - Do not emit normal logs from draw functions; log state transitions and async lifecycle events instead.
 

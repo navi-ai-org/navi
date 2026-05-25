@@ -146,7 +146,7 @@ Native plugins configured under `[[plugins]]` are loaded at startup through `lib
 
 Skills are local folders containing `SKILL.md`. When `[skills].enabled = true`, NAVI discovers configured skill directories and injects active skills into the model prompt. Skills do not execute scripts or install remote content in the initial implementation.
 
-MCP support is client-side in the SDK path. Configured stdio MCP servers under `[[mcp.servers]]` are started by `navi-sdk`, their tools are registered with prefixed names like `memory__search`, and tool execution follows the same approval flow as other custom tools.
+MCP support is client-side through the shared SDK runtime used by Tutor, TUI, and ACP. Configured stdio MCP servers under `[[mcp.servers]]` are started by `navi-sdk`, their tools are registered with prefixed names like `memory__search`, and tool execution follows the same approval flow as other custom tools.
 
 ## Logs
 

@@ -27,8 +27,8 @@ pub use config::{
     ModelTaskSize, NaviConfig, PluginConfig, ProviderConfig, ProviderKind, ProviderModelConfig,
     SecurityConfig, SkillsConfig, ToolPromptManifest, available_model_options,
     canonical_provider_id, effective_context_window, effective_tool_prompt_manifest,
-    is_free_model_name, model_can_run_publicly, provider_catalog, resolve_provider_config,
-    save_global_config, save_project_config,
+    is_free_model_name, model_can_run_publicly, opencode_zen_model_id, provider_catalog,
+    provider_request_model_name, resolve_provider_config, save_global_config, save_project_config,
 };
 pub use context::{ContextPacket, ContextSource, render_context_packets};
 pub use credentials::{
