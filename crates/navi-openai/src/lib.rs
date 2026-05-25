@@ -609,6 +609,11 @@ fn message_to_json(message: &ModelMessage) -> Value {
                 .collect::<Vec<_>>()
         );
     }
+    if let Some(thinking) = &message.thinking_content {
+        if message.role == ModelRole::Assistant && !thinking.is_empty() {
+            value["reasoning_content"] = json!(thinking);
+        }
+    }
     value
 }
 
@@ -1769,6 +1774,7 @@ mod tests {
                 tool_name: None,
                 tool_calls: vec![],
                 created_at: None,
+                thinking_content: None,
             }],
             thinking: navi_core::ThinkingConfig::Off,
             tools: vec![],

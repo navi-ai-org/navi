@@ -272,7 +272,12 @@ pub async fn run_turn(
         if !tool_calls.is_empty() {
             // Append assistant response if any
             if !text.trim().is_empty() {
-                messages.push(ModelMessage::assistant(text.clone()));
+                let thinking_content = (!thinking.is_empty()).then(|| thinking.clone());
+                messages.push(ModelMessage::assistant_with_thinking(
+                    text.clone(),
+                    thinking_content,
+                ));
+                thinking.clear();
             }
 
             // Record tool calls in message history

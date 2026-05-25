@@ -56,6 +56,8 @@ pub struct ModelMessage {
     pub tool_calls: Vec<ToolInvocation>,
     #[serde(default, skip_serializing, skip_deserializing)]
     pub created_at: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thinking_content: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -101,7 +103,17 @@ impl ModelMessage {
     }
 
     pub fn assistant(content: impl Into<String>) -> Self {
-        Self::new(ModelRole::Assistant, content)
+        Self {
+            thinking_content: None,
+            ..Self::new(ModelRole::Assistant, content)
+        }
+    }
+
+    pub fn assistant_with_thinking(content: impl Into<String>, thinking: Option<String>) -> Self {
+        Self {
+            thinking_content: thinking,
+            ..Self::new(ModelRole::Assistant, content)
+        }
     }
 
     pub fn tool_result(
@@ -116,6 +128,7 @@ impl ModelMessage {
             tool_name: Some(tool_name.into()),
             tool_calls: Vec::new(),
             created_at: Some(current_unix_millis()),
+            thinking_content: None,
         }
     }
 
@@ -127,6 +140,7 @@ impl ModelMessage {
             tool_name: None,
             tool_calls: vec![invocation],
             created_at: Some(current_unix_millis()),
+            thinking_content: None,
         }
     }
 
@@ -138,6 +152,7 @@ impl ModelMessage {
             tool_name: None,
             tool_calls: Vec::new(),
             created_at: Some(current_unix_millis()),
+            thinking_content: None,
         }
     }
 }
