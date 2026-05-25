@@ -534,13 +534,26 @@ fn run_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, mut app: TuiA
                                 .insert(invocation.id.clone(), invocation.clone());
 
                             // finalize assistant response if any
-                            let active_content = tail_model_response(&mut app)
+                            let active_msg = tail_model_response(&mut app);
+                            let active_content = active_msg
+                                .as_ref()
                                 .map(|active| active.content.clone())
                                 .unwrap_or_default();
+                            let active_thinking = active_msg.as_ref().and_then(|active| {
+                                if active.thinking_content.is_empty() {
+                                    None
+                                } else {
+                                    Some(active.thinking_content.clone())
+                                }
+                            });
                             if !active_content.trim().is_empty() {
                                 app.compact_state.add_unsent_bytes(active_content.len());
-                                app.conversation_history
-                                    .push(ModelMessage::assistant(active_content));
+                                app.conversation_history.push(
+                                    ModelMessage::assistant_with_thinking(
+                                        active_content,
+                                        active_thinking,
+                                    ),
+                                );
                             }
                             let invocation_json =
                                 serde_json::to_string(&invocation).unwrap_or_default();
@@ -1156,7 +1169,10 @@ fn finalize_active_assistant(app: &mut TuiApp, elapsed_ms: u64, fallback_text: &
 
     app.compact_state.add_unsent_bytes(text.len());
     app.conversation_history
-        .push(ModelMessage::assistant(text.clone()));
+        .push(ModelMessage::assistant_with_thinking(
+            text.clone(),
+            thinking.clone(),
+        ));
     app.events.push(AgentEvent::ModelOutput { text, thinking });
     tracing::info!(elapsed_ms, "TUI model stream finalized");
 }
@@ -5789,7 +5805,10 @@ fn load_session(app: &mut TuiApp, snapshot: &SessionSnapshot) {
                     ..ChatMessage::new(ChatRole::Assistant, text.clone())
                 });
                 app.conversation_history
-                    .push(ModelMessage::assistant(text.clone()));
+                    .push(ModelMessage::assistant_with_thinking(
+                        text.clone(),
+                        thinking.clone(),
+                    ));
             }
             AgentEvent::ToolRequested(invocation) => {
                 tool_invocations.insert(invocation.id.clone(), invocation.clone());
