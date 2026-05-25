@@ -115,15 +115,16 @@ Rust workspace, edition 2024, resolver 3. All implementation lives under `crates
 | `navi-openai` | `ModelProvider` implementation for OpenAI-compatible APIs and provider adapters. |
 | `navi-plugin-api` | Plugin trait and `NAVI_PLUGIN_API_VERSION = 1`. |
 | `navi-plugin-host` | Dynamic `.so`/`.dylib` loading via `libloading`. |
-| `navi-sdk` | Public embedding facade for local clients such as NAVI Tutor. Wraps core runtime, provider setup, plugin loading, host tools, sessions and events. |
-| `navi-tui` | Terminal UI with chat, model picker, thinking/settings/session modals, markdown/code rendering. |
+| `navi-sdk` | Public embedding facade for local clients (Tutor, TUI, ACP). Wraps core runtime, provider setup, plugin loading, host tools, MCP, sessions and events. |
+| `navi-tui` | Terminal UI with chat, model picker, thinking/settings/session modals, markdown/code rendering. Drives turns through `navi-sdk::NaviEngine`. |
 
 ## Current Integration State
 
 Latest important commits:
 
-- `d7f0f46 Add NAVI SDK integration surface` in this repo.
-- `3efb238 Connect Tutor backend to NAVI SDK` in `/home/enrell/projects/navi-tutor`.
+- `e112c59` Unify TUI/ACP under shared `navi-sdk::NaviEngine` runtime surface.
+- `d7f0f46` Add NAVI SDK integration surface in this repo.
+- `3efb238` Connect Tutor backend to NAVI SDK in `/home/enrell/projects/navi-tutor`.
 
 `navi-sdk` exists locally and is not published to crates.io. NAVI Tutor currently consumes it by path dependency:
 
@@ -146,9 +147,14 @@ Implemented SDK/runtime capabilities:
 - `NaviEngine::list_models(...)`
 - `NaviEngine::set_model(...)`
 - `NaviEngine::subscribe_events(...)`
+- `NaviEngine::list_provider_accounts(...)`
+- `NaviEngine::set_session_skills(...)`
+- `NaviEngine::list_mcp_servers(...)`
 - host tools through `SdkHostTool` and `HostToolHandler`
 
 `navi-core` now has embeddable runtime state for session lifecycle, cancellation, approval resolution, event streaming and snapshots. Approval and cancellation have lightweight handles so a client can resolve approval or cancel while a turn is active.
+
+TUI and ACP both drive their sessions through `NaviEngine` instead of constructing `TurnContext`/`SessionRuntime` directly. This means provider setup, tool loading, plugins, MCP, event streaming, approvals, cancellation, and persistence all flow through the shared SDK.
 
 Next integration target:
 
