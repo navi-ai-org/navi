@@ -76,6 +76,12 @@ Agent modes must become real runtime state, not only slash-command text. Example
 
 Host apps must be able to register tools without dynamic native plugins. For NAVI Tutor, host tools may include `create_canvas_node`, `update_study_block`, `link_nodes`, `add_not_now_item`, `create_quiz`, `record_answer`, `update_skill_score`, `search_memory`, and `register_decision`.
 
+Skills and MCP are engine capabilities:
+
+- Skills are local `SKILL.md` folders discovered by `navi-core` and injected as active prompt instructions. Do not implement marketplace/remote install unless explicitly requested.
+- MCP support starts as a client only. `navi-mcp` connects to configured stdio MCP servers and maps remote tools into `ToolExecutor`; do not make NAVI an MCP server yet.
+- MCP and skill support should flow through `navi-sdk` so NAVI Tutor can consume them without TUI dependencies.
+
 ## Plugin Boundary
 
 Plugins must have scope:
@@ -105,6 +111,7 @@ Rust workspace, edition 2024, resolver 3. All implementation lives under `crates
 |---|---|
 | `navi-cli` | Entry binary. Parses CLI, loads config, starts TUI or headless runtime. |
 | `navi-core` | Harness policy, config, provider catalog, model/tool/session abstractions, security policy, runtime. |
+| `navi-mcp` | MCP stdio client integration that registers remote MCP tools with the engine. |
 | `navi-openai` | `ModelProvider` implementation for OpenAI-compatible APIs and provider adapters. |
 | `navi-plugin-api` | Plugin trait and `NAVI_PLUGIN_API_VERSION = 1`. |
 | `navi-plugin-host` | Dynamic `.so`/`.dylib` loading via `libloading`. |

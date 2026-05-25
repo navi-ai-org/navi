@@ -480,6 +480,7 @@ mod tests {
             include_tool_prompt_manifest: false,
             agent_mode: None,
             context_packets: Vec::new(),
+            active_skills: Vec::new(),
             cancel_requested: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             cancel_notify: std::sync::Arc::new(tokio::sync::Notify::new()),
         });

@@ -10,6 +10,7 @@ use crate::model::{
     ModelMessage, ModelProvider, ModelRequest, ModelRole, ModelStreamEvent, ThinkingConfig,
 };
 use crate::security::SecurityDecision;
+use crate::skills::{SkillManifest, render_active_skills};
 use crate::tool::ToolExecutor;
 use anyhow::Result;
 use futures_util::StreamExt;
@@ -40,6 +41,7 @@ pub struct TurnContext {
     pub include_tool_prompt_manifest: bool,
     pub agent_mode: Option<crate::agent::AgentMode>,
     pub context_packets: Vec<ContextPacket>,
+    pub active_skills: Vec<SkillManifest>,
     pub cancel_requested: Arc<AtomicBool>,
     pub cancel_notify: Arc<Notify>,
 }
@@ -106,6 +108,10 @@ pub async fn run_turn(
     if let Some(context) = render_context_packets(&ctx.context_packets) {
         system_content.push_str("\n\n");
         system_content.push_str(&context);
+    }
+    if let Some(skills) = render_active_skills(&ctx.active_skills) {
+        system_content.push_str("\n\n");
+        system_content.push_str(&skills);
     }
 
     if messages.is_empty() {
@@ -532,6 +538,7 @@ mod tests {
             include_tool_prompt_manifest: false,
             agent_mode: None,
             context_packets: Vec::new(),
+            active_skills: Vec::new(),
             cancel_requested: Arc::new(AtomicBool::new(false)),
             cancel_notify: Arc::new(Notify::new()),
         };

@@ -17,6 +17,14 @@ Tool output is truncated to avoid unbounded context/UI growth. `bash` stdout/std
 
 The harness additionally compacts tool observations before sending them back to the model. The TUI can still show fuller tool output, but the model-facing observation should stay bounded for small and medium models.
 
+## Skills And MCP
+
+Skills are local `SKILL.md` directories loaded by `navi-core`. Active skills are prompt instructions only in the initial implementation; they do not execute scripts or register tools.
+
+MCP support is a client integration in `navi-mcp` and is wired through `navi-sdk`. Stdio MCP servers configured under `[[mcp.servers]]` are spawned by the SDK, remote MCP tools are registered as NAVI tools with a prefix such as `<server_id>__<tool_name>`, and failed server connections warn without blocking session startup.
+
+MCP tools are registered as `ToolKind::Custom`, so they require approval under the default security policy. Do not log full MCP payloads or secrets from configured server environments.
+
 ## Security Policy
 
 `SecurityPolicy` validates:

@@ -11,14 +11,15 @@ use crossterm::terminal::{
 };
 use navi_core::{
     AgentEvent, AgentMode, AgentRunState, ApprovalDecision, CredentialStore, HarnessPolicy,
-    LoadedConfig, ModelMessage, ModelOption, ModelProvider, ModelRole, ProviderConfig,
-    SecurityPolicy, SessionId, SessionSnapshot, SessionStore, ThinkingConfig, ToolExecutor,
-    ToolInvocation, ToolResult, available_model_options, build_system_prompt,
-    canonical_provider_id, compact_tool_observation, log_path, resolve_provider_config,
-    save_global_config, select_harness_policy,
+    LoadedConfig, ModelMessage, ModelOption, ModelProvider, ModelRole, ProviderConfig, SessionId,
+    SessionSnapshot, SessionStore, ThinkingConfig, ToolExecutor, ToolInvocation, ToolResult,
+    available_model_options, build_system_prompt, canonical_provider_id, compact_tool_observation,
+    is_free_model_name, log_path, model_can_run_publicly, resolve_provider_api_key,
+    resolve_provider_config, resolve_provider_credential_status, save_global_config,
+    select_harness_policy,
 };
 use navi_openai::OpenAiProvider;
-use navi_plugin_host::{LoadedPlugin, load_configured_plugins};
+use navi_sdk::{build_local_tooling, build_model_provider, configured_active_skills};
 use ratatui::layout::{Constraint, Direction, Layout, Margin, Rect};
 use ratatui::prelude::{CrosstermBackend, Frame, Line, Span, Terminal};
 use ratatui::style::{Color, Modifier, Style};
@@ -162,7 +163,7 @@ pub struct TuiApp {
     stream_task: Option<JoinHandle<()>>,
     tool_task: Option<JoinHandle<()>>,
     tool_executor: Arc<ToolExecutor>,
-    _loaded_plugins: Vec<LoadedPlugin>,
+    _runtime_tooling: navi_sdk::NaviRuntimeTooling,
     harness_policy: HarnessPolicy,
     run_state: AgentRunState,
     yolo_mode: bool,
@@ -319,21 +320,10 @@ impl TuiApp {
         );
         let session_id = SessionStore::create_id();
         let saved_sessions = load_saved_sessions(&session_store);
-        let tool_policy = SecurityPolicy::new(
-            project_dir.clone(),
-            loaded_config.data_dir.clone(),
-            loaded_config.config.security.clone(),
-        )
-        .expect("failed to initialize security policy");
-        let mut tool_executor = ToolExecutor::new(tool_policy.clone());
-        let plugin_report = load_configured_plugins(
-            &loaded_config.config.plugins,
-            &tool_policy,
-            &mut tool_executor,
-        );
-        let plugin_warning = plugin_report.warnings.first().cloned();
-        let loaded_plugins = plugin_report.loaded_plugins;
-        let tool_executor = Arc::new(tool_executor);
+        let runtime_tooling = build_local_tooling(&loaded_config, project_dir.clone())
+            .expect("failed to initialize runtime tooling");
+        let plugin_warning = runtime_tooling.warnings.first().cloned();
+        let tool_executor = runtime_tooling.tool_executor.clone();
         let harness_policy = select_harness_policy(&loaded_config.config);
         let system_prompt = build_system_prompt(&loaded_config.config, &project_dir);
         let log_path = log_path(&loaded_config.data_dir);
@@ -364,7 +354,7 @@ impl TuiApp {
             stream_task: None,
             tool_task: None,
             tool_executor,
-            _loaded_plugins: loaded_plugins,
+            _runtime_tooling: runtime_tooling,
             harness_policy,
             run_state: AgentRunState::default(),
             yolo_mode: false,
@@ -946,6 +936,7 @@ fn start_streaming_request(app: &mut TuiApp) {
 
     let (event_tx, event_rx) = tokio::sync::mpsc::unbounded_channel();
     let pending_approvals = Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()));
+    let active_skills = configured_active_skills(&app.loaded_config, &app.project_dir, &[]);
 
     let ctx = Arc::new(navi_core::turn::TurnContext {
         model_provider: provider,
@@ -962,6 +953,7 @@ fn start_streaming_request(app: &mut TuiApp) {
         ),
         agent_mode: app.selected_agent,
         context_packets: Vec::new(),
+        active_skills,
         cancel_requested: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         cancel_notify: Arc::new(tokio::sync::Notify::new()),
     });
@@ -1292,11 +1284,6 @@ fn format_model_error_message(app: &TuiApp, message: &str) -> String {
     } else {
         format!("⚠ Error: {message}")
     }
-}
-
-fn is_free_model_name(model: &str) -> bool {
-    let model = model.to_ascii_lowercase();
-    model.ends_with("-free") || model.contains(" free")
 }
 
 fn provider_request_model_name(provider_id: &str, model: &str) -> String {
@@ -1759,70 +1746,27 @@ fn retry_last_response(app: &mut TuiApp) {
 
 fn build_provider(
     loaded_config: &LoadedConfig,
-    credential_store: &CredentialStore,
+    _credential_store: &CredentialStore,
 ) -> Option<Arc<dyn ModelProvider>> {
-    let provider_config =
-        resolve_provider_config(&loaded_config.config, &loaded_config.config.model.provider)?;
-
-    let api_key = resolve_provider_api_key(
-        credential_store,
-        &provider_config,
-        &loaded_config.config.model.provider,
-    )
-    .or_else(|| {
-        if model_can_run_publicly(&provider_config.id, &loaded_config.config.model.name) {
-            Some("public".to_string())
-        } else {
-            None
-        }
-    })?;
-
-    match OpenAiProvider::from_provider_config_with_key(&provider_config, api_key) {
-        Ok(provider) => Some(Arc::new(provider)),
-        Err(_) => None,
-    }
-}
-
-fn resolve_provider_api_key(
-    credential_store: &CredentialStore,
-    provider_config: &navi_core::ProviderConfig,
-    requested_provider_id: &str,
-) -> Option<String> {
-    provider_env_api_key_for_config(provider_config)
-        .or_else(|| opencode_auth_json_api_key(credential_store, &provider_config.id))
-        .or_else(|| credential_store.get_api_key(&provider_config.id))
-        .or_else(|| {
-            if requested_provider_id != provider_config.id {
-                credential_store.get_api_key(requested_provider_id)
+    match build_model_provider(loaded_config) {
+        Ok(provider) => Some(provider),
+        Err(_) => {
+            let provider_config = resolve_provider_config(
+                &loaded_config.config,
+                &loaded_config.config.model.provider,
+            )?;
+            if model_can_run_publicly(&provider_config.id, &loaded_config.config.model.name) {
+                OpenAiProvider::from_provider_config_with_key(
+                    &provider_config,
+                    "public".to_string(),
+                )
+                .ok()
+                .map(|provider| Arc::new(provider) as Arc<dyn ModelProvider>)
             } else {
                 None
             }
-        })
-}
-
-fn provider_env_api_key_for_config(provider_config: &navi_core::ProviderConfig) -> Option<String> {
-    if canonical_provider_id(&provider_config.id) == "opencode" {
-        provider_env_api_key("OPENCODE_API_KEY")
-            .or_else(|| provider_env_api_key("OPENCODE_ZEN_API_KEY"))
-    } else {
-        provider_env_api_key(&provider_config.api_key_env)
+        }
     }
-}
-
-fn opencode_auth_json_api_key(
-    credential_store: &CredentialStore,
-    provider_id: &str,
-) -> Option<String> {
-    if canonical_provider_id(provider_id) == "opencode" {
-        credential_store.get_opencode_api_key()
-    } else {
-        None
-    }
-}
-
-fn provider_env_api_key(env_var: &str) -> Option<String> {
-    let key = std::env::var(env_var).ok()?;
-    if key.is_empty() { None } else { Some(key) }
 }
 
 fn rebuild_provider(app: &mut TuiApp) {
@@ -1864,10 +1808,6 @@ fn provider_has_api_key(app: &TuiApp, provider_id: &str) -> bool {
             resolve_provider_api_key(&app.credential_store, &provider_config, provider_id)
         })
         .is_some()
-}
-
-fn model_can_run_publicly(provider_id: &str, model: &str) -> bool {
-    canonical_provider_id(provider_id) == "opencode" && is_free_model_name(model)
 }
 
 fn model_is_available_for_selection(app: &TuiApp, model: &ModelOption) -> bool {
@@ -1967,33 +1907,13 @@ fn current_provider_credential_status(app: &TuiApp) -> String {
         .map(|model| model.name.as_str())
         .unwrap_or(app.loaded_config.config.model.name.as_str());
 
-    if canonical_provider_id(&provider_config.id) == "opencode" {
-        if provider_env_api_key("OPENCODE_API_KEY").is_some() {
-            "env OPENCODE_API_KEY".to_string()
-        } else if provider_env_api_key("OPENCODE_ZEN_API_KEY").is_some() {
-            "env OPENCODE_ZEN_API_KEY".to_string()
-        } else if app.credential_store.get_opencode_api_key().is_some() {
-            "OpenCode auth.json".to_string()
-        } else if resolve_provider_api_key(&app.credential_store, &provider_config, &provider_id)
-            .is_some()
-        {
-            "stored credential".to_string()
-        } else if model_can_run_publicly(&provider_id, model_name) {
-            "free model access without key".to_string()
-        } else {
-            "missing".to_string()
-        }
-    } else if provider_env_api_key(&provider_config.api_key_env).is_some() {
-        format!("env {}", provider_config.api_key_env)
-    } else if resolve_provider_api_key(&app.credential_store, &provider_config, &provider_id)
-        .is_some()
-    {
-        "stored credential".to_string()
-    } else if model_can_run_publicly(&provider_id, model_name) {
-        "free model access without key".to_string()
-    } else {
-        "missing".to_string()
-    }
+    let status = resolve_provider_credential_status(
+        &app.credential_store,
+        &provider_config,
+        &provider_id,
+        Some(model_name),
+    );
+    status.detail.unwrap_or(status.label)
 }
 
 struct ProviderAuthStatus {
@@ -2002,44 +1922,15 @@ struct ProviderAuthStatus {
 }
 
 fn provider_auth_status(app: &TuiApp, provider_config: &ProviderConfig) -> ProviderAuthStatus {
-    if canonical_provider_id(&provider_config.id) == "opencode" {
-        if provider_env_api_key("OPENCODE_API_KEY").is_some() {
-            return ProviderAuthStatus {
-                configured: true,
-                label: "env".to_string(),
-            };
-        }
-        if provider_env_api_key("OPENCODE_ZEN_API_KEY").is_some() {
-            return ProviderAuthStatus {
-                configured: true,
-                label: "env".to_string(),
-            };
-        }
-        if app.credential_store.get_opencode_api_key().is_some() {
-            return ProviderAuthStatus {
-                configured: true,
-                label: "opencode".to_string(),
-            };
-        }
-    } else if provider_env_api_key(&provider_config.api_key_env).is_some() {
-        return ProviderAuthStatus {
-            configured: true,
-            label: "env".to_string(),
-        };
-    }
-
-    if resolve_provider_api_key(&app.credential_store, provider_config, &provider_config.id)
-        .is_some()
-    {
-        ProviderAuthStatus {
-            configured: true,
-            label: "stored".to_string(),
-        }
-    } else {
-        ProviderAuthStatus {
-            configured: false,
-            label: "missing".to_string(),
-        }
+    let status = resolve_provider_credential_status(
+        &app.credential_store,
+        provider_config,
+        &provider_config.id,
+        None,
+    );
+    ProviderAuthStatus {
+        configured: status.configured,
+        label: status.label,
     }
 }
 

@@ -6,6 +6,7 @@ use crate::harness::select_harness_policy;
 use crate::model::{ModelProvider, ModelResponse};
 use crate::security::SecurityPolicy;
 use crate::session::{current_unix_timestamp, session_title_from_events};
+use crate::skills::{SkillManifest, active_skills, discover_configured_skills};
 use crate::tool::{Tool, ToolExecutor};
 use crate::{
     ModelOption, SessionId, SessionSnapshot, SessionStore, available_model_options,
@@ -68,6 +69,8 @@ pub struct AgentRuntimeOptions {
     pub tool_executor: Option<Arc<ToolExecutor>>,
     pub agent_mode: Option<AgentMode>,
     pub context_packets: Vec<ContextPacket>,
+    pub active_skills: Vec<String>,
+    pub session_id: Option<SessionId>,
     pub event_tx: Option<tokio::sync::mpsc::UnboundedSender<AgentEvent>>,
 }
 
@@ -79,6 +82,7 @@ pub struct AgentRuntime {
     session_store: SessionStore,
     agent_mode: Option<AgentMode>,
     context_packets: Vec<ContextPacket>,
+    active_skills: Vec<String>,
     event_tx: Option<tokio::sync::mpsc::UnboundedSender<AgentEvent>>,
     runtime_events_tx: broadcast::Sender<RuntimeEvent>,
     session_runtime: Option<crate::session::SessionRuntime>,
@@ -92,6 +96,7 @@ pub struct AgentRuntime {
     cancel_requested: Arc<AtomicBool>,
     cancel_notify: Arc<Notify>,
     pending_approvals: PendingApprovals,
+    requested_session_id: Option<SessionId>,
     events: Vec<AgentEvent>,
 }
 
@@ -206,6 +211,8 @@ mod tests {
                 priority: 10,
                 metadata: json!({}),
             }],
+            active_skills: Vec::new(),
+            session_id: None,
             event_tx: None,
         });
 
@@ -258,6 +265,8 @@ mod tests {
                 priority: 10,
                 metadata: json!({}),
             }],
+            active_skills: Vec::new(),
+            session_id: None,
             event_tx: None,
         });
 
@@ -308,6 +317,42 @@ mod tests {
             .join(format!("{}.json", snapshot.id.0));
         assert!(snapshot_path.exists());
     }
+
+    #[tokio::test]
+    async fn runtime_uses_requested_session_id_once() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let loaded_config = crate::LoadedConfig {
+            config: NaviConfig {
+                harness: HarnessConfig::default(),
+                approvals: ApprovalConfig::default(),
+                security: SecurityConfig::default(),
+                ..NaviConfig::default()
+            },
+            global_config_path: None,
+            project_config_path: None,
+            data_dir: tempdir.path().join("data"),
+        };
+        let provider = Arc::new(SimpleProvider);
+        let mut runtime = AgentRuntime::new(AgentRuntimeOptions {
+            loaded_config,
+            model_provider: provider,
+            project_dir: tempdir.path().to_path_buf(),
+            tool_executor: None,
+            agent_mode: Some(crate::AgentMode::Tutor),
+            context_packets: Vec::new(),
+            active_skills: Vec::new(),
+            session_id: Some(SessionId(
+                "navi_tutor_algoritmos_2026-05-25_14-32-10".to_string(),
+            )),
+            event_tx: None,
+        });
+
+        let first_id = runtime.start_session().expect("start first session");
+        let second_id = runtime.start_session().expect("start second session");
+
+        assert_eq!(first_id.0, "navi_tutor_algoritmos_2026-05-25_14-32-10");
+        assert_ne!(second_id.0, first_id.0);
+    }
 }
 
 impl AgentRuntime {
@@ -331,11 +376,15 @@ impl AgentRuntime {
             session_store,
             agent_mode: options.agent_mode,
             context_packets: options.context_packets,
+            active_skills: options.active_skills,
             event_tx: options.event_tx,
             runtime_events_tx,
             session_runtime: None,
             session_event_rx: None,
-            session_id: SessionStore::create_id(),
+            session_id: options
+                .session_id
+                .clone()
+                .unwrap_or_else(SessionStore::create_id),
             session_created_at: now,
             session_updated_at: now,
             session_title: None,
@@ -344,6 +393,7 @@ impl AgentRuntime {
             cancel_requested: Arc::new(AtomicBool::new(false)),
             cancel_notify: Arc::new(Notify::new()),
             pending_approvals: Arc::new(std::sync::Mutex::new(HashMap::new())),
+            requested_session_id: options.session_id,
             events: Vec::new(),
         }
     }
@@ -381,6 +431,11 @@ impl AgentRuntime {
 
     pub fn context_packets(&self) -> &[ContextPacket] {
         &self.context_packets
+    }
+
+    pub fn set_active_skills(&mut self, skills: Vec<String>) {
+        self.active_skills = skills;
+        self.publish_runtime_event(RuntimeEventKind::ContextUpdated);
     }
 
     pub fn list_models(&self) -> Vec<ModelOption> {
@@ -454,7 +509,10 @@ impl AgentRuntime {
         self.pending_approvals = Arc::new(std::sync::Mutex::new(HashMap::new()));
         self.session_runtime = None;
         self.session_event_rx = None;
-        self.session_id = SessionStore::create_id();
+        self.session_id = self
+            .requested_session_id
+            .take()
+            .unwrap_or_else(SessionStore::create_id);
         self.session_created_at = current_unix_timestamp();
         self.session_updated_at = self.session_created_at;
         self.session_title = None;
@@ -623,6 +681,7 @@ impl AgentRuntime {
             ),
             agent_mode: self.agent_mode,
             context_packets: self.context_packets.clone(),
+            active_skills: self.load_active_skills(),
             cancel_requested: self.cancel_requested.clone(),
             cancel_notify: self.cancel_notify.clone(),
         });
@@ -653,6 +712,24 @@ impl AgentRuntime {
     fn next_turn_id(&mut self) -> String {
         self.turn_sequence += 1;
         format!("{}-turn-{}", self.session_id.0, self.turn_sequence)
+    }
+
+    fn load_active_skills(&self) -> Vec<SkillManifest> {
+        match discover_configured_skills(
+            &self.loaded_config.config.skills,
+            &self.project_dir,
+            &self.loaded_config.data_dir,
+        ) {
+            Ok(skills) => active_skills(
+                &skills,
+                &self.loaded_config.config.skills.active,
+                &self.active_skills,
+            ),
+            Err(err) => {
+                tracing::warn!(error = %err, "failed to load configured skills");
+                Vec::new()
+            }
+        }
     }
 }
 

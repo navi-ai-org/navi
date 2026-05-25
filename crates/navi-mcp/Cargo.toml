@@ -1,5 +1,5 @@
 [package]
-name = "navi-sdk"
+name = "navi-mcp"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -7,14 +7,9 @@ license.workspace = true
 [dependencies]
 anyhow.workspace = true
 async-trait.workspace = true
+navi-core.workspace = true
+rmcp.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
 tracing.workspace = true
-navi-core.workspace = true
-navi-mcp.workspace = true
-navi-openai.workspace = true
-navi-plugin-host.workspace = true
-
-[dev-dependencies]
-tempfile.workspace = true

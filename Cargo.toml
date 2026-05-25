@@ -2,6 +2,7 @@
 members = [
     "crates/navi-cli",
     "crates/navi-core",
+    "crates/navi-mcp",
     "crates/navi-openai",
     "crates/navi-plugin-api",
     "crates/navi-plugin-host",
@@ -33,6 +34,7 @@ agent-client-protocol = "0.12.1"
 futures-util = "0.3"
 thiserror = "2"
 tokio = { version = "1", features = ["io-util", "macros", "process", "rt-multi-thread", "sync", "time"] }
+rmcp = { version = "1.7.0", default-features = false, features = ["client", "transport-child-process"] }
 toml = "1"
 tracing = "0.1"
 tracing-appender = "0.2"
@@ -40,6 +42,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tempfile = "3"
 wiremock = "0.6"
 navi-core = { path = "crates/navi-core" }
+navi-mcp = { path = "crates/navi-mcp" }
 navi-openai = { path = "crates/navi-openai" }
 navi-plugin-api = { path = "crates/navi-plugin-api" }
 navi-plugin-host = { path = "crates/navi-plugin-host" }

@@ -11,6 +11,7 @@ pub mod patch;
 pub mod runtime;
 pub mod security;
 pub mod session;
+pub mod skills;
 pub mod tool;
 pub mod turn;
 
@@ -22,14 +23,18 @@ pub use compact::{
 };
 pub use config::{
     ApprovalConfig, DEFAULT_CONTEXT_WINDOW, HarnessConfig, HarnessProfile, LoadedConfig,
-    LoggingConfig, MemoryConfig, ModelConfig, ModelOption, ModelTaskSize, NaviConfig, PluginConfig,
-    ProviderConfig, ProviderKind, ProviderModelConfig, SecurityConfig, ToolPromptManifest,
-    available_model_options, canonical_provider_id, effective_context_window,
-    effective_tool_prompt_manifest, provider_catalog, resolve_provider_config, save_global_config,
-    save_project_config,
+    LoggingConfig, McpConfig, McpServerConfig, MemoryConfig, ModelConfig, ModelOption,
+    ModelTaskSize, NaviConfig, PluginConfig, ProviderConfig, ProviderKind, ProviderModelConfig,
+    SecurityConfig, SkillsConfig, ToolPromptManifest, available_model_options,
+    canonical_provider_id, effective_context_window, effective_tool_prompt_manifest,
+    is_free_model_name, model_can_run_publicly, provider_catalog, resolve_provider_config,
+    save_global_config, save_project_config,
 };
 pub use context::{ContextPacket, ContextSource, render_context_packets};
-pub use credentials::CredentialStore;
+pub use credentials::{
+    CredentialSource, CredentialStatus, CredentialStore, resolve_provider_api_key,
+    resolve_provider_credential_status,
+};
 pub use event::{
     AgentEvent, ApprovalDecision, ApprovalRequest, ApprovalRisk, RuntimeEvent, RuntimeEventKind,
 };
@@ -57,5 +62,6 @@ pub use session::{
     MemoryEntry, ProjectMemory, SessionId, SessionRuntime, SessionSnapshot, SessionStore,
     Submission,
 };
+pub use skills::{SkillManifest, active_skills, discover_configured_skills, render_active_skills};
 pub use tool::{Tool, ToolDefinition, ToolExecutor, ToolInvocation, ToolKind, ToolResult};
 pub use turn::{Prompt, TurnContext, run_turn};

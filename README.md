@@ -96,6 +96,20 @@ level = "info"
 file_enabled = true
 stdout_enabled = false
 include_payloads = false
+
+[skills]
+enabled = false
+dirs = [".navi/skills"]
+active = []
+
+[mcp]
+enabled = false
+
+[[mcp.servers]]
+id = "memory"
+command = "memory-mcp-server"
+args = []
+enabled = false
 ```
 
 API keys are resolved from environment variables first, then from NAVI's credential store. If a selected provider has no key, the TUI asks for it from the model picker instead of blocking startup. Provider account management lives in the command palette as `Providers`, which shows configured/unconfigured providers and opens API key setup or OAuth for compatible providers.
@@ -130,6 +144,10 @@ The security layer validates tool kind, paths, commands, plugin paths, and appro
 
 Native plugins configured under `[[plugins]]` are loaded at startup through `libloading`. A plugin must export `navi_plugin_entrypoint`, return metadata with the current `NAVI_PLUGIN_API_VERSION`, and register executable `Tool` implementations. Invalid plugins are reported as warnings and skipped so NAVI can continue with the remaining tools.
 
+Skills are local folders containing `SKILL.md`. When `[skills].enabled = true`, NAVI discovers configured skill directories and injects active skills into the model prompt. Skills do not execute scripts or install remote content in the initial implementation.
+
+MCP support is client-side in the SDK path. Configured stdio MCP servers under `[[mcp.servers]]` are started by `navi-sdk`, their tools are registered with prefixed names like `memory__search`, and tool execution follows the same approval flow as other custom tools.
+
 ## Logs
 
 NAVI writes compact structured diagnostics to `<data_dir>/logs/navi.log` by default. The log directory is private on Unix (`0700`) and the log file is restricted (`0600`). Logs include provider/tool lifecycle events, retries, cancellations, plugin warnings, and timing/status metadata. Secrets are redacted and raw provider payloads are disabled unless explicitly requested with `--debug-payloads`.
@@ -151,6 +169,7 @@ In the TUI, `ctrl+d` opens the Debug modal with the current log path, session id
 |---|---|
 | `navi-cli` | Entry binary, CLI parsing, TUI/headless startup |
 | `navi-core` | Config, model/tool/session abstractions, security policy, runtime |
+| `navi-mcp` | MCP stdio client integration that maps remote MCP tools into NAVI tools |
 | `navi-openai` | Streaming provider implementation for OpenAI-compatible APIs |
 | `navi-plugin-api` | Plugin trait and `NAVI_PLUGIN_API_VERSION` |
 | `navi-plugin-host` | Native library loading with `libloading` |

@@ -15,6 +15,8 @@ pub struct NaviConfig {
     pub providers: Vec<ProviderConfig>,
     pub plugins: Vec<PluginConfig>,
     pub memory: MemoryConfig,
+    pub skills: SkillsConfig,
+    pub mcp: McpConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -200,6 +202,39 @@ pub struct PluginConfig {
     pub enabled: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SkillsConfig {
+    pub enabled: bool,
+    pub dirs: Vec<PathBuf>,
+    pub active: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct McpConfig {
+    pub enabled: bool,
+    pub servers: Vec<McpServerConfig>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct McpServerConfig {
+    pub id: String,
+    pub command: String,
+    #[serde(default)]
+    pub args: Vec<String>,
+    #[serde(default)]
+    pub env: std::collections::BTreeMap<String, String>,
+    #[serde(default)]
+    pub cwd: Option<PathBuf>,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    #[serde(default)]
+    pub tool_prefix: Option<String>,
+    #[serde(default)]
+    pub timeout_ms: Option<u64>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct MemoryConfig {
@@ -251,6 +286,12 @@ impl NaviConfig {
         self.security = other.security;
         self.logging = other.logging;
         self.memory = other.memory;
+        if other.skills != SkillsConfig::default() {
+            self.skills = other.skills;
+        }
+        if other.mcp != McpConfig::default() {
+            self.mcp = other.mcp;
+        }
         merge_provider_configs(&mut self.providers, other.providers);
         self.plugins.extend(other.plugins);
     }
@@ -290,6 +331,27 @@ impl Default for NaviConfig {
             providers: Vec::new(),
             plugins: Vec::new(),
             memory: MemoryConfig::default(),
+            skills: SkillsConfig::default(),
+            mcp: McpConfig::default(),
+        }
+    }
+}
+
+impl Default for SkillsConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            dirs: Vec::new(),
+            active: Vec::new(),
+        }
+    }
+}
+
+impl Default for McpConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            servers: Vec::new(),
         }
     }
 }
@@ -398,6 +460,15 @@ pub fn canonical_provider_id(id: &str) -> &str {
         "opencode-zen" => "opencode",
         other => other,
     }
+}
+
+pub fn model_can_run_publicly(provider_id: &str, model: &str) -> bool {
+    canonical_provider_id(provider_id) == "opencode" && is_free_model_name(model)
+}
+
+pub fn is_free_model_name(model: &str) -> bool {
+    let model = model.to_ascii_lowercase();
+    model.ends_with("-free") || model.contains(" free")
 }
 
 pub fn resolve_provider_config(config: &NaviConfig, id: &str) -> Option<ProviderConfig> {
@@ -1179,6 +1250,8 @@ mod tests {
                 enabled: true,
             }],
             memory: MemoryConfig::default(),
+            skills: SkillsConfig::default(),
+            mcp: McpConfig::default(),
         };
 
         global.merge(NaviConfig {
@@ -1203,12 +1276,44 @@ mod tests {
                 enabled: true,
             }],
             memory: MemoryConfig::default(),
+            skills: SkillsConfig::default(),
+            mcp: McpConfig::default(),
         });
 
         assert_eq!(global.model.name, "gpt-5.4");
         assert!(!global.approvals.require_for_writes);
         assert_eq!(global.logging.level, "debug");
         assert_eq!(global.plugins.len(), 2);
+    }
+
+    #[test]
+    fn parses_skills_and_mcp_config() {
+        let config: NaviConfig = toml::from_str(
+            r#"
+[skills]
+enabled = true
+dirs = [".navi/skills"]
+active = ["socratic"]
+
+[mcp]
+enabled = true
+
+[[mcp.servers]]
+id = "memory"
+command = "memory-mcp-server"
+args = ["--stdio"]
+enabled = true
+tool_prefix = "mem"
+timeout_ms = 1000
+"#,
+        )
+        .expect("config parses");
+
+        assert!(config.skills.enabled);
+        assert_eq!(config.skills.active, vec!["socratic"]);
+        assert!(config.mcp.enabled);
+        assert_eq!(config.mcp.servers[0].id, "memory");
+        assert_eq!(config.mcp.servers[0].tool_prefix.as_deref(), Some("mem"));
     }
 
     #[test]
