@@ -11,12 +11,10 @@ use agent_client_protocol::{
 };
 use anyhow::Result;
 use navi_core::{
-    AgentEvent, ApprovalDecision, LoadedConfig, ModelProvider, SecurityPolicy,
-    SessionId as NaviSessionId, SessionRuntime, SessionSnapshot, SessionStore, Submission,
-    ToolExecutor, ToolResult, resolve_provider_config,
+    AgentEvent, ApprovalDecision, LoadedConfig, SessionId as NaviSessionId, SessionRuntime,
+    SessionSnapshot, SessionStore, Submission, ToolResult,
 };
-use navi_openai::OpenAiProvider;
-use navi_plugin_host::load_configured_plugins;
+use navi_sdk::{build_local_tooling, build_model_provider, configured_active_skills};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -220,27 +218,17 @@ async fn run_prompt_task(
     prompt: String,
     connection: ConnectionTo<Client>,
 ) -> Result<()> {
-    let provider = model_provider_for_config(&loaded_config)?;
-    let security_policy = SecurityPolicy::new(
-        project_dir.clone(),
-        loaded_config.data_dir.clone(),
-        loaded_config.config.security.clone(),
-    )?;
-    let mut tool_executor = ToolExecutor::new(security_policy.clone());
-    let plugin_report = load_configured_plugins(
-        &loaded_config.config.plugins,
-        &security_policy,
-        &mut tool_executor,
-    );
-    for warning in &plugin_report.warnings {
+    let provider = build_model_provider(&loaded_config)?;
+    let tooling = build_local_tooling(&loaded_config, project_dir.clone())?;
+    for warning in &tooling.warnings {
         tracing::warn!(warning = %warning, "plugin load warning");
     }
-    let _loaded_plugins = plugin_report.loaded_plugins;
+    let active_skills = configured_active_skills(&loaded_config, &project_dir, &[]);
 
     let (event_tx, mut event_rx) = tokio::sync::mpsc::unbounded_channel();
     let ctx = Arc::new(navi_core::turn::TurnContext {
         model_provider: provider,
-        tool_executor: Arc::new(tool_executor),
+        tool_executor: tooling.tool_executor.clone(),
         agent_control: navi_core::agent::AgentControl::new(),
         project_dir: project_dir.clone(),
         model_name: loaded_config.config.model.name.clone(),
@@ -257,6 +245,7 @@ async fn run_prompt_task(
         ),
         agent_mode: None,
         context_packets: Vec::new(),
+        active_skills,
         cancel_requested: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         cancel_notify: Arc::new(tokio::sync::Notify::new()),
     });
@@ -468,18 +457,6 @@ fn prompt_to_text(blocks: Vec<ContentBlock>) -> String {
         })
         .collect::<Vec<_>>()
         .join("\n\n")
-}
-
-fn model_provider_for_config(loaded_config: &LoadedConfig) -> Result<Arc<dyn ModelProvider>> {
-    let provider_config =
-        resolve_provider_config(&loaded_config.config, &loaded_config.config.model.provider)
-            .ok_or_else(|| {
-                anyhow::anyhow!("unknown provider {}", loaded_config.config.model.provider)
-            })?;
-
-    Ok(Arc::new(OpenAiProvider::from_provider_config(
-        &provider_config,
-    )?))
 }
 
 fn acp_error_to_anyhow(error: agent_client_protocol::Error) -> anyhow::Error {

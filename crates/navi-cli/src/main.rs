@@ -2,14 +2,12 @@ use anyhow::Result;
 use clap::Parser;
 use navi_core::{
     AgentRuntime, AgentRuntimeOptions, LoadedConfig, LoggingRuntimeConfig, ModelProvider,
-    SecurityPolicy, SessionSnapshot, SessionStore, ToolExecutor, init_logging, log_path,
-    resolve_provider_config,
+    SessionSnapshot, SessionStore, init_logging, log_path, resolve_provider_api_key,
 };
 use navi_openai::OpenAiProvider;
-use navi_plugin_host::load_configured_plugins;
+use navi_sdk::{build_local_tooling, build_model_provider};
 use navi_tui::TuiApp;
 use std::path::PathBuf;
-use std::sync::Arc;
 
 mod acp;
 
@@ -133,7 +131,7 @@ async fn sync_models(mut loaded_config: LoadedConfig, cwd: &std::path::Path) -> 
 
     for provider_config in catalog {
         if let Some(api_key) =
-            credential_store.resolve_api_key(&provider_config.id, &provider_config.api_key_env)
+            resolve_provider_api_key(&credential_store, &provider_config, &provider_config.id)
         {
             println!("Syncing models for provider \"{}\"...", provider_config.id);
             tracing::info!(provider = %provider_config.id, "syncing provider models");
@@ -208,31 +206,22 @@ async fn run_headless(
         anyhow::bail!("headless mode requires a task");
     };
 
-    let provider = model_provider_for_config(&loaded_config)?;
-    let security_policy = SecurityPolicy::new(
-        cwd.clone(),
-        loaded_config.data_dir.clone(),
-        loaded_config.config.security.clone(),
-    )?;
-    let mut tool_executor = ToolExecutor::new(security_policy.clone());
-    let plugin_report = load_configured_plugins(
-        &loaded_config.config.plugins,
-        &security_policy,
-        &mut tool_executor,
-    );
-    for warning in &plugin_report.warnings {
+    let provider = build_model_provider(&loaded_config)?;
+    let tooling = build_local_tooling(&loaded_config, cwd.clone())?;
+    for warning in &tooling.warnings {
         tracing::warn!(warning = %warning, "plugin load warning");
         eprintln!("Plugin warning: {warning}");
     }
-    let _loaded_plugins = plugin_report.loaded_plugins;
 
     let mut runtime = AgentRuntime::new(AgentRuntimeOptions {
         loaded_config: loaded_config.clone(),
         model_provider: provider,
         project_dir: cwd.clone(),
-        tool_executor: Some(Arc::new(tool_executor)),
+        tool_executor: Some(tooling.tool_executor.clone()),
         agent_mode: None,
         context_packets: Vec::new(),
+        active_skills: Vec::new(),
+        session_id: None,
         event_tx: None,
     });
     tracing::info!(
@@ -258,18 +247,6 @@ async fn run_headless(
     })?;
 
     Ok(())
-}
-
-fn model_provider_for_config(loaded_config: &LoadedConfig) -> Result<Arc<dyn ModelProvider>> {
-    let provider_config =
-        resolve_provider_config(&loaded_config.config, &loaded_config.config.model.provider)
-            .ok_or_else(|| {
-                anyhow::anyhow!("unknown provider {}", loaded_config.config.model.provider)
-            })?;
-
-    Ok(Arc::new(OpenAiProvider::from_provider_config(
-        &provider_config,
-    )?))
 }
 
 fn normalize_task(parts: Vec<String>) -> Option<String> {
