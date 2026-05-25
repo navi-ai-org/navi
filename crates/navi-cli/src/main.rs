@@ -221,6 +221,7 @@ async fn run_headless(
         agent_mode: None,
         context_packets: Vec::new(),
         active_skills: Vec::new(),
+        initial_messages: Vec::new(),
         session_id: None,
         event_tx: None,
     });

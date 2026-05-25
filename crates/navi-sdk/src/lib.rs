@@ -2,11 +2,11 @@ use anyhow::{Context, Result};
 use async_trait::async_trait;
 use navi_core::{
     AgentMode, AgentRuntime, AgentRuntimeOptions, ApprovalDecision, ContextPacket, ContextSource,
-    CredentialSource, CredentialStore, LoadedConfig, ModelOption, ModelProvider, RuntimeEvent,
-    SecurityPolicy, SessionId, SessionSnapshot, SkillManifest, Tool, ToolDefinition, ToolExecutor,
-    ToolInvocation, ToolKind, ToolResult, active_skills, canonical_provider_id,
-    discover_configured_skills, resolve_provider_api_key, resolve_provider_config,
-    resolve_provider_credential_status,
+    CredentialSource, CredentialStore, LoadedConfig, ModelMessage, ModelOption, ModelProvider,
+    RuntimeEvent, SecurityPolicy, SessionId, SessionSnapshot, SkillManifest, Tool, ToolDefinition,
+    ToolExecutor, ToolInvocation, ToolKind, ToolResult, active_skills, canonical_provider_id,
+    discover_configured_skills, model_can_run_publicly, resolve_provider_api_key,
+    resolve_provider_config, resolve_provider_credential_status,
 };
 use navi_mcp::{LoadedMcpServers, McpServerInfo, load_configured_mcp_servers};
 use navi_openai::OpenAiProvider;
@@ -105,6 +105,8 @@ pub struct NaviSessionRequest {
     pub context_packets: Vec<ContextPacket>,
     #[serde(default)]
     pub active_skills: Vec<String>,
+    #[serde(default)]
+    pub initial_messages: Vec<ModelMessage>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -287,6 +289,7 @@ impl NaviEngine {
             agent_mode: request.agent_mode.or(self.inner.agent_mode),
             context_packets: request.context_packets,
             active_skills: request.active_skills,
+            initial_messages: request.initial_messages,
             session_id: request.session_id.map(SessionId),
             event_tx: None,
         });
@@ -577,6 +580,13 @@ pub fn build_model_provider(loaded_config: &LoadedConfig) -> Result<Arc<dyn Mode
         &provider_config,
         &loaded_config.config.model.provider,
     )
+    .or_else(|| {
+        (model_can_run_publicly(
+            &loaded_config.config.model.provider,
+            &loaded_config.config.model.name,
+        ) || model_can_run_publicly(&provider_config.id, &loaded_config.config.model.name))
+        .then(|| "public".to_string())
+    })
     .ok_or_else(|| NaviMissingCredentialError {
         provider_id: provider_config.id.clone(),
         env_var: provider_config.api_key_env.clone(),

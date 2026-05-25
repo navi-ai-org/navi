@@ -3,14 +3,14 @@ use crate::config::LoadedConfig;
 use crate::context::ContextPacket;
 use crate::event::{AgentEvent, ApprovalDecision, RuntimeEvent, RuntimeEventKind};
 use crate::harness::select_harness_policy;
-use crate::model::{ModelProvider, ModelResponse};
+use crate::model::{ModelMessage, ModelProvider, ModelResponse};
 use crate::security::SecurityPolicy;
 use crate::session::{current_unix_timestamp, session_title_from_events};
 use crate::skills::{SkillManifest, active_skills, discover_configured_skills};
 use crate::tool::{Tool, ToolExecutor};
 use crate::{
     ModelOption, SessionId, SessionSnapshot, SessionStore, available_model_options,
-    canonical_provider_id,
+    canonical_provider_id, provider_request_model_name,
 };
 use anyhow::Result;
 use std::collections::HashMap;
@@ -70,6 +70,7 @@ pub struct AgentRuntimeOptions {
     pub agent_mode: Option<AgentMode>,
     pub context_packets: Vec<ContextPacket>,
     pub active_skills: Vec<String>,
+    pub initial_messages: Vec<ModelMessage>,
     pub session_id: Option<SessionId>,
     pub event_tx: Option<tokio::sync::mpsc::UnboundedSender<AgentEvent>>,
 }
@@ -83,6 +84,7 @@ pub struct AgentRuntime {
     agent_mode: Option<AgentMode>,
     context_packets: Vec<ContextPacket>,
     active_skills: Vec<String>,
+    initial_messages: Vec<ModelMessage>,
     event_tx: Option<tokio::sync::mpsc::UnboundedSender<AgentEvent>>,
     runtime_events_tx: broadcast::Sender<RuntimeEvent>,
     session_runtime: Option<crate::session::SessionRuntime>,
@@ -212,6 +214,7 @@ mod tests {
                 metadata: json!({}),
             }],
             active_skills: Vec::new(),
+            initial_messages: Vec::new(),
             session_id: None,
             event_tx: None,
         });
@@ -266,6 +269,7 @@ mod tests {
                 metadata: json!({}),
             }],
             active_skills: Vec::new(),
+            initial_messages: Vec::new(),
             session_id: None,
             event_tx: None,
         });
@@ -341,6 +345,7 @@ mod tests {
             agent_mode: Some(crate::AgentMode::Tutor),
             context_packets: Vec::new(),
             active_skills: Vec::new(),
+            initial_messages: Vec::new(),
             session_id: Some(SessionId(
                 "navi_tutor_algoritmos_2026-05-25_14-32-10".to_string(),
             )),
@@ -377,6 +382,7 @@ impl AgentRuntime {
             agent_mode: options.agent_mode,
             context_packets: options.context_packets,
             active_skills: options.active_skills,
+            initial_messages: options.initial_messages,
             event_tx: options.event_tx,
             runtime_events_tx,
             session_runtime: None,
@@ -669,7 +675,10 @@ impl AgentRuntime {
             tool_executor,
             agent_control: crate::agent::AgentControl::new(),
             project_dir: self.project_dir.clone(),
-            model_name: self.loaded_config.config.model.name.clone(),
+            model_name: provider_request_model_name(
+                &self.loaded_config.config.model.provider,
+                &self.loaded_config.config.model.name,
+            ),
             event_tx: Some(event_tx),
             pending_approvals: self.pending_approvals.clone(),
             compact_state: Arc::new(tokio::sync::Mutex::new(crate::compact::CompactState::new(
@@ -687,8 +696,12 @@ impl AgentRuntime {
         });
 
         let policy = select_harness_policy(&self.loaded_config.config);
-        let session_runtime =
-            crate::session::SessionRuntime::spawn(ctx, policy, Vec::new(), memory_injection);
+        let session_runtime = crate::session::SessionRuntime::spawn(
+            ctx,
+            policy,
+            self.initial_messages.clone(),
+            memory_injection,
+        );
 
         Ok((session_runtime, event_rx))
     }

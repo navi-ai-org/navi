@@ -11,15 +11,15 @@ use crossterm::terminal::{
 };
 use navi_core::{
     AgentEvent, AgentMode, AgentRunState, ApprovalDecision, CredentialStore, HarnessPolicy,
-    LoadedConfig, ModelMessage, ModelOption, ModelProvider, ModelRole, ProviderConfig, SessionId,
-    SessionSnapshot, SessionStore, ThinkingConfig, ToolExecutor, ToolInvocation, ToolResult,
-    available_model_options, build_system_prompt, canonical_provider_id, compact_tool_observation,
-    is_free_model_name, log_path, model_can_run_publicly, resolve_provider_api_key,
-    resolve_provider_config, resolve_provider_credential_status, save_global_config,
-    select_harness_policy,
+    LoadedConfig, ModelMessage, ModelOption, ModelProvider, ModelRole, ProviderConfig,
+    RuntimeEvent, RuntimeEventKind, SessionId, SessionSnapshot, SessionStore, ThinkingConfig,
+    ToolInvocation, ToolResult, available_model_options, build_system_prompt,
+    canonical_provider_id, compact_tool_observation, is_free_model_name, log_path,
+    model_can_run_publicly, resolve_provider_api_key, resolve_provider_config,
+    resolve_provider_credential_status, save_global_config, select_harness_policy,
 };
 use navi_openai::OpenAiProvider;
-use navi_sdk::{build_local_tooling, build_model_provider, configured_active_skills};
+use navi_sdk::{NaviEngine, NaviEngineBuilder, NaviSessionRequest, NaviTurnRequest};
 use ratatui::layout::{Constraint, Direction, Layout, Margin, Rect};
 use ratatui::prelude::{CrosstermBackend, Frame, Line, Span, Terminal};
 use ratatui::style::{Color, Modifier, Style};
@@ -28,9 +28,9 @@ use ratatui::widgets::{
     Block, BorderType, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap,
 };
 use std::cell::RefCell;
+use std::future::Future;
 use std::io;
 use std::path::PathBuf;
-use std::sync::Arc;
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 use syntect::easy::HighlightLines;
@@ -112,9 +112,6 @@ pub enum ChatRole {
 
 // ─── async bridge ──────────────────────────────────────────────────────────────
 enum AsyncEvent {
-    ModelError {
-        message: String,
-    },
     SyncCompleted {
         loaded_config: LoadedConfig,
         message: String,
@@ -162,8 +159,8 @@ pub struct TuiApp {
     async_rx: mpsc::UnboundedReceiver<AsyncEvent>,
     stream_task: Option<JoinHandle<()>>,
     tool_task: Option<JoinHandle<()>>,
-    tool_executor: Arc<ToolExecutor>,
-    _runtime_tooling: navi_sdk::NaviRuntimeTooling,
+    engine: NaviEngine,
+    provider_configured: bool,
     harness_policy: HarnessPolicy,
     run_state: AgentRunState,
     yolo_mode: bool,
@@ -171,14 +168,9 @@ pub struct TuiApp {
     model_retry_attempts: usize,
 
     // orchestration
-    session_runtime: Option<navi_core::session::SessionRuntime>,
-    turn_context: Option<Arc<navi_core::turn::TurnContext>>,
     running_tools: std::collections::HashMap<String, ToolInvocation>,
     pending_approvals: Vec<navi_core::ApprovalRequest>,
     tool_invocations: std::collections::HashMap<String, ToolInvocation>,
-
-    // provider
-    model_provider: Option<Arc<dyn ModelProvider>>,
 
     // credentials
     credential_store: CredentialStore,
@@ -313,17 +305,16 @@ impl TuiApp {
 
         let (async_tx, async_rx) = mpsc::unbounded_channel();
         let credential_store = CredentialStore::new(loaded_config.data_dir.clone());
-        let model_provider = build_provider(&loaded_config, &credential_store);
+        let engine = build_engine(&loaded_config, project_dir.clone())
+            .expect("failed to initialize NAVI runtime engine");
+        let provider_configured =
+            selected_model_runtime_available(&loaded_config, &credential_store);
         let session_store = SessionStore::with_redaction(
             loaded_config.data_dir.clone(),
             loaded_config.config.security.redact_secrets_in_sessions,
         );
         let session_id = SessionStore::create_id();
         let saved_sessions = load_saved_sessions(&session_store);
-        let runtime_tooling = build_local_tooling(&loaded_config, project_dir.clone())
-            .expect("failed to initialize runtime tooling");
-        let plugin_warning = runtime_tooling.warnings.first().cloned();
-        let tool_executor = runtime_tooling.tool_executor.clone();
         let harness_policy = select_harness_policy(&loaded_config.config);
         let system_prompt = build_system_prompt(&loaded_config.config, &project_dir);
         let log_path = log_path(&loaded_config.data_dir);
@@ -353,19 +344,16 @@ impl TuiApp {
             async_rx,
             stream_task: None,
             tool_task: None,
-            tool_executor,
-            _runtime_tooling: runtime_tooling,
+            engine,
+            provider_configured,
             harness_policy,
             run_state: AgentRunState::default(),
             yolo_mode: false,
             skip_next_model_done: false,
             model_retry_attempts: 0,
-            session_runtime: None,
-            turn_context: None,
             running_tools: std::collections::HashMap::new(),
             pending_approvals: Vec::new(),
             tool_invocations: std::collections::HashMap::new(),
-            model_provider,
             credential_store,
             api_key_input: String::new(),
             api_key_cursor: 0,
@@ -390,11 +378,6 @@ impl TuiApp {
             chat_render_cache: RefCell::new(ChatRenderCache::default()),
             selection: None,
         };
-
-        if let Some(warning) = plugin_warning {
-            push_diagnostic(&mut app, format!("Plugin warning: {warning}"));
-            show_notification(&mut app, "Plugins", warning);
-        }
 
         // If a task was passed via CLI, pre-fill input
         if let Some(task_text) = task {
@@ -598,12 +581,14 @@ fn run_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, mut app: TuiA
                         }
                         navi_core::AgentEvent::ApprovalRequested(request) => {
                             if app.yolo_mode {
-                                if let Some(ctx) = &app.turn_context {
-                                    let decision = navi_core::ApprovalDecision::Approved {
-                                        id: request.id.clone(),
-                                    };
-                                    ctx.resolve_approval(decision);
-                                }
+                                let engine = app.engine.clone();
+                                let session_id = app.session_id.0.clone();
+                                let decision = navi_core::ApprovalDecision::Approved {
+                                    id: request.id.clone(),
+                                };
+                                spawn_runtime_task(async move {
+                                    let _ = engine.resolve_approval(&session_id, decision).await;
+                                });
                             } else {
                                 app.pending_approvals.push(request.clone());
                                 app.events
@@ -734,10 +719,6 @@ fn run_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, mut app: TuiA
                             handle_model_error(&mut app, err);
                         }
                     }
-                }
-
-                AsyncEvent::ModelError { message } => {
-                    handle_model_error(&mut app, message);
                 }
                 AsyncEvent::RetryModel => {
                     app.stream_task = None;
@@ -898,7 +879,7 @@ fn agent_prompt_text(app: &TuiApp) -> String {
 }
 
 fn start_streaming_request(app: &mut TuiApp) {
-    let Some(provider) = app.model_provider.clone() else {
+    if !app.provider_configured {
         tracing::warn!(provider = %app.loaded_config.config.model.provider, "cannot start stream without API key");
         push_diagnostic(app, "No API key configured for selected provider.");
         app.messages.push(ChatMessage {
@@ -910,7 +891,7 @@ fn start_streaming_request(app: &mut TuiApp) {
             )
         });
         return;
-    };
+    }
 
     app.is_loading = true;
     app.loading_start = Some(Instant::now());
@@ -922,10 +903,6 @@ fn start_streaming_request(app: &mut TuiApp) {
     );
 
     let model_label = app.loaded_config.config.model.name.clone();
-    let request_model_name = provider_request_model_name(
-        &app.loaded_config.config.model.provider,
-        &app.loaded_config.config.model.name,
-    );
     let provider_label = selected_provider_label(app).to_string();
     app.messages.push(ChatMessage {
         model_label: Some(model_label.clone()),
@@ -933,32 +910,6 @@ fn start_streaming_request(app: &mut TuiApp) {
         status: Some("thinking".to_string()),
         ..ChatMessage::new(ChatRole::Assistant, String::new())
     });
-
-    let (event_tx, event_rx) = tokio::sync::mpsc::unbounded_channel();
-    let pending_approvals = Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()));
-    let active_skills = configured_active_skills(&app.loaded_config, &app.project_dir, &[]);
-
-    let ctx = Arc::new(navi_core::turn::TurnContext {
-        model_provider: provider,
-        tool_executor: app.tool_executor.clone(),
-        agent_control: navi_core::agent::AgentControl::new(),
-        project_dir: app.project_dir.clone(),
-        model_name: request_model_name,
-        event_tx: Some(event_tx),
-        pending_approvals: pending_approvals.clone(),
-        compact_state: Arc::new(tokio::sync::Mutex::new(app.compact_state.clone())),
-        harness_config: app.loaded_config.config.harness.clone(),
-        include_tool_prompt_manifest: navi_core::effective_tool_prompt_manifest(
-            &app.loaded_config.config,
-        ),
-        agent_mode: app.selected_agent,
-        context_packets: Vec::new(),
-        active_skills,
-        cancel_requested: Arc::new(std::sync::atomic::AtomicBool::new(false)),
-        cancel_notify: Arc::new(tokio::sync::Notify::new()),
-    });
-
-    app.turn_context = Some(ctx.clone());
 
     let mut initial_messages = app.conversation_history.clone();
     let user_prompt = if !initial_messages.is_empty() {
@@ -968,78 +919,111 @@ fn start_streaming_request(app: &mut TuiApp) {
         String::new()
     };
 
-    let memory_injection = if app.loaded_config.config.memory.session_memory_enabled
-        && app.conversation_history.is_empty()
-    {
-        app.session_store
-            .load_memory(&app.project_dir)
-            .and_then(|m| m.format_injection(app.loaded_config.config.memory.max_memory_entries))
-    } else {
-        None
-    };
-
-    let session_runtime = navi_core::session::SessionRuntime::spawn(
-        ctx,
-        app.harness_policy,
-        initial_messages,
-        memory_injection,
-    );
-    app.session_runtime = Some(session_runtime.clone());
-
     let tx = app.async_tx.clone();
+    let engine = app.engine.clone();
+    let project_dir = app.project_dir.clone();
+    let session_id = app.session_id.0.clone();
+    let agent_mode = app.selected_agent;
 
-    // Send the submission
-    let (response_tx, response_rx) = tokio::sync::oneshot::channel();
-    if let Err(e) = session_runtime
-        .submission_tx
-        .send(navi_core::session::Submission {
-            task: user_prompt,
-            response_tx,
-        })
-    {
-        tracing::error!("Failed to send submission: {}", e);
-        let _ = tx.send(AsyncEvent::ModelError {
-            message: format!("Failed to send submission: {e}"),
-        });
-        return;
-    }
-
-    app.stream_task = Some(tokio::spawn(forward_turn_events(event_rx, response_rx, tx)));
+    app.stream_task = Some(tokio::spawn(async move {
+        let result = run_sdk_turn(
+            engine,
+            session_id.clone(),
+            project_dir,
+            agent_mode,
+            initial_messages,
+            user_prompt,
+            tx.clone(),
+        )
+        .await;
+        let _ = tx.send(AsyncEvent::TurnCompleted(result));
+    }));
 }
 
-async fn forward_turn_events(
-    mut event_rx: tokio::sync::mpsc::UnboundedReceiver<AgentEvent>,
-    mut response_rx: tokio::sync::oneshot::Receiver<Result<String>>,
+async fn run_sdk_turn(
+    engine: NaviEngine,
+    session_id: String,
+    project_dir: PathBuf,
+    agent_mode: Option<AgentMode>,
+    initial_messages: Vec<ModelMessage>,
+    user_prompt: String,
     tx: mpsc::UnboundedSender<AsyncEvent>,
-) {
+) -> std::result::Result<String, String> {
+    engine
+        .start_session(NaviSessionRequest {
+            project_dir: Some(project_dir),
+            session_id: Some(session_id.clone()),
+            agent_mode,
+            context_packets: Vec::new(),
+            active_skills: Vec::new(),
+            initial_messages,
+        })
+        .await
+        .map_err(|err| format!("{err:#}"))?;
+
+    let mut events = engine
+        .subscribe_events(&session_id)
+        .map_err(|err| format!("{err:#}"))?;
+    let turn = engine.send_turn(NaviTurnRequest {
+        session_id: session_id.clone(),
+        message: user_prompt,
+        context_packets: Vec::new(),
+    });
+    tokio::pin!(turn);
+
     let result = loop {
         tokio::select! {
-            event_opt = event_rx.recv() => {
-                if let Some(event) = event_opt {
-                    let _ = tx.send(AsyncEvent::Agent(event));
-                } else {
-                    break turn_result_from_response(response_rx.await);
-                }
+            response = &mut turn => {
+                break response.map(|response| response.text).map_err(|err| format!("{err:#}"));
             }
-            res = &mut response_rx => {
-                break turn_result_from_response(res);
+            event = events.recv() => {
+                if let Ok(event) = event {
+                    forward_runtime_event_to_tui(event, &tx);
+                }
             }
         }
     };
 
-    while let Ok(event) = event_rx.try_recv() {
-        let _ = tx.send(AsyncEvent::Agent(event));
+    while let Ok(event) = events.try_recv() {
+        forward_runtime_event_to_tui(event, &tx);
     }
-    let _ = tx.send(AsyncEvent::TurnCompleted(result));
+    let _ = engine.snapshot_session(&session_id).await;
+    result
 }
 
-fn turn_result_from_response(
-    response: std::result::Result<Result<String>, tokio::sync::oneshot::error::RecvError>,
-) -> std::result::Result<String, String> {
-    match response {
-        Ok(Ok(text)) => Ok(text),
-        Ok(Err(err)) => Err(format!("{err:#}")),
-        Err(_) => Err("Turn cancelled or panicked".to_string()),
+fn forward_runtime_event_to_tui(event: RuntimeEvent, tx: &mpsc::UnboundedSender<AsyncEvent>) {
+    match event.kind {
+        RuntimeEventKind::AssistantDelta { text } => {
+            let _ = tx.send(AsyncEvent::Agent(AgentEvent::ModelDelta { text }));
+        }
+        RuntimeEventKind::AssistantThinkingDelta { text } => {
+            let _ = tx.send(AsyncEvent::Agent(AgentEvent::ModelThinkingDelta { text }));
+        }
+        RuntimeEventKind::ToolRequested(invocation) => {
+            let _ = tx.send(AsyncEvent::Agent(AgentEvent::ToolRequested(invocation)));
+        }
+        RuntimeEventKind::ApprovalRequired(request) => {
+            let _ = tx.send(AsyncEvent::Agent(AgentEvent::ApprovalRequested(request)));
+        }
+        RuntimeEventKind::ToolCompleted(result) => {
+            let _ = tx.send(AsyncEvent::Agent(AgentEvent::ToolCompleted(result)));
+        }
+        RuntimeEventKind::TokensUpdated {
+            input_tokens,
+            output_tokens,
+        } => {
+            let _ = tx.send(AsyncEvent::Agent(AgentEvent::UsageReported {
+                input_tokens,
+                output_tokens,
+            }));
+        }
+        RuntimeEventKind::Error { message } => {
+            let _ = tx.send(AsyncEvent::Agent(AgentEvent::Error { message }));
+        }
+        RuntimeEventKind::LegacyAgentEvent(event) => {
+            let _ = tx.send(AsyncEvent::Agent(event));
+        }
+        _ => {}
     }
 }
 
@@ -1283,43 +1267,6 @@ fn format_model_error_message(app: &TuiApp, message: &str) -> String {
         )
     } else {
         format!("⚠ Error: {message}")
-    }
-}
-
-fn provider_request_model_name(provider_id: &str, model: &str) -> String {
-    if canonical_provider_id(provider_id) == "opencode" {
-        opencode_zen_model_id(model).unwrap_or_else(|| model.to_string())
-    } else {
-        model.to_string()
-    }
-}
-
-fn opencode_zen_model_id(model: &str) -> Option<String> {
-    let normalized = model
-        .trim()
-        .trim_start_matches("opencode/")
-        .to_ascii_lowercase()
-        .replace([' ', '_'], "-");
-    let collapsed = normalized
-        .split('-')
-        .filter(|part| !part.is_empty())
-        .collect::<Vec<_>>()
-        .join("-");
-
-    match collapsed.as_str() {
-        "deepseek-v4-flash-free" => Some("deepseek-v4-flash-free".to_string()),
-        "nemotron-3-super-free" => Some("nemotron-3-super-free".to_string()),
-        "big-pickle" => Some("big-pickle".to_string()),
-        "qwen3.6-plus" | "qwen-3.6-plus" => Some("qwen3.6-plus".to_string()),
-        "qwen3.5-plus" | "qwen-3.5-plus" => Some("qwen3.5-plus".to_string()),
-        "minimax-m2.7" | "mini-max-m2.7" => Some("minimax-m2.7".to_string()),
-        "minimax-m2.5" | "mini-max-m2.5" => Some("minimax-m2.5".to_string()),
-        "glm-5.1" => Some("glm-5.1".to_string()),
-        "glm-5" => Some("glm-5".to_string()),
-        "kimi-k2.6" => Some("kimi-k2.6".to_string()),
-        "kimi-k2.5" => Some("kimi-k2.5".to_string()),
-        "grok-build-0.1" => Some("grok-build-0.1".to_string()),
-        _ => None,
     }
 }
 
@@ -1655,12 +1602,14 @@ fn approve_pending_tool(app: &mut TuiApp) {
     if !app.pending_approvals.is_empty() {
         let request = app.pending_approvals.remove(0);
         tracing::info!(invocation_id = %request.id, "tool approval accepted via pending_approvals");
-        if let Some(ctx) = &app.turn_context {
-            let decision = ApprovalDecision::Approved {
-                id: request.id.clone(),
-            };
-            ctx.resolve_approval(decision);
-        }
+        let engine = app.engine.clone();
+        let session_id = app.session_id.0.clone();
+        let decision = ApprovalDecision::Approved {
+            id: request.id.clone(),
+        };
+        spawn_runtime_task(async move {
+            let _ = engine.resolve_approval(&session_id, decision).await;
+        });
         update_active_assistant_status(app);
     }
 }
@@ -1670,12 +1619,14 @@ fn deny_pending_tool(app: &mut TuiApp) {
         let request = app.pending_approvals.remove(0);
         tracing::warn!(invocation_id = %request.id, "tool approval denied via pending_approvals");
         push_diagnostic(app, format!("Denied tool ID: {}", request.id));
-        if let Some(ctx) = &app.turn_context {
-            let decision = ApprovalDecision::Denied {
-                id: request.id.clone(),
-            };
-            ctx.resolve_approval(decision);
-        }
+        let engine = app.engine.clone();
+        let session_id = app.session_id.0.clone();
+        let decision = ApprovalDecision::Denied {
+            id: request.id.clone(),
+        };
+        spawn_runtime_task(async move {
+            let _ = engine.resolve_approval(&session_id, decision).await;
+        });
         update_active_assistant_status(app);
     }
 }
@@ -1687,6 +1638,11 @@ fn cancel_stream(app: &mut TuiApp) {
         "active operation cancelled"
     );
     push_diagnostic(app, "Cancelled active operation.");
+    let engine = app.engine.clone();
+    let session_id = app.session_id.0.clone();
+    spawn_runtime_task(async move {
+        let _ = engine.cancel_turn(&session_id).await;
+    });
     if let Some(task) = app.stream_task.take() {
         task.abort();
     }
@@ -1695,8 +1651,6 @@ fn cancel_stream(app: &mut TuiApp) {
     }
     app.is_loading = false;
     app.loading_start = None;
-    app.session_runtime = None;
-    app.turn_context = None;
     app.pending_approvals.clear();
     app.running_tools.clear();
     app.skip_next_model_done = false;
@@ -1705,6 +1659,15 @@ fn cancel_stream(app: &mut TuiApp) {
         if active.content.is_empty() {
             active.content = "Cancelled.".to_string();
         }
+    }
+}
+
+fn spawn_runtime_task<F>(future: F)
+where
+    F: Future<Output = ()> + Send + 'static,
+{
+    if let Ok(handle) = tokio::runtime::Handle::try_current() {
+        handle.spawn(future);
     }
 }
 
@@ -1744,33 +1707,37 @@ fn retry_last_response(app: &mut TuiApp) {
     }
 }
 
-fn build_provider(
+fn build_engine(loaded_config: &LoadedConfig, project_dir: PathBuf) -> Result<NaviEngine> {
+    NaviEngineBuilder::from_project(project_dir)
+        .loaded_config(loaded_config.clone())
+        .build()
+}
+
+fn selected_model_runtime_available(
     loaded_config: &LoadedConfig,
-    _credential_store: &CredentialStore,
-) -> Option<Arc<dyn ModelProvider>> {
-    match build_model_provider(loaded_config) {
-        Ok(provider) => Some(provider),
-        Err(_) => {
-            let provider_config = resolve_provider_config(
-                &loaded_config.config,
-                &loaded_config.config.model.provider,
-            )?;
-            if model_can_run_publicly(&provider_config.id, &loaded_config.config.model.name) {
-                OpenAiProvider::from_provider_config_with_key(
-                    &provider_config,
-                    "public".to_string(),
-                )
-                .ok()
-                .map(|provider| Arc::new(provider) as Arc<dyn ModelProvider>)
-            } else {
-                None
-            }
-        }
-    }
+    credential_store: &CredentialStore,
+) -> bool {
+    let Some(provider_config) =
+        resolve_provider_config(&loaded_config.config, &loaded_config.config.model.provider)
+    else {
+        return false;
+    };
+    resolve_provider_credential_status(
+        credential_store,
+        &provider_config,
+        &loaded_config.config.model.provider,
+        Some(&loaded_config.config.model.name),
+    )
+    .configured
 }
 
 fn rebuild_provider(app: &mut TuiApp) {
-    app.model_provider = build_provider(&app.loaded_config, &app.credential_store);
+    match build_engine(&app.loaded_config, app.project_dir.clone()) {
+        Ok(engine) => app.engine = engine,
+        Err(err) => push_diagnostic(app, format!("Failed to rebuild runtime engine: {err:#}")),
+    }
+    app.provider_configured =
+        selected_model_runtime_available(&app.loaded_config, &app.credential_store);
     app.harness_policy = select_harness_policy(&app.loaded_config.config);
     app.compact_state.context_window =
         navi_core::config::effective_context_window(&app.loaded_config.config);
@@ -5956,30 +5923,21 @@ mod tests {
         )));
     }
 
-    #[tokio::test]
-    async fn forward_turn_events_drains_queued_agent_events_before_completion() {
-        let (agent_tx, agent_rx) = tokio::sync::mpsc::unbounded_channel();
-        let (response_tx, response_rx) = tokio::sync::oneshot::channel();
+    #[test]
+    fn forward_runtime_event_maps_deltas_to_agent_events() {
         let (async_tx, mut async_rx) = mpsc::unbounded_channel();
 
-        agent_tx
-            .send(AgentEvent::ModelDelta {
+        forward_runtime_event_to_tui(
+            RuntimeEvent::new(RuntimeEventKind::AssistantDelta {
                 text: "final answer".to_string(),
-            })
-            .unwrap();
-        response_tx.send(Ok("final answer".to_string())).unwrap();
+            }),
+            &async_tx,
+        );
 
-        forward_turn_events(agent_rx, response_rx, async_tx).await;
-
-        let first = async_rx.recv().await;
-        let second = async_rx.recv().await;
+        let first = async_rx.try_recv().ok();
         assert!(matches!(
             first,
             Some(AsyncEvent::Agent(AgentEvent::ModelDelta { text })) if text == "final answer"
-        ));
-        assert!(matches!(
-            second,
-            Some(AsyncEvent::TurnCompleted(Ok(text))) if text == "final answer"
         ));
     }
 
@@ -6301,7 +6259,7 @@ mod tests {
     #[test]
     fn submit_without_provider_adds_error_message() {
         let mut app = test_app("hello");
-        app.model_provider = None;
+        app.provider_configured = false;
         submit_message(&mut app);
         assert_eq!(app.messages.len(), 2); // user + error
         assert_eq!(app.messages[0].role, ChatRole::User);
@@ -6314,7 +6272,7 @@ mod tests {
         let app = app_with_missing_provider_key();
 
         assert_eq!(app.mode, Mode::Normal);
-        assert!(app.model_provider.is_none());
+        assert!(!app.provider_configured);
         assert!(app.pending_model_selection.is_none());
     }
 
@@ -6402,25 +6360,25 @@ mod tests {
     #[test]
     fn ctrl_enter_sends_non_empty_message() {
         let mut app = test_app("one");
-        app.model_provider = None;
+        app.provider_configured = false;
         handle_key(&mut app, KeyCode::Enter, KeyModifiers::CONTROL);
         assert_eq!(app.messages[0].content, "one");
         assert!(app.input.is_empty());
 
         let mut app = test_app("two");
-        app.model_provider = None;
+        app.provider_configured = false;
         handle_key(&mut app, KeyCode::Char('j'), KeyModifiers::CONTROL);
         assert_eq!(app.messages[0].content, "two");
         assert!(app.input.is_empty());
 
         let mut app = test_app("three");
-        app.model_provider = None;
+        app.provider_configured = false;
         handle_key(&mut app, KeyCode::Char('\n'), KeyModifiers::CONTROL);
         assert_eq!(app.messages[0].content, "three");
         assert!(app.input.is_empty());
 
         let mut app = test_app("four");
-        app.model_provider = None;
+        app.provider_configured = false;
         handle_key(&mut app, KeyCode::Char('\r'), KeyModifiers::CONTROL);
         assert_eq!(app.messages[0].content, "four");
         assert!(app.input.is_empty());
@@ -6555,7 +6513,7 @@ mod tests {
     #[test]
     fn submit_applies_selected_agent_unless_input_has_agent_command() {
         let mut app = test_app("");
-        app.model_provider = None;
+        app.provider_configured = false;
         app.selected_agent = Some(AgentMode::Review);
         app.input = "check this change".to_string();
         app.input_cursor = app.input.len();
@@ -7035,7 +6993,7 @@ mod tests {
     #[tokio::test]
     async fn transient_model_error_retries_without_final_error() {
         let mut app = test_app("");
-        app.model_provider = None;
+        app.provider_configured = false;
         app.messages.push(ChatMessage {
             status: Some("thinking".to_string()),
             ..ChatMessage::new(ChatRole::Assistant, String::new())
@@ -7129,15 +7087,18 @@ mod tests {
     #[test]
     fn opencode_zen_model_names_are_canonicalized_for_api_requests() {
         assert_eq!(
-            provider_request_model_name("opencode", "DeepSeek V4 Flash Free"),
+            navi_core::provider_request_model_name("opencode", "DeepSeek V4 Flash Free"),
             "deepseek-v4-flash-free"
         );
         assert_eq!(
-            provider_request_model_name("opencode-zen", "opencode/Nemotron 3 Super Free"),
+            navi_core::provider_request_model_name(
+                "opencode-zen",
+                "opencode/Nemotron 3 Super Free"
+            ),
             "nemotron-3-super-free"
         );
         assert_eq!(
-            provider_request_model_name("openrouter", "DeepSeek V4 Flash Free"),
+            navi_core::provider_request_model_name("openrouter", "DeepSeek V4 Flash Free"),
             "DeepSeek V4 Flash Free"
         );
     }
@@ -7156,7 +7117,7 @@ mod tests {
 
         assert!(model_is_available_for_selection(&app, &model));
         assert_eq!(
-            provider_request_model_name("opencode", "deepseek-v4-flash-free"),
+            navi_core::provider_request_model_name("opencode", "deepseek-v4-flash-free"),
             "deepseek-v4-flash-free"
         );
     }
