@@ -13,6 +13,10 @@ impl RuntimeEvent {
     pub fn new(kind: RuntimeEventKind) -> Self {
         Self { version: 1, kind }
     }
+
+    pub fn into_agent_event(self) -> Option<AgentEvent> {
+        self.kind.into_agent_event()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -31,8 +35,11 @@ pub enum RuntimeEventKind {
     },
     ToolRequested(ToolInvocation),
     ApprovalRequired(ApprovalRequest),
+    ApprovalResolved(ApprovalDecision),
     ToolStarted(ToolInvocation),
     ToolCompleted(ToolResult),
+    HarnessTrace(Value),
+    PatchProposed(PatchProposal),
     ContextUpdated,
     TokensUpdated {
         input_tokens: u64,
@@ -48,10 +55,61 @@ pub enum RuntimeEventKind {
     SessionFinished {
         session_id: String,
     },
+    MicroCompactApplied {
+        messages_cleared: usize,
+    },
+    AutoCompactStarted,
+    AutoCompactCompleted {
+        tokens_saved: u64,
+    },
+    AutoCompactFailed {
+        reason: String,
+    },
     Error {
         message: String,
     },
-    LegacyAgentEvent(AgentEvent),
+}
+
+impl RuntimeEventKind {
+    pub fn into_agent_event(self) -> Option<AgentEvent> {
+        match self {
+            RuntimeEventKind::AssistantDelta { text } => Some(AgentEvent::ModelDelta { text }),
+            RuntimeEventKind::AssistantThinkingDelta { text } => {
+                Some(AgentEvent::ModelThinkingDelta { text })
+            }
+            RuntimeEventKind::ToolRequested(invocation) => {
+                Some(AgentEvent::ToolRequested(invocation))
+            }
+            RuntimeEventKind::ApprovalRequired(request) => {
+                Some(AgentEvent::ApprovalRequested(request))
+            }
+            RuntimeEventKind::ApprovalResolved(decision) => {
+                Some(AgentEvent::ApprovalResolved(decision))
+            }
+            RuntimeEventKind::ToolCompleted(result) => Some(AgentEvent::ToolCompleted(result)),
+            RuntimeEventKind::HarnessTrace(value) => Some(AgentEvent::HarnessTrace(value)),
+            RuntimeEventKind::PatchProposed(patch) => Some(AgentEvent::PatchProposed(patch)),
+            RuntimeEventKind::TokensUpdated {
+                input_tokens,
+                output_tokens,
+            } => Some(AgentEvent::UsageReported {
+                input_tokens,
+                output_tokens,
+            }),
+            RuntimeEventKind::MicroCompactApplied { messages_cleared } => {
+                Some(AgentEvent::MicroCompactApplied { messages_cleared })
+            }
+            RuntimeEventKind::AutoCompactStarted => Some(AgentEvent::AutoCompactStarted),
+            RuntimeEventKind::AutoCompactCompleted { tokens_saved } => {
+                Some(AgentEvent::AutoCompactCompleted { tokens_saved })
+            }
+            RuntimeEventKind::AutoCompactFailed { reason } => {
+                Some(AgentEvent::AutoCompactFailed { reason })
+            }
+            RuntimeEventKind::Error { message } => Some(AgentEvent::Error { message }),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

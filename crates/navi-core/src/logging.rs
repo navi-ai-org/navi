@@ -66,7 +66,7 @@ pub fn init_logging(
     if config.file_enabled && runtime.file_enabled {
         let dir = log_dir(data_dir);
         fs::create_dir_all(&dir).with_context(|| format!("failed to create {}", dir.display()))?;
-        set_private_dir_permissions(&dir)?;
+        crate::fs_util::set_private_dir_permissions(&dir)?;
         cleanup_old_logs(&dir, config.max_files)?;
 
         let path_for_writer = log_path(data_dir);
@@ -75,7 +75,7 @@ pub fn init_logging(
             .append(true)
             .open(&path_for_writer)
             .with_context(|| format!("failed to open {}", path_for_writer.display()))?;
-        set_private_file_permissions(&path_for_writer)?;
+        crate::fs_util::set_private_file_permissions(&path_for_writer)?;
         let (writer, writer_guard) = tracing_appender::non_blocking(file);
         layers.push(
             tracing_subscriber::fmt::layer()
@@ -142,30 +142,6 @@ fn cleanup_old_logs(dir: &Path, max_files: usize) -> Result<()> {
     for (_, path) in logs.into_iter().skip(max_files) {
         let _ = fs::remove_file(path);
     }
-    Ok(())
-}
-
-#[cfg(unix)]
-fn set_private_dir_permissions(path: &Path) -> Result<()> {
-    use std::os::unix::fs::PermissionsExt;
-    fs::set_permissions(path, fs::Permissions::from_mode(0o700))
-        .with_context(|| format!("failed to restrict {}", path.display()))
-}
-
-#[cfg(not(unix))]
-fn set_private_dir_permissions(_path: &Path) -> Result<()> {
-    Ok(())
-}
-
-#[cfg(unix)]
-fn set_private_file_permissions(path: &Path) -> Result<()> {
-    use std::os::unix::fs::PermissionsExt;
-    fs::set_permissions(path, fs::Permissions::from_mode(0o600))
-        .with_context(|| format!("failed to restrict {}", path.display()))
-}
-
-#[cfg(not(unix))]
-fn set_private_file_permissions(_path: &Path) -> Result<()> {
     Ok(())
 }
 

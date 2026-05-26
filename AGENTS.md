@@ -58,15 +58,15 @@ Default integration direction: NAVI Tutor embeds NAVI Engine directly. Advanced 
 
 NAVI should evolve toward a small, serializable, UI-agnostic runtime API equivalent to:
 
-- `NaviRuntime::start_session(...)`
-- `NaviRuntime::send_turn(...)`
-- `NaviRuntime::cancel_turn(...)`
-- `NaviRuntime::list_models(...)`
-- `NaviRuntime::set_model(...)`
-- `NaviRuntime::register_host_tool(...)`
-- `NaviRuntime::add_context_packet(...)`
-- `NaviRuntime::stream_events(...)`
-- `NaviRuntime::snapshot_session(...)`
+- `AgentRuntime::start_session(...)`
+- `AgentRuntime::send_turn(...)`
+- `AgentRuntime::cancel_turn(...)`
+- `AgentRuntime::list_models(...)`
+- `AgentRuntime::set_model(...)`
+- `AgentRuntime::register_host_tool(...)`
+- `AgentRuntime::add_context_packet(...)`
+- `AgentRuntime::stream_events(...)`
+- `AgentRuntime::snapshot_session(...)`
 
 Structured events should be serializable, versioned, and suitable for both TUI and Tutor. Expected event concepts include `session.started`, `turn.started`, `assistant.delta`, `assistant.thinking_delta`, `tool.requested`, `approval.required`, `tool.started`, `tool.completed`, `context.updated`, `tokens.updated`, `session.saved`, `turn.completed`, `session.finished`, and `error`.
 

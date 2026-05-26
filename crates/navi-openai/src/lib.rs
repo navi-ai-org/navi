@@ -8,6 +8,116 @@ use navi_core::{
 };
 use reqwest::{Client, Response};
 use serde_json::{Value, json};
+use std::time::Duration;
+
+pub struct DeviceOAuthStarted {
+    pub verification_uri: String,
+    pub user_code: String,
+}
+
+pub async fn github_copilot_device_oauth<F>(
+    credential_store: navi_core::CredentialStore,
+    provider_id: &str,
+    mut on_started: F,
+) -> std::result::Result<(), String>
+where
+    F: FnMut(DeviceOAuthStarted) + Send,
+{
+    const CLIENT_ID: &str = "Ov23li8tweQw6odWQebz";
+    let client = reqwest::Client::new();
+    let device_response = client
+        .post("https://github.com/login/device/code")
+        .header("Accept", "application/json")
+        .header("User-Agent", "navi/0.1.0")
+        .json(&serde_json::json!({
+            "client_id": CLIENT_ID,
+            "scope": "read:user",
+        }))
+        .send()
+        .await
+        .map_err(|err| err.to_string())?;
+
+    if !device_response.status().is_success() {
+        return Err(format!(
+            "device authorization failed: {}",
+            device_response.status()
+        ));
+    }
+
+    let device_data: serde_json::Value = device_response
+        .json()
+        .await
+        .map_err(|err| err.to_string())?;
+    let verification_uri = device_data
+        .get("verification_uri")
+        .and_then(|value| value.as_str())
+        .ok_or_else(|| "missing verification URL".to_string())?
+        .to_string();
+    let user_code = device_data
+        .get("user_code")
+        .and_then(|value| value.as_str())
+        .ok_or_else(|| "missing user code".to_string())?
+        .to_string();
+    let device_code = device_data
+        .get("device_code")
+        .and_then(|value| value.as_str())
+        .ok_or_else(|| "missing device code".to_string())?
+        .to_string();
+    let mut interval = device_data
+        .get("interval")
+        .and_then(|value| value.as_u64())
+        .unwrap_or(5)
+        .max(1);
+
+    on_started(DeviceOAuthStarted {
+        verification_uri,
+        user_code,
+    });
+
+    for _ in 0..120 {
+        tokio::time::sleep(Duration::from_secs(interval + 3)).await;
+        let token_response = client
+            .post("https://github.com/login/oauth/access_token")
+            .header("Accept", "application/json")
+            .header("User-Agent", "navi/0.1.0")
+            .json(&serde_json::json!({
+                "client_id": CLIENT_ID,
+                "device_code": device_code,
+                "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
+            }))
+            .send()
+            .await
+            .map_err(|err| err.to_string())?;
+
+        if !token_response.status().is_success() {
+            return Err(format!(
+                "token exchange failed: {}",
+                token_response.status()
+            ));
+        }
+
+        let token_data: serde_json::Value =
+            token_response.json().await.map_err(|err| err.to_string())?;
+        if let Some(access_token) = token_data
+            .get("access_token")
+            .and_then(|value| value.as_str())
+        {
+            credential_store
+                .set_api_key(provider_id, access_token)
+                .map_err(|err| err.to_string())?;
+            return Ok(());
+        }
+
+        match token_data.get("error").and_then(|value| value.as_str()) {
+            Some("authorization_pending") => {}
+            Some("slow_down") => interval += 5,
+            Some(error) => return Err(error.to_string()),
+            None => {}
+        }
+    }
+
+    Err("device authorization timed out".to_string())
+}
 
 #[derive(Debug, Clone, Copy)]
 pub enum OpenAiApiKind {
