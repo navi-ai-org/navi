@@ -1,0 +1,1146 @@
+use crate::TuiApp;
+use crate::chat::{
+    active_assistant_message, ensure_tail_model_response, finalize_active_assistant,
+    remove_active_tool_placeholder, submit_message, update_active_assistant_status,
+};
+use crate::commands::CommandAction;
+use crate::commands::filtered_commands;
+use crate::errors::handle_model_error;
+use crate::input::insert_input_char;
+use crate::keybindings::{
+    handle_command_key, handle_help_key, handle_key, handle_model_key, handle_normal_key,
+    handle_settings_key, open_model_picker, run_selected_command, sync_models_tui,
+};
+use crate::mouse::{finish_selection, selected_text};
+use crate::notifications::expire_notification;
+use crate::providers::{
+    ListRow, build_model_rows, first_model_index, model_is_available_for_selection,
+    sync_scroll_to_selection,
+};
+use crate::render::{command_scroll_offset, is_empty_tool_placeholder, tool_full_content};
+use crate::state::{ChatMessage, ChatRole, Mode, Notification, SelectionState};
+use crate::theme::NOTIFICATION_TTL;
+use crate::tools::record_tool_requested;
+use crate::ui::text_input::{
+    floor_char_boundary, next_char_boundary, next_hump_boundary, previous_char_boundary,
+    previous_hump_boundary,
+};
+use crate::view::build_chat_lines;
+use crossterm::event::{KeyCode, KeyModifiers};
+use navi_core::{
+    AgentEvent, AgentMode, LoadedConfig, ModelMessage, ModelOption, ToolInvocation, ToolResult,
+};
+use ratatui::layout::Rect;
+use ratatui::prelude::Line;
+use std::path::PathBuf;
+use std::time::{Duration, Instant};
+
+fn test_app(input: &str) -> TuiApp {
+    let mut app = TuiApp::new(
+        LoadedConfig {
+            config: navi_core::NaviConfig::default(),
+            global_config_path: None,
+            project_config_path: None,
+            data_dir: PathBuf::from("/tmp/navi-test"),
+        },
+        PathBuf::from("/tmp/test-project"),
+        None,
+    );
+    app.input = input.to_string();
+    app.input_cursor = app.input.len();
+    app.mode = Mode::Normal;
+    app
+}
+
+fn app_with_missing_provider_key() -> TuiApp {
+    let mut config = navi_core::NaviConfig::default();
+    config.model.provider = "test-provider".to_string();
+    config.model.name = "test-large".to_string();
+    config.providers = vec![navi_core::ProviderConfig {
+        id: "test-provider".to_string(),
+        label: "Test Provider".to_string(),
+        description: "test provider".to_string(),
+        kind: navi_core::ProviderKind::OpenAiChatCompletions,
+        api_key_env: "NAVI_TEST_MISSING_PROVIDER_KEY".to_string(),
+        base_url: Some("https://example.com/v1".to_string()),
+        models: vec![navi_core::ProviderModelConfig {
+            name: "test-large".to_string(),
+            task_size: navi_core::ModelTaskSize::Large,
+            context_window_tokens: None,
+            tool_prompt_manifest: None,
+        }],
+        ..Default::default()
+    }];
+
+    TuiApp::new(
+        LoadedConfig {
+            config,
+            global_config_path: None,
+            project_config_path: None,
+            data_dir: PathBuf::from("/tmp/navi-test-missing-key"),
+        },
+        PathBuf::from("/tmp/test-project"),
+        None,
+    )
+}
+
+fn line_text(line: &Line<'_>) -> String {
+    line.spans
+        .iter()
+        .map(|span| span.content.as_ref())
+        .collect::<String>()
+}
+
+fn seed_chat_cache(app: &mut TuiApp, lines: &[&str]) {
+    let mut cache = app.chat_render_cache.borrow_mut();
+    cache.lines = lines
+        .iter()
+        .map(|line| Line::from((*line).to_string()))
+        .collect();
+    cache.chat_rect = Some(Rect::new(0, 0, 80, lines.len() as u16));
+}
+
+#[test]
+fn finalize_active_assistant_tracks_response_as_pending_context() {
+    let mut app = test_app("");
+    app.compact_state.update_usage(2_000);
+    app.messages.push(ChatMessage {
+        status: Some("receiving".to_string()),
+        ..ChatMessage::new(ChatRole::Assistant, "final response".to_string())
+    });
+
+    finalize_active_assistant(&mut app, 100, "");
+
+    assert_eq!(
+        app.compact_state.estimated_unsent_bytes,
+        "final response".len()
+    );
+    assert_eq!(
+        app.compact_state.total_estimated_tokens(0),
+        2_000 + ("final response".len() as u64).div_ceil(4)
+    );
+}
+
+#[test]
+fn finalize_active_assistant_uses_turn_text_when_deltas_were_not_seen() {
+    let mut app = test_app("");
+    app.messages.push(ChatMessage {
+        status: Some("thinking".to_string()),
+        ..ChatMessage::new(ChatRole::Assistant, String::new())
+    });
+
+    finalize_active_assistant(&mut app, 100, "final answer");
+
+    assert_eq!(
+        app.messages.last().map(|message| message.content.as_str()),
+        Some("final answer")
+    );
+    assert!(app.events.iter().any(|event| matches!(
+        event,
+        AgentEvent::ModelOutput { text, .. } if text == "final answer"
+    )));
+}
+
+#[test]
+fn selected_text_extracts_multiline_text_from_chat_cache() {
+    let mut app = test_app("");
+    seed_chat_cache(&mut app, &["hello world", "second line"]);
+    app.selection = Some(SelectionState {
+        start: (0, 6),
+        end: (1, 6),
+        active: false,
+    });
+
+    assert_eq!(selected_text(&app).as_deref(), Some("world\nsecond"));
+}
+
+#[test]
+fn mouse_up_outside_chat_finishes_existing_selection() {
+    let mut app = test_app("");
+    seed_chat_cache(&mut app, &["hello world"]);
+    app.selection = Some(SelectionState {
+        start: (0, 0),
+        end: (0, 5),
+        active: true,
+    });
+
+    assert!(finish_selection(&mut app, None));
+    assert_eq!(selected_text(&app).as_deref(), Some("hello"));
+    assert!(!app.selection.as_ref().unwrap().active);
+}
+
+#[test]
+fn model_delta_after_tool_result_creates_visible_response() {
+    let mut app = test_app("");
+    let invocation = ToolInvocation {
+        id: "call-1".to_string(),
+        tool_name: "read_file".to_string(),
+        input: serde_json::json!({ "path": "README.md" }),
+    };
+    let result = ToolResult {
+        invocation_id: "call-1".to_string(),
+        ok: true,
+        output: serde_json::json!({ "content": "readme" }),
+    };
+    app.messages.push(ChatMessage {
+        status: Some("tool result".to_string()),
+        tool_invocation: Some(invocation),
+        tool_result: Some(result),
+        ..ChatMessage::new(ChatRole::Assistant, String::new())
+    });
+
+    let message = ensure_tail_model_response(&mut app);
+    message.content.push_str("final answer");
+
+    assert_eq!(app.messages.len(), 2);
+    assert_eq!(
+        app.messages.last().map(|message| message.content.as_str()),
+        Some("final answer")
+    );
+    let text = build_chat_lines(&app, 80)
+        .iter()
+        .map(line_text)
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(text.contains("read_file called · success"));
+    assert!(text.contains("final answer"));
+}
+
+#[test]
+fn update_status_after_tool_result_does_not_rewrite_tool_row() {
+    let mut app = test_app("");
+    app.is_loading = true;
+    let invocation = ToolInvocation {
+        id: "call-1".to_string(),
+        tool_name: "read_file".to_string(),
+        input: serde_json::json!({ "path": "README.md" }),
+    };
+    let result = ToolResult {
+        invocation_id: "call-1".to_string(),
+        ok: true,
+        output: serde_json::json!({ "content": "readme" }),
+    };
+    app.messages.push(ChatMessage {
+        status: Some("tool result".to_string()),
+        tool_invocation: Some(invocation),
+        tool_result: Some(result),
+        ..ChatMessage::new(ChatRole::Assistant, String::new())
+    });
+
+    update_active_assistant_status(&mut app);
+
+    assert_eq!(
+        app.messages
+            .first()
+            .and_then(|message| message.status.as_deref()),
+        Some("tool result")
+    );
+    assert_eq!(
+        app.messages
+            .last()
+            .and_then(|message| message.status.as_deref()),
+        Some("thinking")
+    );
+    assert!(is_empty_tool_placeholder(app.messages.last().unwrap()));
+}
+
+#[test]
+fn consecutive_tool_requests_share_one_assistant_history_message() {
+    let mut app = test_app("");
+    let active = ensure_tail_model_response(&mut app);
+    active.content = "I need project files.".to_string();
+    active.thinking_content = "hidden reasoning".to_string();
+
+    let first = ToolInvocation {
+        id: "call-1".to_string(),
+        tool_name: "list_files".to_string(),
+        input: serde_json::json!({}),
+    };
+    let second = ToolInvocation {
+        id: "call-2".to_string(),
+        tool_name: "read_file".to_string(),
+        input: serde_json::json!({ "path": "README.md" }),
+    };
+
+    record_tool_requested(&mut app, first);
+    record_tool_requested(&mut app, second);
+
+    assert_eq!(app.conversation_history.len(), 2);
+    let assistant = app
+        .conversation_history
+        .last()
+        .expect("assistant tool call");
+    assert_eq!(assistant.content, "I need project files.");
+    assert_eq!(
+        assistant.thinking_content.as_deref(),
+        Some("hidden reasoning")
+    );
+    assert_eq!(assistant.tool_calls.len(), 2);
+    assert_eq!(assistant.tool_calls[0].id, "call-1");
+    assert_eq!(assistant.tool_calls[1].id, "call-2");
+}
+
+#[test]
+fn camel_hump_next_boundary_splits_identifiers_and_words() {
+    let value = "fooBar_bazQUX99 alpha";
+
+    assert_eq!(next_hump_boundary(value, 0), 3);
+    assert_eq!(next_hump_boundary(value, 3), 6);
+    assert_eq!(next_hump_boundary(value, 7), 10);
+    assert_eq!(next_hump_boundary(value, 10), 13);
+    assert_eq!(next_hump_boundary(value, 13), 15);
+    assert_eq!(next_hump_boundary(value, 15), value.len());
+}
+
+#[test]
+fn camel_hump_previous_boundary_splits_identifiers_and_words() {
+    let value = "fooBar_bazQUX99 alpha";
+
+    assert_eq!(previous_hump_boundary(value, value.len()), 16);
+    assert_eq!(previous_hump_boundary(value, 16), 13);
+    assert_eq!(previous_hump_boundary(value, 13), 10);
+    assert_eq!(previous_hump_boundary(value, 10), 7);
+    assert_eq!(previous_hump_boundary(value, 7), 3);
+    assert_eq!(previous_hump_boundary(value, 3), 0);
+}
+
+#[test]
+fn char_boundary_helpers_handle_multibyte_input() {
+    let value = "abçDef";
+    let after_cedilla = "abç".len();
+
+    assert_eq!(next_hump_boundary(value, 0), after_cedilla);
+    assert_eq!(next_char_boundary(value, 2), Some(after_cedilla));
+    assert_eq!(previous_char_boundary(value, after_cedilla), Some(2));
+    assert_eq!(floor_char_boundary(value, after_cedilla - 1), 2);
+}
+
+#[test]
+fn control_backspace_aliases_delete_previous_camel_hump() {
+    for code in [
+        KeyCode::Backspace,
+        KeyCode::Char('h'),
+        KeyCode::Char('w'),
+        KeyCode::Char('\u{7f}'),
+    ] {
+        let mut app = test_app("cargo test -p navi_tui");
+        handle_normal_key(&mut app, code, KeyModifiers::CONTROL);
+        assert_eq!(app.input, "cargo test -p navi_");
+        assert_eq!(app.input_cursor, "cargo test -p navi_".len());
+
+        handle_normal_key(&mut app, code, KeyModifiers::CONTROL);
+        assert_eq!(app.input, "cargo test -p ");
+        assert_eq!(app.input_cursor, "cargo test -p ".len());
+    }
+}
+
+#[test]
+fn alt_backspace_deletes_until_previous_space_not_separator() {
+    for code in [
+        KeyCode::Backspace,
+        KeyCode::Char('h'),
+        KeyCode::Char('\u{7f}'),
+    ] {
+        let mut app = test_app("cargo test -p navi_tui");
+        handle_normal_key(&mut app, code, KeyModifiers::ALT);
+        assert_eq!(app.input, "cargo test -p ");
+        assert_eq!(app.input_cursor, "cargo test -p ".len());
+
+        handle_normal_key(&mut app, code, KeyModifiers::ALT);
+        assert_eq!(app.input, "cargo test ");
+        assert_eq!(app.input_cursor, "cargo test ".len());
+    }
+}
+
+#[test]
+fn alt_comma_and_period_move_by_camel_humps() {
+    let mut app = test_app("fooBar");
+
+    handle_normal_key(&mut app, KeyCode::Char(','), KeyModifiers::ALT);
+    assert_eq!(app.input_cursor, 3);
+
+    handle_normal_key(&mut app, KeyCode::Char('.'), KeyModifiers::ALT);
+    assert_eq!(app.input_cursor, 6);
+}
+
+#[test]
+fn control_arrows_stop_at_camel_humps_and_special_characters() {
+    let mut app = test_app("fooBar_baz");
+    app.input_cursor = 0;
+
+    handle_normal_key(&mut app, KeyCode::Right, KeyModifiers::CONTROL);
+    assert_eq!(app.input_cursor, 3);
+
+    handle_normal_key(&mut app, KeyCode::Right, KeyModifiers::CONTROL);
+    assert_eq!(app.input_cursor, 6);
+
+    handle_normal_key(&mut app, KeyCode::Right, KeyModifiers::CONTROL);
+    assert_eq!(app.input_cursor, 7);
+
+    handle_normal_key(&mut app, KeyCode::Right, KeyModifiers::CONTROL);
+    assert_eq!(app.input_cursor, 10);
+
+    handle_normal_key(&mut app, KeyCode::Left, KeyModifiers::CONTROL);
+    assert_eq!(app.input_cursor, 7);
+
+    handle_normal_key(&mut app, KeyCode::Left, KeyModifiers::CONTROL);
+    assert_eq!(app.input_cursor, 6);
+
+    handle_normal_key(&mut app, KeyCode::Left, KeyModifiers::CONTROL);
+    assert_eq!(app.input_cursor, 3);
+
+    handle_normal_key(&mut app, KeyCode::Left, KeyModifiers::CONTROL);
+    assert_eq!(app.input_cursor, 0);
+}
+
+#[test]
+fn submit_without_provider_adds_error_message() {
+    let mut app = test_app("hello");
+    app.provider_configured = false;
+    submit_message(&mut app);
+    assert_eq!(app.messages.len(), 2); // user + error
+    assert_eq!(app.messages[0].role, ChatRole::User);
+    assert_eq!(app.messages[1].role, ChatRole::Assistant);
+    assert!(app.messages[1].content.contains("No API key"));
+}
+
+#[test]
+fn missing_api_key_does_not_open_prompt_on_startup() {
+    let app = app_with_missing_provider_key();
+
+    assert_eq!(app.mode, Mode::Normal);
+    assert!(!app.provider_configured);
+    assert!(app.pending_model_selection.is_none());
+}
+
+#[test]
+fn selecting_model_without_provider_key_opens_key_prompt() {
+    let mut app = app_with_missing_provider_key();
+    app.mode = Mode::Models;
+
+    handle_model_key(&mut app, KeyCode::Enter, KeyModifiers::NONE);
+
+    assert_eq!(app.mode, Mode::ApiKeyEntry);
+    assert_eq!(app.pending_model_selection, Some(app.selected_model));
+}
+
+#[test]
+fn model_picker_filters_by_model_and_provider_text() {
+    let mut app = test_app("");
+    open_model_picker(&mut app);
+
+    app.model_filter = "gemini".to_string();
+    let rows = build_model_rows(&app);
+    assert!(rows.iter().any(|row| match row {
+        ListRow::Header { label, .. } => label.contains("Gemini"),
+        ListRow::Model { .. } => false,
+    }));
+    assert!(rows.iter().any(|row| match row {
+        ListRow::Model { index } => app.models[*index].name.contains("gemini"),
+        ListRow::Header { .. } => false,
+    }));
+}
+
+#[test]
+fn model_scroll_sync_does_not_underflow_near_top() {
+    let mut app = test_app("");
+    open_model_picker(&mut app);
+    let rows = build_model_rows(&app);
+    let (selected_row, selected_model) = rows
+        .iter()
+        .enumerate()
+        .find_map(|(row, item)| match item {
+            ListRow::Model { index } if row >= 13 => Some((row, *index)),
+            _ => None,
+        })
+        .expect("model near viewport edge");
+    app.selected_model = selected_model;
+    app.model_scroll = 0;
+
+    sync_scroll_to_selection(&mut app, &rows, 14);
+
+    assert!(app.model_scroll <= selected_row);
+}
+
+#[test]
+fn model_scroll_sync_clamps_large_scroll_values() {
+    let mut app = test_app("");
+    open_model_picker(&mut app);
+    let rows = build_model_rows(&app);
+    app.selected_model = first_model_index(&rows).expect("model");
+    app.model_scroll = usize::MAX;
+
+    sync_scroll_to_selection(&mut app, &rows, 14);
+
+    assert!(app.model_scroll <= rows.len().saturating_sub(14));
+}
+
+#[test]
+fn enter_and_shift_enter_insert_newlines() {
+    let mut app = test_app("one");
+
+    handle_normal_key(&mut app, KeyCode::Enter, KeyModifiers::NONE);
+    insert_input_char(&mut app, 't');
+    insert_input_char(&mut app, 'w');
+    insert_input_char(&mut app, 'o');
+    handle_normal_key(&mut app, KeyCode::Enter, KeyModifiers::SHIFT);
+    insert_input_char(&mut app, 't');
+    insert_input_char(&mut app, 'h');
+    insert_input_char(&mut app, 'r');
+    insert_input_char(&mut app, 'e');
+    insert_input_char(&mut app, 'e');
+
+    assert_eq!(app.input, "one\ntwo\nthree");
+    assert_eq!(app.input_cursor, app.input.len());
+}
+
+#[test]
+fn ctrl_enter_sends_non_empty_message() {
+    let mut app = test_app("one");
+    app.provider_configured = false;
+    handle_key(&mut app, KeyCode::Enter, KeyModifiers::CONTROL);
+    assert_eq!(app.messages[0].content, "one");
+    assert!(app.input.is_empty());
+
+    let mut app = test_app("two");
+    app.provider_configured = false;
+    handle_key(&mut app, KeyCode::Char('j'), KeyModifiers::CONTROL);
+    assert_eq!(app.messages[0].content, "two");
+    assert!(app.input.is_empty());
+
+    let mut app = test_app("three");
+    app.provider_configured = false;
+    handle_key(&mut app, KeyCode::Char('\n'), KeyModifiers::CONTROL);
+    assert_eq!(app.messages[0].content, "three");
+    assert!(app.input.is_empty());
+
+    let mut app = test_app("four");
+    app.provider_configured = false;
+    handle_key(&mut app, KeyCode::Char('\r'), KeyModifiers::CONTROL);
+    assert_eq!(app.messages[0].content, "four");
+    assert!(app.input.is_empty());
+}
+
+#[test]
+fn empty_ctrl_enter_does_not_open_models() {
+    let mut app = test_app("");
+
+    handle_key(&mut app, KeyCode::Enter, KeyModifiers::CONTROL);
+
+    assert_eq!(app.mode, Mode::Normal);
+    assert!(app.messages.is_empty());
+}
+
+#[test]
+fn ctrl_o_toggles_full_tool_view() {
+    let mut app = test_app("");
+    assert!(!app.full_tool_view);
+
+    handle_key(&mut app, KeyCode::Char('o'), KeyModifiers::CONTROL);
+    assert!(app.full_tool_view);
+    assert!(app.notification().is_some());
+
+    handle_key(&mut app, KeyCode::Char('O'), KeyModifiers::CONTROL);
+    assert!(!app.full_tool_view);
+}
+
+#[test]
+fn slash_opens_commands_and_question_mark_opens_help() {
+    let mut app = test_app("");
+    assert_eq!(app.mode, Mode::Normal);
+
+    // '?' with empty input opens shortcuts help
+    handle_key(&mut app, KeyCode::Char('?'), KeyModifiers::NONE);
+    assert_eq!(app.mode, Mode::Help);
+
+    handle_help_key(&mut app, KeyCode::Char('?'));
+    assert_eq!(app.mode, Mode::Normal);
+
+    // Esc goes back to normal
+    app.mode = Mode::Normal;
+
+    // '/' with empty input opens command palette
+    handle_key(&mut app, KeyCode::Char('/'), KeyModifiers::NONE);
+    assert_eq!(app.mode, Mode::Commands);
+
+    // Escape goes back to normal
+    app.mode = Mode::Normal;
+
+    // Pressing '?' when input is NOT empty inserts it as text
+    app.input = "hello".to_string();
+    app.input_cursor = 5;
+    handle_key(&mut app, KeyCode::Char('?'), KeyModifiers::NONE);
+    assert_eq!(app.mode, Mode::Normal);
+    assert_eq!(app.input, "hello?");
+}
+
+#[test]
+fn ctrl_p_opens_commands_and_tab_cycles_agent() {
+    let mut app = test_app("");
+
+    handle_key(&mut app, KeyCode::Char('p'), KeyModifiers::CONTROL);
+    assert_eq!(app.mode, Mode::Commands);
+    assert!(app.command_filter.is_empty());
+    assert_eq!(app.selected_command, 0);
+
+    app.mode = Mode::Normal;
+    app.input = "draft".to_string();
+    app.input_cursor = app.input.len();
+    assert_eq!(app.selected_agent, None);
+    handle_key(&mut app, KeyCode::Tab, KeyModifiers::NONE);
+    assert_eq!(app.mode, Mode::Normal);
+    assert_eq!(app.selected_agent, Some(AgentMode::Plan));
+    assert_eq!(app.input, "draft");
+}
+
+#[test]
+fn command_palette_cycles_agent_and_opens_providers() {
+    let mut app = test_app("");
+
+    app.mode = Mode::Commands;
+    app.command_filter = "agent".to_string();
+    app.selected_command = 0;
+    let agent_commands = filtered_commands(&app);
+    assert!(
+        agent_commands
+            .iter()
+            .any(|command| matches!(command.action, CommandAction::Agent))
+    );
+    assert!(!run_selected_command(&mut app));
+    assert_eq!(app.mode, Mode::Normal);
+    assert_eq!(app.selected_agent, Some(AgentMode::Plan));
+
+    app.mode = Mode::Commands;
+    app.command_filter = "providers".to_string();
+    app.selected_command = 0;
+    let provider_commands = filtered_commands(&app);
+    assert!(
+        provider_commands
+            .iter()
+            .any(|command| matches!(command.action, CommandAction::Providers))
+    );
+    assert!(!run_selected_command(&mut app));
+    assert_eq!(app.mode, Mode::Providers);
+    assert_eq!(app.selected_provider_setting, 0);
+    assert_eq!(app.provider_settings_scroll, 0);
+}
+
+#[test]
+fn command_palette_scroll_offset_keeps_selection_visible() {
+    assert_eq!(command_scroll_offset(0, 6), 0);
+    assert_eq!(command_scroll_offset(5, 6), 0);
+    assert_eq!(command_scroll_offset(6, 6), 1);
+    assert_eq!(command_scroll_offset(11, 6), 6);
+
+    let mut app = test_app("");
+    app.mode = Mode::Commands;
+    app.selected_command = 0;
+    for _ in 0..20 {
+        handle_command_key(&mut app, KeyCode::Down);
+    }
+    assert_eq!(app.selected_command, filtered_commands(&app).len() - 1);
+
+    handle_command_key(&mut app, KeyCode::PageUp);
+    assert_eq!(
+        app.selected_command,
+        filtered_commands(&app).len().saturating_sub(9)
+    );
+}
+
+#[test]
+fn submit_applies_selected_agent_unless_input_has_agent_command() {
+    let mut app = test_app("");
+    app.provider_configured = false;
+    app.selected_agent = Some(AgentMode::Review);
+    app.input = "check this change".to_string();
+    app.input_cursor = app.input.len();
+
+    submit_message(&mut app);
+
+    assert_eq!(app.messages[0].content, "/review check this change");
+    assert!(matches!(
+        app.conversation_history.last(),
+        Some(ModelMessage { content, .. }) if content == "/review check this change"
+    ));
+
+    app.input = "/plan inspect first".to_string();
+    app.input_cursor = app.input.len();
+    submit_message(&mut app);
+
+    assert!(
+        app.messages
+            .iter()
+            .any(|message| message.content == "/plan inspect first")
+    );
+}
+
+#[test]
+fn yolo_toggle_uses_notification_not_chat() {
+    let mut app = test_app("");
+    let message_count = app.messages.len();
+
+    handle_key(&mut app, KeyCode::Char('g'), KeyModifiers::CONTROL);
+
+    assert!(app.yolo_mode);
+    assert_eq!(app.messages.len(), message_count);
+    let notification = app.notification().expect("notification");
+    assert_eq!(notification.title, "Tools");
+    assert!(notification.message.contains("YOLO mode enabled"));
+}
+
+#[test]
+fn notification_expires_after_ttl() {
+    let mut app = test_app("");
+    app.set_notification(Notification {
+        title: "Tools".to_string(),
+        message: "YOLO mode enabled.".to_string(),
+        created_at: Instant::now() - NOTIFICATION_TTL - Duration::from_millis(1),
+        ttl: NOTIFICATION_TTL,
+    });
+
+    assert!(expire_notification(&mut app));
+
+    assert!(app.notification().is_none());
+}
+
+#[test]
+fn settings_toggles_thinking_visibility() {
+    let mut app = test_app("");
+    app.mode = Mode::Settings;
+    app.selected_setting = 0;
+    assert!(app.show_thinking);
+
+    handle_settings_key(&mut app, KeyCode::Enter);
+    assert!(!app.show_thinking);
+    assert!(app.notification().is_some());
+}
+
+#[test]
+fn settings_no_longer_opens_provider_accounts() {
+    let mut app = test_app("");
+    app.mode = Mode::Settings;
+    app.selected_setting = 1;
+
+    handle_settings_key(&mut app, KeyCode::Down);
+    assert_eq!(app.selected_setting, 1);
+
+    handle_settings_key(&mut app, KeyCode::Enter);
+    assert_eq!(app.mode, Mode::Settings);
+}
+
+#[test]
+fn esc_closes_modal_without_canceling_active_model() {
+    let mut app = test_app("");
+    app.mode = Mode::Settings;
+    app.is_loading = true;
+
+    assert!(!handle_key(&mut app, KeyCode::Esc, KeyModifiers::empty()));
+
+    assert_eq!(app.mode, Mode::Normal);
+    assert!(app.is_loading);
+}
+
+#[test]
+fn ctrl_d_opens_debug_modal() {
+    let mut app = test_app("");
+
+    assert!(!handle_key(
+        &mut app,
+        KeyCode::Char('d'),
+        KeyModifiers::CONTROL
+    ));
+
+    assert_eq!(app.mode, Mode::Debug);
+    assert!(app.log_path().ends_with("logs/navi.log"));
+}
+
+#[test]
+fn write_file_tool_full_content_uses_edit_summary() {
+    let invocation = ToolInvocation {
+        id: "call-1".to_string(),
+        tool_name: "write_file".to_string(),
+        input: serde_json::json!({
+            "path": "src/index.html",
+            "content": "<!doctype html>\n<html></html>\n"
+        }),
+    };
+    let result = ToolResult {
+        invocation_id: "call-1".to_string(),
+        ok: true,
+        output: serde_json::json!({
+            "path": "src/index.html",
+            "bytes": 16,
+        }),
+    };
+
+    let content = tool_full_content(&invocation, &result);
+
+    assert!(content.contains("write_file called · success"));
+    assert!(content.contains("Edited src/index.html (+2 -0)"));
+    assert!(!content.contains("Input"));
+    assert!(!content.contains("Output"));
+    assert!(!content.contains("```json"));
+    assert!(!content.contains("<!doctype html>"));
+}
+
+#[test]
+fn completed_tool_removes_empty_tool_placeholder() {
+    let mut app = test_app("");
+    app.messages.push(ChatMessage {
+        model_label: Some("model".to_string()),
+        provider_label: Some("provider".to_string()),
+        status: Some("tool: read_file".to_string()),
+        ..ChatMessage::new(ChatRole::Assistant, String::new())
+    });
+
+    let invocation = ToolInvocation {
+        id: "call-1".to_string(),
+        tool_name: "read_file".to_string(),
+        input: serde_json::json!({ "path": "Cargo.toml" }),
+    };
+    let result = ToolResult {
+        invocation_id: "call-1".to_string(),
+        ok: true,
+        output: serde_json::json!({ "path": "Cargo.toml", "content": "" }),
+    };
+
+    app.tool_invocations
+        .insert(invocation.id.clone(), invocation.clone());
+    app.running_tools
+        .insert(invocation.id.clone(), invocation.clone());
+
+    // Process ToolCompleted event logic directly as in the main event loop
+    app.running_tools.remove(&result.invocation_id);
+    if let Some(invocation) = app.tool_invocations.get(&result.invocation_id).cloned() {
+        remove_active_tool_placeholder(&mut app);
+        app.messages.push(ChatMessage {
+            status: Some("tool result".to_string()),
+            tool_invocation: Some(invocation.clone()),
+            tool_result: Some(result.clone()),
+            ..ChatMessage::new(ChatRole::Assistant, String::new())
+        });
+    }
+
+    assert_eq!(
+        app.messages
+            .iter()
+            .filter(|message| message.status.as_deref() == Some("tool result"))
+            .count(),
+        1
+    );
+    assert!(!app.messages.iter().any(is_empty_tool_placeholder));
+}
+
+#[test]
+fn compact_tool_render_hides_full_input_and_output() {
+    let mut app = test_app("");
+    let invocation = ToolInvocation {
+        id: "call-1".to_string(),
+        tool_name: "list_files".to_string(),
+        input: serde_json::json!({ "path": "/tmp/project" }),
+    };
+    let result = ToolResult {
+        invocation_id: "call-1".to_string(),
+        ok: true,
+        output: serde_json::json!({
+            "files": ["/tmp/project/package.json", "/tmp/project/src/App.tsx"]
+        }),
+    };
+    app.messages.push(ChatMessage {
+        status: Some("tool result".to_string()),
+        tool_invocation: Some(invocation),
+        tool_result: Some(result),
+        ..ChatMessage::new(
+            ChatRole::Assistant,
+            "stale full tool content should not render in compact mode\n\nInput\nOutput"
+                .to_string(),
+        )
+    });
+
+    let text = build_chat_lines(&app, 80)
+        .iter()
+        .map(line_text)
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    assert!(text.contains("list_files called · success"));
+    assert!(!text.contains("Input"));
+    assert!(!text.contains("Output"));
+    assert!(!text.contains("stale full tool content"));
+}
+
+#[test]
+fn full_tool_render_generates_sanitized_metadata_view() {
+    let mut app = test_app("");
+    app.full_tool_view = true;
+    let invocation = ToolInvocation {
+        id: "call-1".to_string(),
+        tool_name: "grep".to_string(),
+        input: serde_json::json!({ "pattern": "NAVI" }),
+    };
+    let result = ToolResult {
+        invocation_id: "call-1".to_string(),
+        ok: false,
+        output: serde_json::json!({ "error": "denied" }),
+    };
+    app.messages.push(ChatMessage {
+        status: Some("tool result".to_string()),
+        tool_invocation: Some(invocation),
+        tool_result: Some(result),
+        ..ChatMessage::new(ChatRole::Assistant, String::new())
+    });
+
+    let text = build_chat_lines(&app, 80)
+        .iter()
+        .map(line_text)
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    assert!(text.contains("grep called · error"));
+    assert!(text.contains("denied"));
+    assert!(!text.contains("Input"));
+    assert!(!text.contains("Output"));
+    assert!(!text.contains("```json"));
+}
+
+#[test]
+fn apply_patch_tool_full_content_uses_edit_summary() {
+    let invocation = ToolInvocation {
+        id: "call-1".to_string(),
+        tool_name: "apply_patch".to_string(),
+        input: serde_json::json!({
+            "patch": "*** Begin Patch\n*** Update File: crates/navi-tui/src/lib.rs\n@@\n-    old\n+    new\n+    added\n*** End Patch\n"
+        }),
+    };
+    let result = ToolResult {
+        invocation_id: "call-1".to_string(),
+        ok: true,
+        output: serde_json::json!({ "status": 0 }),
+    };
+
+    let content = tool_full_content(&invocation, &result);
+
+    assert!(content.contains("apply_patch called · success"));
+    assert!(content.contains("Edited crates/navi-tui/src/lib.rs (+2 -1)"));
+    assert!(!content.contains("*** Begin Patch"));
+    assert!(!content.contains("Input"));
+    assert!(!content.contains("Output"));
+}
+
+#[tokio::test]
+async fn command_palette_sync_models_starts_sync() {
+    let mut app = test_app("");
+    app.command_filter = "sync".to_string();
+    app.selected_command = 0;
+
+    let commands = filtered_commands(&app);
+    assert!(
+        commands
+            .iter()
+            .any(|c| matches!(c.action, CommandAction::SyncModels))
+    );
+
+    sync_models_tui(&mut app);
+
+    assert!(app.is_loading);
+    assert!(app.loading_start.is_some());
+    assert_eq!(app.messages.len(), 1);
+    assert_eq!(app.messages[0].content, "Syncing models from providers...");
+    assert_eq!(app.messages[0].status, Some("syncing".to_string()));
+}
+
+#[tokio::test]
+async fn model_picker_tab_triggers_per_provider_sync() {
+    let mut app = test_app("");
+    app.mode = Mode::Models;
+
+    let provider_id = app.models[app.selected_model].provider_id.clone();
+
+    // Press Tab to trigger per-provider sync
+    handle_model_key(&mut app, KeyCode::Tab, KeyModifiers::NONE);
+
+    assert!(app.is_loading);
+    assert_eq!(app.mode, Mode::Normal);
+    assert_eq!(app.messages.len(), 1);
+    assert!(
+        app.messages[0].content.contains(&provider_id),
+        "Tab sync message should mention the provider: got '{}'",
+        app.messages[0].content
+    );
+}
+
+#[tokio::test]
+async fn model_picker_ctrl_r_triggers_all_provider_sync() {
+    let mut app = test_app("");
+    app.mode = Mode::Models;
+
+    // Press Ctrl+r to trigger all-provider sync
+    handle_model_key(&mut app, KeyCode::Char('r'), KeyModifiers::CONTROL);
+
+    assert!(app.is_loading);
+    assert_eq!(app.mode, Mode::Normal);
+    assert_eq!(app.messages.len(), 1);
+    assert_eq!(app.messages[0].content, "Syncing models from providers...");
+}
+
+#[test]
+fn model_picker_ctrl_e_opens_provider_setup() {
+    let mut app = test_app("");
+    app.mode = Mode::Models;
+    let selected = app.selected_model;
+
+    handle_model_key(&mut app, KeyCode::Char('e'), KeyModifiers::CONTROL);
+
+    assert_eq!(app.mode, Mode::ApiKeyEntry);
+    assert_eq!(app.pending_model_selection, Some(selected));
+    assert!(app.api_key_input.is_empty());
+    assert_eq!(app.api_key_cursor, 0);
+}
+
+#[test]
+fn model_error_is_rendered_as_separate_message() {
+    let mut app = test_app("");
+    app.messages.push(ChatMessage {
+        status: Some("tool result".to_string()),
+        ..ChatMessage::new(
+            ChatRole::Assistant,
+            "✓ write_file called · success".to_string(),
+        )
+    });
+    app.messages.push(ChatMessage {
+        status: Some("thinking".to_string()),
+        ..ChatMessage::new(ChatRole::Assistant, String::new())
+    });
+    app.is_loading = true;
+    app.skip_next_model_done = true;
+
+    handle_model_error(
+        &mut app,
+        "provider request failed with 400 Bad Request".to_string(),
+    );
+
+    assert_eq!(app.messages[0].status.as_deref(), Some("tool result"));
+    assert_eq!(app.messages[2].status.as_deref(), Some("error"));
+    assert!(app.messages[2].content.contains("400"));
+    assert!(!app.is_loading);
+    assert!(!app.skip_next_model_done);
+}
+
+#[tokio::test]
+async fn transient_model_error_retries_without_final_error() {
+    let mut app = test_app("");
+    app.provider_configured = false;
+    app.messages.push(ChatMessage {
+        status: Some("thinking".to_string()),
+        ..ChatMessage::new(ChatRole::Assistant, String::new())
+    });
+    app.is_loading = true;
+
+    handle_model_error(
+        &mut app,
+        "failed to read chat completions stream: unexpected EOF during chunk size line".to_string(),
+    );
+
+    assert_eq!(app.model_retry_attempts, 1);
+    assert!(app.is_loading);
+    assert!(app.has_stream_task());
+    assert!(
+        app.messages
+            .iter()
+            .any(|message| message.status.as_deref() == Some("retrying"))
+    );
+    assert!(
+        app.messages
+            .iter()
+            .all(|message| message.status.as_deref() != Some("thinking"))
+    );
+}
+
+#[test]
+fn free_usage_limit_error_does_not_schedule_retry() {
+    let mut app = test_app("");
+    app.messages.push(ChatMessage {
+        status: Some("thinking".to_string()),
+        ..ChatMessage::new(ChatRole::Assistant, String::new())
+    });
+    app.is_loading = true;
+
+    handle_model_error(
+            &mut app,
+            "API error 429 Too Many Requests: {\"type\":\"error\",\"error\":{\"type\":\"FreeUsageLimitError\",\"message\":\"Rate limit exceeded.\"}} (requested delay: Some(64649s))".to_string(),
+        );
+
+    assert_eq!(app.model_retry_attempts, 0);
+    assert!(!app.is_loading);
+    assert!(!app.has_stream_task());
+    assert!(
+        app.messages
+            .last()
+            .unwrap()
+            .content
+            .contains("Usage limit reached for")
+    );
+    assert!(
+        app.messages
+            .last()
+            .unwrap()
+            .content
+            .contains("select a non-free model")
+    );
+}
+
+#[test]
+fn opencode_zen_model_names_are_canonicalized_for_api_requests() {
+    assert_eq!(
+        navi_core::provider_request_model_name("opencode", "DeepSeek V4 Flash Free"),
+        "deepseek-v4-flash-free"
+    );
+    assert_eq!(
+        navi_core::provider_request_model_name("opencode-zen", "opencode/Nemotron 3 Super Free"),
+        "nemotron-3-super-free"
+    );
+    assert_eq!(
+        navi_core::provider_request_model_name("openrouter", "DeepSeek V4 Flash Free"),
+        "DeepSeek V4 Flash Free"
+    );
+}
+
+#[test]
+fn opencode_free_models_can_use_public_access_without_key() {
+    let app = test_app("");
+    let model = ModelOption {
+        name: "deepseek-v4-flash-free".to_string(),
+        provider_id: "opencode".to_string(),
+        provider_label: "OpenCode Zen".to_string(),
+        provider_description: "Recommended".to_string(),
+        task_size: navi_core::ModelTaskSize::Small,
+        context_window_tokens: None,
+    };
+
+    assert!(model_is_available_for_selection(&app, &model));
+    assert_eq!(
+        navi_core::provider_request_model_name("opencode", "deepseek-v4-flash-free"),
+        "deepseek-v4-flash-free"
+    );
+}
+
+#[test]
+fn escape_cancels_active_tool_task_state() {
+    let mut app = test_app("");
+    app.is_loading = true;
+    app.skip_next_model_done = true;
+    app.messages.push(ChatMessage {
+        status: Some("tool: bash".to_string()),
+        ..ChatMessage::new(ChatRole::Assistant, String::new())
+    });
+
+    let should_quit = handle_key(&mut app, KeyCode::Esc, KeyModifiers::NONE);
+
+    assert!(!should_quit);
+    assert!(!app.is_loading);
+    assert!(!app.skip_next_model_done);
+    assert_eq!(
+        active_assistant_message(&mut app).and_then(|message| message.status.clone()),
+        Some("cancelled".to_string())
+    );
+}

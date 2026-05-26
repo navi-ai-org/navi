@@ -169,7 +169,7 @@ impl SessionStore {
     pub fn save(&self, snapshot: &SessionSnapshot) -> Result<PathBuf> {
         fs::create_dir_all(&self.root)
             .with_context(|| format!("failed to create {}", self.root.display()))?;
-        set_private_dir_permissions(&self.root)?;
+        crate::fs_util::set_private_dir_permissions(&self.root)?;
 
         let path = self.root.join(format!("{}.json", snapshot.id.0));
         let snapshot = if self.redact_secrets {
@@ -187,7 +187,7 @@ impl SessionStore {
         };
         let data = serde_json::to_vec_pretty(&snapshot)?;
         fs::write(&path, data).with_context(|| format!("failed to write {}", path.display()))?;
-        set_private_file_permissions(&path)?;
+        crate::fs_util::set_private_file_permissions(&path)?;
 
         Ok(path)
     }
@@ -218,13 +218,13 @@ impl SessionStore {
         let memory_dir = self.data_dir.join("memory");
         fs::create_dir_all(&memory_dir)
             .with_context(|| format!("failed to create {}", memory_dir.display()))?;
-        set_private_dir_permissions(&memory_dir)?;
+        crate::fs_util::set_private_dir_permissions(&memory_dir)?;
 
         let hash = project_hash(project_dir);
         let path = memory_dir.join(format!("{hash}.json"));
         let data = serde_json::to_vec_pretty(memory)?;
         fs::write(&path, data).with_context(|| format!("failed to write {}", path.display()))?;
-        set_private_file_permissions(&path)?;
+        crate::fs_util::set_private_file_permissions(&path)?;
 
         Ok(path)
     }
@@ -310,30 +310,6 @@ impl SessionRuntime {
 
         Self { submission_tx: tx }
     }
-}
-
-#[cfg(unix)]
-fn set_private_dir_permissions(path: &PathBuf) -> Result<()> {
-    use std::os::unix::fs::PermissionsExt;
-    fs::set_permissions(path, fs::Permissions::from_mode(0o700))
-        .with_context(|| format!("failed to restrict {}", path.display()))
-}
-
-#[cfg(not(unix))]
-fn set_private_dir_permissions(_path: &PathBuf) -> Result<()> {
-    Ok(())
-}
-
-#[cfg(unix)]
-fn set_private_file_permissions(path: &PathBuf) -> Result<()> {
-    use std::os::unix::fs::PermissionsExt;
-    fs::set_permissions(path, fs::Permissions::from_mode(0o600))
-        .with_context(|| format!("failed to restrict {}", path.display()))
-}
-
-#[cfg(not(unix))]
-fn set_private_file_permissions(_path: &PathBuf) -> Result<()> {
-    Ok(())
 }
 
 #[cfg(test)]
@@ -481,8 +457,7 @@ mod tests {
             agent_mode: None,
             context_packets: Vec::new(),
             active_skills: Vec::new(),
-            cancel_requested: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
-            cancel_notify: std::sync::Arc::new(tokio::sync::Notify::new()),
+            cancel_token: crate::cancel::CancelToken::new(),
         });
 
         let policy = crate::harness::HarnessPolicy {

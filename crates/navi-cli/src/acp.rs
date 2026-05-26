@@ -11,8 +11,8 @@ use agent_client_protocol::{
 };
 use anyhow::Result;
 use navi_core::{
-    AgentEvent, ApprovalDecision, LoadedConfig, RuntimeEvent, RuntimeEventKind, SessionStore,
-    ToolInvocation, ToolResult,
+    ApprovalDecision, LoadedConfig, RuntimeEvent, RuntimeEventKind, SessionStore, ToolInvocation,
+    ToolResult,
 };
 use navi_sdk::{NaviEngine, NaviEngineBuilder, NaviSessionRequest, NaviTurnRequest};
 use std::collections::HashMap;
@@ -331,47 +331,6 @@ async fn request_permission(
     }
 }
 
-fn forward_event(
-    connection: &ConnectionTo<Client>,
-    session_id: &str,
-    event: &AgentEvent,
-) -> Result<bool> {
-    match event {
-        AgentEvent::ModelDelta { text } => {
-            send_text_update(connection, session_id, text.clone(), false)?;
-            Ok(true)
-        }
-        AgentEvent::ModelThinkingDelta { text } => {
-            send_text_update(connection, session_id, text.clone(), true)?;
-            Ok(false)
-        }
-        AgentEvent::ToolRequested(invocation) => {
-            connection
-                .send_notification(SessionNotification::new(
-                    session_id.to_string(),
-                    SessionUpdate::ToolCall(
-                        ToolCall::new(invocation.id.clone(), invocation.tool_name.clone())
-                            .kind(acp_tool_kind(&invocation.tool_name))
-                            .status(ToolCallStatus::InProgress)
-                            .raw_input(invocation.input.clone()),
-                    ),
-                ))
-                .map_err(acp_error_to_anyhow)?;
-            Ok(false)
-        }
-        AgentEvent::ToolCompleted(result) => {
-            connection
-                .send_notification(SessionNotification::new(
-                    session_id.to_string(),
-                    SessionUpdate::ToolCallUpdate(tool_result_update(result)),
-                ))
-                .map_err(acp_error_to_anyhow)?;
-            Ok(false)
-        }
-        _ => Ok(false),
-    }
-}
-
 fn forward_runtime_event(
     connection: &ConnectionTo<Client>,
     session_id: &str,
@@ -394,7 +353,6 @@ fn forward_runtime_event(
             send_tool_completed(connection, session_id, result)?;
             Ok(false)
         }
-        RuntimeEventKind::LegacyAgentEvent(event) => forward_event(connection, session_id, event),
         _ => Ok(false),
     }
 }

@@ -1,9 +1,11 @@
 pub mod agent;
+pub mod cancel;
 pub mod compact;
 pub mod config;
 pub mod context;
 pub mod credentials;
 pub mod event;
+mod fs_util;
 pub mod harness;
 pub mod logging;
 pub mod model;
@@ -51,9 +53,7 @@ pub use model::{
     ModelStreamEvent, ThinkingAdapter, ThinkingConfig,
 };
 pub use patch::PatchProposal;
-pub use runtime::{
-    AgentRuntime, AgentRuntimeOptions, ApprovalResolver, NaviRuntime, TurnCanceller,
-};
+pub use runtime::{AgentRuntime, AgentRuntimeOptions, ApprovalResolver, TurnCanceller};
 pub use security::{
     SecurityDecision, SecurityPolicy, SecurityRisk, redact_agent_event, redact_secrets,
     redact_snapshot_events,

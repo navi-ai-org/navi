@@ -19,3 +19,7 @@ navi-core.workspace = true
 navi-sdk.workspace = true
 navi-openai.workspace = true
 navi-tui.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+wiremock.workspace = true

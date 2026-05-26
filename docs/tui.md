@@ -1,11 +1,38 @@
 # TUI Guide
 
-The TUI lives in `crates/navi-tui/src/lib.rs`. It uses a synchronous ratatui/crossterm event loop and an async bridge over `tokio::spawn` tasks. The CLI already owns the Tokio runtime; do not create another runtime inside the TUI.
+The TUI lives in `crates/navi-tui/src/`. Crate root `lib.rs` is now mostly module declarations, crate-local re-exports, and remaining integration-style tests. Supporting logic lives in sibling modules:
+
+| Module | Role |
+|---|---|
+| `lib.rs` | Small crate entry/glue |
+| `app.rs` | `TuiApp` aggregate state and constructor |
+| `state.rs` | `ChatMessage`, `ChatRole`, `Mode`, `ModalKind`, selection, tool state |
+| `theme.rs` | Color palette, logo, spacing constants |
+| `commands.rs` | Command palette model and filtering |
+| `keybindings.rs` | Key routing and modal handlers |
+| `input.rs` | TuiApp input-field adapter helpers |
+| `mouse.rs` | Mouse scrolling, text selection, and clipboard copy |
+| `event_loop.rs` | Crossterm/ratatui terminal lifecycle and polling loop |
+| `dispatch.rs` | `AsyncEvent` handling and runtime-event-to-UI mutations |
+| `chat.rs` | Chat message/history mutations and assistant response lifecycle |
+| `tools.rs` | TUI-side tool rows, approval state, and cancel flow |
+| `providers.rs` | Model picker/provider account UI helpers |
+| `view.rs` | TuiApp-dependent Ratatui rendering |
+| `stream.rs` | SDK turn spawning and streaming request bridge |
+| `notifications.rs` | Notification and diagnostic state helpers |
+| `render.rs` | Markdown rendering, syntax highlighting, tool formatting, input formatting |
+| `runtime.rs` | SDK bridge (`NaviEngine` construction, `forward_runtime_event_to_tui`, OAuth) |
+| `session.rs` | Saved-session listing, timestamp formatting, title extraction |
+| `persistence.rs` | Current session save/load and preference persistence |
+| `errors.rs` | Retry logic, error classification, delay parsing, `human_duration` |
+| `ui/` | Internal Ratatui framework: `TextInput`, `ModalStack`, `SelectListState`, layout |
+
+The event loop is synchronous ratatui/crossterm with an async bridge over `tokio::spawn` tasks. The CLI already owns the Tokio runtime; do not create another runtime inside the TUI.
 
 ## Main Concepts
 
 - `TuiApp` stores UI state, credentials, session display state, tool approval UI state, an SDK engine handle, and async channels.
-- `AsyncEvent` carries SDK runtime events, tool completion events, and model-sync results back into the event loop.
+- `AsyncEvent` carries SDK runtime events, turn completion, retry triggers, OAuth completions, and model-sync results back into the event loop.
 - `Mode` selects modal behavior: normal chat, commands, models, API key entry, thinking, sessions, settings, provider accounts.
 - `ChatMessage` is display-oriented and may contain model labels, status, usage, thinking text, tool invocation/result metadata, or normal content.
 - `ui::*` is the internal TUI framework layer. It owns reusable interaction primitives such as `TextInput`, `KeyOutcome`, `ModalStack`, `SelectListState`, `UiEffect`, and layout sizing. Keep it private to `navi-tui`; do not move ratatui abstractions into `navi-sdk`.
@@ -119,4 +146,6 @@ cargo test -p navi-tui
 cargo check
 ```
 
-For key handling or rendering changes, add focused unit tests in `crates/navi-tui/src/lib.rs`.
+For key handling or rendering changes, add focused unit tests in the corresponding module
+(`render.rs`, `keybindings.rs`, `errors.rs`, etc.) or in `lib.rs` when testing cross-module
+`TuiApp` behavior directly.

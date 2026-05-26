@@ -1,11 +1,11 @@
 use anyhow::Result;
 use clap::Parser;
 use navi_core::{
-    AgentRuntime, AgentRuntimeOptions, LoadedConfig, LoggingRuntimeConfig, ModelProvider,
-    SessionSnapshot, SessionStore, init_logging, log_path, resolve_provider_api_key,
+    LoadedConfig, LoggingRuntimeConfig, ModelProvider, init_logging, log_path,
+    resolve_provider_api_key,
 };
 use navi_openai::OpenAiProvider;
-use navi_sdk::{build_local_tooling, build_model_provider};
+use navi_sdk::{NaviEngineBuilder, NaviSessionRequest, NaviTurnRequest};
 use navi_tui::TuiApp;
 use std::path::PathBuf;
 
@@ -206,46 +206,36 @@ async fn run_headless(
         anyhow::bail!("headless mode requires a task");
     };
 
-    let provider = build_model_provider(&loaded_config)?;
-    let tooling = build_local_tooling(&loaded_config, cwd.clone())?;
-    for warning in &tooling.warnings {
-        tracing::warn!(warning = %warning, "plugin load warning");
-        eprintln!("Plugin warning: {warning}");
-    }
+    let engine = NaviEngineBuilder::from_project(cwd.clone())
+        .loaded_config(loaded_config.clone())
+        .build()?;
 
-    let mut runtime = AgentRuntime::new(AgentRuntimeOptions {
-        loaded_config: loaded_config.clone(),
-        model_provider: provider,
-        project_dir: cwd.clone(),
-        tool_executor: Some(tooling.tool_executor.clone()),
-        agent_mode: None,
-        context_packets: Vec::new(),
-        active_skills: Vec::new(),
-        initial_messages: Vec::new(),
-        session_id: None,
-        event_tx: None,
-    });
     tracing::info!(
         provider = %loaded_config.config.model.provider,
         model = %loaded_config.config.model.name,
         "submitting headless task"
     );
-    let response = runtime.submit_task(task).await?;
-    println!("{}", response.text);
 
-    let store = SessionStore::with_redaction(
-        loaded_config.data_dir,
-        loaded_config.config.security.redact_secrets_in_sessions,
-    );
-    store.save(&SessionSnapshot {
-        id: SessionStore::create_id(),
-        title: None,
-        project: cwd,
-        created_at: navi_core::session::current_unix_timestamp(),
-        updated_at: navi_core::session::current_unix_timestamp(),
-        events: runtime.events().to_vec(),
-        memory: None,
-    })?;
+    let session = engine
+        .start_session(NaviSessionRequest {
+            project_dir: Some(cwd),
+            session_id: None,
+            agent_mode: None,
+            context_packets: Vec::new(),
+            active_skills: Vec::new(),
+            initial_messages: Vec::new(),
+        })
+        .await?;
+
+    let response = engine
+        .send_turn(NaviTurnRequest {
+            session_id: session.id.clone(),
+            message: task,
+            context_packets: Vec::new(),
+        })
+        .await?;
+    println!("{}", response.text);
+    engine.snapshot_session(&session.id).await?;
 
     Ok(())
 }

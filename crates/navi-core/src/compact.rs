@@ -264,31 +264,15 @@ fn build_conversation_text(messages: &[ModelMessage]) -> String {
 
 pub const COMPACT_PROMPT: &str = r#"You are summarizing a conversation between a user and an AI coding assistant (NAVI). Create a detailed summary with these exact sections:
 
-## 1. Pedido e Intenção Primária
-Capture all explicit requests and intents from the user in detail.
-
-## 2. Conceitos Técnicos-Chave
-List all technical concepts, technologies, and frameworks discussed.
-
-## 3. Arquivos e Trechos de Código
-Enumerate specific files and code snippets that were examined, modified, or created. Include file paths and relevant code.
-
-## 4. Erros e Correções
-List all errors that appeared and how they were fixed.
-
-## 5. Resolução de Problemas
-Document problems solved and ongoing investigations.
-
-## 6. Todas as Mensagens do Usuário
-List ALL user messages that are not tool results. These are critical — include them verbatim, one per line, prefixed with "> ".
-
-## 7. Tarefas Pendentes
-List pending tasks that were explicitly requested.
-
-## 8. Trabalho Atual
-Describe in precise detail what was being worked on immediately before this summary request.
-
-## 9. Próximo Passo Opcional
+## 1. Primary Request and Intent
+## 2. Key Technical Concepts
+## 3. Files and Code Snippets
+## 4. Errors and Fixes
+## 5. Problem Resolution
+## 6. All User Messages
+## 7. Pending Tasks
+## 8. Current Work
+## 9. Next Step (Optional)
 List the next step you would take on the current task.
 
 Be thorough and specific. The summary must contain enough detail to continue the conversation seamlessly."#;

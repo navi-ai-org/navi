@@ -2030,8 +2030,10 @@ dependencies = [
  "navi-sdk",
  "navi-tui",
  "serde_json",
+ "tempfile",
  "tokio",
  "tracing",
+ "wiremock",
 ]
 
 [[package]]
@@ -2137,7 +2139,6 @@ dependencies = [
  "navi-openai",
  "navi-sdk",
  "ratatui",
- "reqwest",
  "serde_json",
  "syntect",
  "tokio",
