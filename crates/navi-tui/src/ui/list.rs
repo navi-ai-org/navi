@@ -60,6 +60,25 @@ impl SelectListState {
         }
     }
 
+    pub(crate) fn sync_scroll_with_context(
+        &mut self,
+        visible_rows: usize,
+        trailing_context: usize,
+    ) {
+        let visible_rows = visible_rows.max(1);
+        if self.selected < self.scroll {
+            self.scroll = self.selected;
+        } else if self.selected >= self.scroll + visible_rows {
+            self.scroll = self
+                .selected
+                .saturating_sub(visible_rows.saturating_sub(trailing_context).max(1));
+        }
+    }
+
+    pub(crate) fn clamp_scroll(&mut self, len: usize, visible_rows: usize) {
+        self.scroll = self.scroll.min(len.saturating_sub(visible_rows));
+    }
+
     pub(crate) fn scroll_offset_for_selected(selected: usize, visible_rows: usize) -> usize {
         let mut state = Self::new(selected, 0);
         state.sync_scroll(visible_rows);
