@@ -1974,16 +1974,6 @@ fn provider_supports_oauth(provider_id: &str) -> bool {
     canonical_provider_id(provider_id) == "github-copilot"
 }
 
-fn sync_provider_settings_scroll(app: &mut TuiApp, visible_rows: usize) {
-    if app.selected_provider_setting < app.provider_settings_scroll {
-        app.provider_settings_scroll = app.selected_provider_setting;
-    } else if app.selected_provider_setting >= app.provider_settings_scroll + visible_rows {
-        app.provider_settings_scroll = app
-            .selected_provider_setting
-            .saturating_sub(visible_rows.saturating_sub(1));
-    }
-}
-
 fn start_provider_oauth(app: &mut TuiApp, provider: &ProviderConfig) {
     if !provider_supports_oauth(&provider.id) {
         show_notification(
@@ -2581,13 +2571,14 @@ fn handle_thinking_key(app: &mut TuiApp, code: KeyCode) -> bool {
 
 fn handle_settings_key(app: &mut TuiApp, code: KeyCode) -> bool {
     const SETTINGS_COUNT: usize = 2;
+    let mut list_state = SelectListState::new(app.selected_setting, 0);
     match code {
         KeyCode::Esc => close_active_modal(app),
         KeyCode::Down => {
-            app.selected_setting = (app.selected_setting + 1).min(SETTINGS_COUNT - 1);
+            list_state.select_next(SETTINGS_COUNT);
         }
         KeyCode::Up => {
-            app.selected_setting = app.selected_setting.saturating_sub(1);
+            list_state.select_previous();
         }
         KeyCode::Char(' ') | KeyCode::Enter => match app.selected_setting {
             0 => {
@@ -2618,21 +2609,23 @@ fn handle_settings_key(app: &mut TuiApp, code: KeyCode) -> bool {
         },
         _ => {}
     }
+    app.selected_setting = list_state.selected();
     false
 }
 
 fn handle_providers_key(app: &mut TuiApp, code: KeyCode) -> bool {
     let providers = navi_core::provider_catalog(&app.loaded_config.config);
-    let max_index = providers.len().saturating_sub(1);
+    let mut list_state =
+        SelectListState::new(app.selected_provider_setting, app.provider_settings_scroll);
     match code {
         KeyCode::Esc => close_active_modal(app),
         KeyCode::Down => {
-            app.selected_provider_setting = (app.selected_provider_setting + 1).min(max_index);
-            sync_provider_settings_scroll(app, 12);
+            list_state.select_next(providers.len());
+            list_state.sync_scroll(12);
         }
         KeyCode::Up => {
-            app.selected_provider_setting = app.selected_provider_setting.saturating_sub(1);
-            sync_provider_settings_scroll(app, 12);
+            list_state.select_previous();
+            list_state.sync_scroll(12);
         }
         KeyCode::Enter | KeyCode::Char('k') => {
             if let Some(provider) = providers.get(app.selected_provider_setting) {
@@ -2656,6 +2649,8 @@ fn handle_providers_key(app: &mut TuiApp, code: KeyCode) -> bool {
         }
         _ => {}
     }
+    app.selected_provider_setting = list_state.selected();
+    app.provider_settings_scroll = list_state.scroll();
     false
 }
 
@@ -2667,14 +2662,16 @@ fn open_sessions_picker(app: &mut TuiApp) {
 }
 
 fn handle_sessions_key(app: &mut TuiApp, code: KeyCode) -> bool {
+    let mut list_state = SelectListState::new(app.selected_session, app.session_scroll);
     match code {
         KeyCode::Esc => close_active_modal(app),
         KeyCode::Down => {
-            app.selected_session =
-                (app.selected_session + 1).min(app.saved_sessions.len().saturating_sub(1));
+            list_state.select_next(app.saved_sessions.len());
+            list_state.sync_scroll(10);
         }
         KeyCode::Up => {
-            app.selected_session = app.selected_session.saturating_sub(1);
+            list_state.select_previous();
+            list_state.sync_scroll(10);
         }
         KeyCode::Enter => {
             if let Some(snapshot) = app.saved_sessions.get(app.selected_session).cloned() {
@@ -2692,12 +2689,13 @@ fn handle_sessions_key(app: &mut TuiApp, code: KeyCode) -> bool {
                 let _ = std::fs::remove_file(&path);
             }
             app.saved_sessions = load_saved_sessions(&app.session_store);
-            app.selected_session = app
-                .selected_session
-                .min(app.saved_sessions.len().saturating_sub(1));
+            list_state.clamp(app.saved_sessions.len());
+            list_state.sync_scroll(10);
         }
         _ => {}
     }
+    app.selected_session = list_state.selected();
+    app.session_scroll = list_state.scroll();
 
     false
 }
@@ -5038,11 +5036,17 @@ fn render_sessions_picker(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
             rows[0],
         );
     } else {
+        let height = rows[0].height as usize;
+        let start = app.session_scroll.min(app.saved_sessions.len());
+        let end = (start + height).min(app.saved_sessions.len());
         let items = app
             .saved_sessions
+            .get(start..end)
+            .unwrap_or(&[])
             .iter()
             .enumerate()
-            .map(|(index, snapshot)| {
+            .map(|(offset, snapshot)| {
+                let index = start + offset;
                 let selected = index == app.selected_session;
                 let style = if selected {
                     Style::default()
@@ -5502,19 +5506,10 @@ fn sync_scroll_to_selection(app: &mut TuiApp, rows: &[ListRow], visible_rows: u1
     };
 
     let visible_rows = usize::from(visible_rows).max(1);
-    if selected_row < app.model_scroll {
-        app.model_scroll = selected_row;
-    } else {
-        let bottom = app
-            .model_scroll
-            .saturating_add(visible_rows.saturating_sub(1));
-        if selected_row >= bottom {
-            app.model_scroll = selected_row.saturating_sub(visible_rows.saturating_sub(4));
-        }
-    }
-
-    let max_scroll = rows.len().saturating_sub(visible_rows);
-    app.model_scroll = app.model_scroll.min(max_scroll);
+    let mut state = SelectListState::new(selected_row, app.model_scroll);
+    state.sync_scroll_with_context(visible_rows, 4);
+    state.clamp_scroll(rows.len(), visible_rows);
+    app.model_scroll = state.scroll();
 }
 
 // ─── persistence ───────────────────────────────────────────────────────────────
