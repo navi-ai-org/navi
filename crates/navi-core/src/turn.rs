@@ -275,17 +275,11 @@ pub async fn run_turn(
             // message that requested the tool call.
             let tool_call_content = std::mem::take(&mut text);
             let tool_call_thinking = (!thinking.is_empty()).then(|| std::mem::take(&mut thinking));
-            for (index, invocation) in tool_calls.iter().enumerate() {
-                if index == 0 {
-                    messages.push(ModelMessage::assistant_tool_call_with_context(
-                        invocation.clone(),
-                        tool_call_content.clone(),
-                        tool_call_thinking.clone(),
-                    ));
-                } else {
-                    messages.push(ModelMessage::assistant_tool_call(invocation.clone()));
-                }
-            }
+            messages.push(ModelMessage::assistant_tool_calls_with_context(
+                tool_calls.clone(),
+                tool_call_content,
+                tool_call_thinking,
+            ));
 
             let mut executable_calls = Vec::new();
             let mut immediate_results = Vec::new();

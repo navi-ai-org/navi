@@ -141,12 +141,20 @@ impl ModelMessage {
         content: impl Into<String>,
         thinking: Option<String>,
     ) -> Self {
+        Self::assistant_tool_calls_with_context(vec![invocation], content, thinking)
+    }
+
+    pub fn assistant_tool_calls_with_context(
+        invocations: Vec<ToolInvocation>,
+        content: impl Into<String>,
+        thinking: Option<String>,
+    ) -> Self {
         Self {
             role: ModelRole::Assistant,
             content: content.into(),
             tool_call_id: None,
             tool_name: None,
-            tool_calls: vec![invocation],
+            tool_calls: invocations,
             created_at: Some(current_unix_millis()),
             thinking_content: thinking,
         }

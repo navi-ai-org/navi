@@ -1391,6 +1391,33 @@ mod tests {
     }
 
     #[test]
+    fn chat_messages_serialize_multiple_tool_calls_in_one_assistant_message() {
+        let assistant = message_to_json(&ModelMessage::assistant_tool_calls_with_context(
+            vec![
+                ToolInvocation {
+                    id: "call-1".to_string(),
+                    tool_name: "list_files".to_string(),
+                    input: json!({}),
+                },
+                ToolInvocation {
+                    id: "call-2".to_string(),
+                    tool_name: "read_file".to_string(),
+                    input: json!({ "path": "README.md" }),
+                },
+            ],
+            "I need context.",
+            Some("hidden reasoning".to_string()),
+        ));
+
+        assert_eq!(assistant["role"], "assistant");
+        assert_eq!(assistant["content"], "I need context.");
+        assert_eq!(assistant["reasoning_content"], "hidden reasoning");
+        assert_eq!(assistant["tool_calls"].as_array().unwrap().len(), 2);
+        assert_eq!(assistant["tool_calls"][0]["id"], "call-1");
+        assert_eq!(assistant["tool_calls"][1]["id"], "call-2");
+    }
+
+    #[test]
     fn responses_messages_serialize_function_call_output() {
         let item = responses_input_item_to_json(&ModelMessage::tool_result(
             "call-1",
