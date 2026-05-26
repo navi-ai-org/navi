@@ -41,8 +41,11 @@ use tokio::task::JoinHandle;
 
 mod ui;
 
+use ui::effect::UiEffect;
 use ui::keymap::KeyOutcome;
 use ui::layout::ModalSpec;
+use ui::list::SelectListState;
+use ui::modal::ModalStack;
 use ui::text_input::{TextInputRef, floor_char_boundary, next_char_boundary};
 
 // ─── palette ───────────────────────────────────────────────────────────────────
@@ -142,6 +145,7 @@ pub struct TuiApp {
     input: String,
     input_cursor: usize,
     mode: Mode,
+    modal_stack: ModalStack<ModalKind>,
     command_filter: String,
     selected_command: usize,
     models: Vec<ModelOption>,
@@ -242,6 +246,35 @@ enum Mode {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ModalKind {
+    Commands,
+    Models,
+    ApiKeyEntry,
+    Thinking,
+    Sessions,
+    Settings,
+    Providers,
+    Debug,
+    Help,
+}
+
+impl ModalKind {
+    fn mode(self) -> Mode {
+        match self {
+            Self::Commands => Mode::Commands,
+            Self::Models => Mode::Models,
+            Self::ApiKeyEntry => Mode::ApiKeyEntry,
+            Self::Thinking => Mode::Thinking,
+            Self::Sessions => Mode::Sessions,
+            Self::Settings => Mode::Settings,
+            Self::Providers => Mode::Providers,
+            Self::Debug => Mode::Debug,
+            Self::Help => Mode::Help,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ThinkingLevel {
     Max,
     High,
@@ -331,6 +364,7 @@ impl TuiApp {
             input: String::new(),
             input_cursor: 0,
             mode: Mode::Normal,
+            modal_stack: ModalStack::default(),
             command_filter: String::new(),
             selected_command: 0,
             models,
@@ -1883,11 +1917,11 @@ fn save_api_key_and_rebuild(app: &mut TuiApp) {
     }
     app.api_key_input.clear();
     app.api_key_cursor = 0;
-    app.mode = if return_to_providers {
-        Mode::Providers
+    if return_to_providers {
+        close_active_modal(app);
     } else {
-        Mode::Normal
-    };
+        close_all_modals(app);
+    }
 }
 
 fn current_provider_env_var(app: &TuiApp) -> String {
@@ -2325,11 +2359,11 @@ fn route_normal_cancel_key(app: &mut TuiApp, code: KeyCode) -> KeyOutcome {
 fn route_global_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyModifiers) -> KeyOutcome {
     if modifiers.contains(KeyModifiers::CONTROL) {
         match code {
-            KeyCode::Char('c') => return KeyOutcome::Quit,
+            KeyCode::Char('c') => return apply_ui_effect(app, UiEffect::Quit),
             KeyCode::Char('d') => {
-                app.mode = Mode::Debug;
+                let outcome = apply_ui_effect(app, UiEffect::ReplaceModal(ModalKind::Debug));
                 tracing::info!("debug modal opened");
-                return KeyOutcome::Handled;
+                return outcome;
             }
             KeyCode::Char('g') => {
                 app.yolo_mode = !app.yolo_mode;
@@ -2345,10 +2379,10 @@ fn route_global_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyModifiers) ->
                 return KeyOutcome::Handled;
             }
             KeyCode::Char('p') => {
-                app.mode = Mode::Commands;
+                let outcome = apply_ui_effect(app, UiEffect::ReplaceModal(ModalKind::Commands));
                 app.command_filter.clear();
                 app.selected_command = 0;
-                return KeyOutcome::Handled;
+                return outcome;
             }
             KeyCode::Char('m') => {
                 open_model_picker(app);
@@ -2379,8 +2413,9 @@ fn route_global_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyModifiers) ->
                 app.input.clear();
                 app.input_cursor = 0;
                 app.scroll_offset = 0;
+                let outcome = apply_ui_effect(app, UiEffect::CloseAllModals);
                 show_notification(app, "Layer", "New layer started.");
-                return KeyOutcome::Handled;
+                return outcome;
             }
             _ => {}
         }
@@ -2408,10 +2443,56 @@ fn route_mode_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyModifiers) -> K
     }
 }
 
+fn apply_ui_effect(app: &mut TuiApp, effect: UiEffect<ModalKind>) -> KeyOutcome {
+    match effect {
+        UiEffect::Quit => KeyOutcome::Quit,
+        UiEffect::OpenModal(modal) => {
+            open_modal(app, modal);
+            KeyOutcome::Handled
+        }
+        UiEffect::ReplaceModal(modal) => {
+            replace_modal(app, modal);
+            KeyOutcome::Handled
+        }
+        UiEffect::CloseModal => {
+            close_active_modal(app);
+            KeyOutcome::Handled
+        }
+        UiEffect::CloseAllModals => {
+            close_all_modals(app);
+            KeyOutcome::Handled
+        }
+    }
+}
+
+fn open_modal(app: &mut TuiApp, modal: ModalKind) {
+    app.modal_stack.open(modal);
+    app.mode = modal.mode();
+}
+
+fn replace_modal(app: &mut TuiApp, modal: ModalKind) {
+    app.modal_stack.replace(Some(modal));
+    app.mode = modal.mode();
+}
+
+fn close_active_modal(app: &mut TuiApp) {
+    app.modal_stack.close();
+    app.mode = app
+        .modal_stack
+        .top()
+        .map(ModalKind::mode)
+        .unwrap_or(Mode::Normal);
+}
+
+fn close_all_modals(app: &mut TuiApp) {
+    app.modal_stack.clear();
+    app.mode = Mode::Normal;
+}
+
 fn handle_debug_key(app: &mut TuiApp, code: KeyCode) -> bool {
     match code {
         KeyCode::Esc | KeyCode::Enter => {
-            app.mode = Mode::Normal;
+            apply_ui_effect(app, UiEffect::CloseModal);
             tracing::info!("debug modal closed");
         }
         _ => {}
@@ -2422,7 +2503,7 @@ fn handle_debug_key(app: &mut TuiApp, code: KeyCode) -> bool {
 fn handle_help_key(app: &mut TuiApp, code: KeyCode) -> bool {
     match code {
         KeyCode::Esc | KeyCode::Enter | KeyCode::Char('?') => {
-            app.mode = Mode::Normal;
+            apply_ui_effect(app, UiEffect::CloseModal);
         }
         _ => {}
     }
@@ -2430,7 +2511,7 @@ fn handle_help_key(app: &mut TuiApp, code: KeyCode) -> bool {
 }
 
 fn open_model_picker(app: &mut TuiApp) {
-    app.mode = Mode::Models;
+    replace_modal(app, ModalKind::Models);
     app.pending_model_selection = None;
     app.model_filter.clear();
     app.model_scroll = 0;
@@ -2455,13 +2536,13 @@ fn cycle_agent(app: &mut TuiApp) {
 }
 
 fn open_provider_settings(app: &mut TuiApp) {
-    app.mode = Mode::Providers;
+    replace_modal(app, ModalKind::Providers);
     app.selected_provider_setting = 0;
     app.provider_settings_scroll = 0;
 }
 
 fn open_thinking_picker(app: &mut TuiApp) {
-    app.mode = Mode::Thinking;
+    replace_modal(app, ModalKind::Thinking);
     app.selected_thinking = app.thinking_level as usize;
 }
 
@@ -2475,7 +2556,7 @@ const THINKING_OPTIONS: &[ThinkingLevel] = &[
 
 fn handle_thinking_key(app: &mut TuiApp, code: KeyCode) -> bool {
     match code {
-        KeyCode::Esc => app.mode = Mode::Normal,
+        KeyCode::Esc => close_active_modal(app),
         KeyCode::Down => {
             app.selected_thinking = (app.selected_thinking + 1).min(THINKING_OPTIONS.len() - 1);
         }
@@ -2485,7 +2566,7 @@ fn handle_thinking_key(app: &mut TuiApp, code: KeyCode) -> bool {
         KeyCode::Enter => {
             let level = THINKING_OPTIONS[app.selected_thinking];
             app.thinking_level = level;
-            app.mode = Mode::Normal;
+            close_all_modals(app);
             show_notification(
                 app,
                 "Thinking",
@@ -2501,7 +2582,7 @@ fn handle_thinking_key(app: &mut TuiApp, code: KeyCode) -> bool {
 fn handle_settings_key(app: &mut TuiApp, code: KeyCode) -> bool {
     const SETTINGS_COUNT: usize = 2;
     match code {
-        KeyCode::Esc => app.mode = Mode::Normal,
+        KeyCode::Esc => close_active_modal(app),
         KeyCode::Down => {
             app.selected_setting = (app.selected_setting + 1).min(SETTINGS_COUNT - 1);
         }
@@ -2544,7 +2625,7 @@ fn handle_providers_key(app: &mut TuiApp, code: KeyCode) -> bool {
     let providers = navi_core::provider_catalog(&app.loaded_config.config);
     let max_index = providers.len().saturating_sub(1);
     match code {
-        KeyCode::Esc => app.mode = Mode::Normal,
+        KeyCode::Esc => close_active_modal(app),
         KeyCode::Down => {
             app.selected_provider_setting = (app.selected_provider_setting + 1).min(max_index);
             sync_provider_settings_scroll(app, 12);
@@ -2559,7 +2640,7 @@ fn handle_providers_key(app: &mut TuiApp, code: KeyCode) -> bool {
                 app.pending_model_selection = None;
                 app.api_key_input.clear();
                 app.api_key_cursor = 0;
-                app.mode = Mode::ApiKeyEntry;
+                apply_ui_effect(app, UiEffect::OpenModal(ModalKind::ApiKeyEntry));
             }
         }
         KeyCode::Char('o') | KeyCode::Char('O') => {
@@ -2580,14 +2661,14 @@ fn handle_providers_key(app: &mut TuiApp, code: KeyCode) -> bool {
 
 fn open_sessions_picker(app: &mut TuiApp) {
     app.saved_sessions = load_saved_sessions(&app.session_store);
-    app.mode = Mode::Sessions;
+    replace_modal(app, ModalKind::Sessions);
     app.selected_session = 0;
     app.session_scroll = 0;
 }
 
 fn handle_sessions_key(app: &mut TuiApp, code: KeyCode) -> bool {
     match code {
-        KeyCode::Esc => app.mode = Mode::Normal,
+        KeyCode::Esc => close_active_modal(app),
         KeyCode::Down => {
             app.selected_session =
                 (app.selected_session + 1).min(app.saved_sessions.len().saturating_sub(1));
@@ -2600,7 +2681,7 @@ fn handle_sessions_key(app: &mut TuiApp, code: KeyCode) -> bool {
                 save_current_session(app);
                 load_session(app, &snapshot);
             }
-            app.mode = Mode::Normal;
+            close_all_modals(app);
         }
         KeyCode::Delete => {
             if let Some(snapshot) = app.saved_sessions.get(app.selected_session) {
@@ -2663,12 +2744,12 @@ fn handle_normal_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyModifiers) -
     match code {
         KeyCode::Tab => cycle_agent(app),
         KeyCode::Char('/') if app.input.is_empty() => {
-            app.mode = Mode::Commands;
+            replace_modal(app, ModalKind::Commands);
             app.command_filter.clear();
             app.selected_command = 0;
         }
         KeyCode::Char('?') if app.input.is_empty() => {
-            app.mode = Mode::Help;
+            replace_modal(app, ModalKind::Help);
         }
         KeyCode::Char('q') if app.input.is_empty() && app.messages.is_empty() => return true,
         KeyCode::Char(ch) => insert_input_char(app, ch),
@@ -2719,39 +2800,33 @@ fn handle_normal_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyModifiers) -
 }
 
 fn handle_command_key(app: &mut TuiApp, code: KeyCode) -> bool {
+    let mut list_state = SelectListState::new(app.selected_command, 0);
     match code {
-        KeyCode::Esc => app.mode = Mode::Normal,
+        KeyCode::Esc => close_active_modal(app),
         KeyCode::Char(ch) => {
             app.command_filter.push(ch);
-            app.selected_command = 0;
+            list_state.reset();
         }
         KeyCode::Backspace => {
             app.command_filter.pop();
-            app.selected_command = app
-                .selected_command
-                .min(filtered_commands(app).len().saturating_sub(1));
+            list_state.clamp(filtered_commands(app).len());
         }
         KeyCode::Down | KeyCode::Tab => {
-            let len = filtered_commands(app).len();
-            if len > 0 {
-                app.selected_command = (app.selected_command + 1).min(len - 1);
-            }
+            list_state.select_next(filtered_commands(app).len());
         }
         KeyCode::PageDown => {
-            let len = filtered_commands(app).len();
-            if len > 0 {
-                app.selected_command = (app.selected_command + 8).min(len - 1);
-            }
+            list_state.page_next(filtered_commands(app).len(), 8);
         }
         KeyCode::Up => {
-            app.selected_command = app.selected_command.saturating_sub(1);
+            list_state.select_previous();
         }
         KeyCode::PageUp => {
-            app.selected_command = app.selected_command.saturating_sub(8);
+            list_state.page_previous(8);
         }
         KeyCode::Enter => return run_selected_command(app),
         _ => {}
     }
+    app.selected_command = list_state.selected();
 
     false
 }
@@ -2761,15 +2836,15 @@ fn handle_model_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyModifiers) ->
     // List visible height is approximately modal height (22) minus decoration (~7 rows)
     let visible_rows = 14u16;
     match code {
-        KeyCode::Esc => app.mode = Mode::Normal,
+        KeyCode::Esc => close_active_modal(app),
         KeyCode::Char('r') if modifiers.contains(KeyModifiers::CONTROL) => {
             sync_models_tui(app);
-            app.mode = Mode::Normal;
+            close_all_modals(app);
         }
         KeyCode::Char('e') if modifiers.contains(KeyModifiers::CONTROL) => {
             if selected_model_in_rows(&rows, app.selected_model).is_some() {
                 app.pending_model_selection = Some(app.selected_model);
-                app.mode = Mode::ApiKeyEntry;
+                replace_modal(app, ModalKind::ApiKeyEntry);
                 app.api_key_input.clear();
                 app.api_key_cursor = 0;
             }
@@ -2783,7 +2858,7 @@ fn handle_model_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyModifiers) ->
             if let Some(pid) = provider_id {
                 sync_provider_tui(app, &pid);
             }
-            app.mode = Mode::Normal;
+            close_all_modals(app);
         }
         KeyCode::Char(ch) => {
             app.model_filter.push(ch);
@@ -2813,10 +2888,10 @@ fn handle_model_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyModifiers) ->
             if model_is_available_for_selection(app, model) {
                 apply_model_selection(app, app.selected_model);
                 app.pending_model_selection = None;
-                app.mode = Mode::Normal;
+                close_all_modals(app);
             } else {
                 app.pending_model_selection = Some(app.selected_model);
-                app.mode = Mode::ApiKeyEntry;
+                replace_modal(app, ModalKind::ApiKeyEntry);
                 app.api_key_input.clear();
                 app.api_key_cursor = 0;
             }
@@ -2851,12 +2926,12 @@ fn handle_api_key_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyModifiers) 
         KeyCode::Esc => {
             api_key_input_ref(app).clear();
             app.pending_model_selection = None;
-            let return_to_providers = app.pending_provider_setup.take().is_some();
-            app.mode = if return_to_providers {
-                Mode::Providers
+            let had_provider_parent = app.pending_provider_setup.take().is_some();
+            if had_provider_parent {
+                close_active_modal(app);
             } else {
-                Mode::Normal
-            };
+                close_all_modals(app);
+            }
         }
         KeyCode::Enter => {
             save_api_key_and_rebuild(app);
@@ -2888,7 +2963,7 @@ fn handle_api_key_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyModifiers) 
 fn run_selected_command(app: &mut TuiApp) -> bool {
     let commands = filtered_commands(app);
     let Some(command) = commands.get(app.selected_command).copied() else {
-        app.mode = Mode::Normal;
+        close_all_modals(app);
         return false;
     };
 
@@ -2899,11 +2974,11 @@ fn run_selected_command(app: &mut TuiApp) -> bool {
             app.input.clear();
             app.input_cursor = 0;
             app.scroll_offset = 0;
-            app.mode = Mode::Normal;
+            close_all_modals(app);
         }
         CommandAction::Agent => {
             cycle_agent(app);
-            app.mode = Mode::Normal;
+            close_all_modals(app);
         }
         CommandAction::SwitchModel => {
             open_model_picker(app);
@@ -2925,24 +3000,24 @@ fn run_selected_command(app: &mut TuiApp) -> bool {
                 );
                 app.compact_state.last_input_tokens = Some(app.compact_state.context_window);
             }
-            app.mode = Mode::Normal;
+            close_all_modals(app);
         }
         CommandAction::Sessions => {
             open_sessions_picker(app);
         }
         CommandAction::SyncModels => {
             sync_models_tui(app);
-            app.mode = Mode::Normal;
+            close_all_modals(app);
         }
         CommandAction::Providers => {
             open_provider_settings(app);
         }
         CommandAction::Quit => return true,
         CommandAction::Settings => {
-            app.mode = Mode::Settings;
+            replace_modal(app, ModalKind::Settings);
             app.selected_setting = 0;
         }
-        _ => app.mode = Mode::Normal,
+        _ => close_all_modals(app),
     }
 
     false
@@ -5131,7 +5206,7 @@ fn render_command_palette(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
 }
 
 fn command_scroll_offset(selected: usize, visible_rows: usize) -> usize {
-    selected.saturating_sub(visible_rows.saturating_sub(1))
+    SelectListState::scroll_offset_for_selected(selected, visible_rows)
 }
 
 // ─── model picker ──────────────────────────────────────────────────────────────
