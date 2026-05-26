@@ -553,213 +553,156 @@ fn run_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, mut app: TuiA
         while let Ok(event) = app.async_rx.try_recv() {
             needs_draw = true;
             match event {
-                AsyncEvent::Agent(agent_event) => {
-                    match agent_event {
-                        navi_core::AgentEvent::ModelDelta { text } => {
-                            let message = ensure_tail_model_response(&mut app);
-                            message.content.push_str(&text);
-                            message.status = Some("receiving".to_string());
-                            app.scroll_offset = 0;
+                AsyncEvent::Agent(agent_event) => match agent_event {
+                    navi_core::AgentEvent::ModelDelta { text } => {
+                        let message = ensure_tail_model_response(&mut app);
+                        message.content.push_str(&text);
+                        message.status = Some("receiving".to_string());
+                        app.scroll_offset = 0;
+                    }
+                    navi_core::AgentEvent::ModelThinkingDelta { text } => {
+                        let message = ensure_tail_model_response(&mut app);
+                        message.thinking_content.push_str(&text);
+                        message.status = Some("thinking".to_string());
+                        app.scroll_offset = 0;
+                    }
+                    navi_core::AgentEvent::ToolRequested(invocation) => {
+                        record_tool_requested(&mut app, invocation);
+                    }
+                    navi_core::AgentEvent::ToolCompleted(result) => {
+                        app.running_tools.remove(&result.invocation_id);
+                        if let Some(invocation) =
+                            app.tool_invocations.get(&result.invocation_id).cloned()
+                        {
+                            remove_active_tool_placeholder(&mut app);
+                            app.messages.push(ChatMessage {
+                                status: Some("tool result".to_string()),
+                                tool_invocation: Some(invocation.clone()),
+                                tool_result: Some(result.clone()),
+                                ..ChatMessage::new(ChatRole::Assistant, String::new())
+                            });
+                            let observation =
+                                compact_tool_observation(&invocation, &result, app.harness_policy);
+                            app.compact_state.add_unsent_bytes(observation.len());
+                            app.conversation_history.push(ModelMessage::tool_result(
+                                invocation.id.clone(),
+                                invocation.tool_name.clone(),
+                                observation,
+                            ));
                         }
-                        navi_core::AgentEvent::ModelThinkingDelta { text } => {
-                            let message = ensure_tail_model_response(&mut app);
-                            message.thinking_content.push_str(&text);
-                            message.status = Some("thinking".to_string());
-                            app.scroll_offset = 0;
-                        }
-                        navi_core::AgentEvent::ToolRequested(invocation) => {
-                            app.tool_invocations
-                                .insert(invocation.id.clone(), invocation.clone());
-                            app.running_tools
-                                .insert(invocation.id.clone(), invocation.clone());
-
-                            // Preserve assistant text/thinking on the tool-call message.
-                            // DeepSeek rejects follow-up requests when reasoning_content
-                            // is not echoed on the assistant tool-call item.
-                            let is_continuation_tool_call = app
-                                .conversation_history
-                                .last()
-                                .is_some_and(|message| !message.tool_calls.is_empty());
-                            let active_msg = tail_model_response(&mut app);
-                            let active_content = if is_continuation_tool_call {
-                                String::new()
-                            } else {
-                                active_msg
-                                    .as_ref()
-                                    .map(|active| active.content.clone())
-                                    .unwrap_or_default()
+                        app.events
+                            .push(navi_core::AgentEvent::ToolCompleted(result));
+                        update_active_assistant_status(&mut app);
+                    }
+                    navi_core::AgentEvent::ApprovalRequested(request) => {
+                        if app.yolo_mode {
+                            let engine = app.engine.clone();
+                            let session_id = app.session_id.0.clone();
+                            let decision = navi_core::ApprovalDecision::Approved {
+                                id: request.id.clone(),
                             };
-                            let active_thinking = if is_continuation_tool_call {
-                                None
-                            } else {
-                                active_msg.as_ref().and_then(|active| {
-                                    if active.thinking_content.is_empty() {
-                                        None
-                                    } else {
-                                        Some(active.thinking_content.clone())
-                                    }
-                                })
-                            };
-                            if !active_content.trim().is_empty() {
-                                app.compact_state.add_unsent_bytes(active_content.len());
-                            }
-                            let invocation_json =
-                                serde_json::to_string(&invocation).unwrap_or_default();
-                            app.compact_state.add_unsent_bytes(invocation_json.len());
-                            app.conversation_history.push(
-                                ModelMessage::assistant_tool_call_with_context(
-                                    invocation.clone(),
-                                    active_content,
-                                    active_thinking,
-                                ),
-                            );
+                            spawn_runtime_task(async move {
+                                let _ = engine.resolve_approval(&session_id, decision).await;
+                            });
+                        } else {
+                            app.pending_approvals.push(request.clone());
                             app.events
-                                .push(navi_core::AgentEvent::ToolRequested(invocation));
+                                .push(navi_core::AgentEvent::ApprovalRequested(request));
                             update_active_assistant_status(&mut app);
                         }
-                        navi_core::AgentEvent::ToolCompleted(result) => {
-                            app.running_tools.remove(&result.invocation_id);
-                            if let Some(invocation) =
-                                app.tool_invocations.get(&result.invocation_id).cloned()
-                            {
-                                remove_active_tool_placeholder(&mut app);
-                                app.messages.push(ChatMessage {
-                                    status: Some("tool result".to_string()),
-                                    tool_invocation: Some(invocation.clone()),
-                                    tool_result: Some(result.clone()),
-                                    ..ChatMessage::new(ChatRole::Assistant, String::new())
-                                });
-                                let observation = compact_tool_observation(
-                                    &invocation,
-                                    &result,
-                                    app.harness_policy,
-                                );
-                                app.compact_state.add_unsent_bytes(observation.len());
-                                app.conversation_history.push(ModelMessage::tool_result(
-                                    invocation.id.clone(),
-                                    invocation.tool_name.clone(),
-                                    observation,
+                    }
+                    navi_core::AgentEvent::ApprovalResolved(decision) => {
+                        let id = match &decision {
+                            navi_core::ApprovalDecision::Approved { id } => id,
+                            navi_core::ApprovalDecision::Denied { id } => id,
+                        };
+                        app.pending_approvals.retain(|r| &r.id != id);
+                        app.events
+                            .push(navi_core::AgentEvent::ApprovalResolved(decision));
+                        update_active_assistant_status(&mut app);
+                    }
+                    navi_core::AgentEvent::Error { message } => {
+                        handle_model_error(&mut app, message);
+                    }
+                    navi_core::AgentEvent::HarnessTrace(value) => {
+                        app.events.push(navi_core::AgentEvent::HarnessTrace(value));
+                    }
+                    navi_core::AgentEvent::PatchProposed(patch) => {
+                        app.events.push(navi_core::AgentEvent::PatchProposed(patch));
+                    }
+                    navi_core::AgentEvent::UsageReported {
+                        input_tokens,
+                        output_tokens,
+                    } => {
+                        app.compact_state.update_usage(input_tokens);
+                        if let Some(msg) = app.messages.last_mut() {
+                            if msg.role == ChatRole::Assistant && msg.usage_label.is_none() {
+                                msg.usage_label = Some(format!(
+                                    "{}k in · {}k out",
+                                    input_tokens / 1000,
+                                    output_tokens / 1000,
                                 ));
                             }
-                            app.events
-                                .push(navi_core::AgentEvent::ToolCompleted(result));
-                            update_active_assistant_status(&mut app);
                         }
-                        navi_core::AgentEvent::ApprovalRequested(request) => {
-                            if app.yolo_mode {
-                                let engine = app.engine.clone();
-                                let session_id = app.session_id.0.clone();
-                                let decision = navi_core::ApprovalDecision::Approved {
-                                    id: request.id.clone(),
-                                };
-                                spawn_runtime_task(async move {
-                                    let _ = engine.resolve_approval(&session_id, decision).await;
-                                });
-                            } else {
-                                app.pending_approvals.push(request.clone());
-                                app.events
-                                    .push(navi_core::AgentEvent::ApprovalRequested(request));
-                                update_active_assistant_status(&mut app);
-                            }
-                        }
-                        navi_core::AgentEvent::ApprovalResolved(decision) => {
-                            let id = match &decision {
-                                navi_core::ApprovalDecision::Approved { id } => id,
-                                navi_core::ApprovalDecision::Denied { id } => id,
-                            };
-                            app.pending_approvals.retain(|r| &r.id != id);
-                            app.events
-                                .push(navi_core::AgentEvent::ApprovalResolved(decision));
-                            update_active_assistant_status(&mut app);
-                        }
-                        navi_core::AgentEvent::Error { message } => {
-                            handle_model_error(&mut app, message);
-                        }
-                        navi_core::AgentEvent::HarnessTrace(value) => {
-                            app.events.push(navi_core::AgentEvent::HarnessTrace(value));
-                        }
-                        navi_core::AgentEvent::PatchProposed(patch) => {
-                            app.events.push(navi_core::AgentEvent::PatchProposed(patch));
-                        }
-                        navi_core::AgentEvent::UsageReported {
+                        app.events.push(navi_core::AgentEvent::UsageReported {
                             input_tokens,
                             output_tokens,
-                        } => {
-                            app.compact_state.update_usage(input_tokens);
-                            if let Some(msg) = app.messages.last_mut() {
-                                if msg.role == ChatRole::Assistant && msg.usage_label.is_none() {
-                                    msg.usage_label = Some(format!(
-                                        "{}k in · {}k out",
-                                        input_tokens / 1000,
-                                        output_tokens / 1000,
-                                    ));
-                                }
-                            }
-                            app.events.push(navi_core::AgentEvent::UsageReported {
-                                input_tokens,
-                                output_tokens,
-                            });
-                        }
-                        navi_core::AgentEvent::MicroCompactApplied { messages_cleared } => {
-                            show_notification(
-                                &mut app,
-                                "Micro-Compact",
-                                format!(
-                                    "{} old tool results cleared (60+ min gap)",
-                                    messages_cleared
-                                ),
-                            );
-                            app.events.push(navi_core::AgentEvent::MicroCompactApplied {
-                                messages_cleared,
-                            });
-                        }
-                        navi_core::AgentEvent::AutoCompactStarted => {
-                            push_diagnostic(
-                                &mut app,
-                                "Auto-compact: context threshold reached, summarizing..."
-                                    .to_string(),
-                            );
-                            app.events.push(navi_core::AgentEvent::AutoCompactStarted);
-                        }
-                        navi_core::AgentEvent::AutoCompactCompleted { tokens_saved } => {
-                            show_notification(
-                                &mut app,
-                                "Auto-Compact",
-                                format!(
-                                    "Context compacted ({}k tokens saved)",
-                                    tokens_saved / 1000
-                                ),
-                            );
-                            app.compact_state.consecutive_failures = 0;
-                            if let Some(summary) = &app.compact_state.summary {
-                                app.messages.push(ChatMessage {
-                                    status: Some("compacted".to_string()),
-                                    is_compact_summary: true,
-                                    content: format!(
-                                        "[Context compacted — {}k tokens saved]\n\n{}",
-                                        tokens_saved / 1000,
-                                        summary,
-                                    ),
-                                    ..ChatMessage::new(ChatRole::Assistant, String::new())
-                                });
-                            }
-                            app.events
-                                .push(navi_core::AgentEvent::AutoCompactCompleted { tokens_saved });
-                        }
-                        navi_core::AgentEvent::AutoCompactFailed { reason } => {
-                            push_diagnostic(&mut app, format!("Auto-compact failed: {reason}"));
-                            app.compact_state.consecutive_failures =
-                                app.compact_state.consecutive_failures.saturating_add(1);
-                            app.events
-                                .push(navi_core::AgentEvent::AutoCompactFailed { reason });
-                        }
-                        navi_core::AgentEvent::UserTaskSubmitted { text: _ } => {}
-                        navi_core::AgentEvent::ModelOutput {
-                            text: _,
-                            thinking: _,
-                        } => {}
+                        });
                     }
-                }
+                    navi_core::AgentEvent::MicroCompactApplied { messages_cleared } => {
+                        show_notification(
+                            &mut app,
+                            "Micro-Compact",
+                            format!(
+                                "{} old tool results cleared (60+ min gap)",
+                                messages_cleared
+                            ),
+                        );
+                        app.events
+                            .push(navi_core::AgentEvent::MicroCompactApplied { messages_cleared });
+                    }
+                    navi_core::AgentEvent::AutoCompactStarted => {
+                        push_diagnostic(
+                            &mut app,
+                            "Auto-compact: context threshold reached, summarizing...".to_string(),
+                        );
+                        app.events.push(navi_core::AgentEvent::AutoCompactStarted);
+                    }
+                    navi_core::AgentEvent::AutoCompactCompleted { tokens_saved } => {
+                        show_notification(
+                            &mut app,
+                            "Auto-Compact",
+                            format!("Context compacted ({}k tokens saved)", tokens_saved / 1000),
+                        );
+                        app.compact_state.consecutive_failures = 0;
+                        if let Some(summary) = &app.compact_state.summary {
+                            app.messages.push(ChatMessage {
+                                status: Some("compacted".to_string()),
+                                is_compact_summary: true,
+                                content: format!(
+                                    "[Context compacted — {}k tokens saved]\n\n{}",
+                                    tokens_saved / 1000,
+                                    summary,
+                                ),
+                                ..ChatMessage::new(ChatRole::Assistant, String::new())
+                            });
+                        }
+                        app.events
+                            .push(navi_core::AgentEvent::AutoCompactCompleted { tokens_saved });
+                    }
+                    navi_core::AgentEvent::AutoCompactFailed { reason } => {
+                        push_diagnostic(&mut app, format!("Auto-compact failed: {reason}"));
+                        app.compact_state.consecutive_failures =
+                            app.compact_state.consecutive_failures.saturating_add(1);
+                        app.events
+                            .push(navi_core::AgentEvent::AutoCompactFailed { reason });
+                    }
+                    navi_core::AgentEvent::UserTaskSubmitted { text: _ } => {}
+                    navi_core::AgentEvent::ModelOutput {
+                        text: _,
+                        thinking: _,
+                    } => {}
+                },
                 AsyncEvent::TurnCompleted(res) => {
                     let elapsed_ms = app
                         .loading_start
@@ -901,6 +844,54 @@ fn run_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, mut app: TuiA
     save_preferences(&mut app);
 
     Ok(())
+}
+
+fn record_tool_requested(app: &mut TuiApp, invocation: ToolInvocation) {
+    app.tool_invocations
+        .insert(invocation.id.clone(), invocation.clone());
+    app.running_tools
+        .insert(invocation.id.clone(), invocation.clone());
+
+    // Preserve assistant text/thinking on the assistant message that contains
+    // all tool calls from this model turn. Chat Completions providers reject
+    // histories with adjacent assistant tool-call messages before tool results.
+    let is_continuation_tool_call = app
+        .conversation_history
+        .last()
+        .is_some_and(|message| !message.tool_calls.is_empty());
+    if is_continuation_tool_call {
+        if let Some(message) = app.conversation_history.last_mut() {
+            message.tool_calls.push(invocation.clone());
+        }
+    } else {
+        let active_msg = tail_model_response(app);
+        let active_content = active_msg
+            .as_ref()
+            .map(|active| active.content.clone())
+            .unwrap_or_default();
+        let active_thinking = active_msg.as_ref().and_then(|active| {
+            if active.thinking_content.is_empty() {
+                None
+            } else {
+                Some(active.thinking_content.clone())
+            }
+        });
+        if !active_content.trim().is_empty() {
+            app.compact_state.add_unsent_bytes(active_content.len());
+        }
+        app.conversation_history
+            .push(ModelMessage::assistant_tool_call_with_context(
+                invocation.clone(),
+                active_content,
+                active_thinking,
+            ));
+    }
+
+    let invocation_json = serde_json::to_string(&invocation).unwrap_or_default();
+    app.compact_state.add_unsent_bytes(invocation_json.len());
+    app.events
+        .push(navi_core::AgentEvent::ToolRequested(invocation));
+    update_active_assistant_status(app);
 }
 
 fn submit_message(app: &mut TuiApp) {
@@ -5932,6 +5923,42 @@ mod tests {
             Some("thinking")
         );
         assert!(is_empty_tool_placeholder(app.messages.last().unwrap()));
+    }
+
+    #[test]
+    fn consecutive_tool_requests_share_one_assistant_history_message() {
+        let mut app = test_app("");
+        let active = ensure_tail_model_response(&mut app);
+        active.content = "I need project files.".to_string();
+        active.thinking_content = "hidden reasoning".to_string();
+
+        let first = ToolInvocation {
+            id: "call-1".to_string(),
+            tool_name: "list_files".to_string(),
+            input: serde_json::json!({}),
+        };
+        let second = ToolInvocation {
+            id: "call-2".to_string(),
+            tool_name: "read_file".to_string(),
+            input: serde_json::json!({ "path": "README.md" }),
+        };
+
+        record_tool_requested(&mut app, first);
+        record_tool_requested(&mut app, second);
+
+        assert_eq!(app.conversation_history.len(), 2);
+        let assistant = app
+            .conversation_history
+            .last()
+            .expect("assistant tool call");
+        assert_eq!(assistant.content, "I need project files.");
+        assert_eq!(
+            assistant.thinking_content.as_deref(),
+            Some("hidden reasoning")
+        );
+        assert_eq!(assistant.tool_calls.len(), 2);
+        assert_eq!(assistant.tool_calls[0].id, "call-1");
+        assert_eq!(assistant.tool_calls[1].id, "call-2");
     }
 
     #[test]
