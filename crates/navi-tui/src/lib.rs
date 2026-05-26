@@ -2166,11 +2166,11 @@ fn map_mouse_to_text(app: &TuiApp, col: u16, row: u16) -> Option<(usize, usize)>
     Some((line_index, char_index))
 }
 
-fn copy_selection_to_clipboard(app: &mut TuiApp) {
+fn selected_text(app: &TuiApp) -> Option<String> {
     let selection = if let Some(sel) = &app.selection {
         sel
     } else {
-        return;
+        return None;
     };
 
     let start = selection.start.min(selection.end);
@@ -2205,9 +2205,12 @@ fn copy_selection_to_clipboard(app: &mut TuiApp) {
             }
         }
     }
-    drop(cache);
 
-    if !selected_text.is_empty() {
+    (!selected_text.is_empty()).then_some(selected_text)
+}
+
+fn copy_selection_to_clipboard(app: &mut TuiApp) {
+    if let Some(selected_text) = selected_text(app) {
         // ALWAYS send OSC 52 as a robust fallback for terminals
         use base64::prelude::*;
         let b64 = BASE64_STANDARD.encode(&selected_text);
@@ -2227,6 +2230,20 @@ fn copy_selection_to_clipboard(app: &mut TuiApp) {
             show_notification(app, "Clipboard", "Texto copiado (OSC 52)".to_string());
         }
     }
+}
+
+fn finish_selection(app: &mut TuiApp, end: Option<(usize, usize)>) -> bool {
+    let Some(selection) = &mut app.selection else {
+        return false;
+    };
+    if !selection.active {
+        return false;
+    }
+    if let Some(end) = end {
+        selection.end = end;
+    }
+    selection.active = false;
+    selected_text(app).is_some()
 }
 
 fn handle_mouse(app: &mut TuiApp, mouse: MouseEvent) {
@@ -2267,17 +2284,8 @@ fn handle_mouse(app: &mut TuiApp, mouse: MouseEvent) {
             }
         }
         MouseEventKind::Up(MouseButton::Left) => {
-            let mut execute_copy = false;
-            if let Some(pos) = map_mouse_to_text(app, mouse.column, mouse.row) {
-                if let Some(selection) = &mut app.selection {
-                    if selection.active {
-                        selection.end = pos;
-                        selection.active = false;
-                        execute_copy = true;
-                    }
-                }
-            }
-            if execute_copy {
+            let pos = map_mouse_to_text(app, mouse.column, mouse.row);
+            if finish_selection(app, pos) {
                 copy_selection_to_clipboard(app);
             }
         }
@@ -5791,6 +5799,15 @@ mod tests {
             .collect::<String>()
     }
 
+    fn seed_chat_cache(app: &mut TuiApp, lines: &[&str]) {
+        let mut cache = app.chat_render_cache.borrow_mut();
+        cache.lines = lines
+            .iter()
+            .map(|line| Line::from((*line).to_string()))
+            .collect();
+        cache.chat_rect = Some(Rect::new(0, 0, 80, lines.len() as u16));
+    }
+
     #[test]
     fn finalize_active_assistant_tracks_response_as_pending_context() {
         let mut app = test_app("");
@@ -5848,6 +5865,34 @@ mod tests {
             first,
             Some(AsyncEvent::Agent(AgentEvent::ModelDelta { text })) if text == "final answer"
         ));
+    }
+
+    #[test]
+    fn selected_text_extracts_multiline_text_from_chat_cache() {
+        let mut app = test_app("");
+        seed_chat_cache(&mut app, &["hello world", "second line"]);
+        app.selection = Some(SelectionState {
+            start: (0, 6),
+            end: (1, 6),
+            active: false,
+        });
+
+        assert_eq!(selected_text(&app).as_deref(), Some("world\nsecond"));
+    }
+
+    #[test]
+    fn mouse_up_outside_chat_finishes_existing_selection() {
+        let mut app = test_app("");
+        seed_chat_cache(&mut app, &["hello world"]);
+        app.selection = Some(SelectionState {
+            start: (0, 0),
+            end: (0, 5),
+            active: true,
+        });
+
+        assert!(finish_selection(&mut app, None));
+        assert_eq!(selected_text(&app).as_deref(), Some("hello"));
+        assert!(!app.selection.as_ref().unwrap().active);
     }
 
     #[test]
