@@ -109,6 +109,7 @@ fn build_system_prompt_inner(
             "- Prefer read_file, list_files, and grep for inspection.\n",
             "- Prefer apply_patch for targeted edits; write_file is for whole-file replacement.\n",
             "- Use bash for tests, builds, and commands that cannot be expressed by other tools.\n",
+            "- For long-running commands, call bash with background=true, wait_ms, and timeout_ms; poll or cancel the returned task_id instead of waiting indefinitely.\n",
             "- File paths should be project-relative when possible.\n",
             "- Writes and commands may require approval.\n",
             "- Use native tool calling when available; do not write tool calls in markdown, XML, or prose.\n",

@@ -133,14 +133,22 @@ impl ModelMessage {
     }
 
     pub fn assistant_tool_call(invocation: ToolInvocation) -> Self {
+        Self::assistant_tool_call_with_context(invocation, String::new(), None)
+    }
+
+    pub fn assistant_tool_call_with_context(
+        invocation: ToolInvocation,
+        content: impl Into<String>,
+        thinking: Option<String>,
+    ) -> Self {
         Self {
             role: ModelRole::Assistant,
-            content: String::new(),
+            content: content.into(),
             tool_call_id: None,
             tool_name: None,
             tool_calls: vec![invocation],
             created_at: Some(current_unix_millis()),
-            thinking_content: None,
+            thinking_content: thinking,
         }
     }
 

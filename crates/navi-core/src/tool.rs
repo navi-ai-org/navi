@@ -9,7 +9,8 @@ use std::io::Write;
 use std::path::Path;
 use std::process::{Command, Stdio};
 use std::sync::Arc;
-use std::time::Duration;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{Duration, Instant};
 
 #[async_trait]
 pub trait Tool: Send + Sync {
@@ -256,7 +257,7 @@ impl ToolExecutor {
         self.register(ApplyPatchTool);
         self.register(ListFilesTool);
         self.register(GrepTool);
-        self.register(BashTool);
+        self.register(BashTool::new());
     }
 }
 
@@ -348,7 +349,17 @@ struct WriteFileTool;
 struct ApplyPatchTool;
 struct ListFilesTool;
 struct GrepTool;
-struct BashTool;
+struct BashTool {
+    background: Arc<BashBackgroundRegistry>,
+}
+
+impl BashTool {
+    fn new() -> Self {
+        Self {
+            background: Arc::new(BashBackgroundRegistry::default()),
+        }
+    }
+}
 
 #[async_trait]
 impl Tool for ReadFileTool {
@@ -576,32 +587,350 @@ impl Tool for GrepTool {
     }
 }
 
+const BASH_DEFAULT_TIMEOUT_MS: u64 = 30_000;
+const BASH_MAX_TIMEOUT_MS: u64 = 120_000;
+const BASH_DEFAULT_BACKGROUND_TIMEOUT_MS: u64 = 600_000;
+const BASH_MAX_BACKGROUND_TIMEOUT_MS: u64 = 1_800_000;
+const BASH_DEFAULT_WAIT_MS: u64 = 15_000;
+const BASH_MAX_WAIT_MS: u64 = 60_000;
+const BASH_OUTPUT_LIMIT_BYTES: usize = 64 * 1024;
+const BASH_MAX_BACKGROUND_TASKS: usize = 8;
+
+#[derive(Default)]
+struct BashBackgroundRegistry {
+    next_id: AtomicU64,
+    tasks: tokio::sync::Mutex<HashMap<String, Arc<BashBackgroundTask>>>,
+}
+
+impl BashBackgroundRegistry {
+    async fn spawn_task(
+        &self,
+        command: String,
+        description: Option<String>,
+        timeout_ms: u64,
+    ) -> Result<Arc<BashBackgroundTask>> {
+        let mut tasks = self.tasks.lock().await;
+        let running_tasks = tasks
+            .values()
+            .filter(|task| !task.snapshot_state().is_final())
+            .count();
+        if running_tasks >= BASH_MAX_BACKGROUND_TASKS {
+            anyhow::bail!("too many background bash tasks running");
+        }
+
+        let task_id = format!("bg_{}", self.next_id.fetch_add(1, Ordering::SeqCst) + 1);
+        let task = Arc::new(BashBackgroundTask::spawn(
+            task_id.clone(),
+            command,
+            description,
+            timeout_ms,
+        )?);
+        tasks.insert(task_id, task.clone());
+        Ok(task)
+    }
+
+    async fn get(&self, task_id: &str) -> Option<Arc<BashBackgroundTask>> {
+        self.tasks.lock().await.get(task_id).cloned()
+    }
+
+    async fn list(&self, invocation_id: String) -> ToolResult {
+        let tasks = self.tasks.lock().await;
+        let mut values = Vec::new();
+        for task in tasks.values() {
+            task.refresh_status().await;
+            values.push(task.snapshot_json().await);
+        }
+        values.sort_by(|a, b| {
+            a.get("task_id")
+                .and_then(Value::as_str)
+                .cmp(&b.get("task_id").and_then(Value::as_str))
+        });
+        ok(invocation_id, json!({ "tasks": values }))
+    }
+}
+
+struct BashBackgroundTask {
+    task_id: String,
+    command: String,
+    description: Option<String>,
+    started_at: Instant,
+    timeout_ms: u64,
+    child: tokio::sync::Mutex<Option<tokio::process::Child>>,
+    stdout: Arc<tokio::sync::Mutex<Vec<u8>>>,
+    stderr: Arc<tokio::sync::Mutex<Vec<u8>>>,
+    state: std::sync::Mutex<BashBackgroundState>,
+}
+
+impl BashBackgroundTask {
+    fn spawn(
+        task_id: String,
+        command: String,
+        description: Option<String>,
+        timeout_ms: u64,
+    ) -> Result<Self> {
+        let mut child = tokio::process::Command::new("bash")
+            .arg("-lc")
+            .arg(&command)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .kill_on_drop(true)
+            .spawn()
+            .context("failed to spawn bash")?;
+
+        let stdout = Arc::new(tokio::sync::Mutex::new(Vec::new()));
+        let stderr = Arc::new(tokio::sync::Mutex::new(Vec::new()));
+
+        if let Some(stdout_pipe) = child.stdout.take() {
+            spawn_output_reader(stdout_pipe, stdout.clone());
+        }
+        if let Some(stderr_pipe) = child.stderr.take() {
+            spawn_output_reader(stderr_pipe, stderr.clone());
+        }
+
+        Ok(Self {
+            task_id,
+            command,
+            description,
+            started_at: Instant::now(),
+            timeout_ms,
+            child: tokio::sync::Mutex::new(Some(child)),
+            stdout,
+            stderr,
+            state: std::sync::Mutex::new(BashBackgroundState::running()),
+        })
+    }
+
+    fn snapshot_state(&self) -> BashBackgroundState {
+        self.state.lock().unwrap().clone()
+    }
+
+    async fn observe(&self, wait_ms: u64, invocation_id: String) -> ToolResult {
+        let deadline = Instant::now() + Duration::from_millis(wait_ms);
+        loop {
+            self.refresh_status().await;
+            if self.snapshot_state().is_final() || Instant::now() >= deadline {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+        ok(invocation_id, self.observation_json().await)
+    }
+
+    async fn cancel(&self, invocation_id: String) -> ToolResult {
+        let mut child = self.child.lock().await;
+        if let Some(child) = child.as_mut() {
+            let _ = child.kill().await;
+            let _ = child.wait().await;
+        }
+        *child = None;
+        {
+            let mut state = self.state.lock().unwrap();
+            if !state.is_final() {
+                *state = BashBackgroundState::cancelled();
+            }
+        }
+        ok(invocation_id, self.observation_json().await)
+    }
+
+    async fn refresh_status(&self) {
+        if self.snapshot_state().is_final() {
+            return;
+        }
+
+        let timed_out = self.started_at.elapsed() >= Duration::from_millis(self.timeout_ms);
+        let mut child = self.child.lock().await;
+        let Some(child_ref) = child.as_mut() else {
+            return;
+        };
+
+        match child_ref.try_wait() {
+            Ok(Some(status)) => {
+                *child = None;
+                let mut state = self.state.lock().unwrap();
+                *state = BashBackgroundState::completed(status.success(), status.code());
+            }
+            Ok(None) if timed_out => {
+                let _ = child_ref.kill().await;
+                let _ = child_ref.wait().await;
+                *child = None;
+                let mut state = self.state.lock().unwrap();
+                *state = BashBackgroundState::timed_out();
+            }
+            Ok(None) => {}
+            Err(err) => {
+                *child = None;
+                let mut state = self.state.lock().unwrap();
+                *state = BashBackgroundState::failed(format!("failed to poll command: {err}"));
+            }
+        }
+    }
+
+    async fn observation_json(&self) -> Value {
+        let state = self.snapshot_state();
+        let mut value = self.snapshot_json().await;
+        if !state.is_final() {
+            value["message"] = json!(format!(
+                "Command is still running. Poll with bash({{\"task_id\":\"{}\"}}) or cancel with bash({{\"task_id\":\"{}\",\"action\":\"cancel\"}}).",
+                self.task_id, self.task_id
+            ));
+        }
+        value
+    }
+
+    async fn snapshot_json(&self) -> Value {
+        let state = self.snapshot_state();
+        let stdout = String::from_utf8_lossy(&self.stdout.lock().await).into_owned();
+        let stderr = String::from_utf8_lossy(&self.stderr.lock().await).into_owned();
+        let mut output = json!({
+            "task_id": self.task_id,
+            "command": self.command,
+            "description": self.description,
+            "background": true,
+            "status": state.label,
+            "elapsed_ms": self.started_at.elapsed().as_millis() as u64,
+            "timeout_ms": self.timeout_ms,
+            "stdout": truncate_string(stdout, BASH_OUTPUT_LIMIT_BYTES),
+            "stderr": truncate_string(stderr, BASH_OUTPUT_LIMIT_BYTES),
+        });
+        if let Some(code) = state.exit_code {
+            output["exit_code"] = json!(code);
+        }
+        if let Some(error) = state.error {
+            output["error"] = json!(error);
+        }
+        output
+    }
+}
+
+#[derive(Clone)]
+struct BashBackgroundState {
+    label: &'static str,
+    exit_code: Option<i32>,
+    error: Option<String>,
+}
+
+impl BashBackgroundState {
+    fn running() -> Self {
+        Self {
+            label: "running",
+            exit_code: None,
+            error: None,
+        }
+    }
+
+    fn completed(ok: bool, exit_code: Option<i32>) -> Self {
+        Self {
+            label: if ok { "completed" } else { "failed" },
+            exit_code,
+            error: None,
+        }
+    }
+
+    fn failed(error: String) -> Self {
+        Self {
+            label: "failed",
+            exit_code: None,
+            error: Some(error),
+        }
+    }
+
+    fn timed_out() -> Self {
+        Self {
+            label: "timed_out",
+            exit_code: None,
+            error: Some("command timed out: deadline has elapsed".to_string()),
+        }
+    }
+
+    fn cancelled() -> Self {
+        Self {
+            label: "cancelled",
+            exit_code: None,
+            error: Some("command cancelled".to_string()),
+        }
+    }
+
+    fn is_final(&self) -> bool {
+        self.label != "running"
+    }
+}
+
+fn spawn_output_reader<R>(mut reader: R, output: Arc<tokio::sync::Mutex<Vec<u8>>>)
+where
+    R: tokio::io::AsyncRead + Send + Unpin + 'static,
+{
+    tokio::spawn(async move {
+        use tokio::io::AsyncReadExt;
+        let mut buf = [0; 4096];
+        while let Ok(n) = reader.read(&mut buf).await {
+            if n == 0 {
+                break;
+            }
+            let mut data = output.lock().await;
+            if data.len() < BASH_OUTPUT_LIMIT_BYTES {
+                let remaining = BASH_OUTPUT_LIMIT_BYTES - data.len();
+                data.extend_from_slice(&buf[..n.min(remaining)]);
+            }
+        }
+    });
+}
+
 #[async_trait]
 impl Tool for BashTool {
     fn definition(&self) -> ToolDefinition {
         definition(
             "bash",
-            "Run a shell command in the current project.",
+            "Run a shell command in the current project. Use background=true and wait_ms for long-running commands, then poll or cancel with task_id.",
             ToolKind::Command,
-            json_schema(
-                &[
-                    ("command", "Shell command to run."),
-                    (
-                        "description",
-                        "Short reason for running this command, used for approval and trace context.",
-                    ),
-                    ("timeout_ms", "Timeout in milliseconds, capped internally."),
-                ],
-                &["command"],
-            ),
+            bash_json_schema(),
         )
     }
 
     async fn invoke(&self, invocation: ToolInvocation) -> Result<ToolResult> {
+        let action = optional_string(&invocation.input, "action");
+        if action.as_deref() == Some("list") {
+            return Ok(self.background.list(invocation.id).await);
+        }
+
+        if let Some(task_id) = optional_string(&invocation.input, "task_id") {
+            let Some(task) = self.background.get(&task_id).await else {
+                return Ok(ToolResult {
+                    invocation_id: invocation.id,
+                    ok: false,
+                    output: json!({ "error": format!("unknown background task `{task_id}`") }),
+                });
+            };
+            if action.as_deref() == Some("cancel") {
+                return Ok(task.cancel(invocation.id).await);
+            }
+            let wait_ms = optional_u64(&invocation.input, "wait_ms")
+                .unwrap_or(BASH_DEFAULT_WAIT_MS)
+                .min(BASH_MAX_WAIT_MS);
+            return Ok(task.observe(wait_ms, invocation.id).await);
+        }
+
         let command = required_string(&invocation.input, "command")?;
+        if optional_bool(&invocation.input, "background").unwrap_or(false) {
+            let timeout_ms = optional_u64(&invocation.input, "timeout_ms")
+                .unwrap_or(BASH_DEFAULT_BACKGROUND_TIMEOUT_MS)
+                .min(BASH_MAX_BACKGROUND_TIMEOUT_MS);
+            let wait_ms = optional_u64(&invocation.input, "wait_ms")
+                .unwrap_or(BASH_DEFAULT_WAIT_MS)
+                .min(BASH_MAX_WAIT_MS);
+            let task = self
+                .background
+                .spawn_task(
+                    command.to_string(),
+                    optional_string(&invocation.input, "description"),
+                    timeout_ms,
+                )
+                .await?;
+            return Ok(task.observe(wait_ms, invocation.id).await);
+        }
+
         let timeout_ms = optional_u64(&invocation.input, "timeout_ms")
-            .unwrap_or(30_000)
-            .min(120_000);
+            .unwrap_or(BASH_DEFAULT_TIMEOUT_MS)
+            .min(BASH_MAX_TIMEOUT_MS);
 
         let mut child = tokio::process::Command::new("bash")
             .arg("-lc")
@@ -740,6 +1069,49 @@ fn json_schema(properties: &[(&str, &str)], required: &[&str]) -> Value {
     })
 }
 
+fn bash_json_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "command": {
+                "type": "string",
+                "description": "Shell command to run. Required when starting a new command."
+            },
+            "description": {
+                "type": "string",
+                "description": "Short reason for running this command, used for approval and trace context."
+            },
+            "timeout_ms": {
+                "type": "integer",
+                "description": "Maximum command lifetime in milliseconds, capped internally."
+            },
+            "wait_ms": {
+                "type": "integer",
+                "description": "How long to wait for foreground observation before returning running status for background tasks."
+            },
+            "background": {
+                "type": "boolean",
+                "description": "When true, keep the command running after wait_ms and return a task_id for polling."
+            },
+            "task_id": {
+                "type": "string",
+                "description": "Background task id returned by an earlier bash call."
+            },
+            "action": {
+                "type": "string",
+                "enum": ["poll", "cancel", "list"],
+                "description": "Use poll/cancel with task_id, or list to show background tasks."
+            }
+        },
+        "anyOf": [
+            { "required": ["command"] },
+            { "required": ["task_id"] },
+            { "properties": { "action": { "const": "list" } }, "required": ["action"] }
+        ],
+        "additionalProperties": false,
+    })
+}
+
 fn required_string<'a>(input: &'a Value, key: &str) -> Result<&'a str> {
     input
         .get(key)
@@ -754,6 +1126,10 @@ fn optional_string(input: &Value, key: &str) -> Option<String> {
 
 fn optional_u64(input: &Value, key: &str) -> Option<u64> {
     input.get(key).and_then(Value::as_u64)
+}
+
+fn optional_bool(input: &Value, key: &str) -> Option<bool> {
+    input.get(key).and_then(Value::as_bool)
 }
 
 fn ok(invocation_id: String, output: Value) -> ToolResult {
@@ -956,6 +1332,128 @@ mod tests {
             result.output["error"],
             "command timed out: deadline has elapsed"
         );
+    }
+
+    #[tokio::test]
+    async fn bash_background_task_can_be_polled() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let executor = executor(tempdir.path());
+
+        let started = executor
+            .invoke(ToolInvocation {
+                id: "bash-bg-start".to_string(),
+                tool_name: "bash".to_string(),
+                input: json!({
+                    "command": "sleep 0.05 && printf done",
+                    "background": true,
+                    "wait_ms": 1,
+                    "timeout_ms": 1000
+                }),
+            })
+            .await;
+
+        assert!(started.ok);
+        assert_eq!(started.output["status"], "running");
+        let task_id = started.output["task_id"].as_str().unwrap().to_string();
+
+        let polled = executor
+            .invoke(ToolInvocation {
+                id: "bash-bg-poll".to_string(),
+                tool_name: "bash".to_string(),
+                input: json!({ "task_id": task_id, "wait_ms": 1000 }),
+            })
+            .await;
+
+        assert!(polled.ok);
+        assert_eq!(polled.output["status"], "completed");
+        assert_eq!(polled.output["stdout"], "done");
+    }
+
+    #[tokio::test]
+    async fn bash_background_supports_multiple_tasks_and_list() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let executor = executor(tempdir.path());
+
+        let first = executor
+            .invoke(ToolInvocation {
+                id: "bash-bg-one".to_string(),
+                tool_name: "bash".to_string(),
+                input: json!({
+                    "command": "sleep 0.05 && printf one",
+                    "background": true,
+                    "wait_ms": 1,
+                    "timeout_ms": 1000
+                }),
+            })
+            .await;
+        let second = executor
+            .invoke(ToolInvocation {
+                id: "bash-bg-two".to_string(),
+                tool_name: "bash".to_string(),
+                input: json!({
+                    "command": "sleep 0.05 && printf two",
+                    "background": true,
+                    "wait_ms": 1,
+                    "timeout_ms": 1000
+                }),
+            })
+            .await;
+
+        assert_eq!(first.output["status"], "running");
+        assert_eq!(second.output["status"], "running");
+        assert_ne!(first.output["task_id"], second.output["task_id"]);
+
+        let listed = executor
+            .invoke(ToolInvocation {
+                id: "bash-bg-list".to_string(),
+                tool_name: "bash".to_string(),
+                input: json!({ "action": "list" }),
+            })
+            .await;
+
+        let tasks = listed.output["tasks"].as_array().unwrap();
+        assert!(tasks.len() >= 2);
+        assert!(
+            tasks
+                .iter()
+                .any(|task| task["task_id"] == first.output["task_id"])
+        );
+        assert!(
+            tasks
+                .iter()
+                .any(|task| task["task_id"] == second.output["task_id"])
+        );
+    }
+
+    #[tokio::test]
+    async fn bash_background_task_can_be_cancelled() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let executor = executor(tempdir.path());
+
+        let started = executor
+            .invoke(ToolInvocation {
+                id: "bash-bg-cancel-start".to_string(),
+                tool_name: "bash".to_string(),
+                input: json!({
+                    "command": "sleep 5",
+                    "background": true,
+                    "wait_ms": 1,
+                    "timeout_ms": 1000
+                }),
+            })
+            .await;
+        let task_id = started.output["task_id"].as_str().unwrap().to_string();
+
+        let cancelled = executor
+            .invoke(ToolInvocation {
+                id: "bash-bg-cancel".to_string(),
+                tool_name: "bash".to_string(),
+                input: json!({ "task_id": task_id, "action": "cancel" }),
+            })
+            .await;
+
+        assert!(cancelled.ok);
+        assert_eq!(cancelled.output["status"], "cancelled");
     }
 
     #[test]

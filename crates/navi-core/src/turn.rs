@@ -270,19 +270,21 @@ pub async fn run_turn(
         }
 
         if !tool_calls.is_empty() {
-            // Append assistant response if any
-            if !text.trim().is_empty() {
-                let thinking_content = (!thinking.is_empty()).then(|| thinking.clone());
-                messages.push(ModelMessage::assistant_with_thinking(
-                    text.clone(),
-                    thinking_content,
-                ));
-                thinking.clear();
-            }
-
-            // Record tool calls in message history
-            for invocation in &tool_calls {
-                messages.push(ModelMessage::assistant_tool_call(invocation.clone()));
+            // Record tool calls in message history. Reasoning providers such as
+            // DeepSeek require reasoning_content to be echoed on the assistant
+            // message that requested the tool call.
+            let tool_call_content = std::mem::take(&mut text);
+            let tool_call_thinking = (!thinking.is_empty()).then(|| std::mem::take(&mut thinking));
+            for (index, invocation) in tool_calls.iter().enumerate() {
+                if index == 0 {
+                    messages.push(ModelMessage::assistant_tool_call_with_context(
+                        invocation.clone(),
+                        tool_call_content.clone(),
+                        tool_call_thinking.clone(),
+                    ));
+                } else {
+                    messages.push(ModelMessage::assistant_tool_call(invocation.clone()));
+                }
             }
 
             let mut executable_calls = Vec::new();
@@ -440,6 +442,17 @@ pub async fn run_turn(
                 thinking: (!thinking.is_empty()).then(|| thinking.clone()),
             });
         }
+
+        // Persist assistant message in history so DeepSeek reasoner receives
+        // reasoning_content on subsequent turns (even without tool calls).
+        if !text.trim().is_empty() || !thinking.is_empty() {
+            let thinking_content = (!thinking.is_empty()).then(|| thinking.clone());
+            messages.push(ModelMessage::assistant_with_thinking(
+                text.clone(),
+                thinking_content,
+            ));
+        }
+
         break text;
     };
 

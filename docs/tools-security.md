@@ -11,7 +11,7 @@ Tool execution is owned by `navi-core/src/tool.rs`. Security validation is owned
 | `apply_patch` | `Write` | Applies a unified diff using `git apply --whitespace=nowarn -`. |
 | `list_files` | `Read` | Recursively lists files with optional substring filtering and max result cap. |
 | `grep` | `Read` | Literal text search over readable text files. |
-| `bash` | `Command` | Runs `bash -lc` with a timeout capped at 120 seconds. |
+| `bash` | `Command` | Runs `bash -lc` with a foreground timeout capped at 120 seconds. Background commands default to 10 minutes and are capped at 30 minutes. Supports `background`, `wait_ms`, `task_id`, `action = "list"`, and `action = "cancel"` for long-running commands. |
 
 Tool output is truncated to avoid unbounded context/UI growth. `bash` stdout/stderr are each truncated.
 
@@ -62,7 +62,9 @@ When adding tools with file paths, ensure the path is visible through `path` or 
 
 Commands are validated by program name against `blocked_commands`. Commands require approval by default.
 
-The `bash` tool accepts a shell command string. This is powerful and risky; keep command approval enabled unless the user explicitly opts into a more autonomous mode.
+The `bash` tool accepts a shell command string. This is powerful and risky; keep command approval enabled unless the user explicitly opts into a more autonomous mode. Starting a new command requires command approval; polling, listing, or cancelling an already-created background task is allowed because the original command was already validated.
+
+For long-running commands, use `background = true` with `wait_ms` and `timeout_ms`. If the command is still running after `wait_ms`, `bash` returns `status = "running"` with a `task_id`. Poll with `task_id`, cancel with `action = "cancel"`, or list active tasks with `action = "list"`.
 
 ## Approval Flow
 
