@@ -137,7 +137,17 @@ impl SecurityPolicy {
                 .or_else(|| invocation.input.get("command"))
                 .and_then(Value::as_str)
                 .map(|program| self.validate_command(program))
-                .unwrap_or(SecurityDecision::NeedsApproval(SecurityRisk::Command)),
+                .unwrap_or_else(|| {
+                    if definition.name == "bash"
+                        && (invocation.input.get("task_id").is_some()
+                            || invocation.input.get("action").and_then(Value::as_str)
+                                == Some("list"))
+                    {
+                        SecurityDecision::Allow
+                    } else {
+                        SecurityDecision::NeedsApproval(SecurityRisk::Command)
+                    }
+                }),
             ToolKind::Custom => SecurityDecision::NeedsApproval(SecurityRisk::ExternalPlugin),
         }
     }

@@ -600,7 +600,11 @@ fn message_to_json(message: &ModelMessage) -> Value {
         value["name"] = json!(tool_name);
     }
     if !message.tool_calls.is_empty() {
-        value["content"] = Value::Null;
+        value["content"] = if message.content.is_empty() {
+            Value::Null
+        } else {
+            json!(message.content)
+        };
         value["tool_calls"] = json!(
             message
                 .tool_calls
@@ -1364,6 +1368,26 @@ mod tests {
         assert_eq!(tool["role"], "tool");
         assert_eq!(tool["tool_call_id"], "call-1");
         assert_eq!(tool["name"], "read_file");
+    }
+
+    #[test]
+    fn chat_messages_echo_reasoning_content_on_tool_calls() {
+        let invocation = ToolInvocation {
+            id: "call-1".to_string(),
+            tool_name: "read_file".to_string(),
+            input: json!({ "path": "Cargo.toml" }),
+        };
+
+        let assistant = message_to_json(&ModelMessage::assistant_tool_call_with_context(
+            invocation,
+            "I should inspect Cargo.toml.",
+            Some("hidden reasoning".to_string()),
+        ));
+
+        assert_eq!(assistant["role"], "assistant");
+        assert_eq!(assistant["content"], "I should inspect Cargo.toml.");
+        assert_eq!(assistant["reasoning_content"], "hidden reasoning");
+        assert_eq!(assistant["tool_calls"][0]["id"], "call-1");
     }
 
     #[test]

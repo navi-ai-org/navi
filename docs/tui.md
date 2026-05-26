@@ -8,8 +8,18 @@ The TUI lives in `crates/navi-tui/src/lib.rs`. It uses a synchronous ratatui/cro
 - `AsyncEvent` carries SDK runtime events, tool completion events, and model-sync results back into the event loop.
 - `Mode` selects modal behavior: normal chat, commands, models, API key entry, thinking, sessions, settings, provider accounts.
 - `ChatMessage` is display-oriented and may contain model labels, status, usage, thinking text, tool invocation/result metadata, or normal content.
+- `ui::*` is the internal TUI framework layer. It owns reusable interaction primitives such as text editing, key handling outcomes, and layout sizing. Keep it private to `navi-tui`; do not move ratatui abstractions into `navi-sdk`.
 
 ## Keybindings
+
+Key handling uses explicit precedence layers in this order:
+
+- approval overlay
+- normal-mode cancellation
+- global shortcuts
+- active mode/modal handler
+
+If a layer handles a key, lower layers must not see it. This prevents double activation such as `Esc` closing a modal and also cancelling the active chat turn.
 
 | Shortcut | Behavior |
 |---|---|

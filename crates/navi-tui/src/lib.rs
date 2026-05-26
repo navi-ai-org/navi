@@ -39,6 +39,12 @@ use syntect::parsing::SyntaxSet;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
+mod ui;
+
+use ui::keymap::KeyOutcome;
+use ui::layout::ModalSpec;
+use ui::text_input::{TextInputRef, floor_char_boundary, next_char_boundary};
+
 // ─── palette ───────────────────────────────────────────────────────────────────
 const ACCENT: Color = Color::Rgb(176, 34, 255);
 const RED: Color = Color::Rgb(218, 64, 255);
@@ -533,33 +539,46 @@ fn run_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, mut app: TuiA
                             app.running_tools
                                 .insert(invocation.id.clone(), invocation.clone());
 
-                            // finalize assistant response if any
+                            // Preserve assistant text/thinking on the tool-call message.
+                            // DeepSeek rejects follow-up requests when reasoning_content
+                            // is not echoed on the assistant tool-call item.
+                            let is_continuation_tool_call = app
+                                .conversation_history
+                                .last()
+                                .is_some_and(|message| !message.tool_calls.is_empty());
                             let active_msg = tail_model_response(&mut app);
-                            let active_content = active_msg
-                                .as_ref()
-                                .map(|active| active.content.clone())
-                                .unwrap_or_default();
-                            let active_thinking = active_msg.as_ref().and_then(|active| {
-                                if active.thinking_content.is_empty() {
-                                    None
-                                } else {
-                                    Some(active.thinking_content.clone())
-                                }
-                            });
+                            let active_content = if is_continuation_tool_call {
+                                String::new()
+                            } else {
+                                active_msg
+                                    .as_ref()
+                                    .map(|active| active.content.clone())
+                                    .unwrap_or_default()
+                            };
+                            let active_thinking = if is_continuation_tool_call {
+                                None
+                            } else {
+                                active_msg.as_ref().and_then(|active| {
+                                    if active.thinking_content.is_empty() {
+                                        None
+                                    } else {
+                                        Some(active.thinking_content.clone())
+                                    }
+                                })
+                            };
                             if !active_content.trim().is_empty() {
                                 app.compact_state.add_unsent_bytes(active_content.len());
-                                app.conversation_history.push(
-                                    ModelMessage::assistant_with_thinking(
-                                        active_content,
-                                        active_thinking,
-                                    ),
-                                );
                             }
                             let invocation_json =
                                 serde_json::to_string(&invocation).unwrap_or_default();
                             app.compact_state.add_unsent_bytes(invocation_json.len());
-                            app.conversation_history
-                                .push(ModelMessage::assistant_tool_call(invocation.clone()));
+                            app.conversation_history.push(
+                                ModelMessage::assistant_tool_call_with_context(
+                                    invocation.clone(),
+                                    active_content,
+                                    active_thinking,
+                                ),
+                            );
                             app.events
                                 .push(navi_core::AgentEvent::ToolRequested(invocation));
                             update_active_assistant_status(&mut app);
@@ -2253,35 +2272,64 @@ fn handle_mouse(app: &mut TuiApp, mouse: MouseEvent) {
 
 // ─── key handling ──────────────────────────────────────────────────────────────
 fn handle_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyModifiers) -> bool {
+    route_key(app, code, modifiers).should_quit()
+}
+
+fn route_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyModifiers) -> KeyOutcome {
+    let approval = route_approval_key(app, code);
+    if approval.is_handled() {
+        return approval;
+    }
+
+    let normal_cancel = route_normal_cancel_key(app, code);
+    if normal_cancel.is_handled() {
+        return normal_cancel;
+    }
+
+    let global = route_global_key(app, code, modifiers);
+    if global.is_handled() {
+        return global;
+    }
+
+    route_mode_key(app, code, modifiers)
+}
+
+fn route_approval_key(app: &mut TuiApp, code: KeyCode) -> KeyOutcome {
     if !app.pending_approvals.is_empty() {
         match code {
             KeyCode::Char('y') | KeyCode::Char('Y') => {
                 approve_pending_tool(app);
-                return false;
+                return KeyOutcome::Handled;
             }
             KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
                 deny_pending_tool(app);
-                return false;
+                return KeyOutcome::Handled;
             }
             _ => {}
         }
     }
+    KeyOutcome::Ignored
+}
 
+fn route_normal_cancel_key(app: &mut TuiApp, code: KeyCode) -> KeyOutcome {
     if app.mode == Mode::Normal
         && code == KeyCode::Esc
         && (app.is_loading || app.stream_task.is_some() || app.tool_task.is_some())
     {
         cancel_stream(app);
-        return false;
+        return KeyOutcome::Handled;
     }
+    KeyOutcome::Ignored
+}
 
+fn route_global_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyModifiers) -> KeyOutcome {
     if modifiers.contains(KeyModifiers::CONTROL) {
         match code {
-            KeyCode::Char('c') => return true,
+            KeyCode::Char('c') => return KeyOutcome::Quit,
             KeyCode::Char('d') => {
                 app.mode = Mode::Debug;
                 tracing::info!("debug modal opened");
-                return false;
+                return KeyOutcome::Handled;
             }
             KeyCode::Char('g') => {
                 app.yolo_mode = !app.yolo_mode;
@@ -2294,17 +2342,17 @@ fn handle_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyModifiers) -> bool 
                         if app.yolo_mode { "enabled" } else { "disabled" }
                     ),
                 );
-                return false;
+                return KeyOutcome::Handled;
             }
             KeyCode::Char('p') => {
                 app.mode = Mode::Commands;
                 app.command_filter.clear();
                 app.selected_command = 0;
-                return false;
+                return KeyOutcome::Handled;
             }
             KeyCode::Char('m') => {
                 open_model_picker(app);
-                return false;
+                return KeyOutcome::Handled;
             }
             KeyCode::Char('o') | KeyCode::Char('O') => {
                 app.full_tool_view = !app.full_tool_view;
@@ -2317,13 +2365,13 @@ fn handle_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyModifiers) -> bool 
                         "Compact tool view enabled."
                     },
                 );
-                return false;
+                return KeyOutcome::Handled;
             }
             KeyCode::Char('j') | KeyCode::Char('\n') | KeyCode::Char('\r') | KeyCode::Enter => {
                 if !app.input.trim().is_empty() && !app.is_loading {
                     submit_message(app);
                 }
-                return false;
+                return KeyOutcome::Handled;
             }
             KeyCode::Char('n') => {
                 app.messages.clear();
@@ -2332,13 +2380,16 @@ fn handle_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyModifiers) -> bool 
                 app.input_cursor = 0;
                 app.scroll_offset = 0;
                 show_notification(app, "Layer", "New layer started.");
-                return false;
+                return KeyOutcome::Handled;
             }
             _ => {}
         }
     }
+    KeyOutcome::Ignored
+}
 
-    match app.mode {
+fn route_mode_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyModifiers) -> KeyOutcome {
+    let should_quit = match app.mode {
         Mode::Normal => handle_normal_key(app, code, modifiers),
         Mode::Commands => handle_command_key(app, code),
         Mode::Models => handle_model_key(app, code, modifiers),
@@ -2349,6 +2400,11 @@ fn handle_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyModifiers) -> bool 
         Mode::Providers => handle_providers_key(app, code),
         Mode::Debug => handle_debug_key(app, code),
         Mode::Help => handle_help_key(app, code),
+    };
+    if should_quit {
+        KeyOutcome::Quit
+    } else {
+        KeyOutcome::Handled
     }
 }
 
@@ -2582,7 +2638,7 @@ fn handle_normal_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyModifiers) -
                 app.input_cursor = 0;
             }
             KeyCode::Char('k') => {
-                app.input.truncate(app.input_cursor);
+                chat_input_ref(app).delete_to_end();
             }
             _ => return false,
         }
@@ -2775,16 +2831,15 @@ fn handle_api_key_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyModifiers) 
     if modifiers.contains(KeyModifiers::CONTROL) {
         match code {
             KeyCode::Char('a') => {
-                app.api_key_cursor = 0;
+                api_key_input_ref(app).move_to_start();
                 return false;
             }
             KeyCode::Char('e') => {
-                app.api_key_cursor = app.api_key_input.len();
+                api_key_input_ref(app).move_to_end();
                 return false;
             }
             KeyCode::Char('u') => {
-                app.api_key_input.drain(..app.api_key_cursor);
-                app.api_key_cursor = 0;
+                api_key_input_ref(app).delete_to_start();
                 return false;
             }
             // ctrl+v is handled as a paste by the terminal — characters arrive as Char events
@@ -2794,8 +2849,7 @@ fn handle_api_key_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyModifiers) 
 
     match code {
         KeyCode::Esc => {
-            app.api_key_input.clear();
-            app.api_key_cursor = 0;
+            api_key_input_ref(app).clear();
             app.pending_model_selection = None;
             let return_to_providers = app.pending_provider_setup.take().is_some();
             app.mode = if return_to_providers {
@@ -2808,32 +2862,22 @@ fn handle_api_key_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyModifiers) 
             save_api_key_and_rebuild(app);
         }
         KeyCode::Char(ch) => {
-            app.api_key_input.insert(app.api_key_cursor, ch);
-            app.api_key_cursor += ch.len_utf8();
+            api_key_input_ref(app).insert_char(ch);
         }
         KeyCode::Backspace => {
-            if app.api_key_cursor > 0 {
-                let prev =
-                    previous_char_boundary(&app.api_key_input, app.api_key_cursor).unwrap_or(0);
-                app.api_key_input.drain(prev..app.api_key_cursor);
-                app.api_key_cursor = prev;
-            }
+            api_key_input_ref(app).delete_previous_char();
         }
         KeyCode::Left => {
-            if let Some(prev) = previous_char_boundary(&app.api_key_input, app.api_key_cursor) {
-                app.api_key_cursor = prev;
-            }
+            api_key_input_ref(app).move_previous_char();
         }
         KeyCode::Right => {
-            if let Some(next) = next_char_boundary(&app.api_key_input, app.api_key_cursor) {
-                app.api_key_cursor = next;
-            }
+            api_key_input_ref(app).move_next_char();
         }
         KeyCode::Home => {
-            app.api_key_cursor = 0;
+            api_key_input_ref(app).move_to_start();
         }
         KeyCode::End => {
-            app.api_key_cursor = app.api_key_input.len();
+            api_key_input_ref(app).move_to_end();
         }
         _ => {}
     }
@@ -3083,255 +3127,60 @@ fn sync_provider_tui(app: &mut TuiApp, provider_id: &str) {
 }
 
 // ─── input editing helpers ─────────────────────────────────────────────────────
+fn chat_input_ref(app: &mut TuiApp) -> TextInputRef<'_> {
+    TextInputRef::new(&mut app.input, &mut app.input_cursor)
+}
+
+fn api_key_input_ref(app: &mut TuiApp) -> TextInputRef<'_> {
+    TextInputRef::new(&mut app.api_key_input, &mut app.api_key_cursor)
+}
+
 fn insert_input_char(app: &mut TuiApp, ch: char) {
-    clamp_input_cursor(app);
-    app.input.insert(app.input_cursor, ch);
-    app.input_cursor += ch.len_utf8();
+    chat_input_ref(app).insert_char(ch);
 }
 
 fn delete_input_previous_char(app: &mut TuiApp) {
-    clamp_input_cursor(app);
-    let Some(previous) = previous_char_boundary(&app.input, app.input_cursor) else {
-        return;
-    };
-    app.input.drain(previous..app.input_cursor);
-    app.input_cursor = previous;
+    chat_input_ref(app).delete_previous_char();
 }
 
 fn delete_input_next_char(app: &mut TuiApp) {
-    clamp_input_cursor(app);
-    let Some(next) = next_char_boundary(&app.input, app.input_cursor) else {
-        return;
-    };
-    app.input.drain(app.input_cursor..next);
+    chat_input_ref(app).delete_next_char();
 }
 
 fn move_input_previous_char(app: &mut TuiApp) {
-    clamp_input_cursor(app);
-    if let Some(previous) = previous_char_boundary(&app.input, app.input_cursor) {
-        app.input_cursor = previous;
-    }
+    chat_input_ref(app).move_previous_char();
 }
 
 fn move_input_next_char(app: &mut TuiApp) {
-    clamp_input_cursor(app);
-    if let Some(next) = next_char_boundary(&app.input, app.input_cursor) {
-        app.input_cursor = next;
-    }
+    chat_input_ref(app).move_next_char();
 }
 
 fn move_input_previous_hump(app: &mut TuiApp) {
-    clamp_input_cursor(app);
-    app.input_cursor = previous_hump_boundary(&app.input, app.input_cursor);
+    chat_input_ref(app).move_previous_hump();
 }
 
 fn move_input_next_hump(app: &mut TuiApp) {
-    clamp_input_cursor(app);
-    app.input_cursor = next_hump_boundary(&app.input, app.input_cursor);
+    chat_input_ref(app).move_next_hump();
 }
 
 fn move_input_previous_control_stop(app: &mut TuiApp) {
-    clamp_input_cursor(app);
-    app.input_cursor = previous_control_boundary(&app.input, app.input_cursor);
+    chat_input_ref(app).move_previous_control_stop();
 }
 
 fn move_input_next_control_stop(app: &mut TuiApp) {
-    clamp_input_cursor(app);
-    app.input_cursor = next_control_boundary(&app.input, app.input_cursor);
+    chat_input_ref(app).move_next_control_stop();
 }
 
 fn delete_input_next_hump(app: &mut TuiApp) {
-    clamp_input_cursor(app);
-    let end = next_hump_boundary(&app.input, app.input_cursor);
-    app.input.drain(app.input_cursor..end);
+    chat_input_ref(app).delete_next_hump();
 }
 
 fn delete_input_previous_hump(app: &mut TuiApp) {
-    clamp_input_cursor(app);
-    let start = previous_hump_boundary(&app.input, app.input_cursor);
-    app.input.drain(start..app.input_cursor);
-    app.input_cursor = start;
+    chat_input_ref(app).delete_previous_hump();
 }
 
 fn delete_input_previous_space_word(app: &mut TuiApp) {
-    clamp_input_cursor(app);
-    let start = previous_space_word_boundary(&app.input, app.input_cursor);
-    app.input.drain(start..app.input_cursor);
-    app.input_cursor = start;
-}
-
-fn clamp_input_cursor(app: &mut TuiApp) {
-    app.input_cursor = app.input_cursor.min(app.input.len());
-    app.input_cursor = floor_char_boundary(&app.input, app.input_cursor);
-}
-
-// ─── text boundary helpers ─────────────────────────────────────────────────────
-fn floor_char_boundary(value: &str, mut cursor: usize) -> usize {
-    cursor = cursor.min(value.len());
-    while !value.is_char_boundary(cursor) {
-        cursor = cursor.saturating_sub(1);
-    }
-    cursor
-}
-
-fn previous_char_boundary(value: &str, cursor: usize) -> Option<usize> {
-    value[..cursor]
-        .char_indices()
-        .last()
-        .map(|(index, _)| index)
-}
-
-fn next_char_boundary(value: &str, cursor: usize) -> Option<usize> {
-    value[cursor..]
-        .char_indices()
-        .nth(1)
-        .map(|(index, _)| cursor + index)
-        .or_else(|| (cursor < value.len()).then_some(value.len()))
-}
-
-fn previous_hump_boundary(value: &str, cursor: usize) -> usize {
-    let chars = indexed_chars(value);
-    let mut index = char_slot_at_byte(&chars, cursor);
-    if index == 0 {
-        return 0;
-    }
-
-    index -= 1;
-    while index > 0 && is_separator(chars[index].1) {
-        index -= 1;
-    }
-    while index > 0 && is_hump_continuation(&chars, index) {
-        index -= 1;
-    }
-
-    chars.get(index).map(|(byte, _)| *byte).unwrap_or(0)
-}
-
-fn next_hump_boundary(value: &str, cursor: usize) -> usize {
-    let chars = indexed_chars(value);
-    let mut index = char_slot_at_byte(&chars, cursor);
-    if index >= chars.len() {
-        return value.len();
-    }
-
-    while index < chars.len() && is_separator(chars[index].1) {
-        index += 1;
-    }
-    if index < chars.len() {
-        index += 1;
-    }
-    while index < chars.len() && is_hump_continuation(&chars, index) {
-        index += 1;
-    }
-
-    chars
-        .get(index)
-        .map(|(byte, _)| *byte)
-        .unwrap_or(value.len())
-}
-
-fn previous_control_boundary(value: &str, cursor: usize) -> usize {
-    let chars = indexed_chars(value);
-    let mut index = char_slot_at_byte(&chars, cursor);
-    if index == 0 {
-        return 0;
-    }
-
-    index -= 1;
-    if is_separator(chars[index].1) {
-        return chars[index].0;
-    }
-
-    while index > 0 && is_hump_continuation(&chars, index) {
-        index -= 1;
-    }
-
-    chars.get(index).map(|(byte, _)| *byte).unwrap_or(0)
-}
-
-fn next_control_boundary(value: &str, cursor: usize) -> usize {
-    let chars = indexed_chars(value);
-    let mut index = char_slot_at_byte(&chars, cursor);
-    if index >= chars.len() {
-        return value.len();
-    }
-
-    if is_separator(chars[index].1) {
-        return next_char_boundary(value, cursor).unwrap_or(value.len());
-    }
-
-    index += 1;
-    while index < chars.len() && is_hump_continuation(&chars, index) {
-        index += 1;
-    }
-
-    chars
-        .get(index)
-        .map(|(byte, _)| *byte)
-        .unwrap_or(value.len())
-}
-
-fn previous_space_word_boundary(value: &str, cursor: usize) -> usize {
-    let chars = indexed_chars(value);
-    let mut index = char_slot_at_byte(&chars, cursor);
-    if index == 0 {
-        return 0;
-    }
-
-    index -= 1;
-    while index > 0 && chars[index].1.is_whitespace() {
-        index -= 1;
-    }
-    while index > 0 && !chars[index - 1].1.is_whitespace() {
-        index -= 1;
-    }
-
-    chars.get(index).map(|(byte, _)| *byte).unwrap_or(0)
-}
-
-fn indexed_chars(value: &str) -> Vec<(usize, char)> {
-    value.char_indices().collect()
-}
-
-fn char_slot_at_byte(chars: &[(usize, char)], cursor: usize) -> usize {
-    chars
-        .iter()
-        .position(|(byte, _)| *byte >= cursor)
-        .unwrap_or(chars.len())
-}
-
-fn is_hump_continuation(chars: &[(usize, char)], index: usize) -> bool {
-    let previous = chars[index - 1].1;
-    let current = chars[index].1;
-    let next = chars.get(index + 1).map(|(_, ch)| *ch);
-
-    if is_separator(previous) || is_separator(current) {
-        return false;
-    }
-    if previous.is_lowercase() && current.is_uppercase() {
-        return false;
-    }
-    if previous.is_ascii_digit() != current.is_ascii_digit()
-        && (previous.is_alphanumeric() || current.is_alphanumeric())
-    {
-        return false;
-    }
-    if previous.is_uppercase()
-        && current.is_uppercase()
-        && next.is_some_and(|next| next.is_lowercase())
-    {
-        return false;
-    }
-
-    true
-}
-
-fn is_separator(ch: char) -> bool {
-    ch.is_whitespace()
-        || matches!(
-            ch,
-            '_' | '-' | '.' | '/' | '\\' | ':' | ';' | ',' | '(' | ')' | '[' | ']' | '{' | '}'
-        )
+    chat_input_ref(app).delete_previous_space_word();
 }
 
 // ─── rendering ─────────────────────────────────────────────────────────────────
@@ -5452,31 +5301,7 @@ fn fit_text(value: &str, width: usize) -> String {
 }
 
 fn modal_rect(area: Rect, max_width: u16, height: u16) -> Rect {
-    let width = area.width.saturating_sub(8).min(max_width).max(40);
-    let height = area.height.saturating_sub(4).min(height).max(10);
-    centered_rect(area, width, height)
-}
-
-fn centered_rect(area: Rect, width: u16, height: u16) -> Rect {
-    let width = width.min(area.width);
-    let height = height.min(area.height);
-    let vertical = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(area.height.saturating_sub(height) / 2),
-            Constraint::Length(height),
-            Constraint::Min(0),
-        ])
-        .split(area);
-
-    Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Length(area.width.saturating_sub(width) / 2),
-            Constraint::Length(width),
-            Constraint::Min(0),
-        ])
-        .split(vertical[1])[1]
+    ModalSpec::fixed(max_width, height).rect(area)
 }
 
 fn filtered_commands(app: &TuiApp) -> Vec<CommandItem> {
@@ -5843,6 +5668,10 @@ fn load_session(app: &mut TuiApp, snapshot: &SessionSnapshot) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ui::text_input::{
+        floor_char_boundary, next_char_boundary, next_hump_boundary, previous_char_boundary,
+        previous_hump_boundary,
+    };
     use std::path::PathBuf;
 
     fn test_app(input: &str) -> TuiApp {
