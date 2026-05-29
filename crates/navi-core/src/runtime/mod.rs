@@ -306,6 +306,8 @@ impl AgentRuntime {
         Ok(id)
     }
 
+    /// Sends a user task to the agent and waits for the full response.
+    /// Starts a session automatically if one is not active.
     pub async fn send_turn(&mut self, task: String) -> Result<ModelResponse> {
         if !self.session.started() || self.session.runtime().is_none() {
             self.start_session()?;
