@@ -23,7 +23,7 @@
 | 9 | `BashBackgroundState.label` as `&'static str` instead of enum | `navi-core/src/tool/builtin/bash.rs` | DONE |
 | 10 | String-based provider ID comparisons across 4 files | `credentials.rs`, `runtime.rs`, `mapping.rs` | DONE |
 | 11 | `#[allow(dead_code/unused)]` blanket suppressions in navi-tui | `render.rs`, `keybindings.rs` | DONE |
-| 12 | Duplicated approval resolution logic | `runtime/mod.rs` + `turn/mod.rs` | PENDING |
+| 12 | Duplicated approval resolution logic | `runtime/mod.rs` + `turn/mod.rs` | DONE |
 | 13 | `navi-openai/src/lib.rs` ~800 lines of tests mixed with 89 lines of code | `navi-openai/src/lib.rs` | PENDING |
 | 14 | Functions >100 lines (5 functions) | `modals.rs`, `bash.rs`, `engine.rs` | PENDING |
 | 15 | Blocking `std::fs` in `SessionStore` methods | `navi-core/src/session.rs` | PENDING |
