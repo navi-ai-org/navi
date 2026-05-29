@@ -10,7 +10,7 @@ use agent_client_protocol::{
     on_receive_notification, on_receive_request,
 };
 use anyhow::Result;
-use navi_core::{
+use navi_sdk::{
     ApprovalDecision, LoadedConfig, RuntimeEvent, RuntimeEventKind, SessionStore, ToolInvocation,
     ToolResult,
 };
@@ -34,6 +34,24 @@ struct AcpSession {
 
 struct ActivePrompt {
     cancel_tx: tokio::sync::oneshot::Sender<()>,
+}
+
+impl AcpState {
+    fn with_sessions<F, T>(&self, f: F) -> T
+    where
+        F: FnOnce(&HashMap<String, AcpSession>) -> T,
+    {
+        let sessions = self.sessions.lock().expect("session lock poisoned");
+        f(&sessions)
+    }
+
+    fn with_sessions_mut<F, T>(&self, f: F) -> T
+    where
+        F: FnOnce(&mut HashMap<String, AcpSession>) -> T,
+    {
+        let mut sessions = self.sessions.lock().expect("session lock poisoned");
+        f(&mut sessions)
+    }
 }
 
 pub async fn run_acp_server(
@@ -117,14 +135,16 @@ async fn handle_new_session(
         state.default_project_dir.join(request.cwd)
     };
     let session_id = SessionStore::create_id().0;
-    state.sessions.lock().unwrap().insert(
-        session_id.clone(),
-        AcpSession {
-            project_dir: cwd,
-            sdk_started: false,
-            task: None,
-        },
-    );
+    state.with_sessions_mut(|sessions| {
+        sessions.insert(
+            session_id.clone(),
+            AcpSession {
+                project_dir: cwd,
+                sdk_started: false,
+                task: None,
+            },
+        );
+    });
     Ok(NewSessionResponse::new(session_id))
 }
 
@@ -141,7 +161,7 @@ async fn handle_prompt(
     }
 
     let project_dir = {
-        let mut sessions = state.sessions.lock().unwrap();
+        let mut sessions = state.sessions.lock().expect("session lock poisoned");
         let session = sessions
             .entry(session_id.clone())
             .or_insert_with(|| AcpSession {
@@ -157,13 +177,12 @@ async fn handle_prompt(
         session.project_dir.clone()
     };
 
-    let should_start_sdk = {
-        let sessions = state.sessions.lock().unwrap();
+    let should_start_sdk = state.with_sessions(|sessions| {
         sessions
             .get(&session_id)
             .map(|session| !session.sdk_started)
             .unwrap_or(true)
-    };
+    });
     if should_start_sdk {
         state
             .engine
@@ -181,9 +200,11 @@ async fn handle_prompt(
                     "failed to start NAVI runtime session: {error:#}"
                 ))
             })?;
-        if let Some(session) = state.sessions.lock().unwrap().get_mut(&session_id) {
-            session.sdk_started = true;
-        }
+        state.with_sessions_mut(|sessions| {
+            if let Some(session) = sessions.get_mut(&session_id) {
+                session.sdk_started = true;
+            }
+        });
     }
 
     let (cancel_tx, cancel_rx) = tokio::sync::oneshot::channel();
@@ -219,29 +240,30 @@ async fn handle_prompt(
         };
 
         let _ = responder.respond(PromptResponse::new(stop_reason));
-        if let Some(session) = sessions.lock().unwrap().get_mut(&session_id_for_task) {
+        if let Some(session) = sessions
+            .lock()
+            .expect("session lock poisoned")
+            .get_mut(&session_id_for_task)
+        {
             session.task = None;
         }
     });
 
-    state
-        .sessions
-        .lock()
-        .unwrap()
-        .get_mut(&session_id)
-        .unwrap()
-        .task = Some(ActivePrompt { cancel_tx });
+    state.with_sessions_mut(|sessions| {
+        if let Some(session) = sessions.get_mut(&session_id) {
+            session.task = Some(ActivePrompt { cancel_tx });
+        }
+    });
     Ok(())
 }
 
 async fn handle_cancel(state: AcpState, notification: CancelNotification) -> AcpResult<()> {
     let session_id = notification.session_id.0.to_string();
-    let active = state
-        .sessions
-        .lock()
-        .unwrap()
-        .get_mut(&session_id)
-        .and_then(|session| session.task.take());
+    let active = state.with_sessions_mut(|sessions| {
+        sessions
+            .get_mut(&session_id)
+            .and_then(|session| session.task.take())
+    });
     if let Some(active) = active {
         let _ = active.cancel_tx.send(());
         let _ = state.engine.cancel_turn(&session_id).await;
@@ -296,7 +318,7 @@ async fn run_prompt_task(
 async fn request_permission(
     connection: &ConnectionTo<Client>,
     session_id: &str,
-    request: &navi_core::ApprovalRequest,
+    request: &navi_sdk::ApprovalRequest,
 ) -> Result<ApprovalDecision> {
     let tool_call = ToolCallUpdate::new(
         request.id.clone(),
