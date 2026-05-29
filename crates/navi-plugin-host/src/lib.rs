@@ -1,12 +1,69 @@
 use anyhow::{Context, Result, bail};
+use async_trait::async_trait;
 use libloading::{Library, Symbol};
-use navi_core::{PluginConfig, SecurityDecision, SecurityPolicy, Tool, ToolExecutor};
+use navi_core::{PluginConfig, SecurityDecision, SecurityPolicy, Tool, ToolDefinition, ToolExecutor, ToolInvocation, ToolKind, ToolResult};
 use navi_plugin_api::{
     NAVI_PLUGIN_API_VERSION, NAVI_PLUGIN_ENTRYPOINT, NaviPlugin, PluginCreate, PluginMetadata,
-    PluginRegistry,
+    PluginRegistry, PluginTool, PluginToolDefinition, PluginToolInvocation, PluginToolKind,
 };
 use std::path::Path;
 use std::sync::Arc;
+
+/// Adapter that wraps a `PluginTool` (from the stable plugin ABI) and implements
+/// `navi_core::Tool` so it can be registered with the engine's `ToolExecutor`.
+pub struct PluginToolAdapter {
+    inner: Arc<dyn PluginTool>,
+    def_cache: ToolDefinition,
+}
+
+impl PluginToolAdapter {
+    pub fn new(inner: Arc<dyn PluginTool>) -> Self {
+        let plugin_def = inner.definition();
+        let def_cache = plugin_def_to_core(plugin_def);
+        Self { inner, def_cache }
+    }
+}
+
+#[async_trait]
+impl Tool for PluginToolAdapter {
+    fn definition(&self) -> ToolDefinition {
+        self.def_cache.clone()
+    }
+
+    async fn invoke(&self, invocation: ToolInvocation) -> Result<ToolResult> {
+        let plugin_invocation = PluginToolInvocation {
+            id: invocation.id.clone(),
+            tool_name: invocation.tool_name.clone(),
+            input: invocation.input,
+        };
+        match self.inner.invoke(plugin_invocation) {
+            Ok(result) => Ok(ToolResult {
+                invocation_id: result.invocation_id,
+                ok: result.ok,
+                output: result.output,
+            }),
+            Err(err) => Ok(ToolResult {
+                invocation_id: invocation.id,
+                ok: false,
+                output: serde_json::json!({ "error": err }),
+            }),
+        }
+    }
+}
+
+fn plugin_def_to_core(def: PluginToolDefinition) -> ToolDefinition {
+    ToolDefinition {
+        name: def.name,
+        description: def.description,
+        kind: match def.kind {
+            PluginToolKind::Read => ToolKind::Read,
+            PluginToolKind::Write => ToolKind::Write,
+            PluginToolKind::Command => ToolKind::Command,
+            PluginToolKind::Custom => ToolKind::Custom,
+        },
+        input_schema: def.input_schema,
+    }
+}
 
 pub struct LoadedPlugin {
     metadata: PluginMetadata,
@@ -20,15 +77,23 @@ impl LoadedPlugin {
     }
 
     pub fn register(&self, registry: &mut dyn PluginRegistry) -> Result<()> {
-        self.plugin.register(registry)
+        self.plugin
+            .register(registry)
+            .map_err(|e| anyhow::anyhow!("{e}"))
     }
 }
 
 pub fn load_plugin(path: &Path) -> Result<LoadedPlugin> {
+    // SAFETY: We load a shared library from a path that has been validated by
+    // `SecurityPolicy::validate_plugin_path` before this function is called.
+    // The library must export the `navi_plugin_entrypoint` symbol to be usable.
     let library = unsafe { Library::new(path) }
         .with_context(|| format!("failed to load plugin {}", path.display()))?;
 
     let plugin = {
+        // SAFETY: We look up the well-known entrypoint symbol. The returned
+        // Symbol is valid for the lifetime of `library`. The type `PluginCreate`
+        // matches the expected signature `unsafe fn() -> Box<dyn NaviPlugin>`.
         let constructor: Symbol<PluginCreate> = unsafe { library.get(NAVI_PLUGIN_ENTRYPOINT) }
             .with_context(|| {
                 format!(
@@ -36,6 +101,8 @@ pub fn load_plugin(path: &Path) -> Result<LoadedPlugin> {
                     path.display()
                 )
             })?;
+        // SAFETY: We call the plugin constructor after validating its API version
+        // (below). The returned Box<dyn NaviPlugin> is Send+Sync and owned by us.
         unsafe { constructor() }
     };
 
@@ -81,9 +148,11 @@ pub fn load_configured_plugins(
                 let mut registry = DefaultPluginRegistry::default();
                 match plugin.register(&mut registry) {
                     Ok(()) => {
-                        for tool in registry.tools {
-                            let name = tool.definition().name;
-                            executor.register_tool(tool);
+                        for plugin_tool in registry.tools {
+                            let name = plugin_tool.definition().name.clone();
+                            let adapted: Arc<dyn Tool> =
+                                Arc::new(PluginToolAdapter::new(plugin_tool));
+                            executor.register_tool(adapted);
                             report.tools.push(name);
                         }
                         report.agent_policies.extend(registry.agent_policies);
@@ -108,13 +177,13 @@ pub fn load_configured_plugins(
 
 #[derive(Default)]
 pub struct DefaultPluginRegistry {
-    pub tools: Vec<Arc<dyn Tool>>,
+    pub tools: Vec<Arc<dyn PluginTool>>,
     pub agent_policies: Vec<String>,
     pub tui_components: Vec<String>,
 }
 
 impl PluginRegistry for DefaultPluginRegistry {
-    fn register_tool(&mut self, tool: Arc<dyn Tool>) {
+    fn register_tool(&mut self, tool: Arc<dyn PluginTool>) {
         self.tools.push(tool);
     }
 
@@ -144,7 +213,8 @@ fn validate_plugin_api_version(metadata: &PluginMetadata) -> Result<()> {
 mod tests {
     use super::*;
     use anyhow::Result;
-    use navi_core::{SecurityConfig, ToolDefinition, ToolInvocation, ToolKind, ToolResult};
+    use navi_core::{SecurityConfig, SecurityPolicy};
+    use navi_plugin_api::{PluginToolResult};
     use serde_json::json;
 
     #[test]
@@ -171,23 +241,22 @@ mod tests {
             }
         }
 
-        fn register(&self, registry: &mut dyn PluginRegistry) -> Result<()> {
-            registry.register_tool(Arc::new(TestTool));
+        fn register(&self, registry: &mut dyn PluginRegistry) -> Result<(), String> {
+            registry.register_tool(Arc::new(TestPluginTool));
             registry.register_agent_policy("test-policy");
             registry.register_tui_component("test-component");
             Ok(())
         }
     }
 
-    struct TestTool;
+    struct TestPluginTool;
 
-    #[async_trait::async_trait]
-    impl Tool for TestTool {
-        fn definition(&self) -> ToolDefinition {
-            ToolDefinition {
+    impl PluginTool for TestPluginTool {
+        fn definition(&self) -> PluginToolDefinition {
+            PluginToolDefinition {
                 name: "test_echo".to_string(),
                 description: "Echo test plugin input.".to_string(),
-                kind: ToolKind::Custom,
+                kind: PluginToolKind::Custom,
                 input_schema: json!({
                     "type": "object",
                     "properties": {
@@ -198,8 +267,8 @@ mod tests {
             }
         }
 
-        async fn invoke(&self, invocation: ToolInvocation) -> Result<ToolResult> {
-            Ok(ToolResult {
+        fn invoke(&self, invocation: PluginToolInvocation) -> Result<PluginToolResult, String> {
+            Ok(PluginToolResult {
                 invocation_id: invocation.id,
                 ok: true,
                 output: json!({
@@ -222,8 +291,9 @@ mod tests {
         let mut registry = DefaultPluginRegistry::default();
 
         TestPlugin.register(&mut registry).expect("register");
-        for tool in registry.tools {
-            executor.register_tool(tool);
+        for plugin_tool in registry.tools {
+            let adapted: Arc<dyn navi_core::Tool> = Arc::new(PluginToolAdapter::new(plugin_tool));
+            executor.register_tool(adapted);
         }
 
         assert!(executor.definition("test_echo").is_some());
