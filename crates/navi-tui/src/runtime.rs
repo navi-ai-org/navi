@@ -4,11 +4,10 @@ use std::path::PathBuf;
 use anyhow::Result;
 use tokio::sync::mpsc;
 
-use navi_core::{
-    CredentialStore, LoadedConfig, RuntimeEvent, canonical_provider_id, resolve_provider_config,
-    resolve_provider_credential_status,
+use navi_sdk::{
+    CredentialStore, LoadedConfig, NaviEngine, NaviEngineBuilder, RuntimeEvent,
+    resolve_provider_config, resolve_provider_credential_status,
 };
-use navi_sdk::{NaviEngine, NaviEngineBuilder};
 
 use crate::dispatch::AsyncEvent;
 
@@ -58,14 +57,17 @@ pub(crate) fn selected_model_runtime_available(
 }
 
 pub(crate) fn provider_supports_oauth(provider_id: &str) -> bool {
-    canonical_provider_id(provider_id) == "github-copilot"
+    matches!(
+        navi_sdk::ProviderId::from_config_id(provider_id),
+        navi_sdk::ProviderId::GitHubCopilot
+    )
 }
 
 #[cfg(test)]
 mod tests {
     use tokio::sync::mpsc;
 
-    use navi_core::{AgentEvent, RuntimeEvent, RuntimeEventKind};
+    use navi_sdk::{AgentEvent, RuntimeEvent, RuntimeEventKind};
 
     use super::*;
 

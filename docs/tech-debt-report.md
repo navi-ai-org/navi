@@ -21,7 +21,7 @@
 | 7 | `navi-sdk` public API returns `anyhow::Result` everywhere | `navi-sdk/src/engine.rs` | PENDING |
 | 8 | No `RwLock` for read-heavy patterns (`loaded_config`, `sessions`) | `navi-sdk/src/engine.rs` | DONE |
 | 9 | `BashBackgroundState.label` as `&'static str` instead of enum | `navi-core/src/tool/builtin/bash.rs` | DONE |
-| 10 | String-based provider ID comparisons across 4 files | `credentials.rs`, `runtime.rs`, `mapping.rs` | PENDING |
+| 10 | String-based provider ID comparisons across 4 files | `credentials.rs`, `runtime.rs`, `mapping.rs` | DONE |
 | 11 | `#[allow(dead_code/unused)]` blanket suppressions in navi-tui | `render.rs`, `keybindings.rs` | DONE |
 | 12 | Duplicated approval resolution logic | `runtime/mod.rs` + `turn/mod.rs` | PENDING |
 | 13 | `navi-openai/src/lib.rs` ~800 lines of tests mixed with 89 lines of code | `navi-openai/src/lib.rs` | PENDING |

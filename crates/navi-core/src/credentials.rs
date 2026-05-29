@@ -1,4 +1,5 @@
-use crate::config::{ProviderConfig, canonical_provider_id, model_can_run_publicly};
+use crate::config::{ProviderConfig, model_can_run_publicly};
+use crate::ProviderId;
 use anyhow::{Context, Result};
 use directories::BaseDirs;
 use serde::{Deserialize, Serialize};
@@ -25,6 +26,17 @@ pub enum CredentialSource {
     Stored,
     External,
     PublicModel,
+}
+
+impl CredentialSource {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Env => "env",
+            Self::Stored => "stored",
+            Self::External => "external",
+            Self::PublicModel => "public-model",
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -176,7 +188,7 @@ pub fn resolve_provider_credential_status(
         };
     }
 
-    if canonical_provider_id(&provider_config.id) == "opencode"
+    if ProviderId::from_config_id(&provider_config.id).is_opencode_family()
         && credential_store.get_opencode_api_key().is_some()
     {
         return CredentialStatus {
@@ -233,7 +245,7 @@ fn provider_env_var_for_config(provider_config: &ProviderConfig) -> Option<Strin
 }
 
 fn provider_env_vars_for_config(provider_config: &ProviderConfig) -> Vec<String> {
-    if canonical_provider_id(&provider_config.id) != "opencode" {
+    if !ProviderId::from_config_id(&provider_config.id).is_opencode_family() {
         return vec![provider_config.api_key_env.clone()];
     }
 
@@ -254,7 +266,7 @@ fn opencode_auth_json_api_key(
     credential_store: &CredentialStore,
     provider_id: &str,
 ) -> Option<String> {
-    if canonical_provider_id(provider_id) == "opencode" {
+    if ProviderId::from_config_id(provider_id).is_opencode_family() {
         credential_store.get_opencode_api_key()
     } else {
         None
