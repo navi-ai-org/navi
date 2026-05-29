@@ -1,20 +1,34 @@
 /// Canonical provider identity. Eliminates string-match routing.
+/// Canonical provider identity. Eliminates string-match routing.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ProviderId {
+    /// OpenAI (Responses API).
     OpenAi,
+    /// Anthropic (Messages API).
     Anthropic,
+    /// Google Gemini.
     GoogleGemini,
+    /// OpenRouter.
     OpenRouter,
+    /// GitHub Copilot.
     GitHubCopilot,
+    /// Opencode.
     Opencode,
+    /// Opencode Zen.
     OpencodeZen,
+    /// Opencode Go.
     OpencodeGo,
+    /// Groq.
     Groq,
+    /// xAI (Grok).
     Xai,
+    /// A custom provider not in the built-in set.
     Custom(String),
 }
 
 impl ProviderId {
+    /// Parses a provider id from the config string form (e.g. `"openai"`,
+    /// `"google-gemini"`). Unknown ids become [`ProviderId::Custom`].
     pub fn from_config_id(id: &str) -> Self {
         match id {
             "openai" => Self::OpenAi,
@@ -31,6 +45,7 @@ impl ProviderId {
         }
     }
 
+    /// Returns the canonical string form of this provider id.
     pub fn as_str(&self) -> &str {
         match self {
             Self::OpenAi => "openai",
