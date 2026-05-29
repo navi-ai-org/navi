@@ -1,5 +1,6 @@
 use crate::errors::ProviderError;
-use crate::types::{OpenAiApiKind, ProviderId, StreamRoute};
+use crate::types::{OpenAiApiKind, StreamRoute};
+use navi_core::ProviderId;
 use reqwest::header::USER_AGENT;
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE, HeaderMap, HeaderValue};
 

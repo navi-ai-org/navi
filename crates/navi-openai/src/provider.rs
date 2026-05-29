@@ -4,7 +4,8 @@ use crate::providers::behavior::{Endpoint, ProviderBehavior, behavior_for_provid
 use crate::transport::{
     ensure_success, get_backoff_delay, retry_delay_for_error, should_retry_error,
 };
-use crate::types::{OpenAiApiKind, ProviderId, StreamRoute};
+use crate::types::{OpenAiApiKind, StreamRoute};
+use navi_core::ProviderId;
 use anyhow::{Context, Result};
 use async_stream::try_stream;
 use async_trait::async_trait;
