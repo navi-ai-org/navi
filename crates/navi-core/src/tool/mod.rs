@@ -378,6 +378,8 @@ fn tool_call_advice_message(invalid: &ToolCallInvalid) -> String {
     }
 }
 
+/// Generates a minimal example JSON value from a JSON Schema by extracting
+/// required properties and filling in default/example values.
 pub fn example_from_schema(schema: &Value) -> Value {
     let Some(properties) = schema.get("properties").and_then(Value::as_object) else {
         return json!({});
