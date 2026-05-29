@@ -19,7 +19,7 @@
 | 5 | Duplicate `ProviderId` enum in navi-core and navi-openai | `provider_id.rs` + `types.rs` | PENDING |
 | 6 | `navi-cli/acp.rs` imports from navi-core when SDK re-exports exist | `navi-cli/src/acp.rs` | DONE |
 | 7 | `navi-sdk` public API returns `anyhow::Result` everywhere | `navi-sdk/src/engine.rs` | PENDING |
-| 8 | No `RwLock` for read-heavy patterns (`loaded_config`, `sessions`) | `navi-sdk/src/engine.rs` | PENDING |
+| 8 | No `RwLock` for read-heavy patterns (`loaded_config`, `sessions`) | `navi-sdk/src/engine.rs` | DONE |
 | 9 | `BashBackgroundState.label` as `&'static str` instead of enum | `navi-core/src/tool/builtin/bash.rs` | PENDING |
 | 10 | String-based provider ID comparisons across 4 files | `credentials.rs`, `runtime.rs`, `mapping.rs` | PENDING |
 | 11 | `#[allow(dead_code/unused)]` blanket suppressions in navi-tui | `render.rs`, `keybindings.rs` | PENDING |
