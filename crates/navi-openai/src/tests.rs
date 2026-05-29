@@ -1,3 +1,36 @@
+fn extract_output_text(value: &serde_json::Value) -> String {
+    if let Some(text) = value.get("output_text").and_then(|v| v.as_str()) {
+        return text.to_string();
+    }
+
+    value
+        .get("output")
+        .and_then(|v| v.as_array())
+        .into_iter()
+        .flatten()
+        .flat_map(|item| {
+            item.get("content")
+                .and_then(|v| v.as_array())
+                .into_iter()
+                .flatten()
+        })
+        .filter_map(|content| content.get("text").and_then(|v| v.as_str()))
+        .collect::<Vec<_>>()
+        .join("")
+}
+
+fn extract_chat_completion_text(value: &serde_json::Value) -> String {
+    value
+        .get("choices")
+        .and_then(|v| v.as_array())
+        .and_then(|choices| choices.first())
+        .and_then(|choice| choice.get("message"))
+        .and_then(|message| message.get("content"))
+        .and_then(|v| v.as_str())
+        .unwrap_or_default()
+        .to_string()
+}
+
 use crate::errors::ProviderError;
 use crate::mapping::{
     apply_thinking_to_body, message_to_json, responses_input_item_to_json,
@@ -16,7 +49,6 @@ use crate::transport::{
     should_retry_error,
 };
 use crate::types::OpenAiApiKind;
-use crate::{extract_chat_completion_text, extract_output_text};
 use futures_util::StreamExt;
 use navi_core::{ModelMessage, ModelProvider, ModelStreamEvent, ToolInvocation};
 use serde_json::json;
