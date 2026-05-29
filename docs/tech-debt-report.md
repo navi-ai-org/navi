@@ -38,7 +38,7 @@
 | 19 | `LoadedConfig` cloned on every engine operation | `navi-sdk/src/engine.rs` | PENDING |
 | 20 | `SessionId(pub String)` — public inner field defeats newtype | `navi-core/src/session.rs` | PENDING |
 | 21 | Missing test coverage (oauth, turn, tooling) | Various | PENDING |
-| 22 | `navi-tui` has non-workspace dependencies | `navi-tui/Cargo.toml` | PENDING |
+| 22 | `navi-tui` has non-workspace dependencies | `navi-tui/Cargo.toml` | DONE |
 
 ---
 
