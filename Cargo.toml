@@ -18,7 +18,9 @@ license = "MIT"
 
 [workspace.dependencies]
 anyhow = "1"
+arboard = "3.6.1"
 async-trait = "0.1"
+base64 = "0.22.1"
 clap = { version = "4", features = ["derive"] }
 crossterm = "0.29"
 directories = "6"
