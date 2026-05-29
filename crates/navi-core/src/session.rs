@@ -56,7 +56,7 @@ fn title_from_user_text(text: &str) -> Option<String> {
     clean_session_title(text)
 }
 
-fn clean_session_title(text: &str) -> Option<String> {
+pub fn clean_session_title(text: &str) -> Option<String> {
     let cleaned = text
         .trim()
         .trim_matches('`')
@@ -129,8 +129,14 @@ pub struct SessionStore {
     redact_secrets: bool,
 }
 
+fn default_session_version() -> u32 {
+    1
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionSnapshot {
+    #[serde(default = "default_session_version")]
+    pub version: u32,
     pub id: SessionId,
     #[serde(default)]
     pub title: Option<String>,
@@ -142,6 +148,10 @@ pub struct SessionSnapshot {
     pub events: Vec<AgentEvent>,
     #[serde(default)]
     pub memory: Option<ProjectMemory>,
+}
+
+impl SessionSnapshot {
+    pub const CURRENT_VERSION: u32 = 1;
 }
 
 impl SessionStore {
@@ -174,6 +184,7 @@ impl SessionStore {
         let path = self.root.join(format!("{}.json", snapshot.id.0));
         let snapshot = if self.redact_secrets {
             SessionSnapshot {
+                version: snapshot.version,
                 id: snapshot.id.clone(),
                 title: snapshot.title.clone(),
                 project: snapshot.project.clone(),
@@ -212,6 +223,31 @@ impl SessionStore {
                 .then_with(|| b.id.0.cmp(&a.id.0))
         });
         sessions
+    }
+
+    pub fn load(&self, session_id: &str) -> Result<SessionSnapshot> {
+        let path = self.root.join(format!("{session_id}.json"));
+        let content = fs::read_to_string(&path)
+            .with_context(|| format!("failed to read {}", path.display()))?;
+        let snapshot: SessionSnapshot = serde_json::from_str(&content)
+            .with_context(|| format!("failed to parse {}", path.display()))?;
+        if snapshot.version > SessionSnapshot::CURRENT_VERSION {
+            return Err(anyhow::anyhow!(
+                "session snapshot version {} is newer than supported version {}",
+                snapshot.version,
+                SessionSnapshot::CURRENT_VERSION
+            ));
+        }
+        Ok(snapshot)
+    }
+
+    pub fn delete(&self, session_id: &str) -> Result<bool> {
+        let path = self.root.join(format!("{session_id}.json"));
+        match fs::remove_file(&path) {
+            Ok(()) => Ok(true),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(false),
+            Err(err) => Err(err).with_context(|| format!("failed to delete {}", path.display())),
+        }
     }
 
     pub fn save_memory(&self, project_dir: &Path, memory: &ProjectMemory) -> Result<PathBuf> {
@@ -321,6 +357,7 @@ mod tests {
         let tempdir = tempfile::tempdir().expect("tempdir");
         let store = SessionStore::new(tempdir.path().to_path_buf());
         let snapshot = SessionSnapshot {
+            version: SessionSnapshot::CURRENT_VERSION,
             id: SessionId("test-session".to_string()),
             title: Some("Test session".to_string()),
             project: PathBuf::from("/tmp/project"),
@@ -344,6 +381,7 @@ mod tests {
         let data_dir = tempdir.path().join("navi-data");
         let store = SessionStore::new(data_dir);
         let snapshot = SessionSnapshot {
+            version: SessionSnapshot::CURRENT_VERSION,
             id: SessionId("private-session".to_string()),
             title: None,
             project: PathBuf::from("/tmp/project"),
@@ -374,6 +412,7 @@ mod tests {
         let tempdir = tempfile::tempdir().expect("tempdir");
         let store = SessionStore::new(tempdir.path().to_path_buf());
         let snapshot = SessionSnapshot {
+            version: SessionSnapshot::CURRENT_VERSION,
             id: SessionId("redacted-session".to_string()),
             title: None,
             project: PathBuf::from("/tmp/project"),
@@ -397,6 +436,7 @@ mod tests {
         let tempdir = tempfile::tempdir().expect("tempdir");
         let store = SessionStore::with_redaction(tempdir.path().to_path_buf(), false);
         let snapshot = SessionSnapshot {
+            version: SessionSnapshot::CURRENT_VERSION,
             id: SessionId("unredacted-session".to_string()),
             title: None,
             project: PathBuf::from("/tmp/project"),
@@ -446,9 +486,7 @@ mod tests {
             project_dir: tempdir.path().to_path_buf(),
             model_name: "test-model".to_string(),
             event_tx: None,
-            pending_approvals: std::sync::Arc::new(std::sync::Mutex::new(
-                std::collections::HashMap::new(),
-            )),
+            approval_resolver: crate::runtime::ApprovalResolver::new_for_test(),
             compact_state: std::sync::Arc::new(tokio::sync::Mutex::new(
                 crate::compact::CompactState::new(128_000),
             )),

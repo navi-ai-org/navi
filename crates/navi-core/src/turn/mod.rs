@@ -35,14 +35,7 @@ pub struct TurnContext {
     pub project_dir: PathBuf,
     pub model_name: String,
     pub event_tx: Option<tokio::sync::mpsc::UnboundedSender<AgentEvent>>,
-    pub pending_approvals: Arc<
-        std::sync::Mutex<
-            std::collections::HashMap<
-                String,
-                tokio::sync::oneshot::Sender<crate::event::ApprovalDecision>,
-            >,
-        >,
-    >,
+    pub approval_resolver: crate::runtime::ApprovalResolver,
     pub compact_state: Arc<tokio::sync::Mutex<CompactState>>,
     pub harness_config: crate::config::HarnessConfig,
     pub include_tool_prompt_manifest: bool,
@@ -58,16 +51,7 @@ impl TurnContext {
     }
 
     pub fn resolve_approval(&self, decision: crate::event::ApprovalDecision) -> bool {
-        let id = match &decision {
-            crate::event::ApprovalDecision::Approved { id } => id,
-            crate::event::ApprovalDecision::Denied { id } => id,
-        };
-        if let Some(tx) = self.pending_approvals.lock().unwrap().remove(id) {
-            let _ = tx.send(decision);
-            true
-        } else {
-            false
-        }
+        self.approval_resolver.resolve(decision)
     }
 }
 
@@ -399,11 +383,7 @@ async fn approve_and_invoke_tool(
         crate::security::SecurityRisk::Command => crate::event::ApprovalRisk::Command,
         crate::security::SecurityRisk::ExternalPlugin => crate::event::ApprovalRisk::ExternalPlugin,
     };
-    let (approve_tx, approve_rx) = tokio::sync::oneshot::channel();
-    {
-        let mut lock = ctx.pending_approvals.lock().unwrap();
-        lock.insert(invocation.id.clone(), approve_tx);
-    }
+    let approve_rx = ctx.approval_resolver.register(invocation.id.clone());
 
     let _ = tx.send(AgentEvent::ApprovalRequested(
         crate::event::ApprovalRequest {

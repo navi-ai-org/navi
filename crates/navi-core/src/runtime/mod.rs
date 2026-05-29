@@ -38,12 +38,31 @@ pub struct ApprovalResolver {
 }
 
 impl ApprovalResolver {
+    #[cfg(test)]
+    pub fn new_for_test() -> Self {
+        let (tx, _) = broadcast::channel(16);
+        Self {
+            pending_approvals: Arc::new(std::sync::Mutex::new(HashMap::new())),
+            runtime_events_tx: tx,
+        }
+    }
+
+    /// Register a pending approval, returning the receiver for the decision.
+    pub fn register(
+        &self,
+        id: String,
+    ) -> oneshot::Receiver<ApprovalDecision> {
+        let (tx, rx) = oneshot::channel();
+        self.pending_approvals.lock().unwrap_or_else(|e| e.into_inner()).insert(id, tx);
+        rx
+    }
+
     pub fn resolve(&self, decision: ApprovalDecision) -> bool {
         let id = match &decision {
             ApprovalDecision::Approved { id } => id,
             ApprovalDecision::Denied { id } => id,
         };
-        if let Some(tx) = self.pending_approvals.lock().unwrap().remove(id) {
+        if let Some(tx) = self.pending_approvals.lock().unwrap_or_else(|e| e.into_inner()).remove(id) {
             let _ = tx.send(decision.clone());
             let _ =
                 self.runtime_events_tx
@@ -382,7 +401,7 @@ impl AgentRuntime {
                 &self.loaded_config.config.model.name,
             ),
             event_tx: Some(event_tx),
-            pending_approvals: self.pending_approvals.clone(),
+            approval_resolver: self.approval_resolver(),
             compact_state: Arc::new(tokio::sync::Mutex::new(crate::compact::CompactState::new(
                 crate::config::effective_context_window(&self.loaded_config.config),
             ))),

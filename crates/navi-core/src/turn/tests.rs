@@ -87,7 +87,7 @@ async fn test_turn_loop_with_parallel_tools() {
         project_dir: tempdir.path().to_path_buf(),
         model_name: "gpt-4".to_string(),
         event_tx: None,
-        pending_approvals: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+        approval_resolver: crate::runtime::ApprovalResolver::new_for_test(),
         compact_state: Arc::new(tokio::sync::Mutex::new(CompactState::new(128_000))),
         harness_config: crate::config::HarnessConfig::default(),
         include_tool_prompt_manifest: false,
