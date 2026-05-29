@@ -12,12 +12,15 @@ pub use opencode::{
 // Re-export for config.rs tests that use these helpers
 pub use registry::{model, model_ctx};
 
+/// Returns the full provider catalog: built-in providers merged with any
+/// user-configured overrides.
 pub fn provider_catalog(config: &NaviConfig) -> Vec<ProviderConfig> {
     let mut providers = registry::built_in_providers();
     merge_provider_configs(&mut providers, config.providers.clone());
     providers
 }
 
+/// Maps provider aliases to their canonical form (e.g. `"opencode-zen"` to `"opencode"`).
 pub fn canonical_provider_id(id: &str) -> &str {
     match id {
         "opencode-zen" => "opencode",
@@ -25,6 +28,7 @@ pub fn canonical_provider_id(id: &str) -> &str {
     }
 }
 
+/// Resolves a provider config by id from the merged catalog, following aliases.
 pub fn resolve_provider_config(config: &NaviConfig, id: &str) -> Option<ProviderConfig> {
     let canonical_id = canonical_provider_id(id);
     provider_catalog(config)
@@ -32,6 +36,7 @@ pub fn resolve_provider_config(config: &NaviConfig, id: &str) -> Option<Provider
         .find(|provider| canonical_provider_id(&provider.id) == canonical_id)
 }
 
+/// Returns all available model options across all providers in the catalog.
 pub fn available_model_options(config: &NaviConfig) -> Vec<ModelOption> {
     provider_catalog(config)
         .into_iter()
@@ -53,6 +58,7 @@ pub fn available_model_options(config: &NaviConfig) -> Vec<ModelOption> {
         .collect()
 }
 
+/// Returns the context window size for the selected model, or a default if unknown.
 pub fn effective_context_window(config: &NaviConfig) -> u64 {
     let selected_provider = &config.model.provider;
     let selected_model = &config.model.name;
@@ -63,6 +69,8 @@ pub fn effective_context_window(config: &NaviConfig) -> u64 {
         .unwrap_or(crate::config::defaults::DEFAULT_CONTEXT_WINDOW)
 }
 
+/// Whether the tool prompt manifest should be included for the selected model,
+/// based on harness config and provider/model settings.
 pub fn effective_tool_prompt_manifest(config: &NaviConfig) -> bool {
     use crate::config::types::ToolPromptManifest;
 
@@ -91,6 +99,8 @@ pub fn effective_tool_prompt_manifest(config: &NaviConfig) -> bool {
 }
 
 impl NaviConfig {
+    /// Updates the model list for a provider, merging with existing model metadata
+    /// from the built-in catalog.
     pub fn update_provider_models(&mut self, provider_id: &str, model_names: &[String]) {
         let mut existing_models = std::collections::HashMap::new();
 

@@ -5,6 +5,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 impl NaviConfig {
+    /// Loads and merges configuration from the global config file and the
+    /// project's `.navi/config.toml`, returning the merged config with paths.
     pub fn load(cwd: &Path) -> Result<LoadedConfig> {
         let dirs = navi_dirs()?;
         let global_path = dirs.config_dir().join("config.toml");
@@ -44,6 +46,7 @@ impl NaviConfig {
     }
 }
 
+/// Saves the config to the global config path, creating parent directories if needed.
 pub fn save_global_config(global_path: &Path, config: &NaviConfig) -> Result<PathBuf> {
     if let Some(parent) = global_path.parent() {
         fs::create_dir_all(parent)
@@ -55,6 +58,7 @@ pub fn save_global_config(global_path: &Path, config: &NaviConfig) -> Result<Pat
     Ok(global_path.to_path_buf())
 }
 
+/// Saves the config to the project's `.navi/config.toml`, creating the directory if needed.
 pub fn save_project_config(cwd: &Path, config: &NaviConfig) -> Result<PathBuf> {
     let project_path = cwd.join(".navi").join("config.toml");
     if let Some(parent) = project_path.parent() {

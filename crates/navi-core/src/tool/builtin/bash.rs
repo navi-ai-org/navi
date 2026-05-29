@@ -282,7 +282,11 @@ impl BashBackgroundState {
 
     fn completed(ok: bool, exit_code: Option<i32>) -> Self {
         Self {
-            status: if ok { BashTaskStatus::Completed } else { BashTaskStatus::Failed },
+            status: if ok {
+                BashTaskStatus::Completed
+            } else {
+                BashTaskStatus::Failed
+            },
             exit_code,
             error: None,
         }
@@ -394,7 +398,8 @@ impl Tool for BashTool {
             .unwrap_or(BASH_DEFAULT_TIMEOUT_MS)
             .min(BASH_MAX_TIMEOUT_MS);
 
-        self.run_foreground(&command, timeout_ms, invocation.id).await
+        self.run_foreground(&command, timeout_ms, invocation.id)
+            .await
     }
 }
 

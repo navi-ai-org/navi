@@ -147,8 +147,11 @@ fn build_test_ctx(project_dir: PathBuf) -> TurnContext {
 #[tokio::test]
 async fn test_ensure_system_prompt_reads_agents_md() {
     let tempdir = tempfile::tempdir().unwrap();
-    std::fs::write(tempdir.path().join("AGENTS.md"), "Custom project instructions")
-        .unwrap();
+    std::fs::write(
+        tempdir.path().join("AGENTS.md"),
+        "Custom project instructions",
+    )
+    .unwrap();
     let ctx = build_test_ctx(tempdir.path().to_path_buf());
 
     let mut messages = vec![];
@@ -161,7 +164,9 @@ async fn test_ensure_system_prompt_reads_agents_md() {
         "system prompt should include AGENTS.md content"
     );
     assert!(
-        messages[0].content.contains("AGENTS.md / Project Instructions"),
+        messages[0]
+            .content
+            .contains("AGENTS.md / Project Instructions"),
         "system prompt should have the AGENTS.md section header"
     );
 }
@@ -178,7 +183,9 @@ async fn test_ensure_system_prompt_falls_back_without_agents_md() {
     assert_eq!(messages.len(), 1);
     assert_eq!(messages[0].role, ModelRole::System);
     assert!(
-        messages[0].content.contains("Default NAVI base instructions"),
+        messages[0]
+            .content
+            .contains("Default NAVI base instructions"),
         "system prompt should fall back to default instructions when AGENTS.md is absent"
     );
 }
@@ -195,7 +202,9 @@ async fn test_ensure_system_prompt_updates_existing_system_message() {
     assert_eq!(messages.len(), 1);
     assert_eq!(messages[0].role, ModelRole::System);
     assert!(
-        messages[0].content.contains("Default NAVI base instructions"),
+        messages[0]
+            .content
+            .contains("Default NAVI base instructions"),
         "existing system message should be replaced"
     );
     assert!(
@@ -245,7 +254,10 @@ fn test_resolve_approval_delegates_to_resolver() {
         id: "approval-1".to_string(),
     };
     let resolved = ctx.resolve_approval(decision);
-    assert!(resolved, "resolve_approval should return true for a registered id");
+    assert!(
+        resolved,
+        "resolve_approval should return true for a registered id"
+    );
 
     let received = rx.try_recv().expect("receiver should have the decision");
     assert!(

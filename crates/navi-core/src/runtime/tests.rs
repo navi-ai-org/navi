@@ -248,6 +248,9 @@ async fn runtime_uses_requested_session_id_once() {
     let first_id = runtime.start_session().expect("start first session");
     let second_id = runtime.start_session().expect("start second session");
 
-    assert_eq!(first_id.as_str(), "navi_tutor_algoritmos_2026-05-25_14-32-10");
+    assert_eq!(
+        first_id.as_str(),
+        "navi_tutor_algoritmos_2026-05-25_14-32-10"
+    );
     assert_ne!(second_id.as_str(), first_id.as_str());
 }

@@ -36,8 +36,7 @@ impl Tool for ReadFileTool {
         let path = helpers::required_string(&invocation.input, "path")?.to_string();
         let path_clone = path.clone();
         let content = tokio::task::spawn_blocking(move || {
-            fs::read_to_string(&path_clone)
-                .with_context(|| format!("failed to read {path_clone}"))
+            fs::read_to_string(&path_clone).with_context(|| format!("failed to read {path_clone}"))
         })
         .await
         .map_err(|e| anyhow::anyhow!("task join error: {}", e))??;
