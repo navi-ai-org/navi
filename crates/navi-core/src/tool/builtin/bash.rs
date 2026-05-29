@@ -394,9 +394,20 @@ impl Tool for BashTool {
             .unwrap_or(BASH_DEFAULT_TIMEOUT_MS)
             .min(BASH_MAX_TIMEOUT_MS);
 
+        self.run_foreground(&command, timeout_ms, invocation.id).await
+    }
+}
+
+impl BashTool {
+    async fn run_foreground(
+        &self,
+        command: &str,
+        timeout_ms: u64,
+        invocation_id: String,
+    ) -> Result<ToolResult> {
         let mut child = tokio::process::Command::new("bash")
             .arg("-lc")
-            .arg(&command)
+            .arg(command)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .kill_on_drop(true)
@@ -472,7 +483,7 @@ impl Tool for BashTool {
 
         if let Some(err) = error_msg {
             Ok(ToolResult {
-                invocation_id: invocation.id,
+                invocation_id,
                 ok: false,
                 output: json!({
                     "error": err,
@@ -482,7 +493,7 @@ impl Tool for BashTool {
             })
         } else {
             Ok(ToolResult {
-                invocation_id: invocation.id,
+                invocation_id,
                 ok,
                 output: json!({
                     "status": status_code,
