@@ -19,16 +19,22 @@ struct ProviderCredentials {
     api_key: String,
 }
 
+/// Where a provider's API key was resolved from.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum CredentialSource {
+    /// An environment variable.
     Env,
+    /// NAVI's encrypted credential store on disk.
     Stored,
+    /// An external auth source (e.g. OpenCode auth.json).
     External,
+    /// The model is free and requires no key.
     PublicModel,
 }
 
 impl CredentialSource {
+    /// Returns a lowercase string label for this source.
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Env => "env",
@@ -39,15 +45,22 @@ impl CredentialSource {
     }
 }
 
+/// The resolved credential status for a provider, indicating whether a key is
+/// available and where it came from.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CredentialStatus {
+    /// Whether a usable credential was found.
     pub configured: bool,
+    /// The source of the credential, if found.
     pub source: Option<CredentialSource>,
+    /// Short label for display (e.g. `"env"`, `"stored"`, `"missing"`).
     pub label: String,
+    /// Optional detail string (e.g. the env var name or auth path).
     pub detail: Option<String>,
 }
 
+/// Manages API key storage in a TOML credentials file at `<data_dir>/credentials.toml`.
 #[derive(Debug, Clone)]
 pub struct CredentialStore {
     path: PathBuf,
@@ -60,22 +73,26 @@ impl CredentialStore {
         }
     }
 
+    /// Returns the path to the credentials file.
     pub fn path(&self) -> &Path {
         &self.path
     }
 
+    /// Reads the stored API key for the given provider, or `None` if not found.
     pub fn get_api_key(&self, provider_id: &str) -> Option<String> {
         let content = fs::read_to_string(&self.path).ok()?;
         let file: CredentialsFile = toml::from_str(&content).ok()?;
         file.providers.get(provider_id).map(|c| c.api_key.clone())
     }
 
+    /// Returns the list of provider ids that have stored API keys.
     pub fn list_api_key_providers(&self) -> Result<Vec<String>> {
         let mut providers = self.load_file()?.providers.into_keys().collect::<Vec<_>>();
         providers.sort();
         Ok(providers)
     }
 
+    /// Reads an API key from OpenCode's auth.json file, if it exists.
     pub fn get_opencode_api_key(&self) -> Option<String> {
         if let Ok(content) = std::env::var("OPENCODE_AUTH_CONTENT") {
             if let Some(key) = opencode_key_from_auth_content(&content) {
@@ -88,6 +105,8 @@ impl CredentialStore {
             .find_map(|path| opencode_key_from_auth_file(&path))
     }
 
+    /// Stores an API key for the given provider, creating the credentials file
+    /// if needed.
     pub fn set_api_key(&self, provider_id: &str, api_key: &str) -> Result<()> {
         ensure_private_parent_dir(&self.path)?;
 
@@ -106,6 +125,7 @@ impl CredentialStore {
         Ok(())
     }
 
+    /// Deletes a stored API key. Returns `true` if the key existed.
     pub fn delete_api_key(&self, provider_id: &str) -> Result<bool> {
         if !self.path.exists() {
             return Ok(false);
@@ -123,6 +143,8 @@ impl CredentialStore {
     }
 
     /// Resolve API key for a provider: env var first (explicit override), then stored credential.
+    /// Resolves an API key by checking the environment variable first, then
+    /// the stored credential. Returns `None` if neither is set.
     pub fn resolve_api_key(&self, provider_id: &str, env_var: &str) -> Option<String> {
         if let Ok(key) = std::env::var(env_var) {
             if !key.is_empty() {
@@ -156,6 +178,8 @@ impl CredentialStore {
     }
 }
 
+/// Resolves the API key for a provider by id, using the configured env var from
+/// the provider's `ProviderConfig`. Returns `None` if no key is found.
 pub fn resolve_provider_api_key(
     credential_store: &CredentialStore,
     provider_config: &ProviderConfig,
@@ -173,6 +197,8 @@ pub fn resolve_provider_api_key(
         })
 }
 
+/// Resolves the full [`CredentialStatus`] for a provider, including source
+/// label, env var name, and whether the model is public.
 pub fn resolve_provider_credential_status(
     credential_store: &CredentialStore,
     provider_config: &ProviderConfig,

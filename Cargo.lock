@@ -2026,7 +2026,6 @@ dependencies = [
  "anyhow",
  "clap",
  "navi-core",
- "navi-openai",
  "navi-sdk",
  "navi-tui",
  "serde_json",
@@ -2091,8 +2090,8 @@ dependencies = [
 name = "navi-plugin-api"
 version = "0.1.0"
 dependencies = [
- "anyhow",
- "navi-core",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -2135,8 +2134,6 @@ dependencies = [
  "base64",
  "crossterm",
  "futures-util",
- "navi-core",
- "navi-openai",
  "navi-sdk",
  "ratatui",
  "serde_json",

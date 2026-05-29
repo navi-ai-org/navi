@@ -15,43 +15,81 @@ use builtin::{
     truncate_tool_result,
 };
 
+/// Trait for executable tools that can be invoked by the agent.
+///
+/// Built-in tools (read_file, write_file, apply_patch, list_files, grep, bash)
+/// implement this trait. Host applications can also register custom tools via
+/// the SDK's host tool interface.
 #[async_trait]
 pub trait Tool: Send + Sync {
+    /// Returns the tool's definition (name, description, kind, input schema).
     fn definition(&self) -> ToolDefinition;
+
+    /// Executes the tool with the given invocation and returns the result.
     async fn invoke(&self, invocation: ToolInvocation) -> Result<ToolResult>;
 }
 
+/// Describes a tool's name, purpose, security kind, and input schema.
+///
+/// This is sent to the model as part of the request so it knows which tools
+/// are available and how to call them.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolDefinition {
+    /// Unique tool name used in invocations (e.g. `"read_file"`).
     pub name: String,
+    /// Human-readable description of what the tool does.
     pub description: String,
+    /// Security classification that determines approval behavior.
     pub kind: ToolKind,
+    /// JSON Schema describing the tool's input parameters.
     #[serde(default)]
     pub input_schema: Value,
 }
 
+/// Security classification for a tool, used by [`SecurityPolicy`] to determine
+/// whether invocation requires approval.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ToolKind {
+    /// Read-only operations (default: allowed without approval).
     Read,
+    /// File write operations (default: requires approval).
     Write,
+    /// Shell command execution (default: requires approval).
     Command,
+    /// Custom/plugin tools (default: requires approval).
     Custom,
 }
 
+/// A specific tool invocation requested by the model, with a unique id,
+/// tool name, and JSON input arguments.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ToolInvocation {
+    /// Unique identifier for this invocation (matches tool call ids in messages).
     pub id: String,
+    /// Name of the tool to invoke.
     pub tool_name: String,
+    /// JSON input arguments for the tool.
     pub input: Value,
 }
 
+/// The result of a tool invocation, containing success/failure status and
+/// JSON output.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ToolResult {
+    /// Identifier of the invocation this result responds to.
     pub invocation_id: String,
+    /// Whether the tool executed successfully.
     pub ok: bool,
+    /// JSON output from the tool (result data or error details).
     pub output: Value,
 }
 
+/// Registry and executor for tools, validating invocations against security
+/// policy and JSON Schema before execution.
+///
+/// The executor holds a set of registered [`Tool`] implementations, their
+/// compiled JSON Schema validators, and a [`SecurityPolicy`] that governs
+/// whether invocations are allowed, need approval, or are denied.
 pub struct ToolExecutor {
     tools: HashMap<String, Arc<dyn Tool>>,
     validators: HashMap<String, Arc<jsonschema::Validator>>,
@@ -59,24 +97,37 @@ pub struct ToolExecutor {
     policy: SecurityPolicy,
 }
 
+/// Reasons a tool call can be rejected before execution.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ToolCallInvalid {
+    /// The requested tool name is not registered.
     UnknownTool {
+        /// The tool name that was requested.
         tool_name: String,
+        /// List of tool names that are available.
         available_tools: Vec<String>,
     },
+    /// The tool's input schema is malformed or could not be compiled.
     InvalidSchema {
+        /// The tool name with the bad schema.
         tool_name: String,
+        /// Description of the schema error.
         message: String,
     },
+    /// The input arguments fail schema validation.
     InvalidArguments {
+        /// The tool name with invalid arguments.
         tool_name: String,
+        /// Descriptions of each validation problem.
         problems: Vec<String>,
+        /// A valid example input for reference.
         example: Value,
     },
 }
 
 impl ToolExecutor {
+    /// Creates a new executor with the given security policy and registers the
+    /// built-in tools (read_file, write_file, apply_patch, list_files, grep, bash).
     pub fn new(policy: SecurityPolicy) -> Self {
         let mut executor = Self {
             tools: HashMap::new(),
@@ -88,14 +139,19 @@ impl ToolExecutor {
         executor
     }
 
+    /// Returns definitions for all registered tools.
     pub fn definitions(&self) -> Vec<ToolDefinition> {
         self.tools.values().map(|tool| tool.definition()).collect()
     }
 
+    /// Returns the definition for a specific tool by name, if registered.
     pub fn definition(&self, name: &str) -> Option<ToolDefinition> {
         self.tools.get(name).map(|tool| tool.definition())
     }
 
+    /// Registers a tool, compiling its input schema for validation.
+    ///
+    /// Returns the previous tool with the same name, if any.
     pub fn register_tool(&mut self, tool: Arc<dyn Tool>) -> Option<Arc<dyn Tool>> {
         let definition = tool.definition();
         let name = definition.name.clone();
@@ -113,6 +169,9 @@ impl ToolExecutor {
         self.tools.insert(name, tool)
     }
 
+    /// Validates a tool invocation's arguments against the tool's JSON Schema.
+    ///
+    /// Returns `Ok(())` if valid, or a [`ToolCallInvalid`] error describing the problem.
     pub fn validate_arguments(
         &self,
         invocation: &ToolInvocation,
@@ -161,12 +220,15 @@ impl ToolExecutor {
         Ok(())
     }
 
+    /// Returns sorted list of all registered tool names.
     pub fn tool_names(&self) -> Vec<String> {
         let mut names = self.tools.keys().cloned().collect::<Vec<_>>();
         names.sort();
         names
     }
 
+    /// Creates a failed [`ToolResult`] from an invalid tool call, including
+    /// corrective advice for the model.
     pub fn invalid_tool_result(
         &self,
         invocation: &ToolInvocation,

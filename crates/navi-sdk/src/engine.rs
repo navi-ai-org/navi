@@ -1,4 +1,6 @@
-use anyhow::{Context, Result};
+use anyhow::Context;
+use crate::types::NaviError;
+type Result<T> = std::result::Result<T, NaviError>;
 use navi_core::{
     AgentMode, AgentRuntime, AgentRuntimeOptions, ApprovalDecision,
     CredentialStore, LoadedConfig, ModelOption, ProviderConfig, RuntimeEvent, SessionId,
@@ -236,7 +238,7 @@ impl NaviEngine {
     pub async fn snapshot_session(&self, session_id: &str) -> Result<SessionSnapshot> {
         let session = self.session(session_id)?;
         let mut runtime = session.runtime.lock().await;
-        runtime.snapshot_session()
+        Ok(runtime.snapshot_session()?)
     }
 
     /// Changes the model used by an active session.
@@ -293,12 +295,12 @@ impl NaviEngine {
 
     /// Stores an API key for the given provider in the credential store.
     pub fn set_provider_api_key(&self, provider_id: &str, api_key: &str) -> Result<()> {
-        self.credential_store().set_api_key(provider_id, api_key)
+        Ok(self.credential_store().set_api_key(provider_id, api_key)?)
     }
 
     /// Deletes a stored API key. Returns `true` if a key was removed.
     pub fn delete_provider_api_key(&self, provider_id: &str) -> Result<bool> {
-        self.credential_store().delete_api_key(provider_id)
+        Ok(self.credential_store().delete_api_key(provider_id)?)
     }
 
     /// Discovers and lists configured skills from the project and global skill directories.
@@ -417,21 +419,21 @@ impl NaviEngine {
     /// Loads a persisted session snapshot by ID.
     pub fn load_saved_session(&self, session_id: &str) -> Result<SessionSnapshot> {
         let loaded_config = self.loaded_config();
-        SessionStore::with_redaction(
+        Ok(SessionStore::with_redaction(
             loaded_config.data_dir,
             loaded_config.config.security.redact_secrets_in_sessions,
         )
-        .load(session_id)
+        .load(session_id)?)
     }
 
     /// Deletes a persisted session. Returns `true` if a session was removed.
     pub fn delete_saved_session(&self, session_id: &str) -> Result<bool> {
         let loaded_config = self.loaded_config();
-        SessionStore::with_redaction(
+        Ok(SessionStore::with_redaction(
             loaded_config.data_dir,
             loaded_config.config.security.redact_secrets_in_sessions,
         )
-        .delete(session_id)
+        .delete(session_id)?)
     }
 
     /// Returns the IDs of all active (in-memory) sessions.
@@ -455,7 +457,7 @@ impl NaviEngine {
             .unwrap_or_else(|e| e.into_inner())
             .get(session_id)
             .cloned()
-            .with_context(|| format!("unknown NAVI session `{session_id}`"))
+            .ok_or_else(|| NaviError::SessionNotFound(session_id.to_string()))
     }
 
     /// Returns a snapshot of the current loaded configuration.
@@ -560,24 +562,34 @@ impl NaviEngine {
         match target {
             NaviConfigSaveTarget::None => Ok(None),
             NaviConfigSaveTarget::Project => {
-                save_project_config(&self.inner.project_dir, &loaded_config.config).map(Some)
+                let path = save_project_config(&self.inner.project_dir, &loaded_config.config)
+                    .map_err(NaviError::from)?;
+                Ok(Some(path))
             }
             NaviConfigSaveTarget::Global => {
                 let global_path = loaded_config
                     .global_config_path
                     .as_ref()
-                    .context("global config path is unavailable")?;
-                save_global_config(global_path, &loaded_config.config).map(Some)
+                    .context("global config path is unavailable")
+                    .map_err(NaviError::from)?;
+                let path = save_global_config(global_path, &loaded_config.config)
+                    .map_err(NaviError::from)?;
+                Ok(Some(path))
             }
             NaviConfigSaveTarget::Auto => {
                 if loaded_config.project_config_path.is_some() {
-                    save_project_config(&self.inner.project_dir, &loaded_config.config).map(Some)
+                    let path = save_project_config(&self.inner.project_dir, &loaded_config.config)
+                        .map_err(NaviError::from)?;
+                    Ok(Some(path))
                 } else {
                     let global_path = loaded_config
                         .global_config_path
                         .as_ref()
-                        .context("global config path is unavailable")?;
-                    save_global_config(global_path, &loaded_config.config).map(Some)
+                        .context("global config path is unavailable")
+                        .map_err(NaviError::from)?;
+                    let path = save_global_config(global_path, &loaded_config.config)
+                        .map_err(NaviError::from)?;
+                    Ok(Some(path))
                 }
             }
         }

@@ -6,36 +6,52 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+/// Unique identifier for a session, wrapping a string id like `"session-1719612345000"`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionId(String);
 
 impl SessionId {
+    /// Creates a new `SessionId` from the given string.
     pub fn new(id: String) -> Self {
         Self(id)
     }
 
+    /// Returns the id as a string slice.
     pub fn as_str(&self) -> &str {
         &self.0
     }
 
+    /// Consumes the id and returns the inner string.
     pub fn into_inner(self) -> String {
         self.0
     }
 }
 
+/// Accumulated session memory for a project, used to inject past context into new sessions.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProjectMemory {
+    /// Hash identifying the project directory.
     pub project_hash: String,
+    /// Ordered memory entries from past sessions.
     pub entries: Vec<MemoryEntry>,
 }
 
+/// A single memory entry from a completed session.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MemoryEntry {
+    /// Unix timestamp (seconds) when this entry was created.
     pub created_at: u64,
+    /// Short summary of what the session covered.
     pub summary: String,
+    /// Identifier of the originating session.
     pub session_id: String,
 }
 
+/// Derives a short title from session events by looking for a markdown heading
+/// in the first model output, falling back to a cleaned version of the first
+/// user task text.
+///
+/// Returns `None` if no suitable text is found.
 pub fn session_title_from_events(events: &[AgentEvent]) -> Option<String> {
     events
         .iter()
@@ -70,6 +86,10 @@ fn title_from_user_text(text: &str) -> Option<String> {
     clean_session_title(text)
 }
 
+/// Sanitizes text into a short session title by trimming whitespace, quotes,
+/// markdown markers, and truncating to 80 characters.
+///
+/// Returns `None` if the cleaned text is empty.
 pub fn clean_session_title(text: &str) -> Option<String> {
     let cleaned = text
         .trim()
@@ -96,11 +116,14 @@ pub fn clean_session_title(text: &str) -> Option<String> {
 }
 
 impl ProjectMemory {
+    /// Returns at most `max` of the most recent memory entries.
     pub fn recent_entries(&self, max: usize) -> &[MemoryEntry] {
         let start = self.entries.len().saturating_sub(max);
         &self.entries[start..]
     }
 
+    /// Formats up to `max` recent entries into a text block suitable for
+    /// injection into the system prompt. Returns `None` if there are no entries.
     pub fn format_injection(&self, max: usize) -> Option<String> {
         let entries = self.recent_entries(max);
         if entries.is_empty() {
@@ -136,6 +159,10 @@ fn project_hash(project_dir: &Path) -> String {
     format!("{:016x}", hasher.finish())
 }
 
+/// Persists [`SessionSnapshot`] JSON files to disk under `<data_dir>/sessions/`.
+///
+/// By default, secret redaction is enabled so API keys and tokens are scrubbed
+/// from saved event text.
 #[derive(Debug, Clone)]
 pub struct SessionStore {
     root: PathBuf,
@@ -147,32 +174,44 @@ fn default_session_version() -> u32 {
     1
 }
 
+/// A serializable snapshot of a complete session, persisted to disk as JSON.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionSnapshot {
+    /// Snapshot schema version; currently `1`.
     #[serde(default = "default_session_version")]
     pub version: u32,
+    /// Unique session identifier.
     pub id: SessionId,
+    /// Short human-readable title, derived from the first user/assistant message.
     #[serde(default)]
     pub title: Option<String>,
+    /// Project directory this session belongs to.
     pub project: PathBuf,
+    /// Unix timestamp (seconds) when the session was created.
     #[serde(default)]
     pub created_at: u64,
+    /// Unix timestamp (seconds) when the session was last updated.
     #[serde(default)]
     pub updated_at: u64,
+    /// All agent events recorded during the session.
     pub events: Vec<AgentEvent>,
+    /// Optional project memory snapshot co-persisted with the session.
     #[serde(default)]
     pub memory: Option<ProjectMemory>,
 }
 
 impl SessionSnapshot {
+    /// Current snapshot schema version.
     pub const CURRENT_VERSION: u32 = 1;
 }
 
 impl SessionStore {
+    /// Creates a new store with secret redaction enabled.
     pub fn new(data_dir: PathBuf) -> Self {
         Self::with_redaction(data_dir, true)
     }
 
+    /// Creates a new store with the given redaction setting.
     pub fn with_redaction(data_dir: PathBuf, redact_secrets: bool) -> Self {
         Self {
             root: data_dir.join("sessions"),
@@ -181,15 +220,19 @@ impl SessionStore {
         }
     }
 
+    /// Returns the directory where session JSON files are stored.
     pub fn root(&self) -> &PathBuf {
         &self.root
     }
 
+    /// Generates a new `SessionId` based on the current Unix timestamp in milliseconds.
     pub fn create_id() -> SessionId {
         let millis = current_unix_millis();
         SessionId::new(format!("session-{millis}"))
     }
 
+    /// Serializes and saves a snapshot to disk, creating the sessions directory
+    /// if needed. Applies secret redaction unless disabled.
     pub fn save(&self, snapshot: &SessionSnapshot) -> Result<PathBuf> {
         fs::create_dir_all(&self.root)
             .with_context(|| format!("failed to create {}", self.root.display()))?;
@@ -217,6 +260,7 @@ impl SessionStore {
         Ok(path)
     }
 
+    /// Loads all saved sessions from disk, sorted by most recently updated first.
     pub fn list(&self) -> Vec<SessionSnapshot> {
         let mut sessions = Vec::new();
         if let Ok(entries) = fs::read_dir(&self.root) {
@@ -239,6 +283,8 @@ impl SessionStore {
         sessions
     }
 
+    /// Loads a single session by id. Returns an error if the file is missing or
+    /// the snapshot version is newer than supported.
     pub fn load(&self, session_id: &str) -> Result<SessionSnapshot> {
         let path = self.root.join(format!("{session_id}.json"));
         let content = fs::read_to_string(&path)
@@ -255,6 +301,7 @@ impl SessionStore {
         Ok(snapshot)
     }
 
+    /// Deletes the session file. Returns `true` if the file existed and was removed.
     pub fn delete(&self, session_id: &str) -> Result<bool> {
         let path = self.root.join(format!("{session_id}.json"));
         match fs::remove_file(&path) {
@@ -264,6 +311,7 @@ impl SessionStore {
         }
     }
 
+    /// Persists project memory to `<data_dir>/memory/<hash>.json`.
     pub fn save_memory(&self, project_dir: &Path, memory: &ProjectMemory) -> Result<PathBuf> {
         let memory_dir = self.data_dir.join("memory");
         fs::create_dir_all(&memory_dir)
@@ -279,6 +327,7 @@ impl SessionStore {
         Ok(path)
     }
 
+    /// Loads project memory from disk, returning `None` if no memory file exists.
     pub fn load_memory(&self, project_dir: &Path) -> Option<ProjectMemory> {
         let hash = project_hash(project_dir);
         let path = self.data_dir.join("memory").join(format!("{hash}.json"));
@@ -286,6 +335,7 @@ impl SessionStore {
         serde_json::from_str(&content).ok()
     }
 
+    /// Appends a new memory entry for the project and persists it to disk.
     pub fn add_memory_entry(
         &self,
         project_dir: &Path,
@@ -305,6 +355,7 @@ impl SessionStore {
     }
 }
 
+/// Returns the current time as a Unix timestamp in seconds.
 pub fn current_unix_timestamp() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -319,17 +370,25 @@ fn current_unix_millis() -> u128 {
         .unwrap_or_default()
 }
 
+/// A user task submission sent to the session background loop.
 pub struct Submission {
+    /// The user's task text.
     pub task: String,
+    /// Channel to send the assistant's response back to the caller.
     pub response_tx: tokio::sync::oneshot::Sender<Result<String>>,
 }
 
+/// A handle to a background session loop that accepts [`Submission`]s and
+/// runs them through the turn pipeline.
 #[derive(Clone)]
 pub struct SessionRuntime {
+    /// Channel for sending task submissions to the background loop.
     pub submission_tx: tokio::sync::mpsc::UnboundedSender<Submission>,
 }
 
 impl SessionRuntime {
+    /// Spawns a background tokio task that processes submissions sequentially
+    /// through the turn pipeline, maintaining conversation history.
     pub fn spawn(
         ctx: std::sync::Arc<crate::turn::TurnContext>,
         policy: crate::harness::HarnessPolicy,

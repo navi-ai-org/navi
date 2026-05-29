@@ -27,7 +27,7 @@ use crate::ui::text_input::{
 };
 use crate::view::build_chat_lines;
 use crossterm::event::{KeyCode, KeyModifiers};
-use navi_core::{
+use navi_sdk::{
     AgentEvent, AgentMode, LoadedConfig, ModelMessage, ModelOption, ToolInvocation, ToolResult,
 };
 use ratatui::layout::Rect;
@@ -38,7 +38,7 @@ use std::time::{Duration, Instant};
 fn test_app(input: &str) -> TuiApp {
     let mut app = TuiApp::new(
         LoadedConfig {
-            config: navi_core::NaviConfig::default(),
+            config: navi_sdk::NaviConfig::default(),
             global_config_path: None,
             project_config_path: None,
             data_dir: PathBuf::from("/tmp/navi-test"),
@@ -53,19 +53,19 @@ fn test_app(input: &str) -> TuiApp {
 }
 
 fn app_with_missing_provider_key() -> TuiApp {
-    let mut config = navi_core::NaviConfig::default();
+    let mut config = navi_sdk::NaviConfig::default();
     config.model.provider = "test-provider".to_string();
     config.model.name = "test-large".to_string();
-    config.providers = vec![navi_core::ProviderConfig {
+    config.providers = vec![navi_sdk::ProviderConfig {
         id: "test-provider".to_string(),
         label: "Test Provider".to_string(),
         description: "test provider".to_string(),
-        kind: navi_core::ProviderKind::OpenAiChatCompletions,
+        kind: navi_sdk::ProviderKind::OpenAiChatCompletions,
         api_key_env: "NAVI_TEST_MISSING_PROVIDER_KEY".to_string(),
         base_url: Some("https://example.com/v1".to_string()),
-        models: vec![navi_core::ProviderModelConfig {
+        models: vec![navi_sdk::ProviderModelConfig {
             name: "test-large".to_string(),
-            task_size: navi_core::ModelTaskSize::Large,
+            task_size: navi_sdk::ModelTaskSize::Large,
             context_window_tokens: None,
             tool_prompt_manifest: None,
         }],
@@ -1092,15 +1092,15 @@ fn free_usage_limit_error_does_not_schedule_retry() {
 #[test]
 fn opencode_zen_model_names_are_canonicalized_for_api_requests() {
     assert_eq!(
-        navi_core::provider_request_model_name("opencode", "DeepSeek V4 Flash Free"),
+        navi_sdk::provider_request_model_name("opencode", "DeepSeek V4 Flash Free"),
         "deepseek-v4-flash-free"
     );
     assert_eq!(
-        navi_core::provider_request_model_name("opencode-zen", "opencode/Nemotron 3 Super Free"),
+        navi_sdk::provider_request_model_name("opencode-zen", "opencode/Nemotron 3 Super Free"),
         "nemotron-3-super-free"
     );
     assert_eq!(
-        navi_core::provider_request_model_name("openrouter", "DeepSeek V4 Flash Free"),
+        navi_sdk::provider_request_model_name("openrouter", "DeepSeek V4 Flash Free"),
         "DeepSeek V4 Flash Free"
     );
 }
@@ -1113,13 +1113,13 @@ fn opencode_free_models_can_use_public_access_without_key() {
         provider_id: "opencode".to_string(),
         provider_label: "OpenCode Zen".to_string(),
         provider_description: "Recommended".to_string(),
-        task_size: navi_core::ModelTaskSize::Small,
+        task_size: navi_sdk::ModelTaskSize::Small,
         context_window_tokens: None,
     };
 
     assert!(model_is_available_for_selection(&app, &model));
     assert_eq!(
-        navi_core::provider_request_model_name("opencode", "deepseek-v4-flash-free"),
+        navi_sdk::provider_request_model_name("opencode", "deepseek-v4-flash-free"),
         "deepseek-v4-flash-free"
     );
 }

@@ -6,14 +6,12 @@ use std::time::Instant;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
-use navi_core::compact::CompactState;
-use navi_core::{
-    AgentEvent, AgentMode, AgentRunState, ApprovalRequest, CredentialStore, HarnessPolicy,
-    LoadedConfig, ModelMessage, ModelOption, SessionId, SessionSnapshot, SessionStore,
-    ToolInvocation, available_model_options, build_system_prompt, canonical_provider_id, config,
-    log_path, select_harness_policy,
+use navi_sdk::{
+    AgentEvent, AgentMode, AgentRunState, ApprovalRequest, CompactState, CredentialStore,
+    HarnessPolicy, LoadedConfig, ModelMessage, ModelOption, NaviEngine, SessionId, SessionSnapshot,
+    SessionStore, ToolInvocation, available_model_options, build_system_prompt,
+    canonical_provider_id, effective_context_window, log_path, select_harness_policy,
 };
-use navi_sdk::NaviEngine;
 
 use crate::dispatch::AsyncEvent;
 use crate::runtime::{build_engine, selected_model_runtime_available};
@@ -124,7 +122,7 @@ impl TuiApp {
         let harness_policy = select_harness_policy(&loaded_config.config);
         let system_prompt = build_system_prompt(&loaded_config.config, &project_dir);
         let log_path = log_path(&loaded_config.data_dir);
-        let context_window = config::effective_context_window(&loaded_config.config);
+        let context_window = effective_context_window(&loaded_config.config);
 
         let mut app = Self {
             loaded_config,

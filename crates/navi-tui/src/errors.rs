@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use navi_core::AgentEvent;
+use navi_sdk::AgentEvent;
 
 use crate::app::TuiApp;
 use crate::chat::{remove_active_empty_generation_placeholder, remove_active_tool_placeholder};
@@ -74,7 +74,7 @@ fn format_model_error_message(app: &TuiApp, message: &str) -> String {
     if is_usage_limit_error(message) {
         let model = app.loaded_config.config.model.name.as_str();
         let provider = selected_provider_label(app);
-        let free_hint = if navi_core::is_free_model_name(model) {
+        let free_hint = if navi_sdk::is_free_model_name(model) {
             "This selected model is a free-tier model. Free-tier quota can be exhausted even when the provider account still has paid/regular capacity."
         } else {
             "The selected provider reported a usage-limit error for this request."
@@ -89,7 +89,7 @@ fn format_model_error_message(app: &TuiApp, message: &str) -> String {
 
 fn max_model_retries(app: &TuiApp) -> usize {
     match app.harness_policy().profile {
-        navi_core::HarnessProfile::Small => 2,
+        navi_sdk::HarnessProfile::Small => 2,
         _ => 3,
     }
 }

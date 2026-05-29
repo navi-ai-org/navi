@@ -1,6 +1,6 @@
 use std::time::{Duration, Instant};
 
-use navi_core::{ThinkingConfig, ToolInvocation, ToolResult};
+use navi_sdk::{ThinkingConfig, ToolInvocation, ToolResult};
 use ratatui::layout::Rect;
 use ratatui::text::Line;
 

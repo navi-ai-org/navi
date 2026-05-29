@@ -1,4 +1,4 @@
-use navi_core::{AgentEvent, ModelMessage, ModelRole, build_system_prompt};
+use navi_sdk::{AgentEvent, ModelMessage, ModelRole, build_system_prompt};
 use tracing;
 
 use crate::TuiApp;
