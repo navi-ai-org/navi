@@ -34,7 +34,7 @@
 | # | Issue | Location | Status |
 |---|-------|----------|--------|
 | 17 | SDK re-exports provider-specific `github_copilot_device_oauth` | `navi-sdk/src/lib.rs` | PENDING |
-| 18 | `OpenAiProvider` missing `Debug` derive | `navi-openai/src/provider.rs` | PENDING |
+| 18 | `OpenAiProvider` missing `Debug` derive | `navi-openai/src/provider.rs` | DONE |
 | 19 | `LoadedConfig` cloned on every engine operation | `navi-sdk/src/engine.rs` | PENDING |
 | 20 | `SessionId(pub String)` — public inner field defeats newtype | `navi-core/src/session.rs` | PENDING |
 | 21 | Missing test coverage (oauth, turn, tooling) | Various | PENDING |
