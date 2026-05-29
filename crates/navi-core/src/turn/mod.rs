@@ -67,7 +67,7 @@ pub async fn run_turn(
     policy: HarnessPolicy,
 ) -> Result<String> {
     ensure_not_cancelled(ctx)?;
-    ensure_system_prompt(ctx, messages);
+    ensure_system_prompt(ctx, messages).await;
 
     let mut loop_count = 0;
     let mut run_state = AgentRunState::default();
@@ -106,11 +106,15 @@ fn ensure_not_cancelled(ctx: &TurnContext) -> Result<()> {
     }
 }
 
-fn ensure_system_prompt(ctx: &TurnContext, messages: &mut Vec<ModelMessage>) {
+async fn ensure_system_prompt(ctx: &TurnContext, messages: &mut Vec<ModelMessage>) {
     let agents_md_path = ctx.project_dir.join("AGENTS.md");
+    // Read AGENTS.md without blocking the async runtime.
     let base_instructions = if agents_md_path.exists() {
-        std::fs::read_to_string(&agents_md_path)
-            .unwrap_or_else(|_| "Default NAVI base instructions".to_string())
+        let path = agents_md_path.clone();
+        match tokio::task::spawn_blocking(move || std::fs::read_to_string(&path)).await {
+            Ok(Ok(content)) => content,
+            _ => "Default NAVI base instructions".to_string(),
+        }
     } else {
         "Default NAVI base instructions".to_string()
     };

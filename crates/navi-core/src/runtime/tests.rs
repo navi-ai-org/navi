@@ -1,7 +1,8 @@
 use super::*;
+use crate::config::{ApprovalConfig, HarnessConfig};
 use crate::{
-    AgentMode, ApprovalConfig, HarnessConfig, ModelRequest, ModelStream, ModelStreamEvent,
-    NaviConfig, SecurityConfig, ToolInvocation,
+    AgentMode, ModelRequest, ModelStream, ModelStreamEvent, NaviConfig, SecurityConfig,
+    ToolInvocation,
 };
 use anyhow::Result;
 use async_trait::async_trait;
@@ -175,7 +176,7 @@ async fn runtime_session_lifecycle_streams_events_and_snapshots() {
         .expect("session event");
     assert!(matches!(
         first_event.kind,
-        RuntimeEventKind::SessionStarted { session_id: ref id } if id == &session_id.0
+        RuntimeEventKind::SessionStarted { session_id: ref id } if id.as_str() == session_id.as_str()
     ));
 
     let response = runtime
@@ -205,12 +206,12 @@ async fn runtime_session_lifecycle_streams_events_and_snapshots() {
     assert!(saw_turn_completed);
 
     let snapshot = runtime.snapshot_session().expect("snapshot");
-    assert_eq!(snapshot.id.0, session_id.0);
+    assert_eq!(snapshot.id.as_str(), session_id.as_str());
     assert!(snapshot.title.is_some());
     let snapshot_path = runtime
         .session_store()
         .root()
-        .join(format!("{}.json", snapshot.id.0));
+        .join(format!("{}.json", snapshot.id.as_str()));
     assert!(snapshot_path.exists());
 }
 
@@ -238,7 +239,7 @@ async fn runtime_uses_requested_session_id_once() {
         context_packets: Vec::new(),
         active_skills: Vec::new(),
         initial_messages: Vec::new(),
-        session_id: Some(crate::SessionId(
+        session_id: Some(crate::SessionId::new(
             "navi_tutor_algoritmos_2026-05-25_14-32-10".to_string(),
         )),
         event_tx: None,
@@ -247,6 +248,6 @@ async fn runtime_uses_requested_session_id_once() {
     let first_id = runtime.start_session().expect("start first session");
     let second_id = runtime.start_session().expect("start second session");
 
-    assert_eq!(first_id.0, "navi_tutor_algoritmos_2026-05-25_14-32-10");
-    assert_ne!(second_id.0, first_id.0);
+    assert_eq!(first_id.as_str(), "navi_tutor_algoritmos_2026-05-25_14-32-10");
+    assert_ne!(second_id.as_str(), first_id.as_str());
 }

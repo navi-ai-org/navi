@@ -248,7 +248,7 @@ impl AgentRuntime {
     pub fn start_session(&mut self) -> Result<SessionId> {
         if self.session.started() {
             self.event_bus.publish(RuntimeEventKind::SessionFinished {
-                session_id: self.session.id().0.clone(),
+                session_id: self.session.id().as_str().to_string(),
             });
         }
         self.cancel_token.reset();
@@ -260,7 +260,7 @@ impl AgentRuntime {
 
         let id = self.session.id().clone();
         self.event_bus.publish(RuntimeEventKind::SessionStarted {
-            session_id: id.0.clone(),
+            session_id: id.as_str().to_string(),
         });
 
         Ok(id)

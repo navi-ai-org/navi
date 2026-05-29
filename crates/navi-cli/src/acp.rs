@@ -134,7 +134,7 @@ async fn handle_new_session(
     } else {
         state.default_project_dir.join(request.cwd)
     };
-    let session_id = SessionStore::create_id().0;
+    let session_id = SessionStore::create_id().into_inner();
     state.with_sessions_mut(|sessions| {
         sessions.insert(
             session_id.clone(),

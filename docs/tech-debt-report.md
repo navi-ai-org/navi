@@ -27,7 +27,7 @@
 | 13 | `navi-openai/src/lib.rs` ~800 lines of tests mixed with 89 lines of code | `navi-openai/src/lib.rs` | PENDING |
 | 14 | Functions >100 lines (5 functions) | `modals.rs`, `bash.rs`, `engine.rs` | PENDING |
 | 15 | Blocking `std::fs` in `SessionStore` methods | `navi-core/src/session.rs` | PENDING |
-| 16 | Blocking `std::fs::read_to_string` in `ensure_system_prompt` | `navi-core/src/turn/mod.rs` | PENDING |
+| 16 | Blocking `std::fs::read_to_string` in `ensure_system_prompt` | `navi-core/src/turn/mod.rs` | DONE |
 
 ## LOW severity
 
@@ -36,7 +36,7 @@
 | 17 | SDK re-exports provider-specific `github_copilot_device_oauth` | `navi-sdk/src/lib.rs` | PENDING |
 | 18 | `OpenAiProvider` missing `Debug` derive | `navi-openai/src/provider.rs` | DONE |
 | 19 | `LoadedConfig` cloned on every engine operation | `navi-sdk/src/engine.rs` | PENDING |
-| 20 | `SessionId(pub String)` — public inner field defeats newtype | `navi-core/src/session.rs` | PENDING |
+| 20 | `SessionId(pub String)` — public inner field defeats newtype | `navi-core/src/session.rs` | DONE |
 | 21 | Missing test coverage (oauth, turn, tooling) | Various | PENDING |
 | 22 | `navi-tui` has non-workspace dependencies | `navi-tui/Cargo.toml` | DONE |
 

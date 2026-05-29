@@ -1,77 +1,12 @@
-use navi_core::{AgentEvent, SessionId, SessionSnapshot, SessionStore};
+use navi_sdk::{SessionId, SessionSnapshot, SessionStore};
 
 pub(crate) fn load_saved_sessions(store: &SessionStore) -> Vec<SessionSnapshot> {
     store.list()
 }
 
-pub(crate) fn session_title_from_events(events: &[AgentEvent]) -> Option<String> {
-    events
-        .iter()
-        .find_map(|event| match event {
-            AgentEvent::ModelOutput { text, .. } => title_from_model_text(text),
-            _ => None,
-        })
-        .or_else(|| {
-            events.iter().find_map(|event| match event {
-                AgentEvent::UserTaskSubmitted { text } => title_from_user_text(text),
-                _ => None,
-            })
-        })
-}
-
-pub(crate) fn title_from_model_text(text: &str) -> Option<String> {
-    let heading = text.lines().find_map(|line| {
-        let trimmed = line.trim();
-        if trimmed.starts_with('#') {
-            Some(trimmed.trim_start_matches('#').trim())
-        } else {
-            None
-        }
-    });
-
-    heading
-        .and_then(clean_session_title)
-        .or_else(|| text.lines().find_map(clean_session_title))
-}
-
-pub(crate) fn title_from_user_text(text: &str) -> Option<String> {
-    clean_session_title(text)
-}
-
-pub(crate) fn clean_session_title(text: &str) -> Option<String> {
-    let cleaned = text
-        .trim()
-        .trim_matches('`')
-        .trim_matches('"')
-        .trim_matches('\'')
-        .trim_start_matches(['#', '-', '*', '>'])
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ");
-
-    if cleaned.is_empty() {
-        return None;
-    }
-
-    Some(truncate_title(&cleaned, 72))
-}
-
-pub(crate) fn truncate_title(text: &str, max_chars: usize) -> String {
-    if text.chars().count() <= max_chars {
-        return text.to_string();
-    }
-
-    let mut out = text
-        .chars()
-        .take(max_chars.saturating_sub(3))
-        .collect::<String>();
-    out.push_str("...");
-    out
-}
-
 pub(crate) fn session_created_at(session_id: &SessionId) -> Option<u64> {
     session_id
-        .0
+        .as_str()
         .strip_prefix("session-")?
         .parse::<u128>()
         .ok()
@@ -114,7 +49,7 @@ pub(crate) fn civil_from_days(days_since_unix_epoch: i64) -> (i64, u32, u32) {
 
 #[cfg(test)]
 mod tests {
-    use navi_core::AgentEvent;
+    use navi_sdk::{AgentEvent, session_title_from_events};
 
     use super::*;
 

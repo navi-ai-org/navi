@@ -101,7 +101,7 @@ impl SessionState {
 
     pub fn next_turn_id(&mut self) -> String {
         self.turn_sequence += 1;
-        format!("{}-turn-{}", self.id.0, self.turn_sequence)
+        format!("{}-turn-{}", self.id.as_str(), self.turn_sequence)
     }
 
     pub fn push_event(&mut self, event: AgentEvent) {
@@ -121,6 +121,7 @@ impl SessionState {
         event_bus: &crate::runtime::EventBus,
     ) -> Result<crate::session::SessionSnapshot> {
         let snapshot = crate::session::SessionSnapshot {
+            version: crate::session::SessionSnapshot::CURRENT_VERSION,
             id: self.id.clone(),
             title: self.title.clone(),
             project: project_dir.clone(),
@@ -131,7 +132,7 @@ impl SessionState {
         };
         session_store.save(&snapshot)?;
         event_bus.publish(crate::event::RuntimeEventKind::SessionSaved {
-            session_id: snapshot.id.0.clone(),
+            session_id: snapshot.id.as_str().to_string(),
         });
         Ok(snapshot)
     }

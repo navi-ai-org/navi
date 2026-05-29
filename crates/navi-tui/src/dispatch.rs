@@ -1,4 +1,4 @@
-use navi_core::{
+use navi_sdk::{
     AgentEvent, ApprovalDecision, LoadedConfig, ModelMessage, available_model_options,
     canonical_provider_id, compact_tool_observation,
 };
@@ -79,7 +79,7 @@ pub(crate) fn handle_async_event(app: &mut TuiApp, event: AsyncEvent) {
             AgentEvent::ApprovalRequested(request) => {
                 if app.yolo_mode {
                     let engine = app.engine();
-                    let session_id = app.session_id.0.clone();
+                    let session_id = app.session_id.as_str().to_string();
                     let decision = ApprovalDecision::Approved {
                         id: request.id.clone(),
                     };

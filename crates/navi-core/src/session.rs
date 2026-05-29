@@ -7,7 +7,21 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SessionId(pub String);
+pub struct SessionId(String);
+
+impl SessionId {
+    pub fn new(id: String) -> Self {
+        Self(id)
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    pub fn into_inner(self) -> String {
+        self.0
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProjectMemory {
@@ -173,7 +187,7 @@ impl SessionStore {
 
     pub fn create_id() -> SessionId {
         let millis = current_unix_millis();
-        SessionId(format!("session-{millis}"))
+        SessionId::new(format!("session-{millis}"))
     }
 
     pub fn save(&self, snapshot: &SessionSnapshot) -> Result<PathBuf> {
@@ -181,7 +195,7 @@ impl SessionStore {
             .with_context(|| format!("failed to create {}", self.root.display()))?;
         crate::fs_util::set_private_dir_permissions(&self.root)?;
 
-        let path = self.root.join(format!("{}.json", snapshot.id.0));
+        let path = self.root.join(format!("{}.json", snapshot.id.as_str()));
         let snapshot = if self.redact_secrets {
             SessionSnapshot {
                 version: snapshot.version,
@@ -220,7 +234,7 @@ impl SessionStore {
         sessions.sort_by(|a, b| {
             b.updated_at
                 .cmp(&a.updated_at)
-                .then_with(|| b.id.0.cmp(&a.id.0))
+                .then_with(|| b.id.as_str().cmp(a.id.as_str()))
         });
         sessions
     }
@@ -285,7 +299,7 @@ impl SessionStore {
         memory.entries.push(MemoryEntry {
             created_at: current_unix_timestamp(),
             summary,
-            session_id: session_id.0.clone(),
+            session_id: session_id.as_str().to_string(),
         });
         self.save_memory(project_dir, &memory)
     }
@@ -358,7 +372,7 @@ mod tests {
         let store = SessionStore::new(tempdir.path().to_path_buf());
         let snapshot = SessionSnapshot {
             version: SessionSnapshot::CURRENT_VERSION,
-            id: SessionId("test-session".to_string()),
+            id: SessionId::new("test-session".to_string()),
             title: Some("Test session".to_string()),
             project: PathBuf::from("/tmp/project"),
             created_at: 1,
@@ -382,7 +396,7 @@ mod tests {
         let store = SessionStore::new(data_dir);
         let snapshot = SessionSnapshot {
             version: SessionSnapshot::CURRENT_VERSION,
-            id: SessionId("private-session".to_string()),
+            id: SessionId::new("private-session".to_string()),
             title: None,
             project: PathBuf::from("/tmp/project"),
             created_at: 1,
@@ -413,7 +427,7 @@ mod tests {
         let store = SessionStore::new(tempdir.path().to_path_buf());
         let snapshot = SessionSnapshot {
             version: SessionSnapshot::CURRENT_VERSION,
-            id: SessionId("redacted-session".to_string()),
+            id: SessionId::new("redacted-session".to_string()),
             title: None,
             project: PathBuf::from("/tmp/project"),
             created_at: 1,
@@ -437,7 +451,7 @@ mod tests {
         let store = SessionStore::with_redaction(tempdir.path().to_path_buf(), false);
         let snapshot = SessionSnapshot {
             version: SessionSnapshot::CURRENT_VERSION,
-            id: SessionId("unredacted-session".to_string()),
+            id: SessionId::new("unredacted-session".to_string()),
             title: None,
             project: PathBuf::from("/tmp/project"),
             created_at: 1,
@@ -589,12 +603,12 @@ mod tests {
         let store = SessionStore::new(tempdir.path().to_path_buf());
         let project_dir = PathBuf::from("/tmp/test-project-2");
 
-        let session_id = SessionId("session-1".to_string());
+        let session_id = SessionId::new("session-1".to_string());
         store
             .add_memory_entry(&project_dir, &session_id, "First summary".to_string())
             .expect("add entry 1");
 
-        let session_id2 = SessionId("session-2".to_string());
+        let session_id2 = SessionId::new("session-2".to_string());
         store
             .add_memory_entry(&project_dir, &session_id2, "Second summary".to_string())
             .expect("add entry 2");
