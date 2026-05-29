@@ -1,5 +1,5 @@
-use crate::config::{ProviderConfig, model_can_run_publicly};
 use crate::ProviderId;
+use crate::config::{ProviderConfig, model_can_run_publicly};
 use anyhow::{Context, Result};
 use directories::BaseDirs;
 use serde::{Deserialize, Serialize};

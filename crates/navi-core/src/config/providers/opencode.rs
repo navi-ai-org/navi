@@ -1,9 +1,12 @@
 use crate::ProviderId;
 
+/// Returns `true` if the model can run without an API key (opencode family free models).
 pub fn model_can_run_publicly(provider_id: &str, model: &str) -> bool {
     ProviderId::from_config_id(provider_id).is_opencode_family() && is_free_model_name(model)
 }
 
+/// Returns the canonical model name to send in the API request, mapping free
+/// model aliases to their opencode-zen id when applicable.
 pub fn provider_request_model_name(provider_id: &str, model: &str) -> String {
     if ProviderId::from_config_id(provider_id).is_opencode_family() && is_free_model_name(model) {
         opencode_zen_model_id(model).unwrap_or_else(|| model.to_string())
@@ -12,6 +15,8 @@ pub fn provider_request_model_name(provider_id: &str, model: &str) -> String {
     }
 }
 
+/// Normalizes a free model name to its canonical opencode-zen model id.
+/// Returns `None` if the model is not a recognized free model.
 pub fn opencode_zen_model_id(model: &str) -> Option<String> {
     let normalized = model
         .trim()
@@ -41,6 +46,7 @@ pub fn opencode_zen_model_id(model: &str) -> Option<String> {
     }
 }
 
+/// Returns `true` if the model name indicates a free model (ends with `-free` or contains ` free`).
 pub fn is_free_model_name(model: &str) -> bool {
     let model = model.to_ascii_lowercase();
     model.ends_with("-free") || model.contains(" free")

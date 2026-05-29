@@ -50,12 +50,12 @@ impl ApprovalResolver {
     }
 
     /// Register a pending approval, returning the receiver for the decision.
-    pub fn register(
-        &self,
-        id: String,
-    ) -> oneshot::Receiver<ApprovalDecision> {
+    pub fn register(&self, id: String) -> oneshot::Receiver<ApprovalDecision> {
         let (tx, rx) = oneshot::channel();
-        self.pending_approvals.lock().unwrap_or_else(|e| e.into_inner()).insert(id, tx);
+        self.pending_approvals
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(id, tx);
         rx
     }
 
@@ -66,7 +66,12 @@ impl ApprovalResolver {
             ApprovalDecision::Approved { id } => id,
             ApprovalDecision::Denied { id } => id,
         };
-        if let Some(tx) = self.pending_approvals.lock().unwrap_or_else(|e| e.into_inner()).remove(id) {
+        if let Some(tx) = self
+            .pending_approvals
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(id)
+        {
             let _ = tx.send(decision.clone());
             let _ =
                 self.runtime_events_tx

@@ -1,5 +1,5 @@
-use crate::tool::{ToolDefinition, ToolInvocation};
 use crate::ProviderId;
+use crate::tool::{ToolDefinition, ToolInvocation};
 use anyhow::Result;
 use async_trait::async_trait;
 use futures_util::StreamExt;
@@ -336,7 +336,9 @@ impl ThinkingConfig {
                 .to_openai_effort()
                 .map(|effort| ThinkingAdapter::OpenAiResponses(json!({ "effort": effort })))
                 .unwrap_or(ThinkingAdapter::Unsupported),
-            ProviderId::Anthropic => ThinkingAdapter::AnthropicOpenAiCompatible(self.to_anthropic_thinking()),
+            ProviderId::Anthropic => {
+                ThinkingAdapter::AnthropicOpenAiCompatible(self.to_anthropic_thinking())
+            }
             ProviderId::GoogleGemini => {
                 ThinkingAdapter::GeminiOpenAiCompatible(self.to_gemini_thinking_config())
             }

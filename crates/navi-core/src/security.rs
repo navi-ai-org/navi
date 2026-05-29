@@ -6,6 +6,8 @@ use anyhow::{Context, Result};
 use serde_json::Value;
 use std::path::{Component, Path, PathBuf};
 
+/// Validates tool invocations against security constraints: path restrictions,
+/// blocked commands, `.git` protection, and NAVI private storage.
 #[derive(Debug, Clone)]
 pub struct SecurityPolicy {
     project_root: PathBuf,
@@ -13,21 +15,30 @@ pub struct SecurityPolicy {
     config: SecurityConfig,
 }
 
+/// The outcome of a security validation check.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SecurityDecision {
+    /// The invocation is allowed without user confirmation.
     Allow,
+    /// The invocation requires explicit user approval due to the identified risk.
     NeedsApproval(SecurityRisk),
+    /// The invocation is denied with an explanation.
     Deny(String),
 }
 
+/// The kind of risk identified by a security check.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SecurityRisk {
+    /// A write operation that modifies the filesystem.
     Write,
+    /// A shell command execution.
     Command,
+    /// Loading an external native plugin.
     ExternalPlugin,
 }
 
 impl SecurityPolicy {
+    /// Creates a new policy from the project root, data directory, and security config.
     pub fn new(project_root: PathBuf, data_dir: PathBuf, config: SecurityConfig) -> Result<Self> {
         Ok(Self {
             project_root: normalize_existing_or_parent(&project_root)
@@ -38,6 +49,8 @@ impl SecurityPolicy {
         })
     }
 
+    /// Validates a file path, checking project restrictions, `.git` protection,
+    /// and NAVI private storage.
     pub fn validate_path(&self, path: &Path, write: bool) -> SecurityDecision {
         let Ok(path) = normalize_existing_or_parent(path) else {
             return SecurityDecision::Deny(format!("failed to resolve {}", path.display()));
@@ -72,6 +85,7 @@ impl SecurityPolicy {
         }
     }
 
+    /// Validates all paths in a patch proposal.
     pub fn validate_patch(&self, patch: &PatchProposal) -> SecurityDecision {
         for file in &patch.files {
             match self.validate_path(file, true) {
@@ -82,6 +96,7 @@ impl SecurityPolicy {
         SecurityDecision::NeedsApproval(SecurityRisk::Write)
     }
 
+    /// Validates a command against the blocked-commands list and approval config.
     pub fn validate_command(&self, program: &str) -> SecurityDecision {
         let command = command_name(program);
         if self
@@ -96,6 +111,8 @@ impl SecurityPolicy {
         SecurityDecision::NeedsApproval(SecurityRisk::Command)
     }
 
+    /// Validates a plugin library path, requiring approval unless external plugins
+    /// are explicitly allowed.
     pub fn validate_plugin_path(&self, path: &Path) -> SecurityDecision {
         let Ok(path) = normalize_existing_or_parent(path) else {
             return SecurityDecision::Deny(format!("failed to resolve {}", path.display()));
@@ -117,6 +134,8 @@ impl SecurityPolicy {
         }
     }
 
+    /// Validates a tool invocation by dispatching to the appropriate validator
+    /// based on tool kind.
     pub fn validate_tool_invocation(
         &self,
         definition: &ToolDefinition,
@@ -162,10 +181,12 @@ impl SecurityPolicy {
     }
 }
 
+/// Redacts secrets from all events in a session snapshot.
 pub fn redact_snapshot_events(events: &[AgentEvent]) -> Vec<AgentEvent> {
     events.iter().map(redact_agent_event).collect()
 }
 
+/// Redacts secrets from a single agent event's text fields.
 pub fn redact_agent_event(event: &AgentEvent) -> AgentEvent {
     match event {
         AgentEvent::UserTaskSubmitted { text } => AgentEvent::UserTaskSubmitted {
@@ -188,6 +209,8 @@ pub fn redact_agent_event(event: &AgentEvent) -> AgentEvent {
     }
 }
 
+/// Replaces API keys, bearer tokens, and other secret patterns in text with
+/// `[REDACTED]`.
 pub fn redact_secrets(text: &str) -> String {
     let mut output = String::with_capacity(text.len());
     let mut token = String::new();

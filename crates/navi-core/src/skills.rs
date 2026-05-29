@@ -4,15 +4,22 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
 
+/// A discovered skill loaded from a `SKILL.md` file.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SkillManifest {
+    /// Unique skill identifier (derived from the directory name).
     pub id: String,
+    /// Human-readable skill name.
     pub name: String,
+    /// Optional description extracted from the skill header.
     pub description: Option<String>,
+    /// Path to the skill directory.
     pub path: PathBuf,
+    /// The skill's instruction text (body of `SKILL.md`).
     pub instructions: String,
 }
 
+/// Discovers skills from configured directories and the project's `.navi/skills/` folder.
 pub fn discover_configured_skills(
     config: &SkillsConfig,
     project_dir: &Path,
@@ -47,6 +54,8 @@ pub fn discover_configured_skills(
     Ok(skills)
 }
 
+/// Filters discovered skills to only those that are explicitly active in config
+/// or included in the `active` list.
 pub fn active_skills(
     available: &[SkillManifest],
     configured_active: &[String],
@@ -72,6 +81,8 @@ pub fn active_skills(
         .collect()
 }
 
+/// Renders active skills into a text block for injection into the system prompt.
+/// Returns `None` if there are no active skills.
 pub fn render_active_skills(skills: &[SkillManifest]) -> Option<String> {
     if skills.is_empty() {
         return None;

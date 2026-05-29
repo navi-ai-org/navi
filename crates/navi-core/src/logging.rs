@@ -6,20 +6,27 @@ use std::path::{Path, PathBuf};
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::{EnvFilter, Layer, Registry};
 
+/// Guard that keeps the tracing file appender alive. Dropping this stops logging.
 pub struct LoggingGuard {
     path: Option<PathBuf>,
     _guard: Option<tracing_appender::non_blocking::WorkerGuard>,
 }
 
+/// Runtime logging configuration that can be adjusted without restarting.
 #[derive(Debug, Clone)]
 pub struct LoggingRuntimeConfig {
+    /// Whether to log to stdout.
     pub stdout_enabled: bool,
+    /// Whether to log to a file.
     pub file_enabled: bool,
+    /// Override log level filter, or `None` to keep the current level.
     pub level: Option<String>,
+    /// Whether to include raw payloads in log output.
     pub include_payloads: bool,
 }
 
 impl LoggingGuard {
+    /// Returns the path to the log file, if file logging is active.
     pub fn path(&self) -> Option<&Path> {
         self.path.as_deref()
     }
@@ -36,14 +43,18 @@ impl Default for LoggingRuntimeConfig {
     }
 }
 
+/// Returns the log directory path: `<data_dir>/logs/`.
 pub fn log_dir(data_dir: &Path) -> PathBuf {
     data_dir.join("logs")
 }
 
+/// Returns the log file path: `<data_dir>/logs/navi.log`.
 pub fn log_path(data_dir: &Path) -> PathBuf {
     log_dir(data_dir).join("navi.log")
 }
 
+/// Initializes the tracing subscriber with file and/or stdout layers based on
+/// the logging config. Returns a [`LoggingGuard`] that must be kept alive.
 pub fn init_logging(
     config: &LoggingConfig,
     data_dir: &Path,
@@ -120,6 +131,7 @@ pub fn init_logging(
     })
 }
 
+/// Redacts secrets from a log value string.
 pub fn redact_log_value(value: impl AsRef<str>) -> String {
     redact_secrets(value.as_ref())
 }
