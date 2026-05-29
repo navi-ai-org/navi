@@ -1,0 +1,836 @@
+use crate::errors::ProviderError;
+use crate::mapping::{
+    apply_thinking_to_body, message_to_json, responses_input_item_to_json,
+    unique_sorted_model_ids,
+};
+use crate::provider::OpenAiProvider;
+use crate::providers::anthropic::parse_anthropic_sse;
+use crate::providers::gemini::parse_gemini_sse;
+use crate::providers::openai::{
+    ChatToolCallAccumulator, parse_chat_completions_sse, parse_chat_completions_sse_with_state,
+    parse_openai_responses_sse,
+};
+use crate::sse::SseDecoder;
+use crate::transport::{
+    extract_requested_delay_from_json, get_backoff_delay, retry_delay_for_error,
+    should_retry_error,
+};
+use crate::types::OpenAiApiKind;
+use crate::{extract_chat_completion_text, extract_output_text};
+use futures_util::StreamExt;
+use navi_core::{ModelMessage, ModelProvider, ModelStreamEvent, ToolInvocation};
+use serde_json::json;
+
+#[test]
+fn model_listing_ids_are_sorted_and_deduplicated() {
+    let ids = unique_sorted_model_ids(
+        ["z/model", "a/model", "z/model", "m/model", "a/model"]
+            .into_iter()
+            .map(str::to_string),
+    );
+
+    assert_eq!(ids, vec!["a/model", "m/model", "z/model"]);
+}
+
+#[test]
+fn chat_messages_serialize_assistant_tool_call_and_result() {
+    let invocation = ToolInvocation {
+        id: "call-1".to_string(),
+        tool_name: "read_file".to_string(),
+        input: json!({ "path": "Cargo.toml" }),
+    };
+
+    let assistant = message_to_json(&ModelMessage::assistant_tool_call(invocation));
+    let tool = message_to_json(&ModelMessage::tool_result(
+        "call-1",
+        "read_file",
+        "status: success",
+    ));
+
+    assert_eq!(assistant["role"], "assistant");
+    assert!(assistant["content"].is_null());
+    assert_eq!(assistant["tool_calls"][0]["id"], "call-1");
+    assert_eq!(tool["role"], "tool");
+    assert_eq!(tool["tool_call_id"], "call-1");
+    assert_eq!(tool["name"], "read_file");
+}
+
+#[test]
+fn chat_messages_echo_reasoning_content_on_tool_calls() {
+    let invocation = ToolInvocation {
+        id: "call-1".to_string(),
+        tool_name: "read_file".to_string(),
+        input: json!({ "path": "Cargo.toml" }),
+    };
+
+    let assistant = message_to_json(&ModelMessage::assistant_tool_call_with_context(
+        invocation,
+        "I should inspect Cargo.toml.",
+        Some("hidden reasoning".to_string()),
+    ));
+
+    assert_eq!(assistant["role"], "assistant");
+    assert_eq!(assistant["content"], "I should inspect Cargo.toml.");
+    assert_eq!(assistant["reasoning_content"], "hidden reasoning");
+    assert_eq!(assistant["tool_calls"][0]["id"], "call-1");
+}
+
+#[test]
+fn chat_messages_serialize_multiple_tool_calls_in_one_assistant_message() {
+    let assistant = message_to_json(&ModelMessage::assistant_tool_calls_with_context(
+        vec![
+            ToolInvocation {
+                id: "call-1".to_string(),
+                tool_name: "list_files".to_string(),
+                input: json!({}),
+            },
+            ToolInvocation {
+                id: "call-2".to_string(),
+                tool_name: "read_file".to_string(),
+                input: json!({ "path": "README.md" }),
+            },
+        ],
+        "I need context.",
+        Some("hidden reasoning".to_string()),
+    ));
+
+    assert_eq!(assistant["role"], "assistant");
+    assert_eq!(assistant["content"], "I need context.");
+    assert_eq!(assistant["reasoning_content"], "hidden reasoning");
+    assert_eq!(assistant["tool_calls"].as_array().unwrap().len(), 2);
+    assert_eq!(assistant["tool_calls"][0]["id"], "call-1");
+    assert_eq!(assistant["tool_calls"][1]["id"], "call-2");
+}
+
+#[test]
+fn responses_messages_serialize_function_call_output() {
+    let item = responses_input_item_to_json(&ModelMessage::tool_result(
+        "call-1",
+        "read_file",
+        "status: success",
+    ));
+
+    assert_eq!(item.len(), 1);
+    assert_eq!(item[0]["type"], "function_call_output");
+    assert_eq!(item[0]["call_id"], "call-1");
+    assert_eq!(item[0]["output"], "status: success");
+}
+
+#[test]
+fn extracts_responses_api_output_text_shortcut() {
+    let value = json!({ "output_text": "done" });
+    assert_eq!(extract_output_text(&value), "done");
+}
+
+#[test]
+fn extracts_nested_responses_api_text() {
+    let value = json!({
+        "output": [
+            {
+                "content": [
+                    { "type": "output_text", "text": "hello " },
+                    { "type": "output_text", "text": "world" }
+                ]
+            }
+        ]
+    });
+
+    assert_eq!(extract_output_text(&value), "hello world");
+}
+
+#[test]
+fn extracts_chat_completion_text() {
+    let value = json!({
+        "choices": [
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": "chat done"
+                }
+            }
+        ]
+    });
+
+    assert_eq!(extract_chat_completion_text(&value), "chat done");
+}
+
+#[test]
+fn applies_openai_responses_reasoning() {
+    let mut body = json!({ "model": "gpt-5", "input": [] });
+
+    apply_thinking_to_body(
+        &mut body,
+        navi_core::ThinkingConfig::High.adapter_for_provider("openai"),
+        OpenAiApiKind::Responses,
+    );
+
+    assert_eq!(body["reasoning"], json!({ "effort": "high" }));
+}
+
+#[test]
+fn applies_anthropic_openai_compatible_thinking() {
+    let mut body = json!({ "model": "claude-sonnet-4", "messages": [] });
+
+    apply_thinking_to_body(
+        &mut body,
+        navi_core::ThinkingConfig::Low.adapter_for_provider("anthropic"),
+        OpenAiApiKind::ChatCompletions,
+    );
+
+    assert_eq!(
+        body["thinking"],
+        json!({ "type": "enabled", "budget_tokens": 1024 })
+    );
+}
+
+#[test]
+fn applies_openrouter_reasoning_effort() {
+    let mut body = json!({ "model": "openai/gpt-5", "messages": [] });
+
+    apply_thinking_to_body(
+        &mut body,
+        navi_core::ThinkingConfig::Max.adapter_for_provider("openrouter"),
+        OpenAiApiKind::ChatCompletions,
+    );
+
+    assert_eq!(
+        body["reasoning"],
+        json!({ "effort": "xhigh", "exclude": true })
+    );
+}
+
+#[test]
+fn parses_openai_responses_text_delta() {
+    let events =
+        parse_openai_responses_sse(r#"{"type":"response.output_text.delta","delta":"hello"}"#);
+
+    assert_eq!(
+        events.into_iter().map(Result::unwrap).collect::<Vec<_>>(),
+        vec![ModelStreamEvent::TextDelta {
+            text: "hello".to_string()
+        }]
+    );
+}
+
+#[test]
+fn parses_chat_completions_text_delta() {
+    let events = parse_chat_completions_sse(
+        r#"{"choices":[{"delta":{"content":"hello"},"finish_reason":null}]}"#,
+    );
+
+    assert_eq!(
+        events.into_iter().map(Result::unwrap).collect::<Vec<_>>(),
+        vec![ModelStreamEvent::TextDelta {
+            text: "hello".to_string()
+        }]
+    );
+}
+
+#[test]
+fn parses_chat_completions_object_reasoning_delta() {
+    let events = parse_chat_completions_sse(
+        r#"{"choices":[{"delta":{"reasoning_details":[{"text":"I should inspect files."}]},"finish_reason":null}]}"#,
+    );
+
+    assert_eq!(
+        events.into_iter().map(Result::unwrap).collect::<Vec<_>>(),
+        vec![ModelStreamEvent::ThinkingDelta {
+            text: "I should inspect files.".to_string()
+        }]
+    );
+}
+
+#[test]
+fn ignores_null_reasoning_delta() {
+    let events = parse_chat_completions_sse(
+        r#"{"choices":[{"delta":{"content":null,"reasoning_details":null},"finish_reason":null}]}"#,
+    );
+
+    assert!(events.is_empty());
+}
+
+#[test]
+fn parses_openai_responses_tool_call() {
+    let events = parse_openai_responses_sse(
+        r#"{"type":"response.output_item.done","item":{"type":"function_call","call_id":"call_1","name":"read_file","arguments":"{\"path\":\"Cargo.toml\"}"}}"#,
+    );
+
+    assert_eq!(
+        events.into_iter().map(Result::unwrap).collect::<Vec<_>>(),
+        vec![ModelStreamEvent::ToolCall(ToolInvocation {
+            id: "call_1".to_string(),
+            tool_name: "read_file".to_string(),
+            input: json!({ "path": "Cargo.toml" }),
+        })]
+    );
+}
+
+#[test]
+fn accumulates_chat_completion_tool_call_arguments() {
+    let mut state = ChatToolCallAccumulator::default();
+    let first = parse_chat_completions_sse_with_state(
+        r#"{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","function":{"name":"read_file","arguments":"{\"path\":"}}]},"finish_reason":null}]}"#,
+        &mut state,
+    );
+    let second = parse_chat_completions_sse_with_state(
+        r#"{"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\"Cargo.toml\"}"}}]},"finish_reason":"tool_calls"}]}"#,
+        &mut state,
+    );
+
+    assert!(first.is_empty());
+    assert_eq!(
+        second.into_iter().map(Result::unwrap).collect::<Vec<_>>(),
+        vec![ModelStreamEvent::ToolCall(ToolInvocation {
+            id: "call_1".to_string(),
+            tool_name: "read_file".to_string(),
+            input: json!({ "path": "Cargo.toml" }),
+        }),]
+    );
+}
+
+#[test]
+fn parses_chat_completions_ollama_usage() {
+    let events = parse_chat_completions_sse(
+        r#"{"choices":[],"usage":{"prompt_tokens":123,"completion_tokens":45}}"#,
+    );
+
+    assert_eq!(
+        events.into_iter().map(Result::unwrap).collect::<Vec<_>>(),
+        vec![ModelStreamEvent::Usage {
+            input_tokens: Some(123),
+            output_tokens: Some(45),
+        }]
+    );
+}
+
+#[test]
+fn parses_anthropic_text_and_thinking_delta() {
+    let text = parse_anthropic_sse(
+        r#"{"type":"content_block_delta","delta":{"type":"text_delta","text":"hello"}}"#,
+    );
+    let thinking = parse_anthropic_sse(
+        r#"{"type":"content_block_delta","delta":{"type":"thinking_delta","thinking":"hidden"}}"#,
+    );
+
+    assert_eq!(
+        text.into_iter().map(Result::unwrap).collect::<Vec<_>>(),
+        vec![ModelStreamEvent::TextDelta {
+            text: "hello".to_string()
+        }]
+    );
+    assert_eq!(
+        thinking.into_iter().map(Result::unwrap).collect::<Vec<_>>(),
+        vec![ModelStreamEvent::ThinkingDelta {
+            text: "hidden".to_string()
+        }]
+    );
+}
+
+#[test]
+fn parses_gemini_text_delta() {
+    let events =
+        parse_gemini_sse(r#"{"candidates":[{"content":{"parts":[{"text":"hello"}]}}]}"#);
+
+    assert_eq!(
+        events.into_iter().map(Result::unwrap).collect::<Vec<_>>(),
+        vec![ModelStreamEvent::TextDelta {
+            text: "hello".to_string()
+        }]
+    );
+}
+
+#[test]
+fn sse_decoder_collects_data_frames() {
+    let mut decoder = SseDecoder::default();
+
+    let first = decoder.push_bytes(b"event: message\ndata: {\"a\":");
+    let second = decoder.push_bytes(b"1}\n\ndata: [DONE]\n\n");
+
+    assert!(first.is_empty());
+    assert_eq!(second, vec![r#"{"a":1}"#.to_string(), "[DONE]".to_string()]);
+}
+
+#[test]
+fn test_backoff_delay() {
+    for attempt in 1..=5 {
+        let delay = get_backoff_delay(attempt).as_millis();
+        let exponent = (attempt - 1) as u32;
+        let base = (200 * (1 << exponent)) as f64;
+        let min_expected = (base * 0.9) as u128;
+        let max_expected = (base * 1.1) as u128;
+        assert!(
+            delay >= min_expected && delay <= max_expected,
+            "Attempt {}: delay {} not in expected range [{}, {}]",
+            attempt,
+            delay,
+            min_expected,
+            max_expected
+        );
+    }
+}
+
+#[test]
+fn test_extract_requested_delay_from_json() {
+    let json1 = json!({ "requested_delay_ms": 1500 });
+    assert_eq!(
+        extract_requested_delay_from_json(&json1),
+        Some(std::time::Duration::from_millis(1500))
+    );
+
+    let json2 = json!({ "error": { "requested_delay_ms": 2500 } });
+    assert_eq!(
+        extract_requested_delay_from_json(&json2),
+        Some(std::time::Duration::from_millis(2500))
+    );
+
+    let json3 = json!({ "requested_delay": 1.5 });
+    assert_eq!(
+        extract_requested_delay_from_json(&json3),
+        Some(std::time::Duration::from_millis(1500))
+    );
+
+    let json4 = json!({ "error": { "requested_delay": 3 } });
+    assert_eq!(
+        extract_requested_delay_from_json(&json4),
+        Some(std::time::Duration::from_secs(3))
+    );
+
+    let json5 = json!({ "error": { "message": "something failed" } });
+    assert_eq!(extract_requested_delay_from_json(&json5), None);
+}
+
+#[tokio::test]
+async fn test_should_retry_error() {
+    use reqwest::StatusCode;
+
+    let transport_err = ProviderError::Transport(
+        reqwest::Client::new()
+            .get("http://127.0.0.1:1/invalid")
+            .send()
+            .await
+            .unwrap_err(),
+    );
+    assert!(should_retry_error(&transport_err, false));
+    assert!(should_retry_error(&transport_err, true));
+
+    let timeout_err = ProviderError::StreamIdleTimeout(std::time::Duration::from_secs(1));
+    assert!(should_retry_error(&timeout_err, false));
+    assert!(should_retry_error(&timeout_err, true));
+
+    let server_err = ProviderError::Api {
+        status: StatusCode::INTERNAL_SERVER_ERROR,
+        body: "Internal error".to_string(),
+        requested_delay: None,
+    };
+    assert!(should_retry_error(&server_err, false));
+    assert!(should_retry_error(&server_err, true));
+
+    let rate_limit_err = ProviderError::Api {
+        status: StatusCode::TOO_MANY_REQUESTS,
+        body: "Rate limit reached".to_string(),
+        requested_delay: None,
+    };
+    assert!(!should_retry_error(&rate_limit_err, false));
+    assert!(should_retry_error(&rate_limit_err, true));
+
+    let free_usage_limit_err = ProviderError::Api {
+        status: StatusCode::TOO_MANY_REQUESTS,
+        body: r#"{"type":"error","error":{"type":"FreeUsageLimitError","message":"Rate limit exceeded."}}"#.to_string(),
+        requested_delay: Some(std::time::Duration::from_secs(64_649)),
+    };
+    assert!(!should_retry_error(&free_usage_limit_err, true));
+    assert_eq!(
+        retry_delay_for_error(&free_usage_limit_err, 1),
+        std::time::Duration::from_secs(60)
+    );
+
+    let client_err = ProviderError::Api {
+        status: StatusCode::BAD_REQUEST,
+        body: "Bad request".to_string(),
+        requested_delay: None,
+    };
+    assert!(!should_retry_error(&client_err, false));
+    assert!(!should_retry_error(&client_err, true));
+
+    let other_err = ProviderError::Other("random error".to_string());
+    assert!(!should_retry_error(&other_err, false));
+    assert!(!should_retry_error(&other_err, true));
+}
+
+#[tokio::test]
+async fn test_stream_normal() {
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let mock_server = MockServer::start().await;
+
+    let chunk1 = "data: {\"choices\":[{\"delta\":{\"content\":\"hello\"}}]}\n\n";
+    let chunk2 = "data: {\"choices\":[{\"delta\":{\"content\":\" world\"},\"finish_reason\":\"stop\"}]}\n\n";
+    let chunk3 = "data: [DONE]\n\n";
+    let sse_body = format!("{}{}{}", chunk1, chunk2, chunk3);
+
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string(sse_body)
+                .insert_header("content-type", "text/event-stream"),
+        )
+        .mount(&mock_server)
+        .await;
+
+    let mut config = navi_core::ProviderConfig::default();
+    config.id = "openai".to_string();
+    config.kind = navi_core::ProviderKind::OpenAiChatCompletions;
+
+    let provider = OpenAiProvider::new("test_key".to_string())
+        .with_base_url(mock_server.uri())
+        .with_api_kind(OpenAiApiKind::ChatCompletions)
+        .with_config(config);
+
+    let request = navi_core::ModelRequest {
+        model: "gpt-4".to_string(),
+        messages: vec![ModelMessage {
+            role: navi_core::ModelRole::User,
+            content: "Hi".to_string(),
+            tool_call_id: None,
+            tool_name: None,
+            tool_calls: vec![],
+            created_at: None,
+            thinking_content: None,
+        }],
+        thinking: navi_core::ThinkingConfig::Off,
+        tools: vec![],
+    };
+
+    let mut stream = provider.stream(request);
+    let mut text = String::new();
+    while let Some(event) = stream.next().await {
+        match event.unwrap() {
+            navi_core::ModelStreamEvent::TextDelta { text: t } => {
+                text.push_str(&t);
+            }
+            _ => {}
+        }
+    }
+    assert_eq!(text, "hello world");
+}
+
+#[tokio::test]
+async fn test_opencode_zen_chat_request_uses_bearer_api_key() {
+    use wiremock::matchers::{header, method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .and(header("Authorization", "Bearer zen_test_key"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string(
+                    "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n",
+                )
+                .insert_header("content-type", "text/event-stream"),
+        )
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let mut config = navi_core::ProviderConfig::default();
+    config.id = "opencode".to_string();
+    config.kind = navi_core::ProviderKind::OpenAiChatCompletions;
+
+    let provider = OpenAiProvider::new("zen_test_key".to_string())
+        .with_base_url(mock_server.uri())
+        .with_api_kind(OpenAiApiKind::ChatCompletions)
+        .with_provider_id("opencode".to_string())
+        .with_config(config);
+
+    let request = navi_core::ModelRequest {
+        model: "deepseek-v4-flash-free".to_string(),
+        messages: vec![ModelMessage::user("Hi".to_string())],
+        thinking: navi_core::ThinkingConfig::Off,
+        tools: vec![],
+    };
+
+    let mut stream = provider.stream(request);
+    while let Some(event) = stream.next().await {
+        event.unwrap();
+    }
+}
+
+#[tokio::test]
+async fn test_opencode_zen_gpt_models_use_responses_endpoint() {
+    use wiremock::matchers::{header, method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/responses"))
+        .and(header("Authorization", "Bearer zen_test_key"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string(
+                    "data: {\"type\":\"response.output_text.delta\",\"delta\":\"ok\"}\n\ndata: {\"type\":\"response.completed\"}\n\n",
+                )
+                .insert_header("content-type", "text/event-stream"),
+        )
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let mut config = navi_core::ProviderConfig::default();
+    config.id = "opencode".to_string();
+    config.kind = navi_core::ProviderKind::OpenAiChatCompletions;
+
+    let provider = OpenAiProvider::new("zen_test_key".to_string())
+        .with_base_url(mock_server.uri())
+        .with_api_kind(OpenAiApiKind::ChatCompletions)
+        .with_provider_id("opencode".to_string())
+        .with_config(config);
+
+    let request = navi_core::ModelRequest {
+        model: "gpt-5.5".to_string(),
+        messages: vec![ModelMessage::user("Hi".to_string())],
+        thinking: navi_core::ThinkingConfig::Off,
+        tools: vec![],
+    };
+
+    let mut stream = provider.stream(request);
+    while let Some(event) = stream.next().await {
+        event.unwrap();
+    }
+}
+
+#[tokio::test]
+async fn test_github_copilot_request_uses_oauth_headers() {
+    use wiremock::matchers::{header, method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .and(header("Authorization", "Bearer copilot_token"))
+        .and(header("Openai-Intent", "conversation-edits"))
+        .and(header("x-initiator", "user"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string(
+                    "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n",
+                )
+                .insert_header("content-type", "text/event-stream"),
+        )
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let mut config = navi_core::ProviderConfig::default();
+    config.id = "github-copilot".to_string();
+    config.kind = navi_core::ProviderKind::OpenAiChatCompletions;
+
+    let provider = OpenAiProvider::new("copilot_token".to_string())
+        .with_base_url(mock_server.uri())
+        .with_api_kind(OpenAiApiKind::ChatCompletions)
+        .with_provider_id("github-copilot".to_string())
+        .with_config(config);
+
+    let request = navi_core::ModelRequest {
+        model: "gpt-5.1".to_string(),
+        messages: vec![ModelMessage::user("Hi".to_string())],
+        thinking: navi_core::ThinkingConfig::Off,
+        tools: vec![],
+    };
+
+    let mut stream = provider.stream(request);
+    while let Some(event) = stream.next().await {
+        event.unwrap();
+    }
+}
+
+#[tokio::test]
+async fn test_opencode_zen_claude_models_use_messages_endpoint() {
+    use wiremock::matchers::{header, method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/messages"))
+        .and(header("Authorization", "Bearer zen_test_key"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string("event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"delta\":{\"type\":\"text_delta\",\"text\":\"ok\"}}\n\nevent: message_stop\ndata: {\"type\":\"message_stop\"}\n\n")
+                .insert_header("content-type", "text/event-stream"),
+        )
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let mut config = navi_core::ProviderConfig::default();
+    config.id = "opencode".to_string();
+    config.kind = navi_core::ProviderKind::OpenAiChatCompletions;
+
+    let provider = OpenAiProvider::new("zen_test_key".to_string())
+        .with_base_url(mock_server.uri())
+        .with_api_kind(OpenAiApiKind::ChatCompletions)
+        .with_provider_id("opencode".to_string())
+        .with_config(config);
+
+    let request = navi_core::ModelRequest {
+        model: "claude-sonnet-4.5".to_string(),
+        messages: vec![ModelMessage::user("Hi".to_string())],
+        thinking: navi_core::ThinkingConfig::Off,
+        tools: vec![],
+    };
+
+    let mut stream = provider.stream(request);
+    while let Some(event) = stream.next().await {
+        event.unwrap();
+    }
+}
+
+#[tokio::test]
+async fn test_request_timeout() {
+    use std::time::Duration;
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("GET"))
+        .and(path("/models"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(json!({ "data": [] }))
+                .set_delay(Duration::from_millis(300)),
+        )
+        .mount(&mock_server)
+        .await;
+
+    let mut config = navi_core::ProviderConfig::default();
+    config.id = "openai".to_string();
+    config.kind = navi_core::ProviderKind::OpenAiChatCompletions;
+    config.request_timeout_ms = Some(100);
+    config.request_max_retries = Some(1);
+
+    let provider = OpenAiProvider::new("test_key".to_string())
+        .with_base_url(mock_server.uri())
+        .with_api_kind(OpenAiApiKind::ChatCompletions)
+        .with_config(config);
+
+    let res = provider.list_models().await;
+    assert!(res.is_err());
+    let err = res.unwrap_err();
+    let provider_err = err.downcast_ref::<ProviderError>().unwrap();
+    assert!(matches!(provider_err, ProviderError::Transport(e) if e.is_timeout()));
+}
+
+#[tokio::test]
+async fn test_stream_idle_timeout() {
+    use std::time::Duration;
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let base_url = format!("http://{}", addr);
+
+    tokio::spawn(async move {
+        if let Ok((mut socket, _)) = listener.accept().await {
+            use tokio::io::{AsyncReadExt, AsyncWriteExt};
+            let mut buf = [0; 1024];
+            let _ = socket.read(&mut buf).await;
+
+            let response_headers = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\n\r\n";
+            let _ = socket.write_all(response_headers.as_bytes()).await;
+
+            tokio::time::sleep(Duration::from_millis(300)).await;
+        }
+    });
+
+    let mut config = navi_core::ProviderConfig::default();
+    config.id = "openai".to_string();
+    config.kind = navi_core::ProviderKind::OpenAiChatCompletions;
+    config.stream_idle_timeout_ms = Some(100);
+    config.stream_max_retries = Some(1);
+
+    let provider = OpenAiProvider::new("test_key".to_string())
+        .with_base_url(base_url)
+        .with_api_kind(OpenAiApiKind::ChatCompletions)
+        .with_config(config);
+
+    let request = navi_core::ModelRequest {
+        model: "gpt-4".to_string(),
+        messages: vec![],
+        thinking: navi_core::ThinkingConfig::Off,
+        tools: vec![],
+    };
+
+    let mut stream = provider.stream(request);
+    let item = stream.next().await;
+    assert!(item.is_some());
+    let err = item.unwrap().unwrap_err();
+    let provider_err = err.downcast_ref::<ProviderError>().unwrap();
+    assert!(matches!(provider_err, ProviderError::StreamIdleTimeout(_)));
+}
+
+#[tokio::test]
+async fn test_rate_limit_retry() {
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(ResponseTemplate::new(429).set_body_json(json!({
+            "error": {
+                "message": "Rate limit reached",
+                "requested_delay_ms": 10
+            }
+        })))
+        .up_to_n_times(1)
+        .mount(&mock_server)
+        .await;
+
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string("data: {\"choices\":[{\"delta\":{\"content\":\"hello\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
+                .insert_header("content-type", "text/event-stream")
+        )
+        .mount(&mock_server)
+        .await;
+
+    let mut config = navi_core::ProviderConfig::default();
+    config.id = "openai".to_string();
+    config.kind = navi_core::ProviderKind::OpenAiChatCompletions;
+    config.stream_max_retries = Some(3);
+    config.retry_429 = Some(true);
+
+    let provider = OpenAiProvider::new("test_key".to_string())
+        .with_base_url(mock_server.uri())
+        .with_api_kind(OpenAiApiKind::ChatCompletions)
+        .with_config(config);
+
+    let request = navi_core::ModelRequest {
+        model: "gpt-4".to_string(),
+        messages: vec![],
+        thinking: navi_core::ThinkingConfig::Off,
+        tools: vec![],
+    };
+
+    let mut stream = provider.stream(request);
+    let mut text = String::new();
+    while let Some(event) = stream.next().await {
+        match event.unwrap() {
+            navi_core::ModelStreamEvent::TextDelta { text: t } => {
+                text.push_str(&t);
+            }
+            _ => {}
+        }
+    }
+    assert_eq!(text, "hello");
+}
