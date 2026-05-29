@@ -1,10 +1,10 @@
 use std::time::Instant;
 
-use navi_core::{
-    ModelOption, ProviderConfig, canonical_provider_id, is_free_model_name, model_can_run_publicly,
-    resolve_provider_api_key, resolve_provider_config, resolve_provider_credential_status,
+use navi_sdk::{
+    ModelOption, NaviConfigSaveTarget, NaviModelSelectionRequest, NaviProviderCredentialStatus,
+    ProviderConfig, canonical_provider_id, github_copilot_device_oauth, is_free_model_name,
+    model_can_run_publicly, resolve_provider_config,
 };
-use navi_openai::github_copilot_device_oauth;
 
 use crate::chat::refresh_system_context;
 use crate::dispatch::AsyncEvent;
@@ -25,7 +25,7 @@ pub(crate) fn rebuild_provider(app: &mut TuiApp) {
         selected_model_runtime_available(&app.loaded_config, app.credential_store());
     app.refresh_harness_policy();
     app.compact_state.context_window =
-        navi_core::config::effective_context_window(&app.loaded_config.config);
+        navi_sdk::effective_context_window(&app.loaded_config.config);
     refresh_system_context(app);
     tracing::info!(
         provider = %app.loaded_config.config.model.provider,
@@ -35,11 +35,10 @@ pub(crate) fn rebuild_provider(app: &mut TuiApp) {
 }
 
 pub(crate) fn provider_has_api_key(app: &TuiApp, provider_id: &str) -> bool {
-    resolve_provider_config(&app.loaded_config.config, provider_id)
-        .and_then(|provider_config| {
-            resolve_provider_api_key(app.credential_store(), &provider_config, provider_id)
-        })
-        .is_some()
+    app.engine()
+        .credential_status(provider_id)
+        .map(|status| status.configured)
+        .unwrap_or(false)
 }
 
 pub(crate) fn model_is_available_for_selection(app: &TuiApp, model: &ModelOption) -> bool {
@@ -48,22 +47,35 @@ pub(crate) fn model_is_available_for_selection(app: &TuiApp, model: &ModelOption
 }
 
 pub(crate) fn apply_model_selection(app: &mut TuiApp, model_index: usize) {
-    let Some(model) = app.models.get(model_index) else {
+    let Some(model) = app.models.get(model_index).cloned() else {
         return;
     };
 
-    app.loaded_config.config.model.provider = model.provider_id.clone();
-    app.loaded_config.config.model.name = model.name.clone();
-    app.selected_model = model_index;
-    app.model_scroll = 0;
-    if canonical_provider_id(&model.provider_id) == "opencode" && is_free_model_name(&model.name) {
-        show_notification(
-            app,
-            "OpenCode Zen",
-            "Free model selected. NAVI will use your Zen key when configured.",
-        );
+    let result = app.engine().select_model(NaviModelSelectionRequest {
+        provider_id: model.provider_id.clone(),
+        model: model.name.clone(),
+        save_target: NaviConfigSaveTarget::None,
+    });
+
+    match result {
+        Ok(selection) => {
+            app.loaded_config = selection.loaded_config;
+            app.provider_configured = selection.provider_configured;
+            app.selected_model = model_index;
+            app.model_scroll = 0;
+            if navi_sdk::ProviderId::from_config_id(&model.provider_id).is_opencode_family()
+                && is_free_model_name(&model.name)
+            {
+                show_notification(
+                    app,
+                    "OpenCode Zen",
+                    "Free model selected. NAVI will use your Zen key when configured.",
+                );
+            }
+            rebuild_provider(app);
+        }
+        Err(err) => show_notification(app, "Model", format!("Failed to select model: {err:#}")),
     }
-    rebuild_provider(app);
 }
 
 pub(crate) fn selected_or_pending_provider_id(app: &TuiApp) -> String {
@@ -95,7 +107,7 @@ pub(crate) fn save_api_key_and_rebuild(app: &mut TuiApp) {
     }
 
     let provider_id = selected_or_pending_provider_id(app);
-    if let Err(err) = app.credential_store().set_api_key(&provider_id, &key) {
+    if let Err(err) = app.engine().set_provider_api_key(&provider_id, &key) {
         show_notification(app, "Credentials", format!("Failed to save key: {err:#}"));
     } else {
         show_notification(
@@ -129,23 +141,10 @@ pub(crate) fn current_provider_env_var(app: &TuiApp) -> String {
 
 pub(crate) fn current_provider_credential_status(app: &TuiApp) -> String {
     let provider_id = selected_or_pending_provider_id(app);
-    let Some(provider_config) = resolve_provider_config(&app.loaded_config.config, &provider_id)
-    else {
-        return "unknown provider".to_string();
-    };
-    let model_name = app
-        .pending_model_selection
-        .and_then(|index| app.models.get(index))
-        .map(|model| model.name.as_str())
-        .unwrap_or(app.loaded_config.config.model.name.as_str());
-
-    let status = resolve_provider_credential_status(
-        app.credential_store(),
-        &provider_config,
-        &provider_id,
-        Some(model_name),
-    );
-    status.detail.unwrap_or(status.label)
+    match app.engine().credential_status(&provider_id) {
+        Ok(status) => status.detail.unwrap_or(status.label),
+        Err(_) => "unknown provider".to_string(),
+    }
 }
 
 pub(crate) struct ProviderAuthStatus {
@@ -157,12 +156,18 @@ pub(crate) fn provider_auth_status(
     app: &TuiApp,
     provider_config: &ProviderConfig,
 ) -> ProviderAuthStatus {
-    let status = resolve_provider_credential_status(
-        app.credential_store(),
-        provider_config,
-        &provider_config.id,
-        None,
-    );
+    let status = app
+        .engine()
+        .credential_status(&provider_config.id)
+        .unwrap_or(NaviProviderCredentialStatus {
+            provider_id: provider_config.id.clone(),
+            configured: false,
+            source: None,
+            label: "not configured".to_string(),
+            detail: None,
+            env_var: provider_config.api_key_env.clone(),
+            credential_store_path: app.credential_store().path().to_path_buf(),
+        });
     ProviderAuthStatus {
         configured: status.configured,
         label: status.label,
