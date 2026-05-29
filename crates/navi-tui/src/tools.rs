@@ -1,4 +1,4 @@
-use navi_core::{AgentEvent, ApprovalDecision, ModelMessage, ToolInvocation};
+use navi_sdk::{AgentEvent, ApprovalDecision, ModelMessage, ToolInvocation};
 
 use crate::app::TuiApp;
 use crate::chat::{active_assistant_message, tail_model_response, update_active_assistant_status};
@@ -57,7 +57,7 @@ pub(crate) fn approve_pending_tool(app: &mut TuiApp) {
         let request = app.pending_approvals.remove(0);
         tracing::info!(invocation_id = %request.id, "tool approval accepted via pending_approvals");
         let engine = app.engine();
-        let session_id = app.session_id.0.clone();
+        let session_id = app.session_id.as_str().to_string();
         let decision = ApprovalDecision::Approved {
             id: request.id.clone(),
         };
@@ -74,7 +74,7 @@ pub(crate) fn deny_pending_tool(app: &mut TuiApp) {
         tracing::warn!(invocation_id = %request.id, "tool approval denied via pending_approvals");
         push_diagnostic(app, format!("Denied tool ID: {}", request.id));
         let engine = app.engine();
-        let session_id = app.session_id.0.clone();
+        let session_id = app.session_id.as_str().to_string();
         let decision = ApprovalDecision::Denied {
             id: request.id.clone(),
         };
@@ -90,7 +90,7 @@ pub(crate) fn cancel_stream(app: &mut TuiApp) {
     tracing::warn!(had_stream, had_tool, "active operation cancelled");
     push_diagnostic(app, "Cancelled active operation.");
     let engine = app.engine();
-    let session_id = app.session_id.0.clone();
+    let session_id = app.session_id.as_str().to_string();
     spawn_runtime_task(async move {
         let _ = engine.cancel_turn(&session_id).await;
     });

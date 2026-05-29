@@ -1,8 +1,7 @@
 use std::path::PathBuf;
 use std::time::Instant;
 
-use navi_core::{AgentMode, ModelMessage};
-use navi_sdk::{NaviEngine, NaviSessionRequest, NaviTurnRequest};
+use navi_sdk::{AgentMode, ModelMessage, NaviEngine, NaviSessionRequest, NaviTurnRequest};
 use tokio::sync::mpsc;
 
 use crate::app::TuiApp;
@@ -56,7 +55,7 @@ pub(crate) fn start_streaming_request(app: &mut TuiApp) {
     let tx = app.async_sender();
     let engine = app.engine();
     let project_dir = app.project_dir.clone();
-    let session_id = app.session_id.0.clone();
+    let session_id = app.session_id.as_str().to_string();
     let agent_mode = app.selected_agent;
 
     app.set_stream_task(tokio::spawn(async move {

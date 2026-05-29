@@ -158,7 +158,7 @@ impl NaviEngine {
             context_packets: request.context_packets,
             active_skills: request.active_skills,
             initial_messages: request.initial_messages,
-            session_id: request.session_id.map(SessionId),
+            session_id: request.session_id.map(SessionId::new),
             event_tx: None,
         });
         let events = runtime.stream_events();
@@ -166,13 +166,13 @@ impl NaviEngine {
         let approval_resolver = runtime.approval_resolver();
         let turn_canceller = runtime.turn_canceller();
         let info = NaviSessionInfo {
-            id: session_id.0.clone(),
+            id: session_id.as_str().to_string(),
             project_dir,
             model: loaded_config.config.model.name.clone(),
             provider: loaded_config.config.model.provider.clone(),
         };
         self.inner.sessions.write().unwrap_or_else(|e| e.into_inner()).insert(
-            session_id.0,
+            session_id.into_inner(),
             Arc::new(NaviSession {
                 runtime: AsyncMutex::new(runtime),
                 events,
@@ -405,7 +405,7 @@ impl NaviEngine {
             .list()
             .into_iter()
             .map(|snapshot| NaviSavedSessionInfo {
-                id: snapshot.id.0,
+                id: snapshot.id.into_inner(),
                 title: navi_core::session_title_from_events(&snapshot.events),
                 project: snapshot.project,
                 created_at: snapshot.created_at,
@@ -713,7 +713,7 @@ mod tests {
         std::fs::create_dir_all(&sessions_dir).expect("create sessions dir");
         let snapshot = SessionSnapshot {
             version: SessionSnapshot::CURRENT_VERSION,
-            id: SessionId(session_id.to_string()),
+            id: SessionId::new(session_id.to_string()),
             title: None,
             project: PathBuf::from("/tmp/test-project"),
             created_at: 1000,
@@ -1008,7 +1008,7 @@ mod tests {
         let snapshot = engine
             .load_saved_session("load-test-456")
             .expect("load session");
-        assert_eq!(snapshot.id.0, "load-test-456");
+        assert_eq!(snapshot.id.as_str(), "load-test-456");
         assert_eq!(snapshot.project, PathBuf::from("/tmp/test-project"));
     }
 
