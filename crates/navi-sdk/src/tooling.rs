@@ -125,6 +125,8 @@ pub fn session_id_string(session_id: &navi_core::SessionId) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use navi_core::config::ModelConfig;
+    use navi_core::{NaviConfig, ProviderConfig, ProviderKind};
 
     #[test]
     fn test_context_packet_from_text() {
@@ -143,5 +145,126 @@ mod tests {
     fn test_session_id_string() {
         let id = navi_core::SessionId::new("session-123".to_string());
         assert_eq!(session_id_string(&id), "session-123");
+    }
+
+    #[test]
+    fn build_local_tooling_succeeds_with_default_config() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let loaded_config = LoadedConfig {
+            config: NaviConfig::default(),
+            global_config_path: None,
+            project_config_path: None,
+            data_dir: tempdir.path().to_path_buf(),
+        };
+
+        let result = build_local_tooling(&loaded_config, tempdir.path().to_path_buf());
+        assert!(
+            result.is_ok(),
+            "build_local_tooling should succeed with default config"
+        );
+    }
+
+    #[test]
+    fn build_local_tooling_returns_empty_warnings_without_plugins() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let loaded_config = LoadedConfig {
+            config: NaviConfig::default(),
+            global_config_path: None,
+            project_config_path: None,
+            data_dir: tempdir.path().to_path_buf(),
+        };
+
+        let tooling = build_local_tooling(&loaded_config, tempdir.path().to_path_buf()).unwrap();
+
+        // Verify the executor can list definitions without panicking.
+        let _definitions = tooling.tool_executor.definitions();
+        // No plugins configured, so warnings should be empty.
+        assert!(
+            tooling.warnings.is_empty(),
+            "no warnings expected with default config"
+        );
+    }
+
+    #[test]
+    fn build_model_provider_returns_structured_error_for_missing_credentials() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let loaded_config = LoadedConfig {
+            config: NaviConfig {
+                model: ModelConfig {
+                    provider: "test-provider".to_string(),
+                    name: "test-model".to_string(),
+                },
+                providers: vec![ProviderConfig {
+                    id: "test-provider".to_string(),
+                    label: "Test".to_string(),
+                    kind: ProviderKind::OpenAiResponses,
+                    api_key_env: "NAVI_SDK_TOOLING_TEST_MISSING_KEY_12345".to_string(),
+                    base_url: Some("https://example.test/v1".to_string()),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            },
+            global_config_path: None,
+            project_config_path: None,
+            data_dir: tempdir.path().to_path_buf(),
+        };
+
+        let error = match build_model_provider(&loaded_config) {
+            Ok(_) => panic!("expected missing credential error"),
+            Err(e) => e,
+        };
+
+        let missing = match &error {
+            NaviError::MissingCredential(e) => e,
+            _ => panic!("expected NaviError::MissingCredential, got: {error}"),
+        };
+        assert_eq!(missing.provider_id, "test-provider");
+        assert_eq!(missing.env_var, "NAVI_SDK_TOOLING_TEST_MISSING_KEY_12345");
+        assert_eq!(
+            missing.credential_store_path,
+            tempdir.path().join("credentials.toml")
+        );
+    }
+
+    #[test]
+    fn build_model_provider_returns_error_for_unknown_provider() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let loaded_config = LoadedConfig {
+            config: NaviConfig {
+                model: ModelConfig {
+                    provider: "nonexistent-provider".to_string(),
+                    name: "some-model".to_string(),
+                },
+                ..Default::default()
+            },
+            global_config_path: None,
+            project_config_path: None,
+            data_dir: tempdir.path().to_path_buf(),
+        };
+
+        let error = match build_model_provider(&loaded_config) {
+            Ok(_) => panic!("expected error for unknown provider"),
+            Err(e) => e,
+        };
+
+        assert!(
+            error.to_string().contains("unknown provider"),
+            "error should mention unknown provider, got: {}",
+            error
+        );
+    }
+
+    #[test]
+    fn context_packet_from_text_has_correct_fields() {
+        let packet = context_packet_from_text(
+            ContextSource::UserSelection,
+            "Title",
+            "Body content",
+        );
+        assert_eq!(packet.source, ContextSource::UserSelection);
+        assert_eq!(packet.title.as_deref(), Some("Title"));
+        assert_eq!(packet.content, "Body content");
+        assert_eq!(packet.priority, 0);
+        assert!(packet.id.is_none());
     }
 }

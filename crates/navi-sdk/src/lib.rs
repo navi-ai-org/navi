@@ -13,7 +13,8 @@ pub use tooling::{
     list_models_for_provider, model_provider_for_config, session_id_string,
 };
 pub use types::{
-    NaviConfigSaveTarget, NaviMissingCredentialError, NaviModelInfo, NaviModelSelectionRequest,
+    NaviConfigSaveTarget, NaviError, NaviMissingCredentialError, NaviModelInfo,
+    NaviModelSelectionRequest,
     NaviModelSelectionResult, NaviProviderAccountInfo, NaviProviderCredentialStatus,
     NaviProviderSyncFailure, NaviProviderSyncReport, NaviProviderSyncSkipped, NaviRuntimeTooling,
     NaviSavedSessionInfo, NaviSessionInfo, NaviSessionRequest, NaviSkillInfo, NaviSyncedProvider,

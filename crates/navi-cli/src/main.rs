@@ -1,11 +1,7 @@
 use anyhow::Result;
 use clap::Parser;
-use navi_core::{
-    LoadedConfig, LoggingRuntimeConfig, ModelProvider, init_logging, log_path,
-    resolve_provider_api_key,
-};
-use navi_openai::OpenAiProvider;
-use navi_sdk::{NaviEngineBuilder, NaviSessionRequest, NaviTurnRequest};
+use navi_core::{LoadedConfig, LoggingRuntimeConfig, init_logging, log_path};
+use navi_sdk::{NaviConfigSaveTarget, NaviEngineBuilder, NaviSessionRequest, NaviTurnRequest};
 use navi_tui::TuiApp;
 use std::path::PathBuf;
 
@@ -124,73 +120,50 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-async fn sync_models(mut loaded_config: LoadedConfig, cwd: &std::path::Path) -> Result<()> {
-    let credential_store = navi_core::CredentialStore::new(loaded_config.data_dir.clone());
-    let catalog = navi_core::provider_catalog(&loaded_config.config);
-    let mut updated_any = false;
+async fn sync_models(loaded_config: LoadedConfig, cwd: &std::path::Path) -> Result<()> {
+    let engine = NaviEngineBuilder::from_project(cwd)
+        .loaded_config(loaded_config)
+        .build()?;
 
-    for provider_config in catalog {
-        if let Some(api_key) =
-            resolve_provider_api_key(&credential_store, &provider_config, &provider_config.id)
-        {
-            println!("Syncing models for provider \"{}\"...", provider_config.id);
-            tracing::info!(provider = %provider_config.id, "syncing provider models");
+    let report = engine.sync_models(NaviConfigSaveTarget::Auto).await?;
 
-            match OpenAiProvider::from_provider_config_with_key(&provider_config, api_key) {
-                Ok(provider) => match provider.list_models().await {
-                    Ok(models) => {
-                        if models.is_empty() {
-                            println!(
-                                "No models returned for provider \"{}\".",
-                                provider_config.id
-                            );
-                        } else {
-                            println!(
-                                "Found {} models for provider \"{}\":",
-                                models.len(),
-                                provider_config.id
-                            );
-                            for m in &models {
-                                println!("  - {}", m);
-                            }
-                            loaded_config
-                                .config
-                                .update_provider_models(&provider_config.id, &models);
-                            updated_any = true;
-                        }
-                    }
-                    Err(e) => {
-                        tracing::warn!(provider = %provider_config.id, error = %e, "failed to fetch provider models");
-                        eprintln!(
-                            "Failed to fetch models for provider \"{}\": {}",
-                            provider_config.id, e
-                        );
-                    }
-                },
-                Err(e) => {
-                    tracing::warn!(provider = %provider_config.id, error = %e, "failed to initialize provider");
-                    eprintln!(
-                        "Failed to initialize provider \"{}\": {}",
-                        provider_config.id, e
-                    );
-                }
-            }
-        }
+    for provider in &report.updated {
+        println!(
+            "Synced {} models for provider \"{}\".",
+            provider.model_count, provider.provider_id
+        );
+        tracing::info!(
+            provider = %provider.provider_id,
+            models = provider.model_count,
+            "synced provider models"
+        );
     }
 
-    if updated_any {
-        let saved_path = if let Some(_) = &loaded_config.project_config_path {
-            navi_core::save_project_config(cwd, &loaded_config.config)?
-        } else if let Some(global_path) = &loaded_config.global_config_path {
-            navi_core::save_global_config(global_path, &loaded_config.config)?
-        } else {
-            anyhow::bail!("no config file path found to save");
-        };
+    for skipped in &report.skipped {
         println!(
-            "Successfully saved updated models configuration to: {}",
+            "Skipped provider \"{}\": {}",
+            skipped.provider_id, skipped.reason
+        );
+    }
+
+    for failure in &report.failed {
+        eprintln!(
+            "Failed to sync provider \"{}\": {}",
+            failure.provider_id, failure.message
+        );
+        tracing::warn!(
+            provider = %failure.provider_id,
+            error = %failure.message,
+            "failed to sync provider models"
+        );
+    }
+
+    if let Some(saved_path) = &report.saved_to {
+        println!(
+            "Saved updated models configuration to: {}",
             saved_path.display()
         );
-    } else {
+    } else if report.updated.is_empty() {
         println!("No models were updated.");
     }
 

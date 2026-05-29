@@ -1,39 +1,3 @@
-#[allow(dead_code)]
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub(crate) struct TextInput {
-    text: String,
-    cursor: usize,
-}
-
-#[allow(dead_code)]
-impl TextInput {
-    pub(crate) fn new(text: impl Into<String>) -> Self {
-        let text = text.into();
-        let cursor = text.len();
-        Self { text, cursor }
-    }
-
-    pub(crate) fn as_str(&self) -> &str {
-        &self.text
-    }
-
-    pub(crate) fn cursor(&self) -> usize {
-        self.cursor
-    }
-
-    pub(crate) fn insert_char(&mut self, ch: char) {
-        TextInputRef::new(&mut self.text, &mut self.cursor).insert_char(ch);
-    }
-
-    pub(crate) fn delete_previous_hump(&mut self) {
-        TextInputRef::new(&mut self.text, &mut self.cursor).delete_previous_hump();
-    }
-
-    pub(crate) fn move_previous_hump(&mut self) {
-        TextInputRef::new(&mut self.text, &mut self.cursor).move_previous_hump();
-    }
-}
-
 pub(crate) struct TextInputRef<'a> {
     text: &'a mut String,
     cursor: &'a mut usize,
@@ -324,17 +288,27 @@ mod tests {
     use super::*;
 
     #[test]
-    fn owned_input_edits_at_camel_humps() {
-        let mut input = TextInput::new("fooBar_baz");
+    fn text_input_ref_edits_at_camel_humps() {
+        let mut text = "fooBar_baz".to_string();
+        let mut cursor = text.len();
+        {
+            let mut input = TextInputRef::new(&mut text, &mut cursor);
+            input.move_previous_hump();
+        }
+        assert_eq!(cursor, 7);
 
-        input.move_previous_hump();
-        assert_eq!(input.cursor(), 7);
+        let mut text = "fooBar_baz".to_string();
+        let mut cursor = text.len();
+        {
+            let mut input = TextInputRef::new(&mut text, &mut cursor);
+            input.delete_previous_hump();
+        }
+        assert_eq!(text, "fooBar_");
 
-        let mut input = TextInput::new("fooBar_baz");
-        input.delete_previous_hump();
-        assert_eq!(input.as_str(), "fooBar_");
-
-        input.insert_char('x');
-        assert_eq!(input.as_str(), "fooBar_x");
+        {
+            let mut input = TextInputRef::new(&mut text, &mut cursor);
+            input.insert_char('x');
+        }
+        assert_eq!(text, "fooBar_x");
     }
 }

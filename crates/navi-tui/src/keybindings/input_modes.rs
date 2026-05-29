@@ -1,0 +1,107 @@
+use crate::TuiApp;
+use crate::input::{
+    chat_input_ref, delete_input_next_char, delete_input_next_hump, delete_input_previous_char,
+    delete_input_previous_hump, delete_input_previous_space_word, insert_input_char,
+    move_input_next_char, move_input_next_control_stop, move_input_next_hump,
+    move_input_previous_char, move_input_previous_control_stop, move_input_previous_hump,
+};
+use crate::state::ModalKind;
+use crate::tools::cancel_stream;
+use crossterm::event::{KeyCode, KeyModifiers};
+
+pub(crate) fn handle_normal_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyModifiers) -> bool {
+    if modifiers.contains(KeyModifiers::CONTROL) {
+        match code {
+            KeyCode::Left | KeyCode::Char('b') => move_input_previous_control_stop(app),
+            KeyCode::Right | KeyCode::Char('f') => move_input_next_control_stop(app),
+            KeyCode::Backspace
+            | KeyCode::Char('h')
+            | KeyCode::Char('w')
+            | KeyCode::Char('\u{7f}') => delete_input_previous_hump(app),
+            KeyCode::Delete => delete_input_next_hump(app),
+            KeyCode::Char('a') => app.input_cursor = 0,
+            KeyCode::Char('e') => app.input_cursor = app.input.len(),
+            KeyCode::Char('u') => {
+                app.input.drain(..app.input_cursor);
+                app.input_cursor = 0;
+            }
+            KeyCode::Char('k') => {
+                chat_input_ref(app).delete_to_end();
+            }
+            _ => return false,
+        }
+        return false;
+    }
+
+    if modifiers.contains(KeyModifiers::ALT) {
+        match code {
+            KeyCode::Left | KeyCode::Char('b') | KeyCode::Char(',') => {
+                move_input_previous_hump(app)
+            }
+            KeyCode::Right | KeyCode::Char('f') | KeyCode::Char('.') => move_input_next_hump(app),
+            KeyCode::Backspace | KeyCode::Char('h') | KeyCode::Char('\u{7f}') => {
+                delete_input_previous_space_word(app)
+            }
+            KeyCode::Delete | KeyCode::Char('d') => delete_input_next_hump(app),
+            _ => return false,
+        }
+        return false;
+    }
+
+    match code {
+        KeyCode::Tab => super::cycle_agent(app),
+        KeyCode::Char('/') if app.input.is_empty() => {
+            super::replace_modal(app, ModalKind::Commands);
+            app.command_filter.clear();
+            app.selected_command = 0;
+        }
+        KeyCode::Char('?') if app.input.is_empty() => {
+            super::replace_modal(app, ModalKind::Help);
+        }
+        KeyCode::Char('q') if app.input.is_empty() && app.messages.is_empty() => return true,
+        KeyCode::Char(ch) => insert_input_char(app, ch),
+        KeyCode::Backspace => {
+            delete_input_previous_char(app);
+        }
+        KeyCode::Delete => {
+            delete_input_next_char(app);
+        }
+        KeyCode::Left => {
+            move_input_previous_char(app);
+        }
+        KeyCode::Right => {
+            move_input_next_char(app);
+        }
+        KeyCode::Home => {
+            app.input_cursor = 0;
+        }
+        KeyCode::End => {
+            app.input_cursor = app.input.len();
+        }
+        KeyCode::Up => {
+            app.scroll_offset = app.scroll_offset.saturating_add(3);
+        }
+        KeyCode::Down => {
+            app.scroll_offset = app.scroll_offset.saturating_sub(3);
+        }
+        KeyCode::PageUp => {
+            app.scroll_offset = app.scroll_offset.saturating_add(15);
+        }
+        KeyCode::PageDown => {
+            app.scroll_offset = app.scroll_offset.saturating_sub(15);
+        }
+        KeyCode::Enter => {
+            insert_input_char(app, '\n');
+        }
+        KeyCode::Esc => {
+            if app.is_loading {
+                cancel_stream(app);
+            } else {
+                app.scroll_offset = 0;
+            }
+        }
+        _ => {}
+    }
+
+    false
+}

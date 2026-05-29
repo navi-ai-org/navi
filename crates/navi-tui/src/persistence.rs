@@ -1,16 +1,20 @@
-use navi_core::{AgentEvent, ModelMessage, SessionSnapshot, SessionStore, save_global_config};
+use navi_sdk::{
+    AgentEvent, ModelMessage, SessionSnapshot, SessionStore, save_global_config,
+    session_title_from_events,
+};
 
 use crate::app::TuiApp;
 use crate::chat::reset_system_context;
-use crate::session::{session_created_at, session_title_from_events};
+use crate::session::session_created_at;
 use crate::state::{ChatMessage, ChatRole};
 
 pub(crate) fn save_current_session(app: &mut TuiApp) {
     if app.messages.is_empty() && app.events.is_empty() {
         return;
     }
-    let now = navi_core::session::current_unix_timestamp();
+    let now = navi_sdk::current_unix_timestamp();
     let snapshot = SessionSnapshot {
+        version: SessionSnapshot::CURRENT_VERSION,
         id: app.session_id.clone(),
         title: session_title_from_events(&app.events),
         project: app.project_dir.clone(),

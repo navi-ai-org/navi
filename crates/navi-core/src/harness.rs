@@ -4,25 +4,39 @@ use crate::tool::{ToolDefinition, ToolInvocation, ToolResult, example_from_schem
 use serde_json::{Value, json};
 use std::path::Path;
 
+/// Runtime policy derived from the harness profile, controlling tool-loop and
+/// observation limits.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct HarnessPolicy {
+    /// The selected harness profile.
     pub profile: HarnessProfile,
+    /// Maximum bytes of tool output captured per observation.
     pub observation_max_bytes: usize,
 }
 
+/// Mutable state tracked across tool-loop iterations for detecting repetition
+/// and enforcing iteration limits.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct AgentRunState {
+    /// Total tool-loop iterations so far.
     pub tool_iterations: usize,
+    /// Serialized signature of the last tool invocation, for repetition detection.
     pub last_tool_signature: Option<String>,
+    /// Consecutive count of the same repeated tool call.
     pub repeated_tool_calls: usize,
 }
 
+/// Decision returned by the harness after evaluating a tool iteration.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ToolLoopDecision {
+    /// Proceed to the next iteration.
     Continue,
+    /// The same tool call was repeated; the loop should break with a warning message.
     RepeatedCall(String),
 }
 
+/// Selects a [`HarnessPolicy`] from the config, inferring `Auto` profile from
+/// the selected model's task size.
 pub fn select_harness_policy(config: &NaviConfig) -> HarnessPolicy {
     let profile = match config.harness.profile {
         HarnessProfile::Auto => infer_profile(config),
@@ -31,6 +45,7 @@ pub fn select_harness_policy(config: &NaviConfig) -> HarnessPolicy {
     policy_for_profile(&config.harness, profile)
 }
 
+/// Builds a [`HarnessPolicy`] for an explicit profile (resolving `Auto` to `Medium`).
 pub fn policy_for_profile(config: &HarnessConfig, profile: HarnessProfile) -> HarnessPolicy {
     match profile {
         HarnessProfile::Auto => policy_for_profile(config, HarnessProfile::Medium),
@@ -58,10 +73,12 @@ fn infer_profile(config: &NaviConfig) -> HarnessProfile {
         .unwrap_or(HarnessProfile::Medium)
 }
 
+/// Builds the system prompt for the agent from the given config and working directory.
 pub fn build_system_prompt(config: &NaviConfig, cwd: &Path) -> String {
     build_system_prompt_with_memory(config, cwd, None)
 }
 
+/// Builds the system prompt with an optional memory injection block appended.
 pub fn build_system_prompt_with_memory(
     config: &NaviConfig,
     cwd: &Path,
@@ -70,6 +87,8 @@ pub fn build_system_prompt_with_memory(
     build_system_prompt_inner(config, cwd, memory_injection, &[], false)
 }
 
+/// Builds the system prompt with memory injection and an optional tool manifest
+/// appended for provider compatibility fallback.
 pub fn build_system_prompt_with_tools(
     config: &NaviConfig,
     cwd: &Path,
@@ -136,6 +155,7 @@ fn build_system_prompt_inner(
     prompt
 }
 
+/// Renders a text manifest of available tools for inclusion in the system prompt.
 pub fn tool_prompt_manifest(tools: &[ToolDefinition]) -> String {
     let mut tools = tools.to_vec();
     tools.sort_by(|a, b| a.name.cmp(&b.name));
@@ -166,6 +186,8 @@ pub fn tool_prompt_manifest(tools: &[ToolDefinition]) -> String {
         + "\n"
 }
 
+/// Records a completed tool invocation in the run state, updating iteration
+/// count and repetition tracking.
 pub fn record_tool_call(
     state: &mut AgentRunState,
     _policy: HarnessPolicy,
@@ -190,6 +212,8 @@ pub fn record_tool_call(
     ToolLoopDecision::Continue
 }
 
+/// Truncates tool output to the policy's observation byte limit with a
+/// `[truncated]` marker if exceeded.
 pub fn compact_tool_observation(
     invocation: &ToolInvocation,
     result: &ToolResult,
@@ -206,6 +230,8 @@ pub fn compact_tool_observation(
     )
 }
 
+/// Creates a [`ToolResult`] representing an error, formatted with the
+/// invocation name and a reason message.
 pub fn tool_error_result(invocation: &ToolInvocation, reason: impl Into<String>) -> ToolResult {
     ToolResult {
         invocation_id: invocation.id.clone(),
@@ -214,6 +240,8 @@ pub fn tool_error_result(invocation: &ToolInvocation, reason: impl Into<String>)
     }
 }
 
+/// Builds a JSON summary of a model request for diagnostic logging. Excludes
+/// full message content (logged separately at debug level).
 pub fn trace_request_summary(request: &ModelRequest, policy: HarnessPolicy) -> Value {
     json!({
         "model": request.model,
@@ -243,7 +271,8 @@ fn truncate_string(mut value: String, max_bytes: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{HarnessConfig, HarnessProfile, NaviConfig};
+    use crate::config::HarnessConfig;
+    use crate::{HarnessProfile, NaviConfig};
 
     #[test]
     fn auto_profile_infers_small_from_selected_model() {

@@ -33,9 +33,9 @@ pub(crate) fn build_engine(
     loaded_config: &LoadedConfig,
     project_dir: PathBuf,
 ) -> Result<NaviEngine> {
-    NaviEngineBuilder::from_project(project_dir)
+    Ok(NaviEngineBuilder::from_project(project_dir)
         .loaded_config(loaded_config.clone())
-        .build()
+        .build()?)
 }
 
 pub(crate) fn selected_model_runtime_available(
