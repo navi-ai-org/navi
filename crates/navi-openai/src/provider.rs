@@ -27,6 +27,17 @@ pub struct OpenAiProvider {
     pub(crate) config: ProviderConfig,
 }
 
+impl std::fmt::Debug for OpenAiProvider {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("OpenAiProvider")
+            .field("provider_id", &self.provider_id)
+            .field("base_url", &self.base_url)
+            .field("api_kind", &self.api_kind)
+            .field("config", &self.config)
+            .finish_non_exhaustive()
+    }
+}
+
 impl OpenAiProvider {
     pub fn from_env() -> Result<Self> {
         let api_key = std::env::var("OPENAI_API_KEY").context("OPENAI_API_KEY is not set")?;
