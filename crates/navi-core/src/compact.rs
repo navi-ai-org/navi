@@ -5,6 +5,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 const READ_ONLY_TOOLS: &[&str] = &["read_file", "list_files", "grep", "bash"];
 
+/// Removes read-only tool results from older messages when idle time exceeds
+/// the gap threshold. Returns the number of messages cleared.
 pub fn micro_compact(messages: &mut Vec<ModelMessage>, gap_threshold_minutes: u64) -> usize {
     let now = current_unix_millis();
     let gap_threshold_ms = gap_threshold_minutes * 60 * 1000;
@@ -45,11 +47,16 @@ pub const ERROR_THRESHOLD_BUFFER_TOKENS: u64 = 20_000;
 pub const MAX_OUTPUT_TOKENS_FOR_SUMMARY: u64 = 20_000;
 pub const MAX_CONSECUTIVE_FAILURES: u32 = 3;
 
+/// Context usage severity level used to trigger compact warnings and errors.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CompactThreshold {
+    /// Context usage is within normal bounds.
     Normal,
+    /// Context usage is approaching the limit; a warning should be shown.
     Warning,
+    /// Context usage is critically close to the limit.
     Error,
+    /// Compact has failed too many times; further attempts are blocked.
     CircuitOpen,
 }
 
@@ -64,11 +71,16 @@ impl std::fmt::Display for CompactThreshold {
     }
 }
 
+/// Tracks token usage and compact failure state for autocompact decisions.
 #[derive(Debug, Clone, Default)]
 pub struct CompactState {
+    /// Token count from the last model response, if available.
     pub last_input_tokens: Option<u64>,
+    /// Estimated bytes of new messages not yet sent to the model.
     pub estimated_unsent_bytes: usize,
+    /// Context window size in tokens for the current model.
     pub context_window: u64,
+    /// Number of consecutive compact failures.
     pub consecutive_failures: u32,
     pub summary: Option<String>,
     pub summary_message_count: usize,
