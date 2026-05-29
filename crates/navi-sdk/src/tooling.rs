@@ -121,3 +121,27 @@ pub fn context_packet_from_text(
 pub fn session_id_string(session_id: &navi_core::SessionId) -> String {
     session_id.as_str().to_string()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_context_packet_from_text() {
+        let packet = context_packet_from_text(
+            ContextSource::UserSelection,
+            "test title",
+            "test content",
+        );
+        assert_eq!(packet.source, ContextSource::UserSelection);
+        assert_eq!(packet.title.as_deref(), Some("test title"));
+        assert_eq!(packet.content, "test content");
+        assert_eq!(packet.priority, 0);
+    }
+
+    #[test]
+    fn test_session_id_string() {
+        let id = navi_core::SessionId::new("session-123".to_string());
+        assert_eq!(session_id_string(&id), "session-123");
+    }
+}
