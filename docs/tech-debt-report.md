@@ -7,7 +7,7 @@
 
 | # | Issue | Location | Status |
 |---|-------|----------|--------|
-| 1 | `navi-core` public API has almost no doc comments | All `navi-core/src/*.rs` | PENDING |
+| 1 | `navi-core` public API has almost no doc comments | All `navi-core/src/*.rs` | DONE |
 | 2 | `unsafe` blocks lack `// SAFETY:` comments | `navi-plugin-host/src/lib.rs`, `navi-plugin-api/src/lib.rs` | DONE |
 | 3 | Blocking `std::process::Command` in async `patch.rs` | `navi-core/src/tool/builtin/patch.rs` | DONE |
 | 4 | `HeaderValue::from_str().unwrap()` in all 10 providers | `navi-openai/src/providers/behavior.rs` | DONE |
