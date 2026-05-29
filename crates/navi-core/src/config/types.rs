@@ -206,116 +206,168 @@ impl Default for ProviderConfig {
 }
 
 impl ProviderConfig {
+    /// Returns the request timeout, defaulting to 120 seconds.
     pub fn request_timeout_ms(&self) -> u64 {
         self.request_timeout_ms.unwrap_or(120_000)
     }
 
+    /// Returns the stream idle timeout, defaulting to 300 seconds.
     pub fn stream_idle_timeout_ms(&self) -> u64 {
         self.stream_idle_timeout_ms.unwrap_or(300_000)
     }
 
+    /// Returns the max request retries, defaulting to 4.
     pub fn request_max_retries(&self) -> u32 {
         self.request_max_retries.unwrap_or(4)
     }
 
+    /// Returns the max stream retries, defaulting to 5.
     pub fn stream_max_retries(&self) -> u32 {
         self.stream_max_retries.unwrap_or(5)
     }
 
+    /// Returns the WebSocket connect timeout, defaulting to 15 seconds.
     pub fn websocket_connect_timeout_ms(&self) -> u64 {
         self.websocket_connect_timeout_ms.unwrap_or(15_000)
     }
 
+    /// Whether to retry on HTTP 429 (rate limit), defaulting to `false`.
     pub fn retry_429(&self) -> bool {
         self.retry_429.unwrap_or(false)
     }
 }
 
+/// API protocol kind for a provider.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum ProviderKind {
+    /// OpenAI Responses API (streaming with `response.create`).
     OpenAiResponses,
+    /// OpenAI Chat Completions API (`/v1/chat/completions`).
     OpenAiChatCompletions,
 }
 
+/// A single model entry within a provider's configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProviderModelConfig {
+    /// Model name (e.g. `"gpt-5.5"`).
     pub name: String,
+    /// Task size classification for harness profile inference.
     pub task_size: ModelTaskSize,
+    /// Context window size in tokens, if known.
     #[serde(default)]
     pub context_window_tokens: Option<u64>,
+    /// Whether to force-include the tool prompt manifest for this model.
     #[serde(default)]
     pub tool_prompt_manifest: Option<bool>,
 }
 
+/// Task size classification used to infer the harness profile in `Auto` mode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum ModelTaskSize {
+    /// Large-context model; uses the `medium` harness profile.
     Large,
+    /// Small-context model; uses the `small` harness profile.
     Small,
 }
 
+/// A resolved model option shown in the model picker, combining a model name
+/// with its provider metadata.
 #[derive(Debug, Clone)]
 pub struct ModelOption {
+    /// Model name.
     pub name: String,
+    /// Provider identifier.
     pub provider_id: String,
+    /// Human-readable provider label.
     pub provider_label: String,
+    /// Provider description.
     pub provider_description: String,
+    /// Task size classification.
     pub task_size: ModelTaskSize,
+    /// Context window size in tokens, if known.
     pub context_window_tokens: Option<u64>,
 }
 
+/// A native plugin library path with an enable toggle.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PluginConfig {
+    /// Path to the `.so` or `.dylib` plugin library.
     pub path: PathBuf,
+    /// Whether this plugin is loaded.
     #[serde(default = "default_true")]
     pub enabled: bool,
 }
 
+/// Skill discovery and activation settings.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct SkillsConfig {
+    /// Whether skill discovery is enabled.
     pub enabled: bool,
+    /// Additional directories to scan for `SKILL.md` folders.
     pub dirs: Vec<PathBuf>,
+    /// Skill names that are always active (not just discovered).
     pub active: Vec<String>,
 }
 
+/// MCP (Model Context Protocol) client configuration.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct McpConfig {
+    /// Whether MCP integration is enabled.
     pub enabled: bool,
+    /// Configured MCP server entries.
     pub servers: Vec<McpServerConfig>,
 }
 
+/// Configuration for a single MCP stdio server.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct McpServerConfig {
+    /// Unique server identifier.
     pub id: String,
+    /// Command to launch the server (e.g. `"npx"`).
     pub command: String,
+    /// Arguments passed to the command.
     #[serde(default)]
     pub args: Vec<String>,
+    /// Environment variables for the server process.
     #[serde(default)]
     pub env: BTreeMap<String, String>,
+    /// Working directory for the server process.
     #[serde(default)]
     pub cwd: Option<PathBuf>,
+    /// Whether this server is enabled.
     #[serde(default = "default_true")]
     pub enabled: bool,
+    /// Optional prefix added to remote tool names to avoid collisions.
     #[serde(default)]
     pub tool_prefix: Option<String>,
+    /// Request timeout in milliseconds.
     #[serde(default)]
     pub timeout_ms: Option<u64>,
 }
 
+/// Session memory settings.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct MemoryConfig {
+    /// Whether to inject past session memory into new sessions.
     pub session_memory_enabled: bool,
+    /// Maximum number of memory entries to inject.
     pub max_memory_entries: usize,
 }
 
+/// A fully resolved configuration with paths and merged config layers.
 #[derive(Debug, Clone)]
 pub struct LoadedConfig {
+    /// The merged configuration.
     pub config: NaviConfig,
+    /// Path to the global config file, if it existed.
     pub global_config_path: Option<PathBuf>,
+    /// Path to the project config file, if it existed.
     pub project_config_path: Option<PathBuf>,
+    /// NAVI data directory (sessions, logs, credentials).
     pub data_dir: PathBuf,
 }

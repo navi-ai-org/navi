@@ -214,10 +214,9 @@ mod tests {
             Err(e) => e,
         };
 
-        let missing = match &error {
-            NaviError::MissingCredential(e) => e,
-            _ => panic!("expected NaviError::MissingCredential, got: {error}"),
-        };
+        let missing = error
+            .downcast_ref::<NaviMissingCredentialError>()
+            .expect("error should downcast to NaviMissingCredentialError");
         assert_eq!(missing.provider_id, "test-provider");
         assert_eq!(missing.env_var, "NAVI_SDK_TOOLING_TEST_MISSING_KEY_12345");
         assert_eq!(
