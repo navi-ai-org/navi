@@ -31,6 +31,8 @@ pub use session_state::SessionState;
 
 type PendingApprovals = Arc<std::sync::Mutex<HashMap<String, oneshot::Sender<ApprovalDecision>>>>;
 
+/// Resolves pending tool approvals by matching decision ids to waiting
+/// receivers. Cloneable so it can be handed to the UI layer.
 #[derive(Clone)]
 pub struct ApprovalResolver {
     pending_approvals: PendingApprovals,
@@ -57,6 +59,8 @@ impl ApprovalResolver {
         rx
     }
 
+    /// Resolves a pending approval by id. Returns `true` if a matching
+    /// pending request was found and resolved.
     pub fn resolve(&self, decision: ApprovalDecision) -> bool {
         let id = match &decision {
             ApprovalDecision::Approved { id } => id,
@@ -76,30 +80,45 @@ impl ApprovalResolver {
     }
 }
 
+/// A lightweight handle that cancels the current turn when dropped or called.
+/// Cloneable so it can be handed to the UI layer.
 #[derive(Clone)]
 pub struct TurnCanceller {
     inner: CancelToken,
 }
 
 impl TurnCanceller {
+    /// Cancels the current turn.
     pub fn cancel(&self) {
         self.inner.cancel();
     }
 }
 
+/// Options for constructing an [`AgentRuntime`].
 pub struct AgentRuntimeOptions {
+    /// Loaded and merged configuration.
     pub loaded_config: LoadedConfig,
+    /// The model provider implementation.
     pub model_provider: Arc<dyn ModelProvider>,
+    /// Project root directory.
     pub project_dir: PathBuf,
+    /// Optional custom tool executor (defaults to built-in tools).
     pub tool_executor: Option<Arc<ToolExecutor>>,
+    /// Initial agent mode (e.g. `Plan`, `Edit`).
     pub agent_mode: Option<AgentMode>,
+    /// Context packets to inject into the session.
     pub context_packets: Vec<ContextPacket>,
+    /// Active skill names for this session.
     pub active_skills: Vec<String>,
+    /// Seed messages for restoring a session.
     pub initial_messages: Vec<ModelMessage>,
+    /// Session id for restoring an existing session.
     pub session_id: Option<SessionId>,
+    /// Optional channel for forwarding agent events outside the runtime.
     pub event_tx: Option<tokio::sync::mpsc::UnboundedSender<AgentEvent>>,
 }
 
+/// The core agent runtime that manages sessions, turns, approvals, and events.
 pub struct AgentRuntime {
     loaded_config: LoadedConfig,
     model_provider: Arc<dyn ModelProvider>,
@@ -118,6 +137,7 @@ pub struct AgentRuntime {
 }
 
 impl AgentRuntime {
+    /// Creates a new runtime from the given options.
     pub fn new(options: AgentRuntimeOptions) -> Self {
         let session_store = SessionStore::with_redaction(
             options.loaded_config.data_dir.clone(),
@@ -146,50 +166,61 @@ impl AgentRuntime {
         }
     }
 
+    /// Returns all agent events recorded so far.
     pub fn events(&self) -> &[AgentEvent] {
         self.session.events()
     }
 
+    /// Returns the current session id.
     pub fn session_id(&self) -> &SessionId {
         self.session.id()
     }
 
+    /// Returns the session title, if one has been derived.
     pub fn session_title(&self) -> Option<&str> {
         self.session.title()
     }
 
+    /// Returns the active agent mode, if set.
     pub fn agent_mode(&self) -> Option<AgentMode> {
         self.agent_mode
     }
 
+    /// Sets the agent mode and emits a `ContextUpdated` event.
     pub fn set_agent_mode(&mut self, mode: Option<AgentMode>) {
         self.agent_mode = mode;
         self.event_bus.publish(RuntimeEventKind::ContextUpdated);
     }
 
+    /// Adds a context packet to the session and emits a `ContextUpdated` event.
     pub fn add_context_packet(&mut self, packet: ContextPacket) {
         self.context_packets.push(packet);
         self.event_bus.publish(RuntimeEventKind::ContextUpdated);
     }
 
+    /// Clears all context packets and emits a `ContextUpdated` event.
     pub fn clear_context_packets(&mut self) {
         self.context_packets.clear();
         self.event_bus.publish(RuntimeEventKind::ContextUpdated);
     }
 
+    /// Returns the current context packets.
     pub fn context_packets(&self) -> &[ContextPacket] {
         &self.context_packets
     }
 
+    /// Sets the active skills for this session and emits a `ContextUpdated` event.
     pub fn set_active_skills(&mut self, skills: Vec<String>) {
         self.active_skills = skills;
         self.event_bus.publish(RuntimeEventKind::ContextUpdated);
     }
 
+    /// Lists available model options from the loaded configuration.
     pub fn list_models(&self) -> Vec<ModelOption> {
         available_model_options(&self.loaded_config.config)
     }
 
+    /// Changes the selected model and emits a `ContextUpdated` event.
     pub fn set_model(&mut self, provider: impl Into<String>, model: impl Into<String>) {
         self.loaded_config.config.model.provider =
             canonical_provider_id(&provider.into()).to_string();
@@ -197,6 +228,8 @@ impl AgentRuntime {
         self.event_bus.publish(RuntimeEventKind::ContextUpdated);
     }
 
+    /// Registers a host-provided tool with the runtime's tool executor.
+    /// Creates a default executor if none exists yet.
     pub fn register_host_tool(&mut self, tool: Arc<dyn Tool>) -> Result<()> {
         if self.tool_executor.is_none() {
             let security_policy = SecurityPolicy::new(
@@ -220,18 +253,22 @@ impl AgentRuntime {
         Ok(())
     }
 
+    /// Returns a broadcast receiver for [`RuntimeEvent`]s.
     pub fn stream_events(&self) -> broadcast::Receiver<RuntimeEvent> {
         self.event_bus.stream_events()
     }
 
+    /// Cancels the currently running turn.
     pub fn cancel_turn(&self) {
         self.turn_canceller().cancel();
     }
 
+    /// Resolves a pending approval by id. Returns `true` if found.
     pub fn resolve_approval(&self, decision: ApprovalDecision) -> bool {
         self.approval_resolver().resolve(decision)
     }
 
+    /// Returns an [`ApprovalResolver`] handle for external approval resolution.
     pub fn approval_resolver(&self) -> ApprovalResolver {
         ApprovalResolver {
             pending_approvals: self.pending_approvals.clone(),
@@ -239,12 +276,15 @@ impl AgentRuntime {
         }
     }
 
+    /// Returns a [`TurnCanceller`] handle for external cancellation.
     pub fn turn_canceller(&self) -> TurnCanceller {
         TurnCanceller {
             inner: self.cancel_token.clone(),
         }
     }
 
+    /// Starts a new session (or restarts if one is already active).
+    /// Returns the session id.
     pub fn start_session(&mut self) -> Result<SessionId> {
         if self.session.started() {
             self.event_bus.publish(RuntimeEventKind::SessionFinished {
