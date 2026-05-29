@@ -414,41 +414,11 @@ impl BashTool {
             .spawn()
             .context("failed to spawn bash")?;
 
-        let mut stdout_pipe = child.stdout.take().unwrap();
-        let mut stderr_pipe = child.stderr.take().unwrap();
-
         let stdout_data = Arc::new(tokio::sync::Mutex::new(Vec::new()));
         let stderr_data = Arc::new(tokio::sync::Mutex::new(Vec::new()));
 
-        let stdout_data_clone = stdout_data.clone();
-        let mut stdout_task = tokio::spawn(async move {
-            use tokio::io::AsyncReadExt;
-            let mut buf = [0; 4096];
-            while let Ok(n) = stdout_pipe.read(&mut buf).await {
-                if n == 0 {
-                    break;
-                }
-                let mut data = stdout_data_clone.lock().await;
-                if data.len() < 64 * 1024 {
-                    data.extend_from_slice(&buf[..n]);
-                }
-            }
-        });
-
-        let stderr_data_clone = stderr_data.clone();
-        let mut stderr_task = tokio::spawn(async move {
-            use tokio::io::AsyncReadExt;
-            let mut buf = [0; 4096];
-            while let Ok(n) = stderr_pipe.read(&mut buf).await {
-                if n == 0 {
-                    break;
-                }
-                let mut data = stderr_data_clone.lock().await;
-                if data.len() < 64 * 1024 {
-                    data.extend_from_slice(&buf[..n]);
-                }
-            }
-        });
+        spawn_output_reader(child.stdout.take().unwrap(), stdout_data.clone());
+        spawn_output_reader(child.stderr.take().unwrap(), stderr_data.clone());
 
         let timeout_duration = Duration::from_millis(timeout_ms);
         let status_result = tokio::time::timeout(timeout_duration, child.wait()).await;
@@ -467,13 +437,8 @@ impl BashTool {
             ),
         };
 
-        let _ = tokio::time::timeout(Duration::from_millis(50), async {
-            let _ = tokio::join!(&mut stdout_task, &mut stderr_task);
-        })
-        .await;
-
-        stdout_task.abort();
-        stderr_task.abort();
+        // Give readers a moment to drain remaining output.
+        tokio::time::sleep(Duration::from_millis(50)).await;
 
         let stdout_bytes = stdout_data.lock().await.clone();
         let stderr_bytes = stderr_data.lock().await.clone();
