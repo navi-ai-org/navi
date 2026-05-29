@@ -392,6 +392,7 @@ impl AgentRuntime {
         self.send_turn(task).await
     }
 
+    /// Creates a [`SessionSnapshot`] of the current session state for persistence.
     pub fn snapshot_session(&mut self) -> Result<SessionSnapshot> {
         self.session.set_updated_at(current_unix_timestamp());
         self.session.update_title_from_events();
