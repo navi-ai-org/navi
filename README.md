@@ -7,14 +7,18 @@ NAVI is an opinionated, extensible code agent with a terminal UI. It is built in
 - Interactive TUI with chat, command palette, model picker, thinking controls, settings, session history, and markdown/code rendering.
 - Streaming model responses with visible thinking text when providers expose it.
 - Shared small/medium model harness with compact observations, loop limits, and provider-correct tool transcripts.
-- Tool calling for project work: `read_file`, `write_file`, `apply_patch`, `list_files`, `grep`, and `bash`.
+- Agent modes: Plan, Edit, Review, Tutor, Socratic, Recall, Focus. Each mode controls system prompt, allowed tools, mutation permissions, output style, and approval policy. Cycle with `tab` in the TUI.
+- Specialized bash-redundancy tools that replace ~1,500 redundant bash calls per session with structured output: `test_runner`, `build_runner`, `fs_browser`, `git_ops`, `package_manager`.
+- General project tools: `read_file`, `write_file`, `apply_patch`, `grep`, and `bash`.
 - Compact tool-chain view by default, with `ctrl+o` to expand full tool inputs/outputs.
-- Multi-provider catalog using OpenAI-compatible protocols plus provider-specific adapters for OpenAI, Anthropic, Gemini, OpenRouter, Groq, xAI, and other OpenAI-compatible APIs.
+- Multi-provider catalog using OpenAI-compatible protocols plus provider-specific adapters for OpenAI, Anthropic, Gemini, OpenRouter, Groq, xAI, GitHub Copilot (OAuth), Gitlawb, and other OpenAI-compatible APIs.
 - Secure credential store with env-var precedence and per-provider API key prompting from the model picker.
 - Security policy for tool invocations, path restrictions, command blocking, approvals, and session secret redaction.
 - Native plugin loading through `.so`/`.dylib` libraries with API version validation.
+- MCP client support: configured stdio MCP servers are started by `navi-sdk`, their tools registered with prefixed names (e.g. `memory__search`).
 - ACP stdio server mode for editor/client integration.
 - Headless mode for scripted use.
+- Session memory, auto-compaction, and three-level context management (micro, auto, session memory).
 
 ## Quick Start
 
@@ -125,22 +129,30 @@ Some providers need request/stream adapters even when they expose an OpenAI-comp
 
 GitHub Copilot is available as an OAuth-capable provider. The OAuth flow uses GitHub device login, stores the returned bearer token in NAVI's private credential store, and sends Copilot-specific request headers.
 
+Gitlawb provides an OpenAI-compatible gateway at `https://opengateway.gitlawb.com/v1` with models like `mimo-v2.5-pro`. Uses `openai-chat-completions` protocol with `Authorization: Bearer` auth.
+
 See [docs/providers.md](docs/providers.md) for provider behavior and configuration notes.
 
 ## Tools And Security
 
 Built-in tools are registered by `ToolExecutor` in `navi-core`:
 
-| Tool | Purpose |
-|---|---|
-| `read_file` | Read UTF-8 project files, optionally by line range |
-| `write_file` | Write full UTF-8 file contents |
-| `apply_patch` | Apply a unified diff with `git apply` |
-| `list_files` | List project files with optional filtering |
-| `grep` | Literal text search over project files |
-| `bash` | Run a shell command with timeout and truncation |
+| Tool | Kind | Purpose |
+|---|---|---|
+| `read_file` | Read | Read UTF-8 project files, optionally by line range |
+| `write_file` | Write | Write full UTF-8 file contents |
+| `apply_patch` | Write | Apply a unified diff with `git apply` |
+| `grep` | Read | Literal text search over project files |
+| `bash` | Command | Run a shell command with timeout, background tasks, and truncation |
+| `test_runner` | Command | Run project tests with structured output. Auto-detects cargo/jest/vitest/bun/pytest/go |
+| `build_runner` | Command | Build/compile with caching. Returns structured warnings/errors. Skips rebuild if no source changed |
+| `fs_browser` | Read | Browse filesystem: `list`, `tree`, `find`, `stat`. Replaces `list_files` |
+| `git_ops` | Command | Git operations: `status`, `diff`, `log`, `branch`, `stash`, `remote`. Read-only commands bypass approval |
+| `package_manager` | Write | Manage deps: `install`, `add`, `remove`, `update`, `check`. Auto-detects npm/bun/cargo/go |
 
 The security layer validates tool kind, paths, commands, plugin paths, and approval requirements before execution. See [docs/tools-security.md](docs/tools-security.md).
+
+`git_ops` read-only commands (`status`, `diff`, `log`, `branch`) bypass approval automatically through a special-case in `SecurityPolicy`. Destructive commands (`stash`, `remote`) require approval.
 
 Native plugins configured under `[[plugins]]` are loaded at startup through `libloading`. A plugin must export `navi_plugin_entrypoint`, return metadata with the current `NAVI_PLUGIN_API_VERSION`, and register executable `Tool` implementations. Invalid plugins are reported as warnings and skipped so NAVI can continue with the remaining tools.
 
@@ -173,7 +185,24 @@ In the TUI, `ctrl+d` opens the Debug modal with the current log path, session id
 | `navi-openai` | Streaming provider implementation for OpenAI-compatible APIs |
 | `navi-plugin-api` | Plugin trait and `NAVI_PLUGIN_API_VERSION` |
 | `navi-plugin-host` | Native library loading with `libloading` |
+| `navi-providers` | Provider facade. Re-exports `navi-openai` public API |
+| `navi-sdk` | Public embedding facade for local clients (Tutor, TUI, ACP). Wraps core runtime |
 | `navi-tui` | ratatui/crossterm interface |
+
+## SDK Embedding
+
+`navi-sdk` is the intended Rust boundary for embedding NAVI in other applications (e.g. NAVI Tutor). It provides:
+
+- `NaviEngineBuilder::from_project(path)` — loads config, providers, plugins, MCP
+- `NaviEngine::start_session(...)` — creates a new agent session
+- `NaviEngine::send_turn(...)` — sends a user message, returns structured events
+- `NaviEngine::cancel_turn(...)` — cancels an active turn
+- `NaviEngine::resolve_approval(...)` — resolves tool approval prompts
+- `NaviEngine::subscribe_events(...)` — streams `RuntimeEvent`s (assistant deltas, tool lifecycle, etc.)
+- `NaviEngine::snapshot_session(...)` — takes a persistence snapshot
+- Host tools through `SdkHostTool` — register custom tools from the host app
+
+NAVI Tutor consumes `navi-sdk` by path dependency. See [docs/architecture.md](docs/architecture.md).
 
 More implementation guidance lives in:
 

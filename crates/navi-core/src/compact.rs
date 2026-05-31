@@ -3,7 +3,7 @@ use crate::model::{ModelMessage, ModelProvider, ModelRequest, ModelRole, Thinkin
 use anyhow::Result;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-const READ_ONLY_TOOLS: &[&str] = &["read_file", "list_files", "grep", "bash"];
+const READ_ONLY_TOOLS: &[&str] = &["read_file", "fs_browser", "grep", "bash", "git_ops"];
 
 /// Removes read-only tool results from older messages when idle time exceeds
 /// the gap threshold. Returns the number of messages cleared.

@@ -309,3 +309,344 @@ async fn unknown_tool_returns_available_tools_advice() {
             .contains(&json!("read_file"))
     );
 }
+
+// ── fs_browser regression tests ──────────────────────────────────────────────
+
+#[tokio::test]
+async fn fs_browser_list_returns_files() {
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let executor = executor(tempdir.path());
+
+    std::fs::write(tempdir.path().join("foo.txt"), "hello").unwrap();
+    std::fs::write(tempdir.path().join("bar.rs"), "fn main() {}").unwrap();
+    std::fs::create_dir(tempdir.path().join("subdir")).unwrap();
+
+    let result = executor
+        .invoke(ToolInvocation {
+            id: "fsl".to_string(),
+            tool_name: "fs_browser".to_string(),
+            input: json!({ "action": "list", "path": tempdir.path().display().to_string() }),
+        })
+        .await;
+
+    assert!(result.ok);
+    let files = result.output["files"].as_array().unwrap();
+    assert!(files.len() >= 2); // foo.txt, bar.rs (subdir is recursed into)
+    let file_strs: Vec<&str> = files.iter().filter_map(|f| f.as_str()).collect();
+    assert!(file_strs.iter().any(|f| f.ends_with("foo.txt")));
+    assert!(file_strs.iter().any(|f| f.ends_with("bar.rs")));
+}
+
+#[tokio::test]
+async fn fs_browser_list_returns_total_and_truncated() {
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let executor = executor(tempdir.path());
+
+    std::fs::write(tempdir.path().join("a.txt"), "a").unwrap();
+    std::fs::write(tempdir.path().join("b.txt"), "b").unwrap();
+
+    let result = executor
+        .invoke(ToolInvocation {
+            id: "fsl".to_string(),
+            tool_name: "fs_browser".to_string(),
+            input: json!({ "action": "list", "path": tempdir.path().display().to_string() }),
+        })
+        .await;
+
+    assert!(result.ok);
+    assert_eq!(result.output["total"], 2);
+    assert_eq!(result.output["truncated"], false);
+}
+
+#[tokio::test]
+async fn fs_browser_tree_returns_nested_structure() {
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let executor = executor(tempdir.path());
+
+    std::fs::write(tempdir.path().join("root.txt"), "root").unwrap();
+    std::fs::create_dir(tempdir.path().join("sub")).unwrap();
+    std::fs::write(tempdir.path().join("sub/child.txt"), "child").unwrap();
+
+    let result = executor
+        .invoke(ToolInvocation {
+            id: "fst".to_string(),
+            tool_name: "fs_browser".to_string(),
+            input: json!({
+                "action": "tree",
+                "path": tempdir.path().display().to_string(),
+                "depth": 2
+            }),
+        })
+        .await;
+
+    assert!(result.ok);
+    let entries = result.output["entries"].as_array().unwrap();
+    assert!(entries.len() >= 2); // root.txt and sub
+
+    let sub_entry = entries.iter().find(|e| e["name"] == "sub").unwrap();
+    assert_eq!(sub_entry["type"], "dir");
+    let children = sub_entry["entries"].as_array().unwrap();
+    assert!(children.iter().any(|c| c["name"] == "child.txt"));
+}
+
+#[tokio::test]
+async fn fs_browser_tree_respects_depth() {
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let executor = executor(tempdir.path());
+
+    std::fs::create_dir_all(tempdir.path().join("a/b/c")).unwrap();
+    std::fs::write(tempdir.path().join("a/b/c/deep.txt"), "deep").unwrap();
+
+    let result = executor
+        .invoke(ToolInvocation {
+            id: "fst".to_string(),
+            tool_name: "fs_browser".to_string(),
+            input: json!({
+                "action": "tree",
+                "path": tempdir.path().display().to_string(),
+                "depth": 1
+            }),
+        })
+        .await;
+
+    assert!(result.ok);
+    let entries = result.output["entries"].as_array().unwrap();
+    let a_entry = entries.iter().find(|e| e["name"] == "a").unwrap();
+    assert_eq!(a_entry["type"], "dir");
+    // At depth 1, 'a' should have children listed
+    let a_children = a_entry["entries"].as_array().unwrap();
+    let b_entry = a_children.iter().find(|e| e["name"] == "b").unwrap();
+    // At depth 1, 'b' should NOT have children (would need depth 2)
+    assert!(b_entry.get("entries").is_none() || b_entry["entries"].as_array().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn fs_browser_find_discovers_matching_files() {
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let executor = executor(tempdir.path());
+
+    std::fs::write(tempdir.path().join("readme.md"), "# Hi").unwrap();
+    std::fs::write(tempdir.path().join("notes.md"), "notes").unwrap();
+    std::fs::write(tempdir.path().join("code.rs"), "fn main() {}").unwrap();
+
+    let result = executor
+        .invoke(ToolInvocation {
+            id: "fsf".to_string(),
+            tool_name: "fs_browser".to_string(),
+            input: json!({
+                "action": "find",
+                "path": tempdir.path().display().to_string(),
+                "pattern": ".md"
+            }),
+        })
+        .await;
+
+    assert!(result.ok);
+    let files = result.output["files"].as_array().unwrap();
+    assert!(files.len() >= 2);
+    let file_strs: Vec<&str> = files.iter().filter_map(|f| f.as_str()).collect();
+    assert!(file_strs.iter().any(|f| f.ends_with("readme.md")));
+    assert!(file_strs.iter().any(|f| f.ends_with("notes.md")));
+}
+
+#[tokio::test]
+async fn fs_browser_stat_returns_file_metadata() {
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let executor = executor(tempdir.path());
+
+    std::fs::write(tempdir.path().join("info.txt"), "hello").unwrap();
+
+    let result = executor
+        .invoke(ToolInvocation {
+            id: "fss".to_string(),
+            tool_name: "fs_browser".to_string(),
+            input: json!({
+                "action": "stat",
+                "path": tempdir.path().join("info.txt").display().to_string()
+            }),
+        })
+        .await;
+
+    assert!(result.ok);
+    assert_eq!(result.output["type"], "file");
+    assert_eq!(result.output["size"], 5);
+    assert!(result.output["modified"].as_u64().is_some());
+    assert!(result.output["permissions"].as_str().is_some());
+}
+
+#[tokio::test]
+async fn fs_browser_stat_returns_directory_metadata() {
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let executor = executor(tempdir.path());
+
+    std::fs::create_dir(tempdir.path().join("mydir")).unwrap();
+
+    let result = executor
+        .invoke(ToolInvocation {
+            id: "fss".to_string(),
+            tool_name: "fs_browser".to_string(),
+            input: json!({
+                "action": "stat",
+                "path": tempdir.path().join("mydir").display().to_string()
+            }),
+        })
+        .await;
+
+    assert!(result.ok);
+    assert_eq!(result.output["type"], "dir");
+}
+
+#[tokio::test]
+async fn fs_browser_list_skips_hidden_and_build_dirs() {
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let executor = executor(tempdir.path());
+
+    std::fs::write(tempdir.path().join("visible.txt"), "v").unwrap();
+    std::fs::create_dir(tempdir.path().join(".git")).unwrap();
+    std::fs::write(tempdir.path().join(".git/config"), "c").unwrap();
+    std::fs::create_dir(tempdir.path().join("target")).unwrap();
+    std::fs::write(tempdir.path().join("target/out"), "o").unwrap();
+
+    let result = executor
+        .invoke(ToolInvocation {
+            id: "fsl".to_string(),
+            tool_name: "fs_browser".to_string(),
+            input: json!({ "action": "list", "path": tempdir.path().display().to_string() }),
+        })
+        .await;
+
+    assert!(result.ok);
+    let files = result.output["files"].as_array().unwrap();
+    let file_strs: Vec<&str> = files.iter().filter_map(|f| f.as_str()).collect();
+    assert!(file_strs.iter().any(|f| f.ends_with("visible.txt")));
+    assert!(!file_strs.iter().any(|f| f.contains(".git")));
+    assert!(!file_strs.iter().any(|f| f.contains("target")));
+}
+
+// ── test_runner regression tests ─────────────────────────────────────────────
+
+#[test]
+fn test_runner_definition_has_expected_schema() {
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let executor = executor(tempdir.path());
+
+    let def = executor.definition("test_runner").expect("test_runner");
+    assert_eq!(def.name, "test_runner");
+    assert_eq!(def.input_schema["type"], "object");
+    // test_runner has no required fields
+    assert!(
+        def.input_schema.get("required").is_none()
+            || def.input_schema["required"].as_array().unwrap().is_empty()
+    );
+}
+
+// ── build_runner regression tests ────────────────────────────────────────────
+
+#[test]
+fn build_runner_definition_has_expected_schema() {
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let executor = executor(tempdir.path());
+
+    let def = executor.definition("build_runner").expect("build_runner");
+    assert_eq!(def.name, "build_runner");
+    assert_eq!(def.input_schema["type"], "object");
+    // build_runner has no required fields
+    assert!(
+        def.input_schema.get("required").is_none()
+            || def.input_schema["required"].as_array().unwrap().is_empty()
+    );
+}
+
+// ── git_ops regression tests ─────────────────────────────────────────────────
+
+#[test]
+fn git_ops_definition_has_expected_schema() {
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let executor = executor(tempdir.path());
+
+    let def = executor.definition("git_ops").expect("git_ops");
+    assert_eq!(def.name, "git_ops");
+    assert_eq!(def.input_schema["type"], "object");
+    let required = def.input_schema["required"].as_array().unwrap();
+    assert!(required.contains(&json!("command")));
+}
+
+// ── package_manager regression tests ─────────────────────────────────────────
+
+#[test]
+fn package_manager_definition_has_expected_schema() {
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let executor = executor(tempdir.path());
+
+    let def = executor
+        .definition("package_manager")
+        .expect("package_manager");
+    assert_eq!(def.name, "package_manager");
+    assert_eq!(def.input_schema["type"], "object");
+    let required = def.input_schema["required"].as_array().unwrap();
+    assert!(required.contains(&json!("action")));
+}
+
+#[tokio::test]
+async fn package_manager_add_errors_without_packages() {
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let executor = executor(tempdir.path());
+
+    std::fs::write(
+        tempdir.path().join("Cargo.toml"),
+        "[package]\nname = \"test\"\nversion = \"0.1.0\"\n",
+    )
+    .unwrap();
+
+    let result = executor
+        .invoke(ToolInvocation {
+            id: "pm".to_string(),
+            tool_name: "package_manager".to_string(),
+            input: json!({
+                "action": "add",
+                "manager": "cargo",
+                "packages": []
+            }),
+        })
+        .await;
+
+    assert!(!result.ok);
+    assert_eq!(result.output["error_code"], "missing_packages");
+    assert!(result.output["message"].as_str().is_some());
+}
+
+// ── Integration: tools registered in definitions ─────────────────────────────
+
+#[test]
+fn all_specialized_tools_registered_in_definitions() {
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let executor = executor(tempdir.path());
+    let names = executor.tool_names();
+
+    assert!(names.contains(&"test_runner".to_string()));
+    assert!(names.contains(&"build_runner".to_string()));
+    assert!(names.contains(&"fs_browser".to_string()));
+    assert!(names.contains(&"git_ops".to_string()));
+    assert!(names.contains(&"package_manager".to_string()));
+}
+
+#[test]
+fn all_specialized_tools_have_valid_schemas() {
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let executor = executor(tempdir.path());
+
+    for name in [
+        "test_runner",
+        "build_runner",
+        "fs_browser",
+        "git_ops",
+        "package_manager",
+    ] {
+        let def = executor.definition(name).expect(name);
+        assert_eq!(def.input_schema["type"], "object");
+        assert!(
+            def.input_schema["properties"].as_object().is_some(),
+            "{name} should have properties"
+        );
+    }
+}

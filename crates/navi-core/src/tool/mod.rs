@@ -11,15 +11,15 @@ mod builtin;
 mod tests;
 
 use builtin::{
-    ApplyPatchTool, BashTool, GrepTool, ListFilesTool, ReadFileTool, WriteFileTool,
-    truncate_tool_result,
+    ApplyPatchTool, BashTool, BuildRunnerTool, FsBrowserTool, GitOpsTool, GrepTool,
+    PackageManagerTool, ReadFileTool, TestRunnerTool, WriteFileTool, truncate_tool_result,
 };
 
 /// Trait for executable tools that can be invoked by the agent.
 ///
-/// Built-in tools (read_file, write_file, apply_patch, list_files, grep, bash)
-/// implement this trait. Host applications can also register custom tools via
-/// the SDK's host tool interface.
+/// Built-in tools (read_file, write_file, apply_patch, fs_browser, grep, bash,
+/// test_runner, build_runner, git_ops, package_manager) implement this trait. Host applications can also
+/// register custom tools via the SDK's host tool interface.
 #[async_trait]
 pub trait Tool: Send + Sync {
     /// Returns the tool's definition (name, description, kind, input schema).
@@ -127,7 +127,8 @@ pub enum ToolCallInvalid {
 
 impl ToolExecutor {
     /// Creates a new executor with the given security policy and registers the
-    /// built-in tools (read_file, write_file, apply_patch, list_files, grep, bash).
+    /// built-in tools (read_file, write_file, apply_patch, fs_browser, grep, bash,
+    /// test_runner, build_runner).
     pub fn new(policy: SecurityPolicy) -> Self {
         let mut executor = Self {
             tools: HashMap::new(),
@@ -320,9 +321,13 @@ impl ToolExecutor {
         self.register(ReadFileTool);
         self.register(WriteFileTool);
         self.register(ApplyPatchTool);
-        self.register(ListFilesTool);
+        self.register(FsBrowserTool);
         self.register(GrepTool);
         self.register(BashTool::new());
+        self.register(TestRunnerTool);
+        self.register(BuildRunnerTool::new());
+        self.register(GitOpsTool);
+        self.register(PackageManagerTool);
     }
 }
 

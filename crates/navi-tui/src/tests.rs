@@ -255,8 +255,8 @@ fn consecutive_tool_requests_share_one_assistant_history_message() {
 
     let first = ToolInvocation {
         id: "call-1".to_string(),
-        tool_name: "list_files".to_string(),
-        input: serde_json::json!({}),
+        tool_name: "fs_browser".to_string(),
+        input: serde_json::json!({"action": "list"}),
     };
     let second = ToolInvocation {
         id: "call-2".to_string(),
@@ -838,8 +838,8 @@ fn compact_tool_render_hides_full_input_and_output() {
     let mut app = test_app("");
     let invocation = ToolInvocation {
         id: "call-1".to_string(),
-        tool_name: "list_files".to_string(),
-        input: serde_json::json!({ "path": "/tmp/project" }),
+        tool_name: "fs_browser".to_string(),
+        input: serde_json::json!({ "action": "list", "path": "/tmp/project" }),
     };
     let result = ToolResult {
         invocation_id: "call-1".to_string(),
@@ -865,7 +865,7 @@ fn compact_tool_render_hides_full_input_and_output() {
         .collect::<Vec<_>>()
         .join("\n");
 
-    assert!(text.contains("list_files called · success"));
+    assert!(text.contains("fs_browser called · success"));
     assert!(!text.contains("Input"));
     assert!(!text.contains("Output"));
     assert!(!text.contains("stale full tool content"));
