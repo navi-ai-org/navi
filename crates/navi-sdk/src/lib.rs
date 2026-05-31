@@ -7,24 +7,21 @@ pub use engine::{NaviEngine, NaviEngineBuilder, NaviSession};
 pub use host_tool::{HostToolDefinition, HostToolHandler, SdkHostTool};
 // Re-exported for navi-tui credential flows. Ideally this should be behind a
 // generic provider credential API rather than exposing a single provider's OAuth.
-pub use navi_openai::{DeviceOAuthStarted, github_copilot_device_oauth};
-pub use tooling::{
-    build_local_tooling, build_model_provider, configured_active_skills, context_packet_from_text,
-    list_models_for_provider, model_provider_for_config, session_id_string,
-};
+pub use navi_providers::{DeviceOAuthStarted, github_copilot_device_oauth};
 pub use types::{
     NaviConfigSaveTarget, NaviError, NaviMissingCredentialError, NaviModelInfo,
-    NaviModelSelectionRequest,
-    NaviModelSelectionResult, NaviProviderAccountInfo, NaviProviderCredentialStatus,
-    NaviProviderSyncFailure, NaviProviderSyncReport, NaviProviderSyncSkipped, NaviRuntimeTooling,
-    NaviSavedSessionInfo, NaviSessionInfo, NaviSessionRequest, NaviSkillInfo, NaviSyncedProvider,
-    NaviTurnRequest, NaviTurnResponse,
+    NaviModelSelectionRequest, NaviModelSelectionResult, NaviProviderAccountInfo,
+    NaviProviderCredentialStatus, NaviProviderSyncFailure, NaviProviderSyncReport,
+    NaviProviderSyncSkipped, NaviRuntimeTooling, NaviSavedSessionInfo, NaviSessionInfo,
+    NaviSessionRequest, NaviSkillInfo, NaviSyncedProvider, NaviTurnRequest, NaviTurnResponse,
 };
 
 // Re-export engine types so TUI/clients can import from navi_sdk instead of navi_core.
 pub use navi_core::ProviderId;
 // Session utilities
-pub use navi_core::session::{clean_session_title, current_unix_timestamp, session_title_from_events};
+pub use navi_core::session::{
+    clean_session_title, current_unix_timestamp, session_title_from_events,
+};
 // Event/session types
 pub use navi_core::{
     AgentEvent, AgentMode, AgentRunState, ModelMessage, ModelRole, RuntimeEvent, RuntimeEventKind,
@@ -49,6 +46,7 @@ pub use navi_core::{
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tooling::build_model_provider;
     use navi_core::config::ModelConfig;
     use navi_core::{NaviConfig, ProviderConfig, ProviderKind};
 

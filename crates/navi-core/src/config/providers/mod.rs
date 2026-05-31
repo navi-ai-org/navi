@@ -5,12 +5,7 @@ use crate::config::types::{
     ModelOption, NaviConfig, ProviderConfig, ProviderKind, ProviderModelConfig,
 };
 
-pub use opencode::{
-    is_free_model_name, model_can_run_publicly, opencode_zen_model_id, provider_request_model_name,
-};
-
-// Re-export for config.rs tests that use these helpers
-pub use registry::{model, model_ctx};
+pub use opencode::{is_free_model_name, model_can_run_publicly, provider_request_model_name};
 
 /// Returns the full provider catalog: built-in providers merged with any
 /// user-configured overrides.
@@ -71,7 +66,7 @@ pub fn effective_context_window(config: &NaviConfig) -> u64 {
 
 /// Whether the tool prompt manifest should be included for the selected model,
 /// based on harness config and provider/model settings.
-pub fn effective_tool_prompt_manifest(config: &NaviConfig) -> bool {
+pub(crate) fn effective_tool_prompt_manifest(config: &NaviConfig) -> bool {
     use crate::config::types::ToolPromptManifest;
 
     match config.harness.tool_prompt_manifest {

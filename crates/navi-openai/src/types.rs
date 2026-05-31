@@ -11,4 +11,3 @@ pub(crate) enum StreamRoute {
     AnthropicMessages,
     GeminiGenerateContent,
 }
-

@@ -33,8 +33,7 @@ fn extract_chat_completion_text(value: &serde_json::Value) -> String {
 
 use crate::errors::ProviderError;
 use crate::mapping::{
-    apply_thinking_to_body, message_to_json, responses_input_item_to_json,
-    unique_sorted_model_ids,
+    apply_thinking_to_body, message_to_json, responses_input_item_to_json, unique_sorted_model_ids,
 };
 use crate::provider::OpenAiProvider;
 use crate::providers::anthropic::parse_anthropic_sse;
@@ -45,8 +44,7 @@ use crate::providers::openai::{
 };
 use crate::sse::SseDecoder;
 use crate::transport::{
-    extract_requested_delay_from_json, get_backoff_delay, retry_delay_for_error,
-    should_retry_error,
+    extract_requested_delay_from_json, get_backoff_delay, retry_delay_for_error, should_retry_error,
 };
 use crate::types::OpenAiApiKind;
 use futures_util::StreamExt;
@@ -360,8 +358,7 @@ fn parses_anthropic_text_and_thinking_delta() {
 
 #[test]
 fn parses_gemini_text_delta() {
-    let events =
-        parse_gemini_sse(r#"{"candidates":[{"content":{"parts":[{"text":"hello"}]}}]}"#);
+    let events = parse_gemini_sse(r#"{"candidates":[{"content":{"parts":[{"text":"hello"}]}}]}"#);
 
     assert_eq!(
         events.into_iter().map(Result::unwrap).collect::<Vec<_>>(),
@@ -497,7 +494,8 @@ async fn test_stream_normal() {
     let mock_server = MockServer::start().await;
 
     let chunk1 = "data: {\"choices\":[{\"delta\":{\"content\":\"hello\"}}]}\n\n";
-    let chunk2 = "data: {\"choices\":[{\"delta\":{\"content\":\" world\"},\"finish_reason\":\"stop\"}]}\n\n";
+    let chunk2 =
+        "data: {\"choices\":[{\"delta\":{\"content\":\" world\"},\"finish_reason\":\"stop\"}]}\n\n";
     let chunk3 = "data: [DONE]\n\n";
     let sse_body = format!("{}{}{}", chunk1, chunk2, chunk3);
 

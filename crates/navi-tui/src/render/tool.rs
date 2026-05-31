@@ -24,10 +24,7 @@ pub(crate) fn tool_full_content(invocation: &ToolInvocation, result: &ToolResult
     content
 }
 
-pub(crate) fn formatted_tool_output(
-    invocation: &ToolInvocation,
-    result: &ToolResult,
-) -> Option<String> {
+fn formatted_tool_output(invocation: &ToolInvocation, result: &ToolResult) -> Option<String> {
     let obj = result.output.as_object()?;
     let mut content = String::new();
 
@@ -169,7 +166,7 @@ pub(crate) fn formatted_tool_output(
     Some(content)
 }
 
-pub(crate) fn generic_tool_summary(invocation: &ToolInvocation, result: &ToolResult) -> String {
+fn generic_tool_summary(invocation: &ToolInvocation, result: &ToolResult) -> String {
     if result.ok {
         format!("{} completed successfully\n", invocation.tool_name)
     } else if let Some(error) = result.output.get("error").and_then(|v| v.as_str()) {
@@ -179,7 +176,7 @@ pub(crate) fn generic_tool_summary(invocation: &ToolInvocation, result: &ToolRes
     }
 }
 
-pub(crate) fn count_changed_lines(content: &str) -> usize {
+fn count_changed_lines(content: &str) -> usize {
     if content.is_empty() {
         0
     } else {
@@ -187,7 +184,7 @@ pub(crate) fn count_changed_lines(content: &str) -> usize {
     }
 }
 
-pub(crate) fn patch_edit_summaries(patch: &str) -> Vec<String> {
+fn patch_edit_summaries(patch: &str) -> Vec<String> {
     let mut summaries = Vec::new();
     let mut current_path: Option<String> = None;
     let mut added = 0usize;
@@ -223,7 +220,7 @@ pub(crate) fn patch_edit_summaries(patch: &str) -> Vec<String> {
     summaries
 }
 
-pub(crate) fn flush_patch_summary(
+fn flush_patch_summary(
     summaries: &mut Vec<String>,
     current_path: &mut Option<String>,
     added: &mut usize,
@@ -236,7 +233,7 @@ pub(crate) fn flush_patch_summary(
     }
 }
 
-pub(crate) fn language_for_path(path: &str) -> &'static str {
+fn language_for_path(path: &str) -> &'static str {
     match path
         .rsplit_once('.')
         .map(|(_, ext)| ext)

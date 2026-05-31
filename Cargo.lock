@@ -2109,6 +2109,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "navi-providers"
+version = "0.1.0"
+dependencies = [
+ "navi-core",
+ "navi-openai",
+]
+
+[[package]]
 name = "navi-sdk"
 version = "0.1.0"
 dependencies = [
@@ -2116,8 +2124,8 @@ dependencies = [
  "async-trait",
  "navi-core",
  "navi-mcp",
- "navi-openai",
  "navi-plugin-host",
+ "navi-providers",
  "serde",
  "serde_json",
  "tempfile",

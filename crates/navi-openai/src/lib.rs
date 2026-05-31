@@ -9,10 +9,10 @@ mod sse;
 mod transport;
 
 pub use errors::ProviderError;
+pub use navi_core::ProviderId;
 pub use oauth::{DeviceOAuthStarted, github_copilot_device_oauth};
 pub use provider::OpenAiProvider;
 pub use types::OpenAiApiKind;
-pub use navi_core::ProviderId;
 
 #[cfg(test)]
 mod tests;

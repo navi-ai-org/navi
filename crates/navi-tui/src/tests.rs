@@ -17,7 +17,9 @@ use crate::providers::{
     ListRow, build_model_rows, first_model_index, model_is_available_for_selection,
     sync_scroll_to_selection,
 };
-use crate::render::{command_scroll_offset, is_empty_tool_placeholder, tool_full_content};
+use crate::render::command_scroll_offset;
+use crate::render::markdown::is_empty_tool_placeholder;
+use crate::render::tool::tool_full_content;
 use crate::state::{ChatMessage, ChatRole, Mode, Notification, SelectionState};
 use crate::theme::NOTIFICATION_TTL;
 use crate::tools::record_tool_requested;

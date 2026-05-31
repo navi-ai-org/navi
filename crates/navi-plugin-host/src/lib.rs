@@ -1,7 +1,10 @@
 use anyhow::{Context, Result, bail};
 use async_trait::async_trait;
 use libloading::{Library, Symbol};
-use navi_core::{PluginConfig, SecurityDecision, SecurityPolicy, Tool, ToolDefinition, ToolExecutor, ToolInvocation, ToolKind, ToolResult};
+use navi_core::{
+    PluginConfig, SecurityDecision, SecurityPolicy, Tool, ToolDefinition, ToolExecutor,
+    ToolInvocation, ToolKind, ToolResult,
+};
 use navi_plugin_api::{
     NAVI_PLUGIN_API_VERSION, NAVI_PLUGIN_ENTRYPOINT, NaviPlugin, PluginCreate, PluginMetadata,
     PluginRegistry, PluginTool, PluginToolDefinition, PluginToolInvocation, PluginToolKind,
@@ -214,7 +217,7 @@ mod tests {
     use super::*;
     use anyhow::Result;
     use navi_core::{SecurityConfig, SecurityPolicy};
-    use navi_plugin_api::{PluginToolResult};
+    use navi_plugin_api::PluginToolResult;
     use serde_json::json;
 
     #[test]

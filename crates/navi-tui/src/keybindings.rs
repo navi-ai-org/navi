@@ -130,14 +130,16 @@ fn route_mode_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyModifiers) -> K
 
 // ─── re-exports ─────────────────────────────────────────────────────────────────
 
-// Re-exported for use by tests. The compiler warns about unused items because
-// some are only consumed in #[cfg(test)] code.
+pub(crate) use modals::THINKING_OPTIONS;
+pub(crate) use routing::handle_key;
+
+// Test-only re-exports: sub-modules are private, so tests need these paths.
+// Production code uses direct `self::` paths instead.
 #[allow(unused_imports)]
 pub(crate) use commands::{handle_command_key, run_selected_command};
 #[allow(unused_imports)]
 pub(crate) use input_modes::handle_normal_key;
 #[allow(unused_imports)]
-pub(crate) use modals::{THINKING_OPTIONS, handle_help_key, handle_model_key, handle_settings_key};
+pub(crate) use modals::{handle_help_key, handle_model_key, handle_settings_key};
 #[allow(unused_imports)]
 pub(crate) use provider_sync::sync_models_tui;
-pub(crate) use routing::handle_key;

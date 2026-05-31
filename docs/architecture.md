@@ -8,9 +8,11 @@ NAVI is a Rust workspace using edition 2024 and resolver 3. The repo root has no
 |---|---|
 | `navi-cli` | CLI entry point. Loads config, dispatches to TUI, headless runtime, or ACP stdio server, prints config/provider diagnostics. |
 | `navi-core` | Shared domain layer: config, provider catalog, model abstractions, tool definitions/execution, security policy, sessions, events, runtime. |
-| `navi-openai` | The only current `ModelProvider` implementation. It speaks OpenAI Responses, Chat Completions, Anthropic Messages, and Gemini Generate Content through provider adapters. |
+| `navi-openai` | `ModelProvider` implementation for OpenAI-compatible APIs and provider adapters. Implementation crate behind `navi-providers` facade. |
 | `navi-plugin-api` | Public plugin trait/types and `NAVI_PLUGIN_API_VERSION`. |
 | `navi-plugin-host` | Dynamic library loading and API-version validation via `libloading`. |
+| `navi-providers` | Provider facade. Re-exports `navi-openai` public API. Downstream crates depend on this, not `navi-openai` directly. |
+| `navi-sdk` | Public embedding facade for local clients (Tutor, TUI, ACP). Wraps core runtime, provider setup, plugin loading, host tools, MCP, sessions and events. |
 | `navi-tui` | Interactive terminal UI using ratatui and crossterm. Owns chat rendering, modals, key handling, and an async bridge to the shared SDK runtime. |
 
 ## Runtime Flow
@@ -21,7 +23,7 @@ NAVI is a Rust workspace using edition 2024 and resolver 3. The repo root has no
 4. TUI mode creates a `TuiApp`; headless mode creates `AgentRuntime`; ACP mode serves JSON-RPC over stdio. TUI and ACP drive turns through `navi-sdk::NaviEngine`, which owns provider/tool/plugin/MCP setup and wraps `AgentRuntime` sessions.
 5. The harness layer selects a `small` or `medium` profile, builds the system prompt, and applies loop/observation limits.
 6. A user prompt becomes a `ModelRequest` containing conversation history, selected model, thinking mode, and available tool definitions.
-7. `navi-openai` streams `ModelStreamEvent` values back to the caller.
+7. `navi-providers` (via `navi-openai`) streams `ModelStreamEvent` values back to the caller.
 8. Text/thinking deltas update the active assistant message; tool calls go through `ToolExecutor` and `SecurityPolicy`.
 9. Tool calls and tool results are sent back using provider tool-message protocol, not fake user text.
 10. Completed assistant output, tool results, and harness traces are persisted as session events.

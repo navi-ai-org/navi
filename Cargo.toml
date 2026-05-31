@@ -6,6 +6,7 @@ members = [
     "crates/navi-openai",
     "crates/navi-plugin-api",
     "crates/navi-plugin-host",
+    "crates/navi-providers",
     "crates/navi-sdk",
     "crates/navi-tui",
 ]
@@ -47,6 +48,7 @@ navi-core = { path = "crates/navi-core" }
 navi-mcp = { path = "crates/navi-mcp" }
 navi-openai = { path = "crates/navi-openai" }
 navi-plugin-api = { path = "crates/navi-plugin-api" }
+navi-providers = { path = "crates/navi-providers" }
 navi-plugin-host = { path = "crates/navi-plugin-host" }
 navi-sdk = { path = "crates/navi-sdk" }
 navi-tui = { path = "crates/navi-tui" }

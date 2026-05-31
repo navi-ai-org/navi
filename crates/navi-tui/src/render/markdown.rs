@@ -136,17 +136,14 @@ pub(crate) fn is_empty_tool_placeholder(message: &ChatMessage) -> bool {
         })
 }
 
-pub(crate) fn tool_result_parts(message: &ChatMessage) -> Option<(&ToolInvocation, &ToolResult)> {
+fn tool_result_parts(message: &ChatMessage) -> Option<(&ToolInvocation, &ToolResult)> {
     match (&message.tool_invocation, &message.tool_result) {
         (Some(invocation), Some(result)) => Some((invocation, result)),
         _ => None,
     }
 }
 
-pub(crate) fn render_compact_tool_line(
-    invocation: &ToolInvocation,
-    result: &ToolResult,
-) -> Line<'static> {
+fn render_compact_tool_line(invocation: &ToolInvocation, result: &ToolResult) -> Line<'static> {
     Line::from(vec![
         Span::styled(
             "● ",
@@ -245,7 +242,7 @@ pub(crate) fn render_markdown_lines(
     lines
 }
 
-pub(crate) fn text_line(
+fn text_line(
     text: String,
     show_marker: bool,
     marker_color: Color,
@@ -268,7 +265,7 @@ pub(crate) fn text_line(
     Line::from(spans)
 }
 
-pub(crate) fn markdown_prose_line(text: &str, fallback: Color) -> Option<Vec<Span<'static>>> {
+fn markdown_prose_line(text: &str, fallback: Color) -> Option<Vec<Span<'static>>> {
     let trimmed = text.trim_start();
     let indent = text.len().saturating_sub(trimmed.len());
     let mut spans = Vec::new();
@@ -341,7 +338,7 @@ pub(crate) fn markdown_prose_line(text: &str, fallback: Color) -> Option<Vec<Spa
     })
 }
 
-pub(crate) fn is_table_line(text: &str) -> bool {
+fn is_table_line(text: &str) -> bool {
     text.starts_with('|') && text.ends_with('|') && text.matches('|').count() >= 2
 }
 
@@ -353,14 +350,14 @@ fn is_table_separator(text: &str) -> bool {
         })
 }
 
-pub(crate) fn table_cells(text: &str) -> Vec<String> {
+fn table_cells(text: &str) -> Vec<String> {
     text.trim_matches('|')
         .split('|')
         .map(|cell| cell.trim().to_string())
         .collect()
 }
 
-pub(crate) fn table_block_lines(
+fn table_block_lines(
     table_rows: &[String],
     show_marker: bool,
     marker_color: Color,
@@ -455,11 +452,11 @@ fn stacked_table_lines(
     lines
 }
 
-pub(crate) fn table_row_spans(cells: &[String], widths: &[usize]) -> Vec<Span<'static>> {
+fn table_row_spans(cells: &[String], widths: &[usize]) -> Vec<Span<'static>> {
     table_row_spans_with_header(cells, widths, false)
 }
 
-pub(crate) fn table_row_spans_with_header(
+fn table_row_spans_with_header(
     cells: &[String],
     widths: &[usize],
     header: bool,
@@ -486,14 +483,14 @@ pub(crate) fn table_row_spans_with_header(
     spans
 }
 
-pub(crate) fn rendered_inline_width(text: &str) -> usize {
+fn rendered_inline_width(text: &str) -> usize {
     inline_text_spans(text, TEXT)
         .iter()
         .map(|span| span.content.chars().count())
         .sum()
 }
 
-pub(crate) fn ordered_list_marker(text: &str) -> Option<(String, &str)> {
+fn ordered_list_marker(text: &str) -> Option<(String, &str)> {
     let digit_len = text.chars().take_while(|ch| ch.is_ascii_digit()).count();
     if digit_len == 0 {
         return None;
@@ -509,7 +506,7 @@ pub(crate) fn ordered_list_marker(text: &str) -> Option<(String, &str)> {
     Some((text[..marker_len].to_string(), &text[marker_len..]))
 }
 
-pub(crate) fn inline_text_spans(text: &str, fallback: Color) -> Vec<Span<'static>> {
+fn inline_text_spans(text: &str, fallback: Color) -> Vec<Span<'static>> {
     let mut spans = Vec::new();
     let mut plain = String::new();
     let mut index = 0;
@@ -670,11 +667,7 @@ fn push_plain_span(spans: &mut Vec<Span<'static>>, plain: &mut String, fallback:
     ));
 }
 
-pub(crate) fn markdown_boundary_line(
-    language: &str,
-    show_marker: bool,
-    marker_color: Color,
-) -> Line<'static> {
+fn markdown_boundary_line(language: &str, show_marker: bool, marker_color: Color) -> Line<'static> {
     let mut spans = marker_spans(show_marker, marker_color);
     let label = if language.is_empty() {
         "```".to_string()
@@ -685,7 +678,7 @@ pub(crate) fn markdown_boundary_line(
     Line::from(spans)
 }
 
-pub(crate) fn code_line(
+fn code_line(
     raw_line: &str,
     language: &str,
     show_marker: bool,
@@ -696,7 +689,7 @@ pub(crate) fn code_line(
     Line::from(spans)
 }
 
-pub(crate) fn marker_spans(show_marker: bool, marker_color: Color) -> Vec<Span<'static>> {
+fn marker_spans(show_marker: bool, marker_color: Color) -> Vec<Span<'static>> {
     if show_marker {
         vec![Span::styled("│ ", Style::default().fg(marker_color))]
     } else {

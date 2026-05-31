@@ -117,7 +117,7 @@ impl PartialEq for ModelConfig {
 }
 
 /// Default context window size in tokens when the model's context window is unknown.
-pub const DEFAULT_CONTEXT_WINDOW: u64 = 128_000;
+pub(crate) const DEFAULT_CONTEXT_WINDOW: u64 = 128_000;
 
 fn default_blocked_commands() -> Vec<String> {
     [

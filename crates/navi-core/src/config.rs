@@ -3,7 +3,6 @@ pub mod persistence;
 pub mod providers;
 pub mod types;
 
-pub use defaults::*;
 pub use persistence::*;
 pub use providers::*;
 pub use types::*;
@@ -220,7 +219,12 @@ timeout_ms = 1000
             kind: ProviderKind::OpenAiChatCompletions,
             api_key_env: "CUSTOM_CHARM_KEY".to_string(),
             base_url: Some("https://example.test/v1".to_string()),
-            models: vec![model("Custom Model", ModelTaskSize::Large)],
+            models: vec![ProviderModelConfig {
+                name: "Custom Model".to_string(),
+                task_size: ModelTaskSize::Large,
+                context_window_tokens: None,
+                tool_prompt_manifest: None,
+            }],
             ..Default::default()
         });
 

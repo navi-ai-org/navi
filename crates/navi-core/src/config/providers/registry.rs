@@ -1,6 +1,6 @@
 use crate::config::types::{ModelTaskSize, ProviderConfig, ProviderKind, ProviderModelConfig};
 
-pub fn model(name: &str, task_size: ModelTaskSize) -> ProviderModelConfig {
+pub(super) fn model(name: &str, task_size: ModelTaskSize) -> ProviderModelConfig {
     ProviderModelConfig {
         name: name.to_string(),
         task_size,
@@ -9,7 +9,7 @@ pub fn model(name: &str, task_size: ModelTaskSize) -> ProviderModelConfig {
     }
 }
 
-pub fn model_ctx(name: &str, task_size: ModelTaskSize, ctx: u64) -> ProviderModelConfig {
+pub(super) fn model_ctx(name: &str, task_size: ModelTaskSize, ctx: u64) -> ProviderModelConfig {
     ProviderModelConfig {
         name: name.to_string(),
         task_size,
