@@ -72,7 +72,11 @@ impl ProviderBehavior for AnthropicBehavior {
         StreamRoute::AnthropicMessages
     }
 
-    fn build_headers(&self, api_key: &str, _endpoint: Endpoint) -> Result<HeaderMap, ProviderError> {
+    fn build_headers(
+        &self,
+        api_key: &str,
+        _endpoint: Endpoint,
+    ) -> Result<HeaderMap, ProviderError> {
         let mut headers = HeaderMap::new();
         headers.insert("x-api-key", HeaderValue::from_str(api_key)?);
         headers.insert("anthropic-version", HeaderValue::from_static("2023-06-01"));
@@ -94,7 +98,11 @@ impl ProviderBehavior for GeminiBehavior {
         StreamRoute::GeminiGenerateContent
     }
 
-    fn build_headers(&self, _api_key: &str, _endpoint: Endpoint) -> Result<HeaderMap, ProviderError> {
+    fn build_headers(
+        &self,
+        _api_key: &str,
+        _endpoint: Endpoint,
+    ) -> Result<HeaderMap, ProviderError> {
         // Gemini uses API key in URL query param, not in headers
         Ok(HeaderMap::new())
     }
@@ -116,7 +124,11 @@ impl ProviderBehavior for OpenRouterBehavior {
         }
     }
 
-    fn build_headers(&self, api_key: &str, _endpoint: Endpoint) -> Result<HeaderMap, ProviderError> {
+    fn build_headers(
+        &self,
+        api_key: &str,
+        _endpoint: Endpoint,
+    ) -> Result<HeaderMap, ProviderError> {
         let mut headers = HeaderMap::new();
         headers.insert(AUTHORIZATION, bearer_value(api_key)?);
         headers.insert(
@@ -145,7 +157,11 @@ impl ProviderBehavior for GitHubCopilotBehavior {
         }
     }
 
-    fn build_headers(&self, api_key: &str, _endpoint: Endpoint) -> Result<HeaderMap, ProviderError> {
+    fn build_headers(
+        &self,
+        api_key: &str,
+        _endpoint: Endpoint,
+    ) -> Result<HeaderMap, ProviderError> {
         let mut headers = HeaderMap::new();
         headers.insert(AUTHORIZATION, bearer_value(api_key)?);
         headers.insert(USER_AGENT, HeaderValue::from_static("navi/0.1.0"));
@@ -211,7 +227,11 @@ impl ProviderBehavior for OpencodeZenBehavior {
         }
     }
 
-    fn build_headers(&self, api_key: &str, _endpoint: Endpoint) -> Result<HeaderMap, ProviderError> {
+    fn build_headers(
+        &self,
+        api_key: &str,
+        _endpoint: Endpoint,
+    ) -> Result<HeaderMap, ProviderError> {
         let mut headers = HeaderMap::new();
         headers.insert(AUTHORIZATION, bearer_value(api_key)?);
         headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
@@ -235,7 +255,11 @@ impl ProviderBehavior for OpencodeGoBehavior {
         }
     }
 
-    fn build_headers(&self, api_key: &str, _endpoint: Endpoint) -> Result<HeaderMap, ProviderError> {
+    fn build_headers(
+        &self,
+        api_key: &str,
+        _endpoint: Endpoint,
+    ) -> Result<HeaderMap, ProviderError> {
         let mut headers = HeaderMap::new();
         headers.insert(AUTHORIZATION, bearer_value(api_key)?);
         headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
@@ -259,7 +283,11 @@ impl ProviderBehavior for GroqBehavior {
         }
     }
 
-    fn build_headers(&self, api_key: &str, _endpoint: Endpoint) -> Result<HeaderMap, ProviderError> {
+    fn build_headers(
+        &self,
+        api_key: &str,
+        _endpoint: Endpoint,
+    ) -> Result<HeaderMap, ProviderError> {
         let mut headers = HeaderMap::new();
         headers.insert(AUTHORIZATION, bearer_value(api_key)?);
         headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
@@ -283,7 +311,11 @@ impl ProviderBehavior for XaiBehavior {
         }
     }
 
-    fn build_headers(&self, api_key: &str, _endpoint: Endpoint) -> Result<HeaderMap, ProviderError> {
+    fn build_headers(
+        &self,
+        api_key: &str,
+        _endpoint: Endpoint,
+    ) -> Result<HeaderMap, ProviderError> {
         let mut headers = HeaderMap::new();
         headers.insert(AUTHORIZATION, bearer_value(api_key)?);
         headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
@@ -307,7 +339,11 @@ impl ProviderBehavior for CustomBehavior {
         }
     }
 
-    fn build_headers(&self, api_key: &str, _endpoint: Endpoint) -> Result<HeaderMap, ProviderError> {
+    fn build_headers(
+        &self,
+        api_key: &str,
+        _endpoint: Endpoint,
+    ) -> Result<HeaderMap, ProviderError> {
         let mut headers = HeaderMap::new();
         headers.insert(AUTHORIZATION, bearer_value(api_key)?);
         headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));

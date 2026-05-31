@@ -1,6 +1,4 @@
-use navi_core::{
-    AgentMode, ContextPacket, LoadedConfig, ModelMessage, SecurityPolicy, ToolExecutor,
-};
+use navi_core::{AgentMode, ContextPacket, LoadedConfig, ModelMessage, ToolExecutor};
 use navi_plugin_host::LoadedPlugin;
 use serde::{Deserialize, Serialize};
 use std::error::Error;
@@ -211,13 +209,12 @@ pub struct NaviSavedSessionInfo {
     pub updated_at: u64,
 }
 
-/// Tool executor, security policy, and plugin warnings assembled for a session.
+/// Tool executor and plugin warnings assembled for a session.
 ///
-/// This is an intermediate type produced during session setup. The `security_policy`
-/// and `tool_executor` are passed into the agent runtime; `warnings` reports any
-/// plugin load failures that occurred.
+/// This is an intermediate type produced during session setup. The `tool_executor`
+/// is passed into the agent runtime; `warnings` reports any plugin load failures
+/// that occurred.
 pub struct NaviRuntimeTooling {
-    pub security_policy: SecurityPolicy,
     pub tool_executor: Arc<ToolExecutor>,
     pub warnings: Vec<String>,
     pub(crate) _plugins: Vec<LoadedPlugin>,

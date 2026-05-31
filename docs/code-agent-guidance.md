@@ -16,8 +16,8 @@ The worktree may be dirty. Do not revert user changes. If unrelated files are mo
 ## Important Local Facts
 
 - The repo root has no active `src/`; all code lives under `crates/`.
-- The TUI is currently a large single file: `crates/navi-tui/src/lib.rs`.
-- `navi-openai` is the provider implementation for all configured providers.
+- The TUI is split across modules under `crates/navi-tui/src/`: `view/`, `keybindings/`, `render/`, `ui/`, plus focused files like `app.rs`, `chat.rs`, `runtime.rs`, etc.
+- `navi-providers` is the provider facade; `navi-openai` is the implementation crate behind it.
 - `navi-core` owns harness policy, security, tools, sessions, config, provider catalog, and model abstractions.
 - `test_reqwest.rs` may be present as an untracked local scratch file; do not touch it unless explicitly asked.
 

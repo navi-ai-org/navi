@@ -424,6 +424,7 @@ impl SessionRuntime {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tool::{ToolInvocation, ToolResult};
 
     #[test]
     fn save_writes_session_snapshot() {
@@ -676,5 +677,188 @@ mod tests {
         assert_eq!(loaded.entries.len(), 2);
         assert_eq!(loaded.entries[0].summary, "First summary");
         assert_eq!(loaded.entries[1].summary, "Second summary");
+    }
+
+    fn make_snapshot(id: &str, updated_at: u64) -> SessionSnapshot {
+        SessionSnapshot {
+            version: SessionSnapshot::CURRENT_VERSION,
+            id: SessionId::new(id.to_string()),
+            title: Some(format!("Session {id}")),
+            project: PathBuf::from("/tmp/project"),
+            created_at: updated_at - 10,
+            updated_at,
+            events: Vec::new(),
+            memory: None,
+        }
+    }
+
+    #[test]
+    fn list_returns_sessions_sorted_by_updated_at() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let store = SessionStore::with_redaction(tempdir.path().to_path_buf(), false);
+        store.save(&make_snapshot("s-old", 100)).expect("save");
+        store.save(&make_snapshot("s-new", 300)).expect("save");
+        store.save(&make_snapshot("s-mid", 200)).expect("save");
+
+        let sessions = store.list();
+        assert_eq!(sessions.len(), 3);
+        assert_eq!(sessions[0].id.as_str(), "s-new");
+        assert_eq!(sessions[1].id.as_str(), "s-mid");
+        assert_eq!(sessions[2].id.as_str(), "s-old");
+    }
+
+    #[test]
+    fn list_returns_empty_when_no_sessions() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let store = SessionStore::new(tempdir.path().to_path_buf());
+        assert!(store.list().is_empty());
+    }
+
+    #[test]
+    fn load_roundtrip_save_then_load() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let store = SessionStore::with_redaction(tempdir.path().to_path_buf(), false);
+        let snapshot = make_snapshot("roundtrip-1", 500);
+        store.save(&snapshot).expect("save");
+
+        let loaded = store.load("roundtrip-1").expect("load");
+        assert_eq!(loaded.id.as_str(), "roundtrip-1");
+        assert_eq!(loaded.title, Some("Session roundtrip-1".to_string()));
+        assert_eq!(loaded.updated_at, 500);
+    }
+
+    #[test]
+    fn load_rejects_unsupported_version() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let store = SessionStore::with_redaction(tempdir.path().to_path_buf(), false);
+        let mut snapshot = make_snapshot("future-session", 100);
+        snapshot.version = 999;
+        store.save(&snapshot).expect("save");
+
+        let result = store.load("future-session");
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("version"), "expected version error: {err}");
+    }
+
+    #[test]
+    fn delete_removes_session_file() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let store = SessionStore::with_redaction(tempdir.path().to_path_buf(), false);
+        store.save(&make_snapshot("del-1", 100)).expect("save");
+        assert!(store.root().join("del-1.json").exists());
+
+        let deleted = store.delete("del-1").expect("delete");
+        assert!(deleted);
+        assert!(!store.root().join("del-1.json").exists());
+    }
+
+    #[test]
+    fn delete_returns_false_for_missing() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let store = SessionStore::new(tempdir.path().to_path_buf());
+        let deleted = store.delete("nonexistent").expect("delete");
+        assert!(!deleted);
+    }
+
+    #[test]
+    fn session_snapshot_serialization_roundtrip() {
+        let snapshot = SessionSnapshot {
+            version: SessionSnapshot::CURRENT_VERSION,
+            id: SessionId::new("ser-1".to_string()),
+            title: Some("Test".to_string()),
+            project: PathBuf::from("/tmp/p"),
+            created_at: 1000,
+            updated_at: 2000,
+            events: vec![
+                AgentEvent::UserTaskSubmitted {
+                    text: "hello".to_string(),
+                },
+                AgentEvent::ModelOutput {
+                    text: "response".to_string(),
+                    thinking: Some("reasoning".to_string()),
+                },
+            ],
+            memory: None,
+        };
+        let json = serde_json::to_string(&snapshot).expect("serialize");
+        let loaded: SessionSnapshot = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(loaded.id.as_str(), "ser-1");
+        assert_eq!(loaded.events.len(), 2);
+    }
+
+    #[test]
+    fn session_title_from_events_prefers_model_heading() {
+        let events = vec![
+            AgentEvent::UserTaskSubmitted {
+                text: "do something".to_string(),
+            },
+            AgentEvent::ModelOutput {
+                text: "# My Analysis\n\nSome content here".to_string(),
+                thinking: None,
+            },
+        ];
+        let title = session_title_from_events(&events);
+        assert_eq!(title.as_deref(), Some("My Analysis"));
+    }
+
+    #[test]
+    fn session_title_from_events_falls_back_to_user_text() {
+        let events = vec![AgentEvent::UserTaskSubmitted {
+            text: "Fix the bug".to_string(),
+        }];
+        let title = session_title_from_events(&events);
+        assert_eq!(title.as_deref(), Some("Fix the bug"));
+    }
+
+    #[test]
+    fn clean_session_title_strips_markdown_and_truncates() {
+        assert_eq!(clean_session_title("## Short"), Some("Short".to_string()));
+        assert_eq!(
+            clean_session_title("`code snippet`"),
+            Some("code snippet".to_string())
+        );
+        let long = "a".repeat(200);
+        let result = clean_session_title(&long).unwrap();
+        assert!(result.len() <= 80);
+    }
+
+    #[test]
+    fn clean_session_title_returns_none_for_empty() {
+        assert!(clean_session_title("").is_none());
+        assert!(clean_session_title("###").is_none());
+    }
+
+    #[test]
+    fn save_and_load_preserves_events() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let store = SessionStore::with_redaction(tempdir.path().to_path_buf(), false);
+        let snapshot = SessionSnapshot {
+            version: SessionSnapshot::CURRENT_VERSION,
+            id: SessionId::new("events-session".to_string()),
+            title: None,
+            project: PathBuf::from("/tmp/p"),
+            created_at: 10,
+            updated_at: 20,
+            events: vec![
+                AgentEvent::UserTaskSubmitted {
+                    text: "task".to_string(),
+                },
+                AgentEvent::ToolRequested(ToolInvocation {
+                    id: "c1".to_string(),
+                    tool_name: "read_file".to_string(),
+                    input: serde_json::json!({"path": "x.txt"}),
+                }),
+                AgentEvent::ToolCompleted(ToolResult {
+                    invocation_id: "c1".to_string(),
+                    ok: true,
+                    output: serde_json::json!("file content"),
+                }),
+            ],
+            memory: None,
+        };
+        store.save(&snapshot).expect("save");
+        let loaded = store.load("events-session").expect("load");
+        assert_eq!(loaded.events.len(), 3);
     }
 }

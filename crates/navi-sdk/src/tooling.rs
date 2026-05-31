@@ -1,18 +1,16 @@
 use anyhow::Result;
 use navi_core::{
-    ContextPacket, ContextSource, CredentialStore, LoadedConfig, ModelProvider, SecurityPolicy,
-    SkillManifest, ToolExecutor, active_skills, discover_configured_skills, model_can_run_publicly,
-    resolve_provider_api_key, resolve_provider_config,
+    CredentialStore, LoadedConfig, ModelProvider, SecurityPolicy, ToolExecutor,
+    model_can_run_publicly, resolve_provider_api_key, resolve_provider_config,
 };
-use navi_openai::OpenAiProvider;
 use navi_plugin_host::load_configured_plugins;
-use std::path::Path;
+use navi_providers::OpenAiProvider;
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::types::{NaviMissingCredentialError, NaviRuntimeTooling};
 
-pub fn build_local_tooling(
+pub(crate) fn build_local_tooling(
     loaded_config: &LoadedConfig,
     project_dir: PathBuf,
 ) -> Result<NaviRuntimeTooling> {
@@ -29,14 +27,13 @@ pub fn build_local_tooling(
     );
 
     Ok(NaviRuntimeTooling {
-        security_policy,
         tool_executor: Arc::new(tool_executor),
         warnings: plugin_report.warnings,
         _plugins: plugin_report.loaded_plugins,
     })
 }
 
-pub fn build_model_provider(loaded_config: &LoadedConfig) -> Result<Arc<dyn ModelProvider>> {
+pub(crate) fn build_model_provider(loaded_config: &LoadedConfig) -> Result<Arc<dyn ModelProvider>> {
     let provider_config =
         resolve_provider_config(&loaded_config.config, &loaded_config.config.model.provider)
             .ok_or_else(|| {
@@ -67,7 +64,7 @@ pub fn build_model_provider(loaded_config: &LoadedConfig) -> Result<Arc<dyn Mode
     )?))
 }
 
-pub async fn list_models_for_provider(
+pub(crate) async fn list_models_for_provider(
     provider_config: &navi_core::ProviderConfig,
     api_key: String,
 ) -> Result<Vec<String>> {
@@ -75,7 +72,7 @@ pub async fn list_models_for_provider(
     provider.list_models().await
 }
 
-pub fn model_provider_for_config(
+pub(crate) fn model_provider_for_config(
     provider_config: &navi_core::ProviderConfig,
     api_key: String,
 ) -> Result<Arc<dyn ModelProvider>> {
@@ -85,67 +82,11 @@ pub fn model_provider_for_config(
     )?))
 }
 
-pub fn configured_active_skills(
-    loaded_config: &LoadedConfig,
-    project_dir: &Path,
-    session_active: &[String],
-) -> Vec<SkillManifest> {
-    match discover_configured_skills(
-        &loaded_config.config.skills,
-        project_dir,
-        &loaded_config.data_dir,
-    ) {
-        Ok(skills) => active_skills(&skills, &loaded_config.config.skills.active, session_active),
-        Err(err) => {
-            tracing::warn!(error = %err, "failed to load configured skills");
-            Vec::new()
-        }
-    }
-}
-
-pub fn context_packet_from_text(
-    source: ContextSource,
-    title: &str,
-    content: &str,
-) -> ContextPacket {
-    ContextPacket {
-        id: None,
-        source,
-        title: Some(title.to_string()),
-        content: content.to_string(),
-        priority: 0,
-        metadata: serde_json::json!({}),
-    }
-}
-
-pub fn session_id_string(session_id: &navi_core::SessionId) -> String {
-    session_id.as_str().to_string()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use navi_core::config::ModelConfig;
     use navi_core::{NaviConfig, ProviderConfig, ProviderKind};
-
-    #[test]
-    fn test_context_packet_from_text() {
-        let packet = context_packet_from_text(
-            ContextSource::UserSelection,
-            "test title",
-            "test content",
-        );
-        assert_eq!(packet.source, ContextSource::UserSelection);
-        assert_eq!(packet.title.as_deref(), Some("test title"));
-        assert_eq!(packet.content, "test content");
-        assert_eq!(packet.priority, 0);
-    }
-
-    #[test]
-    fn test_session_id_string() {
-        let id = navi_core::SessionId::new("session-123".to_string());
-        assert_eq!(session_id_string(&id), "session-123");
-    }
 
     #[test]
     fn build_local_tooling_succeeds_with_default_config() {
@@ -251,19 +192,5 @@ mod tests {
             "error should mention unknown provider, got: {}",
             error
         );
-    }
-
-    #[test]
-    fn context_packet_from_text_has_correct_fields() {
-        let packet = context_packet_from_text(
-            ContextSource::UserSelection,
-            "Title",
-            "Body content",
-        );
-        assert_eq!(packet.source, ContextSource::UserSelection);
-        assert_eq!(packet.title.as_deref(), Some("Title"));
-        assert_eq!(packet.content, "Body content");
-        assert_eq!(packet.priority, 0);
-        assert!(packet.id.is_none());
     }
 }

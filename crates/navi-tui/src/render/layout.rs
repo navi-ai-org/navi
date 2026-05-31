@@ -52,7 +52,7 @@ pub(crate) fn model_row_simple(name: &str, configured: bool, width: usize) -> St
     )
 }
 
-pub(crate) fn fit_text(value: &str, width: usize) -> String {
+fn fit_text(value: &str, width: usize) -> String {
     if width == 0 {
         return String::new();
     }

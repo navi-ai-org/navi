@@ -435,4 +435,103 @@ mod tests {
             "OPENAI_API_KEY=<redacted> and bearer <redacted> are present"
         );
     }
+
+    #[test]
+    fn redacts_model_output_thinking_field() {
+        let event = AgentEvent::ModelOutput {
+            text: "output".to_string(),
+            thinking: Some("using OPENAI_API_KEY=sk-proj-1234567890abcdef".to_string()),
+        };
+        let redacted = redact_agent_event(&event);
+        match redacted {
+            AgentEvent::ModelOutput { thinking, .. } => {
+                let thinking = thinking.unwrap();
+                assert!(thinking.contains("OPENAI_API_KEY=<redacted>"));
+                assert!(!thinking.contains("sk-proj-1234567890abcdef"));
+            }
+            _ => panic!("expected ModelOutput"),
+        }
+    }
+
+    #[test]
+    fn redacts_error_event_message() {
+        let event = AgentEvent::Error {
+            message: "failed with token sk-proj-1234567890abcdef".to_string(),
+        };
+        let redacted = redact_agent_event(&event);
+        match redacted {
+            AgentEvent::Error { message } => {
+                assert!(message.contains("<redacted>"));
+                assert!(!message.contains("sk-proj-1234567890abcdef"));
+            }
+            _ => panic!("expected Error"),
+        }
+    }
+
+    #[test]
+    fn redacts_model_delta_text() {
+        let event = AgentEvent::ModelDelta {
+            text: "key is OPENAI_API_KEY=sk-proj-1234567890abcdef".to_string(),
+        };
+        let redacted = redact_agent_event(&event);
+        match redacted {
+            AgentEvent::ModelDelta { text } => {
+                assert!(text.contains("OPENAI_API_KEY=<redacted>"));
+                assert!(!text.contains("sk-proj-1234567890abcdef"));
+            }
+            _ => panic!("expected ModelDelta"),
+        }
+    }
+
+    #[test]
+    fn redacts_model_thinking_delta_text() {
+        let event = AgentEvent::ModelThinkingDelta {
+            text: "secret: anthropic_1234567890abcdef".to_string(),
+        };
+        let redacted = redact_agent_event(&event);
+        match redacted {
+            AgentEvent::ModelThinkingDelta { text } => {
+                assert!(text.contains("<redacted>"));
+                assert!(!text.contains("anthropic_1234567890abcdef"));
+            }
+            _ => panic!("expected ModelThinkingDelta"),
+        }
+    }
+
+    #[test]
+    fn does_not_redact_tool_events() {
+        let event = AgentEvent::ToolRequested(crate::tool::ToolInvocation {
+            id: "c1".to_string(),
+            tool_name: "read_file".to_string(),
+            input: serde_json::json!({"path": "OPENAI_API_KEY=secret123"}),
+        });
+        let redacted = redact_agent_event(&event);
+        match redacted {
+            AgentEvent::ToolRequested(invocation) => {
+                assert!(invocation.input.to_string().contains("secret123"));
+            }
+            _ => panic!("expected ToolRequested"),
+        }
+    }
+
+    #[test]
+    fn redacts_snapshot_events_in_bulk() {
+        let events = vec![
+            AgentEvent::UserTaskSubmitted {
+                text: "OPENAI_API_KEY=sk-proj-1234567890abcdef".to_string(),
+            },
+            AgentEvent::ModelOutput {
+                text: "ok".to_string(),
+                thinking: Some("bearer ghp_1234567890abcdef1234".to_string()),
+            },
+            AgentEvent::Error {
+                message: "error with token github_pat_1234567890abcdef12".to_string(),
+            },
+        ];
+        let redacted = redact_snapshot_events(&events);
+        let json = serde_json::to_string(&redacted).unwrap();
+        assert!(!json.contains("sk-proj-1234567890abcdef"));
+        assert!(!json.contains("ghp_1234567890abcdef1234"));
+        assert!(!json.contains("github_pat_1234567890abcdef12"));
+    }
 }

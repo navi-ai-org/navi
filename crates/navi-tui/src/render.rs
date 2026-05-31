@@ -4,18 +4,11 @@ pub(crate) mod syntax;
 pub(crate) mod text;
 pub(crate) mod tool;
 
-// Re-exported for use by view modules and tests. The compiler warns about
-// unused items because some are only consumed in #[cfg(test)] code.
-#[allow(unused_imports)]
-pub(crate) use layout::*;
-#[allow(unused_imports)]
-pub(crate) use markdown::*;
-#[allow(unused_imports)]
-pub(crate) use syntax::*;
-#[allow(unused_imports)]
-pub(crate) use text::*;
-#[allow(unused_imports)]
-pub(crate) use tool::*;
+pub(crate) use layout::{
+    command_row, command_scroll_offset, modal_block, modal_rect, model_row_simple, truncate_display,
+};
+pub(crate) use markdown::build_chat_lines_for_messages;
+pub(crate) use text::{cursor_span, mask_key_segment, project_label, split_input_spans};
 
 #[cfg(test)]
 mod tests {
@@ -24,6 +17,10 @@ mod tests {
     use navi_sdk::{ToolInvocation, ToolResult};
 
     use super::*;
+    use crate::render::markdown::render_markdown_lines;
+    use crate::render::syntax::highlight_code_line;
+    use crate::render::text::wrap_text;
+    use crate::render::tool::{tool_compact_text, tool_full_content};
     use crate::theme::{CODE_STRING, TEXT};
 
     fn line_text(line: &Line) -> String {

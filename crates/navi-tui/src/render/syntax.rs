@@ -27,11 +27,11 @@ pub(crate) fn highlight_code_line(raw_line: &str, language: &str) -> Vec<Span<'s
     }
 }
 
-pub(crate) fn syntect_style(style: SyntectStyle) -> Style {
+fn syntect_style(style: SyntectStyle) -> Style {
     Style::default().fg(lain_code_color(style))
 }
 
-pub(crate) fn lain_code_color(style: SyntectStyle) -> Color {
+fn lain_code_color(style: SyntectStyle) -> Color {
     let color = style.foreground;
     if style
         .font_style
@@ -69,16 +69,16 @@ pub(crate) fn lain_code_color(style: SyntectStyle) -> Color {
     }
 }
 
-pub(crate) fn boost_code_channel(value: u8) -> u8 {
+fn boost_code_channel(value: u8) -> u8 {
     value.max(96).saturating_add(22)
 }
 
-pub(crate) fn syntax_set() -> &'static SyntaxSet {
+fn syntax_set() -> &'static SyntaxSet {
     static SYNTAX_SET: OnceLock<SyntaxSet> = OnceLock::new();
     SYNTAX_SET.get_or_init(SyntaxSet::load_defaults_newlines)
 }
 
-pub(crate) fn syntax_theme() -> &'static Theme {
+fn syntax_theme() -> &'static Theme {
     static THEME: OnceLock<Theme> = OnceLock::new();
     THEME.get_or_init(|| {
         let themes = ThemeSet::load_defaults();

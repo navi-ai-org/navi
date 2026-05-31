@@ -1,10 +1,10 @@
-use anyhow::Context;
 use crate::types::NaviError;
+use anyhow::Context;
 type Result<T> = std::result::Result<T, NaviError>;
 use navi_core::{
-    AgentMode, AgentRuntime, AgentRuntimeOptions, ApprovalDecision,
-    CredentialStore, LoadedConfig, ModelOption, ProviderConfig, RuntimeEvent, SessionId,
-    SessionSnapshot, SessionStore, SkillManifest, available_model_options, canonical_provider_id,
+    AgentMode, AgentRuntime, AgentRuntimeOptions, ApprovalDecision, CredentialStore, LoadedConfig,
+    ModelOption, ProviderConfig, RuntimeEvent, SessionId, SessionSnapshot, SessionStore,
+    SkillManifest, available_model_options, canonical_provider_id,
     config::effective_context_window, discover_configured_skills, model_can_run_publicly,
     provider_catalog, resolve_provider_api_key, resolve_provider_config,
     resolve_provider_credential_status, save_global_config, save_project_config,
@@ -173,17 +173,21 @@ impl NaviEngine {
             model: loaded_config.config.model.name.clone(),
             provider: loaded_config.config.model.provider.clone(),
         };
-        self.inner.sessions.write().unwrap_or_else(|e| e.into_inner()).insert(
-            session_id.into_inner(),
-            Arc::new(NaviSession {
-                runtime: AsyncMutex::new(runtime),
-                events,
-                approval_resolver,
-                turn_canceller,
-                mcp,
-                _plugins: tool_executor._plugins,
-            }),
-        );
+        self.inner
+            .sessions
+            .write()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(
+                session_id.into_inner(),
+                Arc::new(NaviSession {
+                    runtime: AsyncMutex::new(runtime),
+                    events,
+                    approval_resolver,
+                    turn_canceller,
+                    mcp,
+                    _plugins: tool_executor._plugins,
+                }),
+            );
         Ok(info)
     }
 
@@ -462,11 +466,19 @@ impl NaviEngine {
 
     /// Returns a snapshot of the current loaded configuration.
     pub fn loaded_config(&self) -> LoadedConfig {
-        self.inner.loaded_config.read().unwrap_or_else(|e| e.into_inner()).clone()
+        self.inner
+            .loaded_config
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
     }
 
     fn replace_loaded_config(&self, loaded_config: LoadedConfig) {
-        *self.inner.loaded_config.write().unwrap_or_else(|e| e.into_inner()) = loaded_config;
+        *self
+            .inner
+            .loaded_config
+            .write()
+            .unwrap_or_else(|e| e.into_inner()) = loaded_config;
     }
 
     async fn sync_models_inner(

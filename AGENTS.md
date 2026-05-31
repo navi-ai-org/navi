@@ -112,9 +112,10 @@ Rust workspace, edition 2024, resolver 3. All implementation lives under `crates
 | `navi-cli` | Entry binary. Parses CLI, loads config, starts TUI or headless runtime. |
 | `navi-core` | Harness policy, config, provider catalog, model/tool/session abstractions, security policy, runtime. |
 | `navi-mcp` | MCP stdio client integration that registers remote MCP tools with the engine. |
-| `navi-openai` | `ModelProvider` implementation for OpenAI-compatible APIs and provider adapters. |
+| `navi-openai` | `ModelProvider` implementation for OpenAI-compatible APIs and provider adapters. Implementation crate behind `navi-providers` facade. |
 | `navi-plugin-api` | Plugin trait and `NAVI_PLUGIN_API_VERSION = 1`. |
 | `navi-plugin-host` | Dynamic `.so`/`.dylib` loading via `libloading`. |
+| `navi-providers` | Provider facade. Re-exports `navi-openai` public API. Downstream crates should depend on this, not `navi-openai` directly. |
 | `navi-sdk` | Public embedding facade for local clients (Tutor, TUI, ACP). Wraps core runtime, provider setup, plugin loading, host tools, MCP, sessions and events. |
 | `navi-tui` | Terminal UI with chat, model picker, thinking/settings/session modals, markdown/code rendering. Drives turns through `navi-sdk::NaviEngine`. |
 

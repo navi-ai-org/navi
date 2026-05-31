@@ -17,7 +17,7 @@ pub fn provider_request_model_name(provider_id: &str, model: &str) -> String {
 
 /// Normalizes a free model name to its canonical opencode-zen model id.
 /// Returns `None` if the model is not a recognized free model.
-pub fn opencode_zen_model_id(model: &str) -> Option<String> {
+pub(super) fn opencode_zen_model_id(model: &str) -> Option<String> {
     let normalized = model
         .trim()
         .trim_start_matches("opencode/")

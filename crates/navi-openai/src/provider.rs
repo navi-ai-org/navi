@@ -5,11 +5,11 @@ use crate::transport::{
     ensure_success, get_backoff_delay, retry_delay_for_error, should_retry_error,
 };
 use crate::types::{OpenAiApiKind, StreamRoute};
-use navi_core::ProviderId;
 use anyhow::{Context, Result};
 use async_stream::try_stream;
 use async_trait::async_trait;
 use futures_util::StreamExt;
+use navi_core::ProviderId;
 use navi_core::{
     ModelProvider, ModelRequest, ModelStream, ModelStreamEvent, ProviderConfig, ProviderKind,
 };
@@ -61,7 +61,9 @@ impl OpenAiProvider {
             Some(url) => url.clone(),
             None => behavior
                 .default_base_url()
-                .ok_or_else(|| anyhow::anyhow!("provider {} requires base_url in config", provider.id))?
+                .ok_or_else(|| {
+                    anyhow::anyhow!("provider {} requires base_url in config", provider.id)
+                })?
                 .to_string(),
         };
         let api_kind = match provider.kind {
@@ -255,7 +257,9 @@ impl ModelProvider for OpenAiProvider {
         let url = format!("{}/models", base_url);
         tracing::info!(provider = %self.provider_id, "provider model list request started");
 
-        let headers = self.behavior.build_headers(&self.api_key, Endpoint::Models)?;
+        let headers = self
+            .behavior
+            .build_headers(&self.api_key, Endpoint::Models)?;
         let req = self.client.get(&url).headers(headers);
 
         let res = self.send_with_retry(req).await?;

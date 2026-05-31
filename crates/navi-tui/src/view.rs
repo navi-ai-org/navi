@@ -1,7 +1,12 @@
 mod chat;
+mod command_palette;
+mod debug;
 mod input;
 mod modals;
+mod model_picker;
 mod notification;
+mod provider_settings;
+mod sessions;
 mod welcome;
 
 use ratatui::layout::{Constraint, Direction, Layout};
@@ -14,7 +19,6 @@ use crate::render::modal_rect;
 use crate::state::Mode;
 use crate::theme::BG;
 
-// ─── rendering ─────────────────────────────────────────────────────────────────
 pub(crate) fn render(frame: &mut Frame<'_>, app: &TuiApp) {
     let area = frame.area();
     frame.render_widget(Block::new().style(Style::default().bg(BG)), area);
@@ -32,14 +36,14 @@ pub(crate) fn render(frame: &mut Frame<'_>, app: &TuiApp) {
     input::render_input(frame, app, vertical[2]);
 
     match app.mode {
-        Mode::Commands => modals::render_command_palette(frame, app, modal_rect(area, 68, 15)),
-        Mode::Models => modals::render_model_picker(frame, app, modal_rect(area, 72, 22)),
+        Mode::Commands => command_palette::render(frame, app, modal_rect(area, 68, 15)),
+        Mode::Models => model_picker::render(frame, app, modal_rect(area, 72, 22)),
         Mode::ApiKeyEntry => modals::render_api_key_entry(frame, app, modal_rect(area, 72, 11)),
         Mode::Thinking => modals::render_thinking_picker(frame, app, modal_rect(area, 40, 10)),
-        Mode::Sessions => modals::render_sessions_picker(frame, app, modal_rect(area, 72, 16)),
+        Mode::Sessions => sessions::render(frame, app, modal_rect(area, 72, 16)),
         Mode::Settings => modals::render_settings(frame, app, modal_rect(area, 50, 10)),
-        Mode::Providers => modals::render_provider_settings(frame, app, modal_rect(area, 76, 20)),
-        Mode::Debug => modals::render_debug_modal(frame, app, modal_rect(area, 76, 18)),
+        Mode::Providers => provider_settings::render(frame, app, modal_rect(area, 76, 20)),
+        Mode::Debug => debug::render(frame, app, modal_rect(area, 76, 18)),
         Mode::Help => modals::render_help_modal(frame, modal_rect(area, 62, 16)),
         Mode::Normal => {}
     }
