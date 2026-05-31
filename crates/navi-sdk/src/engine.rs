@@ -1163,4 +1163,157 @@ mod tests {
         let err: &dyn std::error::Error = &error;
         assert!(err.to_string().contains("test-provider"));
     }
+
+    // ── Group 9: Session lifecycle tests ─────────────────────────────────
+
+    fn test_engine_with_key() -> (NaviEngine, tempfile::TempDir) {
+        let (engine, tempdir) = test_engine();
+        engine
+            .set_provider_api_key("test-provider", "sk-test-key")
+            .expect("set key");
+        (engine, tempdir)
+    }
+
+    #[tokio::test]
+    async fn start_session_returns_session_info() {
+        let (engine, _tempdir) = test_engine_with_key();
+        let session = engine
+            .start_session(NaviSessionRequest::default())
+            .await
+            .expect("start session");
+        assert!(!session.id.is_empty());
+    }
+
+    #[tokio::test]
+    async fn start_session_with_agent_mode() {
+        let (engine, _tempdir) = test_engine_with_key();
+        let session = engine
+            .start_session(NaviSessionRequest {
+                agent_mode: Some(navi_core::AgentMode::Plan),
+                ..Default::default()
+            })
+            .await
+            .expect("start session");
+        assert!(!session.id.is_empty());
+    }
+
+    #[tokio::test]
+    async fn subscribe_events_returns_receiver() {
+        let (engine, _tempdir) = test_engine_with_key();
+        let session = engine
+            .start_session(NaviSessionRequest::default())
+            .await
+            .expect("start session");
+        let _receiver = engine.subscribe_events(&session.id);
+        // Should not panic; receiver is valid
+    }
+
+    #[tokio::test]
+    async fn snapshot_session_returns_snapshot() {
+        let (engine, _tempdir) = test_engine_with_key();
+        let session = engine
+            .start_session(NaviSessionRequest::default())
+            .await
+            .expect("start session");
+        let snapshot = engine
+            .snapshot_session(&session.id)
+            .await
+            .expect("snapshot");
+        assert!(!snapshot.id.as_str().is_empty());
+    }
+
+    #[tokio::test]
+    async fn snapshot_nonexistent_session_errors() {
+        let (engine, _tempdir) = test_engine_with_key();
+        let result = engine.snapshot_session("nonexistent-session-id").await;
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn list_models_returns_current_provider_models() {
+        let (engine, _tempdir) = test_engine();
+        let models = engine.list_models();
+        // test_engine sets provider to "test-provider" with "test-model"
+        assert!(
+            models
+                .iter()
+                .any(|m| m.provider_id == "test-provider" && m.name == "test-model")
+        );
+    }
+
+    #[test]
+    fn set_model_changes_active_model() {
+        let (engine, _tempdir) = test_engine();
+        let result = engine
+            .select_model(NaviModelSelectionRequest {
+                provider_id: "openai".to_string(),
+                model: "gpt-4.1-nano".to_string(),
+                save_target: NaviConfigSaveTarget::None,
+            })
+            .expect("select model");
+        assert_eq!(result.provider_id, "openai");
+        assert_eq!(result.model, "gpt-4.1-nano");
+    }
+
+    #[test]
+    fn list_provider_accounts_includes_test_provider() {
+        let (engine, _tempdir) = test_engine();
+        let accounts = engine.list_provider_accounts().expect("accounts");
+        assert!(accounts.iter().any(|a| a.provider_id == "test-provider"));
+    }
+
+    #[tokio::test]
+    async fn set_session_skills_succeeds() {
+        let (engine, _tempdir) = test_engine_with_key();
+        let session = engine
+            .start_session(NaviSessionRequest::default())
+            .await
+            .expect("start session");
+        let result = engine.set_session_skills(&session.id, vec![]).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn add_context_packet_succeeds() {
+        let (engine, _tempdir) = test_engine_with_key();
+        let session = engine
+            .start_session(NaviSessionRequest::default())
+            .await
+            .expect("start session");
+        let packet = navi_core::ContextPacket {
+            id: Some("test".to_string()),
+            source: navi_core::ContextSource::UserSelection,
+            title: Some("test context".to_string()),
+            content: "some context data".to_string(),
+            priority: 0,
+            metadata: serde_json::json!({}),
+        };
+        let result = engine.add_context_packet(&session.id, packet).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn cancel_turn_succeeds_when_no_active_turn() {
+        let (engine, _tempdir) = test_engine_with_key();
+        let session = engine
+            .start_session(NaviSessionRequest::default())
+            .await
+            .expect("start session");
+        let result = engine.cancel_turn(&session.id).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn start_multiple_sessions_independent() {
+        let (engine, _tempdir) = test_engine_with_key();
+        let s1 = engine
+            .start_session(NaviSessionRequest::default())
+            .await
+            .expect("start session 1");
+        let s2 = engine
+            .start_session(NaviSessionRequest::default())
+            .await
+            .expect("start session 2");
+        assert_ne!(s1.id, s2.id);
+    }
 }

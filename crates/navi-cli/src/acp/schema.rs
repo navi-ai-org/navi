@@ -32,10 +32,11 @@ pub(crate) fn tool_output_text(output: &serde_json::Value) -> String {
 
 pub(crate) fn acp_tool_kind(tool_name: &str) -> ToolKind {
     match tool_name {
-        "read_file" | "list_files" => ToolKind::Read,
+        "read_file" | "fs_browser" => ToolKind::Read,
         "write_file" | "apply_patch" => ToolKind::Edit,
         "grep" => ToolKind::Search,
-        "bash" => ToolKind::Execute,
+        "bash" | "test_runner" | "build_runner" | "git_ops" => ToolKind::Execute,
+        "package_manager" => ToolKind::Edit,
         _ => ToolKind::Other,
     }
 }

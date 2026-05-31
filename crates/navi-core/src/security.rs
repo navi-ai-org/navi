@@ -157,15 +157,23 @@ impl SecurityPolicy {
                 .and_then(Value::as_str)
                 .map(|program| self.validate_command(program))
                 .unwrap_or_else(|| {
+                    // bash poll/list operations are safe
                     if definition.name == "bash"
                         && (invocation.input.get("task_id").is_some()
                             || invocation.input.get("action").and_then(Value::as_str)
                                 == Some("list"))
                     {
-                        SecurityDecision::Allow
-                    } else {
-                        SecurityDecision::NeedsApproval(SecurityRisk::Command)
+                        return SecurityDecision::Allow;
                     }
+                    // git_ops read-only commands are safe
+                    if definition.name == "git_ops" {
+                        if let Some(cmd) = invocation.input.get("command").and_then(Value::as_str) {
+                            if matches!(cmd, "status" | "diff" | "log" | "branch") {
+                                return SecurityDecision::Allow;
+                            }
+                        }
+                    }
+                    SecurityDecision::NeedsApproval(SecurityRisk::Command)
                 }),
             ToolKind::Custom => SecurityDecision::NeedsApproval(SecurityRisk::ExternalPlugin),
         }

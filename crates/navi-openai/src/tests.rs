@@ -111,8 +111,8 @@ fn chat_messages_serialize_multiple_tool_calls_in_one_assistant_message() {
         vec![
             ToolInvocation {
                 id: "call-1".to_string(),
-                tool_name: "list_files".to_string(),
-                input: json!({}),
+                tool_name: "fs_browser".to_string(),
+                input: json!({"action": "list"}),
             },
             ToolInvocation {
                 id: "call-2".to_string(),
@@ -863,4 +863,312 @@ async fn test_rate_limit_retry() {
         }
     }
     assert_eq!(text, "hello");
+}
+
+// ── SSE decoder golden tests ────────────────────────────────────────────────
+
+#[test]
+fn sse_decoder_parses_single_event() {
+    let mut decoder = SseDecoder::default();
+    let events = decoder.push_bytes(b"data: hello\n\n");
+    assert_eq!(events, vec!["hello".to_string()]);
+}
+
+#[test]
+fn sse_decoder_parses_multiple_events() {
+    let mut decoder = SseDecoder::default();
+    let events = decoder.push_bytes(b"data: first\n\ndata: second\n\n");
+    assert_eq!(events, vec!["first".to_string(), "second".to_string()]);
+}
+
+#[test]
+fn sse_decoder_handles_chunked_input() {
+    let mut decoder = SseDecoder::default();
+    let e1 = decoder.push_bytes(b"data: hel");
+    assert!(e1.is_empty());
+    let e2 = decoder.push_bytes(b"lo\n\n");
+    assert_eq!(e2, vec!["hello".to_string()]);
+}
+
+#[test]
+fn sse_decoder_ignores_empty_data() {
+    let mut decoder = SseDecoder::default();
+    let events = decoder.push_bytes(b": comment\n\ndata: real\n\n");
+    assert_eq!(events, vec!["real".to_string()]);
+}
+
+#[test]
+fn sse_decoder_handles_multiline_data() {
+    let mut decoder = SseDecoder::default();
+    let events = decoder.push_bytes(b"data: line1\ndata: line2\n\n");
+    assert_eq!(events, vec!["line1\nline2".to_string()]);
+}
+
+#[test]
+fn sse_decoder_ignores_non_data_lines() {
+    let mut decoder = SseDecoder::default();
+    let events = decoder.push_bytes(b"event: message\nid: 1\ndata: payload\n\n");
+    assert_eq!(events, vec!["payload".to_string()]);
+}
+
+#[test]
+fn sse_decoder_skips_events_without_data() {
+    let mut decoder = SseDecoder::default();
+    let events = decoder.push_bytes(b"event: ping\n\n");
+    assert!(events.is_empty());
+}
+
+// ── Anthropic SSE golden tests ──────────────────────────────────────────────
+
+#[test]
+fn anthropic_sse_text_delta() {
+    let data =
+        r#"{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hello"}}"#;
+    let events = parse_anthropic_sse(data);
+    assert_eq!(events.len(), 1);
+    match events[0].as_ref().unwrap() {
+        ModelStreamEvent::TextDelta { text } => assert_eq!(text, "Hello"),
+        other => panic!("expected TextDelta, got {other:?}"),
+    }
+}
+
+#[test]
+fn anthropic_sse_thinking_delta() {
+    let data = r#"{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"Let me think..."}}"#;
+    let events = parse_anthropic_sse(data);
+    assert_eq!(events.len(), 1);
+    match events[0].as_ref().unwrap() {
+        ModelStreamEvent::ThinkingDelta { text } => assert_eq!(text, "Let me think..."),
+        other => panic!("expected ThinkingDelta, got {other:?}"),
+    }
+}
+
+#[test]
+fn anthropic_sse_signature_delta() {
+    let data = r#"{"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"sig"}}"#;
+    let events = parse_anthropic_sse(data);
+    assert_eq!(events.len(), 1);
+    match events[0].as_ref().unwrap() {
+        ModelStreamEvent::Status { label } => assert_eq!(label, "thinking"),
+        other => panic!("expected Status, got {other:?}"),
+    }
+}
+
+#[test]
+fn anthropic_sse_message_delta_with_usage() {
+    let data = r#"{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"input_tokens":100,"output_tokens":50}}"#;
+    let events = parse_anthropic_sse(data);
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e.as_ref().unwrap(), ModelStreamEvent::Usage { .. }))
+    );
+}
+
+#[test]
+fn anthropic_sse_message_stop() {
+    let data = r#"{"type":"message_stop"}"#;
+    let events = parse_anthropic_sse(data);
+    assert_eq!(events.len(), 1);
+    assert!(matches!(
+        events[0].as_ref().unwrap(),
+        ModelStreamEvent::Done
+    ));
+}
+
+#[test]
+fn anthropic_sse_error() {
+    let data = r#"{"type":"error","error":{"type":"overloaded","message":"Too many requests"}}"#;
+    let events = parse_anthropic_sse(data);
+    assert_eq!(events.len(), 1);
+    assert!(events[0].is_err());
+}
+
+#[test]
+fn anthropic_sse_ignores_unknown_types() {
+    let data =
+        r#"{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}"#;
+    let events = parse_anthropic_sse(data);
+    assert!(events.is_empty());
+}
+
+#[test]
+fn anthropic_sse_multi_turn_conversation() {
+    let payloads = vec![
+        r#"{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"I "}}"#,
+        r#"{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"can "}}"#,
+        r#"{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"help."}}"#,
+        r#"{"type":"message_stop"}"#,
+    ];
+    let mut text = String::new();
+    for payload in payloads {
+        for event in parse_anthropic_sse(payload) {
+            match event.unwrap() {
+                ModelStreamEvent::TextDelta { text: t } => text.push_str(&t),
+                ModelStreamEvent::Done => {}
+                _ => {}
+            }
+        }
+    }
+    assert_eq!(text, "I can help.");
+}
+
+// ── Gemini SSE golden tests ─────────────────────────────────────────────────
+
+#[test]
+fn gemini_sse_text_delta() {
+    let data =
+        r#"{"candidates":[{"content":{"parts":[{"text":"Hello world"}]},"finishReason":null}]}"#;
+    let events = parse_gemini_sse(data);
+    assert!(events.iter().any(|e| matches!(
+        e.as_ref().unwrap(),
+        ModelStreamEvent::TextDelta { text } if text == "Hello world"
+    )));
+}
+
+#[test]
+fn gemini_sse_thinking_delta() {
+    let data =
+        r#"{"candidates":[{"content":{"parts":[{"text":"Let me reason...","thought":true}]}}]}"#;
+    let events = parse_gemini_sse(data);
+    assert!(events.iter().any(|e| matches!(
+        e.as_ref().unwrap(),
+        ModelStreamEvent::ThinkingDelta { text } if text == "Let me reason..."
+    )));
+}
+
+#[test]
+fn gemini_sse_thought_status_without_text() {
+    let data = r#"{"candidates":[{"content":{"parts":[{"thought":true}]}}]}"#;
+    let events = parse_gemini_sse(data);
+    assert!(events.iter().any(|e| matches!(
+        e.as_ref().unwrap(),
+        ModelStreamEvent::Status { label } if label == "thinking"
+    )));
+}
+
+#[test]
+fn gemini_sse_with_usage_metadata() {
+    let data = r#"{"candidates":[],"usageMetadata":{"promptTokenCount":100,"candidatesTokenCount":50,"totalTokenCount":150}}"#;
+    let events = parse_gemini_sse(data);
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e.as_ref().unwrap(), ModelStreamEvent::Usage { .. }))
+    );
+}
+
+#[test]
+fn gemini_sse_finish_reason_triggers_done() {
+    let data = r#"{"candidates":[{"content":{"parts":[{"text":"done"}]},"finishReason":"STOP"}]}"#;
+    let events = parse_gemini_sse(data);
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e.as_ref().unwrap(), ModelStreamEvent::Done))
+    );
+}
+
+#[test]
+fn gemini_sse_mixed_text_and_thinking() {
+    let payloads = vec![
+        r#"{"candidates":[{"content":{"parts":[{"text":"Thinking...","thought":true}]}}]}"#,
+        r#"{"candidates":[{"content":{"parts":[{"text":"The answer is 42."}]},"finishReason":"STOP"}]}"#,
+    ];
+    let mut thinking = String::new();
+    let mut text = String::new();
+    for payload in payloads {
+        for event in parse_gemini_sse(payload) {
+            match event.unwrap() {
+                ModelStreamEvent::ThinkingDelta { text: t } => thinking.push_str(&t),
+                ModelStreamEvent::TextDelta { text: t } => text.push_str(&t),
+                _ => {}
+            }
+        }
+    }
+    assert_eq!(thinking, "Thinking...");
+    assert_eq!(text, "The answer is 42.");
+}
+
+#[test]
+fn gemini_sse_multi_part_response() {
+    let data = r#"{"candidates":[{"content":{"parts":[{"text":"First "},{"text":"second."}]},"finishReason":"STOP"}]}"#;
+    let events = parse_gemini_sse(data);
+    let text_deltas: Vec<String> = events
+        .iter()
+        .filter_map(|e| match e.as_ref().unwrap() {
+            ModelStreamEvent::TextDelta { text } => Some(text.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(text_deltas, vec!["First ", "second."]);
+}
+
+#[test]
+fn gemini_sse_empty_candidates() {
+    let data = r#"{"candidates":[]}"#;
+    let events = parse_gemini_sse(data);
+    // Should only have usage (if any) or nothing
+    assert!(
+        events
+            .iter()
+            .all(|e| !matches!(e.as_ref().unwrap(), ModelStreamEvent::TextDelta { .. }))
+    );
+}
+
+// ── Anthropic message conversion ────────────────────────────────────────────
+
+#[test]
+fn anthropic_messages_separates_system() {
+    let messages = vec![
+        ModelMessage::system("You are helpful."),
+        ModelMessage::user("Hello"),
+        ModelMessage::assistant("Hi there!"),
+    ];
+    let (system, converted) = crate::providers::anthropic::anthropic_messages(&messages);
+    assert_eq!(system, "You are helpful.");
+    assert_eq!(converted.len(), 2);
+    assert_eq!(converted[0]["role"], "user");
+    assert_eq!(converted[0]["content"], "Hello");
+    assert_eq!(converted[1]["role"], "assistant");
+    assert_eq!(converted[1]["content"], "Hi there!");
+}
+
+#[test]
+fn anthropic_messages_merges_multiple_system() {
+    let messages = vec![
+        ModelMessage::system("Rule 1."),
+        ModelMessage::system("Rule 2."),
+        ModelMessage::user("Hi"),
+    ];
+    let (system, _) = crate::providers::anthropic::anthropic_messages(&messages);
+    assert_eq!(system, "Rule 1.\n\nRule 2.");
+}
+
+// ── Gemini content conversion ───────────────────────────────────────────────
+
+#[test]
+fn gemini_contents_converts_roles() {
+    let messages = vec![
+        ModelMessage::system("Be concise."),
+        ModelMessage::user("What is 2+2?"),
+        ModelMessage::assistant("4"),
+    ];
+    let (system, contents) = crate::providers::gemini::gemini_contents(&messages);
+    assert_eq!(system, "Be concise.");
+    assert_eq!(contents.len(), 2);
+    assert_eq!(contents[0]["role"], "user");
+    assert_eq!(contents[1]["role"], "model");
+}
+
+#[test]
+fn gemini_encode_model_for_url() {
+    assert_eq!(
+        crate::providers::gemini::encode_model_for_url("gemini-2.0-flash"),
+        "gemini-2.0-flash"
+    );
+    assert_eq!(
+        crate::providers::gemini::encode_model_for_url("models/gemini-2.0-flash"),
+        "models%2Fgemini-2.0-flash"
+    );
 }

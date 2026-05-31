@@ -12,7 +12,7 @@ use std::sync::Arc;
 /// Provide `project_dir` to override the default working directory, `agent_mode`
 /// to start in a specific mode (e.g. Plan, Edit, Tutor), and `context_packets`
 /// to seed the session with external context.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NaviSessionRequest {
     #[serde(default)]

@@ -147,14 +147,17 @@ fn formatted_tool_output(invocation: &ToolInvocation, result: &ToolResult) -> Op
                 }
             }
         }
-    } else if invocation.tool_name == "list_files" {
-        content.push_str("List files\n\n");
+    } else if invocation.tool_name == "fs_browser" {
+        content.push_str("Browse filesystem\n\n");
         if let Some(files) = obj.get("files").and_then(|v| v.as_array()) {
             for (i, file) in files.iter().enumerate() {
                 if let Some(file) = file.as_str() {
                     content.push_str(&format!("{:>4}  {}\n", i + 1, file));
                 }
             }
+        }
+        if let Some(entries) = obj.get("entries").and_then(|v| v.as_array()) {
+            render_tree_entries(entries, &mut content, 0);
         }
     } else {
         return None;
@@ -260,5 +263,22 @@ fn language_for_path(path: &str) -> &'static str {
         "xml" => "xml",
         "sql" => "sql",
         _ => "",
+    }
+}
+
+fn render_tree_entries(entries: &[serde_json::Value], content: &mut String, indent: usize) {
+    let prefix = "  ".repeat(indent);
+    for entry in entries {
+        let name = entry.get("name").and_then(|v| v.as_str()).unwrap_or("?");
+        let entry_type = entry.get("type").and_then(|v| v.as_str()).unwrap_or("file");
+        if entry_type == "dir" {
+            content.push_str(&format!("{prefix}{name}/\n"));
+            if let Some(children) = entry.get("entries").and_then(|v| v.as_array()) {
+                render_tree_entries(children, content, indent + 1);
+            }
+        } else {
+            let size = entry.get("size").and_then(|v| v.as_u64()).unwrap_or(0);
+            content.push_str(&format!("{prefix}{name} ({size} bytes)\n"));
+        }
     }
 }

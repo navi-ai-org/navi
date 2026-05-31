@@ -1,15 +1,23 @@
 mod bash;
+mod build_runner;
+mod fs_browser;
+mod git_ops;
 mod grep;
 mod helpers;
-mod list;
+mod package_manager;
 mod patch;
 mod read;
+mod test_runner;
 mod write;
 
 pub(super) use bash::BashTool;
+pub(super) use build_runner::BuildRunnerTool;
+pub(super) use fs_browser::FsBrowserTool;
+pub(super) use git_ops::GitOpsTool;
 pub(super) use grep::GrepTool;
 pub(super) use helpers::truncate_tool_result;
-pub(super) use list::ListFilesTool;
+pub(super) use package_manager::PackageManagerTool;
 pub(super) use patch::ApplyPatchTool;
 pub(super) use read::ReadFileTool;
+pub(super) use test_runner::TestRunnerTool;
 pub(super) use write::WriteFileTool;
