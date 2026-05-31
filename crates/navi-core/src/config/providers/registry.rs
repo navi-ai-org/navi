@@ -578,6 +578,20 @@ pub(super) fn built_in_providers() -> Vec<ProviderConfig> {
             ..Default::default()
         },
         ProviderConfig {
+            id: "gitlawb".to_string(),
+            label: "Gitlawb".to_string(),
+            description: "Free Opengateway (MiMo, Gemini)".to_string(),
+            kind: ProviderKind::OpenAiChatCompletions,
+            api_key_env: "GITLAWB_API_KEY".to_string(),
+            base_url: Some("https://opengateway.gitlawb.com/v1".to_string()),
+            models: vec![
+                model("mimo-v2.5-pro", ModelTaskSize::Large),
+                model("mimo-v2.5", ModelTaskSize::Large),
+                model("google/gemini-3.1-flash-lite-preview", ModelTaskSize::Small),
+            ],
+            ..Default::default()
+        },
+        ProviderConfig {
             id: "custom".to_string(),
             label: "Custom".to_string(),
             description: "User-configured endpoint".to_string(),

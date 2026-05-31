@@ -85,9 +85,7 @@ async fn handle_cancel(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agent_client_protocol::schema::{
-        ContentBlock, TextContent, ToolCallStatus, ToolKind,
-    };
+    use agent_client_protocol::schema::{ContentBlock, TextContent, ToolCallStatus, ToolKind};
     use navi_sdk::ToolResult;
 
     #[test]
