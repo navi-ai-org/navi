@@ -7,6 +7,7 @@ mod model_picker;
 mod notification;
 mod provider_settings;
 mod sessions;
+mod skills;
 mod welcome;
 
 use ratatui::layout::{Constraint, Direction, Layout};
@@ -45,6 +46,7 @@ pub(crate) fn render(frame: &mut Frame<'_>, app: &TuiApp) {
         Mode::Providers => provider_settings::render(frame, app, modal_rect(area, 76, 20)),
         Mode::Debug => debug::render(frame, app, modal_rect(area, 76, 18)),
         Mode::Help => modals::render_help_modal(frame, modal_rect(area, 62, 16)),
+        Mode::Skills => skills::render(frame, app, modal_rect(area, 72, 20)),
         Mode::Normal => {}
     }
 

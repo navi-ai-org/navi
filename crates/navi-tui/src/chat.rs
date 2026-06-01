@@ -90,9 +90,20 @@ pub(crate) fn ensure_tail_model_response(app: &mut TuiApp) -> &mut ChatMessage {
         let message = model_response_placeholder(app);
         app.messages.push(message);
     }
+    // If another concurrent path cleared `messages` between the push and this
+    // access, fall back to a transient in-memory placeholder so the caller can
+    // still write to it without panicking the TUI.
+    if app.messages.is_empty() {
+        tracing::error!(
+            "messages became empty immediately after pushing a model response placeholder"
+        );
+        let mut message = model_response_placeholder(app);
+        message.thinking_content.clear();
+        app.messages.push(message);
+    }
     app.messages
         .last_mut()
-        .expect("model response was inserted")
+        .expect("placeholder was just pushed")
 }
 
 pub(crate) fn update_active_assistant_status(app: &mut TuiApp) {

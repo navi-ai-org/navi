@@ -93,9 +93,10 @@ async fn test_turn_loop_with_parallel_tools() {
         harness_config: crate::config::HarnessConfig::default(),
         include_tool_prompt_manifest: false,
         agent_mode: None,
-        context_packets: Vec::new(),
-        active_skills: Vec::new(),
+        context_packets: Arc::new(std::sync::Mutex::new(Vec::new())),
+        active_skills: Arc::new(std::sync::Mutex::new(Vec::new())),
         cancel_token: CancelToken::new(),
+        config: Arc::new(crate::config::NaviConfig::default()),
     };
 
     let mut messages = vec![];
@@ -138,9 +139,10 @@ fn build_test_ctx(project_dir: PathBuf) -> TurnContext {
         harness_config: crate::config::HarnessConfig::default(),
         include_tool_prompt_manifest: false,
         agent_mode: None,
-        context_packets: Vec::new(),
-        active_skills: Vec::new(),
+        context_packets: Arc::new(std::sync::Mutex::new(Vec::new())),
+        active_skills: Arc::new(std::sync::Mutex::new(Vec::new())),
         cancel_token: CancelToken::new(),
+        config: Arc::new(crate::config::NaviConfig::default()),
     }
 }
 
@@ -240,6 +242,24 @@ async fn test_ensure_system_prompt_includes_agent_mode() {
     assert!(
         messages[0].content.contains("Plan"),
         "system prompt should include the active agent mode instructions"
+    );
+}
+
+#[tokio::test]
+async fn test_ensure_system_prompt_uses_loaded_config_profile() {
+    let tempdir = tempfile::tempdir().unwrap();
+    let mut ctx = build_test_ctx(tempdir.path().to_path_buf());
+    let mut config = crate::config::NaviConfig::default();
+    config.harness.profile = crate::config::HarnessProfile::Small;
+    ctx.config = Arc::new(config);
+
+    let mut messages = vec![];
+    ensure_system_prompt(&ctx, &mut messages).await;
+
+    assert!(
+        messages[0].content.contains("Harness profile: small"),
+        "system prompt should reflect the loaded_config harness profile, got: {}",
+        messages[0].content
     );
 }
 

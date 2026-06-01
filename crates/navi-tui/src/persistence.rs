@@ -23,16 +23,18 @@ pub(crate) fn save_current_session(app: &mut TuiApp) {
         events: app.events.clone(),
         memory: None,
     };
-    if let Err(err) = app.session_store.save(&snapshot) {
-        eprintln!("failed to save session: {err:#}");
+    if let Err(err) = tokio::task::block_in_place(|| app.session_store.save(&snapshot)) {
+        tracing::warn!(error = %err, "failed to save session");
     }
     if app.loaded_config.config.memory.session_memory_enabled {
         if let Some(summary) = &app.compact_state.summary {
-            if let Err(err) = app.session_store.add_memory_entry(
-                &app.project_dir,
-                &app.session_id,
-                summary.clone(),
-            ) {
+            if let Err(err) = tokio::task::block_in_place(|| {
+                app.session_store.add_memory_entry(
+                    &app.project_dir,
+                    &app.session_id,
+                    summary.clone(),
+                )
+            }) {
                 tracing::warn!("failed to save project memory: {err:#}");
             }
         }
@@ -53,13 +55,12 @@ pub(crate) fn save_preferences(app: &mut TuiApp) {
         .map(|m| m.provider_id.clone())
         .unwrap_or_else(|| app.loaded_config.config.model.provider.clone());
 
-    let global_path = app
-        .loaded_config
-        .global_config_path
-        .as_ref()
-        .expect("global config path");
-    if let Err(err) = save_global_config(global_path, &app.loaded_config.config) {
-        eprintln!("failed to save preferences: {err:#}");
+    let Some(global_path) = app.loaded_config.global_config_path.clone() else {
+        tracing::warn!("skipping preferences save: global config path is not resolved");
+        return;
+    };
+    if let Err(err) = save_global_config(&global_path, &app.loaded_config.config) {
+        tracing::warn!(error = %err, "failed to save preferences");
     }
 }
 

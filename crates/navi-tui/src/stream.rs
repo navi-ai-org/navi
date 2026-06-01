@@ -45,18 +45,17 @@ pub(crate) fn start_streaming_request(app: &mut TuiApp) {
     });
 
     let mut initial_messages = app.conversation_history.clone();
-    let user_prompt = if !initial_messages.is_empty() {
-        let last = initial_messages.pop().unwrap();
-        last.content
-    } else {
-        String::new()
-    };
+    let user_prompt = initial_messages
+        .pop()
+        .map(|last| last.content)
+        .unwrap_or_default();
 
     let tx = app.async_sender();
     let engine = app.engine();
     let project_dir = app.project_dir.clone();
     let session_id = app.session_id.as_str().to_string();
     let agent_mode = app.selected_agent;
+    let active_skills = app.active_skills.clone();
 
     app.set_stream_task(tokio::spawn(async move {
         let result = run_sdk_turn(
@@ -67,6 +66,7 @@ pub(crate) fn start_streaming_request(app: &mut TuiApp) {
             initial_messages,
             user_prompt,
             tx.clone(),
+            active_skills,
         )
         .await;
         let _ = tx.send(AsyncEvent::TurnCompleted(result));
@@ -81,6 +81,7 @@ async fn run_sdk_turn(
     initial_messages: Vec<ModelMessage>,
     user_prompt: String,
     tx: mpsc::UnboundedSender<AsyncEvent>,
+    active_skills: Vec<String>,
 ) -> std::result::Result<String, String> {
     engine
         .start_session(NaviSessionRequest {
@@ -88,7 +89,7 @@ async fn run_sdk_turn(
             session_id: Some(session_id.clone()),
             agent_mode,
             context_packets: Vec::new(),
-            active_skills: Vec::new(),
+            active_skills,
             initial_messages,
         })
         .await

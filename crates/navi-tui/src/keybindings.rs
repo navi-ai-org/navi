@@ -68,14 +68,12 @@ fn cycle_agent(app: &mut TuiApp) {
         Some(agent) => agent.next_code_mode(),
         None => AgentMode::Plan,
     });
-    show_notification(
-        app,
-        "Agent",
-        format!(
-            "{} agent selected.",
-            app.selected_agent.expect("agent selected").label()
-        ),
-    );
+    let label = app
+        .selected_agent
+        .as_ref()
+        .map(|agent| agent.label())
+        .unwrap_or_else(|| AgentMode::Plan.label());
+    show_notification(app, "Agent", format!("{label} agent selected."));
 }
 
 pub(crate) fn open_model_picker(app: &mut TuiApp) {
@@ -106,6 +104,14 @@ fn open_sessions_picker(app: &mut TuiApp) {
     app.session_scroll = 0;
 }
 
+fn open_skills_picker(app: &mut TuiApp) {
+    app.refresh_skills();
+    replace_modal(app, ModalKind::Skills);
+    app.selected_skill = 0;
+    app.skill_filter.clear();
+    app.skill_scroll = 0;
+}
+
 // ─── routing dispatch ───────────────────────────────────────────────────────────
 
 fn route_mode_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyModifiers) -> KeyOutcome {
@@ -120,6 +126,7 @@ fn route_mode_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyModifiers) -> K
         Mode::Providers => self::modals::handle_providers_key(app, code),
         Mode::Debug => self::modals::handle_debug_key(app, code),
         Mode::Help => self::modals::handle_help_key(app, code),
+        Mode::Skills => self::modals::handle_skills_key(app, code),
     };
     if should_quit {
         KeyOutcome::Quit

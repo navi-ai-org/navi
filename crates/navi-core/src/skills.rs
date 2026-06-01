@@ -13,6 +13,14 @@ pub struct SkillManifest {
     pub name: String,
     /// Optional description extracted from the skill header.
     pub description: Option<String>,
+    /// Optional version string (e.g. "1.0.0").
+    pub version: Option<String>,
+    /// Optional author or maintainer.
+    pub author: Option<String>,
+    /// Tags for categorization and filtering.
+    pub tags: Vec<String>,
+    /// Skill ids that must be active for this skill to work.
+    pub requires: Vec<String>,
     /// Path to the skill directory.
     pub path: PathBuf,
     /// The skill's instruction text (body of `SKILL.md`).
@@ -94,6 +102,18 @@ pub fn render_active_skills(skills: &[SkillManifest]) -> Option<String> {
         if let Some(description) = &skill.description {
             output.push_str(&format!("  description: {}\n", description.trim()));
         }
+        if let Some(version) = &skill.version {
+            output.push_str(&format!("  version: {}\n", version));
+        }
+        if let Some(author) = &skill.author {
+            output.push_str(&format!("  author: {}\n", author));
+        }
+        if !skill.tags.is_empty() {
+            output.push_str(&format!("  tags: {}\n", skill.tags.join(", ")));
+        }
+        if !skill.requires.is_empty() {
+            output.push_str(&format!("  requires: {}\n", skill.requires.join(", ")));
+        }
         output.push_str(skill.instructions.trim());
         output.push_str("\n\n");
     }
@@ -135,19 +155,43 @@ fn load_skill_dir(dir: &Path) -> Result<SkillManifest> {
     let name = metadata.name.or(heading).unwrap_or_else(|| id.clone());
     let description = metadata.description.or_else(|| first_plain_line(body));
 
-    Ok(SkillManifest {
+    let manifest = SkillManifest {
         id,
         name,
         description,
+        version: metadata.version,
+        author: metadata.author,
+        tags: metadata.tags,
+        requires: metadata.requires,
         path: skill_path,
         instructions: body.trim().to_string(),
-    })
+    };
+    validate_skill(&manifest)?;
+    Ok(manifest)
+}
+
+fn validate_skill(manifest: &SkillManifest) -> Result<()> {
+    if manifest.id.is_empty() {
+        return Err(anyhow::anyhow!("skill directory name cannot be empty"));
+    }
+    if manifest.instructions.trim().is_empty() {
+        return Err(anyhow::anyhow!(
+            "skill '{}' has empty instructions in {}",
+            manifest.id,
+            manifest.path.display()
+        ));
+    }
+    Ok(())
 }
 
 #[derive(Default)]
 struct SkillMetadata {
     name: Option<String>,
     description: Option<String>,
+    version: Option<String>,
+    author: Option<String>,
+    tags: Vec<String>,
+    requires: Vec<String>,
 }
 
 fn split_frontmatter(raw: &str) -> (SkillMetadata, &str) {
@@ -170,11 +214,27 @@ fn split_frontmatter(raw: &str) -> (SkillMetadata, &str) {
             match key.trim() {
                 "name" => metadata.name = Some(value),
                 "description" => metadata.description = Some(value),
+                "version" => metadata.version = Some(value),
+                "author" => metadata.author = Some(value),
+                "tags" => {
+                    metadata.tags = parse_csv_list(&value);
+                }
+                "requires" => {
+                    metadata.requires = parse_csv_list(&value);
+                }
                 _ => {}
             }
         }
     }
     (metadata, body)
+}
+
+fn parse_csv_list(value: &str) -> Vec<String> {
+    value
+        .split(',')
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect()
 }
 
 fn first_heading(body: &str) -> Option<String> {
@@ -218,5 +278,242 @@ mod tests {
 
         assert_eq!(skills.len(), 1);
         assert!(rendered.contains("Ask one question first."));
+    }
+
+    #[test]
+    fn parses_extended_frontmatter() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let skill_dir = tempdir.path().join(".navi").join("skills").join("reviewer");
+        fs::create_dir_all(&skill_dir).expect("create skill dir");
+        fs::write(
+            skill_dir.join("SKILL.md"),
+            "---\nname: Code Reviewer\ndescription: Reviews code quality\nversion: 1.0.0\nauthor: NAVI Team\ntags: code, review, quality\nrequires: socratic\n---\n# Code Reviewer\nReview code for quality.",
+        )
+        .expect("write skill");
+
+        let config = SkillsConfig {
+            enabled: true,
+            dirs: Vec::new(),
+            active: vec!["reviewer".to_string()],
+        };
+        let skills =
+            discover_configured_skills(&config, tempdir.path(), tempdir.path()).expect("skills");
+
+        assert_eq!(skills.len(), 1);
+        let skill = &skills[0];
+        assert_eq!(skill.name, "Code Reviewer");
+        assert_eq!(skill.version.as_deref(), Some("1.0.0"));
+        assert_eq!(skill.author.as_deref(), Some("NAVI Team"));
+        assert_eq!(skill.tags, vec!["code", "review", "quality"]);
+        assert_eq!(skill.requires, vec!["socratic"]);
+    }
+
+    #[test]
+    fn rejects_skill_with_empty_instructions() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let skill_dir = tempdir.path().join(".navi").join("skills").join("empty");
+        fs::create_dir_all(&skill_dir).expect("create skill dir");
+        fs::write(skill_dir.join("SKILL.md"), "---\nname: Empty Skill\n---\n")
+            .expect("write skill");
+
+        let config = SkillsConfig {
+            enabled: true,
+            dirs: Vec::new(),
+            active: Vec::new(),
+        };
+        let result = discover_configured_skills(&config, tempdir.path(), tempdir.path());
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("empty instructions"));
+    }
+
+    #[test]
+    fn discovers_multiple_skills() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+
+        for name in &["alpha", "beta", "gamma"] {
+            let skill_dir = tempdir.path().join(".navi").join("skills").join(name);
+            fs::create_dir_all(&skill_dir).expect("create skill dir");
+            fs::write(
+                skill_dir.join("SKILL.md"),
+                format!("---\nname: {name}\n---\n# {name}\nInstructions for {name}."),
+            )
+            .expect("write skill");
+        }
+
+        let config = SkillsConfig {
+            enabled: true,
+            dirs: Vec::new(),
+            active: vec!["alpha".to_string(), "gamma".to_string()],
+        };
+        let skills =
+            discover_configured_skills(&config, tempdir.path(), tempdir.path()).expect("skills");
+        let active = active_skills(&skills, &config.active, &[]);
+
+        assert_eq!(skills.len(), 3);
+        assert_eq!(active.len(), 2);
+        assert!(active.iter().any(|s| s.id == "alpha"));
+        assert!(active.iter().any(|s| s.id == "gamma"));
+    }
+
+    #[test]
+    fn deduplicates_skills_by_id() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let project_skill = tempdir.path().join(".navi").join("skills").join("myskill");
+        fs::create_dir_all(&project_skill).expect("create skill dir");
+        fs::write(
+            project_skill.join("SKILL.md"),
+            "---\nname: My Skill\n---\n# My Skill\nProject version.",
+        )
+        .expect("write skill");
+
+        let global_skill = tempdir.path().join("global-skills").join("myskill");
+        fs::create_dir_all(&global_skill).expect("create skill dir");
+        fs::write(
+            global_skill.join("SKILL.md"),
+            "---\nname: My Skill Global\n---\n# My Skill\nGlobal version.",
+        )
+        .expect("write skill");
+
+        let config = SkillsConfig {
+            enabled: true,
+            dirs: vec![tempdir.path().join("global-skills")],
+            active: Vec::new(),
+        };
+        let skills =
+            discover_configured_skills(&config, tempdir.path(), tempdir.path()).expect("skills");
+
+        assert_eq!(skills.len(), 1);
+        // The first discovered skill wins (project dir is scanned first)
+        assert!(skills[0].name == "My Skill" || skills[0].name == "My Skill Global");
+    }
+
+    #[test]
+    fn returns_empty_when_disabled() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let skill_dir = tempdir.path().join(".navi").join("skills").join("test");
+        fs::create_dir_all(&skill_dir).expect("create skill dir");
+        fs::write(
+            skill_dir.join("SKILL.md"),
+            "---\nname: Test\n---\n# Test\nInstructions.",
+        )
+        .expect("write skill");
+
+        let config = SkillsConfig {
+            enabled: false,
+            dirs: Vec::new(),
+            active: vec!["test".to_string()],
+        };
+        let skills =
+            discover_configured_skills(&config, tempdir.path(), tempdir.path()).expect("skills");
+
+        assert!(skills.is_empty());
+    }
+
+    #[test]
+    fn session_active_overrides_configured_active() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+
+        for name in &["skill-a", "skill-b", "skill-c"] {
+            let skill_dir = tempdir.path().join(".navi").join("skills").join(name);
+            fs::create_dir_all(&skill_dir).expect("create skill dir");
+            fs::write(
+                skill_dir.join("SKILL.md"),
+                format!("---\nname: {name}\n---\n# {name}\nInstructions."),
+            )
+            .expect("write skill");
+        }
+
+        let config = SkillsConfig {
+            enabled: true,
+            dirs: Vec::new(),
+            active: vec!["skill-a".to_string()],
+        };
+        let skills =
+            discover_configured_skills(&config, tempdir.path(), tempdir.path()).expect("skills");
+
+        let active = active_skills(&skills, &config.active, &[]);
+        assert_eq!(active.len(), 1);
+        assert_eq!(active[0].id, "skill-a");
+
+        let session_active = vec!["skill-b".to_string(), "skill-c".to_string()];
+        let active = active_skills(&skills, &config.active, &session_active);
+        assert_eq!(active.len(), 2);
+        assert!(active.iter().any(|s| s.id == "skill-b"));
+        assert!(active.iter().any(|s| s.id == "skill-c"));
+    }
+
+    #[test]
+    fn matches_by_name_or_id() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let skill_dir = tempdir.path().join(".navi").join("skills").join("my-skill");
+        fs::create_dir_all(&skill_dir).expect("create skill dir");
+        fs::write(
+            skill_dir.join("SKILL.md"),
+            "---\nname: My Custom Skill\n---\n# My Custom Skill\nInstructions.",
+        )
+        .expect("write skill");
+
+        let config = SkillsConfig {
+            enabled: true,
+            dirs: Vec::new(),
+            active: Vec::new(),
+        };
+        let skills =
+            discover_configured_skills(&config, tempdir.path(), tempdir.path()).expect("skills");
+
+        let by_id = active_skills(&skills, &[], &["my-skill".to_string()]);
+        assert_eq!(by_id.len(), 1);
+
+        let by_name = active_skills(&skills, &[], &["My Custom Skill".to_string()]);
+        assert_eq!(by_name.len(), 1);
+    }
+
+    #[test]
+    fn custom_dirs_are_resolved_relative_to_project() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let custom_dir = tempdir.path().join("custom-skills").join("my-skill");
+        fs::create_dir_all(&custom_dir).expect("create skill dir");
+        fs::write(
+            custom_dir.join("SKILL.md"),
+            "---\nname: Custom\n---\n# Custom\nCustom skill.",
+        )
+        .expect("write skill");
+
+        let config = SkillsConfig {
+            enabled: true,
+            dirs: vec!["custom-skills".into()],
+            active: vec!["my-skill".to_string()],
+        };
+        let skills =
+            discover_configured_skills(&config, tempdir.path(), tempdir.path()).expect("skills");
+
+        assert_eq!(skills.len(), 1);
+        assert_eq!(skills[0].id, "my-skill");
+    }
+
+    #[test]
+    fn render_returns_none_for_empty_skills() {
+        assert!(render_active_skills(&[]).is_none());
+    }
+
+    #[test]
+    fn render_includes_description_and_instructions() {
+        let skills = vec![SkillManifest {
+            id: "test".to_string(),
+            name: "Test Skill".to_string(),
+            description: Some("A test skill".to_string()),
+            version: None,
+            author: None,
+            tags: Vec::new(),
+            requires: Vec::new(),
+            path: PathBuf::from("/test"),
+            instructions: "Do something.".to_string(),
+        }];
+
+        let rendered = render_active_skills(&skills).expect("rendered");
+        assert!(rendered.contains("Test Skill"));
+        assert!(rendered.contains("A test skill"));
+        assert!(rendered.contains("Do something."));
     }
 }

@@ -40,9 +40,13 @@ pub struct TurnContext {
     pub harness_config: crate::config::HarnessConfig,
     pub include_tool_prompt_manifest: bool,
     pub agent_mode: Option<crate::agent::AgentMode>,
-    pub context_packets: Vec<ContextPacket>,
-    pub active_skills: Vec<SkillManifest>,
+    pub context_packets: Arc<std::sync::Mutex<Vec<ContextPacket>>>,
+    pub active_skills: Arc<std::sync::Mutex<Vec<SkillManifest>>>,
     pub cancel_token: CancelToken,
+    /// Snapshot of the active `NaviConfig` taken at turn start. Used by
+    /// `ensure_system_prompt` so the model sees the user-configured harness
+    /// profile, model and provider rather than the defaults.
+    pub config: Arc<crate::config::NaviConfig>,
 }
 
 impl TurnContext {
@@ -122,7 +126,7 @@ async fn ensure_system_prompt(ctx: &TurnContext, messages: &mut Vec<ModelMessage
     let mut system_content = format!(
         "{}\n\n=== AGENTS.md / Project Instructions ===\n{}",
         build_system_prompt_with_tools(
-            &crate::config::NaviConfig::default(),
+            &ctx.config,
             &ctx.project_dir,
             None,
             &ctx.tool_executor.definitions(),
@@ -134,11 +138,21 @@ async fn ensure_system_prompt(ctx: &TurnContext, messages: &mut Vec<ModelMessage
         system_content.push_str("\n\n=== Agent Mode ===\n");
         system_content.push_str(mode.runtime_instructions());
     }
-    if let Some(context) = render_context_packets(&ctx.context_packets) {
+    let context_packets = ctx
+        .context_packets
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone();
+    if let Some(context) = render_context_packets(&context_packets) {
         system_content.push_str("\n\n");
         system_content.push_str(&context);
     }
-    if let Some(skills) = render_active_skills(&ctx.active_skills) {
+    let active_skills = ctx
+        .active_skills
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone();
+    if let Some(skills) = render_active_skills(&active_skills) {
         system_content.push_str("\n\n");
         system_content.push_str(&skills);
     }

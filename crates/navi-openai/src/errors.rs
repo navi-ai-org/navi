@@ -7,6 +7,10 @@ pub enum ProviderError {
         status: reqwest::StatusCode,
         body: String,
         requested_delay: Option<Duration>,
+        /// Reason the response body could not be read, if any. Helps debugging
+        /// transport-level failures (encoding, premature close, etc.) where the
+        /// body itself is unavailable.
+        body_read_error: Option<String>,
     },
     #[error("Transport error: {0}")]
     Transport(#[from] reqwest::Error),

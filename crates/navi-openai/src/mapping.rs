@@ -1,43 +1,45 @@
 use crate::types::OpenAiApiKind;
 use navi_core::{ModelMessage, ModelRole, ThinkingAdapter, ToolDefinition, ToolInvocation};
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 
 pub(crate) fn message_to_json(message: &ModelMessage) -> Value {
-    let mut value = json!({
-        "role": match message.role {
-            ModelRole::System => "system",
-            ModelRole::User => "user",
-            ModelRole::Assistant => "assistant",
-            ModelRole::Tool => "tool",
-        },
-        "content": message.content,
-    });
+    // Pre-size the map for the common case of role + content (+ tool fields).
+    let mut obj = Map::with_capacity(6);
+
+    let role = match message.role {
+        ModelRole::System => "system",
+        ModelRole::User => "user",
+        ModelRole::Assistant => "assistant",
+        ModelRole::Tool => "tool",
+    };
+    obj.insert("role".into(), Value::String(role.into()));
+    obj.insert("content".into(), Value::String(message.content.clone()));
+
     if let Some(tool_call_id) = &message.tool_call_id {
-        value["tool_call_id"] = json!(tool_call_id);
+        obj.insert("tool_call_id".into(), Value::String(tool_call_id.clone()));
     }
     if let Some(tool_name) = &message.tool_name {
-        value["name"] = json!(tool_name);
+        obj.insert("name".into(), Value::String(tool_name.clone()));
     }
     if !message.tool_calls.is_empty() {
-        value["content"] = if message.content.is_empty() {
-            Value::Null
-        } else {
-            json!(message.content)
-        };
-        value["tool_calls"] = json!(
-            message
-                .tool_calls
-                .iter()
-                .map(chat_tool_call_to_json)
-                .collect::<Vec<_>>()
-        );
+        // OpenAI requires content to be either a string or null when tool_calls
+        // are present; empty strings get normalized to null.
+        if message.content.is_empty() {
+            obj.insert("content".into(), Value::Null);
+        }
+        let tool_calls: Vec<Value> = message
+            .tool_calls
+            .iter()
+            .map(chat_tool_call_to_json)
+            .collect();
+        obj.insert("tool_calls".into(), Value::Array(tool_calls));
     }
     if let Some(thinking) = &message.thinking_content {
         if message.role == ModelRole::Assistant && !thinking.is_empty() {
-            value["reasoning_content"] = json!(thinking);
+            obj.insert("reasoning_content".into(), Value::String(thinking.clone()));
         }
     }
-    value
+    Value::Object(obj)
 }
 
 pub(crate) fn responses_input_item_to_json(message: &ModelMessage) -> Vec<Value> {

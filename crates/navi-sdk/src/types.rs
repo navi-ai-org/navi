@@ -92,6 +92,10 @@ pub struct NaviSkillInfo {
     pub id: String,
     pub name: String,
     pub description: Option<String>,
+    pub version: Option<String>,
+    pub author: Option<String>,
+    pub tags: Vec<String>,
+    pub requires: Vec<String>,
 }
 
 /// Credential resolution status for a single provider.
@@ -295,12 +299,54 @@ impl Error for NaviError {
 
 impl From<anyhow::Error> for NaviError {
     fn from(e: anyhow::Error) -> Self {
-        Self::Other(e)
+        match e.downcast::<NaviError>() {
+            Ok(error) => error,
+            Err(e) => match e.downcast::<NaviMissingCredentialError>() {
+                Ok(error) => Self::MissingCredential(error),
+                Err(e) => Self::Other(e),
+            },
+        }
     }
 }
 
 impl From<NaviMissingCredentialError> for NaviError {
     fn from(e: NaviMissingCredentialError) -> Self {
         Self::MissingCredential(e)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn anyhow_missing_credential_downcasts_to_typed_sdk_error() {
+        let missing = NaviMissingCredentialError {
+            provider_id: "test-provider".to_string(),
+            env_var: "TEST_API_KEY".to_string(),
+            credential_store_path: PathBuf::from("/tmp/credentials.toml"),
+        };
+
+        let error = NaviError::from(anyhow::Error::new(missing));
+
+        match error {
+            NaviError::MissingCredential(error) => {
+                assert_eq!(error.provider_id, "test-provider");
+                assert_eq!(error.env_var, "TEST_API_KEY");
+            }
+            other => panic!("expected MissingCredential, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn anyhow_sdk_error_downcasts_to_original_sdk_error() {
+        let error = NaviError::from(anyhow::Error::new(NaviError::SessionNotFound(
+            "session-1".to_string(),
+        )));
+
+        match error {
+            NaviError::SessionNotFound(id) => assert_eq!(id, "session-1"),
+            other => panic!("expected SessionNotFound, got {other:?}"),
+        }
     }
 }

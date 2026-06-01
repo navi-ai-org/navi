@@ -86,6 +86,29 @@ fn chat_messages_serialize_assistant_tool_call_and_result() {
 }
 
 #[test]
+fn chat_messages_preserve_non_empty_content_with_tool_calls() {
+    // OpenAI rejects empty strings with tool_calls, so a real content string
+    // must be preserved verbatim. This guards against the optimization in
+    // message_to_json accidentally collapsing content to null when the
+    // message also has tool_calls.
+    let invocation = ToolInvocation {
+        id: "call-2".to_string(),
+        tool_name: "grep".to_string(),
+        input: json!({ "pattern": "x" }),
+    };
+
+    let assistant = message_to_json(&ModelMessage::assistant_tool_call_with_context(
+        invocation,
+        "Looking for x",
+        None,
+    ));
+
+    assert_eq!(assistant["role"], "assistant");
+    assert_eq!(assistant["content"], "Looking for x");
+    assert_eq!(assistant["tool_calls"][0]["id"], "call-2");
+}
+
+#[test]
 fn chat_messages_echo_reasoning_content_on_tool_calls() {
     let invocation = ToolInvocation {
         id: "call-1".to_string(),
@@ -450,6 +473,7 @@ async fn test_should_retry_error() {
         status: StatusCode::INTERNAL_SERVER_ERROR,
         body: "Internal error".to_string(),
         requested_delay: None,
+        body_read_error: None,
     };
     assert!(should_retry_error(&server_err, false));
     assert!(should_retry_error(&server_err, true));
@@ -458,6 +482,7 @@ async fn test_should_retry_error() {
         status: StatusCode::TOO_MANY_REQUESTS,
         body: "Rate limit reached".to_string(),
         requested_delay: None,
+        body_read_error: None,
     };
     assert!(!should_retry_error(&rate_limit_err, false));
     assert!(should_retry_error(&rate_limit_err, true));
@@ -466,6 +491,7 @@ async fn test_should_retry_error() {
         status: StatusCode::TOO_MANY_REQUESTS,
         body: r#"{"type":"error","error":{"type":"FreeUsageLimitError","message":"Rate limit exceeded."}}"#.to_string(),
         requested_delay: Some(std::time::Duration::from_secs(64_649)),
+        body_read_error: None,
     };
     assert!(!should_retry_error(&free_usage_limit_err, true));
     assert_eq!(
@@ -477,6 +503,7 @@ async fn test_should_retry_error() {
         status: StatusCode::BAD_REQUEST,
         body: "Bad request".to_string(),
         requested_delay: None,
+        body_read_error: None,
     };
     assert!(!should_retry_error(&client_err, false));
     assert!(!should_retry_error(&client_err, true));

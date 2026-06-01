@@ -4,7 +4,9 @@ mod tooling;
 mod types;
 
 pub use engine::{NaviEngine, NaviEngineBuilder, NaviSession};
-pub use host_tool::{HostToolDefinition, HostToolHandler, SdkHostTool};
+pub use host_tool::{
+    HostToolDefinition, HostToolHandler, HostToolInvocation, SdkHostTool, SdkHostToolResult,
+};
 // Re-exported for navi-tui credential flows. Ideally this should be behind a
 // generic provider credential API rather than exposing a single provider's OAuth.
 pub use navi_providers::{DeviceOAuthStarted, github_copilot_device_oauth};

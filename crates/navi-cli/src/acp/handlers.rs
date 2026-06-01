@@ -59,7 +59,7 @@ pub(crate) async fn handle_prompt(
     }
 
     let project_dir = {
-        let mut sessions = state.sessions.lock().expect("session lock poisoned");
+        let mut sessions = state.sessions.lock().unwrap_or_else(|e| e.into_inner());
         let session = sessions
             .entry(session_id.clone())
             .or_insert_with(|| AcpSession {
@@ -140,7 +140,7 @@ pub(crate) async fn handle_prompt(
         let _ = responder.respond(PromptResponse::new(stop_reason));
         if let Some(session) = sessions
             .lock()
-            .expect("session lock poisoned")
+            .unwrap_or_else(|e| e.into_inner())
             .get_mut(&session_id_for_task)
         {
             session.task = None;

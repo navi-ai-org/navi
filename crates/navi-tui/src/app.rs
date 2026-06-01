@@ -3,13 +3,14 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::Instant;
 
+use anyhow::Result;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
 use navi_sdk::{
     AgentEvent, AgentMode, AgentRunState, ApprovalRequest, CompactState, CredentialStore,
-    HarnessPolicy, LoadedConfig, ModelMessage, ModelOption, NaviEngine, SessionId, SessionSnapshot,
-    SessionStore, ToolInvocation, available_model_options, build_system_prompt,
+    HarnessPolicy, LoadedConfig, ModelMessage, ModelOption, NaviEngine, NaviSkillInfo, SessionId,
+    SessionSnapshot, SessionStore, ToolInvocation, available_model_options, build_system_prompt,
     canonical_provider_id, effective_context_window, log_path, select_harness_policy,
 };
 
@@ -93,10 +94,21 @@ pub struct TuiApp {
     log_path: PathBuf,
     pub(crate) chat_render_cache: RefCell<ChatRenderCache>,
     pub(crate) selection: Option<SelectionState>,
+
+    // skills
+    pub(crate) available_skills: Vec<NaviSkillInfo>,
+    pub(crate) active_skills: Vec<String>,
+    pub(crate) selected_skill: usize,
+    pub(crate) skill_filter: String,
+    pub(crate) skill_scroll: usize,
 }
 
 impl TuiApp {
-    pub fn new(loaded_config: LoadedConfig, project_dir: PathBuf, task: Option<String>) -> Self {
+    pub fn new(
+        loaded_config: LoadedConfig,
+        project_dir: PathBuf,
+        task: Option<String>,
+    ) -> Result<Self> {
         let models = available_model_options(&loaded_config.config);
         let selected_provider = canonical_provider_id(&loaded_config.config.model.provider);
         let selected_model = models
@@ -109,8 +121,7 @@ impl TuiApp {
 
         let (async_tx, async_rx) = mpsc::unbounded_channel();
         let credential_store = CredentialStore::new(loaded_config.data_dir.clone());
-        let engine = build_engine(&loaded_config, project_dir.clone())
-            .expect("failed to initialize NAVI runtime engine");
+        let engine = build_engine(&loaded_config, project_dir.clone())?;
         let provider_configured =
             selected_model_runtime_available(&loaded_config, &credential_store);
         let session_store = SessionStore::with_redaction(
@@ -123,6 +134,7 @@ impl TuiApp {
         let system_prompt = build_system_prompt(&loaded_config.config, &project_dir);
         let log_path = log_path(&loaded_config.data_dir);
         let context_window = effective_context_window(&loaded_config.config);
+        let initial_active_skills = loaded_config.config.skills.active.clone();
 
         let mut app = Self {
             loaded_config,
@@ -182,6 +194,11 @@ impl TuiApp {
             log_path,
             chat_render_cache: RefCell::new(ChatRenderCache::default()),
             selection: None,
+            available_skills: Vec::new(),
+            active_skills: initial_active_skills,
+            selected_skill: 0,
+            skill_filter: String::new(),
+            skill_scroll: 0,
         };
 
         // If a task was passed via CLI, pre-fill input
@@ -189,7 +206,10 @@ impl TuiApp {
             app.input = task_text;
         }
 
-        app
+        // Load available skills
+        app.refresh_skills();
+
+        Ok(app)
     }
 
     pub(crate) fn tick(&self) -> u64 {
@@ -294,5 +314,38 @@ impl TuiApp {
 
     pub(crate) fn diagnostics(&self) -> &[String] {
         &self.diagnostics
+    }
+
+    pub(crate) fn refresh_skills(&mut self) {
+        self.available_skills = self.engine.list_skills().unwrap_or_default();
+    }
+
+    pub(crate) fn toggle_skill(&mut self, skill_id: &str) {
+        if let Some(pos) = self.active_skills.iter().position(|s| s == skill_id) {
+            self.active_skills.remove(pos);
+        } else {
+            self.active_skills.push(skill_id.to_string());
+        }
+    }
+
+    pub(crate) fn is_skill_active(&self, skill_id: &str) -> bool {
+        self.active_skills.iter().any(|s| s == skill_id)
+    }
+
+    pub(crate) fn filtered_skills(&self) -> Vec<&NaviSkillInfo> {
+        let filter = self.skill_filter.trim().to_lowercase();
+        self.available_skills
+            .iter()
+            .filter(|skill| {
+                filter.is_empty()
+                    || skill.name.to_lowercase().contains(&filter)
+                    || skill.id.to_lowercase().contains(&filter)
+                    || skill
+                        .description
+                        .as_ref()
+                        .map(|d| d.to_lowercase().contains(&filter))
+                        .unwrap_or(false)
+            })
+            .collect()
     }
 }

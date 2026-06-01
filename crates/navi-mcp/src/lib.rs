@@ -6,12 +6,12 @@ use navi_core::{
 use rmcp::{
     RoleClient, ServiceExt,
     model::CallToolRequestParams,
-    service::{Peer, RunningService},
+    service::{Peer, RunningService, RunningServiceCancellationToken},
     transport::TokioChildProcess,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -26,14 +26,64 @@ pub struct LoadedMcpServers {
     _connections: Vec<Arc<McpConnection>>,
 }
 
+impl LoadedMcpServers {
+    /// Sends a graceful shutdown signal to every active MCP server. Callers
+    /// that want deterministic teardown of MCP child processes should invoke
+    /// this before dropping the `LoadedMcpServers` value.
+    pub fn shutdown(&self) {
+        for connection in &self._connections {
+            connection.request_shutdown();
+        }
+    }
+}
+
 struct McpConnection {
     server_id: String,
     peer: Peer<RoleClient>,
+    /// Token from `RunningService::cancellation_token()`. Wrapped in a
+    /// `Mutex<Option<...>>` so that `request_shutdown` can be called via
+    /// `&self` (the connection lives behind an `Arc`). The `Option` makes
+    /// the operation idempotent: only the first caller actually cancels.
+    cancel_token: Mutex<Option<RunningServiceCancellationToken>>,
     _service: RunningService<RoleClient, ()>,
+}
+
+impl McpConnection {
+    /// Requests a graceful shutdown of the MCP server child process. Safe to
+    /// call multiple times concurrently; only the first caller actually
+    /// triggers the cancel.
+    fn request_shutdown(&self) {
+        let mut guard = self.cancel_token.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(token) = guard.take() {
+            token.cancel();
+        }
+    }
+}
+
+impl Drop for McpConnection {
+    fn drop(&mut self) {
+        // Best-effort: if the caller forgot to invoke
+        // `LoadedMcpServers::shutdown` explicitly, still cancel so rmcp tears
+        // down the child process promptly. The underlying `_service` is
+        // dropped right after, which would also kill it but less gracefully.
+        if self
+            .cancel_token
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .is_some()
+        {
+            tracing::debug!(
+                server = %self.server_id,
+                "McpConnection dropped without explicit shutdown; cancelling now"
+            );
+            self.request_shutdown();
+        }
+    }
 }
 
 pub async fn load_configured_mcp_servers(config: &McpConfig) -> LoadedMcpServers {
     if !config.enabled {
+        tracing::debug!("MCP integration disabled by config; no servers will be loaded");
         return LoadedMcpServers {
             tools: Vec::new(),
             servers: Vec::new(),
@@ -82,33 +132,47 @@ pub async fn load_configured_mcp_servers(config: &McpConfig) -> LoadedMcpServers
 async fn connect_server(
     server: &McpServerConfig,
 ) -> Result<(McpConnection, Vec<rmcp::model::Tool>)> {
-    let mut command = tokio::process::Command::new(&server.command);
-    command.args(&server.args);
-    command.envs(&server.env);
-    if let Some(cwd) = &server.cwd {
-        command.current_dir(cwd);
-    }
-
-    let transport = TokioChildProcess::new(command)
-        .with_context(|| format!("failed to spawn MCP server `{}`", server.id))?;
+    let server_id = server.id.clone();
     let timeout = Duration::from_millis(server.timeout_ms.unwrap_or(30_000));
-    let service = tokio::time::timeout(timeout, ().serve(transport))
+
+    // Outer deadline covers the whole spawn → serve → list pipeline. Any
+    // sub-step that hangs (spawn pre-exec, MCP handshake, JSON-RPC read) is
+    // bounded by this single timer so a misbehaving server can't stall NAVI
+    // startup indefinitely.
+    let connect = async {
+        let mut command = tokio::process::Command::new(&server.command);
+        command.args(&server.args);
+        command.envs(&server.env);
+        if let Some(cwd) = &server.cwd {
+            command.current_dir(cwd);
+        }
+
+        let transport = tokio::task::block_in_place(|| TokioChildProcess::new(command))
+            .with_context(|| format!("failed to spawn MCP server `{server_id}`"))?;
+        let service = tokio::time::timeout(timeout, ().serve(transport))
+            .await
+            .with_context(|| format!("timed out initializing MCP server `{server_id}`"))?
+            .with_context(|| format!("failed to initialize MCP server `{server_id}`"))?;
+        let tools = tokio::time::timeout(timeout, service.peer().list_all_tools())
+            .await
+            .with_context(|| format!("timed out listing MCP tools for `{server_id}`"))?
+            .with_context(|| format!("failed to list MCP tools for `{server_id}`"))?;
+        let peer = service.peer().clone();
+        let cancel_token = service.cancellation_token();
+        Ok((
+            McpConnection {
+                server_id: server_id.clone(),
+                peer,
+                cancel_token: Mutex::new(Some(cancel_token)),
+                _service: service,
+            },
+            tools,
+        ))
+    };
+
+    tokio::time::timeout(timeout, connect)
         .await
-        .with_context(|| format!("timed out initializing MCP server `{}`", server.id))?
-        .with_context(|| format!("failed to initialize MCP server `{}`", server.id))?;
-    let tools = tokio::time::timeout(timeout, service.peer().list_all_tools())
-        .await
-        .with_context(|| format!("timed out listing MCP tools for `{}`", server.id))?
-        .with_context(|| format!("failed to list MCP tools for `{}`", server.id))?;
-    let peer = service.peer().clone();
-    Ok((
-        McpConnection {
-            server_id: server.id.clone(),
-            peer,
-            _service: service,
-        },
-        tools,
-    ))
+        .with_context(|| format!("timed out connecting MCP server `{server_id}` (overall)"))?
 }
 
 fn tool_definition(server: &McpServerConfig, tool: &rmcp::model::Tool) -> ToolDefinition {
@@ -229,5 +293,123 @@ mod tests {
         assert_eq!(definition.name, "n__lookup");
         assert_eq!(definition.kind, ToolKind::Custom);
         assert!(definition.description.contains("Lookup"));
+    }
+
+    #[tokio::test]
+    async fn load_skips_disabled_servers() {
+        let config = McpConfig {
+            enabled: true,
+            servers: vec![McpServerConfig {
+                id: "disabled".to_string(),
+                command: "nope".to_string(),
+                args: Vec::new(),
+                env: Default::default(),
+                cwd: None,
+                enabled: false,
+                tool_prefix: None,
+                timeout_ms: None,
+            }],
+        };
+        let loaded = load_configured_mcp_servers(&config).await;
+        assert!(loaded.tools.is_empty());
+        assert!(loaded.servers.is_empty());
+    }
+
+    #[tokio::test]
+    async fn load_returns_empty_when_disabled() {
+        let config = McpConfig {
+            enabled: false,
+            servers: vec![McpServerConfig {
+                id: "ignored".to_string(),
+                command: "nope".to_string(),
+                args: Vec::new(),
+                env: Default::default(),
+                cwd: None,
+                enabled: true,
+                tool_prefix: None,
+                timeout_ms: None,
+            }],
+        };
+        let loaded = load_configured_mcp_servers(&config).await;
+        assert!(loaded.tools.is_empty());
+        assert!(loaded.servers.is_empty());
+    }
+
+    #[test]
+    fn shutdown_is_safe_with_no_connections() {
+        // Construct a synthetic LoadedMcpServers with no connections and
+        // confirm shutdown() doesn't panic. This guards against accidentally
+        // dereferencing an empty list.
+        let loaded = LoadedMcpServers {
+            tools: Vec::new(),
+            servers: Vec::new(),
+            _connections: Vec::new(),
+        };
+        loaded.shutdown();
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn load_times_out_when_server_hangs() {
+        // `sleep` is a portable command that doesn't speak the MCP protocol,
+        // so the connection will hang after spawn. With a tiny timeout, the
+        // outer deadline in `connect_server` should fire and `load` should
+        // return empty (since per-server failures are logged-and-skipped).
+        let config = McpConfig {
+            enabled: true,
+            servers: vec![McpServerConfig {
+                id: "hanging".to_string(),
+                command: "sleep".to_string(),
+                args: vec!["10".to_string()],
+                env: Default::default(),
+                cwd: None,
+                enabled: true,
+                tool_prefix: None,
+                timeout_ms: Some(200),
+            }],
+        };
+        let start = std::time::Instant::now();
+        let loaded = load_configured_mcp_servers(&config).await;
+        let elapsed = start.elapsed();
+
+        // The load must complete (returning an empty LoadedMcpServers because
+        // the per-server connect error is logged and skipped), and it must do
+        // so within the configured timeout window plus a small grace period
+        // (test runner overhead, scheduling, etc.).
+        assert!(loaded.tools.is_empty());
+        assert!(loaded.servers.is_empty());
+        assert!(
+            elapsed < std::time::Duration::from_secs(5),
+            "load_configured_mcp_servers did not honor timeout (took {elapsed:?})"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn load_skips_missing_command_without_hanging() {
+        // A non-existent command should fail fast (spawn returns an error
+        // immediately, no timeout needed). This guards against a regression
+        // where a missing command would hang the runtime.
+        let config = McpConfig {
+            enabled: true,
+            servers: vec![McpServerConfig {
+                id: "missing".to_string(),
+                command: "this-binary-does-not-exist-navimcptest".to_string(),
+                args: Vec::new(),
+                env: Default::default(),
+                cwd: None,
+                enabled: true,
+                tool_prefix: None,
+                timeout_ms: Some(5_000),
+            }],
+        };
+        let start = std::time::Instant::now();
+        let loaded = load_configured_mcp_servers(&config).await;
+        let elapsed = start.elapsed();
+
+        assert!(loaded.tools.is_empty());
+        assert!(loaded.servers.is_empty());
+        assert!(
+            elapsed < std::time::Duration::from_secs(5),
+            "load_configured_mcp_servers hung on missing command (took {elapsed:?})"
+        );
     }
 }
