@@ -1,43 +1,11 @@
-use crate::config::types::{
-    ApprovalConfig, HarnessConfig, HarnessProfile, LoggingConfig, McpConfig, MemoryConfig,
-    ModelConfig, NaviConfig, SecurityConfig, SkillsConfig, ToolPromptManifest,
+use crate::compact::{
+    AUTOCOMPACT_BUFFER_TOKENS, ERROR_THRESHOLD_BUFFER_TOKENS, MAX_CONSECUTIVE_FAILURES,
+    MAX_OUTPUT_TOKENS_FOR_SUMMARY, WARNING_THRESHOLD_BUFFER_TOKENS,
 };
-
-impl Default for NaviConfig {
-    fn default() -> Self {
-        Self {
-            model: ModelConfig::default(),
-            harness: HarnessConfig::default(),
-            approvals: ApprovalConfig::default(),
-            security: SecurityConfig::default(),
-            logging: LoggingConfig::default(),
-            providers: Vec::new(),
-            plugins: Vec::new(),
-            memory: MemoryConfig::default(),
-            skills: SkillsConfig::default(),
-            mcp: McpConfig::default(),
-        }
-    }
-}
-
-impl Default for SkillsConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            dirs: Vec::new(),
-            active: Vec::new(),
-        }
-    }
-}
-
-impl Default for McpConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            servers: Vec::new(),
-        }
-    }
-}
+use crate::config::types::{
+    ApprovalConfig, HarnessConfig, HarnessProfile, LoggingConfig, MemoryConfig, ModelConfig,
+    SecurityConfig, ToolPromptManifest,
+};
 
 impl Default for ModelConfig {
     fn default() -> Self {
@@ -56,11 +24,11 @@ impl Default for HarnessConfig {
             observation_bytes_small: 12 * 1024,
             observation_bytes_medium: 48 * 1024,
             micro_compact_gap_minutes: 60,
-            autocompact_buffer_tokens: 13_000,
-            autocompact_warning_buffer_tokens: 20_000,
-            autocompact_error_buffer_tokens: 20_000,
-            autocompact_max_output_tokens: 20_000,
-            autocompact_max_consecutive_failures: 3,
+            autocompact_buffer_tokens: AUTOCOMPACT_BUFFER_TOKENS,
+            autocompact_warning_buffer_tokens: WARNING_THRESHOLD_BUFFER_TOKENS,
+            autocompact_error_buffer_tokens: ERROR_THRESHOLD_BUFFER_TOKENS,
+            autocompact_max_output_tokens: MAX_OUTPUT_TOKENS_FOR_SUMMARY,
+            autocompact_max_consecutive_failures: MAX_CONSECUTIVE_FAILURES,
         }
     }
 }

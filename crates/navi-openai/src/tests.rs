@@ -406,7 +406,7 @@ fn sse_decoder_collects_data_frames() {
 fn test_backoff_delay() {
     for attempt in 1..=5 {
         let delay = get_backoff_delay(attempt).as_millis();
-        let exponent = (attempt - 1) as u32;
+        let exponent = attempt - 1;
         let base = (200 * (1 << exponent)) as f64;
         let min_expected = (base * 0.9) as u128;
         let max_expected = (base * 1.1) as u128;
@@ -563,11 +563,8 @@ async fn test_stream_normal() {
     let mut stream = provider.stream(request);
     let mut text = String::new();
     while let Some(event) = stream.next().await {
-        match event.unwrap() {
-            navi_core::ModelStreamEvent::TextDelta { text: t } => {
-                text.push_str(&t);
-            }
-            _ => {}
+        if let navi_core::ModelStreamEvent::TextDelta { text: t } = event.unwrap() {
+            text.push_str(&t);
         }
     }
     assert_eq!(text, "hello world");
@@ -882,11 +879,8 @@ async fn test_rate_limit_retry() {
     let mut stream = provider.stream(request);
     let mut text = String::new();
     while let Some(event) = stream.next().await {
-        match event.unwrap() {
-            navi_core::ModelStreamEvent::TextDelta { text: t } => {
-                text.push_str(&t);
-            }
-            _ => {}
+        if let navi_core::ModelStreamEvent::TextDelta { text: t } = event.unwrap() {
+            text.push_str(&t);
         }
     }
     assert_eq!(text, "hello");

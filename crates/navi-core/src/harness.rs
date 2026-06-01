@@ -146,9 +146,9 @@ fn build_system_prompt_inner(
         cwd = cwd.display(),
     );
     if let Some(memory) = memory_injection {
-        prompt.push_str("\n");
+        prompt.push('\n');
         prompt.push_str(memory);
-        prompt.push_str("\n");
+        prompt.push('\n');
     }
     if include_tool_manifest && !tools.is_empty() {
         prompt.push_str(

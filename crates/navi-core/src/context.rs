@@ -70,7 +70,7 @@ pub fn render_context_packets(packets: &[ContextPacket]) -> Option<String> {
     }
 
     let mut ordered = packets.to_vec();
-    ordered.sort_by(|a, b| b.priority.cmp(&a.priority));
+    ordered.sort_by_key(|b| std::cmp::Reverse(b.priority));
 
     let mut rendered = String::from("=== External Context Packets ===\n");
     for packet in ordered {

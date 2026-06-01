@@ -167,13 +167,11 @@ impl SecurityPolicy {
                         return SecurityDecision::Allow;
                     }
                     // git_ops read-only commands are safe
-                    if definition.name == "git_ops" {
-                        if let Some(cmd) = invocation.input.get("command").and_then(Value::as_str) {
-                            if matches!(cmd, "status" | "diff" | "log" | "branch") {
+                    if definition.name == "git_ops"
+                        && let Some(cmd) = invocation.input.get("command").and_then(Value::as_str)
+                            && matches!(cmd, "status" | "diff" | "log" | "branch") {
                                 return SecurityDecision::Allow;
                             }
-                        }
-                    }
                     SecurityDecision::NeedsApproval(SecurityRisk::Command)
                 }),
             ToolKind::Custom => SecurityDecision::NeedsApproval(SecurityRisk::ExternalPlugin),
@@ -315,13 +313,12 @@ fn push_redacted_token(output: &mut String, token: &str) {
         return;
     }
 
-    if let Some((prefix, _secret)) = token.split_once('=') {
-        if is_secret_assignment_name(prefix) {
+    if let Some((prefix, _secret)) = token.split_once('=')
+        && is_secret_assignment_name(prefix) {
             output.push_str(prefix);
             output.push_str("=<redacted>");
             return;
         }
-    }
 
     let trimmed = token.trim_matches(|ch: char| {
         matches!(
@@ -639,5 +636,214 @@ mod tests {
         assert!(!json.contains("sk-proj-1234567890abcdef"));
         assert!(!json.contains("ghp_1234567890abcdef1234"));
         assert!(!json.contains("github_pat_1234567890abcdef12"));
+    }
+
+    // ── Regression tests ──────────────────────────────────────────────────────
+
+    #[cfg(unix)]
+    #[test]
+    fn regression_symlink_attack_denied() {
+        use std::os::unix::fs::symlink;
+
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let project = tempdir.path().join("project");
+        let data = tempdir.path().join("data");
+        let outside = tempdir.path().join("outside");
+        std::fs::create_dir_all(&project).expect("project");
+        std::fs::create_dir_all(&data).expect("data");
+        std::fs::create_dir_all(&outside).expect("outside");
+        std::fs::write(outside.join("secret.txt"), "secret").expect("write");
+
+        // Symlink inside project points to outside file
+        let link = project.join("link.txt");
+        symlink(outside.join("secret.txt"), &link).expect("symlink");
+
+        let policy = policy(project.clone(), data);
+        let decision = policy.validate_path(&link, false);
+
+        assert!(
+            matches!(decision, SecurityDecision::Deny(_)),
+            "symlink to outside file must be denied, got: {decision:?}"
+        );
+    }
+
+    #[test]
+    fn regression_path_traversal_denied() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let project = tempdir.path().join("project");
+        let data = tempdir.path().join("data");
+        std::fs::create_dir_all(&project).expect("project");
+        std::fs::create_dir_all(&data).expect("data");
+        let policy = policy(project.clone(), data);
+
+        let traversal = project.join("../../../etc/passwd");
+        let decision = policy.validate_path(&traversal, false);
+
+        assert!(
+            matches!(decision, SecurityDecision::Deny(_)),
+            "path traversal must be denied, got: {decision:?}"
+        );
+    }
+
+    #[test]
+    fn regression_command_full_path_extracts_basename() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let project = tempdir.path().join("project");
+        let data = tempdir.path().join("data");
+        std::fs::create_dir_all(&project).expect("project");
+        std::fs::create_dir_all(&data).expect("data");
+        let policy = policy(project, data);
+
+        // /usr/bin/rm should extract "rm" and deny it
+        let decision = policy.validate_command("/usr/bin/rm");
+        assert!(
+            matches!(decision, SecurityDecision::Deny(_)),
+            "full-path blocked command must be denied, got: {decision:?}"
+        );
+    }
+
+    #[test]
+    fn regression_command_sudo_with_args_denied() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let project = tempdir.path().join("project");
+        let data = tempdir.path().join("data");
+        std::fs::create_dir_all(&project).expect("project");
+        std::fs::create_dir_all(&data).expect("data");
+        let policy = policy(project, data);
+
+        let decision = policy.validate_command("sudo rm -rf /");
+        assert!(
+            matches!(decision, SecurityDecision::Deny(_)),
+            "sudo with args must be denied, got: {decision:?}"
+        );
+    }
+
+    #[test]
+    fn regression_data_dir_path_denied() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let project = tempdir.path().join("project");
+        let data = tempdir.path().join("data");
+        std::fs::create_dir_all(&project).expect("project");
+        std::fs::create_dir_all(&data).expect("data");
+        let policy = policy(project, data.clone());
+
+        let decision = policy.validate_path(data.join("sessions/test.json").as_path(), false);
+        assert!(
+            matches!(decision, SecurityDecision::Deny(_)),
+            "NAVI data dir must be denied, got: {decision:?}"
+        );
+    }
+
+    #[test]
+    fn regression_validate_patch_mixed_files_denied() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let project = tempdir.path().join("project");
+        let data = tempdir.path().join("data");
+        std::fs::create_dir_all(&project).expect("project");
+        std::fs::create_dir_all(&data).expect("data");
+        let policy = policy(project.clone(), data);
+
+        // One valid file, one outside file
+        let patch = PatchProposal {
+            id: "p1".to_string(),
+            summary: "edit".to_string(),
+            files: vec![
+                project.join("src/lib.rs"),
+                tempdir.path().join("outside.txt"),
+            ],
+            unified_diff: String::new(),
+        };
+
+        assert!(
+            matches!(policy.validate_patch(&patch), SecurityDecision::Deny(_)),
+            "patch with any outside file must be denied"
+        );
+    }
+
+    #[test]
+    fn regression_redact_github_token() {
+        // GITHUB_TOKEN is not in is_secret_assignment_name (which checks for
+        // API_KEY, ACCESS_TOKEN, AUTH_TOKEN, SECRET, or exact TOKEN).
+        // The value ghp_xxx IS caught by looks_like_secret_token.
+        let text = "ghp_1234567890abcdef1234567890abcdef12";
+        let redacted = redact_secrets(text);
+        assert!(
+            redacted.contains("<redacted>"),
+            "ghp_ token value must be redacted"
+        );
+        assert!(
+            !redacted.contains("ghp_1234567890abcdef1234567890abcdef12"),
+            "token value must not appear"
+        );
+    }
+
+    #[test]
+    fn regression_redact_hf_token() {
+        let text = "HF_TOKEN=hf_1234567890abcdef1234567890abcdef12";
+        let redacted = redact_secrets(text);
+        assert!(redacted.contains("<redacted>"), "HF_TOKEN must be redacted");
+    }
+
+    #[test]
+    fn regression_redact_short_sk_not_clobbered() {
+        // Short sk- values that don't look like real tokens should NOT be redacted
+        let text = "use sk-abc for testing";
+        let redacted = redact_secrets(text);
+        assert_eq!(redacted, text, "short sk- value must not be redacted");
+    }
+
+    #[test]
+    fn regression_redact_empty_string() {
+        assert_eq!(redact_secrets(""), "");
+    }
+
+    #[test]
+    fn regression_redact_nested_json_array() {
+        let value = serde_json::json!({
+            "items": [
+                {"key": "OPENAI_API_KEY=sk-proj-1234567890abcdef"},
+                {"key": "normal value"}
+            ]
+        });
+        let redacted = redact_json_value(&value);
+        let items = redacted["items"].as_array().unwrap();
+        assert!(items[0]["key"].as_str().unwrap().contains("<redacted>"));
+        assert_eq!(items[1]["key"].as_str().unwrap(), "normal value");
+    }
+
+    #[test]
+    fn regression_git_ops_read_only_commands_need_approval() {
+        // NOTE: git_ops read-only bypass at security.rs:169-176 is unreachable
+        // because validate_command() always returns NeedsApproval for non-blocked
+        // commands BEFORE the fallback closure runs. This is a known design issue.
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let project = tempdir.path().join("project");
+        let data = tempdir.path().join("data");
+        std::fs::create_dir_all(&project).expect("project");
+        std::fs::create_dir_all(&data).expect("data");
+        let policy = policy(project, data);
+
+        let git_def = crate::tool::ToolDefinition {
+            name: "git_ops".to_string(),
+            description: "git".to_string(),
+            input_schema: serde_json::json!({}),
+            kind: crate::tool::ToolKind::Command,
+        };
+
+        for cmd in &["status", "diff", "log", "branch"] {
+            let inv = crate::tool::ToolInvocation {
+                id: "test".to_string(),
+                tool_name: "git_ops".to_string(),
+                input: serde_json::json!({"command": cmd}),
+            };
+            let decision = policy.validate_tool_invocation(&git_def, &inv);
+            assert!(
+                matches!(
+                    decision,
+                    SecurityDecision::NeedsApproval(SecurityRisk::Command)
+                ),
+                "git_ops {cmd} currently needs approval (known design issue)"
+            );
+        }
     }
 }

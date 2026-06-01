@@ -7,7 +7,7 @@ const READ_ONLY_TOOLS: &[&str] = &["read_file", "fs_browser", "grep", "bash", "g
 
 /// Removes read-only tool results from older messages when idle time exceeds
 /// the gap threshold. Returns the number of messages cleared.
-pub fn micro_compact(messages: &mut Vec<ModelMessage>, gap_threshold_minutes: u64) -> usize {
+pub fn micro_compact(messages: &mut [ModelMessage], gap_threshold_minutes: u64) -> usize {
     let now = current_unix_millis();
     let gap_threshold_ms = gap_threshold_minutes * 60 * 1000;
 
@@ -27,16 +27,14 @@ pub fn micro_compact(messages: &mut Vec<ModelMessage>, gap_threshold_minutes: u6
 
     let mut cleared = 0;
     for msg in messages.iter_mut() {
-        if msg.role == ModelRole::Tool {
-            if let Some(ref tool_name) = msg.tool_name {
-                if READ_ONLY_TOOLS.contains(&tool_name.as_str())
+        if msg.role == ModelRole::Tool
+            && let Some(ref tool_name) = msg.tool_name
+                && READ_ONLY_TOOLS.contains(&tool_name.as_str())
                     && !msg.content.contains("[Old tool result content cleared]")
                 {
                     msg.content = "[Old tool result content cleared]".to_string();
                     cleared += 1;
                 }
-            }
-        }
     }
     cleared
 }
@@ -488,5 +486,93 @@ mod tests {
         assert_eq!(cleared, 0);
         assert_eq!(messages[2].content, "content written");
         assert_eq!(messages[3].content, "patch applied");
+    }
+
+    // ── Regression tests ──────────────────────────────────────────────────────
+
+    #[test]
+    fn regression_micro_compact_no_assistant_messages_returns_zero() {
+        let mut messages = vec![
+            ModelMessage::system("system"),
+            ModelMessage::user("hello"),
+            ModelMessage::tool_result("c1", "read_file", "content"),
+        ];
+        let cleared = micro_compact(&mut messages, 60);
+        assert_eq!(cleared, 0);
+    }
+
+    #[test]
+    fn regression_micro_compact_preserves_non_readonly_tools() {
+        let now = current_unix_millis();
+        let gap_ms: u64 = 61 * 60 * 1000;
+
+        let mut messages = vec![
+            ModelMessage::system("system"),
+            {
+                let mut m = ModelMessage::assistant("response");
+                m.created_at = Some(now.saturating_sub(gap_ms));
+                m
+            },
+            ModelMessage::tool_result("c1", "test_runner", "tests passed"),
+            ModelMessage::tool_result("c2", "build_runner", "build ok"),
+            ModelMessage::tool_result("c3", "package_manager", "deps ok"),
+            ModelMessage::tool_result("c4", "apply_patch", "patch applied"),
+        ];
+
+        let cleared = micro_compact(&mut messages, 60);
+        assert_eq!(cleared, 0, "non-read-only tools must not be cleared");
+        assert_eq!(messages[2].content, "tests passed");
+        assert_eq!(messages[3].content, "build ok");
+        assert_eq!(messages[4].content, "deps ok");
+        assert_eq!(messages[5].content, "patch applied");
+    }
+
+    #[test]
+    fn regression_compact_state_percentage_clamps_to_100() {
+        let mut state = CompactState::new(1000);
+        // Simulate more tokens than window
+        state.last_input_tokens = Some(2000);
+        let pct = state.context_percentage(0);
+        assert!(pct <= 100, "percentage must clamp to 100, got {pct}");
+    }
+
+    #[test]
+    fn regression_compact_state_usage_label_formats_millions() {
+        let state = CompactState {
+            last_input_tokens: Some(1_500_000),
+            context_window: 2_000_000,
+            ..Default::default()
+        };
+        let label = state.usage_label(0);
+        assert!(label.contains("M"), "should use M format for millions");
+    }
+
+    #[test]
+    fn regression_build_conversation_text_excludes_system() {
+        let messages = vec![
+            ModelMessage::system("you are a helpful assistant"),
+            ModelMessage::user("hello"),
+            ModelMessage::assistant("hi there"),
+        ];
+        let text = build_conversation_text(&messages);
+        assert!(
+            !text.contains("you are a helpful assistant"),
+            "system message must be excluded"
+        );
+        assert!(text.contains("hello"));
+        assert!(text.contains("hi there"));
+    }
+
+    #[test]
+    fn regression_build_conversation_text_includes_tool_name() {
+        let messages = vec![
+            ModelMessage::user("read file"),
+            ModelMessage::tool_result("c1", "read_file", "file content"),
+        ];
+        let text = build_conversation_text(&messages);
+        assert!(
+            text.contains("read_file"),
+            "tool name must be included in conversation text"
+        );
     }
 }

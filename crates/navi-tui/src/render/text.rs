@@ -61,8 +61,7 @@ pub(crate) fn split_input_spans<'a>(spans: Vec<Span<'a>>, continuation: &str) ->
             }
             if parts.peek().is_some() {
                 lines.push(Line::from(current));
-                current = Vec::new();
-                current.push(Span::raw(continuation.to_string()));
+                current = vec![Span::raw(continuation.to_string())];
             }
         }
     }

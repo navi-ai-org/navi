@@ -32,12 +32,11 @@ impl Tool for WriteFileTool {
         let path_clone = path.clone();
         let content_clone = content.clone();
         tokio::task::spawn_blocking(move || {
-            if let Some(parent) = Path::new(&path_clone).parent() {
-                if !parent.as_os_str().is_empty() {
+            if let Some(parent) = Path::new(&path_clone).parent()
+                && !parent.as_os_str().is_empty() {
                     fs::create_dir_all(parent)
                         .with_context(|| format!("failed to create {}", parent.display()))?;
                 }
-            }
             fs::write(&path_clone, content_clone)
                 .with_context(|| format!("failed to write {path_clone}"))
         })

@@ -26,9 +26,9 @@ pub(crate) fn save_current_session(app: &mut TuiApp) {
     if let Err(err) = tokio::task::block_in_place(|| app.session_store.save(&snapshot)) {
         tracing::warn!(error = %err, "failed to save session");
     }
-    if app.loaded_config.config.memory.session_memory_enabled {
-        if let Some(summary) = &app.compact_state.summary {
-            if let Err(err) = tokio::task::block_in_place(|| {
+    if app.loaded_config.config.memory.session_memory_enabled
+        && let Some(summary) = &app.compact_state.summary
+            && let Err(err) = tokio::task::block_in_place(|| {
                 app.session_store.add_memory_entry(
                     &app.project_dir,
                     &app.session_id,
@@ -37,8 +37,6 @@ pub(crate) fn save_current_session(app: &mut TuiApp) {
             }) {
                 tracing::warn!("failed to save project memory: {err:#}");
             }
-        }
-    }
     app.session_id = SessionStore::create_id();
     app.events.clear();
 }

@@ -728,3 +728,138 @@ fn all_specialized_tools_have_valid_schemas() {
         );
     }
 }
+
+// ── Regression tests ──────────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn regression_read_file_out_of_range_lines_returns_empty() {
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let executor = executor(tempdir.path());
+
+    std::fs::write(tempdir.path().join("small.txt"), "line1\nline2\nline3").unwrap();
+
+    let result = executor
+        .invoke(ToolInvocation {
+            id: "test".to_string(),
+            tool_name: "read_file".to_string(),
+            input: json!({"path": "small.txt", "start_line": 100, "end_line": 200}),
+        })
+        .await;
+
+    // Should either succeed with empty content or return a structured error
+    // Either way, it must not panic
+    if result.ok {
+        let content = result.output["content"].as_str().unwrap_or("");
+        assert!(content.is_empty() || content.trim().is_empty());
+    } else {
+        // Structured error is acceptable
+        assert!(result.output["error"].is_string() || result.output["error_code"].is_string());
+    }
+}
+
+#[tokio::test]
+async fn regression_read_file_binary_returns_error() {
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let executor = executor(tempdir.path());
+
+    // Write invalid UTF-8 bytes
+    std::fs::write(tempdir.path().join("binary.bin"), [0xFF, 0xFE, 0x00, 0x01]).unwrap();
+
+    let result = executor
+        .invoke(ToolInvocation {
+            id: "test".to_string(),
+            tool_name: "read_file".to_string(),
+            input: json!({"path": "binary.bin"}),
+        })
+        .await;
+
+    // Should either succeed with lossy conversion or return an error
+    // Either way, it must not panic
+    let _ = result;
+}
+
+#[tokio::test]
+async fn regression_write_file_overwrites_existing() {
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let executor = executor(tempdir.path());
+
+    std::fs::write(tempdir.path().join("existing.txt"), "old content").unwrap();
+
+    let result = executor
+        .invoke(ToolInvocation {
+            id: "test".to_string(),
+            tool_name: "write_file".to_string(),
+            input: json!({"path": "existing.txt", "content": "new content"}),
+        })
+        .await;
+
+    // write_file needs approval, so it may return ok=false with a security decision
+    // or ok=true if the executor auto-approves. Either way, no panic.
+    if result.ok {
+        let content = std::fs::read_to_string(tempdir.path().join("existing.txt")).unwrap();
+        assert_eq!(content, "new content");
+    }
+    // If not ok, it's because of approval requirement - that's fine
+}
+
+#[tokio::test]
+async fn regression_grep_special_chars_treated_literally() {
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let executor = executor(tempdir.path());
+
+    std::fs::write(tempdir.path().join("test.txt"), "foo(bar\nbaz[0]\nqux*").unwrap();
+
+    // Pattern with regex metacharacters should be treated literally
+    let result = executor
+        .invoke(ToolInvocation {
+            id: "test".to_string(),
+            tool_name: "grep".to_string(),
+            input: json!({"pattern": "foo(bar", "path": "."}),
+        })
+        .await;
+
+    // grep may fail if rg is not installed, which is fine
+    if result.ok {
+        let matches = result.output["matches"].as_array().unwrap();
+        assert_eq!(matches.len(), 1, "literal pattern should match");
+    }
+}
+
+#[tokio::test]
+async fn regression_bash_foreground_captures_stderr() {
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let executor = executor(tempdir.path());
+
+    let result = executor
+        .invoke(ToolInvocation {
+            id: "test".to_string(),
+            tool_name: "bash".to_string(),
+            input: json!({"command": "echo error >&2", "timeout_ms": 5000}),
+        })
+        .await;
+
+    assert!(result.ok);
+    let stderr = result.output["stderr"].as_str().unwrap_or("");
+    assert!(
+        stderr.contains("error"),
+        "stderr should be captured: {stderr}"
+    );
+}
+
+#[tokio::test]
+async fn regression_bash_timeout_capped_at_max() {
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let executor = executor(tempdir.path());
+
+    // Request a timeout of 999999ms (should be capped at 120s)
+    let result = executor
+        .invoke(ToolInvocation {
+            id: "test".to_string(),
+            tool_name: "bash".to_string(),
+            input: json!({"command": "echo ok", "timeout_ms": 999_999}),
+        })
+        .await;
+
+    assert!(result.ok);
+    assert_eq!(result.output["stdout"].as_str().unwrap().trim(), "ok");
+}

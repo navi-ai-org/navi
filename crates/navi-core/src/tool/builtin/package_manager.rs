@@ -365,6 +365,8 @@ async fn cmd_check(invocation_id: &str, manager: &str, packages: &[String]) -> R
 }
 
 async fn check_npm(invocation_id: &str, manager: &str, packages: &[String]) -> Result<ToolResult> {
+    // Small manifest files (<10KB); blocking the runtime for microseconds is
+    // cheaper than the spawn_blocking thread-pool overhead.
     let manifest = std::fs::read_to_string("package.json").unwrap_or_default();
     let mut installed: Vec<PackageEntry> = Vec::new();
     let mut not_found: Vec<String> = Vec::new();

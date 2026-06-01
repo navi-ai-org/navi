@@ -291,7 +291,7 @@ impl NaviEngine {
     pub fn list_provider_accounts(&self) -> Result<Vec<NaviProviderAccountInfo>> {
         let loaded_config = self.loaded_config();
         let credential_store = self.credential_store();
-        Ok(provider_catalog(&loaded_config.config)
+        provider_catalog(&loaded_config.config)
             .into_iter()
             .map(|provider| {
                 let status = self.provider_credential_status_for(
@@ -308,7 +308,7 @@ impl NaviEngine {
                     status,
                 })
             })
-            .collect::<Result<Vec<_>>>()?)
+            .collect::<Result<Vec<_>>>()
     }
 
     /// Returns the credential status for a specific provider.
@@ -528,11 +528,10 @@ impl NaviEngine {
         let mut skipped = Vec::new();
 
         for provider in providers {
-            if let Some(selected_provider) = selected_provider.as_deref() {
-                if canonical_provider_id(&provider.id) != selected_provider {
+            if let Some(selected_provider) = selected_provider
+                && canonical_provider_id(&provider.id) != selected_provider {
                     continue;
                 }
-            }
 
             let Some(api_key) =
                 resolve_provider_api_key(&credential_store, &provider, &provider.id)

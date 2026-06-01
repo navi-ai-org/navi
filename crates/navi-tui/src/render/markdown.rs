@@ -111,7 +111,7 @@ pub(crate) fn build_chat_lines_for_messages<'a>(
                         format!("◇ {model_label} via {provider_label} {elapsed}{status}{usage}");
                     let attr_len = attr_text.chars().count();
                     let dash_count = chat_width.saturating_sub(attr_len + 2);
-                    let dashes: String = std::iter::repeat('─').take(dash_count).collect();
+                    let dashes: String = std::iter::repeat_n('─', dash_count).collect();
 
                     rendered_lines.push(Line::from(vec![
                         Span::styled(format!(" {attr_text} "), Style::default().fg(MUTED)),
@@ -250,12 +250,11 @@ fn text_line(
     italic: bool,
 ) -> Line<'static> {
     let mut spans = marker_spans(show_marker, marker_color);
-    if !italic {
-        if let Some(markdown_line) = markdown_prose_line(&text, text_color) {
+    if !italic
+        && let Some(markdown_line) = markdown_prose_line(&text, text_color) {
             spans.extend(markdown_line);
             return Line::from(spans);
         }
-    }
 
     let mut style = Style::default().fg(text_color);
     if italic {
@@ -593,9 +592,9 @@ fn inline_delimited(rest: &str) -> Option<(usize, &str, Modifier, Color, bool)> 
     ];
 
     for (marker, modifier, color, recursive) in patterns {
-        if let Some(after_start) = rest.strip_prefix(marker) {
-            if let Some(end) = after_start.find(marker) {
-                if end > 0 {
+        if let Some(after_start) = rest.strip_prefix(marker)
+            && let Some(end) = after_start.find(marker)
+                && end > 0 {
                     return Some((
                         marker.len(),
                         &after_start[..end],
@@ -604,8 +603,6 @@ fn inline_delimited(rest: &str) -> Option<(usize, &str, Modifier, Color, bool)> 
                         recursive,
                     ));
                 }
-            }
-        }
     }
 
     None

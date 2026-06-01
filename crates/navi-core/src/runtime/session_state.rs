@@ -116,7 +116,7 @@ impl SessionState {
 
     pub fn snapshot(
         &self,
-        project_dir: &std::path::PathBuf,
+        project_dir: &std::path::Path,
         session_store: &SessionStore,
         event_bus: &crate::runtime::EventBus,
     ) -> Result<crate::session::SessionSnapshot> {
@@ -130,7 +130,7 @@ impl SessionState {
                 version: crate::session::SessionSnapshot::CURRENT_VERSION,
                 id: self.id.clone(),
                 title: self.title.clone(),
-                project: project_dir.clone(),
+                project: project_dir.to_path_buf(),
                 created_at: self.created_at,
                 updated_at: current_unix_timestamp(),
                 events: self.events.clone(),

@@ -150,7 +150,7 @@ fn cleanup_old_logs(dir: &Path, max_files: usize) -> Result<()> {
         let modified = entry.metadata()?.modified()?;
         logs.push((modified, path));
     }
-    logs.sort_by(|a, b| b.0.cmp(&a.0));
+    logs.sort_by_key(|b| std::cmp::Reverse(b.0));
     for (_, path) in logs.into_iter().skip(max_files) {
         let _ = fs::remove_file(path);
     }

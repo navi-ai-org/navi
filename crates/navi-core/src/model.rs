@@ -359,3 +359,173 @@ impl ThinkingConfig {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── Regression: ThinkingConfig adapters ───────────────────────────────────
+
+    #[test]
+    fn regression_openai_effort_mapping() {
+        assert_eq!(ThinkingConfig::Max.to_openai_effort(), Some("high"));
+        assert_eq!(ThinkingConfig::High.to_openai_effort(), Some("high"));
+        assert_eq!(ThinkingConfig::Medium.to_openai_effort(), Some("medium"));
+        assert_eq!(ThinkingConfig::Low.to_openai_effort(), Some("low"));
+        assert_eq!(ThinkingConfig::Off.to_openai_effort(), None);
+    }
+
+    #[test]
+    fn regression_openrouter_effort_mapping() {
+        assert_eq!(ThinkingConfig::Max.to_openrouter_effort(), "xhigh");
+        assert_eq!(ThinkingConfig::High.to_openrouter_effort(), "high");
+        assert_eq!(ThinkingConfig::Medium.to_openrouter_effort(), "medium");
+        assert_eq!(ThinkingConfig::Low.to_openrouter_effort(), "low");
+        assert_eq!(ThinkingConfig::Off.to_openrouter_effort(), "none");
+    }
+
+    #[test]
+    fn regression_anthropic_thinking_budget_tokens() {
+        let max = ThinkingConfig::Max.to_anthropic_thinking();
+        assert_eq!(max["type"], "enabled");
+        assert_eq!(max["budget_tokens"], 32000);
+
+        let high = ThinkingConfig::High.to_anthropic_thinking();
+        assert_eq!(high["budget_tokens"], 10000);
+
+        let off = ThinkingConfig::Off.to_anthropic_thinking();
+        assert_eq!(off["type"], "disabled");
+    }
+
+    #[test]
+    fn regression_gemini_thinking_budget() {
+        let max = ThinkingConfig::Max.to_gemini_thinking_config();
+        assert_eq!(max["thinkingBudget"], 24576);
+
+        let off = ThinkingConfig::Off.to_gemini_thinking_config();
+        assert_eq!(off["thinkingBudget"], 0);
+    }
+
+    #[test]
+    fn regression_adapter_for_openai_produces_responses() {
+        let adapter = ThinkingConfig::High.adapter_for_provider("openai");
+        assert!(matches!(adapter, ThinkingAdapter::OpenAiResponses(_)));
+    }
+
+    #[test]
+    fn regression_adapter_for_anthropic_produces_anthropic() {
+        let adapter = ThinkingConfig::High.adapter_for_provider("anthropic");
+        assert!(matches!(
+            adapter,
+            ThinkingAdapter::AnthropicOpenAiCompatible(_)
+        ));
+    }
+
+    #[test]
+    fn regression_adapter_for_gemini_produces_gemini() {
+        let adapter = ThinkingConfig::High.adapter_for_provider("google-gemini");
+        assert!(matches!(
+            adapter,
+            ThinkingAdapter::GeminiOpenAiCompatible(_)
+        ));
+    }
+
+    #[test]
+    fn regression_adapter_for_openrouter_produces_openrouter() {
+        let adapter = ThinkingConfig::High.adapter_for_provider("openrouter");
+        assert!(matches!(adapter, ThinkingAdapter::OpenRouter(_)));
+    }
+
+    #[test]
+    fn regression_adapter_for_groq_produces_groq() {
+        let adapter = ThinkingConfig::High.adapter_for_provider("groq");
+        assert!(matches!(adapter, ThinkingAdapter::Groq(_)));
+    }
+
+    #[test]
+    fn regression_adapter_for_off_produces_unsupported_or_disabled() {
+        // OpenAI Off -> Unsupported
+        let adapter = ThinkingConfig::Off.adapter_for_provider("openai");
+        assert!(matches!(adapter, ThinkingAdapter::Unsupported));
+
+        // Anthropic Off -> disabled JSON
+        let adapter = ThinkingConfig::Off.adapter_for_provider("anthropic");
+        assert!(matches!(
+            adapter,
+            ThinkingAdapter::AnthropicOpenAiCompatible(_)
+        ));
+    }
+
+    // ── Regression: ModelMessage constructors ─────────────────────────────────
+
+    #[test]
+    fn regression_system_message_has_correct_role() {
+        let msg = ModelMessage::system("test".to_string());
+        assert_eq!(msg.role, ModelRole::System);
+        assert_eq!(msg.content, "test");
+    }
+
+    #[test]
+    fn regression_user_message_has_correct_role() {
+        let msg = ModelMessage::user("hello".to_string());
+        assert_eq!(msg.role, ModelRole::User);
+        assert_eq!(msg.content, "hello");
+    }
+
+    #[test]
+    fn regression_assistant_message_has_correct_role() {
+        let msg = ModelMessage::assistant("response".to_string());
+        assert_eq!(msg.role, ModelRole::Assistant);
+        assert_eq!(msg.content, "response");
+    }
+
+    #[test]
+    fn regression_tool_result_sets_call_id_and_name() {
+        let msg = ModelMessage::tool_result("call-1", "read_file", "content");
+        assert_eq!(msg.role, ModelRole::Tool);
+        assert_eq!(msg.tool_call_id.as_deref(), Some("call-1"));
+        assert_eq!(msg.tool_name.as_deref(), Some("read_file"));
+        assert_eq!(msg.content, "content");
+    }
+
+    #[test]
+    fn regression_assistant_tool_call_with_context_sets_fields() {
+        let inv = ToolInvocation {
+            id: "call-1".to_string(),
+            tool_name: "read_file".to_string(),
+            input: serde_json::json!({"path": "test.rs"}),
+        };
+        let msg = ModelMessage::assistant_tool_call_with_context(
+            inv,
+            "thinking text",
+            Some("reasoning".to_string()),
+        );
+        assert_eq!(msg.role, ModelRole::Assistant);
+        assert_eq!(msg.content, "thinking text");
+        assert_eq!(msg.thinking_content.as_deref(), Some("reasoning"));
+        assert_eq!(msg.tool_calls.len(), 1);
+        assert_eq!(msg.tool_calls[0].id, "call-1");
+    }
+
+    // ── Regression: ModelMessage serialization roundtrip ──────────────────────
+
+    #[test]
+    fn regression_model_message_serialization_roundtrip() {
+        let msg = ModelMessage {
+            role: ModelRole::Assistant,
+            content: "hello".to_string(),
+            tool_call_id: None,
+            tool_name: None,
+            tool_calls: vec![],
+            thinking_content: Some("thinking".to_string()),
+            created_at: Some(12345),
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        let deserialized: ModelMessage = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.role, msg.role);
+        assert_eq!(deserialized.content, msg.content);
+        assert_eq!(deserialized.thinking_content, msg.thinking_content);
+        // created_at is intentionally not serialized (runtime-only field)
+        assert!(deserialized.created_at.is_none());
+    }
+}

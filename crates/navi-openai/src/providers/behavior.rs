@@ -4,6 +4,20 @@ use navi_core::ProviderId;
 use reqwest::header::USER_AGENT;
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE, HeaderMap, HeaderValue};
 
+// ─── Provider base URLs ───────────────────────────────────────────────────────
+
+const OPENAI_BASE_URL: &str = "https://api.openai.com/v1";
+const GEMINI_BASE_URL: &str = "https://generativelanguage.googleapis.com";
+const OPENCODE_ZEN_BASE_URL: &str = "https://opencode.ai/zen/v1";
+const OPENCODE_GO_BASE_URL: &str = "https://opencode.ai/zen/go/v1";
+
+const ANTHROPIC_VERSION: &str = "2023-06-01";
+const OPENROUTER_REFERER: &str = "https://github.com/enrell/navi";
+const OPENROUTER_TITLE: &str = "Navi";
+const COPILOT_USER_AGENT: &str = "navi/0.1.0";
+const COPILOT_INTENT: &str = "conversation-edits";
+const COPILOT_INITIATOR: &str = "user";
+
 /// Endpoint category — used to select auth headers per provider.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Endpoint {
@@ -30,13 +44,26 @@ fn bearer_value(api_key: &str) -> Result<HeaderValue, ProviderError> {
     Ok(HeaderValue::from_str(&format!("Bearer {api_key}"))?)
 }
 
+/// Helper: build standard Bearer + optional Content-Type headers.
+///
+/// Most providers follow this pattern. Pass `content_type = true` for
+/// endpoints that send a JSON body (ChatCompletions, AnthropicMessages).
+fn standard_bearer_headers(api_key: &str, content_type: bool) -> Result<HeaderMap, ProviderError> {
+    let mut headers = HeaderMap::new();
+    headers.insert(AUTHORIZATION, bearer_value(api_key)?);
+    if content_type {
+        headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+    }
+    Ok(headers)
+}
+
 // ─── OpenAI ───────────────────────────────────────────────────────────────────
 
 pub(crate) struct OpenAiBehavior;
 
 impl ProviderBehavior for OpenAiBehavior {
     fn default_base_url(&self) -> Option<&str> {
-        Some("https://api.openai.com/v1")
+        Some(OPENAI_BASE_URL)
     }
 
     fn stream_route(&self, _model: &str, configured_kind: OpenAiApiKind) -> StreamRoute {
@@ -47,15 +74,11 @@ impl ProviderBehavior for OpenAiBehavior {
     }
 
     fn build_headers(&self, api_key: &str, endpoint: Endpoint) -> Result<HeaderMap, ProviderError> {
-        let mut headers = HeaderMap::new();
-        headers.insert(AUTHORIZATION, bearer_value(api_key)?);
-        if matches!(
+        let content_type = matches!(
             endpoint,
             Endpoint::ChatCompletions | Endpoint::AnthropicMessages
-        ) {
-            headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
-        }
-        Ok(headers)
+        );
+        standard_bearer_headers(api_key, content_type)
     }
 }
 
@@ -79,7 +102,10 @@ impl ProviderBehavior for AnthropicBehavior {
     ) -> Result<HeaderMap, ProviderError> {
         let mut headers = HeaderMap::new();
         headers.insert("x-api-key", HeaderValue::from_str(api_key)?);
-        headers.insert("anthropic-version", HeaderValue::from_static("2023-06-01"));
+        headers.insert(
+            "anthropic-version",
+            HeaderValue::from_static(ANTHROPIC_VERSION),
+        );
         headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
         Ok(headers)
     }
@@ -91,7 +117,7 @@ pub(crate) struct GeminiBehavior;
 
 impl ProviderBehavior for GeminiBehavior {
     fn default_base_url(&self) -> Option<&str> {
-        Some("https://generativelanguage.googleapis.com")
+        Some(GEMINI_BASE_URL)
     }
 
     fn stream_route(&self, _model: &str, _configured_kind: OpenAiApiKind) -> StreamRoute {
@@ -129,14 +155,9 @@ impl ProviderBehavior for OpenRouterBehavior {
         api_key: &str,
         _endpoint: Endpoint,
     ) -> Result<HeaderMap, ProviderError> {
-        let mut headers = HeaderMap::new();
-        headers.insert(AUTHORIZATION, bearer_value(api_key)?);
-        headers.insert(
-            "HTTP-Referer",
-            HeaderValue::from_static("https://github.com/enrell/navi"),
-        );
-        headers.insert("X-Title", HeaderValue::from_static("Navi"));
-        headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+        let mut headers = standard_bearer_headers(api_key, true)?;
+        headers.insert("HTTP-Referer", HeaderValue::from_static(OPENROUTER_REFERER));
+        headers.insert("X-Title", HeaderValue::from_static(OPENROUTER_TITLE));
         Ok(headers)
     }
 }
@@ -162,15 +183,10 @@ impl ProviderBehavior for GitHubCopilotBehavior {
         api_key: &str,
         _endpoint: Endpoint,
     ) -> Result<HeaderMap, ProviderError> {
-        let mut headers = HeaderMap::new();
-        headers.insert(AUTHORIZATION, bearer_value(api_key)?);
-        headers.insert(USER_AGENT, HeaderValue::from_static("navi/0.1.0"));
-        headers.insert(
-            "Openai-Intent",
-            HeaderValue::from_static("conversation-edits"),
-        );
-        headers.insert("x-initiator", HeaderValue::from_static("user"));
-        headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+        let mut headers = standard_bearer_headers(api_key, true)?;
+        headers.insert(USER_AGENT, HeaderValue::from_static(COPILOT_USER_AGENT));
+        headers.insert("Openai-Intent", HeaderValue::from_static(COPILOT_INTENT));
+        headers.insert("x-initiator", HeaderValue::from_static(COPILOT_INITIATOR));
         Ok(headers)
     }
 }
@@ -181,7 +197,7 @@ pub(crate) struct OpencodeBehavior;
 
 impl ProviderBehavior for OpencodeBehavior {
     fn default_base_url(&self) -> Option<&str> {
-        Some("https://opencode.ai/zen/v1")
+        Some(OPENCODE_ZEN_BASE_URL)
     }
 
     fn stream_route(&self, model: &str, _configured_kind: OpenAiApiKind) -> StreamRoute {
@@ -199,15 +215,11 @@ impl ProviderBehavior for OpencodeBehavior {
     }
 
     fn build_headers(&self, api_key: &str, endpoint: Endpoint) -> Result<HeaderMap, ProviderError> {
-        let mut headers = HeaderMap::new();
-        headers.insert(AUTHORIZATION, bearer_value(api_key)?);
-        if matches!(
+        let content_type = matches!(
             endpoint,
             Endpoint::ChatCompletions | Endpoint::AnthropicMessages
-        ) {
-            headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
-        }
-        Ok(headers)
+        );
+        standard_bearer_headers(api_key, content_type)
     }
 }
 
@@ -217,7 +229,7 @@ pub(crate) struct OpencodeZenBehavior;
 
 impl ProviderBehavior for OpencodeZenBehavior {
     fn default_base_url(&self) -> Option<&str> {
-        Some("https://opencode.ai/zen/v1")
+        Some(OPENCODE_ZEN_BASE_URL)
     }
 
     fn stream_route(&self, _model: &str, configured_kind: OpenAiApiKind) -> StreamRoute {
@@ -232,10 +244,7 @@ impl ProviderBehavior for OpencodeZenBehavior {
         api_key: &str,
         _endpoint: Endpoint,
     ) -> Result<HeaderMap, ProviderError> {
-        let mut headers = HeaderMap::new();
-        headers.insert(AUTHORIZATION, bearer_value(api_key)?);
-        headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
-        Ok(headers)
+        standard_bearer_headers(api_key, true)
     }
 }
 
@@ -245,7 +254,7 @@ pub(crate) struct OpencodeGoBehavior;
 
 impl ProviderBehavior for OpencodeGoBehavior {
     fn default_base_url(&self) -> Option<&str> {
-        Some("https://opencode.ai/zen/go/v1")
+        Some(OPENCODE_GO_BASE_URL)
     }
 
     fn stream_route(&self, _model: &str, configured_kind: OpenAiApiKind) -> StreamRoute {
@@ -260,10 +269,7 @@ impl ProviderBehavior for OpencodeGoBehavior {
         api_key: &str,
         _endpoint: Endpoint,
     ) -> Result<HeaderMap, ProviderError> {
-        let mut headers = HeaderMap::new();
-        headers.insert(AUTHORIZATION, bearer_value(api_key)?);
-        headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
-        Ok(headers)
+        standard_bearer_headers(api_key, true)
     }
 }
 
@@ -288,10 +294,7 @@ impl ProviderBehavior for GroqBehavior {
         api_key: &str,
         _endpoint: Endpoint,
     ) -> Result<HeaderMap, ProviderError> {
-        let mut headers = HeaderMap::new();
-        headers.insert(AUTHORIZATION, bearer_value(api_key)?);
-        headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
-        Ok(headers)
+        standard_bearer_headers(api_key, true)
     }
 }
 
@@ -316,10 +319,7 @@ impl ProviderBehavior for XaiBehavior {
         api_key: &str,
         _endpoint: Endpoint,
     ) -> Result<HeaderMap, ProviderError> {
-        let mut headers = HeaderMap::new();
-        headers.insert(AUTHORIZATION, bearer_value(api_key)?);
-        headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
-        Ok(headers)
+        standard_bearer_headers(api_key, true)
     }
 }
 
@@ -344,10 +344,7 @@ impl ProviderBehavior for CustomBehavior {
         api_key: &str,
         _endpoint: Endpoint,
     ) -> Result<HeaderMap, ProviderError> {
-        let mut headers = HeaderMap::new();
-        headers.insert(AUTHORIZATION, bearer_value(api_key)?);
-        headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
-        Ok(headers)
+        standard_bearer_headers(api_key, true)
     }
 }
 

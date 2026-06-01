@@ -280,13 +280,11 @@ impl SessionStore {
         if let Ok(entries) = fs::read_dir(&self.root) {
             for entry in entries.flatten() {
                 let path = entry.path();
-                if path.extension().and_then(|e| e.to_str()) == Some("json") {
-                    if let Ok(content) = fs::read_to_string(&path) {
-                        if let Ok(snapshot) = serde_json::from_str::<SessionSnapshot>(&content) {
+                if path.extension().and_then(|e| e.to_str()) == Some("json")
+                    && let Ok(content) = fs::read_to_string(&path)
+                        && let Ok(snapshot) = serde_json::from_str::<SessionSnapshot>(&content) {
                             sessions.push(snapshot);
                         }
-                    }
-                }
             }
         }
         sessions.sort_by(|a, b| {
@@ -386,7 +384,17 @@ impl SessionStore {
         let hash = project_hash(project_dir);
         let path = self.data_dir.join("memory").join(format!("{hash}.json"));
         let content = fs::read_to_string(&path).ok()?;
-        serde_json::from_str(&content).ok()
+        match serde_json::from_str(&content) {
+            Ok(memory) => Some(memory),
+            Err(err) => {
+                tracing::warn!(
+                    path = %path.display(),
+                    error = %err,
+                    "failed to parse project memory file"
+                );
+                None
+            }
+        }
     }
 
     /// Async wrapper around [`Self::load_memory`] that runs the blocking
@@ -971,5 +979,130 @@ mod tests {
         store.save(&snapshot).expect("save");
         let loaded = store.load("events-session").expect("load");
         assert_eq!(loaded.events.len(), 3);
+    }
+
+    // ── Regression tests ──────────────────────────────────────────────────────
+
+    #[test]
+    fn regression_corrupt_json_on_disk_skipped_by_list() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let store = SessionStore::new(tempdir.path().to_path_buf());
+
+        // Write a valid session
+        store.save(&make_snapshot("valid", 100)).expect("save");
+
+        // Write a corrupt JSON file
+        let corrupt_path = store.root().join("corrupt.json");
+        std::fs::write(&corrupt_path, "{invalid json!!!").expect("write corrupt");
+
+        // list() should skip the corrupt file and return only the valid one
+        let sessions = store.list();
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].id.as_str(), "valid");
+    }
+
+    #[test]
+    fn regression_list_ignores_non_json_files() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let store = SessionStore::new(tempdir.path().to_path_buf());
+
+        store.save(&make_snapshot("valid", 100)).expect("save");
+
+        // Write non-json files
+        std::fs::write(store.root().join("notes.txt"), "not a session").expect("write");
+        std::fs::write(store.root().join("README.md"), "# readme").expect("write");
+
+        let sessions = store.list();
+        assert_eq!(sessions.len(), 1);
+    }
+
+    #[test]
+    fn regression_load_missing_version_defaults_to_one() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let store = SessionStore::new(tempdir.path().to_path_buf());
+
+        // Write a snapshot JSON without the "version" field
+        // SessionId serializes as a plain string
+        let json = serde_json::json!({
+            "id": "no-version",
+            "title": null,
+            "project": "/tmp/p",
+            "created_at": 1,
+            "updated_at": 2,
+            "events": [],
+            "memory": null
+        });
+        let path = store.root().join("no-version.json");
+        std::fs::create_dir_all(store.root()).expect("create sessions dir");
+        std::fs::write(&path, serde_json::to_string(&json).unwrap()).expect("write");
+
+        let loaded = store.load("no-version").expect("load");
+        assert_eq!(loaded.version, 1); // default_session_version
+    }
+
+    #[test]
+    fn regression_load_memory_malformed_json_returns_none() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let store = SessionStore::new(tempdir.path().to_path_buf());
+        let project_dir = PathBuf::from("/tmp/test-project");
+
+        // Write a corrupt memory file
+        let hash = {
+            use std::hash::{Hash, Hasher};
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            project_dir.hash(&mut hasher);
+            format!("{:016x}", hasher.finish())
+        };
+        let memory_dir = tempdir.path().join("memory");
+        std::fs::create_dir_all(&memory_dir).expect("create");
+        std::fs::write(memory_dir.join(format!("{hash}.json")), "not json!").expect("write");
+
+        let loaded = store.load_memory(&project_dir);
+        assert!(loaded.is_none(), "malformed memory should return None");
+    }
+
+    #[test]
+    fn regression_session_title_only_tool_events_returns_none() {
+        let events = vec![
+            AgentEvent::ToolRequested(ToolInvocation {
+                id: "c1".to_string(),
+                tool_name: "read_file".to_string(),
+                input: serde_json::json!({}),
+            }),
+            AgentEvent::ToolCompleted(ToolResult {
+                invocation_id: "c1".to_string(),
+                ok: true,
+                output: serde_json::json!("content"),
+            }),
+        ];
+        let title = session_title_from_events(&events);
+        assert!(title.is_none(), "no user/model text should return None");
+    }
+
+    #[test]
+    fn regression_project_hash_is_stable() {
+        let path = PathBuf::from("/tmp/some/project/dir");
+        let hash1 = {
+            use std::hash::{Hash, Hasher};
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            path.hash(&mut hasher);
+            format!("{:016x}", hasher.finish())
+        };
+        let hash2 = {
+            use std::hash::{Hash, Hasher};
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            path.hash(&mut hasher);
+            format!("{:016x}", hasher.finish())
+        };
+        assert_eq!(hash1, hash2);
+    }
+
+    #[test]
+    fn regression_create_id_format() {
+        let id = SessionStore::create_id();
+        assert!(
+            id.as_str().starts_with("session-"),
+            "session id must start with 'session-'"
+        );
     }
 }
