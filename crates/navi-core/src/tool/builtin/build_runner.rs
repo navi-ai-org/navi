@@ -3,7 +3,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
@@ -38,6 +38,7 @@ struct BuildOutput {
 
 pub(crate) struct BuildRunnerTool {
     state: Arc<Mutex<BuildState>>,
+    project_root: PathBuf,
 }
 
 struct BuildState {
@@ -54,13 +55,14 @@ struct CachedResult {
 }
 
 impl BuildRunnerTool {
-    pub(crate) fn new() -> Self {
+    pub(crate) fn new(project_root: PathBuf) -> Self {
         Self {
             state: Arc::new(Mutex::new(BuildState {
                 last_build_time: None,
                 last_source_mtime: None,
                 last_result: None,
             })),
+            project_root,
         }
     }
 }
@@ -100,10 +102,10 @@ impl Tool for BuildRunnerTool {
         let features = helpers::optional_string(&invocation.input, "features");
         let incremental = helpers::optional_bool(&invocation.input, "incremental").unwrap_or(true);
 
-        let build_system = detect_build_system().await?;
+        let build_system = detect_build_system(&self.project_root).await?;
 
         if incremental {
-            let current_mtime = latest_source_mtime(&build_system);
+            let current_mtime = latest_source_mtime(&self.project_root, &build_system);
             let state = self.state.lock().unwrap_or_else(|e| e.into_inner());
 
             if let (Some(last_build), Some(src_mtime), Some(cached)) = (
@@ -142,6 +144,7 @@ impl Tool for BuildRunnerTool {
         let mut child = tokio::process::Command::new("bash")
             .arg("-lc")
             .arg(&command)
+            .current_dir(&self.project_root)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .kill_on_drop(true)
@@ -197,7 +200,7 @@ impl Tool for BuildRunnerTool {
         {
             let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
             state.last_build_time = Some(SystemTime::now());
-            state.last_source_mtime = latest_source_mtime(&build_system);
+            state.last_source_mtime = latest_source_mtime(&self.project_root, &build_system);
             state.last_result = Some(CachedResult {
                 _status: result["status"].as_str().unwrap_or("error").to_string(),
                 warnings: result["warnings"].as_array().cloned().unwrap_or_default(),
@@ -228,17 +231,17 @@ fn spawn_reader<R: tokio::io::AsyncRead + Unpin + Send + 'static>(
     });
 }
 
-async fn detect_build_system() -> Result<String> {
-    if Path::new("Cargo.toml").exists() {
+async fn detect_build_system(project_root: &Path) -> Result<String> {
+    if project_root.join("Cargo.toml").exists() {
         return Ok("cargo".to_string());
     }
-    if Path::new("package.json").exists() {
-        if Path::new("bun.lockb").exists() {
+    if project_root.join("package.json").exists() {
+        if project_root.join("bun.lockb").exists() {
             return Ok("bun".to_string());
         }
         return Ok("npm".to_string());
     }
-    if Path::new("Makefile").exists() {
+    if project_root.join("Makefile").exists() {
         return Ok("make".to_string());
     }
     anyhow::bail!("no build system detected in current directory");
@@ -269,7 +272,7 @@ fn build_command(system: &str, profile: &str, features: Option<&str>) -> String 
     cmd
 }
 
-fn latest_source_mtime(system: &str) -> Option<SystemTime> {
+fn latest_source_mtime(project_root: &Path, system: &str) -> Option<SystemTime> {
     let extensions: &[&str] = match system {
         "cargo" => &["rs"],
         "npm" | "bun" => &["ts", "tsx", "js", "jsx"],
@@ -278,7 +281,7 @@ fn latest_source_mtime(system: &str) -> Option<SystemTime> {
     };
 
     let mut latest = None;
-    walk_source_files(Path::new("."), extensions, &mut latest);
+    walk_source_files(project_root, extensions, &mut latest);
     latest
 }
 

@@ -53,7 +53,8 @@ impl SecurityPolicy {
     /// Validates a file path, checking project restrictions, `.git` protection,
     /// and NAVI private storage.
     pub fn validate_path(&self, path: &Path, write: bool) -> SecurityDecision {
-        let Ok(path) = normalize_existing_or_parent(path) else {
+        let path = self.resolve_project_path(path);
+        let Ok(path) = normalize_existing_or_parent(&path) else {
             return SecurityDecision::Deny(format!("failed to resolve {}", path.display()));
         };
 
@@ -169,9 +170,10 @@ impl SecurityPolicy {
                     // git_ops read-only commands are safe
                     if definition.name == "git_ops"
                         && let Some(cmd) = invocation.input.get("command").and_then(Value::as_str)
-                            && matches!(cmd, "status" | "diff" | "log" | "branch") {
-                                return SecurityDecision::Allow;
-                            }
+                        && matches!(cmd, "status" | "diff" | "log" | "branch")
+                    {
+                        return SecurityDecision::Allow;
+                    }
                     SecurityDecision::NeedsApproval(SecurityRisk::Command)
                 }),
             ToolKind::Custom => SecurityDecision::NeedsApproval(SecurityRisk::ExternalPlugin),
@@ -184,7 +186,38 @@ impl SecurityPolicy {
             .get("path")
             .or_else(|| invocation.input.get("file"))
             .and_then(Value::as_str)
-            .map(PathBuf::from)
+            .map(|path| self.resolve_project_path(Path::new(path)))
+    }
+
+    /// Returns the normalized project root used as the execution sandbox.
+    pub fn project_root(&self) -> &Path {
+        &self.project_root
+    }
+
+    /// Resolves relative tool paths against the project root instead of the
+    /// process CWD. This keeps SDK/ACP embeddings from accidentally reading or
+    /// writing outside the requested project when NAVI is launched elsewhere.
+    pub fn resolve_project_path(&self, path: &Path) -> PathBuf {
+        if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            self.project_root.join(path)
+        }
+    }
+
+    /// Returns a copy of the invocation with security-visible path fields made
+    /// absolute under the project root.
+    pub fn normalize_invocation_paths(&self, invocation: &ToolInvocation) -> ToolInvocation {
+        let mut invocation = invocation.clone();
+        if let Value::Object(ref mut map) = invocation.input {
+            for key in ["path", "file"] {
+                if let Some(Value::String(value)) = map.get_mut(key) {
+                    let resolved = self.resolve_project_path(Path::new(value));
+                    *value = resolved.display().to_string();
+                }
+            }
+        }
+        invocation
     }
 }
 
@@ -314,11 +347,12 @@ fn push_redacted_token(output: &mut String, token: &str) {
     }
 
     if let Some((prefix, _secret)) = token.split_once('=')
-        && is_secret_assignment_name(prefix) {
-            output.push_str(prefix);
-            output.push_str("=<redacted>");
-            return;
-        }
+        && is_secret_assignment_name(prefix)
+    {
+        output.push_str(prefix);
+        output.push_str("=<redacted>");
+        return;
+    }
 
     let trimmed = token.trim_matches(|ch: char| {
         matches!(

@@ -273,6 +273,7 @@ impl ToolExecutor {
         let invocation_id = invocation.id.clone();
         let tool_name = invocation.tool_name.clone();
         let started_at = std::time::Instant::now();
+        let invocation = self.policy.normalize_invocation_paths(&invocation);
         if let Err(invalid) = self.validate_arguments(&invocation) {
             tracing::warn!(tool = %tool_name, invocation_id = %invocation_id, error = %tool_call_advice_message(&invalid), "tool argument validation denied");
             return self.invalid_tool_result(&invocation, invalid);
@@ -318,16 +319,17 @@ impl ToolExecutor {
     }
 
     fn register_builtin_tools(&mut self) {
+        let project_root = self.policy.project_root().to_path_buf();
         self.register(ReadFileTool);
         self.register(WriteFileTool);
-        self.register(ApplyPatchTool);
+        self.register(ApplyPatchTool::new(project_root.clone()));
         self.register(FsBrowserTool);
         self.register(GrepTool);
-        self.register(BashTool::new());
-        self.register(TestRunnerTool);
-        self.register(BuildRunnerTool::new());
-        self.register(GitOpsTool);
-        self.register(PackageManagerTool);
+        self.register(BashTool::new(project_root.clone()));
+        self.register(TestRunnerTool::new(project_root.clone()));
+        self.register(BuildRunnerTool::new(project_root.clone()));
+        self.register(GitOpsTool::new(project_root.clone()));
+        self.register(PackageManagerTool::new(project_root));
     }
 }
 

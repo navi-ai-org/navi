@@ -62,9 +62,13 @@ impl Tool for ReadFileTool {
         let end_line = helpers::optional_u64(&invocation.input, "end_line");
 
         let start_idx = (start_line.max(1) - 1) as usize;
-        let end_idx = match end_line {
-            Some(e) => (e as usize).clamp(start_idx, total_lines),
-            None => (start_idx + 1000).min(total_lines),
+        let end_idx = if start_idx >= total_lines {
+            total_lines
+        } else {
+            match end_line {
+                Some(e) => (e as usize).clamp(start_idx, total_lines),
+                None => (start_idx + 1000).min(total_lines),
+            }
         };
 
         let sliced_lines = if start_idx < total_lines {

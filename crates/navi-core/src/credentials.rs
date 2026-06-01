@@ -95,9 +95,10 @@ impl CredentialStore {
     /// Reads an API key from OpenCode's auth.json file, if it exists.
     pub fn get_opencode_api_key(&self) -> Option<String> {
         if let Ok(content) = std::env::var("OPENCODE_AUTH_CONTENT")
-            && let Some(key) = opencode_key_from_auth_content(&content) {
-                return Some(key);
-            }
+            && let Some(key) = opencode_key_from_auth_content(&content)
+        {
+            return Some(key);
+        }
 
         opencode_auth_paths()
             .into_iter()
@@ -146,9 +147,10 @@ impl CredentialStore {
     /// the stored credential. Returns `None` if neither is set.
     pub fn resolve_api_key(&self, provider_id: &str, env_var: &str) -> Option<String> {
         if let Ok(key) = std::env::var(env_var)
-            && !key.is_empty() {
-                return Some(key);
-            }
+            && !key.is_empty()
+        {
+            return Some(key);
+        }
         self.get_api_key(provider_id)
     }
 
@@ -240,14 +242,14 @@ pub fn resolve_provider_credential_status(
     if let Some(model) = model
         && (model_can_run_publicly(requested_provider_id, model)
             || model_can_run_publicly(&provider_config.id, model))
-        {
-            return CredentialStatus {
-                configured: true,
-                source: Some(CredentialSource::PublicModel),
-                label: "public".to_string(),
-                detail: Some("free model access without key".to_string()),
-            };
-        }
+    {
+        return CredentialStatus {
+            configured: true,
+            source: Some(CredentialSource::PublicModel),
+            label: "public".to_string(),
+            detail: Some("free model access without key".to_string()),
+        };
+    }
 
     CredentialStatus {
         configured: false,
@@ -305,9 +307,10 @@ fn opencode_auth_paths() -> Vec<PathBuf> {
     let mut paths = Vec::new();
 
     if let Ok(data_home) = std::env::var("XDG_DATA_HOME")
-        && !data_home.is_empty() {
-            paths.push(PathBuf::from(data_home).join("opencode").join("auth.json"));
-        }
+        && !data_home.is_empty()
+    {
+        paths.push(PathBuf::from(data_home).join("opencode").join("auth.json"));
+    }
 
     if let Some(base_dirs) = BaseDirs::new() {
         paths.push(base_dirs.data_dir().join("opencode").join("auth.json"));

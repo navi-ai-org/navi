@@ -75,6 +75,46 @@ async fn builtins_read_write_and_grep_files() {
 }
 
 #[tokio::test]
+async fn relative_tool_paths_are_resolved_under_project_root() {
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let executor = executor(tempdir.path());
+
+    let result = executor
+        .invoke(ToolInvocation {
+            id: "write-relative".to_string(),
+            tool_name: "write_file".to_string(),
+            input: json!({ "path": "src/relative.rs", "content": "// relative\n" }),
+        })
+        .await;
+
+    assert!(result.ok);
+    assert_eq!(
+        std::fs::read_to_string(tempdir.path().join("src/relative.rs")).unwrap(),
+        "// relative\n"
+    );
+}
+
+#[tokio::test]
+async fn bash_runs_with_project_root_as_cwd() {
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let executor = executor(tempdir.path());
+
+    let result = executor
+        .invoke(ToolInvocation {
+            id: "pwd".to_string(),
+            tool_name: "bash".to_string(),
+            input: json!({ "command": "pwd" }),
+        })
+        .await;
+
+    assert!(result.ok);
+    assert_eq!(
+        result.output["stdout"].as_str().unwrap().trim(),
+        tempdir.path().canonicalize().unwrap().display().to_string()
+    );
+}
+
+#[tokio::test]
 async fn bash_timeout_returns_structured_error() {
     let tempdir = tempfile::tempdir().expect("tempdir");
     let executor = executor(tempdir.path());

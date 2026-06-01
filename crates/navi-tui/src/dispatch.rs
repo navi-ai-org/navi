@@ -116,13 +116,15 @@ pub(crate) fn handle_async_event(app: &mut TuiApp, event: AsyncEvent) {
             } => {
                 app.compact_state.update_usage(input_tokens);
                 if let Some(msg) = app.messages.last_mut()
-                    && msg.role == ChatRole::Assistant && msg.usage_label.is_none() {
-                        msg.usage_label = Some(format!(
-                            "{}k in · {}k out",
-                            input_tokens / 1000,
-                            output_tokens / 1000,
-                        ));
-                    }
+                    && msg.role == ChatRole::Assistant
+                    && msg.usage_label.is_none()
+                {
+                    msg.usage_label = Some(format!(
+                        "{}k in · {}k out",
+                        input_tokens / 1000,
+                        output_tokens / 1000,
+                    ));
+                }
                 app.events.push(AgentEvent::UsageReported {
                     input_tokens,
                     output_tokens,

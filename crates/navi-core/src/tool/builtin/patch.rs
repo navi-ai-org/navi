@@ -1,13 +1,22 @@
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use serde_json::json;
+use std::path::PathBuf;
 use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 
 use super::helpers;
 use crate::tool::{Tool, ToolDefinition, ToolInvocation, ToolKind, ToolResult};
 
-pub(crate) struct ApplyPatchTool;
+pub(crate) struct ApplyPatchTool {
+    project_root: PathBuf,
+}
+
+impl ApplyPatchTool {
+    pub(crate) fn new(project_root: PathBuf) -> Self {
+        Self { project_root }
+    }
+}
 
 #[async_trait]
 impl Tool for ApplyPatchTool {
@@ -24,6 +33,7 @@ impl Tool for ApplyPatchTool {
         let patch = helpers::required_string(&invocation.input, "patch")?;
         let mut child = Command::new("git")
             .args(["apply", "--whitespace=nowarn", "-"])
+            .current_dir(&self.project_root)
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())

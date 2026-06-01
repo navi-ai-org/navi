@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use async_trait::async_trait;
 use serde::Serialize;
 use serde_json::{Value, json};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::Arc;
 use std::time::Duration;
@@ -38,7 +38,15 @@ struct TestRunOutput {
     raw_output: Option<String>,
 }
 
-pub(crate) struct TestRunnerTool;
+pub(crate) struct TestRunnerTool {
+    project_root: PathBuf,
+}
+
+impl TestRunnerTool {
+    pub(crate) fn new(project_root: PathBuf) -> Self {
+        Self { project_root }
+    }
+}
 
 #[async_trait]
 impl Tool for TestRunnerTool {
@@ -68,7 +76,7 @@ impl Tool for TestRunnerTool {
         let test_path = helpers::optional_string(&invocation.input, "test_path");
         let flags = helpers::optional_string(&invocation.input, "flags");
 
-        let framework = detect_test_framework().await?;
+        let framework = detect_test_framework(&self.project_root).await?;
         let command = build_test_command(&framework, test_path.as_deref(), flags.as_deref());
 
         let timeout_ms = TEST_MAX_TIMEOUT_MS;
@@ -76,6 +84,7 @@ impl Tool for TestRunnerTool {
         let mut child = tokio::process::Command::new("bash")
             .arg("-lc")
             .arg(&command)
+            .current_dir(&self.project_root)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .kill_on_drop(true)
@@ -151,36 +160,35 @@ fn spawn_reader<R: tokio::io::AsyncRead + Unpin + Send + 'static>(
     });
 }
 
-async fn detect_test_framework() -> Result<String> {
-    let cwd = std::env::current_dir().context("failed to get cwd")?;
-
-    if Path::new("Cargo.toml").exists() {
+async fn detect_test_framework(project_root: &Path) -> Result<String> {
+    if project_root.join("Cargo.toml").exists() {
         return Ok("cargo".to_string());
     }
-    if Path::new("go.mod").exists() {
+    if project_root.join("go.mod").exists() {
         return Ok("go".to_string());
     }
-    if Path::new("pyproject.toml").exists()
-        || Path::new("setup.py").exists()
-        || Path::new("pytest.ini").exists()
+    if project_root.join("pyproject.toml").exists()
+        || project_root.join("setup.py").exists()
+        || project_root.join("pytest.ini").exists()
     {
         return Ok("pytest".to_string());
     }
-    if Path::new("package.json").exists() {
-        let content = std::fs::read_to_string("package.json").unwrap_or_default();
+    if project_root.join("package.json").exists() {
+        let content =
+            std::fs::read_to_string(project_root.join("package.json")).unwrap_or_default();
         if content.contains("vitest") {
             return Ok("vitest".to_string());
         }
         if content.contains("jest") {
             return Ok("jest".to_string());
         }
-        if content.contains("bun") || Path::new("bun.lockb").exists() {
+        if content.contains("bun") || project_root.join("bun.lockb").exists() {
             return Ok("bun".to_string());
         }
         return Ok("npm".to_string());
     }
 
-    anyhow::bail!("no test framework detected in {}", cwd.display());
+    anyhow::bail!("no test framework detected in {}", project_root.display());
 }
 
 fn build_test_command(framework: &str, test_path: Option<&str>, flags: Option<&str>) -> String {

@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use async_trait::async_trait;
 use serde::Serialize;
 use serde_json::{Value, json};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
 
 use super::helpers;
@@ -26,7 +26,15 @@ struct PackageCheckOutput {
     not_found: Vec<String>,
 }
 
-pub(crate) struct PackageManagerTool;
+pub(crate) struct PackageManagerTool {
+    project_root: PathBuf,
+}
+
+impl PackageManagerTool {
+    pub(crate) fn new(project_root: PathBuf) -> Self {
+        Self { project_root }
+    }
+}
 
 #[async_trait]
 impl Tool for PackageManagerTool {
@@ -81,17 +89,26 @@ impl Tool for PackageManagerTool {
             .unwrap_or_else(|| "auto".to_string());
 
         let detected = if manager == "auto" {
-            detect_package_manager().await?
+            detect_package_manager(&self.project_root).await?
         } else {
             manager.clone()
         };
 
         match action.as_str() {
-            "install" => cmd_install(&invocation.id, &detected).await,
-            "add" => cmd_add(&invocation.id, &detected, &packages, dev).await,
-            "remove" => cmd_remove(&invocation.id, &detected, &packages).await,
-            "update" => cmd_update(&invocation.id, &detected, &packages).await,
-            "check" => cmd_check(&invocation.id, &detected, &packages).await,
+            "install" => cmd_install(&self.project_root, &invocation.id, &detected).await,
+            "add" => {
+                cmd_add(
+                    &self.project_root,
+                    &invocation.id,
+                    &detected,
+                    &packages,
+                    dev,
+                )
+                .await
+            }
+            "remove" => cmd_remove(&self.project_root, &invocation.id, &detected, &packages).await,
+            "update" => cmd_update(&self.project_root, &invocation.id, &detected, &packages).await,
+            "check" => cmd_check(&self.project_root, &invocation.id, &detected, &packages).await,
             _ => Ok(ToolResult {
                 invocation_id: invocation.id,
                 ok: false,
@@ -107,9 +124,9 @@ impl Tool for PackageManagerTool {
     }
 }
 
-async fn run_pkg(args: &[&str]) -> Result<(bool, String, String)> {
+async fn run_pkg(project_root: &Path, args: &[&str]) -> Result<(bool, String, String)> {
     let mut cmd = tokio::process::Command::new("bash");
-    cmd.arg("-lc").arg(args.join(" "));
+    cmd.arg("-lc").arg(args.join(" ")).current_dir(project_root);
     let output = cmd
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -123,23 +140,28 @@ async fn run_pkg(args: &[&str]) -> Result<(bool, String, String)> {
     Ok((output.status.success(), stdout, stderr))
 }
 
-async fn detect_package_manager() -> Result<String> {
-    if Path::new("bun.lockb").exists() {
+async fn detect_package_manager(project_root: &Path) -> Result<String> {
+    if project_root.join("bun.lockb").exists() {
         return Ok("bun".to_string());
     }
-    if Path::new("package-lock.json").exists() || Path::new("package.json").exists() {
+    if project_root.join("package-lock.json").exists() || project_root.join("package.json").exists()
+    {
         return Ok("npm".to_string());
     }
-    if Path::new("Cargo.lock").exists() || Path::new("Cargo.toml").exists() {
+    if project_root.join("Cargo.lock").exists() || project_root.join("Cargo.toml").exists() {
         return Ok("cargo".to_string());
     }
-    if Path::new("go.sum").exists() || Path::new("go.mod").exists() {
+    if project_root.join("go.sum").exists() || project_root.join("go.mod").exists() {
         return Ok("go".to_string());
     }
     anyhow::bail!("no package manager detected in current directory");
 }
 
-async fn cmd_install(invocation_id: &str, manager: &str) -> Result<ToolResult> {
+async fn cmd_install(
+    project_root: &Path,
+    invocation_id: &str,
+    manager: &str,
+) -> Result<ToolResult> {
     let cmd = match manager {
         "npm" => "npm install",
         "bun" => "bun install",
@@ -148,7 +170,7 @@ async fn cmd_install(invocation_id: &str, manager: &str) -> Result<ToolResult> {
         _ => anyhow::bail!("unsupported package manager: {manager}"),
     };
 
-    let (ok, stdout, stderr) = run_pkg(&[cmd]).await?;
+    let (ok, stdout, stderr) = run_pkg(project_root, &[cmd]).await?;
 
     Ok(ToolResult {
         invocation_id: invocation_id.to_string(),
@@ -173,6 +195,7 @@ async fn cmd_install(invocation_id: &str, manager: &str) -> Result<ToolResult> {
 }
 
 async fn cmd_add(
+    project_root: &Path,
     invocation_id: &str,
     manager: &str,
     packages: &[String],
@@ -219,7 +242,7 @@ async fn cmd_add(
         _ => anyhow::bail!("unsupported package manager: {manager}"),
     };
 
-    let (ok, stdout, stderr) = run_pkg(&[&cmd]).await?;
+    let (ok, stdout, stderr) = run_pkg(project_root, &[&cmd]).await?;
 
     let installed: Vec<Value> = packages
         .iter()
@@ -250,7 +273,12 @@ async fn cmd_add(
     })
 }
 
-async fn cmd_remove(invocation_id: &str, manager: &str, packages: &[String]) -> Result<ToolResult> {
+async fn cmd_remove(
+    project_root: &Path,
+    invocation_id: &str,
+    manager: &str,
+    packages: &[String],
+) -> Result<ToolResult> {
     if packages.is_empty() {
         return Ok(ToolResult {
             invocation_id: invocation_id.to_string(),
@@ -274,7 +302,7 @@ async fn cmd_remove(invocation_id: &str, manager: &str, packages: &[String]) -> 
         _ => anyhow::bail!("unsupported package manager: {manager}"),
     };
 
-    let (ok, stdout, stderr) = run_pkg(&[&cmd]).await?;
+    let (ok, stdout, stderr) = run_pkg(project_root, &[&cmd]).await?;
 
     Ok(ToolResult {
         invocation_id: invocation_id.to_string(),
@@ -300,7 +328,12 @@ async fn cmd_remove(invocation_id: &str, manager: &str, packages: &[String]) -> 
     })
 }
 
-async fn cmd_update(invocation_id: &str, manager: &str, packages: &[String]) -> Result<ToolResult> {
+async fn cmd_update(
+    project_root: &Path,
+    invocation_id: &str,
+    manager: &str,
+    packages: &[String],
+) -> Result<ToolResult> {
     let cmd = if packages.is_empty() {
         match manager {
             "npm" => "npm update".to_string(),
@@ -320,7 +353,7 @@ async fn cmd_update(invocation_id: &str, manager: &str, packages: &[String]) -> 
         }
     };
 
-    let (ok, stdout, stderr) = run_pkg(&[&cmd]).await?;
+    let (ok, stdout, stderr) = run_pkg(project_root, &[&cmd]).await?;
 
     Ok(ToolResult {
         invocation_id: invocation_id.to_string(),
@@ -345,11 +378,16 @@ async fn cmd_update(invocation_id: &str, manager: &str, packages: &[String]) -> 
     })
 }
 
-async fn cmd_check(invocation_id: &str, manager: &str, packages: &[String]) -> Result<ToolResult> {
+async fn cmd_check(
+    project_root: &Path,
+    invocation_id: &str,
+    manager: &str,
+    packages: &[String],
+) -> Result<ToolResult> {
     match manager {
-        "npm" | "bun" => check_npm(invocation_id, manager, packages).await,
-        "cargo" => check_cargo(invocation_id, packages).await,
-        "go" => check_go(invocation_id, packages).await,
+        "npm" | "bun" => check_npm(project_root, invocation_id, manager, packages).await,
+        "cargo" => check_cargo(project_root, invocation_id, packages).await,
+        "go" => check_go(project_root, invocation_id, packages).await,
         _ => Ok(ToolResult {
             invocation_id: invocation_id.to_string(),
             ok: false,
@@ -364,10 +402,15 @@ async fn cmd_check(invocation_id: &str, manager: &str, packages: &[String]) -> R
     }
 }
 
-async fn check_npm(invocation_id: &str, manager: &str, packages: &[String]) -> Result<ToolResult> {
+async fn check_npm(
+    project_root: &Path,
+    invocation_id: &str,
+    manager: &str,
+    packages: &[String],
+) -> Result<ToolResult> {
     // Small manifest files (<10KB); blocking the runtime for microseconds is
     // cheaper than the spawn_blocking thread-pool overhead.
-    let manifest = std::fs::read_to_string("package.json").unwrap_or_default();
+    let manifest = std::fs::read_to_string(project_root.join("package.json")).unwrap_or_default();
     let mut installed: Vec<PackageEntry> = Vec::new();
     let mut not_found: Vec<String> = Vec::new();
 
@@ -385,7 +428,7 @@ async fn check_npm(invocation_id: &str, manager: &str, packages: &[String]) -> R
 
     // If no specific packages, check if node_modules exists
     if packages.is_empty() {
-        let has_modules = Path::new("node_modules").exists();
+        let has_modules = project_root.join("node_modules").exists();
         return Ok(helpers::ok(
             invocation_id.to_string(),
             json!({
@@ -411,8 +454,12 @@ async fn check_npm(invocation_id: &str, manager: &str, packages: &[String]) -> R
     ))
 }
 
-async fn check_cargo(invocation_id: &str, packages: &[String]) -> Result<ToolResult> {
-    let manifest = std::fs::read_to_string("Cargo.toml").unwrap_or_default();
+async fn check_cargo(
+    project_root: &Path,
+    invocation_id: &str,
+    packages: &[String],
+) -> Result<ToolResult> {
+    let manifest = std::fs::read_to_string(project_root.join("Cargo.toml")).unwrap_or_default();
     let mut installed: Vec<PackageEntry> = Vec::new();
     let mut not_found: Vec<String> = Vec::new();
 
@@ -429,7 +476,7 @@ async fn check_cargo(invocation_id: &str, packages: &[String]) -> Result<ToolRes
     }
 
     if packages.is_empty() {
-        let has_lock = Path::new("Cargo.lock").exists();
+        let has_lock = project_root.join("Cargo.lock").exists();
         return Ok(helpers::ok(
             invocation_id.to_string(),
             json!({
@@ -455,8 +502,12 @@ async fn check_cargo(invocation_id: &str, packages: &[String]) -> Result<ToolRes
     ))
 }
 
-async fn check_go(invocation_id: &str, packages: &[String]) -> Result<ToolResult> {
-    let manifest = std::fs::read_to_string("go.mod").unwrap_or_default();
+async fn check_go(
+    project_root: &Path,
+    invocation_id: &str,
+    packages: &[String],
+) -> Result<ToolResult> {
+    let manifest = std::fs::read_to_string(project_root.join("go.mod")).unwrap_or_default();
     let mut installed: Vec<PackageEntry> = Vec::new();
     let mut not_found: Vec<String> = Vec::new();
 
@@ -473,7 +524,7 @@ async fn check_go(invocation_id: &str, packages: &[String]) -> Result<ToolResult
     }
 
     if packages.is_empty() {
-        let has_sum = Path::new("go.sum").exists();
+        let has_sum = project_root.join("go.sum").exists();
         return Ok(helpers::ok(
             invocation_id.to_string(),
             json!({
@@ -698,7 +749,7 @@ mod tests {
         let tempdir = tempfile::tempdir().unwrap();
         std::fs::write(tempdir.path().join("bun.lockb"), "").unwrap();
         let _guard = ChangeDirGuard::new(tempdir.path());
-        assert_eq!(detect_package_manager().await.unwrap(), "bun");
+        assert_eq!(detect_package_manager(tempdir.path()).await.unwrap(), "bun");
     }
 
     #[tokio::test]
@@ -706,7 +757,7 @@ mod tests {
         let tempdir = tempfile::tempdir().unwrap();
         std::fs::write(tempdir.path().join("package.json"), "{}").unwrap();
         let _guard = ChangeDirGuard::new(tempdir.path());
-        assert_eq!(detect_package_manager().await.unwrap(), "npm");
+        assert_eq!(detect_package_manager(tempdir.path()).await.unwrap(), "npm");
     }
 
     #[tokio::test]
@@ -714,7 +765,7 @@ mod tests {
         let tempdir = tempfile::tempdir().unwrap();
         std::fs::write(tempdir.path().join("package-lock.json"), "{}").unwrap();
         let _guard = ChangeDirGuard::new(tempdir.path());
-        assert_eq!(detect_package_manager().await.unwrap(), "npm");
+        assert_eq!(detect_package_manager(tempdir.path()).await.unwrap(), "npm");
     }
 
     #[tokio::test]
@@ -722,7 +773,10 @@ mod tests {
         let tempdir = tempfile::tempdir().unwrap();
         std::fs::write(tempdir.path().join("Cargo.toml"), "[package]").unwrap();
         let _guard = ChangeDirGuard::new(tempdir.path());
-        assert_eq!(detect_package_manager().await.unwrap(), "cargo");
+        assert_eq!(
+            detect_package_manager(tempdir.path()).await.unwrap(),
+            "cargo"
+        );
     }
 
     #[tokio::test]
@@ -730,7 +784,10 @@ mod tests {
         let tempdir = tempfile::tempdir().unwrap();
         std::fs::write(tempdir.path().join("Cargo.lock"), "").unwrap();
         let _guard = ChangeDirGuard::new(tempdir.path());
-        assert_eq!(detect_package_manager().await.unwrap(), "cargo");
+        assert_eq!(
+            detect_package_manager(tempdir.path()).await.unwrap(),
+            "cargo"
+        );
     }
 
     #[tokio::test]
@@ -738,7 +795,7 @@ mod tests {
         let tempdir = tempfile::tempdir().unwrap();
         std::fs::write(tempdir.path().join("go.mod"), "module test").unwrap();
         let _guard = ChangeDirGuard::new(tempdir.path());
-        assert_eq!(detect_package_manager().await.unwrap(), "go");
+        assert_eq!(detect_package_manager(tempdir.path()).await.unwrap(), "go");
     }
 
     #[tokio::test]
@@ -746,14 +803,14 @@ mod tests {
         let tempdir = tempfile::tempdir().unwrap();
         std::fs::write(tempdir.path().join("go.sum"), "").unwrap();
         let _guard = ChangeDirGuard::new(tempdir.path());
-        assert_eq!(detect_package_manager().await.unwrap(), "go");
+        assert_eq!(detect_package_manager(tempdir.path()).await.unwrap(), "go");
     }
 
     #[tokio::test]
     async fn detect_fails_without_manifests() {
         let tempdir = tempfile::tempdir().unwrap();
         let _guard = ChangeDirGuard::new(tempdir.path());
-        assert!(detect_package_manager().await.is_err());
+        assert!(detect_package_manager(tempdir.path()).await.is_err());
     }
 
     #[tokio::test]
@@ -762,7 +819,7 @@ mod tests {
         std::fs::write(tempdir.path().join("bun.lockb"), "").unwrap();
         std::fs::write(tempdir.path().join("package.json"), "{}").unwrap();
         let _guard = ChangeDirGuard::new(tempdir.path());
-        assert_eq!(detect_package_manager().await.unwrap(), "bun");
+        assert_eq!(detect_package_manager(tempdir.path()).await.unwrap(), "bun");
     }
 
     // ── check_cargo inline ─────────────────────────────────────────────────
@@ -777,9 +834,13 @@ mod tests {
         .unwrap();
         let _guard = ChangeDirGuard::new(tempdir.path());
 
-        let result = check_cargo("test", &["serde".to_string(), "missing".to_string()])
-            .await
-            .unwrap();
+        let result = check_cargo(
+            tempdir.path(),
+            "test",
+            &["serde".to_string(), "missing".to_string()],
+        )
+        .await
+        .unwrap();
 
         assert!(result.ok);
         let installed = result.output["installed"].as_array().unwrap();
@@ -797,7 +858,7 @@ mod tests {
         std::fs::write(tempdir.path().join("Cargo.lock"), "").unwrap();
         let _guard = ChangeDirGuard::new(tempdir.path());
 
-        let result = check_cargo("test", &[]).await.unwrap();
+        let result = check_cargo(tempdir.path(), "test", &[]).await.unwrap();
         assert!(result.ok);
         assert_eq!(result.output["status"], "installed");
     }
@@ -814,7 +875,7 @@ mod tests {
         .unwrap();
         let _guard = ChangeDirGuard::new(tempdir.path());
 
-        let result = check_npm("test", "npm", &["express".to_string()])
+        let result = check_npm(tempdir.path(), "test", "npm", &["express".to_string()])
             .await
             .unwrap();
 
@@ -835,7 +896,7 @@ mod tests {
         .unwrap();
         let _guard = ChangeDirGuard::new(tempdir.path());
 
-        let result = check_npm("test", "npm", &["serde".to_string()])
+        let result = check_npm(tempdir.path(), "test", "npm", &["serde".to_string()])
             .await
             .unwrap();
 
@@ -854,7 +915,9 @@ mod tests {
         .unwrap();
         let _guard = ChangeDirGuard::new(tempdir.path());
 
-        let result = check_cargo("test", &["serde".to_string()]).await.unwrap();
+        let result = check_cargo(tempdir.path(), "test", &["serde".to_string()])
+            .await
+            .unwrap();
 
         assert!(result.ok);
         assert_eq!(result.output["status"], "not_found");
@@ -871,7 +934,7 @@ mod tests {
         .unwrap();
         let _guard = ChangeDirGuard::new(tempdir.path());
 
-        let result = check_go("test", &["github.com/acme/pkg".to_string()])
+        let result = check_go(tempdir.path(), "test", &["github.com/acme/pkg".to_string()])
             .await
             .unwrap();
 
@@ -886,7 +949,7 @@ mod tests {
         std::fs::create_dir(tempdir.path().join("node_modules")).unwrap();
         let _guard = ChangeDirGuard::new(tempdir.path());
 
-        let result = check_npm("test", "npm", &[]).await.unwrap();
+        let result = check_npm(tempdir.path(), "test", "npm", &[]).await.unwrap();
         assert!(result.ok);
         assert_eq!(result.output["status"], "installed");
     }
@@ -1166,7 +1229,8 @@ mod tests {
 
     #[tokio::test]
     async fn run_pkg_echo_success() {
-        let (ok, stdout, _) = run_pkg(&["echo hello"]).await.unwrap();
+        let tempdir = tempfile::tempdir().unwrap();
+        let (ok, stdout, _) = run_pkg(tempdir.path(), &["echo hello"]).await.unwrap();
         assert!(ok);
         assert_eq!(stdout.trim(), "hello");
     }

@@ -529,9 +529,10 @@ impl NaviEngine {
 
         for provider in providers {
             if let Some(selected_provider) = selected_provider
-                && canonical_provider_id(&provider.id) != selected_provider {
-                    continue;
-                }
+                && canonical_provider_id(&provider.id) != selected_provider
+            {
+                continue;
+            }
 
             let Some(api_key) =
                 resolve_provider_api_key(&credential_store, &provider, &provider.id)

@@ -122,7 +122,11 @@ pub fn load_plugin(path: &Path) -> Result<LoadedPlugin> {
 pub fn load_plugin_with_policy(path: &Path, policy: &SecurityPolicy) -> Result<LoadedPlugin> {
     match policy.validate_plugin_path(path) {
         SecurityDecision::Deny(reason) => bail!("{reason}"),
-        SecurityDecision::Allow | SecurityDecision::NeedsApproval(_) => load_plugin(path),
+        SecurityDecision::NeedsApproval(_) => bail!(
+            "plugin {} requires explicit approval and cannot be loaded during startup",
+            path.display()
+        ),
+        SecurityDecision::Allow => load_plugin(path),
     }
 }
 
@@ -335,5 +339,26 @@ mod tests {
         assert!(report.loaded.is_empty());
         assert_eq!(report.warnings.len(), 1);
         assert!(report.warnings[0].contains("failed to load plugin"));
+    }
+
+    #[test]
+    fn plugin_needing_approval_is_not_loaded_at_startup() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let plugin_dir = tempdir.path().join(".navi/plugins");
+        std::fs::create_dir_all(&plugin_dir).expect("plugin dir");
+        let plugin_path = plugin_dir.join("native.so");
+        std::fs::write(&plugin_path, b"not a real plugin").expect("plugin file");
+        let policy = SecurityPolicy::new(
+            tempdir.path().to_path_buf(),
+            tempdir.path().join("data"),
+            SecurityConfig::default(),
+        )
+        .expect("policy");
+
+        let err = match load_plugin_with_policy(&plugin_path, &policy) {
+            Ok(_) => panic!("plugin should require approval"),
+            Err(err) => err,
+        };
+        assert!(err.to_string().contains("requires explicit approval"));
     }
 }

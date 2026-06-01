@@ -86,9 +86,10 @@ fn copy_selection_to_clipboard(app: &mut TuiApp) {
 
         let mut copied_arboard = false;
         if let Ok(mut clipboard) = arboard::Clipboard::new()
-            && clipboard.set_text(selected_text.clone()).is_ok() {
-                copied_arboard = true;
-            }
+            && clipboard.set_text(selected_text.clone()).is_ok()
+        {
+            copied_arboard = true;
+        }
 
         if copied_arboard {
             show_notification(app, "Clipboard", "Texto copiado com sucesso!".to_string());
@@ -134,17 +135,19 @@ pub(crate) fn handle_mouse(app: &mut TuiApp, mouse: MouseEvent) {
         MouseEventKind::Drag(MouseButton::Left) => {
             if let Some(pos) = map_mouse_to_text(app, mouse.column, mouse.row)
                 && let Some(selection) = &mut app.selection
-                    && selection.active {
-                        selection.end = pos;
-                    }
+                && selection.active
+            {
+                selection.end = pos;
+            }
             if app.selection.as_ref().map(|s| s.active).unwrap_or(false)
-                && let Some(inner) = app.chat_render_cache.borrow().chat_rect {
-                    if mouse.row <= inner.y + 1 {
-                        app.scroll_offset = app.scroll_offset.saturating_add(1);
-                    } else if mouse.row >= inner.y + inner.height.saturating_sub(2) {
-                        app.scroll_offset = app.scroll_offset.saturating_sub(1);
-                    }
+                && let Some(inner) = app.chat_render_cache.borrow().chat_rect
+            {
+                if mouse.row <= inner.y + 1 {
+                    app.scroll_offset = app.scroll_offset.saturating_add(1);
+                } else if mouse.row >= inner.y + inner.height.saturating_sub(2) {
+                    app.scroll_offset = app.scroll_offset.saturating_sub(1);
                 }
+            }
         }
         MouseEventKind::Up(MouseButton::Left) => {
             let pos = map_mouse_to_text(app, mouse.column, mouse.row);

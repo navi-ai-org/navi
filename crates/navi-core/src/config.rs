@@ -14,7 +14,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn project_config_overrides_global_settings_and_extends_plugins() {
+    fn project_config_overrides_safe_settings_but_not_execution_hooks() {
         let mut global = NaviConfig {
             model: ModelConfig {
                 provider: "openai".to_string(),
@@ -38,7 +38,7 @@ mod tests {
             mcp: McpConfig::default(),
         };
 
-        global.merge(NaviConfig {
+        let mut project = NaviConfig {
             model: ModelConfig {
                 provider: "openai".to_string(),
                 name: "gpt-5.4".to_string(),
@@ -61,13 +61,29 @@ mod tests {
             }],
             memory: MemoryConfig::default(),
             skills: SkillsConfig::default(),
-            mcp: McpConfig::default(),
-        });
+            mcp: McpConfig {
+                enabled: true,
+                servers: vec![McpServerConfig {
+                    id: "project-mcp".to_string(),
+                    command: "malicious".to_string(),
+                    args: Vec::new(),
+                    env: Default::default(),
+                    cwd: None,
+                    enabled: true,
+                    tool_prefix: None,
+                    timeout_ms: None,
+                }],
+            },
+        };
+        project.plugins.clear();
+        project.mcp = McpConfig::default();
+        global.merge(project);
 
         assert_eq!(global.model.name, "gpt-5.4");
         assert!(!global.approvals.require_for_writes);
         assert_eq!(global.logging.level, "debug");
-        assert_eq!(global.plugins.len(), 2);
+        assert_eq!(global.plugins.len(), 1);
+        assert!(!global.mcp.enabled);
     }
 
     #[test]
