@@ -120,17 +120,25 @@ impl SessionState {
         session_store: &SessionStore,
         event_bus: &crate::runtime::EventBus,
     ) -> Result<crate::session::SessionSnapshot> {
-        let snapshot = crate::session::SessionSnapshot {
-            version: crate::session::SessionSnapshot::CURRENT_VERSION,
-            id: self.id.clone(),
-            title: self.title.clone(),
-            project: project_dir.clone(),
-            created_at: self.created_at,
-            updated_at: current_unix_timestamp(),
-            events: self.events.clone(),
-            memory: session_store.load_memory(project_dir),
-        };
-        session_store.save(&snapshot)?;
+        // SessionStore I/O is intentionally blocking, but callers invoke this
+        // from the Tokio runtime. Use `block_in_place` so the runtime can
+        // reschedule other tasks on the current thread while the filesystem
+        // work completes.
+        let snapshot = tokio::task::block_in_place(|| {
+            let memory = session_store.load_memory(project_dir);
+            let snap = crate::session::SessionSnapshot {
+                version: crate::session::SessionSnapshot::CURRENT_VERSION,
+                id: self.id.clone(),
+                title: self.title.clone(),
+                project: project_dir.clone(),
+                created_at: self.created_at,
+                updated_at: current_unix_timestamp(),
+                events: self.events.clone(),
+                memory,
+            };
+            session_store.save(&snap)?;
+            Ok::<_, anyhow::Error>(snap)
+        })?;
         event_bus.publish(crate::event::RuntimeEventKind::SessionSaved {
             session_id: snapshot.id.as_str().to_string(),
         });

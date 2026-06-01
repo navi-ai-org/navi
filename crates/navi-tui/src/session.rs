@@ -1,7 +1,7 @@
 use navi_sdk::{SessionId, SessionSnapshot, SessionStore};
 
 pub(crate) fn load_saved_sessions(store: &SessionStore) -> Vec<SessionSnapshot> {
-    store.list()
+    tokio::task::block_in_place(|| store.list())
 }
 
 pub(crate) fn session_created_at(session_id: &SessionId) -> Option<u64> {

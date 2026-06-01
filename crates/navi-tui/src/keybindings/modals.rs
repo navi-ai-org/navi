@@ -245,6 +245,53 @@ pub(crate) fn handle_api_key_key(app: &mut TuiApp, code: KeyCode, modifiers: Key
     false
 }
 
+pub(crate) fn handle_skills_key(app: &mut TuiApp, code: KeyCode) -> bool {
+    let skills = app.filtered_skills();
+    let mut list_state = SelectListState::new(app.selected_skill, app.skill_scroll);
+    match code {
+        KeyCode::Esc => super::close_active_modal(app),
+        KeyCode::Down | KeyCode::Tab => {
+            list_state.select_next(skills.len());
+            list_state.sync_scroll(14);
+        }
+        KeyCode::Up => {
+            list_state.select_previous();
+            list_state.sync_scroll(14);
+        }
+        KeyCode::Enter | KeyCode::Char(' ') => {
+            if let Some(skill) = skills.get(app.selected_skill) {
+                let skill_id = skill.id.clone();
+                let skill_name = skill.name.clone();
+                let was_active = app.is_skill_active(&skill_id);
+                app.toggle_skill(&skill_id);
+                show_notification(
+                    app,
+                    "Skills",
+                    if !was_active {
+                        format!("{} activated.", skill_name)
+                    } else {
+                        format!("{} deactivated.", skill_name)
+                    },
+                );
+            }
+        }
+        KeyCode::Char(ch) => {
+            app.skill_filter.push(ch);
+            app.skill_scroll = 0;
+            app.selected_skill = 0;
+        }
+        KeyCode::Backspace => {
+            app.skill_filter.pop();
+            app.skill_scroll = 0;
+            app.selected_skill = 0;
+        }
+        _ => {}
+    }
+    app.selected_skill = list_state.selected();
+    app.skill_scroll = list_state.scroll();
+    false
+}
+
 pub(crate) fn handle_model_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyModifiers) -> bool {
     let rows = build_model_rows(app);
     let visible_rows = 14u16;

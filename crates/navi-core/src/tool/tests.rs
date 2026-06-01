@@ -288,6 +288,84 @@ async fn invalid_tool_arguments_return_structured_error() {
 }
 
 #[tokio::test]
+async fn read_file_missing_path_returns_structured_error() {
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let executor = executor(tempdir.path());
+
+    let result = executor
+        .invoke(ToolInvocation {
+            id: "missing-read".to_string(),
+            tool_name: "read_file".to_string(),
+            input: json!({ "path": tempdir.path().join("missing.txt").display().to_string() }),
+        })
+        .await;
+
+    assert!(!result.ok);
+    assert!(
+        result.output["error"]
+            .as_str()
+            .unwrap()
+            .contains("failed to read")
+    );
+}
+
+#[tokio::test]
+async fn write_file_creates_parent_directories() {
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let executor = executor(tempdir.path());
+    let path = tempdir.path().join("nested/deep/file.txt");
+
+    let result = executor
+        .invoke(ToolInvocation {
+            id: "write-nested".to_string(),
+            tool_name: "write_file".to_string(),
+            input: json!({ "path": path.display().to_string(), "content": "hello" }),
+        })
+        .await;
+
+    assert!(result.ok);
+    assert_eq!(std::fs::read_to_string(path).unwrap(), "hello");
+}
+
+#[tokio::test]
+async fn grep_returns_empty_matches_for_no_hits() {
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let executor = executor(tempdir.path());
+    std::fs::write(tempdir.path().join("file.txt"), "alpha beta").unwrap();
+
+    let result = executor
+        .invoke(ToolInvocation {
+            id: "grep-empty".to_string(),
+            tool_name: "grep".to_string(),
+            input: json!({
+                "pattern": "does-not-exist",
+                "path": tempdir.path().display().to_string()
+            }),
+        })
+        .await;
+
+    assert!(result.ok);
+    assert_eq!(result.output["matches"].as_array().unwrap().len(), 0);
+}
+
+#[test]
+fn apply_patch_requires_patch_argument() {
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let executor = executor(tempdir.path());
+
+    let invalid = ToolInvocation {
+        id: "patch-missing".to_string(),
+        tool_name: "apply_patch".to_string(),
+        input: json!({}),
+    };
+
+    let err = executor
+        .validate_arguments(&invalid)
+        .expect_err("missing patch should fail");
+    assert!(matches!(err, ToolCallInvalid::InvalidArguments { .. }));
+}
+
+#[tokio::test]
 async fn unknown_tool_returns_available_tools_advice() {
     let tempdir = tempfile::tempdir().expect("tempdir");
     let executor = executor(tempdir.path());

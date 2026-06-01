@@ -132,7 +132,9 @@ pub struct AgentRuntime {
     session_store: SessionStore,
     agent_mode: Option<AgentMode>,
     context_packets: Vec<ContextPacket>,
+    shared_context_packets: Arc<std::sync::Mutex<Vec<ContextPacket>>>,
     active_skills: Vec<String>,
+    shared_active_skills: Arc<std::sync::Mutex<Vec<crate::skills::SkillManifest>>>,
     initial_messages: Vec<ModelMessage>,
     event_tx: Option<mpsc::UnboundedSender<AgentEvent>>,
     cancel_token: CancelToken,
@@ -153,6 +155,10 @@ impl AgentRuntime {
                 .redact_secrets_in_sessions,
         );
 
+        let shared_context_packets =
+            Arc::new(std::sync::Mutex::new(options.context_packets.clone()));
+        let shared_active_skills = Arc::new(std::sync::Mutex::new(Vec::new()));
+
         Self {
             loaded_config: options.loaded_config,
             model_provider: options.model_provider,
@@ -161,7 +167,9 @@ impl AgentRuntime {
             session_store,
             agent_mode: options.agent_mode,
             context_packets: options.context_packets,
+            shared_context_packets,
             active_skills: options.active_skills,
+            shared_active_skills,
             initial_messages: options.initial_messages,
             event_tx: options.event_tx,
             cancel_token: CancelToken::new(),
@@ -199,13 +207,21 @@ impl AgentRuntime {
 
     /// Adds a context packet to the session and emits a `ContextUpdated` event.
     pub fn add_context_packet(&mut self, packet: ContextPacket) {
-        self.context_packets.push(packet);
+        self.context_packets.push(packet.clone());
+        self.shared_context_packets
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push(packet);
         self.event_bus.publish(RuntimeEventKind::ContextUpdated);
     }
 
     /// Clears all context packets and emits a `ContextUpdated` event.
     pub fn clear_context_packets(&mut self) {
         self.context_packets.clear();
+        self.shared_context_packets
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clear();
         self.event_bus.publish(RuntimeEventKind::ContextUpdated);
     }
 
@@ -217,6 +233,11 @@ impl AgentRuntime {
     /// Sets the active skills for this session and emits a `ContextUpdated` event.
     pub fn set_active_skills(&mut self, skills: Vec<String>) {
         self.active_skills = skills;
+        let manifests = self.load_active_skills();
+        *self
+            .shared_active_skills
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = manifests;
         self.event_bus.publish(RuntimeEventKind::ContextUpdated);
     }
 
@@ -439,6 +460,13 @@ impl AgentRuntime {
                 .and_then(|memory| {
                     memory.format_injection(self.loaded_config.config.memory.max_memory_entries)
                 });
+
+        // Initialize shared_active_skills with current loaded skills
+        *self
+            .shared_active_skills
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = self.load_active_skills();
+
         let ctx = Arc::new(crate::turn::TurnContext {
             model_provider: self.model_provider.clone(),
             tool_executor,
@@ -458,9 +486,10 @@ impl AgentRuntime {
                 &self.loaded_config.config,
             ),
             agent_mode: self.agent_mode,
-            context_packets: self.context_packets.clone(),
-            active_skills: self.load_active_skills(),
+            context_packets: self.shared_context_packets.clone(),
+            active_skills: self.shared_active_skills.clone(),
             cancel_token: self.cancel_token.clone(),
+            config: Arc::new(self.loaded_config.config.clone()),
         });
 
         let policy = select_harness_policy(&self.loaded_config.config);

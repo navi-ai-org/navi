@@ -18,10 +18,13 @@ pub(crate) async fn ensure_success(
         }
     }
 
-    let body = response
-        .text()
-        .await
-        .unwrap_or_else(|_| "<failed to read error body>".to_string());
+    let (body, body_read_error) = match response.text().await {
+        Ok(text) => (text, None),
+        Err(err) => (
+            "<failed to read error body>".to_string(),
+            Some(err.to_string()),
+        ),
+    };
 
     if let Ok(json_body) = serde_json::from_str::<serde_json::Value>(&body) {
         if let Some(delay) = extract_requested_delay_from_json(&json_body) {
@@ -29,11 +32,21 @@ pub(crate) async fn ensure_success(
         }
     }
 
-    tracing::warn!(status = %status, ?requested_delay, "provider request failed");
+    if let Some(read_err) = &body_read_error {
+        tracing::warn!(
+            status = %status,
+            ?requested_delay,
+            body_read_error = %read_err,
+            "provider request failed and body could not be read"
+        );
+    } else {
+        tracing::warn!(status = %status, ?requested_delay, "provider request failed");
+    }
     Err(ProviderError::Api {
         status,
         body,
         requested_delay,
+        body_read_error,
     })
 }
 

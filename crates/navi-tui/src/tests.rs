@@ -47,7 +47,8 @@ fn test_app(input: &str) -> TuiApp {
         },
         PathBuf::from("/tmp/test-project"),
         None,
-    );
+    )
+    .expect("test app");
     app.input = input.to_string();
     app.input_cursor = app.input.len();
     app.mode = Mode::Normal;
@@ -84,6 +85,7 @@ fn app_with_missing_provider_key() -> TuiApp {
         PathBuf::from("/tmp/test-project"),
         None,
     )
+    .expect("test app")
 }
 
 fn line_text(line: &Line<'_>) -> String {
@@ -929,7 +931,7 @@ fn apply_patch_tool_full_content_uses_edit_summary() {
     assert!(!content.contains("Output"));
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn command_palette_sync_models_starts_sync() {
     let mut app = test_app("");
     app.command_filter = "sync".to_string();
@@ -951,7 +953,7 @@ async fn command_palette_sync_models_starts_sync() {
     assert_eq!(app.messages[0].status, Some("syncing".to_string()));
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn model_picker_tab_triggers_per_provider_sync() {
     let mut app = test_app("");
     app.mode = Mode::Models;
@@ -971,7 +973,7 @@ async fn model_picker_tab_triggers_per_provider_sync() {
     );
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn model_picker_ctrl_r_triggers_all_provider_sync() {
     let mut app = test_app("");
     app.mode = Mode::Models;
@@ -1028,7 +1030,7 @@ fn model_error_is_rendered_as_separate_message() {
     assert!(!app.skip_next_model_done);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn transient_model_error_retries_without_final_error() {
     let mut app = test_app("");
     app.provider_configured = false;

@@ -10,6 +10,17 @@ pub(crate) struct AcpState {
     pub(crate) sessions: Arc<Mutex<HashMap<String, AcpSession>>>,
 }
 
+#[cfg(test)]
+impl AcpState {
+    pub(crate) fn empty_for_test(engine: NaviEngine) -> Self {
+        Self {
+            engine,
+            default_project_dir: PathBuf::from("."),
+            sessions: Arc::new(Mutex::new(HashMap::new())),
+        }
+    }
+}
+
 pub(crate) struct AcpSession {
     pub(crate) project_dir: PathBuf,
     pub(crate) sdk_started: bool,
@@ -25,7 +36,7 @@ impl AcpState {
     where
         F: FnOnce(&HashMap<String, AcpSession>) -> T,
     {
-        let sessions = self.sessions.lock().expect("session lock poisoned");
+        let sessions = self.sessions.lock().unwrap_or_else(|e| e.into_inner());
         f(&sessions)
     }
 
@@ -33,7 +44,7 @@ impl AcpState {
     where
         F: FnOnce(&mut HashMap<String, AcpSession>) -> T,
     {
-        let mut sessions = self.sessions.lock().expect("session lock poisoned");
+        let mut sessions = self.sessions.lock().unwrap_or_else(|e| e.into_inner());
         f(&mut sessions)
     }
 }

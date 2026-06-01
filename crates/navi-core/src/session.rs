@@ -1,10 +1,11 @@
 use crate::event::AgentEvent;
-use crate::security::redact_snapshot_events;
+use crate::security::{redact_memory, redact_snapshot_events};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
+use tokio::task;
 
 /// Unique identifier for a session, wrapping a string id like `"session-1719612345000"`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -233,6 +234,10 @@ impl SessionStore {
 
     /// Serializes and saves a snapshot to disk, creating the sessions directory
     /// if needed. Applies secret redaction unless disabled.
+    ///
+    /// This is the blocking implementation used internally and in tests. Use
+    /// [`Self::save_async`] from async contexts to avoid blocking the Tokio
+    /// runtime.
     pub fn save(&self, snapshot: &SessionSnapshot) -> Result<PathBuf> {
         fs::create_dir_all(&self.root)
             .with_context(|| format!("failed to create {}", self.root.display()))?;
@@ -248,7 +253,7 @@ impl SessionStore {
                 created_at: snapshot.created_at,
                 updated_at: snapshot.updated_at,
                 events: redact_snapshot_events(&snapshot.events),
-                memory: snapshot.memory.clone(),
+                memory: snapshot.memory.as_ref().map(redact_memory),
             }
         } else {
             snapshot.clone()
@@ -258,6 +263,15 @@ impl SessionStore {
         crate::fs_util::set_private_file_permissions(&path)?;
 
         Ok(path)
+    }
+
+    /// Async wrapper around [`Self::save`] that runs the blocking filesystem
+    /// operations on the Tokio blocking thread pool.
+    pub async fn save_async(&self, snapshot: SessionSnapshot) -> Result<PathBuf> {
+        let store = self.clone();
+        task::spawn_blocking(move || store.save(&snapshot))
+            .await
+            .map_err(|err| anyhow::anyhow!("save_async join error: {err}"))?
     }
 
     /// Loads all saved sessions from disk, sorted by most recently updated first.
@@ -283,6 +297,15 @@ impl SessionStore {
         sessions
     }
 
+    /// Async wrapper around [`Self::list`] that runs the blocking filesystem
+    /// operations on the Tokio blocking thread pool.
+    pub async fn list_async(&self) -> Vec<SessionSnapshot> {
+        let store = self.clone();
+        task::spawn_blocking(move || store.list())
+            .await
+            .unwrap_or_default()
+    }
+
     /// Loads a single session by id. Returns an error if the file is missing or
     /// the snapshot version is newer than supported.
     pub fn load(&self, session_id: &str) -> Result<SessionSnapshot> {
@@ -301,6 +324,15 @@ impl SessionStore {
         Ok(snapshot)
     }
 
+    /// Async wrapper around [`Self::load`] that runs the blocking filesystem
+    /// operations on the Tokio blocking thread pool.
+    pub async fn load_async(&self, session_id: String) -> Result<SessionSnapshot> {
+        let store = self.clone();
+        task::spawn_blocking(move || store.load(&session_id))
+            .await
+            .map_err(|err| anyhow::anyhow!("load_async join error: {err}"))?
+    }
+
     /// Deletes the session file. Returns `true` if the file existed and was removed.
     pub fn delete(&self, session_id: &str) -> Result<bool> {
         let path = self.root.join(format!("{session_id}.json"));
@@ -309,6 +341,15 @@ impl SessionStore {
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(false),
             Err(err) => Err(err).with_context(|| format!("failed to delete {}", path.display())),
         }
+    }
+
+    /// Async wrapper around [`Self::delete`] that runs the blocking filesystem
+    /// operations on the Tokio blocking thread pool.
+    pub async fn delete_async(&self, session_id: String) -> Result<bool> {
+        let store = self.clone();
+        task::spawn_blocking(move || store.delete(&session_id))
+            .await
+            .map_err(|err| anyhow::anyhow!("delete_async join error: {err}"))?
     }
 
     /// Persists project memory to `<data_dir>/memory/<hash>.json`.
@@ -327,12 +368,35 @@ impl SessionStore {
         Ok(path)
     }
 
+    /// Async wrapper around [`Self::save_memory`] that runs the blocking
+    /// filesystem operations on the Tokio blocking thread pool.
+    pub async fn save_memory_async(
+        &self,
+        project_dir: PathBuf,
+        memory: ProjectMemory,
+    ) -> Result<PathBuf> {
+        let store = self.clone();
+        task::spawn_blocking(move || store.save_memory(&project_dir, &memory))
+            .await
+            .map_err(|err| anyhow::anyhow!("save_memory_async join error: {err}"))?
+    }
+
     /// Loads project memory from disk, returning `None` if no memory file exists.
     pub fn load_memory(&self, project_dir: &Path) -> Option<ProjectMemory> {
         let hash = project_hash(project_dir);
         let path = self.data_dir.join("memory").join(format!("{hash}.json"));
         let content = fs::read_to_string(&path).ok()?;
         serde_json::from_str(&content).ok()
+    }
+
+    /// Async wrapper around [`Self::load_memory`] that runs the blocking
+    /// filesystem operations on the Tokio blocking thread pool.
+    pub async fn load_memory_async(&self, project_dir: PathBuf) -> Option<ProjectMemory> {
+        let store = self.clone();
+        task::spawn_blocking(move || store.load_memory(&project_dir))
+            .await
+            .ok()
+            .flatten()
     }
 
     /// Appends a new memory entry for the project and persists it to disk.
@@ -352,6 +416,23 @@ impl SessionStore {
             session_id: session_id.as_str().to_string(),
         });
         self.save_memory(project_dir, &memory)
+    }
+
+    /// Async wrapper around [`Self::add_memory_entry`] that runs the blocking
+    /// filesystem operations on the Tokio blocking thread pool.
+    pub async fn add_memory_entry_async(
+        &self,
+        project_dir: PathBuf,
+        session_id: String,
+        summary: String,
+    ) -> Result<PathBuf> {
+        let store = self.clone();
+        task::spawn_blocking(move || {
+            let sid = SessionId::new(session_id);
+            store.add_memory_entry(&project_dir, &sid, summary)
+        })
+        .await
+        .map_err(|err| anyhow::anyhow!("add_memory_entry_async join error: {err}"))?
     }
 }
 
@@ -506,6 +587,35 @@ mod tests {
     }
 
     #[test]
+    fn save_redacts_secret_like_memory_summaries() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let store = SessionStore::new(tempdir.path().to_path_buf());
+        let snapshot = SessionSnapshot {
+            version: SessionSnapshot::CURRENT_VERSION,
+            id: SessionId::new("redacted-memory-session".to_string()),
+            title: None,
+            project: PathBuf::from("/tmp/project"),
+            created_at: 1,
+            updated_at: 2,
+            events: Vec::new(),
+            memory: Some(ProjectMemory {
+                project_hash: "abc".to_string(),
+                entries: vec![MemoryEntry {
+                    created_at: 1_700_000_000,
+                    summary: "Configured with OPENAI_API_KEY=sk-proj-abcdef0123456789".to_string(),
+                    session_id: "session-x".to_string(),
+                }],
+            }),
+        };
+
+        let path = store.save(&snapshot).expect("save session");
+        let content = fs::read_to_string(path).expect("read session");
+
+        assert!(content.contains("OPENAI_API_KEY=<redacted>"));
+        assert!(!content.contains("sk-proj-abcdef0123456789"));
+    }
+
+    #[test]
     fn save_can_preserve_event_content_when_redaction_is_disabled() {
         let tempdir = tempfile::tempdir().expect("tempdir");
         let store = SessionStore::with_redaction(tempdir.path().to_path_buf(), false);
@@ -567,9 +677,10 @@ mod tests {
             harness_config: crate::config::HarnessConfig::default(),
             include_tool_prompt_manifest: false,
             agent_mode: None,
-            context_packets: Vec::new(),
-            active_skills: Vec::new(),
+            context_packets: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
+            active_skills: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
             cancel_token: crate::cancel::CancelToken::new(),
+            config: std::sync::Arc::new(crate::config::NaviConfig::default()),
         });
 
         let policy = crate::harness::HarnessPolicy {

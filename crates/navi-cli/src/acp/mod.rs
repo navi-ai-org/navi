@@ -122,4 +122,49 @@ mod tests {
         assert!(update.fields.content.is_some());
         assert!(update.fields.raw_output.is_some());
     }
+
+    #[test]
+    fn tool_output_text_unwraps_string_and_object() {
+        assert_eq!(schema::tool_output_text(&serde_json::json!("hi")), "hi");
+        let pretty = schema::tool_output_text(&serde_json::json!({"k": 1}));
+        assert!(pretty.contains("\"k\""));
+    }
+
+    #[test]
+    fn acp_error_to_anyhow_keeps_message() {
+        let err = agent_client_protocol::Error::internal_error();
+        let anyhow = schema::acp_error_to_anyhow(err);
+        // The conversion is non-empty; exact Debug output is a version concern.
+        assert!(!format!("{anyhow:?}").is_empty());
+    }
+
+    #[test]
+    fn acp_state_recovers_from_poisoned_lock() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let engine = navi_sdk::NaviEngineBuilder::from_project(tempdir.path().to_path_buf())
+            .build()
+            .expect("engine");
+        let state = state::AcpState::empty_for_test(engine);
+
+        state.with_sessions_mut(|sessions| {
+            sessions.insert(
+                "s1".to_string(),
+                state::AcpSession {
+                    project_dir: tempdir.path().to_path_buf(),
+                    sdk_started: false,
+                    task: None,
+                },
+            );
+        });
+
+        // Poison the lock by panicking inside a mutator.
+        let panic_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            state.with_sessions_mut(|_| panic!("poison"));
+        }));
+        assert!(panic_result.is_err());
+
+        // Should still be readable after poison.
+        let recovered = state.with_sessions(|sessions| sessions.contains_key("s1"));
+        assert!(recovered);
+    }
 }

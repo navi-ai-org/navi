@@ -19,6 +19,7 @@ pub(crate) enum CommandAction {
     Providers,
     Quit,
     Settings,
+    Skills,
 }
 
 pub(crate) const COMMANDS: &[CommandItem] = &[
@@ -46,6 +47,11 @@ pub(crate) const COMMANDS: &[CommandItem] = &[
         label: "Providers",
         shortcut: None,
         action: CommandAction::Providers,
+    },
+    CommandItem {
+        label: "Skills",
+        shortcut: None,
+        action: CommandAction::Skills,
     },
     CommandItem {
         label: "Retry Last Response",

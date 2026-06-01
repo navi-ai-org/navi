@@ -73,6 +73,7 @@ pub(crate) enum Mode {
     Providers,
     Debug,
     Help,
+    Skills,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -86,6 +87,7 @@ pub(crate) enum ModalKind {
     Providers,
     Debug,
     Help,
+    Skills,
 }
 
 impl ModalKind {
@@ -100,6 +102,7 @@ impl ModalKind {
             Self::Providers => Mode::Providers,
             Self::Debug => Mode::Debug,
             Self::Help => Mode::Help,
+            Self::Skills => Mode::Skills,
         }
     }
 }

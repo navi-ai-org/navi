@@ -1,7 +1,8 @@
 use crate::config::SecurityConfig;
-use crate::event::AgentEvent;
+use crate::event::{AgentEvent, ApprovalRequest};
 use crate::patch::PatchProposal;
-use crate::tool::{ToolDefinition, ToolInvocation, ToolKind};
+use crate::session::ProjectMemory;
+use crate::tool::{ToolDefinition, ToolInvocation, ToolKind, ToolResult};
 use anyhow::{Context, Result};
 use serde_json::Value;
 use std::path::{Component, Path, PathBuf};
@@ -213,6 +214,78 @@ pub fn redact_agent_event(event: &AgentEvent) -> AgentEvent {
         AgentEvent::Error { message } => AgentEvent::Error {
             message: redact_secrets(message),
         },
+        AgentEvent::ToolRequested(invocation) => {
+            AgentEvent::ToolRequested(redact_tool_invocation(invocation))
+        }
+        AgentEvent::ToolCompleted(result) => AgentEvent::ToolCompleted(redact_tool_result(result)),
+        AgentEvent::HarnessTrace(value) => AgentEvent::HarnessTrace(redact_json_value(value)),
+        AgentEvent::PatchProposed(patch) => AgentEvent::PatchProposed(redact_patch_proposal(patch)),
+        AgentEvent::ApprovalRequested(request) => {
+            AgentEvent::ApprovalRequested(redact_approval_request(request))
+        }
+        other => other.clone(),
+    }
+}
+
+/// Redacts secrets from a `ProjectMemory`'s entry summaries so that persisted
+/// memory snapshots don't leak credentials the model may have echoed back.
+pub fn redact_memory(memory: &ProjectMemory) -> ProjectMemory {
+    ProjectMemory {
+        project_hash: memory.project_hash.clone(),
+        entries: memory
+            .entries
+            .iter()
+            .map(|entry| crate::session::MemoryEntry {
+                created_at: entry.created_at,
+                summary: redact_secrets(&entry.summary),
+                session_id: entry.session_id.clone(),
+            })
+            .collect(),
+    }
+}
+
+fn redact_tool_invocation(invocation: &ToolInvocation) -> ToolInvocation {
+    ToolInvocation {
+        id: invocation.id.clone(),
+        tool_name: invocation.tool_name.clone(),
+        input: redact_json_value(&invocation.input),
+    }
+}
+
+fn redact_tool_result(result: &ToolResult) -> ToolResult {
+    ToolResult {
+        invocation_id: result.invocation_id.clone(),
+        ok: result.ok,
+        output: redact_json_value(&result.output),
+    }
+}
+
+fn redact_patch_proposal(patch: &PatchProposal) -> PatchProposal {
+    PatchProposal {
+        id: patch.id.clone(),
+        summary: redact_secrets(&patch.summary),
+        files: patch.files.clone(),
+        unified_diff: redact_secrets(&patch.unified_diff),
+    }
+}
+
+fn redact_approval_request(request: &ApprovalRequest) -> ApprovalRequest {
+    ApprovalRequest {
+        id: request.id.clone(),
+        summary: redact_secrets(&request.summary),
+        risk: request.risk.clone(),
+    }
+}
+
+fn redact_json_value(value: &Value) -> Value {
+    match value {
+        Value::String(text) => Value::String(redact_secrets(text)),
+        Value::Array(values) => Value::Array(values.iter().map(redact_json_value).collect()),
+        Value::Object(map) => Value::Object(
+            map.iter()
+                .map(|(key, value)| (key.clone(), redact_json_value(value)))
+                .collect(),
+        ),
         other => other.clone(),
     }
 }
@@ -507,18 +580,43 @@ mod tests {
     }
 
     #[test]
-    fn does_not_redact_tool_events() {
+    fn redacts_tool_requested_input() {
         let event = AgentEvent::ToolRequested(crate::tool::ToolInvocation {
             id: "c1".to_string(),
             tool_name: "read_file".to_string(),
-            input: serde_json::json!({"path": "OPENAI_API_KEY=secret123"}),
+            input: serde_json::json!({
+                "path": "OPENAI_API_KEY=secret123",
+                "nested": {"token": "ghp_1234567890abcdef1234"}
+            }),
         });
         let redacted = redact_agent_event(&event);
         match redacted {
             AgentEvent::ToolRequested(invocation) => {
-                assert!(invocation.input.to_string().contains("secret123"));
+                let json = invocation.input.to_string();
+                assert!(json.contains("OPENAI_API_KEY=<redacted>"));
+                assert!(json.contains("<redacted>"));
+                assert!(!json.contains("secret123"));
+                assert!(!json.contains("ghp_1234567890abcdef1234"));
             }
             _ => panic!("expected ToolRequested"),
+        }
+    }
+
+    #[test]
+    fn redacts_tool_completed_output() {
+        let event = AgentEvent::ToolCompleted(crate::tool::ToolResult {
+            invocation_id: "c1".to_string(),
+            ok: true,
+            output: serde_json::json!({"stdout": "token sk-proj-1234567890abcdef"}),
+        });
+        let redacted = redact_agent_event(&event);
+        match redacted {
+            AgentEvent::ToolCompleted(result) => {
+                let json = result.output.to_string();
+                assert!(json.contains("<redacted>"));
+                assert!(!json.contains("sk-proj-1234567890abcdef"));
+            }
+            _ => panic!("expected ToolCompleted"),
         }
     }
 

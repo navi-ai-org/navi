@@ -116,7 +116,7 @@ async fn main() -> Result<()> {
     }
 
     tracing::info!(project = %cwd.display(), "starting TUI");
-    navi_tui::run(TuiApp::new(loaded_config, cwd.clone(), task))?;
+    navi_tui::run(TuiApp::new(loaded_config, cwd.clone(), task)?)?;
     Ok(())
 }
 

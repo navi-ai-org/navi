@@ -132,7 +132,7 @@ async fn headless_runtime_executes_read_tools_and_continues() {
     );
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn runtime_session_lifecycle_streams_events_and_snapshots() {
     let tempdir = tempfile::tempdir().expect("tempdir");
     let loaded_config = crate::LoadedConfig {
