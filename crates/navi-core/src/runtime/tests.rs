@@ -72,6 +72,20 @@ impl ModelProvider for SimpleProvider {
     }
 }
 
+struct EchoModelProvider;
+
+#[async_trait]
+impl ModelProvider for EchoModelProvider {
+    fn stream(&self, request: ModelRequest) -> ModelStream {
+        Box::pin(stream::iter(vec![
+            Ok(ModelStreamEvent::TextDelta {
+                text: request.model,
+            }),
+            Ok(ModelStreamEvent::Done),
+        ]))
+    }
+}
+
 #[tokio::test]
 async fn headless_runtime_executes_read_tools_and_continues() {
     let tempdir = tempfile::tempdir().expect("tempdir");
@@ -253,4 +267,55 @@ async fn runtime_uses_requested_session_id_once() {
         "navi_tutor_algoritmos_2026-05-25_14-32-10"
     );
     assert_ne!(second_id.as_str(), first_id.as_str());
+}
+
+#[tokio::test]
+async fn active_session_uses_replaced_model_provider_on_next_turn() {
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let mut loaded_config = crate::LoadedConfig {
+        config: NaviConfig {
+            harness: HarnessConfig::default(),
+            approvals: ApprovalConfig::default(),
+            security: SecurityConfig::default(),
+            ..NaviConfig::default()
+        },
+        global_config_path: None,
+        project_config_path: None,
+        data_dir: tempdir.path().join("data"),
+    };
+    loaded_config.config.model.name = "first-model".to_string();
+    let mut runtime = AgentRuntime::new(AgentRuntimeOptions {
+        loaded_config: loaded_config.clone(),
+        model_provider: Arc::new(EchoModelProvider),
+        project_dir: tempdir.path().to_path_buf(),
+        tool_executor: None,
+        agent_mode: None,
+        context_packets: Vec::new(),
+        active_skills: Vec::new(),
+        initial_messages: Vec::new(),
+        session_id: None,
+        event_tx: None,
+    });
+
+    runtime.start_session().expect("start session");
+    assert_eq!(
+        runtime
+            .send_turn("first".to_string())
+            .await
+            .expect("first turn")
+            .text,
+        "first-model"
+    );
+
+    loaded_config.config.model.name = "second-model".to_string();
+    runtime.set_model_provider(loaded_config, Arc::new(EchoModelProvider));
+
+    assert_eq!(
+        runtime
+            .send_turn("second".to_string())
+            .await
+            .expect("second turn")
+            .text,
+        "second-model"
+    );
 }

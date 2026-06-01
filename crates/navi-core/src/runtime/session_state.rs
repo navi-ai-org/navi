@@ -144,4 +144,30 @@ impl SessionState {
         });
         Ok(snapshot)
     }
+
+    pub async fn snapshot_async(
+        &self,
+        project_dir: &std::path::Path,
+        session_store: &SessionStore,
+        event_bus: &crate::runtime::EventBus,
+    ) -> Result<crate::session::SessionSnapshot> {
+        let memory = session_store
+            .load_memory_async(project_dir.to_path_buf())
+            .await;
+        let snapshot = crate::session::SessionSnapshot {
+            version: crate::session::SessionSnapshot::CURRENT_VERSION,
+            id: self.id.clone(),
+            title: self.title.clone(),
+            project: project_dir.to_path_buf(),
+            created_at: self.created_at,
+            updated_at: current_unix_timestamp(),
+            events: self.events.clone(),
+            memory,
+        };
+        session_store.save_async(snapshot.clone()).await?;
+        event_bus.publish(crate::event::RuntimeEventKind::SessionSaved {
+            session_id: snapshot.id.as_str().to_string(),
+        });
+        Ok(snapshot)
+    }
 }

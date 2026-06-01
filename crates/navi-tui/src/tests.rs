@@ -37,7 +37,7 @@ use ratatui::prelude::Line;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-fn test_app(input: &str) -> TuiApp {
+pub(crate) fn test_app(input: &str) -> TuiApp {
     let mut app = TuiApp::new(
         LoadedConfig {
             config: navi_sdk::NaviConfig::default(),

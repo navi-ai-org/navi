@@ -25,4 +25,4 @@ pub use self::app::TuiApp;
 pub use self::event_loop::run;
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

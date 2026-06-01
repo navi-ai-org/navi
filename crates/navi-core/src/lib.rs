@@ -31,7 +31,8 @@ pub use context::{ContextPacket, ContextSource};
 pub use credentials::{
     CredentialSource, CredentialStore, resolve_provider_api_key, resolve_provider_credential_status,
 };
-pub use event::{AgentEvent, ApprovalDecision, ApprovalRequest, RuntimeEvent, RuntimeEventKind};
+pub use event::{AgentEvent, ApprovalDecision, ApprovalRequest, ApprovalRisk, RuntimeEvent, RuntimeEventKind};
+pub use patch::PatchProposal;
 pub use harness::{
     AgentRunState, HarnessPolicy, build_system_prompt, build_system_prompt_with_memory,
     compact_tool_observation, record_tool_call, select_harness_policy, tool_error_result,
@@ -39,7 +40,7 @@ pub use harness::{
 pub use logging::{LoggingGuard, LoggingRuntimeConfig, init_logging, log_dir, log_path};
 pub use model::{
     ModelMessage, ModelProvider, ModelRequest, ModelResponse, ModelRole, ModelStream,
-    ModelStreamEvent, ThinkingAdapter, ThinkingConfig,
+    ModelStreamEvent, ThinkingConfig, ThinkingRequest,
 };
 pub use provider_id::ProviderId;
 pub use runtime::{AgentRuntime, AgentRuntimeOptions, ApprovalResolver, TurnCanceller};

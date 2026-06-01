@@ -1,70 +1,142 @@
 /// Canonical provider identity. Eliminates string-match routing.
-/// Canonical provider identity. Eliminates string-match routing.
+///
+/// Known providers have predefined constants. Any string is accepted.
+/// New built-in providers only need a constant and a `behavior_for_provider` entry.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ProviderId {
-    /// OpenAI (Responses API).
-    OpenAi,
-    /// Anthropic (Messages API).
-    Anthropic,
-    /// Google Gemini.
-    GoogleGemini,
-    /// OpenRouter.
-    OpenRouter,
-    /// GitHub Copilot.
-    GitHubCopilot,
-    /// Opencode.
-    Opencode,
-    /// Opencode Zen.
-    OpencodeZen,
-    /// Opencode Go.
-    OpencodeGo,
-    /// Groq.
-    Groq,
-    /// xAI (Grok).
-    Xai,
-    /// A custom provider not in the built-in set.
-    Custom(String),
-}
+pub struct ProviderId(String);
 
 impl ProviderId {
+    // ── Known provider constants ─────────────────────────────────────────────
+    pub const OPENAI: &'static str = "openai";
+    pub const ANTHROPIC: &'static str = "anthropic";
+    pub const GOOGLE_GEMINI: &'static str = "google-gemini";
+    pub const OPENROUTER: &'static str = "openrouter";
+    pub const GITHUB_COPILOT: &'static str = "github-copilot";
+    pub const OPENCODE: &'static str = "opencode";
+    pub const OPENCODE_ZEN: &'static str = "opencode-zen";
+    pub const OPENCODE_GO: &'static str = "opencode-go";
+    pub const GROQ: &'static str = "groq";
+    pub const XAI: &'static str = "xai";
+
+    // ── Constructors ─────────────────────────────────────────────────────────
+
     /// Parses a provider id from the config string form (e.g. `"openai"`,
-    /// `"google-gemini"`). Unknown ids become [`ProviderId::Custom`].
+    /// `"google-gemini"`). Any string is accepted.
     pub fn from_config_id(id: &str) -> Self {
-        match id {
-            "openai" => Self::OpenAi,
-            "anthropic" => Self::Anthropic,
-            "google-gemini" => Self::GoogleGemini,
-            "openrouter" => Self::OpenRouter,
-            "github-copilot" => Self::GitHubCopilot,
-            "opencode" => Self::Opencode,
-            "opencode-zen" => Self::OpencodeZen,
-            "opencode-go" => Self::OpencodeGo,
-            "groq" => Self::Groq,
-            "xai" => Self::Xai,
-            other => Self::Custom(other.to_string()),
-        }
+        Self(id.to_string())
     }
+
+    /// Creates a `ProviderId` from a known constant. Panics in debug if the
+    /// constant is not one of the predefined values (for safety).
+    pub fn known(constant: &str) -> Self {
+        debug_assert!(
+            [
+                Self::OPENAI,
+                Self::ANTHROPIC,
+                Self::GOOGLE_GEMINI,
+                Self::OPENROUTER,
+                Self::GITHUB_COPILOT,
+                Self::OPENCODE,
+                Self::OPENCODE_ZEN,
+                Self::OPENCODE_GO,
+                Self::GROQ,
+                Self::XAI,
+            ]
+            .contains(&constant),
+            "not a known provider constant: {constant}"
+        );
+        Self(constant.to_string())
+    }
+
+    // ── Accessors ────────────────────────────────────────────────────────────
 
     /// Returns the canonical string form of this provider id.
     pub fn as_str(&self) -> &str {
-        match self {
-            Self::OpenAi => "openai",
-            Self::Anthropic => "anthropic",
-            Self::GoogleGemini => "google-gemini",
-            Self::OpenRouter => "openrouter",
-            Self::GitHubCopilot => "github-copilot",
-            Self::Opencode => "opencode",
-            Self::OpencodeZen => "opencode-zen",
-            Self::OpencodeGo => "opencode-go",
-            Self::Groq => "groq",
-            Self::Xai => "xai",
-            Self::Custom(s) => s,
-        }
+        &self.0
     }
 
     /// Returns `true` if this provider belongs to the opencode family
     /// (Opencode, OpencodeZen, or OpencodeGo).
     pub fn is_opencode_family(&self) -> bool {
-        matches!(self, Self::Opencode | Self::OpencodeZen | Self::OpencodeGo)
+        matches!(
+            self.0.as_str(),
+            Self::OPENCODE | Self::OPENCODE_ZEN | Self::OPENCODE_GO
+        )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn from_config_id_stores_string_verbatim() {
+        assert_eq!(ProviderId::from_config_id("openai").as_str(), "openai");
+        assert_eq!(
+            ProviderId::from_config_id("google-gemini").as_str(),
+            "google-gemini"
+        );
+        assert_eq!(
+            ProviderId::from_config_id("custom-provider").as_str(),
+            "custom-provider"
+        );
+    }
+
+    #[test]
+    fn from_config_id_accepts_empty_string() {
+        assert_eq!(ProviderId::from_config_id("").as_str(), "");
+    }
+
+    #[test]
+    fn as_str_returns_inner_string() {
+        let id = ProviderId::from_config_id("anthropic");
+        assert_eq!(id.as_str(), "anthropic");
+    }
+
+    #[test]
+    fn known_accepts_all_predefined_constants() {
+        let constants = [
+            ProviderId::OPENAI,
+            ProviderId::ANTHROPIC,
+            ProviderId::GOOGLE_GEMINI,
+            ProviderId::OPENROUTER,
+            ProviderId::GITHUB_COPILOT,
+            ProviderId::OPENCODE,
+            ProviderId::OPENCODE_ZEN,
+            ProviderId::OPENCODE_GO,
+            ProviderId::GROQ,
+            ProviderId::XAI,
+        ];
+        for c in constants {
+            let id = ProviderId::known(c);
+            assert_eq!(id.as_str(), c);
+        }
+    }
+
+    #[test]
+    fn is_opencode_family_returns_true_for_opencode_variants() {
+        assert!(ProviderId::from_config_id("opencode").is_opencode_family());
+        assert!(ProviderId::from_config_id("opencode-zen").is_opencode_family());
+        assert!(ProviderId::from_config_id("opencode-go").is_opencode_family());
+    }
+
+    #[test]
+    fn is_opencode_family_returns_false_for_others() {
+        assert!(!ProviderId::from_config_id("openai").is_opencode_family());
+        assert!(!ProviderId::from_config_id("anthropic").is_opencode_family());
+        assert!(!ProviderId::from_config_id("google-gemini").is_opencode_family());
+        assert!(!ProviderId::from_config_id("custom").is_opencode_family());
+    }
+
+    #[test]
+    fn known_equals_from_config_id_for_same_string() {
+        assert_eq!(
+            ProviderId::known(ProviderId::OPENAI),
+            ProviderId::from_config_id("openai")
+        );
+        assert_eq!(
+            ProviderId::known(ProviderId::ANTHROPIC),
+            ProviderId::from_config_id("anthropic")
+        );
     }
 }

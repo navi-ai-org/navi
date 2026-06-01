@@ -30,7 +30,7 @@ pub use navi_core::{
     SessionId, SessionSnapshot,
 };
 // Tool/approval types
-pub use navi_core::{ApprovalDecision, ApprovalRequest, ToolInvocation, ToolResult};
+pub use navi_core::{ApprovalDecision, ApprovalRequest, ApprovalRisk, PatchProposal, ToolInvocation, ToolResult};
 // Config/provider types
 pub use navi_core::{
     CompactState, CompactThreshold, CredentialStore, HarnessPolicy, HarnessProfile, LoadedConfig,

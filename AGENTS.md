@@ -127,7 +127,7 @@ Some provider ids have special adapters:
 - `github-copilot` uses GitHub device OAuth bearer tokens and Copilot request headers.
 - `openai` and `xai` use Responses-style reasoning effort.
 
-The UI thinking levels are `max`, `high`, `medium`, `low`, and `off`. `ThinkingConfig::adapter_for_provider` maps them to provider-specific request fields.
+The UI thinking levels are `max`, `high`, `medium`, `low`, and `off`. `ThinkingConfig::to_thinking_request` produces a normalized `ThinkingRequest` with `effort` and `budget_tokens` fields. Each provider converts these to its own wire format in the stream layer.
 
 Tool transcripts must remain provider-correct. Chat Completions uses assistant `tool_calls` plus role `tool` results. Responses uses `function_call` and `function_call_output` input items.
 

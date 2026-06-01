@@ -148,7 +148,7 @@ fn builder_loads_from_project_dir() {
 
     let result = NaviEngineBuilder::from_project(tempdir.path()).build();
 
-    assert!(result.is_ok());
+    assert!(result.is_ok(), "builder failed: {:?}", result.err());
 }
 
 // ── Group 2: Model listing tests ────────────────────────────────────
@@ -934,23 +934,25 @@ async fn close_session_returns_false_for_missing_session() {
 
 #[tokio::test]
 
-async fn set_model_on_active_session_returns_explicit_error() {
+async fn set_model_on_active_session_updates_runtime_and_engine_config() {
     let (engine, _tempdir) = test_engine_with_key();
 
     let session = engine
         .start_session(NaviSessionRequest::default())
         .await
         .expect("start session");
+    let mut events = engine.subscribe_events(&session.id).expect("events");
 
-    let result = engine.set_model(&session.id, "openai", "gpt-5.1").await;
+    engine
+        .set_model(&session.id, "test-provider", "next-test-model")
+        .await
+        .expect("set active session model");
 
-    match result {
-        Err(NaviError::Config(message)) => {
-            assert!(message.contains("not supported"));
-        }
-
-        other => panic!("expected config error, got {other:?}"),
-    }
+    let event = events.try_recv().expect("model change event");
+    assert!(matches!(
+        event.kind,
+        navi_core::RuntimeEventKind::ContextUpdated
+    ));
 }
 
 #[tokio::test]

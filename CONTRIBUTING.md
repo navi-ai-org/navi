@@ -123,12 +123,11 @@ navi/
 
 ## Documentation
 
-- **README.md** — User-facing overview, quickstart, configuration
-- **docs/architecture.md** — Crate boundaries and runtime flow
-- **docs/providers.md** — Provider protocols and configuration
-- **docs/tools-security.md** — Built-in tools and security policy
-- **docs/tui.md** — TUI state, keybindings, rendering
-- **AGENTS.md** — Agent development guide
+- **README.md** — Project overview and capabilities
+- **[docs/index.md](../docs/index.md)** — Documentation hub with links to all guides
+- **[docs/user-guide.md](../docs/user-guide.md)** — Installation, configuration, providers, tools, security
+- **[docs/sdk-agents.md](../docs/sdk-agents.md)** — SDK embedding, engine API, runtime events
+- **AGENTS.md** — Technical reference for agents working on the codebase
 
 ## Reporting Issues
 
@@ -144,11 +143,11 @@ When reporting issues, please include:
 
 - Never commit secrets or API keys
 - Use environment variables for sensitive configuration
-- Report security vulnerabilities privately
+- Report security vulnerabilities privately; see [SECURITY.md](SECURITY.md)
 
 ## License
 
-By contributing to NAVI, you agree that your contributions will be licensed under the MIT License.
+By contributing to NAVI, you agree that your contributions will be licensed under the Apache License, Version 2.0.
 
 ## Questions?
 

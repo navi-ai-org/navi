@@ -6,7 +6,7 @@ mod tests;
 
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use tokio::sync::{broadcast, mpsc, oneshot};
 
 use crate::agent::AgentMode;
@@ -127,6 +127,9 @@ pub struct AgentRuntimeOptions {
 pub struct AgentRuntime {
     loaded_config: LoadedConfig,
     model_provider: Arc<dyn ModelProvider>,
+    shared_model_provider: Arc<RwLock<Arc<dyn ModelProvider>>>,
+    shared_model_name: Arc<RwLock<String>>,
+    shared_config: Arc<RwLock<crate::config::NaviConfig>>,
     project_dir: PathBuf,
     tool_executor: Option<Arc<ToolExecutor>>,
     session_store: SessionStore,
@@ -158,10 +161,19 @@ impl AgentRuntime {
         let shared_context_packets =
             Arc::new(std::sync::Mutex::new(options.context_packets.clone()));
         let shared_active_skills = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let shared_model_provider = Arc::new(RwLock::new(options.model_provider.clone()));
+        let shared_model_name = Arc::new(RwLock::new(provider_request_model_name(
+            &options.loaded_config.config.model.provider,
+            &options.loaded_config.config.model.name,
+        )));
+        let shared_config = Arc::new(RwLock::new(options.loaded_config.config.clone()));
 
         Self {
             loaded_config: options.loaded_config,
             model_provider: options.model_provider,
+            shared_model_provider,
+            shared_model_name,
+            shared_config,
             project_dir: options.project_dir,
             tool_executor: options.tool_executor,
             session_store,
@@ -251,6 +263,19 @@ impl AgentRuntime {
         self.loaded_config.config.model.provider =
             canonical_provider_id(&provider.into()).to_string();
         self.loaded_config.config.model.name = model.into();
+        self.update_shared_model_state();
+        self.event_bus.publish(RuntimeEventKind::ContextUpdated);
+    }
+
+    /// Replaces the runtime configuration and provider used by subsequent turns.
+    pub fn set_model_provider(
+        &mut self,
+        loaded_config: LoadedConfig,
+        model_provider: Arc<dyn ModelProvider>,
+    ) {
+        self.loaded_config = loaded_config;
+        self.model_provider = model_provider;
+        self.update_shared_model_state();
         self.event_bus.publish(RuntimeEventKind::ContextUpdated);
     }
 
@@ -426,6 +451,15 @@ impl AgentRuntime {
             .snapshot(&self.project_dir, &self.session_store, &self.event_bus)
     }
 
+    /// Creates and persists a session snapshot without blocking the async runtime.
+    pub async fn snapshot_session_async(&mut self) -> Result<SessionSnapshot> {
+        self.session.set_updated_at(current_unix_timestamp());
+        self.session.update_title_from_events();
+        self.session
+            .snapshot_async(&self.project_dir, &self.session_store, &self.event_bus)
+            .await
+    }
+
     #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn session_store(&self) -> &SessionStore {
         &self.session_store
@@ -468,14 +502,11 @@ impl AgentRuntime {
             .unwrap_or_else(|e| e.into_inner()) = self.load_active_skills();
 
         let ctx = Arc::new(crate::turn::TurnContext {
-            model_provider: self.model_provider.clone(),
+            model_provider: self.shared_model_provider.clone(),
             tool_executor,
             agent_control: crate::agent::AgentControl::new(),
             project_dir: self.project_dir.clone(),
-            model_name: provider_request_model_name(
-                &self.loaded_config.config.model.provider,
-                &self.loaded_config.config.model.name,
-            ),
+            model_name: self.shared_model_name.clone(),
             event_tx: Some(event_tx),
             approval_resolver: self.approval_resolver(),
             compact_state: Arc::new(tokio::sync::Mutex::new(crate::compact::CompactState::new(
@@ -489,7 +520,7 @@ impl AgentRuntime {
             context_packets: self.shared_context_packets.clone(),
             active_skills: self.shared_active_skills.clone(),
             cancel_token: self.cancel_token.clone(),
-            config: Arc::new(self.loaded_config.config.clone()),
+            config: self.shared_config.clone(),
         });
 
         let policy = select_harness_policy(&self.loaded_config.config);
@@ -511,6 +542,24 @@ impl AgentRuntime {
             self.event_bus.publish(kind);
         }
         self.session.push_event(event);
+    }
+
+    fn update_shared_model_state(&self) {
+        *self
+            .shared_model_provider
+            .write()
+            .unwrap_or_else(|e| e.into_inner()) = self.model_provider.clone();
+        *self
+            .shared_model_name
+            .write()
+            .unwrap_or_else(|e| e.into_inner()) = provider_request_model_name(
+            &self.loaded_config.config.model.provider,
+            &self.loaded_config.config.model.name,
+        );
+        *self
+            .shared_config
+            .write()
+            .unwrap_or_else(|e| e.into_inner()) = self.loaded_config.config.clone();
     }
 
     fn load_active_skills(&self) -> Vec<SkillManifest> {

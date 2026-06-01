@@ -69,6 +69,8 @@ impl OpenAiProvider {
         let api_kind = match provider.kind {
             ProviderKind::OpenAiResponses => OpenAiApiKind::Responses,
             ProviderKind::OpenAiChatCompletions => OpenAiApiKind::ChatCompletions,
+            ProviderKind::AnthropicMessages => OpenAiApiKind::ChatCompletions,
+            ProviderKind::GeminiGenerateContent => OpenAiApiKind::ChatCompletions,
         };
 
         Ok(Self::new(api_key)
@@ -81,7 +83,7 @@ impl OpenAiProvider {
     }
 
     pub fn new(api_key: String) -> Self {
-        let identity = ProviderId::OpenAi;
+        let identity = ProviderId::known(ProviderId::OPENAI);
         Self {
             client: Client::new(),
             api_key,

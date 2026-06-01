@@ -244,21 +244,24 @@ impl NaviEngine {
     pub async fn snapshot_session(&self, session_id: &str) -> Result<SessionSnapshot> {
         let session = self.session(session_id)?;
         let mut runtime = session.runtime.lock().await;
-        Ok(runtime.snapshot_session()?)
+        Ok(runtime.snapshot_session_async().await?)
     }
 
     /// Changes the model used by an active session.
-    ///
-    /// This is intentionally rejected for now: the core runtime keeps the
-    /// provider inside the already-spawned session loop, so accepting this call
-    /// would make clients believe the next turn changed providers when it did
-    /// not. Use [`select_model`](Self::select_model) before starting a session,
-    /// or start a new session after selecting the model.
     pub async fn set_model(&self, session_id: &str, provider: &str, model: &str) -> Result<()> {
-        let _ = self.session(session_id)?;
-        Err(NaviError::Config(format!(
-            "changing model for an active session is not supported yet; select {provider}:{model} before starting a session or start a new session"
-        )))
+        let session = self.session(session_id)?;
+        let mut loaded_config = self.loaded_config();
+        let provider_config = resolve_provider_config(&loaded_config.config, provider)
+            .with_context(|| format!("unknown provider {provider}"))?;
+        loaded_config.config.model.provider = provider_config.id.clone();
+        loaded_config.config.model.name = model.to_string();
+        let model_provider = build_model_provider(&loaded_config)?;
+
+        {
+            let mut runtime = session.runtime.lock().await;
+            runtime.set_model_provider(loaded_config.clone(), model_provider);
+        }
+        Ok(())
     }
 
     /// Closes an active in-memory session. Returns `true` when a session was removed.
@@ -445,6 +448,27 @@ impl NaviEngine {
             .collect())
     }
 
+    /// Lists all persisted sessions without blocking the async runtime.
+    pub async fn list_saved_sessions_async(&self) -> Result<Vec<NaviSavedSessionInfo>> {
+        let loaded_config = self.loaded_config();
+        let store = SessionStore::with_redaction(
+            loaded_config.data_dir.clone(),
+            loaded_config.config.security.redact_secrets_in_sessions,
+        );
+        Ok(store
+            .list_async()
+            .await
+            .into_iter()
+            .map(|snapshot| NaviSavedSessionInfo {
+                id: snapshot.id.into_inner(),
+                title: navi_core::session_title_from_events(&snapshot.events),
+                project: snapshot.project,
+                created_at: snapshot.created_at,
+                updated_at: snapshot.updated_at,
+            })
+            .collect())
+    }
+
     /// Loads a persisted session snapshot by ID.
     pub fn load_saved_session(&self, session_id: &str) -> Result<SessionSnapshot> {
         let loaded_config = self.loaded_config();
@@ -453,6 +477,17 @@ impl NaviEngine {
             loaded_config.config.security.redact_secrets_in_sessions,
         )
         .load(session_id)?)
+    }
+
+    /// Loads a persisted session snapshot by ID without blocking the async runtime.
+    pub async fn load_saved_session_async(&self, session_id: &str) -> Result<SessionSnapshot> {
+        let loaded_config = self.loaded_config();
+        Ok(SessionStore::with_redaction(
+            loaded_config.data_dir,
+            loaded_config.config.security.redact_secrets_in_sessions,
+        )
+        .load_async(session_id.to_string())
+        .await?)
     }
 
     /// Deletes a persisted session. Returns `true` if a session was removed.
@@ -465,13 +500,16 @@ impl NaviEngine {
         .delete(session_id)?)
     }
 
-    // NOTE: The list/load/delete wrappers above remain synchronous because the
-    // SDK public API is synchronous today. They call into the blocking
-    // `SessionStore` methods, which is safe here because the SDK is invoked
-    // from a context where blocking is acceptable (the TUI already uses
-    // `block_in_place` for these operations). If the SDK surface becomes
-    // async-first in the future, these should be converted to use the
-    // `_async` variants on `SessionStore`.
+    /// Deletes a persisted session without blocking the async runtime.
+    pub async fn delete_saved_session_async(&self, session_id: &str) -> Result<bool> {
+        let loaded_config = self.loaded_config();
+        Ok(SessionStore::with_redaction(
+            loaded_config.data_dir,
+            loaded_config.config.security.redact_secrets_in_sessions,
+        )
+        .delete_async(session_id.to_string())
+        .await?)
+    }
 
     /// Returns the IDs of all active (in-memory) sessions.
     pub fn session_ids(&self) -> Vec<String> {

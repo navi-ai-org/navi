@@ -131,7 +131,7 @@ GitHub Copilot is available as an OAuth-capable provider. The OAuth flow uses Gi
 
 Gitlawb provides an OpenAI-compatible gateway at `https://opengateway.gitlawb.com/v1` with models like `mimo-v2.5-pro`. Uses `openai-chat-completions` protocol with `Authorization: Bearer` auth.
 
-See [docs/providers.md](docs/providers.md) for provider behavior and configuration notes.
+Provider behavior and configuration notes are documented in [AGENTS.md](AGENTS.md).
 
 ## Tools And Security
 
@@ -150,7 +150,7 @@ Built-in tools are registered by `ToolExecutor` in `navi-core`:
 | `git_ops` | Command | Git operations: `status`, `diff`, `log`, `branch`, `stash`, `remote`. Read-only commands bypass approval |
 | `package_manager` | Write | Manage deps: `install`, `add`, `remove`, `update`, `check`. Auto-detects npm/bun/cargo/go |
 
-The security layer validates tool kind, paths, commands, plugin paths, and approval requirements before execution. See [docs/tools-security.md](docs/tools-security.md).
+The security layer validates tool kind, paths, commands, plugin paths, and approval requirements before execution. Tool and security details are documented in [AGENTS.md](AGENTS.md).
 
 `git_ops` read-only commands (`status`, `diff`, `log`, `branch`) bypass approval automatically through a special-case in `SecurityPolicy`. Destructive commands (`stash`, `remote`) require approval.
 
@@ -202,14 +202,14 @@ In the TUI, `ctrl+d` opens the Debug modal with the current log path, session id
 - `NaviEngine::snapshot_session(...)` — takes a persistence snapshot
 - Host tools through `SdkHostTool` — register custom tools from the host app
 
-NAVI Tutor consumes `navi-sdk` by path dependency. See [docs/architecture.md](docs/architecture.md).
+NAVI Tutor consumes `navi-sdk` by path dependency. See [AGENTS.md](AGENTS.md) for architecture and runtime boundaries.
 
 More implementation guidance lives in:
 
-- [docs/architecture.md](docs/architecture.md)
-- [docs/tui.md](docs/tui.md)
-- [docs/provider-sync.md](docs/provider-sync.md)
-- [docs/code-agent-guidance.md](docs/code-agent-guidance.md)
+- [docs/index.md](docs/index.md) — Full documentation hub
+- [docs/user-guide.md](docs/user-guide.md) — User and code agent guide
+- [docs/sdk-agents.md](docs/sdk-agents.md) — SDK embedding and technical API
+- [AGENTS.md](AGENTS.md) — Technical reference for agents
 
 ## Data Locations
 
@@ -234,4 +234,4 @@ Use focused crate tests while iterating, then run `cargo test` before handing of
 
 ## License
 
-MIT
+Apache-2.0. See [LICENSE](LICENSE).

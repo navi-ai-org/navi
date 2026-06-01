@@ -94,8 +94,14 @@ impl Tool for TestRunnerTool {
         let stdout_data = Arc::new(Mutex::new(Vec::new()));
         let stderr_data = Arc::new(Mutex::new(Vec::new()));
 
-        spawn_reader(child.stdout.take().unwrap(), stdout_data.clone());
-        spawn_reader(child.stderr.take().unwrap(), stderr_data.clone());
+        spawn_reader(
+            child.stdout.take().context("child stdout was not piped")?,
+            stdout_data.clone(),
+        );
+        spawn_reader(
+            child.stderr.take().context("child stderr was not piped")?,
+            stderr_data.clone(),
+        );
 
         let timeout_duration = Duration::from_millis(timeout_ms);
         let status_result = tokio::time::timeout(timeout_duration, child.wait()).await;
