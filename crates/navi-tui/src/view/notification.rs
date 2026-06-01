@@ -20,7 +20,7 @@ pub(super) fn render_notification(frame: &mut Frame<'_>, app: &TuiApp, area: Rec
         .saturating_add(8);
     let available_width = area.width.saturating_sub(4).max(1);
     let width = (message_width.clamp(26, 68) as u16).min(available_width);
-    let height = area.height.min(3).max(1);
+    let height = area.height.clamp(1, 3);
     let x = area.x + area.width.saturating_sub(width + 2);
     let y = area.y
         + area

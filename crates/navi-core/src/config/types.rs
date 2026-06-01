@@ -8,7 +8,7 @@ fn default_true() -> bool {
 
 /// Top-level NAVI configuration, loaded from TOML and merged across defaults,
 /// global config, and project config.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct NaviConfig {
     /// Selected model provider and name.
@@ -301,7 +301,7 @@ pub struct PluginConfig {
 }
 
 /// Skill discovery and activation settings.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct SkillsConfig {
     /// Whether skill discovery is enabled.
@@ -313,7 +313,7 @@ pub struct SkillsConfig {
 }
 
 /// MCP (Model Context Protocol) client configuration.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct McpConfig {
     /// Whether MCP integration is enabled.

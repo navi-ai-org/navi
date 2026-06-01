@@ -104,7 +104,7 @@ impl Tool for BuildRunnerTool {
 
         if incremental {
             let current_mtime = latest_source_mtime(&build_system);
-            let state = self.state.lock().unwrap();
+            let state = self.state.lock().unwrap_or_else(|e| e.into_inner());
 
             if let (Some(last_build), Some(src_mtime), Some(cached)) = (
                 state.last_build_time,
@@ -151,8 +151,10 @@ impl Tool for BuildRunnerTool {
         let stdout_data = Arc::new(tokio::sync::Mutex::new(Vec::new()));
         let stderr_data = Arc::new(tokio::sync::Mutex::new(Vec::new()));
 
-        spawn_reader(child.stdout.take().unwrap(), stdout_data.clone());
-        spawn_reader(child.stderr.take().unwrap(), stderr_data.clone());
+        let stdout = child.stdout.take().context("stdout was not piped")?;
+        let stderr = child.stderr.take().context("stderr was not piped")?;
+        spawn_reader(stdout, stdout_data.clone());
+        spawn_reader(stderr, stderr_data.clone());
 
         let timeout_duration = Duration::from_millis(BUILD_DEFAULT_TIMEOUT_MS);
         let status_result = tokio::time::timeout(timeout_duration, child.wait()).await;
@@ -193,7 +195,7 @@ impl Tool for BuildRunnerTool {
 
         // Update cache state
         {
-            let mut state = self.state.lock().unwrap();
+            let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
             state.last_build_time = Some(SystemTime::now());
             state.last_source_mtime = latest_source_mtime(&build_system);
             state.last_result = Some(CachedResult {

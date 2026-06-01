@@ -218,7 +218,7 @@ pub(crate) fn selected_provider_label(app: &TuiApp) -> &str {
 }
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
+#[allow(dead_code)] // `description` and `provider_id` are used in tests only
 pub(crate) enum ListRow {
     Header {
         label: String,

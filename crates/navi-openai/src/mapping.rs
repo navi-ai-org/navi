@@ -34,11 +34,10 @@ pub(crate) fn message_to_json(message: &ModelMessage) -> Value {
             .collect();
         obj.insert("tool_calls".into(), Value::Array(tool_calls));
     }
-    if let Some(thinking) = &message.thinking_content {
-        if message.role == ModelRole::Assistant && !thinking.is_empty() {
+    if let Some(thinking) = &message.thinking_content
+        && message.role == ModelRole::Assistant && !thinking.is_empty() {
             obj.insert("reasoning_content".into(), Value::String(thinking.clone()));
         }
-    }
     Value::Object(obj)
 }
 

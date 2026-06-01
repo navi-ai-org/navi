@@ -97,14 +97,13 @@ fn run_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, mut app: TuiA
 
         if event::poll(timeout)? {
             match event::read()? {
-                Event::Key(key) => {
-                    if key.kind == KeyEventKind::Press {
+                Event::Key(key)
+                    if key.kind == KeyEventKind::Press => {
                         needs_draw = true;
                         if handle_key(&mut app, key.code, key.modifiers) {
                             break;
                         }
                     }
-                }
                 Event::Mouse(mouse_event) => {
                     needs_draw = true;
                     handle_mouse(&mut app, mouse_event);

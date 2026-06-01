@@ -41,3 +41,9 @@ impl CancelToken {
         self.notify.notified()
     }
 }
+
+impl Default for CancelToken {
+    fn default() -> Self {
+        Self::new()
+    }
+}

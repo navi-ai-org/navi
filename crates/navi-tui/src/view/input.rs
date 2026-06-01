@@ -167,7 +167,7 @@ fn shortcut_tips(app: &TuiApp, width: usize) -> Line<'static> {
             " ".repeat(padding),
             Style::default().fg(MUTED),
         ));
-        spans.push(Span::styled(format!("ctx:"), Style::default().fg(MUTED)));
+        spans.push(Span::styled("ctx:".to_string(), Style::default().fg(MUTED)));
         spans.push(Span::styled(pct_label, Style::default().fg(pct_color)));
         if !threshold_label.is_empty() {
             spans.push(Span::styled(

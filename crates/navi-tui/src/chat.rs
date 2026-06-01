@@ -1,5 +1,4 @@
 use navi_sdk::{AgentEvent, ModelMessage, ModelRole, build_system_prompt};
-use tracing;
 
 use crate::TuiApp;
 use crate::providers::selected_provider_label;

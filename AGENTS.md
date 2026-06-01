@@ -1,8 +1,6 @@
 # Agent Guide for NAVI
 
-NAVI is the local agentic engine and terminal-first code agent. It is implemented in Rust, has a ratatui/crossterm TUI for interactive sessions, supports headless/scripted execution, and should expose engine capabilities to other local clients.
-
-NAVI Tutor is a separate visual active-learning workspace that may use NAVI as its engine. Treat NAVI Tutor as an important client/case of use, not as the NAVI product boundary.
+NAVI is the local agentic engine and terminal-first code agent. It is implemented in Rust, has a ratatui/crossterm TUI for interactive sessions, supports headless/scripted execution, and exposes engine capabilities to other local clients.
 
 ## Product Boundary
 
@@ -22,17 +20,12 @@ NAVI owns:
 
 NAVI does not own:
 
-- visual study canvas
-- mind maps
-- drawing UI
-- study blocks UI
-- skill map UI
-- tutor dashboard
-- learning product UX
-- Tauri frontend layout
-- educational workflow design, except as engine capabilities exposed to clients
+- visual study canvas, mind maps, drawing UI
+- study blocks UI, skill map UI, tutor dashboard
+- learning product UX, Tauri frontend layout
+- educational workflow design (except as engine capabilities exposed to clients)
 
-## Architecture Principle
+## Architecture
 
 The TUI is not the engine.
 
@@ -42,70 +35,9 @@ NAVI TUI    = terminal frontend for technical builders
 NAVI Tutor  = visual learning frontend using the same engine
 ```
 
-Core agent behavior belongs in engine crates, primarily `navi-core`, not in `navi-tui`. The TUI should be a powerful frontend/client of the engine. NAVI Tutor must be able to embed or drive the engine without depending on terminal UI internals.
+Core agent behavior belongs in engine crates, primarily `navi-core`, not in `navi-tui`. The TUI is a powerful frontend/client of the engine. NAVI Tutor must be able to embed or drive the engine without depending on terminal UI internals.
 
-NAVI should expose three stable surfaces:
-
-1. CLI/TUI for humans operating the agent directly in a terminal.
-2. Runtime SDK / Rust API for NAVI Tutor/Tauri and other local apps embedding NAVI.
-3. ACP stdio server for editors and external agent clients.
-
-Do not make WebSocket/daemon the primary interface unless explicitly requested. External process mode should prefer a stable stdio/headless runtime protocol first.
-
-Default integration direction: NAVI Tutor embeds NAVI Engine directly. Advanced mode may use an external NAVI installation through a stable headless/stdio protocol. NAVI Tutor must not require NAVI TUI to be installed.
-
-## Engine API Direction
-
-NAVI should evolve toward a small, serializable, UI-agnostic runtime API equivalent to:
-
-- `AgentRuntime::start_session(...)`
-- `AgentRuntime::send_turn(...)`
-- `AgentRuntime::cancel_turn(...)`
-- `AgentRuntime::list_models(...)`
-- `AgentRuntime::set_model(...)`
-- `AgentRuntime::register_host_tool(...)`
-- `AgentRuntime::add_context_packet(...)`
-- `AgentRuntime::stream_events(...)`
-- `AgentRuntime::snapshot_session(...)`
-
-Structured events should be serializable, versioned, and suitable for both TUI and Tutor. Expected event concepts include `session.started`, `turn.started`, `assistant.delta`, `assistant.thinking_delta`, `tool.requested`, `approval.required`, `tool.started`, `tool.completed`, `context.updated`, `tokens.updated`, `session.saved`, `turn.completed`, `session.finished`, and `error`.
-
-External clients must be able to provide context packets from sources such as files, project state, user selection, canvas nodes, study blocks, focus threads, material excerpts, session summaries, decisions, and memory search. NAVI should accept, prioritize, and inject these packets without owning the client's UI or database.
-
-Agent modes must become real runtime state, not only slash-command text. Examples include `Plan`, `Edit`, `Review`, `Tutor`, `Socratic`, `Recall`, and `Focus`. Modes may control system prompt, allowed tools, mutation permissions, output style, approval policy, and whether NAVI answers directly or asks Socratic questions.
-
-Host apps must be able to register tools without dynamic native plugins. For NAVI Tutor, host tools may include `create_canvas_node`, `update_study_block`, `link_nodes`, `add_not_now_item`, `create_quiz`, `record_answer`, `update_skill_score`, `search_memory`, and `register_decision`.
-
-Skills and MCP are engine capabilities:
-
-- Skills are local `SKILL.md` folders discovered by `navi-core` and injected as active prompt instructions. Do not implement marketplace/remote install unless explicitly requested.
-- MCP support starts as a client only. `navi-mcp` connects to configured stdio MCP servers and maps remote tools into `ToolExecutor`; do not make NAVI an MCP server yet.
-- MCP and skill support should flow through `navi-sdk` so NAVI Tutor can consume them without TUI dependencies.
-
-## Plugin Boundary
-
-Plugins must have scope:
-
-- Engine plugins: providers, tools, context processors, routing, memory/session hooks, approval policies. Usable by TUI and Tutor.
-- TUI plugins: terminal UI widgets, ratatui panels, keybindings, terminal commands, themes. Usable only by NAVI TUI.
-- Tutor plugins: visual blocks, canvas tools, study behaviors, tutor widgets. Usable only by NAVI Tutor.
-
-NAVI Tutor can inherit engine sessions, providers, runtime plugins, tools, and events. NAVI Tutor cannot inherit TUI-specific plugins because there is no terminal UI to modify.
-
-## Read First
-
-Use these docs as the current map before making non-trivial changes:
-
-- `README.md` — user-facing overview, commands, controls.
-- `docs/architecture.md` — crate boundaries and runtime flow.
-- `docs/tui.md` — TUI state, keybindings, rendering, performance rules.
-- `docs/providers.md` — provider protocols, thinking adapters, credentials.
-- `docs/tools-security.md` — built-in tools, approvals, security policy.
-- `docs/code-agent-guidance.md` — workflow guidance for coding agents.
-
-## Workspace
-
-Rust workspace, edition 2024, resolver 3. All implementation lives under `crates/`; the repo root has no active `src/`.
+### Crates
 
 | Crate | Role |
 |---|---|
@@ -119,63 +51,46 @@ Rust workspace, edition 2024, resolver 3. All implementation lives under `crates
 | `navi-sdk` | Public embedding facade for local clients (Tutor, TUI, ACP). Wraps core runtime, provider setup, plugin loading, host tools, MCP, sessions and events. |
 | `navi-tui` | Terminal UI with chat, model picker, thinking/settings/session modals, markdown/code rendering. Drives turns through `navi-sdk::NaviEngine`. |
 
-## Current Integration State
+### Runtime Flow
 
-Latest important commits:
+1. `navi-cli` loads `NaviConfig` from defaults, global config, and project config.
+2. The selected provider config is resolved from the built-in catalog plus user overrides.
+3. Credentials are resolved from environment variables first, then the credential store.
+4. TUI mode creates a `TuiApp`; headless mode creates `AgentRuntime`; ACP mode serves JSON-RPC over stdio. TUI and ACP drive turns through `navi-sdk::NaviEngine`.
+5. The harness layer selects a `small` or `medium` profile, builds the system prompt, and applies loop/observation limits.
+6. A user prompt becomes a `ModelRequest` containing conversation history, selected model, thinking mode, and available tool definitions.
+7. `navi-providers` (via `navi-openai`) streams `ModelStreamEvent` values back to the caller.
+8. Text/thinking deltas update the active assistant message; tool calls go through `ToolExecutor` and `SecurityPolicy`.
+9. Tool calls and tool results are sent back using provider tool-message protocol.
+10. Completed assistant output, tool results, and harness traces are persisted as session events.
 
-- `e112c59` Unify TUI/ACP under shared `navi-sdk::NaviEngine` runtime surface.
-- `d7f0f46` Add NAVI SDK integration surface in this repo.
-- `3efb238` Connect Tutor backend to NAVI SDK in `/home/enrell/projects/navi-tutor`.
+### Three Stable Surfaces
 
-`navi-sdk` exists locally and is not published to crates.io. NAVI Tutor currently consumes it by path dependency:
+1. CLI/TUI for humans operating the agent directly in a terminal.
+2. Runtime SDK / Rust API for NAVI Tutor/Tauri and other local apps embedding NAVI.
+3. ACP stdio server for editors and external agent clients.
 
-```toml
-navi-sdk = { path = "../../navi/crates/navi-sdk" }
-navi-core = { path = "../../navi/crates/navi-core" }
-```
+Do not make WebSocket/daemon the primary interface unless explicitly requested. External process mode should prefer a stable stdio/headless runtime protocol first.
 
-The SDK is the intended public Rust boundary for Tutor integration. Do not make Tutor depend on `navi-tui`. Do not assume the `navi` binary exists in `PATH`.
+### Engine API
 
-Implemented SDK/runtime capabilities:
+NAVI exposes a small, serializable, UI-agnostic runtime API:
 
-- `NaviEngineBuilder::from_project(...)`
-- `NaviEngine::start_session(...)`
-- `NaviEngine::send_turn(...)`
-- `NaviEngine::cancel_turn(...)`
-- `NaviEngine::resolve_approval(...)`
-- `NaviEngine::add_context_packet(...)`
-- `NaviEngine::snapshot_session(...)`
-- `NaviEngine::list_models(...)`
-- `NaviEngine::set_model(...)`
-- `NaviEngine::subscribe_events(...)`
-- `NaviEngine::list_provider_accounts(...)`
-- `NaviEngine::set_session_skills(...)`
-- `NaviEngine::list_mcp_servers(...)`
-- host tools through `SdkHostTool` and `HostToolHandler`
+- `NaviEngine::start_session(...)` — creates a new agent session
+- `NaviEngine::send_turn(...)` — sends a user message, returns structured events
+- `NaviEngine::cancel_turn(...)` — cancels an active turn
+- `NaviEngine::resolve_approval(...)` — resolves tool approval prompts
+- `NaviEngine::add_context_packet(...)` — injects context from external sources
+- `NaviEngine::snapshot_session(...)` — takes a persistence snapshot
+- `NaviEngine::list_models(...)` — lists available models
+- `NaviEngine::set_model(...)` — selects a model
+- `NaviEngine::subscribe_events(...)` — streams `RuntimeEvent`s
+- `NaviEngine::list_provider_accounts(...)` — lists provider credentials
+- `NaviEngine::set_session_skills(...)` — activates skills
+- `NaviEngine::list_mcp_servers(...)` — lists MCP servers
+- Host tools through `SdkHostTool` and `HostToolHandler`
 
-`navi-core` now has embeddable runtime state for session lifecycle, cancellation, approval resolution, event streaming and snapshots. Approval and cancellation have lightweight handles so a client can resolve approval or cancel while a turn is active.
-
-TUI and ACP both drive their sessions through `NaviEngine` instead of constructing `TurnContext`/`SessionRuntime` directly. This means provider setup, tool loading, plugins, MCP, event streaming, approvals, cancellation, and persistence all flow through the shared SDK.
-
-Next integration target:
-
-- Build the Tutor frontend loop on top of existing Tauri commands: start a NAVI session, send a turn, listen to `navi-runtime-event`, render assistant deltas, show approval prompts, and verify host tools mutate Tutor SQLite/canvas state.
-
-## Commands
-
-```bash
-cargo build
-cargo fmt
-cargo check
-cargo test
-cargo test -p <crate_name>
-cargo run -p navi-cli -- TASK
-cargo run -p navi-cli -- --no-tui TASK
-cargo run -p navi-cli -- --print-config
-cargo run -p navi-cli -- --print-providers
-```
-
-Headless mode requires a task argument.
+Structured events are serializable, versioned, and suitable for both TUI and Tutor: `session.started`, `turn.started`, `assistant.delta`, `assistant.thinking_delta`, `tool.requested`, `approval.required`, `tool.started`, `tool.completed`, `context.updated`, `tokens.updated`, `session.saved`, `turn.completed`, `session.finished`, `error`.
 
 ## Configuration
 
@@ -195,7 +110,7 @@ Key sections:
 - `providers`: built-in provider overrides or custom providers.
 - `plugins`: native plugin library paths.
 
-API keys are read from env vars first, provider-specific external auth sources next, then the credential store. The TUI must not ask for API keys on startup; it prompts from the model picker when selecting a provider without a resolved key. Provider account management belongs in the command palette as `Providers`, not in Settings.
+API keys are read from env vars first, provider-specific external auth sources next, then the credential store. The TUI must not ask for API keys on startup; it prompts from the model picker when selecting a provider without a resolved key.
 
 ## Providers
 
@@ -216,52 +131,264 @@ The UI thinking levels are `max`, `high`, `medium`, `low`, and `off`. `ThinkingC
 
 Tool transcripts must remain provider-correct. Chat Completions uses assistant `tool_calls` plus role `tool` results. Responses uses `function_call` and `function_call_output` input items.
 
+Provider keys are resolved in this order:
+
+1. Environment variable declared by `ProviderConfig.api_key_env`
+2. Provider-specific external auth sources
+3. Credential store under NAVI's data directory
+
 ## Tools And Security
 
 Built-in tools:
 
-- `read_file`
-- `write_file`
-- `apply_patch`
-- `list_files`
-- `grep`
-- `bash`
+| Tool | Kind | Purpose |
+|---|---|---|
+| `read_file` | Read | Read UTF-8 project files, optionally by line range |
+| `write_file` | Write | Write full UTF-8 file contents |
+| `apply_patch` | Write | Apply a unified diff with `git apply` |
+| `grep` | Read | Literal text search over project files |
+| `bash` | Command | Run a shell command with timeout, background tasks, and truncation |
+| `test_runner` | Command | Run project tests with structured output. Auto-detects cargo/jest/vitest/bun/pytest/go |
+| `build_runner` | Command | Build/compile with caching. Returns structured warnings/errors. Skips rebuild if no source changed |
+| `fs_browser` | Read | Browse filesystem: `list`, `tree`, `find`, `stat`. Replaces `list_files` |
+| `git_ops` | Command | Git operations: `status`, `diff`, `log`, `branch`, `stash`, `remote`. Read-only commands bypass approval |
+| `package_manager` | Write | Manage deps: `install`, `add`, `remove`, `update`, `check`. Auto-detects npm/bun/cargo/go |
 
 `ToolExecutor` validates invocations through `SecurityPolicy` before execution. Reads are allowed by default, writes and commands require approval by default, blocked commands are denied, paths are restricted to the project by default, NAVI private storage is denied, and writes to `.git` are denied.
 
 When adding tools, make security-sensitive inputs visible to policy validation. File tools should expose `path` or `file`; command tools should expose `program` or `command`.
 
-Native plugins are loaded with `libloading` from configured `[[plugins]]` entries. They must export `navi_plugin_entrypoint`, match `NAVI_PLUGIN_API_VERSION`, and register executable `Tool` implementations. Bad plugins warn and are skipped; agent policy and TUI component registrations are discovery-only for now.
+### Security Policy
 
-## TUI Notes
+Default security config:
 
-- The TUI event loop is synchronous; async model/tool/provider work uses `tokio::spawn` and reports through `AsyncEvent`.
-- Do not create a second Tokio runtime in the TUI.
-- The shared harness lives in `navi-core/src/harness.rs`; do not add separate TUI-only prompts or loop policy.
-- Ctrl shortcuts: `ctrl+p` commands, `ctrl+m` models, `ctrl+n` new session, `ctrl+s` sessions, `ctrl+o` full tool view, `ctrl+c` quit.
-- `tab` cycles the active agent mode in the TUI through `navi_core::AgentMode`; runtime APIs should treat this as real engine state, not only a slash-command prefix.
-- `ctrl+d` opens the Debug modal with log path, session id, provider/model, active state, and recent diagnostics.
-- Prompt sending is `ctrl+enter`; plain `enter` inserts a newline.
-- Chat rendering uses cached markdown/code rendering. If rendered output depends on new message fields, update `chat_render_signature`.
-- Avoid expensive work in draw functions.
+```toml
+[security]
+restrict_paths_to_project = true
+protect_git_metadata = true
+redact_secrets_in_sessions = true
+allow_external_plugins = false
+blocked_commands = ["rm", "rmdir", "shred", "mkfs", "dd", "sudo", "su", "doas"]
+```
 
-## KISS Rules
+Path rules:
+- reads and writes are restricted to the project root
+- NAVI private storage is denied
+- writes into `.git` are denied
+- writes require approval
 
-- Do not couple NAVI Tutor to NAVI TUI.
-- Do not make NAVI Tutor depend on terminal UI internals.
-- Do not force WebSocket/daemon before needed.
-- Do not make plugin scope ambiguous.
-- Do not put core runtime logic inside `navi-tui`.
-- Keep engine APIs small, serializable, and stable.
-- Keep TUI as a powerful frontend, not the product boundary.
+Command rules:
+- commands are validated by program name against `blocked_commands`
+- commands require approval by default
+- long-running commands use `background = true` with `wait_ms` and `timeout_ms`
 
-## Persistence
+Approval flow:
+- `ToolExecutor::validate` returns `Allow`, `NeedsApproval`, or `Deny(reason)`
+- the TUI handles approval prompts unless YOLO/autonomous mode is enabled
+- headless mode is approval-gated by default
 
-`SessionStore` saves `SessionSnapshot` JSON under `<data_dir>/sessions/`. Secret redaction is enabled by default. If you add event fields containing user/model/tool text, update redaction and session replay logic.
+Secret redaction:
+- session persistence redacts likely secrets when `redact_secrets_in_sessions = true`
+- catches secret-like assignments, long secret-like tokens, common key/token naming patterns
+
+## TUI
+
+The TUI lives in `crates/navi-tui/src/`. The event loop is synchronous ratatui/crossterm with an async bridge over `tokio::spawn` tasks. The CLI already owns the Tokio runtime; do not create another runtime inside the TUI.
+
+### Modules
+
+| Module | Role |
+|---|---|
+| `app.rs` | `TuiApp` aggregate state and constructor |
+| `state.rs` | `ChatMessage`, `ChatRole`, `Mode`, `ModalKind`, selection, tool state |
+| `theme.rs` | Color palette, logo, spacing constants |
+| `commands.rs` | Command palette model and filtering |
+| `keybindings.rs` | Key routing and modal handlers |
+| `input.rs` | TuiApp input-field adapter helpers |
+| `mouse.rs` | Mouse scrolling, text selection, and clipboard copy |
+| `event_loop.rs` | Crossterm/ratatui terminal lifecycle and polling loop |
+| `dispatch.rs` | `AsyncEvent` handling and runtime-event-to-UI mutations |
+| `chat.rs` | Chat message/history mutations and assistant response lifecycle |
+| `tools.rs` | TUI-side tool rows, approval state, and cancel flow |
+| `providers.rs` | Model picker/provider account UI helpers |
+| `view.rs` | TuiApp-dependent Ratatui rendering |
+| `stream.rs` | SDK turn spawning and streaming request bridge |
+| `notifications.rs` | Notification and diagnostic state helpers |
+| `render.rs` | Markdown rendering, syntax highlighting, tool formatting, input formatting |
+| `runtime.rs` | SDK bridge (`NaviEngine` construction, `forward_runtime_event_to_tui`, OAuth) |
+| `session.rs` | Saved-session listing, timestamp formatting, title extraction |
+| `persistence.rs` | Current session save/load and preference persistence |
+| `errors.rs` | Retry logic, error classification, delay parsing, `human_duration` |
+| `ui/` | Internal Ratatui framework: `TextInput`, `ModalStack`, `SelectListState`, layout |
+
+### Main Concepts
+
+- `TuiApp` stores UI state, credentials, session display state, tool approval UI state, an SDK engine handle, and async channels.
+- `AsyncEvent` carries SDK runtime events, turn completion, retry triggers, OAuth completions, and model-sync results back into the event loop.
+- `Mode` selects modal behavior: normal chat, commands, models, API key entry, thinking, sessions, settings, provider accounts.
+- `ChatMessage` is display-oriented and may contain model labels, status, usage, thinking text, tool invocation/result metadata, or normal content.
+- `ui::*` is the internal TUI framework layer. Keep it private to `navi-tui`; do not move ratatui abstractions into `navi-sdk`.
+
+### Keybindings
+
+Key handling uses explicit precedence layers:
+
+1. approval overlay
+2. normal-mode cancellation
+3. global shortcuts
+4. active mode/modal handler
+
+If a layer handles a key, lower layers must not see it.
+
+Modal transitions should go through `UiEffect` helpers (`OpenModal`, `ReplaceModal`, `CloseModal`, `CloseAllModals`) so `Mode` and `ModalStack` stay synchronized.
+
+| Shortcut | Behavior |
+|---|---|
+| `ctrl+p` | Command palette |
+| `ctrl+m` | Model picker |
+| `ctrl+n` | New session |
+| `ctrl+s` | Session picker |
+| `ctrl+o` | Toggle compact/full tool output view |
+| `ctrl+d` | Debug modal |
+| `ctrl+enter` | Send prompt |
+| `enter` | Insert newline |
+| `ctrl+j` | Insert newline |
+| `ctrl+c` | Quit |
+| `/` on empty input | Command palette |
+| `?` on empty input | Shortcuts |
+
+### Input Editing
+
+NAVI supports CamelHumps editing:
+
+- `ctrl` word movement/deletion stops at camel humps and special characters.
+- `alt` word deletion is broader and deletes until whitespace.
+
+### Chat Rendering
+
+The chat renderer supports:
+
+- markdown-ish prose rendering for headings, bullets, ordered lists, blockquotes, links, inline code, bold, italic, and tables.
+- fenced code block syntax highlighting through `syntect`.
+- compact tool rows by default.
+- full tool input/output view when `ctrl+o` is enabled.
+- visible thinking text when `Show Thinking Text` is enabled in settings.
+
+Rendering is cached in `ChatRenderCache`. If you change message fields that affect rendered output, update `chat_render_signature`.
+
+### Tool Call Display
+
+Default view: one compact line per tool result. Green ball for success, red ball for error.
+
+Full view: enabled with `ctrl+o` or settings. Shows tool input and output.
+
+### Modals
+
+The model picker includes provider/model search and refresh actions:
+
+- `tab` refreshes the selected provider.
+- `ctrl+r` refreshes all providers.
+- selecting a model from a provider without a stored key opens the API key entry modal.
+
+Provider configuration is in the command palette as `Providers`. That modal lists configured providers, shows credential status, and supports:
+
+- `enter` / `k` for API key setup.
+- `o` for OAuth on supported providers.
+- `r` to sync models for the selected provider.
+
+The Debug modal (`ctrl+d`) shows the log path, session id, project, selected model/provider, active state, and recent diagnostics.
+
+### Performance Rules
+
+- Do not run syntax highlighting, model filtering, provider sync, file IO, or network IO in the draw path without caching.
+- Keep `render_*` functions deterministic and fast.
+- Use async tasks for SDK runtime/model/provider operations and report back through `AsyncEvent`.
+- Avoid rebuilding full chat render output on scroll-only frames.
+- Do not emit normal logs from draw functions.
+
+## Compaction
+
+NAVI implements a three-level conversation compaction system:
+
+| Level | Trigger | Mechanism | Data Loss |
+|---|---|---|---|
+| Micro-compact | Time gap > 60 min since last assistant message | Clears read-only tool result content in-place | Tool output text only |
+| Auto-compact | `input_tokens + buffer >= context_window` | Summarizes full conversation via model, replaces messages with system + summary | Full conversation replaced by summary |
+| Session memory | Session end with compact summary | Saves summary to `<data_dir>/memory/<project_hash>.json`, injected on next session | None (additive) |
+
+### Micro-Compact
+
+`micro_compact(messages, gap_threshold_minutes)` clears the `content` of tool result messages whose `tool_name` is in the read-only set (`read_file`, `list_files`, `grep`, `bash`, `git_ops`). Write tools are never cleared. Cleared content is replaced with `[Old tool result content cleared]`.
+
+### Auto-Compact
+
+`CompactState::auto_compact()` is called when `input_tokens + autocompact_buffer_tokens >= context_window` and the circuit breaker is not open.
+
+The conversation is serialized to text and sent to the model with a prompt that produces a 9-section summary:
+
+1. Pedido e Intenção Primária
+2. Conceitos Técnicos-Chave
+3. Arquivos e Trechos de Código
+4. Erros e Correções
+5. Resolução de Problemas
+6. Todas as Mensagens do Usuário
+7. Tarefas Pendentes
+8. Trabalho Atual
+9. Próximo Passo Opcional
+
+After 3 consecutive failures, the circuit breaker opens. No further auto-compact attempts are made.
+
+### Session Memory
+
+When `MemoryConfig.session_memory_enabled` is true and a new session starts, the TUI loads the project memory and injects recent entries into the system prompt.
+
+## Sessions
+
+`SessionStore` saves `SessionSnapshot` JSON under `<data_dir>/sessions/`. Secret redaction is enabled by default through `SecurityConfig.redact_secrets_in_sessions`.
+
+When adding event types:
+
+- Add them to `AgentEvent`.
+- Update session load/replay logic in the TUI if the event affects user-visible history.
+- Confirm redaction still handles secret-bearing text.
+
+## Plugins
+
+Plugins are native libraries exporting `navi_plugin_entrypoint`. The host loads them with `libloading`, rejects incompatible `api_version` values, and registers executable plugin tools into the same `ToolExecutor` used by built-in tools.
+
+Trusted plugin locations are enforced by `SecurityPolicy` unless `allow_external_plugins = true`. Failed plugins are reported as warnings and skipped.
+
+Plugin scope:
+
+- Engine plugins: providers, tools, context processors, routing, memory/session hooks, approval policies. Usable by TUI and Tutor.
+- TUI plugins: terminal UI widgets, ratatui panels, keybindings, terminal commands, themes. Usable only by NAVI TUI.
+- Tutor plugins: visual blocks, canvas tools, study behaviors, tutor widgets. Usable only by NAVI Tutor.
+
+## Skills And MCP
+
+Skills are local `SKILL.md` folders discovered by `navi-core` and injected as active prompt instructions. Do not implement marketplace/remote install unless explicitly requested.
+
+MCP support starts as a client only. `navi-mcp` connects to configured stdio MCP servers and maps remote tools into `ToolExecutor`; do not make NAVI an MCP server yet. MCP and skill support should flow through `navi-sdk` so NAVI Tutor can consume them without TUI dependencies.
 
 ## Logging
 
 NAVI uses `tracing` through `navi-core::logging`. File logs default to `<data_dir>/logs/navi.log` with private permissions on Unix. Logs are diagnostics, not session history. Keep them compact and redacted by default; raw payload logging is only for explicit debug mode. Do not log secrets, Authorization headers, credential-store values, full prompts, or full tool output. Avoid logging from TUI draw paths.
+
+## Commands
+
+```bash
+cargo build
+cargo fmt
+cargo check
+cargo test
+cargo test -p <crate_name>
+cargo run -p navi-cli -- TASK
+cargo run -p navi-cli -- --no-tui TASK
+cargo run -p navi-cli -- --print-config
+cargo run -p navi-cli -- --print-providers
+```
+
+Headless mode requires a task argument.
 
 ## Testing Expectations
 
@@ -279,9 +406,34 @@ For targeted changes:
 - provider/request/stream parsing: `cargo test -p navi-openai`
 - tools/security/session/config: `cargo test -p navi-core`
 
+### Resource Limits
+
+Tests MUST respect resource constraints to avoid starving the host machine:
+
+- **CPU**: Maximum 4 test threads. Use `--test-threads=4` or set `CARGO_TEST_THREADS=4`.
+- **Memory**: Maximum 500MB per test process. Use `ulimit -v 512000` (virtual memory) before running tests, or wrap commands with `systemd-run --scope -p MemoryMax=500M` if available.
+
+```bash
+CARGO_TEST_THREADS=4 cargo test
+CARGO_TEST_THREADS=4 cargo test -p navi-core
+```
+
+If a single test exceeds 500MB or hangs for more than 60 seconds, it is a bug and must be fixed.
+
+## KISS Rules
+
+- Do not couple NAVI Tutor to NAVI TUI.
+- Do not make NAVI Tutor depend on terminal UI internals.
+- Do not force WebSocket/daemon before needed.
+- Do not make plugin scope ambiguous.
+- Do not put core runtime logic inside `navi-tui`.
+- Keep engine APIs small, serializable, and stable.
+- Keep TUI as a powerful frontend, not the product boundary.
+
 ## Gotchas
 
 - The worktree may be dirty; do not revert changes you did not make.
 - `target/` is gitignored.
 - `test_reqwest.rs` may exist as an untracked local scratch file. Leave it alone unless the user explicitly asks.
 - No CI, clippy, or rustfmt config is committed; use default cargo behavior.
+- `navi-sdk` exists locally and is not published to crates.io. NAVI Tutor consumes it by path dependency.

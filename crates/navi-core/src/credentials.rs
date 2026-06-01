@@ -94,11 +94,10 @@ impl CredentialStore {
 
     /// Reads an API key from OpenCode's auth.json file, if it exists.
     pub fn get_opencode_api_key(&self) -> Option<String> {
-        if let Ok(content) = std::env::var("OPENCODE_AUTH_CONTENT") {
-            if let Some(key) = opencode_key_from_auth_content(&content) {
+        if let Ok(content) = std::env::var("OPENCODE_AUTH_CONTENT")
+            && let Some(key) = opencode_key_from_auth_content(&content) {
                 return Some(key);
             }
-        }
 
         opencode_auth_paths()
             .into_iter()
@@ -146,11 +145,10 @@ impl CredentialStore {
     /// Resolves an API key by checking the environment variable first, then
     /// the stored credential. Returns `None` if neither is set.
     pub fn resolve_api_key(&self, provider_id: &str, env_var: &str) -> Option<String> {
-        if let Ok(key) = std::env::var(env_var) {
-            if !key.is_empty() {
+        if let Ok(key) = std::env::var(env_var)
+            && !key.is_empty() {
                 return Some(key);
             }
-        }
         self.get_api_key(provider_id)
     }
 
@@ -239,9 +237,9 @@ pub fn resolve_provider_credential_status(
         };
     }
 
-    if let Some(model) = model {
-        if model_can_run_publicly(requested_provider_id, model)
-            || model_can_run_publicly(&provider_config.id, model)
+    if let Some(model) = model
+        && (model_can_run_publicly(requested_provider_id, model)
+            || model_can_run_publicly(&provider_config.id, model))
         {
             return CredentialStatus {
                 configured: true,
@@ -250,7 +248,6 @@ pub fn resolve_provider_credential_status(
                 detail: Some("free model access without key".to_string()),
             };
         }
-    }
 
     CredentialStatus {
         configured: false,
@@ -307,11 +304,10 @@ fn provider_env_api_key(env_var: &str) -> Option<String> {
 fn opencode_auth_paths() -> Vec<PathBuf> {
     let mut paths = Vec::new();
 
-    if let Ok(data_home) = std::env::var("XDG_DATA_HOME") {
-        if !data_home.is_empty() {
+    if let Ok(data_home) = std::env::var("XDG_DATA_HOME")
+        && !data_home.is_empty() {
             paths.push(PathBuf::from(data_home).join("opencode").join("auth.json"));
         }
-    }
 
     if let Some(base_dirs) = BaseDirs::new() {
         paths.push(base_dirs.data_dir().join("opencode").join("auth.json"));
@@ -347,7 +343,7 @@ fn api_key_from_opencode_auth_entry(entry: &Value) -> Option<String> {
     }
 }
 
-fn ensure_private_parent_dir(path: &PathBuf) -> Result<()> {
+fn ensure_private_parent_dir(path: &Path) -> Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).context("failed to create credentials directory")?;
         #[cfg(unix)]
@@ -603,5 +599,68 @@ mod tests {
 
         assert_eq!(dir_mode, 0o700);
         assert_eq!(file_mode, 0o600);
+    }
+
+    // ── Regression tests ──────────────────────────────────────────────────────
+
+    #[test]
+    fn regression_corrupt_credentials_file_returns_none() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let data_dir = tempdir.path().join("navi-data");
+        let store = CredentialStore::new(data_dir.clone());
+
+        // Write corrupt TOML
+        fs::create_dir_all(&data_dir).expect("create");
+        fs::write(data_dir.join("credentials.toml"), "{not valid toml!!!").expect("write");
+
+        let key = store.get_api_key("openai");
+        assert!(key.is_none(), "corrupt credentials must return None");
+    }
+
+    #[test]
+    fn regression_delete_api_key_missing_file_returns_false() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let data_dir = tempdir.path().join("navi-data");
+        let store = CredentialStore::new(data_dir);
+
+        let result = store.delete_api_key("openai").expect("delete");
+        assert!(!result, "deleting from missing file should return false");
+    }
+
+    #[test]
+    fn regression_empty_env_var_falls_through() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let data_dir = tempdir.path().join("navi-data");
+        let store = CredentialStore::new(data_dir);
+
+        // Store a key
+        store.set_api_key("openai", "sk-stored").expect("save");
+
+        // Set env var to empty
+        unsafe { std::env::set_var("OPENAI_API_KEY", "") };
+        let key = store.resolve_api_key("openai", "OPENAI_API_KEY");
+        unsafe { std::env::remove_var("OPENAI_API_KEY") };
+
+        // Empty env var should fall through to stored key
+        assert_eq!(key.as_deref(), Some("sk-stored"));
+    }
+
+    #[test]
+    fn regression_set_empty_api_key_stores_empty() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let data_dir = tempdir.path().join("navi-data");
+        let store = CredentialStore::new(data_dir);
+
+        store.set_api_key("openai", "").expect("save");
+        // The store doesn't validate non-empty, so empty is stored
+        // This is a known behavior - callers should validate
+        let key = store.get_api_key("openai");
+        assert_eq!(key.as_deref(), Some(""));
+    }
+
+    #[test]
+    fn regression_opencode_key_from_invalid_json_returns_none() {
+        let result = opencode_key_from_auth_content("{not json");
+        assert!(result.is_none());
     }
 }

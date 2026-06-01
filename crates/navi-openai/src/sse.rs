@@ -1,14 +1,8 @@
+#[derive(Default)]
 pub(crate) struct SseDecoder {
     buffer: String,
 }
 
-impl Default for SseDecoder {
-    fn default() -> Self {
-        Self {
-            buffer: String::new(),
-        }
-    }
-}
 
 impl SseDecoder {
     pub(crate) fn push_bytes(&mut self, bytes: &[u8]) -> Vec<String> {

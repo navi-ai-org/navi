@@ -819,7 +819,7 @@ mod tests {
         assert_eq!(result["passed"], 3);
         assert_eq!(result["failed"], 2);
         assert_eq!(result["total"], 5);
-        assert!(result["failures"].as_array().unwrap().len() >= 1);
+        assert!(!result["failures"].as_array().unwrap().is_empty());
         assert_eq!(result["summary"], "3/5 passed, 2 failed");
     }
 
@@ -859,7 +859,7 @@ mod tests {
         assert_eq!(result["total"], 7);
         assert_eq!(result["passed"], 5);
         assert_eq!(result["failed"], 2);
-        assert!(result["failures"].as_array().unwrap().len() >= 1);
+        assert!(!result["failures"].as_array().unwrap().is_empty());
     }
 
     #[test]

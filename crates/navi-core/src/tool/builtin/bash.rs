@@ -398,7 +398,7 @@ impl Tool for BashTool {
             .unwrap_or(BASH_DEFAULT_TIMEOUT_MS)
             .min(BASH_MAX_TIMEOUT_MS);
 
-        self.run_foreground(&command, timeout_ms, invocation.id)
+        self.run_foreground(command, timeout_ms, invocation.id)
             .await
     }
 }
@@ -422,8 +422,10 @@ impl BashTool {
         let stdout_data = Arc::new(tokio::sync::Mutex::new(Vec::new()));
         let stderr_data = Arc::new(tokio::sync::Mutex::new(Vec::new()));
 
-        spawn_output_reader(child.stdout.take().unwrap(), stdout_data.clone());
-        spawn_output_reader(child.stderr.take().unwrap(), stderr_data.clone());
+        let stdout = child.stdout.take().context("stdout was not piped")?;
+        let stderr = child.stderr.take().context("stderr was not piped")?;
+        spawn_output_reader(stdout, stdout_data.clone());
+        spawn_output_reader(stderr, stderr_data.clone());
 
         let timeout_duration = Duration::from_millis(timeout_ms);
         let status_result = tokio::time::timeout(timeout_duration, child.wait()).await;
