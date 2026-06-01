@@ -250,11 +250,10 @@ fn text_line(
     italic: bool,
 ) -> Line<'static> {
     let mut spans = marker_spans(show_marker, marker_color);
-    if !italic
-        && let Some(markdown_line) = markdown_prose_line(&text, text_color) {
-            spans.extend(markdown_line);
-            return Line::from(spans);
-        }
+    if !italic && let Some(markdown_line) = markdown_prose_line(&text, text_color) {
+        spans.extend(markdown_line);
+        return Line::from(spans);
+    }
 
     let mut style = Style::default().fg(text_color);
     if italic {
@@ -594,15 +593,16 @@ fn inline_delimited(rest: &str) -> Option<(usize, &str, Modifier, Color, bool)> 
     for (marker, modifier, color, recursive) in patterns {
         if let Some(after_start) = rest.strip_prefix(marker)
             && let Some(end) = after_start.find(marker)
-                && end > 0 {
-                    return Some((
-                        marker.len(),
-                        &after_start[..end],
-                        modifier,
-                        color,
-                        recursive,
-                    ));
-                }
+            && end > 0
+        {
+            return Some((
+                marker.len(),
+                &after_start[..end],
+                modifier,
+                color,
+                recursive,
+            ));
+        }
     }
 
     None

@@ -3,7 +3,6 @@ pub(crate) struct SseDecoder {
     buffer: String,
 }
 
-
 impl SseDecoder {
     pub(crate) fn push_bytes(&mut self, bytes: &[u8]) -> Vec<String> {
         self.buffer.push_str(&String::from_utf8_lossy(bytes));

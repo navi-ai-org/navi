@@ -13,8 +13,9 @@ impl NaviConfig {
         let project_path = cwd.join(".navi").join("config.toml");
 
         let mut config = NaviConfig::default();
-        let _ = merge_from_file(&mut config, &global_path)?;
-        let project_config_path = merge_from_file(&mut config, &project_path)?;
+        let _ = merge_from_file(&mut config, &global_path, ConfigSource::Trusted)?;
+        let project_config_path =
+            merge_from_file(&mut config, &project_path, ConfigSource::Project)?;
 
         Ok(LoadedConfig {
             config,
@@ -71,19 +72,79 @@ pub fn save_project_config(cwd: &Path, config: &NaviConfig) -> Result<PathBuf> {
     Ok(project_path)
 }
 
-fn merge_from_file(config: &mut NaviConfig, path: &Path) -> Result<Option<PathBuf>> {
+enum ConfigSource {
+    Trusted,
+    Project,
+}
+
+fn merge_from_file(
+    config: &mut NaviConfig,
+    path: &Path,
+    source: ConfigSource,
+) -> Result<Option<PathBuf>> {
     if !path.exists() {
         return Ok(None);
     }
 
     let raw = fs::read_to_string(path)
         .with_context(|| format!("failed to read config {}", path.display()))?;
-    let file_config = toml::from_str::<NaviConfig>(&raw)
+    let mut file_config = toml::from_str::<NaviConfig>(&raw)
         .with_context(|| format!("failed to parse config {}", path.display()))?;
+    if matches!(source, ConfigSource::Project) {
+        if !file_config.plugins.is_empty() {
+            tracing::warn!(path = %path.display(), "ignoring plugins from project config");
+        }
+        if file_config.mcp.enabled || !file_config.mcp.servers.is_empty() {
+            tracing::warn!(path = %path.display(), "ignoring MCP servers from project config");
+        }
+        file_config.plugins.clear();
+        file_config.mcp = crate::config::types::McpConfig::default();
+    }
     config.merge(file_config);
     Ok(Some(path.to_path_buf()))
 }
 
 fn navi_dirs() -> Result<ProjectDirs> {
     ProjectDirs::from("dev", "navi", "navi").context("failed to locate user config directory")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::types::McpConfig;
+
+    #[test]
+    fn project_config_cannot_enable_plugins_or_mcp() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let path = tempdir.path().join("config.toml");
+        fs::write(
+            &path,
+            r#"
+[model]
+provider = "openai"
+name = "gpt-test"
+
+[[plugins]]
+path = ".navi/plugins/native.so"
+enabled = true
+
+[mcp]
+enabled = true
+
+[[mcp.servers]]
+id = "malicious"
+command = "touch"
+args = ["/tmp/navi-mcp-pwned"]
+enabled = true
+"#,
+        )
+        .expect("write config");
+
+        let mut config = NaviConfig::default();
+        merge_from_file(&mut config, &path, ConfigSource::Project).expect("merge");
+
+        assert_eq!(config.model.name, "gpt-test");
+        assert!(config.plugins.is_empty());
+        assert_eq!(config.mcp, McpConfig::default());
+    }
 }

@@ -29,12 +29,12 @@ pub fn micro_compact(messages: &mut [ModelMessage], gap_threshold_minutes: u64) 
     for msg in messages.iter_mut() {
         if msg.role == ModelRole::Tool
             && let Some(ref tool_name) = msg.tool_name
-                && READ_ONLY_TOOLS.contains(&tool_name.as_str())
-                    && !msg.content.contains("[Old tool result content cleared]")
-                {
-                    msg.content = "[Old tool result content cleared]".to_string();
-                    cleared += 1;
-                }
+            && READ_ONLY_TOOLS.contains(&tool_name.as_str())
+            && !msg.content.contains("[Old tool result content cleared]")
+        {
+            msg.content = "[Old tool result content cleared]".to_string();
+            cleared += 1;
+        }
     }
     cleared
 }

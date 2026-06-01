@@ -13,9 +13,10 @@ pub(crate) async fn ensure_success(
 
     let mut requested_delay = None;
     if let Some(retry_after_header) = response.headers().get(reqwest::header::RETRY_AFTER)
-        && let Ok(retry_after_str) = retry_after_header.to_str() {
-            requested_delay = parse_retry_after(retry_after_str);
-        }
+        && let Ok(retry_after_str) = retry_after_header.to_str()
+    {
+        requested_delay = parse_retry_after(retry_after_str);
+    }
 
     let (body, body_read_error) = match response.text().await {
         Ok(text) => (text, None),
@@ -26,9 +27,10 @@ pub(crate) async fn ensure_success(
     };
 
     if let Ok(json_body) = serde_json::from_str::<serde_json::Value>(&body)
-        && let Some(delay) = extract_requested_delay_from_json(&json_body) {
-            requested_delay = Some(delay);
-        }
+        && let Some(delay) = extract_requested_delay_from_json(&json_body)
+    {
+        requested_delay = Some(delay);
+    }
 
     if let Some(read_err) = &body_read_error {
         tracing::warn!(
@@ -119,7 +121,9 @@ fn parse_retry_after(header_val: &str) -> Option<Duration> {
 fn value_to_duration_seconds(val: &Value) -> Option<Duration> {
     if let Some(ms) = val.as_u64() {
         Some(Duration::from_secs(ms))
-    } else { val.as_f64().map(Duration::from_secs_f64) }
+    } else {
+        val.as_f64().map(Duration::from_secs_f64)
+    }
 }
 
 pub(crate) fn extract_requested_delay_from_json(json: &Value) -> Option<Duration> {
@@ -127,19 +131,22 @@ pub(crate) fn extract_requested_delay_from_json(json: &Value) -> Option<Duration
         return Some(Duration::from_millis(val));
     }
     if let Some(error) = json.get("error")
-        && let Some(val) = error.get("requested_delay_ms").and_then(Value::as_u64) {
-            return Some(Duration::from_millis(val));
-        }
+        && let Some(val) = error.get("requested_delay_ms").and_then(Value::as_u64)
+    {
+        return Some(Duration::from_millis(val));
+    }
 
     if let Some(val) = json.get("requested_delay")
-        && let Some(dur) = value_to_duration_seconds(val) {
-            return Some(dur);
-        }
+        && let Some(dur) = value_to_duration_seconds(val)
+    {
+        return Some(dur);
+    }
     if let Some(error) = json.get("error")
         && let Some(val) = error.get("requested_delay")
-            && let Some(dur) = value_to_duration_seconds(val) {
-                return Some(dur);
-            }
+        && let Some(dur) = value_to_duration_seconds(val)
+    {
+        return Some(dur);
+    }
 
     None
 }

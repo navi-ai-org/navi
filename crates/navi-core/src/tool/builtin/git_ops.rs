@@ -2,6 +2,7 @@ use anyhow::{Context, Result};
 use async_trait::async_trait;
 use serde::Serialize;
 use serde_json::json;
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
 
 use super::helpers;
@@ -88,7 +89,15 @@ struct GitRemoteOutput {
     remotes: Vec<GitRemoteInfo>,
 }
 
-pub(crate) struct GitOpsTool;
+pub(crate) struct GitOpsTool {
+    project_root: PathBuf,
+}
+
+impl GitOpsTool {
+    pub(crate) fn new(project_root: PathBuf) -> Self {
+        Self { project_root }
+    }
+}
 
 #[async_trait]
 impl Tool for GitOpsTool {
@@ -128,12 +137,12 @@ impl Tool for GitOpsTool {
             .unwrap_or_else(|| "json".to_string());
 
         match command.as_str() {
-            "status" => git_status(&invocation.id, args.as_deref()).await,
-            "diff" => git_diff(&invocation.id, args.as_deref(), &format).await,
-            "log" => git_log(&invocation.id, args.as_deref()).await,
-            "branch" => git_branch(&invocation.id, args.as_deref()).await,
-            "stash" => git_stash(&invocation.id, args.as_deref()).await,
-            "remote" => git_remote(&invocation.id, args.as_deref()).await,
+            "status" => git_status(&self.project_root, &invocation.id, args.as_deref()).await,
+            "diff" => git_diff(&self.project_root, &invocation.id, args.as_deref(), &format).await,
+            "log" => git_log(&self.project_root, &invocation.id, args.as_deref()).await,
+            "branch" => git_branch(&self.project_root, &invocation.id, args.as_deref()).await,
+            "stash" => git_stash(&self.project_root, &invocation.id, args.as_deref()).await,
+            "remote" => git_remote(&self.project_root, &invocation.id, args.as_deref()).await,
             _ => Ok(ToolResult {
                 invocation_id: invocation.id,
                 ok: false,
@@ -149,8 +158,9 @@ impl Tool for GitOpsTool {
     }
 }
 
-async fn run_git(args: &[&str]) -> Result<(bool, String, String)> {
+async fn run_git(project_root: &Path, args: &[&str]) -> Result<(bool, String, String)> {
     let mut cmd = tokio::process::Command::new("git");
+    cmd.current_dir(project_root);
     for arg in args {
         cmd.arg(arg);
     }
@@ -167,8 +177,16 @@ async fn run_git(args: &[&str]) -> Result<(bool, String, String)> {
     Ok((output.status.success(), stdout, stderr))
 }
 
-async fn git_status(invocation_id: &str, _args: Option<&str>) -> Result<ToolResult> {
-    let (ok, stdout, stderr) = run_git(&["status", "--porcelain=v2", "-z", "--branch"]).await?;
+async fn git_status(
+    project_root: &Path,
+    invocation_id: &str,
+    _args: Option<&str>,
+) -> Result<ToolResult> {
+    let (ok, stdout, stderr) = run_git(
+        project_root,
+        &["status", "--porcelain=v2", "-z", "--branch"],
+    )
+    .await?;
 
     if !ok {
         return Ok(ToolResult {
@@ -292,7 +310,12 @@ fn is_status_record(record: &str) -> bool {
         || record.starts_with("! ")
 }
 
-async fn git_diff(invocation_id: &str, args: Option<&str>, format: &str) -> Result<ToolResult> {
+async fn git_diff(
+    project_root: &Path,
+    invocation_id: &str,
+    args: Option<&str>,
+    format: &str,
+) -> Result<ToolResult> {
     let mut git_args = vec!["diff", "--numstat"];
     let extra;
     if let Some(a) = args {
@@ -300,7 +323,7 @@ async fn git_diff(invocation_id: &str, args: Option<&str>, format: &str) -> Resu
         git_args.push(&extra);
     }
 
-    let (ok, stdout, stderr) = run_git(&git_args).await?;
+    let (ok, stdout, stderr) = run_git(project_root, &git_args).await?;
 
     if !ok {
         return Ok(ToolResult {
@@ -324,7 +347,7 @@ async fn git_diff(invocation_id: &str, args: Option<&str>, format: &str) -> Resu
             extra_text = a.to_string();
             text_args.push(&extra_text);
         }
-        let (_, text_stdout, _) = run_git(&text_args).await?;
+        let (_, text_stdout, _) = run_git(project_root, &text_args).await?;
         return Ok(helpers::ok(
             invocation_id.to_string(),
             json!({
@@ -374,7 +397,11 @@ fn parse_git_diff_numstat(stdout: &str) -> GitDiffOutput {
     }
 }
 
-async fn git_log(invocation_id: &str, args: Option<&str>) -> Result<ToolResult> {
+async fn git_log(
+    project_root: &Path,
+    invocation_id: &str,
+    args: Option<&str>,
+) -> Result<ToolResult> {
     let format_str = "%H|%an|%ai|%s";
     let mut git_args = vec!["log", &format_str, "--format", format_str, "-n", "20"];
     let extra;
@@ -383,7 +410,7 @@ async fn git_log(invocation_id: &str, args: Option<&str>) -> Result<ToolResult> 
         git_args.push(&extra);
     }
 
-    let (ok, stdout, stderr) = run_git(&git_args).await?;
+    let (ok, stdout, stderr) = run_git(project_root, &git_args).await?;
 
     if !ok {
         return Ok(ToolResult {
@@ -422,7 +449,11 @@ fn parse_git_log_output(stdout: &str) -> GitLogOutput {
     GitLogOutput { commits }
 }
 
-async fn git_branch(invocation_id: &str, args: Option<&str>) -> Result<ToolResult> {
+async fn git_branch(
+    project_root: &Path,
+    invocation_id: &str,
+    args: Option<&str>,
+) -> Result<ToolResult> {
     let mut git_args = vec!["branch", "-v", "--no-color"];
     let extra;
     if let Some(a) = args {
@@ -430,7 +461,7 @@ async fn git_branch(invocation_id: &str, args: Option<&str>) -> Result<ToolResul
         git_args.push(&extra);
     }
 
-    let (ok, stdout, stderr) = run_git(&git_args).await?;
+    let (ok, stdout, stderr) = run_git(project_root, &git_args).await?;
 
     if !ok {
         return Ok(ToolResult {
@@ -482,7 +513,11 @@ fn parse_git_branch_output(stdout: &str) -> GitBranchOutput {
     }
 }
 
-async fn git_stash(invocation_id: &str, args: Option<&str>) -> Result<ToolResult> {
+async fn git_stash(
+    project_root: &Path,
+    invocation_id: &str,
+    args: Option<&str>,
+) -> Result<ToolResult> {
     let mut git_args = vec!["stash"];
     let extra;
     if let Some(a) = args {
@@ -490,7 +525,7 @@ async fn git_stash(invocation_id: &str, args: Option<&str>) -> Result<ToolResult
         git_args.push(&extra);
     }
 
-    let (ok, stdout, stderr) = run_git(&git_args).await?;
+    let (ok, stdout, stderr) = run_git(project_root, &git_args).await?;
 
     Ok(ToolResult {
         invocation_id: invocation_id.to_string(),
@@ -513,7 +548,11 @@ async fn git_stash(invocation_id: &str, args: Option<&str>) -> Result<ToolResult
     })
 }
 
-async fn git_remote(invocation_id: &str, args: Option<&str>) -> Result<ToolResult> {
+async fn git_remote(
+    project_root: &Path,
+    invocation_id: &str,
+    args: Option<&str>,
+) -> Result<ToolResult> {
     let mut git_args = vec!["remote", "-v"];
     let extra;
     if let Some(a) = args {
@@ -521,7 +560,7 @@ async fn git_remote(invocation_id: &str, args: Option<&str>) -> Result<ToolResul
         git_args.push(&extra);
     }
 
-    let (ok, stdout, stderr) = run_git(&git_args).await?;
+    let (ok, stdout, stderr) = run_git(project_root, &git_args).await?;
 
     if !ok {
         return Ok(ToolResult {

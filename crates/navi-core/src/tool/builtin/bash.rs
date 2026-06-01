@@ -2,6 +2,7 @@ use anyhow::{Context, Result};
 use async_trait::async_trait;
 use serde_json::{Value, json};
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::process::Stdio;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -21,12 +22,14 @@ const BASH_MAX_BACKGROUND_TASKS: usize = 8;
 
 pub(crate) struct BashTool {
     background: Arc<BashBackgroundRegistry>,
+    project_root: PathBuf,
 }
 
 impl BashTool {
-    pub(crate) fn new() -> Self {
+    pub(crate) fn new(project_root: PathBuf) -> Self {
         Self {
             background: Arc::new(BashBackgroundRegistry::default()),
+            project_root,
         }
     }
 }
@@ -42,6 +45,7 @@ impl BashBackgroundRegistry {
         &self,
         command: String,
         description: Option<String>,
+        project_root: PathBuf,
         timeout_ms: u64,
     ) -> Result<Arc<BashBackgroundTask>> {
         let mut tasks = self.tasks.lock().await;
@@ -58,6 +62,7 @@ impl BashBackgroundRegistry {
             task_id.clone(),
             command,
             description,
+            project_root,
             timeout_ms,
         )?);
         tasks.insert(task_id, task.clone());
@@ -101,11 +106,13 @@ impl BashBackgroundTask {
         task_id: String,
         command: String,
         description: Option<String>,
+        project_root: PathBuf,
         timeout_ms: u64,
     ) -> Result<Self> {
         let mut child = tokio::process::Command::new("bash")
             .arg("-lc")
             .arg(&command)
+            .current_dir(&project_root)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .kill_on_drop(true)
@@ -388,6 +395,7 @@ impl Tool for BashTool {
                 .spawn_task(
                     command.to_string(),
                     helpers::optional_string(&invocation.input, "description"),
+                    self.project_root.clone(),
                     timeout_ms,
                 )
                 .await?;
@@ -413,6 +421,7 @@ impl BashTool {
         let mut child = tokio::process::Command::new("bash")
             .arg("-lc")
             .arg(command)
+            .current_dir(&self.project_root)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .kill_on_drop(true)

@@ -301,13 +301,15 @@ pub(crate) fn handle_model_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyMo
             super::provider_sync::sync_models_tui(app);
             super::close_all_modals(app);
         }
-        KeyCode::Char('e') if modifiers.contains(KeyModifiers::CONTROL)
-            && selected_model_in_rows(&rows, app.selected_model).is_some() => {
-                app.pending_model_selection = Some(app.selected_model);
-                super::replace_modal(app, ModalKind::ApiKeyEntry);
-                app.api_key_input.clear();
-                app.api_key_cursor = 0;
-            }
+        KeyCode::Char('e')
+            if modifiers.contains(KeyModifiers::CONTROL)
+                && selected_model_in_rows(&rows, app.selected_model).is_some() =>
+        {
+            app.pending_model_selection = Some(app.selected_model);
+            super::replace_modal(app, ModalKind::ApiKeyEntry);
+            app.api_key_input.clear();
+            app.api_key_cursor = 0;
+        }
         KeyCode::Tab => {
             let provider_id = app
                 .models
