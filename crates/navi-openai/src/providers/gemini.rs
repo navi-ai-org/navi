@@ -5,7 +5,10 @@ use crate::transport::ensure_success;
 use anyhow::Result;
 use async_stream::try_stream;
 use futures_util::StreamExt;
-use navi_core::{ModelMessage, ModelRequest, ModelRole, ModelStream, ModelStreamEvent};
+use navi_core::{
+    ModelMessage, ModelRequest, ModelRole, ModelStream, ModelStreamEvent, ToolDefinition,
+    ToolInvocation,
+};
 use serde_json::{Value, json};
 use std::time::Duration;
 
@@ -19,20 +22,28 @@ impl crate::provider::OpenAiProvider {
         Box::pin(try_stream! {
             let model_name = request.model.clone();
             tracing::info!(provider = %provider_id, model = %model_name, api = "gemini-generate-content", tools = request.tools.len(), "provider stream started");
-            if !request.tools.is_empty() {
-                Err(anyhow::anyhow!("native Gemini tool calling is not implemented yet"))?;
-            }
             let (system, contents) = gemini_contents(&request.messages);
+            let thinking = request.thinking.to_thinking_request();
+            let thinking_budget = if thinking.enabled {
+                thinking.budget_tokens.unwrap_or(0)
+            } else {
+                0
+            };
             let mut body = json!({
                 "contents": contents,
                 "generationConfig": {
-                    "thinkingConfig": request.thinking.to_gemini_thinking_config(),
+                    "thinkingConfig": { "thinkingBudget": thinking_budget },
                 }
             });
             if !system.is_empty() {
                 body["systemInstruction"] = json!({
                     "parts": [{ "text": system }]
                 });
+            }
+            if !request.tools.is_empty() {
+                body["tools"] = json!([{
+                    "functionDeclarations": request.tools.iter().map(gemini_tool_to_json).collect::<Vec<_>>()
+                }]);
             }
             let model = encode_model_for_url(&request.model);
             let response = client
@@ -91,7 +102,20 @@ pub(crate) fn parse_gemini_sse(data: &str) -> Vec<Result<ModelStreamEvent>> {
         .and_then(Value::as_array)
     {
         for part in parts {
-            if let Some(text) = part.get("text").and_then(Value::as_str) {
+            if let Some(fc) = part.get("functionCall") {
+                let name = fc
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_string();
+                let args = fc.get("args").cloned().unwrap_or(json!({}));
+                let id = format!("gemini-{}", uuid_hex());
+                events.push(Ok(ModelStreamEvent::ToolCall(ToolInvocation {
+                    id,
+                    tool_name: name,
+                    input: args,
+                })));
+            } else if let Some(text) = part.get("text").and_then(Value::as_str) {
                 if part.get("thought").and_then(Value::as_bool) == Some(true) {
                     events.push(Ok(ModelStreamEvent::ThinkingDelta {
                         text: text.to_string(),
@@ -126,18 +150,54 @@ pub(crate) fn gemini_contents(messages: &[ModelMessage]) -> (String, Vec<Value>)
     for message in messages {
         match message.role {
             ModelRole::System => system.push(message.content.clone()),
-            ModelRole::User | ModelRole::Tool => contents.push(json!({
+            ModelRole::User => contents.push(json!({
                 "role": "user",
                 "parts": [{ "text": message.content }],
             })),
-            ModelRole::Assistant => contents.push(json!({
-                "role": "model",
-                "parts": [{ "text": message.content }],
-            })),
+            ModelRole::Tool => {
+                let function_name = message.tool_name.as_deref().unwrap_or("");
+                let response_value: Value = serde_json::from_str(&message.content)
+                    .unwrap_or_else(|_| json!({ "result": message.content }));
+                contents.push(json!({
+                    "role": "function",
+                    "parts": [{
+                        "functionResponse": {
+                            "name": function_name,
+                            "response": response_value,
+                        }
+                    }],
+                }));
+            }
+            ModelRole::Assistant => {
+                let mut parts: Vec<Value> = Vec::new();
+                if !message.content.is_empty() {
+                    parts.push(json!({ "text": message.content }));
+                }
+                for tc in &message.tool_calls {
+                    parts.push(json!({
+                        "functionCall": {
+                            "name": tc.tool_name,
+                            "args": tc.input,
+                        }
+                    }));
+                }
+                contents.push(json!({
+                    "role": "model",
+                    "parts": parts,
+                }));
+            }
         }
     }
 
     (system.join("\n\n"), contents)
+}
+
+fn gemini_tool_to_json(tool: &ToolDefinition) -> Value {
+    json!({
+        "name": tool.name,
+        "description": tool.description,
+        "parameters": tool.input_schema,
+    })
 }
 
 pub(crate) fn encode_model_for_url(model: &str) -> String {
@@ -145,4 +205,13 @@ pub(crate) fn encode_model_for_url(model: &str) -> String {
         .replace('/', "%2F")
         .replace(':', "%3A")
         .replace(' ', "%20")
+}
+
+fn uuid_hex() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let t = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    format!("{:016x}", t)
 }

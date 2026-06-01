@@ -1,11 +1,9 @@
-use crate::ProviderId;
 use crate::tool::{ToolDefinition, ToolInvocation};
 use anyhow::Result;
 use async_trait::async_trait;
 use futures_util::StreamExt;
 use futures_util::stream::BoxStream;
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
 
 /// Trait for model provider backends that can stream and complete requests.
 ///
@@ -240,7 +238,7 @@ fn current_unix_millis() -> u64 {
 
 /// The thinking/reasoning effort level requested from the model.
 ///
-/// Maps to provider-specific parameters via [`ThinkingConfig::adapter_for_provider`].
+/// Maps to provider-specific parameters via [`ThinkingConfig::to_thinking_request`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ThinkingConfig {
@@ -256,106 +254,54 @@ pub enum ThinkingConfig {
     Off,
 }
 
-/// Provider-specific thinking configuration produced by
-/// [`ThinkingConfig::adapter_for_provider`].
+/// Normalized thinking/reasoning request produced by [`ThinkingConfig::to_thinking_request`].
 ///
-/// Each variant carries the JSON value or string needed by the corresponding
-/// provider's request format.
+/// This is a provider-agnostic representation. Each provider converts these
+/// fields into its own wire format in the stream layer.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ThinkingAdapter {
-    /// OpenAI Responses API reasoning effort object.
-    OpenAiResponses(Value),
-    /// OpenAI Chat Completions reasoning effort string.
-    OpenAiChatCompletions(&'static str),
-    /// Anthropic thinking configuration in OpenAI-compatible format.
-    AnthropicOpenAiCompatible(Value),
-    /// Gemini thinking budget configuration in OpenAI-compatible format.
-    GeminiOpenAiCompatible(Value),
-    /// OpenRouter reasoning effort and exclusion config.
-    OpenRouter(Value),
-    /// Groq reasoning effort string.
-    Groq(&'static str),
-    /// Thinking is not supported for this provider.
-    Unsupported,
+pub struct ThinkingRequest {
+    /// Whether thinking/reasoning is enabled.
+    pub enabled: bool,
+    /// Reasoning effort level for providers that use effort strings
+    /// (OpenAI, OpenRouter, Groq, etc.).
+    pub effort: Option<&'static str>,
+    /// Token budget for providers that use budget-based thinking
+    /// (Anthropic, Gemini).
+    pub budget_tokens: Option<u32>,
 }
 
 impl ThinkingConfig {
-    /// Maps this config to an OpenAI Responses API effort level string.
+    /// Produces a normalized [`ThinkingRequest`] from this config.
     ///
-    /// Returns `None` for `Off`.
-    pub fn to_openai_effort(self) -> Option<&'static str> {
+    /// The caller (provider stream layer) converts the normalized fields
+    /// into the provider-specific wire format.
+    pub fn to_thinking_request(self) -> ThinkingRequest {
         match self {
-            Self::Max | Self::High => Some("high"),
-            Self::Medium => Some("medium"),
-            Self::Low => Some("low"),
-            Self::Off => None,
-        }
-    }
-
-    /// Maps this config to an OpenRouter reasoning effort string.
-    pub fn to_openrouter_effort(self) -> &'static str {
-        match self {
-            Self::Max => "xhigh",
-            Self::High => "high",
-            Self::Medium => "medium",
-            Self::Low => "low",
-            Self::Off => "none",
-        }
-    }
-
-    /// Maps this config to an Anthropic thinking configuration JSON value.
-    pub fn to_anthropic_thinking(self) -> Value {
-        match self {
-            Self::Max => json!({ "type": "enabled", "budget_tokens": 32000 }),
-            Self::High => json!({ "type": "enabled", "budget_tokens": 10000 }),
-            Self::Medium => json!({ "type": "enabled", "budget_tokens": 4096 }),
-            Self::Low => json!({ "type": "enabled", "budget_tokens": 1024 }),
-            Self::Off => json!({ "type": "disabled" }),
-        }
-    }
-
-    /// Maps this config to a Gemini thinking budget configuration JSON value.
-    pub fn to_gemini_thinking_config(self) -> Value {
-        match self {
-            Self::Max => json!({ "thinkingBudget": 24576 }),
-            Self::High => json!({ "thinkingBudget": 8192 }),
-            Self::Medium => json!({ "thinkingBudget": 4096 }),
-            Self::Low => json!({ "thinkingBudget": 1024 }),
-            Self::Off => json!({ "thinkingBudget": 0 }),
-        }
-    }
-
-    /// Produces a provider-specific [`ThinkingAdapter`] for the given provider id.
-    ///
-    /// Provider ids with known adapters include `openai`, `xai`, `anthropic`,
-    /// `google-gemini`, `openrouter`, and `groq`. Unknown providers fall back
-    /// to the OpenAI Chat Completions format.
-    pub fn adapter_for_provider(self, provider_id: &str) -> ThinkingAdapter {
-        match ProviderId::from_config_id(provider_id) {
-            ProviderId::OpenAi | ProviderId::Xai => self
-                .to_openai_effort()
-                .map(|effort| ThinkingAdapter::OpenAiResponses(json!({ "effort": effort })))
-                .unwrap_or(ThinkingAdapter::Unsupported),
-            ProviderId::Anthropic => {
-                ThinkingAdapter::AnthropicOpenAiCompatible(self.to_anthropic_thinking())
-            }
-            ProviderId::GoogleGemini => {
-                ThinkingAdapter::GeminiOpenAiCompatible(self.to_gemini_thinking_config())
-            }
-            ProviderId::OpenRouter => ThinkingAdapter::OpenRouter(json!({
-                "effort": self.to_openrouter_effort(),
-                "exclude": true
-            })),
-            ProviderId::Groq => match self {
-                Self::Max | Self::High => ThinkingAdapter::Groq("high"),
-                Self::Medium => ThinkingAdapter::Groq("medium"),
-                Self::Low => ThinkingAdapter::Groq("low"),
-                Self::Off => ThinkingAdapter::Groq("none"),
+            Self::Max => ThinkingRequest {
+                enabled: true,
+                effort: Some("high"),
+                budget_tokens: Some(32000),
             },
-            _ => self
-                .to_openai_effort()
-                .map(ThinkingAdapter::OpenAiChatCompletions)
-                .unwrap_or(ThinkingAdapter::Unsupported),
+            Self::High => ThinkingRequest {
+                enabled: true,
+                effort: Some("high"),
+                budget_tokens: Some(10000),
+            },
+            Self::Medium => ThinkingRequest {
+                enabled: true,
+                effort: Some("medium"),
+                budget_tokens: Some(4096),
+            },
+            Self::Low => ThinkingRequest {
+                enabled: true,
+                effort: Some("low"),
+                budget_tokens: Some(1024),
+            },
+            Self::Off => ThinkingRequest {
+                enabled: false,
+                effort: None,
+                budget_tokens: None,
+            },
         }
     }
 }
@@ -364,96 +310,46 @@ impl ThinkingConfig {
 mod tests {
     use super::*;
 
-    // ── Regression: ThinkingConfig adapters ───────────────────────────────────
+    // ── Regression: ThinkingConfig to ThinkingRequest ──────────────────────────
 
     #[test]
-    fn regression_openai_effort_mapping() {
-        assert_eq!(ThinkingConfig::Max.to_openai_effort(), Some("high"));
-        assert_eq!(ThinkingConfig::High.to_openai_effort(), Some("high"));
-        assert_eq!(ThinkingConfig::Medium.to_openai_effort(), Some("medium"));
-        assert_eq!(ThinkingConfig::Low.to_openai_effort(), Some("low"));
-        assert_eq!(ThinkingConfig::Off.to_openai_effort(), None);
+    fn regression_thinking_request_high_produces_effort_and_budget() {
+        let request = ThinkingConfig::High.to_thinking_request();
+        assert!(request.enabled);
+        assert_eq!(request.effort, Some("high"));
+        assert_eq!(request.budget_tokens, Some(10000));
     }
 
     #[test]
-    fn regression_openrouter_effort_mapping() {
-        assert_eq!(ThinkingConfig::Max.to_openrouter_effort(), "xhigh");
-        assert_eq!(ThinkingConfig::High.to_openrouter_effort(), "high");
-        assert_eq!(ThinkingConfig::Medium.to_openrouter_effort(), "medium");
-        assert_eq!(ThinkingConfig::Low.to_openrouter_effort(), "low");
-        assert_eq!(ThinkingConfig::Off.to_openrouter_effort(), "none");
+    fn regression_thinking_request_max_produces_effort_and_budget() {
+        let request = ThinkingConfig::Max.to_thinking_request();
+        assert!(request.enabled);
+        assert_eq!(request.effort, Some("high"));
+        assert_eq!(request.budget_tokens, Some(32000));
     }
 
     #[test]
-    fn regression_anthropic_thinking_budget_tokens() {
-        let max = ThinkingConfig::Max.to_anthropic_thinking();
-        assert_eq!(max["type"], "enabled");
-        assert_eq!(max["budget_tokens"], 32000);
-
-        let high = ThinkingConfig::High.to_anthropic_thinking();
-        assert_eq!(high["budget_tokens"], 10000);
-
-        let off = ThinkingConfig::Off.to_anthropic_thinking();
-        assert_eq!(off["type"], "disabled");
+    fn regression_thinking_request_off_produces_disabled() {
+        let request = ThinkingConfig::Off.to_thinking_request();
+        assert!(!request.enabled);
+        assert!(request.effort.is_none());
+        assert!(request.budget_tokens.is_none());
     }
 
     #[test]
-    fn regression_gemini_thinking_budget() {
-        let max = ThinkingConfig::Max.to_gemini_thinking_config();
-        assert_eq!(max["thinkingBudget"], 24576);
-
-        let off = ThinkingConfig::Off.to_gemini_thinking_config();
-        assert_eq!(off["thinkingBudget"], 0);
+    fn regression_thinking_request_medium_produces_medium_effort() {
+        let request = ThinkingConfig::Medium.to_thinking_request();
+        assert!(request.enabled);
+        assert_eq!(request.effort, Some("medium"));
+        assert_eq!(request.budget_tokens, Some(4096));
     }
 
     #[test]
-    fn regression_adapter_for_openai_produces_responses() {
-        let adapter = ThinkingConfig::High.adapter_for_provider("openai");
-        assert!(matches!(adapter, ThinkingAdapter::OpenAiResponses(_)));
-    }
-
-    #[test]
-    fn regression_adapter_for_anthropic_produces_anthropic() {
-        let adapter = ThinkingConfig::High.adapter_for_provider("anthropic");
-        assert!(matches!(
-            adapter,
-            ThinkingAdapter::AnthropicOpenAiCompatible(_)
-        ));
-    }
-
-    #[test]
-    fn regression_adapter_for_gemini_produces_gemini() {
-        let adapter = ThinkingConfig::High.adapter_for_provider("google-gemini");
-        assert!(matches!(
-            adapter,
-            ThinkingAdapter::GeminiOpenAiCompatible(_)
-        ));
-    }
-
-    #[test]
-    fn regression_adapter_for_openrouter_produces_openrouter() {
-        let adapter = ThinkingConfig::High.adapter_for_provider("openrouter");
-        assert!(matches!(adapter, ThinkingAdapter::OpenRouter(_)));
-    }
-
-    #[test]
-    fn regression_adapter_for_groq_produces_groq() {
-        let adapter = ThinkingConfig::High.adapter_for_provider("groq");
-        assert!(matches!(adapter, ThinkingAdapter::Groq(_)));
-    }
-
-    #[test]
-    fn regression_adapter_for_off_produces_unsupported_or_disabled() {
-        // OpenAI Off -> Unsupported
-        let adapter = ThinkingConfig::Off.adapter_for_provider("openai");
-        assert!(matches!(adapter, ThinkingAdapter::Unsupported));
-
-        // Anthropic Off -> disabled JSON
-        let adapter = ThinkingConfig::Off.adapter_for_provider("anthropic");
-        assert!(matches!(
-            adapter,
-            ThinkingAdapter::AnthropicOpenAiCompatible(_)
-        ));
+    fn regression_thinking_request_low_produces_low_effort() {
+        let request = ThinkingConfig::Low.to_thinking_request();
+        assert!(request.enabled);
+        assert_eq!(request.effort, Some("low"));
+        assert_eq!(request.budget_tokens, Some(1024));
     }
 
     // ── Regression: ModelMessage constructors ─────────────────────────────────

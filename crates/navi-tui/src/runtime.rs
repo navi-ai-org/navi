@@ -57,10 +57,7 @@ pub(crate) fn selected_model_runtime_available(
 }
 
 pub(crate) fn provider_supports_oauth(provider_id: &str) -> bool {
-    matches!(
-        navi_sdk::ProviderId::from_config_id(provider_id),
-        navi_sdk::ProviderId::GitHubCopilot
-    )
+    provider_id == navi_sdk::ProviderId::GITHUB_COPILOT
 }
 
 #[cfg(test)]

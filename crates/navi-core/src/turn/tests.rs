@@ -80,13 +80,13 @@ async fn test_turn_loop_with_parallel_tools() {
     executor.register_tool(Arc::new(MockTool));
 
     let ctx = TurnContext {
-        model_provider: Arc::new(MockProvider {
+        model_provider: Arc::new(std::sync::RwLock::new(Arc::new(MockProvider {
             calls: Mutex::new(0),
-        }),
+        }))),
         tool_executor: Arc::new(executor),
         agent_control: AgentControl::new(),
         project_dir: tempdir.path().to_path_buf(),
-        model_name: "gpt-4".to_string(),
+        model_name: Arc::new(std::sync::RwLock::new("gpt-4".to_string())),
         event_tx: None,
         approval_resolver: crate::runtime::ApprovalResolver::new_for_test(),
         compact_state: Arc::new(tokio::sync::Mutex::new(CompactState::new(128_000))),
@@ -96,7 +96,7 @@ async fn test_turn_loop_with_parallel_tools() {
         context_packets: Arc::new(std::sync::Mutex::new(Vec::new())),
         active_skills: Arc::new(std::sync::Mutex::new(Vec::new())),
         cancel_token: CancelToken::new(),
-        config: Arc::new(crate::config::NaviConfig::default()),
+        config: Arc::new(std::sync::RwLock::new(crate::config::NaviConfig::default())),
     };
 
     let mut messages = vec![];
@@ -126,13 +126,13 @@ fn build_test_ctx(project_dir: PathBuf) -> TurnContext {
     executor.register_tool(Arc::new(MockTool));
 
     TurnContext {
-        model_provider: Arc::new(MockProvider {
+        model_provider: Arc::new(std::sync::RwLock::new(Arc::new(MockProvider {
             calls: Mutex::new(0),
-        }),
+        }))),
         tool_executor: Arc::new(executor),
         agent_control: AgentControl::new(),
         project_dir,
-        model_name: "gpt-4".to_string(),
+        model_name: Arc::new(std::sync::RwLock::new("gpt-4".to_string())),
         event_tx: None,
         approval_resolver: crate::runtime::ApprovalResolver::new_for_test(),
         compact_state: Arc::new(tokio::sync::Mutex::new(CompactState::new(128_000))),
@@ -142,7 +142,7 @@ fn build_test_ctx(project_dir: PathBuf) -> TurnContext {
         context_packets: Arc::new(std::sync::Mutex::new(Vec::new())),
         active_skills: Arc::new(std::sync::Mutex::new(Vec::new())),
         cancel_token: CancelToken::new(),
-        config: Arc::new(crate::config::NaviConfig::default()),
+        config: Arc::new(std::sync::RwLock::new(crate::config::NaviConfig::default())),
     }
 }
 
@@ -248,10 +248,10 @@ async fn test_ensure_system_prompt_includes_agent_mode() {
 #[tokio::test]
 async fn test_ensure_system_prompt_uses_loaded_config_profile() {
     let tempdir = tempfile::tempdir().unwrap();
-    let mut ctx = build_test_ctx(tempdir.path().to_path_buf());
+    let ctx = build_test_ctx(tempdir.path().to_path_buf());
     let mut config = crate::config::NaviConfig::default();
     config.harness.profile = crate::config::HarnessProfile::Small;
-    ctx.config = Arc::new(config);
+    *ctx.config.write().unwrap() = config;
 
     let mut messages = vec![];
     ensure_system_prompt(&ctx, &mut messages).await;

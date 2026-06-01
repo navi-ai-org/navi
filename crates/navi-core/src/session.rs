@@ -673,11 +673,13 @@ mod tests {
         let tool_executor = std::sync::Arc::new(crate::ToolExecutor::new(security_policy));
 
         let ctx = std::sync::Arc::new(crate::turn::TurnContext {
-            model_provider: std::sync::Arc::new(MockProvider),
+            model_provider: std::sync::Arc::new(std::sync::RwLock::new(std::sync::Arc::new(
+                MockProvider,
+            ))),
             tool_executor,
             agent_control: crate::agent::AgentControl::new(),
             project_dir: tempdir.path().to_path_buf(),
-            model_name: "test-model".to_string(),
+            model_name: std::sync::Arc::new(std::sync::RwLock::new("test-model".to_string())),
             event_tx: None,
             approval_resolver: crate::runtime::ApprovalResolver::new_for_test(),
             compact_state: std::sync::Arc::new(tokio::sync::Mutex::new(
@@ -689,7 +691,9 @@ mod tests {
             context_packets: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
             active_skills: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
             cancel_token: crate::cancel::CancelToken::new(),
-            config: std::sync::Arc::new(crate::config::NaviConfig::default()),
+            config: std::sync::Arc::new(std::sync::RwLock::new(
+                crate::config::NaviConfig::default(),
+            )),
         });
 
         let policy = crate::harness::HarnessPolicy {

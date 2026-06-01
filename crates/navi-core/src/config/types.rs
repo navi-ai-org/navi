@@ -241,10 +241,12 @@ impl ProviderConfig {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum ProviderKind {
-    /// OpenAI Responses API (streaming with `response.create`).
+    #[serde(rename = "openai-responses", alias = "open-ai-responses")]
     OpenAiResponses,
-    /// OpenAI Chat Completions API (`/v1/chat/completions`).
+    #[serde(rename = "openai-chat-completions", alias = "open-ai-chat-completions")]
     OpenAiChatCompletions,
+    AnthropicMessages,
+    GeminiGenerateContent,
 }
 
 /// A single model entry within a provider's configuration.
@@ -370,4 +372,36 @@ pub struct LoadedConfig {
     pub project_config_path: Option<PathBuf>,
     /// NAVI data directory (sessions, logs, credentials).
     pub data_dir: PathBuf,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn provider_kind_serde_roundtrip() {
+        let variants = [
+            (ProviderKind::OpenAiResponses, "openai-responses"),
+            (ProviderKind::OpenAiChatCompletions, "openai-chat-completions"),
+            (ProviderKind::AnthropicMessages, "anthropic-messages"),
+            (ProviderKind::GeminiGenerateContent, "gemini-generate-content"),
+        ];
+        for (kind, expected_str) in variants {
+            let serialized = serde_json::to_string(&kind).unwrap();
+            assert_eq!(serialized, format!("\"{}\"", expected_str));
+            let deserialized: ProviderKind = serde_json::from_str(&serialized).unwrap();
+            assert_eq!(deserialized, kind);
+        }
+    }
+
+    #[test]
+    fn provider_kind_from_toml_string() {
+        let toml_str = "kind = \"anthropic-messages\"";
+        #[derive(Deserialize)]
+        struct Wrapper {
+            kind: ProviderKind,
+        }
+        let wrapper: Wrapper = toml::from_str(toml_str).unwrap();
+        assert_eq!(wrapper.kind, ProviderKind::AnthropicMessages);
+    }
 }

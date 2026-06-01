@@ -33,7 +33,8 @@ fn extract_chat_completion_text(value: &serde_json::Value) -> String {
 
 use crate::errors::ProviderError;
 use crate::mapping::{
-    apply_thinking_to_body, message_to_json, responses_input_item_to_json, unique_sorted_model_ids,
+    apply_thinking_to_body, message_to_json, responses_input_item_to_json,
+    thinking_request_for_api, unique_sorted_model_ids,
 };
 use crate::provider::OpenAiProvider;
 use crate::providers::anthropic::parse_anthropic_sse;
@@ -213,8 +214,13 @@ fn applies_openai_responses_reasoning() {
 
     apply_thinking_to_body(
         &mut body,
-        navi_core::ThinkingConfig::High.adapter_for_provider("openai"),
+        thinking_request_for_api(
+            navi_core::ThinkingConfig::High,
+            OpenAiApiKind::Responses,
+            "openai",
+        ),
         OpenAiApiKind::Responses,
+        "openai",
     );
 
     assert_eq!(body["reasoning"], json!({ "effort": "high" }));
@@ -226,8 +232,13 @@ fn applies_anthropic_openai_compatible_thinking() {
 
     apply_thinking_to_body(
         &mut body,
-        navi_core::ThinkingConfig::Low.adapter_for_provider("anthropic"),
+        thinking_request_for_api(
+            navi_core::ThinkingConfig::Low,
+            OpenAiApiKind::ChatCompletions,
+            "anthropic",
+        ),
         OpenAiApiKind::ChatCompletions,
+        "anthropic",
     );
 
     assert_eq!(
@@ -242,8 +253,13 @@ fn applies_openrouter_reasoning_effort() {
 
     apply_thinking_to_body(
         &mut body,
-        navi_core::ThinkingConfig::Max.adapter_for_provider("openrouter"),
+        thinking_request_for_api(
+            navi_core::ThinkingConfig::Max,
+            OpenAiApiKind::ChatCompletions,
+            "openrouter",
+        ),
         OpenAiApiKind::ChatCompletions,
+        "openrouter",
     );
 
     assert_eq!(
@@ -1152,7 +1168,8 @@ fn anthropic_messages_separates_system() {
     assert_eq!(converted[0]["role"], "user");
     assert_eq!(converted[0]["content"], "Hello");
     assert_eq!(converted[1]["role"], "assistant");
-    assert_eq!(converted[1]["content"], "Hi there!");
+    assert_eq!(converted[1]["content"][0]["type"], "text");
+    assert_eq!(converted[1]["content"][0]["text"], "Hi there!");
 }
 
 #[test]
@@ -1192,4 +1209,236 @@ fn gemini_encode_model_for_url() {
         crate::providers::gemini::encode_model_for_url("models/gemini-2.0-flash"),
         "models%2Fgemini-2.0-flash"
     );
+}
+
+// ── Anthropic tool_use SSE lifecycle ──────────────────────────────────────────
+
+#[test]
+fn anthropic_sse_tool_use_lifecycle() {
+    let mut state = crate::providers::anthropic::AnthropicToolState::default();
+    let parse = |data: &str, state: &mut crate::providers::anthropic::AnthropicToolState| {
+        crate::providers::anthropic::parse_anthropic_sse_with_state(data, state)
+    };
+
+    // content_block_start with tool_use
+    let start = r#"{"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"call-123","name":"read_file","input":{}}}"#;
+    let events = parse(start, &mut state);
+    assert!(events.is_empty(), "start should not emit events");
+
+    // input_json_delta (partial JSON)
+    let delta1 = r#"{"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"path\":"}}"#;
+    let events = parse(delta1, &mut state);
+    assert!(events.is_empty(), "partial json should not emit events");
+
+    let delta2 = r#"{"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"\"test.rs\"}"}}"#;
+    let events = parse(delta2, &mut state);
+    assert!(events.is_empty(), "partial json should not emit events");
+
+    // content_block_stop -> emits ToolCall
+    let stop = r#"{"type":"content_block_stop","index":1}"#;
+    let events = parse(stop, &mut state);
+    assert_eq!(events.len(), 1);
+    let tool_call = events[0].as_ref().unwrap();
+    match tool_call {
+        ModelStreamEvent::ToolCall(inv) => {
+            assert_eq!(inv.id, "call-123");
+            assert_eq!(inv.tool_name, "read_file");
+            assert_eq!(inv.input["path"], "test.rs");
+        }
+        _ => panic!("expected ToolCall"),
+    }
+}
+
+#[test]
+fn anthropic_sse_tool_use_empty_json() {
+    let mut state = crate::providers::anthropic::AnthropicToolState::default();
+    let parse = |data: &str, state: &mut crate::providers::anthropic::AnthropicToolState| {
+        crate::providers::anthropic::parse_anthropic_sse_with_state(data, state)
+    };
+
+    let start = r#"{"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"call-456","name":"bash","input":{}}}"#;
+    parse(start, &mut state);
+
+    let stop = r#"{"type":"content_block_stop","index":1}"#;
+    let events = parse(stop, &mut state);
+    assert_eq!(events.len(), 1);
+    match events[0].as_ref().unwrap() {
+        ModelStreamEvent::ToolCall(inv) => {
+            assert_eq!(inv.id, "call-456");
+            assert_eq!(inv.tool_name, "bash");
+            assert_eq!(inv.input, json!({}));
+        }
+        _ => panic!("expected ToolCall"),
+    }
+}
+
+// ── Anthropic message conversion with tools ──────────────────────────────────
+
+#[test]
+fn anthropic_messages_tool_role_produces_tool_result() {
+    let messages = vec![ModelMessage::tool_result("call-1", "read_file", "file content")];
+    let (_, converted) = crate::providers::anthropic::anthropic_messages(&messages);
+    assert_eq!(converted.len(), 1);
+    assert_eq!(converted[0]["role"], "user");
+    let content = converted[0]["content"].as_array().unwrap();
+    assert_eq!(content.len(), 1);
+    assert_eq!(content[0]["type"], "tool_result");
+    assert_eq!(content[0]["tool_use_id"], "call-1");
+    assert_eq!(content[0]["content"], "file content");
+}
+
+#[test]
+fn anthropic_messages_assistant_with_tool_calls() {
+    let inv = navi_core::ToolInvocation {
+        id: "call-abc".to_string(),
+        tool_name: "grep".to_string(),
+        input: json!({"pattern": "fn main"}),
+    };
+    let msg = ModelMessage::assistant_tool_call(inv);
+    let (_, converted) = crate::providers::anthropic::anthropic_messages(&[msg]);
+    assert_eq!(converted.len(), 1);
+    assert_eq!(converted[0]["role"], "assistant");
+    let content = converted[0]["content"].as_array().unwrap();
+    assert_eq!(content.len(), 1);
+    assert_eq!(content[0]["type"], "tool_use");
+    assert_eq!(content[0]["id"], "call-abc");
+    assert_eq!(content[0]["name"], "grep");
+    assert_eq!(content[0]["input"]["pattern"], "fn main");
+}
+
+// ── Gemini functionCall SSE ──────────────────────────────────────────────────
+
+#[test]
+fn gemini_sse_function_call() {
+    let data = r#"{"candidates":[{"content":{"parts":[{"functionCall":{"name":"read_file","args":{"path":"main.rs"}}}]}}]}"#;
+    let events = crate::providers::gemini::parse_gemini_sse(data);
+    let tool_calls: Vec<_> = events
+        .iter()
+        .filter_map(|e| match e.as_ref().ok()? {
+            ModelStreamEvent::ToolCall(inv) => Some(inv),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(tool_calls.len(), 1);
+    assert_eq!(tool_calls[0].tool_name, "read_file");
+    assert_eq!(tool_calls[0].input["path"], "main.rs");
+    assert!(tool_calls[0].id.starts_with("gemini-"));
+}
+
+#[test]
+fn gemini_sse_mixed_text_and_function_call() {
+    let data = r#"{"candidates":[{"content":{"parts":[{"text":"I'll read the file"},{"functionCall":{"name":"read_file","args":{"path":"lib.rs"}}}]}}]}"#;
+    let events = crate::providers::gemini::parse_gemini_sse(data);
+    let texts: Vec<_> = events
+        .iter()
+        .filter_map(|e| match e.as_ref().ok()? {
+            ModelStreamEvent::TextDelta { text } => Some(text.clone()),
+            _ => None,
+        })
+        .collect();
+    let tool_calls: Vec<_> = events
+        .iter()
+        .filter_map(|e| match e.as_ref().ok()? {
+            ModelStreamEvent::ToolCall(inv) => Some(inv),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(texts, vec!["I'll read the file"]);
+    assert_eq!(tool_calls.len(), 1);
+    assert_eq!(tool_calls[0].tool_name, "read_file");
+}
+
+// ── Gemini content conversion with tools ─────────────────────────────────────
+
+#[test]
+fn gemini_contents_tool_role_produces_function_response() {
+    let messages = vec![ModelMessage::tool_result("call-1", "read_file", "file content")];
+    let (_, contents) = crate::providers::gemini::gemini_contents(&messages);
+    assert_eq!(contents.len(), 1);
+    assert_eq!(contents[0]["role"], "function");
+    let parts = contents[0]["parts"].as_array().unwrap();
+    assert_eq!(parts.len(), 1);
+    assert_eq!(parts[0]["functionResponse"]["name"], "read_file");
+    assert_eq!(parts[0]["functionResponse"]["response"]["result"], "file content");
+}
+
+#[test]
+fn gemini_contents_assistant_with_tool_calls() {
+    let inv = navi_core::ToolInvocation {
+        id: "call-xyz".to_string(),
+        tool_name: "bash".to_string(),
+        input: json!({"command": "ls"}),
+    };
+    let msg = ModelMessage::assistant_tool_call(inv);
+    let (_, contents) = crate::providers::gemini::gemini_contents(&[msg]);
+    assert_eq!(contents.len(), 1);
+    assert_eq!(contents[0]["role"], "model");
+    let parts = contents[0]["parts"].as_array().unwrap();
+    assert_eq!(parts.len(), 1);
+    assert_eq!(parts[0]["functionCall"]["name"], "bash");
+    assert_eq!(parts[0]["functionCall"]["args"]["command"], "ls");
+}
+
+// ── apply_thinking_to_body branches ──────────────────────────────────────────
+
+#[test]
+fn applies_gemini_thinking_budget() {
+    let mut body = json!({ "model": "gemini-2.5-pro", "messages": [] });
+    apply_thinking_to_body(
+        &mut body,
+        thinking_request_for_api(navi_core::ThinkingConfig::High, OpenAiApiKind::ChatCompletions, "google-gemini"),
+        OpenAiApiKind::ChatCompletions,
+        "google-gemini",
+    );
+    assert_eq!(
+        body["extra_body"]["google"]["thinking_config"]["thinkingBudget"],
+        10000
+    );
+}
+
+#[test]
+fn apply_thinking_disabled_does_not_modify_body() {
+    let mut body = json!({ "model": "gpt-5", "messages": [] });
+    let original = body.clone();
+    apply_thinking_to_body(
+        &mut body,
+        thinking_request_for_api(navi_core::ThinkingConfig::Off, OpenAiApiKind::Responses, "openai"),
+        OpenAiApiKind::Responses,
+        "openai",
+    );
+    assert_eq!(body, original);
+}
+
+#[test]
+fn applies_generic_reasoning_effort_for_unknown_provider() {
+    let mut body = json!({ "model": "custom-model", "messages": [] });
+    apply_thinking_to_body(
+        &mut body,
+        thinking_request_for_api(navi_core::ThinkingConfig::Medium, OpenAiApiKind::ChatCompletions, "custom-provider"),
+        OpenAiApiKind::ChatCompletions,
+        "custom-provider",
+    );
+    assert_eq!(body["reasoning_effort"], "medium");
+}
+
+// ── anthropic_tool_to_json / gemini_tool_to_json structure ────────────────────
+
+#[test]
+fn anthropic_messages_with_tools_produces_correct_request_body() {
+    let messages = vec![ModelMessage::user("read main.rs")];
+    let (system, converted) = crate::providers::anthropic::anthropic_messages(&messages);
+    assert!(system.is_empty());
+    assert_eq!(converted[0]["role"], "user");
+}
+
+#[test]
+fn gemini_contents_with_system_instruction() {
+    let messages = vec![
+        ModelMessage::system("You are a Rust expert."),
+        ModelMessage::user("Explain lifetimes."),
+    ];
+    let (system, contents) = crate::providers::gemini::gemini_contents(&messages);
+    assert_eq!(system, "You are a Rust expert.");
+    assert_eq!(contents.len(), 1);
+    assert_eq!(contents[0]["role"], "user");
 }

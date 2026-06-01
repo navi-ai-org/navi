@@ -1,5 +1,5 @@
 use crate::types::OpenAiApiKind;
-use navi_core::{ModelMessage, ModelRole, ThinkingAdapter, ToolDefinition, ToolInvocation};
+use navi_core::{ModelMessage, ModelRole, ThinkingRequest, ToolDefinition, ToolInvocation};
 use serde_json::{Map, Value, json};
 
 pub(crate) fn message_to_json(message: &ModelMessage) -> Value {
@@ -103,61 +103,90 @@ pub(crate) fn chat_tool_to_json(tool: &ToolDefinition) -> Value {
 
 pub(crate) fn apply_thinking_to_body(
     body: &mut Value,
-    adapter: ThinkingAdapter,
+    thinking: ThinkingRequest,
     api_kind: OpenAiApiKind,
+    provider_id: &str,
 ) {
     let Some(object) = body.as_object_mut() else {
         return;
     };
 
-    match adapter {
-        ThinkingAdapter::OpenAiResponses(reasoning) => {
-            if matches!(api_kind, OpenAiApiKind::Responses) {
-                object.insert("reasoning".to_string(), reasoning);
+    if !thinking.enabled {
+        return;
+    }
+
+    let provider = navi_core::ProviderId::from_config_id(provider_id);
+
+    match api_kind {
+        OpenAiApiKind::Responses => {
+            if let Some(effort) = thinking.effort {
+                object.insert("reasoning".to_string(), json!({ "effort": effort }));
             }
         }
-        ThinkingAdapter::OpenAiChatCompletions(effort) | ThinkingAdapter::Groq(effort) => {
-            if matches!(api_kind, OpenAiApiKind::ChatCompletions) {
-                object.insert("reasoning_effort".to_string(), json!(effort));
+        OpenAiApiKind::ChatCompletions => match provider.as_str() {
+            navi_core::ProviderId::ANTHROPIC => {
+                if let Some(budget) = thinking.budget_tokens {
+                    object.insert(
+                        "thinking".to_string(),
+                        json!({ "type": "enabled", "budget_tokens": budget }),
+                    );
+                    let max_tokens = (budget + 1024).max(4096);
+                    object.insert("max_tokens".to_string(), json!(max_tokens));
+                }
             }
-        }
-        ThinkingAdapter::AnthropicOpenAiCompatible(thinking) => {
-            if matches!(api_kind, OpenAiApiKind::ChatCompletions) {
-                object.insert("thinking".to_string(), thinking);
+            navi_core::ProviderId::GOOGLE_GEMINI => {
+                if let Some(budget) = thinking.budget_tokens {
+                    object.insert(
+                        "extra_body".to_string(),
+                        json!({ "google": { "thinking_config": { "thinkingBudget": budget } } }),
+                    );
+                }
             }
-        }
-        ThinkingAdapter::GeminiOpenAiCompatible(thinking_config) => {
-            if matches!(api_kind, OpenAiApiKind::ChatCompletions) {
-                object.insert(
-                    "extra_body".to_string(),
-                    json!({ "google": { "thinking_config": thinking_config } }),
-                );
+            navi_core::ProviderId::OPENROUTER => {
+                if let Some(effort) = thinking.effort {
+                    object.insert(
+                        "reasoning".to_string(),
+                        json!({ "effort": effort, "exclude": true }),
+                    );
+                }
             }
-        }
-        ThinkingAdapter::OpenRouter(reasoning) => {
-            if matches!(api_kind, OpenAiApiKind::ChatCompletions) {
-                object.insert("reasoning".to_string(), reasoning);
+            _ => {
+                if let Some(effort) = thinking.effort {
+                    object.insert("reasoning_effort".to_string(), json!(effort));
+                }
             }
-        }
-        ThinkingAdapter::Unsupported => {}
+        },
     }
 }
 
-pub(crate) fn thinking_adapter_for_api(
-    provider_id: &str,
+pub(crate) fn thinking_request_for_api(
     thinking: navi_core::ThinkingConfig,
     api_kind: OpenAiApiKind,
-) -> ThinkingAdapter {
+    provider_id: &str,
+) -> ThinkingRequest {
+    let mut request = thinking.to_thinking_request();
+
+    // OpenRouter uses different effort levels
+    if navi_core::ProviderId::from_config_id(provider_id).as_str()
+        == navi_core::ProviderId::OPENROUTER
+    {
+        request.effort = Some(match thinking {
+            navi_core::ThinkingConfig::Max => "xhigh",
+            navi_core::ThinkingConfig::High => "high",
+            navi_core::ThinkingConfig::Medium => "medium",
+            navi_core::ThinkingConfig::Low => "low",
+            navi_core::ThinkingConfig::Off => "none",
+        });
+    }
+
+    // Opencode family in Responses mode uses Responses-style effort
     if navi_core::ProviderId::from_config_id(provider_id).is_opencode_family()
         && matches!(api_kind, OpenAiApiKind::Responses)
     {
-        return thinking
-            .to_openai_effort()
-            .map(|effort| ThinkingAdapter::OpenAiResponses(json!({ "effort": effort })))
-            .unwrap_or(ThinkingAdapter::Unsupported);
+        // Keep the default effort, no override needed
     }
 
-    thinking.adapter_for_provider(provider_id)
+    request
 }
 
 pub(crate) fn text_delta(text: &str) -> anyhow::Result<navi_core::ModelStreamEvent> {
@@ -169,24 +198,41 @@ pub(crate) fn text_delta(text: &str) -> anyhow::Result<navi_core::ModelStreamEve
 pub(crate) fn usage_from_value(
     value: Option<&Value>,
 ) -> Vec<anyhow::Result<navi_core::ModelStreamEvent>> {
+    usage_from_value_with_behavior(value, None)
+}
+
+pub(crate) fn usage_from_value_with_behavior(
+    value: Option<&Value>,
+    behavior: Option<&dyn crate::providers::behavior::ProviderBehavior>,
+) -> Vec<anyhow::Result<navi_core::ModelStreamEvent>> {
     let Some(usage) = value else {
         return Vec::new();
     };
-    let input_tokens = usage
-        .get("input_tokens")
-        .or_else(|| usage.get("prompt_tokens"))
-        .or_else(|| usage.get("promptTokenCount"))
-        .and_then(Value::as_u64);
-    let output_tokens = usage
-        .get("output_tokens")
-        .or_else(|| usage.get("completion_tokens"))
-        .or_else(|| usage.get("candidatesTokenCount"))
-        .and_then(Value::as_u64);
 
-    if input_tokens.is_some() || output_tokens.is_some() {
-        vec![Ok(navi_core::ModelStreamEvent::Usage {
+    let normalized = if let Some(b) = behavior {
+        b.parse_usage(usage)
+    } else {
+        // Fallback: try all common field name variants
+        let input_tokens = usage
+            .get("input_tokens")
+            .or_else(|| usage.get("prompt_tokens"))
+            .or_else(|| usage.get("promptTokenCount"))
+            .and_then(Value::as_u64);
+        let output_tokens = usage
+            .get("output_tokens")
+            .or_else(|| usage.get("completion_tokens"))
+            .or_else(|| usage.get("candidatesTokenCount"))
+            .and_then(Value::as_u64);
+        crate::providers::behavior::NormalizedUsage {
             input_tokens,
             output_tokens,
+        }
+    };
+
+    if normalized.input_tokens.is_some() || normalized.output_tokens.is_some() {
+        vec![Ok(navi_core::ModelStreamEvent::Usage {
+            input_tokens: normalized.input_tokens,
+            output_tokens: normalized.output_tokens,
         })]
     } else {
         Vec::new()

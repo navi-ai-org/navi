@@ -86,7 +86,7 @@ pub(super) fn built_in_providers() -> Vec<ProviderConfig> {
             id: "anthropic".to_string(),
             label: "Anthropic".to_string(),
             description: "Claude models via API key".to_string(),
-            kind: ProviderKind::OpenAiChatCompletions,
+            kind: ProviderKind::AnthropicMessages,
             api_key_env: "ANTHROPIC_API_KEY".to_string(),
             base_url: Some("https://api.anthropic.com/v1".to_string()),
             models: vec![
@@ -129,7 +129,7 @@ pub(super) fn built_in_providers() -> Vec<ProviderConfig> {
             id: "google-gemini".to_string(),
             label: "Google Gemini".to_string(),
             description: "Gemini API key".to_string(),
-            kind: ProviderKind::OpenAiChatCompletions,
+            kind: ProviderKind::GeminiGenerateContent,
             api_key_env: "GEMINI_API_KEY".to_string(),
             base_url: Some("https://generativelanguage.googleapis.com/v1beta/openai/".to_string()),
             models: vec![

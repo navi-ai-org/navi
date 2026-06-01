@@ -1,7 +1,7 @@
 use crate::errors::ProviderError;
 use crate::mapping::{
     apply_thinking_to_body, chat_tool_to_json, message_to_json, reasoning_text,
-    responses_input_item_to_json, responses_tool_to_json, text_delta, thinking_adapter_for_api,
+    responses_input_item_to_json, responses_tool_to_json, text_delta, thinking_request_for_api,
     usage_from_value,
 };
 use crate::sse::SseDecoder;
@@ -38,8 +38,9 @@ impl crate::provider::OpenAiProvider {
         }
         apply_thinking_to_body(
             &mut body,
-            thinking_adapter_for_api(&provider_id, request.thinking, OpenAiApiKind::Responses),
+            thinking_request_for_api(request.thinking, OpenAiApiKind::Responses, &provider_id),
             OpenAiApiKind::Responses,
+            &provider_id,
         );
         body["stream"] = json!(true);
         body["stream_options"] = json!({ "include_usage": true });
@@ -107,12 +108,9 @@ impl crate::provider::OpenAiProvider {
         }
         apply_thinking_to_body(
             &mut body,
-            thinking_adapter_for_api(
-                &provider_id,
-                request.thinking,
-                OpenAiApiKind::ChatCompletions,
-            ),
+            thinking_request_for_api(request.thinking, OpenAiApiKind::ChatCompletions, &provider_id),
             OpenAiApiKind::ChatCompletions,
+            &provider_id,
         );
         body["stream"] = json!(true);
         body["stream_options"] = json!({ "include_usage": true });

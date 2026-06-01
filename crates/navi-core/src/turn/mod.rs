@@ -16,7 +16,7 @@ use crate::tool::ToolExecutor;
 use anyhow::Result;
 use futures_util::StreamExt;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 const TURN_LOOP_LIMIT: usize = 10;
 
@@ -29,11 +29,11 @@ struct ModelTurnOutput {
 type ToolExecutionResult = (crate::tool::ToolInvocation, crate::tool::ToolResult, String);
 
 pub struct TurnContext {
-    pub model_provider: Arc<dyn ModelProvider>,
+    pub model_provider: Arc<RwLock<Arc<dyn ModelProvider>>>,
     pub tool_executor: Arc<ToolExecutor>,
     pub agent_control: AgentControl,
     pub project_dir: PathBuf,
-    pub model_name: String,
+    pub model_name: Arc<RwLock<String>>,
     pub event_tx: Option<tokio::sync::mpsc::UnboundedSender<AgentEvent>>,
     pub approval_resolver: crate::runtime::ApprovalResolver,
     pub compact_state: Arc<tokio::sync::Mutex<CompactState>>,
@@ -46,10 +46,31 @@ pub struct TurnContext {
     /// Snapshot of the active `NaviConfig` taken at turn start. Used by
     /// `ensure_system_prompt` so the model sees the user-configured harness
     /// profile, model and provider rather than the defaults.
-    pub config: Arc<crate::config::NaviConfig>,
+    pub config: Arc<RwLock<crate::config::NaviConfig>>,
 }
 
 impl TurnContext {
+    pub fn active_model_provider(&self) -> Arc<dyn ModelProvider> {
+        self.model_provider
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+    }
+
+    pub fn active_model_name(&self) -> String {
+        self.model_name
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+    }
+
+    pub fn active_config(&self) -> crate::config::NaviConfig {
+        self.config
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+    }
+
     pub fn cancellation_requested(&self) -> bool {
         self.cancel_token.is_requested()
     }
@@ -126,7 +147,7 @@ async fn ensure_system_prompt(ctx: &TurnContext, messages: &mut Vec<ModelMessage
     let mut system_content = format!(
         "{}\n\n=== AGENTS.md / Project Instructions ===\n{}",
         build_system_prompt_with_tools(
-            &ctx.config,
+            &ctx.active_config(),
             &ctx.project_dir,
             None,
             &ctx.tool_executor.definitions(),
@@ -192,8 +213,8 @@ async fn maintain_context_budget(ctx: &TurnContext, messages: &mut Vec<ModelMess
     match state
         .auto_compact(
             messages,
-            ctx.model_provider.as_ref(),
-            &ctx.model_name,
+            ctx.active_model_provider().as_ref(),
+            &ctx.active_model_name(),
             &ctx.harness_config,
         )
         .await
@@ -216,7 +237,7 @@ async fn maintain_context_budget(ctx: &TurnContext, messages: &mut Vec<ModelMess
 
 fn build_model_request(ctx: &TurnContext, messages: &[ModelMessage]) -> ModelRequest {
     ModelRequest {
-        model: ctx.model_name.clone(),
+        model: ctx.active_model_name(),
         messages: messages.to_vec(),
         thinking: ThinkingConfig::High,
         tools: ctx.tool_executor.definitions(),
@@ -239,7 +260,8 @@ fn emit_request_trace(ctx: &TurnContext, request: &ModelRequest, policy: Harness
 }
 
 async fn collect_model_output(ctx: &TurnContext, request: ModelRequest) -> Result<ModelTurnOutput> {
-    let mut stream = ctx.model_provider.stream(request);
+    let provider = ctx.active_model_provider();
+    let mut stream = provider.stream(request);
     let mut output = ModelTurnOutput {
         text: String::new(),
         thinking: String::new(),

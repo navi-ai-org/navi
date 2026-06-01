@@ -27,7 +27,14 @@ pub(crate) enum Endpoint {
     Models,
 }
 
-/// Per-provider behavior: auth, routing, headers, URL construction.
+/// Normalized usage data extracted from a provider-specific response.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct NormalizedUsage {
+    pub input_tokens: Option<u64>,
+    pub output_tokens: Option<u64>,
+}
+
+/// Per-provider behavior: auth, routing, headers, URL construction, usage parsing.
 pub(crate) trait ProviderBehavior: Send + Sync {
     /// Default base URL when none is configured. None means the provider requires base_url in config.
     fn default_base_url(&self) -> Option<&str>;
@@ -37,6 +44,26 @@ pub(crate) trait ProviderBehavior: Send + Sync {
 
     /// Build auth + extra headers for a request to the given endpoint.
     fn build_headers(&self, api_key: &str, endpoint: Endpoint) -> Result<HeaderMap, ProviderError>;
+
+    /// Extract normalized usage from a provider-specific usage JSON object.
+    ///
+    /// Default implementation handles OpenAI Responses (`input_tokens`/`output_tokens`)
+    /// and Chat Completions (`prompt_tokens`/`completion_tokens`) field names.
+    /// Providers with different field names should override this.
+    fn parse_usage(&self, usage: &serde_json::Value) -> NormalizedUsage {
+        let input_tokens = usage
+            .get("input_tokens")
+            .or_else(|| usage.get("prompt_tokens"))
+            .and_then(serde_json::Value::as_u64);
+        let output_tokens = usage
+            .get("output_tokens")
+            .or_else(|| usage.get("completion_tokens"))
+            .and_then(serde_json::Value::as_u64);
+        NormalizedUsage {
+            input_tokens,
+            output_tokens,
+        }
+    }
 }
 
 /// Helper: create a `Bearer` authorization header value from an API key.
@@ -131,6 +158,19 @@ impl ProviderBehavior for GeminiBehavior {
     ) -> Result<HeaderMap, ProviderError> {
         // Gemini uses API key in URL query param, not in headers
         Ok(HeaderMap::new())
+    }
+
+    fn parse_usage(&self, usage: &serde_json::Value) -> NormalizedUsage {
+        let input_tokens = usage
+            .get("promptTokenCount")
+            .and_then(serde_json::Value::as_u64);
+        let output_tokens = usage
+            .get("candidatesTokenCount")
+            .and_then(serde_json::Value::as_u64);
+        NormalizedUsage {
+            input_tokens,
+            output_tokens,
+        }
     }
 }
 
@@ -351,17 +391,17 @@ impl ProviderBehavior for CustomBehavior {
 // ─── Factory ──────────────────────────────────────────────────────────────────
 
 pub(crate) fn behavior_for_provider(provider_id: &ProviderId) -> Box<dyn ProviderBehavior> {
-    match provider_id {
-        ProviderId::OpenAi => Box::new(OpenAiBehavior),
-        ProviderId::Anthropic => Box::new(AnthropicBehavior),
-        ProviderId::GoogleGemini => Box::new(GeminiBehavior),
-        ProviderId::OpenRouter => Box::new(OpenRouterBehavior),
-        ProviderId::GitHubCopilot => Box::new(GitHubCopilotBehavior),
-        ProviderId::Opencode => Box::new(OpencodeBehavior),
-        ProviderId::OpencodeZen => Box::new(OpencodeZenBehavior),
-        ProviderId::OpencodeGo => Box::new(OpencodeGoBehavior),
-        ProviderId::Groq => Box::new(GroqBehavior),
-        ProviderId::Xai => Box::new(XaiBehavior),
-        ProviderId::Custom(_) => Box::new(CustomBehavior),
+    match provider_id.as_str() {
+        ProviderId::OPENAI => Box::new(OpenAiBehavior),
+        ProviderId::ANTHROPIC => Box::new(AnthropicBehavior),
+        ProviderId::GOOGLE_GEMINI => Box::new(GeminiBehavior),
+        ProviderId::OPENROUTER => Box::new(OpenRouterBehavior),
+        ProviderId::GITHUB_COPILOT => Box::new(GitHubCopilotBehavior),
+        ProviderId::OPENCODE => Box::new(OpencodeBehavior),
+        ProviderId::OPENCODE_ZEN => Box::new(OpencodeZenBehavior),
+        ProviderId::OPENCODE_GO => Box::new(OpencodeGoBehavior),
+        ProviderId::GROQ => Box::new(GroqBehavior),
+        ProviderId::XAI => Box::new(XaiBehavior),
+        _ => Box::new(CustomBehavior),
     }
 }
