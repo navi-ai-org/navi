@@ -32,6 +32,8 @@ use crossterm::event::{KeyCode, KeyModifiers};
 use navi_sdk::{
     AgentEvent, AgentMode, LoadedConfig, ModelMessage, ModelOption, ToolInvocation, ToolResult,
 };
+use ratatui::Terminal;
+use ratatui::backend::TestBackend;
 use ratatui::layout::Rect;
 use ratatui::prelude::Line;
 use std::path::PathBuf;
@@ -102,6 +104,22 @@ fn seed_chat_cache(app: &mut TuiApp, lines: &[&str]) {
         .map(|line| Line::from((*line).to_string()))
         .collect();
     cache.chat_rect = Some(Rect::new(0, 0, 80, lines.len() as u16));
+}
+
+#[test]
+fn root_render_keeps_header_inside_viewport_margin() {
+    let mut app = test_app("");
+    app.git_branch = Some("main".to_string());
+    app.compact_state.context_window = 200_000;
+
+    let backend = TestBackend::new(40, 12);
+    let mut terminal = Terminal::new(backend).expect("terminal");
+    terminal
+        .draw(|frame| crate::view::render(frame, &app))
+        .expect("draw");
+
+    let buffer = terminal.backend().buffer();
+    assert_eq!(buffer.cell((39, 0)).expect("cell").symbol(), " ");
 }
 
 #[test]

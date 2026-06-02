@@ -57,10 +57,7 @@ impl ThemeId {
     }
 
     pub(crate) fn next(self) -> Self {
-        let idx = Self::ALL
-            .iter()
-            .position(|id| *id == self)
-            .unwrap_or(0);
+        let idx = Self::ALL.iter().position(|id| *id == self).unwrap_or(0);
         Self::ALL[(idx + 1) % Self::ALL.len()]
     }
 
@@ -102,25 +99,25 @@ pub(crate) struct ThemePalette {
 impl ThemePalette {
     fn lain() -> Self {
         Self {
-            accent: rgb(176, 34, 255),
-            red: rgb(218, 64, 255),
-            pink: rgb(194, 31, 255),
-            signal: rgb(236, 218, 255),
-            text: rgb(245, 239, 255),
-            muted: rgb(150, 128, 166),
-            panel: rgb(19, 13, 26),
-            bg: rgb(9, 5, 13),
-            ghost: rgb(58, 38, 74),
-            user_accent: rgb(176, 34, 255),
-            code_keyword: rgb(220, 96, 255),
-            code_string: rgb(205, 166, 255),
-            code_comment: rgb(124, 100, 146),
-            code_number: rgb(160, 220, 255),
-            code_punct: rgb(185, 145, 220),
-            code_type: rgb(111, 214, 255),
-            code_func: rgb(190, 146, 255),
-            code_const: rgb(255, 199, 112),
-            code_operator: rgb(255, 118, 214),
+            accent: rgb(178, 132, 255),
+            red: rgb(255, 112, 194),
+            pink: rgb(196, 154, 255),
+            signal: rgb(236, 232, 255),
+            text: rgb(224, 226, 232),
+            muted: rgb(134, 139, 150),
+            panel: rgb(16, 18, 22),
+            bg: rgb(0, 0, 0),
+            ghost: rgb(67, 72, 84),
+            user_accent: rgb(154, 124, 205),
+            code_keyword: rgb(116, 214, 232),
+            code_string: rgb(196, 154, 255),
+            code_comment: rgb(114, 119, 130),
+            code_number: rgb(141, 211, 255),
+            code_punct: rgb(164, 170, 184),
+            code_type: rgb(100, 213, 235),
+            code_func: rgb(218, 204, 255),
+            code_const: rgb(255, 204, 128),
+            code_operator: rgb(255, 139, 203),
         }
     }
 
