@@ -1,0 +1,12 @@
+# rustquty — local quality scanner (https://github.com/enrell/rustquty)
+# Run: just quality · just quality-doctor · just quality-baseline
+
+[profile]
+default = "full"
+
+[collectors]
+# Mutation testing is slow; use `just quality-deep` to include mutants.
+mutants = false
+
+[output]
+dir = "quality"
