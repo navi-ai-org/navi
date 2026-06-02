@@ -1,6 +1,6 @@
 # NAVI development tasks — https://github.com/casey/just
-# Quality scans: rustquty — https://github.com/enrell/rustquty
-# Coverage (optional): cargo install cargo-llvm-cov
+# Quality: rustquty — https://github.com/enrell/rustquty
+# First time: `just setup-tools` then `just quality-doctor`
 
 set shell := ["bash", "-eu", "-o", "pipefail", "-c"]
 
@@ -119,11 +119,16 @@ verify: fmt-check check test
 # Pre-PR: verify + clippy + rustquty (full profile)
 ci: verify clippy analyze
 
-# Optional collectors: tests (nextest), coverage, deny, audit, hack, mutants
+# Install rustquty + all collectors it can run (see `just quality-doctor`)
 setup-tools:
-    @echo "Installing rustquty..."
-    cargo install rustquty --locked
-    @echo "Installing cargo-llvm-cov (coverage)..."
-    cargo install cargo-llvm-cov --locked
-    @echo "Optional: cargo install cargo-nextest cargo-audit cargo-deny cargo-hack cargo-mutants"
+    @echo "Installing cargo quality tools..."
+    cargo install cargo-llvm-cov cargo-nextest cargo-audit cargo-deny cargo-hack cargo-mutants --locked
+    @if [ -d ../rustquty ]; then \
+      echo "Installing rustquty from ../rustquty (local checkout)..."; \
+      cargo install --path ../rustquty/rustquty --locked --force; \
+    else \
+      echo "Installing rustquty from crates.io..."; \
+      cargo install rustquty --locked; \
+    fi
+    @rustup component add rustfmt clippy 2>/dev/null || true
     @just quality-doctor
