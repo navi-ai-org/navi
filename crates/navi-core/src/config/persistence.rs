@@ -26,7 +26,9 @@ impl NaviConfig {
     }
 
     pub(crate) fn merge(&mut self, other: NaviConfig) {
-        use crate::config::types::{McpConfig, ModelConfig, PluginMarketplaceConfig, SkillsConfig, TuiConfig};
+        use crate::config::types::{
+            McpConfig, ModelConfig, PluginMarketplaceConfig, SkillsConfig, TuiConfig,
+        };
 
         if other.model != ModelConfig::default() {
             self.model = other.model;

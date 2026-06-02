@@ -76,7 +76,10 @@ pub(super) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
             })
             .collect::<Vec<_>>();
 
-        frame.render_widget(List::new(items).style(Style::default().bg(panel())), rows[0]);
+        frame.render_widget(
+            List::new(items).style(Style::default().bg(panel())),
+            rows[0],
+        );
     }
 
     frame.render_widget(

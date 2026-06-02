@@ -1,7 +1,7 @@
 //! Plugin marketplace: fetch a catalog from a registry repository and stage artifacts for install.
 
 use crate::types::PluginManifest;
-use crate::{compute_wasm_hash, parse_manifest, validate, TrustLevel};
+use crate::{TrustLevel, compute_wasm_hash, parse_manifest, validate};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -58,8 +58,7 @@ pub fn registry_url(configured: Option<&str>) -> &str {
 
 /// Parse catalog JSON.
 pub fn parse_catalog(bytes: &[u8]) -> Result<PluginCatalog, MarketplaceError> {
-    serde_json::from_slice(bytes)
-        .map_err(|e| MarketplaceError::InvalidCatalog(e.to_string()))
+    serde_json::from_slice(bytes).map_err(|e| MarketplaceError::InvalidCatalog(e.to_string()))
 }
 
 /// Fetch the plugin catalog from a registry URL (`https://` or `file://`).
@@ -116,11 +115,10 @@ pub async fn stage_plugin_from_catalog(
     let artifact_base = resolve_artifact_base(registry_url, &entry.artifact_dir);
     let manifest_url = join_url(&artifact_base, "plugin.toml");
     let manifest_bytes = fetch_bytes(&manifest_url).await?;
-    let manifest_content = String::from_utf8(manifest_bytes).map_err(|e| {
-        MarketplaceError::Manifest(format!("plugin.toml is not UTF-8: {e}"))
-    })?;
-    let manifest = parse_manifest(&manifest_content)
-        .map_err(|e| MarketplaceError::Manifest(e.to_string()))?;
+    let manifest_content = String::from_utf8(manifest_bytes)
+        .map_err(|e| MarketplaceError::Manifest(format!("plugin.toml is not UTF-8: {e}")))?;
+    let manifest =
+        parse_manifest(&manifest_content).map_err(|e| MarketplaceError::Manifest(e.to_string()))?;
     validate(&manifest, TrustLevel::Community)
         .map_err(|e| MarketplaceError::Manifest(e.to_string()))?;
 
@@ -300,8 +298,9 @@ mod tests {
         let entry = find_catalog_entry(&catalog, "echo").unwrap();
         let staging = tmp.path().join("staging");
         let registry_url = format!("file://{}", catalog_path.display());
-        let (manifest, path) =
-            stage_plugin_from_catalog(&registry_url, entry, &staging).await.unwrap();
+        let (manifest, path) = stage_plugin_from_catalog(&registry_url, entry, &staging)
+            .await
+            .unwrap();
         assert_eq!(manifest.plugin.id, "echo");
         assert!(path.join("plugin.toml").exists());
         assert!(path.join("plugin.wasm").exists());

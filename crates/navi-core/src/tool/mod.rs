@@ -230,8 +230,7 @@ impl ToolExecutor {
 
     /// Removes WASM plugin tools (`plugin__*` namespaced IDs) so the host can reload plugins.
     pub fn unregister_plugin_tools(&mut self) {
-        self.tools
-            .retain(|name, _| !name.starts_with("plugin__"));
+        self.tools.retain(|name, _| !name.starts_with("plugin__"));
         self.validators
             .retain(|name, _| !name.starts_with("plugin__"));
         self.invalid_schemas

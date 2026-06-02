@@ -69,10 +69,7 @@ pub(super) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
 
             let label = match row {
                 PluginPickerRow::Catalog(entry) => {
-                    format!(
-                        " [market] {} v{} — {}",
-                        entry.id, entry.version, entry.name
-                    )
+                    format!(" [market] {} v{} — {}", entry.id, entry.version, entry.name)
                 }
                 PluginPickerRow::Installed {
                     id,

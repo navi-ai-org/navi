@@ -154,9 +154,15 @@ pub(super) fn render_tool_approval(frame: &mut Frame<'_>, app: &TuiApp, area: Re
         )),
         Line::from(""),
         Line::from(vec![
-            Span::styled("y", Style::default().fg(text()).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "y",
+                Style::default().fg(text()).add_modifier(Modifier::BOLD),
+            ),
             Span::styled(" approve  •  ", Style::default().fg(muted())),
-            Span::styled("n", Style::default().fg(text()).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "n",
+                Style::default().fg(text()).add_modifier(Modifier::BOLD),
+            ),
             Span::styled(" deny  •  ", Style::default().fg(muted())),
             Span::styled(
                 "ctrl+g",
@@ -207,7 +213,10 @@ pub(super) fn render_thinking_picker(frame: &mut Frame<'_>, app: &TuiApp, area: 
         })
         .collect::<Vec<_>>();
 
-    frame.render_widget(List::new(items).style(Style::default().bg(panel())), rows[0]);
+    frame.render_widget(
+        List::new(items).style(Style::default().bg(panel())),
+        rows[0],
+    );
     frame.render_widget(
         Paragraph::new("↑↓ choose  •  enter confirm  •  esc cancel")
             .style(Style::default().fg(muted()).bg(panel())),
@@ -272,7 +281,10 @@ pub(super) fn render_settings(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
         })
         .collect::<Vec<_>>();
 
-    frame.render_widget(List::new(items).style(Style::default().bg(panel())), rows[0]);
+    frame.render_widget(
+        List::new(items).style(Style::default().bg(panel())),
+        rows[0],
+    );
     frame.render_widget(
         Paragraph::new("↑↓ choose  •  enter configure/toggle  •  esc close")
             .style(Style::default().fg(muted()).bg(panel())),
@@ -352,7 +364,10 @@ fn api_key_input_line(app: &TuiApp, _max_width: usize) -> Line<'_> {
         let next =
             next_char_boundary(&app.api_key_input, cursor).unwrap_or(app.api_key_input.len());
         let (cursor_ch, after) = rest.split_at(next - cursor);
-        spans.push(Span::styled(cursor_ch, Style::default().fg(bg()).bg(signal())));
+        spans.push(Span::styled(
+            cursor_ch,
+            Style::default().fg(bg()).bg(signal()),
+        ));
         let display_after = mask_key_segment(after);
         spans.push(Span::styled(display_after, Style::default().fg(text())));
     }
@@ -508,11 +523,20 @@ pub(super) fn render_plugin_approval(frame: &mut Frame<'_>, app: &TuiApp, area: 
         ])
     } else {
         Line::from(vec![
-            Span::styled("y", Style::default().fg(text()).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "y",
+                Style::default().fg(text()).add_modifier(Modifier::BOLD),
+            ),
             Span::styled(" install  •  ", Style::default().fg(muted())),
-            Span::styled("n", Style::default().fg(text()).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "n",
+                Style::default().fg(text()).add_modifier(Modifier::BOLD),
+            ),
             Span::styled(" deny  •  ", Style::default().fg(muted())),
-            Span::styled("↑↓", Style::default().fg(text()).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "↑↓",
+                Style::default().fg(text()).add_modifier(Modifier::BOLD),
+            ),
             Span::styled(" scroll  •  ", Style::default().fg(muted())),
             Span::styled(
                 "esc",

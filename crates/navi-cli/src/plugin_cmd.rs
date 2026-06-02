@@ -33,19 +33,15 @@ pub fn handle_plugin_command(
 }
 
 fn registry_for_config(config: &LoadedConfig) -> &str {
-    registry_url(
-        config
-            .config
-            .plugin_marketplace
-            .registry_url
-            .as_deref(),
-    )
+    registry_url(config.config.plugin_marketplace.registry_url.as_deref())
 }
 
 fn search_marketplace(query: Option<&str>, config: &LoadedConfig) -> Result<()> {
     let rt = tokio::runtime::Runtime::new().context("failed to start async runtime")?;
     let catalog = rt
-        .block_on(navi_plugin_manifest::fetch_catalog(registry_for_config(config)))
+        .block_on(navi_plugin_manifest::fetch_catalog(registry_for_config(
+            config,
+        )))
         .map_err(|e| anyhow::anyhow!("{e}"))?;
     let q = query.unwrap_or("");
     let hits = search_catalog(&catalog, q);
@@ -86,7 +82,12 @@ fn update_plugin_marketplace(plugin_id: &str, force: bool, config: &LoadedConfig
             &config.data_dir,
         ))
         .map_err(|e| anyhow::anyhow!("{e}"))?;
-    update_plugin(&staging, force, config, staging.parent().unwrap_or(&staging))
+    update_plugin(
+        &staging,
+        force,
+        config,
+        staging.parent().unwrap_or(&staging),
+    )
 }
 
 fn install_plugin(path: &Path, yes: bool, config: &LoadedConfig, _cwd: &Path) -> Result<()> {

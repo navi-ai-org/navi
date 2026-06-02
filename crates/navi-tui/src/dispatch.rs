@@ -76,15 +76,16 @@ pub(crate) fn handle_async_event(app: &mut TuiApp, event: AsyncEvent) {
             error,
         } => {
             if let Some(err) = error {
-                show_notification(app, "Plugins", format!("Failed to fetch {plugin_id}: {err}"));
+                show_notification(
+                    app,
+                    "Plugins",
+                    format!("Failed to fetch {plugin_id}: {err}"),
+                );
                 return;
             }
-            if let Err(err) = crate::plugins::handle_plugin_staged(
-                app,
-                &plugin_id,
-                &staging_path,
-                update,
-            ) {
+            if let Err(err) =
+                crate::plugins::handle_plugin_staged(app, &plugin_id, &staging_path, update)
+            {
                 show_notification(app, "Plugins", format!("{err:#}"));
             }
         }

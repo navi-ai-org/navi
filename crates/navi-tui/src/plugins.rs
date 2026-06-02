@@ -76,19 +76,11 @@ pub(crate) fn plugin_picker_rows(app: &TuiApp) -> Vec<PluginPickerRow> {
                 if !manifest_path.exists() {
                     continue;
                 }
-                if app
-                    .plugin_catalog
-                    .iter()
-                    .any(|c| c.id == name)
-                {
+                if app.plugin_catalog.iter().any(|c| c.id == name) {
                     continue;
                 }
                 let (version, publisher, tool_count) =
-                    read_installed_summary(&manifest_path).unwrap_or((
-                        "?".into(),
-                        "?".into(),
-                        0,
-                    ));
+                    read_installed_summary(&manifest_path).unwrap_or(("?".into(), "?".into(), 0));
                 rows.push(PluginPickerRow::Installed {
                     id: name,
                     version,

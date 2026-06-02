@@ -111,11 +111,7 @@ pub(crate) fn handle_settings_key(app: &mut TuiApp, code: KeyCode) -> bool {
             2 => {
                 let next = app.theme_id.next();
                 app.set_theme(next);
-                show_notification(
-                    app,
-                    "Settings",
-                    format!("Theme: {}.", next.label()),
-                );
+                show_notification(app, "Settings", format!("Theme: {}.", next.label()));
             }
             _ => {}
         },
