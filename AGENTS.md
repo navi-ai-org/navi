@@ -231,6 +231,12 @@ The TUI lives in `crates/navi-tui/src/`. The event loop is synchronous ratatui/c
 - `ChatMessage` is display-oriented and may contain model labels, status, usage, thinking text, tool invocation/result metadata, or normal content.
 - `ui::*` is the internal TUI framework layer. Keep it private to `navi-tui`; do not move ratatui abstractions into `navi-sdk`.
 
+### TUI Mini-Framework Rule
+
+Do not add ad hoc layout/rendering hacks in `navi-tui` to make one feature fit. New TUI features must use the internal mini-framework in `crates/navi-tui/src/ui/` and the shared render/layout helpers instead of bypassing them with one-off `ratatui::Layout`, manual viewport math, or hard-coded overflow/padding fixes.
+
+If the existing mini-framework cannot support the feature cleanly, propose and implement the smallest reusable addition or modification to the mini-framework first, then build the feature on top of that. This keeps viewport bounds, modal state, list scrolling, input behavior, and rendering constraints consistent across the TUI.
+
 ### Keybindings
 
 Key handling uses explicit precedence layers:
@@ -378,12 +384,31 @@ NAVI uses `tracing` through `navi-core::logging`. File logs default to `<data_di
 
 ## Commands
 
+### Just (required for agents)
+
+Use the root [`justfile`](justfile) for build, format, check, test, clippy, coverage, and quality scans. **Do not** call `cargo fmt`, `cargo check`, `cargo test`, `cargo clippy`, `rustquty`, or `cargo llvm-cov` directly when a `just` recipe exists — recipes already set `CARGO_TEST_THREADS=4` and workspace flags.
+
+First time on a machine: `just setup-tools` (installs rustquty collectors; see `just quality-doctor`).
+
+| Task | Use |
+|------|-----|
+| List recipes | `just` |
+| Build | `just build` |
+| Format / check formatting | `just fmt` / `just fmt-check` |
+| Typecheck | `just check` |
+| All tests | `just test` |
+| One crate | `just test-crate <crate>` (e.g. `navi-core`, `navi-tui`, `navi-openai`) |
+| Clippy | `just clippy` |
+| Fast gate (fmt + check + test) | `just verify` |
+| Pre-PR gate | `just ci` |
+| Quality (rustquty full) | `just analyze` or `just quality` |
+| Quick quality (fmt + clippy) | `just quality-fast` |
+| Coverage LCOV | `just coverage` |
+| Coverage HTML | `just coverage-html` |
+
+**Exceptions** (no `just` recipe yet — `cargo` is OK):
+
 ```bash
-cargo build
-cargo fmt
-cargo check
-cargo test
-cargo test -p <crate_name>
 cargo run -p navi-cli -- TASK
 cargo run -p navi-cli -- --no-tui TASK
 cargo run -p navi-cli -- --print-config
@@ -397,27 +422,29 @@ Headless mode requires a task argument.
 Use focused tests while iterating and broader checks before handoff:
 
 ```bash
-cargo fmt
-cargo check
-cargo test
+just fmt-check
+just check
+just test
 ```
+
+Before handoff, prefer `just verify`; for a fuller gate use `just ci`.
 
 For targeted changes:
 
-- TUI/key/rendering: `cargo test -p navi-tui`
-- provider/request/stream parsing: `cargo test -p navi-openai`
-- tools/security/session/config: `cargo test -p navi-core`
+- TUI/key/rendering: `just test-crate navi-tui`
+- provider/request/stream parsing: `just test-crate navi-openai`
+- tools/security/session/config: `just test-crate navi-core`
 
 ### Resource Limits
 
 Tests MUST respect resource constraints to avoid starving the host machine:
 
-- **CPU**: Maximum 4 test threads. Use `--test-threads=4` or set `CARGO_TEST_THREADS=4`.
+- **CPU**: Maximum 4 test threads — enforced by `just test` / `just test-crate` (do not bypass with raw `cargo test` unless debugging a single test).
 - **Memory**: Maximum 500MB per test process. Use `ulimit -v 512000` (virtual memory) before running tests, or wrap commands with `systemd-run --scope -p MemoryMax=500M` if available.
 
 ```bash
-CARGO_TEST_THREADS=4 cargo test
-CARGO_TEST_THREADS=4 cargo test -p navi-core
+just test
+just test-crate navi-core
 ```
 
 If a single test exceeds 500MB or hangs for more than 60 seconds, it is a bug and must be fixed.
