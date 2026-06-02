@@ -1,6 +1,6 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use anyhow::Result;
@@ -82,6 +82,7 @@ pub struct TuiApp {
     pub(crate) events: Vec<AgentEvent>,
     pub(crate) session_id: SessionId,
     pub(crate) project_dir: PathBuf,
+    pub(crate) git_branch: Option<String>,
     pub(crate) saved_sessions: Vec<SessionSnapshot>,
     pub(crate) selected_session: usize,
     pub(crate) session_scroll: usize,
@@ -154,6 +155,7 @@ impl TuiApp {
         let yolo_mode = loaded_config.config.tui.yolo_mode;
         let theme_id = ThemeId::from_config(&loaded_config.config.tui.theme);
         let thinking_level = ThinkingLevel::from_config(&loaded_config.config.tui.thinking_level);
+        let git_branch = detect_git_branch(&project_dir);
 
         let mut app = Self {
             loaded_config,
@@ -200,6 +202,7 @@ impl TuiApp {
             events: Vec::new(),
             session_id,
             project_dir,
+            git_branch,
             saved_sessions,
             selected_session: 0,
             session_scroll: 0,
@@ -386,4 +389,16 @@ impl TuiApp {
             })
             .collect()
     }
+}
+
+fn detect_git_branch(project_dir: &Path) -> Option<String> {
+    let head = std::fs::read_to_string(project_dir.join(".git").join("HEAD")).ok()?;
+    let head = head.trim();
+    if let Some(branch) = head.strip_prefix("ref: refs/heads/") {
+        return Some(branch.to_string());
+    }
+    if head.len() >= 7 {
+        return Some(head.chars().take(7).collect());
+    }
+    None
 }

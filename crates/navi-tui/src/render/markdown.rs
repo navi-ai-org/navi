@@ -28,13 +28,7 @@ pub(crate) fn build_chat_lines_for_messages<'a>(
 
         match msg.role {
             ChatRole::User => {
-                rendered_lines.extend(render_markdown_lines(
-                    &msg.content,
-                    chat_width.saturating_sub(4),
-                    user_accent(),
-                    text(),
-                    false,
-                ));
+                rendered_lines.extend(render_user_message_lines(&msg.content, chat_width));
             }
             ChatRole::Assistant => {
                 if msg.is_compact_summary {
@@ -122,6 +116,48 @@ pub(crate) fn build_chat_lines_for_messages<'a>(
         }
     }
     rendered_lines
+}
+
+fn render_user_message_lines(text: &str, chat_width: usize) -> Vec<Line<'static>> {
+    let width = chat_width.max(8);
+    let wrapped = wrap_text(text, width.saturating_sub(4));
+    wrapped
+        .into_iter()
+        .enumerate()
+        .map(|(index, line)| {
+            let prefix = if index == 0 { "› " } else { "  " };
+            let mut spans = vec![Span::styled(
+                prefix,
+                Style::default()
+                    .fg(user_accent())
+                    .bg(panel())
+                    .add_modifier(Modifier::BOLD),
+            )];
+            spans.extend(
+                inline_text_spans(&line, text_color_for_user())
+                    .into_iter()
+                    .map(|mut span| {
+                        span.style = span.style.bg(panel());
+                        span
+                    }),
+            );
+            let used = spans
+                .iter()
+                .map(|span| span.content.chars().count())
+                .sum::<usize>();
+            if used < width {
+                spans.push(Span::styled(
+                    " ".repeat(width - used),
+                    Style::default().fg(muted()).bg(panel()),
+                ));
+            }
+            Line::from(spans)
+        })
+        .collect()
+}
+
+fn text_color_for_user() -> Color {
+    text()
 }
 
 pub(crate) fn is_empty_tool_placeholder(message: &ChatMessage) -> bool {
@@ -433,7 +469,9 @@ fn stacked_table_lines(
                 if line_index == 0 {
                     spans.push(Span::styled(
                         format!("{label:<label_width$}  "),
-                        Style::default().fg(code_type()).add_modifier(Modifier::BOLD),
+                        Style::default()
+                            .fg(code_type())
+                            .add_modifier(Modifier::BOLD),
                     ));
                 } else {
                     spans.push(Span::styled(
@@ -543,7 +581,9 @@ fn inline_text_spans(text: &str, fallback: Color) -> Vec<Span<'static>> {
             push_plain_span(&mut spans, &mut plain, fallback);
             spans.push(Span::styled(
                 alt.to_string(),
-                Style::default().fg(code_type()).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(code_type())
+                    .add_modifier(Modifier::BOLD),
             ));
             spans.push(Span::styled(
                 format!(" (image: {url})"),
@@ -557,7 +597,9 @@ fn inline_text_spans(text: &str, fallback: Color) -> Vec<Span<'static>> {
             push_plain_span(&mut spans, &mut plain, fallback);
             spans.push(Span::styled(
                 label.to_string(),
-                Style::default().fg(code_type()).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(code_type())
+                    .add_modifier(Modifier::BOLD),
             ));
             spans.push(Span::styled(
                 format!(" ({url})"),

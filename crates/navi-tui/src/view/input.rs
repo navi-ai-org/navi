@@ -1,9 +1,9 @@
-use navi_sdk::{AgentMode, CompactThreshold};
+use navi_sdk::AgentMode;
 use ratatui::layout::{Constraint, Direction, Layout, Margin, Rect};
 use ratatui::prelude::{Frame, Line, Span};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::Text;
-use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
+use ratatui::widgets::{Block, BorderType, Borders, Paragraph, Wrap};
 
 use crate::TuiApp;
 use crate::render::{cursor_span, split_input_spans};
@@ -12,25 +12,43 @@ use crate::ui::text_input::{floor_char_boundary, next_char_boundary};
 
 pub(super) fn render_input(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
     let inner = area.inner(Margin {
-        horizontal: 2,
-        vertical: 1,
+        horizontal: 1,
+        vertical: 0,
     });
     let rows = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(4),
+            Constraint::Length(3),
             Constraint::Length(1),
             Constraint::Min(0),
         ])
         .split(inner);
 
-    let input_lines = visible_input_lines(input_lines(app), rows[0].height as usize);
+    let border_style = if app.is_loading {
+        Style::default().fg(accent()).bg(bg())
+    } else {
+        Style::default().fg(ghost()).bg(bg())
+    };
+    frame.render_widget(
+        Block::new()
+            .borders(Borders::ALL)
+            .border_type(BorderType::Plain)
+            .border_style(border_style)
+            .style(Style::default().bg(bg())),
+        rows[0],
+    );
+
+    let input_area = rows[0].inner(Margin {
+        horizontal: 1,
+        vertical: 1,
+    });
+    let input_lines = visible_input_lines(input_lines(app), input_area.height as usize);
     frame.render_widget(
         Paragraph::new(Text::from(input_lines))
             .style(Style::default().bg(bg()))
             .wrap(Wrap { trim: false })
             .block(Block::new().borders(Borders::NONE)),
-        rows[0],
+        input_area,
     );
     frame.render_widget(
         Paragraph::new(shortcut_tips(app, rows[1].width as usize)).style(Style::default().bg(bg())),
@@ -45,7 +63,7 @@ fn visible_input_lines(lines: Vec<Line<'_>>, height: usize) -> Vec<Line<'_>> {
 }
 
 fn input_lines(app: &TuiApp) -> Vec<Line<'_>> {
-    let prompt = "> ";
+    let prompt = "} ";
     let continuation = " ".repeat(prompt.chars().count());
     let mut spans = vec![Span::styled(
         prompt,
@@ -54,11 +72,7 @@ fn input_lines(app: &TuiApp) -> Vec<Line<'_>> {
 
     if app.input.is_empty() {
         spans.push(cursor_span(" "));
-        let placeholder = if app.is_loading {
-            " Thinking..."
-        } else {
-            " Ready!"
-        };
+        let placeholder = if app.is_loading { " thinking..." } else { "" };
         spans.push(Span::styled(placeholder, Style::default().fg(muted())));
         return vec![Line::from(spans)];
     }
@@ -106,10 +120,10 @@ fn shortcut_tips(app: &TuiApp, width: usize) -> Line<'static> {
     }
 
     let items = [
-        ("?", "for shortcuts", text()),
-        ("ctrl+p", "commands", text()),
-        ("tab", agent_label, text()),
-        ("ctrl+c", "quit", text()),
+        ("Shift+Tab", "mode", text()),
+        ("Ctrl+.", "shortcuts", text()),
+        ("Ctrl+P", "commands", text()),
+        ("Tab", agent_label, text()),
     ];
 
     let mut spans = vec![Span::styled(" ", Style::default().fg(muted()))];
@@ -144,38 +158,35 @@ fn shortcut_tips(app: &TuiApp, width: usize) -> Line<'static> {
         }
     }
 
-    let compact_state = &app.compact_state;
-    let threshold = compact_state.threshold_level(app.input.len());
-    let pct_label = format!(" {}", compact_state.usage_label(app.input.len()));
-    let pct_color = match threshold {
-        CompactThreshold::CircuitOpen => signal(),
-        CompactThreshold::Error => signal(),
-        CompactThreshold::Warning => accent(),
-        CompactThreshold::Normal => muted(),
+    let mode_label = if app.yolo_mode {
+        "always-approve"
+    } else {
+        "approve"
     };
-    let threshold_label = match threshold {
-        CompactThreshold::CircuitOpen => " ⚠circuit",
-        CompactThreshold::Error => " ⚠compact",
-        CompactThreshold::Warning => " ~compact",
-        CompactThreshold::Normal => "",
-    };
-    let context_text = format!("ctx:{pct_label}{threshold_label}");
-    let context_width = context_text.chars().count();
-    if used + context_width + 2 < width {
-        let padding = width.saturating_sub(used + context_width + 1);
+    let composer_text = format!("Composer {} · {mode_label}", selected_model_label(app));
+    let composer_width = composer_text.chars().count();
+    if used + composer_width + 2 < width {
+        let padding = width.saturating_sub(used + composer_width + 1);
         spans.push(Span::styled(
             " ".repeat(padding),
             Style::default().fg(muted()),
         ));
-        spans.push(Span::styled("ctx:".to_string(), Style::default().fg(muted())));
-        spans.push(Span::styled(pct_label, Style::default().fg(pct_color)));
-        if !threshold_label.is_empty() {
-            spans.push(Span::styled(
-                threshold_label.to_string(),
-                Style::default().fg(pct_color),
-            ));
-        }
+        spans.push(Span::styled(composer_text, Style::default().fg(muted())));
     }
 
     Line::from(spans)
+}
+
+fn selected_model_label(app: &TuiApp) -> String {
+    let label = app
+        .models
+        .get(app.selected_model)
+        .map(|model| model.name.as_str())
+        .unwrap_or("model");
+    if label.chars().count() <= 24 {
+        return label.to_string();
+    }
+    let mut shortened = label.chars().take(23).collect::<String>();
+    shortened.push('…');
+    shortened
 }
