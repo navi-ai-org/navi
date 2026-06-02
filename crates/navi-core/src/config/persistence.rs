@@ -44,6 +44,7 @@ impl NaviConfig {
         }
         crate::config::providers::merge_provider_configs(&mut self.providers, other.providers);
         self.plugins.extend(other.plugins);
+        self.wasm_plugins.extend(other.wasm_plugins);
     }
 }
 
@@ -91,14 +92,30 @@ fn merge_from_file(
     let mut file_config = toml::from_str::<NaviConfig>(&raw)
         .with_context(|| format!("failed to parse config {}", path.display()))?;
     if matches!(source, ConfigSource::Project) {
+        // Project-local config must not load code or network surfaces from the repo
+        // (supply-chain risk). Native plugins, WASM scan roots, and MCP servers belong
+        // in the user-global config or via `navi plugin install` → {data_dir}/plugins/.
         if !file_config.plugins.is_empty() {
-            tracing::warn!(path = %path.display(), "ignoring plugins from project config");
+            tracing::warn!(
+                path = %path.display(),
+                "ignoring [[plugins]] from project config (use global config or navi plugin install)"
+            );
         }
         if file_config.mcp.enabled || !file_config.mcp.servers.is_empty() {
-            tracing::warn!(path = %path.display(), "ignoring MCP servers from project config");
+            tracing::warn!(
+                path = %path.display(),
+                "ignoring [mcp] from project config (use global ~/.config/navi/config.toml)"
+            );
+        }
+        if !file_config.wasm_plugins.is_empty() {
+            tracing::warn!(
+                path = %path.display(),
+                "ignoring [[wasm_plugins]] from project config (installed plugins auto-load from data_dir/plugins)"
+            );
         }
         file_config.plugins.clear();
         file_config.mcp = crate::config::types::McpConfig::default();
+        file_config.wasm_plugins.clear();
     }
     config.merge(file_config);
     Ok(Some(path.to_path_buf()))
@@ -145,6 +162,7 @@ enabled = true
 
         assert_eq!(config.model.name, "gpt-test");
         assert!(config.plugins.is_empty());
+        assert!(config.wasm_plugins.is_empty());
         assert_eq!(config.mcp, McpConfig::default());
     }
 }

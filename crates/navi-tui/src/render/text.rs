@@ -77,8 +77,8 @@ pub(crate) fn cursor_span(value: &str) -> Span<'_> {
     Span::styled(
         value,
         Style::default()
-            .fg(BG)
-            .bg(SIGNAL)
+            .fg(bg())
+            .bg(signal())
             .add_modifier(Modifier::BOLD),
     )
 }

@@ -13,13 +13,13 @@ pub(crate) fn command_scroll_offset(selected: usize, visible_rows: usize) -> usi
 pub(crate) fn modal_block(title: &'static str) -> Block<'static> {
     Block::new()
         .title(Line::from(vec![
-            Span::styled(format!(" {title} "), Style::default().fg(RED)),
-            Span::styled("  online", Style::default().fg(MUTED)),
+            Span::styled(format!(" {title} "), Style::default().fg(red())),
+            Span::styled("  online", Style::default().fg(muted())),
         ]))
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(ACCENT))
-        .style(Style::default().fg(TEXT).bg(PANEL))
+        .border_style(Style::default().fg(accent()))
+        .style(Style::default().fg(text()).bg(panel()))
 }
 
 pub(crate) fn truncate_display(value: &str, max_chars: usize) -> String {

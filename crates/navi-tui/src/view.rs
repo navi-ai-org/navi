@@ -5,6 +5,7 @@ mod input;
 mod modals;
 mod model_picker;
 mod notification;
+mod plugins;
 mod provider_settings;
 mod sessions;
 mod skills;
@@ -18,11 +19,15 @@ use ratatui::widgets::Block;
 use crate::TuiApp;
 use crate::render::modal_rect;
 use crate::state::Mode;
-use crate::theme::BG;
+use crate::theme;
 
 pub(crate) fn render(frame: &mut Frame<'_>, app: &TuiApp) {
+    theme::with_palette(&app.theme_palette(), || render_inner(frame, app));
+}
+
+fn render_inner(frame: &mut Frame<'_>, app: &TuiApp) {
     let area = frame.area();
-    frame.render_widget(Block::new().style(Style::default().bg(BG)), area);
+    frame.render_widget(Block::new().style(Style::default().bg(theme::bg())), area);
 
     let vertical = Layout::default()
         .direction(Direction::Vertical)
@@ -42,11 +47,15 @@ pub(crate) fn render(frame: &mut Frame<'_>, app: &TuiApp) {
         Mode::ApiKeyEntry => modals::render_api_key_entry(frame, app, modal_rect(area, 72, 11)),
         Mode::Thinking => modals::render_thinking_picker(frame, app, modal_rect(area, 40, 10)),
         Mode::Sessions => sessions::render(frame, app, modal_rect(area, 72, 16)),
-        Mode::Settings => modals::render_settings(frame, app, modal_rect(area, 50, 10)),
+        Mode::Settings => modals::render_settings(frame, app, modal_rect(area, 52, 12)),
         Mode::Providers => provider_settings::render(frame, app, modal_rect(area, 76, 20)),
         Mode::Debug => debug::render(frame, app, modal_rect(area, 76, 18)),
         Mode::Help => modals::render_help_modal(frame, modal_rect(area, 62, 16)),
         Mode::Skills => skills::render(frame, app, modal_rect(area, 72, 20)),
+        Mode::Plugins => plugins::render(frame, app, modal_rect(area, 76, 22)),
+        Mode::PluginApproval => {
+            modals::render_plugin_approval(frame, app, modal_rect(area, 84, 24))
+        }
         Mode::Normal => {}
     }
 

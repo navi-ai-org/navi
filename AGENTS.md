@@ -103,6 +103,8 @@ Config is TOML, loaded in this order:
 Key sections:
 
 - `model`: provider id and model name.
+
+Project config (`.navi/config.toml`) can override `model`, `harness`, `approvals`, `security`, `skills`, and provider entries. For supply-chain safety, **project config cannot enable** native `plugins`, `wasm_plugins`, or `mcp` servers — those are ignored with a warning. Install WASM plugins via `navi plugin install` (stored under `{data_dir}/plugins/`, loaded automatically). Configure extra WASM scan roots and native plugins in the **global** `~/.config/navi/config.toml`.
 - `harness`: `auto`, `small`, or `medium` profile plus tool-loop and observation budgets.
 - `approvals`: read/write/command approval behavior.
 - `security`: path restrictions, `.git` protection, session redaction, plugin trust, blocked commands.
@@ -318,7 +320,7 @@ NAVI implements a three-level conversation compaction system:
 
 ### Micro-Compact
 
-`micro_compact(messages, gap_threshold_minutes)` clears the `content` of tool result messages whose `tool_name` is in the read-only set (`read_file`, `list_files`, `grep`, `bash`, `git_ops`). Write tools are never cleared. Cleared content is replaced with `[Old tool result content cleared]`.
+`micro_compact(messages, gap_threshold_minutes)` clears the `content` of tool result messages whose `tool_name` is in the read-only set (`read_file`, `fs_browser`, `grep`, `bash`, `git_ops`). Write tools are never cleared. Cleared content is replaced with `[Old tool result content cleared]`.
 
 ### Auto-Compact
 

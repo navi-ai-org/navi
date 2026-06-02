@@ -8,7 +8,7 @@ use ratatui::widgets::{Clear, List, ListItem, ListState, Paragraph};
 use crate::TuiApp;
 use crate::providers::{ListRow, build_model_rows, selected_model_in_rows};
 use crate::render::{modal_block, model_row_simple};
-use crate::theme::{ACCENT, GHOST, MUTED, PANEL, SIGNAL, TEXT};
+use crate::theme::*;
 
 pub(super) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
     frame.render_widget(Clear, area);
@@ -35,17 +35,17 @@ pub(super) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
     };
     frame.render_widget(
         Paragraph::new(Text::from(vec![Line::from(vec![
-            Span::styled("> ", Style::default().fg(SIGNAL)),
+            Span::styled("> ", Style::default().fg(signal())),
             Span::styled(
                 filter_text,
                 Style::default().fg(if app.model_filter.is_empty() {
-                    MUTED
+                    muted()
                 } else {
-                    TEXT
+                    text()
                 }),
             ),
         ])]))
-        .style(Style::default().bg(PANEL)),
+        .style(Style::default().bg(panel())),
         rows[0],
     );
 
@@ -63,10 +63,10 @@ pub(super) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
         .map(|row| match row {
             ListRow::Header { label, .. } => {
                 let header_style = Style::default()
-                    .fg(TEXT)
-                    .bg(PANEL)
+                    .fg(text())
+                    .bg(panel())
                     .add_modifier(Modifier::BOLD);
-                let refresh_style = Style::default().fg(GHOST).bg(PANEL);
+                let refresh_style = Style::default().fg(ghost()).bg(panel());
 
                 let mut spans = vec![Span::styled(format!("  {}", label), header_style)];
                 spans.push(Span::styled("  ↻ tab", refresh_style));
@@ -81,10 +81,10 @@ pub(super) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
                 let style = if selected {
                     Style::default()
                         .fg(Color::White)
-                        .bg(ACCENT)
+                        .bg(accent())
                         .add_modifier(Modifier::BOLD)
                 } else {
-                    Style::default().fg(TEXT).bg(PANEL)
+                    Style::default().fg(text()).bg(panel())
                 };
 
                 ListItem::new(Span::styled(
@@ -97,7 +97,7 @@ pub(super) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
         .collect::<Vec<_>>();
 
     frame.render_stateful_widget(
-        List::new(items).style(Style::default().bg(PANEL)),
+        List::new(items).style(Style::default().bg(panel())),
         list_area,
         &mut list_state,
     );
@@ -105,7 +105,7 @@ pub(super) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
         Paragraph::new(
             "type search  •  ↑↓ choose  •  ctrl+e edit setup  •  tab refresh provider  •  ctrl+r refresh all  •  enter confirm  •  esc exit",
         )
-        .style(Style::default().fg(MUTED).bg(PANEL)),
+        .style(Style::default().fg(muted()).bg(panel())),
         rows[2],
     );
 }

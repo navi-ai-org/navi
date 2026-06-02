@@ -22,7 +22,7 @@ pub(crate) fn highlight_code_line(raw_line: &str, language: &str) -> Vec<Span<'s
             .collect(),
         Err(_) => vec![Span::styled(
             raw_line.to_string(),
-            Style::default().fg(TEXT),
+            Style::default().fg(text()),
         )],
     }
 }
@@ -38,28 +38,28 @@ fn lain_code_color(style: SyntectStyle) -> Color {
         .contains(syntect::highlighting::FontStyle::ITALIC)
         || (color.r < 118 && color.g < 118 && color.b < 118)
     {
-        CODE_COMMENT
+        code_comment()
     } else if style
         .font_style
         .contains(syntect::highlighting::FontStyle::BOLD)
     {
-        CODE_FUNC
+        code_func()
     } else if color.r > 190 && color.b > 165 && color.g < 170 {
-        CODE_KEYWORD
+        code_keyword()
     } else if color.g > color.r.saturating_add(25) && color.g > color.b.saturating_add(5) {
-        Color::Rgb(143, 232, 173)
+        code_string()
     } else if color.b > color.r.saturating_add(25) && color.g > color.r.saturating_add(10) {
-        CODE_TYPE
+        code_type()
     } else if color.b > color.r.saturating_add(25) {
-        CODE_NUMBER
+        code_number()
     } else if color.r > 175 && color.g > 145 && color.b < 145 {
-        CODE_CONST
+        code_const()
     } else if color.r > 180 && color.b > 95 && color.g < 135 {
-        CODE_OPERATOR
+        code_operator()
     } else if color.r < 175 && color.g < 175 && color.b < 175 {
-        CODE_PUNCT
+        code_punct()
     } else if color.r > 200 && color.g > 200 && color.b > 200 {
-        TEXT
+        text()
     } else {
         Color::Rgb(
             boost_code_channel(color.r),

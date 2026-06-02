@@ -39,12 +39,12 @@ fn apply_ui_effect(app: &mut TuiApp, effect: UiEffect<ModalKind>) -> KeyOutcome 
     }
 }
 
-fn open_modal(app: &mut TuiApp, modal: ModalKind) {
+pub(crate) fn open_modal(app: &mut TuiApp, modal: ModalKind) {
     app.modal_stack.open(modal);
     app.mode = modal.mode();
 }
 
-fn replace_modal(app: &mut TuiApp, modal: ModalKind) {
+pub(crate) fn replace_modal(app: &mut TuiApp, modal: ModalKind) {
     app.modal_stack.replace(Some(modal));
     app.mode = modal.mode();
 }
@@ -112,6 +112,13 @@ fn open_skills_picker(app: &mut TuiApp) {
     app.skill_scroll = 0;
 }
 
+fn open_plugins_picker(app: &mut TuiApp) {
+    replace_modal(app, ModalKind::Plugins);
+    app.selected_plugin_row = 0;
+    app.plugin_row_scroll = 0;
+    crate::plugins::refresh_plugin_catalog(app);
+}
+
 // ─── routing dispatch ───────────────────────────────────────────────────────────
 
 fn route_mode_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyModifiers) -> KeyOutcome {
@@ -127,6 +134,8 @@ fn route_mode_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyModifiers) -> K
         Mode::Debug => self::modals::handle_debug_key(app, code),
         Mode::Help => self::modals::handle_help_key(app, code),
         Mode::Skills => self::modals::handle_skills_key(app, code),
+        Mode::Plugins => self::modals::handle_plugins_key(app, code),
+        Mode::PluginApproval => self::modals::handle_plugin_approval_key(app, code, modifiers),
     };
     if should_quit {
         KeyOutcome::Quit

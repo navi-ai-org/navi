@@ -228,6 +228,16 @@ impl ToolExecutor {
         names
     }
 
+    /// Removes WASM plugin tools (`plugin__*` namespaced IDs) so the host can reload plugins.
+    pub fn unregister_plugin_tools(&mut self) {
+        self.tools
+            .retain(|name, _| !name.starts_with("plugin__"));
+        self.validators
+            .retain(|name, _| !name.starts_with("plugin__"));
+        self.invalid_schemas
+            .retain(|name, _| !name.starts_with("plugin__"));
+    }
+
     /// Creates a failed [`ToolResult`] from an invalid tool call, including
     /// corrective advice for the model.
     pub fn invalid_tool_result(

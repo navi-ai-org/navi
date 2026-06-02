@@ -480,6 +480,16 @@ impl AgentRuntime {
         Ok(executor)
     }
 
+    /// Returns the configured tool executor, if any.
+    pub fn tool_executor(&self) -> Option<Arc<ToolExecutor>> {
+        self.tool_executor.clone()
+    }
+
+    /// Replaces the session tool executor (e.g. after installing WASM plugins).
+    pub fn set_tool_executor(&mut self, executor: Arc<ToolExecutor>) {
+        self.tool_executor = Some(executor);
+    }
+
     fn build_session_runtime(
         &mut self,
     ) -> Result<(

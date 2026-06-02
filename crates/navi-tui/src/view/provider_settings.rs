@@ -8,7 +8,7 @@ use crate::TuiApp;
 use crate::providers::provider_auth_status;
 use crate::render::modal_block;
 use crate::runtime::provider_supports_oauth;
-use crate::theme::{ACCENT, MUTED, PANEL, SIGNAL};
+use crate::theme::*;
 
 pub(super) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
     frame.render_widget(Clear, area);
@@ -29,7 +29,7 @@ pub(super) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
 
     frame.render_widget(
         Paragraph::new("Configure API keys or OAuth sign-in for supported providers.")
-            .style(Style::default().fg(MUTED).bg(PANEL)),
+            .style(Style::default().fg(muted()).bg(panel())),
         rows[0],
     );
 
@@ -56,22 +56,22 @@ pub(super) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
             let style = if selected {
                 Style::default()
                     .fg(Color::White)
-                    .bg(ACCENT)
+                    .bg(accent())
                     .add_modifier(Modifier::BOLD)
             } else if status.configured {
-                Style::default().fg(SIGNAL).bg(PANEL)
+                Style::default().fg(signal()).bg(panel())
             } else {
-                Style::default().fg(MUTED).bg(PANEL)
+                Style::default().fg(muted()).bg(panel())
             };
             ListItem::new(Span::styled(line, style)).style(style)
         })
         .collect::<Vec<_>>();
 
-    frame.render_widget(List::new(items).style(Style::default().bg(PANEL)), rows[1]);
+    frame.render_widget(List::new(items).style(Style::default().bg(panel())), rows[1]);
 
     frame.render_widget(
         Paragraph::new("enter/k API key  •  o OAuth  •  r sync models  •  esc close")
-            .style(Style::default().fg(MUTED).bg(PANEL)),
+            .style(Style::default().fg(muted()).bg(panel())),
         rows[2],
     );
 }

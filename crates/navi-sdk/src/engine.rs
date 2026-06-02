@@ -511,6 +511,35 @@ impl NaviEngine {
         .await?)
     }
 
+    /// Reloads WASM plugin tools on every active in-memory session without restarting NAVI.
+    ///
+    /// Installed plugins are read from `{data_dir}/plugins/` plus configured `wasm_plugins` scan roots.
+    pub async fn reload_wasm_plugins(&self) -> Result<Vec<String>> {
+        let loaded_config = self.loaded_config();
+        let project_dir = self.inner.project_dir.clone();
+        let mut warnings = Vec::new();
+        for session_id in self.session_ids() {
+            let session = self.session(&session_id)?;
+            let mut runtime = session.runtime.lock().await;
+            let mut fresh = build_local_tooling(&loaded_config, project_dir.clone())?;
+            for tool in &self.inner.host_tools {
+                let executor = Arc::get_mut(&mut fresh.tool_executor).ok_or_else(|| {
+                    NaviError::Config("cannot register host tool during plugin reload".into())
+                })?;
+                executor.register_tool(tool.clone());
+            }
+            for tool in &session.mcp.tools {
+                let executor = Arc::get_mut(&mut fresh.tool_executor).ok_or_else(|| {
+                    NaviError::Config("cannot register MCP tool during plugin reload".into())
+                })?;
+                executor.register_tool(tool.clone());
+            }
+            runtime.set_tool_executor(fresh.tool_executor);
+            warnings.extend(fresh.warnings);
+        }
+        Ok(warnings)
+    }
+
     /// Returns the IDs of all active (in-memory) sessions.
     pub fn session_ids(&self) -> Vec<String> {
         let mut ids = self

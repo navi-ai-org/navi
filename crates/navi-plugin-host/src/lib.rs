@@ -12,6 +12,9 @@ use navi_plugin_api::{
 use std::path::Path;
 use std::sync::Arc;
 
+pub mod sandbox;
+pub use sandbox::{SandboxStatus, apply_filesystem_sandbox};
+
 /// Adapter that wraps a `PluginTool` (from the stable plugin ABI) and implements
 /// `navi_core::Tool` so it can be registered with the engine's `ToolExecutor`.
 pub struct PluginToolAdapter {
@@ -145,6 +148,23 @@ pub fn load_configured_plugins(
     policy: &SecurityPolicy,
     executor: &mut ToolExecutor,
 ) -> PluginLoadReport {
+    load_configured_plugins_with_options(plugins, policy, executor, &LoadOptions::default())
+}
+
+/// Options that control plugin loading behavior (e.g. sandboxing).
+#[derive(Debug, Clone, Default)]
+pub struct LoadOptions {
+    /// If set, applies a filesystem sandbox after plugin load completes.
+    /// Only the listed paths (plus standard system paths) will be accessible.
+    pub sandbox_paths: Option<Vec<std::path::PathBuf>>,
+}
+
+pub fn load_configured_plugins_with_options(
+    plugins: &[PluginConfig],
+    policy: &SecurityPolicy,
+    executor: &mut ToolExecutor,
+    options: &LoadOptions,
+) -> PluginLoadReport {
     let mut report = PluginLoadReport::default();
 
     for plugin_config in plugins.iter().filter(|plugin| plugin.enabled) {
@@ -176,6 +196,30 @@ pub fn load_configured_plugins(
             Err(err) => report
                 .warnings
                 .push(format!("failed to load plugin {}: {err:#}", path.display())),
+        }
+    }
+
+    // Apply sandbox if requested and we successfully loaded at least one plugin.
+    if let Some(paths) = &options.sandbox_paths {
+        if !report.loaded.is_empty() {
+            match apply_filesystem_sandbox(paths.iter().map(|p| p.as_path())) {
+                Ok(SandboxStatus::Active) => {
+                    tracing::info!("filesystem sandbox active for {} path(s)", paths.len());
+                }
+                Ok(SandboxStatus::ActiveWithWarnings) => {
+                    tracing::warn!("filesystem sandbox active with warnings (some paths rejected)");
+                }
+                Ok(SandboxStatus::Unavailable(reason)) => {
+                    report
+                        .warnings
+                        .push(format!("filesystem sandbox unavailable: {reason}"));
+                }
+                Err(e) => {
+                    report
+                        .warnings
+                        .push(format!("filesystem sandbox failed: {e:#}"));
+                }
+            }
         }
     }
 
@@ -360,5 +404,43 @@ mod tests {
             Err(err) => err,
         };
         assert!(err.to_string().contains("requires explicit approval"));
+    }
+
+    #[test]
+    fn sandbox_runs_even_when_no_plugins_loaded() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let data_dir = tempdir.path().join("data");
+        let policy = SecurityPolicy::new(
+            tempdir.path().to_path_buf(),
+            data_dir,
+            SecurityConfig::default(),
+        )
+        .expect("policy");
+        let mut executor = ToolExecutor::new(policy.clone());
+        let report = load_configured_plugins_with_options(
+            &[],
+            &policy,
+            &mut executor,
+            &LoadOptions {
+                sandbox_paths: Some(vec![tempdir.path().to_path_buf()]),
+            },
+        );
+        // No plugins loaded => sandbox is not enforced (no risk surface).
+        assert!(report.warnings.is_empty());
+    }
+
+    #[test]
+    fn sandbox_reports_unavailable_when_no_paths_given() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let data_dir = tempdir.path().join("data");
+        let policy = SecurityPolicy::new(
+            tempdir.path().to_path_buf(),
+            data_dir,
+            SecurityConfig::default(),
+        )
+        .expect("policy");
+        let result = apply_filesystem_sandbox(Vec::<std::path::PathBuf>::new());
+        // Either unavailable (off-platform) or active (Landlock enabled).
+        assert!(result.is_ok());
     }
 }

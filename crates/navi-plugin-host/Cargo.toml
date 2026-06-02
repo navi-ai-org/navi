@@ -11,7 +11,13 @@ libloading.workspace = true
 navi-core.workspace = true
 navi-plugin-api.workspace = true
 serde_json.workspace = true
+tracing.workspace = true
+landlock = { version = "0.4", optional = true }
 
 [dev-dependencies]
 tempfile.workspace = true
 tokio.workspace = true
+
+[features]
+default = ["landlock"]
+landlock = ["dep:landlock"]

@@ -5,7 +5,7 @@ use ratatui::text::Text;
 use crate::TuiApp;
 use crate::providers::selected_provider_label;
 use crate::render::project_label;
-use crate::theme::{ACCENT, MUTED, NAVI_COMPACT_LOGO, PINK, TEXT};
+use crate::theme::*;
 
 pub(super) fn welcome_text(app: &TuiApp, width: usize) -> Text<'static> {
     let mut lines = Vec::new();
@@ -56,8 +56,8 @@ pub(super) fn welcome_text(app: &TuiApp, width: usize) -> Text<'static> {
 
         if let Some(logo_line) = NAVI_COMPACT_LOGO.get(index) {
             let color = match (app.tick() / 5 + index as u64) % 4 {
-                0 => PINK,
-                1 => ACCENT,
+                0 => pink(),
+                1 => accent(),
                 2 => Color::Rgb(236, 218, 255),
                 _ => Color::Rgb(132, 20, 204),
             };
@@ -89,7 +89,7 @@ pub(super) fn welcome_text(app: &TuiApp, width: usize) -> Text<'static> {
             "{}NAVI · wired code agent for local-first builders",
             " ".repeat(left_pad)
         ),
-        Style::default().fg(MUTED),
+        Style::default().fg(muted()),
     )]));
 
     Text::from(lines)
@@ -110,53 +110,53 @@ fn welcome_status_line(
 ) -> Option<Vec<Span<'static>>> {
     match index {
         0 => Some(vec![
-            Span::styled("project ", Style::default().fg(MUTED)),
+            Span::styled("project ", Style::default().fg(muted())),
             Span::styled(
                 project.to_string(),
-                Style::default().fg(TEXT).add_modifier(Modifier::BOLD),
+                Style::default().fg(text()).add_modifier(Modifier::BOLD),
             ),
         ]),
         1 => Some(vec![
-            Span::styled("model   ", Style::default().fg(MUTED)),
+            Span::styled("model   ", Style::default().fg(muted())),
             Span::styled(
                 model.to_string(),
-                Style::default().fg(TEXT).add_modifier(Modifier::BOLD),
+                Style::default().fg(text()).add_modifier(Modifier::BOLD),
             ),
         ]),
         2 => Some(vec![
-            Span::styled("via     ", Style::default().fg(MUTED)),
+            Span::styled("via     ", Style::default().fg(muted())),
             Span::styled(
                 provider.to_string(),
-                Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+                Style::default().fg(accent()).add_modifier(Modifier::BOLD),
             ),
         ]),
         3 => Some(vec![
-            Span::styled("thinking ", Style::default().fg(MUTED)),
-            Span::styled(thinking.to_string(), Style::default().fg(TEXT)),
+            Span::styled("thinking ", Style::default().fg(muted())),
+            Span::styled(thinking.to_string(), Style::default().fg(text())),
         ]),
         4 => Some(vec![
-            Span::styled("context ", Style::default().fg(MUTED)),
-            Span::styled(context.to_string(), Style::default().fg(TEXT)),
+            Span::styled("context ", Style::default().fg(muted())),
+            Span::styled(context.to_string(), Style::default().fg(text())),
         ]),
         5 => Some(vec![
-            Span::styled("mode    ", Style::default().fg(MUTED)),
-            Span::styled(mode.to_string(), Style::default().fg(TEXT)),
+            Span::styled("mode    ", Style::default().fg(muted())),
+            Span::styled(mode.to_string(), Style::default().fg(text())),
         ]),
         6 => Some(vec![
-            Span::styled("router  ", Style::default().fg(MUTED)),
-            Span::styled(router.to_string(), Style::default().fg(TEXT)),
+            Span::styled("router  ", Style::default().fg(muted())),
+            Span::styled(router.to_string(), Style::default().fg(text())),
         ]),
         7 => Some(vec![
-            Span::styled("tools   ", Style::default().fg(MUTED)),
-            Span::styled(tools.to_string(), Style::default().fg(TEXT)),
+            Span::styled("tools   ", Style::default().fg(muted())),
+            Span::styled(tools.to_string(), Style::default().fg(text())),
         ]),
         8 => Some(vec![
-            Span::styled("session ", Style::default().fg(MUTED)),
-            Span::styled(session.to_string(), Style::default().fg(TEXT)),
+            Span::styled("session ", Style::default().fg(muted())),
+            Span::styled(session.to_string(), Style::default().fg(text())),
         ]),
         9 => Some(vec![
-            Span::styled("cost    ", Style::default().fg(MUTED)),
-            Span::styled(cost.to_string(), Style::default().fg(TEXT)),
+            Span::styled("cost    ", Style::default().fg(muted())),
+            Span::styled(cost.to_string(), Style::default().fg(text())),
         ]),
         _ => None,
     }

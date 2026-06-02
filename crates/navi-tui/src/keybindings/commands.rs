@@ -93,6 +93,9 @@ pub(crate) fn run_selected_command(app: &mut TuiApp) -> bool {
         CommandAction::Skills => {
             super::open_skills_picker(app);
         }
+        CommandAction::Plugins => {
+            super::open_plugins_picker(app);
+        }
         CommandAction::Quit => return true,
         CommandAction::Settings => {
             super::replace_modal(app, ModalKind::Settings);

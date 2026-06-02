@@ -2,8 +2,8 @@ use std::time::Instant;
 
 use navi_sdk::{
     ModelOption, NaviConfigSaveTarget, NaviModelSelectionRequest, NaviProviderCredentialStatus,
-    ProviderConfig, canonical_provider_id, github_copilot_device_oauth, is_free_model_name,
-    model_can_run_publicly, resolve_provider_config,
+    ProviderConfig, canonical_provider_id, is_free_model_name, model_can_run_publicly,
+    resolve_provider_config, start_provider_device_oauth,
 };
 
 use crate::chat::refresh_system_context;
@@ -193,14 +193,15 @@ pub(crate) fn start_provider_oauth(app: &mut TuiApp, provider: &ProviderConfig) 
     let credential_store = app.credential_store_clone();
     let provider_id = provider.id.clone();
     app.set_stream_task(tokio::spawn(async move {
-        let result = github_copilot_device_oauth(credential_store, &provider_id, |started| {
+        let result = start_provider_device_oauth(&credential_store, &provider_id, |started| {
             let _ = tx.send(AsyncEvent::OAuthDeviceStarted {
                 provider_id: provider_id.clone(),
                 verification_uri: started.verification_uri,
                 user_code: started.user_code,
             });
         })
-        .await;
+        .await
+        .map_err(|err| err.to_string());
         let _ = tx.send(AsyncEvent::OAuthCompleted {
             provider_id,
             result,
