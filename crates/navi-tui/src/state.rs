@@ -144,6 +144,30 @@ impl ThinkingLevel {
             Self::Off => "off",
         }
     }
+
+    pub(crate) fn from_config(value: &str) -> Self {
+        match value.trim().to_lowercase().as_str() {
+            "max" => Self::Max,
+            "medium" => Self::Medium,
+            "low" => Self::Low,
+            "off" => Self::Off,
+            _ => Self::High,
+        }
+    }
+
+    pub(crate) fn config_value(self) -> &'static str {
+        self.label()
+    }
+
+    pub(crate) fn index(self) -> usize {
+        match self {
+            Self::Max => 0,
+            Self::High => 1,
+            Self::Medium => 2,
+            Self::Low => 3,
+            Self::Off => 4,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -26,7 +26,7 @@ impl NaviConfig {
     }
 
     pub(crate) fn merge(&mut self, other: NaviConfig) {
-        use crate::config::types::{McpConfig, ModelConfig, SkillsConfig};
+        use crate::config::types::{McpConfig, ModelConfig, PluginMarketplaceConfig, SkillsConfig, TuiConfig};
 
         if other.model != ModelConfig::default() {
             self.model = other.model;
@@ -41,6 +41,12 @@ impl NaviConfig {
         }
         if other.mcp != McpConfig::default() {
             self.mcp = other.mcp;
+        }
+        if other.tui != TuiConfig::default() {
+            self.tui = other.tui;
+        }
+        if other.plugin_marketplace != PluginMarketplaceConfig::default() {
+            self.plugin_marketplace = other.plugin_marketplace;
         }
         crate::config::providers::merge_provider_configs(&mut self.providers, other.providers);
         self.plugins.extend(other.plugins);
@@ -164,5 +170,51 @@ enabled = true
         assert!(config.plugins.is_empty());
         assert!(config.wasm_plugins.is_empty());
         assert_eq!(config.mcp, McpConfig::default());
+    }
+
+    #[test]
+    fn global_config_merges_tui_theme() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let path = tempdir.path().join("config.toml");
+        fs::write(
+            &path,
+            r#"
+[tui]
+theme = "oscura-night"
+"#,
+        )
+        .expect("write config");
+
+        let mut config = NaviConfig::default();
+        merge_from_file(&mut config, &path, ConfigSource::Trusted).expect("merge");
+
+        assert_eq!(config.tui.theme, "oscura-night");
+    }
+
+    #[test]
+    fn global_config_merges_tui_preferences() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let path = tempdir.path().join("config.toml");
+        fs::write(
+            &path,
+            r#"
+[tui]
+theme = "terminal"
+show_thinking = false
+full_tool_view = true
+thinking_level = "low"
+yolo_mode = true
+"#,
+        )
+        .expect("write config");
+
+        let mut config = NaviConfig::default();
+        merge_from_file(&mut config, &path, ConfigSource::Trusted).expect("merge");
+
+        assert_eq!(config.tui.theme, "terminal");
+        assert!(!config.tui.show_thinking);
+        assert!(config.tui.full_tool_view);
+        assert_eq!(config.tui.thinking_level, "low");
+        assert!(config.tui.yolo_mode);
     }
 }
