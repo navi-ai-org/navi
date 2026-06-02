@@ -28,15 +28,13 @@ where
     F: FnMut(DeviceOAuthStarted) + Send,
 {
     match canonical_provider_id(provider_id) {
-        "github-copilot" => {
-            navi_providers::github_copilot_device_oauth(
-                credential_store.clone(),
-                provider_id,
-                on_started,
-            )
-            .await
-            .map_err(|err| anyhow::anyhow!(err))
-        }
+        "github-copilot" => navi_providers::github_copilot_device_oauth(
+            credential_store.clone(),
+            provider_id,
+            on_started,
+        )
+        .await
+        .map_err(|err| anyhow::anyhow!(err)),
         other => bail!("device OAuth is not supported for provider '{other}'"),
     }
 }

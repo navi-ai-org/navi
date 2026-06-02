@@ -56,7 +56,13 @@ mod tests {
 
     #[test]
     fn markdown_renderer_wraps_plain_text() {
-        let lines = render_markdown_lines("hello world from navi", 12, test_palette().text, test_palette().text, false);
+        let lines = render_markdown_lines(
+            "hello world from navi",
+            12,
+            test_palette().text,
+            test_palette().text,
+            false,
+        );
         let rendered = lines.iter().map(line_text).collect::<Vec<_>>();
 
         assert_eq!(rendered, vec!["hello world", "from navi"]);
@@ -81,7 +87,13 @@ mod tests {
 
     #[test]
     fn markdown_renderer_handles_unclosed_fence() {
-        let lines = render_markdown_lines("```unknown\n  value", 80, test_palette().text, test_palette().text, false);
+        let lines = render_markdown_lines(
+            "```unknown\n  value",
+            80,
+            test_palette().text,
+            test_palette().text,
+            false,
+        );
         let rendered = lines.iter().map(line_text).collect::<Vec<_>>();
 
         assert_eq!(rendered, vec!["```unknown", "  value"]);

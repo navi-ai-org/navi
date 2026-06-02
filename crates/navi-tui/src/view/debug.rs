@@ -79,7 +79,10 @@ pub(super) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
         )),
     ];
     if app.diagnostics().is_empty() {
-        lines.push(Line::from(Span::styled("none", Style::default().fg(muted()))));
+        lines.push(Line::from(Span::styled(
+            "none",
+            Style::default().fg(muted()),
+        )));
     } else {
         for diagnostic in app.diagnostics().iter().rev().take(8) {
             lines.push(Line::from(Span::styled(

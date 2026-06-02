@@ -9,12 +9,12 @@ pub use credentials::{
     provider_credential_status, provider_supports_device_oauth, start_provider_device_oauth,
 };
 pub use engine::{NaviEngine, NaviEngineBuilder, NaviSession};
-pub use tooling::reload_wasm_plugins_on_executor;
 pub use host_tool::{
     HostToolDefinition, HostToolHandler, HostToolInvocation, SdkHostTool, SdkHostToolResult,
 };
 /// Deprecated: use [`start_provider_device_oauth`] instead.
 pub use navi_providers::github_copilot_device_oauth;
+pub use tooling::reload_wasm_plugins_on_executor;
 pub use types::{
     NaviConfigSaveTarget, NaviError, NaviMissingCredentialError, NaviModelInfo,
     NaviModelSelectionRequest, NaviModelSelectionResult, NaviProviderAccountInfo,

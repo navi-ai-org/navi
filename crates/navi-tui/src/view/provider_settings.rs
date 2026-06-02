@@ -67,7 +67,10 @@ pub(super) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
         })
         .collect::<Vec<_>>();
 
-    frame.render_widget(List::new(items).style(Style::default().bg(panel())), rows[1]);
+    frame.render_widget(
+        List::new(items).style(Style::default().bg(panel())),
+        rows[1],
+    );
 
     frame.render_widget(
         Paragraph::new("enter/k API key  •  o OAuth  •  r sync models  •  esc close")
