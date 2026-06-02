@@ -54,7 +54,7 @@ pub(crate) fn apply_model_selection(app: &mut TuiApp, model_index: usize) {
     let result = app.engine().select_model(NaviModelSelectionRequest {
         provider_id: model.provider_id.clone(),
         model: model.name.clone(),
-        save_target: NaviConfigSaveTarget::None,
+        save_target: NaviConfigSaveTarget::Auto,
     });
 
     match result {

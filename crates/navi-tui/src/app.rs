@@ -149,7 +149,11 @@ impl TuiApp {
         let log_path = log_path(&loaded_config.data_dir);
         let context_window = effective_context_window(&loaded_config.config);
         let initial_active_skills = loaded_config.config.skills.active.clone();
+        let show_thinking = loaded_config.config.tui.show_thinking;
+        let full_tool_view = loaded_config.config.tui.full_tool_view;
+        let yolo_mode = loaded_config.config.tui.yolo_mode;
         let theme_id = ThemeId::from_config(&loaded_config.config.tui.theme);
+        let thinking_level = ThinkingLevel::from_config(&loaded_config.config.tui.thinking_level);
 
         let mut app = Self {
             loaded_config,
@@ -164,8 +168,8 @@ impl TuiApp {
             model_scroll: 0,
             model_filter: String::new(),
             selected_agent: None,
-            thinking_level: ThinkingLevel::High,
-            selected_thinking: 1,
+            thinking_level,
+            selected_thinking: thinking_level.index(),
             tick: 0,
             messages: Vec::new(),
             scroll_offset: 0,
@@ -180,7 +184,7 @@ impl TuiApp {
             provider_configured,
             harness_policy,
             run_state: AgentRunState::default(),
-            yolo_mode: false,
+            yolo_mode,
             skip_next_model_done: false,
             model_retry_attempts: 0,
             running_tools: HashMap::new(),
@@ -199,8 +203,8 @@ impl TuiApp {
             saved_sessions,
             selected_session: 0,
             session_scroll: 0,
-            full_tool_view: false,
-            show_thinking: true,
+            full_tool_view,
+            show_thinking,
             selected_setting: 0,
             selected_provider_setting: 0,
             provider_settings_scroll: 0,
@@ -265,8 +269,8 @@ impl TuiApp {
 
     pub(crate) fn set_theme(&mut self, theme_id: ThemeId) {
         self.theme_id = theme_id;
-        self.loaded_config.config.tui.theme = theme_id.config_value().to_string();
         self.chat_render_cache.borrow_mut().signature.clear();
+        crate::persistence::save_preferences(self);
     }
 
     pub(crate) fn credential_store(&self) -> &CredentialStore {
@@ -359,6 +363,7 @@ impl TuiApp {
         } else {
             self.active_skills.push(skill_id.to_string());
         }
+        crate::persistence::save_preferences(self);
     }
 
     pub(crate) fn is_skill_active(&self, skill_id: &str) -> bool {

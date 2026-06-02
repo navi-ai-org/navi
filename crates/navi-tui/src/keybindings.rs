@@ -94,7 +94,7 @@ fn open_provider_settings(app: &mut TuiApp) {
 
 fn open_thinking_picker(app: &mut TuiApp) {
     replace_modal(app, ModalKind::Thinking);
-    app.selected_thinking = app.thinking_level as usize;
+    app.selected_thinking = app.thinking_level.index();
 }
 
 fn open_sessions_picker(app: &mut TuiApp) {

@@ -716,20 +716,49 @@ fn settings_toggles_thinking_visibility() {
 
     handle_settings_key(&mut app, KeyCode::Enter);
     assert!(!app.show_thinking);
+    assert!(!app.loaded_config.config.tui.show_thinking);
     assert!(app.notification().is_some());
 }
 
 #[test]
-fn settings_no_longer_opens_provider_accounts() {
+fn tui_preferences_load_from_config() {
+    let mut config = navi_sdk::NaviConfig::default();
+    config.tui.theme = "ember".to_string();
+    config.tui.show_thinking = false;
+    config.tui.full_tool_view = true;
+    config.tui.thinking_level = "low".to_string();
+    config.tui.yolo_mode = true;
+    config.skills.active = vec!["demo-skill".to_string()];
+
+    let app = TuiApp::new(
+        LoadedConfig {
+            config,
+            global_config_path: None,
+            project_config_path: None,
+            data_dir: PathBuf::from("/tmp/navi-test"),
+        },
+        PathBuf::from("/tmp/test-project"),
+        None,
+    )
+    .expect("test app");
+
+    assert_eq!(app.theme_id, crate::theme::ThemeId::Ember);
+    assert!(!app.show_thinking);
+    assert!(app.full_tool_view);
+    assert_eq!(app.thinking_level, crate::state::ThinkingLevel::Low);
+    assert!(app.yolo_mode);
+    assert_eq!(app.active_skills, vec!["demo-skill".to_string()]);
+}
+
+#[test]
+fn settings_does_not_open_provider_accounts() {
     let mut app = test_app("");
     app.mode = Mode::Settings;
-    app.selected_setting = 1;
-
-    handle_settings_key(&mut app, KeyCode::Down);
-    assert_eq!(app.selected_setting, 1);
+    app.selected_setting = 0;
 
     handle_settings_key(&mut app, KeyCode::Enter);
     assert_eq!(app.mode, Mode::Settings);
+    assert!(!app.full_tool_view);
 }
 
 #[test]

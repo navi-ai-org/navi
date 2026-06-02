@@ -1,6 +1,7 @@
 use crate::TuiApp;
 use crate::chat::{reset_system_context, submit_message};
 use crate::notifications::show_notification;
+use crate::persistence::save_preferences;
 use crate::state::ModalKind;
 use crate::ui::effect::UiEffect;
 use crate::ui::keymap::KeyOutcome;
@@ -30,6 +31,7 @@ pub(super) fn route_global_key(
                         if app.yolo_mode { "enabled" } else { "disabled" }
                     ),
                 );
+                save_preferences(app);
                 return KeyOutcome::Handled;
             }
             KeyCode::Char('p') => {
@@ -54,6 +56,7 @@ pub(super) fn route_global_key(
                         "Compact tool view enabled."
                     },
                 );
+                save_preferences(app);
                 return KeyOutcome::Handled;
             }
             KeyCode::Char('j') | KeyCode::Char('\n') | KeyCode::Char('\r') | KeyCode::Enter => {

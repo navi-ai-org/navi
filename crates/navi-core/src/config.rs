@@ -37,6 +37,8 @@ mod tests {
             skills: SkillsConfig::default(),
             mcp: McpConfig::default(),
             wasm_plugins: Vec::new(),
+            plugin_marketplace: PluginMarketplaceConfig::default(),
+            tui: TuiConfig::default(),
         };
 
         let mut project = NaviConfig {
@@ -76,6 +78,8 @@ mod tests {
                 }],
             },
             wasm_plugins: Vec::new(),
+            plugin_marketplace: PluginMarketplaceConfig::default(),
+            tui: TuiConfig::default(),
         };
         project.plugins.clear();
         project.mcp = McpConfig::default();

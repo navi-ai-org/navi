@@ -39,7 +39,7 @@ pub(crate) fn save_current_session(app: &mut TuiApp) {
     app.events.clear();
 }
 
-pub(crate) fn save_preferences(app: &mut TuiApp) {
+pub(crate) fn sync_preferences_to_config(app: &mut TuiApp) {
     app.loaded_config.config.model.name = app
         .models
         .get(app.selected_model)
@@ -50,7 +50,17 @@ pub(crate) fn save_preferences(app: &mut TuiApp) {
         .get(app.selected_model)
         .map(|m| m.provider_id.clone())
         .unwrap_or_else(|| app.loaded_config.config.model.provider.clone());
-    app.loaded_config.config.tui.theme = app.theme_id.config_value().to_string();
+    app.loaded_config.config.skills.active = app.active_skills.clone();
+    let tui = &mut app.loaded_config.config.tui;
+    tui.theme = app.theme_id.config_value().to_string();
+    tui.show_thinking = app.show_thinking;
+    tui.full_tool_view = app.full_tool_view;
+    tui.thinking_level = app.thinking_level.config_value().to_string();
+    tui.yolo_mode = app.yolo_mode;
+}
+
+pub(crate) fn save_preferences(app: &mut TuiApp) {
+    sync_preferences_to_config(app);
 
     let Some(global_path) = app.loaded_config.global_config_path.clone() else {
         tracing::warn!("skipping preferences save: global config path is not resolved");

@@ -1,7 +1,7 @@
 use crate::TuiApp;
 use crate::input::api_key_input_ref;
 use crate::notifications::show_notification;
-use crate::persistence::{load_session, save_current_session};
+use crate::persistence::{load_session, save_current_session, save_preferences};
 use crate::providers::{
     apply_model_selection, build_model_rows, first_model_index, model_is_available_for_selection,
     next_model_index, previous_model_index, save_api_key_and_rebuild, selected_model_in_rows,
@@ -55,12 +55,14 @@ pub(crate) fn handle_thinking_key(app: &mut TuiApp, code: KeyCode) -> bool {
         KeyCode::Enter => {
             let level = THINKING_OPTIONS[app.selected_thinking];
             app.thinking_level = level;
+            app.selected_thinking = level.index();
             super::close_all_modals(app);
             show_notification(
                 app,
                 "Thinking",
                 format!("Thinking set to {}.", level.label()),
             );
+            save_preferences(app);
         }
         _ => {}
     }
@@ -91,6 +93,7 @@ pub(crate) fn handle_settings_key(app: &mut TuiApp, code: KeyCode) -> bool {
                         "Thinking text hidden."
                     },
                 );
+                save_preferences(app);
             }
             1 => {
                 app.full_tool_view = !app.full_tool_view;
@@ -103,6 +106,7 @@ pub(crate) fn handle_settings_key(app: &mut TuiApp, code: KeyCode) -> bool {
                         "Tool output compacted."
                     },
                 );
+                save_preferences(app);
             }
             2 => {
                 let next = app.theme_id.next();

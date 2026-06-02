@@ -42,23 +42,36 @@ pub struct NaviConfig {
 }
 
 /// TUI-specific settings (global config).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct TuiConfig {
     /// Color theme id: `lain`, `terminal`, `slate`, `ember`, `paper`, `oscura-night`.
     pub theme: String,
+    /// Whether assistant thinking text is shown in the chat view.
+    #[serde(default = "default_true")]
+    pub show_thinking: bool,
+    /// Whether tool rows show full input/output instead of compact lines.
+    pub full_tool_view: bool,
+    /// Thinking effort: `max`, `high`, `medium`, `low`, `off`.
+    pub thinking_level: String,
+    /// Auto-approve tools without confirmation (YOLO mode).
+    pub yolo_mode: bool,
 }
 
 impl Default for TuiConfig {
     fn default() -> Self {
         Self {
             theme: "lain".to_string(),
+            show_thinking: true,
+            full_tool_view: false,
+            thinking_level: "high".to_string(),
+            yolo_mode: false,
         }
     }
 }
 
 /// Plugin marketplace / registry repository settings.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct PluginMarketplaceConfig {
     /// URL to `catalog.json` in the registry repository (`https://` or `file://`).
