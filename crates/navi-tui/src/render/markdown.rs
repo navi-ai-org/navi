@@ -31,8 +31,8 @@ pub(crate) fn build_chat_lines_for_messages<'a>(
                 rendered_lines.extend(render_markdown_lines(
                     &msg.content,
                     chat_width.saturating_sub(4),
-                    USER_ACCENT,
-                    TEXT,
+                    user_accent(),
+                    text(),
                     false,
                 ));
             }
@@ -41,11 +41,11 @@ pub(crate) fn build_chat_lines_for_messages<'a>(
                     rendered_lines.push(Line::from(vec![
                         Span::styled(
                             " ◈ compacted ",
-                            Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+                            Style::default().fg(accent()).add_modifier(Modifier::BOLD),
                         ),
                         Span::styled(
                             "─".repeat(chat_width.saturating_sub(14)),
-                            Style::default().fg(GHOST),
+                            Style::default().fg(ghost()),
                         ),
                     ]));
                 }
@@ -54,8 +54,8 @@ pub(crate) fn build_chat_lines_for_messages<'a>(
                         rendered_lines.extend(render_markdown_lines(
                             &tool_full_content(invocation, result),
                             chat_width.saturating_sub(2),
-                            TEXT,
-                            TEXT,
+                            text(),
+                            text(),
                             false,
                         ));
                     } else {
@@ -66,8 +66,8 @@ pub(crate) fn build_chat_lines_for_messages<'a>(
                         rendered_lines.extend(render_markdown_lines(
                             &msg.thinking_content,
                             chat_width.saturating_sub(4),
-                            MUTED,
-                            MUTED,
+                            muted(),
+                            muted(),
                             true,
                         ));
                         if !msg.content.is_empty() {
@@ -77,8 +77,8 @@ pub(crate) fn build_chat_lines_for_messages<'a>(
                     rendered_lines.extend(render_markdown_lines(
                         &msg.content,
                         chat_width.saturating_sub(2),
-                        TEXT,
-                        TEXT,
+                        text(),
+                        text(),
                         false,
                     ));
                 }
@@ -114,8 +114,8 @@ pub(crate) fn build_chat_lines_for_messages<'a>(
                     let dashes: String = std::iter::repeat_n('─', dash_count).collect();
 
                     rendered_lines.push(Line::from(vec![
-                        Span::styled(format!(" {attr_text} "), Style::default().fg(MUTED)),
-                        Span::styled(dashes, Style::default().fg(GHOST)),
+                        Span::styled(format!(" {attr_text} "), Style::default().fg(muted())),
+                        Span::styled(dashes, Style::default().fg(ghost())),
                     ]));
                 }
             }
@@ -151,7 +151,7 @@ fn render_compact_tool_line(invocation: &ToolInvocation, result: &ToolResult) ->
         ),
         Span::styled(
             tool_compact_text(invocation, result),
-            Style::default().fg(TEXT),
+            Style::default().fg(text()),
         ),
     ])
 }
@@ -284,10 +284,10 @@ fn markdown_prose_line(text: &str, fallback: Color) -> Option<Vec<Span<'static>>
         };
         spans.push(Span::styled(
             prefix,
-            Style::default().fg(PINK).add_modifier(Modifier::BOLD),
+            Style::default().fg(pink()).add_modifier(Modifier::BOLD),
         ));
         spans.extend(
-            inline_text_spans(&trimmed[heading + 1..], TEXT)
+            inline_text_spans(&trimmed[heading + 1..], crate::theme::text())
                 .into_iter()
                 .map(|mut span| {
                     span.style = span.style.add_modifier(Modifier::BOLD);
@@ -300,9 +300,9 @@ fn markdown_prose_line(text: &str, fallback: Color) -> Option<Vec<Span<'static>>
     if let Some(rest) = trimmed.strip_prefix("> ") {
         spans.push(Span::styled(
             "▌ ",
-            Style::default().fg(PINK).add_modifier(Modifier::BOLD),
+            Style::default().fg(pink()).add_modifier(Modifier::BOLD),
         ));
-        spans.extend(inline_text_spans(rest, MUTED));
+        spans.extend(inline_text_spans(rest, muted()));
         return Some(spans);
     }
 
@@ -314,7 +314,7 @@ fn markdown_prose_line(text: &str, fallback: Color) -> Option<Vec<Span<'static>>
     if trimmed.starts_with("- ") || trimmed.starts_with("* ") {
         spans.push(Span::styled(
             "• ",
-            Style::default().fg(PINK).add_modifier(Modifier::BOLD),
+            Style::default().fg(pink()).add_modifier(Modifier::BOLD),
         ));
         spans.extend(inline_text_spans(&trimmed[2..], fallback));
         return Some(spans);
@@ -323,7 +323,7 @@ fn markdown_prose_line(text: &str, fallback: Color) -> Option<Vec<Span<'static>>
     if let Some((marker, rest)) = ordered_list_marker(trimmed) {
         spans.push(Span::styled(
             marker,
-            Style::default().fg(PINK).add_modifier(Modifier::BOLD),
+            Style::default().fg(pink()).add_modifier(Modifier::BOLD),
         ));
         spans.extend(inline_text_spans(rest, fallback));
         return Some(spans);
@@ -433,15 +433,15 @@ fn stacked_table_lines(
                 if line_index == 0 {
                     spans.push(Span::styled(
                         format!("{label:<label_width$}  "),
-                        Style::default().fg(CODE_TYPE).add_modifier(Modifier::BOLD),
+                        Style::default().fg(code_type()).add_modifier(Modifier::BOLD),
                     ));
                 } else {
                     spans.push(Span::styled(
                         " ".repeat(label_width + 2),
-                        Style::default().fg(GHOST),
+                        Style::default().fg(ghost()),
                     ));
                 }
-                spans.extend(inline_text_spans(&value, TEXT));
+                spans.extend(inline_text_spans(&value, text()));
                 lines.push(Line::from(spans));
             }
         }
@@ -462,15 +462,15 @@ fn table_row_spans_with_header(
     let mut spans = Vec::new();
     for (index, cell) in cells.iter().enumerate() {
         if index > 0 {
-            spans.push(Span::styled("  ", Style::default().fg(GHOST)));
+            spans.push(Span::styled("  ", Style::default().fg(ghost())));
         }
-        let mut style = Style::default().fg(if header { CODE_TYPE } else { TEXT });
+        let mut style = Style::default().fg(if header { code_type() } else { text() });
         if header {
             style = style.add_modifier(Modifier::BOLD);
         }
         spans.extend(inline_text_spans(
             cell,
-            if header { CODE_TYPE } else { TEXT },
+            if header { code_type() } else { text() },
         ));
         let width = widths.get(index).copied().unwrap_or(0);
         let padding = width.saturating_sub(rendered_inline_width(cell));
@@ -481,8 +481,8 @@ fn table_row_spans_with_header(
     spans
 }
 
-fn rendered_inline_width(text: &str) -> usize {
-    inline_text_spans(text, TEXT)
+fn rendered_inline_width(content: &str) -> usize {
+    inline_text_spans(content, crate::theme::text())
         .iter()
         .map(|span| span.content.chars().count())
         .sum()
@@ -543,11 +543,11 @@ fn inline_text_spans(text: &str, fallback: Color) -> Vec<Span<'static>> {
             push_plain_span(&mut spans, &mut plain, fallback);
             spans.push(Span::styled(
                 alt.to_string(),
-                Style::default().fg(CODE_TYPE).add_modifier(Modifier::BOLD),
+                Style::default().fg(code_type()).add_modifier(Modifier::BOLD),
             ));
             spans.push(Span::styled(
                 format!(" (image: {url})"),
-                Style::default().fg(MUTED),
+                Style::default().fg(muted()),
             ));
             index += consumed;
             continue;
@@ -557,11 +557,11 @@ fn inline_text_spans(text: &str, fallback: Color) -> Vec<Span<'static>> {
             push_plain_span(&mut spans, &mut plain, fallback);
             spans.push(Span::styled(
                 label.to_string(),
-                Style::default().fg(CODE_TYPE).add_modifier(Modifier::BOLD),
+                Style::default().fg(code_type()).add_modifier(Modifier::BOLD),
             ));
             spans.push(Span::styled(
                 format!(" ({url})"),
-                Style::default().fg(MUTED),
+                Style::default().fg(muted()),
             ));
             index += consumed;
             continue;
@@ -580,14 +580,14 @@ fn inline_text_spans(text: &str, fallback: Color) -> Vec<Span<'static>> {
 
 fn inline_delimited(rest: &str) -> Option<(usize, &str, Modifier, Color, bool)> {
     let patterns = [
-        ("`", Modifier::empty(), CODE_STRING, false),
-        ("***", Modifier::BOLD | Modifier::ITALIC, TEXT, true),
-        ("___", Modifier::BOLD | Modifier::ITALIC, TEXT, true),
-        ("**", Modifier::BOLD, TEXT, true),
-        ("__", Modifier::BOLD, TEXT, true),
-        ("~~", Modifier::CROSSED_OUT, MUTED, true),
-        ("*", Modifier::ITALIC, MUTED, true),
-        ("_", Modifier::ITALIC, MUTED, true),
+        ("`", Modifier::empty(), code_string(), false),
+        ("***", Modifier::BOLD | Modifier::ITALIC, text(), true),
+        ("___", Modifier::BOLD | Modifier::ITALIC, text(), true),
+        ("**", Modifier::BOLD, text(), true),
+        ("__", Modifier::BOLD, text(), true),
+        ("~~", Modifier::CROSSED_OUT, muted(), true),
+        ("*", Modifier::ITALIC, muted(), true),
+        ("_", Modifier::ITALIC, muted(), true),
     ];
 
     for (marker, modifier, color, recursive) in patterns {
@@ -671,7 +671,7 @@ fn markdown_boundary_line(language: &str, show_marker: bool, marker_color: Color
     } else {
         format!("```{language}")
     };
-    spans.push(Span::styled(label, Style::default().fg(GHOST)));
+    spans.push(Span::styled(label, Style::default().fg(ghost())));
     Line::from(spans)
 }
 

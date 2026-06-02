@@ -1276,7 +1276,11 @@ fn anthropic_sse_tool_use_empty_json() {
 
 #[test]
 fn anthropic_messages_tool_role_produces_tool_result() {
-    let messages = vec![ModelMessage::tool_result("call-1", "read_file", "file content")];
+    let messages = vec![ModelMessage::tool_result(
+        "call-1",
+        "read_file",
+        "file content",
+    )];
     let (_, converted) = crate::providers::anthropic::anthropic_messages(&messages);
     assert_eq!(converted.len(), 1);
     assert_eq!(converted[0]["role"], "user");
@@ -1352,14 +1356,21 @@ fn gemini_sse_mixed_text_and_function_call() {
 
 #[test]
 fn gemini_contents_tool_role_produces_function_response() {
-    let messages = vec![ModelMessage::tool_result("call-1", "read_file", "file content")];
+    let messages = vec![ModelMessage::tool_result(
+        "call-1",
+        "read_file",
+        "file content",
+    )];
     let (_, contents) = crate::providers::gemini::gemini_contents(&messages);
     assert_eq!(contents.len(), 1);
     assert_eq!(contents[0]["role"], "function");
     let parts = contents[0]["parts"].as_array().unwrap();
     assert_eq!(parts.len(), 1);
     assert_eq!(parts[0]["functionResponse"]["name"], "read_file");
-    assert_eq!(parts[0]["functionResponse"]["response"]["result"], "file content");
+    assert_eq!(
+        parts[0]["functionResponse"]["response"]["result"],
+        "file content"
+    );
 }
 
 #[test]
@@ -1386,7 +1397,11 @@ fn applies_gemini_thinking_budget() {
     let mut body = json!({ "model": "gemini-2.5-pro", "messages": [] });
     apply_thinking_to_body(
         &mut body,
-        thinking_request_for_api(navi_core::ThinkingConfig::High, OpenAiApiKind::ChatCompletions, "google-gemini"),
+        thinking_request_for_api(
+            navi_core::ThinkingConfig::High,
+            OpenAiApiKind::ChatCompletions,
+            "google-gemini",
+        ),
         OpenAiApiKind::ChatCompletions,
         "google-gemini",
     );
@@ -1402,7 +1417,11 @@ fn apply_thinking_disabled_does_not_modify_body() {
     let original = body.clone();
     apply_thinking_to_body(
         &mut body,
-        thinking_request_for_api(navi_core::ThinkingConfig::Off, OpenAiApiKind::Responses, "openai"),
+        thinking_request_for_api(
+            navi_core::ThinkingConfig::Off,
+            OpenAiApiKind::Responses,
+            "openai",
+        ),
         OpenAiApiKind::Responses,
         "openai",
     );
@@ -1414,7 +1433,11 @@ fn applies_generic_reasoning_effort_for_unknown_provider() {
     let mut body = json!({ "model": "custom-model", "messages": [] });
     apply_thinking_to_body(
         &mut body,
-        thinking_request_for_api(navi_core::ThinkingConfig::Medium, OpenAiApiKind::ChatCompletions, "custom-provider"),
+        thinking_request_for_api(
+            navi_core::ThinkingConfig::Medium,
+            OpenAiApiKind::ChatCompletions,
+            "custom-provider",
+        ),
         OpenAiApiKind::ChatCompletions,
         "custom-provider",
     );

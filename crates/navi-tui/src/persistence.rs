@@ -50,6 +50,7 @@ pub(crate) fn save_preferences(app: &mut TuiApp) {
         .get(app.selected_model)
         .map(|m| m.provider_id.clone())
         .unwrap_or_else(|| app.loaded_config.config.model.provider.clone());
+    app.loaded_config.config.tui.theme = app.theme_id.config_value().to_string();
 
     let Some(global_path) = app.loaded_config.global_config_path.clone() else {
         tracing::warn!("skipping preferences save: global config path is not resolved");

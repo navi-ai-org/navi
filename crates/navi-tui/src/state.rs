@@ -74,6 +74,8 @@ pub(crate) enum Mode {
     Debug,
     Help,
     Skills,
+    Plugins,
+    PluginApproval,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -88,6 +90,8 @@ pub(crate) enum ModalKind {
     Debug,
     Help,
     Skills,
+    Plugins,
+    PluginApproval,
 }
 
 impl ModalKind {
@@ -103,6 +107,8 @@ impl ModalKind {
             Self::Debug => Mode::Debug,
             Self::Help => Mode::Help,
             Self::Skills => Mode::Skills,
+            Self::Plugins => Mode::Plugins,
+            Self::PluginApproval => Mode::PluginApproval,
         }
     }
 }
@@ -145,4 +151,42 @@ pub(crate) struct SelectionState {
     pub start: (usize, usize),
     pub end: (usize, usize),
     pub active: bool,
+}
+
+/// A pending plugin install/update approval in the TUI.
+#[derive(Debug, Clone)]
+pub(crate) struct PluginApprovalRequest {
+    /// Unique id used to correlate with the decision callback.
+    pub id: String,
+    /// Source directory or path being installed from.
+    pub source_path: String,
+    /// The plugin id.
+    pub plugin_id: String,
+    /// The plugin version.
+    pub version: String,
+    /// The plugin publisher.
+    pub publisher: String,
+    /// Overall risk string (LOW, MEDIUM, HIGH, CRITICAL).
+    pub overall_risk: String,
+    /// Pre-formatted capabilities list (one per line, already truncated).
+    pub capabilities_text: String,
+    /// Pre-formatted tools list.
+    pub tools_text: String,
+    /// Pre-formatted warnings list.
+    pub warnings_text: String,
+    /// Whether this is an install or an update.
+    pub kind: PluginApprovalKind,
+    /// Pre-formatted diff (for updates), empty for installs.
+    pub changes_text: String,
+    /// For updates, the reconsent action label.
+    pub reconsent_action: Option<String>,
+    /// When the user approves, the on-disk install is performed.
+    pub install_on_approve: bool,
+}
+
+/// Whether the approval is for a fresh install or an update.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PluginApprovalKind {
+    Install,
+    Update,
 }

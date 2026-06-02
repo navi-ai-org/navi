@@ -36,6 +36,7 @@ mod tests {
             memory: MemoryConfig::default(),
             skills: SkillsConfig::default(),
             mcp: McpConfig::default(),
+            wasm_plugins: Vec::new(),
         };
 
         let mut project = NaviConfig {
@@ -74,6 +75,7 @@ mod tests {
                     timeout_ms: None,
                 }],
             },
+            wasm_plugins: Vec::new(),
         };
         project.plugins.clear();
         project.mcp = McpConfig::default();

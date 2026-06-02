@@ -34,6 +34,21 @@ pub(crate) enum AsyncEvent {
     Agent(AgentEvent),
     TurnCompleted(std::result::Result<String, String>),
     RetryModel,
+    PluginCatalogLoaded {
+        entries: Vec<navi_plugin_manifest::PluginCatalogEntry>,
+        error: Option<String>,
+    },
+    PluginStaged {
+        plugin_id: String,
+        staging_path: std::path::PathBuf,
+        update: bool,
+        error: Option<String>,
+    },
+    PluginsReloaded {
+        error: Option<String>,
+        warnings: Vec<String>,
+    },
+    PluginsReloadNeeded,
 }
 
 pub(crate) fn handle_async_event(app: &mut TuiApp, event: AsyncEvent) {
@@ -44,6 +59,49 @@ pub(crate) fn handle_async_event(app: &mut TuiApp, event: AsyncEvent) {
             app.clear_stream_task();
             if app.is_loading {
                 start_streaming_request(app);
+            }
+        }
+        AsyncEvent::PluginCatalogLoaded { entries, error } => {
+            app.plugin_catalog_loading = false;
+            app.plugin_catalog = entries;
+            app.plugin_catalog_error = error.unwrap_or_default();
+            if !app.plugin_catalog_error.is_empty() {
+                show_notification(app, "Plugins", app.plugin_catalog_error.clone());
+            }
+        }
+        AsyncEvent::PluginStaged {
+            plugin_id,
+            staging_path,
+            update,
+            error,
+        } => {
+            if let Some(err) = error {
+                show_notification(app, "Plugins", format!("Failed to fetch {plugin_id}: {err}"));
+                return;
+            }
+            if let Err(err) = crate::plugins::handle_plugin_staged(
+                app,
+                &plugin_id,
+                &staging_path,
+                update,
+            ) {
+                show_notification(app, "Plugins", format!("{err:#}"));
+            }
+        }
+        AsyncEvent::PluginsReloadNeeded => {
+            crate::plugins::reload_engine_plugins(app);
+        }
+        AsyncEvent::PluginsReloaded { error, warnings } => {
+            if let Some(err) = error {
+                show_notification(app, "Plugins", format!("Reload failed: {err}"));
+            } else if warnings.is_empty() {
+                show_notification(app, "Plugins", "Plugins reloaded.");
+            } else {
+                show_notification(
+                    app,
+                    "Plugins",
+                    format!("Reloaded with {} warning(s).", warnings.len()),
+                );
             }
         }
         AsyncEvent::SyncCompleted {
@@ -436,11 +494,9 @@ mod tests {
 
         handle_async_event(
             &mut app,
-            AsyncEvent::Agent(AgentEvent::ApprovalResolved(
-                ApprovalDecision::Approved {
-                    id: "ap-2".to_string(),
-                },
-            )),
+            AsyncEvent::Agent(AgentEvent::ApprovalResolved(ApprovalDecision::Approved {
+                id: "ap-2".to_string(),
+            })),
         );
 
         assert!(app.pending_approvals.is_empty());
@@ -453,11 +509,9 @@ mod tests {
 
         handle_async_event(
             &mut app,
-            AsyncEvent::Agent(AgentEvent::ApprovalResolved(
-                ApprovalDecision::Denied {
-                    id: "ap-3".to_string(),
-                },
-            )),
+            AsyncEvent::Agent(AgentEvent::ApprovalResolved(ApprovalDecision::Denied {
+                id: "ap-3".to_string(),
+            })),
         );
 
         assert!(app.pending_approvals.is_empty());
@@ -483,8 +537,10 @@ mod tests {
     #[test]
     fn usage_reported_sets_usage_label_on_assistant_message() {
         let mut app = test_app("");
-        app.messages
-            .push(ChatMessage::new(ChatRole::Assistant, "response".to_string()));
+        app.messages.push(ChatMessage::new(
+            ChatRole::Assistant,
+            "response".to_string(),
+        ));
 
         handle_async_event(
             &mut app,
@@ -508,9 +564,7 @@ mod tests {
 
         handle_async_event(
             &mut app,
-            AsyncEvent::Agent(AgentEvent::AutoCompactCompleted {
-                tokens_saved: 5000,
-            }),
+            AsyncEvent::Agent(AgentEvent::AutoCompactCompleted { tokens_saved: 5000 }),
         );
 
         assert_eq!(app.compact_state.consecutive_failures, 0);
@@ -562,7 +616,10 @@ mod tests {
             .insert("t1".to_string(), sample_invocation("t1"));
         app.pending_approvals.push(sample_approval("ap-1"));
 
-        handle_async_event(&mut app, AsyncEvent::TurnCompleted(Ok("answer".to_string())));
+        handle_async_event(
+            &mut app,
+            AsyncEvent::TurnCompleted(Ok("answer".to_string())),
+        );
 
         assert!(!app.is_loading);
         assert!(app.loading_start.is_none());
@@ -602,10 +659,9 @@ mod tests {
         );
 
         // The error is recorded in events regardless of retry scheduling
-        let has_error_event = app
-            .events
-            .iter()
-            .any(|e| matches!(e, AgentEvent::Error { message } if message.contains("model not found")));
+        let has_error_event = app.events.iter().any(
+            |e| matches!(e, AgentEvent::Error { message } if message.contains("model not found")),
+        );
         assert!(has_error_event, "should push an error event");
     }
 
@@ -786,10 +842,7 @@ mod tests {
     fn auto_compact_started_pushes_diagnostic_and_event() {
         let mut app = test_app("");
 
-        handle_async_event(
-            &mut app,
-            AsyncEvent::Agent(AgentEvent::AutoCompactStarted),
-        );
+        handle_async_event(&mut app, AsyncEvent::Agent(AgentEvent::AutoCompactStarted));
 
         assert_eq!(app.events.len(), 1);
         let diag = app.diagnostics();

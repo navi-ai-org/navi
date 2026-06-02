@@ -6,7 +6,7 @@ use ratatui::widgets::{Clear, List, ListItem, ListState, Paragraph};
 use crate::TuiApp;
 use crate::commands::filtered_commands;
 use crate::render::{command_row, command_scroll_offset, modal_block};
-use crate::theme::{ACCENT, MUTED, PANEL, SIGNAL, TEXT};
+use crate::theme::*;
 
 pub(super) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
     frame.render_widget(Clear, area);
@@ -33,10 +33,10 @@ pub(super) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
     };
     frame.render_widget(
         Paragraph::new(Line::from(vec![
-            Span::styled("> ", Style::default().fg(SIGNAL)),
-            Span::styled(filter, Style::default().fg(MUTED)),
+            Span::styled("> ", Style::default().fg(signal())),
+            Span::styled(filter, Style::default().fg(muted())),
         ]))
-        .style(Style::default().bg(PANEL)),
+        .style(Style::default().bg(panel())),
         rows[0],
     );
 
@@ -51,10 +51,10 @@ pub(super) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
             let style = if selected {
                 Style::default()
                     .fg(Color::White)
-                    .bg(ACCENT)
+                    .bg(accent())
                     .add_modifier(Modifier::BOLD)
             } else {
-                Style::default().fg(TEXT).bg(PANEL)
+                Style::default().fg(text()).bg(panel())
             };
 
             let shortcut = command.shortcut.unwrap_or("");
@@ -73,13 +73,13 @@ pub(super) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
         ))
         .with_selected((!commands.is_empty()).then_some(selected_command));
     frame.render_stateful_widget(
-        List::new(items).style(Style::default().bg(PANEL)),
+        List::new(items).style(Style::default().bg(panel())),
         rows[1],
         &mut list_state,
     );
     frame.render_widget(
         Paragraph::new("tab/↑↓ choose  •  enter confirm  •  esc cancel")
-            .style(Style::default().fg(MUTED).bg(PANEL)),
+            .style(Style::default().fg(muted()).bg(panel())),
         rows[2],
     );
 }

@@ -31,6 +31,38 @@ pub struct NaviConfig {
     pub skills: SkillsConfig,
     /// MCP server configuration.
     pub mcp: McpConfig,
+    /// WASM plugin directory paths.
+    pub wasm_plugins: Vec<WasmPluginConfig>,
+    /// Plugin marketplace registry (catalog repository).
+    #[serde(default)]
+    pub plugin_marketplace: PluginMarketplaceConfig,
+    /// Terminal UI preferences.
+    #[serde(default)]
+    pub tui: TuiConfig,
+}
+
+/// TUI-specific settings (global config).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct TuiConfig {
+    /// Color theme id: `lain`, `terminal`, `slate`, `ember`, `paper`, `oscura-night`.
+    pub theme: String,
+}
+
+impl Default for TuiConfig {
+    fn default() -> Self {
+        Self {
+            theme: "lain".to_string(),
+        }
+    }
+}
+
+/// Plugin marketplace / registry repository settings.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PluginMarketplaceConfig {
+    /// URL to `catalog.json` in the registry repository (`https://` or `file://`).
+    pub registry_url: Option<String>,
 }
 
 /// Selected model configuration: provider id and model name.
@@ -302,6 +334,16 @@ pub struct PluginConfig {
     pub enabled: bool,
 }
 
+/// A WASM plugin directory path with an enable toggle.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WasmPluginConfig {
+    /// Path to the WASM plugin directory (containing plugin.toml and .wasm binary).
+    pub path: PathBuf,
+    /// Whether this plugin is loaded.
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+}
+
 /// Skill discovery and activation settings.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
@@ -382,9 +424,15 @@ mod tests {
     fn provider_kind_serde_roundtrip() {
         let variants = [
             (ProviderKind::OpenAiResponses, "openai-responses"),
-            (ProviderKind::OpenAiChatCompletions, "openai-chat-completions"),
+            (
+                ProviderKind::OpenAiChatCompletions,
+                "openai-chat-completions",
+            ),
             (ProviderKind::AnthropicMessages, "anthropic-messages"),
-            (ProviderKind::GeminiGenerateContent, "gemini-generate-content"),
+            (
+                ProviderKind::GeminiGenerateContent,
+                "gemini-generate-content",
+            ),
         ];
         for (kind, expected_str) in variants {
             let serialized = serde_json::to_string(&kind).unwrap();

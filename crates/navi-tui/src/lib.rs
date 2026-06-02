@@ -11,6 +11,8 @@ mod keybindings;
 mod mouse;
 mod notifications;
 mod persistence;
+mod plugin_approval;
+mod plugins;
 mod providers;
 mod render;
 mod runtime;

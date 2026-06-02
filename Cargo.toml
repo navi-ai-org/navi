@@ -5,7 +5,11 @@ members = [
     "crates/navi-mcp",
     "crates/navi-openai",
     "crates/navi-plugin-api",
+    "crates/navi-plugin-broker",
     "crates/navi-plugin-host",
+    "crates/navi-plugin-manifest",
+    "crates/navi-plugin-orchestrator",
+    "crates/navi-plugin-runtime",
     "crates/navi-providers",
     "crates/navi-sdk",
     "crates/navi-tui",
@@ -48,7 +52,11 @@ navi-core = { path = "crates/navi-core" }
 navi-mcp = { path = "crates/navi-mcp" }
 navi-openai = { path = "crates/navi-openai" }
 navi-plugin-api = { path = "crates/navi-plugin-api" }
+navi-plugin-broker = { path = "crates/navi-plugin-broker" }
 navi-providers = { path = "crates/navi-providers" }
 navi-plugin-host = { path = "crates/navi-plugin-host" }
+navi-plugin-manifest = { path = "crates/navi-plugin-manifest" }
+navi-plugin-orchestrator = { path = "crates/navi-plugin-orchestrator" }
+navi-plugin-runtime = { path = "crates/navi-plugin-runtime" }
 navi-sdk = { path = "crates/navi-sdk" }
 navi-tui = { path = "crates/navi-tui" }

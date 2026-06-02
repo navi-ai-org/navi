@@ -1,16 +1,20 @@
 use anyhow::Result;
-use clap::Parser;
+use clap::{Parser, Subcommand};
 use navi_core::{LoadedConfig, LoggingRuntimeConfig, init_logging, log_path};
 use navi_sdk::{NaviConfigSaveTarget, NaviEngineBuilder, NaviSessionRequest, NaviTurnRequest};
 use navi_tui::TuiApp;
 use std::path::PathBuf;
 
 mod acp;
+mod plugin_cmd;
 
 #[derive(Debug, Parser)]
 #[command(name = "navi")]
 #[command(about = "An opinionated, customizable TUI code agent")]
 struct Cli {
+    #[command(subcommand)]
+    command: Option<Commands>,
+
     #[arg(long)]
     print_config: bool,
 
@@ -42,6 +46,68 @@ struct Cli {
     task: Vec<String>,
 }
 
+#[derive(Debug, Subcommand)]
+enum Commands {
+    /// Manage WASM plugins
+    Plugin {
+        #[command(subcommand)]
+        action: PluginAction,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum PluginAction {
+    /// Install a plugin from a local directory (developer workflow)
+    Install {
+        /// Path to the plugin directory (containing plugin.toml and .wasm)
+        path: PathBuf,
+        /// Skip the approval prompt and install non-interactively
+        #[arg(long)]
+        yes: bool,
+    },
+    /// Install a plugin from the marketplace registry by id
+    InstallMarketplace {
+        /// Plugin id from catalog.json
+        plugin_id: String,
+        /// Skip the approval prompt and install non-interactively
+        #[arg(long)]
+        yes: bool,
+    },
+    /// Update an installed plugin from a local directory (developer workflow)
+    Update {
+        /// Path to the new plugin directory (containing plugin.toml and .wasm)
+        path: PathBuf,
+        /// Force the update even when the publisher changed
+        #[arg(long)]
+        force: bool,
+    },
+    /// Update an installed plugin from the marketplace registry
+    UpdateMarketplace {
+        /// Plugin id from catalog.json
+        plugin_id: String,
+        /// Force the update even when the publisher changed
+        #[arg(long)]
+        force: bool,
+    },
+    /// Search the marketplace catalog
+    Search {
+        /// Optional search query (id, name, description)
+        query: Option<String>,
+    },
+    /// List installed plugins
+    List,
+    /// Remove an installed plugin
+    Remove {
+        /// Plugin ID to remove
+        plugin_id: String,
+    },
+    /// Show details of a plugin
+    Info {
+        /// Plugin ID or path
+        plugin_id: String,
+    },
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
@@ -49,6 +115,11 @@ async fn main() -> Result<()> {
     let mut loaded_config = navi_core::NaviConfig::load(&cwd)?;
     if cli.debug_payloads {
         loaded_config.config.logging.include_payloads = true;
+    }
+
+    // Handle plugin subcommand early
+    if let Some(Commands::Plugin { action }) = cli.command {
+        return plugin_cmd::handle_plugin_command(action, &loaded_config, &cwd);
     }
 
     if cli.print_log_path {

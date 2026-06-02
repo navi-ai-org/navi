@@ -5,7 +5,7 @@ use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph, Wrap};
 
 use crate::TuiApp;
 use crate::notifications::visible_notification;
-use crate::theme::{ACCENT, PANEL, PINK, TEXT};
+use crate::theme::*;
 
 pub(super) fn render_notification(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
     let Some(notification) = visible_notification(app) else {
@@ -38,17 +38,17 @@ pub(super) fn render_notification(frame: &mut Frame<'_>, app: &TuiApp, area: Rec
         Block::new()
             .title(Line::from(vec![Span::styled(
                 format!(" {} ", notification.title),
-                Style::default().fg(PINK).add_modifier(Modifier::BOLD),
+                Style::default().fg(pink()).add_modifier(Modifier::BOLD),
             )]))
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)
-            .border_style(Style::default().fg(ACCENT))
-            .style(Style::default().bg(PANEL)),
+            .border_style(Style::default().fg(accent()))
+            .style(Style::default().bg(panel())),
         rect,
     );
     frame.render_widget(
         Paragraph::new(notification.message.clone())
-            .style(Style::default().fg(TEXT).bg(PANEL))
+            .style(Style::default().fg(text()).bg(panel()))
             .wrap(Wrap { trim: true }),
         inner,
     );

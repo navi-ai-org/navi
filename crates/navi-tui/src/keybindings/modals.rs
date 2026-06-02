@@ -69,7 +69,7 @@ pub(crate) fn handle_thinking_key(app: &mut TuiApp, code: KeyCode) -> bool {
 }
 
 pub(crate) fn handle_settings_key(app: &mut TuiApp, code: KeyCode) -> bool {
-    const SETTINGS_COUNT: usize = 2;
+    const SETTINGS_COUNT: usize = 3;
     let mut list_state = SelectListState::new(app.selected_setting, 0);
     match code {
         KeyCode::Esc => super::close_active_modal(app),
@@ -102,6 +102,15 @@ pub(crate) fn handle_settings_key(app: &mut TuiApp, code: KeyCode) -> bool {
                     } else {
                         "Tool output compacted."
                     },
+                );
+            }
+            2 => {
+                let next = app.theme_id.next();
+                app.set_theme(next);
+                show_notification(
+                    app,
+                    "Settings",
+                    format!("Theme: {}.", next.label()),
                 );
             }
             _ => {}
@@ -359,5 +368,111 @@ pub(crate) fn handle_model_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyMo
         _ => {}
     }
 
+    false
+}
+
+pub(crate) fn handle_plugins_key(app: &mut TuiApp, code: KeyCode) -> bool {
+    use crate::notifications::show_notification;
+    use crate::plugins::{
+        PluginPickerRow, install_or_update_from_marketplace, plugin_picker_rows,
+        refresh_plugin_catalog,
+    };
+
+    let rows = plugin_picker_rows(app);
+    let mut list_state = SelectListState::new(app.selected_plugin_row, app.plugin_row_scroll);
+
+    match code {
+        KeyCode::Esc => super::close_active_modal(app),
+        KeyCode::Down | KeyCode::Tab => {
+            list_state.select_next(rows.len());
+            list_state.sync_scroll(14);
+        }
+        KeyCode::Up => {
+            list_state.select_previous();
+            list_state.sync_scroll(14);
+        }
+        KeyCode::Char('r') => refresh_plugin_catalog(app),
+        KeyCode::Char('i') => {
+            if let Some(PluginPickerRow::Catalog(entry)) = rows.get(app.selected_plugin_row) {
+                install_or_update_from_marketplace(app, &entry.id, false);
+            } else {
+                show_notification(app, "Plugins", "Select a marketplace plugin to install.");
+            }
+        }
+        KeyCode::Char('u') => match rows.get(app.selected_plugin_row) {
+            Some(PluginPickerRow::Catalog(entry)) => {
+                install_or_update_from_marketplace(app, &entry.id, true);
+            }
+            Some(PluginPickerRow::Installed { id, .. }) => {
+                install_or_update_from_marketplace(app, id, true);
+            }
+            _ => show_notification(app, "Plugins", "Select a plugin to update."),
+        },
+        KeyCode::Enter => match rows.get(app.selected_plugin_row) {
+            Some(PluginPickerRow::Catalog(entry)) => {
+                let installed = crate::plugins::list_installed_plugin_ids(app);
+                let update = installed.iter().any(|id| id == &entry.id);
+                install_or_update_from_marketplace(app, &entry.id, update);
+            }
+            Some(PluginPickerRow::Installed { id, .. }) => {
+                install_or_update_from_marketplace(app, id, true);
+            }
+            None => {}
+        },
+        _ => {}
+    }
+
+    app.selected_plugin_row = list_state.selected();
+    app.plugin_row_scroll = list_state.scroll();
+    false
+}
+
+pub(crate) fn handle_plugin_approval_key(
+    app: &mut TuiApp,
+    code: KeyCode,
+    _modifiers: KeyModifiers,
+) -> bool {
+    use crate::plugin_approval::PluginApprovalDecision;
+
+    if app.pending_plugin_approvals.is_empty() {
+        super::close_all_modals(app);
+        return false;
+    }
+
+    match code {
+        KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
+            let req = app.pending_plugin_approvals.remove(0);
+            crate::plugin_approval::approve_plugin_install(app, req);
+            app.plugin_approval_scroll = 0;
+            if app.pending_plugin_approvals.is_empty() {
+                super::close_all_modals(app);
+            }
+        }
+        KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+            let req = app.pending_plugin_approvals.remove(0);
+            crate::plugin_approval::notify_plugin_decision(
+                app,
+                &req,
+                PluginApprovalDecision::Denied,
+            );
+            app.plugin_approval_scroll = 0;
+            if app.pending_plugin_approvals.is_empty() {
+                super::close_all_modals(app);
+            }
+        }
+        KeyCode::Down => {
+            app.plugin_approval_scroll = app.plugin_approval_scroll.saturating_add(1);
+        }
+        KeyCode::Up => {
+            app.plugin_approval_scroll = app.plugin_approval_scroll.saturating_sub(1);
+        }
+        KeyCode::PageDown => {
+            app.plugin_approval_scroll = app.plugin_approval_scroll.saturating_add(8);
+        }
+        KeyCode::PageUp => {
+            app.plugin_approval_scroll = app.plugin_approval_scroll.saturating_sub(8);
+        }
+        _ => {}
+    }
     false
 }

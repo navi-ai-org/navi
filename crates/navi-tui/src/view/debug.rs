@@ -6,7 +6,7 @@ use ratatui::widgets::{Clear, Paragraph, Wrap};
 use crate::TuiApp;
 use crate::providers::{current_provider_credential_status, selected_provider_label};
 use crate::render::modal_block;
-use crate::theme::{ACCENT, MUTED, PANEL, PINK, TEXT};
+use crate::theme::*;
 
 pub(super) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
     frame.render_widget(Clear, area);
@@ -34,69 +34,69 @@ pub(super) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
     let provider = selected_provider_label(app);
     let mut lines = vec![
         Line::from(vec![
-            Span::styled("Log file: ", Style::default().fg(MUTED)),
+            Span::styled("Log file: ", Style::default().fg(muted())),
             Span::styled(
                 app.log_path().display().to_string(),
-                Style::default().fg(TEXT),
+                Style::default().fg(text()),
             ),
         ]),
         Line::from(vec![
-            Span::styled("Session:  ", Style::default().fg(MUTED)),
+            Span::styled("Session:  ", Style::default().fg(muted())),
             Span::styled(
                 app.session_id.as_str().to_string(),
-                Style::default().fg(TEXT),
+                Style::default().fg(text()),
             ),
         ]),
         Line::from(vec![
-            Span::styled("Project:  ", Style::default().fg(MUTED)),
+            Span::styled("Project:  ", Style::default().fg(muted())),
             Span::styled(
                 app.project_dir.display().to_string(),
-                Style::default().fg(TEXT),
+                Style::default().fg(text()),
             ),
         ]),
         Line::from(vec![
-            Span::styled("Model:    ", Style::default().fg(MUTED)),
+            Span::styled("Model:    ", Style::default().fg(muted())),
             Span::styled(
                 format!("{} via {}", app.loaded_config.config.model.name, provider),
-                Style::default().fg(TEXT),
+                Style::default().fg(text()),
             ),
         ]),
         Line::from(vec![
-            Span::styled("API key:  ", Style::default().fg(MUTED)),
+            Span::styled("API key:  ", Style::default().fg(muted())),
             Span::styled(
                 current_provider_credential_status(app),
-                Style::default().fg(ACCENT),
+                Style::default().fg(accent()),
             ),
         ]),
         Line::from(vec![
-            Span::styled("State:    ", Style::default().fg(MUTED)),
-            Span::styled(active_state, Style::default().fg(ACCENT)),
+            Span::styled("State:    ", Style::default().fg(muted())),
+            Span::styled(active_state, Style::default().fg(accent())),
         ]),
         Line::from(""),
         Line::from(Span::styled(
             "Recent diagnostics",
-            Style::default().fg(PINK),
+            Style::default().fg(pink()),
         )),
     ];
     if app.diagnostics().is_empty() {
-        lines.push(Line::from(Span::styled("none", Style::default().fg(MUTED))));
+        lines.push(Line::from(Span::styled("none", Style::default().fg(muted()))));
     } else {
         for diagnostic in app.diagnostics().iter().rev().take(8) {
             lines.push(Line::from(Span::styled(
                 diagnostic.clone(),
-                Style::default().fg(TEXT),
+                Style::default().fg(text()),
             )));
         }
     }
 
     frame.render_widget(
         Paragraph::new(lines)
-            .style(Style::default().fg(TEXT).bg(PANEL))
+            .style(Style::default().fg(text()).bg(panel()))
             .wrap(Wrap { trim: false }),
         rows[0],
     );
     frame.render_widget(
-        Paragraph::new("esc close").style(Style::default().fg(MUTED).bg(PANEL)),
+        Paragraph::new("esc close").style(Style::default().fg(muted()).bg(panel())),
         rows[1],
     );
 }

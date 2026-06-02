@@ -733,6 +733,18 @@ fn settings_no_longer_opens_provider_accounts() {
 }
 
 #[test]
+fn settings_cycles_theme() {
+    let mut app = test_app("");
+    app.mode = Mode::Settings;
+    app.selected_setting = 2;
+    assert_eq!(app.theme_id, crate::theme::ThemeId::Lain);
+
+    handle_settings_key(&mut app, KeyCode::Enter);
+    assert_eq!(app.theme_id, crate::theme::ThemeId::Terminal);
+    assert_eq!(app.loaded_config.config.tui.theme, "terminal");
+}
+
+#[test]
 fn esc_closes_modal_without_canceling_active_model() {
     let mut app = test_app("");
     app.mode = Mode::Settings;

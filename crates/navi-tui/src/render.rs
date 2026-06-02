@@ -21,7 +21,11 @@ mod tests {
     use crate::render::syntax::highlight_code_line;
     use crate::render::text::wrap_text;
     use crate::render::tool::{tool_compact_text, tool_full_content};
-    use crate::theme::{CODE_STRING, TEXT};
+    use crate::theme::ThemeId;
+
+    fn test_palette() -> crate::theme::ThemePalette {
+        ThemeId::Lain.palette()
+    }
 
     fn line_text(line: &Line) -> String {
         line.spans
@@ -52,7 +56,7 @@ mod tests {
 
     #[test]
     fn markdown_renderer_wraps_plain_text() {
-        let lines = render_markdown_lines("hello world from navi", 12, TEXT, TEXT, false);
+        let lines = render_markdown_lines("hello world from navi", 12, test_palette().text, test_palette().text, false);
         let rendered = lines.iter().map(line_text).collect::<Vec<_>>();
 
         assert_eq!(rendered, vec!["hello world", "from navi"]);
@@ -63,8 +67,8 @@ mod tests {
         let lines = render_markdown_lines(
             "before\n```rust\nfn main() {}\n```\nafter",
             80,
-            TEXT,
-            TEXT,
+            test_palette().text,
+            test_palette().text,
             false,
         );
         let rendered = lines.iter().map(line_text).collect::<Vec<_>>();
@@ -77,7 +81,7 @@ mod tests {
 
     #[test]
     fn markdown_renderer_handles_unclosed_fence() {
-        let lines = render_markdown_lines("```unknown\n  value", 80, TEXT, TEXT, false);
+        let lines = render_markdown_lines("```unknown\n  value", 80, test_palette().text, test_palette().text, false);
         let rendered = lines.iter().map(line_text).collect::<Vec<_>>();
 
         assert_eq!(rendered, vec!["```unknown", "  value"]);
@@ -88,8 +92,8 @@ mod tests {
         let lines = render_markdown_lines(
             "**NAVI** is `wired` and [documented](https://example.test)",
             120,
-            TEXT,
-            TEXT,
+            test_palette().text,
+            test_palette().text,
             false,
         );
         let rendered = lines.iter().map(line_text).collect::<Vec<_>>();
@@ -111,8 +115,8 @@ mod tests {
         let lines = render_markdown_lines(
             "**`NAVI`** uses ***strong emphasis***, ~~old text~~, ![diagram](file.png), and \\*literal\\*.",
             160,
-            TEXT,
-            TEXT,
+            test_palette().text,
+            test_palette().text,
             false,
         );
         let rendered = lines.iter().map(line_text).collect::<Vec<_>>();
@@ -126,7 +130,7 @@ mod tests {
             .iter()
             .find(|span| span.content.as_ref() == "NAVI")
             .expect("nested code span");
-        assert_eq!(navi.style.fg, Some(CODE_STRING));
+        assert_eq!(navi.style.fg, Some(test_palette().code_string));
         assert!(navi.style.add_modifier.contains(Modifier::BOLD));
 
         let strong_emphasis = lines[0]
@@ -155,8 +159,8 @@ mod tests {
         let lines = render_markdown_lines(
             "1. **Architecture**\n> signal in prose",
             120,
-            TEXT,
-            TEXT,
+            test_palette().text,
+            test_palette().text,
             false,
         );
         let rendered = lines.iter().map(line_text).collect::<Vec<_>>();
@@ -169,8 +173,8 @@ mod tests {
         let lines = render_markdown_lines(
             "## Project Overview\n\n| Crate | Purpose |\n|---|---|\n| `navi-cli` | Entry binary |",
             120,
-            TEXT,
-            TEXT,
+            test_palette().text,
+            test_palette().text,
             false,
         );
         let rendered = lines.iter().map(line_text).collect::<Vec<_>>();
@@ -193,8 +197,8 @@ mod tests {
         let lines = render_markdown_lines(
             "| Problema | Onde | Gravidade |\n|---|---|---|\n| OAuth Device Flow na TUI | navi-tui/src/runtime.rs contém HTTP calls, polling loop e JSON parsing | CRÍTICO |\n| Flat module tree | lib.rs re-exporta tudo num namespace plano | ALTO |",
             64,
-            TEXT,
-            TEXT,
+            test_palette().text,
+            test_palette().text,
             false,
         );
         let rendered = lines.iter().map(line_text).collect::<Vec<_>>();

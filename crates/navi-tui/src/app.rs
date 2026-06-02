@@ -18,8 +18,10 @@ use crate::dispatch::AsyncEvent;
 use crate::runtime::{build_engine, selected_model_runtime_available};
 use crate::session::load_saved_sessions;
 use crate::state::{
-    ChatMessage, ChatRenderCache, ModalKind, Mode, Notification, SelectionState, ThinkingLevel,
+    ChatMessage, ChatRenderCache, ModalKind, Mode, Notification, PluginApprovalRequest,
+    SelectionState, ThinkingLevel,
 };
+use crate::theme::{ThemeId, ThemePalette};
 use crate::ui::modal::ModalStack;
 
 // ─── app state ─────────────────────────────────────────────────────────────────
@@ -94,6 +96,7 @@ pub struct TuiApp {
     log_path: PathBuf,
     pub(crate) chat_render_cache: RefCell<ChatRenderCache>,
     pub(crate) selection: Option<SelectionState>,
+    pub(crate) theme_id: ThemeId,
 
     // skills
     pub(crate) available_skills: Vec<NaviSkillInfo>,
@@ -101,6 +104,17 @@ pub struct TuiApp {
     pub(crate) selected_skill: usize,
     pub(crate) skill_filter: String,
     pub(crate) skill_scroll: usize,
+
+    // plugins modal (marketplace catalog + installed)
+    pub(crate) plugin_catalog: Vec<navi_plugin_manifest::PluginCatalogEntry>,
+    pub(crate) plugin_catalog_loading: bool,
+    pub(crate) plugin_catalog_error: String,
+    pub(crate) selected_plugin_row: usize,
+    pub(crate) plugin_row_scroll: usize,
+
+    // plugin install / update approvals
+    pub(crate) pending_plugin_approvals: Vec<PluginApprovalRequest>,
+    pub(crate) plugin_approval_scroll: usize,
 }
 
 impl TuiApp {
@@ -135,6 +149,7 @@ impl TuiApp {
         let log_path = log_path(&loaded_config.data_dir);
         let context_window = effective_context_window(&loaded_config.config);
         let initial_active_skills = loaded_config.config.skills.active.clone();
+        let theme_id = ThemeId::from_config(&loaded_config.config.tui.theme);
 
         let mut app = Self {
             loaded_config,
@@ -194,11 +209,19 @@ impl TuiApp {
             log_path,
             chat_render_cache: RefCell::new(ChatRenderCache::default()),
             selection: None,
+            theme_id,
             available_skills: Vec::new(),
             active_skills: initial_active_skills,
             selected_skill: 0,
             skill_filter: String::new(),
             skill_scroll: 0,
+            plugin_catalog: Vec::new(),
+            plugin_catalog_loading: false,
+            plugin_catalog_error: String::new(),
+            selected_plugin_row: 0,
+            plugin_row_scroll: 0,
+            pending_plugin_approvals: Vec::new(),
+            plugin_approval_scroll: 0,
         };
 
         // If a task was passed via CLI, pre-fill input
@@ -234,6 +257,16 @@ impl TuiApp {
 
     pub(crate) fn engine(&self) -> NaviEngine {
         self.engine.clone()
+    }
+
+    pub(crate) fn theme_palette(&self) -> ThemePalette {
+        self.theme_id.palette()
+    }
+
+    pub(crate) fn set_theme(&mut self, theme_id: ThemeId) {
+        self.theme_id = theme_id;
+        self.loaded_config.config.tui.theme = theme_id.config_value().to_string();
+        self.chat_render_cache.borrow_mut().signature.clear();
     }
 
     pub(crate) fn credential_store(&self) -> &CredentialStore {

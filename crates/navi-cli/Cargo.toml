@@ -16,9 +16,13 @@ serde_json.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 navi-core.workspace = true
+navi-plugin-broker.workspace = true
+navi-plugin-manifest.workspace = true
+navi-plugin-orchestrator.workspace = true
 navi-sdk.workspace = true
 navi-tui.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
+toml.workspace = true
 wiremock.workspace = true

@@ -5,7 +5,7 @@ use ratatui::widgets::{Clear, List, ListItem, ListState, Paragraph};
 
 use crate::TuiApp;
 use crate::render::{command_scroll_offset, modal_block};
-use crate::theme::{ACCENT, MUTED, PANEL, SIGNAL, TEXT};
+use crate::theme::*;
 
 pub(super) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
     frame.render_widget(Clear, area);
@@ -34,10 +34,10 @@ pub(super) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
     };
     frame.render_widget(
         Paragraph::new(Line::from(vec![
-            Span::styled("> ", Style::default().fg(SIGNAL)),
-            Span::styled(filter, Style::default().fg(MUTED)),
+            Span::styled("> ", Style::default().fg(signal())),
+            Span::styled(filter, Style::default().fg(muted())),
         ]))
-        .style(Style::default().bg(PANEL)),
+        .style(Style::default().bg(panel())),
         rows[0],
     );
 
@@ -56,14 +56,14 @@ pub(super) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
                 (
                     Style::default()
                         .fg(Color::White)
-                        .bg(ACCENT)
+                        .bg(accent())
                         .add_modifier(Modifier::BOLD),
                     if is_active { "✓" } else { " " },
                 )
             } else if is_active {
-                (Style::default().fg(SIGNAL).bg(PANEL), "✓")
+                (Style::default().fg(signal()).bg(panel()), "✓")
             } else {
-                (Style::default().fg(TEXT).bg(PANEL), " ")
+                (Style::default().fg(text()).bg(panel()), " ")
             };
 
             let description = skill
@@ -97,7 +97,7 @@ pub(super) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
         .with_offset(command_scroll_offset(selected, rows[1].height as usize))
         .with_selected((!skills.is_empty()).then_some(selected));
     frame.render_stateful_widget(
-        List::new(items).style(Style::default().bg(PANEL)),
+        List::new(items).style(Style::default().bg(panel())),
         rows[1],
         &mut list_state,
     );
@@ -107,14 +107,14 @@ pub(super) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
     let total_count = app.available_skills.len();
     let summary = format!(" {} active / {} available ", active_count, total_count);
     frame.render_widget(
-        Paragraph::new(summary).style(Style::default().fg(MUTED).bg(PANEL)),
+        Paragraph::new(summary).style(Style::default().fg(muted()).bg(panel())),
         rows[2],
     );
 
     // Footer
     frame.render_widget(
         Paragraph::new("tab/↑↓ choose  •  enter toggle  •  esc close")
-            .style(Style::default().fg(MUTED).bg(PANEL)),
+            .style(Style::default().fg(muted()).bg(panel())),
         rows[3],
     );
 }

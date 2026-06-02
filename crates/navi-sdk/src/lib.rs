@@ -1,15 +1,20 @@
+mod credentials;
 mod engine;
 mod host_tool;
 mod tooling;
 mod types;
 
+pub use credentials::{
+    CredentialSource, CredentialStatus, DeviceOAuthStarted, provider_api_key,
+    provider_credential_status, provider_supports_device_oauth, start_provider_device_oauth,
+};
 pub use engine::{NaviEngine, NaviEngineBuilder, NaviSession};
+pub use tooling::reload_wasm_plugins_on_executor;
 pub use host_tool::{
     HostToolDefinition, HostToolHandler, HostToolInvocation, SdkHostTool, SdkHostToolResult,
 };
-// Re-exported for navi-tui credential flows. Ideally this should be behind a
-// generic provider credential API rather than exposing a single provider's OAuth.
-pub use navi_providers::{DeviceOAuthStarted, github_copilot_device_oauth};
+/// Deprecated: use [`start_provider_device_oauth`] instead.
+pub use navi_providers::github_copilot_device_oauth;
 pub use types::{
     NaviConfigSaveTarget, NaviError, NaviMissingCredentialError, NaviModelInfo,
     NaviModelSelectionRequest, NaviModelSelectionResult, NaviProviderAccountInfo,
@@ -30,7 +35,9 @@ pub use navi_core::{
     SessionId, SessionSnapshot,
 };
 // Tool/approval types
-pub use navi_core::{ApprovalDecision, ApprovalRequest, ApprovalRisk, PatchProposal, ToolInvocation, ToolResult};
+pub use navi_core::{
+    ApprovalDecision, ApprovalRequest, ApprovalRisk, PatchProposal, ToolInvocation, ToolResult,
+};
 // Config/provider types
 pub use navi_core::{
     CompactState, CompactThreshold, CredentialStore, HarnessPolicy, HarnessProfile, LoadedConfig,

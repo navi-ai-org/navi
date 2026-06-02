@@ -8,7 +8,7 @@ use ratatui::widgets::{Clear, List, ListItem, Paragraph};
 use crate::TuiApp;
 use crate::render::modal_block;
 use crate::session::format_session_timestamp;
-use crate::theme::{ACCENT, MUTED, PANEL, TEXT};
+use crate::theme::*;
 
 pub(super) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
     frame.render_widget(Clear, area);
@@ -30,10 +30,10 @@ pub(super) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
                 ratatui::prelude::Line::from(""),
                 ratatui::prelude::Line::from(Span::styled(
                     "No saved sessions",
-                    Style::default().fg(MUTED),
+                    Style::default().fg(muted()),
                 )),
             ]))
-            .style(Style::default().bg(PANEL)),
+            .style(Style::default().bg(panel())),
             rows[0],
         );
     } else {
@@ -52,10 +52,10 @@ pub(super) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
                 let style = if selected {
                     Style::default()
                         .fg(Color::White)
-                        .bg(ACCENT)
+                        .bg(accent())
                         .add_modifier(Modifier::BOLD)
                 } else {
-                    Style::default().fg(TEXT).bg(PANEL)
+                    Style::default().fg(text()).bg(panel())
                 };
 
                 let project = snapshot
@@ -76,12 +76,12 @@ pub(super) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
             })
             .collect::<Vec<_>>();
 
-        frame.render_widget(List::new(items).style(Style::default().bg(PANEL)), rows[0]);
+        frame.render_widget(List::new(items).style(Style::default().bg(panel())), rows[0]);
     }
 
     frame.render_widget(
         Paragraph::new("↑↓ choose  •  enter load  •  del delete  •  esc cancel")
-            .style(Style::default().fg(MUTED).bg(PANEL)),
+            .style(Style::default().fg(muted()).bg(panel())),
         rows[1],
     );
 }

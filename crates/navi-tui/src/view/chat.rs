@@ -7,7 +7,7 @@ use ratatui::widgets::{Paragraph, Wrap};
 use crate::TuiApp;
 use crate::render::build_chat_lines_for_messages;
 use crate::state::ChatRole;
-use crate::theme::BG;
+use crate::theme::*;
 
 use super::welcome::welcome_text;
 
@@ -22,7 +22,7 @@ pub(super) fn render_chat_area(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) 
         let welcome = welcome_text(app, inner.width as usize);
         frame.render_widget(
             Paragraph::new(welcome)
-                .style(Style::default().bg(BG))
+                .style(Style::default().bg(bg()))
                 .wrap(Wrap { trim: false }),
             inner,
         );
@@ -104,7 +104,7 @@ pub(super) fn render_chat_area(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) 
 
     frame.render_widget(
         Paragraph::new(Text::from(visible_lines))
-            .style(Style::default().bg(BG))
+            .style(Style::default().bg(bg()))
             .wrap(Wrap { trim: false }),
         inner,
     );
@@ -140,6 +140,8 @@ fn chat_render_signature(app: &TuiApp) -> String {
         "compact|"
     });
     signature.push_str(if app.show_thinking { "think|" } else { "hide|" });
+    signature.push_str(app.theme_id.config_value());
+    signature.push('|');
     for msg in &app.messages {
         signature.push(match msg.role {
             ChatRole::User => 'u',
