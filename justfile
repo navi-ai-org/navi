@@ -1,6 +1,6 @@
-# NAVI development tasks. Install: https://github.com/casey/just
-# Qlty (code quality): https://qlty.sh — `curl https://qlty.sh | sh`
-# Coverage (optional): `cargo install cargo-llvm-cov`
+# NAVI development tasks — https://github.com/casey/just
+# Quality scans: rustquty — https://github.com/enrell/rustquty
+# Coverage (optional): cargo install cargo-llvm-cov
 
 set shell := ["bash", "-eu", "-o", "pipefail", "-c"]
 
@@ -9,6 +9,8 @@ default:
 
 export CARGO_TEST_THREADS := "4"
 test_threads := "4"
+quality_dir := "quality"
+quality_profile := "full"
 coverage_lcov := "coverage/lcov.info"
 
 # ─── Build ───────────────────────────────────────────────────────────────────
@@ -36,7 +38,7 @@ test *args:
 test-crate crate *args:
     cargo test -p {{crate}} --test-threads={{test_threads}} {{args}}
 
-# ─── Coverage (llvm-cov → LCOV for Qlty) ─────────────────────────────────────
+# ─── Coverage (cargo-llvm-cov; also used by rustquty's coverage collector) ───
 
 _require-llvm-cov:
     @command -v cargo-llvm-cov >/dev/null || { \
@@ -56,37 +58,55 @@ coverage-html: _require-llvm-cov
     cargo llvm-cov --workspace --html -- --test-threads={{test_threads}}
     @echo "Open target/llvm-cov/html/index.html"
 
-# Upload LCOV to Qlty Cloud (optional; requires `qlty` auth / OIDC in CI)
-coverage-upload: coverage _require-qlty
-    qlty coverage publish {{coverage_lcov}}
+# ─── rustquty (local quality: collect + gate) ────────────────────────────────
 
-# ─── Qlty (lint, format, smells, metrics) ────────────────────────────────────
-
-_require-qlty:
-    @command -v qlty >/dev/null || { \
-      echo "Missing qlty CLI. Install: curl https://qlty.sh | sh"; \
+_require-rustquty:
+    @command -v rustquty >/dev/null || { \
+      echo "Missing rustquty. Install: cargo install rustquty"; \
       exit 1; \
     }
 
-qlty-check: _require-qlty
-    qlty check --all
+quality-init: _require-rustquty
+    rustquty init
 
-qlty-fmt: _require-qlty
-    qlty fmt
+quality-doctor: _require-rustquty
+    rustquty doctor
 
-qlty-fmt-check: _require-qlty
-    qlty fmt --dry-run
+# Collect metrics → quality/metricsSummary.json
+quality-collect profile=quality_profile *args: _require-rustquty
+    rustquty collect --profile {{profile}} {{args}}
 
-qlty-smells: _require-qlty
-    qlty smells --all
+# Compare metrics to quality/baseline.json → quality/qualityReport.json
+quality-gate profile=quality_profile *args: _require-rustquty
+    rustquty gate --profile {{profile}} {{args}}
 
-qlty-metrics: _require-qlty
-    qlty metrics --all --max-depth=2 --sort complexity --limit 15
+# Default workflow: collect then gate (profile: full | fast | deep)
+quality profile=quality_profile *args: _require-rustquty
+    rustquty qa --profile {{profile}} {{args}}
 
-# Full static analysis via Qlty (clippy, rustfmt, security scanners, etc.)
-analyze: qlty-check qlty-smells
+quality-fast *args:
+    @just quality fast {{args}}
 
-# ─── Rust tooling (without Qlty) ─────────────────────────────────────────────
+quality-deep *args:
+    @just quality deep {{args}}
+
+# Verbose violations (file:line)
+quality-verbose profile=quality_profile *args:
+    @just quality {{profile}} -v {{args}}
+
+# Snapshot current metrics as the ratchet baseline
+quality-baseline profile=quality_profile: _require-rustquty
+    rustquty collect --profile {{profile}}
+    rustquty init-baseline
+
+quality-update-baseline: _require-rustquty
+    rustquty update-baseline
+
+# Alias for CI / pre-PR
+analyze profile=quality_profile *args:
+    @just quality {{profile}} {{args}}
+
+# ─── Rust tooling (direct cargo; rustquty wraps fmt/clippy in profiles) ───────
 
 clippy:
     cargo clippy --workspace --all-targets -- -D warnings
@@ -96,15 +116,14 @@ clippy:
 # Fast local gate: format, compile, unit tests
 verify: fmt-check check test
 
-# Pre-PR: verify + clippy + Qlty
+# Pre-PR: verify + clippy + rustquty (full profile)
 ci: verify clippy analyze
 
-# Install optional dev tools (qlty, llvm-cov)
+# Optional collectors: tests (nextest), coverage, deny, audit, hack, mutants
 setup-tools:
+    @echo "Installing rustquty..."
+    cargo install rustquty --locked
     @echo "Installing cargo-llvm-cov (coverage)..."
     cargo install cargo-llvm-cov --locked
-    @command -v qlty >/dev/null || { \
-      echo "Installing qlty..."; \
-      curl -fsSL https://qlty.sh | sh; \
-    }
-    @echo "Done. Run: just --list"
+    @echo "Optional: cargo install cargo-nextest cargo-audit cargo-deny cargo-hack cargo-mutants"
+    @just quality-doctor
