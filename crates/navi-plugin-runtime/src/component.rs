@@ -3,7 +3,6 @@
 /// A WASM component can be detected by checking for the magic prefix `\\0asm`
 /// followed by version 1 and type section markers. Raw modules are flat core
 /// wasm with the `run_tool` export pattern used by the pre-component path.
-
 /// Classification of a WASM binary: either a raw core module (flat ABI) or a
 /// Component Model module (component section present).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

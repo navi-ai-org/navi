@@ -1,7 +1,8 @@
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Instant;
 
-use navi_sdk::{AgentMode, ModelMessage, NaviEngine, NaviSessionRequest, NaviTurnRequest};
+use navi_sdk::{AgentMode, EngineDriver, ModelMessage, NaviSessionRequest, NaviTurnRequest};
 use tokio::sync::mpsc;
 
 use crate::app::TuiApp;
@@ -73,8 +74,9 @@ pub(crate) fn start_streaming_request(app: &mut TuiApp) {
     }));
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn run_sdk_turn(
-    engine: NaviEngine,
+    engine: Arc<dyn EngineDriver>,
     session_id: String,
     project_dir: PathBuf,
     agent_mode: Option<AgentMode>,

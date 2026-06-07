@@ -552,9 +552,11 @@ async fn test_stream_normal() {
         .mount(&mock_server)
         .await;
 
-    let mut config = navi_core::ProviderConfig::default();
-    config.id = "openai".to_string();
-    config.kind = navi_core::ProviderKind::OpenAiChatCompletions;
+    let config = navi_core::ProviderConfig {
+        id: "openai".to_string(),
+        kind: navi_core::ProviderKind::OpenAiChatCompletions,
+        ..navi_core::ProviderConfig::default()
+    };
 
     let provider = OpenAiProvider::new("test_key".to_string())
         .with_base_url(mock_server.uri())
@@ -607,9 +609,11 @@ async fn test_opencode_zen_chat_request_uses_bearer_api_key() {
         .mount(&mock_server)
         .await;
 
-    let mut config = navi_core::ProviderConfig::default();
-    config.id = "opencode".to_string();
-    config.kind = navi_core::ProviderKind::OpenAiChatCompletions;
+    let config = navi_core::ProviderConfig {
+        id: "opencode".to_string(),
+        kind: navi_core::ProviderKind::OpenAiChatCompletions,
+        ..navi_core::ProviderConfig::default()
+    };
 
     let provider = OpenAiProvider::new("zen_test_key".to_string())
         .with_base_url(mock_server.uri())
@@ -651,9 +655,11 @@ async fn test_opencode_zen_gpt_models_use_responses_endpoint() {
         .mount(&mock_server)
         .await;
 
-    let mut config = navi_core::ProviderConfig::default();
-    config.id = "opencode".to_string();
-    config.kind = navi_core::ProviderKind::OpenAiChatCompletions;
+    let config = navi_core::ProviderConfig {
+        id: "opencode".to_string(),
+        kind: navi_core::ProviderKind::OpenAiChatCompletions,
+        ..navi_core::ProviderConfig::default()
+    };
 
     let provider = OpenAiProvider::new("zen_test_key".to_string())
         .with_base_url(mock_server.uri())
@@ -697,9 +703,11 @@ async fn test_github_copilot_request_uses_oauth_headers() {
         .mount(&mock_server)
         .await;
 
-    let mut config = navi_core::ProviderConfig::default();
-    config.id = "github-copilot".to_string();
-    config.kind = navi_core::ProviderKind::OpenAiChatCompletions;
+    let config = navi_core::ProviderConfig {
+        id: "github-copilot".to_string(),
+        kind: navi_core::ProviderKind::OpenAiChatCompletions,
+        ..navi_core::ProviderConfig::default()
+    };
 
     let provider = OpenAiProvider::new("copilot_token".to_string())
         .with_base_url(mock_server.uri())
@@ -739,9 +747,11 @@ async fn test_opencode_zen_claude_models_use_messages_endpoint() {
         .mount(&mock_server)
         .await;
 
-    let mut config = navi_core::ProviderConfig::default();
-    config.id = "opencode".to_string();
-    config.kind = navi_core::ProviderKind::OpenAiChatCompletions;
+    let config = navi_core::ProviderConfig {
+        id: "opencode".to_string(),
+        kind: navi_core::ProviderKind::OpenAiChatCompletions,
+        ..navi_core::ProviderConfig::default()
+    };
 
     let provider = OpenAiProvider::new("zen_test_key".to_string())
         .with_base_url(mock_server.uri())
@@ -780,11 +790,13 @@ async fn test_request_timeout() {
         .mount(&mock_server)
         .await;
 
-    let mut config = navi_core::ProviderConfig::default();
-    config.id = "openai".to_string();
-    config.kind = navi_core::ProviderKind::OpenAiChatCompletions;
-    config.request_timeout_ms = Some(100);
-    config.request_max_retries = Some(1);
+    let config = navi_core::ProviderConfig {
+        id: "openai".to_string(),
+        kind: navi_core::ProviderKind::OpenAiChatCompletions,
+        request_timeout_ms: Some(100),
+        request_max_retries: Some(1),
+        ..navi_core::ProviderConfig::default()
+    };
 
     let provider = OpenAiProvider::new("test_key".to_string())
         .with_base_url(mock_server.uri())
@@ -819,11 +831,13 @@ async fn test_stream_idle_timeout() {
         }
     });
 
-    let mut config = navi_core::ProviderConfig::default();
-    config.id = "openai".to_string();
-    config.kind = navi_core::ProviderKind::OpenAiChatCompletions;
-    config.stream_idle_timeout_ms = Some(100);
-    config.stream_max_retries = Some(1);
+    let config = navi_core::ProviderConfig {
+        id: "openai".to_string(),
+        kind: navi_core::ProviderKind::OpenAiChatCompletions,
+        stream_idle_timeout_ms: Some(100),
+        stream_max_retries: Some(1),
+        ..navi_core::ProviderConfig::default()
+    };
 
     let provider = OpenAiProvider::new("test_key".to_string())
         .with_base_url(base_url)
@@ -874,11 +888,13 @@ async fn test_rate_limit_retry() {
         .mount(&mock_server)
         .await;
 
-    let mut config = navi_core::ProviderConfig::default();
-    config.id = "openai".to_string();
-    config.kind = navi_core::ProviderKind::OpenAiChatCompletions;
-    config.stream_max_retries = Some(3);
-    config.retry_429 = Some(true);
+    let config = navi_core::ProviderConfig {
+        id: "openai".to_string(),
+        kind: navi_core::ProviderKind::OpenAiChatCompletions,
+        stream_max_retries: Some(3),
+        retry_429: Some(true),
+        ..navi_core::ProviderConfig::default()
+    };
 
     let provider = OpenAiProvider::new("test_key".to_string())
         .with_base_url(mock_server.uri())

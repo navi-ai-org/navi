@@ -177,6 +177,20 @@ fn selected_text_extracts_multiline_text_from_chat_cache() {
 }
 
 #[test]
+fn zero_width_mouse_selection_does_not_copy_text() {
+    let mut app = test_app("");
+    seed_chat_cache(&mut app, &["hello world"]);
+    app.selection = Some(SelectionState {
+        start: (0, 3),
+        end: (0, 3),
+        active: true,
+    });
+
+    assert!(!finish_selection(&mut app, None));
+    assert_eq!(selected_text(&app), None);
+}
+
+#[test]
 fn mouse_up_outside_chat_finishes_existing_selection() {
     let mut app = test_app("");
     seed_chat_cache(&mut app, &["hello world"]);
@@ -224,7 +238,7 @@ fn model_delta_after_tool_result_creates_visible_response() {
         .map(line_text)
         .collect::<Vec<_>>()
         .join("\n");
-    assert!(text.contains("read_file called · success"));
+    assert!(text.contains("Read README.md"));
     assert!(text.contains("final answer"));
 }
 
@@ -833,13 +847,15 @@ fn write_file_tool_full_content_uses_edit_summary() {
         output: serde_json::json!({
             "path": "src/index.html",
             "bytes": 16,
+            "lines_added": 2,
+            "lines_removed": 1,
         }),
     };
 
     let content = tool_full_content(&invocation, &result);
 
-    assert!(content.contains("write_file called · success"));
-    assert!(content.contains("Edited src/index.html (+2 -0)"));
+    assert!(content.contains("Write src/index.html (+2 -1 lines)"));
+    assert!(content.contains("Edited src/index.html (+2 -1 lines)"));
     assert!(!content.contains("Input"));
     assert!(!content.contains("Output"));
     assert!(!content.contains("```json"));
@@ -926,10 +942,98 @@ fn compact_tool_render_hides_full_input_and_output() {
         .collect::<Vec<_>>()
         .join("\n");
 
-    assert!(text.contains("fs_browser called · success"));
+    assert!(text.contains("List /tmp/project"));
     assert!(!text.contains("Input"));
     assert!(!text.contains("Output"));
     assert!(!text.contains("stale full tool content"));
+}
+
+#[test]
+fn compact_tool_render_groups_consecutive_tools_and_keeps_recent_five() {
+    let mut app = test_app("");
+    for index in 0..8 {
+        let id = format!("call-{index}");
+        let invocation = ToolInvocation {
+            id: id.clone(),
+            tool_name: "grep".to_string(),
+            input: serde_json::json!({ "pattern": format!("needle-{index}"), "path": "src" }),
+        };
+        let result = ToolResult {
+            invocation_id: id,
+            ok: true,
+            output: serde_json::json!({ "matches": [] }),
+        };
+        app.messages.push(ChatMessage {
+            status: Some("tool result".to_string()),
+            tool_invocation: Some(invocation),
+            tool_result: Some(result),
+            ..ChatMessage::new(ChatRole::Assistant, String::new())
+        });
+    }
+
+    let text = build_chat_lines(&app, 80)
+        .iter()
+        .map(line_text)
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    assert!(text.contains("3 earlier tool calls"));
+    assert!(!text.contains("needle-0"));
+    assert!(!text.contains("needle-2"));
+    assert!(text.contains("needle-3"));
+    assert!(text.contains("needle-7"));
+    assert_eq!(text.matches("Search \"").count(), 5);
+}
+
+#[test]
+fn compact_tool_render_collapses_older_tool_groups() {
+    let mut app = test_app("");
+    for index in 0..6 {
+        let id = format!("old-call-{index}");
+        app.messages.push(ChatMessage {
+            status: Some("tool result".to_string()),
+            tool_invocation: Some(ToolInvocation {
+                id: id.clone(),
+                tool_name: "grep".to_string(),
+                input: serde_json::json!({ "pattern": format!("old-needle-{index}") }),
+            }),
+            tool_result: Some(ToolResult {
+                invocation_id: id,
+                ok: true,
+                output: serde_json::json!({ "matches": [] }),
+            }),
+            ..ChatMessage::new(ChatRole::Assistant, String::new())
+        });
+    }
+    app.messages.push(ChatMessage::new(
+        ChatRole::Assistant,
+        "intermediate thought".to_string(),
+    ));
+    app.messages.push(ChatMessage {
+        status: Some("tool result".to_string()),
+        tool_invocation: Some(ToolInvocation {
+            id: "latest-call".to_string(),
+            tool_name: "read_file".to_string(),
+            input: serde_json::json!({ "path": "README.md" }),
+        }),
+        tool_result: Some(ToolResult {
+            invocation_id: "latest-call".to_string(),
+            ok: true,
+            output: serde_json::json!({ "path": "README.md" }),
+        }),
+        ..ChatMessage::new(ChatRole::Assistant, String::new())
+    });
+
+    let text = build_chat_lines(&app, 80)
+        .iter()
+        .map(line_text)
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    assert!(text.contains("6 tools · Search x6"));
+    assert!(!text.contains("old-needle-5"));
+    assert!(text.contains("intermediate thought"));
+    assert!(text.contains("Read README.md"));
 }
 
 #[test]
@@ -959,7 +1063,8 @@ fn full_tool_render_generates_sanitized_metadata_view() {
         .collect::<Vec<_>>()
         .join("\n");
 
-    assert!(text.contains("grep called · error"));
+    assert!(text.contains("Search \"NAVI\""));
+    assert!(text.contains("error: denied"));
     assert!(text.contains("denied"));
     assert!(!text.contains("Input"));
     assert!(!text.contains("Output"));
@@ -983,7 +1088,6 @@ fn apply_patch_tool_full_content_uses_edit_summary() {
 
     let content = tool_full_content(&invocation, &result);
 
-    assert!(content.contains("apply_patch called · success"));
     assert!(content.contains("Edited crates/navi-tui/src/lib.rs (+2 -1)"));
     assert!(!content.contains("*** Begin Patch"));
     assert!(!content.contains("Input"));

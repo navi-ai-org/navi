@@ -1,0 +1,23 @@
+  main  /tmp/navi-test-project                               │ 0 / 200K │ 0 0 ✓
+
+   › Hello, world
+
+   Partial
+
+   ⚠ Error: rate limited
+
+
+
+
+
+
+
+
+
+
+
+
+  ┌──────────────────────────────────────────────────────────────────────────┐
+  │}                                                                         │
+  └──────────────────────────────────────────────────────────────────────────┘
+   Shift+Tab mode · Ctrl+. shortcuts · Ctrl+P commands · Tab none

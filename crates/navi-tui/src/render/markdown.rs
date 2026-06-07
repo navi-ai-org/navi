@@ -1,5 +1,6 @@
 use ratatui::prelude::{Line, Modifier, Span, Style};
 use ratatui::style::Color;
+use std::collections::BTreeMap;
 
 use navi_sdk::{ToolInvocation, ToolResult};
 
@@ -10,6 +11,8 @@ use super::syntax::highlight_code_line;
 use super::text::wrap_text;
 use super::tool::{tool_compact_text, tool_full_content};
 
+const TOOL_GROUP_VISIBLE_LIMIT: usize = 5;
+
 pub(crate) fn build_chat_lines_for_messages<'a>(
     messages: impl IntoIterator<Item = &'a ChatMessage>,
     chat_width: usize,
@@ -17,11 +20,37 @@ pub(crate) fn build_chat_lines_for_messages<'a>(
     show_thinking: bool,
 ) -> Vec<Line<'static>> {
     let mut rendered_lines: Vec<Line<'static>> = Vec::new();
+    let messages = messages.into_iter().collect::<Vec<_>>();
+    let latest_tool_group_start = latest_tool_group_start(&messages);
+    let mut index = 0;
 
-    for msg in messages {
+    while index < messages.len() {
+        let msg = messages[index];
         if is_empty_tool_placeholder(msg) {
+            index += 1;
             continue;
         }
+        if !full_tool_view && tool_result_parts(msg).is_some() {
+            let mut group = Vec::new();
+            let group_start = index;
+            while index < messages.len() {
+                let group_msg = messages[index];
+                if is_empty_tool_placeholder(group_msg) {
+                    index += 1;
+                    continue;
+                }
+                let Some(parts) = tool_result_parts(group_msg) else {
+                    break;
+                };
+                group.push(parts);
+                index += 1;
+            }
+            push_block_gap(&mut rendered_lines);
+            let expanded = latest_tool_group_start == Some(group_start);
+            rendered_lines.extend(render_compact_tool_group(&group, chat_width, expanded));
+            continue;
+        }
+
         if !rendered_lines.is_empty() {
             rendered_lines.push(Line::from(""));
         }
@@ -91,11 +120,7 @@ pub(crate) fn build_chat_lines_for_messages<'a>(
                         })
                         .unwrap_or_default();
 
-                    let status = msg
-                        .status
-                        .as_ref()
-                        .map(|status| format!(" • {status}"))
-                        .unwrap_or_default();
+                    let status = visible_status(msg.status.as_deref());
                     let usage = msg
                         .usage_label
                         .as_ref()
@@ -114,8 +139,41 @@ pub(crate) fn build_chat_lines_for_messages<'a>(
                 }
             }
         }
+        index += 1;
     }
     rendered_lines
+}
+
+fn latest_tool_group_start(messages: &[&ChatMessage]) -> Option<usize> {
+    let mut latest = None;
+    let mut previous_was_tool = false;
+    for (index, message) in messages.iter().enumerate() {
+        if is_empty_tool_placeholder(message) {
+            continue;
+        }
+        let is_tool = tool_result_parts(message).is_some();
+        if is_tool && !previous_was_tool {
+            latest = Some(index);
+        }
+        previous_was_tool = is_tool;
+    }
+    latest
+}
+
+fn visible_status(status: Option<&str>) -> String {
+    let Some(status) = status else {
+        return String::new();
+    };
+    if status.starts_with("tool:") || status.starts_with("approval:") {
+        return String::new();
+    }
+    format!(" • {status}")
+}
+
+fn push_block_gap(lines: &mut Vec<Line<'static>>) {
+    if !lines.is_empty() {
+        lines.push(Line::from(""));
+    }
 }
 
 fn render_user_message_lines(text: &str, chat_width: usize) -> Vec<Line<'static>> {
@@ -180,16 +238,127 @@ fn tool_result_parts(message: &ChatMessage) -> Option<(&ToolInvocation, &ToolRes
 }
 
 fn render_compact_tool_line(invocation: &ToolInvocation, result: &ToolResult) -> Line<'static> {
+    render_compact_tool_line_with_width(invocation, result, usize::MAX)
+}
+
+fn render_compact_tool_group(
+    tools: &[(&ToolInvocation, &ToolResult)],
+    chat_width: usize,
+    expanded: bool,
+) -> Vec<Line<'static>> {
+    if !expanded {
+        return vec![render_collapsed_tool_group(tools, chat_width)];
+    }
+
+    let mut lines = Vec::new();
+    let hidden = tools.len().saturating_sub(TOOL_GROUP_VISIBLE_LIMIT);
+    if hidden > 0 {
+        lines.push(Line::from(vec![
+            Span::styled("  ", Style::default().fg(ghost())),
+            Span::styled(
+                format!("{hidden} earlier tool calls"),
+                Style::default().fg(muted()).add_modifier(Modifier::BOLD),
+            ),
+        ]));
+    }
+
+    let start = tools.len().saturating_sub(TOOL_GROUP_VISIBLE_LIMIT);
+    for (invocation, result) in &tools[start..] {
+        lines.push(render_compact_tool_line_with_width(
+            invocation, result, chat_width,
+        ));
+    }
+    lines
+}
+
+fn render_collapsed_tool_group(
+    tools: &[(&ToolInvocation, &ToolResult)],
+    chat_width: usize,
+) -> Line<'static> {
+    let marker = "◆ ";
+    let marker_width = marker.chars().count();
+    let text_width = chat_width.saturating_sub(marker_width).max(12);
+    let errors = tools.iter().filter(|(_, result)| !result.ok).count();
+    let mut counts = BTreeMap::new();
+    for (invocation, _) in tools {
+        *counts
+            .entry(tool_group_label(&invocation.tool_name))
+            .or_insert(0usize) += 1;
+    }
+
+    let mut detail = counts
+        .into_iter()
+        .map(|(label, count)| {
+            if count == 1 {
+                label
+            } else {
+                format!("{label} x{count}")
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    if errors > 0 {
+        detail = format!(
+            "{errors} error{} · {detail}",
+            if errors == 1 { "" } else { "s" }
+        );
+    }
+
+    let noun = if tools.len() == 1 { "tool" } else { "tools" };
     Line::from(vec![
         Span::styled(
-            "● ",
+            marker,
+            Style::default().fg(if errors > 0 { Color::Red } else { Color::Green }),
+        ),
+        Span::styled(
+            truncate_chars(&format!("{} {noun} · {detail}", tools.len()), text_width),
+            Style::default().fg(muted()),
+        ),
+    ])
+}
+
+fn tool_group_label(tool_name: &str) -> String {
+    match tool_name {
+        "read_file" | "view_file" => "Read".to_string(),
+        "write_file" => "Write".to_string(),
+        "apply_patch" => "Edit".to_string(),
+        "bash" => "Run".to_string(),
+        "grep" => "Search".to_string(),
+        "fs_browser" => "Browse".to_string(),
+        other => other.replace('_', " "),
+    }
+}
+
+fn render_compact_tool_line_with_width(
+    invocation: &ToolInvocation,
+    result: &ToolResult,
+    chat_width: usize,
+) -> Line<'static> {
+    let marker = "◆ ";
+    let marker_width = marker.chars().count();
+    let text_width = chat_width.saturating_sub(marker_width).max(12);
+    Line::from(vec![
+        Span::styled(
+            marker,
             Style::default().fg(if result.ok { Color::Green } else { Color::Red }),
         ),
         Span::styled(
-            tool_compact_text(invocation, result),
-            Style::default().fg(text()),
+            truncate_chars(&tool_compact_text(invocation, result), text_width),
+            Style::default().fg(if result.ok { muted() } else { text() }),
         ),
     ])
+}
+
+fn truncate_chars(value: &str, max_chars: usize) -> String {
+    if value.chars().count() <= max_chars {
+        return value.to_string();
+    }
+    if max_chars <= 1 {
+        return "…".to_string();
+    }
+    let mut text = value.chars().take(max_chars - 1).collect::<String>();
+    text.push('…');
+    text
 }
 
 pub(crate) fn render_markdown_lines(

@@ -211,6 +211,14 @@ pub enum AgentEvent {
     ApprovalRequested(ApprovalRequest),
     /// An approval request was resolved.
     ApprovalResolved(ApprovalDecision),
+    /// The same tool was called consecutively with identical arguments.
+    /// The tool still executes; this is a notification to the user.
+    RepeatedToolCallWarning {
+        /// Name of the repeated tool.
+        tool_name: String,
+        /// Warning message describing the repetition.
+        message: String,
+    },
     /// An error occurred.
     Error {
         /// Human-readable error message.

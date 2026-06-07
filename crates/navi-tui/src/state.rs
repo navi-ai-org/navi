@@ -62,7 +62,7 @@ pub(crate) struct ChatRenderCache {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Mode {
+pub enum Mode {
     Normal,
     Commands,
     Models,

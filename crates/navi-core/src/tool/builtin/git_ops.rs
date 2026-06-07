@@ -767,7 +767,7 @@ mod tests {
 
     #[test]
     fn parse_status_porcelain_z_handles_paths_with_spaces() {
-        let stdout = "# branch.head main\0# branch.ab +1 -2\01 .M N... 100644 100644 100644 abc123 def456 src/file with space.rs\0? new file.txt\0";
+        let stdout = "# branch.head main\x00# branch.ab +1 -2\x001 .M N... 100644 100644 100644 abc123 def456 src/file with space.rs\x00? new file.txt\x00";
         let parsed = parse_git_status_porcelain_v2(stdout);
         assert_eq!(parsed.branch, "main");
         assert_eq!(parsed.ahead, 1);

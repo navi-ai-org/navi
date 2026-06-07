@@ -139,13 +139,13 @@ pub async fn stage_plugin_from_catalog(
             manifest.plugin.wasm_hash, actual_hash
         )));
     }
-    if let Some(expected) = &entry.wasm_hash {
-        if expected != &manifest.plugin.wasm_hash {
-            return Err(MarketplaceError::Manifest(format!(
-                "catalog wasm_hash {} does not match manifest {}",
-                expected, manifest.plugin.wasm_hash
-            )));
-        }
+    if let Some(expected) = &entry.wasm_hash
+        && expected != &manifest.plugin.wasm_hash
+    {
+        return Err(MarketplaceError::Manifest(format!(
+            "catalog wasm_hash {} does not match manifest {}",
+            expected, manifest.plugin.wasm_hash
+        )));
     }
 
     std::fs::write(staging_dir.join("plugin.toml"), manifest_content)?;

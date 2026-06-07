@@ -257,13 +257,48 @@ mod tests {
 
         assert_eq!(
             tool_compact_text(&invocation, &ok_result),
-            "grep called · success"
+            "Search \"NAVI\" in . (0 matches)"
         );
         assert_eq!(
             tool_compact_text(&invocation, &err_result),
-            "grep called · error"
+            "Search \"NAVI\" in . (0 matches) · error: denied"
         );
         assert!(!tool_compact_text(&invocation, &ok_result).contains('\n'));
+    }
+
+    #[test]
+    fn read_file_summary_shows_relative_path_line_range_and_read_count() {
+        let path = std::env::current_dir()
+            .unwrap()
+            .join("Cargo.toml")
+            .to_string_lossy()
+            .to_string();
+        let invocation = ToolInvocation {
+            id: "call-1".to_string(),
+            tool_name: "read_file".to_string(),
+            input: serde_json::json!({ "path": path }),
+        };
+        let result = ToolResult {
+            invocation_id: "call-1".to_string(),
+            ok: true,
+            output: serde_json::json!({
+                "path": invocation.input["path"],
+                "content": "a\nb\nc\n",
+                "start_line": 2,
+                "end_line": 4,
+                "total_lines": 10,
+                "truncated": true,
+            }),
+        };
+
+        assert_eq!(
+            tool_compact_text(&invocation, &result),
+            "Read Cargo.toml (lines 2-4 of 10, 3 lines read)"
+        );
+        assert!(
+            tool_full_content(&invocation, &result)
+                .contains("View Cargo.toml (lines 2-4 of 10, 3 lines read)")
+        );
     }
 
     #[test]
@@ -284,7 +319,7 @@ mod tests {
         };
 
         let content = tool_full_content(&invocation, &result);
-        assert!(content.contains("read_file called · success"));
+        assert!(content.contains("Read Cargo.toml"));
         assert!(content.contains("View Cargo.toml"));
         assert!(content.contains("[workspace]"));
         assert!(!content.contains("Input"));

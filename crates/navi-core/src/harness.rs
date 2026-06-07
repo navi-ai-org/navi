@@ -192,6 +192,10 @@ pub fn tool_prompt_manifest(tools: &[ToolDefinition]) -> String {
 
 /// Records a completed tool invocation in the run state, updating iteration
 /// count and repetition tracking.
+///
+/// Returns `ToolLoopDecision::RepeatedCall` when the same tool has been
+/// called consecutively with identical arguments 20+ times in a row,
+/// indicating the model is likely hallucinating / stuck in a loop.
 pub fn record_tool_call(
     state: &mut AgentRunState,
     _policy: HarnessPolicy,
@@ -204,15 +208,16 @@ pub fn record_tool_call(
         state.repeated_tool_calls = 0;
     }
     state.last_tool_signature = Some(signature);
+    state.tool_iterations += 1;
 
-    if state.repeated_tool_calls >= 1 {
+    if state.repeated_tool_calls >= 20 {
         return ToolLoopDecision::RepeatedCall(format!(
-            "repeated identical tool call `{}`; use the previous observation or change strategy",
-            invocation.tool_name
+            "Repeated identical tool call `{}` {} times in a row — the model appears stuck",
+            invocation.tool_name,
+            state.repeated_tool_calls + 1,
         ));
     }
 
-    state.tool_iterations += 1;
     ToolLoopDecision::Continue
 }
 
@@ -305,7 +310,7 @@ mod tests {
     }
 
     #[test]
-    fn repeated_tool_call_is_flagged() {
+    fn repeated_tool_call_is_flagged_at_20() {
         let policy = HarnessPolicy {
             profile: HarnessProfile::Small,
             observation_max_bytes: 100,
@@ -317,14 +322,56 @@ mod tests {
         };
         let mut state = AgentRunState::default();
 
-        assert_eq!(
-            record_tool_call(&mut state, policy, &invocation),
-            ToolLoopDecision::Continue
-        );
+        // First 20 calls should be Continue (repeated goes 0..19).
+        for i in 0..20 {
+            let mut inv = invocation.clone();
+            inv.id = format!("call-{i}");
+            assert_eq!(
+                record_tool_call(&mut state, policy, &inv),
+                ToolLoopDecision::Continue,
+                "call {i} should continue"
+            );
+        }
+        // 21st consecutive identical call (repeated=20) triggers RepeatedCall.
         assert!(matches!(
             record_tool_call(&mut state, policy, &invocation),
             ToolLoopDecision::RepeatedCall(_)
         ));
+    }
+
+    #[test]
+    fn repeated_tool_call_resets_on_different_input() {
+        let policy = HarnessPolicy {
+            profile: HarnessProfile::Small,
+            observation_max_bytes: 100,
+        };
+        let invocation_a = ToolInvocation {
+            id: "call-1".to_string(),
+            tool_name: "read_file".to_string(),
+            input: json!({ "path": "Cargo.toml" }),
+        };
+        let invocation_b = ToolInvocation {
+            id: "call-2".to_string(),
+            tool_name: "read_file".to_string(),
+            input: json!({ "path": "src/main.rs" }),
+        };
+        let mut state = AgentRunState::default();
+
+        // Call A 20 times, then B — counter resets.
+        for i in 0..20 {
+            let mut inv = invocation_a.clone();
+            inv.id = format!("a-{i}");
+            record_tool_call(&mut state, policy, &inv);
+        }
+        assert_eq!(
+            record_tool_call(&mut state, policy, &invocation_b),
+            ToolLoopDecision::Continue,
+        );
+        // Back to A — counter started over, so still Continue.
+        assert_eq!(
+            record_tool_call(&mut state, policy, &invocation_a),
+            ToolLoopDecision::Continue,
+        );
     }
 
     #[test]

@@ -95,6 +95,7 @@ pub(super) fn welcome_text(app: &TuiApp, width: usize) -> Text<'static> {
     Text::from(lines)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn welcome_status_line(
     index: usize,
     project: &str,

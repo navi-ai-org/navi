@@ -24,7 +24,10 @@ mod tools;
 mod view;
 
 pub use self::app::TuiApp;
-pub use self::event_loop::run;
+pub use self::event_loop::{CrosstermInput, InputSource, run, run_loop};
+
+#[doc(hidden)]
+pub mod testing;
 
 #[cfg(test)]
 pub(crate) mod tests;

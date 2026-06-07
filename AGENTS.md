@@ -72,6 +72,12 @@ Core agent behavior belongs in engine crates, primarily `navi-core`, not in `nav
 
 Do not make WebSocket/daemon the primary interface unless explicitly requested. External process mode should prefer a stable stdio/headless runtime protocol first.
 
+### Agent Test Scope Rule
+
+When validating agent-made changes, prefer the smallest focused test/build command that covers the touched crate and behavior. For example, TUI-only changes should usually run `just test-crate navi-tui` rather than compiling or testing the full product.
+
+Only run full-product gates such as `just verify`, `just ci`, or feature-heavy checks when the change touches shared runtime, CLI, SDK, plugins, MCP, ACP, provider wiring, or when the user explicitly asks for a broader gate.
+
 ### Engine API
 
 NAVI exposes a small, serializable, UI-agnostic runtime API:

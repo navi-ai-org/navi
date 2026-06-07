@@ -40,7 +40,7 @@ where
 
     #[cfg(all(target_os = "linux", feature = "landlock"))]
     {
-        return apply_landlock_sandbox(&paths);
+        apply_landlock_sandbox(&paths)
     }
 
     #[cfg(not(all(target_os = "linux", feature = "landlock")))]

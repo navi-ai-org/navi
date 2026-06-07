@@ -316,108 +316,6 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<()> {
     Ok(())
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use navi_plugin_manifest::{PluginMeta, RuntimeKind};
-    use tempfile::tempdir;
-
-    fn make_manifest(id: &str, version: &str, publisher: &str) -> PluginManifest {
-        use navi_plugin_manifest::sign_plugin_manifest_for_tests;
-
-        let wasm = b"test-wasm-bytes";
-        let mut manifest = PluginManifest {
-            plugin: PluginMeta {
-                id: id.to_string(),
-                name: id.to_string(),
-                version: version.to_string(),
-                publisher: publisher.to_string(),
-                runtime: RuntimeKind::WasmComponent,
-                entry: "plugin.wasm".to_string(),
-                wasm_hash: String::new(),
-                signature: String::new(),
-                public_key: None,
-                minimum_navi: "0.1.0".to_string(),
-            },
-            capabilities: vec![],
-            tools: vec![],
-        };
-        sign_plugin_manifest_for_tests(&mut manifest, wasm);
-        manifest
-    }
-
-    #[test]
-    fn install_request_kind_is_install() {
-        let m = make_manifest("test", "1.0.0", "gh:test");
-        let req = build_install_request("id-1".into(), Path::new("/tmp/x"), &m);
-        assert_eq!(req.kind, PluginApprovalKind::Install);
-        assert_eq!(req.plugin_id, "test");
-    }
-
-    #[test]
-    fn update_request_kind_is_update() {
-        let tmp = tempdir().unwrap();
-        let plugins_root = tmp.path().join("plugins");
-        let installed_dir = plugins_root.join("u");
-        std::fs::create_dir_all(&installed_dir).unwrap();
-
-        let old = make_manifest("u", "1.0.0", "gh:test");
-        let installed_manifest = toml::to_string(&old).unwrap();
-        std::fs::write(installed_dir.join("plugin.toml"), &installed_manifest).unwrap();
-
-        // Pre-populate aggregate lockfile with an entry for the old manifest.
-        let mut lockfile = Lockfile::default();
-        lockfile.upsert(navi_plugin_manifest::LockEntry {
-            id: "u".to_string(),
-            version: "1.0.0".to_string(),
-            publisher: "gh:test".to_string(),
-            wasm_hash: format!("sha256:{}", "0".repeat(64)),
-            capabilities_hash: navi_plugin_manifest::compute_content_hash(""),
-            tools_hash: navi_plugin_manifest::compute_content_hash(""),
-            approved_capabilities: vec![],
-            approved_at: "0".to_string(),
-        });
-        lockfile
-            .save(&aggregate_lockfile_path(&plugins_root))
-            .unwrap();
-
-        let mut new = old.clone();
-        new.plugin.version = "1.1.0".to_string();
-        let src = tmp.path().join("src");
-        std::fs::create_dir_all(&src).unwrap();
-
-        let req = build_update_request("u-id".into(), &src, &new, &installed_dir).unwrap();
-        assert_eq!(req.kind, PluginApprovalKind::Update);
-    }
-
-    #[test]
-    fn apply_install_copies_files_and_lockfile() {
-        let tmp = tempdir().unwrap();
-        let src = tmp.path().join("src");
-        std::fs::create_dir_all(&src).unwrap();
-        std::fs::write(src.join("plugin.toml"), "x = 1").unwrap();
-        std::fs::write(src.join("plugin.wasm"), b"wasm").unwrap();
-
-        let manifest = make_manifest("p1", "1.0.0", "gh:t");
-        let data = tmp.path().join("data");
-        std::fs::create_dir_all(&data).unwrap();
-        let dst =
-            apply_plugin_install(&src, &manifest, &data, PluginApprovalKind::Install).unwrap();
-        assert!(dst.join("plugin.toml").exists());
-        assert!(dst.join("plugin.wasm").exists());
-        let aggregate = installed_plugins_dir(&data).join("navi-plugins.lock");
-        assert!(
-            aggregate.exists(),
-            "aggregate lockfile at {}",
-            aggregate.display()
-        );
-        assert!(
-            !dst.join("navi-plugins.lock").exists(),
-            "per-plugin lockfile should not be created"
-        );
-    }
-}
-
 /// Submit an install/update to disk after a TUI approval.
 /// Performs the file copy and lockfile update.
 pub(crate) fn approve_plugin_install(app: &mut crate::TuiApp, req: PluginApprovalRequest) {
@@ -471,25 +369,25 @@ pub(crate) fn approve_plugin_install(app: &mut crate::TuiApp, req: PluginApprova
 
     // Best-effort sync install for small plugins. If it completes synchronously,
     // show a notification right away; otherwise defer to the async task.
-    if let Ok(manifest) = load_and_validate_manifest(&source_path) {
-        if let Ok(installed) = apply_plugin_install(
+    if let Ok(manifest) = load_and_validate_manifest(&source_path)
+        && let Ok(installed) = apply_plugin_install(
             &source_path,
             &manifest,
             &app.loaded_config.data_dir,
             req.kind,
-        ) {
-            show_notification(
-                app,
-                match req.kind {
-                    PluginApprovalKind::Install => "Plugin",
-                    PluginApprovalKind::Update => "Plugin update",
-                },
-                format!("Installed {plugin_id} → {}", installed.display()),
-            );
-            notify_plugin_decision(app, &req, PluginApprovalDecision::Approved);
-            crate::plugins::reload_engine_plugins(app);
-            return;
-        }
+        )
+    {
+        show_notification(
+            app,
+            match req.kind {
+                PluginApprovalKind::Install => "Plugin",
+                PluginApprovalKind::Update => "Plugin update",
+            },
+            format!("Installed {plugin_id} → {}", installed.display()),
+        );
+        notify_plugin_decision(app, &req, PluginApprovalDecision::Approved);
+        crate::plugins::reload_engine_plugins(app);
+        return;
     }
 
     show_notification(
@@ -594,4 +492,106 @@ pub(crate) fn request_update_approval(app: &mut crate::TuiApp, source_path: &Pat
     app.plugin_approval_scroll = 0;
     open_modal(app, ModalKind::PluginApproval);
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use navi_plugin_manifest::{PluginMeta, RuntimeKind};
+    use tempfile::tempdir;
+
+    fn make_manifest(id: &str, version: &str, publisher: &str) -> PluginManifest {
+        use navi_plugin_manifest::sign_plugin_manifest_for_tests;
+
+        let wasm = b"test-wasm-bytes";
+        let mut manifest = PluginManifest {
+            plugin: PluginMeta {
+                id: id.to_string(),
+                name: id.to_string(),
+                version: version.to_string(),
+                publisher: publisher.to_string(),
+                runtime: RuntimeKind::WasmComponent,
+                entry: "plugin.wasm".to_string(),
+                wasm_hash: String::new(),
+                signature: String::new(),
+                public_key: None,
+                minimum_navi: "0.1.0".to_string(),
+            },
+            capabilities: vec![],
+            tools: vec![],
+        };
+        sign_plugin_manifest_for_tests(&mut manifest, wasm);
+        manifest
+    }
+
+    #[test]
+    fn install_request_kind_is_install() {
+        let m = make_manifest("test", "1.0.0", "gh:test");
+        let req = build_install_request("id-1".into(), Path::new("/tmp/x"), &m);
+        assert_eq!(req.kind, PluginApprovalKind::Install);
+        assert_eq!(req.plugin_id, "test");
+    }
+
+    #[test]
+    fn update_request_kind_is_update() {
+        let tmp = tempdir().unwrap();
+        let plugins_root = tmp.path().join("plugins");
+        let installed_dir = plugins_root.join("u");
+        std::fs::create_dir_all(&installed_dir).unwrap();
+
+        let old = make_manifest("u", "1.0.0", "gh:test");
+        let installed_manifest = toml::to_string(&old).unwrap();
+        std::fs::write(installed_dir.join("plugin.toml"), &installed_manifest).unwrap();
+
+        // Pre-populate aggregate lockfile with an entry for the old manifest.
+        let mut lockfile = Lockfile::default();
+        lockfile.upsert(navi_plugin_manifest::LockEntry {
+            id: "u".to_string(),
+            version: "1.0.0".to_string(),
+            publisher: "gh:test".to_string(),
+            wasm_hash: format!("sha256:{}", "0".repeat(64)),
+            capabilities_hash: navi_plugin_manifest::compute_content_hash(""),
+            tools_hash: navi_plugin_manifest::compute_content_hash(""),
+            approved_capabilities: vec![],
+            approved_at: "0".to_string(),
+        });
+        lockfile
+            .save(&aggregate_lockfile_path(&plugins_root))
+            .unwrap();
+
+        let mut new = old.clone();
+        new.plugin.version = "1.1.0".to_string();
+        let src = tmp.path().join("src");
+        std::fs::create_dir_all(&src).unwrap();
+
+        let req = build_update_request("u-id".into(), &src, &new, &installed_dir).unwrap();
+        assert_eq!(req.kind, PluginApprovalKind::Update);
+    }
+
+    #[test]
+    fn apply_install_copies_files_and_lockfile() {
+        let tmp = tempdir().unwrap();
+        let src = tmp.path().join("src");
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::write(src.join("plugin.toml"), "x = 1").unwrap();
+        std::fs::write(src.join("plugin.wasm"), b"wasm").unwrap();
+
+        let manifest = make_manifest("p1", "1.0.0", "gh:t");
+        let data = tmp.path().join("data");
+        std::fs::create_dir_all(&data).unwrap();
+        let dst =
+            apply_plugin_install(&src, &manifest, &data, PluginApprovalKind::Install).unwrap();
+        assert!(dst.join("plugin.toml").exists());
+        assert!(dst.join("plugin.wasm").exists());
+        let aggregate = installed_plugins_dir(&data).join("navi-plugins.lock");
+        assert!(
+            aggregate.exists(),
+            "aggregate lockfile at {}",
+            aggregate.display()
+        );
+        assert!(
+            !dst.join("navi-plugins.lock").exists(),
+            "per-plugin lockfile should not be created"
+        );
+    }
 }
