@@ -7,6 +7,10 @@ set shell := ["bash", "-eu", "-o", "pipefail", "-c"]
 default:
     @just --list
 
+# Limit parallel rustc compilations and test threads to avoid OOM on
+# machines with constrained RAM.  Override per-invocation with
+#   CARGO_BUILD_JOBS=N just test
+export CARGO_BUILD_JOBS := "2"
 export CARGO_TEST_THREADS := "4"
 test_threads := "4"
 quality_dir := "quality"
@@ -33,10 +37,16 @@ fmt-check:
 # ─── Tests ───────────────────────────────────────────────────────────────────
 
 test *args:
-    cargo test --workspace --test-threads={{test_threads}} {{args}}
+    cargo test --workspace -- --test-threads={{test_threads}} {{args}}
 
 test-crate crate *args:
-    cargo test -p {{crate}} --test-threads={{test_threads}} {{args}}
+    cargo test -p {{crate}} -- --test-threads={{test_threads}} {{args}}
+
+# Regenerate the TUI golden snapshots in crates/navi-tui/tests/snapshots/.
+# Run this after an intentional rendering change is reviewed by hand.
+snapshot-update:
+    UPDATE_SNAPSHOTS=1 cargo test -p navi-tui --test screenshots
+    @echo "Updated TUI goldens in crates/navi-tui/tests/snapshots/."
 
 # ─── Coverage (cargo-llvm-cov; also used by rustquty's coverage collector) ───
 

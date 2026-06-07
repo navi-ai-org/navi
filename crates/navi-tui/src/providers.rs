@@ -18,7 +18,8 @@ use crate::{
 
 pub(crate) fn rebuild_provider(app: &mut TuiApp) {
     match build_engine(&app.loaded_config, app.project_dir.clone()) {
-        Ok(engine) => app.set_engine(engine),
+        Ok(engine) => app
+            .set_engine(std::sync::Arc::new(engine) as std::sync::Arc<dyn navi_sdk::EngineDriver>),
         Err(err) => push_diagnostic(app, format!("Failed to rebuild runtime engine: {err:#}")),
     }
     app.provider_configured =

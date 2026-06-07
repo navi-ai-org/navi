@@ -116,18 +116,18 @@ pub(crate) fn parse_anthropic_sse_with_state(
     match value.get("type").and_then(Value::as_str) {
         Some("content_block_start") => {
             let block = value.get("content_block");
-            if let Some(block_type) = block.and_then(|b| b.get("type")).and_then(Value::as_str) {
-                if block_type == "tool_use" {
-                    state.current_tool_id = block
-                        .and_then(|b| b.get("id"))
-                        .and_then(Value::as_str)
-                        .map(String::from);
-                    state.current_tool_name = block
-                        .and_then(|b| b.get("name"))
-                        .and_then(Value::as_str)
-                        .map(String::from);
-                    state.current_json_buf.clear();
-                }
+            if let Some(block_type) = block.and_then(|b| b.get("type")).and_then(Value::as_str)
+                && block_type == "tool_use"
+            {
+                state.current_tool_id = block
+                    .and_then(|b| b.get("id"))
+                    .and_then(Value::as_str)
+                    .map(String::from);
+                state.current_tool_name = block
+                    .and_then(|b| b.get("name"))
+                    .and_then(Value::as_str)
+                    .map(String::from);
+                state.current_json_buf.clear();
             }
             Vec::new()
         }

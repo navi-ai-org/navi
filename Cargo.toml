@@ -23,7 +23,6 @@ license = "Apache-2.0"
 
 [workspace.dependencies]
 anyhow = "1"
-arboard = "3.6.1"
 async-trait = "0.1"
 base64 = "0.22.1"
 clap = { version = "4", features = ["derive"] }
@@ -41,6 +40,7 @@ agent-client-protocol = "0.12.1"
 futures-util = "0.3"
 thiserror = "2"
 tokio = { version = "1", features = ["io-util", "macros", "process", "rt-multi-thread", "sync", "time"] }
+portable-pty = "0.8"
 rmcp = { version = "1.7.0", default-features = false, features = ["client", "transport-child-process"] }
 toml = "1"
 tracing = "0.1"

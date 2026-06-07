@@ -61,36 +61,36 @@ pub(crate) fn plugin_picker_rows(app: &TuiApp) -> Vec<PluginPickerRow> {
         rows.push(PluginPickerRow::Catalog(entry.clone()));
     }
     let plugin_dir = app.loaded_config.data_dir.join("plugins");
-    if plugin_dir.exists() {
-        if let Ok(rd) = std::fs::read_dir(&plugin_dir) {
-            for entry in rd.flatten() {
-                let path = entry.path();
-                if !path.is_dir() {
-                    continue;
-                }
-                let name = entry.file_name().to_string_lossy().to_string();
-                if name.starts_with('.') {
-                    continue;
-                }
-                let manifest_path = path.join("plugin.toml");
-                if !manifest_path.exists() {
-                    continue;
-                }
-                if app.plugin_catalog.iter().any(|c| c.id == name) {
-                    continue;
-                }
-                let (version, publisher, tool_count) =
-                    read_installed_summary(&manifest_path).unwrap_or(("?".into(), "?".into(), 0));
-                rows.push(PluginPickerRow::Installed {
-                    id: name,
-                    version,
-                    publisher,
-                    tool_count,
-                });
+    if plugin_dir.exists()
+        && let Ok(rd) = std::fs::read_dir(&plugin_dir)
+    {
+        for entry in rd.flatten() {
+            let path = entry.path();
+            if !path.is_dir() {
+                continue;
             }
+            let name = entry.file_name().to_string_lossy().to_string();
+            if name.starts_with('.') {
+                continue;
+            }
+            let manifest_path = path.join("plugin.toml");
+            if !manifest_path.exists() {
+                continue;
+            }
+            if app.plugin_catalog.iter().any(|c| c.id == name) {
+                continue;
+            }
+            let (version, publisher, tool_count) =
+                read_installed_summary(&manifest_path).unwrap_or(("?".into(), "?".into(), 0));
+            rows.push(PluginPickerRow::Installed {
+                id: name,
+                version,
+                publisher,
+                tool_count,
+            });
         }
     }
-    rows.sort_by(|a, b| plugin_row_sort_key(a).cmp(&plugin_row_sort_key(b)));
+    rows.sort_by_key(plugin_row_sort_key);
     rows
 }
 

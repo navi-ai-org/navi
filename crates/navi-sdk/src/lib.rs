@@ -1,5 +1,6 @@
 mod credentials;
 mod engine;
+mod engine_driver;
 mod host_tool;
 mod tooling;
 mod types;
@@ -9,6 +10,7 @@ pub use credentials::{
     provider_credential_status, provider_supports_device_oauth, start_provider_device_oauth,
 };
 pub use engine::{NaviEngine, NaviEngineBuilder, NaviSession};
+pub use engine_driver::EngineDriver;
 pub use host_tool::{
     HostToolDefinition, HostToolHandler, HostToolInvocation, SdkHostTool, SdkHostToolResult,
 };

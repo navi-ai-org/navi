@@ -371,11 +371,11 @@ fn show_plugin_info(plugin_id: &str, config: &LoadedConfig, _cwd: &Path) -> Resu
     // Show lockfile info
     let plugins_root = installed_plugins_dir(&config.data_dir);
     let lockfile_path = aggregate_lockfile_path(&plugins_root);
-    if let Ok(lockfile) = navi_plugin_manifest::Lockfile::load(&lockfile_path) {
-        if let Some(entry) = lockfile.find(plugin_id) {
-            println!("Installed: {}", entry.approved_at);
-            println!("WASM hash: {}", entry.wasm_hash);
-        }
+    if let Ok(lockfile) = navi_plugin_manifest::Lockfile::load(&lockfile_path)
+        && let Some(entry) = lockfile.find(plugin_id)
+    {
+        println!("Installed: {}", entry.approved_at);
+        println!("WASM hash: {}", entry.wasm_hash);
     }
 
     Ok(())

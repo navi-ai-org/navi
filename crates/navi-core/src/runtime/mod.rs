@@ -636,5 +636,6 @@ fn runtime_event_kind_from_agent_event(event: &AgentEvent) -> Option<RuntimeEven
             reason: reason.clone(),
         }),
         AgentEvent::UserTaskSubmitted { .. } | AgentEvent::ModelOutput { .. } => None,
+        AgentEvent::RepeatedToolCallWarning { .. } => None,
     }
 }
