@@ -18,7 +18,7 @@ use futures_util::StreamExt;
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 
-const TURN_LOOP_LIMIT: usize = 10;
+const TURN_LOOP_LIMIT: usize = 150;
 
 struct ModelTurnOutput {
     text: String,
@@ -339,8 +339,13 @@ async fn handle_tool_calls(
         match record_tool_call(run_state, policy, &invocation) {
             ToolLoopDecision::Continue => executable_calls.push(invocation),
             ToolLoopDecision::RepeatedCall(reason) => {
-                let result = tool_error_result(&invocation, reason);
+                let result = tool_error_result(&invocation, &reason);
+                // Notify the user about the hallucination loop.
                 if let Some(ref tx) = ctx.event_tx {
+                    let _ = tx.send(AgentEvent::RepeatedToolCallWarning {
+                        tool_name: invocation.tool_name.clone(),
+                        message: reason,
+                    });
                     let _ = tx.send(AgentEvent::ToolCompleted(result.clone()));
                 }
                 let observation = compact_tool_observation(&invocation, &result, policy);
@@ -352,10 +357,10 @@ async fn handle_tool_calls(
     let tool_futures = executable_calls
         .into_iter()
         .map(|invocation| execute_tool_call(ctx, policy, invocation));
-    let mut executed_results = immediate_results;
-    executed_results.extend(futures_util::future::join_all(tool_futures).await);
+    let mut all_results = immediate_results;
+    all_results.extend(futures_util::future::join_all(tool_futures).await);
 
-    for (invocation, _result, observation) in executed_results {
+    for (invocation, _result, observation) in all_results {
         messages.push(ModelMessage::tool_result(
             invocation.id,
             invocation.tool_name,

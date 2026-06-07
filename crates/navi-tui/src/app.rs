@@ -7,9 +7,11 @@ use anyhow::Result;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
+use std::sync::Arc;
+
 use navi_sdk::{
     AgentEvent, AgentMode, AgentRunState, ApprovalRequest, CompactState, CredentialStore,
-    HarnessPolicy, LoadedConfig, ModelMessage, ModelOption, NaviEngine, NaviSkillInfo, SessionId,
+    EngineDriver, HarnessPolicy, LoadedConfig, ModelMessage, ModelOption, NaviSkillInfo, SessionId,
     SessionSnapshot, SessionStore, ToolInvocation, available_model_options, build_system_prompt,
     canonical_provider_id, effective_context_window, log_path, select_harness_policy,
 };
@@ -54,7 +56,7 @@ pub struct TuiApp {
     async_rx: mpsc::UnboundedReceiver<AsyncEvent>,
     stream_task: Option<JoinHandle<()>>,
     tool_task: Option<JoinHandle<()>>,
-    engine: NaviEngine,
+    engine: Arc<dyn EngineDriver>,
     pub(crate) provider_configured: bool,
     harness_policy: HarnessPolicy,
     run_state: AgentRunState,
@@ -136,7 +138,8 @@ impl TuiApp {
 
         let (async_tx, async_rx) = mpsc::unbounded_channel();
         let credential_store = CredentialStore::new(loaded_config.data_dir.clone());
-        let engine = build_engine(&loaded_config, project_dir.clone())?;
+        let engine: Arc<dyn EngineDriver> =
+            Arc::new(build_engine(&loaded_config, project_dir.clone())?);
         let provider_configured =
             selected_model_runtime_available(&loaded_config, &credential_store);
         let session_store = SessionStore::with_redaction(
@@ -262,7 +265,7 @@ impl TuiApp {
         self.async_rx.try_recv().ok()
     }
 
-    pub(crate) fn engine(&self) -> NaviEngine {
+    pub(crate) fn engine(&self) -> Arc<dyn EngineDriver> {
         self.engine.clone()
     }
 
@@ -284,7 +287,7 @@ impl TuiApp {
         self.credential_store.clone()
     }
 
-    pub(crate) fn set_engine(&mut self, engine: NaviEngine) {
+    pub(crate) fn set_engine(&mut self, engine: Arc<dyn EngineDriver>) {
         self.engine = engine;
     }
 

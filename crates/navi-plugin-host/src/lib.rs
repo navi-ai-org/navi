@@ -200,25 +200,25 @@ pub fn load_configured_plugins_with_options(
     }
 
     // Apply sandbox if requested and we successfully loaded at least one plugin.
-    if let Some(paths) = &options.sandbox_paths {
-        if !report.loaded.is_empty() {
-            match apply_filesystem_sandbox(paths.iter().map(|p| p.as_path())) {
-                Ok(SandboxStatus::Active) => {
-                    tracing::info!("filesystem sandbox active for {} path(s)", paths.len());
-                }
-                Ok(SandboxStatus::ActiveWithWarnings) => {
-                    tracing::warn!("filesystem sandbox active with warnings (some paths rejected)");
-                }
-                Ok(SandboxStatus::Unavailable(reason)) => {
-                    report
-                        .warnings
-                        .push(format!("filesystem sandbox unavailable: {reason}"));
-                }
-                Err(e) => {
-                    report
-                        .warnings
-                        .push(format!("filesystem sandbox failed: {e:#}"));
-                }
+    if let Some(paths) = &options.sandbox_paths
+        && !report.loaded.is_empty()
+    {
+        match apply_filesystem_sandbox(paths.iter().map(|p| p.as_path())) {
+            Ok(SandboxStatus::Active) => {
+                tracing::info!("filesystem sandbox active for {} path(s)", paths.len());
+            }
+            Ok(SandboxStatus::ActiveWithWarnings) => {
+                tracing::warn!("filesystem sandbox active with warnings (some paths rejected)");
+            }
+            Ok(SandboxStatus::Unavailable(reason)) => {
+                report
+                    .warnings
+                    .push(format!("filesystem sandbox unavailable: {reason}"));
+            }
+            Err(e) => {
+                report
+                    .warnings
+                    .push(format!("filesystem sandbox failed: {e:#}"));
             }
         }
     }
@@ -433,7 +433,7 @@ mod tests {
     fn sandbox_reports_unavailable_when_no_paths_given() {
         let tempdir = tempfile::tempdir().expect("tempdir");
         let data_dir = tempdir.path().join("data");
-        let policy = SecurityPolicy::new(
+        let _policy = SecurityPolicy::new(
             tempdir.path().to_path_buf(),
             data_dir,
             SecurityConfig::default(),

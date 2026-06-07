@@ -17,7 +17,8 @@ use crate::stream::start_streaming_request;
 use crate::tools::record_tool_requested;
 
 // ─── async bridge ──────────────────────────────────────────────────────────────
-pub(crate) enum AsyncEvent {
+#[allow(clippy::large_enum_variant)]
+pub enum AsyncEvent {
     SyncCompleted {
         loaded_config: LoadedConfig,
         message: String,
@@ -316,6 +317,10 @@ fn handle_agent_event(app: &mut TuiApp, event: AgentEvent) {
             text: _,
             thinking: _,
         } => {}
+        AgentEvent::RepeatedToolCallWarning { tool_name, message } => {
+            show_notification(app, format!("Repeated call: {tool_name}"), &message);
+            push_diagnostic(app, message);
+        }
     }
 }
 

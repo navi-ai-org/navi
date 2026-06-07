@@ -23,7 +23,10 @@ async fn builtins_read_write_and_grep_files() {
         tool_name: "write_file".to_string(),
         input: json!({ "path": file.display().to_string(), "content": "pub fn marker() {}\n" }),
     };
-    assert!(executor.invoke(write).await.ok);
+    let write = executor.invoke(write).await;
+    assert!(write.ok);
+    assert_eq!(write.output["lines_added"], 1);
+    assert_eq!(write.output["lines_removed"], 0);
 
     let read = executor
         .invoke(ToolInvocation {
@@ -45,7 +48,10 @@ async fn builtins_read_write_and_grep_files() {
         tool_name: "write_file".to_string(),
         input: json!({ "path": multiline_file.display().to_string(), "content": "one\ntwo\nthree\nfour\n" }),
     };
-    assert!(executor.invoke(write_multiline).await.ok);
+    let write_multiline = executor.invoke(write_multiline).await;
+    assert!(write_multiline.ok);
+    assert_eq!(write_multiline.output["lines_added"], 4);
+    assert_eq!(write_multiline.output["lines_removed"], 0);
 
     let read_slice = executor
         .invoke(ToolInvocation {
@@ -365,6 +371,8 @@ async fn write_file_creates_parent_directories() {
 
     assert!(result.ok);
     assert_eq!(std::fs::read_to_string(path).unwrap(), "hello");
+    assert_eq!(result.output["lines_added"], 1);
+    assert_eq!(result.output["lines_removed"], 0);
 }
 
 #[tokio::test]
@@ -823,7 +831,7 @@ async fn regression_write_file_overwrites_existing() {
     let tempdir = tempfile::tempdir().expect("tempdir");
     let executor = executor(tempdir.path());
 
-    std::fs::write(tempdir.path().join("existing.txt"), "old content").unwrap();
+    std::fs::write(tempdir.path().join("existing.txt"), "old\ncontent\n").unwrap();
 
     let result = executor
         .invoke(ToolInvocation {
@@ -838,6 +846,8 @@ async fn regression_write_file_overwrites_existing() {
     if result.ok {
         let content = std::fs::read_to_string(tempdir.path().join("existing.txt")).unwrap();
         assert_eq!(content, "new content");
+        assert_eq!(result.output["lines_added"], 1);
+        assert_eq!(result.output["lines_removed"], 2);
     }
     // If not ok, it's because of approval requirement - that's fine
 }

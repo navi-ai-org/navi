@@ -63,7 +63,7 @@ pub(crate) fn selected_text(app: &TuiApp) -> Option<String> {
             let substr: String = line_text
                 .chars()
                 .skip(start_char)
-                .take(end_char.saturating_sub(start_char).max(1))
+                .take(end_char.saturating_sub(start_char))
                 .collect();
             selected_text.push_str(&substr);
 
@@ -84,18 +84,7 @@ fn copy_selection_to_clipboard(app: &mut TuiApp) {
         print!("\x1B]52;c;{}\x07", b64);
         let _ = std::io::Write::flush(&mut std::io::stdout());
 
-        let mut copied_arboard = false;
-        if let Ok(mut clipboard) = arboard::Clipboard::new()
-            && clipboard.set_text(selected_text.clone()).is_ok()
-        {
-            copied_arboard = true;
-        }
-
-        if copied_arboard {
-            show_notification(app, "Clipboard", "Texto copiado com sucesso!".to_string());
-        } else {
-            show_notification(app, "Clipboard", "Texto copiado (OSC 52)".to_string());
-        }
+        show_notification(app, "Clipboard", "Texto copiado (OSC 52)".to_string());
     }
 }
 
@@ -110,6 +99,9 @@ pub(crate) fn finish_selection(app: &mut TuiApp, end: Option<(usize, usize)>) ->
         selection.end = end;
     }
     selection.active = false;
+    if selection.start == selection.end {
+        return false;
+    }
     selected_text(app).is_some()
 }
 
