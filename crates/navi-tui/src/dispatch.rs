@@ -178,13 +178,11 @@ fn handle_agent_event(app: &mut TuiApp, event: AgentEvent) {
             let message = ensure_tail_model_response(app);
             message.content.push_str(&text);
             message.status = Some("receiving".to_string());
-            app.scroll_offset = 0;
         }
         AgentEvent::ModelThinkingDelta { text } => {
             let message = ensure_tail_model_response(app);
             message.thinking_content.push_str(&text);
             message.status = Some("thinking".to_string());
-            app.scroll_offset = 0;
         }
         AgentEvent::ToolRequested(invocation) => {
             record_tool_requested(app, invocation);
@@ -340,7 +338,6 @@ fn handle_turn_completed(app: &mut TuiApp, res: std::result::Result<String, Stri
     app.is_loading = false;
     app.loading_start = None;
     app.clear_stream_task();
-    app.scroll_offset = 0;
     app.running_tools.clear();
     app.pending_approvals.clear();
 }
@@ -380,7 +377,7 @@ mod tests {
     // ── ModelDelta ────────────────────────────────────────────────────
 
     #[test]
-    fn model_delta_appends_content_and_resets_scroll() {
+    fn model_delta_appends_content_and_preserves_manual_scroll() {
         let mut app = test_app("");
         app.scroll_offset = 42;
 
@@ -400,6 +397,20 @@ mod tests {
         let msg = app.messages.last().unwrap();
         assert_eq!(msg.content, "hello world");
         assert_eq!(msg.status.as_deref(), Some("receiving"));
+        assert_eq!(app.scroll_offset, 42);
+    }
+
+    #[test]
+    fn model_delta_keeps_tail_when_already_at_bottom() {
+        let mut app = test_app("");
+
+        handle_async_event(
+            &mut app,
+            AsyncEvent::Agent(AgentEvent::ModelDelta {
+                text: "hello".to_string(),
+            }),
+        );
+
         assert_eq!(app.scroll_offset, 0);
     }
 
@@ -420,7 +431,7 @@ mod tests {
         let msg = app.messages.last().unwrap();
         assert_eq!(msg.thinking_content, "reasoning...");
         assert_eq!(msg.status.as_deref(), Some("thinking"));
-        assert_eq!(app.scroll_offset, 0);
+        assert_eq!(app.scroll_offset, 10);
     }
 
     // ── ToolCompleted ─────────────────────────────────────────────────
@@ -629,7 +640,7 @@ mod tests {
 
         assert!(!app.is_loading);
         assert!(app.loading_start.is_none());
-        assert_eq!(app.scroll_offset, 0);
+        assert_eq!(app.scroll_offset, 10);
         assert!(app.running_tools.is_empty());
         assert!(app.pending_approvals.is_empty());
     }
@@ -650,7 +661,7 @@ mod tests {
 
         assert!(!app.is_loading);
         assert!(app.loading_start.is_none());
-        assert_eq!(app.scroll_offset, 0);
+        assert_eq!(app.scroll_offset, 5);
         assert!(app.running_tools.is_empty());
         assert!(app.pending_approvals.is_empty());
     }

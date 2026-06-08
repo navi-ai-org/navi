@@ -115,7 +115,7 @@ fn root_render_keeps_header_inside_viewport_margin() {
     let backend = TestBackend::new(40, 12);
     let mut terminal = Terminal::new(backend).expect("terminal");
     terminal
-        .draw(|frame| crate::view::render(frame, &app))
+        .draw(|frame| crate::view::render(frame, &mut app))
         .expect("draw");
 
     let buffer = terminal.backend().buffer();
