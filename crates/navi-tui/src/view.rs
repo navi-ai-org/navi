@@ -24,11 +24,11 @@ use crate::theme;
 use crate::theme::{accent, bg, ghost, muted, signal, text};
 use crate::ui::layout::{split_left_right, viewport_rect};
 
-pub(crate) fn render(frame: &mut Frame<'_>, app: &TuiApp) {
+pub(crate) fn render(frame: &mut Frame<'_>, app: &mut TuiApp) {
     theme::with_palette(&app.theme_palette(), || render_inner(frame, app));
 }
 
-fn render_inner(frame: &mut Frame<'_>, app: &TuiApp) {
+fn render_inner(frame: &mut Frame<'_>, app: &mut TuiApp) {
     let area = frame.area();
     frame.render_widget(Block::new().style(Style::default().bg(theme::bg())), area);
     let content_area = viewport_rect(area);
