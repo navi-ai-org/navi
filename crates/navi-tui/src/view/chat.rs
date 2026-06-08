@@ -11,7 +11,7 @@ use crate::theme::*;
 
 use super::welcome::welcome_text;
 
-pub(super) fn render_chat_area(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
+pub(super) fn render_chat_area(frame: &mut Frame<'_>, app: &mut TuiApp, area: Rect) {
     let inner = area.inner(Margin {
         horizontal: 2,
         vertical: 1,
@@ -110,7 +110,7 @@ pub(super) fn render_chat_area(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) 
     );
 }
 
-fn ensure_chat_cache(app: &TuiApp, chat_width: usize) {
+fn ensure_chat_cache(app: &mut TuiApp, chat_width: usize) {
     let signature = chat_render_signature(app);
     {
         let cache = app.chat_render_cache.borrow();
@@ -123,13 +123,43 @@ fn ensure_chat_cache(app: &TuiApp, chat_width: usize) {
         }
     }
 
+    let (previous_line_count, can_preserve_manual_scroll) = {
+        let cache = app.chat_render_cache.borrow();
+        (
+            cache.lines.len(),
+            !cache.signature.is_empty()
+                && cache.width == chat_width
+                && cache.full_tool_view == app.full_tool_view
+                && cache.show_thinking == app.show_thinking,
+        )
+    };
     let lines = build_chat_lines(app, chat_width);
+    if can_preserve_manual_scroll {
+        app.scroll_offset =
+            anchored_scroll_offset(app.scroll_offset, previous_line_count, lines.len());
+    }
+
     let mut cache = app.chat_render_cache.borrow_mut();
     cache.width = chat_width;
     cache.full_tool_view = app.full_tool_view;
     cache.show_thinking = app.show_thinking;
     cache.signature = signature;
     cache.lines = lines;
+}
+
+fn anchored_scroll_offset(
+    scroll_offset: usize,
+    previous_line_count: usize,
+    next_line_count: usize,
+) -> usize {
+    if scroll_offset == 0 {
+        return 0;
+    }
+    if next_line_count >= previous_line_count {
+        scroll_offset.saturating_add(next_line_count - previous_line_count)
+    } else {
+        scroll_offset.saturating_sub(previous_line_count - next_line_count)
+    }
 }
 
 fn chat_render_signature(app: &TuiApp) -> String {
@@ -180,4 +210,24 @@ pub(super) fn build_chat_lines(app: &TuiApp, chat_width: usize) -> Vec<Line<'sta
         app.full_tool_view,
         app.show_thinking,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::anchored_scroll_offset;
+
+    #[test]
+    fn anchored_scroll_tracks_added_lines_when_scrolled_up() {
+        assert_eq!(anchored_scroll_offset(10, 100, 105), 15);
+    }
+
+    #[test]
+    fn anchored_scroll_tracks_removed_lines_when_scrolled_up() {
+        assert_eq!(anchored_scroll_offset(10, 100, 94), 4);
+    }
+
+    #[test]
+    fn anchored_scroll_keeps_tail_at_zero() {
+        assert_eq!(anchored_scroll_offset(0, 100, 120), 0);
+    }
 }

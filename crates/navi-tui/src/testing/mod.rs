@@ -162,8 +162,10 @@ impl Harness {
 
     /// Render the current app state to the test terminal buffer.
     pub fn render(&mut self) -> &mut Self {
-        self.terminal
-            .draw(|frame| crate::view::render(frame, &self.app))
+        let terminal = &mut self.terminal;
+        let app = &mut self.app;
+        terminal
+            .draw(|frame| crate::view::render(frame, app))
             .expect("draw");
         self
     }
