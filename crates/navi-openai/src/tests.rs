@@ -32,13 +32,13 @@ fn extract_chat_completion_text(value: &serde_json::Value) -> String {
 }
 
 use crate::errors::ProviderError;
-use crate::providers::behavior::ProviderBehavior;
 use crate::mapping::{
     apply_thinking_to_body, message_to_json, responses_input_item_to_json,
     thinking_request_for_api, unique_sorted_model_ids,
 };
 use crate::provider::OpenAiProvider;
 use crate::providers::anthropic::parse_anthropic_sse;
+use crate::providers::behavior::ProviderBehavior;
 use crate::providers::gemini::parse_gemini_sse;
 use crate::providers::openai::{
     ChatToolCallAccumulator, parse_chat_completions_sse, parse_chat_completions_sse_with_state,
