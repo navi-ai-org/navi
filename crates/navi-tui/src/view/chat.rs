@@ -66,6 +66,7 @@ pub(super) fn render_chat_area(frame: &mut Frame<'_>, app: &mut TuiApp, area: Re
         app,
         inner.width as usize,
     );
+    pad_code_block_bg(&mut visible_lines, inner.width as usize);
 
     if let Some(selection) = &app.selection {
         let sel_start = selection.start.min(selection.end);
@@ -227,6 +228,26 @@ fn apply_card_bg(line: &mut Line<'static>, width: usize, bg: Color, emphasize: b
             " ".repeat(width - used),
             Style::default().fg(text()).bg(bg),
         ));
+    }
+}
+
+fn pad_code_block_bg(lines: &mut [Line<'static>], width: usize) {
+    let bg = code_block_bg();
+    for line in lines.iter_mut() {
+        let is_code = line
+            .spans
+            .first()
+            .is_some_and(|span| span.style.bg == Some(bg));
+        if !is_code {
+            continue;
+        }
+        let used: usize = line.spans.iter().map(|s| display_width(&s.content)).sum();
+        if used < width {
+            line.spans.push(Span::styled(
+                " ".repeat(width - used),
+                Style::default().bg(bg),
+            ));
+        }
     }
 }
 
