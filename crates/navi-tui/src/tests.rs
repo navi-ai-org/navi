@@ -957,6 +957,7 @@ fn tui_preferences_load_from_config() {
     config.tui.theme = "ember".to_string();
     config.tui.show_thinking = false;
     config.tui.full_tool_view = true;
+    config.tui.compact_tool_visible_limit = 8;
     config.tui.thinking_level = "low".to_string();
     config.tui.yolo_mode = true;
     config.skills.active = vec!["demo-skill".to_string()];
@@ -976,6 +977,7 @@ fn tui_preferences_load_from_config() {
     assert_eq!(app.theme_id, crate::theme::ThemeId::Ember);
     assert!(!app.show_thinking);
     assert!(app.full_tool_view);
+    assert_eq!(app.compact_tool_visible_limit, 8);
     assert_eq!(app.thinking_level, crate::state::ThinkingLevel::Low);
     assert!(app.yolo_mode);
     assert_eq!(app.active_skills, vec!["demo-skill".to_string()]);
@@ -996,12 +998,12 @@ fn settings_does_not_open_provider_accounts() {
 fn settings_opens_theme_picker() {
     let mut app = test_app("");
     app.mode = Mode::Settings;
-    app.selected_setting = 2;
-    assert_eq!(app.theme_id, crate::theme::ThemeId::Lain);
+    app.selected_setting = 3;
+    assert_eq!(app.theme_id, crate::theme::ThemeId::Default);
 
     handle_settings_key(&mut app, KeyCode::Enter);
     assert_eq!(app.mode, Mode::ThemePicker);
-    assert_eq!(app.theme_id, crate::theme::ThemeId::Lain);
+    assert_eq!(app.theme_id, crate::theme::ThemeId::Default);
 }
 
 #[test]

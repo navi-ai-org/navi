@@ -100,7 +100,7 @@ pub(super) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
         rows[0],
     );
     frame.render_widget(
-        Paragraph::new("esc close").style(Style::default().fg(muted()).bg(panel())),
+        Paragraph::new("").style(Style::default().bg(panel())),
         rows[1],
     );
     app.register_hit(

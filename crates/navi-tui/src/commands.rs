@@ -85,7 +85,7 @@ pub(crate) const COMMANDS: &[CommandItem] = &[
     },
     CommandItem {
         label: "Quit",
-        shortcut: Some("ctrl+c"),
+        shortcut: None,
         action: CommandAction::Quit,
     },
 ];

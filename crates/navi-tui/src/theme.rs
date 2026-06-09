@@ -1,10 +1,11 @@
-use ratatui::style::Color;
+use ratatui::style::{Color, Modifier, Style};
 use std::cell::RefCell;
 use std::time::Duration;
 
 /// Built-in color themes for the TUI.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) enum ThemeId {
+    Default,
     Lain,
     Terminal,
     Slate,
@@ -14,7 +15,8 @@ pub(crate) enum ThemeId {
 }
 
 impl ThemeId {
-    pub(crate) const ALL: [ThemeId; 6] = [
+    pub(crate) const ALL: [ThemeId; 7] = [
+        ThemeId::Default,
         ThemeId::Lain,
         ThemeId::Terminal,
         ThemeId::Slate,
@@ -25,6 +27,7 @@ impl ThemeId {
 
     pub(crate) fn label(self) -> &'static str {
         match self {
+            ThemeId::Default => "Default",
             ThemeId::Lain => "Lain",
             ThemeId::Terminal => "Terminal",
             ThemeId::Slate => "Slate",
@@ -36,17 +39,19 @@ impl ThemeId {
 
     pub(crate) fn from_config(value: &str) -> Self {
         match value.trim().to_ascii_lowercase().as_str() {
+            "default" | "system" | "auto" => ThemeId::Default,
             "terminal" | "green" => ThemeId::Terminal,
             "slate" | "blue" => ThemeId::Slate,
             "ember" | "red" => ThemeId::Ember,
             "paper" | "light" => ThemeId::Paper,
             "oscura-night" | "oscura_night" | "oscura" | "night" => ThemeId::OscuraNight,
-            _ => ThemeId::Lain,
+            _ => ThemeId::Default,
         }
     }
 
     pub(crate) fn config_value(self) -> &'static str {
         match self {
+            ThemeId::Default => "default",
             ThemeId::Lain => "lain",
             ThemeId::Terminal => "terminal",
             ThemeId::Slate => "slate",
@@ -64,6 +69,7 @@ impl ThemeId {
 
     pub(crate) fn palette(self) -> ThemePalette {
         match self {
+            ThemeId::Default => ThemePalette::default_terminal(),
             ThemeId::Lain => ThemePalette::lain(),
             ThemeId::Terminal => ThemePalette::terminal(),
             ThemeId::Slate => ThemePalette::slate(),
@@ -109,9 +115,37 @@ pub(crate) struct ThemePalette {
     pub code_func: Color,
     pub code_const: Color,
     pub code_operator: Color,
+    pub selection_fg: Color,
+    pub selection_bg: Color,
 }
 
 impl ThemePalette {
+    fn default_terminal() -> Self {
+        Self {
+            accent: Color::Cyan,
+            red: Color::Red,
+            pink: Color::Magenta,
+            signal: Color::White,
+            text: Color::Reset,
+            muted: Color::DarkGray,
+            panel: Color::Reset,
+            bg: Color::Reset,
+            ghost: Color::DarkGray,
+            user_accent: Color::Cyan,
+            code_keyword: Color::Blue,
+            code_string: Color::Green,
+            code_comment: Color::DarkGray,
+            code_number: Color::Cyan,
+            code_punct: Color::Reset,
+            code_type: Color::Cyan,
+            code_func: Color::White,
+            code_const: Color::Yellow,
+            code_operator: Color::Magenta,
+            selection_fg: Color::Black,
+            selection_bg: Color::White,
+        }
+    }
+
     fn lain() -> Self {
         Self {
             accent: rgb(178, 132, 255),
@@ -133,6 +167,8 @@ impl ThemePalette {
             code_func: rgb(218, 204, 255),
             code_const: rgb(255, 204, 128),
             code_operator: rgb(255, 139, 203),
+            selection_fg: rgb(0, 0, 0),
+            selection_bg: rgb(236, 232, 255),
         }
     }
 
@@ -157,6 +193,8 @@ impl ThemePalette {
             code_func: rgb(190, 255, 210),
             code_const: rgb(255, 199, 112),
             code_operator: rgb(255, 118, 160),
+            selection_fg: rgb(5, 8, 6),
+            selection_bg: rgb(210, 255, 228),
         }
     }
 
@@ -181,6 +219,8 @@ impl ThemePalette {
             code_func: rgb(190, 210, 255),
             code_const: rgb(255, 199, 112),
             code_operator: rgb(255, 150, 180),
+            selection_fg: rgb(14, 17, 22),
+            selection_bg: rgb(220, 228, 242),
         }
     }
 
@@ -205,6 +245,8 @@ impl ThemePalette {
             code_func: rgb(255, 200, 160),
             code_const: rgb(255, 199, 112),
             code_operator: rgb(255, 100, 100),
+            selection_fg: rgb(8, 8, 8),
+            selection_bg: rgb(234, 220, 210),
         }
     }
 
@@ -229,6 +271,8 @@ impl ThemePalette {
             code_func: rgb(80, 60, 180),
             code_const: rgb(150, 90, 0),
             code_operator: rgb(180, 60, 100),
+            selection_fg: rgb(252, 252, 253),
+            selection_bg: rgb(40, 50, 70),
         }
     }
 
@@ -254,6 +298,8 @@ impl ThemePalette {
             code_func: rgb(198, 208, 244),
             code_const: rgb(255, 208, 138),
             code_operator: rgb(198, 158, 255),
+            selection_fg: rgb(8, 9, 16),
+            selection_bg: rgb(208, 216, 238),
         }
     }
 }
@@ -350,17 +396,25 @@ pub(crate) fn code_operator() -> Color {
     p().code_operator
 }
 
+pub(crate) fn active_item_style() -> Style {
+    let palette = p();
+    Style::default()
+        .fg(palette.selection_fg)
+        .bg(palette.selection_bg)
+        .add_modifier(Modifier::BOLD)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn theme_cycle_covers_all() {
-        let mut id = ThemeId::Lain;
+        let mut id = ThemeId::Default;
         for _ in 0..ThemeId::ALL.len() {
             id = id.next();
         }
-        assert_eq!(id, ThemeId::Lain);
+        assert_eq!(id, ThemeId::Default);
     }
 
     #[test]
@@ -368,6 +422,6 @@ mod tests {
         assert_eq!(ThemeId::from_config("green"), ThemeId::Terminal);
         assert_eq!(ThemeId::from_config("oscura-night"), ThemeId::OscuraNight);
         assert_eq!(ThemeId::from_config("oscura"), ThemeId::OscuraNight);
-        assert_eq!(ThemeId::from_config("unknown"), ThemeId::Lain);
+        assert_eq!(ThemeId::from_config("unknown"), ThemeId::Default);
     }
 }

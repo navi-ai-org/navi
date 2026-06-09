@@ -204,6 +204,7 @@ theme = "oscura-night"
 theme = "terminal"
 show_thinking = false
 full_tool_view = true
+compact_tool_visible_limit = 8
 thinking_level = "low"
 yolo_mode = true
 "#,
@@ -216,6 +217,7 @@ yolo_mode = true
         assert_eq!(config.tui.theme, "terminal");
         assert!(!config.tui.show_thinking);
         assert!(config.tui.full_tool_view);
+        assert_eq!(config.tui.compact_tool_visible_limit, 8);
         assert_eq!(config.tui.thinking_level, "low");
         assert!(config.tui.yolo_mode);
     }

@@ -12,10 +12,10 @@ pub(crate) fn command_scroll_offset(selected: usize, visible_rows: usize) -> usi
 
 pub(crate) fn modal_block(title: &'static str) -> Block<'static> {
     Block::new()
-        .title(Line::from(vec![
-            Span::styled(format!(" {title} "), Style::default().fg(red())),
-            Span::styled("  online", Style::default().fg(muted())),
-        ]))
+        .title(Line::from(Span::styled(
+            format!(" {title} "),
+            Style::default().fg(red()),
+        )))
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(accent()))

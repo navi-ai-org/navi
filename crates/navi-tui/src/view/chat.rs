@@ -117,6 +117,7 @@ fn ensure_chat_cache(app: &mut TuiApp, chat_width: usize) {
         if cache.width == chat_width
             && cache.full_tool_view == app.full_tool_view
             && cache.show_thinking == app.show_thinking
+            && cache.compact_tool_visible_limit == app.compact_tool_visible_limit
             && cache.signature == signature
         {
             return;
@@ -130,7 +131,8 @@ fn ensure_chat_cache(app: &mut TuiApp, chat_width: usize) {
             !cache.signature.is_empty()
                 && cache.width == chat_width
                 && cache.full_tool_view == app.full_tool_view
-                && cache.show_thinking == app.show_thinking,
+                && cache.show_thinking == app.show_thinking
+                && cache.compact_tool_visible_limit == app.compact_tool_visible_limit,
         )
     };
     let lines = build_chat_lines(app, chat_width);
@@ -143,6 +145,7 @@ fn ensure_chat_cache(app: &mut TuiApp, chat_width: usize) {
     cache.width = chat_width;
     cache.full_tool_view = app.full_tool_view;
     cache.show_thinking = app.show_thinking;
+    cache.compact_tool_visible_limit = app.compact_tool_visible_limit;
     cache.signature = signature;
     cache.lines = lines;
 }
@@ -171,6 +174,8 @@ fn chat_render_signature(app: &TuiApp) -> String {
     });
     signature.push_str(if app.show_thinking { "think|" } else { "hide|" });
     signature.push_str(app.theme_id.config_value());
+    signature.push('|');
+    signature.push_str(&app.compact_tool_visible_limit.to_string());
     signature.push('|');
     for msg in &app.messages {
         signature.push(match msg.role {
@@ -209,6 +214,7 @@ pub(super) fn build_chat_lines(app: &TuiApp, chat_width: usize) -> Vec<Line<'sta
         chat_width,
         app.full_tool_view,
         app.show_thinking,
+        app.compact_tool_visible_limit,
     )
 }
 

@@ -55,6 +55,7 @@ pub(crate) fn sync_preferences_to_config(app: &mut TuiApp) {
     tui.theme = app.theme_id.config_value().to_string();
     tui.show_thinking = app.show_thinking;
     tui.full_tool_view = app.full_tool_view;
+    tui.compact_tool_visible_limit = app.compact_tool_visible_limit;
     tui.thinking_level = app.thinking_level.config_value().to_string();
     tui.yolo_mode = app.yolo_mode;
 }

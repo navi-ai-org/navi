@@ -113,7 +113,7 @@ pub(super) fn render_api_key_entry(frame: &mut Frame<'_>, app: &TuiApp, area: Re
     );
 
     frame.render_widget(
-        Paragraph::new("enter save  •  esc cancel").style(Style::default().fg(muted()).bg(panel())),
+        Paragraph::new("").style(Style::default().bg(panel())),
         rows[7],
     );
     app.register_hit(
@@ -222,16 +222,8 @@ pub(super) fn render_thinking_picker(frame: &mut Frame<'_>, app: &TuiApp, area: 
             let selected = index == app.selected_thinking;
             let hovered = app.hover_index == Some(index);
             let current = *level == app.thinking_level;
-            let style = if hovered {
-                Style::default()
-                    .fg(Color::White)
-                    .bg(accent())
-                    .add_modifier(Modifier::BOLD)
-            } else if selected {
-                Style::default()
-                    .fg(signal())
-                    .bg(panel())
-                    .add_modifier(Modifier::BOLD)
+            let style = if hovered || selected {
+                active_item_style()
             } else {
                 Style::default().fg(muted()).bg(panel())
             };
@@ -261,8 +253,7 @@ pub(super) fn render_thinking_picker(frame: &mut Frame<'_>, app: &TuiApp, area: 
         );
     }
     frame.render_widget(
-        Paragraph::new("↑↓ choose  •  enter confirm  •  esc cancel")
-            .style(Style::default().fg(muted()).bg(panel())),
+        Paragraph::new("").style(Style::default().fg(muted()).bg(panel())),
         rows[1],
     );
 }
@@ -358,16 +349,8 @@ pub(super) fn render_question(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
         .map(|(row, option)| {
             let selected = row == question.selected_row;
             let hovered = app.hover_index == Some(row);
-            let style = if hovered {
-                Style::default()
-                    .fg(Color::White)
-                    .bg(accent())
-                    .add_modifier(Modifier::BOLD)
-            } else if selected {
-                Style::default()
-                    .fg(signal())
-                    .bg(panel())
-                    .add_modifier(Modifier::BOLD)
+            let style = if hovered || selected {
+                active_item_style()
             } else {
                 Style::default().fg(muted()).bg(panel())
             };
@@ -476,11 +459,11 @@ pub(super) fn render_question(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
     );
 
     let footer = if question.selected_is_custom() {
-        "type to edit  •  ←→ move  •  enter send  •  esc close"
+        "type to edit  •  ←→ move"
     } else if question.request.multiple {
-        "↑↓ choose  •  1-9 toggle  •  space toggle  •  enter send  •  esc close"
+        "1-9 toggle  •  space toggle"
     } else {
-        "↑↓ choose  •  1-9 select  •  type for text  •  enter send  •  esc close"
+        "1-9 select  •  type for text"
     };
     frame.render_widget(
         Paragraph::new(footer).style(Style::default().fg(muted()).bg(panel())),
@@ -576,7 +559,7 @@ pub(super) fn render_settings(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
         .constraints([Constraint::Min(4), Constraint::Length(1)])
         .split(inner);
 
-    let settings_list: [(&str, String); 3] = [
+    let settings_list: [(&str, String); 4] = [
         (
             "Show Reasoning",
             if app.show_thinking {
@@ -586,14 +569,18 @@ pub(super) fn render_settings(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
             },
         ),
         (
-            "Verbose Tool Output",
-            if app.full_tool_view {
+            "Compact Tool View",
+            if !app.full_tool_view {
                 "[x]".into()
             } else {
                 "[ ]".into()
             },
         ),
-        ("Theme", "Select Theme →".into()),
+        (
+            "Compact Tool Rows",
+            app.compact_tool_visible_limit.to_string(),
+        ),
+        ("Theme", format!("Select Theme ({})", app.theme_id.label())),
     ];
 
     let items = settings_list
@@ -602,21 +589,13 @@ pub(super) fn render_settings(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
         .map(|(index, (label, val))| {
             let selected = index == app.selected_setting;
             let hovered = app.hover_index == Some(index);
-            let style = if hovered {
-                Style::default()
-                    .fg(Color::White)
-                    .bg(accent())
-                    .add_modifier(Modifier::BOLD)
-            } else if selected {
-                Style::default()
-                    .fg(signal())
-                    .bg(panel())
-                    .add_modifier(Modifier::BOLD)
+            let style = if hovered || selected {
+                active_item_style()
             } else {
                 Style::default().fg(muted()).bg(panel())
             };
 
-            let line = if index == 2 {
+            let line = if index >= 2 {
                 format!("{label}: {val}")
             } else {
                 format!("{val} {label}")
@@ -634,7 +613,7 @@ pub(super) fn render_settings(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
         .enumerate()
         .take(rows[0].height as usize)
     {
-        let action = if index == 2 {
+        let action = if index == 3 {
             HitAction::ThemePicker
         } else {
             HitAction::Setting(index)
@@ -647,8 +626,7 @@ pub(super) fn render_settings(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
         );
     }
     frame.render_widget(
-        Paragraph::new("↑↓ choose  •  enter toggle  •  esc close")
-            .style(Style::default().fg(muted()).bg(panel())),
+        Paragraph::new("").style(Style::default().fg(muted()).bg(panel())),
         rows[1],
     );
     app.register_hit(
@@ -705,7 +683,7 @@ pub(super) fn render_help_modal(frame: &mut Frame<'_>, app: &TuiApp, area: Rect)
         rows[0],
     );
     frame.render_widget(
-        Paragraph::new("enter/?/esc close").style(Style::default().fg(muted()).bg(panel())),
+        Paragraph::new("").style(Style::default().bg(panel())),
         rows[1],
     );
     app.register_hit(
@@ -899,7 +877,7 @@ pub(super) fn render_plugin_approval(frame: &mut Frame<'_>, app: &TuiApp, area: 
                 Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
             ),
             Span::styled(
-                "publisher change - update refused (esc close)",
+                "publisher change - update refused",
                 Style::default().fg(muted()),
             ),
         ])
@@ -919,12 +897,7 @@ pub(super) fn render_plugin_approval(frame: &mut Frame<'_>, app: &TuiApp, area: 
                 "↑↓",
                 Style::default().fg(text()).add_modifier(Modifier::BOLD),
             ),
-            Span::styled(" scroll  •  ", Style::default().fg(muted())),
-            Span::styled(
-                "esc",
-                Style::default().fg(text()).add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(" cancel", Style::default().fg(muted())),
+            Span::styled(" scroll", Style::default().fg(muted())),
         ])
     };
     frame.render_widget(
@@ -971,7 +944,7 @@ pub(super) fn render_theme_picker(frame: &mut Frame<'_>, app: &TuiApp, area: Rec
         .split(inner);
 
     let filter = if app.theme_filter.is_empty() {
-        "type to filter"
+        "search"
     } else {
         app.theme_filter.as_str()
     };
@@ -996,16 +969,8 @@ pub(super) fn render_theme_picker(frame: &mut Frame<'_>, app: &TuiApp, area: Rec
             let current = *theme == app.theme_id;
             let selected = *orig_index == app.selected_theme;
             let hovered = app.hover_index == Some(*orig_index);
-            let style = if hovered {
-                Style::default()
-                    .fg(Color::White)
-                    .bg(accent())
-                    .add_modifier(Modifier::BOLD)
-            } else if selected {
-                Style::default()
-                    .fg(signal())
-                    .bg(panel())
-                    .add_modifier(Modifier::BOLD)
+            let style = if hovered || selected {
+                active_item_style()
             } else {
                 Style::default().fg(muted()).bg(panel())
             };
@@ -1036,8 +1001,7 @@ pub(super) fn render_theme_picker(frame: &mut Frame<'_>, app: &TuiApp, area: Rec
         );
     }
     frame.render_widget(
-        Paragraph::new("↑↓ choose  •  enter apply  •  esc close")
-            .style(Style::default().fg(muted()).bg(panel())),
+        Paragraph::new("").style(Style::default().fg(muted()).bg(panel())),
         rows[2],
     );
     app.register_hit(

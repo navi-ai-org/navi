@@ -2,8 +2,8 @@
 
 
     ███╗   ██╗ █████╗ ██╗   ██╗██╗      project navi-tui
-    ██╭ Commands   online────────────────────────────────────────────────╮
-    ██│ > type to filter                                                 │
+    ██╭ Commands ────────────────────────────────────────────────────────╮
+    ██│ > search                                                         │
     ██│                                                                  │
     ██│ New Session                                         ctrl+n     █ │
     ╚═│ Sessions                                            ctrl+s     █ │
@@ -15,7 +15,7 @@
     NA│ Thinking Mode                                                  █ │
       │ Compact Context                                                │ │
       │ Initialize Layer                                               │ │
-      │ tab/↑↓ choose  •  enter confirm  •  esc cancel                   │
+      │                                                                  │
       ╰──────────────────────────────────────────────────────────────────╯
   ┌──────────────────────────────────────────────────────────────────────────┐
   │}                                                                         │

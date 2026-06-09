@@ -1,5 +1,5 @@
 use ratatui::prelude::{Line, Span};
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::Text;
 
 use crate::TuiApp;
@@ -55,12 +55,7 @@ pub(super) fn welcome_text(app: &TuiApp, width: usize) -> Text<'static> {
         let mut spans = Vec::new();
 
         if let Some(logo_line) = NAVI_COMPACT_LOGO.get(index) {
-            let color = match (app.tick() / 5 + index as u64) % 4 {
-                0 => pink(),
-                1 => accent(),
-                2 => Color::Rgb(236, 218, 255),
-                _ => Color::Rgb(132, 20, 204),
-            };
+            let color = animated_logo_color(app.tick(), index);
             spans.push(Span::styled(
                 format!("{}{logo_line}", " ".repeat(left_pad)),
                 Style::default().fg(color).add_modifier(Modifier::BOLD),
@@ -93,6 +88,17 @@ pub(super) fn welcome_text(app: &TuiApp, width: usize) -> Text<'static> {
     )]));
 
     Text::from(lines)
+}
+
+fn animated_logo_color(tick: u64, row: usize) -> ratatui::style::Color {
+    let frame = (tick / 6) as usize;
+    let band = frame % NAVI_COMPACT_LOGO.len().max(1);
+    let trail = band.saturating_sub(1);
+    if row == band || row == trail {
+        signal()
+    } else {
+        accent()
+    }
 }
 
 #[allow(clippy::too_many_arguments)]

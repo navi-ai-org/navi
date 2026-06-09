@@ -11,13 +11,12 @@ use super::syntax::highlight_code_line;
 use super::text::wrap_text;
 use super::tool::{tool_compact_text, tool_full_content};
 
-const TOOL_GROUP_VISIBLE_LIMIT: usize = 5;
-
 pub(crate) fn build_chat_lines_for_messages<'a>(
     messages: impl IntoIterator<Item = &'a ChatMessage>,
     chat_width: usize,
     full_tool_view: bool,
     show_thinking: bool,
+    compact_tool_visible_limit: usize,
 ) -> Vec<Line<'static>> {
     let mut rendered_lines: Vec<Line<'static>> = Vec::new();
     let messages = messages.into_iter().collect::<Vec<_>>();
@@ -47,7 +46,12 @@ pub(crate) fn build_chat_lines_for_messages<'a>(
             }
             push_block_gap(&mut rendered_lines);
             let expanded = latest_tool_group_start == Some(group_start);
-            rendered_lines.extend(render_compact_tool_group(&group, chat_width, expanded));
+            rendered_lines.extend(render_compact_tool_group(
+                &group,
+                chat_width,
+                expanded,
+                compact_tool_visible_limit,
+            ));
             continue;
         }
 
@@ -245,13 +249,15 @@ fn render_compact_tool_group(
     tools: &[(&ToolInvocation, &ToolResult)],
     chat_width: usize,
     expanded: bool,
+    visible_limit: usize,
 ) -> Vec<Line<'static>> {
     if !expanded {
         return vec![render_collapsed_tool_group(tools, chat_width)];
     }
 
     let mut lines = Vec::new();
-    let hidden = tools.len().saturating_sub(TOOL_GROUP_VISIBLE_LIMIT);
+    let visible_limit = visible_limit.max(1);
+    let hidden = tools.len().saturating_sub(visible_limit);
     if hidden > 0 {
         lines.push(Line::from(vec![
             Span::styled("  ", Style::default().fg(ghost())),
@@ -262,7 +268,7 @@ fn render_compact_tool_group(
         ]));
     }
 
-    let start = tools.len().saturating_sub(TOOL_GROUP_VISIBLE_LIMIT);
+    let start = tools.len().saturating_sub(visible_limit);
     for (invocation, result) in &tools[start..] {
         lines.push(render_compact_tool_line_with_width(
             invocation, result, chat_width,
