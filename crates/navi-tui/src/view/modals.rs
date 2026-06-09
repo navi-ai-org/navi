@@ -25,7 +25,7 @@ pub(super) fn render_api_key_entry(frame: &mut Frame<'_>, app: &TuiApp, area: Re
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(accent()))
-        .style(Style::default().fg(text()).bg(panel()));
+        .style(Style::default().fg(text()).bg(modal_bg()));
     frame.render_widget(block, area);
 
     let inner = area.inner(Margin {
@@ -58,7 +58,7 @@ pub(super) fn render_api_key_entry(frame: &mut Frame<'_>, app: &TuiApp, area: Re
                 Style::default().fg(text()).add_modifier(Modifier::BOLD),
             ),
         ]))
-        .style(Style::default().bg(panel())),
+        .style(Style::default().bg(modal_bg())),
         rows[0],
     );
 
@@ -67,7 +67,7 @@ pub(super) fn render_api_key_entry(frame: &mut Frame<'_>, app: &TuiApp, area: Re
             Span::styled("Env var:   ", Style::default().fg(muted())),
             Span::styled(env_var, Style::default().fg(ghost())),
         ]))
-        .style(Style::default().bg(panel())),
+        .style(Style::default().bg(modal_bg())),
         rows[1],
     );
 
@@ -76,13 +76,13 @@ pub(super) fn render_api_key_entry(frame: &mut Frame<'_>, app: &TuiApp, area: Re
             "Paste your API key:",
             Style::default().fg(muted()),
         )))
-        .style(Style::default().bg(panel())),
+        .style(Style::default().bg(modal_bg())),
         rows[3],
     );
 
     let key_display = api_key_input_line(app, rows[4].width as usize);
     frame.render_widget(
-        Paragraph::new(key_display).style(Style::default().bg(panel())),
+        Paragraph::new(key_display).style(Style::default().bg(modal_bg())),
         rows[4],
     );
 
@@ -107,12 +107,12 @@ pub(super) fn render_api_key_entry(frame: &mut Frame<'_>, app: &TuiApp, area: Re
         ))
     };
     frame.render_widget(
-        Paragraph::new(status).style(Style::default().bg(panel())),
+        Paragraph::new(status).style(Style::default().bg(modal_bg())),
         rows[6],
     );
 
     frame.render_widget(
-        Paragraph::new("").style(Style::default().bg(panel())),
+        Paragraph::new("").style(Style::default().bg(modal_bg())),
         rows[7],
     );
     app.register_hit(
@@ -183,7 +183,7 @@ pub(super) fn render_tool_approval(frame: &mut Frame<'_>, app: &TuiApp, area: Re
     frame.render_widget(
         Paragraph::new(text)
             .wrap(Wrap { trim: false })
-            .style(Style::default().bg(panel())),
+            .style(Style::default().bg(modal_bg())),
         inner,
     );
     app.register_hit(
@@ -233,7 +233,7 @@ pub(super) fn render_thinking_picker(frame: &mut Frame<'_>, app: &TuiApp, area: 
         .collect::<Vec<_>>();
 
     frame.render_widget(
-        List::new(items).style(Style::default().bg(panel())),
+        List::new(items).style(Style::default().bg(modal_bg())),
         rows[0],
     );
     for (index, level) in THINKING_OPTIONS
@@ -252,7 +252,7 @@ pub(super) fn render_thinking_picker(frame: &mut Frame<'_>, app: &TuiApp, area: 
         );
     }
     frame.render_widget(
-        Paragraph::new("").style(Style::default().fg(muted()).bg(panel())),
+        Paragraph::new("").style(Style::default().fg(muted()).bg(modal_bg())),
         rows[1],
     );
 }
@@ -299,7 +299,7 @@ pub(super) fn render_question(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
                 Style::default().fg(signal()).add_modifier(Modifier::BOLD),
             ),
         ]))
-        .style(Style::default().bg(panel())),
+        .style(Style::default().bg(modal_bg())),
         rows[0],
     );
 
@@ -318,7 +318,7 @@ pub(super) fn render_question(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
             Line::from(Span::styled(kind, Style::default().fg(muted()))),
         ]))
         .wrap(Wrap { trim: false })
-        .style(Style::default().bg(panel())),
+        .style(Style::default().bg(modal_bg())),
         rows[1],
     );
 
@@ -327,7 +327,7 @@ pub(super) fn render_question(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
             "Options",
             Style::default().fg(muted()).add_modifier(Modifier::BOLD),
         )))
-        .style(Style::default().bg(panel())),
+        .style(Style::default().bg(modal_bg())),
         rows[2],
     );
 
@@ -378,7 +378,7 @@ pub(super) fn render_question(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
         })
         .collect::<Vec<_>>();
     frame.render_widget(
-        List::new(items).style(Style::default().bg(panel())),
+        List::new(items).style(Style::default().bg(modal_bg())),
         rows[3],
     );
     render_scrollbar(
@@ -413,14 +413,14 @@ pub(super) fn render_question(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(text_border))
-        .style(Style::default().bg(panel()));
+        .style(Style::default().bg(modal_bg()));
     let text_inner = rows[4].inner(Margin {
         horizontal: 1,
         vertical: 1,
     });
     frame.render_widget(text_block, rows[4]);
     frame.render_widget(
-        Paragraph::new(question_text_line(question)).style(Style::default().bg(panel())),
+        Paragraph::new(question_text_line(question)).style(Style::default().bg(modal_bg())),
         text_inner,
     );
     app.register_hit(rows[4], 30, "question text answer", HitAction::QuestionText);
@@ -431,7 +431,7 @@ pub(super) fn render_question(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
             .bg(red())
             .add_modifier(Modifier::BOLD)
     } else {
-        Style::default().fg(text()).bg(panel())
+        Style::default().fg(text()).bg(modal_bg())
     };
     frame.render_widget(
         Paragraph::new(Text::from(vec![
@@ -441,7 +441,7 @@ pub(super) fn render_question(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
                 deny_style,
             )),
         ]))
-        .style(Style::default().bg(panel())),
+        .style(Style::default().bg(modal_bg())),
         rows[5],
     );
     app.register_hit(
@@ -465,7 +465,7 @@ pub(super) fn render_question(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
         "1-9 select  •  type for text"
     };
     frame.render_widget(
-        Paragraph::new(footer).style(Style::default().fg(text()).bg(panel())),
+        Paragraph::new(footer).style(Style::default().fg(text()).bg(modal_bg())),
         rows[6],
     );
 }
@@ -604,7 +604,7 @@ pub(super) fn render_settings(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
         .collect::<Vec<_>>();
 
     frame.render_widget(
-        List::new(items).style(Style::default().bg(panel())),
+        List::new(items).style(Style::default().bg(modal_bg())),
         rows[0],
     );
     for (index, setting) in settings_list
@@ -625,7 +625,7 @@ pub(super) fn render_settings(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
         );
     }
     frame.render_widget(
-        Paragraph::new("").style(Style::default().fg(muted()).bg(panel())),
+        Paragraph::new("").style(Style::default().fg(muted()).bg(modal_bg())),
         rows[1],
     );
     app.register_hit(
@@ -677,12 +677,12 @@ pub(super) fn render_help_modal(frame: &mut Frame<'_>, app: &TuiApp, area: Rect)
 
     frame.render_widget(
         Paragraph::new(lines)
-            .style(Style::default().fg(text()).bg(panel()))
+            .style(Style::default().fg(text()).bg(modal_bg()))
             .wrap(Wrap { trim: false }),
         rows[0],
     );
     frame.render_widget(
-        Paragraph::new("").style(Style::default().bg(panel())),
+        Paragraph::new("").style(Style::default().bg(modal_bg())),
         rows[1],
     );
     app.register_hit(
@@ -719,10 +719,10 @@ pub(super) fn render_message_actions(frame: &mut Frame<'_>, app: &TuiApp, area: 
         .unwrap_or_else(|| "message no longer available".to_string());
     frame.render_widget(
         Paragraph::new(Line::from(vec![
-            Span::styled("Selected: ", Style::default().fg(muted()).bg(panel())),
-            Span::styled(selected_text, Style::default().fg(text()).bg(panel())),
+            Span::styled("Selected: ", Style::default().fg(muted()).bg(modal_bg())),
+            Span::styled(selected_text, Style::default().fg(text()).bg(modal_bg())),
         ]))
-        .style(Style::default().bg(panel())),
+        .style(Style::default().bg(modal_bg())),
         rows[0],
     );
     frame.render_widget(Paragraph::new(""), rows[1]);
@@ -741,7 +741,7 @@ pub(super) fn render_message_actions(frame: &mut Frame<'_>, app: &TuiApp, area: 
             let description_style = if hovered || selected {
                 active_item_style()
             } else {
-                Style::default().fg(muted()).bg(panel())
+                Style::default().fg(muted()).bg(modal_bg())
             };
             ListItem::new(Line::from(vec![
                 Span::styled(format!("{:<16}", action.label()), style),
@@ -751,7 +751,7 @@ pub(super) fn render_message_actions(frame: &mut Frame<'_>, app: &TuiApp, area: 
         })
         .collect::<Vec<_>>();
     frame.render_widget(
-        List::new(items).style(Style::default().bg(panel())),
+        List::new(items).style(Style::default().bg(modal_bg())),
         rows[0],
     );
 
@@ -765,7 +765,7 @@ pub(super) fn render_message_actions(frame: &mut Frame<'_>, app: &TuiApp, area: 
     }
 
     frame.render_widget(
-        Paragraph::new("enter select · esc close").style(Style::default().fg(muted()).bg(panel())),
+        Paragraph::new("enter select · esc close").style(Style::default().fg(muted()).bg(modal_bg())),
         rows[3],
     );
     app.register_hit(rows[3], 20, "close message actions", HitAction::CloseModal);
@@ -935,7 +935,7 @@ pub(super) fn render_plugin_approval(frame: &mut Frame<'_>, app: &TuiApp, area: 
     let body = Paragraph::new(Text::from(lines))
         .wrap(Wrap { trim: false })
         .scroll((app.plugin_approval_scroll as u16, 0))
-        .style(Style::default().bg(panel()));
+        .style(Style::default().bg(modal_bg()));
     frame.render_widget(body, rows[0]);
     render_scrollbar(
         frame,
@@ -978,7 +978,7 @@ pub(super) fn render_plugin_approval(frame: &mut Frame<'_>, app: &TuiApp, area: 
         ])
     };
     frame.render_widget(
-        Paragraph::new(footer).style(Style::default().bg(panel())),
+        Paragraph::new(footer).style(Style::default().bg(modal_bg())),
         rows[1],
     );
     if !blocked {
@@ -1030,7 +1030,7 @@ pub(super) fn render_theme_picker(frame: &mut Frame<'_>, app: &TuiApp, area: Rec
             Span::styled("> ", Style::default().fg(signal())),
             Span::styled(filter, Style::default().fg(text())),
         ]))
-        .style(Style::default().bg(panel())),
+        .style(Style::default().bg(modal_bg())),
         rows[0],
     );
 
@@ -1062,8 +1062,8 @@ pub(super) fn render_theme_picker(frame: &mut Frame<'_>, app: &TuiApp, area: Rec
         .with_selected((!filtered.is_empty()).then_some(visible_selected));
     frame.render_stateful_widget(
         List::new(items)
-            .style(Style::default().bg(panel()))
-            .highlight_style(Style::default()),
+            .style(Style::default().bg(modal_bg()))
+            .highlight_style(modal_list_highlight_style()),
         rows[1],
         &mut list_state,
     );
@@ -1078,7 +1078,7 @@ pub(super) fn render_theme_picker(frame: &mut Frame<'_>, app: &TuiApp, area: Rec
         );
     }
     frame.render_widget(
-        Paragraph::new("").style(Style::default().fg(muted()).bg(panel())),
+        Paragraph::new("").style(Style::default().fg(muted()).bg(modal_bg())),
         rows[2],
     );
     app.register_hit(

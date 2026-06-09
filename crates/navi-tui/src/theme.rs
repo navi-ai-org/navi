@@ -359,6 +359,36 @@ pub(crate) fn muted() -> Color {
 pub(crate) fn panel() -> Color {
     p().panel
 }
+/// Opaque surface color for modals. Never `Color::Reset`.
+pub(crate) fn modal_bg() -> Color {
+    let palette = p();
+    if palette.panel == Color::Reset {
+        Color::Rgb(40, 44, 52)
+    } else {
+        palette.panel
+    }
+}
+/// Foreground for modal surfaces when the theme text color is unset.
+pub(crate) fn modal_fg() -> Color {
+    if text() == Color::Reset {
+        Color::Gray
+    } else {
+        text()
+    }
+}
+pub(crate) fn modal_style() -> Style {
+    Style::default().fg(modal_fg()).bg(modal_bg())
+}
+/// Dim layer painted behind modals over the chat viewport.
+pub(crate) fn modal_scrim_style() -> Style {
+    let palette = p();
+    let bg = if palette.bg == Color::Reset {
+        Color::Black
+    } else {
+        palette.bg
+    };
+    Style::default().fg(modal_fg()).bg(bg)
+}
 pub(crate) fn bg() -> Color {
     p().bg
 }
@@ -433,7 +463,7 @@ pub(crate) fn active_item_style() -> Style {
 }
 
 pub(crate) fn inactive_item_style() -> Style {
-    Style::default().fg(text()).bg(panel())
+    Style::default().fg(modal_fg()).bg(modal_bg())
 }
 
 #[cfg(test)]

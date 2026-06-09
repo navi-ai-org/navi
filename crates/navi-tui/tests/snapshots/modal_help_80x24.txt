@@ -1,24 +1,20 @@
-  main  /tmp/navi-test-project                               │ 0 / 200K │ 0 0 ✓
 
 
-    ███╗   ██╗ █████╗ ██╗   ██╗██╗      project navi-tui
-    ████╗╭ Shortcuts ─────────────────────────────────────────────────╮
-    ██╔██│ ctrl+p      commands                                       │
-    ██║╚█│ tab         refresh/provider actions                       │
-    ██║ ╚│ ctrl+m      models                                         │
-    ╚═╝  │ ctrl+n      new layer                                      │
+
+
+         ╭ Shortcuts ─────────────────────────────────────────────────╮
+         │ ctrl+p      commands                                       │
+         │ tab         refresh/provider actions                       │
+         │ ctrl+m      models                                         │
+         │ ctrl+n      new layer                                      │
          │ ctrl+s      memory                                         │
-         │ ctrl+o      compact/full tool output                       │atch
+         │ ctrl+o      compact/full tool output                       │
          │ ctrl+d      debug                                          │
          │ ctrl+g      toggle YOLO mode                               │
          │ ctrl+enter  send prompt                                    │
-    NAVI │ enter       new line                                       │
+         │ enter       new line                                       │
          │ ctrl+j      new line                                       │
          │ /           commands when input is empty                   │
          │ ?           shortcuts                                      │
          │                                                            │
          ╰────────────────────────────────────────────────────────────╯
-  ┌──────────────────────────────────────────────────────────────────────────┐
-  │}                                                                         │
-  └──────────────────────────────────────────────────────────────────────────┘
-   type a task, or ctrl+p for commands

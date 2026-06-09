@@ -35,7 +35,7 @@ pub(super) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
                     Style::default().fg(muted()),
                 )),
             ]))
-            .style(Style::default().bg(panel())),
+            .style(Style::default().bg(modal_bg())),
             rows[0],
         );
     } else {
@@ -77,7 +77,7 @@ pub(super) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
             .collect::<Vec<_>>();
 
         frame.render_widget(
-            List::new(items).style(Style::default().bg(panel())),
+            List::new(items).style(Style::default().bg(modal_bg())),
             rows[0],
         );
         render_scrollbar(
@@ -106,7 +106,7 @@ pub(super) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
     }
 
     frame.render_widget(
-        Paragraph::new("del delete").style(Style::default().fg(text()).bg(panel())),
+        Paragraph::new("del delete").style(Style::default().fg(text()).bg(modal_bg())),
         rows[1],
     );
 }

@@ -19,18 +19,42 @@ pub(crate) fn modal_block(title: &'static str) -> Block<'static> {
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(accent()))
-        .style(Style::default().fg(text()).bg(panel()))
+        .style(modal_style())
+}
+
+/// Paint every cell in `area` with spaces and `style`.
+///
+/// Unlike `Buffer::set_style`, this overwrites symbols so underlying chat
+/// content cannot bleed through modal surfaces.
+pub(crate) fn opaque_fill(frame: &mut Frame<'_>, area: Rect, style: Style) {
+    let area = area.intersection(frame.area());
+    if area.is_empty() {
+        return;
+    }
+    let buf = frame.buffer_mut();
+    for y in area.top()..area.bottom() {
+        for x in area.left()..area.right() {
+            let cell = &mut buf[(x, y)];
+            cell.set_symbol(" ");
+            cell.set_style(style);
+        }
+    }
+}
+
+pub(crate) fn fill_modal_surface(frame: &mut Frame<'_>, area: Rect) {
+    opaque_fill(frame, area, modal_style());
+}
+
+pub(crate) fn fill_modal_scrim(frame: &mut Frame<'_>, area: Rect) {
+    opaque_fill(frame, area, modal_scrim_style());
 }
 
 pub(crate) fn clear_modal_area(frame: &mut Frame<'_>, area: Rect) {
-    use ratatui::widgets::Clear;
-    frame.render_widget(Clear, area);
-    frame.render_widget(
-        Block::new()
-            .borders(Borders::ALL)
-            .style(Style::default().fg(panel()).bg(panel())),
-        area,
-    );
+    fill_modal_surface(frame, area);
+}
+
+pub(crate) fn modal_list_highlight_style() -> Style {
+    active_item_style()
 }
 
 pub(crate) fn truncate_display(value: &str, max_chars: usize) -> String {
@@ -78,4 +102,42 @@ fn fit_text(value: &str, width: usize) -> String {
 
 pub(crate) fn modal_rect(area: Rect, max_width: u16, height: u16) -> Rect {
     ModalSpec::fixed(max_width, height).rect(area)
+}
+
+#[cfg(test)]
+mod tests {
+    use ratatui::backend::TestBackend;
+    use ratatui::Terminal;
+
+    use crate::theme::{ThemeId, with_palette};
+
+    use super::*;
+
+    #[test]
+    fn opaque_fill_replaces_symbols_and_style() {
+        with_palette(&ThemeId::Lain.palette(), || {
+            let backend = TestBackend::new(5, 1);
+            let mut terminal = Terminal::new(backend).expect("terminal");
+            terminal
+                .draw(|frame| {
+                    for x in 0..5 {
+                        frame.buffer_mut()[(x, 0)].set_symbol("Z");
+                    }
+                    opaque_fill(
+                        frame,
+                        Rect::new(1, 0, 3, 1),
+                        modal_style(),
+                    );
+                })
+                .expect("draw");
+
+            let buf = terminal.backend().buffer();
+            assert_eq!(buf[(0, 0)].symbol(), "Z");
+            assert_eq!(buf[(1, 0)].symbol(), " ");
+            assert_eq!(buf[(2, 0)].symbol(), " ");
+            assert_eq!(buf[(3, 0)].symbol(), " ");
+            assert_eq!(buf[(4, 0)].symbol(), "Z");
+            assert_eq!(buf[(2, 0)].bg, modal_bg());
+        });
+    }
 }

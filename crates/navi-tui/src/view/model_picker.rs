@@ -7,7 +7,9 @@ use ratatui::widgets::{List, ListItem, ListState, Paragraph};
 
 use crate::TuiApp;
 use crate::providers::{ListRow, build_model_rows, selected_model_in_rows};
-use crate::render::{clear_modal_area, modal_block, model_row_simple};
+use crate::render::{
+    clear_modal_area, modal_block, modal_list_highlight_style, model_row_simple,
+};
 use crate::theme::*;
 use crate::ui::interaction::{HitAction, line_rect};
 use crate::ui::list::render_scrollbar;
@@ -47,7 +49,7 @@ pub(super) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
                 }),
             ),
         ])]))
-        .style(Style::default().bg(panel())),
+        .style(Style::default().bg(modal_bg())),
         rows[0],
     );
 
@@ -69,9 +71,9 @@ pub(super) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
             ListRow::Header { label, .. } => {
                 let header_style = Style::default()
                     .fg(text())
-                    .bg(panel())
+                    .bg(modal_bg())
                     .add_modifier(Modifier::BOLD);
-                let refresh_style = Style::default().fg(ghost()).bg(panel());
+                let refresh_style = Style::default().fg(ghost()).bg(modal_bg());
 
                 let mut spans = vec![Span::styled(format!("  {}", label), header_style)];
                 spans.push(Span::styled("  ↻ tab", refresh_style));
@@ -101,8 +103,8 @@ pub(super) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
 
     frame.render_stateful_widget(
         List::new(items)
-            .style(Style::default().bg(panel()))
-            .highlight_style(Style::default()),
+            .style(Style::default().bg(modal_bg()))
+            .highlight_style(modal_list_highlight_style()),
         list_area,
         &mut list_state,
     );
@@ -144,7 +146,7 @@ pub(super) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
     }
     frame.render_widget(
         Paragraph::new("search  •  ctrl+e setup  •  tab refresh provider  •  ctrl+r refresh all")
-            .style(Style::default().fg(text()).bg(panel())),
+            .style(Style::default().fg(text()).bg(modal_bg())),
         rows[2],
     );
 }
