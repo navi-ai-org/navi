@@ -4,7 +4,7 @@ use ratatui::style::{Modifier, Style};
 use ratatui::widgets::Paragraph;
 
 use crate::TuiApp;
-use crate::theme::{accent, ghost, panel};
+use crate::theme::{accent, ghost, modal_bg};
 use crate::ui::interaction::{HitAction, ScrollTarget};
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -116,10 +116,10 @@ pub(crate) fn render_scrollbar(
             let style = if y >= thumb.y && y < thumb.y.saturating_add(thumb.height) {
                 Style::default()
                     .fg(accent())
-                    .bg(panel())
+                    .bg(modal_bg())
                     .add_modifier(Modifier::BOLD)
             } else {
-                Style::default().fg(ghost()).bg(panel())
+                Style::default().fg(ghost()).bg(modal_bg())
             };
             let glyph = if y >= thumb.y && y < thumb.y.saturating_add(thumb.height) {
                 "█"
@@ -131,7 +131,7 @@ pub(crate) fn render_scrollbar(
         .collect::<Vec<_>>();
 
     frame.render_widget(
-        Paragraph::new(lines).style(Style::default().bg(panel())),
+        Paragraph::new(lines).style(Style::default().bg(modal_bg())),
         bar,
     );
 

@@ -95,12 +95,12 @@ pub(super) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
 
     frame.render_widget(
         Paragraph::new(lines)
-            .style(Style::default().fg(text()).bg(panel()))
+            .style(Style::default().fg(text()).bg(modal_bg()))
             .wrap(Wrap { trim: false }),
         rows[0],
     );
     frame.render_widget(
-        Paragraph::new("").style(Style::default().bg(panel())),
+        Paragraph::new("").style(Style::default().bg(modal_bg())),
         rows[1],
     );
     app.register_hit(

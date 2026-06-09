@@ -18,7 +18,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Paragraph};
 
 use crate::TuiApp;
-use crate::render::modal_rect;
+use crate::render::{fill_modal_scrim, modal_rect};
 use crate::state::Mode;
 use crate::theme;
 use crate::theme::{accent, bg, ghost, muted, signal, text};
@@ -49,6 +49,10 @@ fn render_inner(frame: &mut Frame<'_>, app: &mut TuiApp) {
     chat::render_chat_area(frame, app, vertical[1]);
     input::render_input(frame, app, vertical[2]);
 
+    if modal_backdrop_active(app) {
+        fill_modal_scrim(frame, content_area);
+    }
+
     match app.mode {
         Mode::Commands => command_palette::render(frame, app, modal_rect(area, 68, 15)),
         Mode::Models => model_picker::render(frame, app, modal_rect(area, 72, 22)),
@@ -77,6 +81,10 @@ fn render_inner(frame: &mut Frame<'_>, app: &mut TuiApp) {
     }
 
     notification::render_notification(frame, app, area);
+}
+
+fn modal_backdrop_active(app: &TuiApp) -> bool {
+    app.mode != Mode::Normal || !app.pending_approvals.is_empty()
 }
 
 fn render_header(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {

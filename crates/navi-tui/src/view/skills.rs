@@ -4,7 +4,7 @@ use ratatui::style::Style;
 use ratatui::widgets::{List, ListItem, ListState, Paragraph};
 
 use crate::TuiApp;
-use crate::render::{clear_modal_area, modal_block};
+use crate::render::{clear_modal_area, modal_block, modal_list_highlight_style};
 use crate::theme::*;
 use crate::ui::interaction::{HitAction, line_rect};
 use crate::ui::list::render_scrollbar;
@@ -39,7 +39,7 @@ pub(super) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
             Span::styled("> ", Style::default().fg(signal())),
             Span::styled(filter, Style::default().fg(text())),
         ]))
-        .style(Style::default().bg(panel())),
+        .style(Style::default().bg(modal_bg())),
         rows[0],
     );
 
@@ -58,7 +58,7 @@ pub(super) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
             let (name_style, status_icon) = if is_hovered || is_selected {
                 (active_item_style(), if is_active { "✓" } else { " " })
             } else if is_active {
-                (Style::default().fg(signal()).bg(panel()), "✓")
+                (Style::default().fg(signal()).bg(modal_bg()), "✓")
             } else {
                 (inactive_item_style(), " ")
             };
@@ -98,8 +98,8 @@ pub(super) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
         .with_selected((!skills.is_empty()).then_some(app.hover_index.unwrap_or(selected)));
     frame.render_stateful_widget(
         List::new(items)
-            .style(Style::default().bg(panel()))
-            .highlight_style(Style::default()),
+            .style(Style::default().bg(modal_bg()))
+            .highlight_style(modal_list_highlight_style()),
         rows[1],
         &mut list_state,
     );
@@ -128,13 +128,13 @@ pub(super) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
     let total_count = app.available_skills.len();
     let summary = format!(" {} active / {} available ", active_count, total_count);
     frame.render_widget(
-        Paragraph::new(summary).style(Style::default().fg(text()).bg(panel())),
+        Paragraph::new(summary).style(Style::default().fg(text()).bg(modal_bg())),
         rows[2],
     );
 
     // Footer
     frame.render_widget(
-        Paragraph::new("").style(Style::default().fg(muted()).bg(panel())),
+        Paragraph::new("").style(Style::default().fg(muted()).bg(modal_bg())),
         rows[3],
     );
 }

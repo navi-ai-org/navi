@@ -31,7 +31,7 @@ pub(super) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
 
     frame.render_widget(
         Paragraph::new("Configure API keys or OAuth sign-in for supported providers.")
-            .style(Style::default().fg(muted()).bg(panel())),
+            .style(Style::default().fg(muted()).bg(modal_bg())),
         rows[0],
     );
 
@@ -58,7 +58,7 @@ pub(super) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
             let style = if app.hover_index == Some(index) || selected {
                 active_item_style()
             } else if status.configured {
-                Style::default().fg(signal()).bg(panel())
+                Style::default().fg(signal()).bg(modal_bg())
             } else {
                 inactive_item_style()
             };
@@ -67,7 +67,7 @@ pub(super) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
         .collect::<Vec<_>>();
 
     frame.render_widget(
-        List::new(items).style(Style::default().bg(panel())),
+        List::new(items).style(Style::default().bg(modal_bg())),
         rows[1],
     );
     render_scrollbar(
@@ -99,7 +99,7 @@ pub(super) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
 
     frame.render_widget(
         Paragraph::new("k API key  •  o OAuth  •  r sync models")
-            .style(Style::default().fg(text()).bg(panel())),
+            .style(Style::default().fg(text()).bg(modal_bg())),
         rows[2],
     );
 }
