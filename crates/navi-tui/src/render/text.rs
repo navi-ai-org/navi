@@ -2,6 +2,39 @@ use ratatui::prelude::{Modifier, Span, Style};
 
 use crate::theme::*;
 
+/// Split styled spans into multiple lines that each fit within `max_width` columns.
+pub(crate) fn wrap_spans_to_width(spans: &[Span<'static>], max_width: usize) -> Vec<Vec<Span<'static>>> {
+    let max_width = max_width.max(1);
+    let mut lines: Vec<Vec<Span<'static>>> = vec![Vec::new()];
+    let mut current_width = 0usize;
+
+    for span in spans {
+        if span.content.is_empty() {
+            continue;
+        }
+        let style = span.style;
+        let chars: Vec<char> = span.content.chars().collect();
+        let mut start = 0usize;
+        while start < chars.len() {
+            if current_width >= max_width {
+                lines.push(Vec::new());
+                current_width = 0;
+            }
+            let remaining = max_width.saturating_sub(current_width);
+            let take = remaining.min(chars.len() - start);
+            let chunk: String = chars[start..start + take].iter().collect();
+            lines
+                .last_mut()
+                .expect("at least one output line")
+                .push(Span::styled(chunk, style));
+            current_width += take;
+            start += take;
+        }
+    }
+
+    lines
+}
+
 pub(crate) fn display_width(s: &str) -> usize {
     if s.is_ascii() {
         s.len()
