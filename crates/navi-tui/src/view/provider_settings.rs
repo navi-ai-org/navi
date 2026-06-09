@@ -2,18 +2,18 @@ use navi_sdk::provider_catalog;
 use ratatui::layout::{Constraint, Direction, Layout, Margin, Rect};
 use ratatui::prelude::{Frame, Span};
 use ratatui::style::Style;
-use ratatui::widgets::{Clear, List, ListItem, Paragraph};
+use ratatui::widgets::{List, ListItem, Paragraph};
 
 use crate::TuiApp;
 use crate::providers::provider_auth_status;
-use crate::render::modal_block;
+use crate::render::{clear_modal_area, modal_block};
 use crate::runtime::provider_supports_oauth;
 use crate::theme::*;
 use crate::ui::interaction::{HitAction, line_rect};
 use crate::ui::list::render_scrollbar;
 
 pub(super) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
-    frame.render_widget(Clear, area);
+    clear_modal_area(frame, area);
     frame.render_widget(modal_block("Provider Accounts"), area);
 
     let inner = area.inner(Margin {
