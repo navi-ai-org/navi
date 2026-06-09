@@ -23,8 +23,12 @@ pub(crate) fn modal_block(title: &'static str) -> Block<'static> {
 }
 
 pub(crate) fn clear_modal_area(frame: &mut Frame<'_>, area: Rect) {
+    use ratatui::widgets::Clear;
+    frame.render_widget(Clear, area);
     frame.render_widget(
-        ratatui::widgets::Paragraph::new("").style(Style::default().bg(panel())),
+        Block::new()
+            .borders(Borders::ALL)
+            .style(Style::default().fg(panel()).bg(panel())),
         area,
     );
 }
