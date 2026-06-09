@@ -23,7 +23,10 @@ pub(crate) fn modal_block(title: &'static str) -> Block<'static> {
 }
 
 pub(crate) fn clear_modal_area(frame: &mut Frame<'_>, area: Rect) {
-    frame.render_widget(Block::new().style(Style::default().bg(panel())), area);
+    frame.render_widget(
+        ratatui::widgets::Paragraph::new("").style(Style::default().bg(panel())),
+        area,
+    );
 }
 
 pub(crate) fn truncate_display(value: &str, max_chars: usize) -> String {
