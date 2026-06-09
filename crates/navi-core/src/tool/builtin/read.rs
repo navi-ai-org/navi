@@ -1,12 +1,25 @@
 use anyhow::{Context, Result};
 use async_trait::async_trait;
+use navi_vfs::VfsEngine;
 use serde_json::json;
 use std::fs;
+use std::path::Path;
+use std::sync::Arc;
 
 use super::helpers;
 use crate::tool::{Tool, ToolDefinition, ToolInvocation, ToolKind, ToolResult};
 
-pub(crate) struct ReadFileTool;
+const DEFAULT_READ_LINE_LIMIT: usize = 400;
+
+pub(crate) struct ReadFileTool {
+    vfs: Option<Arc<VfsEngine>>,
+}
+
+impl ReadFileTool {
+    pub(crate) fn new(vfs: Option<Arc<VfsEngine>>) -> Self {
+        Self { vfs }
+    }
+}
 
 #[async_trait]
 impl Tool for ReadFileTool {
@@ -24,7 +37,7 @@ impl Tool for ReadFileTool {
                     ),
                     (
                         "end_line",
-                        "Line number to stop reading at (1-indexed, inclusive, defaults to start_line + 999).",
+                        "Line number to stop reading at (1-indexed, inclusive, defaults to start_line + 399).",
                     ),
                 ],
                 &["path"],
@@ -67,7 +80,7 @@ impl Tool for ReadFileTool {
         } else {
             match end_line {
                 Some(e) => (e as usize).clamp(start_idx, total_lines),
-                None => (start_idx + 1000).min(total_lines),
+                None => (start_idx + DEFAULT_READ_LINE_LIMIT).min(total_lines),
             }
         };
 
@@ -84,17 +97,29 @@ impl Tool for ReadFileTool {
             sliced_content.push('\n');
         }
 
+        // VFS: minify content before sending to the LLM.
+        let (display_content, vfs_minified) = if let Some(ref vfs) = self.vfs {
+            if let Some(minified) = vfs.minify(Path::new(&path), &sliced_content) {
+                (minified.clone(), true)
+            } else {
+                (sliced_content, false)
+            }
+        } else {
+            (sliced_content, false)
+        };
+
         let truncated = start_idx > 0 || end_idx < total_lines;
 
         Ok(helpers::ok(
             invocation.id,
             json!({
                 "path": path,
-                "content": sliced_content,
+                "content": display_content,
                 "start_line": start_idx + 1,
                 "end_line": end_idx,
                 "total_lines": total_lines,
-                "truncated": truncated
+                "truncated": truncated,
+                "vfs_minified": vfs_minified,
             }),
         ))
     }
