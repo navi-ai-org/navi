@@ -53,6 +53,8 @@ pub(crate) trait ProviderBehavior: Send + Sync {
     ///
     /// Default implementation handles OpenAI Responses (`input_tokens`/`output_tokens`)
     /// and Chat Completions (`prompt_tokens`/`completion_tokens`) field names.
+    /// Also extracts cached tokens from OpenAI's `input_tokens_details.cached_tokens`
+    /// or `prompt_tokens_details.cached_tokens`.
     /// Providers with different field names should override this.
     fn parse_usage(&self, usage: &serde_json::Value) -> NormalizedUsage {
         let input_tokens = usage
@@ -63,11 +65,19 @@ pub(crate) trait ProviderBehavior: Send + Sync {
             .get("output_tokens")
             .or_else(|| usage.get("completion_tokens"))
             .and_then(serde_json::Value::as_u64);
+        // OpenAI reports cached tokens in nested details objects:
+        // Responses: usage.input_tokens_details.cached_tokens
+        // Chat Completions: usage.prompt_tokens_details.cached_tokens
+        let cache_read_tokens = usage
+            .get("input_tokens_details")
+            .or_else(|| usage.get("prompt_tokens_details"))
+            .and_then(|details| details.get("cached_tokens"))
+            .and_then(serde_json::Value::as_u64);
         NormalizedUsage {
             input_tokens,
             output_tokens,
             cache_creation_tokens: None,
-            cache_read_tokens: None,
+            cache_read_tokens,
         }
     }
 }

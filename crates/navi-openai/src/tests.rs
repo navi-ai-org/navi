@@ -32,6 +32,7 @@ fn extract_chat_completion_text(value: &serde_json::Value) -> String {
 }
 
 use crate::errors::ProviderError;
+use crate::providers::behavior::ProviderBehavior;
 use crate::mapping::{
     apply_thinking_to_body, message_to_json, responses_input_item_to_json,
     thinking_request_for_api, unique_sorted_model_ids,
@@ -1018,6 +1019,60 @@ fn anthropic_sse_message_delta_with_usage() {
             .iter()
             .any(|e| matches!(e.as_ref().unwrap(), ModelStreamEvent::Usage { .. }))
     );
+}
+
+#[test]
+fn anthropic_sse_message_delta_with_cache_usage() {
+    let data = r#"{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"input_tokens":100,"output_tokens":50,"cache_creation_input_tokens":500,"cache_read_input_tokens":0}}"#;
+    let events = parse_anthropic_sse(data);
+    let usage_event = events
+        .iter()
+        .find_map(|e| match e.as_ref().unwrap() {
+            ModelStreamEvent::Usage {
+                cache_creation_tokens,
+                cache_read_tokens,
+                ..
+            } => Some((cache_creation_tokens, cache_read_tokens)),
+            _ => None,
+        })
+        .expect("usage event");
+    assert_eq!(*usage_event.0, Some(500));
+    assert_eq!(*usage_event.1, Some(0));
+}
+
+#[test]
+fn openai_usage_extracts_cached_tokens() {
+    let usage = serde_json::json!({
+        "input_tokens": 1000,
+        "output_tokens": 200,
+        "input_tokens_details": {
+            "cached_tokens": 800,
+            "text_tokens": 200
+        }
+    });
+    let behavior = crate::providers::behavior::OpenAiBehavior;
+    let normalized = behavior.parse_usage(&usage);
+    assert_eq!(normalized.input_tokens, Some(1000));
+    assert_eq!(normalized.output_tokens, Some(200));
+    assert_eq!(normalized.cache_read_tokens, Some(800));
+    assert_eq!(normalized.cache_creation_tokens, None);
+}
+
+#[test]
+fn openai_chat_completions_usage_extracts_cached_tokens() {
+    let usage = serde_json::json!({
+        "prompt_tokens": 1000,
+        "completion_tokens": 200,
+        "prompt_tokens_details": {
+            "cached_tokens": 600,
+            "audio_tokens": 0
+        }
+    });
+    let behavior = crate::providers::behavior::OpenAiBehavior;
+    let normalized = behavior.parse_usage(&usage);
+    assert_eq!(normalized.input_tokens, Some(1000));
+    assert_eq!(normalized.output_tokens, Some(200));
+    assert_eq!(normalized.cache_read_tokens, Some(600));
 }
 
 #[test]

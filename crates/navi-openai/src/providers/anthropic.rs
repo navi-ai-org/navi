@@ -191,7 +191,12 @@ pub(crate) fn parse_anthropic_sse_with_state(
                 Vec::new()
             }
         }
-        Some("message_delta") => usage_from_value(value.get("usage")),
+        Some("message_delta") => {
+            crate::mapping::usage_from_value_with_behavior(
+                value.get("usage"),
+                Some(&crate::providers::behavior::AnthropicBehavior),
+            )
+        }
         Some("message_stop") => vec![Ok(ModelStreamEvent::Done)],
         Some("error") => vec![Err(anyhow::anyhow!(
             "{}",
