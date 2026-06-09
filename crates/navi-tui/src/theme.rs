@@ -160,13 +160,13 @@ impl ThemePalette {
             user_accent: rgb(154, 124, 205),
             code_keyword: rgb(116, 214, 232),
             code_string: rgb(196, 154, 255),
-            code_comment: rgb(114, 119, 130),
+            code_comment: rgb(140, 146, 160),
             code_number: rgb(141, 211, 255),
-            code_punct: rgb(164, 170, 184),
+            code_punct: rgb(180, 188, 202),
             code_type: rgb(100, 213, 235),
             code_func: rgb(218, 204, 255),
             code_const: rgb(255, 204, 128),
-            code_operator: rgb(255, 139, 203),
+            code_operator: rgb(255, 150, 210),
             selection_fg: rgb(0, 0, 0),
             selection_bg: rgb(236, 232, 255),
         }
@@ -186,13 +186,13 @@ impl ThemePalette {
             user_accent: rgb(124, 255, 178),
             code_keyword: rgb(124, 255, 178),
             code_string: rgb(198, 255, 214),
-            code_comment: rgb(88, 118, 98),
+            code_comment: rgb(110, 148, 122),
             code_number: rgb(160, 220, 255),
-            code_punct: rgb(143, 200, 165),
+            code_punct: rgb(160, 210, 178),
             code_type: rgb(111, 214, 255),
             code_func: rgb(190, 255, 210),
             code_const: rgb(255, 199, 112),
-            code_operator: rgb(255, 118, 160),
+            code_operator: rgb(255, 140, 180),
             selection_fg: rgb(5, 8, 6),
             selection_bg: rgb(210, 255, 228),
         }
@@ -212,13 +212,13 @@ impl ThemePalette {
             user_accent: rgb(143, 179, 255),
             code_keyword: rgb(143, 179, 255),
             code_string: rgb(198, 210, 255),
-            code_comment: rgb(110, 118, 132),
+            code_comment: rgb(132, 140, 156),
             code_number: rgb(160, 200, 255),
-            code_punct: rgb(170, 180, 200),
+            code_punct: rgb(186, 196, 218),
             code_type: rgb(120, 200, 255),
             code_func: rgb(190, 210, 255),
             code_const: rgb(255, 199, 112),
-            code_operator: rgb(255, 150, 180),
+            code_operator: rgb(255, 165, 195),
             selection_fg: rgb(14, 17, 22),
             selection_bg: rgb(220, 228, 242),
         }
@@ -238,13 +238,13 @@ impl ThemePalette {
             user_accent: rgb(196, 49, 49),
             code_keyword: rgb(255, 120, 96),
             code_string: rgb(217, 208, 195),
-            code_comment: rgb(119, 119, 119),
+            code_comment: rgb(142, 142, 142),
             code_number: rgb(255, 180, 120),
-            code_punct: rgb(160, 150, 140),
+            code_punct: rgb(178, 168, 158),
             code_type: rgb(255, 160, 120),
             code_func: rgb(255, 200, 160),
             code_const: rgb(255, 199, 112),
-            code_operator: rgb(255, 100, 100),
+            code_operator: rgb(255, 120, 120),
             selection_fg: rgb(8, 8, 8),
             selection_bg: rgb(234, 220, 210),
         }
@@ -291,13 +291,13 @@ impl ThemePalette {
             user_accent: rgb(157, 175, 220),
             code_keyword: rgb(136, 178, 255),
             code_string: rgb(184, 196, 228),
-            code_comment: rgb(86, 94, 116),
+            code_comment: rgb(118, 128, 152),
             code_number: rgb(118, 198, 218),
-            code_punct: rgb(148, 158, 186),
+            code_punct: rgb(168, 178, 206),
             code_type: rgb(156, 208, 255),
             code_func: rgb(198, 208, 244),
             code_const: rgb(255, 208, 138),
-            code_operator: rgb(198, 158, 255),
+            code_operator: rgb(210, 175, 255),
             selection_fg: rgb(8, 9, 16),
             selection_bg: rgb(208, 216, 238),
         }
@@ -410,6 +410,18 @@ pub(crate) fn code_const() -> Color {
 }
 pub(crate) fn code_operator() -> Color {
     p().code_operator
+}
+
+pub(crate) fn code_block_bg() -> Color {
+    let palette = p();
+    match palette.panel {
+        Color::Rgb(r, g, b) => Color::Rgb(
+            r.saturating_add(8),
+            g.saturating_add(8),
+            b.saturating_add(8),
+        ),
+        _ => Color::Rgb(24, 27, 32),
+    }
 }
 
 pub(crate) fn active_item_style() -> Style {

@@ -44,7 +44,9 @@ pub(crate) fn highlight_code_line(raw_line: &str, language: &str) -> Vec<Span<'s
 }
 
 fn syntect_style(style: SyntectStyle) -> Style {
-    Style::default().fg(lain_code_color(style))
+    Style::default()
+        .fg(lain_code_color(style))
+        .bg(code_block_bg())
 }
 
 fn lain_code_color(style: SyntectStyle) -> Color {
