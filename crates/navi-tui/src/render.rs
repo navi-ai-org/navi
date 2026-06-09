@@ -7,8 +7,7 @@ pub(crate) mod tool;
 pub(crate) use layout::{
     command_row, command_scroll_offset, modal_block, modal_rect, model_row_simple, truncate_display,
 };
-pub(crate) use markdown::build_chat_lines_for_messages;
-pub(crate) use text::{cursor_span, mask_key_segment, project_label, split_input_spans};
+pub(crate) use text::{cursor_span, mask_key_segment, project_label};
 
 #[cfg(test)]
 mod tests {

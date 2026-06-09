@@ -8,7 +8,7 @@ use crate::providers::{
     start_provider_oauth, sync_scroll_to_selection,
 };
 use crate::session::load_saved_sessions;
-use crate::state::{ModalKind, ThinkingLevel};
+use crate::state::{MessageAction, ModalKind, ThinkingLevel};
 use crate::theme::filtered_theme_options;
 use crate::ui::effect::UiEffect;
 use crate::ui::list::SelectListState;
@@ -42,6 +42,22 @@ pub(crate) fn handle_help_key(app: &mut TuiApp, code: KeyCode) -> bool {
         KeyCode::Esc | KeyCode::Enter | KeyCode::Char('?') => {
             super::apply_ui_effect(app, UiEffect::CloseModal);
         }
+        _ => {}
+    }
+    false
+}
+
+pub(crate) fn handle_message_actions_key(app: &mut TuiApp, code: KeyCode) -> bool {
+    match code {
+        KeyCode::Esc => super::close_active_modal(app),
+        KeyCode::Down | KeyCode::Tab => {
+            app.selected_message_action =
+                (app.selected_message_action + 1).min(MessageAction::ALL.len().saturating_sub(1));
+        }
+        KeyCode::Up => {
+            app.selected_message_action = app.selected_message_action.saturating_sub(1);
+        }
+        KeyCode::Enter => crate::mouse::run_message_action(app, app.selected_message_action),
         _ => {}
     }
     false

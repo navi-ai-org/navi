@@ -64,7 +64,7 @@ pub(super) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
             let base = if is_hovered || is_selected {
                 active_item_style()
             } else {
-                Style::default().fg(muted()).bg(panel())
+                inactive_item_style()
             };
 
             let label = match row {
@@ -119,12 +119,12 @@ pub(super) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
     let installed = count_installed_plugins(app);
     frame.render_widget(
         Paragraph::new(format!(" {installed} installed "))
-            .style(Style::default().fg(muted()).bg(panel())),
+            .style(Style::default().fg(text()).bg(panel())),
         rows[2],
     );
     frame.render_widget(
         Paragraph::new("i install  •  u update  •  r refresh")
-            .style(Style::default().fg(muted()).bg(panel())),
+            .style(Style::default().fg(text()).bg(panel())),
         rows[3],
     );
     app.register_hit(rows[3], 20, "refresh plugins", HitAction::PluginRefresh);

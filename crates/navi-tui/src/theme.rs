@@ -127,7 +127,7 @@ impl ThemePalette {
             pink: Color::Magenta,
             signal: Color::White,
             text: Color::Reset,
-            muted: Color::DarkGray,
+            muted: Color::Gray,
             panel: Color::Reset,
             bg: Color::Reset,
             ghost: Color::DarkGray,
@@ -153,7 +153,7 @@ impl ThemePalette {
             pink: rgb(196, 154, 255),
             signal: rgb(236, 232, 255),
             text: rgb(224, 226, 232),
-            muted: rgb(134, 139, 150),
+            muted: rgb(170, 174, 188),
             panel: rgb(16, 18, 22),
             bg: rgb(0, 0, 0),
             ghost: rgb(67, 72, 84),
@@ -179,7 +179,7 @@ impl ThemePalette {
             pink: rgb(143, 232, 173),
             signal: rgb(210, 255, 228),
             text: rgb(230, 255, 240),
-            muted: rgb(106, 138, 118),
+            muted: rgb(150, 188, 164),
             panel: rgb(11, 18, 14),
             bg: rgb(5, 8, 6),
             ghost: rgb(36, 58, 44),
@@ -205,7 +205,7 @@ impl ThemePalette {
             pink: rgb(180, 200, 255),
             signal: rgb(220, 228, 242),
             text: rgb(237, 239, 242),
-            muted: rgb(144, 151, 161),
+            muted: rgb(176, 184, 198),
             panel: rgb(23, 27, 34),
             bg: rgb(14, 17, 22),
             ghost: rgb(48, 56, 68),
@@ -231,7 +231,7 @@ impl ThemePalette {
             pink: rgb(217, 208, 195),
             signal: rgb(234, 220, 210),
             text: rgb(234, 234, 234),
-            muted: rgb(119, 119, 119),
+            muted: rgb(170, 160, 150),
             panel: rgb(17, 17, 17),
             bg: rgb(8, 8, 8),
             ghost: rgb(55, 55, 55),
@@ -257,7 +257,7 @@ impl ThemePalette {
             pink: rgb(90, 110, 200),
             signal: rgb(40, 50, 70),
             text: rgb(24, 28, 36),
-            muted: rgb(110, 118, 132),
+            muted: rgb(82, 90, 108),
             panel: rgb(244, 246, 250),
             bg: rgb(252, 252, 253),
             ghost: rgb(210, 216, 228),
@@ -284,7 +284,7 @@ impl ThemePalette {
             pink: rgb(178, 188, 228),
             signal: rgb(208, 216, 238),
             text: rgb(226, 230, 242),
-            muted: rgb(106, 112, 130),
+            muted: rgb(158, 166, 190),
             panel: rgb(16, 18, 28),
             bg: rgb(8, 9, 16),
             ghost: rgb(38, 42, 58),
@@ -365,6 +365,22 @@ pub(crate) fn bg() -> Color {
 pub(crate) fn ghost() -> Color {
     p().ghost
 }
+pub(crate) fn interactive_bg() -> Color {
+    let palette = p();
+    if palette.panel == Color::Reset {
+        Color::Black
+    } else {
+        palette.panel
+    }
+}
+pub(crate) fn interactive_hover_bg() -> Color {
+    let palette = p();
+    if palette.ghost == Color::Reset {
+        Color::DarkGray
+    } else {
+        palette.ghost
+    }
+}
 pub(crate) fn user_accent() -> Color {
     p().user_accent
 }
@@ -402,6 +418,10 @@ pub(crate) fn active_item_style() -> Style {
         .fg(palette.selection_fg)
         .bg(palette.selection_bg)
         .add_modifier(Modifier::BOLD)
+}
+
+pub(crate) fn inactive_item_style() -> Style {
+    Style::default().fg(text()).bg(panel())
 }
 
 #[cfg(test)]

@@ -1,7 +1,8 @@
 use crate::TuiApp;
 use crate::chat::{
     active_assistant_message, ensure_tail_model_response, finalize_active_assistant,
-    remove_active_tool_placeholder, submit_message, update_active_assistant_status,
+    fork_from_user_message, remove_active_tool_placeholder, revert_to_user_message, submit_message,
+    update_active_assistant_status,
 };
 use crate::commands::CommandAction;
 use crate::commands::filtered_commands;
@@ -11,7 +12,7 @@ use crate::keybindings::{
     handle_command_key, handle_help_key, handle_key, handle_model_key, handle_normal_key,
     handle_settings_key, open_model_picker, run_selected_command, sync_models_tui,
 };
-use crate::mouse::{finish_selection, selected_text};
+use crate::mouse::{finish_selection, handle_mouse, selected_text};
 use crate::notifications::expire_notification;
 use crate::providers::{
     ListRow, build_model_rows, first_model_index, model_is_available_for_selection,
@@ -20,16 +21,19 @@ use crate::providers::{
 use crate::render::command_scroll_offset;
 use crate::render::markdown::is_empty_tool_placeholder;
 use crate::render::tool::tool_full_content;
-use crate::state::{ChatMessage, ChatRole, Mode, Notification, SelectionState};
+use crate::state::{ChatLineSource, ChatMessage, ChatRole, Mode, Notification, SelectionState};
 use crate::theme::NOTIFICATION_TTL;
 use crate::tools::record_tool_requested;
+use crate::ui::interaction::HitAction;
 use crate::ui::text_input::{
     floor_char_boundary, next_char_boundary, next_hump_boundary, previous_char_boundary,
     previous_hump_boundary,
 };
 use crate::view::build_chat_lines;
-use crossterm::event::{KeyCode, KeyModifiers};
-use navi_sdk::{AgentEvent, LoadedConfig, ModelMessage, ModelOption, ToolInvocation, ToolResult};
+use crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+use navi_sdk::{
+    AgentEvent, LoadedConfig, ModelMessage, ModelOption, SessionId, ToolInvocation, ToolResult,
+};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::layout::Rect;
@@ -202,6 +206,152 @@ fn mouse_up_outside_chat_finishes_existing_selection() {
     assert!(finish_selection(&mut app, None));
     assert_eq!(selected_text(&app).as_deref(), Some("hello"));
     assert!(!app.selection.as_ref().unwrap().active);
+}
+
+#[test]
+fn mouse_down_on_user_chat_message_opens_message_actions() {
+    let mut app = test_app("");
+    app.messages
+        .push(ChatMessage::new(ChatRole::User, "change this".to_string()));
+    app.register_hit(
+        Rect::new(0, 0, 20, 1),
+        5,
+        "user message",
+        HitAction::ChatMessage(0),
+    );
+
+    handle_mouse(
+        &mut app,
+        MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 2,
+            row: 0,
+            modifiers: KeyModifiers::NONE,
+        },
+    );
+
+    assert_eq!(app.mode, Mode::MessageActions);
+    assert_eq!(app.message_action_target, Some(0));
+    assert_eq!(app.selected_message_action, 0);
+}
+
+#[test]
+fn mouse_move_on_chat_hit_tracks_hovered_interactive_block() {
+    let mut app = test_app("");
+    app.messages
+        .push(ChatMessage::new(ChatRole::User, "hover me".to_string()));
+    app.register_hit(
+        Rect::new(0, 0, 20, 1),
+        5,
+        "user message",
+        HitAction::ChatMessage(0),
+    );
+
+    handle_mouse(
+        &mut app,
+        MouseEvent {
+            kind: MouseEventKind::Moved,
+            column: 2,
+            row: 0,
+            modifiers: KeyModifiers::NONE,
+        },
+    );
+
+    assert_eq!(app.hovered_chat_source, Some(ChatLineSource::Message(0)));
+
+    handle_mouse(
+        &mut app,
+        MouseEvent {
+            kind: MouseEventKind::Moved,
+            column: 40,
+            row: 0,
+            modifiers: KeyModifiers::NONE,
+        },
+    );
+
+    assert_eq!(app.hovered_chat_source, None);
+}
+
+#[test]
+fn revert_to_user_message_truncates_cacheable_prefix_without_rewriting_it() {
+    let mut app = test_app("");
+    let system = app.conversation_history[0].clone();
+    app.messages = vec![
+        ChatMessage::new(ChatRole::User, "first".to_string()),
+        ChatMessage::new(ChatRole::Assistant, "answer one".to_string()),
+        ChatMessage::new(ChatRole::User, "second".to_string()),
+        ChatMessage::new(ChatRole::Assistant, "answer two".to_string()),
+    ];
+    app.conversation_history = vec![
+        system,
+        ModelMessage::user("first"),
+        ModelMessage::assistant("answer one"),
+        ModelMessage::user("second"),
+        ModelMessage::assistant("answer two"),
+    ];
+    app.events = vec![
+        AgentEvent::UserTaskSubmitted {
+            text: "first".to_string(),
+        },
+        AgentEvent::ModelOutput {
+            text: "answer one".to_string(),
+            thinking: None,
+        },
+        AgentEvent::UserTaskSubmitted {
+            text: "second".to_string(),
+        },
+        AgentEvent::ModelOutput {
+            text: "answer two".to_string(),
+            thinking: None,
+        },
+    ];
+
+    revert_to_user_message(&mut app, 2).expect("revert");
+
+    assert_eq!(app.input, "second");
+    assert_eq!(app.messages.len(), 2);
+    assert_eq!(app.conversation_history.len(), 3);
+    assert_eq!(app.events.len(), 2);
+    assert_eq!(app.conversation_history[1].content, "first");
+    assert_eq!(app.conversation_history[2].content, "answer one");
+}
+
+#[test]
+fn fork_from_user_message_saves_original_and_keeps_prefix_in_new_session() {
+    let mut app = test_app("");
+    app.session_id = SessionId::new("old-session".to_string());
+    let system = app.conversation_history[0].clone();
+    app.messages = vec![
+        ChatMessage::new(ChatRole::User, "first".to_string()),
+        ChatMessage::new(ChatRole::Assistant, "answer one".to_string()),
+        ChatMessage::new(ChatRole::User, "second".to_string()),
+    ];
+    app.conversation_history = vec![
+        system,
+        ModelMessage::user("first"),
+        ModelMessage::assistant("answer one"),
+        ModelMessage::user("second"),
+    ];
+    app.events = vec![
+        AgentEvent::UserTaskSubmitted {
+            text: "first".to_string(),
+        },
+        AgentEvent::ModelOutput {
+            text: "answer one".to_string(),
+            thinking: None,
+        },
+        AgentEvent::UserTaskSubmitted {
+            text: "second".to_string(),
+        },
+    ];
+
+    fork_from_user_message(&mut app, 2).expect("fork");
+
+    assert_ne!(app.session_id.as_str(), "old-session");
+    assert_eq!(app.input, "second");
+    assert_eq!(app.messages.len(), 2);
+    assert_eq!(app.conversation_history.len(), 3);
+    assert_eq!(app.events.len(), 2);
 }
 
 #[test]
@@ -624,6 +774,17 @@ fn ctrl_p_opens_commands_and_tab_is_ignored_in_composer() {
     handle_key(&mut app, KeyCode::Tab, KeyModifiers::NONE);
     assert_eq!(app.mode, Mode::Normal);
     assert_eq!(app.input, "draft");
+}
+
+#[test]
+fn ctrl_dot_and_ctrl_s_open_help_and_sessions() {
+    let mut app = test_app("");
+
+    handle_key(&mut app, KeyCode::Char('.'), KeyModifiers::CONTROL);
+    assert_eq!(app.mode, Mode::Help);
+
+    handle_key(&mut app, KeyCode::Char('s'), KeyModifiers::CONTROL);
+    assert_eq!(app.mode, Mode::Sessions);
 }
 
 #[test]
@@ -1319,6 +1480,48 @@ fn full_tool_render_generates_sanitized_metadata_view() {
     assert!(!text.contains("Input"));
     assert!(!text.contains("Output"));
     assert!(!text.contains("```json"));
+}
+
+#[test]
+fn compact_tool_render_expands_only_clicked_tool_result() {
+    let mut app = test_app("");
+    let invocation = ToolInvocation {
+        id: "call-1".to_string(),
+        tool_name: "read_file".to_string(),
+        input: serde_json::json!({ "path": "README.md" }),
+    };
+    let result = ToolResult {
+        invocation_id: "call-1".to_string(),
+        ok: true,
+        output: serde_json::json!({
+            "path": "README.md",
+            "content": "expanded-only-content"
+        }),
+    };
+    app.messages.push(ChatMessage {
+        status: Some("tool result".to_string()),
+        tool_invocation: Some(invocation),
+        tool_result: Some(result),
+        ..ChatMessage::new(ChatRole::Assistant, String::new())
+    });
+
+    let collapsed = build_chat_lines(&app, 80)
+        .iter()
+        .map(line_text)
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(!collapsed.contains("expanded-only-content"));
+
+    app.expanded_tool_results.insert("call-1".to_string());
+    let expanded = build_chat_lines(&app, 80)
+        .iter()
+        .map(line_text)
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    assert!(expanded.contains("Click to collapse"));
+    assert!(expanded.contains("expanded-only-content"));
+    assert!(!app.full_tool_view);
 }
 
 #[test]

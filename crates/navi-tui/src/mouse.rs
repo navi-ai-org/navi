@@ -1,9 +1,10 @@
 use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
 
 use crate::app::TuiApp;
+use crate::chat::{fork_from_user_message, revert_to_user_message};
 use crate::commands::filtered_commands;
 use crate::keybindings::{close_active_modal, handle_key, replace_modal};
-use crate::notifications::show_notification;
+use crate::notifications::{push_diagnostic, show_notification};
 use crate::plugins::{install_or_update_from_marketplace, plugin_picker_rows};
 use crate::providers::{
     ListRow, apply_model_selection, build_model_rows, first_model_index, selected_model_in_rows,
@@ -86,15 +87,22 @@ pub(crate) fn selected_text(app: &TuiApp) -> Option<String> {
     (!selected_text.is_empty()).then_some(selected_text)
 }
 
+pub(crate) fn copy_text_to_clipboard(app: &mut TuiApp, text: &str) {
+    if text.is_empty() {
+        return;
+    }
+    // ALWAYS send OSC 52 as a robust fallback for terminals.
+    use base64::prelude::*;
+    let b64 = BASE64_STANDARD.encode(text);
+    print!("\x1B]52;c;{}\x07", b64);
+    let _ = std::io::Write::flush(&mut std::io::stdout());
+
+    show_notification(app, "Clipboard", "Text copied (OSC 52).".to_string());
+}
+
 fn copy_selection_to_clipboard(app: &mut TuiApp) {
     if let Some(selected_text) = selected_text(app) {
-        // ALWAYS send OSC 52 as a robust fallback for terminals
-        use base64::prelude::*;
-        let b64 = BASE64_STANDARD.encode(&selected_text);
-        print!("\x1B]52;c;{}\x07", b64);
-        let _ = std::io::Write::flush(&mut std::io::stdout());
-
-        show_notification(app, "Clipboard", "Texto copiado (OSC 52)".to_string());
+        copy_text_to_clipboard(app, &selected_text);
     }
 }
 
@@ -136,10 +144,12 @@ pub(crate) fn handle_mouse(app: &mut TuiApp, mouse: MouseEvent) {
                     return;
                 }
                 app.hover_index = None;
+                app.hovered_chat_source = chat_source_for_action(&hit.action);
                 dispatch_hit(app, hit);
                 return;
             }
             app.hover_index = None;
+            app.hovered_chat_source = None;
             if let Some(pos) = map_mouse_to_text(app, mouse.column, mouse.row) {
                 app.selection = Some(SelectionState {
                     start: pos,
@@ -189,6 +199,7 @@ pub(crate) fn handle_mouse(app: &mut TuiApp, mouse: MouseEvent) {
                 apply_hover(app, &hit);
             } else {
                 app.hover_index = None;
+                app.hovered_chat_source = None;
             }
         }
         _ => {}
@@ -196,6 +207,7 @@ pub(crate) fn handle_mouse(app: &mut TuiApp, mouse: MouseEvent) {
 }
 
 fn apply_hover(app: &mut TuiApp, hit: &HitRegion) {
+    app.hovered_chat_source = chat_source_for_action(&hit.action);
     match &hit.action {
         HitAction::QuestionOption(index) => {
             app.hover_index = Some(*index);
@@ -214,6 +226,7 @@ fn apply_hover(app: &mut TuiApp, hit: &HitRegion) {
         HitAction::Session(index) => app.hover_index = Some(*index),
         HitAction::Skill(index) => app.hover_index = Some(*index),
         HitAction::Setting(index) => app.hover_index = Some(*index),
+        HitAction::MessageAction(index) => app.hover_index = Some(*index),
         HitAction::PluginInstallOrUpdate(index) => {
             app.hover_index = Some(*index);
         }
@@ -221,6 +234,15 @@ fn apply_hover(app: &mut TuiApp, hit: &HitRegion) {
         _ => {
             app.hover_index = None;
         }
+    }
+}
+
+fn chat_source_for_action(action: &HitAction) -> Option<crate::state::ChatLineSource> {
+    match action {
+        HitAction::ChatMessage(index) => Some(crate::state::ChatLineSource::Message(*index)),
+        HitAction::ToolResult(id) => Some(crate::state::ChatLineSource::ToolResult(id.clone())),
+        HitAction::ToolGroup(ids) => Some(crate::state::ChatLineSource::ToolGroup(ids.clone())),
+        _ => None,
     }
 }
 
@@ -376,7 +398,79 @@ fn dispatch_hit(app: &mut TuiApp, hit: HitRegion) {
                 app.set_theme(*theme);
             }
         }
+        HitAction::ChatMessage(index) => {
+            if app
+                .messages
+                .get(index)
+                .is_some_and(|message| message.role == crate::state::ChatRole::User)
+            {
+                app.message_action_target = Some(index);
+                app.selected_message_action = 0;
+                replace_modal(app, crate::state::ModalKind::MessageActions);
+            }
+        }
+        HitAction::ToolResult(id) => {
+            toggle_tool_result(app, &id);
+        }
+        HitAction::ToolGroup(ids) => {
+            let expand = ids.iter().any(|id| !app.expanded_tool_results.contains(id));
+            for id in ids {
+                if expand {
+                    app.expanded_tool_results.insert(id);
+                } else {
+                    app.expanded_tool_results.remove(&id);
+                }
+            }
+            app.chat_render_cache.borrow_mut().signature.clear();
+        }
+        HitAction::MessageAction(index) => {
+            run_message_action(app, index);
+        }
         HitAction::ScrollTo { target, offset } => scroll_to(app, target, offset),
+    }
+}
+
+fn toggle_tool_result(app: &mut TuiApp, id: &str) {
+    if !app.expanded_tool_results.remove(id) {
+        app.expanded_tool_results.insert(id.to_string());
+    }
+    app.chat_render_cache.borrow_mut().signature.clear();
+}
+
+pub(crate) fn run_message_action(app: &mut TuiApp, index: usize) {
+    let Some(action) = crate::state::MessageAction::ALL.get(index).copied() else {
+        return;
+    };
+    let Some(message_index) = app.message_action_target else {
+        close_active_modal(app);
+        return;
+    };
+
+    match action {
+        crate::state::MessageAction::Copy => {
+            if let Some(text) = app
+                .messages
+                .get(message_index)
+                .map(|message| message.content.clone())
+            {
+                copy_text_to_clipboard(app, &text);
+            }
+            close_active_modal(app);
+        }
+        crate::state::MessageAction::Revert => {
+            match revert_to_user_message(app, message_index) {
+                Ok(()) => show_notification(app, "Message", "Reverted to selected message."),
+                Err(err) => push_diagnostic(app, err),
+            }
+            close_active_modal(app);
+        }
+        crate::state::MessageAction::Fork => {
+            match fork_from_user_message(app, message_index) {
+                Ok(()) => show_notification(app, "Message", "Forked into a new session."),
+                Err(err) => push_diagnostic(app, err),
+            }
+            close_active_modal(app);
+        }
     }
 }
 
@@ -400,7 +494,12 @@ fn active_scroll_target(app: &TuiApp) -> Option<ScrollTarget> {
         Mode::Plugins => Some(ScrollTarget::Plugins),
         Mode::PluginApproval => Some(ScrollTarget::PluginApproval),
         Mode::Question => Some(ScrollTarget::QuestionOptions),
-        Mode::Settings | Mode::ThemePicker | Mode::Thinking | Mode::Help | Mode::Debug => None,
+        Mode::Settings
+        | Mode::ThemePicker
+        | Mode::Thinking
+        | Mode::Help
+        | Mode::Debug
+        | Mode::MessageActions => None,
         Mode::Normal | Mode::ApiKeyEntry => None,
     }
 }

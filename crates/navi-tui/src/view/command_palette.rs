@@ -29,14 +29,14 @@ pub(super) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
         .split(inner);
 
     let filter = if app.command_filter.is_empty() {
-        "search"
+        "type to search"
     } else {
         app.command_filter.as_str()
     };
     frame.render_widget(
         Paragraph::new(Line::from(vec![
             Span::styled("> ", Style::default().fg(signal())),
-            Span::styled(filter, Style::default().fg(muted())),
+            Span::styled(filter, Style::default().fg(text())),
         ]))
         .style(Style::default().bg(panel())),
         rows[0],
@@ -54,7 +54,7 @@ pub(super) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
             let style = if hovered || selected {
                 active_item_style()
             } else {
-                Style::default().fg(muted()).bg(panel())
+                inactive_item_style()
             };
 
             let shortcut = command.shortcut.unwrap_or("");

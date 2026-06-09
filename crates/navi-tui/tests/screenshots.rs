@@ -130,6 +130,17 @@ fn sessions_picker_open_via_palette() {
 }
 
 #[test]
+fn thinking_picker_open_via_palette() {
+    let mut h = h();
+    h.press(KeyCode::Char('p'), KeyModifiers::CONTROL);
+    h.type_text("thinking");
+    h.press(KeyCode::Enter, KeyModifiers::NONE);
+    assert_eq!(h.mode(), Mode::Thinking);
+    h.render();
+    h.assert_screen("modal_thinking_80x24");
+}
+
+#[test]
 fn debug_modal_open() {
     let mut h = h();
     h.press(KeyCode::Char('d'), KeyModifiers::CONTROL);

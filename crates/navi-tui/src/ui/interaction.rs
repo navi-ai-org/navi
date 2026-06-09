@@ -29,6 +29,10 @@ pub(crate) enum HitAction {
     PluginDeny,
     ThemeSelect(usize),
     ThemePicker,
+    ChatMessage(usize),
+    ToolResult(String),
+    ToolGroup(Vec<String>),
+    MessageAction(usize),
     ScrollTo {
         target: ScrollTarget,
         offset: usize,

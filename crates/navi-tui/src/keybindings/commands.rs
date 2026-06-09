@@ -1,11 +1,14 @@
 use crate::TuiApp;
 use crate::chat::{reset_system_context, retry_last_response};
 use crate::commands::{CommandAction, filtered_commands};
+use crate::mouse::copy_text_to_clipboard;
 use crate::notifications::show_notification;
 use crate::render::command_scroll_offset;
+use crate::session::session_created_at;
 use crate::state::ModalKind;
 use crate::ui::list::SelectListState;
 use crossterm::event::KeyCode;
+use navi_sdk::{AgentEvent, session_title_from_events};
 
 pub(crate) fn handle_command_key(app: &mut TuiApp, code: KeyCode) -> bool {
     const VISIBLE_ROWS: usize = 10;
@@ -82,6 +85,14 @@ pub(crate) fn run_selected_command(app: &mut TuiApp) -> bool {
         CommandAction::Sessions => {
             super::open_sessions_picker(app);
         }
+        CommandAction::CopySession => {
+            copy_session_transcript(app);
+            super::close_all_modals(app);
+        }
+        CommandAction::ShareSession => {
+            copy_session_json(app);
+            super::close_all_modals(app);
+        }
         CommandAction::SyncModels => {
             super::provider_sync::sync_models_tui(app);
             super::close_all_modals(app);
@@ -104,4 +115,59 @@ pub(crate) fn run_selected_command(app: &mut TuiApp) -> bool {
     }
 
     false
+}
+
+fn copy_session_transcript(app: &mut TuiApp) {
+    let transcript = session_transcript(app);
+    if transcript.trim().is_empty() {
+        show_notification(app, "Session", "Nothing to copy yet.");
+        return;
+    }
+    copy_text_to_clipboard(app, &transcript);
+    show_notification(app, "Session", "Session transcript copied.");
+}
+
+fn copy_session_json(app: &mut TuiApp) {
+    let now = navi_sdk::current_unix_timestamp();
+    let value = serde_json::json!({
+        "version": 1,
+        "id": app.session_id.as_str(),
+        "title": session_title_from_events(&app.events),
+        "project": app.project_dir,
+        "created_at": session_created_at(&app.session_id).unwrap_or(now),
+        "updated_at": now,
+        "events": app.events,
+    });
+    let Ok(json) = serde_json::to_string_pretty(&value) else {
+        show_notification(app, "Session", "Failed to serialize session.");
+        return;
+    };
+    copy_text_to_clipboard(app, &json);
+    show_notification(app, "Session", "Shareable session JSON copied.");
+}
+
+fn session_transcript(app: &TuiApp) -> String {
+    let mut lines = Vec::new();
+    for event in &app.events {
+        match event {
+            AgentEvent::UserTaskSubmitted { text } => {
+                lines.push(format!("User:\n{}", text.trim_end()));
+            }
+            AgentEvent::ModelOutput { text, thinking: _ } => {
+                lines.push(format!("Assistant:\n{}", text.trim_end()));
+            }
+            AgentEvent::ToolRequested(invocation) => {
+                lines.push(format!("Tool requested: {}", invocation.tool_name));
+            }
+            AgentEvent::ToolCompleted(result) => {
+                let status = if result.ok { "ok" } else { "error" };
+                lines.push(format!(
+                    "Tool completed: {} ({status})",
+                    result.invocation_id
+                ));
+            }
+            _ => {}
+        }
+    }
+    lines.join("\n\n")
 }
