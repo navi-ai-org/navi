@@ -477,9 +477,7 @@ pub(crate) fn run_message_action(app: &mut TuiApp, index: usize) {
 
 fn scroll_active_list(app: &mut TuiApp, delta: isize) -> bool {
     let Some(target) = active_scroll_target(app) else {
-        // Modal is open but has no scrollable list; consume the event
-        // so the chat viewport doesn't scroll underneath.
-        return app.mode != Mode::Normal;
+        return false;
     };
     scroll_by(app, target, delta);
     true
