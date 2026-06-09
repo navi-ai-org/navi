@@ -146,6 +146,98 @@ async fn top_files_returns_ranked_relevant_files() {
 }
 
 #[tokio::test]
+async fn top_files_code_overview_prefers_code_structure_over_large_agent_docs() {
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let executor = executor(tempdir.path());
+    std::fs::create_dir_all(tempdir.path().join("crates/demo/src")).expect("mkdir");
+    std::fs::write(
+        tempdir.path().join("AGENTS.md"),
+        "project overview structure\n".repeat(300),
+    )
+    .expect("write agents");
+    std::fs::write(
+        tempdir.path().join("Cargo.toml"),
+        "[workspace]\nmembers = [\"crates/demo\"]\n",
+    )
+    .expect("write workspace");
+    std::fs::write(
+        tempdir.path().join("crates/demo/Cargo.toml"),
+        "[package]\nname = \"demo\"\n",
+    )
+    .expect("write crate manifest");
+    std::fs::write(
+        tempdir.path().join("crates/demo/src/lib.rs"),
+        "pub mod runtime;\npub fn start_engine_runtime() {}\n",
+    )
+    .expect("write lib");
+    std::fs::write(
+        tempdir.path().join("crates/demo/src/runtime.rs"),
+        "pub struct AgentRuntime;\n",
+    )
+    .expect("write runtime");
+
+    let result = executor
+        .invoke(ToolInvocation {
+            id: "top".to_string(),
+            tool_name: "top_files".to_string(),
+            input: json!({ "query": "project overview structure", "max_files": 3 }),
+        })
+        .await;
+
+    assert!(result.ok, "{:?}", result.output);
+    let paths = result.output["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|file| file["path"].as_str().unwrap().to_string())
+        .collect::<Vec<_>>();
+    assert!(paths.contains(&"Cargo.toml".to_string()), "{paths:?}");
+    assert!(
+        paths
+            .iter()
+            .any(|path| path == "crates/demo/src/lib.rs" || path == "crates/demo/src/runtime.rs"),
+        "{paths:?}"
+    );
+    assert_ne!(paths.first().map(String::as_str), Some("AGENTS.md"));
+}
+
+#[tokio::test]
+async fn top_files_docs_query_keeps_agent_docs_on_top() {
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let executor = executor(tempdir.path());
+    std::fs::create_dir_all(tempdir.path().join("src")).expect("mkdir");
+    std::fs::write(
+        tempdir.path().join("AGENTS.md"),
+        "agent instructions rules guide\n".repeat(50),
+    )
+    .expect("write agents");
+    std::fs::write(
+        tempdir.path().join("src/main.rs"),
+        "fn main() { println!(\"agent instructions\"); }\n",
+    )
+    .expect("write main");
+
+    let result = executor
+        .invoke(ToolInvocation {
+            id: "top".to_string(),
+            tool_name: "top_files".to_string(),
+            input: json!({ "query": "agent instructions", "max_files": 2 }),
+        })
+        .await;
+
+    assert!(result.ok, "{:?}", result.output);
+    let files = result.output["files"].as_array().unwrap();
+    assert_eq!(files[0]["path"], "AGENTS.md");
+    assert!(
+        files[0]["reasons"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|reason| reason == "docs_overview_boost")
+    );
+}
+
+#[tokio::test]
 async fn top_files_truncates_long_files_to_default_limit() {
     let tempdir = tempfile::tempdir().expect("tempdir");
     let executor = executor(tempdir.path());
