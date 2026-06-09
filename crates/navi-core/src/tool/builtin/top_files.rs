@@ -128,6 +128,25 @@ struct Candidate {
     size: u64,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum QueryIntent {
+    CodeOverview,
+    DocsOverview,
+    TargetedSearch,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FileCategory {
+    AgentInstructions,
+    Readme,
+    WorkspaceManifest,
+    CrateManifest,
+    Entrypoint,
+    Source,
+    Config,
+    Other,
+}
+
 fn run_top_files(
     policy: &SecurityPolicy,
     vfs: Option<&VfsEngine>,
@@ -141,7 +160,15 @@ fn run_top_files(
 
     let query_terms = query_terms(query.as_deref());
     let mut candidates = Vec::new();
-    collect_candidates(policy, &root, input.hidden, &query_terms, &mut candidates)?;
+    let intent = classify_query_intent(&query_terms);
+    collect_candidates(
+        policy,
+        &root,
+        input.hidden,
+        &query_terms,
+        intent,
+        &mut candidates,
+    )?;
     let candidates_scanned = candidates.len();
 
     candidates.sort_by(compare_candidates);
@@ -203,6 +230,7 @@ fn collect_candidates(
     root: &Path,
     hidden: bool,
     query_terms: &[String],
+    intent: QueryIntent,
     candidates: &mut Vec<Candidate>,
 ) -> Result<()> {
     if candidates.len() >= MAX_CANDIDATES || !root.exists() {
@@ -210,7 +238,7 @@ fn collect_candidates(
     }
 
     if root.is_file() {
-        if let Some(candidate) = score_candidate(policy, root, query_terms) {
+        if let Some(candidate) = score_candidate(policy, root, query_terms, intent) {
             candidates.push(candidate);
         }
         return Ok(());
@@ -244,9 +272,9 @@ fn collect_candidates(
         };
         let path = entry.path();
         if file_type.is_dir() {
-            collect_candidates(policy, &path, hidden, query_terms, candidates)?;
+            collect_candidates(policy, &path, hidden, query_terms, intent, candidates)?;
         } else if file_type.is_file()
-            && let Some(candidate) = score_candidate(policy, &path, query_terms)
+            && let Some(candidate) = score_candidate(policy, &path, query_terms, intent)
         {
             candidates.push(candidate);
         }
@@ -259,6 +287,7 @@ fn score_candidate(
     policy: &SecurityPolicy,
     path: &Path,
     query_terms: &[String],
+    intent: QueryIntent,
 ) -> Option<Candidate> {
     if !matches!(policy.validate_path(path, false), SecurityDecision::Allow) {
         return None;
@@ -286,12 +315,36 @@ fn score_candidate(
         .unwrap_or_default()
         .to_lowercase();
     let lower_sample = sample.to_lowercase();
+    let category = file_category(path, &rel_path, &file_name);
     let mut score = 0;
     let mut reasons = BTreeSet::new();
 
     if is_structural_file(&file_name) {
         score += 60;
         reasons.insert("structural_file");
+    }
+    match category {
+        FileCategory::AgentInstructions => {
+            score += 20;
+            reasons.insert("agent_instructions");
+        }
+        FileCategory::Readme => {
+            score += 15;
+            reasons.insert("readme");
+        }
+        FileCategory::WorkspaceManifest => {
+            score += 30;
+            reasons.insert("workspace_manifest");
+        }
+        FileCategory::CrateManifest => {
+            score += 22;
+            reasons.insert("crate_manifest");
+        }
+        FileCategory::Entrypoint => {
+            score += 18;
+            reasons.insert("crate_entrypoint");
+        }
+        FileCategory::Source | FileCategory::Config | FileCategory::Other => {}
     }
     if is_entrypoint(&file_name) {
         score += 45;
@@ -325,6 +378,15 @@ fn score_candidate(
         }
     }
 
+    apply_intent_adjustments(
+        intent,
+        category,
+        &lower_path,
+        &file_name,
+        &mut score,
+        &mut reasons,
+    );
+
     if meta.len() > 256 * 1024 {
         score -= 30;
         reasons.insert("large_file_penalty");
@@ -344,6 +406,117 @@ fn score_candidate(
         reasons,
         size: meta.len(),
     })
+}
+
+fn classify_query_intent(query_terms: &[String]) -> QueryIntent {
+    if query_terms.is_empty() {
+        return QueryIntent::CodeOverview;
+    }
+    let has_docs_term = query_terms.iter().any(|term| {
+        matches!(
+            term.as_str(),
+            "agent"
+                | "agents"
+                | "instruction"
+                | "instructions"
+                | "guide"
+                | "docs"
+                | "doc"
+                | "readme"
+                | "rules"
+        )
+    });
+    let has_code_overview_term = query_terms.iter().any(|term| {
+        matches!(
+            term.as_str(),
+            "project"
+                | "overview"
+                | "structure"
+                | "architecture"
+                | "entrypoint"
+                | "entrypoints"
+                | "runtime"
+                | "engine"
+                | "harness"
+                | "code"
+                | "core"
+        )
+    });
+
+    if has_docs_term && !has_code_overview_term {
+        QueryIntent::DocsOverview
+    } else if has_code_overview_term {
+        QueryIntent::CodeOverview
+    } else {
+        QueryIntent::TargetedSearch
+    }
+}
+
+fn file_category(path: &Path, rel_path: &str, file_name: &str) -> FileCategory {
+    if matches!(file_name, "agents.md" | "claude.md") {
+        return FileCategory::AgentInstructions;
+    }
+    if file_name == "readme.md" {
+        return FileCategory::Readme;
+    }
+    if is_entrypoint(file_name) {
+        return FileCategory::Entrypoint;
+    }
+    if is_workspace_manifest(rel_path, file_name) {
+        return FileCategory::WorkspaceManifest;
+    }
+    if is_crate_manifest(rel_path, file_name) {
+        return FileCategory::CrateManifest;
+    }
+    if is_source_file(path) {
+        return FileCategory::Source;
+    }
+    if is_config_file(path) {
+        return FileCategory::Config;
+    }
+    FileCategory::Other
+}
+
+fn apply_intent_adjustments(
+    intent: QueryIntent,
+    category: FileCategory,
+    lower_path: &str,
+    file_name: &str,
+    score: &mut i64,
+    reasons: &mut BTreeSet<&'static str>,
+) {
+    match intent {
+        QueryIntent::CodeOverview => {
+            reasons.insert("code_overview_boost");
+            match category {
+                FileCategory::WorkspaceManifest => *score += 55,
+                FileCategory::CrateManifest => *score += 45,
+                FileCategory::Entrypoint => *score += 65,
+                FileCategory::Source => *score += 20,
+                FileCategory::AgentInstructions | FileCategory::Readme => {
+                    *score -= 80;
+                    reasons.insert("doc_penalty");
+                }
+                FileCategory::Config | FileCategory::Other => {}
+            }
+            if is_domain_module(lower_path, file_name) {
+                *score += 40;
+                reasons.insert("domain_module");
+            }
+        }
+        QueryIntent::DocsOverview => match category {
+            FileCategory::AgentInstructions => {
+                *score += 90;
+                reasons.insert("docs_overview_boost");
+            }
+            FileCategory::Readme => {
+                *score += 45;
+                reasons.insert("docs_overview_boost");
+            }
+            _ => {}
+        },
+        QueryIntent::TargetedSearch => {}
+    }
 }
 
 struct TopFileContent {
@@ -432,6 +605,43 @@ fn relative_path(project_root: &Path, path: &Path) -> String {
         .unwrap_or(path)
         .display()
         .to_string()
+}
+
+fn is_workspace_manifest(rel_path: &str, file_name: &str) -> bool {
+    matches!(
+        file_name,
+        "cargo.toml" | "package.json" | "pyproject.toml" | "go.mod" | "pom.xml"
+    ) && !rel_path.contains('/')
+}
+
+fn is_crate_manifest(rel_path: &str, file_name: &str) -> bool {
+    matches!(
+        file_name,
+        "cargo.toml" | "package.json" | "pyproject.toml" | "go.mod" | "pom.xml"
+    ) && rel_path.contains('/')
+}
+
+fn is_domain_module(lower_path: &str, file_name: &str) -> bool {
+    let stem = file_name.split('.').next().unwrap_or_default();
+    matches!(
+        stem,
+        "runtime"
+            | "engine"
+            | "harness"
+            | "tool"
+            | "tools"
+            | "session"
+            | "provider"
+            | "providers"
+            | "config"
+            | "dispatch"
+            | "event_loop"
+            | "lib"
+            | "main"
+    ) || lower_path.contains("/runtime/")
+        || lower_path.contains("/tool/")
+        || lower_path.contains("/provider")
+        || lower_path.contains("/session")
 }
 
 fn is_candidate_file(path: &Path, rel_path: &str) -> bool {
