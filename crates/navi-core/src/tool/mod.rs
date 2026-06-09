@@ -1,6 +1,7 @@
 use crate::security::{SecurityDecision, SecurityPolicy};
 use anyhow::Result;
 use async_trait::async_trait;
+use navi_vfs::VfsEngine;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::HashMap;
@@ -12,7 +13,8 @@ mod tests;
 
 use builtin::{
     ApplyPatchTool, BashTool, BuildRunnerTool, FsBrowserTool, GitOpsTool, GrepTool,
-    PackageManagerTool, ReadFileTool, TestRunnerTool, WriteFileTool, truncate_tool_result,
+    PackageManagerTool, QuestionTool, ReadFileTool, TestRunnerTool, WriteFileTool,
+    truncate_tool_result,
 };
 
 /// Trait for executable tools that can be invoked by the agent.
@@ -95,6 +97,7 @@ pub struct ToolExecutor {
     validators: HashMap<String, Arc<jsonschema::Validator>>,
     invalid_schemas: HashMap<String, String>,
     policy: SecurityPolicy,
+    vfs: Option<Arc<VfsEngine>>,
 }
 
 /// Reasons a tool call can be rejected before execution.
@@ -130,11 +133,17 @@ impl ToolExecutor {
     /// built-in tools (read_file, write_file, apply_patch, fs_browser, grep, bash,
     /// test_runner, build_runner).
     pub fn new(policy: SecurityPolicy) -> Self {
+        Self::new_with_vfs(policy, None)
+    }
+
+    /// Creates a new executor with an optional VFS engine for code minification.
+    pub fn new_with_vfs(policy: SecurityPolicy, vfs: Option<Arc<VfsEngine>>) -> Self {
         let mut executor = Self {
             tools: HashMap::new(),
             validators: HashMap::new(),
             invalid_schemas: HashMap::new(),
             policy,
+            vfs,
         };
         executor.register_builtin_tools();
         executor
@@ -329,15 +338,17 @@ impl ToolExecutor {
 
     fn register_builtin_tools(&mut self) {
         let project_root = self.policy.project_root().to_path_buf();
-        self.register(ReadFileTool);
-        self.register(WriteFileTool);
-        self.register(ApplyPatchTool::new(project_root.clone()));
+        let vfs = self.vfs.clone();
+        self.register(ReadFileTool::new(vfs.clone()));
+        self.register(WriteFileTool::new(vfs.clone()));
+        self.register(ApplyPatchTool::new(project_root.clone(), vfs));
         self.register(FsBrowserTool);
         self.register(GrepTool);
         self.register(BashTool::new(project_root.clone()));
         self.register(TestRunnerTool::new(project_root.clone()));
         self.register(BuildRunnerTool::new(project_root.clone()));
         self.register(GitOpsTool::new(project_root.clone()));
+        self.register(QuestionTool);
         self.register(PackageManagerTool::new(project_root));
     }
 }

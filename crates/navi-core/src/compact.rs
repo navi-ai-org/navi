@@ -182,19 +182,48 @@ impl CompactState {
             return Ok(None);
         }
 
-        let conversation_text = build_conversation_text(messages);
-        if conversation_text.trim().is_empty() {
+        // Split: system message(s) first, then conversation messages.
+        let system_msgs: Vec<ModelMessage> = messages
+            .iter()
+            .filter(|m| m.role == ModelRole::System)
+            .cloned()
+            .collect();
+        let conversation_msgs: Vec<ModelMessage> = messages
+            .iter()
+            .filter(|m| m.role != ModelRole::System)
+            .cloned()
+            .collect();
+
+        if conversation_msgs.is_empty() {
+            return Ok(None);
+        }
+
+        // KeepRatio: keep the last N% of conversation turns intact.
+        let keep_ratio = harness_config.autocompact_keep_ratio.clamp(0.0, 0.9);
+        let total = conversation_msgs.len();
+        let keep_count = (total as f64 * keep_ratio).round() as usize;
+        // Always keep at least 2 messages (1 user + 1 assistant) and at most
+        // total - 2 (so there's something to summarize).
+        let keep_count = keep_count.clamp(2.min(total), total.saturating_sub(2).max(2.min(total)));
+        let split_at = total.saturating_sub(keep_count);
+
+        // Old messages → summarize. Recent messages → keep intact.
+        let (old_msgs, recent_msgs) = conversation_msgs.split_at(split_at);
+        let old_text = build_conversation_text(old_msgs);
+
+        if old_text.trim().is_empty() {
+            // Nothing old to summarize; just keep everything.
             return Ok(None);
         }
 
         let prompt = if let Some(ref prev_summary) = self.summary {
             PARTIAL_COMPACT_PROMPT
                 .replace("{previous_summary}", prev_summary)
-                .replace("{new_conversation}", &conversation_text)
+                .replace("{new_conversation}", &old_text)
         } else {
             format!(
                 "{}\n\nConversation to summarize:\n{}",
-                COMPACT_PROMPT, conversation_text
+                COMPACT_PROMPT, old_text
             )
         };
 
@@ -212,25 +241,29 @@ impl CompactState {
             Ok(response) => {
                 let summary = response.text;
                 let previous_tokens = self.last_input_tokens.unwrap_or(0);
-                let system_msg = messages
-                    .first()
-                    .cloned()
-                    .unwrap_or_else(|| ModelMessage::system(""));
+
+                // Reassemble: system + summary + recent turns kept intact.
                 messages.clear();
-                messages.push(system_msg);
+                messages.extend(system_msgs);
                 messages.push(ModelMessage::user(format!(
                     "Here is a summary of the conversation so far:\n\n{}",
                     summary
                 )));
+                messages.extend(recent_msgs.iter().cloned());
 
                 self.summary = Some(summary);
-                self.summary_message_count = 0;
+                self.summary_message_count = messages.len();
                 self.consecutive_failures = 0;
                 self.last_input_tokens = None;
 
                 let tokens_saved =
                     previous_tokens.saturating_sub(harness_config.autocompact_max_output_tokens);
-                tracing::info!(tokens_saved, "auto-compact completed");
+                tracing::info!(
+                    tokens_saved,
+                    old_turns = old_msgs.len(),
+                    kept_turns = recent_msgs.len(),
+                    "auto-compact completed"
+                );
 
                 Ok(Some(tokens_saved))
             }
@@ -574,5 +607,38 @@ mod tests {
             text.contains("read_file"),
             "tool name must be included in conversation text"
         );
+    }
+
+    #[test]
+    fn keep_ratio_clamps_valid_range() {
+        let config = HarnessConfig {
+            autocompact_keep_ratio: 0.25,
+            ..Default::default()
+        };
+        assert_eq!(config.autocompact_keep_ratio, 0.25);
+    }
+
+    #[test]
+    fn keep_ratio_default_is_25_percent() {
+        let config = HarnessConfig::default();
+        assert_eq!(config.autocompact_keep_ratio, 0.25);
+    }
+
+    #[test]
+    fn build_conversation_text_preserves_order() {
+        let messages = vec![
+            ModelMessage::user("first"),
+            ModelMessage::assistant("second"),
+            ModelMessage::user("third"),
+            ModelMessage::assistant("fourth"),
+        ];
+        let text = build_conversation_text(&messages);
+        let first_pos = text.find("first").unwrap();
+        let second_pos = text.find("second").unwrap();
+        let third_pos = text.find("third").unwrap();
+        let fourth_pos = text.find("fourth").unwrap();
+        assert!(first_pos < second_pos);
+        assert!(second_pos < third_pos);
+        assert!(third_pos < fourth_pos);
     }
 }

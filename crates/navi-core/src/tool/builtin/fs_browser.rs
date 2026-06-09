@@ -350,7 +350,29 @@ fn matches_pattern(name: &str, pattern: Option<&str>) -> bool {
 fn should_skip_dir(name: &str) -> bool {
     matches!(
         name,
-        ".git" | "target" | "node_modules" | ".cache" | ".venv" | "__pycache__"
+        ".git"
+            | "target"
+            | "node_modules"
+            | ".cache"
+            | ".venv"
+            | "venv"
+            | "__pycache__"
+            | ".tox"
+            | "vendor"
+            | "dist"
+            | "build"
+            | "out"
+            | ".next"
+            | ".nuxt"
+            | ".output"
+            | ".parcel-cache"
+            | ".turbo"
+            | ".eslintcache"
+            | "coverage"
+            | ".nyc_output"
+            | "htmlcov"
+            | ".idea"
+            | ".vscode"
     )
 }
 

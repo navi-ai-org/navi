@@ -12,9 +12,12 @@ use crate::state::{ModalKind, ThinkingLevel};
 use crate::ui::effect::UiEffect;
 use crate::ui::list::SelectListState;
 use crossterm::event::{KeyCode, KeyModifiers};
-use navi_sdk::provider_catalog;
+use navi_sdk::{QuestionResponse, provider_catalog};
+
+use crate::runtime::spawn_runtime_task;
 
 pub(crate) const THINKING_OPTIONS: &[ThinkingLevel] = &[
+    ThinkingLevel::Adaptive,
     ThinkingLevel::Max,
     ThinkingLevel::High,
     ThinkingLevel::Medium,
@@ -41,6 +44,211 @@ pub(crate) fn handle_help_key(app: &mut TuiApp, code: KeyCode) -> bool {
         _ => {}
     }
     false
+}
+
+pub(crate) fn handle_question_key(
+    app: &mut TuiApp,
+    code: KeyCode,
+    modifiers: KeyModifiers,
+) -> bool {
+    const QUESTION_VISIBLE_OPTIONS: usize = 8;
+    if app.pending_questions.is_empty() {
+        super::close_active_modal(app);
+        return false;
+    }
+
+    if modifiers.contains(KeyModifiers::CONTROL) {
+        match code {
+            KeyCode::Char('a') => {
+                if let Some(question) = app.pending_questions.first_mut() {
+                    question.move_custom_home();
+                }
+                return false;
+            }
+            KeyCode::Char('e') => {
+                if let Some(question) = app.pending_questions.first_mut() {
+                    question.move_custom_end();
+                }
+                return false;
+            }
+            KeyCode::Char('u') => {
+                if let Some(question) = app.pending_questions.first_mut() {
+                    question.clear_custom();
+                }
+                return false;
+            }
+            _ => {}
+        }
+    }
+
+    match code {
+        KeyCode::Esc => super::close_active_modal(app),
+        KeyCode::Down | KeyCode::Tab => {
+            if let Some(question) = app.pending_questions.first_mut() {
+                let row_count = question.row_count();
+                if row_count > 0 {
+                    question.selected_row = (question.selected_row + 1).min(row_count - 1);
+                }
+            }
+        }
+        KeyCode::Up => {
+            if let Some(question) = app.pending_questions.first_mut() {
+                question.selected_row = question.selected_row.saturating_sub(1);
+            }
+        }
+        KeyCode::Left => {
+            if let Some(question) = app.pending_questions.first_mut()
+                && question.selected_is_custom()
+            {
+                question.move_custom_left();
+            }
+        }
+        KeyCode::Right => {
+            if let Some(question) = app.pending_questions.first_mut()
+                && question.selected_is_custom()
+            {
+                question.move_custom_right();
+            }
+        }
+        KeyCode::Home => {
+            if let Some(question) = app.pending_questions.first_mut()
+                && question.selected_is_custom()
+            {
+                question.move_custom_home();
+            }
+        }
+        KeyCode::End => {
+            if let Some(question) = app.pending_questions.first_mut()
+                && question.selected_is_custom()
+            {
+                question.move_custom_end();
+            }
+        }
+        KeyCode::Delete => {
+            if let Some(question) = app.pending_questions.first_mut()
+                && question.selected_is_custom()
+            {
+                question.delete_custom_next_char();
+            }
+        }
+        KeyCode::Char(ch) if ('1'..='9').contains(&ch) => {
+            let index = ch as usize - '1' as usize;
+            if let Some(question) = app.pending_questions.first_mut()
+                && index < question.request.options.len()
+            {
+                question.selected_row = index;
+                if question.request.multiple
+                    && let Some(selected) = question.selected_options.get_mut(index)
+                {
+                    *selected = !*selected;
+                }
+            }
+        }
+        KeyCode::Char(' ')
+            if app
+                .pending_questions
+                .first()
+                .is_some_and(|question| question.selected_is_custom()) =>
+        {
+            if let Some(question) = app.pending_questions.first_mut() {
+                question.insert_custom_char(' ');
+            }
+        }
+        KeyCode::Char(' ') => {
+            if let Some(question) = app.pending_questions.first_mut()
+                && question.request.multiple
+                && let Some(selected) = question.selected_options.get_mut(question.selected_row)
+            {
+                *selected = !*selected;
+            }
+        }
+        KeyCode::Backspace
+            if app
+                .pending_questions
+                .first()
+                .is_some_and(|question| question.selected_is_custom()) =>
+        {
+            if let Some(question) = app.pending_questions.first_mut() {
+                question.delete_custom_previous_char();
+            }
+        }
+        KeyCode::Char(ch)
+            if app
+                .pending_questions
+                .first()
+                .is_some_and(|question| question.selected_is_custom()) =>
+        {
+            if let Some(question) = app.pending_questions.first_mut() {
+                question.insert_custom_char(ch);
+            }
+        }
+        KeyCode::Enter => submit_active_question(app),
+        KeyCode::Char('n') | KeyCode::Char('N') => deny_active_question(app),
+        KeyCode::Char(ch) => {
+            if let Some(question) = app.pending_questions.first_mut() {
+                question.insert_custom_char(ch);
+            }
+        }
+        _ => {}
+    }
+
+    if let Some(question) = app.pending_questions.first_mut() {
+        let option_count = question.request.options.len();
+        if question.selected_row < option_count {
+            let mut list_state =
+                SelectListState::new(question.selected_row, question.option_scroll);
+            list_state.sync_scroll(QUESTION_VISIBLE_OPTIONS);
+            list_state.clamp_scroll(option_count, QUESTION_VISIBLE_OPTIONS);
+            question.option_scroll = list_state.scroll();
+        }
+    }
+
+    false
+}
+
+fn submit_active_question(app: &mut TuiApp) {
+    let Some(question) = app.pending_questions.first() else {
+        super::close_active_modal(app);
+        return;
+    };
+    if question.selected_is_deny() {
+        deny_active_question(app);
+        return;
+    }
+    let answers = question.selected_answers();
+    if answers.is_empty() {
+        show_notification(app, "Question", "Choose an option or enter an answer.");
+        return;
+    }
+    let id = question.request.id.clone();
+    resolve_active_question(app, QuestionResponse::Answered { id, answers });
+}
+
+fn deny_active_question(app: &mut TuiApp) {
+    let Some(question) = app.pending_questions.first() else {
+        super::close_active_modal(app);
+        return;
+    };
+    resolve_active_question(
+        app,
+        QuestionResponse::Dismissed {
+            id: question.request.id.clone(),
+        },
+    );
+}
+
+fn resolve_active_question(app: &mut TuiApp, response: QuestionResponse) {
+    let id = response.id().to_string();
+    app.pending_questions
+        .retain(|question| question.request.id != id);
+    let engine = app.engine();
+    let session_id = app.session_id.as_str().to_string();
+    spawn_runtime_task(async move {
+        let _ = engine.resolve_question(&session_id, response).await;
+    });
+    if app.pending_questions.is_empty() {
+        super::close_active_modal(app);
+    }
 }
 
 pub(crate) fn handle_thinking_key(app: &mut TuiApp, code: KeyCode) -> bool {
@@ -109,9 +317,8 @@ pub(crate) fn handle_settings_key(app: &mut TuiApp, code: KeyCode) -> bool {
                 save_preferences(app);
             }
             2 => {
-                let next = app.theme_id.next();
-                app.set_theme(next);
-                show_notification(app, "Settings", format!("Theme: {}.", next.label()));
+                app.theme_filter.clear();
+                super::replace_modal(app, ModalKind::ThemePicker);
             }
             _ => {}
         },
@@ -475,4 +682,52 @@ pub(crate) fn handle_plugin_approval_key(
         _ => {}
     }
     false
+}
+
+pub(crate) fn handle_theme_picker_key(app: &mut TuiApp, code: KeyCode) -> bool {
+    let count = filtered_theme_count(app);
+    let mut list_state = SelectListState::new(app.selected_theme, 0);
+    match code {
+        KeyCode::Esc => {
+            app.theme_filter.clear();
+            super::close_active_modal(app);
+        }
+        KeyCode::Char(ch) => {
+            app.theme_filter.push(ch);
+            list_state.reset();
+        }
+        KeyCode::Backspace => {
+            app.theme_filter.pop();
+            list_state.clamp(count);
+        }
+        KeyCode::Down => {
+            list_state.select_next(count);
+        }
+        KeyCode::Up => {
+            list_state.select_previous();
+        }
+        KeyCode::Char(' ') | KeyCode::Enter => {
+            if let Some(theme) = crate::theme::ThemeId::ALL.get(app.selected_theme) {
+                app.set_theme(*theme);
+            }
+        }
+        _ => {}
+    }
+    app.selected_theme = list_state.selected();
+    false
+}
+
+fn filtered_theme_count(app: &TuiApp) -> usize {
+    if app.theme_filter.is_empty() {
+        crate::theme::ThemeId::ALL.len()
+    } else {
+        crate::theme::ThemeId::ALL
+            .iter()
+            .filter(|t| {
+                t.label()
+                    .to_lowercase()
+                    .contains(&app.theme_filter.to_lowercase())
+            })
+            .count()
+    }
 }

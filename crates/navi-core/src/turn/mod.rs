@@ -1,4 +1,3 @@
-use crate::agent::AgentControl;
 use crate::cancel::CancelToken;
 use crate::compact::{self, CompactState};
 use crate::context::{ContextPacket, render_context_packets};
@@ -15,10 +14,12 @@ use crate::skills::{SkillManifest, render_active_skills};
 use crate::tool::ToolExecutor;
 use anyhow::Result;
 use futures_util::StreamExt;
+use serde_json::{Value, json};
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 
 const TURN_LOOP_LIMIT: usize = 150;
+const QUESTION_TOOL_NAME: &str = "question";
 
 struct ModelTurnOutput {
     text: String,
@@ -31,15 +32,14 @@ type ToolExecutionResult = (crate::tool::ToolInvocation, crate::tool::ToolResult
 pub struct TurnContext {
     pub model_provider: Arc<RwLock<Arc<dyn ModelProvider>>>,
     pub tool_executor: Arc<ToolExecutor>,
-    pub agent_control: AgentControl,
     pub project_dir: PathBuf,
     pub model_name: Arc<RwLock<String>>,
     pub event_tx: Option<tokio::sync::mpsc::UnboundedSender<AgentEvent>>,
     pub approval_resolver: crate::runtime::ApprovalResolver,
+    pub question_resolver: crate::runtime::QuestionResolver,
     pub compact_state: Arc<tokio::sync::Mutex<CompactState>>,
     pub harness_config: crate::config::HarnessConfig,
     pub include_tool_prompt_manifest: bool,
-    pub agent_mode: Option<crate::agent::AgentMode>,
     pub context_packets: Arc<std::sync::Mutex<Vec<ContextPacket>>>,
     pub active_skills: Arc<std::sync::Mutex<Vec<SkillManifest>>>,
     pub cancel_token: CancelToken,
@@ -155,10 +155,6 @@ async fn ensure_system_prompt(ctx: &TurnContext, messages: &mut Vec<ModelMessage
         ),
         base_instructions
     );
-    if let Some(mode) = ctx.agent_mode {
-        system_content.push_str("\n\n=== Agent Mode ===\n");
-        system_content.push_str(mode.runtime_instructions());
-    }
     let context_packets = ctx
         .context_packets
         .lock()
@@ -236,10 +232,26 @@ async fn maintain_context_budget(ctx: &TurnContext, messages: &mut Vec<ModelMess
 }
 
 fn build_model_request(ctx: &TurnContext, messages: &[ModelMessage]) -> ModelRequest {
+    let config = ctx.active_config();
+    let thinking_level = config.tui.thinking_level.trim().to_lowercase();
+
+    let thinking = match thinking_level.as_str() {
+        "adaptive" => {
+            let tool_names: Vec<String> = ctx.tool_executor.tool_names();
+            ThinkingConfig::resolve_adaptive(messages, &tool_names, 0)
+        }
+        "max" => ThinkingConfig::Max,
+        "high" => ThinkingConfig::High,
+        "medium" => ThinkingConfig::Medium,
+        "low" => ThinkingConfig::Low,
+        "off" => ThinkingConfig::Off,
+        _ => ThinkingConfig::Adaptive,
+    };
+
     ModelRequest {
         model: ctx.active_model_name(),
         messages: messages.to_vec(),
-        thinking: ThinkingConfig::High,
+        thinking,
         tools: ctx.tool_executor.definitions(),
     }
 }
@@ -389,6 +401,15 @@ async fn execute_tool_call(
         return (invocation, result, observation);
     }
 
+    if invocation.tool_name == QUESTION_TOOL_NAME {
+        let result = ask_user_question(ctx, &invocation).await;
+        if let Some(ref tx) = ctx.event_tx {
+            let _ = tx.send(AgentEvent::ToolCompleted(result.clone()));
+        }
+        let observation = compact_tool_observation(&invocation, &result, policy);
+        return (invocation, result, observation);
+    }
+
     let result = match ctx.tool_executor.validate(&invocation) {
         SecurityDecision::Allow => ctx.tool_executor.invoke(invocation.clone()).await,
         SecurityDecision::NeedsApproval(risk) => {
@@ -409,6 +430,122 @@ async fn execute_tool_call(
 
     let observation = compact_tool_observation(&invocation, &result, policy);
     (invocation, result, observation)
+}
+
+async fn ask_user_question(
+    ctx: &TurnContext,
+    invocation: &crate::tool::ToolInvocation,
+) -> crate::tool::ToolResult {
+    let Some(ref tx) = ctx.event_tx else {
+        return tool_error_result(invocation, "question requires an interactive client");
+    };
+
+    let request = match question_request_from_invocation(invocation) {
+        Ok(request) => request,
+        Err(message) => return tool_error_result(invocation, message),
+    };
+
+    let answer_rx = ctx.question_resolver.register(invocation.id.clone());
+    let _ = tx.send(AgentEvent::QuestionRequested(request));
+
+    let response = tokio::select! {
+        response = answer_rx => response.ok(),
+        _ = ctx.cancel_token.notified() => None,
+    };
+
+    match response {
+        Some(crate::event::QuestionResponse::Answered { id, answers }) => {
+            let response = crate::event::QuestionResponse::Answered {
+                id,
+                answers: answers.clone(),
+            };
+            let _ = tx.send(AgentEvent::QuestionResolved(response));
+            crate::tool::ToolResult {
+                invocation_id: invocation.id.clone(),
+                ok: true,
+                output: json!({
+                    "schema_version": 1,
+                    "answers": answers,
+                    "answer": answers.join("\n"),
+                }),
+            }
+        }
+        Some(response @ crate::event::QuestionResponse::Dismissed { .. }) => {
+            let _ = tx.send(AgentEvent::QuestionResolved(response));
+            tool_error_result(invocation, "user dismissed question")
+        }
+        None => {
+            let response = crate::event::QuestionResponse::Dismissed {
+                id: invocation.id.clone(),
+            };
+            let _ = tx.send(AgentEvent::QuestionResolved(response));
+            tool_error_result(invocation, "turn cancelled")
+        }
+    }
+}
+
+fn question_request_from_invocation(
+    invocation: &crate::tool::ToolInvocation,
+) -> std::result::Result<crate::event::QuestionRequest, String> {
+    let question = invocation
+        .input
+        .get("question")
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| "question must include a non-empty `question` string".to_string())?
+        .trim()
+        .to_string();
+    let options_value = invocation
+        .input
+        .get("options")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "question must include an `options` array".to_string())?;
+    let mut options = Vec::new();
+    for option in options_value {
+        if let Some(label) = option.as_str() {
+            options.push(crate::event::QuestionOption {
+                label: label.to_string(),
+                description: None,
+            });
+            continue;
+        }
+        let Some(object) = option.as_object() else {
+            return Err("question options must be strings or objects".to_string());
+        };
+        let label = object
+            .get("label")
+            .and_then(Value::as_str)
+            .filter(|value| !value.trim().is_empty())
+            .ok_or_else(|| "question option objects need a non-empty `label`".to_string())?;
+        let description = object
+            .get("description")
+            .and_then(Value::as_str)
+            .filter(|value| !value.trim().is_empty())
+            .map(str::to_string);
+        options.push(crate::event::QuestionOption {
+            label: label.to_string(),
+            description,
+        });
+    }
+    if options.is_empty() {
+        return Err("question must include at least one option".to_string());
+    }
+    Ok(crate::event::QuestionRequest {
+        id: invocation.id.clone(),
+        question,
+        options,
+        multiple: invocation
+            .input
+            .get("multiple")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        allow_custom: invocation
+            .input
+            .get("custom")
+            .or_else(|| invocation.input.get("allow_custom"))
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+    })
 }
 
 async fn approve_and_invoke_tool(

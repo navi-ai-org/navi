@@ -13,6 +13,7 @@ members = [
     "crates/navi-providers",
     "crates/navi-sdk",
     "crates/navi-tui",
+    "crates/navi-vfs",
 ]
 resolver = "3"
 
@@ -60,3 +61,22 @@ navi-plugin-orchestrator = { path = "crates/navi-plugin-orchestrator" }
 navi-plugin-runtime = { path = "crates/navi-plugin-runtime" }
 navi-sdk = { path = "crates/navi-sdk" }
 navi-tui = { path = "crates/navi-tui" }
+navi-vfs = { path = "crates/navi-vfs" }
+
+# Tree-sitter (VFS)
+tree-sitter = "0.25"
+tree-sitter-rust = "0.23"
+tree-sitter-python = "0.23"
+tree-sitter-javascript = "0.23"
+tree-sitter-typescript = "0.23"
+tree-sitter-go = "0.23"
+tree-sitter-c = "0.23"
+tree-sitter-cpp = "0.23"
+tree-sitter-java = "0.23"
+tree-sitter-ruby = "0.23"
+tree-sitter-php = "0.23"
+tree-sitter-bash = "0.23"
+tree-sitter-html = "0.23"
+tree-sitter-css = "0.23"
+tree-sitter-json = "0.23"
+tree-sitter-c-sharp = "0.23"
