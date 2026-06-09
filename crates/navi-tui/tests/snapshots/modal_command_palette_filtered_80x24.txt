@@ -3,16 +3,16 @@
 
     ███╗   ██╗ █████╗ ██╗   ██╗██╗      project navi-tui
     ██╭ Commands ────────────────────────────────────────────────────────╮
-    ██│█> mode███████║██║   ██║██║      via     OpenAI                   │
-    ██│╚██╗██║██╔══██║╚██╗ ██╔╝██║      thinking adaptive                │
+    ██│ > mode                                                           │
+    ██│                                                                  │
     ██│ Models                                              ctrl+m       │
     ╚═│ Thinking Mode                                                    │
       │ Sync Models                                                      │
-      │                                 tools   shell read write grep pat│h
-      │                                 session new                      │
-      │                                 cost    $0.00                    │
+      │                                                                  │h
       │                                                                  │
-    NA│I · wired code agent for local-first builders                     │
+      │                                                                  │
+      │                                                                  │
+    NA│                                                                  │
       │                                                                  │
       │                                                                  │
       │                                                                  │
