@@ -11,6 +11,7 @@ use crate::TuiApp;
 use crate::keybindings::THINKING_OPTIONS;
 use crate::providers::*;
 use crate::render::*;
+use crate::state::MessageAction;
 use crate::theme::*;
 use crate::ui::interaction::{HitAction, line_rect};
 use crate::ui::list::render_scrollbar;
@@ -225,7 +226,7 @@ pub(super) fn render_thinking_picker(frame: &mut Frame<'_>, app: &TuiApp, area: 
             let style = if hovered || selected {
                 active_item_style()
             } else {
-                Style::default().fg(muted()).bg(panel())
+                inactive_item_style()
             };
 
             let marker = if current { "● " } else { "  " };
@@ -352,7 +353,7 @@ pub(super) fn render_question(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
             let style = if hovered || selected {
                 active_item_style()
             } else {
-                Style::default().fg(muted()).bg(panel())
+                inactive_item_style()
             };
             let mark = if question.request.multiple {
                 if question.selected_options.get(row).copied().unwrap_or(false) {
@@ -432,7 +433,7 @@ pub(super) fn render_question(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
             .bg(red())
             .add_modifier(Modifier::BOLD)
     } else {
-        Style::default().fg(muted()).bg(panel())
+        Style::default().fg(text()).bg(panel())
     };
     frame.render_widget(
         Paragraph::new(Text::from(vec![
@@ -466,7 +467,7 @@ pub(super) fn render_question(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
         "1-9 select  •  type for text"
     };
     frame.render_widget(
-        Paragraph::new(footer).style(Style::default().fg(muted()).bg(panel())),
+        Paragraph::new(footer).style(Style::default().fg(text()).bg(panel())),
         rows[6],
     );
 }
@@ -592,7 +593,7 @@ pub(super) fn render_settings(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
             let style = if hovered || selected {
                 active_item_style()
             } else {
-                Style::default().fg(muted()).bg(panel())
+                inactive_item_style()
             };
 
             let line = if index >= 2 {
@@ -692,6 +693,84 @@ pub(super) fn render_help_modal(frame: &mut Frame<'_>, app: &TuiApp, area: Rect)
         "close help",
         HitAction::CloseModal,
     );
+}
+
+pub(super) fn render_message_actions(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
+    frame.render_widget(Clear, area);
+    let block = modal_block("Message Actions");
+    frame.render_widget(block, area);
+
+    let inner = area.inner(Margin {
+        horizontal: 2,
+        vertical: 1,
+    });
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(1),
+            Constraint::Length(1),
+            Constraint::Min(3),
+            Constraint::Length(1),
+        ])
+        .split(inner);
+
+    let selected_text = app
+        .message_action_target
+        .and_then(|index| app.messages.get(index))
+        .map(|message| truncate_display(&message.content.replace('\n', " "), 44))
+        .unwrap_or_else(|| "message no longer available".to_string());
+    frame.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::styled("Selected: ", Style::default().fg(muted()).bg(panel())),
+            Span::styled(selected_text, Style::default().fg(text()).bg(panel())),
+        ]))
+        .style(Style::default().bg(panel())),
+        rows[0],
+    );
+    frame.render_widget(Paragraph::new(""), rows[1]);
+
+    let items = MessageAction::ALL
+        .iter()
+        .enumerate()
+        .map(|(index, action)| {
+            let selected = index == app.selected_message_action;
+            let hovered = app.hover_index == Some(index);
+            let style = if hovered || selected {
+                active_item_style()
+            } else {
+                inactive_item_style()
+            };
+            let description_style = if hovered || selected {
+                active_item_style()
+            } else {
+                Style::default().fg(muted()).bg(panel())
+            };
+            ListItem::new(Line::from(vec![
+                Span::styled(format!("{:<16}", action.label()), style),
+                Span::styled(action.description(), description_style),
+            ]))
+            .style(style)
+        })
+        .collect::<Vec<_>>();
+    frame.render_widget(
+        List::new(items).style(Style::default().bg(panel())),
+        rows[0],
+    );
+
+    for (index, action) in MessageAction::ALL.iter().enumerate() {
+        app.register_hit(
+            line_rect(rows[2], index),
+            20,
+            format!("message action {}", action.label()),
+            HitAction::MessageAction(index),
+        );
+    }
+
+    frame.render_widget(
+        Paragraph::new("enter select · esc close").style(Style::default().fg(muted()).bg(panel())),
+        rows[3],
+    );
+    app.register_hit(rows[3], 20, "close message actions", HitAction::CloseModal);
 }
 
 fn api_key_input_line(app: &TuiApp, _max_width: usize) -> Line<'_> {
@@ -951,7 +1030,7 @@ pub(super) fn render_theme_picker(frame: &mut Frame<'_>, app: &TuiApp, area: Rec
     frame.render_widget(
         Paragraph::new(Line::from(vec![
             Span::styled("> ", Style::default().fg(signal())),
-            Span::styled(filter, Style::default().fg(muted())),
+            Span::styled(filter, Style::default().fg(text())),
         ]))
         .style(Style::default().bg(panel())),
         rows[0],
@@ -972,7 +1051,7 @@ pub(super) fn render_theme_picker(frame: &mut Frame<'_>, app: &TuiApp, area: Rec
             let style = if hovered || selected {
                 active_item_style()
             } else {
-                Style::default().fg(muted()).bg(panel())
+                inactive_item_style()
             };
 
             let marker = if current { "● " } else { "  " };

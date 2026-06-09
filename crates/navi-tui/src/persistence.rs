@@ -37,6 +37,10 @@ pub(crate) fn save_current_session(app: &mut TuiApp) {
     }
     app.session_id = SessionStore::create_id();
     app.events.clear();
+    app.message_action_target = None;
+    app.selected_message_action = 0;
+    app.expanded_tool_results.clear();
+    app.hovered_chat_source = None;
 }
 
 pub(crate) fn sync_preferences_to_config(app: &mut TuiApp) {
@@ -126,4 +130,8 @@ pub(crate) fn load_session(app: &mut TuiApp, snapshot: &SessionSnapshot) {
     app.scroll_offset = 0;
     app.input.clear();
     app.input_cursor = 0;
+    app.message_action_target = None;
+    app.selected_message_action = 0;
+    app.expanded_tool_results.clear();
+    app.hovered_chat_source = None;
 }

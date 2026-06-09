@@ -1,25 +1,33 @@
 use ratatui::prelude::{Line, Modifier, Span, Style};
 use ratatui::style::Color;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 
 use navi_sdk::{ToolInvocation, ToolResult};
 
-use crate::state::{ChatMessage, ChatRole};
+use crate::state::{ChatLineSource, ChatMessage, ChatRole};
 use crate::theme::*;
 
 use super::syntax::highlight_code_line;
 use super::text::wrap_text;
 use super::tool::{tool_compact_text, tool_full_content};
 
-pub(crate) fn build_chat_lines_for_messages<'a>(
-    messages: impl IntoIterator<Item = &'a ChatMessage>,
+#[derive(Debug, Clone)]
+pub(crate) struct ChatRenderOutput {
+    pub(crate) lines: Vec<Line<'static>>,
+    pub(crate) sources: Vec<ChatLineSource>,
+}
+
+pub(crate) fn build_chat_render_for_messages(
+    messages: &[ChatMessage],
     chat_width: usize,
     full_tool_view: bool,
     show_thinking: bool,
     compact_tool_visible_limit: usize,
-) -> Vec<Line<'static>> {
+    expanded_tool_results: &HashSet<String>,
+) -> ChatRenderOutput {
     let mut rendered_lines: Vec<Line<'static>> = Vec::new();
-    let messages = messages.into_iter().collect::<Vec<_>>();
+    let mut line_sources: Vec<ChatLineSource> = Vec::new();
+    let messages = messages.iter().collect::<Vec<_>>();
     let latest_tool_group_start = latest_tool_group_start(&messages);
     let mut index = 0;
 
@@ -44,24 +52,37 @@ pub(crate) fn build_chat_lines_for_messages<'a>(
                 group.push(parts);
                 index += 1;
             }
-            push_block_gap(&mut rendered_lines);
-            let expanded = latest_tool_group_start == Some(group_start);
-            rendered_lines.extend(render_compact_tool_group(
+            push_block_gap(&mut rendered_lines, &mut line_sources);
+            let expanded = latest_tool_group_start == Some(group_start)
+                || group
+                    .iter()
+                    .any(|(_, result)| expanded_tool_results.contains(&result.invocation_id));
+            let rendered_group = render_compact_tool_group(
                 &group,
                 chat_width,
                 expanded,
                 compact_tool_visible_limit,
-            ));
+                expanded_tool_results,
+            );
+            for (line, source) in rendered_group {
+                rendered_lines.push(line);
+                line_sources.push(source);
+            }
             continue;
         }
 
         if !rendered_lines.is_empty() {
             rendered_lines.push(Line::from(""));
+            line_sources.push(ChatLineSource::None);
         }
 
         match msg.role {
             ChatRole::User => {
-                rendered_lines.extend(render_user_message_lines(&msg.content, chat_width));
+                let lines = render_user_message_lines(&msg.content, chat_width);
+                for line in lines {
+                    rendered_lines.push(line);
+                    line_sources.push(ChatLineSource::Message(index));
+                }
             }
             ChatRole::Assistant => {
                 if msg.is_compact_summary {
@@ -75,39 +96,58 @@ pub(crate) fn build_chat_lines_for_messages<'a>(
                             Style::default().fg(ghost()),
                         ),
                     ]));
+                    line_sources.push(ChatLineSource::Message(index));
                 }
                 if let Some((invocation, result)) = tool_result_parts(msg) {
                     if full_tool_view {
-                        rendered_lines.extend(render_markdown_lines(
-                            &tool_full_content(invocation, result),
+                        let source = ChatLineSource::ToolResult(result.invocation_id.clone());
+                        push_sourced_lines(
+                            &mut rendered_lines,
+                            &mut line_sources,
+                            render_markdown_lines(
+                                &tool_full_content(invocation, result),
+                                chat_width.saturating_sub(2),
+                                text(),
+                                text(),
+                                false,
+                            ),
+                            source,
+                        );
+                    } else {
+                        rendered_lines.push(render_compact_tool_line(invocation, result));
+                        line_sources.push(ChatLineSource::ToolResult(result.invocation_id.clone()));
+                    }
+                } else {
+                    if show_thinking && !msg.thinking_content.is_empty() {
+                        push_sourced_lines(
+                            &mut rendered_lines,
+                            &mut line_sources,
+                            render_markdown_lines(
+                                &msg.thinking_content,
+                                chat_width.saturating_sub(4),
+                                muted(),
+                                muted(),
+                                true,
+                            ),
+                            ChatLineSource::Message(index),
+                        );
+                        if !msg.content.is_empty() {
+                            rendered_lines.push(Line::from(""));
+                            line_sources.push(ChatLineSource::Message(index));
+                        }
+                    }
+                    push_sourced_lines(
+                        &mut rendered_lines,
+                        &mut line_sources,
+                        render_markdown_lines(
+                            &msg.content,
                             chat_width.saturating_sub(2),
                             text(),
                             text(),
                             false,
-                        ));
-                    } else {
-                        rendered_lines.push(render_compact_tool_line(invocation, result));
-                    }
-                } else {
-                    if show_thinking && !msg.thinking_content.is_empty() {
-                        rendered_lines.extend(render_markdown_lines(
-                            &msg.thinking_content,
-                            chat_width.saturating_sub(4),
-                            muted(),
-                            muted(),
-                            true,
-                        ));
-                        if !msg.content.is_empty() {
-                            rendered_lines.push(Line::from(""));
-                        }
-                    }
-                    rendered_lines.extend(render_markdown_lines(
-                        &msg.content,
-                        chat_width.saturating_sub(2),
-                        text(),
-                        text(),
-                        false,
-                    ));
+                        ),
+                        ChatLineSource::Message(index),
+                    );
                 }
 
                 if let (Some(model_label), Some(provider_label)) =
@@ -140,12 +180,16 @@ pub(crate) fn build_chat_lines_for_messages<'a>(
                         Span::styled(format!(" {attr_text} "), Style::default().fg(muted())),
                         Span::styled(dashes, Style::default().fg(ghost())),
                     ]));
+                    line_sources.push(ChatLineSource::Message(index));
                 }
             }
         }
         index += 1;
     }
-    rendered_lines
+    ChatRenderOutput {
+        lines: rendered_lines,
+        sources: line_sources,
+    }
 }
 
 fn latest_tool_group_start(messages: &[&ChatMessage]) -> Option<usize> {
@@ -174,9 +218,22 @@ fn visible_status(status: Option<&str>) -> String {
     format!(" • {status}")
 }
 
-fn push_block_gap(lines: &mut Vec<Line<'static>>) {
+fn push_block_gap(lines: &mut Vec<Line<'static>>, sources: &mut Vec<ChatLineSource>) {
     if !lines.is_empty() {
         lines.push(Line::from(""));
+        sources.push(ChatLineSource::None);
+    }
+}
+
+fn push_sourced_lines(
+    lines: &mut Vec<Line<'static>>,
+    sources: &mut Vec<ChatLineSource>,
+    next: Vec<Line<'static>>,
+    source: ChatLineSource,
+) {
+    for line in next {
+        lines.push(line);
+        sources.push(source.clone());
     }
 }
 
@@ -260,29 +317,61 @@ fn render_compact_tool_group(
     chat_width: usize,
     expanded: bool,
     visible_limit: usize,
-) -> Vec<Line<'static>> {
+    expanded_tool_results: &HashSet<String>,
+) -> Vec<(Line<'static>, ChatLineSource)> {
+    let ids = tools
+        .iter()
+        .map(|(_, result)| result.invocation_id.clone())
+        .collect::<Vec<_>>();
     if !expanded {
-        return vec![render_collapsed_tool_group(tools, chat_width)];
+        return vec![(
+            render_collapsed_tool_group(tools, chat_width),
+            ChatLineSource::ToolGroup(ids),
+        )];
     }
 
     let mut lines = Vec::new();
     let visible_limit = visible_limit.max(1);
     let hidden = tools.len().saturating_sub(visible_limit);
     if hidden > 0 {
-        lines.push(Line::from(vec![
-            Span::styled("  ", Style::default().fg(ghost())),
-            Span::styled(
-                format!("{hidden} earlier tool calls"),
-                Style::default().fg(muted()).add_modifier(Modifier::BOLD),
-            ),
-        ]));
+        lines.push((
+            Line::from(vec![
+                Span::styled("  ", Style::default().fg(ghost())),
+                Span::styled(
+                    format!("{hidden} earlier tool calls"),
+                    Style::default().fg(muted()).add_modifier(Modifier::BOLD),
+                ),
+            ]),
+            ChatLineSource::ToolGroup(ids.clone()),
+        ));
     }
 
     let start = tools.len().saturating_sub(visible_limit);
     for (invocation, result) in &tools[start..] {
-        lines.push(render_compact_tool_line_with_width(
-            invocation, result, chat_width,
-        ));
+        let source = ChatLineSource::ToolResult(result.invocation_id.clone());
+        if expanded_tool_results.contains(&result.invocation_id) {
+            lines.push((
+                Line::from(Span::styled(
+                    "Click to collapse",
+                    Style::default().fg(muted()).add_modifier(Modifier::BOLD),
+                )),
+                source.clone(),
+            ));
+            for line in render_markdown_lines(
+                &tool_full_content(invocation, result),
+                chat_width.saturating_sub(2),
+                text(),
+                text(),
+                false,
+            ) {
+                lines.push((line, source.clone()));
+            }
+        } else {
+            lines.push((
+                render_compact_tool_line_with_width(invocation, result, chat_width),
+                source,
+            ));
+        }
     }
     lines
 }

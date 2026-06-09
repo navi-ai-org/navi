@@ -5,16 +5,16 @@
     ████╗  ██║██╔══██╗██║   ██║██║      model   gpt-5.5
     ██╔██╗ ██║███████║██║   ██║██║      via     OpenAI
     ██║╚██╗██║██╔══██║╚██╗ ██╔╝██║      thinking adaptive
-    ██║ ╚████║██║  ██║ ╚████╔╝ ██║      context 0 / 200k (0%)
-    ╚═╝  ╚═══╝╚═╝  ╚═╝  ╚═══╝  ╚═╝      mode    auto
-                                        router  auto
-                                        tools   shell read write grep patch
-                                        session new
-                                        cost    $0.00
-
-    NAVI · wired code agent for local-first builders
-
-
+    ██║ ╚████║██║  █╭ Thinking Mode ───────────────────────╮)
+    ╚═╝  ╚═══╝╚═╝  ╚│ ● adaptive                           │
+                    │   max                                │
+                    │   high                               │rite grep patch
+                    │   medium                             │
+                    │   low                                │
+                    │   off                                │
+    NAVI · wired cod│                                      │
+                    │                                      │
+                    ╰──────────────────────────────────────╯
 
 
 

@@ -34,12 +34,14 @@ fn render_inner(frame: &mut Frame<'_>, app: &mut TuiApp) {
     frame.render_widget(Block::new().style(Style::default().bg(theme::bg())), area);
     let content_area = viewport_rect(area);
 
+    let input_width = content_area.width.saturating_sub(4) as usize;
+    let input_height = input::composer_height(app, input_width);
     let vertical = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(1),
             Constraint::Min(6),
-            Constraint::Length(5),
+            Constraint::Length(input_height),
         ])
         .split(content_area);
 
@@ -64,6 +66,9 @@ fn render_inner(frame: &mut Frame<'_>, app: &mut TuiApp) {
         }
         Mode::Question => modals::render_question(frame, app, modal_rect(area, 78, 22)),
         Mode::ThemePicker => modals::render_theme_picker(frame, app, modal_rect(area, 40, 12)),
+        Mode::MessageActions => {
+            modals::render_message_actions(frame, app, modal_rect(area, 58, 10))
+        }
         Mode::Normal => {}
     }
 
