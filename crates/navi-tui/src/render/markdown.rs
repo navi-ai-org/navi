@@ -522,18 +522,23 @@ pub(crate) fn render_markdown_lines(
                 if in_code { rest.trim() } else { "" },
                 show_marker,
                 marker_color,
+                in_code,
             ));
             index += 1;
             continue;
         }
 
         if in_code {
+            let bg = code_block_bg();
             let spans = if let Some(ref mut hl) = code_highlighter {
                 hl.highlight_line(raw_line)
             } else {
                 highlight_code_line(raw_line, &language)
             };
             let mut line_spans = marker_spans(show_marker, marker_color);
+            for span in &mut line_spans {
+                span.style = span.style.bg(bg);
+            }
             line_spans.extend(spans);
             lines.push(Line::from(line_spans));
             index += 1;
@@ -1012,14 +1017,29 @@ fn push_plain_span(spans: &mut Vec<Span<'static>>, plain: &mut String, fallback:
     ));
 }
 
-fn markdown_boundary_line(language: &str, show_marker: bool, marker_color: Color) -> Line<'static> {
+fn markdown_boundary_line(
+    language: &str,
+    show_marker: bool,
+    marker_color: Color,
+    in_code: bool,
+) -> Line<'static> {
     let mut spans = marker_spans(show_marker, marker_color);
     let label = if language.is_empty() {
         "```".to_string()
     } else {
         format!("```{language}")
     };
-    spans.push(Span::styled(label, Style::default().fg(ghost())));
+    let bg = if in_code {
+        code_block_bg()
+    } else {
+        Color::Reset
+    };
+    spans.push(Span::styled(label, Style::default().fg(ghost()).bg(bg)));
+    if in_code {
+        for span in &mut spans {
+            span.style = span.style.bg(bg);
+        }
+    }
     Line::from(spans)
 }
 
