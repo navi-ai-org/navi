@@ -8,7 +8,7 @@ use crate::state::{ChatLineSource, ChatMessage, ChatRole};
 use crate::theme::*;
 
 use super::syntax::{CodeHighlighter, highlight_code_line};
-use super::text::{display_width, wrap_text};
+use super::text::{display_width, wrap_spans_to_width, wrap_text};
 use super::tool::{tool_compact_text, tool_full_content};
 
 #[derive(Debug, Clone)]
@@ -535,12 +535,27 @@ pub(crate) fn render_markdown_lines(
             } else {
                 highlight_code_line(raw_line, &language)
             };
-            let mut line_spans = marker_spans(show_marker, marker_color);
-            for span in &mut line_spans {
-                span.style = span.style.bg(bg);
+            let marker_width = if show_marker { 2 } else { 0 };
+            let content_width = max_width.saturating_sub(marker_width).max(1);
+            let wrapped = wrap_spans_to_width(&spans, content_width);
+            let wrapped = if wrapped.is_empty() {
+                vec![Vec::new()]
+            } else {
+                wrapped
+            };
+            for content_spans in wrapped {
+                let mut line_spans = marker_spans(show_marker, marker_color);
+                for span in &mut line_spans {
+                    span.style = span.style.bg(bg);
+                }
+                for mut span in content_spans {
+                    if span.style.bg.is_none() {
+                        span.style = span.style.bg(bg);
+                    }
+                    line_spans.push(span);
+                }
+                lines.push(Line::from(line_spans).style(Style::default().bg(bg)));
             }
-            line_spans.extend(spans);
-            lines.push(Line::from(line_spans).style(Style::default().bg(bg)));
             index += 1;
             continue;
         }

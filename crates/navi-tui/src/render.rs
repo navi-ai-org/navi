@@ -19,7 +19,8 @@ mod tests {
     use super::*;
     use crate::render::markdown::render_markdown_lines;
     use crate::render::syntax::highlight_code_line;
-    use crate::render::text::wrap_text;
+    use crate::render::text::{display_width, wrap_spans_to_width, wrap_text};
+    use crate::theme::code_block_bg;
     use crate::render::tool::{tool_compact_text, tool_full_content};
     use crate::theme::ThemeId;
 
@@ -83,6 +84,56 @@ mod tests {
             rendered,
             vec!["before", "```rust", "fn main() {}", "```", "after"]
         );
+    }
+
+    #[test]
+    fn markdown_renderer_wraps_long_code_lines() {
+        let long_line = format!(
+            "```rust\n\"message\": \"{}\"\n```",
+            "x".repeat(120)
+        );
+        let width = 40;
+        let lines = render_markdown_lines(
+            &long_line,
+            width,
+            test_palette().text,
+            test_palette().text,
+            false,
+        );
+        let code_lines: Vec<_> = lines
+            .iter()
+            .filter(|line| {
+                line.spans
+                    .iter()
+                    .any(|span| span.style.bg == Some(code_block_bg()))
+            })
+            .collect();
+        assert!(code_lines.len() > 1, "expected wrapped code lines");
+        for line in &code_lines {
+            let used: usize = line
+                .spans
+                .iter()
+                .map(|span| display_width(&span.content))
+                .sum();
+            assert!(
+                used <= width,
+                "code line wider than viewport: {used} > {width}"
+            );
+        }
+    }
+
+    #[test]
+    fn wrap_spans_to_width_splits_highlighted_spans() {
+        let spans = highlight_code_line("\"abcdefghijklmnop\"", "rust");
+        let wrapped = wrap_spans_to_width(&spans, 8);
+        let rendered: Vec<String> = wrapped
+            .iter()
+            .map(|line| line.iter().map(|span| span.content.as_ref()).collect())
+            .collect();
+        assert_eq!(rendered.len(), 3);
+        for line in rendered {
+            assert!(line.chars().count() <= 8);
+        }
     }
 
     #[test]
