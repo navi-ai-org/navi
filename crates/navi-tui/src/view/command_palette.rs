@@ -12,6 +12,10 @@ use crate::ui::list::render_scrollbar;
 
 pub(super) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
     frame.render_widget(Clear, area);
+    frame.render_widget(
+        ratatui::widgets::Block::default().style(Style::default().bg(panel())),
+        area,
+    );
     let block = modal_block("Commands");
     frame.render_widget(block, area);
 
