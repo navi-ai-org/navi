@@ -1,3 +1,6 @@
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
+
 use ratatui::layout::{Margin, Rect};
 use ratatui::prelude::{Frame, Line, Span};
 use ratatui::style::{Color, Modifier, Style};
@@ -6,6 +9,7 @@ use ratatui::widgets::{Paragraph, Wrap};
 
 use crate::TuiApp;
 use crate::render::markdown::build_chat_render_for_messages;
+use crate::render::text::display_width;
 use crate::state::{ChatLineSource, ChatRole, Mode};
 use crate::theme::*;
 use crate::ui::interaction::{HitAction, line_rect};
@@ -79,7 +83,7 @@ pub(super) fn render_chat_area(frame: &mut Frame<'_>, app: &mut TuiApp, area: Re
                 let mut new_spans = Vec::new();
                 let mut current_char = 0;
                 for span in line.spans.iter() {
-                    let span_len = span.content.chars().count();
+                    let span_len = display_width(&span.content);
                     let span_end = current_char + span_len;
 
                     if span_end <= start_char || current_char >= end_char {
@@ -207,7 +211,7 @@ fn chat_sources_match(a: &ChatLineSource, b: &ChatLineSource) -> bool {
 fn apply_card_bg(line: &mut Line<'static>, width: usize, bg: Color, emphasize: bool) {
     let mut used = 0usize;
     for (index, span) in line.spans.iter_mut().enumerate() {
-        used = used.saturating_add(span.content.chars().count());
+        used = used.saturating_add(display_width(&span.content));
         span.style = span.style.bg(bg);
         if emphasize && index == 0 {
             span.style = span.style.fg(signal()).add_modifier(Modifier::BOLD);
@@ -222,7 +226,7 @@ fn apply_card_bg(line: &mut Line<'static>, width: usize, bg: Color, emphasize: b
 }
 
 fn ensure_chat_cache(app: &mut TuiApp, chat_width: usize) {
-    let signature = chat_render_signature(app);
+    let signature_hash = chat_render_signature(app);
     let expanded_signature = expanded_tool_signature(app);
     {
         let cache = app.chat_render_cache.borrow();
@@ -231,23 +235,27 @@ fn ensure_chat_cache(app: &mut TuiApp, chat_width: usize) {
             && cache.show_thinking == app.show_thinking
             && cache.compact_tool_visible_limit == app.compact_tool_visible_limit
             && cache.expanded_tool_signature == expanded_signature
-            && cache.signature == signature
+            && cache.signature_hash == signature_hash
         {
             return;
         }
     }
 
-    let (previous_line_count, can_preserve_manual_scroll) = {
+    let (previous_line_count, can_preserve_manual_scroll, width_changed) = {
         let cache = app.chat_render_cache.borrow();
         (
             cache.lines.len(),
-            !cache.signature.is_empty()
+            cache.signature_hash != 0
                 && cache.width == chat_width
                 && cache.full_tool_view == app.full_tool_view
                 && cache.show_thinking == app.show_thinking
                 && cache.compact_tool_visible_limit == app.compact_tool_visible_limit,
+            cache.width != chat_width && cache.signature_hash != 0,
         )
     };
+    if width_changed {
+        app.chat_render_cache.borrow_mut().tool_render_cache.clear();
+    }
     let rendered = build_chat_render(app, chat_width);
     if can_preserve_manual_scroll {
         app.scroll_offset =
@@ -260,7 +268,7 @@ fn ensure_chat_cache(app: &mut TuiApp, chat_width: usize) {
     cache.show_thinking = app.show_thinking;
     cache.compact_tool_visible_limit = app.compact_tool_visible_limit;
     cache.expanded_tool_signature = expanded_signature;
-    cache.signature = signature;
+    cache.signature_hash = signature_hash;
     cache.lines = rendered.lines;
     cache.line_sources = rendered.sources;
 }
@@ -280,47 +288,27 @@ fn anchored_scroll_offset(
     }
 }
 
-fn chat_render_signature(app: &TuiApp) -> String {
-    let mut signature = String::with_capacity(app.messages.len() * 48);
-    signature.push_str(if app.full_tool_view {
-        "full|"
-    } else {
-        "compact|"
-    });
-    signature.push_str(if app.show_thinking { "think|" } else { "hide|" });
-    signature.push_str(app.theme_id.config_value());
-    signature.push('|');
-    signature.push_str(&app.compact_tool_visible_limit.to_string());
-    signature.push('|');
+fn chat_render_signature(app: &TuiApp) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    app.full_tool_view.hash(&mut hasher);
+    app.show_thinking.hash(&mut hasher);
+    app.theme_id.config_value().hash(&mut hasher);
+    app.compact_tool_visible_limit.hash(&mut hasher);
     for msg in &app.messages {
-        signature.push(match msg.role {
-            ChatRole::User => 'u',
-            ChatRole::Assistant => 'a',
-        });
-        signature.push(':');
-        signature.push_str(&msg.content.len().to_string());
-        signature.push(':');
-        signature.push_str(&msg.thinking_content.len().to_string());
-        signature.push(':');
-        signature.push_str(msg.status.as_deref().unwrap_or_default());
-        signature.push(':');
-        signature.push_str(msg.usage_label.as_deref().unwrap_or_default());
-        signature.push(':');
-        signature.push_str(&msg.elapsed_ms.unwrap_or_default().to_string());
-        signature.push(':');
-        signature.push_str(msg.model_label.as_deref().unwrap_or_default());
-        signature.push(':');
-        signature.push_str(msg.provider_label.as_deref().unwrap_or_default());
-        if msg.is_compact_summary {
-            signature.push_str(":compact");
-        }
+        msg.role.hash(&mut hasher);
+        msg.content.len().hash(&mut hasher);
+        msg.thinking_content.len().hash(&mut hasher);
+        msg.status.hash(&mut hasher);
+        msg.usage_label.hash(&mut hasher);
+        msg.elapsed_ms.hash(&mut hasher);
+        msg.model_label.hash(&mut hasher);
+        msg.provider_label.hash(&mut hasher);
+        msg.is_compact_summary.hash(&mut hasher);
         if let Some(result) = &msg.tool_result {
-            signature.push(':');
-            signature.push_str(if result.ok { "ok" } else { "err" });
+            result.ok.hash(&mut hasher);
         }
-        signature.push('|');
     }
-    signature
+    hasher.finish()
 }
 
 fn expanded_tool_signature(app: &TuiApp) -> String {
@@ -333,11 +321,14 @@ fn expanded_tool_signature(app: &TuiApp) -> String {
 }
 
 #[cfg(test)]
-pub(super) fn build_chat_lines(app: &TuiApp, chat_width: usize) -> Vec<Line<'static>> {
+pub(super) fn build_chat_lines(app: &mut TuiApp, chat_width: usize) -> Vec<Line<'static>> {
     build_chat_render(app, chat_width).lines
 }
 
-fn build_chat_render(app: &TuiApp, chat_width: usize) -> crate::render::markdown::ChatRenderOutput {
+fn build_chat_render(
+    app: &mut TuiApp,
+    chat_width: usize,
+) -> crate::render::markdown::ChatRenderOutput {
     build_chat_render_for_messages(
         &app.messages,
         chat_width,
@@ -345,6 +336,7 @@ fn build_chat_render(app: &TuiApp, chat_width: usize) -> crate::render::markdown
         app.show_thinking,
         app.compact_tool_visible_limit,
         &app.expanded_tool_results,
+        &mut app.chat_render_cache.borrow_mut().tool_render_cache,
     )
 }
 

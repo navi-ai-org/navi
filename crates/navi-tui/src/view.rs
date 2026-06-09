@@ -187,7 +187,7 @@ fn compact_token_label(tokens: u64) -> String {
 
 #[cfg(test)]
 pub(crate) fn build_chat_lines(
-    app: &TuiApp,
+    app: &mut TuiApp,
     chat_width: usize,
 ) -> Vec<ratatui::prelude::Line<'static>> {
     chat::build_chat_lines(app, chat_width)

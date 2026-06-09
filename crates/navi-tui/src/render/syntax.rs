@@ -7,24 +7,40 @@ use syntect::parsing::SyntaxSet;
 
 use crate::theme::*;
 
-pub(crate) fn highlight_code_line(raw_line: &str, language: &str) -> Vec<Span<'static>> {
-    let syntax_set = syntax_set();
-    let syntax = syntax_set
-        .find_syntax_by_token(language)
-        .or_else(|| syntax_set.find_syntax_by_extension(language))
-        .unwrap_or_else(|| syntax_set.find_syntax_plain_text());
-    let mut highlighter = HighlightLines::new(syntax, syntax_theme());
+pub(crate) struct CodeHighlighter {
+    highlighter: HighlightLines<'static>,
+}
 
-    match highlighter.highlight_line(raw_line, syntax_set) {
-        Ok(ranges) => ranges
-            .into_iter()
-            .map(|(style, text)| Span::styled(text.to_string(), syntect_style(style)))
-            .collect(),
-        Err(_) => vec![Span::styled(
-            raw_line.to_string(),
-            Style::default().fg(text()),
-        )],
+impl CodeHighlighter {
+    pub(crate) fn new(language: &str) -> Self {
+        let syntax_set = syntax_set();
+        let syntax = syntax_set
+            .find_syntax_by_token(language)
+            .or_else(|| syntax_set.find_syntax_by_extension(language))
+            .unwrap_or_else(|| syntax_set.find_syntax_plain_text());
+        Self {
+            highlighter: HighlightLines::new(syntax, syntax_theme()),
+        }
     }
+
+    pub(crate) fn highlight_line(&mut self, raw_line: &str) -> Vec<Span<'static>> {
+        let syntax_set = syntax_set();
+        match self.highlighter.highlight_line(raw_line, syntax_set) {
+            Ok(ranges) => ranges
+                .into_iter()
+                .map(|(style, text)| Span::styled(text.to_string(), syntect_style(style)))
+                .collect(),
+            Err(_) => vec![Span::styled(
+                raw_line.to_string(),
+                Style::default().fg(text()),
+            )],
+        }
+    }
+}
+
+pub(crate) fn highlight_code_line(raw_line: &str, language: &str) -> Vec<Span<'static>> {
+    let mut highlighter = CodeHighlighter::new(language);
+    highlighter.highlight_line(raw_line)
 }
 
 fn syntect_style(style: SyntectStyle) -> Style {

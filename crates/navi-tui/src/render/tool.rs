@@ -2,6 +2,21 @@ use navi_sdk::{ToolInvocation, ToolResult};
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
+const MAX_TOOL_RENDER_LINES: usize = 5000;
+
+fn truncate_to_lines(text: &str, max_lines: usize) -> &str {
+    let mut count = 0;
+    for (i, ch) in text.char_indices() {
+        if ch == '\n' {
+            count += 1;
+            if count >= max_lines {
+                return &text[..=i];
+            }
+        }
+    }
+    text
+}
+
 pub(crate) fn tool_compact_text(invocation: &ToolInvocation, result: &ToolResult) -> String {
     let mut text = match invocation.tool_name.as_str() {
         "read_file" | "view_file" => read_file_summary(invocation, result),
@@ -51,16 +66,18 @@ fn formatted_tool_output(invocation: &ToolInvocation, result: &ToolResult) -> Op
             let stderr = obj.get("stderr").and_then(|v| v.as_str()).unwrap_or("");
             if !stdout.is_empty() {
                 content.push_str("\nStdout:\n```\n");
-                content.push_str(stdout);
-                if !stdout.ends_with('\n') {
+                let truncated_stdout = truncate_to_lines(stdout, MAX_TOOL_RENDER_LINES);
+                content.push_str(truncated_stdout);
+                if !truncated_stdout.ends_with('\n') {
                     content.push('\n');
                 }
                 content.push_str("```\n");
             }
             if !stderr.is_empty() {
                 content.push_str("\nStderr:\n```\n");
-                content.push_str(stderr);
-                if !stderr.ends_with('\n') {
+                let truncated_stderr = truncate_to_lines(stderr, MAX_TOOL_RENDER_LINES);
+                content.push_str(truncated_stderr);
+                if !truncated_stderr.ends_with('\n') {
                     content.push('\n');
                 }
                 content.push_str("```\n");
@@ -83,9 +100,16 @@ fn formatted_tool_output(invocation: &ToolInvocation, result: &ToolResult) -> Op
         if let Some(file_content) = obj.get("content").and_then(|v| v.as_str()) {
             let language = language_for_path(path);
             content.push_str(&format!("```{language}\n"));
-            content.push_str(file_content);
-            if !file_content.ends_with('\n') {
+            let truncated_content = truncate_to_lines(file_content, MAX_TOOL_RENDER_LINES);
+            content.push_str(truncated_content);
+            if !truncated_content.ends_with('\n') {
                 content.push('\n');
+            }
+            if truncated_content.len() < file_content.len() {
+                content.push_str(&format!(
+                    "... (truncated, {} lines total)\n",
+                    file_content.lines().count()
+                ));
             }
             content.push_str("```\n");
         }
@@ -139,17 +163,31 @@ fn formatted_tool_output(invocation: &ToolInvocation, result: &ToolResult) -> Op
         let stderr = obj.get("stderr").and_then(|v| v.as_str()).unwrap_or("");
         if !stdout.is_empty() {
             content.push_str("\nStdout:\n```\n");
-            content.push_str(stdout);
-            if !stdout.ends_with('\n') {
+            let truncated_stdout = truncate_to_lines(stdout, MAX_TOOL_RENDER_LINES);
+            content.push_str(truncated_stdout);
+            if !truncated_stdout.ends_with('\n') {
                 content.push('\n');
+            }
+            if truncated_stdout.len() < stdout.len() {
+                content.push_str(&format!(
+                    "... (truncated, {} lines total)\n",
+                    stdout.lines().count()
+                ));
             }
             content.push_str("```\n");
         }
         if !stderr.is_empty() {
             content.push_str("\nStderr:\n```\n");
-            content.push_str(stderr);
-            if !stderr.ends_with('\n') {
+            let truncated_stderr = truncate_to_lines(stderr, MAX_TOOL_RENDER_LINES);
+            content.push_str(truncated_stderr);
+            if !truncated_stderr.ends_with('\n') {
                 content.push('\n');
+            }
+            if truncated_stderr.len() < stderr.len() {
+                content.push_str(&format!(
+                    "... (truncated, {} lines total)\n",
+                    stderr.lines().count()
+                ));
             }
             content.push_str("```\n");
         }

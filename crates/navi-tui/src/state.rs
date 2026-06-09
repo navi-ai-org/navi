@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 use navi_sdk::{QuestionRequest, ThinkingConfig, ToolInvocation, ToolResult};
@@ -37,7 +38,7 @@ impl ChatMessage {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ChatRole {
     User,
     Assistant,
@@ -58,10 +59,11 @@ pub(crate) struct ChatRenderCache {
     pub show_thinking: bool,
     pub compact_tool_visible_limit: usize,
     pub expanded_tool_signature: String,
-    pub signature: String,
+    pub signature_hash: u64,
     pub lines: Vec<Line<'static>>,
     pub line_sources: Vec<ChatLineSource>,
     pub chat_rect: Option<Rect>,
+    pub tool_render_cache: HashMap<String, Vec<Line<'static>>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
