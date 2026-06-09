@@ -234,10 +234,7 @@ fn apply_card_bg(line: &mut Line<'static>, width: usize, bg: Color, emphasize: b
 fn pad_code_block_bg(lines: &mut [Line<'static>], width: usize) {
     let bg = code_block_bg();
     for line in lines.iter_mut() {
-        let is_code = line
-            .spans
-            .first()
-            .is_some_and(|span| span.style.bg == Some(bg));
+        let is_code = line.spans.iter().any(|span| span.style.bg == Some(bg));
         if !is_code {
             continue;
         }
