@@ -1,24 +1,19 @@
-  main  /tmp/navi-test-project                               │ 0 / 200K │ 0 0 ✓
 
 
-    ███╗   ██╗ █████╗ ██╗   ██╗██╗      project navi-tui
-    ██╭ Commands ────────────────────────────────────────────────────────╮
-    ██│ > type to search                                                 │
-    ██│                                                                  │
-    ██│ New Session                                         ctrl+n     █ │
-    ╚═│ Sessions                                            ctrl+s     █ │
+
+
+      ╭ Commands ────────────────────────────────────────────────────────╮
+      │ > type to search                                                 │
+      │                                                                  │
+      │ New Session                                         ctrl+n     █ │
+      │ Sessions                                            ctrl+s     █ │
       │ Copy Session                                                   █ │
-      │ Share Session                                                  █ │h
+      │ Share Session                                                  █ │
       │ Models                                              ctrl+m     █ │
       │ Providers                                                      █ │
       │ Skills                                                         █ │
-    NA│ Plugins                                                        │ │
+      │ Plugins                                                        │ │
       │ Retry Last Response                                            │ │
       │ Thinking Mode                                                  │ │
       │                                                                  │
       ╰──────────────────────────────────────────────────────────────────╯
-
-  ┌──────────────────────────────────────────────────────────────────────────┐
-  │}                                                                         │
-  └──────────────────────────────────────────────────────────────────────────┘
-   type a task, or ctrl+p for commands

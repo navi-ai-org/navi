@@ -5,8 +5,9 @@ pub(crate) mod text;
 pub(crate) mod tool;
 
 pub(crate) use layout::{
-    clear_modal_area, command_row, command_scroll_offset, modal_block, modal_rect,
-    model_row_simple, truncate_display,
+    clear_modal_area, command_row, command_scroll_offset, fill_modal_scrim,
+    fill_modal_surface, modal_block, modal_list_highlight_style, modal_rect, model_row_simple,
+    truncate_display,
 };
 pub(crate) use text::{cursor_span, mask_key_segment, project_label};
 

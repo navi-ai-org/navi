@@ -5,7 +5,9 @@ use ratatui::widgets::{List, ListItem, ListState, Paragraph};
 
 use crate::TuiApp;
 use crate::commands::filtered_commands;
-use crate::render::{clear_modal_area, command_row, modal_block};
+use crate::render::{
+    clear_modal_area, command_row, fill_modal_surface, modal_block, modal_list_highlight_style,
+};
 use crate::theme::*;
 use crate::ui::interaction::{HitAction, line_rect};
 use crate::ui::list::render_scrollbar;
@@ -28,6 +30,10 @@ pub(super) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
         ])
         .split(inner);
 
+    for row in rows.iter() {
+        fill_modal_surface(frame, *row);
+    }
+
     let filter = if app.command_filter.is_empty() {
         "type to search"
     } else {
@@ -38,7 +44,7 @@ pub(super) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
             Span::styled("> ", Style::default().fg(signal())),
             Span::styled(filter, Style::default().fg(text())),
         ]))
-        .style(Style::default().bg(panel())),
+        .style(Style::default().bg(modal_bg())),
         rows[0],
     );
 
@@ -74,8 +80,8 @@ pub(super) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
     );
     frame.render_stateful_widget(
         List::new(items)
-            .style(Style::default().bg(panel()))
-            .highlight_style(Style::default()),
+            .style(Style::default().bg(modal_bg()))
+            .highlight_style(modal_list_highlight_style()),
         rows[1],
         &mut list_state,
     );
@@ -99,7 +105,7 @@ pub(super) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
         );
     }
     frame.render_widget(
-        Paragraph::new("").style(Style::default().fg(muted()).bg(panel())),
+        Paragraph::new("").style(Style::default().fg(muted()).bg(modal_bg())),
         rows[2],
     );
 }
