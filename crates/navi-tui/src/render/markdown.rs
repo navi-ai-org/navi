@@ -34,7 +34,7 @@ pub(crate) fn build_chat_lines_for_messages<'a>(
             let group_start = index;
             while index < messages.len() {
                 let group_msg = messages[index];
-                if is_empty_tool_placeholder(group_msg) {
+                if is_transparent_tool_placeholder(group_msg) {
                     index += 1;
                     continue;
                 }
@@ -152,7 +152,7 @@ fn latest_tool_group_start(messages: &[&ChatMessage]) -> Option<usize> {
     let mut latest = None;
     let mut previous_was_tool = false;
     for (index, message) in messages.iter().enumerate() {
-        if is_empty_tool_placeholder(message) {
+        if is_transparent_tool_placeholder(message) {
             continue;
         }
         let is_tool = tool_result_parts(message).is_some();
@@ -232,6 +232,16 @@ pub(crate) fn is_empty_tool_placeholder(message: &ChatMessage) -> bool {
                 || status == "thinking"
                 || status == "receiving"
         })
+}
+
+fn is_transparent_tool_placeholder(message: &ChatMessage) -> bool {
+    message.role == ChatRole::Assistant
+        && message.content.trim().is_empty()
+        && message.thinking_content.trim().is_empty()
+        && message
+            .status
+            .as_deref()
+            .is_some_and(|status| status.starts_with("tool:") || status.starts_with("approval:"))
 }
 
 fn tool_result_parts(message: &ChatMessage) -> Option<(&ToolInvocation, &ToolResult)> {

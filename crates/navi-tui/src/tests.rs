@@ -1238,6 +1238,55 @@ fn compact_tool_render_collapses_older_tool_groups() {
 }
 
 #[test]
+fn compact_tool_render_splits_groups_at_thinking_placeholder() {
+    let mut app = test_app("");
+    for path in ["src/a.rs", "src/b.rs"] {
+        app.messages.push(ChatMessage {
+            status: Some("tool result".to_string()),
+            tool_invocation: Some(ToolInvocation {
+                id: path.to_string(),
+                tool_name: "read_file".to_string(),
+                input: serde_json::json!({ "path": path }),
+            }),
+            tool_result: Some(ToolResult {
+                invocation_id: path.to_string(),
+                ok: true,
+                output: serde_json::json!({ "path": path }),
+            }),
+            ..ChatMessage::new(ChatRole::Assistant, String::new())
+        });
+    }
+    app.messages.push(ChatMessage {
+        status: Some("thinking".to_string()),
+        ..ChatMessage::new(ChatRole::Assistant, String::new())
+    });
+    app.messages.push(ChatMessage {
+        status: Some("tool result".to_string()),
+        tool_invocation: Some(ToolInvocation {
+            id: "src/c.rs".to_string(),
+            tool_name: "read_file".to_string(),
+            input: serde_json::json!({ "path": "src/c.rs" }),
+        }),
+        tool_result: Some(ToolResult {
+            invocation_id: "src/c.rs".to_string(),
+            ok: true,
+            output: serde_json::json!({ "path": "src/c.rs" }),
+        }),
+        ..ChatMessage::new(ChatRole::Assistant, String::new())
+    });
+
+    let text = build_chat_lines(&app, 80)
+        .iter()
+        .map(line_text)
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    assert!(text.contains("2 tools · Read x2"));
+    assert!(text.contains("Read src/c.rs"));
+    assert!(!text.contains("3 tools · Read x3"));
+}
+
+#[test]
 fn full_tool_render_generates_sanitized_metadata_view() {
     let mut app = test_app("");
     app.full_tool_view = true;
