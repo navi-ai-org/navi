@@ -1,5 +1,5 @@
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
@@ -32,6 +32,7 @@ pub struct TuiApp {
     pub(crate) loaded_config: LoadedConfig,
     pub(crate) input: String,
     pub(crate) input_cursor: usize,
+    pub(crate) input_wrap_width: usize,
     pub(crate) mode: Mode,
     pub(crate) modal_stack: ModalStack<ModalKind>,
     pub(crate) command_filter: String,
@@ -107,6 +108,10 @@ pub struct TuiApp {
     pub(crate) selection: Option<SelectionState>,
     pub(crate) hover_index: Option<usize>,
     pub(crate) theme_id: ThemeId,
+    pub(crate) message_action_target: Option<usize>,
+    pub(crate) selected_message_action: usize,
+    pub(crate) expanded_tool_results: HashSet<String>,
+    pub(crate) hovered_chat_source: Option<crate::state::ChatLineSource>,
 
     // skills
     pub(crate) available_skills: Vec<NaviSkillInfo>,
@@ -176,6 +181,7 @@ impl TuiApp {
             loaded_config,
             input: String::new(),
             input_cursor: 0,
+            input_wrap_width: 80,
             mode: Mode::Normal,
             modal_stack: ModalStack::default(),
             command_filter: String::new(),
@@ -241,6 +247,10 @@ impl TuiApp {
             selection: None,
             hover_index: None,
             theme_id,
+            message_action_target: None,
+            selected_message_action: 0,
+            expanded_tool_results: HashSet::new(),
+            hovered_chat_source: None,
             available_skills: Vec::new(),
             active_skills: initial_active_skills,
             selected_skill: 0,

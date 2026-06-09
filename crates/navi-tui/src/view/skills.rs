@@ -37,7 +37,7 @@ pub(super) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
     frame.render_widget(
         Paragraph::new(Line::from(vec![
             Span::styled("> ", Style::default().fg(signal())),
-            Span::styled(filter, Style::default().fg(muted())),
+            Span::styled(filter, Style::default().fg(text())),
         ]))
         .style(Style::default().bg(panel())),
         rows[0],
@@ -60,7 +60,7 @@ pub(super) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
             } else if is_active {
                 (Style::default().fg(signal()).bg(panel()), "✓")
             } else {
-                (Style::default().fg(muted()).bg(panel()), " ")
+                (inactive_item_style(), " ")
             };
 
             let description = skill
@@ -128,7 +128,7 @@ pub(super) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
     let total_count = app.available_skills.len();
     let summary = format!(" {} active / {} available ", active_count, total_count);
     frame.render_widget(
-        Paragraph::new(summary).style(Style::default().fg(muted()).bg(panel())),
+        Paragraph::new(summary).style(Style::default().fg(text()).bg(panel())),
         rows[2],
     );
 

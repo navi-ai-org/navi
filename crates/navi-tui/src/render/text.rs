@@ -1,4 +1,4 @@
-use ratatui::prelude::{Line, Modifier, Span, Style};
+use ratatui::prelude::{Modifier, Span, Style};
 
 use crate::theme::*;
 
@@ -47,35 +47,9 @@ pub(crate) fn wrap_text(text: &str, max_width: usize) -> Vec<String> {
     lines
 }
 
-pub(crate) fn split_input_spans<'a>(spans: Vec<Span<'a>>, continuation: &str) -> Vec<Line<'a>> {
-    let mut lines = Vec::new();
-    let mut current = Vec::new();
-
-    for span in spans {
-        let content = span.content.clone();
-        let style = span.style;
-        let mut parts = content.split('\n').peekable();
-        while let Some(part) = parts.next() {
-            if !part.is_empty() {
-                current.push(Span::styled(part.to_string(), style));
-            }
-            if parts.peek().is_some() {
-                lines.push(Line::from(current));
-                current = vec![Span::raw(continuation.to_string())];
-            }
-        }
-    }
-
-    if !current.is_empty() || lines.is_empty() {
-        lines.push(Line::from(current));
-    }
-
-    lines
-}
-
-pub(crate) fn cursor_span(value: &str) -> Span<'_> {
+pub(crate) fn cursor_span(value: impl Into<String>) -> Span<'static> {
     Span::styled(
-        value,
+        value.into(),
         Style::default()
             .fg(bg())
             .bg(signal())

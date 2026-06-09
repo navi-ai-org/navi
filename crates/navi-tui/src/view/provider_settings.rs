@@ -60,7 +60,7 @@ pub(super) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
             } else if status.configured {
                 Style::default().fg(signal()).bg(panel())
             } else {
-                Style::default().fg(muted()).bg(panel())
+                inactive_item_style()
             };
             ListItem::new(Span::styled(line, style)).style(style)
         })
@@ -99,7 +99,7 @@ pub(super) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
 
     frame.render_widget(
         Paragraph::new("k API key  •  o OAuth  •  r sync models")
-            .style(Style::default().fg(muted()).bg(panel())),
+            .style(Style::default().fg(text()).bg(panel())),
         rows[2],
     );
 }

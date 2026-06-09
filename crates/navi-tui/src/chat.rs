@@ -6,6 +6,13 @@ use crate::state::{ChatMessage, ChatRole};
 use crate::stream::start_streaming_request;
 use crate::tools::cancel_stream;
 
+#[derive(Debug, Clone)]
+struct ChatPrefix {
+    messages: Vec<ChatMessage>,
+    conversation_history: Vec<ModelMessage>,
+    events: Vec<AgentEvent>,
+}
+
 pub(crate) fn submit_message(app: &mut TuiApp) {
     let text = app.input.trim().to_string();
     if text.is_empty() {
@@ -253,6 +260,126 @@ pub(crate) fn retry_last_response(app: &mut TuiApp) {
     {
         start_streaming_request(app);
     }
+}
+
+pub(crate) fn revert_to_user_message(app: &mut TuiApp, message_index: usize) -> Result<(), String> {
+    let prompt = user_message_text(app, message_index)?;
+    ensure_safe_history_action(app)?;
+    let prefix = prefix_before_user_message(app, message_index)?;
+    apply_prefix(app, prefix);
+    app.input = prompt;
+    app.input_cursor = app.input.len();
+    app.scroll_offset = 0;
+    Ok(())
+}
+
+pub(crate) fn fork_from_user_message(app: &mut TuiApp, message_index: usize) -> Result<(), String> {
+    let prompt = user_message_text(app, message_index)?;
+    ensure_safe_history_action(app)?;
+    let prefix = prefix_before_user_message(app, message_index)?;
+    crate::persistence::save_current_session(app);
+    apply_prefix(app, prefix);
+    app.input = prompt;
+    app.input_cursor = app.input.len();
+    app.scroll_offset = 0;
+    Ok(())
+}
+
+fn user_message_text(app: &TuiApp, message_index: usize) -> Result<String, String> {
+    let Some(message) = app.messages.get(message_index) else {
+        return Err("Message no longer exists.".to_string());
+    };
+    if message.role != ChatRole::User {
+        return Err("Only user messages can be reverted or forked.".to_string());
+    }
+    Ok(message.content.clone())
+}
+
+fn ensure_safe_history_action(app: &TuiApp) -> Result<(), String> {
+    if app.is_loading || app.has_async_task() || !app.running_tools.is_empty() {
+        return Err("Wait for the active turn to finish before changing history.".to_string());
+    }
+    if !app.pending_approvals.is_empty() || !app.pending_questions.is_empty() {
+        return Err("Resolve pending approvals/questions before changing history.".to_string());
+    }
+    Ok(())
+}
+
+fn prefix_before_user_message(app: &TuiApp, message_index: usize) -> Result<ChatPrefix, String> {
+    user_message_text(app, message_index)?;
+    let target_user_ordinal = app
+        .messages
+        .iter()
+        .take(message_index)
+        .filter(|message| message.role == ChatRole::User)
+        .count();
+
+    let messages = app.messages[..message_index].to_vec();
+    let conversation_history =
+        truncate_model_history_before_user(&app.conversation_history, target_user_ordinal);
+    let events = truncate_events_before_user(&app.events, target_user_ordinal);
+
+    Ok(ChatPrefix {
+        messages,
+        conversation_history,
+        events,
+    })
+}
+
+fn truncate_model_history_before_user(
+    history: &[ModelMessage],
+    target_user_ordinal: usize,
+) -> Vec<ModelMessage> {
+    let mut user_seen = 0usize;
+    let mut prefix = Vec::new();
+    for message in history {
+        if matches!(message.role, ModelRole::User) {
+            if user_seen == target_user_ordinal {
+                break;
+            }
+            user_seen += 1;
+        }
+        prefix.push(message.clone());
+    }
+    prefix
+}
+
+fn truncate_events_before_user(
+    events: &[AgentEvent],
+    target_user_ordinal: usize,
+) -> Vec<AgentEvent> {
+    let mut user_seen = 0usize;
+    let mut prefix = Vec::new();
+    for event in events {
+        if matches!(event, AgentEvent::UserTaskSubmitted { .. }) {
+            if user_seen == target_user_ordinal {
+                break;
+            }
+            user_seen += 1;
+        }
+        prefix.push(event.clone());
+    }
+    prefix
+}
+
+fn apply_prefix(app: &mut TuiApp, prefix: ChatPrefix) {
+    app.messages = prefix.messages;
+    app.conversation_history = prefix.conversation_history;
+    app.events = prefix.events;
+    app.pending_approvals.clear();
+    app.pending_questions.clear();
+    app.running_tools.clear();
+    app.expanded_tool_results.clear();
+    app.hovered_chat_source = None;
+    app.tool_invocations.clear();
+    for event in &app.events {
+        if let AgentEvent::ToolRequested(invocation) = event {
+            app.tool_invocations
+                .insert(invocation.id.clone(), invocation.clone());
+        }
+    }
+    app.reset_run_state();
+    app.model_retry_attempts = 0;
 }
 
 pub(crate) fn reset_system_context(app: &mut TuiApp) {

@@ -55,7 +55,7 @@ pub(super) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
                 let style = if hovered || selected {
                     active_item_style()
                 } else {
-                    Style::default().fg(muted()).bg(panel())
+                    inactive_item_style()
                 };
 
                 let project = snapshot
@@ -106,7 +106,7 @@ pub(super) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
     }
 
     frame.render_widget(
-        Paragraph::new("del delete").style(Style::default().fg(muted()).bg(panel())),
+        Paragraph::new("del delete").style(Style::default().fg(text()).bg(panel())),
         rows[1],
     );
 }

@@ -87,7 +87,7 @@ pub(super) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
                 let style = if hovered || selected {
                     active_item_style()
                 } else {
-                    Style::default().fg(muted()).bg(panel())
+                    inactive_item_style()
                 };
 
                 ListItem::new(Span::styled(
@@ -144,7 +144,7 @@ pub(super) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
     }
     frame.render_widget(
         Paragraph::new("search  •  ctrl+e setup  •  tab refresh provider  •  ctrl+r refresh all")
-            .style(Style::default().fg(muted()).bg(panel())),
+            .style(Style::default().fg(text()).bg(panel())),
         rows[2],
     );
 }

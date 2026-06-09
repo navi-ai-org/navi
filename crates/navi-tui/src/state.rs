@@ -57,9 +57,47 @@ pub(crate) struct ChatRenderCache {
     pub full_tool_view: bool,
     pub show_thinking: bool,
     pub compact_tool_visible_limit: usize,
+    pub expanded_tool_signature: String,
     pub signature: String,
     pub lines: Vec<Line<'static>>,
+    pub line_sources: Vec<ChatLineSource>,
     pub chat_rect: Option<Rect>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub(crate) enum ChatLineSource {
+    #[default]
+    None,
+    Message(usize),
+    ToolResult(String),
+    ToolGroup(Vec<String>),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum MessageAction {
+    Revert,
+    Copy,
+    Fork,
+}
+
+impl MessageAction {
+    pub(crate) const ALL: [Self; 3] = [Self::Revert, Self::Copy, Self::Fork];
+
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::Revert => "Revert to here",
+            Self::Copy => "Copy text",
+            Self::Fork => "Fork from here",
+        }
+    }
+
+    pub(crate) fn description(self) -> &'static str {
+        match self {
+            Self::Revert => "move this message back to input",
+            Self::Copy => "copy selected message",
+            Self::Fork => "start new session from this point",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -79,6 +117,7 @@ pub enum Mode {
     PluginApproval,
     Question,
     ThemePicker,
+    MessageActions,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -97,6 +136,7 @@ pub(crate) enum ModalKind {
     PluginApproval,
     Question,
     ThemePicker,
+    MessageActions,
 }
 
 impl ModalKind {
@@ -116,6 +156,7 @@ impl ModalKind {
             Self::PluginApproval => Mode::PluginApproval,
             Self::Question => Mode::Question,
             Self::ThemePicker => Mode::ThemePicker,
+            Self::MessageActions => Mode::MessageActions,
         }
     }
 }

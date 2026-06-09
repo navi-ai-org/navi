@@ -4,6 +4,7 @@ use crate::input::{
     delete_input_previous_hump, delete_input_previous_space_word, insert_input_char,
     move_input_next_char, move_input_next_control_stop, move_input_next_hump,
     move_input_previous_char, move_input_previous_control_stop, move_input_previous_hump,
+    move_input_visual_line,
 };
 use crate::state::ModalKind;
 use crate::tools::cancel_stream;
@@ -78,10 +79,10 @@ pub(crate) fn handle_normal_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyM
         KeyCode::End => {
             app.input_cursor = app.input.len();
         }
-        KeyCode::Up => {
+        KeyCode::Up if !move_input_visual_line(app, -1) => {
             app.scroll_offset = app.scroll_offset.saturating_add(3);
         }
-        KeyCode::Down => {
+        KeyCode::Down if !move_input_visual_line(app, 1) => {
             app.scroll_offset = app.scroll_offset.saturating_sub(3);
         }
         KeyCode::PageUp => {

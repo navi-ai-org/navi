@@ -42,8 +42,15 @@ pub(super) fn route_global_key(
                 app.command_scroll = 0;
                 return outcome;
             }
+            KeyCode::Char('.') => {
+                return super::apply_ui_effect(app, UiEffect::ReplaceModal(ModalKind::Help));
+            }
             KeyCode::Char('m') => {
                 super::open_model_picker(app);
+                return KeyOutcome::Handled;
+            }
+            KeyCode::Char('s') => {
+                super::open_sessions_picker(app);
                 return KeyOutcome::Handled;
             }
             KeyCode::Char('o') | KeyCode::Char('O') => {
