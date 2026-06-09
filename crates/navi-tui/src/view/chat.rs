@@ -37,6 +37,11 @@ pub(super) fn render_chat_area(frame: &mut Frame<'_>, app: &mut TuiApp, area: Re
     let chat_width = inner.width as usize;
     ensure_chat_cache(app, chat_width);
     let visible_height = inner.height as usize;
+    {
+        let cache = app.chat_render_cache.borrow();
+        let max_scroll = cache.lines.len().saturating_sub(visible_height);
+        app.scroll_offset = app.scroll_offset.min(max_scroll);
+    }
     let (start, mut visible_lines, visible_sources) = {
         let cache = app.chat_render_cache.borrow();
         let rendered_lines = &cache.lines;
