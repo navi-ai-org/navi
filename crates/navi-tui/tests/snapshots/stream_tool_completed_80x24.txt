@@ -20,4 +20,4 @@
   ┌──────────────────────────────────────────────────────────────────────────┐
   │}   thinking...                                                           │
   └──────────────────────────────────────────────────────────────────────────┘
-   Shift+Tab mode · Ctrl+. shortcuts · Ctrl+P commands · Tab none
+   Ctrl+. shortcuts · Ctrl+P commands · Ctrl+M models

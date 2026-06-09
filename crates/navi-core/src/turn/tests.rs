@@ -84,17 +84,17 @@ async fn test_turn_loop_with_parallel_tools() {
             calls: Mutex::new(0),
         }))),
         tool_executor: Arc::new(executor),
-        agent_control: AgentControl::new(),
         project_dir: tempdir.path().to_path_buf(),
         model_name: Arc::new(std::sync::RwLock::new("gpt-4".to_string())),
         event_tx: None,
         approval_resolver: crate::runtime::ApprovalResolver::new_for_test(),
+        question_resolver: crate::runtime::QuestionResolver::new_for_test(),
         compact_state: Arc::new(tokio::sync::Mutex::new(CompactState::new(128_000))),
         harness_config: crate::config::HarnessConfig::default(),
         include_tool_prompt_manifest: false,
-        agent_mode: None,
         context_packets: Arc::new(std::sync::Mutex::new(Vec::new())),
         active_skills: Arc::new(std::sync::Mutex::new(Vec::new())),
+        prompt_cache: Arc::new(crate::prompt::PromptCache::new()),
         cancel_token: CancelToken::new(),
         config: Arc::new(std::sync::RwLock::new(crate::config::NaviConfig::default())),
     };
@@ -130,17 +130,17 @@ fn build_test_ctx(project_dir: PathBuf) -> TurnContext {
             calls: Mutex::new(0),
         }))),
         tool_executor: Arc::new(executor),
-        agent_control: AgentControl::new(),
         project_dir,
         model_name: Arc::new(std::sync::RwLock::new("gpt-4".to_string())),
         event_tx: None,
         approval_resolver: crate::runtime::ApprovalResolver::new_for_test(),
+        question_resolver: crate::runtime::QuestionResolver::new_for_test(),
         compact_state: Arc::new(tokio::sync::Mutex::new(CompactState::new(128_000))),
         harness_config: crate::config::HarnessConfig::default(),
         include_tool_prompt_manifest: false,
-        agent_mode: None,
         context_packets: Arc::new(std::sync::Mutex::new(Vec::new())),
         active_skills: Arc::new(std::sync::Mutex::new(Vec::new())),
+        prompt_cache: Arc::new(crate::prompt::PromptCache::new()),
         cancel_token: CancelToken::new(),
         config: Arc::new(std::sync::RwLock::new(crate::config::NaviConfig::default())),
     }
@@ -227,22 +227,6 @@ async fn test_ensure_system_prompt_inserts_before_non_system_message() {
     assert_eq!(messages[0].role, ModelRole::System);
     assert_eq!(messages[1].role, ModelRole::User);
     assert_eq!(messages[1].content, "hello");
-}
-
-#[tokio::test]
-async fn test_ensure_system_prompt_includes_agent_mode() {
-    let tempdir = tempfile::tempdir().unwrap();
-    let mut ctx = build_test_ctx(tempdir.path().to_path_buf());
-    ctx.agent_mode = Some(crate::agent::AgentMode::Plan);
-
-    let mut messages = vec![];
-    ensure_system_prompt(&ctx, &mut messages).await;
-
-    assert!(messages[0].content.contains("Agent Mode"));
-    assert!(
-        messages[0].content.contains("Plan"),
-        "system prompt should include the active agent mode instructions"
-    );
 }
 
 #[tokio::test]

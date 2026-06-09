@@ -9,6 +9,8 @@ use crate::TuiApp;
 use crate::render::modal_block;
 use crate::session::format_session_timestamp;
 use crate::theme::*;
+use crate::ui::interaction::{HitAction, line_rect};
+use crate::ui::list::render_scrollbar;
 
 pub(super) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
     frame.render_widget(Clear, area);
@@ -49,13 +51,19 @@ pub(super) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
             .map(|(offset, snapshot)| {
                 let index = start + offset;
                 let selected = index == app.selected_session;
-                let style = if selected {
+                let hovered = app.hover_index == Some(index);
+                let style = if hovered {
                     Style::default()
                         .fg(Color::White)
                         .bg(accent())
                         .add_modifier(Modifier::BOLD)
+                } else if selected {
+                    Style::default()
+                        .fg(signal())
+                        .bg(panel())
+                        .add_modifier(Modifier::BOLD)
                 } else {
-                    Style::default().fg(text()).bg(panel())
+                    Style::default().fg(muted()).bg(panel())
                 };
 
                 let project = snapshot
@@ -80,6 +88,29 @@ pub(super) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
             List::new(items).style(Style::default().bg(panel())),
             rows[0],
         );
+        render_scrollbar(
+            frame,
+            app,
+            rows[0],
+            app.saved_sessions.len(),
+            start,
+            crate::ui::interaction::ScrollTarget::Sessions,
+        );
+        for (offset, snapshot) in app
+            .saved_sessions
+            .get(start..end)
+            .unwrap_or(&[])
+            .iter()
+            .enumerate()
+        {
+            let index = start + offset;
+            app.register_hit(
+                line_rect(rows[0], offset),
+                20,
+                format!("session {}", snapshot.id.as_str()),
+                HitAction::Session(index),
+            );
+        }
     }
 
     frame.render_widget(

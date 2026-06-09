@@ -14,7 +14,7 @@ use navi_sdk::{
     ApprovalDecision, EngineDriver, LoadedConfig, NaviConfig, NaviConfigSaveTarget, NaviError,
     NaviModelSelectionRequest, NaviModelSelectionResult, NaviProviderCredentialStatus,
     NaviProviderSyncReport, NaviSessionInfo, NaviSessionRequest, NaviSkillInfo, NaviTurnRequest,
-    NaviTurnResponse, RuntimeEvent, SessionSnapshot,
+    NaviTurnResponse, QuestionResponse, RuntimeEvent, SessionSnapshot,
 };
 
 /// A recorded call to a method on the engine.
@@ -27,6 +27,10 @@ pub enum EngineCall {
     ResolveApproval {
         session_id: String,
         decision: ApprovalDecision,
+    },
+    ResolveQuestion {
+        session_id: String,
+        response: QuestionResponse,
     },
     SnapshotSession(String),
     ReloadWasmPlugins,
@@ -203,6 +207,18 @@ impl EngineDriver for MockEngine {
             .push(EngineCall::ResolveApproval {
                 session_id: session_id.to_string(),
                 decision,
+            });
+        Ok(true)
+    }
+
+    async fn resolve_question(&self, session_id: &str, response: QuestionResponse) -> Result<bool> {
+        self.state
+            .lock()
+            .unwrap()
+            .calls
+            .push(EngineCall::ResolveQuestion {
+                session_id: session_id.to_string(),
+                response,
             });
         Ok(true)
     }

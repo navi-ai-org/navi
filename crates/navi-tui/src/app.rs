@@ -10,8 +10,8 @@ use tokio::task::JoinHandle;
 use std::sync::Arc;
 
 use navi_sdk::{
-    AgentEvent, AgentMode, AgentRunState, ApprovalRequest, CompactState, CredentialStore,
-    EngineDriver, HarnessPolicy, LoadedConfig, ModelMessage, ModelOption, NaviSkillInfo, SessionId,
+    AgentEvent, AgentRunState, ApprovalRequest, CompactState, CredentialStore, EngineDriver,
+    HarnessPolicy, LoadedConfig, ModelMessage, ModelOption, NaviSkillInfo, SessionId,
     SessionSnapshot, SessionStore, ToolInvocation, available_model_options, build_system_prompt,
     canonical_provider_id, effective_context_window, log_path, select_harness_policy,
 };
@@ -21,9 +21,10 @@ use crate::runtime::{build_engine, selected_model_runtime_available};
 use crate::session::load_saved_sessions;
 use crate::state::{
     ChatMessage, ChatRenderCache, ModalKind, Mode, Notification, PluginApprovalRequest,
-    SelectionState, ThinkingLevel,
+    QuestionUiState, SelectionState, ThinkingLevel,
 };
 use crate::theme::{ThemeId, ThemePalette};
+use crate::ui::interaction::{HitAction, HitRegion, InteractionRegistry};
 use crate::ui::modal::ModalStack;
 
 // ─── app state ─────────────────────────────────────────────────────────────────
@@ -35,11 +36,11 @@ pub struct TuiApp {
     pub(crate) modal_stack: ModalStack<ModalKind>,
     pub(crate) command_filter: String,
     pub(crate) selected_command: usize,
+    pub(crate) command_scroll: usize,
     pub(crate) models: Vec<ModelOption>,
     pub(crate) selected_model: usize,
     pub(crate) model_scroll: usize,
     pub(crate) model_filter: String,
-    pub(crate) selected_agent: Option<AgentMode>,
     pub(crate) thinking_level: ThinkingLevel,
     pub(crate) selected_thinking: usize,
     tick: u64,
@@ -67,6 +68,7 @@ pub struct TuiApp {
     // orchestration
     pub(crate) running_tools: HashMap<String, ToolInvocation>,
     pub(crate) pending_approvals: Vec<ApprovalRequest>,
+    pub(crate) pending_questions: Vec<QuestionUiState>,
     pub(crate) tool_invocations: HashMap<String, ToolInvocation>,
 
     // credentials
@@ -92,13 +94,17 @@ pub struct TuiApp {
     pub(crate) full_tool_view: bool,
     pub(crate) show_thinking: bool,
     pub(crate) selected_setting: usize,
+    pub(crate) selected_theme: usize,
+    pub(crate) theme_filter: String,
     pub(crate) selected_provider_setting: usize,
     pub(crate) provider_settings_scroll: usize,
     notification: Option<Notification>,
     diagnostics: Vec<String>,
     log_path: PathBuf,
     pub(crate) chat_render_cache: RefCell<ChatRenderCache>,
+    pub(crate) interaction_registry: RefCell<InteractionRegistry>,
     pub(crate) selection: Option<SelectionState>,
+    pub(crate) hover_index: Option<usize>,
     pub(crate) theme_id: ThemeId,
 
     // skills
@@ -168,11 +174,11 @@ impl TuiApp {
             modal_stack: ModalStack::default(),
             command_filter: String::new(),
             selected_command: 0,
+            command_scroll: 0,
             models,
             selected_model,
             model_scroll: 0,
             model_filter: String::new(),
-            selected_agent: None,
             thinking_level,
             selected_thinking: thinking_level.index(),
             tick: 0,
@@ -194,6 +200,7 @@ impl TuiApp {
             model_retry_attempts: 0,
             running_tools: HashMap::new(),
             pending_approvals: Vec::new(),
+            pending_questions: Vec::new(),
             tool_invocations: HashMap::new(),
             credential_store,
             api_key_input: String::new(),
@@ -212,13 +219,20 @@ impl TuiApp {
             full_tool_view,
             show_thinking,
             selected_setting: 0,
+            selected_theme: ThemeId::ALL
+                .iter()
+                .position(|id| *id == theme_id)
+                .unwrap_or(0),
+            theme_filter: String::new(),
             selected_provider_setting: 0,
             provider_settings_scroll: 0,
             notification: None,
             diagnostics: Vec::new(),
             log_path,
             chat_render_cache: RefCell::new(ChatRenderCache::default()),
+            interaction_registry: RefCell::new(InteractionRegistry::default()),
             selection: None,
+            hover_index: None,
             theme_id,
             available_skills: Vec::new(),
             active_skills: initial_active_skills,
@@ -271,6 +285,26 @@ impl TuiApp {
 
     pub(crate) fn theme_palette(&self) -> ThemePalette {
         self.theme_id.palette()
+    }
+
+    pub(crate) fn clear_interactions(&self) {
+        self.interaction_registry.borrow_mut().clear();
+    }
+
+    pub(crate) fn register_hit(
+        &self,
+        rect: ratatui::layout::Rect,
+        z: i16,
+        label: impl Into<String>,
+        action: HitAction,
+    ) -> String {
+        self.interaction_registry
+            .borrow_mut()
+            .register(rect, z, label, action)
+    }
+
+    pub(crate) fn hit_test(&self, col: u16, row: u16) -> Option<HitRegion> {
+        self.interaction_registry.borrow().hit(col, row)
     }
 
     pub(crate) fn set_theme(&mut self, theme_id: ThemeId) {

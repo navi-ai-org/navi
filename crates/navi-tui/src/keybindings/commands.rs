@@ -2,12 +2,14 @@ use crate::TuiApp;
 use crate::chat::{reset_system_context, retry_last_response};
 use crate::commands::{CommandAction, filtered_commands};
 use crate::notifications::show_notification;
+use crate::render::command_scroll_offset;
 use crate::state::ModalKind;
 use crate::ui::list::SelectListState;
 use crossterm::event::KeyCode;
 
 pub(crate) fn handle_command_key(app: &mut TuiApp, code: KeyCode) -> bool {
-    let mut list_state = SelectListState::new(app.selected_command, 0);
+    const VISIBLE_ROWS: usize = 10;
+    let mut list_state = SelectListState::new(app.selected_command, app.command_scroll);
     match code {
         KeyCode::Esc => super::close_active_modal(app),
         KeyCode::Char(ch) => {
@@ -34,6 +36,7 @@ pub(crate) fn handle_command_key(app: &mut TuiApp, code: KeyCode) -> bool {
         _ => {}
     }
     app.selected_command = list_state.selected();
+    app.command_scroll = command_scroll_offset(app.selected_command, VISIBLE_ROWS);
 
     false
 }
@@ -52,10 +55,6 @@ pub(crate) fn run_selected_command(app: &mut TuiApp) -> bool {
             app.input.clear();
             app.input_cursor = 0;
             app.scroll_offset = 0;
-            super::close_all_modals(app);
-        }
-        CommandAction::Agent => {
-            super::cycle_agent(app);
             super::close_all_modals(app);
         }
         CommandAction::SwitchModel => {

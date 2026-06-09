@@ -5,8 +5,10 @@ use ratatui::widgets::{Clear, List, ListItem, ListState, Paragraph};
 
 use crate::TuiApp;
 use crate::commands::filtered_commands;
-use crate::render::{command_row, command_scroll_offset, modal_block};
+use crate::render::{command_row, modal_block};
 use crate::theme::*;
+use crate::ui::interaction::{HitAction, line_rect};
+use crate::ui::list::render_scrollbar;
 
 pub(super) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
     frame.render_widget(Clear, area);
@@ -48,13 +50,19 @@ pub(super) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
         .enumerate()
         .map(|(index, command)| {
             let selected = index == selected_command;
-            let style = if selected {
+            let hovered = app.hover_index == Some(index);
+            let style = if hovered {
                 Style::default()
                     .fg(Color::White)
                     .bg(accent())
                     .add_modifier(Modifier::BOLD)
+            } else if selected {
+                Style::default()
+                    .fg(signal())
+                    .bg(panel())
+                    .add_modifier(Modifier::BOLD)
             } else {
-                Style::default().fg(text()).bg(panel())
+                Style::default().fg(muted()).bg(panel())
             };
 
             let shortcut = command.shortcut.unwrap_or("");
@@ -66,17 +74,38 @@ pub(super) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
         })
         .collect::<Vec<_>>();
 
-    let mut list_state = ListState::default()
-        .with_offset(command_scroll_offset(
-            selected_command,
-            rows[1].height as usize,
-        ))
-        .with_selected((!commands.is_empty()).then_some(selected_command));
+    let offset = app
+        .command_scroll
+        .min(commands.len().saturating_sub(rows[1].height as usize));
+    let mut list_state = ListState::default().with_offset(offset).with_selected(
+        (!commands.is_empty()).then_some(app.hover_index.unwrap_or(selected_command)),
+    );
     frame.render_stateful_widget(
-        List::new(items).style(Style::default().bg(panel())),
+        List::new(items)
+            .style(Style::default().bg(panel()))
+            .highlight_style(Style::default()),
         rows[1],
         &mut list_state,
     );
+    render_scrollbar(
+        frame,
+        app,
+        rows[1],
+        commands.len(),
+        offset,
+        crate::ui::interaction::ScrollTarget::Commands,
+    );
+    for (row_offset, index) in (offset..commands.len())
+        .take(rows[1].height as usize)
+        .enumerate()
+    {
+        app.register_hit(
+            line_rect(rows[1], row_offset),
+            20,
+            format!("command {}", commands[index].label),
+            HitAction::Command(index),
+        );
+    }
     frame.render_widget(
         Paragraph::new("tab/↑↓ choose  •  enter confirm  •  esc cancel")
             .style(Style::default().fg(muted()).bg(panel())),

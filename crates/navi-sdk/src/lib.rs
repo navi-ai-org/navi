@@ -33,8 +33,8 @@ pub use navi_core::session::{
 };
 // Event/session types
 pub use navi_core::{
-    AgentEvent, AgentMode, AgentRunState, ModelMessage, ModelRole, RuntimeEvent, RuntimeEventKind,
-    SessionId, SessionSnapshot,
+    AgentEvent, AgentRunState, ModelMessage, ModelRole, QuestionOption, QuestionRequest,
+    QuestionResponse, RuntimeEvent, RuntimeEventKind, SessionId, SessionSnapshot,
 };
 // Tool/approval types
 pub use navi_core::{

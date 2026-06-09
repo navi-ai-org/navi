@@ -16,14 +16,14 @@ cargo run -p navi-cli -- --no-tui "run tests and fix the first failure"
 
 | Pillar | In one line |
 |---|---|
-| **Harness** | Profiles, agent modes, structured coding tools, compaction, provider-correct tool loops — built for long repo sessions, not chat demos. |
+| **Harness** | Profiles, structured coding tools, compaction, provider-correct tool loops — built for long repo sessions, not chat demos. |
 | **SDK** | [`navi-sdk`](crates/navi-sdk): sessions, turns, event stream, approvals, host tools — same engine for TUI, headless, ACP, and your Rust app. |
 | **Plugins** | WASM marketplace + lockfile; extend tools without forking the engine. Hot-reload after install. |
 | **TUI** | Model picker, thinking levels, command palette, markdown/code view, compact tool trace (`ctrl+o`), plugins & providers in-app. |
 | **Security** | Path scope, command blocklist, write/command approvals, plugin sandbox brokers, session secret redaction — tuned in TOML, not buried in prompts. |
 
 ```txt
-Harness (navi-core)  →  tool loop, modes, compaction
+Harness (navi-core)  →  tool loop, prompts, compaction
 SDK (navi-sdk)     →  embed · events · host tools
 CLI / TUI          →  daily driver in the terminal
 Plugins (WASM)     →  marketplace + local install

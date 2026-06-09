@@ -555,8 +555,8 @@ mod tests {
     fn adaptive_thinking_long_conversation_gives_higher() {
         let mut messages = Vec::new();
         for i in 0..25 {
-            messages.push(ModelMessage::user(&format!("message {i}")));
-            messages.push(ModelMessage::assistant(&format!("response {i}")));
+            messages.push(ModelMessage::user(format!("message {i}")));
+            messages.push(ModelMessage::assistant(format!("response {i}")));
         }
         let tools = vec!["bash".to_string(), "write_file".to_string()];
         let result = ThinkingConfig::resolve_adaptive(&messages, &tools, 0);
@@ -570,15 +570,8 @@ mod tests {
     fn adaptive_thinking_errors_increase_complexity() {
         let messages = vec![
             ModelMessage::user("fix this"),
-            {
-                let mut m = ModelMessage::tool_result("c1", "bash", "{\"error\": \"failed\"}");
-                m
-            },
-            {
-                let mut m =
-                    ModelMessage::tool_result("c2", "bash", "{\"error\": \"failed again\"}");
-                m
-            },
+            ModelMessage::tool_result("c1", "bash", "{\"error\": \"failed\"}"),
+            ModelMessage::tool_result("c2", "bash", "{\"error\": \"failed again\"}"),
         ];
         let tools = vec!["bash".to_string()];
         let result = ThinkingConfig::resolve_adaptive(&messages, &tools, 0);

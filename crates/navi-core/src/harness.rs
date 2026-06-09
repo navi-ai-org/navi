@@ -84,7 +84,7 @@ pub fn build_system_prompt_with_memory(
     cwd: &Path,
     memory_injection: Option<&str>,
 ) -> String {
-    build_system_prompt_inner(config, cwd, memory_injection, &[], false)
+    build_system_prompt_inner(config, cwd, memory_injection, None)
 }
 
 /// Builds the system prompt with memory injection and an optional tool manifest
@@ -96,15 +96,30 @@ pub fn build_system_prompt_with_tools(
     tools: &[ToolDefinition],
     include_tool_manifest: bool,
 ) -> String {
-    build_system_prompt_inner(config, cwd, memory_injection, tools, include_tool_manifest)
+    let manifest = if include_tool_manifest && !tools.is_empty() {
+        Some(tool_prompt_manifest(tools))
+    } else {
+        None
+    };
+    build_system_prompt_with_manifest_text(config, cwd, memory_injection, manifest.as_deref())
+}
+
+/// Builds the system prompt with a caller-provided tool manifest. This lets the
+/// turn layer cache manifest rendering independently of the dynamic prompt body.
+pub fn build_system_prompt_with_manifest_text(
+    config: &NaviConfig,
+    cwd: &Path,
+    memory_injection: Option<&str>,
+    tool_manifest: Option<&str>,
+) -> String {
+    build_system_prompt_inner(config, cwd, memory_injection, tool_manifest)
 }
 
 fn build_system_prompt_inner(
     config: &NaviConfig,
     cwd: &Path,
     memory_injection: Option<&str>,
-    tools: &[ToolDefinition],
-    include_tool_manifest: bool,
+    tool_manifest: Option<&str>,
 ) -> String {
     let policy = select_harness_policy(config);
     let profile = match policy.profile {
@@ -125,7 +140,8 @@ fn build_system_prompt_inner(
             "5. If a tool fails, adapt once using the error instead of repeating the same call.\n",
             "\n",
             "Tool rules:\n",
-            "- Prefer read_file, fs_browser, and grep for inspection.\n",
+            "- Prefer top_files for first-pass exploration of unfamiliar code areas before issuing many read_file calls.\n",
+            "- Prefer read_file, fs_browser, and grep for focused follow-up inspection.\n",
             "- Prefer apply_patch for targeted edits; write_file is for whole-file replacement.\n",
             "- Prefer test_runner over bash for running tests — structured output is faster to process.\n",
             "- Prefer build_runner over bash for compilation — cached builds skip redundant work.\n",
@@ -155,11 +171,11 @@ fn build_system_prompt_inner(
         prompt.push_str(memory);
         prompt.push('\n');
     }
-    if include_tool_manifest && !tools.is_empty() {
+    if let Some(manifest) = tool_manifest {
         prompt.push_str(
             "\nAvailable tools (compatibility manifest; still use native tool calling):\n",
         );
-        prompt.push_str(&tool_prompt_manifest(tools));
+        prompt.push_str(manifest);
     }
     prompt
 }

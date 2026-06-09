@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use serde::Serialize;
-use serde_json::json;
+use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 
@@ -115,8 +115,11 @@ impl Tool for GitOpsTool {
                         "description": "Git operation to perform."
                     },
                     "args": {
-                        "type": "string",
-                        "description": "Extra arguments for the git command (e.g. specific file for diff, branch name for log)."
+                        "oneOf": [
+                            { "type": "string" },
+                            { "type": "array", "items": { "type": "string" } }
+                        ],
+                        "description": "Extra git arguments. Prefer an array for multiple arguments (e.g. [\"v0.1.0\", \"v0.2.0\"]); shell-like strings are also split."
                     },
                     "format": {
                         "type": "string",
@@ -132,17 +135,34 @@ impl Tool for GitOpsTool {
 
     async fn invoke(&self, invocation: ToolInvocation) -> Result<ToolResult> {
         let command = helpers::required_string(&invocation.input, "command")?.to_string();
-        let args = helpers::optional_string(&invocation.input, "args");
+        let args = match parse_git_args(&invocation.input) {
+            Ok(args) => args,
+            Err(message) => {
+                return Ok(ToolResult {
+                    invocation_id: invocation.id,
+                    ok: false,
+                    output: helpers::tool_error(
+                        "invalid_git_args",
+                        message,
+                        true,
+                        Some(
+                            "Pass args as an array of strings, or as a shell-like string with balanced quotes.",
+                        ),
+                        None,
+                    ),
+                });
+            }
+        };
         let format = helpers::optional_string(&invocation.input, "format")
             .unwrap_or_else(|| "json".to_string());
 
         match command.as_str() {
-            "status" => git_status(&self.project_root, &invocation.id, args.as_deref()).await,
-            "diff" => git_diff(&self.project_root, &invocation.id, args.as_deref(), &format).await,
-            "log" => git_log(&self.project_root, &invocation.id, args.as_deref()).await,
-            "branch" => git_branch(&self.project_root, &invocation.id, args.as_deref()).await,
-            "stash" => git_stash(&self.project_root, &invocation.id, args.as_deref()).await,
-            "remote" => git_remote(&self.project_root, &invocation.id, args.as_deref()).await,
+            "status" => git_status(&self.project_root, &invocation.id, &args).await,
+            "diff" => git_diff(&self.project_root, &invocation.id, &args, &format).await,
+            "log" => git_log(&self.project_root, &invocation.id, &args, &format).await,
+            "branch" => git_branch(&self.project_root, &invocation.id, &args).await,
+            "stash" => git_stash(&self.project_root, &invocation.id, &args).await,
+            "remote" => git_remote(&self.project_root, &invocation.id, &args).await,
             _ => Ok(ToolResult {
                 invocation_id: invocation.id,
                 ok: false,
@@ -177,10 +197,64 @@ async fn run_git(project_root: &Path, args: &[&str]) -> Result<(bool, String, St
     Ok((output.status.success(), stdout, stderr))
 }
 
+fn parse_git_args(input: &Value) -> std::result::Result<Vec<String>, String> {
+    match input.get("args") {
+        None | Some(Value::Null) => Ok(Vec::new()),
+        Some(Value::String(args)) => split_git_args(args),
+        Some(Value::Array(items)) => items
+            .iter()
+            .enumerate()
+            .map(|(index, item)| {
+                item.as_str()
+                    .map(str::to_string)
+                    .ok_or_else(|| format!("args[{index}] must be a string"))
+            })
+            .collect(),
+        Some(_) => Err("args must be a string or an array of strings".to_string()),
+    }
+}
+
+fn split_git_args(args: &str) -> std::result::Result<Vec<String>, String> {
+    let mut result = Vec::new();
+    let mut current = String::new();
+    let mut quote: Option<char> = None;
+    let mut escaped = false;
+
+    for ch in args.chars() {
+        if escaped {
+            current.push(ch);
+            escaped = false;
+            continue;
+        }
+        match ch {
+            '\\' if quote != Some('\'') => escaped = true,
+            '\'' | '"' if quote == Some(ch) => quote = None,
+            '\'' | '"' if quote.is_none() => quote = Some(ch),
+            ch if ch.is_whitespace() && quote.is_none() => {
+                if !current.is_empty() {
+                    result.push(std::mem::take(&mut current));
+                }
+            }
+            ch => current.push(ch),
+        }
+    }
+
+    if escaped {
+        current.push('\\');
+    }
+    if let Some(quote) = quote {
+        return Err(format!("unterminated {quote} quote in args"));
+    }
+    if !current.is_empty() {
+        result.push(current);
+    }
+    Ok(result)
+}
+
 async fn git_status(
     project_root: &Path,
     invocation_id: &str,
-    _args: Option<&str>,
+    _args: &[String],
 ) -> Result<ToolResult> {
     let (ok, stdout, stderr) = run_git(
         project_root,
@@ -313,15 +387,11 @@ fn is_status_record(record: &str) -> bool {
 async fn git_diff(
     project_root: &Path,
     invocation_id: &str,
-    args: Option<&str>,
+    args: &[String],
     format: &str,
 ) -> Result<ToolResult> {
     let mut git_args = vec!["diff", "--numstat"];
-    let extra;
-    if let Some(a) = args {
-        extra = a.to_string();
-        git_args.push(&extra);
-    }
+    git_args.extend(args.iter().map(String::as_str));
 
     let (ok, stdout, stderr) = run_git(project_root, &git_args).await?;
 
@@ -342,11 +412,7 @@ async fn git_diff(
     if format == "text" {
         // Get full diff text
         let mut text_args = vec!["diff"];
-        let extra_text;
-        if let Some(a) = args {
-            extra_text = a.to_string();
-            text_args.push(&extra_text);
-        }
+        text_args.extend(args.iter().map(String::as_str));
         let (_, text_stdout, _) = run_git(project_root, &text_args).await?;
         return Ok(helpers::ok(
             invocation_id.to_string(),
@@ -400,14 +466,48 @@ fn parse_git_diff_numstat(stdout: &str) -> GitDiffOutput {
 async fn git_log(
     project_root: &Path,
     invocation_id: &str,
-    args: Option<&str>,
+    args: &[String],
+    format: &str,
 ) -> Result<ToolResult> {
+    if format == "text" {
+        let mut git_args = vec!["log"];
+        git_args.extend(args.iter().map(String::as_str));
+        if !git_log_has_limit(args) {
+            git_args.extend(["-n", "20"]);
+        }
+
+        let (ok, stdout, stderr) = run_git(project_root, &git_args).await?;
+        if !ok {
+            return Ok(ToolResult {
+                invocation_id: invocation_id.to_string(),
+                ok: false,
+                output: helpers::tool_error(
+                    "git_log_failed",
+                    "git log failed",
+                    true,
+                    None,
+                    Some(stderr),
+                ),
+            });
+        }
+
+        return Ok(helpers::ok(
+            invocation_id.to_string(),
+            json!({
+                "schema_version": helpers::SPECIALIZED_SCHEMA_VERSION,
+                "log": helpers::truncate_string(stdout, GIT_OUTPUT_LIMIT_BYTES),
+            }),
+        ));
+    }
+
     let format_str = "%H|%an|%ai|%s";
-    let mut git_args = vec!["log", &format_str, "--format", format_str, "-n", "20"];
-    let extra;
-    if let Some(a) = args {
-        extra = a.to_string();
-        git_args.push(&extra);
+    let format_arg = format!("--format={format_str}");
+    let structured_args = structured_log_args(args);
+    let mut git_args = vec!["log"];
+    git_args.extend(structured_args.iter().copied());
+    git_args.push(format_arg.as_str());
+    if !git_log_has_limit(args) {
+        git_args.extend(["-n", "20"]);
     }
 
     let (ok, stdout, stderr) = run_git(project_root, &git_args).await?;
@@ -449,17 +549,50 @@ fn parse_git_log_output(stdout: &str) -> GitLogOutput {
     GitLogOutput { commits }
 }
 
+fn git_log_has_limit(args: &[String]) -> bool {
+    args.iter().any(|arg| {
+        arg == "-n"
+            || arg.strip_prefix("-n").is_some_and(|value| {
+                !value.is_empty() && value.chars().all(|ch| ch.is_ascii_digit())
+            })
+            || arg == "--max-count"
+            || arg.starts_with("--max-count=")
+            || arg.strip_prefix('-').is_some_and(|value| {
+                !value.is_empty() && value.chars().all(|ch| ch.is_ascii_digit())
+            })
+    })
+}
+
+fn structured_log_args(args: &[String]) -> Vec<&str> {
+    let mut filtered = Vec::new();
+    let mut skip_next = false;
+    for arg in args {
+        if skip_next {
+            skip_next = false;
+            continue;
+        }
+        match arg.as_str() {
+            "--format" | "--pretty" => {
+                skip_next = true;
+            }
+            "--oneline" | "--graph" | "--decorate" | "--no-decorate" => {}
+            value
+                if value.starts_with("--format=")
+                    || value.starts_with("--pretty=")
+                    || value.starts_with("--decorate=") => {}
+            value => filtered.push(value),
+        }
+    }
+    filtered
+}
+
 async fn git_branch(
     project_root: &Path,
     invocation_id: &str,
-    args: Option<&str>,
+    args: &[String],
 ) -> Result<ToolResult> {
     let mut git_args = vec!["branch", "-v", "--no-color"];
-    let extra;
-    if let Some(a) = args {
-        extra = a.to_string();
-        git_args.push(&extra);
-    }
+    git_args.extend(args.iter().map(String::as_str));
 
     let (ok, stdout, stderr) = run_git(project_root, &git_args).await?;
 
@@ -516,14 +649,10 @@ fn parse_git_branch_output(stdout: &str) -> GitBranchOutput {
 async fn git_stash(
     project_root: &Path,
     invocation_id: &str,
-    args: Option<&str>,
+    args: &[String],
 ) -> Result<ToolResult> {
     let mut git_args = vec!["stash"];
-    let extra;
-    if let Some(a) = args {
-        extra = a.to_string();
-        git_args.push(&extra);
-    }
+    git_args.extend(args.iter().map(String::as_str));
 
     let (ok, stdout, stderr) = run_git(project_root, &git_args).await?;
 
@@ -551,14 +680,10 @@ async fn git_stash(
 async fn git_remote(
     project_root: &Path,
     invocation_id: &str,
-    args: Option<&str>,
+    args: &[String],
 ) -> Result<ToolResult> {
     let mut git_args = vec!["remote", "-v"];
-    let extra;
-    if let Some(a) = args {
-        extra = a.to_string();
-        git_args.push(&extra);
-    }
+    git_args.extend(args.iter().map(String::as_str));
 
     let (ok, stdout, stderr) = run_git(project_root, &git_args).await?;
 
@@ -621,6 +746,74 @@ fn xy_status(xy: &str) -> &'static str {
 mod tests {
     use super::*;
     use serde_json::json;
+    use std::path::Path;
+    use std::process::{Command, Stdio};
+
+    fn run_git_test_command(project_root: &Path, args: &[&str]) {
+        let status = Command::new("git")
+            .args(args)
+            .current_dir(project_root)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .expect("git command starts");
+        assert!(status.success(), "git {:?} should succeed", args);
+    }
+
+    fn init_git_repo(project_root: &Path) {
+        run_git_test_command(project_root, &["init"]);
+    }
+
+    fn commit_readme(project_root: &Path, content: &str, message: &str) {
+        std::fs::write(project_root.join("README.md"), content).expect("write readme");
+        run_git_test_command(project_root, &["add", "README.md"]);
+        run_git_test_command(
+            project_root,
+            &[
+                "-c",
+                "user.name=NAVI Test",
+                "-c",
+                "user.email=navi@example.test",
+                "commit",
+                "-m",
+                message,
+            ],
+        );
+    }
+
+    #[test]
+    fn split_git_args_handles_spaces_quotes_and_escapes() {
+        let args = split_git_args(r#"stash push -m "saved work" path\ with\ spaces.txt"#)
+            .expect("args split");
+        assert_eq!(
+            args,
+            vec!["stash", "push", "-m", "saved work", "path with spaces.txt"]
+        );
+    }
+
+    #[test]
+    fn parse_git_args_accepts_array() {
+        let args =
+            parse_git_args(&json!({ "args": ["v0.1.0", "v0.2.0-beta"] })).expect("args parse");
+        assert_eq!(args, vec!["v0.1.0", "v0.2.0-beta"]);
+    }
+
+    #[test]
+    fn split_git_args_rejects_unterminated_quote() {
+        let err = split_git_args("stash push -m \"missing end").expect_err("quote error");
+        assert!(err.contains("unterminated"));
+    }
+
+    #[test]
+    fn structured_log_args_drop_presentation_flags_for_json() {
+        let args = vec![
+            "--oneline".to_string(),
+            "--graph".to_string(),
+            "--format=%H".to_string(),
+            "--all".to_string(),
+        ];
+        assert_eq!(structured_log_args(&args), vec!["--all"]);
+    }
 
     // ── xy_status ──────────────────────────────────────────────────────────
 
@@ -864,6 +1057,109 @@ mod tests {
         assert_eq!(commits[0]["author"], "Alice");
         assert_eq!(commits[0]["message"], "feat: add new feature");
         assert_eq!(commits[1]["hash"], "def5678");
+    }
+
+    #[tokio::test]
+    async fn git_log_invocation_succeeds_in_repo() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let project_root = tempdir.path();
+        init_git_repo(project_root);
+        commit_readme(project_root, "test\n", "initial commit");
+
+        let tool = GitOpsTool::new(project_root.to_path_buf());
+        let result = tool
+            .invoke(ToolInvocation {
+                id: "git-log".to_string(),
+                tool_name: "git_ops".to_string(),
+                input: json!({ "command": "log", "format": "json" }),
+            })
+            .await
+            .expect("git_ops log invokes");
+
+        assert!(result.ok, "git_ops log should succeed: {:?}", result.output);
+        assert_eq!(result.output["commits"][0]["message"], "initial commit");
+    }
+
+    #[tokio::test]
+    async fn git_diff_splits_multi_ref_string_args() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let project_root = tempdir.path();
+        init_git_repo(project_root);
+        commit_readme(project_root, "one\n", "first commit");
+        run_git_test_command(project_root, &["tag", "v0.1.0"]);
+        commit_readme(project_root, "one\ntwo\n", "second commit");
+        run_git_test_command(project_root, &["tag", "v0.2.0-beta"]);
+
+        let tool = GitOpsTool::new(project_root.to_path_buf());
+        let result = tool
+            .invoke(ToolInvocation {
+                id: "git-diff".to_string(),
+                tool_name: "git_ops".to_string(),
+                input: json!({ "command": "diff", "args": "v0.1.0 v0.2.0-beta" }),
+            })
+            .await
+            .expect("git_ops diff invokes");
+
+        assert!(
+            result.ok,
+            "git_ops diff should succeed: {:?}",
+            result.output
+        );
+        assert_eq!(result.output["stats"]["files_changed"], 1);
+    }
+
+    #[tokio::test]
+    async fn git_log_json_ignores_presentation_flags() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let project_root = tempdir.path();
+        init_git_repo(project_root);
+        commit_readme(project_root, "test\n", "initial commit");
+
+        let tool = GitOpsTool::new(project_root.to_path_buf());
+        let result = tool
+            .invoke(ToolInvocation {
+                id: "git-log-json".to_string(),
+                tool_name: "git_ops".to_string(),
+                input: json!({
+                    "command": "log",
+                    "args": "--oneline --graph --format=%H --all"
+                }),
+            })
+            .await
+            .expect("git_ops log invokes");
+
+        assert!(result.ok, "git_ops log should succeed: {:?}", result.output);
+        assert_eq!(result.output["commits"][0]["message"], "initial commit");
+    }
+
+    #[tokio::test]
+    async fn git_log_text_preserves_presentation_flags() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let project_root = tempdir.path();
+        init_git_repo(project_root);
+        commit_readme(project_root, "test\n", "initial commit");
+
+        let tool = GitOpsTool::new(project_root.to_path_buf());
+        let result = tool
+            .invoke(ToolInvocation {
+                id: "git-log-text".to_string(),
+                tool_name: "git_ops".to_string(),
+                input: json!({
+                    "command": "log",
+                    "args": "--oneline --graph --all",
+                    "format": "text"
+                }),
+            })
+            .await
+            .expect("git_ops log invokes");
+
+        assert!(result.ok, "git_ops log should succeed: {:?}", result.output);
+        assert!(
+            result.output["log"]
+                .as_str()
+                .unwrap()
+                .contains("initial commit")
+        );
     }
 
     // ── parse git branch inline ────────────────────────────────────────────

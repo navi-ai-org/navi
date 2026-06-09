@@ -6,14 +6,12 @@ mod provider_sync;
 mod routing;
 
 use crate::TuiApp;
-use crate::notifications::show_notification;
 use crate::providers::{build_model_rows, first_model_index};
 use crate::session::load_saved_sessions;
 use crate::state::{ModalKind, Mode};
 use crate::ui::effect::UiEffect;
 use crate::ui::keymap::KeyOutcome;
 use crossterm::event::{KeyCode, KeyModifiers};
-use navi_sdk::AgentMode;
 
 // ─── shared helpers ──────────────────────────────────────────────────────────────
 
@@ -42,11 +40,13 @@ fn apply_ui_effect(app: &mut TuiApp, effect: UiEffect<ModalKind>) -> KeyOutcome 
 pub(crate) fn open_modal(app: &mut TuiApp, modal: ModalKind) {
     app.modal_stack.open(modal);
     app.mode = modal.mode();
+    app.hover_index = None;
 }
 
 pub(crate) fn replace_modal(app: &mut TuiApp, modal: ModalKind) {
     app.modal_stack.replace(Some(modal));
     app.mode = modal.mode();
+    app.hover_index = None;
 }
 
 pub(crate) fn close_active_modal(app: &mut TuiApp) {
@@ -56,24 +56,13 @@ pub(crate) fn close_active_modal(app: &mut TuiApp) {
         .top()
         .map(ModalKind::mode)
         .unwrap_or(Mode::Normal);
+    app.hover_index = None;
 }
 
 pub(crate) fn close_all_modals(app: &mut TuiApp) {
     app.modal_stack.clear();
     app.mode = Mode::Normal;
-}
-
-fn cycle_agent(app: &mut TuiApp) {
-    app.selected_agent = Some(match app.selected_agent {
-        Some(agent) => agent.next_code_mode(),
-        None => AgentMode::Plan,
-    });
-    let label = app
-        .selected_agent
-        .as_ref()
-        .map(|agent| agent.label())
-        .unwrap_or_else(|| AgentMode::Plan.label());
-    show_notification(app, "Agent", format!("{label} agent selected."));
+    app.hover_index = None;
 }
 
 pub(crate) fn open_model_picker(app: &mut TuiApp) {
@@ -136,6 +125,8 @@ fn route_mode_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyModifiers) -> K
         Mode::Skills => self::modals::handle_skills_key(app, code),
         Mode::Plugins => self::modals::handle_plugins_key(app, code),
         Mode::PluginApproval => self::modals::handle_plugin_approval_key(app, code, modifiers),
+        Mode::Question => self::modals::handle_question_key(app, code, modifiers),
+        Mode::ThemePicker => self::modals::handle_theme_picker_key(app, code),
     };
     if should_quit {
         KeyOutcome::Quit

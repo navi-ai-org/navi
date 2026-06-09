@@ -733,23 +733,6 @@ async fn start_session_returns_session_info() {
 
 #[tokio::test]
 
-async fn start_session_with_agent_mode() {
-    let (engine, _tempdir) = test_engine_with_key();
-
-    let session = engine
-        .start_session(NaviSessionRequest {
-            agent_mode: Some(navi_core::AgentMode::Plan),
-
-            ..Default::default()
-        })
-        .await
-        .expect("start session");
-
-    assert!(!session.id.is_empty());
-}
-
-#[tokio::test]
-
 async fn subscribe_events_returns_receiver() {
     let (engine, _tempdir) = test_engine_with_key();
 
