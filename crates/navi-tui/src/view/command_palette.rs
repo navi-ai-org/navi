@@ -1,21 +1,17 @@
 use ratatui::layout::{Constraint, Direction, Layout, Margin, Rect};
 use ratatui::prelude::{Frame, Line, Span};
 use ratatui::style::Style;
-use ratatui::widgets::{Clear, List, ListItem, ListState, Paragraph};
+use ratatui::widgets::{List, ListItem, ListState, Paragraph};
 
 use crate::TuiApp;
 use crate::commands::filtered_commands;
-use crate::render::{command_row, modal_block};
+use crate::render::{clear_modal_area, command_row, modal_block};
 use crate::theme::*;
 use crate::ui::interaction::{HitAction, line_rect};
 use crate::ui::list::render_scrollbar;
 
 pub(super) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
-    frame.render_widget(Clear, area);
-    frame.render_widget(
-        ratatui::widgets::Block::default().style(Style::default().bg(panel())),
-        area,
-    );
+    clear_modal_area(frame, area);
     let block = modal_block("Commands");
     frame.render_widget(block, area);
 

@@ -540,7 +540,7 @@ pub(crate) fn render_markdown_lines(
                 span.style = span.style.bg(bg);
             }
             line_spans.extend(spans);
-            lines.push(Line::from(line_spans));
+            lines.push(Line::from(line_spans).style(Style::default().bg(bg)));
             index += 1;
             continue;
         }
@@ -1039,8 +1039,10 @@ fn markdown_boundary_line(
         for span in &mut spans {
             span.style = span.style.bg(bg);
         }
+        Line::from(spans).style(Style::default().bg(bg))
+    } else {
+        Line::from(spans)
     }
-    Line::from(spans)
 }
 
 fn marker_spans(show_marker: bool, marker_color: Color) -> Vec<Span<'static>> {

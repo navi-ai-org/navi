@@ -3,9 +3,7 @@ use ratatui::layout::{Constraint, Direction, Layout, Margin, Rect};
 use ratatui::prelude::{Frame, Line, Span};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::Text;
-use ratatui::widgets::{
-    Block, BorderType, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap,
-};
+use ratatui::widgets::{Block, BorderType, Borders, List, ListItem, ListState, Paragraph, Wrap};
 
 use crate::TuiApp;
 use crate::keybindings::THINKING_OPTIONS;
@@ -18,7 +16,7 @@ use crate::ui::list::render_scrollbar;
 use crate::ui::text_input::next_char_boundary;
 
 pub(super) fn render_api_key_entry(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
-    frame.render_widget(Clear, area);
+    clear_modal_area(frame, area);
     let block = Block::new()
         .title(Line::from(vec![Span::styled(
             " Enter API Key ",
@@ -140,7 +138,7 @@ pub(super) fn render_tool_approval(frame: &mut Frame<'_>, app: &TuiApp, area: Re
         };
         &default_inv
     };
-    frame.render_widget(Clear, area);
+    clear_modal_area(frame, area);
     let block = modal_block("Tool Approval");
     let inner = area.inner(Margin {
         horizontal: 2,
@@ -203,7 +201,7 @@ pub(super) fn render_tool_approval(frame: &mut Frame<'_>, app: &TuiApp, area: Re
 }
 
 pub(super) fn render_thinking_picker(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
-    frame.render_widget(Clear, area);
+    clear_modal_area(frame, area);
     let block = modal_block("Thinking Mode");
     frame.render_widget(block, area);
 
@@ -264,7 +262,7 @@ pub(super) fn render_question(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
         return;
     };
 
-    frame.render_widget(Clear, area);
+    clear_modal_area(frame, area);
     frame.render_widget(modal_block("Decision"), area);
 
     let inner = area.inner(Margin {
@@ -547,7 +545,7 @@ fn question_preview_line(question: &crate::state::QuestionUiState) -> Line<'stat
 }
 
 pub(super) fn render_settings(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
-    frame.render_widget(Clear, area);
+    clear_modal_area(frame, area);
     let block = modal_block("Settings");
     frame.render_widget(block, area);
 
@@ -639,7 +637,7 @@ pub(super) fn render_settings(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
 }
 
 pub(super) fn render_help_modal(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
-    frame.render_widget(Clear, area);
+    clear_modal_area(frame, area);
     let block = modal_block("Shortcuts");
     frame.render_widget(block, area);
 
@@ -696,7 +694,7 @@ pub(super) fn render_help_modal(frame: &mut Frame<'_>, app: &TuiApp, area: Rect)
 }
 
 pub(super) fn render_message_actions(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
-    frame.render_widget(Clear, area);
+    clear_modal_area(frame, area);
     let block = modal_block("Message Actions");
     frame.render_widget(block, area);
 
@@ -817,7 +815,7 @@ pub(super) fn render_plugin_approval(frame: &mut Frame<'_>, app: &TuiApp, area: 
         PluginApprovalKind::Update => "Plugin Update",
     };
 
-    frame.render_widget(Clear, area);
+    clear_modal_area(frame, area);
     let block = modal_block(title);
     frame.render_widget(block, area);
 
@@ -1005,7 +1003,7 @@ pub(super) fn render_plugin_approval(frame: &mut Frame<'_>, app: &TuiApp, area: 
 }
 
 pub(super) fn render_theme_picker(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
-    frame.render_widget(Clear, area);
+    clear_modal_area(frame, area);
     let block = modal_block("Theme");
     frame.render_widget(block, area);
 

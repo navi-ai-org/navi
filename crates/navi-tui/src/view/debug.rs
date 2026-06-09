@@ -1,16 +1,16 @@
 use ratatui::layout::{Constraint, Direction, Layout, Margin, Rect};
 use ratatui::prelude::{Frame, Line, Span};
 use ratatui::style::Style;
-use ratatui::widgets::{Clear, Paragraph, Wrap};
+use ratatui::widgets::{Paragraph, Wrap};
 
 use crate::TuiApp;
 use crate::providers::{current_provider_credential_status, selected_provider_label};
-use crate::render::modal_block;
+use crate::render::{clear_modal_area, modal_block};
 use crate::theme::*;
 use crate::ui::interaction::{HitAction, line_rect};
 
 pub(super) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
-    frame.render_widget(Clear, area);
+    clear_modal_area(frame, area);
     let block = modal_block("Debug");
     frame.render_widget(block, area);
 

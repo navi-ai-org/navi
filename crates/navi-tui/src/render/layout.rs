@@ -1,5 +1,5 @@
 use ratatui::layout::Rect;
-use ratatui::prelude::{Line, Span, Style};
+use ratatui::prelude::{Frame, Line, Span, Style};
 use ratatui::widgets::{Block, BorderType, Borders};
 
 use crate::theme::*;
@@ -20,6 +20,10 @@ pub(crate) fn modal_block(title: &'static str) -> Block<'static> {
         .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(accent()))
         .style(Style::default().fg(text()).bg(panel()))
+}
+
+pub(crate) fn clear_modal_area(frame: &mut Frame<'_>, area: Rect) {
+    frame.render_widget(Block::new().style(Style::default().bg(panel())), area);
 }
 
 pub(crate) fn truncate_display(value: &str, max_chars: usize) -> String {

@@ -1,10 +1,11 @@
 use ratatui::layout::{Margin, Rect};
 use ratatui::prelude::{Frame, Line, Span};
 use ratatui::style::{Modifier, Style};
-use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph, Wrap};
+use ratatui::widgets::{Block, BorderType, Borders, Paragraph, Wrap};
 
 use crate::TuiApp;
 use crate::notifications::visible_notification;
+use crate::render::clear_modal_area;
 use crate::theme::*;
 
 pub(super) fn render_notification(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
@@ -33,7 +34,7 @@ pub(super) fn render_notification(frame: &mut Frame<'_>, app: &TuiApp, area: Rec
         vertical: 1,
     });
 
-    frame.render_widget(Clear, rect);
+    clear_modal_area(frame, rect);
     frame.render_widget(
         Block::new()
             .title(Line::from(vec![Span::styled(

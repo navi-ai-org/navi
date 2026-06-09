@@ -1,18 +1,18 @@
 use ratatui::layout::{Constraint, Direction, Layout, Margin, Rect};
 use ratatui::prelude::{Frame, Line, Span};
 use ratatui::style::Style;
-use ratatui::widgets::{Clear, List, ListItem, ListState, Paragraph};
+use ratatui::widgets::{List, ListItem, ListState, Paragraph};
 
 use crate::TuiApp;
 use crate::plugin_approval::count_installed_plugins;
 use crate::plugins::{PluginPickerRow, plugin_picker_rows};
-use crate::render::modal_block;
+use crate::render::{clear_modal_area, modal_block};
 use crate::theme::*;
 use crate::ui::interaction::{HitAction, line_rect};
 use crate::ui::list::render_scrollbar;
 
 pub(super) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
-    frame.render_widget(Clear, area);
+    clear_modal_area(frame, area);
     let block = modal_block("Plugins");
     frame.render_widget(block, area);
 
