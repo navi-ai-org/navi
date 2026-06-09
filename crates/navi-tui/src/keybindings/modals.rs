@@ -280,7 +280,8 @@ pub(crate) fn handle_thinking_key(app: &mut TuiApp, code: KeyCode) -> bool {
 }
 
 pub(crate) fn handle_settings_key(app: &mut TuiApp, code: KeyCode) -> bool {
-    const SETTINGS_COUNT: usize = 3;
+    const SETTINGS_COUNT: usize = 4;
+    const COMPACT_TOOL_LIMITS: &[usize] = &[3, 5, 8, 12, 20];
     let mut list_state = SelectListState::new(app.selected_setting, 0);
     match code {
         KeyCode::Esc => super::close_active_modal(app),
@@ -309,15 +310,32 @@ pub(crate) fn handle_settings_key(app: &mut TuiApp, code: KeyCode) -> bool {
                 show_notification(
                     app,
                     "Settings",
-                    if app.full_tool_view {
-                        "Full tool output visible."
-                    } else {
+                    if !app.full_tool_view {
                         "Tool output compacted."
+                    } else {
+                        "Full tool output visible."
                     },
                 );
                 save_preferences(app);
             }
             2 => {
+                let current = COMPACT_TOOL_LIMITS
+                    .iter()
+                    .position(|limit| *limit >= app.compact_tool_visible_limit)
+                    .unwrap_or(0);
+                app.compact_tool_visible_limit =
+                    COMPACT_TOOL_LIMITS[(current + 1) % COMPACT_TOOL_LIMITS.len()];
+                show_notification(
+                    app,
+                    "Settings",
+                    format!(
+                        "Compact tool rows set to {}.",
+                        app.compact_tool_visible_limit
+                    ),
+                );
+                save_preferences(app);
+            }
+            3 => {
                 app.theme_filter.clear();
                 super::replace_modal(app, ModalKind::ThemePicker);
             }

@@ -1,7 +1,7 @@
 use navi_sdk::canonical_provider_id;
 use ratatui::layout::{Constraint, Direction, Layout, Margin, Rect};
 use ratatui::prelude::{Frame, Line, Span};
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::Text;
 use ratatui::widgets::{Clear, List, ListItem, ListState, Paragraph};
 
@@ -84,16 +84,8 @@ pub(super) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
                 let configured = model.name == app.loaded_config.config.model.name
                     && canonical_provider_id(&model.provider_id)
                         == canonical_provider_id(&app.loaded_config.config.model.provider);
-                let style = if hovered {
-                    Style::default()
-                        .fg(Color::White)
-                        .bg(accent())
-                        .add_modifier(Modifier::BOLD)
-                } else if selected {
-                    Style::default()
-                        .fg(signal())
-                        .bg(panel())
-                        .add_modifier(Modifier::BOLD)
+                let style = if hovered || selected {
+                    active_item_style()
                 } else {
                     Style::default().fg(muted()).bg(panel())
                 };
@@ -151,10 +143,8 @@ pub(super) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
         }
     }
     frame.render_widget(
-        Paragraph::new(
-            "type search  •  ↑↓ choose  •  ctrl+e edit setup  •  tab refresh provider  •  ctrl+r refresh all  •  enter confirm  •  esc exit",
-        )
-        .style(Style::default().fg(muted()).bg(panel())),
+        Paragraph::new("search  •  ctrl+e setup  •  tab refresh provider  •  ctrl+r refresh all")
+            .style(Style::default().fg(muted()).bg(panel())),
         rows[2],
     );
 }

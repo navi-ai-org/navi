@@ -48,13 +48,15 @@ pub struct NaviConfig {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct TuiConfig {
-    /// Color theme id: `lain`, `terminal`, `slate`, `ember`, `paper`, `oscura-night`.
+    /// Color theme id: `default`, `lain`, `terminal`, `slate`, `ember`, `paper`, `oscura-night`.
     pub theme: String,
     /// Whether assistant thinking text is shown in the chat view.
     #[serde(default = "default_true")]
     pub show_thinking: bool,
     /// Whether tool rows show full input/output instead of compact lines.
     pub full_tool_view: bool,
+    /// Number of most-recent tool rows shown in compact tool groups.
+    pub compact_tool_visible_limit: usize,
     /// Thinking effort: `max`, `high`, `medium`, `low`, `off`.
     pub thinking_level: String,
     /// Auto-approve tools without confirmation (YOLO mode).
@@ -64,9 +66,10 @@ pub struct TuiConfig {
 impl Default for TuiConfig {
     fn default() -> Self {
         Self {
-            theme: "lain".to_string(),
+            theme: "default".to_string(),
             show_thinking: true,
             full_tool_view: false,
+            compact_tool_visible_limit: 5,
             thinking_level: "adaptive".to_string(),
             yolo_mode: false,
         }

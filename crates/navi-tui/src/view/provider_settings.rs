@@ -1,7 +1,7 @@
 use navi_sdk::provider_catalog;
 use ratatui::layout::{Constraint, Direction, Layout, Margin, Rect};
 use ratatui::prelude::{Frame, Span};
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::Style;
 use ratatui::widgets::{Clear, List, ListItem, Paragraph};
 
 use crate::TuiApp;
@@ -55,16 +55,8 @@ pub(super) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
                 "{:<18} {:<12} {:<10} {}",
                 provider.label, status.label, oauth, provider.description
             );
-            let style = if app.hover_index == Some(index) {
-                Style::default()
-                    .fg(Color::White)
-                    .bg(accent())
-                    .add_modifier(Modifier::BOLD)
-            } else if selected {
-                Style::default()
-                    .fg(signal())
-                    .bg(panel())
-                    .add_modifier(Modifier::BOLD)
+            let style = if app.hover_index == Some(index) || selected {
+                active_item_style()
             } else if status.configured {
                 Style::default().fg(signal()).bg(panel())
             } else {
@@ -106,7 +98,7 @@ pub(super) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
     }
 
     frame.render_widget(
-        Paragraph::new("enter/k API key  •  o OAuth  •  r sync models  •  esc close")
+        Paragraph::new("k API key  •  o OAuth  •  r sync models")
             .style(Style::default().fg(muted()).bg(panel())),
         rows[2],
     );

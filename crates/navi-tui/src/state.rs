@@ -56,6 +56,7 @@ pub(crate) struct ChatRenderCache {
     pub width: usize,
     pub full_tool_view: bool,
     pub show_thinking: bool,
+    pub compact_tool_visible_limit: usize,
     pub signature: String,
     pub lines: Vec<Line<'static>>,
     pub chat_rect: Option<Rect>,
