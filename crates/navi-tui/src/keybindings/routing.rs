@@ -10,6 +10,8 @@ pub(crate) fn handle_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyModifier
 }
 
 pub(crate) fn route_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyModifiers) -> KeyOutcome {
+    app.hover_index = None;
+
     let approval = route_approval_key(app, code);
     if approval.is_handled() {
         return approval;
@@ -18,6 +20,12 @@ pub(crate) fn route_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyModifiers
     let normal_cancel = route_normal_cancel_key(app, code);
     if normal_cancel.is_handled() {
         return normal_cancel;
+    }
+
+    if app.mode == crate::state::Mode::Question
+        && !(modifiers.contains(KeyModifiers::CONTROL) && matches!(code, KeyCode::Char('c')))
+    {
+        return super::route_mode_key(app, code, modifiers);
     }
 
     let global = route_global_key(app, code, modifiers);

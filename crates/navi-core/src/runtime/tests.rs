@@ -1,8 +1,7 @@
 use super::*;
 use crate::config::{ApprovalConfig, HarnessConfig};
 use crate::{
-    AgentMode, ModelRequest, ModelStream, ModelStreamEvent, NaviConfig, SecurityConfig,
-    ToolInvocation,
+    ModelRequest, ModelStream, ModelStreamEvent, NaviConfig, SecurityConfig, ToolInvocation,
 };
 use anyhow::Result;
 use async_trait::async_trait;
@@ -28,7 +27,6 @@ impl ModelProvider for MockToolProvider {
         if call_number == 1 {
             assert!(!request.tools.is_empty());
             assert!(request.messages[0].content.contains("Workflow contract"));
-            assert!(request.messages[0].content.contains("Agent mode: Plan"));
             assert!(request.messages[0].content.contains("runtime context"));
             Box::pin(stream::iter(vec![Ok(ModelStreamEvent::ToolCall(
                 ToolInvocation {
@@ -111,7 +109,6 @@ async fn headless_runtime_executes_read_tools_and_continues() {
         model_provider: provider,
         project_dir: tempdir.path().to_path_buf(),
         tool_executor: None,
-        agent_mode: Some(AgentMode::Plan),
         context_packets: vec![crate::ContextPacket {
             id: Some("ctx-1".to_string()),
             source: crate::ContextSource::FocusThread,
@@ -166,7 +163,6 @@ async fn runtime_session_lifecycle_streams_events_and_snapshots() {
         model_provider: provider,
         project_dir: tempdir.path().to_path_buf(),
         tool_executor: None,
-        agent_mode: Some(AgentMode::Plan),
         context_packets: vec![crate::ContextPacket {
             id: Some("ctx-1".to_string()),
             source: crate::ContextSource::FocusThread,
@@ -249,7 +245,6 @@ async fn runtime_uses_requested_session_id_once() {
         model_provider: provider,
         project_dir: tempdir.path().to_path_buf(),
         tool_executor: None,
-        agent_mode: Some(AgentMode::Tutor),
         context_packets: Vec::new(),
         active_skills: Vec::new(),
         initial_messages: Vec::new(),
@@ -289,7 +284,6 @@ async fn active_session_uses_replaced_model_provider_on_next_turn() {
         model_provider: Arc::new(EchoModelProvider),
         project_dir: tempdir.path().to_path_buf(),
         tool_executor: None,
-        agent_mode: None,
         context_packets: Vec::new(),
         active_skills: Vec::new(),
         initial_messages: Vec::new(),

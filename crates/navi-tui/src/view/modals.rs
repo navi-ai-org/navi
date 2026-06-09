@@ -3,13 +3,17 @@ use ratatui::layout::{Constraint, Direction, Layout, Margin, Rect};
 use ratatui::prelude::{Frame, Line, Span};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::Text;
-use ratatui::widgets::{Block, BorderType, Borders, Clear, List, ListItem, Paragraph, Wrap};
+use ratatui::widgets::{
+    Block, BorderType, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap,
+};
 
 use crate::TuiApp;
 use crate::keybindings::THINKING_OPTIONS;
 use crate::providers::*;
 use crate::render::*;
 use crate::theme::*;
+use crate::ui::interaction::{HitAction, line_rect};
+use crate::ui::list::render_scrollbar;
 use crate::ui::text_input::next_char_boundary;
 
 pub(super) fn render_api_key_entry(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
@@ -112,6 +116,12 @@ pub(super) fn render_api_key_entry(frame: &mut Frame<'_>, app: &TuiApp, area: Re
         Paragraph::new("enter save  •  esc cancel").style(Style::default().fg(muted()).bg(panel())),
         rows[7],
     );
+    app.register_hit(
+        line_rect(rows[7], 0),
+        20,
+        "cancel api key entry",
+        HitAction::CloseModal,
+    );
 }
 
 pub(super) fn render_tool_approval(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
@@ -177,6 +187,18 @@ pub(super) fn render_tool_approval(frame: &mut Frame<'_>, app: &TuiApp, area: Re
             .style(Style::default().bg(panel())),
         inner,
     );
+    app.register_hit(
+        line_rect(inner, 4),
+        30,
+        "approve tool",
+        HitAction::ToolApprove,
+    );
+    app.register_hit(
+        Rect::new(inner.x + 13, inner.y + 4, 10, 1),
+        31,
+        "deny tool",
+        HitAction::ToolDeny,
+    );
 }
 
 pub(super) fn render_thinking_picker(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
@@ -198,14 +220,20 @@ pub(super) fn render_thinking_picker(frame: &mut Frame<'_>, app: &TuiApp, area: 
         .enumerate()
         .map(|(index, level)| {
             let selected = index == app.selected_thinking;
+            let hovered = app.hover_index == Some(index);
             let current = *level == app.thinking_level;
-            let style = if selected {
+            let style = if hovered {
                 Style::default()
                     .fg(Color::White)
                     .bg(accent())
                     .add_modifier(Modifier::BOLD)
+            } else if selected {
+                Style::default()
+                    .fg(signal())
+                    .bg(panel())
+                    .add_modifier(Modifier::BOLD)
             } else {
-                Style::default().fg(text()).bg(panel())
+                Style::default().fg(muted()).bg(panel())
             };
 
             let marker = if current { "● " } else { "  " };
@@ -217,11 +245,321 @@ pub(super) fn render_thinking_picker(frame: &mut Frame<'_>, app: &TuiApp, area: 
         List::new(items).style(Style::default().bg(panel())),
         rows[0],
     );
+    for (index, level) in THINKING_OPTIONS
+        .iter()
+        .enumerate()
+        .take(rows[0].height as usize)
+    {
+        app.register_hit(
+            line_rect(rows[0], index),
+            20,
+            format!("thinking {}", level.label()),
+            HitAction::Key {
+                code: crossterm::event::KeyCode::Enter,
+                modifiers: crossterm::event::KeyModifiers::NONE,
+            },
+        );
+    }
     frame.render_widget(
         Paragraph::new("↑↓ choose  •  enter confirm  •  esc cancel")
             .style(Style::default().fg(muted()).bg(panel())),
         rows[1],
     );
+}
+
+pub(super) fn render_question(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
+    let Some(question) = app.pending_questions.first() else {
+        return;
+    };
+
+    frame.render_widget(Clear, area);
+    frame.render_widget(modal_block("Decision"), area);
+
+    let inner = area.inner(Margin {
+        horizontal: 2,
+        vertical: 1,
+    });
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(1),
+            Constraint::Length(4),
+            Constraint::Length(1),
+            Constraint::Min(5),
+            Constraint::Length(3),
+            Constraint::Length(2),
+            Constraint::Length(1),
+        ])
+        .split(inner);
+
+    let pending = app.pending_questions.len();
+    let eyebrow = if pending > 1 {
+        format!("NAVI needs a decision  •  1/{pending} pending")
+    } else {
+        "NAVI needs a decision".to_string()
+    };
+    frame.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::styled(
+                "? ",
+                Style::default().fg(signal()).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                eyebrow,
+                Style::default().fg(signal()).add_modifier(Modifier::BOLD),
+            ),
+        ]))
+        .style(Style::default().bg(panel())),
+        rows[0],
+    );
+
+    let kind = if question.request.multiple {
+        "Choose one or more options, write your own answer, or deny explicitly."
+    } else {
+        "Choose an option, write your own answer, or deny explicitly."
+    };
+    frame.render_widget(
+        Paragraph::new(Text::from(vec![
+            Line::from(Span::styled(
+                truncate_display(&question.request.question, 220),
+                Style::default().fg(text()).add_modifier(Modifier::BOLD),
+            )),
+            Line::from(""),
+            Line::from(Span::styled(kind, Style::default().fg(muted()))),
+        ]))
+        .wrap(Wrap { trim: false })
+        .style(Style::default().bg(panel())),
+        rows[1],
+    );
+
+    frame.render_widget(
+        Paragraph::new(Line::from(Span::styled(
+            "Options",
+            Style::default().fg(muted()).add_modifier(Modifier::BOLD),
+        )))
+        .style(Style::default().bg(panel())),
+        rows[2],
+    );
+
+    let visible_rows = rows[3].height as usize;
+    let option_count = question.request.options.len();
+    let start = question
+        .option_scroll
+        .min(option_count.saturating_sub(visible_rows));
+    let end = option_count.min(start.saturating_add(visible_rows));
+    let items = (start..end)
+        .filter_map(|row| {
+            question
+                .request
+                .options
+                .get(row)
+                .map(|option| (row, option))
+        })
+        .map(|(row, option)| {
+            let selected = row == question.selected_row;
+            let hovered = app.hover_index == Some(row);
+            let style = if hovered {
+                Style::default()
+                    .fg(Color::White)
+                    .bg(accent())
+                    .add_modifier(Modifier::BOLD)
+            } else if selected {
+                Style::default()
+                    .fg(signal())
+                    .bg(panel())
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(muted()).bg(panel())
+            };
+            let mark = if question.request.multiple {
+                if question.selected_options.get(row).copied().unwrap_or(false) {
+                    "[x]"
+                } else {
+                    "[ ]"
+                }
+            } else if selected {
+                "(*)"
+            } else {
+                "( )"
+            };
+            let number = format!("{}.", row + 1);
+            let mut label = format!("{number:<3} {mark} {}", option.label);
+            if let Some(description) = &option.description {
+                label.push_str("  - ");
+                label.push_str(description);
+            }
+            ListItem::new(Line::from(Span::styled(
+                truncate_display(&label, 180),
+                style,
+            )))
+            .style(style)
+        })
+        .collect::<Vec<_>>();
+    frame.render_widget(
+        List::new(items).style(Style::default().bg(panel())),
+        rows[3],
+    );
+    render_scrollbar(
+        frame,
+        app,
+        rows[3],
+        option_count,
+        start,
+        crate::ui::interaction::ScrollTarget::QuestionOptions,
+    );
+    for (offset, row) in (start..end).enumerate() {
+        if let Some(option) = question.request.options.get(row) {
+            app.register_hit(
+                line_rect(rows[3], offset),
+                30,
+                format!("question option {}", option.label),
+                HitAction::QuestionOption(row),
+            );
+        }
+    }
+
+    let text_border = if question.selected_is_custom() {
+        accent()
+    } else {
+        ghost()
+    };
+    let text_block = Block::new()
+        .title(Line::from(Span::styled(
+            " Your answer ",
+            Style::default().fg(muted()),
+        )))
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(text_border))
+        .style(Style::default().bg(panel()));
+    let text_inner = rows[4].inner(Margin {
+        horizontal: 1,
+        vertical: 1,
+    });
+    frame.render_widget(text_block, rows[4]);
+    frame.render_widget(
+        Paragraph::new(question_text_line(question)).style(Style::default().bg(panel())),
+        text_inner,
+    );
+    app.register_hit(rows[4], 30, "question text answer", HitAction::QuestionText);
+
+    let deny_style = if question.selected_is_deny() {
+        Style::default()
+            .fg(Color::White)
+            .bg(red())
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(muted()).bg(panel())
+    };
+    frame.render_widget(
+        Paragraph::new(Text::from(vec![
+            question_preview_line(question),
+            Line::from(Span::styled(
+                "[deny] Cannot answer this question",
+                deny_style,
+            )),
+        ]))
+        .style(Style::default().bg(panel())),
+        rows[5],
+    );
+    app.register_hit(
+        line_rect(rows[5], 0),
+        30,
+        "send question answer",
+        HitAction::QuestionSend,
+    );
+    app.register_hit(
+        line_rect(rows[5], 1),
+        30,
+        "deny question",
+        HitAction::QuestionDeny,
+    );
+
+    let footer = if question.selected_is_custom() {
+        "type to edit  •  ←→ move  •  enter send  •  esc close"
+    } else if question.request.multiple {
+        "↑↓ choose  •  1-9 toggle  •  space toggle  •  enter send  •  esc close"
+    } else {
+        "↑↓ choose  •  1-9 select  •  type for text  •  enter send  •  esc close"
+    };
+    frame.render_widget(
+        Paragraph::new(footer).style(Style::default().fg(muted()).bg(panel())),
+        rows[6],
+    );
+}
+
+fn question_text_line(question: &crate::state::QuestionUiState) -> Line<'static> {
+    let mut spans = vec![Span::styled(
+        "> ",
+        Style::default().fg(signal()).add_modifier(Modifier::BOLD),
+    )];
+    if question.custom_answer.is_empty() {
+        if question.selected_is_custom() {
+            spans.push(question_cursor_span(" "));
+        }
+        spans.push(Span::styled(
+            "write a plain-text answer",
+            Style::default().fg(ghost()),
+        ));
+        return Line::from(spans);
+    }
+
+    let mut cursor = question.custom_cursor.min(question.custom_answer.len());
+    while !question.custom_answer.is_char_boundary(cursor) {
+        cursor = cursor.saturating_sub(1);
+    }
+    let (before, rest) = question.custom_answer.split_at(cursor);
+    spans.push(Span::styled(
+        before.to_string(),
+        Style::default().fg(text()),
+    ));
+    if question.selected_is_custom() {
+        if rest.is_empty() {
+            spans.push(question_cursor_span(" "));
+        } else {
+            let next = next_char_boundary(&question.custom_answer, cursor)
+                .unwrap_or(question.custom_answer.len());
+            let (cursor_text, after) = question.custom_answer[cursor..].split_at(next - cursor);
+            spans.push(question_cursor_span(cursor_text.to_string()));
+            spans.push(Span::styled(after.to_string(), Style::default().fg(text())));
+        }
+    } else {
+        spans.push(Span::styled(rest.to_string(), Style::default().fg(text())));
+    }
+    Line::from(spans)
+}
+
+fn question_cursor_span(value: impl Into<String>) -> Span<'static> {
+    Span::styled(
+        value.into(),
+        Style::default()
+            .fg(bg())
+            .bg(signal())
+            .add_modifier(Modifier::BOLD),
+    )
+}
+
+fn question_preview_line(question: &crate::state::QuestionUiState) -> Line<'static> {
+    if question.selected_is_deny() {
+        return Line::from(Span::styled(
+            "Will deny this question.",
+            Style::default().fg(red()).add_modifier(Modifier::BOLD),
+        ));
+    }
+    let answers = question.selected_answers();
+    if answers.is_empty() {
+        return Line::from(Span::styled(
+            "No answer selected yet.",
+            Style::default().fg(muted()),
+        ));
+    }
+    Line::from(vec![
+        Span::styled("Will send: ", Style::default().fg(muted())),
+        Span::styled(
+            truncate_display(&answers.join(", "), 96),
+            Style::default().fg(signal()).add_modifier(Modifier::BOLD),
+        ),
+    ])
 }
 
 pub(super) fn render_settings(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
@@ -255,7 +593,7 @@ pub(super) fn render_settings(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
                 "[ ]".into()
             },
         ),
-        ("Theme", app.theme_id.label().to_string()),
+        ("Theme", "Select Theme →".into()),
     ];
 
     let items = settings_list
@@ -263,13 +601,19 @@ pub(super) fn render_settings(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
         .enumerate()
         .map(|(index, (label, val))| {
             let selected = index == app.selected_setting;
-            let style = if selected {
+            let hovered = app.hover_index == Some(index);
+            let style = if hovered {
                 Style::default()
                     .fg(Color::White)
                     .bg(accent())
                     .add_modifier(Modifier::BOLD)
+            } else if selected {
+                Style::default()
+                    .fg(signal())
+                    .bg(panel())
+                    .add_modifier(Modifier::BOLD)
             } else {
-                Style::default().fg(text()).bg(panel())
+                Style::default().fg(muted()).bg(panel())
             };
 
             let line = if index == 2 {
@@ -285,14 +629,37 @@ pub(super) fn render_settings(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
         List::new(items).style(Style::default().bg(panel())),
         rows[0],
     );
+    for (index, setting) in settings_list
+        .iter()
+        .enumerate()
+        .take(rows[0].height as usize)
+    {
+        let action = if index == 2 {
+            HitAction::ThemePicker
+        } else {
+            HitAction::Setting(index)
+        };
+        app.register_hit(
+            line_rect(rows[0], index),
+            20,
+            format!("setting {}", setting.0),
+            action,
+        );
+    }
     frame.render_widget(
-        Paragraph::new("↑↓ choose  •  enter configure/toggle  •  esc close")
+        Paragraph::new("↑↓ choose  •  enter toggle  •  esc close")
             .style(Style::default().fg(muted()).bg(panel())),
         rows[1],
     );
+    app.register_hit(
+        line_rect(rows[1], 0),
+        20,
+        "close settings",
+        HitAction::CloseModal,
+    );
 }
 
-pub(super) fn render_help_modal(frame: &mut Frame<'_>, area: Rect) {
+pub(super) fn render_help_modal(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
     frame.render_widget(Clear, area);
     let block = modal_block("Shortcuts");
     frame.render_widget(block, area);
@@ -307,7 +674,7 @@ pub(super) fn render_help_modal(frame: &mut Frame<'_>, area: Rect) {
         .split(inner);
     let shortcuts = [
         ("ctrl+p", "commands"),
-        ("tab", "agent"),
+        ("tab", "refresh/provider actions"),
         ("ctrl+m", "models"),
         ("ctrl+n", "new layer"),
         ("ctrl+s", "memory"),
@@ -340,6 +707,12 @@ pub(super) fn render_help_modal(frame: &mut Frame<'_>, area: Rect) {
     frame.render_widget(
         Paragraph::new("enter/?/esc close").style(Style::default().fg(muted()).bg(panel())),
         rows[1],
+    );
+    app.register_hit(
+        line_rect(rows[1], 0),
+        20,
+        "close help",
+        HitAction::CloseModal,
     );
 }
 
@@ -502,12 +875,21 @@ pub(super) fn render_plugin_approval(frame: &mut Frame<'_>, app: &TuiApp, area: 
     }
 
     lines.push(Line::from(""));
+    let line_count = lines.len();
 
     let body = Paragraph::new(Text::from(lines))
         .wrap(Wrap { trim: false })
         .scroll((app.plugin_approval_scroll as u16, 0))
         .style(Style::default().bg(panel()));
     frame.render_widget(body, rows[0]);
+    render_scrollbar(
+        frame,
+        app,
+        rows[0],
+        line_count,
+        app.plugin_approval_scroll,
+        crate::ui::interaction::ScrollTarget::PluginApproval,
+    );
 
     let blocked = req.reconsent_action.as_deref() == Some("BLOCKED");
     let footer = if blocked {
@@ -548,5 +930,120 @@ pub(super) fn render_plugin_approval(frame: &mut Frame<'_>, app: &TuiApp, area: 
     frame.render_widget(
         Paragraph::new(footer).style(Style::default().bg(panel())),
         rows[1],
+    );
+    if !blocked {
+        app.register_hit(
+            Rect::new(rows[1].x, rows[1].y, 12.min(rows[1].width), 1),
+            30,
+            "approve plugin",
+            HitAction::PluginApprove,
+        );
+        app.register_hit(
+            Rect::new(
+                rows[1].x + 14.min(rows[1].width),
+                rows[1].y,
+                12.min(rows[1].width.saturating_sub(14)),
+                1,
+            ),
+            31,
+            "deny plugin",
+            HitAction::PluginDeny,
+        );
+    }
+}
+
+pub(super) fn render_theme_picker(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
+    frame.render_widget(Clear, area);
+    let block = modal_block("Theme");
+    frame.render_widget(block, area);
+
+    let inner = area.inner(Margin {
+        horizontal: 2,
+        vertical: 1,
+    });
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(2),
+            Constraint::Min(5),
+            Constraint::Length(1),
+        ])
+        .split(inner);
+
+    let filter = if app.theme_filter.is_empty() {
+        "type to filter"
+    } else {
+        app.theme_filter.as_str()
+    };
+    frame.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::styled("> ", Style::default().fg(signal())),
+            Span::styled(filter, Style::default().fg(muted())),
+        ]))
+        .style(Style::default().bg(panel())),
+        rows[0],
+    );
+
+    let filtered = filtered_theme_options(&app.theme_filter);
+    let visible_selected = filtered
+        .iter()
+        .position(|(orig_index, _)| *orig_index == app.selected_theme)
+        .unwrap_or(0);
+
+    let items = filtered
+        .iter()
+        .map(|(orig_index, theme)| {
+            let current = *theme == app.theme_id;
+            let selected = *orig_index == app.selected_theme;
+            let hovered = app.hover_index == Some(*orig_index);
+            let style = if hovered {
+                Style::default()
+                    .fg(Color::White)
+                    .bg(accent())
+                    .add_modifier(Modifier::BOLD)
+            } else if selected {
+                Style::default()
+                    .fg(signal())
+                    .bg(panel())
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(muted()).bg(panel())
+            };
+
+            let marker = if current { "● " } else { "  " };
+            ListItem::new(Span::styled(format!("{}{}", marker, theme.label()), style)).style(style)
+        })
+        .collect::<Vec<_>>();
+
+    let mut list_state = ListState::default()
+        .with_offset(0)
+        .with_selected((!filtered.is_empty()).then_some(visible_selected));
+    frame.render_stateful_widget(
+        List::new(items)
+            .style(Style::default().bg(panel()))
+            .highlight_style(Style::default()),
+        rows[1],
+        &mut list_state,
+    );
+    for (row_index, (orig_index, theme)) in
+        filtered.iter().take(rows[1].height as usize).enumerate()
+    {
+        app.register_hit(
+            line_rect(rows[1], row_index),
+            20,
+            format!("theme {}", theme.label()),
+            HitAction::ThemeSelect(*orig_index),
+        );
+    }
+    frame.render_widget(
+        Paragraph::new("↑↓ choose  •  enter apply  •  esc close")
+            .style(Style::default().fg(muted()).bg(panel())),
+        rows[2],
+    );
+    app.register_hit(
+        line_rect(rows[2], 0),
+        20,
+        "close theme picker",
+        HitAction::CloseModal,
     );
 }

@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
 
-use navi_sdk::{AgentMode, EngineDriver, ModelMessage, NaviSessionRequest, NaviTurnRequest};
+use navi_sdk::{EngineDriver, ModelMessage, NaviSessionRequest, NaviTurnRequest};
 use tokio::sync::mpsc;
 
 use crate::app::TuiApp;
@@ -55,7 +55,6 @@ pub(crate) fn start_streaming_request(app: &mut TuiApp) {
     let engine = app.engine();
     let project_dir = app.project_dir.clone();
     let session_id = app.session_id.as_str().to_string();
-    let agent_mode = app.selected_agent;
     let active_skills = app.active_skills.clone();
 
     app.set_stream_task(tokio::spawn(async move {
@@ -63,7 +62,6 @@ pub(crate) fn start_streaming_request(app: &mut TuiApp) {
             engine,
             session_id.clone(),
             project_dir,
-            agent_mode,
             initial_messages,
             user_prompt,
             tx.clone(),
@@ -79,7 +77,6 @@ async fn run_sdk_turn(
     engine: Arc<dyn EngineDriver>,
     session_id: String,
     project_dir: PathBuf,
-    agent_mode: Option<AgentMode>,
     initial_messages: Vec<ModelMessage>,
     user_prompt: String,
     tx: mpsc::UnboundedSender<AsyncEvent>,
@@ -89,7 +86,6 @@ async fn run_sdk_turn(
         .start_session(NaviSessionRequest {
             project_dir: Some(project_dir),
             session_id: Some(session_id.clone()),
-            agent_mode,
             context_packets: Vec::new(),
             active_skills,
             initial_messages,

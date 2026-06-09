@@ -273,9 +273,9 @@ navi --acp
 
 ACP uses stdout/stdin for JSON-RPC. Diagnostics go to the log file. ACP cannot be combined with `--no-tui` or a task argument.
 
-## Agent Modes
+## Interactive Questions
 
-NAVI supports multiple agent modes: Plan, Edit, Review, Tutor, Socratic, Recall, Focus. Each mode controls system prompt, allowed tools, mutation permissions, output style, and approval policy. Cycle with `tab` in the TUI.
+NAVI runs as one agent. When it needs a user decision mid-turn, it can request an interactive question in the TUI with selectable options, a plain-text answer row, and an explicit deny action. `Esc` only closes the modal; use `ctrl+enter` to reopen a pending question.
 
 ## Tips for Code Agents
 

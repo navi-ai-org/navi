@@ -2,9 +2,9 @@ use crate::types::NaviError;
 use anyhow::Context;
 type Result<T> = std::result::Result<T, NaviError>;
 use navi_core::{
-    AgentMode, AgentRuntime, AgentRuntimeOptions, ApprovalDecision, CredentialStore, LoadedConfig,
-    ModelOption, ProviderConfig, RuntimeEvent, SessionId, SessionSnapshot, SessionStore,
-    SkillManifest, available_model_options, canonical_provider_id,
+    AgentRuntime, AgentRuntimeOptions, ApprovalDecision, CredentialStore, LoadedConfig,
+    ModelOption, ProviderConfig, QuestionResponse, RuntimeEvent, SessionId, SessionSnapshot,
+    SessionStore, SkillManifest, available_model_options, canonical_provider_id,
     config::effective_context_window, discover_configured_skills, model_can_run_publicly,
     provider_catalog, resolve_provider_api_key, resolve_provider_config,
     resolve_provider_credential_status, save_global_config, save_project_config,
@@ -40,7 +40,6 @@ use crate::types::{
 pub struct NaviEngineBuilder {
     project_dir: PathBuf,
     loaded_config: Option<LoadedConfig>,
-    agent_mode: Option<AgentMode>,
     host_tools: Vec<Arc<dyn navi_core::Tool>>,
 }
 
@@ -54,7 +53,6 @@ impl NaviEngineBuilder {
         Self {
             project_dir: project_dir.into(),
             loaded_config: None,
-            agent_mode: None,
             host_tools: Vec::new(),
         }
     }
@@ -62,12 +60,6 @@ impl NaviEngineBuilder {
     /// Overrides the loaded config instead of loading from the project directory.
     pub fn loaded_config(mut self, loaded_config: LoadedConfig) -> Self {
         self.loaded_config = Some(loaded_config);
-        self
-    }
-
-    /// Sets the initial [`AgentMode`] for sessions created by this engine.
-    pub fn agent_mode(mut self, agent_mode: AgentMode) -> Self {
-        self.agent_mode = Some(agent_mode);
         self
     }
 
@@ -88,7 +80,6 @@ impl NaviEngineBuilder {
             inner: Arc::new(NaviEngineInner {
                 project_dir: self.project_dir,
                 loaded_config: RwLock::new(loaded_config),
-                agent_mode: self.agent_mode,
                 host_tools: self.host_tools,
                 sessions: RwLock::new(HashMap::new()),
             }),
@@ -108,7 +99,6 @@ pub struct NaviEngine {
 struct NaviEngineInner {
     project_dir: PathBuf,
     loaded_config: RwLock<LoadedConfig>,
-    agent_mode: Option<AgentMode>,
     host_tools: Vec<Arc<dyn navi_core::Tool>>,
     sessions: RwLock<HashMap<String, Arc<NaviSession>>>,
 }
@@ -118,6 +108,7 @@ pub struct NaviSession {
     runtime: AsyncMutex<AgentRuntime>,
     events: broadcast::Receiver<RuntimeEvent>,
     approval_resolver: navi_core::ApprovalResolver,
+    question_resolver: navi_core::QuestionResolver,
     turn_canceller: navi_core::TurnCanceller,
     mcp: LoadedMcpServers,
     _plugins: Vec<LoadedPlugin>,
@@ -158,7 +149,6 @@ impl NaviEngine {
             model_provider: provider,
             project_dir: project_dir.clone(),
             tool_executor: Some(tool_executor.tool_executor.clone()),
-            agent_mode: request.agent_mode.or(self.inner.agent_mode),
             context_packets: request.context_packets,
             active_skills: request.active_skills,
             initial_messages: request.initial_messages,
@@ -168,6 +158,7 @@ impl NaviEngine {
         let events = runtime.stream_events();
         let session_id = runtime.start_session()?;
         let approval_resolver = runtime.approval_resolver();
+        let question_resolver = runtime.question_resolver();
         let turn_canceller = runtime.turn_canceller();
         let info = NaviSessionInfo {
             id: session_id.as_str().to_string(),
@@ -185,6 +176,7 @@ impl NaviEngine {
                     runtime: AsyncMutex::new(runtime),
                     events,
                     approval_resolver,
+                    question_resolver,
                     turn_canceller,
                     mcp,
                     _plugins: tool_executor._plugins,
@@ -226,6 +218,17 @@ impl NaviEngine {
     ) -> Result<bool> {
         let session = self.session(session_id)?;
         Ok(session.approval_resolver.resolve(decision))
+    }
+
+    /// Resolves a pending interactive question. Returns `true` if the response was
+    /// consumed, `false` if there was no pending request.
+    pub async fn resolve_question(
+        &self,
+        session_id: &str,
+        response: QuestionResponse,
+    ) -> Result<bool> {
+        let session = self.session(session_id)?;
+        Ok(session.question_resolver.resolve(response))
     }
 
     /// Adds a context packet (file, selection, memory, etc.) to an active session.

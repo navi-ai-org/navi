@@ -39,6 +39,7 @@ pub(super) fn route_global_key(
                     super::apply_ui_effect(app, UiEffect::ReplaceModal(ModalKind::Commands));
                 app.command_filter.clear();
                 app.selected_command = 0;
+                app.command_scroll = 0;
                 return outcome;
             }
             KeyCode::Char('m') => {
@@ -60,6 +61,12 @@ pub(super) fn route_global_key(
                 return KeyOutcome::Handled;
             }
             KeyCode::Char('j') | KeyCode::Char('\n') | KeyCode::Char('\r') | KeyCode::Enter => {
+                if !app.pending_questions.is_empty() {
+                    return super::apply_ui_effect(
+                        app,
+                        UiEffect::ReplaceModal(ModalKind::Question),
+                    );
+                }
                 if !app.input.trim().is_empty() && !app.is_loading {
                     submit_message(app);
                 }

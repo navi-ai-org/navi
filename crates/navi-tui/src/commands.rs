@@ -9,7 +9,6 @@ pub(crate) struct CommandItem {
 pub(crate) enum CommandAction {
     NewSession,
     Sessions,
-    Agent,
     SwitchModel,
     RetryLast,
     OpenThinking,
@@ -33,11 +32,6 @@ pub(crate) const COMMANDS: &[CommandItem] = &[
         label: "Sessions",
         shortcut: Some("ctrl+s"),
         action: CommandAction::Sessions,
-    },
-    CommandItem {
-        label: "Agent",
-        shortcut: Some("tab"),
-        action: CommandAction::Agent,
     },
     CommandItem {
         label: "Models",

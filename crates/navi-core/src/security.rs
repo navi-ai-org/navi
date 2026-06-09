@@ -1047,8 +1047,7 @@ mod tests {
         std::fs::write(project.join("package-lock.json"), "{}").expect("lock");
         let policy = policy(project.clone(), data);
 
-        let decision =
-            policy.validate_path(project.join("package-lock.json").as_path(), false);
+        let decision = policy.validate_path(project.join("package-lock.json").as_path(), false);
 
         assert!(
             matches!(decision, SecurityDecision::Deny(_)),
@@ -1113,8 +1112,7 @@ mod tests {
             deny_paths: vec![],
             ..Default::default()
         };
-        let policy =
-            SecurityPolicy::new(project, data, config).expect("policy");
+        let policy = SecurityPolicy::new(project, data, config).expect("policy");
 
         let text = "node_modules/foo/index.js:1: export {}\n";
         let filtered = policy.filter_denied_lines(text);

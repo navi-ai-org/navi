@@ -20,4 +20,4 @@
   ┌──────────────────────────────────────────────────────────────────────────┐
   │}                                                                         │
   └──────────────────────────────────────────────────────────────────────────┘
-   type a task, /plan, /edit, /review, or ctrl+p for commands; tab changes age
+   type a task, or ctrl+p for commands

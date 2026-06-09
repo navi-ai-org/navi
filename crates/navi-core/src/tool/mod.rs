@@ -13,8 +13,8 @@ mod tests;
 
 use builtin::{
     ApplyPatchTool, BashTool, BuildRunnerTool, FsBrowserTool, GitOpsTool, GrepTool,
-    PackageManagerTool, QuestionTool, ReadFileTool, TestRunnerTool, WriteFileTool,
-    truncate_tool_result,
+    PackageManagerTool, QuestionTool, ReadFileTool, TestRunnerTool, ToolWorkflowTool, TopFilesTool,
+    WriteFileTool, truncate_tool_result,
 };
 
 /// Trait for executable tools that can be invoked by the agent.
@@ -146,6 +146,22 @@ impl ToolExecutor {
             vfs,
         };
         executor.register_builtin_tools();
+        executor
+    }
+
+    pub(crate) fn new_workflow_host(policy: SecurityPolicy, vfs: Option<Arc<VfsEngine>>) -> Self {
+        let project_root = policy.project_root().to_path_buf();
+        let mut executor = Self {
+            tools: HashMap::new(),
+            validators: HashMap::new(),
+            invalid_schemas: HashMap::new(),
+            policy,
+            vfs: vfs.clone(),
+        };
+        executor.register(ReadFileTool::new(vfs));
+        executor.register(FsBrowserTool);
+        executor.register(GrepTool);
+        executor.register(GitOpsTool::new(project_root));
         executor
     }
 
@@ -340,6 +356,7 @@ impl ToolExecutor {
         let project_root = self.policy.project_root().to_path_buf();
         let vfs = self.vfs.clone();
         self.register(ReadFileTool::new(vfs.clone()));
+        self.register(TopFilesTool::new(self.policy.clone(), vfs.clone()));
         self.register(WriteFileTool::new(vfs.clone()));
         self.register(ApplyPatchTool::new(project_root.clone(), vfs));
         self.register(FsBrowserTool);
@@ -350,6 +367,7 @@ impl ToolExecutor {
         self.register(GitOpsTool::new(project_root.clone()));
         self.register(QuestionTool);
         self.register(PackageManagerTool::new(project_root));
+        self.register(ToolWorkflowTool::new(self.policy.clone(), self.vfs.clone()));
     }
 }
 

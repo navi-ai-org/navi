@@ -5,19 +5,19 @@
     ██╭ Commands   online────────────────────────────────────────────────╮
     ██│ > type to filter                                                 │
     ██│                                                                  │
-    ██│ New Session                                         ctrl+n       │
-    ╚═│ Sessions                                            ctrl+s       │
-      │ Agent                                               tab          │
-      │ Models                                              ctrl+m       │h
-      │ Providers                                                        │
-      │ Skills                                                           │
-      │ Plugins                                                          │
-    NA│ Retry Last Response                                              │
-      │ Thinking Mode                                                    │
-      │ Compact Context                                                  │
+    ██│ New Session                                         ctrl+n     █ │
+    ╚═│ Sessions                                            ctrl+s     █ │
+      │ Models                                              ctrl+m     █ │
+      │ Providers                                                      █ │h
+      │ Skills                                                         █ │
+      │ Plugins                                                        █ │
+      │ Retry Last Response                                            █ │
+    NA│ Thinking Mode                                                  █ │
+      │ Compact Context                                                │ │
+      │ Initialize Layer                                               │ │
       │ tab/↑↓ choose  •  enter confirm  •  esc cancel                   │
       ╰──────────────────────────────────────────────────────────────────╯
   ┌──────────────────────────────────────────────────────────────────────────┐
   │}                                                                         │
   └──────────────────────────────────────────────────────────────────────────┘
-   type a task, /plan, /edit, /review, or ctrl+p for commands; tab changes age
+   type a task, or ctrl+p for commands

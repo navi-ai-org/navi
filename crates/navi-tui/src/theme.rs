@@ -56,6 +56,7 @@ impl ThemeId {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn next(self) -> Self {
         let idx = Self::ALL.iter().position(|id| *id == self).unwrap_or(0);
         Self::ALL[(idx + 1) % Self::ALL.len()]
@@ -71,6 +72,20 @@ impl ThemeId {
             ThemeId::OscuraNight => ThemePalette::oscura_night(),
         }
     }
+}
+
+pub(crate) fn filtered_theme_options(filter: &str) -> Vec<(usize, ThemeId)> {
+    if filter.is_empty() {
+        return ThemeId::ALL.iter().copied().enumerate().collect();
+    }
+
+    let filter = filter.to_lowercase();
+    ThemeId::ALL
+        .iter()
+        .copied()
+        .enumerate()
+        .filter(|(_, theme)| theme.label().to_lowercase().contains(&filter))
+        .collect()
 }
 
 #[derive(Debug, Clone)]

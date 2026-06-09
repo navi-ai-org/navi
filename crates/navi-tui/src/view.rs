@@ -29,6 +29,7 @@ pub(crate) fn render(frame: &mut Frame<'_>, app: &mut TuiApp) {
 }
 
 fn render_inner(frame: &mut Frame<'_>, app: &mut TuiApp) {
+    app.clear_interactions();
     let area = frame.area();
     frame.render_widget(Block::new().style(Style::default().bg(theme::bg())), area);
     let content_area = viewport_rect(area);
@@ -55,12 +56,14 @@ fn render_inner(frame: &mut Frame<'_>, app: &mut TuiApp) {
         Mode::Settings => modals::render_settings(frame, app, modal_rect(area, 52, 12)),
         Mode::Providers => provider_settings::render(frame, app, modal_rect(area, 76, 20)),
         Mode::Debug => debug::render(frame, app, modal_rect(area, 76, 18)),
-        Mode::Help => modals::render_help_modal(frame, modal_rect(area, 62, 16)),
+        Mode::Help => modals::render_help_modal(frame, app, modal_rect(area, 62, 16)),
         Mode::Skills => skills::render(frame, app, modal_rect(area, 72, 20)),
         Mode::Plugins => plugins::render(frame, app, modal_rect(area, 76, 22)),
         Mode::PluginApproval => {
             modals::render_plugin_approval(frame, app, modal_rect(area, 84, 24))
         }
+        Mode::Question => modals::render_question(frame, app, modal_rect(area, 78, 22)),
+        Mode::ThemePicker => modals::render_theme_picker(frame, app, modal_rect(area, 40, 12)),
         Mode::Normal => {}
     }
 
@@ -101,7 +104,9 @@ fn render_header(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
 
     let context = header_context_label(app);
     let tool_count = app.running_tools.len();
-    let approval_count = app.pending_approvals.len() + app.pending_plugin_approvals.len();
+    let approval_count = app.pending_approvals.len()
+        + app.pending_plugin_approvals.len()
+        + app.pending_questions.len();
     frame.render_widget(
         Paragraph::new(Line::from(vec![
             Span::styled("│ ", Style::default().fg(ghost()).bg(bg())),

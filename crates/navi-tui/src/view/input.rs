@@ -1,4 +1,3 @@
-use navi_sdk::AgentMode;
 use ratatui::layout::{Constraint, Direction, Layout, Margin, Rect};
 use ratatui::prelude::{Frame, Line, Span};
 use ratatui::style::{Modifier, Style};
@@ -8,6 +7,7 @@ use ratatui::widgets::{Block, BorderType, Borders, Paragraph, Wrap};
 use crate::TuiApp;
 use crate::render::{cursor_span, split_input_spans};
 use crate::theme::*;
+use crate::ui::interaction::HitAction;
 use crate::ui::text_input::{floor_char_boundary, next_char_boundary};
 
 pub(super) fn render_input(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
@@ -54,6 +54,14 @@ pub(super) fn render_input(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
         Paragraph::new(shortcut_tips(app, rows[1].width as usize)).style(Style::default().bg(bg())),
         rows[1],
     );
+    if !app.pending_questions.is_empty() {
+        app.register_hit(
+            rows[1],
+            3,
+            "reopen pending question",
+            HitAction::ReopenQuestion,
+        );
+    }
 }
 
 fn visible_input_lines(lines: Vec<Line<'_>>, height: usize) -> Vec<Line<'_>> {
@@ -95,35 +103,34 @@ fn input_lines(app: &TuiApp) -> Vec<Line<'_>> {
 }
 
 fn shortcut_tips(app: &TuiApp, width: usize) -> Line<'static> {
-    let agent_label = app.selected_agent.map(AgentMode::label).unwrap_or("none");
+    if !app.pending_questions.is_empty() {
+        return Line::from(vec![
+            Span::styled(" ", Style::default().fg(muted())),
+            Span::styled("pending question  ", Style::default().fg(muted())),
+            Span::styled(
+                "ctrl+enter",
+                Style::default().fg(text()).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(" reopen", Style::default().fg(muted())),
+        ]);
+    }
+
     if app.messages.is_empty() && app.conversation_history.len() <= 1 && app.input.is_empty() {
         return Line::from(vec![
             Span::styled(" ", Style::default().fg(muted())),
-            Span::styled(
-                "type a task, /plan, /edit, /review, or ",
-                Style::default().fg(muted()),
-            ),
+            Span::styled("type a task, or ", Style::default().fg(muted())),
             Span::styled(
                 "ctrl+p",
                 Style::default().fg(text()).add_modifier(Modifier::BOLD),
             ),
-            Span::styled(" for commands; ", Style::default().fg(muted())),
-            Span::styled(
-                "tab",
-                Style::default().fg(text()).add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(
-                format!(" changes agent ({agent_label})"),
-                Style::default().fg(muted()),
-            ),
+            Span::styled(" for commands", Style::default().fg(muted())),
         ]);
     }
 
     let items = [
-        ("Shift+Tab", "mode", text()),
         ("Ctrl+.", "shortcuts", text()),
         ("Ctrl+P", "commands", text()),
-        ("Tab", agent_label, text()),
+        ("Ctrl+M", "models", text()),
     ];
 
     let mut spans = vec![Span::styled(" ", Style::default().fg(muted()))];

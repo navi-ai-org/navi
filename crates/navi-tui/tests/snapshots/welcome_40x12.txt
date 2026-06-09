@@ -8,4 +8,4 @@
   ┌──────────────────────────────────┐
   │}                                 │
   └──────────────────────────────────┘
-   type a task, /plan, /edit, /review,
+   type a task, or ctrl+p for commands

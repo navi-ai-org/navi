@@ -1,4 +1,3 @@
-pub mod agent;
 pub mod cancel;
 pub mod compact;
 pub mod config;
@@ -10,6 +9,7 @@ pub mod harness;
 pub mod logging;
 pub mod model;
 pub mod patch;
+pub mod prompt;
 mod provider_id;
 pub mod runtime;
 pub mod security;
@@ -18,7 +18,6 @@ pub mod skills;
 pub mod tool;
 pub mod turn;
 
-pub use agent::AgentMode;
 pub use compact::{CompactState, CompactThreshold};
 pub use config::{
     HarnessProfile, LoadedConfig, McpConfig, McpServerConfig, ModelOption, ModelTaskSize,
@@ -33,7 +32,8 @@ pub use credentials::{
     resolve_provider_credential_status,
 };
 pub use event::{
-    AgentEvent, ApprovalDecision, ApprovalRequest, ApprovalRisk, RuntimeEvent, RuntimeEventKind,
+    AgentEvent, ApprovalDecision, ApprovalRequest, ApprovalRisk, QuestionOption, QuestionRequest,
+    QuestionResponse, RuntimeEvent, RuntimeEventKind,
 };
 pub use harness::{
     AgentRunState, HarnessPolicy, build_system_prompt, build_system_prompt_with_memory,
@@ -45,8 +45,11 @@ pub use model::{
     ModelStreamEvent, ThinkingConfig, ThinkingRequest,
 };
 pub use patch::PatchProposal;
+pub use prompt::{PromptCache, SystemPromptInput, SystemPromptRenderer};
 pub use provider_id::ProviderId;
-pub use runtime::{AgentRuntime, AgentRuntimeOptions, ApprovalResolver, TurnCanceller};
+pub use runtime::{
+    AgentRuntime, AgentRuntimeOptions, ApprovalResolver, QuestionResolver, TurnCanceller,
+};
 pub use security::{SecurityDecision, SecurityPolicy};
 pub use session::{
     SessionId, SessionRuntime, SessionSnapshot, SessionStore, clean_session_title,

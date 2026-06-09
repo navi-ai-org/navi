@@ -1,3 +1,12 @@
+use ratatui::layout::Rect;
+use ratatui::prelude::{Frame, Line, Span};
+use ratatui::style::{Modifier, Style};
+use ratatui::widgets::Paragraph;
+
+use crate::TuiApp;
+use crate::theme::{accent, ghost, panel};
+use crate::ui::interaction::{HitAction, ScrollTarget};
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct SelectListState {
     selected: usize,
@@ -86,6 +95,90 @@ impl SelectListState {
     }
 }
 
+pub(crate) fn render_scrollbar(
+    frame: &mut Frame<'_>,
+    app: &TuiApp,
+    area: Rect,
+    total_items: usize,
+    offset: usize,
+    target: ScrollTarget,
+) {
+    let visible_items = area.height as usize;
+    if area.width == 0 || area.height == 0 || total_items <= visible_items || visible_items == 0 {
+        return;
+    }
+
+    let bar = Rect::new(area.x + area.width - 1, area.y, 1, area.height);
+    let thumb = scrollbar_thumb(bar, total_items, visible_items, offset);
+    let lines = (0..bar.height)
+        .map(|row| {
+            let y = bar.y + row;
+            let style = if y >= thumb.y && y < thumb.y.saturating_add(thumb.height) {
+                Style::default()
+                    .fg(accent())
+                    .bg(panel())
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(ghost()).bg(panel())
+            };
+            let glyph = if y >= thumb.y && y < thumb.y.saturating_add(thumb.height) {
+                "█"
+            } else {
+                "│"
+            };
+            Line::from(Span::styled(glyph, style))
+        })
+        .collect::<Vec<_>>();
+
+    frame.render_widget(
+        Paragraph::new(lines).style(Style::default().bg(panel())),
+        bar,
+    );
+
+    for row in 0..bar.height {
+        let click_offset = scrollbar_offset_for_row(bar, total_items, visible_items, row);
+        app.register_hit(
+            Rect::new(bar.x, bar.y + row, 1, 1),
+            80,
+            "scrollbar",
+            HitAction::ScrollTo {
+                target,
+                offset: click_offset,
+            },
+        );
+    }
+}
+
+fn scrollbar_thumb(area: Rect, total_items: usize, visible_items: usize, offset: usize) -> Rect {
+    let height = area.height as usize;
+    let thumb_height = ((visible_items * height).div_ceil(total_items))
+        .max(1)
+        .min(height);
+    let max_offset = total_items.saturating_sub(visible_items).max(1);
+    let max_thumb_top = height.saturating_sub(thumb_height);
+    let thumb_top = offset.min(max_offset) * max_thumb_top / max_offset;
+    Rect::new(
+        area.x,
+        area.y + thumb_top as u16,
+        area.width,
+        thumb_height as u16,
+    )
+}
+
+fn scrollbar_offset_for_row(
+    area: Rect,
+    total_items: usize,
+    visible_items: usize,
+    row: u16,
+) -> usize {
+    let height = area.height as usize;
+    let max_offset = total_items.saturating_sub(visible_items);
+    if height <= 1 || max_offset == 0 {
+        return 0;
+    }
+    (row as usize * max_offset).div_ceil(height.saturating_sub(1))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -110,5 +203,13 @@ mod tests {
         assert_eq!(SelectListState::scroll_offset_for_selected(5, 6), 0);
         assert_eq!(SelectListState::scroll_offset_for_selected(6, 6), 1);
         assert_eq!(SelectListState::scroll_offset_for_selected(11, 6), 6);
+    }
+
+    #[test]
+    fn scrollbar_click_row_maps_to_scroll_offset() {
+        let area = Rect::new(0, 0, 1, 10);
+
+        assert_eq!(scrollbar_offset_for_row(area, 100, 10, 0), 0);
+        assert_eq!(scrollbar_offset_for_row(area, 100, 10, 9), 90);
     }
 }

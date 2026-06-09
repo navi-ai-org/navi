@@ -29,14 +29,13 @@ use crate::ui::text_input::{
 };
 use crate::view::build_chat_lines;
 use crossterm::event::{KeyCode, KeyModifiers};
-use navi_sdk::{
-    AgentEvent, AgentMode, LoadedConfig, ModelMessage, ModelOption, ToolInvocation, ToolResult,
-};
+use navi_sdk::{AgentEvent, LoadedConfig, ModelMessage, ModelOption, ToolInvocation, ToolResult};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::layout::Rect;
 use ratatui::prelude::Line;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 pub(crate) fn test_app(input: &str) -> TuiApp {
@@ -611,7 +610,7 @@ fn slash_opens_commands_and_question_mark_opens_help() {
 }
 
 #[test]
-fn ctrl_p_opens_commands_and_tab_cycles_agent() {
+fn ctrl_p_opens_commands_and_tab_is_ignored_in_composer() {
     let mut app = test_app("");
 
     handle_key(&mut app, KeyCode::Char('p'), KeyModifiers::CONTROL);
@@ -622,29 +621,14 @@ fn ctrl_p_opens_commands_and_tab_cycles_agent() {
     app.mode = Mode::Normal;
     app.input = "draft".to_string();
     app.input_cursor = app.input.len();
-    assert_eq!(app.selected_agent, None);
     handle_key(&mut app, KeyCode::Tab, KeyModifiers::NONE);
     assert_eq!(app.mode, Mode::Normal);
-    assert_eq!(app.selected_agent, Some(AgentMode::Plan));
     assert_eq!(app.input, "draft");
 }
 
 #[test]
-fn command_palette_cycles_agent_and_opens_providers() {
+fn command_palette_opens_providers() {
     let mut app = test_app("");
-
-    app.mode = Mode::Commands;
-    app.command_filter = "agent".to_string();
-    app.selected_command = 0;
-    let agent_commands = filtered_commands(&app);
-    assert!(
-        agent_commands
-            .iter()
-            .any(|command| matches!(command.action, CommandAction::Agent))
-    );
-    assert!(!run_selected_command(&mut app));
-    assert_eq!(app.mode, Mode::Normal);
-    assert_eq!(app.selected_agent, Some(AgentMode::Plan));
 
     app.mode = Mode::Commands;
     app.command_filter = "providers".to_string();
@@ -659,6 +643,222 @@ fn command_palette_cycles_agent_and_opens_providers() {
     assert_eq!(app.mode, Mode::Providers);
     assert_eq!(app.selected_provider_setting, 0);
     assert_eq!(app.provider_settings_scroll, 0);
+}
+
+fn sample_question_request() -> navi_sdk::QuestionRequest {
+    navi_sdk::QuestionRequest {
+        id: "question-1".to_string(),
+        question: "Which direction should NAVI take?".to_string(),
+        options: vec![
+            navi_sdk::QuestionOption {
+                label: "Fast".to_string(),
+                description: Some("Smallest implementation".to_string()),
+            },
+            navi_sdk::QuestionOption {
+                label: "Thorough".to_string(),
+                description: Some("More validation".to_string()),
+            },
+        ],
+        multiple: false,
+        allow_custom: false,
+    }
+}
+
+async fn wait_for_question_resolution(engine: &crate::testing::MockEngine) {
+    use crate::testing::EngineCall;
+
+    for _ in 0..50 {
+        if engine
+            .calls()
+            .iter()
+            .any(|call| matches!(call, EngineCall::ResolveQuestion { .. }))
+        {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(1)).await;
+    }
+}
+
+#[test]
+fn question_request_opens_modal() {
+    let mut app = test_app("");
+
+    crate::dispatch::handle_async_event(
+        &mut app,
+        crate::dispatch::AsyncEvent::Agent(
+            AgentEvent::QuestionRequested(sample_question_request()),
+        ),
+    );
+
+    assert_eq!(app.mode, Mode::Question);
+    assert_eq!(app.pending_questions.len(), 1);
+    assert_eq!(app.pending_questions[0].request.id, "question-1");
+}
+
+#[test]
+fn question_escape_closes_without_resolving_and_ctrl_enter_reopens() {
+    use crate::testing::MockEngine;
+
+    let mut app = test_app("");
+    let engine = Arc::new(MockEngine::new());
+    app.set_engine(engine.clone());
+    crate::dispatch::handle_async_event(
+        &mut app,
+        crate::dispatch::AsyncEvent::Agent(
+            AgentEvent::QuestionRequested(sample_question_request()),
+        ),
+    );
+
+    handle_key(&mut app, KeyCode::Char('x'), KeyModifiers::NONE);
+    assert_eq!(app.pending_questions[0].custom_answer, "x");
+
+    handle_key(&mut app, KeyCode::Esc, KeyModifiers::NONE);
+
+    assert_eq!(app.mode, Mode::Normal);
+    assert_eq!(app.pending_questions.len(), 1);
+    assert_eq!(app.pending_questions[0].custom_answer, "x");
+    assert!(engine.calls().is_empty());
+
+    handle_key(&mut app, KeyCode::Enter, KeyModifiers::CONTROL);
+
+    assert_eq!(app.mode, Mode::Question);
+    assert_eq!(app.pending_questions.len(), 1);
+    assert_eq!(app.pending_questions[0].custom_answer, "x");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn question_enter_resolves_selected_answer() {
+    use crate::testing::{EngineCall, MockEngine};
+
+    let mut app = test_app("");
+    let engine = Arc::new(MockEngine::new());
+    app.set_engine(engine.clone());
+    crate::dispatch::handle_async_event(
+        &mut app,
+        crate::dispatch::AsyncEvent::Agent(
+            AgentEvent::QuestionRequested(sample_question_request()),
+        ),
+    );
+    let session_id = app.session_id.as_str().to_string();
+
+    handle_key(&mut app, KeyCode::Down, KeyModifiers::NONE);
+    handle_key(&mut app, KeyCode::Enter, KeyModifiers::NONE);
+    wait_for_question_resolution(&engine).await;
+
+    assert_eq!(app.mode, Mode::Normal);
+    assert!(app.pending_questions.is_empty());
+    let calls = engine.calls();
+    assert!(
+        calls.iter().any(|call| matches!(
+            call,
+            EngineCall::ResolveQuestion {
+                session_id: resolved_session_id,
+                response: navi_sdk::QuestionResponse::Answered { id, answers },
+            } if resolved_session_id == &session_id && id == "question-1" && answers == &vec!["Thorough".to_string()]
+        )),
+        "calls: {calls:?}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn question_number_key_selects_option() {
+    use crate::testing::{EngineCall, MockEngine};
+
+    let mut app = test_app("");
+    let engine = Arc::new(MockEngine::new());
+    app.set_engine(engine.clone());
+    crate::dispatch::handle_async_event(
+        &mut app,
+        crate::dispatch::AsyncEvent::Agent(
+            AgentEvent::QuestionRequested(sample_question_request()),
+        ),
+    );
+    let session_id = app.session_id.as_str().to_string();
+
+    handle_key(&mut app, KeyCode::Char('2'), KeyModifiers::NONE);
+    handle_key(&mut app, KeyCode::Enter, KeyModifiers::NONE);
+    wait_for_question_resolution(&engine).await;
+
+    let calls = engine.calls();
+    assert!(
+        calls.iter().any(|call| matches!(
+            call,
+            EngineCall::ResolveQuestion {
+                session_id: resolved_session_id,
+                response: navi_sdk::QuestionResponse::Answered { id, answers },
+            } if resolved_session_id == &session_id && id == "question-1" && answers == &vec!["Thorough".to_string()]
+        )),
+        "calls: {calls:?}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn question_can_be_denied_explicitly() {
+    use crate::testing::{EngineCall, MockEngine};
+
+    let mut app = test_app("");
+    let engine = Arc::new(MockEngine::new());
+    app.set_engine(engine.clone());
+    crate::dispatch::handle_async_event(
+        &mut app,
+        crate::dispatch::AsyncEvent::Agent(
+            AgentEvent::QuestionRequested(sample_question_request()),
+        ),
+    );
+    let session_id = app.session_id.as_str().to_string();
+
+    handle_key(&mut app, KeyCode::Char('n'), KeyModifiers::NONE);
+    wait_for_question_resolution(&engine).await;
+
+    assert_eq!(app.mode, Mode::Normal);
+    assert!(app.pending_questions.is_empty());
+    let calls = engine.calls();
+    assert!(
+        calls.iter().any(|call| matches!(
+            call,
+            EngineCall::ResolveQuestion {
+                session_id: resolved_session_id,
+                response: navi_sdk::QuestionResponse::Dismissed { id },
+            } if resolved_session_id == &session_id && id == "question-1"
+        )),
+        "calls: {calls:?}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn question_accepts_plain_text_answer() {
+    use crate::testing::{EngineCall, MockEngine};
+
+    let mut app = test_app("");
+    let engine = Arc::new(MockEngine::new());
+    app.set_engine(engine.clone());
+    crate::dispatch::handle_async_event(
+        &mut app,
+        crate::dispatch::AsyncEvent::Agent(
+            AgentEvent::QuestionRequested(sample_question_request()),
+        ),
+    );
+    let session_id = app.session_id.as_str().to_string();
+
+    handle_key(&mut app, KeyCode::Down, KeyModifiers::NONE);
+    handle_key(&mut app, KeyCode::Down, KeyModifiers::NONE);
+    for ch in "plain answer".chars() {
+        handle_key(&mut app, KeyCode::Char(ch), KeyModifiers::NONE);
+    }
+    handle_key(&mut app, KeyCode::Enter, KeyModifiers::NONE);
+    wait_for_question_resolution(&engine).await;
+
+    let calls = engine.calls();
+    assert!(
+        calls.iter().any(|call| matches!(
+            call,
+            EngineCall::ResolveQuestion {
+                session_id: resolved_session_id,
+                response: navi_sdk::QuestionResponse::Answered { id, answers },
+            } if resolved_session_id == &session_id && id == "question-1" && answers == &vec!["plain answer".to_string()]
+        )),
+        "calls: {calls:?}"
+    );
 }
 
 #[test]
@@ -684,29 +884,28 @@ fn command_palette_scroll_offset_keeps_selection_visible() {
 }
 
 #[test]
-fn submit_applies_selected_agent_unless_input_has_agent_command() {
+fn submit_sends_raw_input_text() {
     let mut app = test_app("");
     app.provider_configured = false;
-    app.selected_agent = Some(AgentMode::Review);
     app.input = "check this change".to_string();
     app.input_cursor = app.input.len();
 
     submit_message(&mut app);
 
-    assert_eq!(app.messages[0].content, "/review check this change");
+    assert_eq!(app.messages[0].content, "check this change");
     assert!(matches!(
         app.conversation_history.last(),
-        Some(ModelMessage { content, .. }) if content == "/review check this change"
+        Some(ModelMessage { content, .. }) if content == "check this change"
     ));
 
-    app.input = "/plan inspect first".to_string();
+    app.input = "/literal inspect first".to_string();
     app.input_cursor = app.input.len();
     submit_message(&mut app);
 
     assert!(
         app.messages
             .iter()
-            .any(|message| message.content == "/plan inspect first")
+            .any(|message| message.content == "/literal inspect first")
     );
 }
 
@@ -794,15 +993,15 @@ fn settings_does_not_open_provider_accounts() {
 }
 
 #[test]
-fn settings_cycles_theme() {
+fn settings_opens_theme_picker() {
     let mut app = test_app("");
     app.mode = Mode::Settings;
     app.selected_setting = 2;
     assert_eq!(app.theme_id, crate::theme::ThemeId::Lain);
 
     handle_settings_key(&mut app, KeyCode::Enter);
-    assert_eq!(app.theme_id, crate::theme::ThemeId::Terminal);
-    assert_eq!(app.loaded_config.config.tui.theme, "terminal");
+    assert_eq!(app.mode, Mode::ThemePicker);
+    assert_eq!(app.theme_id, crate::theme::ThemeId::Lain);
 }
 
 #[test]

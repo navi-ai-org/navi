@@ -2,7 +2,7 @@
 //! `TestBackend` with a scripted `VecInput` event stream.
 
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
-use navi_tui::testing::{Harness, TestConfig};
+use navi_tui::testing::{Harness, Mode, TestConfig};
 
 fn h() -> Harness {
     Harness::new(TestConfig {
@@ -54,4 +54,40 @@ fn drive_loop_esc_closes_palette() {
         key(KeyCode::Esc, KeyModifiers::NONE),
     ]);
     assert!(!h.is_loading());
+}
+
+#[test]
+fn settings_keyboard_workflow() {
+    let mut h = h();
+
+    // Open command palette
+    h.press(KeyCode::Char('p'), KeyModifiers::CONTROL);
+    assert_eq!(h.mode(), Mode::Commands);
+
+    // Type "settings" to filter
+    h.type_text("settings");
+    assert_eq!(h.mode(), Mode::Commands);
+
+    // Select the settings command
+    h.press(KeyCode::Enter, KeyModifiers::NONE);
+    assert_eq!(h.mode(), Mode::Settings);
+
+    // Navigate down to Theme (index 2)
+    h.press(KeyCode::Down, KeyModifiers::NONE);
+    h.press(KeyCode::Down, KeyModifiers::NONE);
+
+    // Open theme picker
+    h.press(KeyCode::Enter, KeyModifiers::NONE);
+    assert_eq!(h.mode(), Mode::ThemePicker);
+
+    // Navigate in theme picker
+    h.press(KeyCode::Down, KeyModifiers::NONE);
+
+    // Select theme
+    h.press(KeyCode::Enter, KeyModifiers::NONE);
+    assert_eq!(h.mode(), Mode::ThemePicker);
+
+    // Close theme picker
+    h.press(KeyCode::Esc, KeyModifiers::NONE);
+    assert_eq!(h.mode(), Mode::Normal);
 }

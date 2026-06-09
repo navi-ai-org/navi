@@ -18,8 +18,8 @@ use crate::TuiApp;
 pub use crate::dispatch::AsyncEvent;
 pub use crate::state::{ChatMessage, ChatRole, Mode};
 pub use navi_sdk::{
-    AgentEvent, AgentMode, AgentRunState, ApprovalDecision, ApprovalRequest, EngineDriver,
-    LoadedConfig, NaviConfig, RuntimeEvent, RuntimeEventKind, ToolInvocation, ToolResult,
+    AgentEvent, AgentRunState, ApprovalDecision, ApprovalRequest, EngineDriver, LoadedConfig,
+    NaviConfig, RuntimeEvent, RuntimeEventKind, ToolInvocation, ToolResult,
 };
 
 mod mock_engine;

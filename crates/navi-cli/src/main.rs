@@ -264,7 +264,6 @@ async fn run_headless(
         .start_session(NaviSessionRequest {
             project_dir: Some(cwd),
             session_id: None,
-            agent_mode: None,
             context_packets: Vec::new(),
             active_skills: Vec::new(),
             initial_messages: Vec::new(),

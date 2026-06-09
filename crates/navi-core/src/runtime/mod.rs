@@ -188,6 +188,7 @@ pub struct AgentRuntime {
     shared_context_packets: Arc<std::sync::Mutex<Vec<ContextPacket>>>,
     active_skills: Vec<String>,
     shared_active_skills: Arc<std::sync::Mutex<Vec<crate::skills::SkillManifest>>>,
+    prompt_cache: Arc<crate::prompt::PromptCache>,
     initial_messages: Vec<ModelMessage>,
     event_tx: Option<mpsc::UnboundedSender<AgentEvent>>,
     cancel_token: CancelToken,
@@ -218,6 +219,7 @@ impl AgentRuntime {
             &options.loaded_config.config.model.name,
         )));
         let shared_config = Arc::new(RwLock::new(options.loaded_config.config.clone()));
+        let prompt_cache = Arc::new(crate::prompt::PromptCache::new());
 
         Self {
             loaded_config: options.loaded_config,
@@ -232,6 +234,7 @@ impl AgentRuntime {
             shared_context_packets,
             active_skills: options.active_skills,
             shared_active_skills,
+            prompt_cache,
             initial_messages: options.initial_messages,
             event_tx: options.event_tx,
             cancel_token: CancelToken::new(),
@@ -582,6 +585,7 @@ impl AgentRuntime {
             ),
             context_packets: self.shared_context_packets.clone(),
             active_skills: self.shared_active_skills.clone(),
+            prompt_cache: self.prompt_cache.clone(),
             cancel_token: self.cancel_token.clone(),
             config: self.shared_config.clone(),
         });

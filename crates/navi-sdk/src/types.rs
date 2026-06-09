@@ -1,4 +1,4 @@
-use navi_core::{AgentMode, ContextPacket, LoadedConfig, ModelMessage, ToolExecutor};
+use navi_core::{ContextPacket, LoadedConfig, ModelMessage, ToolExecutor};
 use navi_plugin_host::LoadedPlugin;
 use serde::{Deserialize, Serialize};
 use std::error::Error;
@@ -9,9 +9,8 @@ use std::sync::Arc;
 /// Parameters for creating a new NAVI agent session.
 ///
 /// All fields are optional except those implied by the engine configuration.
-/// Provide `project_dir` to override the default working directory, `agent_mode`
-/// to start in a specific mode (e.g. Plan, Edit, Tutor), and `context_packets`
-/// to seed the session with external context.
+/// Provide `project_dir` to override the default working directory and
+/// `context_packets` to seed the session with external context.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NaviSessionRequest {
@@ -19,8 +18,6 @@ pub struct NaviSessionRequest {
     pub project_dir: Option<PathBuf>,
     #[serde(default)]
     pub session_id: Option<String>,
-    #[serde(default)]
-    pub agent_mode: Option<AgentMode>,
     #[serde(default)]
     pub context_packets: Vec<ContextPacket>,
     #[serde(default)]

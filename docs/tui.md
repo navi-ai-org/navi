@@ -114,7 +114,7 @@ The model picker includes provider/model search and refresh actions:
 - `ctrl+r` refreshes all providers.
 - selecting a model from a provider without a stored key opens the API key entry modal.
 
-In the normal input flow, `tab` cycles the active agent mode (`/plan`, `/edit`, `/review`) rather than moving focus inside the input.
+If the assistant needs a decision mid-turn, NAVI opens a question modal. Use `up`/`down` or `1-9` to choose, `space` to toggle multi-select answers, type any text to use a plain-text answer, `enter` to answer, and `n` to deny. `Esc` only closes the modal; `ctrl+enter` reopens a pending question.
 
 The settings modal currently controls:
 
