@@ -382,7 +382,7 @@ fn model_delta_after_tool_result_creates_visible_response() {
         app.messages.last().map(|message| message.content.as_str()),
         Some("final answer")
     );
-    let text = build_chat_lines(&app, 80)
+    let text = build_chat_lines(&mut app, 80)
         .iter()
         .map(line_text)
         .collect::<Vec<_>>()
@@ -1298,7 +1298,7 @@ fn compact_tool_render_hides_full_input_and_output() {
         )
     });
 
-    let text = build_chat_lines(&app, 80)
+    let text = build_chat_lines(&mut app, 80)
         .iter()
         .map(line_text)
         .collect::<Vec<_>>()
@@ -1333,7 +1333,7 @@ fn compact_tool_render_groups_consecutive_tools_and_keeps_recent_five() {
         });
     }
 
-    let text = build_chat_lines(&app, 80)
+    let text = build_chat_lines(&mut app, 80)
         .iter()
         .map(line_text)
         .collect::<Vec<_>>()
@@ -1386,7 +1386,7 @@ fn compact_tool_render_collapses_older_tool_groups() {
         ..ChatMessage::new(ChatRole::Assistant, String::new())
     });
 
-    let text = build_chat_lines(&app, 80)
+    let text = build_chat_lines(&mut app, 80)
         .iter()
         .map(line_text)
         .collect::<Vec<_>>()
@@ -1436,7 +1436,7 @@ fn compact_tool_render_splits_groups_at_thinking_placeholder() {
         ..ChatMessage::new(ChatRole::Assistant, String::new())
     });
 
-    let text = build_chat_lines(&app, 80)
+    let text = build_chat_lines(&mut app, 80)
         .iter()
         .map(line_text)
         .collect::<Vec<_>>()
@@ -1468,7 +1468,7 @@ fn full_tool_render_generates_sanitized_metadata_view() {
         ..ChatMessage::new(ChatRole::Assistant, String::new())
     });
 
-    let text = build_chat_lines(&app, 80)
+    let text = build_chat_lines(&mut app, 80)
         .iter()
         .map(line_text)
         .collect::<Vec<_>>()
@@ -1505,7 +1505,7 @@ fn compact_tool_render_expands_only_clicked_tool_result() {
         ..ChatMessage::new(ChatRole::Assistant, String::new())
     });
 
-    let collapsed = build_chat_lines(&app, 80)
+    let collapsed = build_chat_lines(&mut app, 80)
         .iter()
         .map(line_text)
         .collect::<Vec<_>>()
@@ -1513,7 +1513,7 @@ fn compact_tool_render_expands_only_clicked_tool_result() {
     assert!(!collapsed.contains("expanded-only-content"));
 
     app.expanded_tool_results.insert("call-1".to_string());
-    let expanded = build_chat_lines(&app, 80)
+    let expanded = build_chat_lines(&mut app, 80)
         .iter()
         .map(line_text)
         .collect::<Vec<_>>()

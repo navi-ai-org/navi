@@ -1,14 +1,14 @@
 use ratatui::prelude::{Line, Modifier, Span, Style};
 use ratatui::style::Color;
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use navi_sdk::{ToolInvocation, ToolResult};
 
 use crate::state::{ChatLineSource, ChatMessage, ChatRole};
 use crate::theme::*;
 
-use super::syntax::highlight_code_line;
-use super::text::wrap_text;
+use super::syntax::{CodeHighlighter, highlight_code_line};
+use super::text::{display_width, wrap_text};
 use super::tool::{tool_compact_text, tool_full_content};
 
 #[derive(Debug, Clone)]
@@ -24,6 +24,7 @@ pub(crate) fn build_chat_render_for_messages(
     show_thinking: bool,
     compact_tool_visible_limit: usize,
     expanded_tool_results: &HashSet<String>,
+    tool_render_cache: &mut HashMap<String, Vec<Line<'static>>>,
 ) -> ChatRenderOutput {
     let mut rendered_lines: Vec<Line<'static>> = Vec::new();
     let mut line_sources: Vec<ChatLineSource> = Vec::new();
@@ -63,6 +64,7 @@ pub(crate) fn build_chat_render_for_messages(
                 expanded,
                 compact_tool_visible_limit,
                 expanded_tool_results,
+                tool_render_cache,
             );
             for (line, source) in rendered_group {
                 rendered_lines.push(line);
@@ -101,16 +103,24 @@ pub(crate) fn build_chat_render_for_messages(
                 if let Some((invocation, result)) = tool_result_parts(msg) {
                     if full_tool_view {
                         let source = ChatLineSource::ToolResult(result.invocation_id.clone());
-                        push_sourced_lines(
-                            &mut rendered_lines,
-                            &mut line_sources,
-                            render_markdown_lines(
+                        let cache_key = format!("full|{}", result.invocation_id);
+                        let rendered = if let Some(cached) = tool_render_cache.get(&cache_key) {
+                            cached.clone()
+                        } else {
+                            let rendered = render_markdown_lines(
                                 &tool_full_content(invocation, result),
                                 chat_width.saturating_sub(2),
                                 text(),
                                 text(),
                                 false,
-                            ),
+                            );
+                            tool_render_cache.insert(cache_key, rendered.clone());
+                            rendered
+                        };
+                        push_sourced_lines(
+                            &mut rendered_lines,
+                            &mut line_sources,
+                            rendered,
                             source,
                         );
                     } else {
@@ -262,7 +272,7 @@ fn render_user_message_lines(text: &str, chat_width: usize) -> Vec<Line<'static>
             );
             let used = spans
                 .iter()
-                .map(|span| span.content.chars().count())
+                .map(|span| display_width(&span.content))
                 .sum::<usize>();
             if used < width {
                 spans.push(Span::styled(
@@ -318,6 +328,7 @@ fn render_compact_tool_group(
     expanded: bool,
     visible_limit: usize,
     expanded_tool_results: &HashSet<String>,
+    tool_render_cache: &mut HashMap<String, Vec<Line<'static>>>,
 ) -> Vec<(Line<'static>, ChatLineSource)> {
     let ids = tools
         .iter()
@@ -357,13 +368,21 @@ fn render_compact_tool_group(
                 )),
                 source.clone(),
             ));
-            for line in render_markdown_lines(
-                &tool_full_content(invocation, result),
-                chat_width.saturating_sub(2),
-                text(),
-                text(),
-                false,
-            ) {
+            let cache_key = result.invocation_id.clone();
+            let rendered = if let Some(cached) = tool_render_cache.get(&cache_key) {
+                cached.clone()
+            } else {
+                let rendered = render_markdown_lines(
+                    &tool_full_content(invocation, result),
+                    chat_width.saturating_sub(2),
+                    text(),
+                    text(),
+                    false,
+                );
+                tool_render_cache.insert(cache_key, rendered.clone());
+                rendered
+            };
+            for line in rendered {
                 lines.push((line, source.clone()));
             }
         } else {
@@ -455,7 +474,7 @@ fn render_compact_tool_line_with_width(
 }
 
 fn truncate_chars(value: &str, max_chars: usize) -> String {
-    if value.chars().count() <= max_chars {
+    if display_width(value) <= max_chars {
         return value.to_string();
     }
     if max_chars <= 1 {
@@ -476,6 +495,7 @@ pub(crate) fn render_markdown_lines(
     let mut lines = Vec::new();
     let mut in_code = false;
     let mut language = String::new();
+    let mut code_highlighter: Option<CodeHighlighter> = None;
     let show_marker = marker_color != text_color || italic;
 
     let raw_lines = text.lines().collect::<Vec<_>>();
@@ -493,6 +513,11 @@ pub(crate) fn render_markdown_lines(
             } else {
                 String::new()
             };
+            if in_code {
+                code_highlighter = Some(CodeHighlighter::new(&language));
+            } else {
+                code_highlighter = None;
+            }
             lines.push(markdown_boundary_line(
                 if in_code { rest.trim() } else { "" },
                 show_marker,
@@ -503,7 +528,14 @@ pub(crate) fn render_markdown_lines(
         }
 
         if in_code {
-            lines.push(code_line(raw_line, &language, show_marker, marker_color));
+            let spans = if let Some(ref mut hl) = code_highlighter {
+                hl.highlight_line(raw_line)
+            } else {
+                highlight_code_line(raw_line, &language)
+            };
+            let mut line_spans = marker_spans(show_marker, marker_color);
+            line_spans.extend(spans);
+            lines.push(Line::from(line_spans));
             index += 1;
             continue;
         }
@@ -796,7 +828,7 @@ fn table_row_spans_with_header(
 fn rendered_inline_width(content: &str) -> usize {
     inline_text_spans(content, crate::theme::text())
         .iter()
-        .map(|span| span.content.chars().count())
+        .map(|span| display_width(&span.content))
         .sum()
 }
 
@@ -988,17 +1020,6 @@ fn markdown_boundary_line(language: &str, show_marker: bool, marker_color: Color
         format!("```{language}")
     };
     spans.push(Span::styled(label, Style::default().fg(ghost())));
-    Line::from(spans)
-}
-
-fn code_line(
-    raw_line: &str,
-    language: &str,
-    show_marker: bool,
-    marker_color: Color,
-) -> Line<'static> {
-    let mut spans = marker_spans(show_marker, marker_color);
-    spans.extend(highlight_code_line(raw_line, language));
     Line::from(spans)
 }
 

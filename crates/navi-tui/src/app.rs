@@ -326,7 +326,7 @@ impl TuiApp {
 
     pub(crate) fn set_theme(&mut self, theme_id: ThemeId) {
         self.theme_id = theme_id;
-        self.chat_render_cache.borrow_mut().signature.clear();
+        self.chat_render_cache.borrow_mut().signature_hash = 0;
         crate::persistence::save_preferences(self);
     }
 

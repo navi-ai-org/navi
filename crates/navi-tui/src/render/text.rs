@@ -2,6 +2,14 @@ use ratatui::prelude::{Modifier, Span, Style};
 
 use crate::theme::*;
 
+pub(crate) fn display_width(s: &str) -> usize {
+    if s.is_ascii() {
+        s.len()
+    } else {
+        s.chars().count()
+    }
+}
+
 pub(crate) fn project_label() -> String {
     std::env::current_dir()
         .ok()
@@ -24,15 +32,20 @@ pub(crate) fn wrap_text(text: &str, max_width: usize) -> Vec<String> {
         }
 
         let mut current_line = String::new();
+        let mut current_width: usize = 0;
         for word in paragraph.split_whitespace() {
+            let word_width = word.chars().count();
             if current_line.is_empty() {
                 current_line = word.to_string();
-            } else if current_line.chars().count() + 1 + word.chars().count() <= max_width {
+                current_width = word_width;
+            } else if current_width + 1 + word_width <= max_width {
                 current_line.push(' ');
                 current_line.push_str(word);
+                current_width += 1 + word_width;
             } else {
                 lines.push(current_line);
                 current_line = word.to_string();
+                current_width = word_width;
             }
         }
         if !current_line.is_empty() {
