@@ -176,6 +176,7 @@ pub(crate) fn thinking_request_for_api(
             navi_core::ThinkingConfig::Medium => "medium",
             navi_core::ThinkingConfig::Low => "low",
             navi_core::ThinkingConfig::Off => "none",
+            navi_core::ThinkingConfig::Adaptive => "medium",
         });
     }
 
@@ -226,6 +227,8 @@ pub(crate) fn usage_from_value_with_behavior(
         crate::providers::behavior::NormalizedUsage {
             input_tokens,
             output_tokens,
+            cache_creation_tokens: None,
+            cache_read_tokens: None,
         }
     };
 
@@ -233,6 +236,8 @@ pub(crate) fn usage_from_value_with_behavior(
         vec![Ok(navi_core::ModelStreamEvent::Usage {
             input_tokens: normalized.input_tokens,
             output_tokens: normalized.output_tokens,
+            cache_creation_tokens: normalized.cache_creation_tokens,
+            cache_read_tokens: normalized.cache_read_tokens,
         })]
     } else {
         Vec::new()

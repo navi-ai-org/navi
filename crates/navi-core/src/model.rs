@@ -134,6 +134,10 @@ pub enum ModelStreamEvent {
         input_tokens: Option<u64>,
         /// Number of output/completion tokens produced, if reported.
         output_tokens: Option<u64>,
+        /// Number of tokens written to the prompt cache (Anthropic).
+        cache_creation_tokens: Option<u64>,
+        /// Number of tokens read from the prompt cache (Anthropic).
+        cache_read_tokens: Option<u64>,
     },
     /// The model requested a tool invocation.
     ToolCall(ToolInvocation),
@@ -571,7 +575,8 @@ mod tests {
                 m
             },
             {
-                let mut m = ModelMessage::tool_result("c2", "bash", "{\"error\": \"failed again\"}");
+                let mut m =
+                    ModelMessage::tool_result("c2", "bash", "{\"error\": \"failed again\"}");
                 m
             },
         ];

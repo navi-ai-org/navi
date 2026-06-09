@@ -32,6 +32,10 @@ pub(crate) enum Endpoint {
 pub(crate) struct NormalizedUsage {
     pub input_tokens: Option<u64>,
     pub output_tokens: Option<u64>,
+    /// Tokens written to prompt cache (Anthropic).
+    pub cache_creation_tokens: Option<u64>,
+    /// Tokens read from prompt cache (Anthropic).
+    pub cache_read_tokens: Option<u64>,
 }
 
 /// Per-provider behavior: auth, routing, headers, URL construction, usage parsing.
@@ -62,6 +66,8 @@ pub(crate) trait ProviderBehavior: Send + Sync {
         NormalizedUsage {
             input_tokens,
             output_tokens,
+            cache_creation_tokens: None,
+            cache_read_tokens: None,
         }
     }
 }
@@ -136,6 +142,27 @@ impl ProviderBehavior for AnthropicBehavior {
         headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
         Ok(headers)
     }
+
+    fn parse_usage(&self, usage: &serde_json::Value) -> NormalizedUsage {
+        let input_tokens = usage
+            .get("input_tokens")
+            .and_then(serde_json::Value::as_u64);
+        let output_tokens = usage
+            .get("output_tokens")
+            .and_then(serde_json::Value::as_u64);
+        let cache_creation_tokens = usage
+            .get("cache_creation_input_tokens")
+            .and_then(serde_json::Value::as_u64);
+        let cache_read_tokens = usage
+            .get("cache_read_input_tokens")
+            .and_then(serde_json::Value::as_u64);
+        NormalizedUsage {
+            input_tokens,
+            output_tokens,
+            cache_creation_tokens,
+            cache_read_tokens,
+        }
+    }
 }
 
 // ─── Google Gemini ────────────────────────────────────────────────────────────
@@ -170,6 +197,8 @@ impl ProviderBehavior for GeminiBehavior {
         NormalizedUsage {
             input_tokens,
             output_tokens,
+            cache_creation_tokens: None,
+            cache_read_tokens: None,
         }
     }
 }

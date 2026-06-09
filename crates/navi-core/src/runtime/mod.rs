@@ -9,11 +9,12 @@ use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 use tokio::sync::{broadcast, mpsc, oneshot};
 
-use crate::agent::AgentMode;
 use crate::cancel::CancelToken;
 use crate::config::LoadedConfig;
 use crate::context::ContextPacket;
-use crate::event::{AgentEvent, ApprovalDecision, RuntimeEvent, RuntimeEventKind};
+use crate::event::{
+    AgentEvent, ApprovalDecision, QuestionResponse, RuntimeEvent, RuntimeEventKind,
+};
 use crate::harness::select_harness_policy;
 use crate::model::{ModelMessage, ModelProvider, ModelResponse};
 use crate::security::SecurityPolicy;
@@ -30,6 +31,7 @@ pub use event_bus::EventBus;
 pub use session_state::SessionState;
 
 type PendingApprovals = Arc<std::sync::Mutex<HashMap<String, oneshot::Sender<ApprovalDecision>>>>;
+type PendingQuestions = Arc<std::sync::Mutex<HashMap<String, oneshot::Sender<QuestionResponse>>>>;
 
 /// Resolves pending tool approvals by matching decision ids to waiting
 /// receivers. Cloneable so it can be handed to the UI layer.
@@ -37,6 +39,57 @@ type PendingApprovals = Arc<std::sync::Mutex<HashMap<String, oneshot::Sender<App
 pub struct ApprovalResolver {
     pending_approvals: PendingApprovals,
     runtime_events_tx: broadcast::Sender<RuntimeEvent>,
+}
+
+/// Resolves pending interactive questions by matching response ids to waiting
+/// receivers. Cloneable so it can be handed to the UI layer.
+#[derive(Clone)]
+pub struct QuestionResolver {
+    pending_questions: PendingQuestions,
+    runtime_events_tx: broadcast::Sender<RuntimeEvent>,
+}
+
+impl QuestionResolver {
+    #[cfg(test)]
+    pub fn new_for_test() -> Self {
+        let (tx, _) = broadcast::channel(16);
+        Self {
+            pending_questions: Arc::new(std::sync::Mutex::new(HashMap::new())),
+            runtime_events_tx: tx,
+        }
+    }
+
+    /// Register a pending question, returning the receiver for the response.
+    pub fn register(&self, id: String) -> oneshot::Receiver<QuestionResponse> {
+        let (tx, rx) = oneshot::channel();
+        self.pending_questions
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(id, tx);
+        rx
+    }
+
+    /// Resolves a pending question by id. Returns `true` if a matching request
+    /// was found and resolved.
+    pub fn resolve(&self, response: QuestionResponse) -> bool {
+        let id = response.id().to_string();
+        if let Some(tx) = self
+            .pending_questions
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&id)
+        {
+            let _ = tx.send(response.clone());
+            let _ =
+                self.runtime_events_tx
+                    .send(RuntimeEvent::new(RuntimeEventKind::QuestionResolved(
+                        response,
+                    )));
+            true
+        } else {
+            false
+        }
+    }
 }
 
 impl ApprovalResolver {
@@ -109,8 +162,6 @@ pub struct AgentRuntimeOptions {
     pub project_dir: PathBuf,
     /// Optional custom tool executor (defaults to built-in tools).
     pub tool_executor: Option<Arc<ToolExecutor>>,
-    /// Initial agent mode (e.g. `Plan`, `Edit`).
-    pub agent_mode: Option<AgentMode>,
     /// Context packets to inject into the session.
     pub context_packets: Vec<ContextPacket>,
     /// Active skill names for this session.
@@ -133,7 +184,6 @@ pub struct AgentRuntime {
     project_dir: PathBuf,
     tool_executor: Option<Arc<ToolExecutor>>,
     session_store: SessionStore,
-    agent_mode: Option<AgentMode>,
     context_packets: Vec<ContextPacket>,
     shared_context_packets: Arc<std::sync::Mutex<Vec<ContextPacket>>>,
     active_skills: Vec<String>,
@@ -142,6 +192,7 @@ pub struct AgentRuntime {
     event_tx: Option<mpsc::UnboundedSender<AgentEvent>>,
     cancel_token: CancelToken,
     pending_approvals: PendingApprovals,
+    pending_questions: PendingQuestions,
     event_bus: EventBus,
     session: SessionState,
 }
@@ -177,7 +228,6 @@ impl AgentRuntime {
             project_dir: options.project_dir,
             tool_executor: options.tool_executor,
             session_store,
-            agent_mode: options.agent_mode,
             context_packets: options.context_packets,
             shared_context_packets,
             active_skills: options.active_skills,
@@ -186,6 +236,7 @@ impl AgentRuntime {
             event_tx: options.event_tx,
             cancel_token: CancelToken::new(),
             pending_approvals: Arc::new(std::sync::Mutex::new(HashMap::new())),
+            pending_questions: Arc::new(std::sync::Mutex::new(HashMap::new())),
             event_bus: EventBus::new(),
             session: SessionState::new(options.session_id),
         }
@@ -204,17 +255,6 @@ impl AgentRuntime {
     /// Returns the session title, if one has been derived.
     pub fn session_title(&self) -> Option<&str> {
         self.session.title()
-    }
-
-    /// Returns the active agent mode, if set.
-    pub fn agent_mode(&self) -> Option<AgentMode> {
-        self.agent_mode
-    }
-
-    /// Sets the agent mode and emits a `ContextUpdated` event.
-    pub fn set_agent_mode(&mut self, mode: Option<AgentMode>) {
-        self.agent_mode = mode;
-        self.event_bus.publish(RuntimeEventKind::ContextUpdated);
     }
 
     /// Adds a context packet to the session and emits a `ContextUpdated` event.
@@ -319,10 +359,23 @@ impl AgentRuntime {
         self.approval_resolver().resolve(decision)
     }
 
+    /// Resolves a pending interactive question by id. Returns `true` if found.
+    pub fn resolve_question(&self, response: QuestionResponse) -> bool {
+        self.question_resolver().resolve(response)
+    }
+
     /// Returns an [`ApprovalResolver`] handle for external approval resolution.
     pub fn approval_resolver(&self) -> ApprovalResolver {
         ApprovalResolver {
             pending_approvals: self.pending_approvals.clone(),
+            runtime_events_tx: self.event_bus.sender(),
+        }
+    }
+
+    /// Returns a [`QuestionResolver`] handle for external question resolution.
+    pub fn question_resolver(&self) -> QuestionResolver {
+        QuestionResolver {
+            pending_questions: self.pending_questions.clone(),
             runtime_events_tx: self.event_bus.sender(),
         }
     }
@@ -344,6 +397,7 @@ impl AgentRuntime {
         }
         self.cancel_token.reset();
         self.pending_approvals = Arc::new(std::sync::Mutex::new(HashMap::new()));
+        self.pending_questions = Arc::new(std::sync::Mutex::new(HashMap::new()));
         self.session.start();
 
         let (session_runtime, event_rx) = self.build_session_runtime()?;
@@ -514,11 +568,11 @@ impl AgentRuntime {
         let ctx = Arc::new(crate::turn::TurnContext {
             model_provider: self.shared_model_provider.clone(),
             tool_executor,
-            agent_control: crate::agent::AgentControl::new(),
             project_dir: self.project_dir.clone(),
             model_name: self.shared_model_name.clone(),
             event_tx: Some(event_tx),
             approval_resolver: self.approval_resolver(),
+            question_resolver: self.question_resolver(),
             compact_state: Arc::new(tokio::sync::Mutex::new(crate::compact::CompactState::new(
                 crate::config::effective_context_window(&self.loaded_config.config),
             ))),
@@ -526,7 +580,6 @@ impl AgentRuntime {
             include_tool_prompt_manifest: crate::config::effective_tool_prompt_manifest(
                 &self.loaded_config.config,
             ),
-            agent_mode: self.agent_mode,
             context_packets: self.shared_context_packets.clone(),
             active_skills: self.shared_active_skills.clone(),
             cancel_token: self.cancel_token.clone(),
@@ -609,15 +662,25 @@ fn runtime_event_kind_from_agent_event(event: &AgentEvent) -> Option<RuntimeEven
         AgentEvent::UsageReported {
             input_tokens,
             output_tokens,
+            cache_creation_tokens,
+            cache_read_tokens,
         } => Some(RuntimeEventKind::TokensUpdated {
             input_tokens: *input_tokens,
             output_tokens: *output_tokens,
+            cache_creation_tokens: *cache_creation_tokens,
+            cache_read_tokens: *cache_read_tokens,
         }),
         AgentEvent::Error { message } => Some(RuntimeEventKind::Error {
             message: message.clone(),
         }),
         AgentEvent::ApprovalResolved(decision) => {
             Some(RuntimeEventKind::ApprovalResolved(decision.clone()))
+        }
+        AgentEvent::QuestionRequested(request) => {
+            Some(RuntimeEventKind::QuestionRequired(request.clone()))
+        }
+        AgentEvent::QuestionResolved(response) => {
+            Some(RuntimeEventKind::QuestionResolved(response.clone()))
         }
         AgentEvent::HarnessTrace(value) => Some(RuntimeEventKind::HarnessTrace(value.clone())),
         AgentEvent::PatchProposed(patch) => Some(RuntimeEventKind::PatchProposed(patch.clone())),
