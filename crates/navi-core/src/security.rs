@@ -80,6 +80,14 @@ impl SecurityPolicy {
             ));
         }
 
+        // Deny list: block reads of wasteful/sensitive paths.
+        if !write && self.is_path_denied(&path) {
+            return SecurityDecision::Deny(format!(
+                "path {} is on the deny list (wasteful or sensitive)",
+                path.display()
+            ));
+        }
+
         if write {
             SecurityDecision::NeedsApproval(SecurityRisk::Write)
         } else {
@@ -152,30 +160,30 @@ impl SecurityPolicy {
                 .path_from_invocation(invocation)
                 .map(|path| self.validate_path(&path, true))
                 .unwrap_or(SecurityDecision::NeedsApproval(SecurityRisk::Write)),
-            ToolKind::Command => invocation
-                .input
-                .get("program")
-                .or_else(|| invocation.input.get("command"))
-                .and_then(Value::as_str)
-                .map(|program| self.validate_command(program))
-                .unwrap_or_else(|| {
-                    // bash poll/list operations are safe
-                    if definition.name == "bash"
-                        && (invocation.input.get("task_id").is_some()
-                            || invocation.input.get("action").and_then(Value::as_str)
-                                == Some("list"))
-                    {
-                        return SecurityDecision::Allow;
-                    }
-                    // git_ops read-only commands are safe
-                    if definition.name == "git_ops"
-                        && let Some(cmd) = invocation.input.get("command").and_then(Value::as_str)
-                        && matches!(cmd, "status" | "diff" | "log" | "branch")
-                    {
-                        return SecurityDecision::Allow;
-                    }
-                    SecurityDecision::NeedsApproval(SecurityRisk::Command)
-                }),
+            ToolKind::Command => {
+                // git_ops uses `command` for a git subcommand, not a shell program.
+                // Apply the read-only bypass before generic command validation.
+                if definition.name == "git_ops"
+                    && let Some(cmd) = invocation.input.get("command").and_then(Value::as_str)
+                    && matches!(cmd, "status" | "diff" | "log" | "branch")
+                {
+                    return SecurityDecision::Allow;
+                }
+                // bash poll/list operations are safe
+                if definition.name == "bash"
+                    && (invocation.input.get("task_id").is_some()
+                        || invocation.input.get("action").and_then(Value::as_str) == Some("list"))
+                {
+                    return SecurityDecision::Allow;
+                }
+                invocation
+                    .input
+                    .get("program")
+                    .or_else(|| invocation.input.get("command"))
+                    .and_then(Value::as_str)
+                    .map(|program| self.validate_command(program))
+                    .unwrap_or(SecurityDecision::NeedsApproval(SecurityRisk::Command))
+            }
             ToolKind::Custom => SecurityDecision::NeedsApproval(SecurityRisk::ExternalPlugin),
         }
     }
@@ -218,6 +226,91 @@ impl SecurityPolicy {
             }
         }
         invocation
+    }
+
+    /// Check if a path matches any entry in the deny list.
+    ///
+    /// Supports:
+    /// - Directory name prefixes: `"node_modules"` matches `node_modules/foo/bar.js`
+    /// - Glob patterns: `"*.log"` matches `debug.log`
+    /// - Exact path suffixes: `"package-lock.json"` matches `foo/package-lock.json`
+    pub fn is_path_denied(&self, path: &Path) -> bool {
+        if self.config.deny_paths.is_empty() {
+            return false;
+        }
+        let path_str = path.to_string_lossy();
+        let path_lower = path_str.to_lowercase();
+
+        for pattern in &self.config.deny_paths {
+            let pattern_lower = pattern.to_lowercase();
+
+            // Glob pattern: starts with * (e.g. "*.log")
+            if let Some(suffix) = pattern_lower.strip_prefix('*') {
+                if path_lower.ends_with(suffix) {
+                    return true;
+                }
+                continue;
+            }
+
+            // Directory prefix: check if any component matches or path contains it.
+            if path.components().any(|c| {
+                if let Component::Normal(name) = c {
+                    let name_lower = name.to_string_lossy().to_lowercase();
+                    name_lower == pattern_lower
+                } else {
+                    false
+                }
+            }) {
+                return true;
+            }
+
+            // Suffix match: "package-lock.json" matches "foo/package-lock.json"
+            if path_lower.ends_with(&pattern_lower) {
+                return true;
+            }
+        }
+
+        false
+    }
+
+    /// Filter text output by removing lines that reference denied paths.
+    ///
+    /// Used by grep and fs_browser to prevent denied path references from
+    /// entering the LLM context.
+    pub fn filter_denied_lines(&self, text: &str) -> String {
+        if self.config.deny_paths.is_empty() {
+            return text.to_string();
+        }
+
+        let mut output = String::with_capacity(text.len());
+        for line in text.lines() {
+            if !self.line_references_denied_path(line) {
+                output.push_str(line);
+                output.push('\n');
+            }
+        }
+        output
+    }
+
+    /// Check if a single line references any denied path pattern.
+    fn line_references_denied_path(&self, line: &str) -> bool {
+        let line_lower = line.to_lowercase();
+        for pattern in &self.config.deny_paths {
+            let pattern_lower = pattern.to_lowercase();
+
+            if let Some(suffix) = pattern_lower.strip_prefix('*') {
+                // For glob patterns, check if the line contains the suffix.
+                if line_lower.contains(suffix) {
+                    return true;
+                }
+            } else {
+                // For exact patterns, check if the line contains the pattern.
+                if line_lower.contains(&pattern_lower) {
+                    return true;
+                }
+            }
+        }
+        false
     }
 }
 
@@ -846,10 +939,7 @@ mod tests {
     }
 
     #[test]
-    fn regression_git_ops_read_only_commands_need_approval() {
-        // NOTE: git_ops read-only bypass at security.rs:169-176 is unreachable
-        // because validate_command() always returns NeedsApproval for non-blocked
-        // commands BEFORE the fallback closure runs. This is a known design issue.
+    fn regression_git_ops_read_only_commands_bypass_approval() {
         let tempdir = tempfile::tempdir().expect("tempdir");
         let project = tempdir.path().join("project");
         let data = tempdir.path().join("data");
@@ -872,12 +962,163 @@ mod tests {
             };
             let decision = policy.validate_tool_invocation(&git_def, &inv);
             assert!(
-                matches!(
-                    decision,
-                    SecurityDecision::NeedsApproval(SecurityRisk::Command)
-                ),
-                "git_ops {cmd} currently needs approval (known design issue)"
+                matches!(decision, SecurityDecision::Allow),
+                "git_ops {cmd} should bypass approval"
             );
         }
+    }
+
+    // ── Deny list tests ────────────────────────────────────────────────────
+
+    #[test]
+    fn deny_list_blocks_node_modules_read() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let project = tempdir.path().join("project");
+        let data = tempdir.path().join("data");
+        std::fs::create_dir_all(project.join("node_modules/pkg")).expect("nm");
+        std::fs::create_dir_all(&data).expect("data");
+        let policy = policy(project.clone(), data);
+
+        let decision =
+            policy.validate_path(project.join("node_modules/pkg/index.js").as_path(), false);
+
+        assert!(
+            matches!(decision, SecurityDecision::Deny(_)),
+            "node_modules reads must be denied, got: {decision:?}"
+        );
+    }
+
+    #[test]
+    fn deny_list_blocks_target_read() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let project = tempdir.path().join("project");
+        let data = tempdir.path().join("data");
+        std::fs::create_dir_all(project.join("target/debug")).expect("target");
+        std::fs::create_dir_all(&data).expect("data");
+        let policy = policy(project.clone(), data);
+
+        let decision = policy.validate_path(project.join("target/debug/app").as_path(), false);
+
+        assert!(
+            matches!(decision, SecurityDecision::Deny(_)),
+            "target reads must be denied, got: {decision:?}"
+        );
+    }
+
+    #[test]
+    fn deny_list_blocks_log_files() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let project = tempdir.path().join("project");
+        let data = tempdir.path().join("data");
+        std::fs::create_dir_all(&project).expect("project");
+        std::fs::create_dir_all(&data).expect("data");
+        std::fs::write(project.join("debug.log"), "logs").expect("log");
+        let policy = policy(project.clone(), data);
+
+        let decision = policy.validate_path(project.join("debug.log").as_path(), false);
+
+        assert!(
+            matches!(decision, SecurityDecision::Deny(_)),
+            "*.log reads must be denied, got: {decision:?}"
+        );
+    }
+
+    #[test]
+    fn deny_list_allows_normal_files() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let project = tempdir.path().join("project");
+        let data = tempdir.path().join("data");
+        std::fs::create_dir_all(project.join("src")).expect("src");
+        std::fs::create_dir_all(&data).expect("data");
+        let policy = policy(project.clone(), data);
+
+        let decision = policy.validate_path(project.join("src/main.rs").as_path(), false);
+
+        assert_eq!(decision, SecurityDecision::Allow);
+    }
+
+    #[test]
+    fn deny_list_blocks_package_lock() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let project = tempdir.path().join("project");
+        let data = tempdir.path().join("data");
+        std::fs::create_dir_all(&project).expect("project");
+        std::fs::create_dir_all(&data).expect("data");
+        std::fs::write(project.join("package-lock.json"), "{}").expect("lock");
+        let policy = policy(project.clone(), data);
+
+        let decision =
+            policy.validate_path(project.join("package-lock.json").as_path(), false);
+
+        assert!(
+            matches!(decision, SecurityDecision::Deny(_)),
+            "package-lock.json must be denied, got: {decision:?}"
+        );
+    }
+
+    #[test]
+    fn is_path_denied_glob_pattern() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let project = tempdir.path().join("project");
+        let data = tempdir.path().join("data");
+        std::fs::create_dir_all(&project).expect("project");
+        std::fs::create_dir_all(&data).expect("data");
+        let policy = policy(project, data);
+
+        assert!(policy.is_path_denied(Path::new("app.log")));
+        assert!(policy.is_path_denied(Path::new("logs/debug.log")));
+        assert!(!policy.is_path_denied(Path::new("app.rs")));
+    }
+
+    #[test]
+    fn is_path_denied_directory_prefix() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let project = tempdir.path().join("project");
+        let data = tempdir.path().join("data");
+        std::fs::create_dir_all(&project).expect("project");
+        std::fs::create_dir_all(&data).expect("data");
+        let policy = policy(project, data);
+
+        assert!(policy.is_path_denied(Path::new("node_modules/foo/bar.js")));
+        assert!(policy.is_path_denied(Path::new("target/debug/app")));
+        assert!(!policy.is_path_denied(Path::new("src/main.rs")));
+    }
+
+    #[test]
+    fn filter_denied_lines_removes_matching_lines() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let project = tempdir.path().join("project");
+        let data = tempdir.path().join("data");
+        std::fs::create_dir_all(&project).expect("project");
+        std::fs::create_dir_all(&data).expect("data");
+        let policy = policy(project, data);
+
+        let text = "src/main.rs:42: fn main() {}\nnode_modules/foo/index.js:1: export {}\nsrc/lib.rs:10: pub fn test()\n";
+        let filtered = policy.filter_denied_lines(text);
+
+        assert!(filtered.contains("src/main.rs:42"));
+        assert!(!filtered.contains("node_modules"));
+        assert!(filtered.contains("src/lib.rs:10"));
+    }
+
+    #[test]
+    fn filter_denied_lines_empty_deny_list() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let project = tempdir.path().join("project");
+        let data = tempdir.path().join("data");
+        std::fs::create_dir_all(&project).expect("project");
+        std::fs::create_dir_all(&data).expect("data");
+
+        let config = SecurityConfig {
+            deny_paths: vec![],
+            ..Default::default()
+        };
+        let policy =
+            SecurityPolicy::new(project, data, config).expect("policy");
+
+        let text = "node_modules/foo/index.js:1: export {}\n";
+        let filtered = policy.filter_denied_lines(text);
+
+        assert_eq!(filtered, text);
     }
 }

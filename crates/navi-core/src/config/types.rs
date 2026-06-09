@@ -39,6 +39,9 @@ pub struct NaviConfig {
     /// Terminal UI preferences.
     #[serde(default)]
     pub tui: TuiConfig,
+    /// Virtual File System — semantic code minification for token savings.
+    #[serde(default)]
+    pub vfs: VfsConfig,
 }
 
 /// TUI-specific settings (global config).
@@ -64,8 +67,30 @@ impl Default for TuiConfig {
             theme: "lain".to_string(),
             show_thinking: true,
             full_tool_view: false,
-            thinking_level: "high".to_string(),
+            thinking_level: "adaptive".to_string(),
             yolo_mode: false,
+        }
+    }
+}
+
+/// Virtual File System configuration — semantic code minification.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct VfsConfig {
+    /// Enable VFS minification on read and formatting on write.
+    pub enabled: bool,
+    /// Keep comments in minified output.
+    pub keep_comments: bool,
+    /// Languages to enable VFS for (empty = all supported).
+    pub languages: Vec<String>,
+}
+
+impl Default for VfsConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            keep_comments: false,
+            languages: Vec::new(),
         }
     }
 }
@@ -112,6 +137,9 @@ pub struct HarnessConfig {
     pub autocompact_max_output_tokens: u64,
     /// Max consecutive compact failures before giving up.
     pub autocompact_max_consecutive_failures: u32,
+    /// Fraction of recent turns to keep intact during autocompact (0.0–1.0).
+    /// Default 0.25 keeps the most recent 25% of turns unsummarized.
+    pub autocompact_keep_ratio: f64,
 }
 
 /// Harness profile that controls observation limits and prompt complexity.
@@ -164,6 +192,10 @@ pub struct SecurityConfig {
     pub allow_external_plugins: bool,
     /// Commands that are always denied (e.g. `"rm -rf /"`).
     pub blocked_commands: Vec<String>,
+    /// Paths that are always denied for reads. Supports glob patterns and
+    /// directory prefixes. Lines referencing denied paths in grep/fs_browser
+    /// output are filtered before entering context.
+    pub deny_paths: Vec<String>,
 }
 
 /// Structured logging configuration.

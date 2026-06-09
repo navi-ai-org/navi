@@ -252,6 +252,9 @@ pub enum ThinkingConfig {
     Low,
     /// Thinking/reasoning disabled.
     Off,
+    /// Adaptive: automatically selects effort based on task complexity.
+    /// Simple tasks (read, grep) → Low. Complex tasks (refactor, multi-file) → High.
+    Adaptive,
 }
 
 /// Normalized thinking/reasoning request produced by [`ThinkingConfig::to_thinking_request`].
@@ -302,6 +305,98 @@ impl ThinkingConfig {
                 effort: None,
                 budget_tokens: None,
             },
+            // Adaptive should be resolved before calling to_thinking_request.
+            // Fallback to Medium if called directly.
+            Self::Adaptive => Self::Medium.to_thinking_request(),
+        }
+    }
+
+    /// Resolve an adaptive thinking level based on task context heuristics.
+    ///
+    /// Returns a concrete `ThinkingConfig` (never `Adaptive`).
+    pub fn resolve_adaptive(
+        messages: &[ModelMessage],
+        tool_names: &[String],
+        _iteration: usize,
+    ) -> Self {
+        let complexity = TaskComplexity::classify(messages, tool_names);
+        match complexity {
+            TaskComplexity::Simple => Self::Low,
+            TaskComplexity::Medium => Self::Medium,
+            TaskComplexity::Complex => Self::High,
+        }
+    }
+}
+
+/// Task complexity classification for adaptive thinking.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TaskComplexity {
+    Simple,
+    Medium,
+    Complex,
+}
+
+impl TaskComplexity {
+    fn classify(messages: &[ModelMessage], tool_names: &[String]) -> Self {
+        let mut score: u32 = 0;
+
+        // More messages → more complex conversation context.
+        let msg_count = messages.len() as u32;
+        if msg_count > 20 {
+            score += 2;
+        } else if msg_count > 8 {
+            score += 1;
+        }
+
+        // Check recent tool calls for complexity signals.
+        let has_write_tools = tool_names
+            .iter()
+            .any(|t| matches!(t.as_str(), "write_file" | "apply_patch"));
+        let has_complex_tools = tool_names
+            .iter()
+            .any(|t| matches!(t.as_str(), "bash" | "test_runner" | "build_runner"));
+        let has_read_only = tool_names
+            .iter()
+            .any(|t| matches!(t.as_str(), "read_file" | "grep" | "fs_browser" | "git_ops"));
+
+        if has_write_tools {
+            score += 2;
+        }
+        if has_complex_tools {
+            score += 1;
+        }
+        // If only read-only tools and nothing else → simpler.
+        if has_read_only && !has_write_tools && !has_complex_tools {
+            score = score.saturating_sub(1);
+        }
+
+        // Check for error patterns in recent messages (retries = complex).
+        let recent_errors = messages
+            .iter()
+            .rev()
+            .take(6)
+            .filter(|m| {
+                m.role == ModelRole::Tool
+                    && m.content.contains("\"error\"")
+                    && !m.content.contains("[Old tool result content cleared]")
+            })
+            .count();
+        if recent_errors > 1 {
+            score += 1;
+        }
+
+        // User messages with long content → likely complex instructions.
+        let last_user = messages.iter().rev().find(|m| m.role == ModelRole::User);
+        if let Some(user_msg) = last_user
+            && user_msg.content.len() > 500
+        {
+            score += 1;
+        }
+
+        match score {
+            0..=1 => Self::Simple,
+            2..=3 => Self::Medium,
+            _ => Self::Complex,
         }
     }
 }
@@ -423,5 +518,84 @@ mod tests {
         assert_eq!(deserialized.thinking_content, msg.thinking_content);
         // created_at is intentionally not serialized (runtime-only field)
         assert!(deserialized.created_at.is_none());
+    }
+
+    // ── Adaptive thinking ──────────────────────────────────────────────────────
+
+    #[test]
+    fn adaptive_thinking_simple_read_only_gives_low() {
+        let messages = vec![
+            ModelMessage::user("read this file"),
+            ModelMessage::assistant("ok"),
+        ];
+        let tools = vec!["read_file".to_string()];
+        let result = ThinkingConfig::resolve_adaptive(&messages, &tools, 0);
+        assert_eq!(result, ThinkingConfig::Low);
+    }
+
+    #[test]
+    fn adaptive_thinking_write_tools_gives_medium_or_high() {
+        let messages = vec![
+            ModelMessage::user("refactor this module"),
+            ModelMessage::assistant("ok"),
+        ];
+        let tools = vec!["write_file".to_string(), "read_file".to_string()];
+        let result = ThinkingConfig::resolve_adaptive(&messages, &tools, 0);
+        assert!(matches!(
+            result,
+            ThinkingConfig::Medium | ThinkingConfig::High
+        ));
+    }
+
+    #[test]
+    fn adaptive_thinking_long_conversation_gives_higher() {
+        let mut messages = Vec::new();
+        for i in 0..25 {
+            messages.push(ModelMessage::user(&format!("message {i}")));
+            messages.push(ModelMessage::assistant(&format!("response {i}")));
+        }
+        let tools = vec!["bash".to_string(), "write_file".to_string()];
+        let result = ThinkingConfig::resolve_adaptive(&messages, &tools, 0);
+        assert!(matches!(
+            result,
+            ThinkingConfig::Medium | ThinkingConfig::High
+        ));
+    }
+
+    #[test]
+    fn adaptive_thinking_errors_increase_complexity() {
+        let messages = vec![
+            ModelMessage::user("fix this"),
+            {
+                let mut m = ModelMessage::tool_result("c1", "bash", "{\"error\": \"failed\"}");
+                m
+            },
+            {
+                let mut m = ModelMessage::tool_result("c2", "bash", "{\"error\": \"failed again\"}");
+                m
+            },
+        ];
+        let tools = vec!["bash".to_string()];
+        let result = ThinkingConfig::resolve_adaptive(&messages, &tools, 0);
+        assert!(matches!(
+            result,
+            ThinkingConfig::Medium | ThinkingConfig::High
+        ));
+    }
+
+    #[test]
+    fn adaptive_falls_back_to_medium_in_to_thinking_request() {
+        let request = ThinkingConfig::Adaptive.to_thinking_request();
+        assert!(request.enabled);
+        assert_eq!(request.effort, Some("medium"));
+    }
+
+    #[test]
+    fn adaptive_serde_roundtrip() {
+        let config = ThinkingConfig::Adaptive;
+        let json = serde_json::to_string(&config).unwrap();
+        assert_eq!(json, "\"adaptive\"");
+        let deserialized: ThinkingConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized, ThinkingConfig::Adaptive);
     }
 }

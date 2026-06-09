@@ -212,7 +212,29 @@ fn should_skip(path: &Path) -> bool {
         .is_some_and(|name| {
             matches!(
                 name,
-                ".git" | "target" | "node_modules" | ".cache" | ".venv" | "__pycache__"
+                ".git"
+                    | "target"
+                    | "node_modules"
+                    | ".cache"
+                    | ".venv"
+                    | "venv"
+                    | "__pycache__"
+                    | ".tox"
+                    | "vendor"
+                    | "dist"
+                    | "build"
+                    | "out"
+                    | ".next"
+                    | ".nuxt"
+                    | ".output"
+                    | ".parcel-cache"
+                    | ".turbo"
+                    | ".eslintcache"
+                    | "coverage"
+                    | ".nyc_output"
+                    | "htmlcov"
+                    | ".idea"
+                    | ".vscode"
             )
         })
 }

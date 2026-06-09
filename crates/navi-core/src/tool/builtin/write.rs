@@ -1,13 +1,23 @@
 use anyhow::{Context, Result};
 use async_trait::async_trait;
+use navi_vfs::VfsEngine;
 use serde_json::json;
 use std::fs;
 use std::path::Path;
+use std::sync::Arc;
 
 use super::helpers;
 use crate::tool::{Tool, ToolDefinition, ToolInvocation, ToolKind, ToolResult};
 
-pub(crate) struct WriteFileTool;
+pub(crate) struct WriteFileTool {
+    vfs: Option<Arc<VfsEngine>>,
+}
+
+impl WriteFileTool {
+    pub(crate) fn new(vfs: Option<Arc<VfsEngine>>) -> Self {
+        Self { vfs }
+    }
+}
 
 #[async_trait]
 impl Tool for WriteFileTool {
@@ -31,6 +41,7 @@ impl Tool for WriteFileTool {
         let content = helpers::required_string(&invocation.input, "content")?.to_string();
         let path_clone = path.clone();
         let content_clone = content.clone();
+        let vfs = self.vfs.clone();
         let line_counts = tokio::task::spawn_blocking(move || {
             let lines_removed = fs::read_to_string(&path_clone)
                 .ok()
@@ -44,6 +55,14 @@ impl Tool for WriteFileTool {
             }
             fs::write(&path_clone, content_clone)
                 .with_context(|| format!("failed to write {path_clone}"))?;
+
+            // VFS: format the file after writing.
+            if let Some(ref vfs) = vfs
+                && let Err(e) = vfs.format_after_write(Path::new(&path_clone))
+            {
+                tracing::warn!(path = %path_clone, error = %e, "VFS post-write format failed");
+            }
+
             Ok::<_, anyhow::Error>(lines_removed)
         })
         .await

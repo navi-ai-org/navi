@@ -29,6 +29,7 @@ impl Default for HarnessConfig {
             autocompact_error_buffer_tokens: ERROR_THRESHOLD_BUFFER_TOKENS,
             autocompact_max_output_tokens: MAX_OUTPUT_TOKENS_FOR_SUMMARY,
             autocompact_max_consecutive_failures: MAX_CONSECUTIVE_FAILURES,
+            autocompact_keep_ratio: 0.25,
         }
     }
 }
@@ -51,6 +52,7 @@ impl Default for SecurityConfig {
             redact_secrets_in_sessions: true,
             allow_external_plugins: false,
             blocked_commands: default_blocked_commands(),
+            deny_paths: default_deny_paths(),
         }
     }
 }
@@ -91,6 +93,56 @@ fn default_blocked_commands() -> Vec<String> {
     [
         "rm", "rmdir", "shred", "mkfs", "dd", "sudo", "su", "doas", "chmod", "chown", "chgrp",
         "mount", "umount", "reboot", "shutdown", "poweroff",
+    ]
+    .into_iter()
+    .map(str::to_string)
+    .collect()
+}
+
+fn default_deny_paths() -> Vec<String> {
+    [
+        // Dependencies (large, machine-generated)
+        "node_modules",
+        "vendor",
+        ".venv",
+        "venv",
+        "__pycache__",
+        ".tox",
+        // Build artifacts
+        "target",
+        "dist",
+        "build",
+        "out",
+        ".next",
+        ".nuxt",
+        ".output",
+        // Cache directories
+        ".cache",
+        ".parcel-cache",
+        ".turbo",
+        ".eslintcache",
+        // Large generated files
+        "package-lock.json",
+        "yarn.lock",
+        "pnpm-lock.yaml",
+        "Cargo.lock",
+        "composer.lock",
+        "poetry.lock",
+        // Coverage/test output
+        "coverage",
+        ".nyc_output",
+        "htmlcov",
+        // Log files
+        "*.log",
+        "npm-debug.log*",
+        "yarn-debug.log*",
+        "yarn-error.log*",
+        // IDE/editor
+        ".idea",
+        ".vscode",
+        // OS files
+        ".DS_Store",
+        "Thumbs.db",
     ]
     .into_iter()
     .map(str::to_string)
