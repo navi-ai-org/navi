@@ -10,6 +10,7 @@ use crate::providers::{
     ListRow, apply_model_selection, build_model_rows, first_model_index, selected_model_in_rows,
     sync_scroll_to_selection,
 };
+use crate::render::text::display_width;
 use crate::runtime::provider_supports_oauth;
 use crate::state::{Mode, SelectionState};
 use crate::ui::interaction::{HitAction, HitRegion, ScrollTarget};
@@ -68,7 +69,7 @@ pub(crate) fn selected_text(app: &TuiApp) -> Option<String> {
             let end_char = if line_idx == end.0 {
                 end.1
             } else {
-                line_text.chars().count()
+                display_width(&line_text)
             };
 
             let substr: String = line_text
@@ -421,7 +422,7 @@ fn dispatch_hit(app: &mut TuiApp, hit: HitRegion) {
                     app.expanded_tool_results.remove(&id);
                 }
             }
-            app.chat_render_cache.borrow_mut().signature.clear();
+            app.chat_render_cache.borrow_mut().signature_hash = 0;
         }
         HitAction::MessageAction(index) => {
             run_message_action(app, index);
@@ -434,7 +435,7 @@ fn toggle_tool_result(app: &mut TuiApp, id: &str) {
     if !app.expanded_tool_results.remove(id) {
         app.expanded_tool_results.insert(id.to_string());
     }
-    app.chat_render_cache.borrow_mut().signature.clear();
+    app.chat_render_cache.borrow_mut().signature_hash = 0;
 }
 
 pub(crate) fn run_message_action(app: &mut TuiApp, index: usize) {
