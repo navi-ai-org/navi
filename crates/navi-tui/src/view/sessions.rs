@@ -3,17 +3,17 @@ use ratatui::layout::{Constraint, Direction, Layout, Margin, Rect};
 use ratatui::prelude::{Frame, Span};
 use ratatui::style::Style;
 use ratatui::text::Text;
-use ratatui::widgets::{Clear, List, ListItem, Paragraph};
+use ratatui::widgets::{List, ListItem, Paragraph};
 
 use crate::TuiApp;
-use crate::render::modal_block;
+use crate::render::{clear_modal_area, modal_block};
 use crate::session::format_session_timestamp;
 use crate::theme::*;
 use crate::ui::interaction::{HitAction, line_rect};
 use crate::ui::list::render_scrollbar;
 
 pub(super) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
-    frame.render_widget(Clear, area);
+    clear_modal_area(frame, area);
     let block = modal_block("Memory");
     frame.render_widget(block, area);
 

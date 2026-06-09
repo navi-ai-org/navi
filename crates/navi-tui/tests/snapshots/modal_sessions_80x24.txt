@@ -3,16 +3,16 @@
 
     ███╗   ██╗ █████╗ ██╗   ██╗██╗      project navi-tui
     ╭ Memory ──────────────────────────────────────────────────────────────╮
+    │█╔██╗ ██║███████║██║   ██║██║      via     OpenAI                     │
+    │█No saved sessions██╗ ██╔╝██║      thinking adaptive                  │
+    │█║ ╚████║██║  ██║ ╚████╔╝ ██║      context 0 / 200k (0%)              │
+    │═╝  ╚═══╝╚═╝  ╚═╝  ╚═══╝  ╚═╝      mode    auto                       │
+    │                                   router  auto                       │
+    │                                   tools   shell read write grep patch│
+    │                                   session new                        │
+    │                                   cost    $0.00                      │
     │                                                                      │
-    │ No saved sessions                                                    │
-    │                                                                      │
-    │                                                                      │
-    │                                                                      │
-    │                                                                      │
-    │                                                                      │
-    │                                                                      │
-    │                                                                      │
-    │                                                                      │
+    │AVI · wired code agent for local-first builders                       │
     │                                                                      │
     │                                                                      │
     │                                                                      │

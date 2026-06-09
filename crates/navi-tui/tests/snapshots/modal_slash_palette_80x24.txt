@@ -3,16 +3,16 @@
 
     ███╗   ██╗ █████╗ ██╗   ██╗██╗      project navi-tui
     ██╭ Commands ────────────────────────────────────────────────────────╮
-    ██│ > type to search                                                 │
-    ██│                                                                  │
+    ██│█> type to search║   ██║██║      via     OpenAI                   │
+    ██│╚██╗██║██╔══██║╚██╗ ██╔╝██║      thinking adaptive                │
     ██│ New Session                                         ctrl+n     █ │
     ╚═│ Sessions                                            ctrl+s     █ │
       │ Copy Session                                                   █ │
-      │ Share Session                                                  █ │h
+      │ Share Session                                                  █t│h
       │ Models                                              ctrl+m     █ │
       │ Providers                                                      █ │
       │ Skills                                                         █ │
-    NA│ Plugins                                                        │ │
+    NA│IPlugins                                                        │ │
       │ Retry Last Response                                            │ │
       │ Thinking Mode                                                  │ │
       │                                                                  │

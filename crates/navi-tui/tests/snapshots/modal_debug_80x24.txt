@@ -2,17 +2,17 @@
 
 
     ╭ Debug ───────────────────────────────────────────────────────────────╮
-    │ Log file: /tmp/navi-test-data/logs/navi.log                          │
-    │ Session:  session-test                                               │
-    │ Project:  /tmp/navi-test-project                                     │
-    │ Model:    gpt-5.5 via OpenAI                                         │
-    │ API key:  OPENAI_API_KEY                                             │
-    │ State:    idle                                                       │
+    │█Log file: /tmp/navi-test-data/logs/navi.logpt-5.5                    │
+    │█Session:  session-test██║██║      via     OpenAI                     │
+    │█Project:  /tmp/navi-test-project  thinking adaptive                  │
+    │█Model:    gpt-5.5 via OpenAI      context 0 / 200k (0%)              │
+    │═API key:  OPENAI_API_KEY ╚═╝      mode    auto                       │
+    │ State:    idle                    router  auto                       │
+    │                                   tools   shell read write grep patch│
+    │ Recent diagnostics                session new                        │
+    │ none                              cost    $0.00                      │
     │                                                                      │
-    │ Recent diagnostics                                                   │
-    │ none                                                                 │
-    │                                                                      │
-    │                                                                      │
+    │AVI · wired code agent for local-first builders                       │
     │                                                                      │
     │                                                                      │
     │                                                                      │
