@@ -7,7 +7,7 @@ use crate::stream::start_streaming_request;
 use crate::tools::cancel_stream;
 
 pub(crate) fn submit_message(app: &mut TuiApp) {
-    let text = agent_prompt_text(app);
+    let text = app.input.trim().to_string();
     if text.is_empty() {
         return;
     }
@@ -35,16 +35,6 @@ pub(crate) fn submit_message(app: &mut TuiApp) {
     app.model_retry_attempts = 0;
 
     start_streaming_request(app);
-}
-
-fn agent_prompt_text(app: &TuiApp) -> String {
-    let text = app.input.trim();
-    if text.is_empty() {
-        return String::new();
-    }
-    app.selected_agent
-        .map(|agent| agent.apply_to_prompt(text))
-        .unwrap_or_else(|| text.to_string())
 }
 
 fn is_model_response_message(message: &ChatMessage) -> bool {
@@ -117,6 +107,12 @@ pub(crate) fn update_active_assistant_status(app: &mut TuiApp) {
             Some(format!("approval: {}", name))
         } else {
             Some(format!("approval: {} tools", app.pending_approvals.len()))
+        }
+    } else if !app.pending_questions.is_empty() {
+        if app.pending_questions.len() == 1 {
+            Some("question".to_string())
+        } else {
+            Some(format!("questions: {}", app.pending_questions.len()))
         }
     } else if !app.running_tools.is_empty() {
         if app.running_tools.len() == 1 {

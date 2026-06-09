@@ -87,7 +87,6 @@ pub(crate) async fn handle_prompt(
             .start_session(NaviSessionRequest {
                 project_dir: Some(project_dir.clone()),
                 session_id: Some(session_id.clone()),
-                agent_mode: None,
                 context_packets: Vec::new(),
                 active_skills: Vec::new(),
                 initial_messages: Vec::new(),

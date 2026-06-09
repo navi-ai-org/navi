@@ -1,16 +1,17 @@
 use crate::cancel::CancelToken;
 use crate::compact::{self, CompactState};
-use crate::context::{ContextPacket, render_context_packets};
+use crate::context::ContextPacket;
 use crate::event::AgentEvent;
 use crate::harness::{
-    AgentRunState, HarnessPolicy, ToolLoopDecision, build_system_prompt_with_tools,
-    compact_tool_observation, record_tool_call, tool_error_result, trace_request_summary,
+    AgentRunState, HarnessPolicy, ToolLoopDecision, compact_tool_observation, record_tool_call,
+    tool_error_result, trace_request_summary,
 };
 use crate::model::{
     ModelMessage, ModelProvider, ModelRequest, ModelRole, ModelStreamEvent, ThinkingConfig,
 };
+use crate::prompt::{PromptCache, SystemPromptInput, SystemPromptRenderer};
 use crate::security::SecurityDecision;
-use crate::skills::{SkillManifest, render_active_skills};
+use crate::skills::SkillManifest;
 use crate::tool::ToolExecutor;
 use anyhow::Result;
 use futures_util::StreamExt;
@@ -42,6 +43,7 @@ pub struct TurnContext {
     pub include_tool_prompt_manifest: bool,
     pub context_packets: Arc<std::sync::Mutex<Vec<ContextPacket>>>,
     pub active_skills: Arc<std::sync::Mutex<Vec<SkillManifest>>>,
+    pub prompt_cache: Arc<PromptCache>,
     pub cancel_token: CancelToken,
     /// Snapshot of the active `NaviConfig` taken at turn start. Used by
     /// `ensure_system_prompt` so the model sees the user-configured harness
@@ -132,47 +134,29 @@ fn ensure_not_cancelled(ctx: &TurnContext) -> Result<()> {
 }
 
 async fn ensure_system_prompt(ctx: &TurnContext, messages: &mut Vec<ModelMessage>) {
-    let agents_md_path = ctx.project_dir.join("AGENTS.md");
-    // Read AGENTS.md without blocking the async runtime.
-    let base_instructions = if agents_md_path.exists() {
-        let path = agents_md_path.clone();
-        match tokio::task::spawn_blocking(move || std::fs::read_to_string(&path)).await {
-            Ok(Ok(content)) => content,
-            _ => "Default NAVI base instructions".to_string(),
-        }
-    } else {
-        "Default NAVI base instructions".to_string()
-    };
-
-    let mut system_content = format!(
-        "{}\n\n=== AGENTS.md / Project Instructions ===\n{}",
-        build_system_prompt_with_tools(
-            &ctx.active_config(),
-            &ctx.project_dir,
-            None,
-            &ctx.tool_executor.definitions(),
-            ctx.include_tool_prompt_manifest,
-        ),
-        base_instructions
-    );
     let context_packets = ctx
         .context_packets
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .clone();
-    if let Some(context) = render_context_packets(&context_packets) {
-        system_content.push_str("\n\n");
-        system_content.push_str(&context);
-    }
     let active_skills = ctx
         .active_skills
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .clone();
-    if let Some(skills) = render_active_skills(&active_skills) {
-        system_content.push_str("\n\n");
-        system_content.push_str(&skills);
-    }
+    let input = SystemPromptInput {
+        config: ctx.active_config(),
+        project_dir: ctx.project_dir.clone(),
+        memory_injection: None,
+        tools: ctx.tool_executor.definitions(),
+        include_tool_prompt_manifest: ctx.include_tool_prompt_manifest,
+        context_packets,
+        active_skills,
+    };
+    let renderer = SystemPromptRenderer::new(ctx.prompt_cache.clone());
+    let system_content = tokio::task::spawn_blocking(move || renderer.render(input))
+        .await
+        .unwrap_or_else(|_| "Default NAVI base instructions".to_string());
 
     if messages.is_empty() {
         messages.push(ModelMessage::system(system_content));

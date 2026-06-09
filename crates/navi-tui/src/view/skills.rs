@@ -4,8 +4,10 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::widgets::{Clear, List, ListItem, ListState, Paragraph};
 
 use crate::TuiApp;
-use crate::render::{command_scroll_offset, modal_block};
+use crate::render::modal_block;
 use crate::theme::*;
+use crate::ui::interaction::{HitAction, line_rect};
+use crate::ui::list::render_scrollbar;
 
 pub(super) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
     frame.render_widget(Clear, area);
@@ -50,9 +52,10 @@ pub(super) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
         .enumerate()
         .map(|(index, skill)| {
             let is_active = app.is_skill_active(&skill.id);
-            let selected_style = index == selected;
+            let is_selected = index == selected;
+            let is_hovered = app.hover_index == Some(index);
 
-            let (name_style, status_icon) = if selected_style {
+            let (name_style, status_icon) = if is_hovered {
                 (
                     Style::default()
                         .fg(Color::White)
@@ -60,10 +63,18 @@ pub(super) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
                         .add_modifier(Modifier::BOLD),
                     if is_active { "✓" } else { " " },
                 )
+            } else if is_selected {
+                (
+                    Style::default()
+                        .fg(signal())
+                        .bg(panel())
+                        .add_modifier(Modifier::BOLD),
+                    if is_active { "✓" } else { " " },
+                )
             } else if is_active {
                 (Style::default().fg(signal()).bg(panel()), "✓")
             } else {
-                (Style::default().fg(text()).bg(panel()), " ")
+                (Style::default().fg(muted()).bg(panel()), " ")
             };
 
             let description = skill
@@ -93,14 +104,38 @@ pub(super) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
         })
         .collect();
 
+    let offset = app
+        .skill_scroll
+        .min(skills.len().saturating_sub(rows[1].height as usize));
     let mut list_state = ListState::default()
-        .with_offset(command_scroll_offset(selected, rows[1].height as usize))
-        .with_selected((!skills.is_empty()).then_some(selected));
+        .with_offset(offset)
+        .with_selected((!skills.is_empty()).then_some(app.hover_index.unwrap_or(selected)));
     frame.render_stateful_widget(
-        List::new(items).style(Style::default().bg(panel())),
+        List::new(items)
+            .style(Style::default().bg(panel()))
+            .highlight_style(Style::default()),
         rows[1],
         &mut list_state,
     );
+    render_scrollbar(
+        frame,
+        app,
+        rows[1],
+        skills.len(),
+        offset,
+        crate::ui::interaction::ScrollTarget::Skills,
+    );
+    for (row_offset, index) in (offset..skills.len())
+        .take(rows[1].height as usize)
+        .enumerate()
+    {
+        app.register_hit(
+            line_rect(rows[1], row_offset),
+            20,
+            format!("skill {}", skills[index].name),
+            HitAction::Skill(index),
+        );
+    }
 
     // Active skills summary
     let active_count = app.active_skills.len();

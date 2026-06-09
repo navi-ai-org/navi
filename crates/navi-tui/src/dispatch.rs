@@ -12,7 +12,7 @@ use crate::errors::handle_model_error;
 use crate::notifications::{push_diagnostic, show_notification};
 use crate::providers::rebuild_provider;
 use crate::runtime::spawn_runtime_task;
-use crate::state::{ChatMessage, ChatRole};
+use crate::state::{ChatMessage, ChatRole, ModalKind, Mode, QuestionUiState};
 use crate::stream::start_streaming_request;
 use crate::tools::record_tool_requested;
 
@@ -234,6 +234,29 @@ fn handle_agent_event(app: &mut TuiApp, event: AgentEvent) {
             app.events.push(AgentEvent::ApprovalResolved(decision));
             update_active_assistant_status(app);
         }
+        AgentEvent::QuestionRequested(request) => {
+            if !app
+                .pending_questions
+                .iter()
+                .any(|question| question.request.id == request.id)
+            {
+                app.pending_questions
+                    .push(QuestionUiState::new(request.clone()));
+            }
+            app.events.push(AgentEvent::QuestionRequested(request));
+            crate::keybindings::replace_modal(app, ModalKind::Question);
+            update_active_assistant_status(app);
+        }
+        AgentEvent::QuestionResolved(response) => {
+            let id = response.id().to_string();
+            app.pending_questions
+                .retain(|question| question.request.id != id);
+            app.events.push(AgentEvent::QuestionResolved(response));
+            if app.mode == Mode::Question && app.pending_questions.is_empty() {
+                crate::keybindings::close_active_modal(app);
+            }
+            update_active_assistant_status(app);
+        }
         AgentEvent::Error { message } => {
             handle_model_error(app, message);
         }
@@ -246,6 +269,8 @@ fn handle_agent_event(app: &mut TuiApp, event: AgentEvent) {
         AgentEvent::UsageReported {
             input_tokens,
             output_tokens,
+            cache_creation_tokens,
+            cache_read_tokens,
         } => {
             app.compact_state.update_usage(input_tokens);
             if let Some(msg) = app.messages.last_mut()
@@ -261,6 +286,8 @@ fn handle_agent_event(app: &mut TuiApp, event: AgentEvent) {
             app.events.push(AgentEvent::UsageReported {
                 input_tokens,
                 output_tokens,
+                cache_creation_tokens,
+                cache_read_tokens,
             });
         }
         AgentEvent::MicroCompactApplied { messages_cleared } => {
@@ -340,6 +367,10 @@ fn handle_turn_completed(app: &mut TuiApp, res: std::result::Result<String, Stri
     app.clear_stream_task();
     app.running_tools.clear();
     app.pending_approvals.clear();
+    app.pending_questions.clear();
+    if app.mode == Mode::Question {
+        crate::keybindings::close_active_modal(app);
+    }
 }
 
 #[cfg(test)]
@@ -545,6 +576,8 @@ mod tests {
             AsyncEvent::Agent(AgentEvent::UsageReported {
                 input_tokens: 5000,
                 output_tokens: 1000,
+                cache_creation_tokens: 0,
+                cache_read_tokens: 0,
             }),
         );
 
@@ -564,6 +597,8 @@ mod tests {
             AsyncEvent::Agent(AgentEvent::UsageReported {
                 input_tokens: 3000,
                 output_tokens: 1500,
+                cache_creation_tokens: 0,
+                cache_read_tokens: 0,
             }),
         );
 

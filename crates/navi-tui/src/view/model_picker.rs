@@ -9,6 +9,8 @@ use crate::TuiApp;
 use crate::providers::{ListRow, build_model_rows, selected_model_in_rows};
 use crate::render::{modal_block, model_row_simple};
 use crate::theme::*;
+use crate::ui::interaction::{HitAction, line_rect};
+use crate::ui::list::render_scrollbar;
 
 pub(super) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
     frame.render_widget(Clear, area);
@@ -54,9 +56,12 @@ pub(super) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
     let row_width = list_area.width as usize;
 
     let selected_row = selected_model_in_rows(&list_rows, app.selected_model).unwrap_or(0);
+    let hover_row = app
+        .hover_index
+        .and_then(|idx| selected_model_in_rows(&list_rows, idx));
     let mut list_state = ListState::default()
         .with_offset(app.model_scroll)
-        .with_selected(Some(selected_row));
+        .with_selected(Some(hover_row.unwrap_or(selected_row)));
 
     let items = list_rows
         .iter()
@@ -75,16 +80,22 @@ pub(super) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
             ListRow::Model { index } => {
                 let model = &app.models[*index];
                 let selected = *index == app.selected_model;
+                let hovered = app.hover_index == Some(*index);
                 let configured = model.name == app.loaded_config.config.model.name
                     && canonical_provider_id(&model.provider_id)
                         == canonical_provider_id(&app.loaded_config.config.model.provider);
-                let style = if selected {
+                let style = if hovered {
                     Style::default()
                         .fg(Color::White)
                         .bg(accent())
                         .add_modifier(Modifier::BOLD)
+                } else if selected {
+                    Style::default()
+                        .fg(signal())
+                        .bg(panel())
+                        .add_modifier(Modifier::BOLD)
                 } else {
-                    Style::default().fg(text()).bg(panel())
+                    Style::default().fg(muted()).bg(panel())
                 };
 
                 ListItem::new(Span::styled(
@@ -97,10 +108,48 @@ pub(super) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
         .collect::<Vec<_>>();
 
     frame.render_stateful_widget(
-        List::new(items).style(Style::default().bg(panel())),
+        List::new(items)
+            .style(Style::default().bg(panel()))
+            .highlight_style(Style::default()),
         list_area,
         &mut list_state,
     );
+    render_scrollbar(
+        frame,
+        app,
+        list_area,
+        list_rows.len(),
+        app.model_scroll,
+        crate::ui::interaction::ScrollTarget::Models,
+    );
+    for (row_offset, row) in list_rows
+        .iter()
+        .enumerate()
+        .skip(app.model_scroll)
+        .take(list_area.height as usize)
+    {
+        let rect = line_rect(list_area, row_offset.saturating_sub(app.model_scroll));
+        match row {
+            ListRow::Header {
+                provider_id, label, ..
+            } => {
+                app.register_hit(
+                    rect,
+                    20,
+                    format!("refresh provider {label}"),
+                    HitAction::ModelProviderRefresh(provider_id.clone()),
+                );
+            }
+            ListRow::Model { index } => {
+                let label = app
+                    .models
+                    .get(*index)
+                    .map(|model| model.name.clone())
+                    .unwrap_or_else(|| "model".to_string());
+                app.register_hit(rect, 20, format!("model {label}"), HitAction::Model(*index));
+            }
+        }
+    }
     frame.render_widget(
         Paragraph::new(
             "type search  •  ↑↓ choose  •  ctrl+e edit setup  •  tab refresh provider  •  ctrl+r refresh all  •  enter confirm  •  esc exit",

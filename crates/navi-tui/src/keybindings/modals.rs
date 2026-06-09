@@ -9,6 +9,7 @@ use crate::providers::{
 };
 use crate::session::load_saved_sessions;
 use crate::state::{ModalKind, ThinkingLevel};
+use crate::theme::filtered_theme_options;
 use crate::ui::effect::UiEffect;
 use crate::ui::list::SelectListState;
 use crossterm::event::{KeyCode, KeyModifiers};
@@ -685,8 +686,12 @@ pub(crate) fn handle_plugin_approval_key(
 }
 
 pub(crate) fn handle_theme_picker_key(app: &mut TuiApp, code: KeyCode) -> bool {
-    let count = filtered_theme_count(app);
-    let mut list_state = SelectListState::new(app.selected_theme, 0);
+    let mut filtered = filtered_theme_options(&app.theme_filter);
+    let selected_visible = filtered
+        .iter()
+        .position(|(orig_index, _)| *orig_index == app.selected_theme)
+        .unwrap_or(0);
+    let mut list_state = SelectListState::new(selected_visible, 0);
     match code {
         KeyCode::Esc => {
             app.theme_filter.clear();
@@ -694,40 +699,29 @@ pub(crate) fn handle_theme_picker_key(app: &mut TuiApp, code: KeyCode) -> bool {
         }
         KeyCode::Char(ch) => {
             app.theme_filter.push(ch);
+            filtered = filtered_theme_options(&app.theme_filter);
             list_state.reset();
         }
         KeyCode::Backspace => {
             app.theme_filter.pop();
-            list_state.clamp(count);
+            filtered = filtered_theme_options(&app.theme_filter);
+            list_state.clamp(filtered.len());
         }
         KeyCode::Down => {
-            list_state.select_next(count);
+            list_state.select_next(filtered.len());
         }
         KeyCode::Up => {
             list_state.select_previous();
         }
-        KeyCode::Char(' ') | KeyCode::Enter => {
+        KeyCode::Enter => {
             if let Some(theme) = crate::theme::ThemeId::ALL.get(app.selected_theme) {
                 app.set_theme(*theme);
             }
         }
         _ => {}
     }
-    app.selected_theme = list_state.selected();
-    false
-}
-
-fn filtered_theme_count(app: &TuiApp) -> usize {
-    if app.theme_filter.is_empty() {
-        crate::theme::ThemeId::ALL.len()
-    } else {
-        crate::theme::ThemeId::ALL
-            .iter()
-            .filter(|t| {
-                t.label()
-                    .to_lowercase()
-                    .contains(&app.theme_filter.to_lowercase())
-            })
-            .count()
+    if let Some((orig_index, _)) = filtered.get(list_state.selected()) {
+        app.selected_theme = *orig_index;
     }
+    false
 }

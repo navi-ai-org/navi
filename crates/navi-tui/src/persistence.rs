@@ -113,6 +113,7 @@ pub(crate) fn load_session(app: &mut TuiApp, snapshot: &SessionSnapshot) {
             AgentEvent::UsageReported {
                 input_tokens,
                 output_tokens: _,
+                ..
             } => {
                 app.compact_state.update_usage(*input_tokens);
             }

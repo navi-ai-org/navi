@@ -18,7 +18,7 @@ use crate::{
     ApprovalDecision, LoadedConfig, NaviConfigSaveTarget, NaviModelSelectionRequest,
     NaviModelSelectionResult, NaviProviderCredentialStatus, NaviProviderSyncReport,
     NaviSessionInfo, NaviSessionRequest, NaviSkillInfo, NaviTurnRequest, NaviTurnResponse,
-    RuntimeEvent, SessionSnapshot,
+    QuestionResponse, RuntimeEvent, SessionSnapshot,
 };
 
 /// Convenience alias matching the one used inside `engine.rs`.
@@ -49,6 +49,9 @@ pub trait EngineDriver: Send + Sync {
 
     /// Resolve a pending tool approval.
     async fn resolve_approval(&self, session_id: &str, decision: ApprovalDecision) -> Result<bool>;
+
+    /// Resolve a pending interactive question.
+    async fn resolve_question(&self, session_id: &str, response: QuestionResponse) -> Result<bool>;
 
     /// Take a persistence snapshot of the session.
     async fn snapshot_session(&self, session_id: &str) -> Result<SessionSnapshot>;
@@ -118,6 +121,10 @@ impl EngineDriver for crate::NaviEngine {
 
     async fn resolve_approval(&self, session_id: &str, decision: ApprovalDecision) -> Result<bool> {
         crate::NaviEngine::resolve_approval(self, session_id, decision).await
+    }
+
+    async fn resolve_question(&self, session_id: &str, response: QuestionResponse) -> Result<bool> {
+        crate::NaviEngine::resolve_question(self, session_id, response).await
     }
 
     async fn snapshot_session(&self, session_id: &str) -> Result<SessionSnapshot> {

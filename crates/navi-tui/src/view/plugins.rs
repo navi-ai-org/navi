@@ -6,8 +6,10 @@ use ratatui::widgets::{Clear, List, ListItem, ListState, Paragraph};
 use crate::TuiApp;
 use crate::plugin_approval::count_installed_plugins;
 use crate::plugins::{PluginPickerRow, plugin_picker_rows};
-use crate::render::{command_scroll_offset, modal_block};
+use crate::render::modal_block;
 use crate::theme::*;
+use crate::ui::interaction::{HitAction, line_rect};
+use crate::ui::list::render_scrollbar;
 
 pub(super) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
     frame.render_widget(Clear, area);
@@ -57,14 +59,20 @@ pub(super) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
         .iter()
         .enumerate()
         .map(|(index, row)| {
-            let selected_style = index == selected;
-            let base = if selected_style {
+            let is_selected = index == selected;
+            let is_hovered = app.hover_index == Some(index);
+            let base = if is_hovered {
                 Style::default()
                     .fg(Color::White)
                     .bg(accent())
                     .add_modifier(Modifier::BOLD)
+            } else if is_selected {
+                Style::default()
+                    .fg(signal())
+                    .bg(panel())
+                    .add_modifier(Modifier::BOLD)
             } else {
-                Style::default().fg(text()).bg(panel())
+                Style::default().fg(muted()).bg(panel())
             };
 
             let label = match row {
@@ -83,14 +91,38 @@ pub(super) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
         })
         .collect();
 
+    let offset = app
+        .plugin_row_scroll
+        .min(picker_rows.len().saturating_sub(rows[1].height as usize));
     let mut list_state = ListState::default()
-        .with_offset(command_scroll_offset(selected, rows[1].height as usize))
-        .with_selected((!picker_rows.is_empty()).then_some(selected));
+        .with_offset(offset)
+        .with_selected((!picker_rows.is_empty()).then_some(app.hover_index.unwrap_or(selected)));
     frame.render_stateful_widget(
-        List::new(items).style(Style::default().bg(panel())),
+        List::new(items)
+            .style(Style::default().bg(panel()))
+            .highlight_style(Style::default()),
         rows[1],
         &mut list_state,
     );
+    render_scrollbar(
+        frame,
+        app,
+        rows[1],
+        picker_rows.len(),
+        offset,
+        crate::ui::interaction::ScrollTarget::Plugins,
+    );
+    for (row_offset, index) in (offset..picker_rows.len())
+        .take(rows[1].height as usize)
+        .enumerate()
+    {
+        app.register_hit(
+            line_rect(rows[1], row_offset),
+            20,
+            "plugin row",
+            HitAction::PluginInstallOrUpdate(index),
+        );
+    }
 
     let installed = count_installed_plugins(app);
     frame.render_widget(
@@ -103,4 +135,5 @@ pub(super) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
             .style(Style::default().fg(muted()).bg(panel())),
         rows[3],
     );
+    app.register_hit(rows[3], 20, "refresh plugins", HitAction::PluginRefresh);
 }

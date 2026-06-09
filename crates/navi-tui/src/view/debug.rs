@@ -7,6 +7,7 @@ use crate::TuiApp;
 use crate::providers::{current_provider_credential_status, selected_provider_label};
 use crate::render::modal_block;
 use crate::theme::*;
+use crate::ui::interaction::{HitAction, line_rect};
 
 pub(super) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
     frame.render_widget(Clear, area);
@@ -101,5 +102,11 @@ pub(super) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
     frame.render_widget(
         Paragraph::new("esc close").style(Style::default().fg(muted()).bg(panel())),
         rows[1],
+    );
+    app.register_hit(
+        line_rect(rows[1], 0),
+        20,
+        "close debug",
+        HitAction::CloseModal,
     );
 }

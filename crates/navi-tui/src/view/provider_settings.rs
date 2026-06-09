@@ -9,6 +9,8 @@ use crate::providers::provider_auth_status;
 use crate::render::modal_block;
 use crate::runtime::provider_supports_oauth;
 use crate::theme::*;
+use crate::ui::interaction::{HitAction, line_rect};
+use crate::ui::list::render_scrollbar;
 
 pub(super) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
     frame.render_widget(Clear, area);
@@ -53,10 +55,15 @@ pub(super) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
                 "{:<18} {:<12} {:<10} {}",
                 provider.label, status.label, oauth, provider.description
             );
-            let style = if selected {
+            let style = if app.hover_index == Some(index) {
                 Style::default()
                     .fg(Color::White)
                     .bg(accent())
+                    .add_modifier(Modifier::BOLD)
+            } else if selected {
+                Style::default()
+                    .fg(signal())
+                    .bg(panel())
                     .add_modifier(Modifier::BOLD)
             } else if status.configured {
                 Style::default().fg(signal()).bg(panel())
@@ -71,6 +78,32 @@ pub(super) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
         List::new(items).style(Style::default().bg(panel())),
         rows[1],
     );
+    render_scrollbar(
+        frame,
+        app,
+        rows[1],
+        providers.len(),
+        start,
+        crate::ui::interaction::ScrollTarget::Providers,
+    );
+    for (offset, provider) in providers[start..end].iter().enumerate() {
+        let index = start + offset;
+        let row = line_rect(rows[1], offset);
+        app.register_hit(
+            row,
+            20,
+            format!("provider {} api key", provider.label),
+            HitAction::ProviderApiKey(index),
+        );
+        if provider_supports_oauth(&provider.id) {
+            app.register_hit(
+                Rect::new(row.x + 31, row.y, 10.min(row.width.saturating_sub(31)), 1),
+                21,
+                format!("provider {} oauth", provider.label),
+                HitAction::ProviderOAuth(index),
+            );
+        }
+    }
 
     frame.render_widget(
         Paragraph::new("enter/k API key  •  o OAuth  •  r sync models  •  esc close")

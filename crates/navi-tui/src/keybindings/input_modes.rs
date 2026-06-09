@@ -49,11 +49,11 @@ pub(crate) fn handle_normal_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyM
     }
 
     match code {
-        KeyCode::Tab => super::cycle_agent(app),
         KeyCode::Char('/') if app.input.is_empty() => {
             super::replace_modal(app, ModalKind::Commands);
             app.command_filter.clear();
             app.selected_command = 0;
+            app.command_scroll = 0;
         }
         KeyCode::Char('?') if app.input.is_empty() => {
             super::replace_modal(app, ModalKind::Help);
