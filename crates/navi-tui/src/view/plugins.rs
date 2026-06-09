@@ -1,6 +1,6 @@
 use ratatui::layout::{Constraint, Direction, Layout, Margin, Rect};
 use ratatui::prelude::{Frame, Line, Span};
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::Style;
 use ratatui::widgets::{Clear, List, ListItem, ListState, Paragraph};
 
 use crate::TuiApp;
@@ -61,16 +61,8 @@ pub(super) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
         .map(|(index, row)| {
             let is_selected = index == selected;
             let is_hovered = app.hover_index == Some(index);
-            let base = if is_hovered {
-                Style::default()
-                    .fg(Color::White)
-                    .bg(accent())
-                    .add_modifier(Modifier::BOLD)
-            } else if is_selected {
-                Style::default()
-                    .fg(signal())
-                    .bg(panel())
-                    .add_modifier(Modifier::BOLD)
+            let base = if is_hovered || is_selected {
+                active_item_style()
             } else {
                 Style::default().fg(muted()).bg(panel())
             };
@@ -131,7 +123,7 @@ pub(super) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
         rows[2],
     );
     frame.render_widget(
-        Paragraph::new("↑↓ select  •  i install  •  u update  •  r refresh  •  enter  •  esc")
+        Paragraph::new("i install  •  u update  •  r refresh")
             .style(Style::default().fg(muted()).bg(panel())),
         rows[3],
     );

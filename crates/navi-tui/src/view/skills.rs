@@ -1,6 +1,6 @@
 use ratatui::layout::{Constraint, Direction, Layout, Margin, Rect};
 use ratatui::prelude::{Frame, Line, Span};
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::Style;
 use ratatui::widgets::{Clear, List, ListItem, ListState, Paragraph};
 
 use crate::TuiApp;
@@ -30,7 +30,7 @@ pub(super) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
 
     // Filter input
     let filter = if app.skill_filter.is_empty() {
-        "type to filter"
+        "search"
     } else {
         app.skill_filter.as_str()
     };
@@ -55,22 +55,8 @@ pub(super) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
             let is_selected = index == selected;
             let is_hovered = app.hover_index == Some(index);
 
-            let (name_style, status_icon) = if is_hovered {
-                (
-                    Style::default()
-                        .fg(Color::White)
-                        .bg(accent())
-                        .add_modifier(Modifier::BOLD),
-                    if is_active { "✓" } else { " " },
-                )
-            } else if is_selected {
-                (
-                    Style::default()
-                        .fg(signal())
-                        .bg(panel())
-                        .add_modifier(Modifier::BOLD),
-                    if is_active { "✓" } else { " " },
-                )
+            let (name_style, status_icon) = if is_hovered || is_selected {
+                (active_item_style(), if is_active { "✓" } else { " " })
             } else if is_active {
                 (Style::default().fg(signal()).bg(panel()), "✓")
             } else {
@@ -148,8 +134,7 @@ pub(super) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
 
     // Footer
     frame.render_widget(
-        Paragraph::new("tab/↑↓ choose  •  enter toggle  •  esc close")
-            .style(Style::default().fg(muted()).bg(panel())),
+        Paragraph::new("").style(Style::default().fg(muted()).bg(panel())),
         rows[3],
     );
 }

@@ -92,6 +92,7 @@ pub struct TuiApp {
     pub(crate) session_scroll: usize,
 
     pub(crate) full_tool_view: bool,
+    pub(crate) compact_tool_visible_limit: usize,
     pub(crate) show_thinking: bool,
     pub(crate) selected_setting: usize,
     pub(crate) selected_theme: usize,
@@ -161,6 +162,11 @@ impl TuiApp {
         let initial_active_skills = loaded_config.config.skills.active.clone();
         let show_thinking = loaded_config.config.tui.show_thinking;
         let full_tool_view = loaded_config.config.tui.full_tool_view;
+        let compact_tool_visible_limit = loaded_config
+            .config
+            .tui
+            .compact_tool_visible_limit
+            .clamp(1, 20);
         let yolo_mode = loaded_config.config.tui.yolo_mode;
         let theme_id = ThemeId::from_config(&loaded_config.config.tui.theme);
         let thinking_level = ThinkingLevel::from_config(&loaded_config.config.tui.thinking_level);
@@ -217,6 +223,7 @@ impl TuiApp {
             selected_session: 0,
             session_scroll: 0,
             full_tool_view,
+            compact_tool_visible_limit,
             show_thinking,
             selected_setting: 0,
             selected_theme: ThemeId::ALL
@@ -259,12 +266,12 @@ impl TuiApp {
         Ok(app)
     }
 
-    pub(crate) fn tick(&self) -> u64 {
-        self.tick
-    }
-
     pub(crate) fn advance_tick(&mut self) {
         self.tick = self.tick.wrapping_add(1);
+    }
+
+    pub(crate) fn tick(&self) -> u64 {
+        self.tick
     }
 
     pub(crate) fn log_path(&self) -> &std::path::Path {

@@ -72,7 +72,8 @@ fn settings_keyboard_workflow() {
     h.press(KeyCode::Enter, KeyModifiers::NONE);
     assert_eq!(h.mode(), Mode::Settings);
 
-    // Navigate down to Theme (index 2)
+    // Navigate down to Theme (index 3)
+    h.press(KeyCode::Down, KeyModifiers::NONE);
     h.press(KeyCode::Down, KeyModifiers::NONE);
     h.press(KeyCode::Down, KeyModifiers::NONE);
 
