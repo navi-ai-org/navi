@@ -1,5 +1,5 @@
 use crate::errors::ProviderError;
-use crate::mapping::{text_delta, usage_from_value};
+use crate::mapping::text_delta;
 use crate::sse::SseDecoder;
 use crate::transport::ensure_success;
 use anyhow::Result;
@@ -191,12 +191,10 @@ pub(crate) fn parse_anthropic_sse_with_state(
                 Vec::new()
             }
         }
-        Some("message_delta") => {
-            crate::mapping::usage_from_value_with_behavior(
-                value.get("usage"),
-                Some(&crate::providers::behavior::AnthropicBehavior),
-            )
-        }
+        Some("message_delta") => crate::mapping::usage_from_value_with_behavior(
+            value.get("usage"),
+            Some(&crate::providers::behavior::AnthropicBehavior),
+        ),
         Some("message_stop") => vec![Ok(ModelStreamEvent::Done)],
         Some("error") => vec![Err(anyhow::anyhow!(
             "{}",
