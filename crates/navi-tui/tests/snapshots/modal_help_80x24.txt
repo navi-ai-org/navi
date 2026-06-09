@@ -3,16 +3,16 @@
 
     ███╗   ██╗ █████╗ ██╗   ██╗██╗      project navi-tui
     ████╗╭ Shortcuts ─────────────────────────────────────────────────╮
-    ██╔██│ ctrl+p      commands██║      via     OpenAI                │
-    ██║╚█│╗tab         refresh/provider actionsg adaptive             │
-    ██║ ╚│█ctrl+m      models╝ ██║      context 0 / 200k (0%)         │
-    ╚═╝  │═ctrl+n      new layer═╝      mode    auto                  │
-         │ ctrl+s      memory           router  auto                  │
-         │ ctrl+o      compact/full tool output shell read write grep │atch
-         │ ctrl+d      debug            session new                   │
-         │ ctrl+g      toggle YOLO mode cost    $0.00                 │
+    ██╔██│ ctrl+p      commands                                       │
+    ██║╚█│ tab         refresh/provider actions                       │
+    ██║ ╚│ ctrl+m      models                                         │
+    ╚═╝  │ ctrl+n      new layer                                      │
+         │ ctrl+s      memory                                         │
+         │ ctrl+o      compact/full tool output                       │atch
+         │ ctrl+d      debug                                          │
+         │ ctrl+g      toggle YOLO mode                               │
          │ ctrl+enter  send prompt                                    │
-    NAVI │ enter       new line local-first builders                  │
+    NAVI │ enter       new line                                       │
          │ ctrl+j      new line                                       │
          │ /           commands when input is empty                   │
          │ ?           shortcuts                                      │

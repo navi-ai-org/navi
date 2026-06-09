@@ -6,13 +6,13 @@
     ██╔██╗ ██║███████║██║   ██║██║      via     OpenAI
     ██║╚██╗██║██╔══██║╚██╗ ██╔╝██║      thinking adaptive
     ██║ ╚████║██║  █╭ Thinking Mode ───────────────────────╮)
-    ╚═╝  ╚═══╝╚═╝  ╚│╝● adaptive═╝      mode    auto       │
-                    │   max             router  auto       │
-                    │   high            tools   shell read │rite grep patch
-                    │   medium          session new        │
-                    │   low             cost    $0.00      │
+    ╚═╝  ╚═══╝╚═╝  ╚│ ● adaptive                           │
+                    │   max                                │
+                    │   high                               │rite grep patch
+                    │   medium                             │
+                    │   low                                │
                     │   off                                │
-    NAVI · wired cod│ agent for local-first builders       │
+    NAVI · wired cod│                                      │
                     │                                      │
                     ╰──────────────────────────────────────╯
 
