@@ -64,6 +64,10 @@ pub enum RuntimeEventKind {
     ApprovalRequired(ApprovalRequest),
     /// An approval request has been resolved (approved or denied).
     ApprovalResolved(ApprovalDecision),
+    /// The assistant has requested an interactive user choice.
+    QuestionRequired(QuestionRequest),
+    /// An interactive user choice has been resolved.
+    QuestionResolved(QuestionResponse),
     /// A tool invocation has begun execution.
     ToolStarted(ToolInvocation),
     /// A tool invocation has completed.
@@ -80,6 +84,10 @@ pub enum RuntimeEventKind {
         input_tokens: u64,
         /// Number of output/completion tokens produced.
         output_tokens: u64,
+        /// Number of tokens written to the prompt cache (Anthropic).
+        cache_creation_tokens: u64,
+        /// Number of tokens read from the prompt cache (Anthropic).
+        cache_read_tokens: u64,
     },
     /// The session has been persisted to disk.
     SessionSaved {
@@ -143,15 +151,25 @@ impl RuntimeEventKind {
             RuntimeEventKind::ApprovalResolved(decision) => {
                 Some(AgentEvent::ApprovalResolved(decision))
             }
+            RuntimeEventKind::QuestionRequired(request) => {
+                Some(AgentEvent::QuestionRequested(request))
+            }
+            RuntimeEventKind::QuestionResolved(response) => {
+                Some(AgentEvent::QuestionResolved(response))
+            }
             RuntimeEventKind::ToolCompleted(result) => Some(AgentEvent::ToolCompleted(result)),
             RuntimeEventKind::HarnessTrace(value) => Some(AgentEvent::HarnessTrace(value)),
             RuntimeEventKind::PatchProposed(patch) => Some(AgentEvent::PatchProposed(patch)),
             RuntimeEventKind::TokensUpdated {
                 input_tokens,
                 output_tokens,
+                cache_creation_tokens,
+                cache_read_tokens,
             } => Some(AgentEvent::UsageReported {
                 input_tokens,
                 output_tokens,
+                cache_creation_tokens,
+                cache_read_tokens,
             }),
             RuntimeEventKind::MicroCompactApplied { messages_cleared } => {
                 Some(AgentEvent::MicroCompactApplied { messages_cleared })
@@ -211,6 +229,10 @@ pub enum AgentEvent {
     ApprovalRequested(ApprovalRequest),
     /// An approval request was resolved.
     ApprovalResolved(ApprovalDecision),
+    /// The assistant requested an interactive user choice.
+    QuestionRequested(QuestionRequest),
+    /// An interactive user choice was resolved.
+    QuestionResolved(QuestionResponse),
     /// The same tool was called consecutively with identical arguments.
     /// The tool still executes; this is a notification to the user.
     RepeatedToolCallWarning {
@@ -230,6 +252,10 @@ pub enum AgentEvent {
         input_tokens: u64,
         /// Number of output/completion tokens produced.
         output_tokens: u64,
+        /// Number of tokens written to the prompt cache (Anthropic).
+        cache_creation_tokens: u64,
+        /// Number of tokens read from the prompt cache (Anthropic).
+        cache_read_tokens: u64,
     },
     /// Micro-compaction cleared stale tool results from history.
     MicroCompactApplied {
@@ -259,6 +285,62 @@ pub struct ApprovalRequest {
     pub summary: String,
     /// The security risk category that triggered the approval requirement.
     pub risk: ApprovalRisk,
+}
+
+/// A selectable option in a [`QuestionRequest`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct QuestionOption {
+    /// Short option label shown in the selection UI and returned to the model.
+    pub label: String,
+    /// Optional explanatory text shown below the label.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+}
+
+/// A pending interactive question requested by the assistant through the
+/// `question` tool.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct QuestionRequest {
+    /// Unique identifier matching the tool invocation id.
+    pub id: String,
+    /// Prompt shown to the user.
+    pub question: String,
+    /// Selectable options.
+    #[serde(default)]
+    pub options: Vec<QuestionOption>,
+    /// Whether more than one option may be selected.
+    #[serde(default)]
+    pub multiple: bool,
+    /// Whether the UI should allow a free-form custom answer.
+    #[serde(default)]
+    pub allow_custom: bool,
+}
+
+/// Resolution for an interactive [`QuestionRequest`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum QuestionResponse {
+    /// The user selected one or more answers.
+    Answered {
+        /// Question/tool invocation id.
+        id: String,
+        /// Selected labels or the custom answer text.
+        answers: Vec<String>,
+    },
+    /// The user dismissed the question without answering.
+    Dismissed {
+        /// Question/tool invocation id.
+        id: String,
+    },
+}
+
+impl QuestionResponse {
+    /// Returns the request id this response resolves.
+    pub fn id(&self) -> &str {
+        match self {
+            Self::Answered { id, .. } | Self::Dismissed { id } => id,
+        }
+    }
 }
 
 /// The security risk category associated with an approval request.

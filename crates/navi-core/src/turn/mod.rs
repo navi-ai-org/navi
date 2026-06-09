@@ -309,13 +309,19 @@ async fn collect_model_output(ctx: &TurnContext, request: ModelRequest) -> Resul
             ModelStreamEvent::Usage {
                 input_tokens,
                 output_tokens,
+                cache_creation_tokens,
+                cache_read_tokens,
             } => {
                 let in_tok = input_tokens.unwrap_or(0);
                 let out_tok = output_tokens.unwrap_or(0);
+                let cache_create = cache_creation_tokens.unwrap_or(0);
+                let cache_read = cache_read_tokens.unwrap_or(0);
                 if let Some(ref tx) = ctx.event_tx {
                     let _ = tx.send(AgentEvent::UsageReported {
                         input_tokens: in_tok,
                         output_tokens: out_tok,
+                        cache_creation_tokens: cache_create,
+                        cache_read_tokens: cache_read,
                     });
                 }
                 let mut state = ctx.compact_state.lock().await;

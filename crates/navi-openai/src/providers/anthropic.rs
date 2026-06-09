@@ -203,13 +203,21 @@ pub(crate) fn parse_anthropic_sse_with_state(
 
 // ── Anthropic message conversion ─────────────────────────────────────────────
 
-pub(crate) fn anthropic_messages(messages: &[ModelMessage]) -> (String, Vec<Value>) {
+pub(crate) fn anthropic_messages(messages: &[ModelMessage]) -> (Vec<Value>, Vec<Value>) {
     let mut system = Vec::new();
     let mut converted = Vec::new();
 
     for message in messages {
         match message.role {
-            ModelRole::System => system.push(message.content.clone()),
+            ModelRole::System => {
+                // Send system messages as structured content blocks with
+                // cache_control to enable Anthropic prompt caching.
+                system.push(json!({
+                    "type": "text",
+                    "text": message.content,
+                    "cache_control": { "type": "ephemeral" }
+                }));
+            }
             ModelRole::User => converted.push(json!({
                 "role": "user",
                 "content": message.content,
@@ -246,7 +254,7 @@ pub(crate) fn anthropic_messages(messages: &[ModelMessage]) -> (String, Vec<Valu
         }
     }
 
-    (system.join("\n\n"), converted)
+    (system, converted)
 }
 
 // ── Anthropic tool definition conversion ─────────────────────────────────────

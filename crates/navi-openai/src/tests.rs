@@ -368,6 +368,8 @@ fn parses_chat_completions_ollama_usage() {
         vec![ModelStreamEvent::Usage {
             input_tokens: Some(123),
             output_tokens: Some(45),
+            cache_creation_tokens: None,
+            cache_read_tokens: None,
         }]
     );
 }
@@ -1179,7 +1181,10 @@ fn anthropic_messages_separates_system() {
         ModelMessage::assistant("Hi there!"),
     ];
     let (system, converted) = crate::providers::anthropic::anthropic_messages(&messages);
-    assert_eq!(system, "You are helpful.");
+    assert_eq!(system.len(), 1);
+    assert_eq!(system[0]["type"], "text");
+    assert_eq!(system[0]["text"], "You are helpful.");
+    assert_eq!(system[0]["cache_control"]["type"], "ephemeral");
     assert_eq!(converted.len(), 2);
     assert_eq!(converted[0]["role"], "user");
     assert_eq!(converted[0]["content"], "Hello");
@@ -1196,7 +1201,10 @@ fn anthropic_messages_merges_multiple_system() {
         ModelMessage::user("Hi"),
     ];
     let (system, _) = crate::providers::anthropic::anthropic_messages(&messages);
-    assert_eq!(system, "Rule 1.\n\nRule 2.");
+    assert_eq!(system.len(), 2);
+    assert_eq!(system[0]["text"], "Rule 1.");
+    assert_eq!(system[1]["text"], "Rule 2.");
+    assert_eq!(system[0]["cache_control"]["type"], "ephemeral");
 }
 
 // ── Gemini content conversion ───────────────────────────────────────────────
