@@ -175,39 +175,6 @@ pub(crate) fn build_chat_render_for_messages(
                         ChatLineSource::Message(index),
                     );
                 }
-
-                if let (Some(model_label), Some(provider_label)) =
-                    (&msg.model_label, &msg.provider_label)
-                {
-                    let elapsed = msg
-                        .elapsed_ms
-                        .map(|ms| {
-                            if ms < 1000 {
-                                format!("{ms}ms")
-                            } else {
-                                format!("{:.1}s", ms as f64 / 1000.0)
-                            }
-                        })
-                        .unwrap_or_default();
-
-                    let status = visible_status(msg.status.as_deref());
-                    let usage = msg
-                        .usage_label
-                        .as_ref()
-                        .map(|usage| format!(" • {usage}"))
-                        .unwrap_or_default();
-                    let attr_text =
-                        format!("◇ {model_label} via {provider_label} {elapsed}{status}{usage}");
-                    let attr_len = attr_text.chars().count();
-                    let dash_count = chat_width.saturating_sub(attr_len + 2);
-                    let dashes: String = std::iter::repeat_n('─', dash_count).collect();
-
-                    rendered_lines.push(Line::from(vec![
-                        Span::styled(format!(" {attr_text} "), Style::default().fg(muted())),
-                        Span::styled(dashes, Style::default().fg(ghost())),
-                    ]));
-                    line_sources.push(ChatLineSource::Message(index));
-                }
             }
         }
         index += 1;
@@ -232,16 +199,6 @@ fn latest_tool_group_start(messages: &[&ChatMessage]) -> Option<usize> {
         previous_was_tool = is_tool;
     }
     latest
-}
-
-fn visible_status(status: Option<&str>) -> String {
-    let Some(status) = status else {
-        return String::new();
-    };
-    if status.starts_with("tool:") || status.starts_with("approval:") {
-        return String::new();
-    }
-    format!(" • {status}")
 }
 
 fn push_block_gap(lines: &mut Vec<Line<'static>>, sources: &mut Vec<ChatLineSource>) {
