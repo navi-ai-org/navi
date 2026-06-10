@@ -141,7 +141,7 @@ impl ProviderBehavior for AnthropicBehavior {
     fn build_headers(
         &self,
         api_key: &str,
-        _endpoint: Endpoint,
+        endpoint: Endpoint,
     ) -> Result<HeaderMap, ProviderError> {
         let mut headers = HeaderMap::new();
         headers.insert("x-api-key", HeaderValue::from_str(api_key)?);
@@ -149,6 +149,12 @@ impl ProviderBehavior for AnthropicBehavior {
             "anthropic-version",
             HeaderValue::from_static(ANTHROPIC_VERSION),
         );
+        if matches!(endpoint, Endpoint::Models) {
+            headers.insert(
+                "authorization",
+                HeaderValue::from_str(&format!("Bearer {}", api_key))?,
+            );
+        }
         headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
         Ok(headers)
     }
@@ -432,7 +438,10 @@ impl ProviderBehavior for CustomBehavior {
 pub(crate) fn behavior_for_provider(provider_id: &ProviderId) -> Box<dyn ProviderBehavior> {
     match provider_id.as_str() {
         ProviderId::OPENAI => Box::new(OpenAiBehavior),
-        ProviderId::ANTHROPIC => Box::new(AnthropicBehavior),
+        ProviderId::ANTHROPIC
+        | ProviderId::MIMO_ANTHROPIC_CN
+        | ProviderId::MIMO_ANTHROPIC_SGP
+        | ProviderId::MIMO_ANTHROPIC_AMS => Box::new(AnthropicBehavior),
         ProviderId::GOOGLE_GEMINI => Box::new(GeminiBehavior),
         ProviderId::OPENROUTER => Box::new(OpenRouterBehavior),
         ProviderId::GITHUB_COPILOT => Box::new(GitHubCopilotBehavior),

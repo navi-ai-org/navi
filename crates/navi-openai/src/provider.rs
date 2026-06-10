@@ -255,7 +255,10 @@ impl ModelProvider for OpenAiProvider {
     }
 
     async fn list_models(&self) -> Result<Vec<String>> {
-        let base_url = self.base_url.trim_end_matches('/');
+        let mut base_url = self.base_url.trim_end_matches('/').to_string();
+        if base_url.ends_with("/anthropic") {
+            base_url = base_url.replace("/anthropic", "/v1");
+        }
         let url = format!("{}/models", base_url);
         tracing::info!(provider = %self.provider_id, "provider model list request started");
 
