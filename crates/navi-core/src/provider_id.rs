@@ -17,6 +17,9 @@ impl ProviderId {
     pub const OPENCODE_GO: &'static str = "opencode-go";
     pub const GROQ: &'static str = "groq";
     pub const XAI: &'static str = "xai";
+    pub const MIMO_ANTHROPIC_CN: &'static str = "mimo-anthropic-cn";
+    pub const MIMO_ANTHROPIC_SGP: &'static str = "mimo-anthropic-sgp";
+    pub const MIMO_ANTHROPIC_AMS: &'static str = "mimo-anthropic-ams";
 
     // ── Constructors ─────────────────────────────────────────────────────────
 
@@ -41,6 +44,9 @@ impl ProviderId {
                 Self::OPENCODE_GO,
                 Self::GROQ,
                 Self::XAI,
+                Self::MIMO_ANTHROPIC_CN,
+                Self::MIMO_ANTHROPIC_SGP,
+                Self::MIMO_ANTHROPIC_AMS,
             ]
             .contains(&constant),
             "not a known provider constant: {constant}"
@@ -106,6 +112,9 @@ mod tests {
             ProviderId::OPENCODE_GO,
             ProviderId::GROQ,
             ProviderId::XAI,
+            ProviderId::MIMO_ANTHROPIC_CN,
+            ProviderId::MIMO_ANTHROPIC_SGP,
+            ProviderId::MIMO_ANTHROPIC_AMS,
         ];
         for c in constants {
             let id = ProviderId::known(c);

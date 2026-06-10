@@ -13,7 +13,7 @@ use crate::theme::filtered_theme_options;
 use crate::ui::effect::UiEffect;
 use crate::ui::list::SelectListState;
 use crossterm::event::{KeyCode, KeyModifiers};
-use navi_sdk::{QuestionResponse, provider_catalog};
+use navi_sdk::QuestionResponse;
 
 use crate::runtime::spawn_runtime_task;
 
@@ -363,12 +363,19 @@ pub(crate) fn handle_settings_key(app: &mut TuiApp, code: KeyCode) -> bool {
     false
 }
 
-pub(crate) fn handle_providers_key(app: &mut TuiApp, code: KeyCode) -> bool {
-    let providers = provider_catalog(&app.loaded_config.config);
+pub(crate) fn handle_providers_key(
+    app: &mut TuiApp,
+    code: KeyCode,
+    modifiers: KeyModifiers,
+) -> bool {
+    let providers = app.filtered_providers();
     let mut list_state =
         SelectListState::new(app.selected_provider_setting, app.provider_settings_scroll);
     match code {
-        KeyCode::Esc => super::close_active_modal(app),
+        KeyCode::Esc => {
+            app.provider_filter.clear();
+            super::close_active_modal(app);
+        }
         KeyCode::Down => {
             list_state.select_next(providers.len());
             list_state.sync_scroll(12);
@@ -377,7 +384,7 @@ pub(crate) fn handle_providers_key(app: &mut TuiApp, code: KeyCode) -> bool {
             list_state.select_previous();
             list_state.sync_scroll(12);
         }
-        KeyCode::Enter | KeyCode::Char('k') => {
+        KeyCode::Enter => {
             if let Some(provider) = providers.get(app.selected_provider_setting) {
                 app.pending_provider_setup = Some(provider.id.clone());
                 app.pending_model_selection = None;
@@ -386,16 +393,38 @@ pub(crate) fn handle_providers_key(app: &mut TuiApp, code: KeyCode) -> bool {
                 super::apply_ui_effect(app, UiEffect::OpenModal(ModalKind::ApiKeyEntry));
             }
         }
-        KeyCode::Char('o') | KeyCode::Char('O') => {
+        KeyCode::Char('k') if modifiers.contains(KeyModifiers::CONTROL) => {
+            if let Some(provider) = providers.get(app.selected_provider_setting) {
+                app.pending_provider_setup = Some(provider.id.clone());
+                app.pending_model_selection = None;
+                app.api_key_input.clear();
+                app.api_key_cursor = 0;
+                super::apply_ui_effect(app, UiEffect::OpenModal(ModalKind::ApiKeyEntry));
+            }
+        }
+        KeyCode::Char('o') if modifiers.contains(KeyModifiers::CONTROL) => {
             if let Some(provider) = providers.get(app.selected_provider_setting) {
                 start_provider_oauth(app, provider);
             }
         }
-        KeyCode::Char('r') | KeyCode::Char('R') => {
+        KeyCode::Char('r') if modifiers.contains(KeyModifiers::CONTROL) => {
             if let Some(provider) = providers.get(app.selected_provider_setting) {
                 let provider_id = provider.id.clone();
                 super::provider_sync::sync_provider_tui(app, &provider_id);
             }
+        }
+        KeyCode::Char('d') if modifiers.contains(KeyModifiers::CONTROL) => {
+            if let Some(provider) = providers.get(app.selected_provider_setting) {
+                let _ = app.credential_store().delete_api_key(&provider.id);
+            }
+        }
+        KeyCode::Char(ch) => {
+            app.provider_filter.push(ch);
+            list_state = SelectListState::new(0, 0);
+        }
+        KeyCode::Backspace => {
+            app.provider_filter.pop();
+            list_state = SelectListState::new(0, 0);
         }
         _ => {}
     }
@@ -405,11 +434,15 @@ pub(crate) fn handle_providers_key(app: &mut TuiApp, code: KeyCode) -> bool {
 }
 
 pub(crate) fn handle_sessions_key(app: &mut TuiApp, code: KeyCode) -> bool {
+    let sessions = app.filtered_sessions();
     let mut list_state = SelectListState::new(app.selected_session, app.session_scroll);
     match code {
-        KeyCode::Esc => super::close_active_modal(app),
+        KeyCode::Esc => {
+            app.session_filter.clear();
+            super::close_active_modal(app);
+        }
         KeyCode::Down => {
-            list_state.select_next(app.saved_sessions.len());
+            list_state.select_next(sessions.len());
             list_state.sync_scroll(10);
         }
         KeyCode::Up => {
@@ -417,19 +450,35 @@ pub(crate) fn handle_sessions_key(app: &mut TuiApp, code: KeyCode) -> bool {
             list_state.sync_scroll(10);
         }
         KeyCode::Enter => {
-            if let Some(snapshot) = app.saved_sessions.get(app.selected_session).cloned() {
+            let snapshot = sessions.get(app.selected_session).copied().cloned();
+            drop(sessions);
+            if let Some(snapshot) = snapshot {
                 save_current_session(app);
                 load_session(app, &snapshot);
             }
+            app.session_filter.clear();
             super::close_all_modals(app);
         }
         KeyCode::Delete => {
-            if let Some(snapshot) = app.saved_sessions.get(app.selected_session) {
-                let _ = app.engine().delete_saved_session(snapshot.id.as_str());
+            let session_id = sessions.get(app.selected_session).map(|s| s.id.clone());
+            drop(sessions);
+            if let Some(id) = session_id {
+                let _ = app.engine().delete_saved_session(id.as_str());
             }
             app.saved_sessions = load_saved_sessions(&app.session_store);
-            list_state.clamp(app.saved_sessions.len());
+            let sessions = app.filtered_sessions();
+            list_state.clamp(sessions.len());
             list_state.sync_scroll(10);
+        }
+        KeyCode::Char(ch) => {
+            app.session_filter.push(ch);
+            app.session_scroll = 0;
+            app.selected_session = 0;
+        }
+        KeyCode::Backspace => {
+            app.session_filter.pop();
+            app.session_scroll = 0;
+            app.selected_session = 0;
         }
         _ => {}
     }
