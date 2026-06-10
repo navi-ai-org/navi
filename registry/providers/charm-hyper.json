@@ -1,0 +1,65 @@
+{
+  "id": "charm-hyper",
+  "label": "Charm Hyper",
+  "description": "Hyper provider",
+  "kind": "openai-chat-completions",
+  "api_key_env": "CHARM_HYPER_API_KEY",
+  "base_url": null,
+  "models": [
+    {
+      "name": "Kimi K2.6",
+      "task_size": "large",
+      "context_window_tokens": 256000
+    },
+    {
+      "name": "Kimi K2.5",
+      "task_size": "large",
+      "context_window_tokens": 256000
+    },
+    {
+      "name": "DeepSeek V4 Pro",
+      "task_size": "large",
+      "context_window_tokens": 1000000
+    },
+    {
+      "name": "DeepSeek V4 Flash",
+      "task_size": "small",
+      "context_window_tokens": 1000000
+    },
+    {
+      "name": "Gemma 4 26B A4B",
+      "task_size": "small",
+      "context_window_tokens": 262144
+    },
+    {
+      "name": "GLM-5.1",
+      "task_size": "large",
+      "context_window_tokens": 200000
+    },
+    {
+      "name": "GLM-5",
+      "task_size": "large",
+      "context_window_tokens": 200000
+    },
+    {
+      "name": "Qwen 3 32B",
+      "task_size": "small",
+      "context_window_tokens": 128000
+    },
+    {
+      "name": "MiniMax M2.1",
+      "task_size": "small",
+      "context_window_tokens": 204800
+    },
+    {
+      "name": "gpt-oss-120b",
+      "task_size": "large",
+      "context_window_tokens": 128000
+    },
+    {
+      "name": "gpt-oss-20b",
+      "task_size": "small",
+      "context_window_tokens": 128000
+    }
+  ]
+}

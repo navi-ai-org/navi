@@ -603,10 +603,17 @@ fn selecting_model_without_provider_key_opens_key_prompt() {
     let mut app = app_with_missing_provider_key();
     app.mode = Mode::Models;
 
+    // Models from unauthenticated providers (except free/public ones) are
+    // hidden in the picker. The selected test-provider model is filtered out,
+    // so Enter is a no-op and mode stays Models.
     handle_model_key(&mut app, KeyCode::Enter, KeyModifiers::NONE);
-
-    assert_eq!(app.mode, Mode::ApiKeyEntry);
-    assert_eq!(app.pending_model_selection, Some(app.selected_model));
+    assert_eq!(app.mode, Mode::Models);
+    // Verify the test-provider model is not in the visible rows
+    let rows = build_model_rows(&app);
+    assert!(!rows.iter().any(|row| match row {
+        ListRow::Model { index } => app.models[*index].provider_id == "test-provider",
+        _ => false,
+    }));
 }
 
 #[test]
@@ -614,14 +621,24 @@ fn model_picker_filters_by_model_and_provider_text() {
     let mut app = test_app("");
     open_model_picker(&mut app);
 
+    // Only free/public models should appear without API keys
     app.model_filter = "gemini".to_string();
     let rows = build_model_rows(&app);
-    assert!(rows.iter().any(|row| match row {
+    // Gemini models require an API key, so they should be filtered out
+    assert!(!rows.iter().any(|row| match row {
         ListRow::Header { label, .. } => label.contains("Gemini"),
         ListRow::Model { .. } => false,
     }));
-    assert!(rows.iter().any(|row| match row {
+    assert!(!rows.iter().any(|row| match row {
         ListRow::Model { index } => app.models[*index].name.contains("gemini"),
+        ListRow::Header { .. } => false,
+    }));
+
+    // Free models should still appear
+    app.model_filter = "free".to_string();
+    let rows = build_model_rows(&app);
+    assert!(rows.iter().any(|row| match row {
+        ListRow::Model { index } => app.models[*index].name.contains("free"),
         ListRow::Header { .. } => false,
     }));
 }
@@ -1565,7 +1582,10 @@ async fn command_palette_sync_models_starts_sync() {
     assert!(app.is_loading);
     assert!(app.loading_start.is_some());
     assert_eq!(app.messages.len(), 1);
-    assert_eq!(app.messages[0].content, "Syncing models from providers...");
+    assert_eq!(
+        app.messages[0].content,
+        "Syncing registry and models from providers..."
+    );
     assert_eq!(app.messages[0].status, Some("syncing".to_string()));
 }
 
@@ -1600,7 +1620,10 @@ async fn model_picker_ctrl_r_triggers_all_provider_sync() {
     assert!(app.is_loading);
     assert_eq!(app.mode, Mode::Normal);
     assert_eq!(app.messages.len(), 1);
-    assert_eq!(app.messages[0].content, "Syncing models from providers...");
+    assert_eq!(
+        app.messages[0].content,
+        "Syncing registry and models from providers..."
+    );
 }
 
 #[test]

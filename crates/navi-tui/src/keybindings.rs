@@ -79,6 +79,7 @@ pub(crate) fn open_model_picker(app: &mut TuiApp) {
     app.pending_model_selection = None;
     app.model_filter.clear();
     app.model_scroll = 0;
+    app.refresh_authenticated_providers();
 
     let rows = build_model_rows(app);
     app.selected_model = first_model_index(&rows).unwrap_or(app.selected_model);

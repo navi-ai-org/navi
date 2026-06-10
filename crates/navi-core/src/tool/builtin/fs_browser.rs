@@ -9,7 +9,7 @@ use super::helpers;
 use crate::tool::{Tool, ToolDefinition, ToolInvocation, ToolKind, ToolResult};
 
 const FS_MAX_DEPTH: u64 = 10;
-const FS_MAX_RESULTS: usize = 500;
+const FS_MAX_RESULTS: usize = 100;
 
 pub(crate) struct FsBrowserTool;
 

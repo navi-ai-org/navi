@@ -1,0 +1,55 @@
+{
+  "id": "minimax",
+  "label": "MiniMax",
+  "description": "MiniMax platform",
+  "kind": "openai-chat-completions",
+  "api_key_env": "MINIMAX_API_KEY",
+  "base_url": "https://api.minimax.io/v1",
+  "models": [
+    {
+      "name": "MiniMax-M2.7",
+      "task_size": "large",
+      "context_window_tokens": 204800
+    },
+    {
+      "name": "MiniMax-M2.5",
+      "task_size": "large",
+      "context_window_tokens": 204800
+    },
+    {
+      "name": "MiniMax-M2.1",
+      "task_size": "small",
+      "context_window_tokens": 204800
+    },
+    {
+      "name": "MiniMax-Text-01",
+      "task_size": "large",
+      "context_window_tokens": 256000
+    },
+    {
+      "name": "MiniMax-Text-01-456B",
+      "task_size": "large",
+      "context_window_tokens": 256000
+    },
+    {
+      "name": "abab6.5-chat",
+      "task_size": "large",
+      "context_window_tokens": 200000
+    },
+    {
+      "name": "abab6.5g-chat",
+      "task_size": "large",
+      "context_window_tokens": 200000
+    },
+    {
+      "name": "abab6.5s-chat",
+      "task_size": "small",
+      "context_window_tokens": 200000
+    },
+    {
+      "name": "abab6.5t-chat",
+      "task_size": "small",
+      "context_window_tokens": 200000
+    }
+  ]
+}

@@ -1,16 +1,55 @@
 mod opencode;
 mod registry;
 
+use std::cell::RefCell;
+use std::sync::Arc;
+
 use crate::config::types::{
     ModelOption, NaviConfig, ProviderConfig, ProviderKind, ProviderModelConfig,
 };
+use crate::registry::RegistryStore;
 
 pub use opencode::{is_free_model_name, model_can_run_publicly, provider_request_model_name};
 
-/// Returns the full provider catalog: built-in providers merged with any
-/// user-configured overrides.
+// ── Thread-local registry store for zero-API-change catalog integration ──
+
+thread_local! {
+    static REGISTRY_STORE: RefCell<Option<Arc<RegistryStore>>> = const { RefCell::new(None) };
+}
+
+/// Sets the thread-local registry store used by [`provider_catalog`].
+/// Typically called once during engine initialization.
+pub fn set_registry_store(store: Arc<RegistryStore>) {
+    REGISTRY_STORE.with(|cell| {
+        *cell.borrow_mut() = Some(store);
+    });
+}
+
+/// Returns the full provider catalog: SQLite registry cache merged with any
+/// user-configured overrides. Falls back to built-in providers if the
+/// registry cache is empty or unavailable.
 pub fn provider_catalog(config: &NaviConfig) -> Vec<ProviderConfig> {
-    let mut providers = registry::built_in_providers();
+    // Try loading from the SQLite registry cache first.
+    let registry_providers = REGISTRY_STORE.with(|cell| {
+        cell.borrow()
+            .as_ref()
+            .and_then(|store| match store.load_all_providers() {
+                Ok(providers) if !providers.is_empty() => Some(providers),
+                Ok(_) => {
+                    tracing::debug!("registry cache is empty, falling back to built-in providers");
+                    None
+                }
+                Err(err) => {
+                    tracing::warn!(
+                        error = %err,
+                        "failed to load from registry cache, falling back to built-in"
+                    );
+                    None
+                }
+            })
+    });
+
+    let mut providers = registry_providers.unwrap_or_else(registry::built_in_providers);
     merge_provider_configs(&mut providers, config.providers.clone());
     providers
 }
@@ -95,13 +134,15 @@ pub(crate) fn effective_tool_prompt_manifest(config: &NaviConfig) -> bool {
 
 impl NaviConfig {
     /// Updates the model list for a provider, merging with existing model metadata
-    /// from the built-in catalog.
+    /// from the registry or built-in catalog.
     pub fn update_provider_models(&mut self, provider_id: &str, model_names: &[String]) {
         let mut existing_models = std::collections::HashMap::new();
 
         let provider_id = canonical_provider_id(provider_id).to_string();
 
-        if let Some(built_in) = registry::built_in_providers()
+        // Look up existing metadata from the catalog (which now comes from SQLite
+        // registry cache when available, falling back to built-in).
+        if let Some(built_in) = provider_catalog(self)
             .into_iter()
             .find(|p| canonical_provider_id(&p.id) == provider_id)
         {
@@ -113,6 +154,7 @@ impl NaviConfig {
             }
         }
 
+        // Also check user overrides.
         if let Some(existing_override) = self
             .providers
             .iter()

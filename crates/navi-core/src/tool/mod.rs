@@ -12,7 +12,7 @@ mod tests;
 
 use builtin::{
     ApplyPatchTool, BashTool, BuildRunnerTool, FsBrowserTool, GitOpsTool, GrepTool,
-    PackageManagerTool, QuestionTool, ReadFileTool, RuntimeInfoTool, TestRunnerTool,
+    PackageManagerTool, PlanTool, QuestionTool, ReadFileTool, RuntimeInfoTool, TestRunnerTool,
     ToolWorkflowTool, TopFilesTool, WriteFileTool, truncate_tool_result,
 };
 
@@ -369,6 +369,7 @@ impl ToolExecutor {
         self.register(BuildRunnerTool::new(project_root.clone()));
         self.register(GitOpsTool::new(project_root.clone()));
         self.register(QuestionTool);
+        self.register(PlanTool::new(self.policy.clone()));
         self.register(PackageManagerTool::new(project_root));
         self.register(ToolWorkflowTool::new(self.policy.clone()));
         self.register(RuntimeInfoTool::new(

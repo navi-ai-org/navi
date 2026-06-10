@@ -6,7 +6,7 @@ use navi_core::{
     ModelOption, ProviderConfig, QuestionResponse, RuntimeEvent, SessionId, SessionSnapshot,
     SessionStore, SkillManifest, available_model_options, canonical_provider_id,
     config::effective_context_window, discover_configured_skills, model_can_run_publicly,
-    provider_catalog, resolve_provider_api_key, resolve_provider_config,
+    provider_catalog, registry::RegistryStore, resolve_provider_api_key, resolve_provider_config,
     resolve_provider_credential_status, save_global_config, save_project_config,
 };
 use navi_mcp::{LoadedMcpServers, McpServerInfo, load_configured_mcp_servers};
@@ -76,12 +76,28 @@ impl NaviEngineBuilder {
             Some(config) => config,
             None => navi_core::NaviConfig::load(&self.project_dir)?,
         };
+
+        // Initialize the registry store and set it as the catalog source
+        // so provider_catalog() uses the SQLite cache when available.
+        let registry_store = match RegistryStore::open(&loaded_config.data_dir) {
+            Ok(store) => {
+                let store = Arc::new(store);
+                navi_core::set_registry_store(store.clone());
+                Some(store)
+            }
+            Err(err) => {
+                tracing::warn!(error = %err, "failed to open registry store, using built-in providers");
+                None
+            }
+        };
+
         Ok(NaviEngine {
             inner: Arc::new(NaviEngineInner {
                 project_dir: self.project_dir,
                 loaded_config: RwLock::new(loaded_config),
                 host_tools: self.host_tools,
                 sessions: RwLock::new(HashMap::new()),
+                registry_store,
             }),
         })
     }
@@ -101,6 +117,7 @@ struct NaviEngineInner {
     loaded_config: RwLock<LoadedConfig>,
     host_tools: Vec<Arc<dyn navi_core::Tool>>,
     sessions: RwLock<HashMap<String, Arc<NaviSession>>>,
+    registry_store: Option<Arc<RegistryStore>>,
 }
 
 /// An active NAVI session with its own runtime, event stream, and approval handles.
@@ -383,6 +400,22 @@ impl NaviEngine {
     pub fn subscribe_events(&self, session_id: &str) -> Result<broadcast::Receiver<RuntimeEvent>> {
         let session = self.session(session_id)?;
         Ok(session.events.resubscribe())
+    }
+
+    /// Syncs the remote provider registry into the local SQLite cache.
+    ///
+    /// Fetches the manifest and all provider definitions from the NAVI repo
+    /// on GitHub. Returns  if the cache was updated.
+    pub async fn sync_registry(&self, force: bool) -> Result<bool> {
+        let store = self
+            .inner
+            .registry_store
+            .as_ref()
+            .ok_or_else(|| NaviError::Config("registry store is not available".into()))?;
+        let fetcher = navi_core::registry::RegistryFetcher::new();
+        navi_core::registry::sync_registry(store, &fetcher, force)
+            .await
+            .map_err(|e| NaviError::Config(e.to_string()))
     }
 
     /// Fetches the latest model list from a specific provider and updates config.

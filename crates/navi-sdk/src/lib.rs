@@ -51,8 +51,10 @@ pub use navi_core::{
     available_model_options, build_system_prompt, canonical_provider_id, compact_tool_observation,
     effective_context_window, is_free_model_name, log_path, model_can_run_publicly,
     provider_catalog, provider_request_model_name, resolve_provider_config,
-    resolve_provider_credential_status, save_global_config,
+    resolve_provider_credential_status, save_global_config, set_registry_store,
 };
+// Registry
+pub use navi_core::registry::{RegistryFetcher, RegistryStore};
 
 #[cfg(test)]
 mod tests {

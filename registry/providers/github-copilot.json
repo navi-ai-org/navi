@@ -1,0 +1,35 @@
+{
+  "id": "github-copilot",
+  "label": "GitHub Copilot",
+  "description": "GitHub Copilot OAuth device sign-in",
+  "kind": "openai-chat-completions",
+  "api_key_env": "GITHUB_COPILOT_TOKEN",
+  "base_url": "https://api.githubcopilot.com",
+  "models": [
+    {
+      "name": "gpt-5.1-codex",
+      "task_size": "large",
+      "context_window_tokens": 1000000
+    },
+    {
+      "name": "gpt-5.1",
+      "task_size": "large",
+      "context_window_tokens": 200000
+    },
+    {
+      "name": "gpt-5-mini",
+      "task_size": "small",
+      "context_window_tokens": 512000
+    },
+    {
+      "name": "claude-sonnet-4.5",
+      "task_size": "large",
+      "context_window_tokens": 200000
+    },
+    {
+      "name": "claude-haiku-4.5",
+      "task_size": "small",
+      "context_window_tokens": 200000
+    }
+  ]
+}

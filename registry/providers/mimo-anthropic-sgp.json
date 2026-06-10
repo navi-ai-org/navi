@@ -1,0 +1,35 @@
+{
+  "id": "mimo-anthropic-sgp",
+  "label": "MiMo Singapore (Tokens Plan)",
+  "description": "",
+  "kind": "anthropic-messages",
+  "api_key_env": "MIMO_API_KEY",
+  "base_url": "https://token-plan-sgp.xiaomimimo.com/anthropic",
+  "models": [
+    {
+      "name": "mimo-v2.5-pro",
+      "task_size": "large",
+      "context_window_tokens": 1048576
+    },
+    {
+      "name": "mimo-v2.5",
+      "task_size": "small",
+      "context_window_tokens": 1048576
+    },
+    {
+      "name": "mimo-v2-pro",
+      "task_size": "large",
+      "context_window_tokens": 1048576
+    },
+    {
+      "name": "mimo-v2-omni",
+      "task_size": "small",
+      "context_window_tokens": 262144
+    },
+    {
+      "name": "mimo-v2-flash",
+      "task_size": "small",
+      "context_window_tokens": 262144
+    }
+  ]
+}

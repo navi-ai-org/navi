@@ -1,0 +1,70 @@
+{
+  "id": "groq",
+  "label": "Groq",
+  "description": "Ultra-fast inference",
+  "kind": "openai-chat-completions",
+  "api_key_env": "GROQ_API_KEY",
+  "base_url": "https://api.groq.com/openai/v1",
+  "models": [
+    {
+      "name": "llama-3.3-70b-versatile",
+      "task_size": "large",
+      "context_window_tokens": 128000
+    },
+    {
+      "name": "llama-3.1-8b-instant",
+      "task_size": "small",
+      "context_window_tokens": 32000
+    },
+    {
+      "name": "openai/gpt-oss-120b",
+      "task_size": "large",
+      "context_window_tokens": 128000
+    },
+    {
+      "name": "openai/gpt-oss-20b",
+      "task_size": "small",
+      "context_window_tokens": 128000
+    },
+    {
+      "name": "qwen/qwen3-32b",
+      "task_size": "small",
+      "context_window_tokens": 131072
+    },
+    {
+      "name": "deepseek-r1-distill-llama-70b",
+      "task_size": "large",
+      "context_window_tokens": 128000
+    },
+    {
+      "name": "moonshotai/kimi-k2-instruct",
+      "task_size": "large",
+      "context_window_tokens": 128000
+    },
+    {
+      "name": "meta-llama/llama-4-maverick-17b-128e-instruct",
+      "task_size": "large",
+      "context_window_tokens": 524288
+    },
+    {
+      "name": "meta-llama/llama-4-scout-17b-16e-instruct",
+      "task_size": "small",
+      "context_window_tokens": 1048576
+    },
+    {
+      "name": "meta-llama/llama-guard-4-12b",
+      "task_size": "small",
+      "context_window_tokens": 32000
+    },
+    {
+      "name": "mistral-saba-24b",
+      "task_size": "small",
+      "context_window_tokens": 32000
+    },
+    {
+      "name": "gemma2-9b-it",
+      "task_size": "small",
+      "context_window_tokens": 8192
+    }
+  ]
+}

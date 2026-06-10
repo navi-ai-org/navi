@@ -315,10 +315,18 @@ pub const COMPACT_PROMPT: &str = r#"You are summarizing a conversation between a
 ## 6. All User Messages
 ## 7. Pending Tasks
 ## 8. Current Work
-## 9. Next Step (Optional)
+## 9. Active Work Plan
+If the conversation has an active plan (created via the plan tool), include it here with:
+- Plan ID and title
+- All steps with their completion status
+- Which step to work on next
+If there is no active plan, skip this section.
+## 10. Next Step (Optional)
 List the next step you would take on the current task.
 
-Be thorough and specific. The summary must contain enough detail to continue the conversation seamlessly."#;
+Be thorough and specific. The summary must contain enough detail to continue the conversation seamlessly.
+
+IMPORTANT: If there is an active plan, you MUST continue working on it after reading this summary. Check the plan status, identify the next incomplete step, and proceed. Do not restart the plan or create a new one unless the active plan has been marked completed or abandoned."#;
 
 pub const PARTIAL_COMPACT_PROMPT: &str = r#"You are extending an existing conversation summary with new content. Preserve the existing summary sections and update them with new information. Add any new user messages to section 6. Update sections 8 and 9 based on the most recent work.
 
@@ -328,7 +336,7 @@ Existing summary:
 New conversation to summarize:
 {new_conversation}
 
-Return the complete updated summary with all 9 sections."#;
+Return the complete updated summary with all 10 sections (including Active Work Plan if applicable).\n\nIMPORTANT: If there is an active plan, you MUST preserve all plan details including step completion status. The assistant will continue working on the plan after reading the summary."#;
 
 fn current_unix_millis() -> u64 {
     SystemTime::now()

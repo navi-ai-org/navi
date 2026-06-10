@@ -11,6 +11,7 @@ pub mod model;
 pub mod patch;
 pub mod prompt;
 mod provider_id;
+pub mod registry;
 pub mod runtime;
 pub mod security;
 pub mod session;
@@ -25,6 +26,7 @@ pub use config::{
     ToolPromptManifest, WasmPluginConfig, available_model_options, canonical_provider_id,
     effective_context_window, is_free_model_name, model_can_run_publicly, provider_catalog,
     provider_request_model_name, resolve_provider_config, save_global_config, save_project_config,
+    set_registry_store,
 };
 pub use context::{ContextPacket, ContextSource};
 pub use credentials::{

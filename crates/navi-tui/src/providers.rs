@@ -28,6 +28,7 @@ pub(crate) fn rebuild_provider(app: &mut TuiApp) {
     app.compact_state.context_window =
         navi_sdk::effective_context_window(&app.loaded_config.config);
     refresh_system_context(app);
+    app.refresh_authenticated_providers();
     tracing::info!(
         provider = %app.loaded_config.config.model.provider,
         model = %app.loaded_config.config.model.name,
@@ -36,10 +37,8 @@ pub(crate) fn rebuild_provider(app: &mut TuiApp) {
 }
 
 pub(crate) fn provider_has_api_key(app: &TuiApp, provider_id: &str) -> bool {
-    app.engine()
-        .credential_status(provider_id)
-        .map(|status| status.configured)
-        .unwrap_or(false)
+    app.authenticated_providers
+        .contains(canonical_provider_id(provider_id))
 }
 
 pub(crate) fn model_is_available_for_selection(app: &TuiApp, model: &ModelOption) -> bool {
@@ -239,6 +238,12 @@ pub(crate) fn build_model_rows(app: &TuiApp) -> Vec<ListRow> {
     let mut current_provider: Option<&str> = None;
 
     for (index, model) in app.models.iter().enumerate() {
+        // Only show models from authenticated providers (or free/public models).
+        // Unauthenticated providers are hidden so users only see usable models.
+        if !model_is_available_for_selection(app, model) {
+            continue;
+        }
+
         if !filter.is_empty()
             && !model.name.to_lowercase().contains(&filter)
             && !model.provider_id.to_lowercase().contains(&filter)

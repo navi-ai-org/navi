@@ -21,86 +21,99 @@ navi-sdk (NaviEngine)
 ## Engine Construction
 
 ```rust
-use navi_sdk::NaviEngineBuilder;
+use navi_sdk::{NaviEngineBuilder, NaviEngine};
 
 // From a project directory (loads config, providers, plugins, MCP)
-let engine = NaviEngineBuilder::from_project("/path/to/project")?.build()?;
+let engine = NaviEngineBuilder::from_project(".")
+    .build()
+    .expect("engine");
 
 // With explicit config
-let engine = NaviEngineBuilder::with_config(config).build()?;
+let engine = NaviEngineBuilder::from_project(".")
+    .loaded_config(loaded_config)
+    .build()
+    .expect("engine");
+
+// With host tools
+let engine = NaviEngineBuilder::from_project(".")
+    .host_tool(Arc::new(MyTool))
+    .build()
+    .expect("engine");
 ```
 
-`from_project` loads `NaviConfig` from defaults, global config, and project config. The selected provider is resolved from the catalog plus user overrides. Credentials are resolved from environment variables first, then the credential store.
+`from_project` returns a builder (not `Result`). Config is loaded from defaults, global config, and project config on `build()`. The selected provider is resolved from the catalog plus user overrides. Credentials are resolved from environment variables first, then the credential store.
 
 ## Session Lifecycle
 
-```rust
-// Start a session
-let session = engine.start_session(None).await?; // None = auto-generate ID
-// or
-let session = engine.start_session(Some("my-session-id".into())).await?;
+Session-scoped operations require a `session_id` parameter:
 
-// Send a turn (user message -> events)
-let events = engine.send_turn("explain this codebase").await?;
+```rust
+use navi_sdk::NaviSessionRequest;
+
+// Start a session
+let info = engine.start_session(NaviSessionRequest {
+    project_dir: None,       // defaults to engine's project
+    session_id: None,        // auto-generate
+    context_packets: vec![],
+    active_skills: vec![],
+    initial_messages: vec![],
+}).await?;
+let session_id = info.id;
+
+// Send a turn (user message -> response)
+let response = engine.send_turn(NaviTurnRequest {
+    session_id: session_id.clone(),
+    message: "explain this codebase".into(),
+    context_packets: vec![],
+}).await?;
 
 // Cancel an active turn
-engine.cancel_turn().await?;
+engine.cancel_turn(&session_id).await?;
 
 // Take a persistence snapshot
-engine.snapshot_session().await?;
+let snapshot = engine.snapshot_session(&session_id).await?;
 
 // Close a session
-engine.close_session().await?;
+engine.close_session(&session_id).await?;
 ```
 
 ## Runtime Events
 
-`send_turn` returns a stream of `RuntimeEvent` values. Each event is serializable and UI-agnostic:
-
-| Event | Payload | Description |
-|---|---|---|
-| `session.started` | session id | New session initialized. |
-| `turn.started` | turn id | User message received, turn processing begins. |
-| `assistant.delta` | text chunk | Streaming assistant text. |
-| `assistant.thinking_delta` | text chunk | Streaming thinking text (when visible). |
-| `tool.requested` | tool name, call id, input | Tool call pending approval. |
-| `approval.required` | call id, tool name, input | Approval prompt for write/command tools. |
-| `tool.started` | call id, tool name | Tool execution started. |
-| `tool.completed` | call id, output, success | Tool execution finished. |
-| `context.updated` | packets | Context injection changed. |
-| `tokens.updated` | usage | Token counts updated. |
-| `session.saved` | snapshot path | Session persisted. |
-| `turn.completed` | turn id | Turn finished. |
-| `session.finished` | session id | Session ended. |
-| `error` | message | Error occurred. |
-
-Subscribe to events for streaming:
+Runtime events are delivered via `subscribe_events` as a `broadcast::Receiver<RuntimeEvent>`. Each event has `version` and `kind` fields:
 
 ```rust
-let mut events = engine.subscribe_events().await?;
+use navi_core::RuntimeEvent;
 
-while let Some(event) = events.recv().await {
+// Subscribe to events for a session (synchronous, returns broadcast::Receiver)
+let mut events = engine.subscribe_events(&session_id)?;
+
+// In an async task, receive events
+while let Ok(event) = events.recv().await {
     match event {
         RuntimeEvent::AssistantDelta { text, .. } => { /* render text */ }
         RuntimeEvent::ToolRequested { name, input, .. } => { /* show tool call */ }
         RuntimeEvent::ApprovalRequired { call_id, .. } => {
-            engine.resolve_approval(&call_id, true).await?;
+            engine.resolve_approval(&session_id, ApprovalDecision::Allow).await?;
         }
         // ...
     }
 }
 ```
 
+Events are serializable and UI-agnostic. Common event kinds include `session.started`, `turn.started`, `assistant.delta`, `assistant.thinking_delta`, `tool.requested`, `approval.required`, `tool.started`, `tool.completed`, `context.updated`, `tokens.updated`, `session.saved`, `turn.completed`, `session.finished`, and `error`.
+
 ## Approval Flow
 
 Write and command tools require approval by default. When `approval.required` fires:
 
 ```rust
+use navi_core::ApprovalDecision;
+
 // Approve
-engine.resolve_approval(&call_id, true).await?;
+engine.resolve_approval(&session_id, ApprovalDecision::Allow).await?;
 
 // Deny
-engine.resolve_approval(&call_id, false).await?;
+engine.resolve_approval(&session_id, ApprovalDecision::Deny).await?;
 ```
 
 In headless/autonomous mode, approvals are gated by default. Configure `[approvals]` to auto-allow specific tool kinds if needed.
@@ -108,21 +121,31 @@ In headless/autonomous mode, approvals are gated by default. Configure `[approva
 ## Model Management
 
 ```rust
-// List available models
-let models = engine.list_models().await?;
+// List available models (synchronous)
+let models = engine.list_models();
 
-// Set the active model
-engine.set_model("openai", "gpt-5.5").await?;
+// Select a model (persists config change)
+let result = engine.select_model(NaviModelSelectionRequest {
+    provider_id: "openai".into(),
+    model: "gpt-5.5".into(),
+    save_target: NaviConfigSaveTarget::Auto,
+})?;
 
 // List provider accounts and credential status
-let accounts = engine.list_provider_accounts().await?;
+let accounts = engine.list_provider_accounts()?;
+
+// Set the active model for a session
+engine.set_model(&session_id, "openai", "gpt-5.5").await?;
 ```
 
 ## Skills
 
 ```rust
-// Set active skills for the session
-engine.set_session_skills(vec!["planner".into(), "reviewer".into()]).await?;
+// List discovered skills
+let skills = engine.list_skills()?;
+
+// Set active skills for a session
+engine.set_session_skills(&session_id, vec!["planner".into(), "reviewer".into()]).await?;
 ```
 
 Skills must be configured in `[skills]` and discovered from disk. `set_session_skills` activates them for the current session's system prompt.
@@ -130,8 +153,11 @@ Skills must be configured in `[skills]` and discovered from disk. `set_session_s
 ## MCP Servers
 
 ```rust
-// List configured MCP servers
-let servers = engine.list_mcp_servers().await?;
+// List MCP servers for a session
+let servers = engine.list_mcp_servers(&session_id)?;
+
+// List MCP tool names for a session
+let tools = engine.list_mcp_tools(&session_id)?;
 ```
 
 MCP servers are started by `navi-sdk` on engine build. Their tools are registered with prefixed names (e.g. `memory__search`) and follow the same approval flow as built-in tools. MCP servers can only be configured in global config, not project config.
@@ -143,22 +169,24 @@ Applications embedding NAVI can register custom tools:
 ```rust
 use navi_sdk::host_tool::{SdkHostTool, HostToolHandler};
 use navi_core::tool::Invocation;
+use async_trait::async_trait;
 
 struct MyTool;
 
+#[async_trait]
 impl HostToolHandler for MyTool {
     fn name(&self) -> &str { "my_custom_tool" }
 
-    fn invoke(&self, invocation: &Invocation) -> anyhow::serde_json::Value {
+    async fn invoke(&self, invocation: &Invocation) -> anyhow::Result<serde_json::Value> {
         // Return structured JSON result
-        serde_json::json!({ "status": "ok", "data": "..." })
+        Ok(serde_json::json!({ "status": "ok", "data": "..." }))
     }
 }
 
 let host_tool = SdkHostTool::new(MyTool);
 // Register during engine build
-let engine = NaviEngineBuilder::with_config(config)
-    .with_host_tool(host_tool)
+let engine = NaviEngineBuilder::from_project(".")
+    .host_tool(Arc::new(host_tool))
     .build()?;
 ```
 
@@ -166,10 +194,12 @@ Host tools go through the same `ToolExecutor` and `SecurityPolicy` as built-in t
 
 ## Context Injection
 
-Inject external context into the active session:
+Inject external context into an active session:
 
 ```rust
-engine.add_context_packet(ContextPacket {
+use navi_core::ContextPacket;
+
+engine.add_context_packet(&session_id, ContextPacket {
     source: "external".into(),
     content: "Relevant context for the agent...".into(),
     priority: ContextPriority::High,
@@ -180,7 +210,7 @@ Context packets are included in the next turn's model request.
 
 ## Error Handling
 
-All engine methods return `Result<T, SdkError>`. `SdkError` variants:
+All engine methods return `Result<T, NaviError>`. `NaviError` variants:
 
 | Variant | Description |
 |---|---|
@@ -188,9 +218,10 @@ All engine methods return `Result<T, SdkError>`. `SdkError` variants:
 | `UnknownProvider` | Requested provider id not in catalog. |
 | `SessionNotFound` | Session id does not exist. |
 | `TurnInProgress` | Cannot start a new turn while one is active. |
+| `Config` | Configuration error. |
 | `Internal` | Underlying runtime error. |
 
-`SdkError` implements `std::error::Error` and can be downcast from `anyhow::Error`.
+`NaviError` implements `std::error::Error` and can be downcast from `anyhow::Error`.
 
 ## Configuration for Embedding
 
@@ -218,13 +249,13 @@ navi-sdk = { path = "../navi-sdk" }
 Run SDK-specific tests:
 
 ```bash
-cargo test -p navi-sdk
+just test-crate navi-sdk
 ```
 
 Run the full suite with resource limits:
 
 ```bash
-CARGO_TEST_THREADS=4 cargo test
+just test
 ```
 
 ## See Also

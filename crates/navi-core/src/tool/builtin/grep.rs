@@ -13,7 +13,7 @@ impl Tool for GrepTool {
     fn definition(&self) -> ToolDefinition {
         helpers::definition(
             "grep",
-            "Search project text files for a literal pattern.",
+            "Search project text files for a literal pattern. Returns up to 50 matches by default to save context. Use max_results to request more if needed.",
             ToolKind::Read,
             helpers::json_schema(
                 &[
@@ -34,7 +34,7 @@ impl Tool for GrepTool {
         let root =
             helpers::optional_string(&invocation.input, "path").unwrap_or_else(|| ".".to_string());
         let max_results =
-            helpers::optional_u64(&invocation.input, "max_results").unwrap_or(200) as usize;
+            helpers::optional_u64(&invocation.input, "max_results").unwrap_or(50) as usize;
         let result = tokio::task::spawn_blocking(move || {
             let mut matches = Vec::new();
             helpers::grep_path(Path::new(&root), &pattern, max_results, &mut matches)?;

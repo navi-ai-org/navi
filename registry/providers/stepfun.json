@@ -1,0 +1,60 @@
+{
+  "id": "stepfun",
+  "label": "StepFun",
+  "description": "StepFun AI models",
+  "kind": "openai-chat-completions",
+  "api_key_env": "STEP_API_KEY",
+  "base_url": "https://api.stepfun.ai/v1",
+  "models": [
+    {
+      "name": "step-3.5-flash",
+      "task_size": "large",
+      "context_window_tokens": 256000
+    },
+    {
+      "name": "step-3",
+      "task_size": "large",
+      "context_window_tokens": 128000
+    },
+    {
+      "name": "step-2-16k",
+      "task_size": "large",
+      "context_window_tokens": 16000
+    },
+    {
+      "name": "step-2",
+      "task_size": "large",
+      "context_window_tokens": 256000
+    },
+    {
+      "name": "step-1-256k",
+      "task_size": "large",
+      "context_window_tokens": 256000
+    },
+    {
+      "name": "step-1-128k",
+      "task_size": "large",
+      "context_window_tokens": 128000
+    },
+    {
+      "name": "step-1-32k",
+      "task_size": "small",
+      "context_window_tokens": 32000
+    },
+    {
+      "name": "step-1-8k",
+      "task_size": "small",
+      "context_window_tokens": 8000
+    },
+    {
+      "name": "step-1v",
+      "task_size": "small",
+      "context_window_tokens": 32000
+    },
+    {
+      "name": "step-1",
+      "task_size": "small",
+      "context_window_tokens": 32000
+    }
+  ]
+}

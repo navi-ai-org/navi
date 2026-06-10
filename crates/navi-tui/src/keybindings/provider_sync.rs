@@ -39,12 +39,30 @@ pub fn sync_models_tui(app: &mut TuiApp) {
     let sender = app.async_sender();
     let engine = app.engine();
     tokio::spawn(async move {
+        // First sync the remote registry (fetches latest provider/model definitions).
+        let registry_msg = match engine.sync_registry(false).await {
+            Ok(true) => Some("Registry updated from remote. "),
+            Ok(false) => None,
+            Err(err) => {
+                tracing::warn!(error = %err, "registry sync failed, continuing with model sync");
+                None
+            }
+        };
+
+        // Then sync provider models (queries each provider's API).
         let result = engine.sync_models(NaviConfigSaveTarget::Auto).await;
         let event = match result {
-            Ok(report) => AsyncEvent::SyncCompleted {
-                message: sync_summary(&report),
-                loaded_config: report.loaded_config,
-            },
+            Ok(report) => {
+                let summary = sync_summary(&report);
+                let message = match registry_msg {
+                    Some(prefix) => format!("{prefix}{summary}"),
+                    None => summary,
+                };
+                AsyncEvent::SyncCompleted {
+                    message,
+                    loaded_config: report.loaded_config,
+                }
+            }
             Err(err) => AsyncEvent::SyncCompleted {
                 message: format!("Model sync failed: {err}"),
                 loaded_config: engine.loaded_config(),
@@ -57,7 +75,7 @@ pub fn sync_models_tui(app: &mut TuiApp) {
         status: Some("syncing".to_string()),
         ..ChatMessage::new(
             ChatRole::Assistant,
-            "Syncing models from providers...".to_string(),
+            "Syncing registry and models from providers...".to_string(),
         )
     });
 }

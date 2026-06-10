@@ -175,7 +175,7 @@ fn project_path_label(app: &TuiApp) -> String {
 }
 
 fn header_context_label(app: &TuiApp) -> String {
-    let total = app.compact_state.total_estimated_tokens(app.input.len());
+    let total = app.compact_state.total_estimated_tokens(0);
     format!(
         "{} / {}",
         compact_token_label(total),

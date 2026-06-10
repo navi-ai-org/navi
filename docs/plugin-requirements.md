@@ -42,8 +42,8 @@ Every requirement in this document has a stable ID for traceability. Requirement
 | REQ-MANIFEST-006 | `tools[].id` MUST be unique within the plugin. |
 | REQ-MANIFEST-007 | `capabilities[].id` MUST be unique within the plugin. |
 | REQ-MANIFEST-008 | `tools[].capabilities` MUST reference existing capabilities. |
-| REQ-MANIFEST-009 | The manifest MUST declare `id`, `name`, `version`, `author`, and `runtime`. |
-| REQ-MANIFEST-010 | The manifest SHOULD declare `description` and `license`. |
+| REQ-MANIFEST-009 | The manifest MUST declare `id`, `name`, `version`, `publisher`, and `runtime`. |
+| REQ-MANIFEST-010 | The manifest MUST declare `entry`, `wasm_hash`, `signature`, and `minimum_navi`. |
 | REQ-MANIFEST-011 | The manifest MUST be valid TOML. |
 | REQ-MANIFEST-012 | The host MUST reject plugins with malformed manifests. |
 | REQ-MANIFEST-013 | The host MUST reject plugins with missing required fields. |
@@ -61,7 +61,7 @@ Every requirement in this document has a stable ID for traceability. Requirement
 | REQ-CAP-002 | Capabilities MUST be scoped per tool. |
 | REQ-CAP-003 | Capability composition MUST affect risk classification. |
 | REQ-CAP-004 | The host MUST NOT grant a tool access to capabilities it did not declare. |
-| REQ-CAP-005 | Each capability MUST have a severity level: LOW, MEDIUM, HIGH, or CRITICAL. |
+| REQ-CAP-005 | Severity is computed by the host from capability composition, not declared in the manifest. |
 | REQ-CAP-006 | The host MUST compute risk from the highest severity produced by any single capability or composition. |
 | REQ-CAP-007 | Capabilities MUST be unique within a plugin. |
 | REQ-CAP-008 | Capabilities MUST include a human-readable description. |
@@ -79,8 +79,8 @@ Every requirement in this document has a stable ID for traceability. Requirement
 | REQ-HTTP-004 | The HTTP broker MUST validate the final URL after redirects. |
 | REQ-HTTP-005 | The HTTP broker MUST reject redirects to undeclared hosts. |
 | REQ-HTTP-006 | The HTTP broker MUST sanitize response headers before returning to plugins. |
-| REQ-HTTP-007 | The HTTP broker MUST enforce response body size cap (1 MB default). |
-| REQ-HTTP-008 | The HTTP broker MUST enforce rate limits per plugin (60 req/min default). |
+| REQ-HTTP-007 | The HTTP broker MUST enforce response body size cap (4 MB default). |
+| REQ-HTTP-008 | The HTTP broker MUST enforce rate limits per plugin (10 req/min default). |
 | REQ-HTTP-009 | The HTTP broker MUST pin DNS resolution to prevent DNS rebinding. |
 | REQ-HTTP-010 | The HTTP broker MUST limit redirects to 3 maximum. |
 | REQ-HTTP-011 | The HTTP broker MUST strip `Set-Cookie` headers from responses. |
@@ -99,8 +99,8 @@ Every requirement in this document has a stable ID for traceability. Requirement
 | REQ-FS-002 | The FS broker MUST reject symlink escapes outside the project root. |
 | REQ-FS-003 | The FS broker MUST reject null bytes in paths. |
 | REQ-FS-004 | The FS broker MUST reject sensitive files by default (`.git/`, `.env`, `*.pem`, `*.key`, `*.p12`). |
-| REQ-FS-005 | The FS broker MUST enforce file size caps (1 MB per file default). |
-| REQ-FS-006 | The FS broker MUST enforce total read budget per invocation (10 MB default). |
+| REQ-FS-005 | The FS broker MUST enforce file size caps (2 MB per file default). |
+| REQ-FS-006 | The FS broker MUST enforce total read budget per invocation (16 MB default). |
 | REQ-FS-007 | The FS broker MUST NOT return raw file handles to plugins. |
 | REQ-FS-008 | The FS broker MUST restrict access to paths declared in the capability. |
 | REQ-FS-009 | The FS broker SHOULD support configurable sensitive file blocklists. |

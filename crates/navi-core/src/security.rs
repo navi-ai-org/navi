@@ -202,6 +202,17 @@ impl SecurityPolicy {
         &self.project_root
     }
 
+    /// Returns a reference to the security configuration.
+    pub fn config(&self) -> &SecurityConfig {
+        &self.config
+    }
+
+    /// Returns the NAVI data directory used for persistent storage (sessions,
+    /// memory, plans, credentials, logs).
+    pub fn data_dir(&self) -> &Path {
+        &self.data_dir
+    }
+
     /// Resolves relative tool paths against the project root instead of the
     /// process CWD. This keeps SDK/ACP embeddings from accidentally reading or
     /// writing outside the requested project when NAVI is launched elsewhere.

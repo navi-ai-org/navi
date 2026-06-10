@@ -124,7 +124,7 @@ The host MUST configure the following limits for every WASM invocation:
 | Limit | Default | Configurable |
 |---|---|---|
 | Linear memory | 64 MB | Per-plugin |
-| Fuel (compute) | 1 billion instructions | Per-plugin |
+| Fuel (compute) | 10 million instructions | Per-plugin |
 | Wall-clock timeout | 30 seconds | Per-plugin |
 | Output size | 32 KB | Global |
 | Stack size | 1 MB | Global |
@@ -159,7 +159,7 @@ Native in-process execution is restricted to core plugins. The host MUST NOT loa
 Every capability MUST be declared in the plugin manifest (`plugin.toml`) with:
 
 - `id`: Unique identifier within the plugin.
-- `kind`: One of `fs-read`, `fs-write`, `http`, `git`, `auth`.
+- `kind`: One of `filesystem`, `network`, `tui`.
 - `severity`: One of `LOW`, `MEDIUM`, `HIGH`, `CRITICAL`.
 - `description`: Human-readable explanation.
 - Scope-specific parameters (e.g., `paths` for `fs-read`, `hosts` for `http`).
@@ -169,6 +169,8 @@ Every capability MUST be declared in the plugin manifest (`plugin.toml`) with:
 Capabilities MUST be scoped per tool. A tool declares which capabilities it requires via `tools[].capabilities`. The host MUST NOT grant a tool access to capabilities it did not declare.
 
 ### 6.3 Severity Levels
+
+Severity is computed by the host from capability composition, not declared in the manifest.
 
 | Level | Meaning | Examples |
 |---|---|---|
@@ -181,11 +183,10 @@ Capabilities MUST be scoped per tool. A tool declares which capabilities it requ
 
 The host MUST compute risk from capability composition per tool:
 
-- `fs-read` + `http` (GET) → **HIGH** (data exfiltration risk)
-- `fs-read` + `http` (POST) → **CRITICAL** (active exfiltration)
-- `fs-write` + `http` → **CRITICAL** (remote-triggered local modification)
-- `auth` + `http` → **CRITICAL** (token leakage risk)
-- `git` (write) + `http` → **CRITICAL** (repo manipulation + exfiltration)
+- `filesystem` (read) + `network` (GET) → **HIGH** (data exfiltration risk)
+- `filesystem` (read) + `network` (POST) → **CRITICAL** (active exfiltration)
+- `filesystem` (write) + `network` → **CRITICAL** (remote-triggered local modification)
+- `auth` + `network` → **CRITICAL** (token leakage risk)
 
 The host MUST classify the tool at the highest severity produced by any single capability or composition.
 
@@ -207,7 +208,7 @@ All resource access by plugins is mediated by host brokers. Brokers enforce auth
 | **Authorization** | Path allowlist from manifest | Per-tool path scopes |
 | **Path resolution** | Canonicalize + symlink check | Same |
 | **Sensitive file blocking** | `.git/`, `.env`, `*.pem`, `*.key`, `*.p12` | Configurable blocklist |
-| **Size caps** | 1 MB per file, 10 MB total per invocation | Configurable |
+| **Size caps** | 2 MB per file, 16 MB total per invocation | Configurable |
 
 The FS broker MUST:
 
@@ -226,8 +227,8 @@ The FS broker MUST:
 | **IP blocking** | Loopback, private, link-local blocked by default |
 | **Redirect limit** | 3 maximum |
 | **Response header sanitization** | Strips `Set-Cookie`, `Authorization`, sensitive headers |
-| **Rate limit** | Per-plugin configurable (default: 60 req/min) |
-| **Body size cap** | 1 MB response body |
+| **Rate limit** | Per-plugin configurable (default: 10 req/min) |
+| **Body size cap** | 4 MB response body |
 
 The HTTP broker MUST:
 
@@ -411,29 +412,32 @@ Violations MUST be caught by the runtime, broker, or security policy and MUST re
 id = "example"
 name = "Example Plugin"
 version = "0.1.0"
-author = "Author Name"
-runtime = "wasm-component"          # "wasm-component" | "subprocess" | "native"
-description = "What this plugin does"
-license = "MIT"
+publisher = "gh:username"
+runtime = "wasm-component"
+entry = "plugin.wasm"
+wasm_hash = "sha256:..."
+signature = "ed25519:..."
+minimum_navi = "0.1.0"
 
 [[capabilities]]
 id = "read-src"
-kind = "fs-read"
-severity = "LOW"
-description = "Read source files from the project"
+kind = "filesystem"
+scope = "project"
+access = "read-only"
 paths = ["src/**", "lib/**"]
+reason = "Read source files from the project"
 
 [[capabilities]]
 id = "fetch-api"
-kind = "http"
-severity = "MEDIUM"
-description = "Fetch data from Example API"
+kind = "network"
 hosts = ["api.example.com"]
 methods = ["GET"]
+reason = "Fetch data from Example API"
 
 [[tools]]
 id = "search"
-description = "Search source files for patterns"
+summary = "Search source files for patterns"
+risk = "read_only"
 capabilities = ["read-src"]
 
 [tools.input_schema]
@@ -443,7 +447,8 @@ required = ["pattern"]
 
 [[tools]]
 id = "fetch-data"
-description = "Fetch data from Example API"
+summary = "Fetch data from Example API"
+risk = "network_read"
 capabilities = ["fetch-api"]
 
 [tools.input_schema]

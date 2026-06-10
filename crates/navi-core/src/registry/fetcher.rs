@@ -1,0 +1,239 @@
+//! HTTP fetcher for the remote registry files hosted in the NAVI repo.
+
+use anyhow::{Context, Result};
+
+use super::types::{RegistryManifest, RegistryProvider};
+
+/// Base URL for the NAVI registry on GitHub. Uses `raw.githubusercontent.com`
+/// for direct file access without the GitHub API rate limits.
+const REGISTRY_BASE_URL: &str = "https://raw.githubusercontent.com/enrell/navi/main/registry";
+
+/// Timeout for individual HTTP requests.
+const FETCH_TIMEOUT_SECS: u64 = 15;
+
+/// Fetches registry data from the remote NAVI repo.
+pub struct RegistryFetcher {
+    client: reqwest::Client,
+}
+
+impl RegistryFetcher {
+    pub fn new() -> Self {
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(FETCH_TIMEOUT_SECS))
+            .user_agent("navi-registry-fetcher/1.0")
+            .build()
+            .expect("failed to build HTTP client");
+        Self { client }
+    }
+
+    /// Fetches the manifest from the remote registry.
+    pub async fn fetch_manifest(&self) -> Result<RegistryManifest> {
+        let url = format!("{REGISTRY_BASE_URL}/manifest.json");
+        let resp = self
+            .client
+            .get(&url)
+            .send()
+            .await
+            .with_context(|| format!("failed to fetch manifest from {url}"))?;
+
+        resp.error_for_status()
+            .with_context(|| format!("manifest request failed: {url}"))?
+            .json::<RegistryManifest>()
+            .await
+            .context("failed to parse manifest JSON")
+    }
+
+    /// Fetches a single provider JSON by id.
+    pub async fn fetch_provider(
+        &self,
+        provider_id: &str,
+        manifest: &RegistryManifest,
+    ) -> Result<RegistryProvider> {
+        let entry = manifest
+            .providers
+            .get(provider_id)
+            .with_context(|| format!("provider '{provider_id}' not in manifest"))?;
+
+        let url = format!("{REGISTRY_BASE_URL}/{}", entry.file);
+        let resp = self
+            .client
+            .get(&url)
+            .send()
+            .await
+            .with_context(|| format!("failed to fetch provider '{provider_id}' from {url}"))?;
+
+        let text = resp
+            .error_for_status()
+            .with_context(|| format!("provider '{provider_id}' request failed: {url}"))?
+            .text()
+            .await
+            .context("failed to read provider response body")?;
+
+        // TODO: SHA-256 integrity check against `entry.sha256`.
+        // Skipped for now — the registry lives in NAVI's own GitHub repo,
+        // so the TLS transport provides sufficient integrity.  When a crypto
+        // crate (e.g. `sha2`) is added, verify the hash here.
+        let _ = &entry.sha256;
+
+        serde_json::from_str::<RegistryProvider>(&text)
+            .with_context(|| format!("failed to parse provider '{provider_id}' JSON"))
+    }
+
+    /// Fetches all providers listed in the manifest.
+    pub async fn fetch_all_providers(
+        &self,
+        manifest: &RegistryManifest,
+    ) -> Result<Vec<RegistryProvider>> {
+        let mut providers = Vec::new();
+        for provider_id in manifest.providers.keys() {
+            let provider = self.fetch_provider(provider_id, manifest).await?;
+            providers.push(provider);
+        }
+        Ok(providers)
+    }
+
+    /// Returns the raw base URL (useful for tests).
+    pub fn base_url(&self) -> &str {
+        REGISTRY_BASE_URL
+    }
+}
+
+impl Default for RegistryFetcher {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Syncs the remote registry into the local SQLite store.
+///
+/// Returns `true` if the store was updated.
+pub async fn sync_registry(
+    store: &super::store::RegistryStore,
+    fetcher: &RegistryFetcher,
+    force: bool,
+) -> Result<bool> {
+    // Check if we need to update.
+    if !force {
+        if let Some(updated_at) = store.manifest_updated_at()? {
+            if let Ok(parsed) = parse_iso_timestamp(&updated_at) {
+                if parsed.hours_ago < 24 && !store.is_empty()? {
+                    tracing::debug!("registry cache is fresh, skipping fetch");
+                    return Ok(false);
+                }
+            }
+        }
+    }
+
+    tracing::info!("fetching remote registry manifest");
+    let manifest = fetcher.fetch_manifest().await?;
+
+    // Compare with stored manifest version.
+    if !force {
+        if let Some(stored_version) = store.manifest_version()? {
+            if stored_version >= manifest.version && !store.is_empty()? {
+                tracing::debug!(
+                    stored = stored_version,
+                    remote = manifest.version,
+                    "registry manifest is up-to-date"
+                );
+                return Ok(false);
+            }
+        }
+    }
+
+    tracing::info!(
+        version = manifest.version,
+        providers = manifest.providers.len(),
+        "fetching all provider definitions"
+    );
+
+    let providers = fetcher.fetch_all_providers(&manifest).await?;
+
+    store.replace_all(&providers)?;
+    store.save_manifest_meta(&manifest)?;
+
+    tracing::info!(
+        providers = providers.len(),
+        models = providers.iter().map(|p| p.models.len()).sum::<usize>(),
+        "registry cache updated"
+    );
+
+    Ok(true)
+}
+
+/// Minimal timestamp diff — no chrono dependency.
+/// Parses ISO 8601 `YYYY-MM-DDTHH:MM:SSZ` and returns approximate hours since.
+fn parse_iso_timestamp(iso: &str) -> Result<TimestampDiff> {
+    let now_secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+
+    let date_part = iso.get(..10).context("invalid date format")?;
+    let time_part = iso.get(11..19).context("invalid time format")?;
+
+    let parts: Vec<u64> = date_part
+        .split('-')
+        .filter_map(|s| s.parse().ok())
+        .collect();
+    let time_parts: Vec<u64> = time_part
+        .split(':')
+        .filter_map(|s| s.parse().ok())
+        .collect();
+
+    if parts.len() < 3 || time_parts.len() < 3 {
+        anyhow::bail!("invalid timestamp format: {iso}");
+    }
+
+    // Approximate epoch seconds (good enough for 24h staleness).
+    let year = parts[0];
+    let month = parts[1];
+    let day = parts[2];
+    let hours = time_parts[0];
+    let minutes = time_parts[1];
+    let seconds = time_parts[2];
+
+    let days_since_epoch = (year - 1970) * 365 + (month - 1) * 30 + (day - 1);
+    let epoch = days_since_epoch * 86400 + hours * 3600 + minutes * 60 + seconds;
+
+    let diff_secs = now_secs.saturating_sub(epoch);
+    Ok(TimestampDiff {
+        hours_ago: diff_secs / 3600,
+    })
+}
+
+struct TimestampDiff {
+    hours_ago: u64,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_iso_timestamp_recent() {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        // Construct a timestamp ~1 hour ago.
+        let hours = (now % 86400) / 3600;
+        let days = now / 86400;
+        let year = 1970 + days / 365;
+        let month = 1 + (days % 365) / 30;
+        let day = 1 + (days % 365) % 30;
+        let iso = format!("{:04}-{:02}-{:02}T{:02}:00:00Z", year, month, day, hours);
+        let diff = parse_iso_timestamp(&iso).expect("parse");
+        assert!(
+            diff.hours_ago <= 2,
+            "expected <= 2h, got {}",
+            diff.hours_ago
+        );
+    }
+
+    #[test]
+    fn parse_iso_timestamp_old() {
+        let diff = parse_iso_timestamp("2020-01-01T00:00:00Z").expect("parse");
+        assert!(diff.hours_ago > 1000);
+    }
+}

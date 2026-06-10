@@ -532,7 +532,11 @@ impl AgentRuntime {
             self.loaded_config.data_dir.clone(),
             self.loaded_config.config.security.clone(),
         )?;
-        let executor = Arc::new(ToolExecutor::new(security_policy));
+        let harness_policy = crate::harness::select_harness_policy(&self.loaded_config.config);
+        let profile_name = format!("{:?}", harness_policy.profile).to_lowercase();
+        let mut executor = ToolExecutor::new(security_policy);
+        executor.set_harness_profile(profile_name);
+        let executor = Arc::new(executor);
         self.tool_executor = Some(executor.clone());
         Ok(executor)
     }

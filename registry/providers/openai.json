@@ -1,0 +1,155 @@
+{
+  "id": "openai",
+  "label": "OpenAI",
+  "description": "ChatGPT Plus/Pro or API key",
+  "kind": "openai-responses",
+  "api_key_env": "OPENAI_API_KEY",
+  "base_url": "https://api.openai.com/v1",
+  "models": [
+    {
+      "name": "gpt-5.5",
+      "task_size": "large",
+      "context_window_tokens": 1000000
+    },
+    {
+      "name": "gpt-5.4",
+      "task_size": "large",
+      "context_window_tokens": 1000000
+    },
+    {
+      "name": "gpt-5.4-codex",
+      "task_size": "large",
+      "context_window_tokens": 1000000
+    },
+    {
+      "name": "gpt-5.4-mini",
+      "task_size": "small",
+      "context_window_tokens": 512000
+    },
+    {
+      "name": "gpt-5.3-codex",
+      "task_size": "large",
+      "context_window_tokens": 1000000
+    },
+    {
+      "name": "gpt-5.2",
+      "task_size": "large",
+      "context_window_tokens": 1000000
+    },
+    {
+      "name": "gpt-5.1-codex",
+      "task_size": "large",
+      "context_window_tokens": 1000000
+    },
+    {
+      "name": "gpt-5.1-codex-mini",
+      "task_size": "small",
+      "context_window_tokens": 512000
+    },
+    {
+      "name": "gpt-5.1",
+      "task_size": "large",
+      "context_window_tokens": 1000000
+    },
+    {
+      "name": "gpt-5.1-mini",
+      "task_size": "small",
+      "context_window_tokens": 512000
+    },
+    {
+      "name": "gpt-5",
+      "task_size": "large",
+      "context_window_tokens": 1000000
+    },
+    {
+      "name": "gpt-5-mini",
+      "task_size": "small",
+      "context_window_tokens": 512000
+    },
+    {
+      "name": "gpt-5-nano",
+      "task_size": "small",
+      "context_window_tokens": 256000
+    },
+    {
+      "name": "gpt-4.1",
+      "task_size": "large",
+      "context_window_tokens": 1000000
+    },
+    {
+      "name": "gpt-4.1-mini",
+      "task_size": "small",
+      "context_window_tokens": 512000
+    },
+    {
+      "name": "gpt-4.1-nano",
+      "task_size": "small",
+      "context_window_tokens": 256000
+    },
+    {
+      "name": "gpt-4o",
+      "task_size": "large",
+      "context_window_tokens": 128000
+    },
+    {
+      "name": "gpt-4o-mini",
+      "task_size": "small",
+      "context_window_tokens": 128000
+    },
+    {
+      "name": "chatgpt-4o-latest",
+      "task_size": "large",
+      "context_window_tokens": 128000
+    },
+    {
+      "name": "gpt-4.5-preview",
+      "task_size": "large",
+      "context_window_tokens": 128000
+    },
+    {
+      "name": "o3",
+      "task_size": "large",
+      "context_window_tokens": 200000
+    },
+    {
+      "name": "o3-pro",
+      "task_size": "large",
+      "context_window_tokens": 200000
+    },
+    {
+      "name": "o3-mini",
+      "task_size": "small",
+      "context_window_tokens": 200000
+    },
+    {
+      "name": "o4-mini",
+      "task_size": "small",
+      "context_window_tokens": 200000
+    },
+    {
+      "name": "o1",
+      "task_size": "large",
+      "context_window_tokens": 200000
+    },
+    {
+      "name": "o1-pro",
+      "task_size": "large",
+      "context_window_tokens": 200000
+    },
+    {
+      "name": "o1-mini",
+      "task_size": "small",
+      "context_window_tokens": 128000
+    },
+    {
+      "name": "gpt-oss-120b",
+      "task_size": "large",
+      "context_window_tokens": 128000
+    },
+    {
+      "name": "gpt-oss-20b",
+      "task_size": "small",
+      "context_window_tokens": 128000
+    }
+  ]
+}

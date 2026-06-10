@@ -61,6 +61,9 @@ pub trait EngineDriver: Send + Sync {
 
     // ── Provider / model management ────────────────────────────────────
 
+    /// Sync the remote provider registry into the local SQLite cache.
+    async fn sync_registry(&self, force: bool) -> Result<bool>;
+
     /// Sync the model list for all configured providers.
     async fn sync_models(&self, target: NaviConfigSaveTarget) -> Result<NaviProviderSyncReport>;
 
@@ -133,6 +136,10 @@ impl EngineDriver for crate::NaviEngine {
 
     async fn reload_wasm_plugins(&self) -> Result<Vec<String>> {
         crate::NaviEngine::reload_wasm_plugins(self).await
+    }
+
+    async fn sync_registry(&self, force: bool) -> Result<bool> {
+        crate::NaviEngine::sync_registry(self, force).await
     }
 
     async fn sync_models(&self, target: NaviConfigSaveTarget) -> Result<NaviProviderSyncReport> {
