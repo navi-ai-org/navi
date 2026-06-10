@@ -2,11 +2,11 @@
 
    › read the file
 
+     ⠋ thinking...
+
    ◆ Read src/main.rs
 
-
-
-
+     ⠋ thinking...
 
 
 
