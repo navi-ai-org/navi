@@ -50,6 +50,7 @@ pub enum AsyncEvent {
         warnings: Vec<String>,
     },
     PluginsReloadNeeded,
+    ClearSyncMessages,
 }
 
 pub(crate) fn handle_async_event(app: &mut TuiApp, event: AsyncEvent) {
@@ -124,13 +125,20 @@ pub(crate) fn handle_async_event(app: &mut TuiApp, event: AsyncEvent) {
                 .unwrap_or(0);
             rebuild_provider(app);
             app.messages.push(ChatMessage {
-                status: Some("synced".to_string()),
+                status: Some("syncing".to_string()),
                 ..ChatMessage::new(ChatRole::Assistant, message)
             });
             app.is_loading = false;
             app.loading_start = None;
             app.clear_stream_task();
             app.scroll_offset = 0;
+
+            // Auto-clear sync messages after 3 seconds
+            let sender = app.async_sender();
+            spawn_runtime_task(async move {
+                tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+                let _ = sender.send(AsyncEvent::ClearSyncMessages);
+            });
         }
         AsyncEvent::OAuthDeviceStarted {
             provider_id,
@@ -168,6 +176,11 @@ pub(crate) fn handle_async_event(app: &mut TuiApp, event: AsyncEvent) {
                     show_notification(app, "OAuth", format!("{provider_id} failed: {err}"));
                 }
             }
+        }
+        AsyncEvent::ClearSyncMessages => {
+            app.messages
+                .retain(|m| !matches!(m.status.as_deref(), Some("syncing")));
+            app.scroll_offset = 0;
         }
     }
 }
@@ -800,7 +813,7 @@ mod tests {
         assert!(app.loading_start.is_none());
         assert_eq!(app.scroll_offset, 0);
         let last = app.messages.last().unwrap();
-        assert_eq!(last.status.as_deref(), Some("synced"));
+        assert_eq!(last.status.as_deref(), Some("syncing"));
         assert_eq!(last.content, "Synced 3 providers");
     }
 
