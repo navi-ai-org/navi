@@ -1,8 +1,6 @@
 use super::*;
 use crate::{SecurityConfig, SecurityPolicy};
-use navi_vfs::{VfsConfig, VfsEngine};
 use std::path::Path;
-use std::sync::Arc;
 
 fn executor(root: &Path) -> ToolExecutor {
     let policy = SecurityPolicy::new(
@@ -12,16 +10,6 @@ fn executor(root: &Path) -> ToolExecutor {
     )
     .expect("policy");
     ToolExecutor::new(policy)
-}
-
-fn executor_with_vfs(root: &Path) -> ToolExecutor {
-    let policy = SecurityPolicy::new(
-        root.to_path_buf(),
-        root.join(".navi-data"),
-        SecurityConfig::default(),
-    )
-    .expect("policy");
-    ToolExecutor::new_with_vfs(policy, Some(Arc::new(VfsEngine::new(VfsConfig::default()))))
 }
 
 #[tokio::test]
@@ -363,32 +351,6 @@ async fn top_files_skips_binary_files() {
         .map(|file| file["path"].as_str().unwrap().to_string())
         .collect::<Vec<_>>();
     assert_eq!(paths, vec!["src/text.rs"]);
-}
-
-#[tokio::test]
-async fn top_files_applies_vfs_when_enabled() {
-    let tempdir = tempfile::tempdir().expect("tempdir");
-    let executor = executor_with_vfs(tempdir.path());
-    std::fs::create_dir_all(tempdir.path().join("src")).expect("mkdir");
-    std::fs::write(
-        tempdir.path().join("src/min.rs"),
-        "// remove me\npub fn minify_marker() {\n    let value = 1;\n    println!(\"{}\", value);\n}\n",
-    )
-    .expect("write min");
-
-    let result = executor
-        .invoke(ToolInvocation {
-            id: "top".to_string(),
-            tool_name: "top_files".to_string(),
-            input: json!({ "query": "minify_marker" }),
-        })
-        .await;
-
-    assert!(result.ok, "{:?}", result.output);
-    let file = &result.output["files"].as_array().unwrap()[0];
-    assert_eq!(file["path"], "src/min.rs");
-    assert!(file["vfs_minified"].as_bool().unwrap());
-    assert!(!file["content"].as_str().unwrap().contains("remove me"));
 }
 
 #[tokio::test]

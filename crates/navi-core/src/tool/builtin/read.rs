@@ -1,23 +1,18 @@
 use anyhow::{Context, Result};
 use async_trait::async_trait;
-use navi_vfs::VfsEngine;
 use serde_json::json;
 use std::fs;
-use std::path::Path;
-use std::sync::Arc;
 
 use super::helpers;
 use crate::tool::{Tool, ToolDefinition, ToolInvocation, ToolKind, ToolResult};
 
 const DEFAULT_READ_LINE_LIMIT: usize = 400;
 
-pub(crate) struct ReadFileTool {
-    vfs: Option<Arc<VfsEngine>>,
-}
+pub(crate) struct ReadFileTool;
 
 impl ReadFileTool {
-    pub(crate) fn new(vfs: Option<Arc<VfsEngine>>) -> Self {
-        Self { vfs }
+    pub(crate) fn new() -> Self {
+        Self
     }
 }
 
@@ -97,29 +92,25 @@ impl Tool for ReadFileTool {
             sliced_content.push('\n');
         }
 
-        // VFS: minify content before sending to the LLM.
-        let (display_content, vfs_minified) = if let Some(ref vfs) = self.vfs {
-            if let Some(minified) = vfs.minify(Path::new(&path), &sliced_content) {
-                (minified.clone(), true)
-            } else {
-                (sliced_content, false)
-            }
-        } else {
-            (sliced_content, false)
-        };
-
         let truncated = start_idx > 0 || end_idx < total_lines;
+
+        let (next_start, remaining) = if end_idx < total_lines {
+            (Some((end_idx + 1) as u64), Some((total_lines - end_idx) as u64))
+        } else {
+            (None, None)
+        };
 
         Ok(helpers::ok(
             invocation.id,
             json!({
                 "path": path,
-                "content": display_content,
+                "content": sliced_content,
+                "next_start_line": next_start,
+                "remaining_lines": remaining,
                 "start_line": start_idx + 1,
                 "end_line": end_idx,
                 "total_lines": total_lines,
                 "truncated": truncated,
-                "vfs_minified": vfs_minified,
             }),
         ))
     }

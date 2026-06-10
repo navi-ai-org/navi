@@ -10,7 +10,6 @@ async-trait.workspace = true
 directories.workspace = true
 futures-util.workspace = true
 jsonschema.workspace = true
-navi-vfs.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 starlark.workspace = true
