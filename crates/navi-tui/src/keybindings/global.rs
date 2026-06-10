@@ -16,6 +16,9 @@ pub(super) fn route_global_key(
         match code {
             KeyCode::Char('c') => return super::apply_ui_effect(app, UiEffect::Quit),
             KeyCode::Char('d') => {
+                if app.mode == crate::state::Mode::Providers {
+                    return KeyOutcome::Ignored;
+                }
                 let outcome = super::apply_ui_effect(app, UiEffect::ReplaceModal(ModalKind::Debug));
                 tracing::info!("debug modal opened");
                 return outcome;

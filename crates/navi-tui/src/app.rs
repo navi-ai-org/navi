@@ -11,9 +11,10 @@ use std::sync::Arc;
 
 use navi_sdk::{
     AgentEvent, AgentRunState, ApprovalRequest, CompactState, CredentialStore, EngineDriver,
-    HarnessPolicy, LoadedConfig, ModelMessage, ModelOption, NaviSkillInfo, SessionId,
-    SessionSnapshot, SessionStore, ToolInvocation, available_model_options, build_system_prompt,
-    canonical_provider_id, effective_context_window, log_path, select_harness_policy,
+    HarnessPolicy, LoadedConfig, ModelMessage, ModelOption, NaviSkillInfo, ProviderConfig,
+    SessionId, SessionSnapshot, SessionStore, ToolInvocation, available_model_options,
+    build_system_prompt, canonical_provider_id, clean_session_title, effective_context_window,
+    log_path, provider_catalog, select_harness_policy,
 };
 
 use crate::dispatch::AsyncEvent;
@@ -91,6 +92,7 @@ pub struct TuiApp {
     pub(crate) saved_sessions: Vec<SessionSnapshot>,
     pub(crate) selected_session: usize,
     pub(crate) session_scroll: usize,
+    pub(crate) session_filter: String,
 
     pub(crate) full_tool_view: bool,
     pub(crate) compact_tool_visible_limit: usize,
@@ -100,6 +102,7 @@ pub struct TuiApp {
     pub(crate) theme_filter: String,
     pub(crate) selected_provider_setting: usize,
     pub(crate) provider_settings_scroll: usize,
+    pub(crate) provider_filter: String,
     notification: Option<Notification>,
     diagnostics: Vec<String>,
     log_path: PathBuf,
@@ -228,6 +231,7 @@ impl TuiApp {
             saved_sessions,
             selected_session: 0,
             session_scroll: 0,
+            session_filter: String::new(),
             full_tool_view,
             compact_tool_visible_limit,
             show_thinking,
@@ -239,6 +243,7 @@ impl TuiApp {
             theme_filter: String::new(),
             selected_provider_setting: 0,
             provider_settings_scroll: 0,
+            provider_filter: String::new(),
             notification: None,
             diagnostics: Vec::new(),
             log_path,
@@ -440,6 +445,47 @@ impl TuiApp {
                         .as_ref()
                         .map(|d| d.to_lowercase().contains(&filter))
                         .unwrap_or(false)
+            })
+            .collect()
+    }
+
+    pub(crate) fn filtered_sessions(&self) -> Vec<&SessionSnapshot> {
+        let filter = self.session_filter.trim().to_lowercase();
+        self.saved_sessions
+            .iter()
+            .filter(|snapshot| {
+                if filter.is_empty() {
+                    return true;
+                }
+                let project = snapshot
+                    .project
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_else(|| snapshot.project.to_string_lossy().to_string())
+                    .to_lowercase();
+                let title = snapshot
+                    .title
+                    .as_deref()
+                    .and_then(clean_session_title)
+                    .unwrap_or_else(|| project.clone())
+                    .to_lowercase();
+                title.contains(&filter) || project.contains(&filter)
+            })
+            .collect()
+    }
+
+    pub(crate) fn filtered_providers(&self) -> Vec<ProviderConfig> {
+        let filter = self.provider_filter.trim().to_lowercase();
+        let providers = provider_catalog(&self.loaded_config.config);
+        if filter.is_empty() {
+            return providers;
+        }
+        providers
+            .into_iter()
+            .filter(|p| {
+                p.id.to_lowercase().contains(&filter)
+                    || p.label.to_lowercase().contains(&filter)
+                    || p.description.to_lowercase().contains(&filter)
             })
             .collect()
     }

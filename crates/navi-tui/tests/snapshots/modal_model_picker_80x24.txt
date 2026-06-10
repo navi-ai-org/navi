@@ -1,4 +1,4 @@
-
+  main  /tmp/navi-test-project                               │ 0 / 200K │ 0 0 ✓
 
     ╭ Switch Protocol ─────────────────────────────────────────────────────╮
     │ > search providers or models                                         │
@@ -18,5 +18,7 @@
     │     gpt-5-nano                                                     │ │
     │     gpt-4.1                                                        │ │
     │     gpt-4.1-mini                                                   │ │
-    │ search  •  ctrl+e setup  •  tab refresh provider  •  ctrl+r refresh  │
-    ╰──────────────────────────────────────────────────────────────────────╯
+  ┌─│ search  •  ctrl+e setup  •  tab refresh provider  •  ctrl+r refresh  │─┐
+  │}╰──────────────────────────────────────────────────────────────────────╯ │
+  └──────────────────────────────────────────────────────────────────────────┘
+   type a task, or ctrl+p for commands

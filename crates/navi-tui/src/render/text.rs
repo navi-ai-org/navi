@@ -3,7 +3,10 @@ use ratatui::prelude::{Modifier, Span, Style};
 use crate::theme::*;
 
 /// Split styled spans into multiple lines that each fit within `max_width` columns.
-pub(crate) fn wrap_spans_to_width(spans: &[Span<'static>], max_width: usize) -> Vec<Vec<Span<'static>>> {
+pub(crate) fn wrap_spans_to_width(
+    spans: &[Span<'static>],
+    max_width: usize,
+) -> Vec<Vec<Span<'static>>> {
     let max_width = max_width.max(1);
     let mut lines: Vec<Vec<Span<'static>>> = vec![Vec::new()];
     let mut current_width = 0usize;

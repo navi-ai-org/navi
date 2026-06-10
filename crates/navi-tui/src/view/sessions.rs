@@ -23,27 +23,51 @@ pub(super) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
     });
     let rows = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Min(10), Constraint::Length(1)])
+        .constraints([
+            Constraint::Length(2),
+            Constraint::Min(10),
+            Constraint::Length(1),
+        ])
         .split(inner);
 
-    if app.saved_sessions.is_empty() {
+    // Filter input
+    let filter = if app.session_filter.is_empty() {
+        "search"
+    } else {
+        app.session_filter.as_str()
+    };
+    frame.render_widget(
+        Paragraph::new(ratatui::prelude::Line::from(vec![
+            Span::styled("> ", Style::default().fg(signal())),
+            Span::styled(filter, Style::default().fg(text())),
+        ]))
+        .style(Style::default().bg(modal_bg())),
+        rows[0],
+    );
+
+    let sessions = app.filtered_sessions();
+
+    if sessions.is_empty() {
         frame.render_widget(
             Paragraph::new(Text::from(vec![
                 ratatui::prelude::Line::from(""),
                 ratatui::prelude::Line::from(Span::styled(
-                    "No saved sessions",
+                    if app.session_filter.is_empty() {
+                        "No saved sessions"
+                    } else {
+                        "No matching sessions"
+                    },
                     Style::default().fg(muted()),
                 )),
             ]))
             .style(Style::default().bg(modal_bg())),
-            rows[0],
+            rows[1],
         );
     } else {
-        let height = rows[0].height as usize;
-        let start = app.session_scroll.min(app.saved_sessions.len());
-        let end = (start + height).min(app.saved_sessions.len());
-        let items = app
-            .saved_sessions
+        let height = rows[1].height as usize;
+        let start = app.session_scroll.min(sessions.len());
+        let end = (start + height).min(sessions.len());
+        let items = sessions
             .get(start..end)
             .unwrap_or(&[])
             .iter()
@@ -78,26 +102,20 @@ pub(super) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
 
         frame.render_widget(
             List::new(items).style(Style::default().bg(modal_bg())),
-            rows[0],
+            rows[1],
         );
         render_scrollbar(
             frame,
             app,
-            rows[0],
-            app.saved_sessions.len(),
+            rows[1],
+            sessions.len(),
             start,
             crate::ui::interaction::ScrollTarget::Sessions,
         );
-        for (offset, snapshot) in app
-            .saved_sessions
-            .get(start..end)
-            .unwrap_or(&[])
-            .iter()
-            .enumerate()
-        {
+        for (offset, snapshot) in sessions.get(start..end).unwrap_or(&[]).iter().enumerate() {
             let index = start + offset;
             app.register_hit(
-                line_rect(rows[0], offset),
+                line_rect(rows[1], offset),
                 20,
                 format!("session {}", snapshot.id.as_str()),
                 HitAction::Session(index),
@@ -107,6 +125,6 @@ pub(super) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
 
     frame.render_widget(
         Paragraph::new("del delete").style(Style::default().fg(text()).bg(modal_bg())),
-        rows[1],
+        rows[2],
     );
 }

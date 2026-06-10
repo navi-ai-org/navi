@@ -10,6 +10,8 @@ use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 struct CredentialsFile {
+    #[serde(default)]
+    ignored_providers: Vec<String>,
     #[serde(flatten)]
     providers: HashMap<String, ProviderCredentials>,
 }
@@ -85,6 +87,19 @@ impl CredentialStore {
         file.providers.get(provider_id).map(|c| c.api_key.clone())
     }
 
+    /// Returns `true` if the user explicitly ignored this provider (e.g. by deleting an env-provided key).
+    pub fn is_ignored(&self, provider_id: &str) -> bool {
+        let content = match fs::read_to_string(&self.path) {
+            Ok(c) => c,
+            Err(_) => return false,
+        };
+        let file: CredentialsFile = match toml::from_str(&content) {
+            Ok(f) => f,
+            Err(_) => return false,
+        };
+        file.ignored_providers.contains(&provider_id.to_string())
+    }
+
     /// Returns the list of provider ids that have stored API keys.
     pub fn list_api_key_providers(&self) -> Result<Vec<String>> {
         let mut providers = self.load_file()?.providers.into_keys().collect::<Vec<_>>();
@@ -111,6 +126,7 @@ impl CredentialStore {
         ensure_private_parent_dir(&self.path)?;
 
         let mut file = self.load_file()?;
+        file.ignored_providers.retain(|p| p != provider_id);
 
         file.providers.insert(
             provider_id.to_string(),
@@ -125,16 +141,19 @@ impl CredentialStore {
         Ok(())
     }
 
-    /// Deletes a stored API key. Returns `true` if the key existed.
+    /// Deletes a stored API key and adds the provider to the ignored list.
+    /// Returns `true` if a stored key was removed.
     pub fn delete_api_key(&self, provider_id: &str) -> Result<bool> {
-        if !self.path.exists() {
-            return Ok(false);
+        let mut file = self.load_file().unwrap_or_default();
+        let removed = file.providers.remove(provider_id).is_some();
+        let mut ignored = false;
+        if !file.ignored_providers.contains(&provider_id.to_string()) {
+            file.ignored_providers.push(provider_id.to_string());
+            ignored = true;
         }
 
-        ensure_private_parent_dir(&self.path)?;
-        let mut file = self.load_file()?;
-        let removed = file.providers.remove(provider_id).is_some();
-        if removed {
+        if removed || ignored {
+            ensure_private_parent_dir(&self.path)?;
             let content =
                 toml::to_string_pretty(&file).context("failed to serialize credentials")?;
             self.write_content(&content)?;
@@ -185,6 +204,10 @@ pub fn resolve_provider_api_key(
     provider_config: &ProviderConfig,
     requested_provider_id: &str,
 ) -> Option<String> {
+    if credential_store.is_ignored(&provider_config.id) {
+        return None;
+    }
+
     provider_env_api_key_for_config(provider_config)
         .or_else(|| opencode_auth_json_api_key(credential_store, &provider_config.id))
         .or_else(|| credential_store.get_api_key(&provider_config.id))
@@ -205,6 +228,15 @@ pub fn resolve_provider_credential_status(
     requested_provider_id: &str,
     model: Option<&str>,
 ) -> CredentialStatus {
+    if credential_store.is_ignored(&provider_config.id) {
+        return CredentialStatus {
+            configured: false,
+            source: None,
+            label: "ignored".to_string(),
+            detail: Some("disabled by user".to_string()),
+        };
+    }
+
     if let Some(env_var) = provider_env_var_for_config(provider_config) {
         return CredentialStatus {
             configured: true,

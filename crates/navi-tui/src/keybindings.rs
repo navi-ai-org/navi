@@ -100,6 +100,7 @@ fn open_sessions_picker(app: &mut TuiApp) {
     replace_modal(app, ModalKind::Sessions);
     app.selected_session = 0;
     app.session_scroll = 0;
+    app.session_filter.clear();
 }
 
 fn open_skills_picker(app: &mut TuiApp) {
@@ -128,7 +129,7 @@ fn route_mode_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyModifiers) -> K
         Mode::Thinking => self::modals::handle_thinking_key(app, code),
         Mode::Sessions => self::modals::handle_sessions_key(app, code),
         Mode::Settings => self::modals::handle_settings_key(app, code),
-        Mode::Providers => self::modals::handle_providers_key(app, code),
+        Mode::Providers => self::modals::handle_providers_key(app, code, modifiers),
         Mode::Debug => self::modals::handle_debug_key(app, code),
         Mode::Help => self::modals::handle_help_key(app, code),
         Mode::Skills => self::modals::handle_skills_key(app, code),

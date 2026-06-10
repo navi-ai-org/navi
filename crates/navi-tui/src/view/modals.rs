@@ -765,7 +765,8 @@ pub(super) fn render_message_actions(frame: &mut Frame<'_>, app: &TuiApp, area: 
     }
 
     frame.render_widget(
-        Paragraph::new("enter select · esc close").style(Style::default().fg(muted()).bg(modal_bg())),
+        Paragraph::new("enter select · esc close")
+            .style(Style::default().fg(muted()).bg(modal_bg())),
         rows[3],
     );
     app.register_hit(rows[3], 20, "close message actions", HitAction::CloseModal);

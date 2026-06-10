@@ -5,9 +5,8 @@ pub(crate) mod text;
 pub(crate) mod tool;
 
 pub(crate) use layout::{
-    clear_modal_area, command_row, command_scroll_offset, fill_modal_scrim,
-    fill_modal_surface, modal_block, modal_list_highlight_style, modal_rect, model_row_simple,
-    truncate_display,
+    clear_modal_area, command_row, command_scroll_offset, fill_modal_scrim, fill_modal_surface,
+    modal_block, modal_list_highlight_style, modal_rect, model_row_simple, truncate_display,
 };
 pub(crate) use text::{cursor_span, mask_key_segment, project_label};
 
@@ -21,9 +20,9 @@ mod tests {
     use crate::render::markdown::render_markdown_lines;
     use crate::render::syntax::highlight_code_line;
     use crate::render::text::{display_width, wrap_spans_to_width, wrap_text};
-    use crate::theme::code_block_bg;
     use crate::render::tool::{tool_compact_text, tool_full_content};
     use crate::theme::ThemeId;
+    use crate::theme::code_block_bg;
 
     fn test_palette() -> crate::theme::ThemePalette {
         ThemeId::Lain.palette()
@@ -89,10 +88,7 @@ mod tests {
 
     #[test]
     fn markdown_renderer_wraps_long_code_lines() {
-        let long_line = format!(
-            "```rust\n\"message\": \"{}\"\n```",
-            "x".repeat(120)
-        );
+        let long_line = format!("```rust\n\"message\": \"{}\"\n```", "x".repeat(120));
         let width = 40;
         let lines = render_markdown_lines(
             &long_line,

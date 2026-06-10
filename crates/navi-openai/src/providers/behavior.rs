@@ -138,11 +138,7 @@ impl ProviderBehavior for AnthropicBehavior {
         StreamRoute::AnthropicMessages
     }
 
-    fn build_headers(
-        &self,
-        api_key: &str,
-        endpoint: Endpoint,
-    ) -> Result<HeaderMap, ProviderError> {
+    fn build_headers(&self, api_key: &str, endpoint: Endpoint) -> Result<HeaderMap, ProviderError> {
         let mut headers = HeaderMap::new();
         headers.insert("x-api-key", HeaderValue::from_str(api_key)?);
         headers.insert(
