@@ -409,9 +409,9 @@ pub(super) fn built_in_providers() -> Vec<ProviderConfig> {
             id: "xiaomi".to_string(),
             label: "MiMo".to_string(),
             description: "MiMo models via Tokens Plan".to_string(),
-            kind: ProviderKind::OpenAiChatCompletions,
+            kind: ProviderKind::AnthropicMessages,
             api_key_env: "XIAOMI_API_KEY".to_string(),
-            base_url: Some("https://token-plan-sgp.xiaomimimo.com/v1".to_string()),
+            base_url: Some("https://token-plan-sgp.xiaomimimo.com/anthropic".to_string()),
             models: vec![model("Press ctrl-r to sync models", ModelTaskSize::Small)],
             ..Default::default()
         },
