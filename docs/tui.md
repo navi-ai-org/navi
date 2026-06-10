@@ -7,9 +7,10 @@ The TUI lives in `crates/navi-tui/src/`. Crate root `lib.rs` is now mostly modul
 | `lib.rs` | Small crate entry/glue |
 | `app.rs` | `TuiApp` aggregate state and constructor |
 | `state.rs` | `ChatMessage`, `ChatRole`, `Mode`, `ModalKind`, selection, tool state |
-| `theme.rs` | Color palette, logo, spacing constants |
+| `theme.rs` | Color palette, logo, spacing constants, theme definitions |
 | `commands.rs` | Command palette model and filtering |
 | `keybindings.rs` | Key routing and modal handlers |
+| `keybindings/` | Keybinding submodules for specific modes |
 | `input.rs` | TuiApp input-field adapter helpers |
 | `mouse.rs` | Mouse scrolling, text selection, and clipboard copy |
 | `event_loop.rs` | Crossterm/ratatui terminal lifecycle and polling loop |
@@ -17,14 +18,20 @@ The TUI lives in `crates/navi-tui/src/`. Crate root `lib.rs` is now mostly modul
 | `chat.rs` | Chat message/history mutations and assistant response lifecycle |
 | `tools.rs` | TUI-side tool rows, approval state, and cancel flow |
 | `providers.rs` | Model picker/provider account UI helpers |
-| `view.rs` | TuiApp-dependent Ratatui rendering |
+| `view.rs` | TuiApp-dependent Ratatui rendering entry |
+| `view/` | View submodules for specific UI areas |
 | `stream.rs` | SDK turn spawning and streaming request bridge |
 | `notifications.rs` | Notification and diagnostic state helpers |
 | `render.rs` | Markdown rendering, syntax highlighting, tool formatting, input formatting |
+| `render/` | Render submodules for specific content types |
 | `runtime.rs` | SDK bridge (`NaviEngine` construction, `forward_runtime_event_to_tui`, OAuth) |
 | `session.rs` | Saved-session listing, timestamp formatting, title extraction |
 | `persistence.rs` | Current session save/load and preference persistence |
 | `errors.rs` | Retry logic, error classification, delay parsing, `human_duration` |
+| `plugins.rs` | Plugin listing, install, update, and reload |
+| `plugin_approval.rs` | Plugin install/update approval UI |
+| `testing/` | Test utilities and fixtures |
+| `tests.rs` | Integration and cross-module tests |
 | `ui/` | Internal Ratatui framework: `TextInput`, `ModalStack`, `SelectListState`, layout |
 
 The event loop is synchronous ratatui/crossterm with an async bridge over `tokio::spawn` tasks. The CLI already owns the Tokio runtime; do not create another runtime inside the TUI.
@@ -33,9 +40,32 @@ The event loop is synchronous ratatui/crossterm with an async bridge over `tokio
 
 - `TuiApp` stores UI state, credentials, session display state, tool approval UI state, an SDK engine handle, and async channels.
 - `AsyncEvent` carries SDK runtime events, turn completion, retry triggers, OAuth completions, and model-sync results back into the event loop.
-- `Mode` selects modal behavior: normal chat, commands, models, API key entry, thinking, sessions, settings, provider accounts.
+- `Mode` selects modal behavior: normal chat, commands, models, API key entry, thinking, sessions, settings, provider accounts, help, skills, plugins, plugin approval, questions, theme picker, and message actions.
 - `ChatMessage` is display-oriented and may contain model labels, status, usage, thinking text, tool invocation/result metadata, or normal content.
 - `ui::*` is the internal TUI framework layer. It owns reusable interaction primitives such as `TextInput`, `KeyOutcome`, `ModalStack`, `SelectListState`, `UiEffect`, and layout sizing. Keep it private to `navi-tui`; do not move ratatui abstractions into `navi-sdk`.
+
+### Mode Enum
+
+The `Mode` enum defines all modal states:
+
+| Mode | Description |
+|---|---|
+| `Normal` | Default chat mode |
+| `Commands` | Command palette |
+| `Models` | Model picker |
+| `ApiKeyEntry` | API key input |
+| `Thinking` | Thinking level selector |
+| `Sessions` | Session picker |
+| `Settings` | Settings modal |
+| `Providers` | Provider account management |
+| `Debug` | Debug information modal |
+| `Help` | Keyboard shortcuts help |
+| `Skills` | Skill management |
+| `Plugins` | Plugin marketplace |
+| `PluginApproval` | Plugin install/update approval |
+| `Question` | Interactive question modal |
+| `ThemePicker` | Theme selector |
+| `MessageActions` | Message action menu |
 
 ## Keybindings
 
@@ -58,6 +88,8 @@ Modal transitions should go through `UiEffect` helpers (`OpenModal`, `ReplaceMod
 | `ctrl+s` | Session picker |
 | `ctrl+o` | Toggle compact/full tool output view |
 | `ctrl+d` | Debug modal |
+| `ctrl+h` | Help modal (keyboard shortcuts) |
+| `ctrl+k` | Skills modal |
 | `ctrl+enter` | Send prompt |
 | `enter` | Insert newline |
 | `ctrl+j` | Insert newline |
@@ -118,8 +150,11 @@ If the assistant needs a decision mid-turn, NAVI opens a question modal. Use `up
 
 The settings modal currently controls:
 
-- `Show Reasoning`
-- `Verbose Tool Output`
+- `Show Reasoning` — toggle thinking text visibility
+- `Verbose Tool Output` — toggle full tool input/output view
+- `Thinking Level` — select thinking effort (adaptive/max/high/medium/low/off)
+- `YOLO Mode` — auto-approve tools without confirmation
+- `Theme` — select color theme
 
 Provider configuration is now in the command palette as `Providers`. That modal lists configured providers, shows whether each one is backed by an env var, stored credential, OpenCode auth, or is missing credentials, and supports:
 
@@ -128,6 +163,30 @@ Provider configuration is now in the command palette as `Providers`. That modal 
 - `r` to sync models for the selected provider.
 
 The Debug modal (`ctrl+d`) shows the log path, session id, project, selected model/provider, active state, and recent diagnostics. It is intentionally read-only and should not render raw payloads or secrets.
+
+### Plugin Marketplace
+
+The Plugins modal (`ctrl+p` → "Plugins") provides:
+
+- Browse available plugins from the configured registry
+- Install plugins with approval workflow
+- Update installed plugins
+- Reload WASM plugins without restarting
+
+Plugin install/update requires approval via the `PluginApproval` modal, which shows:
+
+- Plugin capabilities and tools
+- Risk assessment (LOW/MEDIUM/HIGH/CRITICAL)
+- Publisher and version information
+- Warnings and security notes
+
+### Message Actions
+
+The Message Actions modal (accessible via right-click or keyboard shortcut on a message) provides:
+
+- `Revert to here` — move message content back to input
+- `Copy text` — copy message to clipboard
+- `Fork from here` — start a new session from this point
 
 ## Performance Rules
 
@@ -142,8 +201,8 @@ The Debug modal (`ctrl+d`) shows the log path, session id, project, selected mod
 For TUI changes:
 
 ```bash
-cargo test -p navi-tui
-cargo check
+just test-crate navi-tui
+just check
 ```
 
 For key handling or rendering changes, add focused unit tests in the corresponding module

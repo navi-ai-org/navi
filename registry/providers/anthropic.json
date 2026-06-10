@@ -1,0 +1,90 @@
+{
+  "id": "anthropic",
+  "label": "Anthropic",
+  "description": "Claude models via API key",
+  "kind": "anthropic-messages",
+  "api_key_env": "ANTHROPIC_API_KEY",
+  "base_url": "https://api.anthropic.com/v1",
+  "models": [
+    {
+      "name": "claude-opus-4",
+      "task_size": "large",
+      "context_window_tokens": 200000
+    },
+    {
+      "name": "claude-opus-4-1-20250805",
+      "task_size": "large",
+      "context_window_tokens": 200000
+    },
+    {
+      "name": "claude-opus-4-20250514",
+      "task_size": "large",
+      "context_window_tokens": 200000
+    },
+    {
+      "name": "claude-sonnet-4",
+      "task_size": "large",
+      "context_window_tokens": 200000
+    },
+    {
+      "name": "claude-sonnet-4-20250514",
+      "task_size": "large",
+      "context_window_tokens": 200000
+    },
+    {
+      "name": "claude-haiku-4",
+      "task_size": "small",
+      "context_window_tokens": 200000
+    },
+    {
+      "name": "claude-3.7-sonnet",
+      "task_size": "large",
+      "context_window_tokens": 200000
+    },
+    {
+      "name": "claude-3-7-sonnet-20250219",
+      "task_size": "large",
+      "context_window_tokens": 200000
+    },
+    {
+      "name": "claude-3.5-sonnet",
+      "task_size": "large",
+      "context_window_tokens": 200000
+    },
+    {
+      "name": "claude-3-5-sonnet-20241022",
+      "task_size": "large",
+      "context_window_tokens": 200000
+    },
+    {
+      "name": "claude-3-5-sonnet-20240620",
+      "task_size": "large",
+      "context_window_tokens": 200000
+    },
+    {
+      "name": "claude-3.5-haiku",
+      "task_size": "small",
+      "context_window_tokens": 200000
+    },
+    {
+      "name": "claude-3-5-haiku-20241022",
+      "task_size": "small",
+      "context_window_tokens": 200000
+    },
+    {
+      "name": "claude-3-opus-20240229",
+      "task_size": "large",
+      "context_window_tokens": 200000
+    },
+    {
+      "name": "claude-3-sonnet-20240229",
+      "task_size": "large",
+      "context_window_tokens": 200000
+    },
+    {
+      "name": "claude-3-haiku-20240307",
+      "task_size": "small",
+      "context_window_tokens": 200000
+    }
+  ]
+}

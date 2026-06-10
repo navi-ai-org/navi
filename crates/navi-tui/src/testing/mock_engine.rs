@@ -241,6 +241,10 @@ impl EngineDriver for MockEngine {
         Ok(Vec::new())
     }
 
+    async fn sync_registry(&self, _force: bool) -> Result<bool> {
+        Ok(false)
+    }
+
     async fn sync_models(&self, target: NaviConfigSaveTarget) -> Result<NaviProviderSyncReport> {
         self.state
             .lock()

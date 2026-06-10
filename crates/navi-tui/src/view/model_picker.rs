@@ -55,6 +55,45 @@ pub(super) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
     let list_area = rows[1];
     let row_width = list_area.width as usize;
 
+    if list_rows.is_empty() {
+        // No authenticated providers — show instructional empty state.
+        let dim = Style::default().fg(muted()).bg(modal_bg());
+        let accent = Style::default().fg(signal()).bg(modal_bg());
+        let hint = Style::default().fg(ghost()).bg(modal_bg());
+        let empty_lines = vec![
+            Line::from(""),
+            Line::from(Span::styled("  No models available.", accent)),
+            Line::from(""),
+            Line::from(Span::styled("  Configure a provider to get started:", dim)),
+            Line::from(""),
+            Line::from(vec![
+                Span::styled("  1. ", hint),
+                Span::styled("ctrl+p", accent),
+                Span::styled(" → ", dim),
+                Span::styled("Providers", accent),
+                Span::styled(" to add an API key", dim),
+            ]),
+            Line::from(vec![
+                Span::styled("  2. Set an env var like ", dim),
+                Span::styled("OPENAI_API_KEY", accent),
+            ]),
+            Line::from(Span::styled(
+                "  3. Or add a [providers] entry in config.toml",
+                dim,
+            )),
+        ];
+        frame.render_widget(
+            Paragraph::new(empty_lines).style(Style::default().bg(modal_bg())),
+            list_area,
+        );
+        frame.render_widget(
+            Paragraph::new("ctrl+p command palette  •  ctrl+e setup")
+                .style(Style::default().fg(text()).bg(modal_bg())),
+            rows[2],
+        );
+        return;
+    }
+
     let selected_row = selected_model_in_rows(&list_rows, app.selected_model).unwrap_or(0);
     let hover_row = app
         .hover_index

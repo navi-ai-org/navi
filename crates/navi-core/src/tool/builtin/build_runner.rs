@@ -89,6 +89,10 @@ impl Tool for BuildRunnerTool {
                     "incremental": {
                         "type": "boolean",
                         "description": "When true (default), skip build if no source files changed since last build."
+                    },
+                    "force": {
+                        "type": "boolean",
+                        "description": "When true, bypass the build cache and force a fresh rebuild."
                     }
                 },
                 "additionalProperties": false,
@@ -102,9 +106,10 @@ impl Tool for BuildRunnerTool {
         let features = helpers::optional_string(&invocation.input, "features");
         let incremental = helpers::optional_bool(&invocation.input, "incremental").unwrap_or(true);
 
+        let force = helpers::optional_bool(&invocation.input, "force").unwrap_or(false);
         let build_system = detect_build_system(&self.project_root).await?;
 
-        if incremental {
+        if incremental && !force {
             let current_mtime = latest_source_mtime(&self.project_root, &build_system);
             let state = self.state.lock().unwrap_or_else(|e| e.into_inner());
 
@@ -116,6 +121,22 @@ impl Tool for BuildRunnerTool {
                 && current <= src_mtime
                 && last_build.elapsed().unwrap_or_default().as_secs() < 300
             {
+                let cache_age_secs = last_build.elapsed().unwrap_or_default().as_secs();
+                let original_status = cached._status.clone();
+                let original_warnings = cached.warnings.len();
+                let original_errors = cached.errors.len();
+                let original_summary = if original_status == "success" {
+                    if original_warnings == 0 {
+                        "last build succeeded".to_string()
+                    } else {
+                        format!("last build succeeded with {} warning(s)", original_warnings)
+                    }
+                } else {
+                    format!(
+                        "last build had {} error(s), {} warning(s)",
+                        original_errors, original_warnings
+                    )
+                };
                 return Ok(helpers::ok(
                     invocation.id,
                     helpers::versioned(BuildOutput {
@@ -133,7 +154,10 @@ impl Tool for BuildRunnerTool {
                             .filter_map(|v| serde_json::from_value(v.clone()).ok())
                             .collect(),
                         artifact_path: cached.artifact_path.clone(),
-                        summary: "build cached — no source changes detected".to_string(),
+                        summary: format!(
+                            "build cached ({}s ago) — {}. Set force=true to rebuild",
+                            cache_age_secs, original_summary
+                        ),
                     }),
                 ));
             }

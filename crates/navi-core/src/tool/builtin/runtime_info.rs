@@ -33,12 +33,17 @@ impl Tool for RuntimeInfoTool {
 
     async fn invoke(&self, invocation: ToolInvocation) -> Result<ToolResult> {
         let project_root = self.policy.project_root().display().to_string();
+        let security = self.policy.config();
 
         Ok(helpers::ok(
             invocation.id,
             json!({
                 "project_root": project_root,
                 "harness_profile": self.harness_profile,
+                "restrict_paths_to_project": security.restrict_paths_to_project,
+                "protect_git_metadata": security.protect_git_metadata,
+                "redact_secrets_in_sessions": security.redact_secrets_in_sessions,
+                "blocked_commands": security.blocked_commands,
             }),
         ))
     }
