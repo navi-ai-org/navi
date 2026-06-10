@@ -101,12 +101,6 @@ pub(crate) fn copy_text_to_clipboard(app: &mut TuiApp, text: &str) {
     show_notification(app, "Clipboard", "Text copied (OSC 52).".to_string());
 }
 
-fn copy_selection_to_clipboard(app: &mut TuiApp) {
-    if let Some(selected_text) = selected_text(app) {
-        copy_text_to_clipboard(app, &selected_text);
-    }
-}
-
 pub(crate) fn finish_selection(app: &mut TuiApp, end: Option<(usize, usize)>) -> bool {
     let Some(selection) = &mut app.selection else {
         return false;
@@ -191,9 +185,7 @@ pub(crate) fn handle_mouse(app: &mut TuiApp, mouse: MouseEvent) {
                 return;
             }
             let pos = map_mouse_to_text(app, mouse.column, mouse.row);
-            if finish_selection(app, pos) {
-                copy_selection_to_clipboard(app);
-            }
+            finish_selection(app, pos);
         }
         MouseEventKind::Moved => {
             if let Some(hit) = app.hit_test(mouse.column, mouse.row) {
