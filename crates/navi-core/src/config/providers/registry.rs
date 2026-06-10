@@ -407,18 +407,42 @@ pub(super) fn built_in_providers() -> Vec<ProviderConfig> {
         },
         ProviderConfig {
             id: "xiaomi".to_string(),
-            label: "Xiaomi".to_string(),
-            description: "MiMo models".to_string(),
+            label: "MiMo".to_string(),
+            description: "MiMo models via Tokens Plan".to_string(),
             kind: ProviderKind::OpenAiChatCompletions,
             api_key_env: "XIAOMI_API_KEY".to_string(),
-            base_url: Some("https://api.mimo-v2.com/v1".to_string()),
-            models: vec![
-                model("mimo-v2.5-pro", ModelTaskSize::Large),
-                model("mimo-v2.5", ModelTaskSize::Large),
-                model("mimo-v2-omni", ModelTaskSize::Small),
-                model("mimo-v2", ModelTaskSize::Small),
-                model("mimo-v1", ModelTaskSize::Small),
-            ],
+            base_url: Some("https://token-plan-sgp.xiaomimimo.com/v1".to_string()),
+            models: vec![model("Press ctrl-r to sync models", ModelTaskSize::Small)],
+            ..Default::default()
+        },
+        ProviderConfig {
+            id: "mimo-anthropic-cn".to_string(),
+            label: "MiMo (China)".to_string(),
+            description: "".to_string(),
+            kind: ProviderKind::AnthropicMessages,
+            api_key_env: "MIMO_API_KEY".to_string(),
+            base_url: Some("https://token-plan-cn.xiaomimimo.com/anthropic".to_string()),
+            models: vec![model("Press ctrl-r to sync models", ModelTaskSize::Small)],
+            ..Default::default()
+        },
+        ProviderConfig {
+            id: "mimo-anthropic-sgp".to_string(),
+            label: "MiMo Singapore (Tokens Plan)".to_string(),
+            description: "".to_string(),
+            kind: ProviderKind::AnthropicMessages,
+            api_key_env: "MIMO_API_KEY".to_string(),
+            base_url: Some("https://token-plan-sgp.xiaomimimo.com/anthropic".to_string()),
+            models: vec![model("Press ctrl-r to sync models", ModelTaskSize::Small)],
+            ..Default::default()
+        },
+        ProviderConfig {
+            id: "mimo-anthropic-ams".to_string(),
+            label: "MiMo (Europe)".to_string(),
+            description: "".to_string(),
+            kind: ProviderKind::AnthropicMessages,
+            api_key_env: "MIMO_API_KEY".to_string(),
+            base_url: Some("https://token-plan-ams.xiaomimimo.com/anthropic".to_string()),
+            models: vec![model("Press ctrl-r to sync models", ModelTaskSize::Small)],
             ..Default::default()
         },
         ProviderConfig {
