@@ -22,23 +22,21 @@ For EACH milestone:
 
 ```bash
 # Format check
-cargo fmt --check
+just fmt-check
 
 # Lint check
-cargo clippy --workspace --all-targets -- -D warnings
+just clippy
 
 # All tests
-CARGO_TEST_THREADS=4 cargo test --workspace
+just test
 
 # Per-crate tests
-cargo test -p navi-plugin-manifest
-cargo test -p navi-plugin-security
-cargo test -p navi-plugin-broker
-cargo test -p navi-plugin-runtime
-cargo test -p navi-plugin-registry
+just test-crate navi-plugin-manifest
+just test-crate navi-plugin-broker
+just test-crate navi-plugin-runtime
 
 # Red-team tests
-cargo test --test plugin_redteam
+cargo test -p navi-plugin-broker --test redteam_tests
 ```
 
 ## Security Gate Verification

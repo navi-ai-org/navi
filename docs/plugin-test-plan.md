@@ -112,9 +112,7 @@ Critical blocking tests:
 ## Test Commands
 ```bash
 cargo test -p navi-plugin-manifest
-cargo test -p navi-plugin-security
 cargo test -p navi-plugin-broker
 cargo test -p navi-plugin-runtime
-cargo test -p navi-plugin-registry
-cargo test --test plugin_redteam
+cargo test -p navi-plugin-broker --test redteam_tests
 ```

@@ -260,14 +260,14 @@ fn parse_cargo_test_output(output: &str, exit_ok: bool) -> TestRunOutput {
             let parts: Vec<&str> = line.split(';').collect();
             for part in &parts {
                 let part = part.trim();
-                if let Some(n) = extract_count(part, "passed") {
-                    passed = n;
+                if let Some(n) = extract_count(part.trim(), "passed") {
+                    passed += n;
                 }
-                if let Some(n) = extract_count(part, "failed") {
-                    failed = n;
+                if let Some(n) = extract_count(part.trim(), "failed") {
+                    failed += n;
                 }
-                if let Some(n) = extract_count(part, "ignored") {
-                    ignored = n;
+                if let Some(n) = extract_count(part.trim(), "ignored") {
+                    ignored += n;
                 }
                 if let Some(secs) = extract_duration_secs(part) {
                     duration_ms = secs;
@@ -853,6 +853,28 @@ mod tests {
         assert_eq!(result["total"], 5);
     }
 
+    #[test]
+    fn parse_cargo_multi_binary_accumulates() {
+        let output = "running 472 tests
+test result: ok. 472 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.39s
+running 0 tests
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s";
+        let result = parse_cargo_test(output, true, Some(0));
+        assert_eq!(result["passed"], 472);
+        assert_eq!(result["failed"], 0);
+        assert_eq!(result["total"], 472);
+    }
+
+    #[test]
+    fn parse_cargo_multi_binary_sums_passed() {
+        let output = "running 5 tests
+test result: ok. 5 passed; 0 failed; 0 ignored; finished in 1.00s
+running 3 tests
+test result: ok. 3 passed; 0 failed; 0 ignored; finished in 0.50s";
+        let result = parse_cargo_test(output, true, Some(0));
+        assert_eq!(result["passed"], 8);
+        assert_eq!(result["total"], 8);
+    }
     // ── parse_js_test ──────────────────────────────────────────────────────
 
     #[test]

@@ -1,0 +1,55 @@
+{
+  "id": "nvidia",
+  "label": "Nvidia",
+  "description": "NIM inference microservices",
+  "kind": "openai-chat-completions",
+  "api_key_env": "NVIDIA_API_KEY",
+  "base_url": "https://integrate.api.nvidia.com/v1",
+  "models": [
+    {
+      "name": "meta/llama-3.3-70b-instruct",
+      "task_size": "large",
+      "context_window_tokens": 128000
+    },
+    {
+      "name": "meta/llama-3.1-8b-instruct",
+      "task_size": "small",
+      "context_window_tokens": 128000
+    },
+    {
+      "name": "mistralai/mistral-7b-instruct",
+      "task_size": "small",
+      "context_window_tokens": 32000
+    },
+    {
+      "name": "nvidia/llama-3.1-nemotron-70b-instruct",
+      "task_size": "large",
+      "context_window_tokens": 128000
+    },
+    {
+      "name": "qwen/qwen2.5-coder-32b-instruct",
+      "task_size": "large",
+      "context_window_tokens": 128000
+    },
+    {
+      "name": "mistralai/mixtral-8x7b-instruct",
+      "task_size": "small",
+      "context_window_tokens": 32000
+    },
+    {
+      "name": "mistralai/mistral-large",
+      "task_size": "large",
+      "context_window_tokens": 128000
+    },
+    {
+      "name": "deepseek-ai/deepseek-r1",
+      "task_size": "large",
+      "context_window_tokens": 128000
+    },
+    {
+      "name": "microsoft/phi-4",
+      "task_size": "small",
+      "context_window_tokens": 16000
+    }
+  ]
+}

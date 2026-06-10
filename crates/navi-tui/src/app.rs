@@ -116,6 +116,10 @@ pub struct TuiApp {
     pub(crate) expanded_tool_results: HashSet<String>,
     pub(crate) hovered_chat_source: Option<crate::state::ChatLineSource>,
 
+    /// Cached set of canonical provider IDs with resolved credentials.
+    /// Populated by refresh_authenticated_providers().
+    pub(crate) authenticated_providers: HashSet<String>,
+
     // skills
     pub(crate) available_skills: Vec<NaviSkillInfo>,
     pub(crate) active_skills: Vec<String>,
@@ -256,6 +260,7 @@ impl TuiApp {
             selected_message_action: 0,
             expanded_tool_results: HashSet::new(),
             hovered_chat_source: None,
+            authenticated_providers: HashSet::new(),
             available_skills: Vec::new(),
             active_skills: initial_active_skills,
             selected_skill: 0,
@@ -277,6 +282,9 @@ impl TuiApp {
 
         // Load available skills
         app.refresh_skills();
+
+        // Cache authenticated provider IDs for fast model picker filtering
+        app.refresh_authenticated_providers();
 
         Ok(app)
     }
@@ -430,6 +438,26 @@ impl TuiApp {
 
     pub(crate) fn is_skill_active(&self, skill_id: &str) -> bool {
         self.active_skills.iter().any(|s| s == skill_id)
+    }
+
+    /// Rebuild the cached set of authenticated provider IDs.
+    /// Call this when opening the model picker or after credential changes.
+    pub(crate) fn refresh_authenticated_providers(&mut self) {
+        let engine = self.engine.clone();
+        let unique_providers: HashSet<String> = self
+            .models
+            .iter()
+            .map(|m| canonical_provider_id(&m.provider_id).to_string())
+            .collect();
+        self.authenticated_providers = unique_providers
+            .into_iter()
+            .filter(|pid| {
+                engine
+                    .credential_status(pid)
+                    .map(|s| s.configured)
+                    .unwrap_or(false)
+            })
+            .collect();
     }
 
     pub(crate) fn filtered_skills(&self) -> Vec<&NaviSkillInfo> {

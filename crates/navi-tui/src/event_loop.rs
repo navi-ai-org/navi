@@ -4,8 +4,8 @@ use std::time::Duration;
 use anyhow::Result;
 use crossterm::event::{self, Event, KeyEventKind, KeyboardEnhancementFlags};
 use crossterm::event::{
-    DisableMouseCapture, EnableMouseCapture, PopKeyboardEnhancementFlags,
-    PushKeyboardEnhancementFlags,
+    DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
+    PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
 };
 use crossterm::execute;
 use crossterm::terminal::{
@@ -18,6 +18,7 @@ use ratatui::prelude::{CrosstermBackend, Terminal};
 use crate::app::TuiApp;
 use crate::chat::submit_message;
 use crate::dispatch::handle_async_event;
+use crate::input::{insert_api_key_text, insert_input_text};
 use crate::keybindings::handle_key;
 use crate::mouse::handle_mouse;
 use crate::notifications::{expire_notification, visible_notification};
@@ -56,7 +57,12 @@ impl InputSource for CrosstermInput {
 pub fn run(app: TuiApp) -> Result<()> {
     enable_raw_mode()?;
     let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
+    execute!(
+        stdout,
+        EnterAlternateScreen,
+        EnableMouseCapture,
+        EnableBracketedPaste
+    )?;
 
     // Enable the kitty keyboard protocol so the terminal can distinguish
     // Ctrl+Enter from plain Enter (and report other modifier combos).
@@ -82,7 +88,8 @@ pub fn run(app: TuiApp) -> Result<()> {
     execute!(
         terminal.backend_mut(),
         LeaveAlternateScreen,
-        DisableMouseCapture
+        DisableMouseCapture,
+        DisableBracketedPaste
     )?;
     disable_raw_mode()?;
     terminal.show_cursor()?;
@@ -145,6 +152,10 @@ where
                     needs_draw = true;
                     handle_mouse(app, mouse_event);
                 }
+                Event::Paste(content) => {
+                    needs_draw = true;
+                    handle_paste(app, &content);
+                }
                 _ => {}
             }
         } else if app.is_loading || app.messages.is_empty() || visible_notification(app).is_some() {
@@ -156,4 +167,14 @@ where
     save_preferences(app);
 
     Ok(())
+}
+
+/// Handle a bracketed paste event by inserting the full text into the active
+/// input field.
+fn handle_paste(app: &mut TuiApp, content: &str) {
+    match app.mode {
+        Mode::Normal => insert_input_text(app, content),
+        Mode::ApiKeyEntry => insert_api_key_text(app, content),
+        _ => {}
+    }
 }

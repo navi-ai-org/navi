@@ -355,16 +355,16 @@ Optimize agent behavior.
 
 ### Commands
 ```bash
-cargo test --test plugin_redteam_fast_search
-cargo test --test plugin_redteam_smart_indexer
-cargo test --test plugin_redteam_api_helper
-cargo test --test plugin_redteam_doc_gen
-cargo test --test plugin_redteam_theme_pack
-cargo test --test plugin_redteam_context_boost
-cargo test --test plugin_redteam_git_flow
-cargo test --test plugin_redteam_perf_monitor
-cargo test --test plugin_redteam_file_writer
-cargo test --test plugin_redteam_agent_optimizer
+cargo test -p navi-plugin-broker --test redteam_tests -- fast_search
+cargo test -p navi-plugin-broker --test redteam_tests -- smart_indexer
+cargo test -p navi-plugin-broker --test redteam_tests -- api_helper
+cargo test -p navi-plugin-broker --test redteam_tests -- doc_gen
+cargo test -p navi-plugin-broker --test redteam_tests -- theme_pack
+cargo test -p navi-plugin-broker --test redteam_tests -- context_boost
+cargo test -p navi-plugin-broker --test redteam_tests -- git_flow
+cargo test -p navi-plugin-broker --test redteam_tests -- perf_monitor
+cargo test -p navi-plugin-broker --test redteam_tests -- file_writer
+cargo test -p navi-plugin-broker --test redteam_tests -- agent_optimizer
 ```
 
 ### Gating

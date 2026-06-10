@@ -1,0 +1,145 @@
+{
+  "id": "mistral",
+  "label": "Mistral",
+  "description": "Mistral AI API",
+  "kind": "openai-chat-completions",
+  "api_key_env": "MISTRAL_API_KEY",
+  "base_url": "https://api.mistral.ai/v1",
+  "models": [
+    {
+      "name": "mistral-large-latest",
+      "task_size": "large",
+      "context_window_tokens": 128000
+    },
+    {
+      "name": "mistral-large-2411",
+      "task_size": "large",
+      "context_window_tokens": 128000
+    },
+    {
+      "name": "mistral-large-2407",
+      "task_size": "large",
+      "context_window_tokens": 128000
+    },
+    {
+      "name": "mistral-medium-latest",
+      "task_size": "large",
+      "context_window_tokens": 64000
+    },
+    {
+      "name": "mistral-medium-2508",
+      "task_size": "large",
+      "context_window_tokens": 64000
+    },
+    {
+      "name": "mistral-small-latest",
+      "task_size": "small",
+      "context_window_tokens": 32000
+    },
+    {
+      "name": "mistral-small-2506",
+      "task_size": "small",
+      "context_window_tokens": 32000
+    },
+    {
+      "name": "mistral-small-2503",
+      "task_size": "small",
+      "context_window_tokens": 32000
+    },
+    {
+      "name": "codestral-latest",
+      "task_size": "large",
+      "context_window_tokens": 128000
+    },
+    {
+      "name": "codestral-2508",
+      "task_size": "large",
+      "context_window_tokens": 128000
+    },
+    {
+      "name": "codestral-2501",
+      "task_size": "large",
+      "context_window_tokens": 128000
+    },
+    {
+      "name": "codestral-2405",
+      "task_size": "large",
+      "context_window_tokens": 32768
+    },
+    {
+      "name": "devstral-medium-latest",
+      "task_size": "large",
+      "context_window_tokens": 256000
+    },
+    {
+      "name": "devstral-medium-2507",
+      "task_size": "large",
+      "context_window_tokens": 256000
+    },
+    {
+      "name": "devstral-small-latest",
+      "task_size": "small",
+      "context_window_tokens": 32000
+    },
+    {
+      "name": "devstral-small-2507",
+      "task_size": "small",
+      "context_window_tokens": 32000
+    },
+    {
+      "name": "devstral-small-2505",
+      "task_size": "small",
+      "context_window_tokens": 32000
+    },
+    {
+      "name": "magistral-medium-latest",
+      "task_size": "large",
+      "context_window_tokens": 128000
+    },
+    {
+      "name": "magistral-small-latest",
+      "task_size": "small",
+      "context_window_tokens": 32000
+    },
+    {
+      "name": "pixtral-large-latest",
+      "task_size": "large",
+      "context_window_tokens": 128000
+    },
+    {
+      "name": "pixtral-12b-2409",
+      "task_size": "small",
+      "context_window_tokens": 128000
+    },
+    {
+      "name": "open-mistral-nemo",
+      "task_size": "small",
+      "context_window_tokens": 128000
+    },
+    {
+      "name": "open-mixtral-8x22b",
+      "task_size": "large",
+      "context_window_tokens": 64000
+    },
+    {
+      "name": "open-mixtral-8x7b",
+      "task_size": "small",
+      "context_window_tokens": 32000
+    },
+    {
+      "name": "open-mistral-7b",
+      "task_size": "small",
+      "context_window_tokens": 32000
+    },
+    {
+      "name": "ministral-8b-latest",
+      "task_size": "small",
+      "context_window_tokens": 32000
+    },
+    {
+      "name": "ministral-3b-latest",
+      "task_size": "small",
+      "context_window_tokens": 32000
+    }
+  ]
+}

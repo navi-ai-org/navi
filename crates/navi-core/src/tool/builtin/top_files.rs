@@ -77,11 +77,10 @@ impl Tool for TopFilesTool {
         let root = policy.resolve_project_path(Path::new(&input.path));
         let query = input.query.clone();
 
-        let output = tokio::task::spawn_blocking(move || {
-            run_top_files(&policy, root, &query, input)
-        })
-        .await
-        .map_err(|e| anyhow::anyhow!("top_files task join error: {e}"))??;
+        let output =
+            tokio::task::spawn_blocking(move || run_top_files(&policy, root, &query, input))
+                .await
+                .map_err(|e| anyhow::anyhow!("top_files task join error: {e}"))??;
 
         Ok(helpers::ok(invocation.id, output))
     }

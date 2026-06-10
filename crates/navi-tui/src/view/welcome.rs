@@ -18,7 +18,7 @@ pub(super) fn welcome_text(app: &TuiApp, width: usize) -> Text<'static> {
     let model = app.loaded_config.config.model.name.clone();
     let provider = selected_provider_label(app).to_string();
     let thinking = app.thinking_level.label();
-    let context = app.compact_state.usage_label(app.input.len());
+    let context = app.compact_state.usage_label(0);
     let mode = format!("{:?}", app.loaded_config.config.harness.profile).to_lowercase();
     let router = "auto".to_string();
     let tools = "shell read write grep patch".to_string();

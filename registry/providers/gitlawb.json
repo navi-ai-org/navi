@@ -1,0 +1,25 @@
+{
+  "id": "gitlawb",
+  "label": "Gitlawb",
+  "description": "Free Opengateway (MiMo, Gemini)",
+  "kind": "openai-chat-completions",
+  "api_key_env": "GITLAWB_API_KEY",
+  "base_url": "https://opengateway.gitlawb.com/v1",
+  "models": [
+    {
+      "name": "mimo-v2.5-pro",
+      "task_size": "large",
+      "context_window_tokens": 200000
+    },
+    {
+      "name": "mimo-v2.5",
+      "task_size": "large",
+      "context_window_tokens": 200000
+    },
+    {
+      "name": "google/gemini-3.1-flash-lite-preview",
+      "task_size": "small",
+      "context_window_tokens": 1000000
+    }
+  ]
+}

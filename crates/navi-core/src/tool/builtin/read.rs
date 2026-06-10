@@ -95,7 +95,10 @@ impl Tool for ReadFileTool {
         let truncated = start_idx > 0 || end_idx < total_lines;
 
         let (next_start, remaining) = if end_idx < total_lines {
-            (Some((end_idx + 1) as u64), Some((total_lines - end_idx) as u64))
+            (
+                Some((end_idx + 1) as u64),
+                Some((total_lines - end_idx) as u64),
+            )
         } else {
             (None, None)
         };

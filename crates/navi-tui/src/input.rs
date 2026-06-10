@@ -23,6 +23,14 @@ pub(crate) fn insert_input_char(app: &mut TuiApp, ch: char) {
     chat_input_ref(app).insert_char(ch);
 }
 
+pub(crate) fn insert_input_text(app: &mut TuiApp, text: &str) {
+    chat_input_ref(app).insert_text(text);
+}
+
+pub(crate) fn insert_api_key_text(app: &mut TuiApp, text: &str) {
+    api_key_input_ref(app).insert_text(text);
+}
+
 pub(crate) fn delete_input_previous_char(app: &mut TuiApp) {
     chat_input_ref(app).delete_previous_char();
 }

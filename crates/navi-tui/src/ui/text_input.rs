@@ -14,6 +14,35 @@ impl<'a> TextInputRef<'a> {
         *self.cursor += ch.len_utf8();
     }
 
+    /// Insert a multi-character string at the cursor position, filtering out
+    /// control characters (except `\n` and `\t`). `\r\n` is normalized to
+    /// `\n`; standalone `\r` is also converted to `\n`.
+    pub(crate) fn insert_text(&mut self, text: &str) {
+        self.clamp_cursor();
+        let mut chars = text.chars().peekable();
+        while let Some(ch) = chars.next() {
+            match ch {
+                '\r' => {
+                    // \r\n → skip \r, the following \n will be inserted.
+                    // Standalone \r → convert to \n.
+                    if chars.peek() != Some(&'\n') {
+                        self.text.insert(*self.cursor, '\n');
+                        *self.cursor += 1;
+                    }
+                }
+                '\n' | '\t' => {
+                    self.text.insert(*self.cursor, ch);
+                    *self.cursor += ch.len_utf8();
+                }
+                c if c.is_control() => {}
+                c => {
+                    self.text.insert(*self.cursor, c);
+                    *self.cursor += c.len_utf8();
+                }
+            }
+        }
+    }
+
     pub(crate) fn delete_previous_char(&mut self) {
         self.clamp_cursor();
         let Some(previous) = previous_char_boundary(self.text, *self.cursor) else {
@@ -310,5 +339,40 @@ mod tests {
             input.insert_char('x');
         }
         assert_eq!(text, "fooBar_x");
+    }
+
+    #[test]
+    fn insert_text_normalizes_line_endings() {
+        let mut text = String::new();
+        let mut cursor = 0;
+        {
+            let mut input = TextInputRef::new(&mut text, &mut cursor);
+            input.insert_text("hello\r\nworld\rbye\n");
+        }
+        assert_eq!(text, "hello\nworld\nbye\n");
+        assert_eq!(cursor, text.len());
+    }
+
+    #[test]
+    fn insert_text_skips_control_chars() {
+        let mut text = String::new();
+        let mut cursor = 0;
+        {
+            let mut input = TextInputRef::new(&mut text, &mut cursor);
+            input.insert_text("ab\x01\x02cd");
+        }
+        assert_eq!(text, "abcd");
+    }
+
+    #[test]
+    fn insert_text_at_cursor_position() {
+        let mut text = "hello".to_string();
+        let mut cursor = 5;
+        {
+            let mut input = TextInputRef::new(&mut text, &mut cursor);
+            input.insert_text(" world");
+        }
+        assert_eq!(text, "hello world");
+        assert_eq!(cursor, 11);
     }
 }
