@@ -1,5 +1,5 @@
 use ratatui::layout::Rect;
-use ratatui::prelude::{Frame, Line, Span, Style};
+use ratatui::prelude::{Frame, Line, Modifier, Span, Style};
 use ratatui::widgets::{Block, BorderType, Borders};
 
 use crate::theme::*;
@@ -46,11 +46,35 @@ pub(crate) fn fill_modal_surface(frame: &mut Frame<'_>, area: Rect) {
 }
 
 pub(crate) fn fill_modal_scrim(frame: &mut Frame<'_>, area: Rect) {
-    opaque_fill(frame, area, modal_scrim_style());
+    let area = area.intersection(frame.area());
+    if area.is_empty() {
+        return;
+    }
+    let buf = frame.buffer_mut();
+    for y in area.top()..area.bottom() {
+        for x in area.left()..area.right() {
+            let cell = &mut buf[(x, y)];
+            cell.set_style(cell.style().add_modifier(Modifier::DIM));
+        }
+    }
 }
 
 pub(crate) fn clear_modal_area(frame: &mut Frame<'_>, area: Rect) {
     fill_modal_surface(frame, area);
+    strip_dim(frame, area);
+}
+
+pub(crate) fn strip_dim(frame: &mut Frame<'_>, area: Rect) {
+    let area = area.intersection(frame.area());
+    if area.is_empty() {
+        return;
+    }
+    let buf = frame.buffer_mut();
+    for y in area.top()..area.bottom() {
+        for x in area.left()..area.right() {
+            buf[(x, y)].modifier.remove(Modifier::DIM);
+        }
+    }
 }
 
 pub(crate) fn modal_list_highlight_style() -> Style {
@@ -106,8 +130,8 @@ pub(crate) fn modal_rect(area: Rect, max_width: u16, height: u16) -> Rect {
 
 #[cfg(test)]
 mod tests {
-    use ratatui::backend::TestBackend;
     use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
 
     use crate::theme::{ThemeId, with_palette};
 
@@ -123,11 +147,7 @@ mod tests {
                     for x in 0..5 {
                         frame.buffer_mut()[(x, 0)].set_symbol("Z");
                     }
-                    opaque_fill(
-                        frame,
-                        Rect::new(1, 0, 3, 1),
-                        modal_style(),
-                    );
+                    opaque_fill(frame, Rect::new(1, 0, 3, 1), modal_style());
                 })
                 .expect("draw");
 

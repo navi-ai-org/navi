@@ -1,4 +1,3 @@
-use navi_sdk::provider_catalog;
 use ratatui::layout::{Constraint, Direction, Layout, Margin, Rect};
 use ratatui::prelude::{Frame, Span};
 use ratatui::style::Style;
@@ -25,17 +24,23 @@ pub(super) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
         .constraints([
             Constraint::Length(2),
             Constraint::Min(10),
-            Constraint::Length(2),
+            Constraint::Length(1),
+            Constraint::Length(1),
         ])
         .split(inner);
 
+    let header_text = if app.provider_filter.is_empty() {
+        "Type to filter providers...".to_string()
+    } else {
+        format!("Filter: {}_", app.provider_filter)
+    };
+
     frame.render_widget(
-        Paragraph::new("Configure API keys or OAuth sign-in for supported providers.")
-            .style(Style::default().fg(muted()).bg(modal_bg())),
+        Paragraph::new(header_text).style(Style::default().fg(muted()).bg(modal_bg())),
         rows[0],
     );
 
-    let providers = provider_catalog(&app.loaded_config.config);
+    let providers = app.filtered_providers();
     let height = rows[1].height as usize;
     let start = app.provider_settings_scroll.min(providers.len());
     let end = (start + height).min(providers.len());
@@ -49,10 +54,10 @@ pub(super) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
             let oauth = if provider_supports_oauth(&provider.id) {
                 "OAuth"
             } else {
-                "API key"
+                ""
             };
             let line = format!(
-                "{:<18} {:<12} {:<10} {}",
+                "{:<30} {:<12} {:<10} {}",
                 provider.label, status.label, oauth, provider.description
             );
             let style = if app.hover_index == Some(index) || selected {
@@ -89,7 +94,7 @@ pub(super) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
         );
         if provider_supports_oauth(&provider.id) {
             app.register_hit(
-                Rect::new(row.x + 31, row.y, 10.min(row.width.saturating_sub(31)), 1),
+                Rect::new(row.x + 43, row.y, 10.min(row.width.saturating_sub(43)), 1),
                 21,
                 format!("provider {} oauth", provider.label),
                 HitAction::ProviderOAuth(index),
@@ -98,8 +103,10 @@ pub(super) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
     }
 
     frame.render_widget(
-        Paragraph::new("k API key  •  o OAuth  •  r sync models")
-            .style(Style::default().fg(text()).bg(modal_bg())),
-        rows[2],
+        Paragraph::new(
+            "Enter configure key     ctrl-o OAuth     ctrl-r sync models     ctrl-d delete",
+        )
+        .style(Style::default().fg(text()).bg(modal_bg())),
+        rows[3],
     );
 }

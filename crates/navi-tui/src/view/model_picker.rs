@@ -7,9 +7,7 @@ use ratatui::widgets::{List, ListItem, ListState, Paragraph};
 
 use crate::TuiApp;
 use crate::providers::{ListRow, build_model_rows, selected_model_in_rows};
-use crate::render::{
-    clear_modal_area, modal_block, modal_list_highlight_style, model_row_simple,
-};
+use crate::render::{clear_modal_area, modal_block, modal_list_highlight_style, model_row_simple};
 use crate::theme::*;
 use crate::ui::interaction::{HitAction, line_rect};
 use crate::ui::list::render_scrollbar;
