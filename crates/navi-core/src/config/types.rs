@@ -39,9 +39,6 @@ pub struct NaviConfig {
     /// Terminal UI preferences.
     #[serde(default)]
     pub tui: TuiConfig,
-    /// Virtual File System — semantic code minification for token savings.
-    #[serde(default)]
-    pub vfs: VfsConfig,
 }
 
 /// TUI-specific settings (global config).
@@ -72,28 +69,6 @@ impl Default for TuiConfig {
             compact_tool_visible_limit: 5,
             thinking_level: "adaptive".to_string(),
             yolo_mode: false,
-        }
-    }
-}
-
-/// Virtual File System configuration — semantic code minification.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
-pub struct VfsConfig {
-    /// Enable VFS minification on read and formatting on write.
-    pub enabled: bool,
-    /// Keep comments in minified output.
-    pub keep_comments: bool,
-    /// Languages to enable VFS for (empty = all supported).
-    pub languages: Vec<String>,
-}
-
-impl Default for VfsConfig {
-    fn default() -> Self {
-        Self {
-            enabled: true,
-            keep_comments: false,
-            languages: Vec::new(),
         }
     }
 }

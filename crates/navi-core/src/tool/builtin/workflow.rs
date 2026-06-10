@@ -1,6 +1,5 @@
 use anyhow::{Context, Result, anyhow, bail};
 use async_trait::async_trait;
-use navi_vfs::VfsEngine;
 use serde_json::{Value as JsonValue, json};
 use starlark::any::ProvidesStaticType;
 use starlark::environment::{GlobalsBuilder, Module};
@@ -13,7 +12,6 @@ use starlark::values::dict::AllocDict;
 use starlark::values::none::NoneType;
 use std::cell::{Cell, RefCell};
 use std::collections::BTreeSet;
-use std::sync::Arc;
 use std::time::Instant;
 
 use super::helpers;
@@ -58,12 +56,11 @@ def stat(path):
 
 pub(crate) struct ToolWorkflowTool {
     policy: SecurityPolicy,
-    vfs: Option<Arc<VfsEngine>>,
 }
 
 impl ToolWorkflowTool {
-    pub(crate) fn new(policy: SecurityPolicy, vfs: Option<Arc<VfsEngine>>) -> Self {
-        Self { policy, vfs }
+    pub(crate) fn new(policy: SecurityPolicy) -> Self {
+        Self { policy }
     }
 }
 
@@ -111,8 +108,7 @@ impl Tool for ToolWorkflowTool {
         }
 
         let limits = WorkflowLimits::from_input(&invocation.input);
-        let nested_executor =
-            ToolExecutor::new_workflow_host(self.policy.clone(), self.vfs.clone());
+        let nested_executor = ToolExecutor::new_workflow_host(self.policy.clone());
         let context = WorkflowContext::new(
             nested_executor,
             tokio::runtime::Handle::current(),

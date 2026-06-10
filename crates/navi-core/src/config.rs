@@ -39,7 +39,6 @@ mod tests {
             wasm_plugins: Vec::new(),
             plugin_marketplace: PluginMarketplaceConfig::default(),
             tui: TuiConfig::default(),
-            vfs: VfsConfig::default(),
         };
 
         let mut project = NaviConfig {
@@ -81,7 +80,6 @@ mod tests {
             wasm_plugins: Vec::new(),
             plugin_marketplace: PluginMarketplaceConfig::default(),
             tui: TuiConfig::default(),
-            vfs: VfsConfig::default(),
         };
         project.plugins.clear();
         project.mcp = McpConfig::default();
