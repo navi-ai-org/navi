@@ -48,8 +48,13 @@ impl crate::provider::OpenAiProvider {
                 body["tools"] = json!(request.tools.iter().map(anthropic_tool_to_json).collect::<Vec<_>>());
             }
 
+            let url = if base_url.ends_with("/v1") {
+                format!("{}/messages", base_url.trim_end_matches('/'))
+            } else {
+                format!("{}/v1/messages", base_url.trim_end_matches('/'))
+            };
             let response = client
-                .post(format!("{}/messages", base_url.trim_end_matches('/')))
+                .post(url)
                 .headers(headers)
                 .json(&body)
                 .send()

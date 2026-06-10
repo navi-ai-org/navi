@@ -739,7 +739,7 @@ async fn test_opencode_zen_claude_models_use_messages_endpoint() {
     let mock_server = MockServer::start().await;
 
     Mock::given(method("POST"))
-        .and(path("/messages"))
+        .and(path("/v1/messages"))
         .and(header("Authorization", "Bearer zen_test_key"))
         .respond_with(
             ResponseTemplate::new(200)
