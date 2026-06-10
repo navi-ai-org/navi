@@ -25,6 +25,7 @@ pub(crate) fn build_chat_render_for_messages(
     compact_tool_visible_limit: usize,
     expanded_tool_results: &HashSet<String>,
     tool_render_cache: &mut HashMap<String, Vec<Line<'static>>>,
+    tick: u64,
 ) -> ChatRenderOutput {
     let mut rendered_lines: Vec<Line<'static>> = Vec::new();
     let mut line_sources: Vec<ChatLineSource> = Vec::new();
@@ -35,6 +36,21 @@ pub(crate) fn build_chat_render_for_messages(
     while index < messages.len() {
         let msg = messages[index];
         if is_empty_tool_placeholder(msg) {
+            let status = msg.status.as_deref().unwrap_or("working");
+            let frames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+            let frame = frames[(tick / 6) as usize % frames.len()];
+
+            if !rendered_lines.is_empty() {
+                rendered_lines.push(Line::from(""));
+                line_sources.push(ChatLineSource::None);
+            }
+
+            rendered_lines.push(Line::from(vec![Span::styled(
+                format!("  {frame} {status}..."),
+                Style::default().fg(accent()).add_modifier(Modifier::BOLD),
+            )]));
+            line_sources.push(ChatLineSource::Message(index));
+
             index += 1;
             continue;
         }
@@ -1044,20 +1060,12 @@ fn markdown_boundary_line(
     } else {
         format!("```{language}")
     };
-    let bg = if in_code {
-        code_block_bg()
-    } else {
-        Color::Reset
-    };
-    spans.push(Span::styled(label, Style::default().fg(ghost()).bg(bg)));
-    if in_code {
-        for span in &mut spans {
-            span.style = span.style.bg(bg);
-        }
-        Line::from(spans).style(Style::default().bg(bg))
-    } else {
-        Line::from(spans)
+    let bg = if in_code { code_block_bg() } else { bg() };
+    for span in &mut spans {
+        span.style = span.style.bg(bg);
     }
+    spans.push(Span::styled(label, Style::default().fg(ghost()).bg(bg)));
+    Line::from(spans).style(Style::default().bg(bg))
 }
 
 fn marker_spans(show_marker: bool, marker_color: Color) -> Vec<Span<'static>> {

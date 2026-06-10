@@ -2,7 +2,7 @@
 
    › read the file
 
-
+     ⠋ approval: tool...
 
     ╭ Tool Approval ───────────────────────────────────────────────────────╮
     │ Tool: unknown                                                        │

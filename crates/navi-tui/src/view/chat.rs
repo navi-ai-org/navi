@@ -317,6 +317,9 @@ fn chat_render_signature(app: &TuiApp) -> u64 {
     app.show_thinking.hash(&mut hasher);
     app.theme_id.config_value().hash(&mut hasher);
     app.compact_tool_visible_limit.hash(&mut hasher);
+    if app.is_loading || !app.running_tools.is_empty() {
+        (app.tick() / 6).hash(&mut hasher);
+    }
     for msg in &app.messages {
         msg.role.hash(&mut hasher);
         msg.content.len().hash(&mut hasher);
@@ -360,6 +363,7 @@ fn build_chat_render(
         app.compact_tool_visible_limit,
         &app.expanded_tool_results,
         &mut app.chat_render_cache.borrow_mut().tool_render_cache,
+        app.tick(),
     )
 }
 
