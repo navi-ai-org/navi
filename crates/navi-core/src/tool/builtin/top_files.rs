@@ -1,13 +1,11 @@
 use anyhow::Result;
 use async_trait::async_trait;
-use navi_vfs::VfsEngine;
 use serde_json::{Value, json};
 use std::cmp::Ordering;
 use std::collections::BTreeSet;
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 
 use super::helpers;
 use crate::security::{SecurityDecision, SecurityPolicy};
@@ -25,12 +23,11 @@ const SCORE_SAMPLE_BYTES: usize = 64 * 1024;
 
 pub(crate) struct TopFilesTool {
     policy: SecurityPolicy,
-    vfs: Option<Arc<VfsEngine>>,
 }
 
 impl TopFilesTool {
-    pub(crate) fn new(policy: SecurityPolicy, vfs: Option<Arc<VfsEngine>>) -> Self {
-        Self { policy, vfs }
+    pub(crate) fn new(policy: SecurityPolicy) -> Self {
+        Self { policy }
     }
 }
 
@@ -39,7 +36,7 @@ impl Tool for TopFilesTool {
     fn definition(&self) -> ToolDefinition {
         helpers::definition(
             "top_files",
-            "Read the most relevant project files for guided exploration, with automatic ranking, truncation, and VFS minification.",
+            "Read the most relevant project files for guided exploration, with automatic ranking and truncation.",
             ToolKind::Read,
             json!({
                 "type": "object",
@@ -77,12 +74,11 @@ impl Tool for TopFilesTool {
     async fn invoke(&self, invocation: ToolInvocation) -> Result<ToolResult> {
         let input = TopFilesInput::from_json(&invocation.input);
         let policy = self.policy.clone();
-        let vfs = self.vfs.clone();
         let root = policy.resolve_project_path(Path::new(&input.path));
         let query = input.query.clone();
 
         let output = tokio::task::spawn_blocking(move || {
-            run_top_files(&policy, vfs.as_deref(), root, &query, input)
+            run_top_files(&policy, root, &query, input)
         })
         .await
         .map_err(|e| anyhow::anyhow!("top_files task join error: {e}"))??;
@@ -149,7 +145,6 @@ enum FileCategory {
 
 fn run_top_files(
     policy: &SecurityPolicy,
-    vfs: Option<&VfsEngine>,
     root: PathBuf,
     query: &Option<String>,
     input: TopFilesInput,
@@ -183,7 +178,7 @@ fn run_top_files(
             break;
         }
 
-        let Some(mut file) = read_candidate_file(&candidate, vfs, input.max_lines_per_file)? else {
+        let Some(mut file) = read_candidate_file(&candidate, input.max_lines_per_file)? else {
             continue;
         };
 
@@ -208,7 +203,6 @@ fn run_top_files(
             "total_lines": file.total_lines,
             "truncated": file.truncated,
             "truncated_by_total_limit": file.truncated_by_total_limit,
-            "vfs_minified": file.vfs_minified,
         }));
     }
 
@@ -525,12 +519,10 @@ struct TopFileContent {
     total_lines: usize,
     truncated: bool,
     truncated_by_total_limit: bool,
-    vfs_minified: bool,
 }
 
 fn read_candidate_file(
     candidate: &Candidate,
-    vfs: Option<&VfsEngine>,
     max_lines_per_file: usize,
 ) -> Result<Option<TopFileContent>> {
     let content = match fs::read_to_string(&candidate.path) {
@@ -548,23 +540,12 @@ fn read_candidate_file(
         sliced_content.push('\n');
     }
 
-    let (content, vfs_minified) = if let Some(vfs) = vfs {
-        if let Some(minified) = vfs.minify(&candidate.path, &sliced_content) {
-            (minified, true)
-        } else {
-            (sliced_content, false)
-        }
-    } else {
-        (sliced_content, false)
-    };
-
     Ok(Some(TopFileContent {
-        content,
+        content: sliced_content,
         end_line: end_idx,
         total_lines,
         truncated: end_idx < total_lines,
         truncated_by_total_limit: false,
-        vfs_minified,
     }))
 }
 

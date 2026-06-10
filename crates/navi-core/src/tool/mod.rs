@@ -1,7 +1,6 @@
 use crate::security::{SecurityDecision, SecurityPolicy};
 use anyhow::Result;
 use async_trait::async_trait;
-use navi_vfs::VfsEngine;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::HashMap;
@@ -13,8 +12,8 @@ mod tests;
 
 use builtin::{
     ApplyPatchTool, BashTool, BuildRunnerTool, FsBrowserTool, GitOpsTool, GrepTool,
-    PackageManagerTool, QuestionTool, ReadFileTool, TestRunnerTool, ToolWorkflowTool, TopFilesTool,
-    WriteFileTool, truncate_tool_result,
+    PackageManagerTool, QuestionTool, ReadFileTool, RuntimeInfoTool, TestRunnerTool,
+    ToolWorkflowTool, TopFilesTool, WriteFileTool, truncate_tool_result,
 };
 
 /// Trait for executable tools that can be invoked by the agent.
@@ -97,7 +96,7 @@ pub struct ToolExecutor {
     validators: HashMap<String, Arc<jsonschema::Validator>>,
     invalid_schemas: HashMap<String, String>,
     policy: SecurityPolicy,
-    vfs: Option<Arc<VfsEngine>>,
+    harness_profile: String,
 }
 
 /// Reasons a tool call can be rejected before execution.
@@ -133,32 +132,37 @@ impl ToolExecutor {
     /// built-in tools (read_file, write_file, apply_patch, fs_browser, grep, bash,
     /// test_runner, build_runner).
     pub fn new(policy: SecurityPolicy) -> Self {
-        Self::new_with_vfs(policy, None)
-    }
-
-    /// Creates a new executor with an optional VFS engine for code minification.
-    pub fn new_with_vfs(policy: SecurityPolicy, vfs: Option<Arc<VfsEngine>>) -> Self {
         let mut executor = Self {
             tools: HashMap::new(),
             validators: HashMap::new(),
             invalid_schemas: HashMap::new(),
             policy,
-            vfs,
+            harness_profile: "medium".to_string(),
         };
         executor.register_builtin_tools();
         executor
     }
 
-    pub(crate) fn new_workflow_host(policy: SecurityPolicy, vfs: Option<Arc<VfsEngine>>) -> Self {
+    /// Sets the harness profile label reported by the `runtime_info` tool.
+    pub fn set_harness_profile(&mut self, profile: String) {
+        self.harness_profile = profile;
+        // Re-register runtime_info with the updated profile.
+        self.register(RuntimeInfoTool::new(
+            self.policy.clone(),
+            self.harness_profile.clone(),
+        ));
+    }
+
+    pub(crate) fn new_workflow_host(policy: SecurityPolicy) -> Self {
         let project_root = policy.project_root().to_path_buf();
         let mut executor = Self {
             tools: HashMap::new(),
             validators: HashMap::new(),
             invalid_schemas: HashMap::new(),
             policy,
-            vfs: vfs.clone(),
+            harness_profile: "medium".to_string(),
         };
-        executor.register(ReadFileTool::new(vfs));
+        executor.register(ReadFileTool::new());
         executor.register(FsBrowserTool);
         executor.register(GrepTool);
         executor.register(GitOpsTool::new(project_root));
@@ -354,11 +358,10 @@ impl ToolExecutor {
 
     fn register_builtin_tools(&mut self) {
         let project_root = self.policy.project_root().to_path_buf();
-        let vfs = self.vfs.clone();
-        self.register(ReadFileTool::new(vfs.clone()));
-        self.register(TopFilesTool::new(self.policy.clone(), vfs.clone()));
-        self.register(WriteFileTool::new(vfs.clone()));
-        self.register(ApplyPatchTool::new(project_root.clone(), vfs));
+        self.register(ReadFileTool::new());
+        self.register(TopFilesTool::new(self.policy.clone()));
+        self.register(WriteFileTool::new());
+        self.register(ApplyPatchTool::new(project_root.clone()));
         self.register(FsBrowserTool);
         self.register(GrepTool);
         self.register(BashTool::new(project_root.clone()));
@@ -367,7 +370,11 @@ impl ToolExecutor {
         self.register(GitOpsTool::new(project_root.clone()));
         self.register(QuestionTool);
         self.register(PackageManagerTool::new(project_root));
-        self.register(ToolWorkflowTool::new(self.policy.clone(), self.vfs.clone()));
+        self.register(ToolWorkflowTool::new(self.policy.clone()));
+        self.register(RuntimeInfoTool::new(
+            self.policy.clone(),
+            self.harness_profile.clone(),
+        ));
     }
 }
 
