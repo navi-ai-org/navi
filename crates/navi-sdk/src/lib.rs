@@ -55,6 +55,7 @@ pub use navi_core::{
 };
 // Registry
 pub use navi_core::registry::{RegistryFetcher, RegistryStore};
+pub use navi_mcp::McpServerInfo;
 
 #[cfg(test)]
 mod tests {

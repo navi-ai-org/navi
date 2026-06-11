@@ -20,6 +20,7 @@ use crate::{
     NaviSessionInfo, NaviSessionRequest, NaviSkillInfo, NaviTurnRequest, NaviTurnResponse,
     QuestionResponse, RuntimeEvent, SessionSnapshot,
 };
+use navi_mcp::McpServerInfo;
 
 /// Convenience alias matching the one used inside `engine.rs`.
 pub type Result<T> = std::result::Result<T, NaviError>;
@@ -88,10 +89,13 @@ pub trait EngineDriver: Send + Sync {
     /// Store an API key for a provider in the credential store.
     fn set_provider_api_key(&self, provider_id: &str, api_key: &str) -> Result<()>;
 
-    // ── Skills ─────────────────────────────────────────────────────────
+    // ── Skills & MCP ───────────────────────────────────────────────────
 
     /// Discover and list configured skills.
     fn list_skills(&self) -> Result<Vec<NaviSkillInfo>>;
+
+    /// List connected MCP servers.
+    fn list_mcp_servers(&self, session_id: &str) -> Result<Vec<McpServerInfo>>;
 
     // ── Saved sessions ─────────────────────────────────────────────────
 
@@ -176,5 +180,9 @@ impl EngineDriver for crate::NaviEngine {
 
     fn delete_saved_session(&self, session_id: &str) -> Result<bool> {
         crate::NaviEngine::delete_saved_session(self, session_id)
+    }
+
+    fn list_mcp_servers(&self, session_id: &str) -> Result<Vec<McpServerInfo>> {
+        crate::NaviEngine::list_mcp_servers(self, session_id)
     }
 }

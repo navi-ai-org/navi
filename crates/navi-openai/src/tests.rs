@@ -1594,7 +1594,10 @@ fn anthropic_messages_last_stable_user_gets_cache_control() {
     assert_eq!(content[0]["text"], "Hello");
     assert_eq!(content[0]["cache_control"]["type"], "ephemeral");
     // Last user message (index 3) is current turn — stays as plain string.
-    assert!(converted[2]["content"].is_string(), "last user msg stays plain string");
+    assert!(
+        converted[2]["content"].is_string(),
+        "last user msg stays plain string"
+    );
 }
 
 #[test]
@@ -1635,18 +1638,35 @@ fn anthropic_messages_breakpoint_budget_limits_to_four() {
 
     // The stable user message (Q1) should NOT be cached (budget exhausted).
     let q1_msg = &converted[0];
-    assert!(q1_msg["content"].is_string(), "Q1 stays plain string (no budget)");
+    assert!(
+        q1_msg["content"].is_string(),
+        "Q1 stays plain string (no budget)"
+    );
 }
 
 #[test]
 fn model_supports_extended_cache_gpt5() {
-    assert!(crate::providers::openai::model_supports_extended_cache("gpt-5"));
-    assert!(crate::providers::openai::model_supports_extended_cache("gpt-5.5"));
-    assert!(crate::providers::openai::model_supports_extended_cache("gpt-5.5-pro"));
-    assert!(crate::providers::openai::model_supports_extended_cache("gpt-5-codex"));
-    assert!(crate::providers::openai::model_supports_extended_cache("gpt-4.1"));
-    assert!(!crate::providers::openai::model_supports_extended_cache("gpt-4o"));
-    assert!(!crate::providers::openai::model_supports_extended_cache("gpt-4o-mini"));
+    assert!(crate::providers::openai::model_supports_extended_cache(
+        "gpt-5"
+    ));
+    assert!(crate::providers::openai::model_supports_extended_cache(
+        "gpt-5.5"
+    ));
+    assert!(crate::providers::openai::model_supports_extended_cache(
+        "gpt-5.5-pro"
+    ));
+    assert!(crate::providers::openai::model_supports_extended_cache(
+        "gpt-5-codex"
+    ));
+    assert!(crate::providers::openai::model_supports_extended_cache(
+        "gpt-4.1"
+    ));
+    assert!(!crate::providers::openai::model_supports_extended_cache(
+        "gpt-4o"
+    ));
+    assert!(!crate::providers::openai::model_supports_extended_cache(
+        "gpt-4o-mini"
+    ));
 }
 
 #[test]

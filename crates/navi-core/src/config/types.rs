@@ -395,7 +395,11 @@ pub struct McpServerConfig {
     /// Unique server identifier.
     pub id: String,
     /// Command to launch the server (e.g. `"npx"`).
-    pub command: String,
+    #[serde(default)]
+    pub command: Option<String>,
+    /// URL to connect to the server (e.g. `"http://localhost:8080/sse"`).
+    #[serde(default)]
+    pub url: Option<String>,
     /// Arguments passed to the command.
     #[serde(default)]
     pub args: Vec<String>,

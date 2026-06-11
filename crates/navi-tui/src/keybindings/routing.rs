@@ -12,6 +12,10 @@ pub(crate) fn handle_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyModifier
 pub(crate) fn route_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyModifiers) -> KeyOutcome {
     app.hover_index = None;
 
+    if code != KeyCode::Esc {
+        app.cancel_esc_pressed = false;
+    }
+
     let approval = route_approval_key(app, code);
     if approval.is_handled() {
         return approval;
@@ -62,7 +66,13 @@ fn route_normal_cancel_key(app: &mut TuiApp, code: KeyCode) -> KeyOutcome {
         && code == KeyCode::Esc
         && (app.is_loading || app.has_async_task())
     {
-        cancel_stream(app);
+        if app.cancel_esc_pressed {
+            cancel_stream(app);
+            app.cancel_esc_pressed = false;
+        } else {
+            app.cancel_esc_pressed = true;
+            crate::notifications::show_notification(app, "Cancel", "Press Esc again to stop");
+        }
         return KeyOutcome::Handled;
     }
     KeyOutcome::Ignored

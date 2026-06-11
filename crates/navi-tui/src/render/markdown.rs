@@ -24,8 +24,10 @@ pub(crate) fn build_chat_render_for_messages(
     show_thinking: bool,
     compact_tool_visible_limit: usize,
     expanded_tool_results: &HashSet<String>,
+    running_tools: &HashMap<String, ToolInvocation>,
     tool_render_cache: &mut HashMap<String, Vec<Line<'static>>>,
     tick: u64,
+    loading_elapsed_ms: Option<u64>,
 ) -> ChatRenderOutput {
     let mut rendered_lines: Vec<Line<'static>> = Vec::new();
     let mut line_sources: Vec<ChatLineSource> = Vec::new();
@@ -36,20 +38,41 @@ pub(crate) fn build_chat_render_for_messages(
     while index < messages.len() {
         let msg = messages[index];
         if is_empty_tool_placeholder(msg) {
-            let status = msg.status.as_deref().unwrap_or("working");
-            let frames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
-            let frame = frames[(tick / 6) as usize % frames.len()];
+            if let Some(status) = msg.status.as_deref() {
+                if status.starts_with("tool:") && !running_tools.is_empty() {
+                    if !rendered_lines.is_empty() {
+                        rendered_lines.push(Line::from(""));
+                        line_sources.push(ChatLineSource::None);
+                    }
 
-            if !rendered_lines.is_empty() {
-                rendered_lines.push(Line::from(""));
-                line_sources.push(ChatLineSource::None);
+                    for invocation in running_tools.values() {
+                        rendered_lines.push(render_running_tool_line(
+                            invocation,
+                            chat_width,
+                            tick,
+                            loading_elapsed_ms,
+                        ));
+                        line_sources.push(ChatLineSource::Message(index));
+                    }
+                } else if matches!(status, "thinking" | "receiving")
+                    || status.starts_with("approval:")
+                    || status.starts_with("question")
+                {
+                    if !rendered_lines.is_empty() {
+                        rendered_lines.push(Line::from(""));
+                        line_sources.push(ChatLineSource::None);
+                    }
+                    rendered_lines.push(render_activity_line(
+                        msg,
+                        status,
+                        running_tools,
+                        chat_width,
+                        tick,
+                        loading_elapsed_ms,
+                    ));
+                    line_sources.push(ChatLineSource::Message(index));
+                }
             }
-
-            rendered_lines.push(Line::from(vec![Span::styled(
-                format!("  {frame} {status}..."),
-                Style::default().fg(accent()).add_modifier(Modifier::BOLD),
-            )]));
-            line_sources.push(ChatLineSource::Message(index));
 
             index += 1;
             continue;
@@ -144,6 +167,29 @@ pub(crate) fn build_chat_render_for_messages(
                         line_sources.push(ChatLineSource::ToolResult(result.invocation_id.clone()));
                     }
                 } else {
+                    if !show_thinking
+                        && !msg.thinking_content.trim().is_empty()
+                        && msg
+                            .status
+                            .as_deref()
+                            .is_some_and(|status| status == "thinking")
+                    {
+                        rendered_lines.push(render_activity_line(
+                            msg,
+                            "thinking",
+                            running_tools,
+                            chat_width,
+                            tick,
+                            loading_elapsed_ms,
+                        ));
+                        line_sources.push(ChatLineSource::Message(index));
+                        if msg.content.trim().is_empty() {
+                            index += 1;
+                            continue;
+                        }
+                        rendered_lines.push(Line::from(""));
+                        line_sources.push(ChatLineSource::Message(index));
+                    }
                     if show_thinking && !msg.thinking_content.is_empty() {
                         push_sourced_lines(
                             &mut rendered_lines,
@@ -220,6 +266,175 @@ fn push_sourced_lines(
     }
 }
 
+fn render_running_tool_line(
+    invocation: &ToolInvocation,
+    chat_width: usize,
+    tick: u64,
+    loading_elapsed_ms: Option<u64>,
+) -> Line<'static> {
+    let frame = spinner_frame(tick);
+    let action_color = pulse_color(tick, tool_color(invocation.tool_name.as_str()));
+    let tool_label = tool_group_label(&invocation.tool_name);
+    let mut detail = tool_compact_text(
+        invocation,
+        &ToolResult {
+            invocation_id: invocation.id.clone(),
+            ok: true,
+            output: serde_json::json!({}),
+        },
+    );
+    if let Some(rest) = detail.strip_prefix(&tool_label) {
+        detail = rest.trim_start().to_string();
+    }
+    if detail.is_empty() {
+        detail = running_tool_detail(invocation);
+    }
+    let elapsed = loading_elapsed_ms.map(format_elapsed).unwrap_or_default();
+    let suffix = if elapsed.is_empty() {
+        String::new()
+    } else {
+        format!(" · {elapsed}")
+    };
+    let content_width = chat_width.saturating_sub(6).max(12);
+    let detail = truncate_chars(
+        &detail,
+        content_width.saturating_sub(tool_label.len() + suffix.len() + 2),
+    );
+
+    Line::from(vec![
+        Span::styled("│ ", Style::default().fg(action_color)),
+        Span::styled(
+            format!("{frame} "),
+            Style::default()
+                .fg(action_color)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            format!("{tool_label}:"),
+            Style::default()
+                .fg(action_color)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(" ", Style::default().fg(ghost())),
+        Span::styled(detail, Style::default().fg(text())),
+        Span::styled(suffix, Style::default().fg(code_number())),
+    ])
+}
+
+fn render_activity_line(
+    message: &ChatMessage,
+    status: &str,
+    running_tools: &HashMap<String, ToolInvocation>,
+    chat_width: usize,
+    tick: u64,
+    loading_elapsed_ms: Option<u64>,
+) -> Line<'static> {
+    let (label, phase, color) = if status == "receiving" {
+        ("Writing", "composing response".to_string(), accent())
+    } else if status.starts_with("approval:") {
+        (
+            "Approval",
+            status.trim_start_matches("approval: ").to_string(),
+            code_const(),
+        )
+    } else if status.starts_with("question") {
+        ("Question", "waiting for input".to_string(), code_const())
+    } else if let Some(invocation) = running_tools.values().next() {
+        (
+            "Thinking",
+            format!(
+                "preparing {}",
+                tool_group_label(&invocation.tool_name).to_lowercase()
+            ),
+            code_operator(),
+        )
+    } else {
+        ("Thinking", thinking_phase(message), code_operator())
+    };
+    let color = pulse_color(tick, color);
+    let elapsed = loading_elapsed_ms.map(format_elapsed).unwrap_or_default();
+    let suffix = if elapsed.is_empty() {
+        String::new()
+    } else {
+        format!(" · {elapsed}")
+    };
+    let phase = truncate_chars(
+        &phase,
+        chat_width
+            .saturating_sub(label.len() + suffix.len() + 8)
+            .max(12),
+    );
+
+    Line::from(vec![
+        Span::styled("│ ", Style::default().fg(color)),
+        Span::styled(
+            format!("{} ", spinner_frame(tick)),
+            Style::default().fg(color).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            format!("{label}:"),
+            Style::default().fg(color).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(" ", Style::default().fg(ghost())),
+        Span::styled(
+            phase,
+            Style::default().fg(text()).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(suffix, Style::default().fg(code_number())),
+    ])
+}
+
+fn running_tool_detail(invocation: &ToolInvocation) -> String {
+    invocation
+        .input
+        .get("command")
+        .or_else(|| invocation.input.get("path"))
+        .or_else(|| invocation.input.get("query"))
+        .and_then(|value| value.as_str())
+        .map(str::to_string)
+        .unwrap_or_else(|| "working".to_string())
+}
+
+fn thinking_phase(message: &ChatMessage) -> String {
+    message
+        .thinking_content
+        .lines()
+        .rev()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .map(clean_activity_text)
+        .filter(|line| !line.is_empty())
+        .unwrap_or_else(|| "planning next step".to_string())
+}
+
+fn clean_activity_text(text: &str) -> String {
+    text.trim_matches(|ch: char| matches!(ch, '#' | '*' | '-' | '`' | '>' | ' '))
+        .trim()
+        .to_string()
+}
+
+fn spinner_frame(tick: u64) -> char {
+    const FRAMES: [char; 10] = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+    FRAMES[(tick / 6) as usize % FRAMES.len()]
+}
+
+fn pulse_color(tick: u64, base: Color) -> Color {
+    if (tick / 12).is_multiple_of(2) {
+        base
+    } else {
+        signal()
+    }
+}
+
+fn format_elapsed(ms: u64) -> String {
+    let seconds = ms / 1_000;
+    if seconds < 60 {
+        format!("{seconds}s")
+    } else {
+        format!("{}m {}s", seconds / 60, seconds % 60)
+    }
+}
+
 fn render_user_message_lines(text: &str, chat_width: usize) -> Vec<Line<'static>> {
     let width = chat_width.max(8);
     let wrapped = wrap_text(text, width.saturating_sub(4));
@@ -247,6 +462,7 @@ fn render_user_message_lines(text: &str, chat_width: usize) -> Vec<Line<'static>
                 .iter()
                 .map(|span| display_width(&span.content))
                 .sum::<usize>();
+
             if used < width {
                 spans.push(Span::styled(
                     " ".repeat(width - used),
@@ -405,11 +621,19 @@ fn render_collapsed_tool_group(
     );
     let bar_color = if errors > 0 { Color::Red } else { accent() };
     let bg = interactive_bg();
-    Line::from(vec![
+    let mut spans = vec![
         Span::styled("│", Style::default().fg(bar_color).bg(bg)),
         Span::styled(" ", Style::default().bg(bg)),
-        Span::styled(text, Style::default().fg(muted()).bg(bg)),
-    ])
+    ];
+    spans.extend(
+        semantic_plain_spans(&text, muted())
+            .into_iter()
+            .map(|mut span| {
+                span.style = span.style.bg(bg);
+                span
+            }),
+    );
+    Line::from(spans)
 }
 
 fn tool_group_label(tool_name: &str) -> String {
@@ -433,13 +657,45 @@ fn render_compact_tool_line_with_width(
     let marker_width = marker.chars().count();
     let text_width = chat_width.saturating_sub(marker_width).max(12);
     let status_color = if result.ok { accent() } else { red() };
-    Line::from(vec![
+    let label = truncate_chars(&tool_compact_text(invocation, result), text_width);
+    let (action, detail) = label.split_once(' ').unwrap_or((&label, ""));
+    let action_color = if result.ok {
+        tool_color(invocation.tool_name.as_str())
+    } else {
+        red()
+    };
+    let mut spans = vec![
         Span::styled(marker, Style::default().fg(status_color)),
         Span::styled(
-            truncate_chars(&tool_compact_text(invocation, result), text_width),
-            Style::default().fg(if result.ok { muted() } else { text() }),
+            if result.ok { "✓ " } else { "✗ " },
+            Style::default()
+                .fg(status_color)
+                .add_modifier(Modifier::BOLD),
         ),
-    ])
+        Span::styled(
+            action.to_string(),
+            Style::default()
+                .fg(action_color)
+                .add_modifier(Modifier::BOLD),
+        ),
+    ];
+    if !detail.is_empty() {
+        spans.push(Span::styled(" ", Style::default().fg(ghost())));
+        spans.extend(semantic_plain_spans(
+            detail,
+            if result.ok { muted() } else { text() },
+        ));
+    }
+    Line::from(spans)
+}
+
+fn tool_color(tool_name: &str) -> Color {
+    match tool_name {
+        "read_file" | "view_file" | "grep" | "fs_browser" => code_type(),
+        "write_file" | "apply_patch" => code_const(),
+        "bash" => code_operator(),
+        _ => accent(),
+    }
 }
 
 fn truncate_chars(value: &str, max_chars: usize) -> String {
@@ -495,7 +751,11 @@ pub(crate) fn render_markdown_lines(
 
         if in_code {
             let bg = code_block_bg();
-            let spans = if let Some(ref mut hl) = code_highlighter {
+            let spans = if is_diff_language(&language) {
+                diff_line_spans(raw_line)
+            } else if language.is_empty() {
+                terminal_output_spans(raw_line)
+            } else if let Some(ref mut hl) = code_highlighter {
                 hl.highlight_line(raw_line)
             } else {
                 highlight_code_line(raw_line, &language)
@@ -847,7 +1107,7 @@ fn inline_text_spans(text: &str, fallback: Color) -> Vec<Span<'static>> {
 
         if let Some((marker_len, content, modifier, color, recursive)) = inline_delimited(rest) {
             push_plain_span(&mut spans, &mut plain, fallback);
-            if recursive {
+            if recursive && contains_inline_markup(content) {
                 spans.extend(
                     inline_text_spans(content, color)
                         .into_iter()
@@ -945,6 +1205,14 @@ fn inline_delimited(rest: &str) -> Option<(usize, &str, Modifier, Color, bool)> 
     None
 }
 
+fn contains_inline_markup(text: &str) -> bool {
+    text.contains('`')
+        || text.contains('*')
+        || text.contains('_')
+        || text.contains("~~")
+        || text.contains("](")
+}
+
 fn inline_escape(rest: &str) -> Option<(char, usize)> {
     let escaped = rest.strip_prefix('\\')?.chars().next()?;
     if matches!(
@@ -995,10 +1263,249 @@ fn push_plain_span(spans: &mut Vec<Span<'static>>, plain: &mut String, fallback:
     if plain.is_empty() {
         return;
     }
+    spans.extend(semantic_plain_spans(&std::mem::take(plain), fallback));
+}
+
+fn semantic_plain_spans(text: &str, fallback: Color) -> Vec<Span<'static>> {
+    let mut spans = Vec::new();
+    let mut token = String::new();
+    let mut token_is_whitespace = None;
+
+    for ch in text.chars() {
+        let is_whitespace = ch.is_whitespace();
+        if token_is_whitespace == Some(is_whitespace) || token.is_empty() {
+            token.push(ch);
+            token_is_whitespace = Some(is_whitespace);
+            continue;
+        }
+        push_semantic_token(
+            &mut spans,
+            std::mem::take(&mut token),
+            token_is_whitespace,
+            fallback,
+        );
+        token.push(ch);
+        token_is_whitespace = Some(is_whitespace);
+    }
+    push_semantic_token(&mut spans, token, token_is_whitespace, fallback);
+    spans
+}
+
+fn push_semantic_token(
+    spans: &mut Vec<Span<'static>>,
+    token: String,
+    token_is_whitespace: Option<bool>,
+    fallback: Color,
+) {
+    if token.is_empty() {
+        return;
+    }
+    if token_is_whitespace == Some(true) {
+        spans.push(Span::styled(token, Style::default().fg(fallback)));
+        return;
+    }
     spans.push(Span::styled(
-        std::mem::take(plain),
-        Style::default().fg(fallback),
+        token.clone(),
+        semantic_token_style(&token, fallback),
     ));
+}
+
+fn semantic_token_style(token: &str, fallback: Color) -> Style {
+    let core = token.trim_matches(|ch: char| {
+        matches!(
+            ch,
+            ',' | '.' | ':' | ';' | '(' | ')' | '[' | ']' | '{' | '}' | '"' | '\''
+        )
+    });
+    let lower = core.to_ascii_lowercase();
+
+    if matches!(
+        lower.as_str(),
+        "error" | "errors" | "failed" | "failure" | "panic" | "denied"
+    ) || is_rust_error_code(core)
+    {
+        return Style::default().fg(red()).add_modifier(Modifier::BOLD);
+    }
+    if matches!(lower.as_str(), "warning" | "warnings" | "warn") {
+        return Style::default()
+            .fg(code_const())
+            .add_modifier(Modifier::BOLD);
+    }
+    if matches!(
+        lower.as_str(),
+        "ok" | "success" | "successful" | "successfully" | "finished" | "completed" | "ready"
+    ) {
+        return Style::default().fg(accent()).add_modifier(Modifier::BOLD);
+    }
+    if matches!(
+        core,
+        "Checking" | "Compiling" | "Running" | "Finished" | "Command" | "Stdout" | "Stderr"
+    ) {
+        return Style::default()
+            .fg(code_func())
+            .add_modifier(Modifier::BOLD);
+    }
+    if is_likely_path(core) {
+        return Style::default().fg(code_type());
+    }
+    if core.starts_with("navi-") || core.starts_with("NAVI") {
+        return Style::default()
+            .fg(code_string())
+            .add_modifier(Modifier::BOLD);
+    }
+    if core.starts_with('-') && core.len() > 1 {
+        return Style::default().fg(code_operator());
+    }
+    if is_command_name(core) {
+        return Style::default()
+            .fg(code_func())
+            .add_modifier(Modifier::BOLD);
+    }
+    if is_number_like(core) || core.starts_with('v') && is_number_like(&core[1..]) {
+        return Style::default().fg(code_number());
+    }
+    if is_env_like(core) {
+        return Style::default()
+            .fg(code_const())
+            .add_modifier(Modifier::BOLD);
+    }
+    Style::default().fg(fallback)
+}
+
+fn terminal_output_spans(raw_line: &str) -> Vec<Span<'static>> {
+    let bg = code_block_bg();
+    semantic_plain_spans(raw_line, text())
+        .into_iter()
+        .map(|mut span| {
+            span.style = span.style.bg(bg);
+            span
+        })
+        .collect()
+}
+
+fn is_diff_language(language: &str) -> bool {
+    matches!(language, "diff" | "patch")
+}
+
+fn diff_line_spans(raw_line: &str) -> Vec<Span<'static>> {
+    let (bg, marker_color, content_color, bold) = if raw_line.starts_with("@@") {
+        (diff_hunk_bg(), code_const(), code_const(), true)
+    } else if raw_line.starts_with("diff ") || raw_line.starts_with("index ") {
+        (diff_meta_bg(), code_func(), code_func(), true)
+    } else if raw_line.starts_with("+++") || raw_line.starts_with("---") {
+        (diff_meta_bg(), code_type(), code_type(), true)
+    } else if raw_line.starts_with('+') {
+        (diff_add_bg(), accent(), text(), false)
+    } else if raw_line.starts_with('-') {
+        (diff_remove_bg(), red(), text(), false)
+    } else {
+        (code_block_bg(), ghost(), text(), false)
+    };
+
+    if let Some((marker, rest)) = diff_marker_and_rest(raw_line) {
+        let mut spans = vec![Span::styled(
+            marker.to_string(),
+            Style::default()
+                .fg(marker_color)
+                .bg(bg)
+                .add_modifier(Modifier::BOLD),
+        )];
+        spans.extend(highlight_diff_code(rest, content_color, bg));
+        return spans;
+    }
+
+    semantic_plain_spans(raw_line, content_color)
+        .into_iter()
+        .map(|mut span| {
+            span.style = span.style.bg(bg);
+            if bold {
+                span.style = span.style.add_modifier(Modifier::BOLD);
+            }
+            span
+        })
+        .collect()
+}
+
+fn diff_marker_and_rest(raw_line: &str) -> Option<(char, &str)> {
+    if raw_line.starts_with("+++") || raw_line.starts_with("---") {
+        return None;
+    }
+    let marker = raw_line.chars().next()?;
+    if matches!(marker, '+' | '-' | ' ') {
+        Some((marker, &raw_line[marker.len_utf8()..]))
+    } else {
+        None
+    }
+}
+
+fn highlight_diff_code(rest: &str, fallback: Color, bg: Color) -> Vec<Span<'static>> {
+    let highlighted = highlight_code_line(rest, "rust");
+    let mut spans = if highlighted.len() == 1 && highlighted[0].style.fg == Some(text()) {
+        semantic_plain_spans(rest, fallback)
+    } else {
+        highlighted
+    };
+    for span in &mut spans {
+        span.style = span.style.bg(bg);
+        if span.style.fg.is_none() {
+            span.style = span.style.fg(fallback);
+        }
+    }
+    spans
+}
+
+fn diff_add_bg() -> Color {
+    Color::Rgb(18, 49, 43)
+}
+
+fn diff_remove_bg() -> Color {
+    Color::Rgb(54, 31, 43)
+}
+
+fn diff_hunk_bg() -> Color {
+    Color::Rgb(35, 41, 64)
+}
+
+fn diff_meta_bg() -> Color {
+    Color::Rgb(27, 34, 48)
+}
+
+fn is_likely_path(token: &str) -> bool {
+    token.contains('/')
+        || token.starts_with("~/")
+        || [
+            ".rs", ".toml", ".json", ".md", ".lock", ".yaml", ".yml", ".tsx", ".ts", ".js",
+        ]
+        .iter()
+        .any(|suffix| token.ends_with(suffix))
+}
+
+fn is_rust_error_code(token: &str) -> bool {
+    token.len() == 5 && token.starts_with('E') && token[1..].chars().all(|ch| ch.is_ascii_digit())
+}
+
+fn is_command_name(token: &str) -> bool {
+    matches!(
+        token,
+        "cargo" | "just" | "git" | "npm" | "pnpm" | "bun" | "node" | "rustc" | "rg"
+    )
+}
+
+fn is_number_like(token: &str) -> bool {
+    let trimmed = token.trim_end_matches(|ch: char| matches!(ch, '%' | 'K' | 'M' | 's' | 'm'));
+    !trimmed.is_empty()
+        && trimmed
+            .chars()
+            .all(|ch| ch.is_ascii_digit() || matches!(ch, '.' | '_' | '/'))
+        && trimmed.chars().any(|ch| ch.is_ascii_digit())
+}
+
+fn is_env_like(token: &str) -> bool {
+    token.len() > 3
+        && token.contains('_')
+        && token
+            .chars()
+            .all(|ch| ch.is_ascii_uppercase() || ch.is_ascii_digit() || ch == '_')
 }
 
 fn code_panel_padding_line(show_marker: bool, marker_color: Color) -> Line<'static> {

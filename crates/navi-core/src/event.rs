@@ -344,12 +344,14 @@ impl QuestionResponse {
 }
 
 /// The security risk category associated with an approval request.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ApprovalRisk {
     /// A file write operation.
     Write,
     /// A shell command execution.
     Command,
+    /// A guarded command that requires explicit approval even in YOLO mode.
+    Guarded,
     /// Loading or executing an external plugin.
     ExternalPlugin,
 }

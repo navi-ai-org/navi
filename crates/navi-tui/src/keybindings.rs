@@ -139,6 +139,7 @@ fn route_mode_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyModifiers) -> K
         Mode::Question => self::modals::handle_question_key(app, code, modifiers),
         Mode::ThemePicker => self::modals::handle_theme_picker_key(app, code),
         Mode::MessageActions => self::modals::handle_message_actions_key(app, code),
+        Mode::Mcp => self::modals::handle_mcp_key(app, code, modifiers),
     };
     if should_quit {
         KeyOutcome::Quit

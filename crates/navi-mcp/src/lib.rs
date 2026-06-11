@@ -140,34 +140,62 @@ async fn connect_server(
     // bounded by this single timer so a misbehaving server can't stall NAVI
     // startup indefinitely.
     let connect = async {
-        let mut command = tokio::process::Command::new(&server.command);
-        command.args(&server.args);
-        command.envs(&server.env);
-        if let Some(cwd) = &server.cwd {
-            command.current_dir(cwd);
-        }
+        if let Some(url) = &server.url {
 
-        let transport = tokio::task::block_in_place(|| TokioChildProcess::new(command))
-            .with_context(|| format!("failed to spawn MCP server `{server_id}`"))?;
-        let service = tokio::time::timeout(timeout, ().serve(transport))
-            .await
-            .with_context(|| format!("timed out initializing MCP server `{server_id}`"))?
-            .with_context(|| format!("failed to initialize MCP server `{server_id}`"))?;
-        let tools = tokio::time::timeout(timeout, service.peer().list_all_tools())
-            .await
-            .with_context(|| format!("timed out listing MCP tools for `{server_id}`"))?
-            .with_context(|| format!("failed to list MCP tools for `{server_id}`"))?;
-        let peer = service.peer().clone();
-        let cancel_token = service.cancellation_token();
-        Ok((
-            McpConnection {
-                server_id: server_id.clone(),
-                peer,
-                cancel_token: Mutex::new(Some(cancel_token)),
-                _service: service,
-            },
-            tools,
-        ))
+            let url_parsed = reqwest::Url::parse(url)
+                .with_context(|| format!("invalid url for MCP server `{server_id}`: {url}"))?;
+            let transport = rmcp::transport::StreamableHttpClientTransport::from_uri(url_parsed.as_str());
+            let service = tokio::time::timeout(timeout, ().serve(transport))
+                .await
+                .with_context(|| format!("timed out initializing MCP server `{server_id}`"))?
+                .with_context(|| format!("failed to initialize MCP server `{server_id}`"))?;
+            let tools = tokio::time::timeout(timeout, service.peer().list_all_tools())
+                .await
+                .with_context(|| format!("timed out listing MCP tools for `{server_id}`"))?
+                .with_context(|| format!("failed to list MCP tools for `{server_id}`"))?;
+            let peer = service.peer().clone();
+            let cancel_token = service.cancellation_token();
+            Ok((
+                McpConnection {
+                    server_id: server_id.clone(),
+                    peer,
+                    cancel_token: Mutex::new(Some(cancel_token)),
+                    _service: service,
+                },
+                tools,
+            ))
+        } else if let Some(cmd) = &server.command {
+            let mut command = tokio::process::Command::new(cmd);
+            command.args(&server.args);
+            command.envs(&server.env);
+            if let Some(cwd) = &server.cwd {
+                command.current_dir(cwd);
+            }
+
+            let transport = tokio::task::block_in_place(|| TokioChildProcess::new(command))
+                .with_context(|| format!("failed to spawn MCP server `{server_id}`"))?;
+            let service = tokio::time::timeout(timeout, ().serve(transport))
+                .await
+                .with_context(|| format!("timed out initializing MCP server `{server_id}`"))?
+                .with_context(|| format!("failed to initialize MCP server `{server_id}`"))?;
+            let tools = tokio::time::timeout(timeout, service.peer().list_all_tools())
+                .await
+                .with_context(|| format!("timed out listing MCP tools for `{server_id}`"))?
+                .with_context(|| format!("failed to list MCP tools for `{server_id}`"))?;
+            let peer = service.peer().clone();
+            let cancel_token = service.cancellation_token();
+            Ok((
+                McpConnection {
+                    server_id: server_id.clone(),
+                    peer,
+                    cancel_token: Mutex::new(Some(cancel_token)),
+                    _service: service,
+                },
+                tools,
+            ))
+        } else {
+            anyhow::bail!("MCP server `{server_id}` must define either `url` or `command`");
+        }
     };
 
     tokio::time::timeout(timeout, connect)

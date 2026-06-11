@@ -1,5 +1,5 @@
 use crate::TuiApp;
-use crate::chat::{reset_system_context, submit_message};
+use crate::chat::reset_system_context;
 use crate::mouse::{copy_text_to_clipboard, selected_text};
 use crate::notifications::show_notification;
 use crate::persistence::save_preferences;
@@ -78,7 +78,7 @@ pub(super) fn route_global_key(
                 save_preferences(app);
                 return KeyOutcome::Handled;
             }
-            KeyCode::Char('j') | KeyCode::Char('\n') | KeyCode::Char('\r') | KeyCode::Enter => {
+            KeyCode::Enter => {
                 if !app.pending_questions.is_empty() {
                     return super::apply_ui_effect(
                         app,
@@ -86,7 +86,7 @@ pub(super) fn route_global_key(
                     );
                 }
                 if !app.input.trim().is_empty() && !app.is_loading {
-                    submit_message(app);
+                    crate::chat::submit_message(app);
                 }
                 return KeyOutcome::Handled;
             }
@@ -95,6 +95,7 @@ pub(super) fn route_global_key(
                 reset_system_context(app);
                 app.input.clear();
                 app.input_cursor = 0;
+                app.input_selection = None;
                 app.scroll_offset = 0;
                 let outcome = super::apply_ui_effect(app, UiEffect::CloseAllModals);
                 show_notification(app, "Layer", "New layer started.");

@@ -88,7 +88,7 @@ fn lain_code_color(style: SyntectStyle) -> Color {
 }
 
 fn boost_code_channel(value: u8) -> u8 {
-    value.max(96).saturating_add(22)
+    value.max(118).saturating_add(34)
 }
 
 fn syntax_set() -> &'static SyntaxSet {

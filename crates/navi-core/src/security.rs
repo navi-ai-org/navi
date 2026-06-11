@@ -34,6 +34,9 @@ pub enum SecurityRisk {
     Write,
     /// A shell command execution.
     Command,
+    /// A guarded command that requires explicit approval even in YOLO mode
+    /// (e.g. `git push`, force-destructive operations).
+    GuardedCommand,
     /// Loading an external native plugin.
     ExternalPlugin,
 }
@@ -156,18 +159,20 @@ impl SecurityPolicy {
                 .path_from_invocation(invocation)
                 .map(|path| self.validate_path(&path, false))
                 .unwrap_or(SecurityDecision::Allow),
-            ToolKind::Write => self
-                .path_from_invocation(invocation)
-                .map(|path| self.validate_path(&path, true))
-                .unwrap_or(SecurityDecision::NeedsApproval(SecurityRisk::Write)),
+            ToolKind::Write => {
+                if definition.name == "apply_patch" {
+                    return self.validate_apply_patch_invocation(invocation);
+                }
+                self.path_from_invocation(invocation)
+                    .map(|path| self.validate_path(&path, true))
+                    .unwrap_or(SecurityDecision::NeedsApproval(SecurityRisk::Write))
+            }
             ToolKind::Command => {
                 // git_ops uses `command` for a git subcommand, not a shell program.
-                // Apply the read-only bypass before generic command validation.
                 if definition.name == "git_ops"
                     && let Some(cmd) = invocation.input.get("command").and_then(Value::as_str)
-                    && matches!(cmd, "status" | "diff" | "log" | "branch")
                 {
-                    return SecurityDecision::Allow;
+                    return self.validate_git_command(cmd);
                 }
                 // bash poll/list operations are safe
                 if definition.name == "bash"
@@ -195,6 +200,33 @@ impl SecurityPolicy {
             .or_else(|| invocation.input.get("file"))
             .and_then(Value::as_str)
             .map(|path| self.resolve_project_path(Path::new(path)))
+    }
+
+    /// Git commands that always require explicit user approval (guarded even in YOLO).
+    fn validate_git_command(&self, cmd: &str) -> SecurityDecision {
+        match cmd {
+            "push" | "push-force" | "push_delete" => {
+                SecurityDecision::NeedsApproval(SecurityRisk::GuardedCommand)
+            }
+            _ => SecurityDecision::Allow,
+        }
+    }
+
+    fn validate_apply_patch_invocation(&self, invocation: &ToolInvocation) -> SecurityDecision {
+        let Some(patch) = invocation.input.get("patch").and_then(Value::as_str) else {
+            return SecurityDecision::NeedsApproval(SecurityRisk::Write);
+        };
+        let paths = extract_apply_patch_paths(patch);
+        if paths.is_empty() {
+            return SecurityDecision::NeedsApproval(SecurityRisk::Write);
+        }
+        for path in paths {
+            match self.validate_path(Path::new(&path), true) {
+                SecurityDecision::Allow | SecurityDecision::NeedsApproval(SecurityRisk::Write) => {}
+                decision => return decision,
+            }
+        }
+        SecurityDecision::NeedsApproval(SecurityRisk::Write)
     }
 
     /// Returns the normalized project root used as the execution sandbox.
@@ -548,6 +580,41 @@ fn normalize_existing_or_parent(path: &Path) -> Result<PathBuf> {
         normalized.push(component);
     }
     Ok(normalized)
+}
+
+fn extract_apply_patch_paths(patch: &str) -> Vec<String> {
+    let mut paths = Vec::new();
+    for line in patch.lines() {
+        if let Some(path) = line.strip_prefix("*** Add File: ") {
+            push_unique_string(&mut paths, path);
+        } else if let Some(path) = line.strip_prefix("*** Delete File: ") {
+            push_unique_string(&mut paths, path);
+        } else if let Some(path) = line.strip_prefix("*** Update File: ") {
+            push_unique_string(&mut paths, path);
+        } else if let Some(path) = line.strip_prefix("*** Move to: ") {
+            push_unique_string(&mut paths, path);
+        } else if let Some(path) = line.strip_prefix("--- a/") {
+            push_unique_string(&mut paths, path);
+        } else if let Some(path) = line.strip_prefix("+++ b/") {
+            push_unique_string(&mut paths, path);
+        } else if let Some(path) = line.strip_prefix("--- ")
+            && path != "/dev/null"
+        {
+            push_unique_string(&mut paths, path);
+        } else if let Some(path) = line.strip_prefix("+++ ")
+            && path != "/dev/null"
+        {
+            push_unique_string(&mut paths, path);
+        }
+    }
+    paths
+}
+
+fn push_unique_string(paths: &mut Vec<String>, path: &str) {
+    let path = path.split('\t').next().unwrap_or(path).to_string();
+    if path != "/dev/null" && !paths.contains(&path) {
+        paths.push(path);
+    }
 }
 
 #[cfg(test)]
@@ -965,7 +1032,9 @@ mod tests {
             kind: crate::tool::ToolKind::Command,
         };
 
-        for cmd in &["status", "diff", "log", "branch"] {
+        for cmd in &[
+            "status", "diff", "log", "branch", "add", "commit", "stash", "remote",
+        ] {
             let inv = crate::tool::ToolInvocation {
                 id: "test".to_string(),
                 tool_name: "git_ops".to_string(),
@@ -974,9 +1043,107 @@ mod tests {
             let decision = policy.validate_tool_invocation(&git_def, &inv);
             assert!(
                 matches!(decision, SecurityDecision::Allow),
-                "git_ops {cmd} should bypass approval"
+                "git_ops {cmd} should be allowed"
             );
         }
+
+        let inv = crate::tool::ToolInvocation {
+            id: "test".to_string(),
+            tool_name: "git_ops".to_string(),
+            input: serde_json::json!({"command": "push"}),
+        };
+        let decision = policy.validate_tool_invocation(&git_def, &inv);
+        assert!(
+            matches!(
+                decision,
+                SecurityDecision::NeedsApproval(SecurityRisk::GuardedCommand)
+            ),
+            "git_ops push should require guarded approval, got: {decision:?}"
+        );
+    }
+
+    #[test]
+    fn regression_apply_patch_structured_git_path_denied() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let project = tempdir.path().join("project");
+        let data = tempdir.path().join("data");
+        std::fs::create_dir_all(project.join(".git")).expect("project");
+        std::fs::create_dir_all(&data).expect("data");
+        let policy = policy(project, data);
+
+        let decision = policy.validate_tool_invocation(
+            &ToolDefinition {
+                name: "apply_patch".to_string(),
+                description: String::new(),
+                kind: ToolKind::Write,
+                input_schema: serde_json::json!({}),
+            },
+            &ToolInvocation {
+                id: "patch".to_string(),
+                tool_name: "apply_patch".to_string(),
+                input: serde_json::json!({
+                    "patch": "*** Begin Patch\n*** Add File: .git/config\n+bad\n*** End Patch\n"
+                }),
+            },
+        );
+
+        assert!(matches!(decision, SecurityDecision::Deny(_)));
+    }
+
+    #[test]
+    fn regression_apply_patch_structured_traversal_denied() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let project = tempdir.path().join("project");
+        let data = tempdir.path().join("data");
+        std::fs::create_dir_all(&project).expect("project");
+        std::fs::create_dir_all(&data).expect("data");
+        let policy = policy(project, data);
+
+        let decision = policy.validate_tool_invocation(
+            &ToolDefinition {
+                name: "apply_patch".to_string(),
+                description: String::new(),
+                kind: ToolKind::Write,
+                input_schema: serde_json::json!({}),
+            },
+            &ToolInvocation {
+                id: "patch".to_string(),
+                tool_name: "apply_patch".to_string(),
+                input: serde_json::json!({
+                    "patch": "*** Begin Patch\n*** Add File: ../outside.txt\n+bad\n*** End Patch\n"
+                }),
+            },
+        );
+
+        assert!(matches!(decision, SecurityDecision::Deny(_)));
+    }
+
+    #[test]
+    fn regression_apply_patch_unified_git_path_denied() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let project = tempdir.path().join("project");
+        let data = tempdir.path().join("data");
+        std::fs::create_dir_all(project.join(".git")).expect("project");
+        std::fs::create_dir_all(&data).expect("data");
+        let policy = policy(project, data);
+
+        let decision = policy.validate_tool_invocation(
+            &ToolDefinition {
+                name: "apply_patch".to_string(),
+                description: String::new(),
+                kind: ToolKind::Write,
+                input_schema: serde_json::json!({}),
+            },
+            &ToolInvocation {
+                id: "patch".to_string(),
+                tool_name: "apply_patch".to_string(),
+                input: serde_json::json!({
+                    "patch": "--- a/.git/config\n+++ b/.git/config\n@@ -1 +1 @@\n-old\n+new\n"
+                }),
+            },
+        );
+
+        assert!(matches!(decision, SecurityDecision::Deny(_)));
     }
 
     // ── Deny list tests ────────────────────────────────────────────────────

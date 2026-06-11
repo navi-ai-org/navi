@@ -420,6 +420,10 @@ fn dispatch_hit(app: &mut TuiApp, hit: HitRegion) {
             run_message_action(app, index);
         }
         HitAction::ScrollTo { target, offset } => scroll_to(app, target, offset),
+        HitAction::McpServer(index) => {
+            app.mcp_ui_state.selected_server = index;
+            app.mcp_ui_state.is_focused_on_tools = false;
+        }
     }
 }
 
@@ -491,7 +495,7 @@ fn active_scroll_target(app: &TuiApp) -> Option<ScrollTarget> {
         | Mode::Help
         | Mode::Debug
         | Mode::MessageActions => None,
-        Mode::Normal | Mode::ApiKeyEntry => None,
+        Mode::Normal | Mode::ApiKeyEntry | Mode::Mcp => None,
     }
 }
 
