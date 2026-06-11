@@ -119,12 +119,16 @@ fn input_lines(app: &TuiApp, width: usize) -> (Vec<Line<'static>>, usize) {
     };
 
     if app.input.is_empty() {
-        current.push(cursor_span(" "));
-        let placeholder = if app.is_loading { " thinking..." } else { "" };
+        let context = app.compact_state.usage_label(0);
+        let model = selected_model_label(app);
+        let provider = selected_provider_label(app);
+        let thinking = app.thinking_level.label();
+        let status = if app.is_loading { "Build" } else { "Ready" };
         current.push(Span::styled(
-            placeholder.to_string(),
+            format!("{status} · {model} {provider} · {thinking}"),
             Style::default().fg(muted()),
         ));
+        current.push(cursor_span(" "));
         lines.push(Line::from(current));
         return (lines, cursor_line);
     }
