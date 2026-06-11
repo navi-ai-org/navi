@@ -23,6 +23,7 @@ pub(crate) enum HitAction {
     Setting(usize),
     PluginInstallOrUpdate(usize),
     PluginRefresh,
+    McpServer(usize),
     ToolApprove,
     ToolDeny,
     PluginApprove,

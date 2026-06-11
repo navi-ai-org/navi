@@ -6,22 +6,6 @@ pub(crate) fn viewport_rect(area: Rect) -> Rect {
     inset_rect(area, VIEWPORT_HORIZONTAL_MARGIN, 0)
 }
 
-pub(crate) fn split_left_right(
-    area: Rect,
-    min_left_width: u16,
-    preferred_right_width: u16,
-) -> (Rect, Rect) {
-    let right_width = if area.width > min_left_width {
-        preferred_right_width.min(area.width - min_left_width)
-    } else {
-        0
-    };
-    let left_width = area.width.saturating_sub(right_width);
-    let left = Rect::new(area.x, area.y, left_width, area.height);
-    let right = Rect::new(area.x + left_width, area.y, right_width, area.height);
-    (left, right)
-}
-
 fn inset_rect(area: Rect, horizontal: u16, vertical: u16) -> Rect {
     let horizontal = horizontal.min(area.width / 2);
     let vertical = vertical.min(area.height / 2);
@@ -129,25 +113,4 @@ mod tests {
         assert_eq!(rect.height, 20);
     }
 
-    #[test]
-    fn split_left_right_does_not_exceed_area() {
-        let area = Rect::new(1, 0, 30, 1);
-        let (left, right) = split_left_right(area, 20, 42);
-
-        assert_eq!(left.x, 1);
-        assert_eq!(left.width, 20);
-        assert_eq!(right.x, 21);
-        assert_eq!(right.width, 10);
-        assert_eq!(right.x + right.width, area.x + area.width);
-    }
-
-    #[test]
-    fn split_left_right_drops_right_column_when_too_narrow() {
-        let area = Rect::new(1, 0, 18, 1);
-        let (left, right) = split_left_right(area, 20, 42);
-
-        assert_eq!(left, area);
-        assert_eq!(right.width, 0);
-        assert_eq!(right.x, area.x + area.width);
-    }
 }

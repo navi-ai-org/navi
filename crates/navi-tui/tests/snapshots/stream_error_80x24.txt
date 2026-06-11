@@ -1,6 +1,6 @@
   main  /tmp/navi-test-project                               │ 0 / 200K │ 0 0 ✓
 
-   › Hello, world
+   │ Hello, world
 
    Partial
 
@@ -18,7 +18,6 @@
 
 
 
-  ┌──────────────────────────────────────────────────────────────────────────┐
-  │}                                                                         │
-  └──────────────────────────────────────────────────────────────────────────┘
-   Ctrl+. shortcuts · Ctrl+P commands · Ctrl+M models
+
+  ▌  type a task, or ctrl+p for commands
+  ▌ Ready · gpt-5.5 OpenAI · adaptive

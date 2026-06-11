@@ -1,6 +1,6 @@
 use navi_sdk::{
-    AgentEvent, ApprovalDecision, LoadedConfig, ModelMessage, available_model_options,
-    canonical_provider_id, compact_tool_observation,
+    AgentEvent, ApprovalDecision, ApprovalRisk, LoadedConfig, ModelMessage,
+    available_model_options, canonical_provider_id, compact_tool_observation,
 };
 
 use crate::app::TuiApp;
@@ -223,7 +223,8 @@ fn handle_agent_event(app: &mut TuiApp, event: AgentEvent) {
             update_active_assistant_status(app);
         }
         AgentEvent::ApprovalRequested(request) => {
-            if app.yolo_mode {
+            let is_guarded = matches!(request.risk, ApprovalRisk::Guarded);
+            if app.yolo_mode && !is_guarded {
                 let engine = app.engine();
                 let session_id = app.session_id.as_str().to_string();
                 let decision = ApprovalDecision::Approved {

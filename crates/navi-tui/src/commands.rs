@@ -22,6 +22,7 @@ pub(crate) enum CommandAction {
     Settings,
     Skills,
     Plugins,
+    McpServers,
 }
 
 pub(crate) const COMMANDS: &[CommandItem] = &[
@@ -64,6 +65,11 @@ pub(crate) const COMMANDS: &[CommandItem] = &[
         label: "Plugins",
         shortcut: None,
         action: CommandAction::Plugins,
+    },
+    CommandItem {
+        label: "MCP Servers",
+        shortcut: None,
+        action: CommandAction::McpServers,
     },
     CommandItem {
         label: "Retry Last Response",

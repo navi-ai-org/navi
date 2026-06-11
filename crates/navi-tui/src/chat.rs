@@ -14,10 +14,10 @@ struct ChatPrefix {
 }
 
 pub(crate) fn submit_message(app: &mut TuiApp) {
-    let text = app.input.trim().to_string();
-    if text.is_empty() {
+    if app.input.trim().is_empty() {
         return;
     }
+    let text = app.input.clone();
     tracing::info!(
         model = %app.loaded_config.config.model.name,
         provider = %app.loaded_config.config.model.provider,
@@ -37,6 +37,7 @@ pub(crate) fn submit_message(app: &mut TuiApp) {
 
     app.input.clear();
     app.input_cursor = 0;
+    app.input_selection = None;
     app.scroll_offset = 0;
     app.reset_run_state();
     app.model_retry_attempts = 0;

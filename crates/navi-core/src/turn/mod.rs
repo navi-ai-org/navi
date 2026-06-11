@@ -553,6 +553,7 @@ async fn approve_and_invoke_tool(
     let approval_risk = match risk {
         crate::security::SecurityRisk::Write => crate::event::ApprovalRisk::Write,
         crate::security::SecurityRisk::Command => crate::event::ApprovalRisk::Command,
+        crate::security::SecurityRisk::GuardedCommand => crate::event::ApprovalRisk::Guarded,
         crate::security::SecurityRisk::ExternalPlugin => crate::event::ApprovalRisk::ExternalPlugin,
     };
     let approve_rx = ctx.approval_resolver.register(invocation.id.clone());

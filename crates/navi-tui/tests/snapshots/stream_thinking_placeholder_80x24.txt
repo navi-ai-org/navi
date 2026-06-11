@@ -1,6 +1,6 @@
   main  /tmp/navi-test-project                               │ 0 / 200K │ 0 0 ✓
 
-   › Hello, world
+   │ Hello, world
 
      ⠋ thinking...
 
@@ -18,7 +18,7 @@
 
 
 
-  ┌──────────────────────────────────────────────────────────────────────────┐
-  │}   thinking...                                                           │
-  └──────────────────────────────────────────────────────────────────────────┘
-   Ctrl+. shortcuts · Ctrl+P commands · Ctrl+M models
+  ▌   thinking...
+  ▌
+  ▌ Build · gpt-5.5 OpenAI · adaptive
+                                                0 / 200k (0%)  ctrl+p commands

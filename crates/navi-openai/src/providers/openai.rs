@@ -351,8 +351,5 @@ impl ChatToolCallAccumulator {
 pub(crate) fn model_supports_extended_cache(model: &str) -> bool {
     let m = model.to_ascii_lowercase();
     // gpt-5.5, gpt-5.5-pro, gpt-5.4, gpt-5.2, gpt-5.1*, gpt-5, gpt-5-codex, gpt-4.1
-    m.starts_with("gpt-5")
-        || m.starts_with("gpt-4.1")
-        || m.starts_with("o4")
-        || m.starts_with("o3")
+    m.starts_with("gpt-5") || m.starts_with("gpt-4.1") || m.starts_with("o4") || m.starts_with("o3")
 }

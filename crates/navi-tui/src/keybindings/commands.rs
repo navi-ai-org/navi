@@ -106,6 +106,13 @@ pub(crate) fn run_selected_command(app: &mut TuiApp) -> bool {
         CommandAction::Plugins => {
             super::open_plugins_picker(app);
         }
+        CommandAction::McpServers => {
+            app.mcp_ui_state.selected_server = 0;
+            app.mcp_ui_state.selected_tool = 0;
+            app.mcp_ui_state.scroll = 0;
+            app.mcp_ui_state.is_focused_on_tools = false;
+            super::replace_modal(app, ModalKind::Mcp);
+        }
         CommandAction::Quit => return true,
         CommandAction::Settings => {
             super::replace_modal(app, ModalKind::Settings);

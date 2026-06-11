@@ -14,7 +14,7 @@ use navi_sdk::{
     ApprovalDecision, EngineDriver, LoadedConfig, NaviConfig, NaviConfigSaveTarget, NaviError,
     NaviModelSelectionRequest, NaviModelSelectionResult, NaviProviderCredentialStatus,
     NaviProviderSyncReport, NaviSessionInfo, NaviSessionRequest, NaviSkillInfo, NaviTurnRequest,
-    NaviTurnResponse, QuestionResponse, RuntimeEvent, SessionSnapshot,
+    NaviTurnResponse, QuestionResponse, RuntimeEvent, SessionSnapshot, McpServerInfo,
 };
 
 /// A recorded call to a method on the engine.
@@ -355,5 +355,9 @@ impl EngineDriver for MockEngine {
             .calls
             .push(EngineCall::DeleteSavedSession(session_id.to_string()));
         Ok(false)
+    }
+
+    fn list_mcp_servers(&self, _session_id: &str) -> Result<Vec<McpServerInfo>> {
+        Ok(vec![])
     }
 }

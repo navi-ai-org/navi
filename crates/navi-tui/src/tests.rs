@@ -717,10 +717,15 @@ fn model_scroll_sync_clamps_large_scroll_values() {
 }
 
 #[test]
-fn enter_and_shift_enter_insert_newlines() {
+fn enter_sends_shift_enter_and_ctrl_j_insert_newlines() {
     let mut app = test_app("one");
+    app.provider_configured = false;
 
     handle_normal_key(&mut app, KeyCode::Enter, KeyModifiers::NONE);
+    assert_eq!(app.messages[0].content, "one");
+    assert!(app.input.is_empty());
+
+    let mut app = test_app("one");
     insert_input_char(&mut app, 't');
     insert_input_char(&mut app, 'w');
     insert_input_char(&mut app, 'o');
@@ -731,8 +736,11 @@ fn enter_and_shift_enter_insert_newlines() {
     insert_input_char(&mut app, 'e');
     insert_input_char(&mut app, 'e');
 
-    assert_eq!(app.input, "one\ntwo\nthree");
+    assert_eq!(app.input, "onetwo\nthree");
     assert_eq!(app.input_cursor, app.input.len());
+
+    handle_normal_key(&mut app, KeyCode::Char('j'), KeyModifiers::CONTROL);
+    assert_eq!(app.input, "onetwo\nthree\n");
 }
 
 #[test]
@@ -746,20 +754,33 @@ fn ctrl_enter_sends_non_empty_message() {
     let mut app = test_app("two");
     app.provider_configured = false;
     handle_key(&mut app, KeyCode::Char('j'), KeyModifiers::CONTROL);
-    assert_eq!(app.messages[0].content, "two");
-    assert!(app.input.is_empty());
+    assert_eq!(app.input, "two\n");
+    assert!(app.messages.is_empty());
 
     let mut app = test_app("three");
     app.provider_configured = false;
     handle_key(&mut app, KeyCode::Char('\n'), KeyModifiers::CONTROL);
-    assert_eq!(app.messages[0].content, "three");
-    assert!(app.input.is_empty());
+    assert_eq!(app.input, "three\n");
+    assert!(app.messages.is_empty());
 
     let mut app = test_app("four");
     app.provider_configured = false;
     handle_key(&mut app, KeyCode::Char('\r'), KeyModifiers::CONTROL);
-    assert_eq!(app.messages[0].content, "four");
-    assert!(app.input.is_empty());
+    assert_eq!(app.input, "four\n");
+    assert!(app.messages.is_empty());
+}
+
+#[test]
+fn ctrl_a_selects_entire_input_and_typing_replaces_it() {
+    let mut app = test_app("replace me");
+
+    handle_normal_key(&mut app, KeyCode::Char('a'), KeyModifiers::CONTROL);
+    assert_eq!(app.input_selection, Some((0, "replace me".len())));
+
+    handle_normal_key(&mut app, KeyCode::Char('x'), KeyModifiers::NONE);
+    assert_eq!(app.input, "x");
+    assert_eq!(app.input_cursor, 1);
+    assert!(app.input_selection.is_none());
 }
 
 #[test]
@@ -1669,6 +1690,13 @@ async fn model_picker_ctrl_r_triggers_all_provider_sync() {
 fn model_picker_ctrl_e_opens_provider_setup() {
     let mut app = test_app("");
     app.mode = Mode::Models;
+    // Set a dummy API key so the default provider's models are visible
+    let provider_id = app.models[app.selected_model].provider_id.clone();
+    let _ = app
+        .credential_store()
+        .set_api_key(&provider_id, "dummy-key");
+    app.refresh_authenticated_providers();
+
     let selected = app.selected_model;
 
     handle_model_key(&mut app, KeyCode::Char('e'), KeyModifiers::CONTROL);
