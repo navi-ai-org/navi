@@ -227,7 +227,7 @@ fn render_user_message_lines(text: &str, chat_width: usize) -> Vec<Line<'static>
         .into_iter()
         .enumerate()
         .map(|(index, line)| {
-            let prefix = if index == 0 { "› " } else { "  " };
+            let prefix = if index == 0 { "│ " } else { "  " };
             let mut spans = vec![Span::styled(
                 prefix,
                 Style::default()
@@ -429,20 +429,15 @@ fn render_compact_tool_line_with_width(
     result: &ToolResult,
     chat_width: usize,
 ) -> Line<'static> {
-    let text = truncate_chars(
-        &tool_compact_text(invocation, result),
-        chat_width.saturating_sub(6),
-    );
-    let bar_color = if result.ok { Color::Green } else { Color::Red };
-    let bg = interactive_bg();
+    let marker = "│ ";
+    let marker_width = marker.chars().count();
+    let text_width = chat_width.saturating_sub(marker_width).max(12);
+    let status_color = if result.ok { accent() } else { red() };
     Line::from(vec![
-        Span::styled("│", Style::default().fg(bar_color).bg(bg)),
-        Span::styled(" ", Style::default().bg(bg)),
+        Span::styled(marker, Style::default().fg(status_color)),
         Span::styled(
-            text,
-            Style::default()
-                .fg(if result.ok { muted() } else { text() })
-                .bg(bg),
+            truncate_chars(&tool_compact_text(invocation, result), text_width),
+            Style::default().fg(if result.ok { muted() } else { text() }),
         ),
     ])
 }

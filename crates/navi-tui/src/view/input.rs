@@ -91,11 +91,13 @@ fn visible_input_lines(
 }
 
 fn input_lines(app: &TuiApp, width: usize) -> (Vec<Line<'static>>, usize) {
-    let prompt = "";
+    let prompt = "│ ";
     let continuation = " ".repeat(prompt.chars().count());
     let width = width.max(prompt.chars().count() + 1);
     let text_style = Style::default().fg(text());
-    let prefix_style = Style::default().fg(signal()).add_modifier(Modifier::BOLD);
+    let prefix_style = Style::default()
+        .fg(user_accent())
+        .add_modifier(Modifier::BOLD);
     let mut lines = Vec::new();
     let mut current = vec![Span::styled(prompt.to_string(), prefix_style)];
     let mut current_width = prompt.chars().count();
@@ -119,16 +121,12 @@ fn input_lines(app: &TuiApp, width: usize) -> (Vec<Line<'static>>, usize) {
     };
 
     if app.input.is_empty() {
-        let context = app.compact_state.usage_label(0);
-        let model = selected_model_label(app);
-        let provider = selected_provider_label(app);
-        let thinking = app.thinking_level.label();
-        let status = if app.is_loading { "Build" } else { "Ready" };
+        current.push(cursor_span(" "));
+        let placeholder = if app.is_loading { " thinking..." } else { "" };
         current.push(Span::styled(
-            format!("{status} · {model} {provider} · {thinking}"),
+            placeholder.to_string(),
             Style::default().fg(muted()),
         ));
-        current.push(cursor_span(" "));
         lines.push(Line::from(current));
         return (lines, cursor_line);
     }
