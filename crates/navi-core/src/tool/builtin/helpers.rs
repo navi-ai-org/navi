@@ -1,7 +1,6 @@
 use anyhow::{Context, Result};
 use serde::Serialize;
 use serde_json::{Value, json};
-use std::fs;
 use std::path::Path;
 
 use crate::tool::{ToolDefinition, ToolKind, ToolResult};
@@ -171,6 +170,7 @@ pub(super) fn truncate_string(mut value: String, max_bytes: usize) -> String {
     value
 }
 
+#[cfg(test)]
 pub(super) fn grep_path(
     root: &Path,
     pattern: &str,

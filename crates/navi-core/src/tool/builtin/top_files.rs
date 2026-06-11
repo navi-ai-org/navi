@@ -11,11 +11,8 @@ use super::helpers;
 use crate::security::{SecurityDecision, SecurityPolicy};
 use crate::tool::{Tool, ToolDefinition, ToolInvocation, ToolKind, ToolResult};
 
-const DEFAULT_MAX_FILES: usize = 8;
 const MAX_FILES: usize = 20;
-const DEFAULT_MAX_LINES_PER_FILE: usize = 400;
 const MAX_LINES_PER_FILE: usize = 500;
-const DEFAULT_MAX_TOTAL_BYTES: usize = 128 * 1024;
 const MAX_TOTAL_BYTES: usize = 512 * 1024;
 const MAX_CANDIDATES: usize = 2_000;
 const MAX_FILE_BYTES: u64 = 1024 * 1024;
@@ -102,13 +99,13 @@ impl TopFilesInput {
             path: helpers::optional_string(input, "path").unwrap_or_else(|| ".".to_string()),
             query: helpers::optional_string(input, "query"),
             max_files: helpers::optional_u64(input, "max_files")
-                .unwrap_or(DEFAULT_MAX_FILES as u64)
+                .unwrap_or(MAX_FILES as u64)
                 .min(MAX_FILES as u64) as usize,
             max_lines_per_file: helpers::optional_u64(input, "max_lines_per_file")
-                .unwrap_or(DEFAULT_MAX_LINES_PER_FILE as u64)
+                .unwrap_or(MAX_LINES_PER_FILE as u64)
                 .min(MAX_LINES_PER_FILE as u64) as usize,
             max_total_bytes: helpers::optional_u64(input, "max_total_bytes")
-                .unwrap_or(DEFAULT_MAX_TOTAL_BYTES as u64)
+                .unwrap_or(MAX_TOTAL_BYTES as u64)
                 .min(MAX_TOTAL_BYTES as u64) as usize,
             hidden: helpers::optional_bool(input, "hidden").unwrap_or(false),
         }
