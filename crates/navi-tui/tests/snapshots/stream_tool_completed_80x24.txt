@@ -1,10 +1,10 @@
   main  /tmp/navi-test-project                               │ 0 / 200K │ 0 0 ✓
 
-   › read the file
+   │ read the file
 
      ⠋ thinking...
 
-   ◆ Read src/main.rs
+   │ Read src/main.rs
 
      ⠋ thinking...
 
@@ -18,7 +18,7 @@
 
 
 
-  ┌──────────────────────────────────────────────────────────────────────────┐
-  │}   thinking...                                                           │
-  └──────────────────────────────────────────────────────────────────────────┘
-   Ctrl+. shortcuts · Ctrl+P commands · Ctrl+M models
+  ▌   thinking...
+  ▌
+  ▌ Build · gpt-5.5 OpenAI · adaptive
+                                                0 / 200k (0%)  ctrl+p commands

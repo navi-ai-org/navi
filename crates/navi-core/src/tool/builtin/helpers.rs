@@ -1,6 +1,9 @@
 use anyhow::{Context, Result};
 use serde::Serialize;
 use serde_json::{Value, json};
+#[cfg(test)]
+use std::fs;
+#[cfg(test)]
 use std::path::Path;
 
 use crate::tool::{ToolDefinition, ToolKind, ToolResult};
@@ -206,6 +209,7 @@ pub(super) fn grep_path(
     Ok(())
 }
 
+#[cfg(test)]
 fn should_skip(path: &Path) -> bool {
     path.file_name()
         .and_then(|name| name.to_str())

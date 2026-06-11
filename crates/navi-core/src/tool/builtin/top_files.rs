@@ -102,7 +102,7 @@ impl TopFilesInput {
                 .unwrap_or(MAX_FILES as u64)
                 .min(MAX_FILES as u64) as usize,
             max_lines_per_file: helpers::optional_u64(input, "max_lines_per_file")
-                .unwrap_or(MAX_LINES_PER_FILE as u64)
+                .unwrap_or(400)
                 .min(MAX_LINES_PER_FILE as u64) as usize,
             max_total_bytes: helpers::optional_u64(input, "max_total_bytes")
                 .unwrap_or(MAX_TOTAL_BYTES as u64)

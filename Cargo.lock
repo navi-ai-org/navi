@@ -2819,6 +2819,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "navi-core",
+ "reqwest",
  "rmcp",
  "serde",
  "serde_json",
@@ -4078,13 +4079,16 @@ dependencies = [
  "base64",
  "chrono",
  "futures",
+ "http",
  "pastey",
  "pin-project-lite",
  "process-wrap",
+ "reqwest",
  "rmcp-macros",
  "schemars 1.2.1",
  "serde",
  "serde_json",
+ "sse-stream",
  "thiserror 2.0.18",
  "tokio",
  "tokio-stream",
@@ -4696,6 +4700,19 @@ name = "sptr"
 version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3b9b39299b249ad65f3b7e96443bad61c02ca5cd3589f46cb6d610a0fd6c0d6a"
+
+[[package]]
+name = "sse-stream"
+version = "0.2.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f3962b63f038885f15bce2c6e02c0e7925c072f1ac86bb60fd44c5c6b762fb72"
+dependencies = [
+ "bytes",
+ "futures-util",
+ "http-body",
+ "http-body-util",
+ "pin-project-lite",
+]
 
 [[package]]
 name = "stable_deref_trait"

@@ -11,9 +11,9 @@ mod sessions;
 mod skills;
 mod welcome;
 
-use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
+use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::prelude::Frame;
-use ratatui::style::{Modifier, Style};
+use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Paragraph};
 
@@ -21,8 +21,8 @@ use crate::TuiApp;
 use crate::render::{fill_modal_scrim, modal_rect};
 use crate::state::Mode;
 use crate::theme;
-use crate::theme::{accent, bg, ghost, muted, signal, text};
-use crate::ui::layout::{split_left_right, viewport_rect};
+use crate::theme::{bg, ghost, muted, text};
+use crate::ui::layout::viewport_rect;
 
 pub(crate) fn render(frame: &mut Frame<'_>, app: &mut TuiApp) {
     theme::with_palette(&app.theme_palette(), || render_inner(frame, app));
@@ -42,6 +42,7 @@ fn render_inner(frame: &mut Frame<'_>, app: &mut TuiApp) {
             Constraint::Length(1),
             Constraint::Min(6),
             Constraint::Length(input_height),
+            Constraint::Length(1),
         ])
         .split(content_area);
 
@@ -73,6 +74,10 @@ fn render_inner(frame: &mut Frame<'_>, app: &mut TuiApp) {
         Mode::MessageActions => {
             modals::render_message_actions(frame, app, modal_rect(area, 58, 10))
         }
+        Mode::Mcp => {
+            let palette = app.theme_palette();
+            crate::ui::mcp::draw_mcp_modal(frame, modal_rect(area, 90, 22), app, &palette)
+        }
         Mode::Normal => {}
     }
 
@@ -92,69 +97,19 @@ fn render_header(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
         return;
     }
 
-    let (left, right) = split_left_right(area, 20, 42);
-
     let branch = app.git_branch.as_deref().unwrap_or("project");
-    if left.width > 0 {
-        frame.render_widget(
-            Paragraph::new(Line::from(vec![
-                Span::styled(" ", Style::default().fg(ghost()).bg(bg())),
-                Span::styled(branch.to_string(), Style::default().fg(text()).bg(bg())),
-                Span::styled("  ", Style::default().fg(ghost()).bg(bg())),
-                Span::styled(
-                    project_path_label(app),
-                    Style::default().fg(muted()).bg(bg()),
-                ),
-            ]))
-            .style(Style::default().bg(bg())),
-            left,
-        );
-    }
-
-    if right.width == 0 {
-        return;
-    }
-
-    let context = header_context_label(app);
-    let tool_count = app.running_tools.len();
-    let approval_count = app.pending_approvals.len()
-        + app.pending_plugin_approvals.len()
-        + app.pending_questions.len();
     frame.render_widget(
         Paragraph::new(Line::from(vec![
-            Span::styled("│ ", Style::default().fg(ghost()).bg(bg())),
+            Span::styled(" ", Style::default().fg(ghost()).bg(bg())),
+            Span::styled(branch.to_string(), Style::default().fg(text()).bg(bg())),
+            Span::styled("  ", Style::default().fg(ghost()).bg(bg())),
             Span::styled(
-                context,
-                Style::default()
-                    .fg(signal())
-                    .bg(bg())
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(" │ ", Style::default().fg(ghost()).bg(bg())),
-            Span::styled(
-                tool_count.to_string(),
+                project_path_label(app),
                 Style::default().fg(muted()).bg(bg()),
             ),
-            Span::styled(" ", Style::default().fg(muted()).bg(bg())),
-            Span::styled(
-                approval_count.to_string(),
-                Style::default()
-                    .fg(accent())
-                    .bg(bg())
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(" ", Style::default().fg(muted()).bg(bg())),
-            Span::styled(
-                "✓",
-                Style::default()
-                    .fg(text())
-                    .bg(bg())
-                    .add_modifier(Modifier::BOLD),
-            ),
         ]))
-        .alignment(Alignment::Right)
         .style(Style::default().bg(bg())),
-        right,
+        area,
     );
 }
 
@@ -172,25 +127,6 @@ fn project_path_label(app: &TuiApp) -> String {
         }
     }
     path.to_string_lossy().to_string()
-}
-
-fn header_context_label(app: &TuiApp) -> String {
-    let total = app.compact_state.total_estimated_tokens(0);
-    format!(
-        "{} / {}",
-        compact_token_label(total),
-        compact_token_label(app.compact_state.context_window)
-    )
-}
-
-fn compact_token_label(tokens: u64) -> String {
-    if tokens >= 1_000_000 {
-        format!("{:.1}M", tokens as f64 / 1_000_000.0)
-    } else if tokens >= 1_000 {
-        format!("{}K", tokens / 1_000)
-    } else {
-        tokens.to_string()
-    }
 }
 
 #[cfg(test)]

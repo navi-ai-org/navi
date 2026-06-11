@@ -104,14 +104,20 @@ impl Tool for GitOpsTool {
     fn definition(&self) -> ToolDefinition {
         helpers::definition(
             "git_ops",
-            "Run git operations with structured output. Read-only commands (status, diff, log, branch) bypass approval. Destructive commands (stash, remote, push, rm, checkout, reset) require approval.",
+            "Run git operations with structured output. All commands are allowed by default. Only push, push-force, and push_delete require explicit approval (even in YOLO mode).",
             ToolKind::Command,
             json!({
                 "type": "object",
                 "properties": {
                     "command": {
                         "type": "string",
-                        "enum": ["status", "diff", "log", "branch", "stash", "remote"],
+                        "enum": [
+                            "status", "diff", "log", "branch", "stash", "remote",
+                            "add", "commit", "restore", "checkout", "merge", "rebase",
+                            "push", "push-force", "push_delete",
+                            "pull", "fetch", "reset", "clean", "tag", "rm", "mv",
+                            "init", "clone"
+                        ],
                         "description": "Git operation to perform."
                     },
                     "args": {
@@ -125,6 +131,15 @@ impl Tool for GitOpsTool {
                         "type": "string",
                         "enum": ["json", "text"],
                         "description": "Output format. Defaults to json."
+                    },
+                    "message": {
+                        "type": "string",
+                        "description": "Commit message (convenience shortcut for commit -m)."
+                    },
+                    "files": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "Files to stage (convenience shortcut for add)."
                     }
                 },
                 "required": ["command"],
@@ -155,6 +170,17 @@ impl Tool for GitOpsTool {
         };
         let format = helpers::optional_string(&invocation.input, "format")
             .unwrap_or_else(|| "json".to_string());
+        let message = helpers::optional_string(&invocation.input, "message");
+        let files: Vec<String> = invocation
+            .input
+            .get("files")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default();
 
         match command.as_str() {
             "status" => git_status(&self.project_root, &invocation.id, &args).await,
@@ -163,6 +189,28 @@ impl Tool for GitOpsTool {
             "branch" => git_branch(&self.project_root, &invocation.id, &args).await,
             "stash" => git_stash(&self.project_root, &invocation.id, &args).await,
             "remote" => git_remote(&self.project_root, &invocation.id, &args).await,
+            "add" => git_add(&self.project_root, &invocation.id, &args, &files).await,
+            "commit" => git_commit(&self.project_root, &invocation.id, &args, message).await,
+            "restore" => {
+                git_passthrough(&self.project_root, &invocation.id, "restore", &args).await
+            }
+            "checkout" => {
+                git_passthrough(&self.project_root, &invocation.id, "checkout", &args).await
+            }
+            "merge" => git_passthrough(&self.project_root, &invocation.id, "merge", &args).await,
+            "rebase" => git_passthrough(&self.project_root, &invocation.id, "rebase", &args).await,
+            "push" | "push-force" | "push_delete" => {
+                git_push(&self.project_root, &invocation.id, command.as_str(), &args).await
+            }
+            "pull" => git_passthrough(&self.project_root, &invocation.id, "pull", &args).await,
+            "fetch" => git_passthrough(&self.project_root, &invocation.id, "fetch", &args).await,
+            "reset" => git_passthrough(&self.project_root, &invocation.id, "reset", &args).await,
+            "clean" => git_passthrough(&self.project_root, &invocation.id, "clean", &args).await,
+            "tag" => git_passthrough(&self.project_root, &invocation.id, "tag", &args).await,
+            "rm" => git_passthrough(&self.project_root, &invocation.id, "rm", &args).await,
+            "mv" => git_passthrough(&self.project_root, &invocation.id, "mv", &args).await,
+            "init" => git_passthrough(&self.project_root, &invocation.id, "init", &args).await,
+            "clone" => git_passthrough(&self.project_root, &invocation.id, "clone", &args).await,
             _ => Ok(ToolResult {
                 invocation_id: invocation.id,
                 ok: false,
@@ -170,7 +218,7 @@ impl Tool for GitOpsTool {
                     "unknown_git_command",
                     format!("unknown git_ops command: {command}"),
                     true,
-                    Some("Use one of: status, diff, log, branch, stash, remote."),
+                    None,
                     None,
                 ),
             }),
@@ -721,6 +769,148 @@ fn parse_git_remote_output(stdout: &str) -> GitRemoteOutput {
     }
 
     GitRemoteOutput { remotes }
+}
+
+// ── New git commands ─────────────────────────────────────────────────────
+
+async fn git_add(
+    project_root: &Path,
+    invocation_id: &str,
+    args: &[String],
+    files: &[String],
+) -> Result<ToolResult> {
+    let mut git_args = vec!["add"];
+    if files.is_empty() {
+        git_args.extend(args.iter().map(String::as_str));
+    } else {
+        git_args.extend(files.iter().map(String::as_str));
+    }
+    let (ok, stdout, stderr) = run_git(project_root, &git_args).await?;
+    Ok(ToolResult {
+        invocation_id: invocation_id.to_string(),
+        ok,
+        output: if ok {
+            json!({
+                "schema_version": helpers::SPECIALIZED_SCHEMA_VERSION,
+                "status": "success",
+                "output": stdout.trim(),
+                "files": files,
+            })
+        } else {
+            helpers::tool_error(
+                "git_add_failed",
+                &stderr.trim().to_string(),
+                true,
+                None,
+                Some(stderr),
+            )
+        },
+    })
+}
+
+async fn git_commit(
+    project_root: &Path,
+    invocation_id: &str,
+    args: &[String],
+    message: Option<String>,
+) -> Result<ToolResult> {
+    let mut git_args = vec!["commit"];
+    git_args.extend(args.iter().map(String::as_str));
+    if let Some(msg) = &message {
+        if !args
+            .iter()
+            .any(|a| a == "-m" || a.starts_with("-m") || a == "--message")
+        {
+            git_args.push("-m");
+            git_args.push(msg.as_str());
+        }
+    }
+    let (ok, stdout, stderr) = run_git(project_root, &git_args).await?;
+    Ok(ToolResult {
+        invocation_id: invocation_id.to_string(),
+        ok,
+        output: if ok {
+            json!({
+                "schema_version": helpers::SPECIALIZED_SCHEMA_VERSION,
+                "status": "success",
+                "output": stdout.trim(),
+            })
+        } else {
+            helpers::tool_error(
+                "git_commit_failed",
+                &stderr.trim().to_string(),
+                true,
+                None,
+                Some(stderr),
+            )
+        },
+    })
+}
+
+async fn git_push(
+    project_root: &Path,
+    invocation_id: &str,
+    command: &str,
+    args: &[String],
+) -> Result<ToolResult> {
+    let mut git_args = vec!["push"];
+    if command == "push-force" {
+        git_args.push("--force");
+    } else if command == "push_delete" {
+        git_args.push("--delete");
+    }
+    git_args.extend(args.iter().map(String::as_str));
+    let (ok, stdout, stderr) = run_git(project_root, &git_args).await?;
+    Ok(ToolResult {
+        invocation_id: invocation_id.to_string(),
+        ok,
+        output: if ok {
+            json!({
+                "schema_version": helpers::SPECIALIZED_SCHEMA_VERSION,
+                "status": "success",
+                "output": stdout.trim(),
+            })
+        } else {
+            helpers::tool_error(
+                "git_push_failed",
+                &stderr.trim().to_string(),
+                true,
+                None,
+                Some(stderr),
+            )
+        },
+    })
+}
+
+async fn git_passthrough(
+    project_root: &Path,
+    invocation_id: &str,
+    command: &str,
+    args: &[String],
+) -> Result<ToolResult> {
+    let mut git_args = vec![command];
+    git_args.extend(args.iter().map(String::as_str));
+    let (ok, stdout, stderr) = run_git(project_root, &git_args).await?;
+    Ok(ToolResult {
+        invocation_id: invocation_id.to_string(),
+        ok,
+        output: if ok {
+            json!({
+                "schema_version": helpers::SPECIALIZED_SCHEMA_VERSION,
+                "status": "success",
+                "output": stdout.trim(),
+            })
+        } else {
+            let msg = stderr.trim().to_string();
+            helpers::tool_error(
+                &format!("git_{command}_failed"),
+                &msg,
+                true,
+                None,
+                Some(stderr),
+            )
+        },
+    })
 }
 
 fn xy_status(xy: &str) -> &'static str {

@@ -164,7 +164,7 @@ impl ToolExecutor {
         };
         executor.register(ReadFileTool::new());
         executor.register(FsBrowserTool);
-        executor.register(GrepTool);
+        executor.register(GrepTool::new(project_root.clone()));
         executor.register(GitOpsTool::new(project_root));
         executor
     }
@@ -363,7 +363,8 @@ impl ToolExecutor {
         self.register(WriteFileTool::new());
         self.register(ApplyPatchTool::new(project_root.clone()));
         self.register(FsBrowserTool);
-        self.register(GrepTool);
+        self.register(GrepTool::new(project_root.clone()));
+        self.register(GrepTool::search_alias(project_root.clone()));
         self.register(BashTool::new(project_root.clone()));
         self.register(TestRunnerTool::new(project_root.clone()));
         self.register(BuildRunnerTool::new(project_root.clone()));

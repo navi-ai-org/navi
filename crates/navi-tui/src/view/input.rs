@@ -5,7 +5,10 @@ use ratatui::text::Text;
 use ratatui::widgets::{Block, Paragraph};
 
 use crate::TuiApp;
-use crate::input::{COMPOSER_MAX_VISIBLE_LINES, input_visual_line_count};
+use crate::input::{
+    COMPOSER_MAX_VISIBLE_LINES, input_visual_line_count, input_visual_line_ranges,
+    selected_input_range,
+};
 use crate::providers::selected_provider_label;
 use crate::render::cursor_span;
 use crate::theme::*;
@@ -18,33 +21,43 @@ pub(super) fn render_input(frame: &mut Frame<'_>, app: &mut TuiApp, area: Rect) 
         vertical: 0,
     });
 
-    // When input is empty, show a single clean panel with status inside
-    // When input has content, show input + status
-    let is_empty = app.input.is_empty() && !app.is_loading;
-    let constraints = if is_empty {
-        [Constraint::Min(1), Constraint::Length(1)]
-    } else {
-        [Constraint::Min(2), Constraint::Length(1)]
-    };
+    let constraints = [Constraint::Min(2), Constraint::Length(1)];
 
     let rows = Layout::default()
         .direction(Direction::Vertical)
         .constraints(constraints)
         .split(inner);
 
+    let block = Block::new()
+        .borders(ratatui::widgets::Borders::LEFT)
+        .border_set(ratatui::symbols::border::Set {
+            vertical_left: "▌",
+            ..ratatui::symbols::border::PLAIN
+        })
+        .border_style(Style::default().fg(accent()).bg(composer_panel_bg(app)))
+        .style(Style::default().fg(text()).bg(composer_panel_bg(app)));
+
+    let inner_block_area = block.inner(rows[0]);
+    frame.render_widget(block, rows[0]);
+
+    // Fill the background of the inner area so horizontal margins aren't uncolored
     frame.render_widget(
-        Block::new().style(Style::default().fg(text()).bg(composer_panel_bg(app))),
-        rows[0],
+        Block::new().style(Style::default().bg(composer_panel_bg(app))),
+        inner_block_area,
     );
 
     let panel_margin = Margin {
         horizontal: 2,
-        vertical: 0,
+        vertical: 1,
     };
     let panel_rows = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Min(1), Constraint::Length(1)])
-        .split(rows[0].inner(panel_margin));
+        .constraints([
+            Constraint::Min(1),
+            Constraint::Length(1),
+            Constraint::Length(1),
+        ])
+        .split(inner_block_area.inner(panel_margin));
 
     let input_area = panel_rows[0];
     app.input_wrap_width = input_area.width as usize;
@@ -58,19 +71,15 @@ pub(super) fn render_input(frame: &mut Frame<'_>, app: &mut TuiApp, area: Rect) 
     );
 
     frame.render_widget(
-        Paragraph::new(composer_status_line(app, panel_rows[1].width as usize))
+        Paragraph::new(composer_status_line(app, panel_rows[2].width as usize))
             .style(Style::default().bg(composer_panel_bg(app))),
-        panel_rows[1],
+        panel_rows[2],
     );
 
-    // Only show shortcut tips row when there's actual content or loading
-    if !is_empty {
-        frame.render_widget(
-            Paragraph::new(shortcut_tips(app, rows[1].width as usize))
-                .style(Style::default().bg(bg())),
-            rows[1],
-        );
-    }
+    frame.render_widget(
+        Paragraph::new(shortcut_tips(app, rows[1].width as usize)).style(Style::default().bg(bg())),
+        rows[1],
+    );
 
     if !app.pending_questions.is_empty() {
         app.register_hit(
@@ -83,23 +92,16 @@ pub(super) fn render_input(frame: &mut Frame<'_>, app: &mut TuiApp, area: Rect) 
 }
 
 pub(super) fn composer_height(app: &TuiApp, input_width: usize) -> u16 {
-    let visible_lines = input_visual_line_count(&app.input, input_width)
-        .clamp(1, COMPOSER_MAX_VISIBLE_LINES) as u16;
-    // When empty and not loading: panel + status (2 lines)
-    // Otherwise: panel + status + tips row (3 lines)
-    if app.input.is_empty() && !app.is_loading {
-        visible_lines + 2
-    } else {
-        visible_lines + 3
-    }
+    // 4 chars taken by margins (horizontal: 2 on each side)
+    let wrap_width = input_width.saturating_sub(4);
+    let visible_lines =
+        input_visual_line_count(&app.input, wrap_width).clamp(1, COMPOSER_MAX_VISIBLE_LINES) as u16;
+    // panel (1 line) + spacer (1 line) + status (1 line) + vertical margins (2 lines) + tips row (1 line) = 6
+    visible_lines + 5
 }
 
-fn composer_panel_bg(app: &TuiApp) -> ratatui::style::Color {
-    if app.is_loading {
-        interactive_hover_bg()
-    } else {
-        panel()
-    }
+fn composer_panel_bg(_app: &TuiApp) -> ratatui::style::Color {
+    interactive_bg()
 }
 
 fn visible_input_lines(
@@ -116,128 +118,59 @@ fn visible_input_lines(
 }
 
 fn input_lines(app: &TuiApp, width: usize) -> (Vec<Line<'static>>, usize) {
-    let prompt = "│ ";
-    let continuation = " ".repeat(prompt.chars().count());
-    let width = width.max(prompt.chars().count() + 1);
+    let width = width.max(1);
     let text_style = Style::default().fg(text());
-    let prefix_style = Style::default()
-        .fg(user_accent())
-        .add_modifier(Modifier::BOLD);
-    let mut lines = Vec::new();
-    let mut current = vec![Span::styled(prompt.to_string(), prefix_style)];
-    let mut current_width = prompt.chars().count();
-    let mut cursor_line = 0usize;
-    let mut cursor_drawn = false;
-
-    let push_wrapped_char = |lines: &mut Vec<Line<'static>>,
-                             current: &mut Vec<Span<'static>>,
-                             current_width: &mut usize,
-                             span: Span<'static>,
-                             width: usize,
-                             continuation: &str,
-                             prefix_style: Style| {
-        if *current_width >= width {
-            lines.push(Line::from(std::mem::take(current)));
-            current.push(Span::styled(continuation.to_string(), prefix_style));
-            *current_width = continuation.chars().count();
-        }
-        *current_width += span.content.chars().count();
-        current.push(span);
-    };
 
     if app.input.is_empty() {
-        current.push(cursor_span(" "));
+        let mut current = vec![cursor_span(" ")];
         let placeholder = if app.is_loading {
             " thinking..."
         } else {
-            "type a task, or ctrl+p for commands"
+            "Ask anything... \"Fix broken tests\""
         };
         current.push(Span::styled(
             placeholder.to_string(),
             Style::default().fg(muted()),
         ));
-        lines.push(Line::from(current));
-        return (lines, cursor_line);
+        return (vec![Line::from(current)], 0);
     }
 
     let cursor = app.input_cursor.min(app.input.len());
     let cursor = floor_char_boundary(&app.input, cursor);
-    for (byte, ch) in app.input.char_indices() {
-        if !cursor_drawn && cursor == byte {
-            if ch != '\n' {
-                if current_width >= width {
-                    lines.push(Line::from(std::mem::take(&mut current)));
-                    current.push(Span::styled(continuation.clone(), prefix_style));
-                    current_width = continuation.chars().count();
-                }
-                cursor_line = lines.len();
-                push_wrapped_char(
-                    &mut lines,
-                    &mut current,
-                    &mut current_width,
-                    cursor_span(ch.to_string()),
-                    width,
-                    &continuation,
-                    prefix_style,
-                );
+    let selected = selected_input_range(app);
+    let ranges = input_visual_line_ranges(&app.input, width);
+    let mut cursor_line = ranges.len().saturating_sub(1);
+    let mut lines = Vec::new();
+
+    for (line_index, (start, end)) in ranges.iter().copied().enumerate() {
+        if cursor >= start && cursor <= end {
+            cursor_line = line_index;
+        }
+        let mut spans = Vec::new();
+        let mut cursor_drawn = false;
+        for (offset, ch) in app.input[start..end].char_indices() {
+            let byte = start + offset;
+            if cursor == byte {
+                let cursor_text = if ch == '\t' {
+                    " ".to_string()
+                } else {
+                    ch.to_string()
+                };
+                spans.push(cursor_span(cursor_text));
                 cursor_drawn = true;
                 continue;
             }
-            if current_width >= width {
-                lines.push(Line::from(std::mem::take(&mut current)));
-                current.push(Span::styled(continuation.clone(), prefix_style));
-                current_width = continuation.chars().count();
+            let mut style = text_style;
+            if selected.is_some_and(|(sel_start, sel_end)| byte >= sel_start && byte < sel_end) {
+                style = style.fg(selection_fg()).bg(selection_bg());
             }
-            cursor_line = lines.len();
-            push_wrapped_char(
-                &mut lines,
-                &mut current,
-                &mut current_width,
-                cursor_span(" "),
-                width,
-                &continuation,
-                prefix_style,
-            );
-            cursor_drawn = true;
+            spans.push(Span::styled(ch.to_string(), style));
         }
-
-        if ch == '\n' {
-            lines.push(Line::from(std::mem::take(&mut current)));
-            current.push(Span::styled(continuation.clone(), prefix_style));
-            current_width = continuation.chars().count();
-            continue;
+        if !cursor_drawn && cursor == end {
+            spans.push(cursor_span(" "));
         }
-
-        push_wrapped_char(
-            &mut lines,
-            &mut current,
-            &mut current_width,
-            Span::styled(ch.to_string(), text_style),
-            width,
-            &continuation,
-            prefix_style,
-        );
+        lines.push(Line::from(spans));
     }
-
-    if !cursor_drawn {
-        if current_width >= width {
-            lines.push(Line::from(std::mem::take(&mut current)));
-            current.push(Span::styled(continuation.clone(), prefix_style));
-            current_width = continuation.chars().count();
-        }
-        cursor_line = lines.len();
-        push_wrapped_char(
-            &mut lines,
-            &mut current,
-            &mut current_width,
-            cursor_span(" "),
-            width,
-            &continuation,
-            prefix_style,
-        );
-    }
-
-    lines.push(Line::from(current));
     (lines, cursor_line)
 }
 
@@ -254,64 +187,61 @@ fn shortcut_tips(app: &TuiApp, width: usize) -> Line<'static> {
         ]);
     }
 
-    if app.messages.is_empty() && app.conversation_history.len() <= 1 && app.input.is_empty() {
-        return Line::from(vec![
-            Span::styled(" ", Style::default().fg(muted())),
-            Span::styled("type a task, or ", Style::default().fg(muted())),
-            Span::styled(
-                "ctrl+p",
-                Style::default().fg(text()).add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(" for commands", Style::default().fg(muted())),
-        ]);
-    }
-
     let context = app.compact_state.usage_label(0);
     let help = "ctrl+p commands";
     let footer = format!("{context}  {help}");
     let padding = width.saturating_sub(footer.chars().count());
     Line::from(vec![
         Span::styled(" ".repeat(padding), Style::default().fg(muted())),
-        Span::styled(context, Style::default().fg(muted())),
+        Span::styled(
+            context,
+            Style::default()
+                .fg(code_number())
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::styled("  ", Style::default().fg(ghost())),
         Span::styled(
             "ctrl+p",
-            Style::default().fg(text()).add_modifier(Modifier::BOLD),
+            Style::default().fg(signal()).add_modifier(Modifier::BOLD),
         ),
         Span::styled(" commands", Style::default().fg(muted())),
     ])
 }
 
-fn composer_status_line(app: &TuiApp, width: usize) -> Line<'static> {
+fn composer_status_line(app: &TuiApp, _width: usize) -> Line<'static> {
     let provider = selected_provider_label(app);
     let thinking = app.thinking_level.label();
     let status = if app.is_loading { "Build" } else { "Ready" };
+    let status_color = if app.is_loading {
+        code_const()
+    } else {
+        accent()
+    };
     let model = selected_model_label(app);
-    let text_width = status.chars().count()
-        + model.chars().count()
-        + provider.chars().count()
-        + thinking.chars().count()
-        + 9;
+
     let mut spans = vec![Span::styled(
         status.to_string(),
-        Style::default().fg(accent()),
+        Style::default()
+            .fg(status_color)
+            .add_modifier(Modifier::BOLD),
     )];
 
-    if text_width <= width {
-        spans.extend([
-            Span::styled(" · ", Style::default().fg(ghost())),
-            Span::styled(model, Style::default().fg(muted())),
-            Span::styled(" ", Style::default().fg(ghost())),
-            Span::styled(provider.to_string(), Style::default().fg(muted())),
-            Span::styled(" · ", Style::default().fg(ghost())),
-            Span::styled(
-                thinking.to_string(),
-                Style::default()
-                    .fg(code_const())
-                    .add_modifier(Modifier::BOLD),
-            ),
-        ]);
-    }
+    spans.extend([
+        Span::styled(" · ", Style::default().fg(ghost())),
+        Span::styled(model, Style::default().fg(code_type())),
+        Span::styled(" ", Style::default().fg(ghost())),
+        Span::styled(
+            provider.to_string(),
+            Style::default().fg(signal()).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(" · ", Style::default().fg(ghost())),
+        Span::styled(
+            thinking.to_string(),
+            Style::default()
+                .fg(code_const())
+                .add_modifier(Modifier::BOLD),
+        ),
+    ]);
 
     Line::from(spans)
 }

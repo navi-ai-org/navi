@@ -5,8 +5,7 @@
     project navi-tui
    ████╗  ██║██╔══██╗██║   ██║██║
     model   gpt-5.5
+   ██╔██╗ ██║███████║██║   ██║██║
 
-  ┌──────────────────────────────────┐
-  │}                                 │
-  └──────────────────────────────────┘
-   type a task, or ctrl+p for commands
+  ▌  type a task, or ctrl+p for comma
+  ▌ Ready

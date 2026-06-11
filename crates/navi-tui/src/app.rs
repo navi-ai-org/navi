@@ -21,7 +21,7 @@ use crate::dispatch::AsyncEvent;
 use crate::runtime::{build_engine, selected_model_runtime_available};
 use crate::session::load_saved_sessions;
 use crate::state::{
-    ChatMessage, ChatRenderCache, ModalKind, Mode, Notification, PluginApprovalRequest,
+    ChatMessage, ChatRenderCache, McpUiState, ModalKind, Mode, Notification, PluginApprovalRequest,
     QuestionUiState, SelectionState, ThinkingLevel,
 };
 use crate::theme::{ThemeId, ThemePalette};
@@ -33,6 +33,7 @@ pub struct TuiApp {
     pub(crate) loaded_config: LoadedConfig,
     pub(crate) input: String,
     pub(crate) input_cursor: usize,
+    pub(crate) input_selection: Option<(usize, usize)>,
     pub(crate) input_wrap_width: usize,
     pub(crate) mode: Mode,
     pub(crate) modal_stack: ModalStack<ModalKind>,
@@ -115,6 +116,7 @@ pub struct TuiApp {
     pub(crate) selected_message_action: usize,
     pub(crate) expanded_tool_results: HashSet<String>,
     pub(crate) hovered_chat_source: Option<crate::state::ChatLineSource>,
+    pub(crate) cancel_esc_pressed: bool,
 
     /// Cached set of canonical provider IDs with resolved credentials.
     /// Populated by refresh_authenticated_providers().
@@ -137,6 +139,9 @@ pub struct TuiApp {
     // plugin install / update approvals
     pub(crate) pending_plugin_approvals: Vec<PluginApprovalRequest>,
     pub(crate) plugin_approval_scroll: usize,
+
+    // mcp
+    pub(crate) mcp_ui_state: McpUiState,
 }
 
 impl TuiApp {
@@ -188,6 +193,7 @@ impl TuiApp {
             loaded_config,
             input: String::new(),
             input_cursor: 0,
+            input_selection: None,
             input_wrap_width: 80,
             mode: Mode::Normal,
             modal_stack: ModalStack::default(),
@@ -260,6 +266,7 @@ impl TuiApp {
             selected_message_action: 0,
             expanded_tool_results: HashSet::new(),
             hovered_chat_source: None,
+            cancel_esc_pressed: false,
             authenticated_providers: HashSet::new(),
             available_skills: Vec::new(),
             active_skills: initial_active_skills,
@@ -273,6 +280,7 @@ impl TuiApp {
             plugin_row_scroll: 0,
             pending_plugin_approvals: Vec::new(),
             plugin_approval_scroll: 0,
+            mcp_ui_state: Default::default(),
         };
 
         // If a task was passed via CLI, pre-fill input

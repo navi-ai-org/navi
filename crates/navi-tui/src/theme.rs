@@ -424,6 +424,14 @@ pub(crate) fn code_operator() -> Color {
     p().code_operator
 }
 
+pub(crate) fn selection_fg() -> Color {
+    p().selection_fg
+}
+
+pub(crate) fn selection_bg() -> Color {
+    p().selection_bg
+}
+
 pub(crate) fn code_block_bg() -> Color {
     let palette = p();
     match palette.panel {

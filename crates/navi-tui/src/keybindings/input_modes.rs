@@ -1,13 +1,13 @@
 use crate::TuiApp;
+use crate::chat::submit_message;
 use crate::input::{
     chat_input_ref, delete_input_next_char, delete_input_next_hump, delete_input_previous_char,
     delete_input_previous_hump, delete_input_previous_space_word, insert_input_char,
     move_input_next_char, move_input_next_control_stop, move_input_next_hump,
     move_input_previous_char, move_input_previous_control_stop, move_input_previous_hump,
-    move_input_visual_line,
+    move_input_visual_line, select_all_input,
 };
 use crate::state::ModalKind;
-use crate::tools::cancel_stream;
 use crossterm::event::{KeyCode, KeyModifiers};
 
 pub(crate) fn handle_normal_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyModifiers) -> bool {
@@ -20,14 +20,22 @@ pub(crate) fn handle_normal_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyM
             | KeyCode::Char('w')
             | KeyCode::Char('\u{7f}') => delete_input_previous_hump(app),
             KeyCode::Delete => delete_input_next_hump(app),
-            KeyCode::Char('a') => app.input_cursor = 0,
-            KeyCode::Char('e') => app.input_cursor = app.input.len(),
+            KeyCode::Char('a') => select_all_input(app),
+            KeyCode::Char('e') => {
+                app.input_cursor = app.input.len();
+                app.input_selection = None;
+            }
+            KeyCode::Char('j') | KeyCode::Char('\n') | KeyCode::Char('\r') => {
+                insert_input_char(app, '\n')
+            }
             KeyCode::Char('u') => {
                 app.input.drain(..app.input_cursor);
                 app.input_cursor = 0;
+                app.input_selection = None;
             }
             KeyCode::Char('k') => {
                 chat_input_ref(app).delete_to_end();
+                app.input_selection = None;
             }
             _ => return false,
         }
@@ -59,7 +67,6 @@ pub(crate) fn handle_normal_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyM
         KeyCode::Char('?') if app.input.is_empty() => {
             super::replace_modal(app, ModalKind::Help);
         }
-        KeyCode::Char('q') if app.input.is_empty() && app.messages.is_empty() => return true,
         KeyCode::Char(ch) => insert_input_char(app, ch),
         KeyCode::Backspace => {
             delete_input_previous_char(app);
@@ -75,9 +82,11 @@ pub(crate) fn handle_normal_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyM
         }
         KeyCode::Home => {
             app.input_cursor = 0;
+            app.input_selection = None;
         }
         KeyCode::End => {
             app.input_cursor = app.input.len();
+            app.input_selection = None;
         }
         KeyCode::Up if !move_input_visual_line(app, -1) => {
             app.scroll_offset = app.scroll_offset.saturating_add(3);
@@ -91,15 +100,18 @@ pub(crate) fn handle_normal_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyM
         KeyCode::PageDown => {
             app.scroll_offset = app.scroll_offset.saturating_sub(15);
         }
-        KeyCode::Enter => {
+        KeyCode::Enter if modifiers.contains(KeyModifiers::SHIFT) => {
             insert_input_char(app, '\n');
         }
-        KeyCode::Esc => {
-            if app.is_loading {
-                cancel_stream(app);
-            } else {
-                app.scroll_offset = 0;
+        KeyCode::Enter => {
+            if !app.pending_questions.is_empty() {
+                super::replace_modal(app, ModalKind::Question);
+            } else if !app.input.trim().is_empty() && !app.is_loading {
+                submit_message(app);
             }
+        }
+        KeyCode::Esc => {
+            app.scroll_offset = 0;
         }
         _ => {}
     }

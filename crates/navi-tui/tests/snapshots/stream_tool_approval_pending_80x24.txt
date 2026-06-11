@@ -1,6 +1,6 @@
   main  /tmp/navi-test-project                              │ 18 / 200K │ 1 1 ✓
 
-   › read the file
+   │ read the file
 
      ⠋ approval: tool...
 
@@ -18,7 +18,7 @@
     ╰──────────────────────────────────────────────────────────────────────╯
 
 
-  ┌──────────────────────────────────────────────────────────────────────────┐
-  │}   thinking...                                                           │
-  └──────────────────────────────────────────────────────────────────────────┘
-   Ctrl+. shortcuts · Ctrl+P commands · Ctrl+M models
+  ▌   thinking...
+  ▌
+  ▌ Build · gpt-5.5 OpenAI · adaptive
+                                               18 / 200k (0%)  ctrl+p commands

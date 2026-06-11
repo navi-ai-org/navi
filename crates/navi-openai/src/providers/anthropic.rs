@@ -231,9 +231,7 @@ pub(crate) fn anthropic_messages(messages: &[ModelMessage]) -> (Vec<Value>, Vec<
     let mut system = Vec::new();
 
     // Pre-compute indices for breakpoint placement.
-    let last_tool_index = messages
-        .iter()
-        .rposition(|m| m.role == ModelRole::Tool);
+    let last_tool_index = messages.iter().rposition(|m| m.role == ModelRole::Tool);
     // Last user message that is NOT at the end of the conversation
     // (i.e., a stable user message from a previous turn).
     let last_stable_user_index = messages

@@ -120,6 +120,7 @@ pub enum Mode {
     Question,
     ThemePicker,
     MessageActions,
+    Mcp,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -139,6 +140,7 @@ pub(crate) enum ModalKind {
     Question,
     ThemePicker,
     MessageActions,
+    Mcp,
 }
 
 impl ModalKind {
@@ -159,6 +161,7 @@ impl ModalKind {
             Self::Question => Mode::Question,
             Self::ThemePicker => Mode::ThemePicker,
             Self::MessageActions => Mode::MessageActions,
+            Self::Mcp => Mode::Mcp,
         }
     }
 }
@@ -171,6 +174,14 @@ pub(crate) struct QuestionUiState {
     pub selected_options: Vec<bool>,
     pub custom_answer: String,
     pub custom_cursor: usize,
+}
+
+#[derive(Debug, Clone, Default)]
+pub(crate) struct McpUiState {
+    pub scroll: usize,
+    pub selected_server: usize,
+    pub selected_tool: usize,
+    pub is_focused_on_tools: bool,
 }
 
 impl QuestionUiState {

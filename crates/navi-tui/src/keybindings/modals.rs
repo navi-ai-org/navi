@@ -808,3 +808,52 @@ pub(crate) fn handle_theme_picker_key(app: &mut TuiApp, code: KeyCode) -> bool {
     }
     false
 }
+
+pub(super) fn handle_mcp_key(app: &mut TuiApp, code: KeyCode, _modifiers: KeyModifiers) -> bool {
+    let len = app.loaded_config.config.mcp.servers.len();
+
+    match code {
+        KeyCode::Esc => {
+            if app.mcp_ui_state.is_focused_on_tools {
+                app.mcp_ui_state.is_focused_on_tools = false;
+            } else {
+                super::close_active_modal(app);
+            }
+        }
+        KeyCode::Down | KeyCode::Char('j') => {
+            if len > 0 {
+                if app.mcp_ui_state.is_focused_on_tools {
+                    app.mcp_ui_state.selected_tool = app.mcp_ui_state.selected_tool.saturating_add(1);
+                } else {
+                    app.mcp_ui_state.selected_server = app.mcp_ui_state.selected_server.saturating_add(1).min(len - 1);
+                }
+            }
+        }
+        KeyCode::Up | KeyCode::Char('k') => {
+            if len > 0 {
+                if app.mcp_ui_state.is_focused_on_tools {
+                    app.mcp_ui_state.selected_tool = app.mcp_ui_state.selected_tool.saturating_sub(1);
+                } else {
+                    app.mcp_ui_state.selected_server = app.mcp_ui_state.selected_server.saturating_sub(1);
+                }
+            }
+        }
+        KeyCode::Right | KeyCode::Char('l') => {
+            app.mcp_ui_state.is_focused_on_tools = true;
+            app.mcp_ui_state.selected_tool = 0;
+        }
+        KeyCode::Left | KeyCode::Char('h') => {
+            app.mcp_ui_state.is_focused_on_tools = false;
+        }
+        KeyCode::Enter => {
+            if !app.mcp_ui_state.is_focused_on_tools && len > 0 {
+                let idx = app.mcp_ui_state.selected_server;
+                if let Some(server) = app.loaded_config.config.mcp.servers.get_mut(idx) {
+                    server.enabled = !server.enabled;
+                }
+            }
+        }
+        _ => {}
+    }
+    false
+}

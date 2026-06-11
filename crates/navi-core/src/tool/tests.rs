@@ -782,6 +782,56 @@ async fn grep_returns_empty_matches_for_no_hits() {
     assert_eq!(result.output["matches"].as_array().unwrap().len(), 0);
 }
 
+#[tokio::test]
+async fn grep_defaults_to_project_root_when_path_omitted() {
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let executor = executor(tempdir.path());
+    std::fs::write(tempdir.path().join("file.txt"), "project needle").unwrap();
+
+    let result = executor
+        .invoke(ToolInvocation {
+            id: "grep-default-root".to_string(),
+            tool_name: "grep".to_string(),
+            input: json!({ "pattern": "needle" }),
+        })
+        .await;
+
+    assert!(result.ok, "{}", result.output);
+    assert_eq!(result.output["matches"][0]["path"], "file.txt");
+}
+
+#[tokio::test]
+async fn grep_accepts_search_style_arguments() {
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let executor = executor(tempdir.path());
+    std::fs::create_dir_all(tempdir.path().join("src")).unwrap();
+    std::fs::write(
+        tempdir.path().join("src/lib.rs"),
+        "Needle in rust\nneedle again",
+    )
+    .unwrap();
+    std::fs::write(tempdir.path().join("src/lib.txt"), "Needle in text").unwrap();
+
+    let result = executor
+        .invoke(ToolInvocation {
+            id: "search-style".to_string(),
+            tool_name: "search".to_string(),
+            input: json!({
+                "query": "needle",
+                "include": "*.rs",
+                "limit": 1,
+                "case_sensitive": false
+            }),
+        })
+        .await;
+
+    assert!(result.ok, "{}", result.output);
+    let matches = result.output["matches"].as_array().unwrap();
+    assert_eq!(matches.len(), 1);
+    assert_eq!(matches[0]["path"], "src/lib.rs");
+    assert!(result.output["truncated"].as_bool().unwrap());
+}
+
 #[test]
 fn apply_patch_requires_patch_argument() {
     let tempdir = tempfile::tempdir().expect("tempdir");
@@ -797,6 +847,86 @@ fn apply_patch_requires_patch_argument() {
         .validate_arguments(&invalid)
         .expect_err("missing patch should fail");
     assert!(matches!(err, ToolCallInvalid::InvalidArguments { .. }));
+}
+
+#[tokio::test]
+async fn apply_patch_accepts_structured_update() {
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let executor = executor(tempdir.path());
+    let path = tempdir.path().join("src/lib.rs");
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(&path, "fn old() {\n    println!(\"old\");\n}\n").unwrap();
+
+    let result = executor
+        .invoke(ToolInvocation {
+            id: "patch-structured".to_string(),
+            tool_name: "apply_patch".to_string(),
+            input: json!({
+                "patch": "*** Begin Patch\n*** Update File: src/lib.rs\n@@\n fn old() {\n-    println!(\"old\");\n+    println!(\"new\");\n }\n*** End Patch\n"
+            }),
+        })
+        .await;
+
+    assert!(result.ok, "{}", result.output);
+    assert_eq!(result.output["method"], "structured apply_patch");
+    assert_eq!(
+        std::fs::read_to_string(path).unwrap(),
+        "fn old() {\n    println!(\"new\");\n}\n"
+    );
+}
+
+#[tokio::test]
+async fn apply_patch_accepts_structured_add_delete_and_move() {
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let executor = executor(tempdir.path());
+    std::fs::write(tempdir.path().join("old.txt"), "before\n").unwrap();
+    std::fs::write(tempdir.path().join("delete.txt"), "remove me\n").unwrap();
+
+    let result = executor
+        .invoke(ToolInvocation {
+            id: "patch-ops".to_string(),
+            tool_name: "apply_patch".to_string(),
+            input: json!({
+                "patch": "*** Begin Patch\n*** Add File: nested/new.txt\n+hello\n+world\n*** Delete File: delete.txt\n*** Update File: old.txt\n*** Move to: renamed.txt\n@@\n-before\n+after\n*** End Patch\n"
+            }),
+        })
+        .await;
+
+    assert!(result.ok, "{}", result.output);
+    assert_eq!(
+        std::fs::read_to_string(tempdir.path().join("nested/new.txt")).unwrap(),
+        "hello\nworld\n"
+    );
+    assert!(!tempdir.path().join("delete.txt").exists());
+    assert!(!tempdir.path().join("old.txt").exists());
+    assert_eq!(
+        std::fs::read_to_string(tempdir.path().join("renamed.txt")).unwrap(),
+        "after\n"
+    );
+}
+
+#[tokio::test]
+async fn apply_patch_structured_failure_does_not_apply_prior_files() {
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let executor = executor(tempdir.path());
+    std::fs::write(tempdir.path().join("existing.txt"), "actual\n").unwrap();
+
+    let result = executor
+        .invoke(ToolInvocation {
+            id: "patch-atomic".to_string(),
+            tool_name: "apply_patch".to_string(),
+            input: json!({
+                "patch": "*** Begin Patch\n*** Add File: created.txt\n+created\n*** Update File: existing.txt\n@@\n-missing\n+changed\n*** End Patch\n"
+            }),
+        })
+        .await;
+
+    assert!(!result.ok, "{}", result.output);
+    assert!(!tempdir.path().join("created.txt").exists());
+    assert_eq!(
+        std::fs::read_to_string(tempdir.path().join("existing.txt")).unwrap(),
+        "actual\n"
+    );
 }
 
 #[tokio::test]
