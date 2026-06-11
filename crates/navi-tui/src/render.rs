@@ -70,7 +70,7 @@ mod tests {
     }
 
     #[test]
-    fn markdown_renderer_preserves_fenced_code_blocks() {
+    fn markdown_renderer_renders_fenced_code_as_panel() {
         let lines = render_markdown_lines(
             "before\n```rust\nfn main() {}\n```\nafter",
             80,
@@ -82,7 +82,7 @@ mod tests {
 
         assert_eq!(
             rendered,
-            vec!["before", "```rust", "fn main() {}", "```", "after"]
+            vec!["before", "│  ", "│  fn main() {}", "│  ", "after"]
         );
     }
 
@@ -144,7 +144,7 @@ mod tests {
         );
         let rendered = lines.iter().map(line_text).collect::<Vec<_>>();
 
-        assert_eq!(rendered, vec!["```unknown", "  value"]);
+        assert_eq!(rendered, vec!["│  ", "│    value"]);
     }
 
     #[test]
