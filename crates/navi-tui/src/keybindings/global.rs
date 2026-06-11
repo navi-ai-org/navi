@@ -1,5 +1,6 @@
 use crate::TuiApp;
 use crate::chat::{reset_system_context, submit_message};
+use crate::mouse::{copy_text_to_clipboard, selected_text};
 use crate::notifications::show_notification;
 use crate::persistence::save_preferences;
 use crate::state::ModalKind;
@@ -13,6 +14,13 @@ pub(super) fn route_global_key(
     modifiers: KeyModifiers,
 ) -> KeyOutcome {
     if modifiers.contains(KeyModifiers::CONTROL) {
+        if is_copy_selection_key(code, modifiers) {
+            if let Some(text) = selected_text(app) {
+                copy_text_to_clipboard(app, &text);
+            }
+            return KeyOutcome::Handled;
+        }
+
         match code {
             KeyCode::Char('c') => return super::apply_ui_effect(app, UiEffect::Quit),
             KeyCode::Char('d') => {
@@ -96,4 +104,11 @@ pub(super) fn route_global_key(
         }
     }
     KeyOutcome::Ignored
+}
+
+pub(super) fn is_copy_selection_key(code: KeyCode, modifiers: KeyModifiers) -> bool {
+    // Terminals differ: Ctrl+Shift+C may arrive as uppercase 'C' or as
+    // lowercase 'c' plus an explicit SHIFT modifier. Plain Ctrl+C must quit.
+    matches!(code, KeyCode::Char('C'))
+        || (matches!(code, KeyCode::Char('c')) && modifiers.contains(KeyModifiers::SHIFT))
 }
