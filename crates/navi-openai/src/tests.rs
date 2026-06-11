@@ -1241,8 +1241,11 @@ fn anthropic_messages_separates_system() {
     assert_eq!(system[0]["text"], "You are helpful.");
     assert_eq!(system[0]["cache_control"]["type"], "ephemeral");
     assert_eq!(converted.len(), 2);
-    assert_eq!(converted[0]["role"], "user");
-    assert_eq!(converted[0]["content"], "Hello");
+    // User message is wrapped in array with cache_control (it's a stable user message).
+    let user_content = converted[0]["content"].as_array().unwrap();
+    assert_eq!(user_content[0]["type"], "text");
+    assert_eq!(user_content[0]["text"], "Hello");
+    assert_eq!(user_content[0]["cache_control"]["type"], "ephemeral");
     assert_eq!(converted[1]["role"], "assistant");
     assert_eq!(converted[1]["content"][0]["type"], "text");
     assert_eq!(converted[1]["content"][0]["text"], "Hi there!");
@@ -1259,7 +1262,25 @@ fn anthropic_messages_merges_multiple_system() {
     assert_eq!(system.len(), 2);
     assert_eq!(system[0]["text"], "Rule 1.");
     assert_eq!(system[1]["text"], "Rule 2.");
+    // Both get cache_control since we have budget for 2 system + 1 tool result + 1 user
     assert_eq!(system[0]["cache_control"]["type"], "ephemeral");
+    assert_eq!(system[1]["cache_control"]["type"], "ephemeral");
+}
+
+#[test]
+fn anthropic_messages_splits_runtime_context() {
+    let messages = vec![ModelMessage::system(
+        "Stable rules.\n\n=== Runtime Context ===\nCurrent project: /tmp/project",
+    )];
+    let (system, _) = crate::providers::anthropic::anthropic_messages(&messages);
+    assert_eq!(system.len(), 2);
+    assert_eq!(system[0]["text"], "Stable rules.");
+    assert_eq!(system[0]["cache_control"]["type"], "ephemeral");
+    assert_eq!(
+        system[1]["text"],
+        "=== Runtime Context ===\nCurrent project: /tmp/project"
+    );
+    assert!(system[1].get("cache_control").is_none());
 }
 
 // ── Gemini content conversion ───────────────────────────────────────────────
@@ -1368,6 +1389,8 @@ fn anthropic_messages_tool_role_produces_tool_result() {
     assert_eq!(content[0]["type"], "tool_result");
     assert_eq!(content[0]["tool_use_id"], "call-1");
     assert_eq!(content[0]["content"], "file content");
+    // Last tool result gets cache_control
+    assert_eq!(content[0]["cache_control"]["type"], "ephemeral");
 }
 
 #[test]
@@ -1531,6 +1554,99 @@ fn anthropic_messages_with_tools_produces_correct_request_body() {
     let (system, converted) = crate::providers::anthropic::anthropic_messages(&messages);
     assert!(system.is_empty());
     assert_eq!(converted[0]["role"], "user");
+}
+
+#[test]
+fn anthropic_tool_definitions_cache_only_last_tool() {
+    let tools = vec![
+        navi_core::ToolDefinition {
+            name: "a".to_string(),
+            description: "A".to_string(),
+            kind: navi_core::ToolKind::Read,
+            input_schema: json!({"type":"object"}),
+        },
+        navi_core::ToolDefinition {
+            name: "b".to_string(),
+            description: "B".to_string(),
+            kind: navi_core::ToolKind::Read,
+            input_schema: json!({"type":"object"}),
+        },
+    ];
+    let body = serde_json::to_value(crate::providers::anthropic::anthropic_tools_to_json(&tools))
+        .expect("tools serialize");
+
+    assert!(body[0].get("cache_control").is_none());
+    assert_eq!(body[1]["cache_control"]["type"], "ephemeral");
+}
+
+#[test]
+fn anthropic_messages_last_stable_user_gets_cache_control() {
+    let messages = vec![
+        ModelMessage::system("Rules"),
+        ModelMessage::user("Hello"),
+        ModelMessage::assistant("Hi!"),
+        ModelMessage::user("What is Rust?"),
+    ];
+    let (_, converted) = crate::providers::anthropic::anthropic_messages(&messages);
+    // First user message (index 1) is stable — it has assistant messages after it.
+    let content = converted[0]["content"].as_array().unwrap();
+    assert_eq!(content[0]["type"], "text");
+    assert_eq!(content[0]["text"], "Hello");
+    assert_eq!(content[0]["cache_control"]["type"], "ephemeral");
+    // Last user message (index 3) is current turn — stays as plain string.
+    assert!(converted[2]["content"].is_string(), "last user msg stays plain string");
+}
+
+#[test]
+fn anthropic_messages_breakpoint_budget_limits_to_four() {
+    // 3 system messages + 1 tool result + 1 stable user = 5 candidates, but only 4 breakpoints.
+    // Priority: system(3) + tool_result(1) = 4. User message skipped.
+    let messages = vec![
+        ModelMessage::system("Rule 1."),
+        ModelMessage::system("Rule 2."),
+        ModelMessage::system("Rule 3."),
+        ModelMessage::user("Q1"),
+        ModelMessage::assistant("A1"),
+        ModelMessage::tool_result("call-1", "read_file", "content"),
+        ModelMessage::user("Q2"),
+    ];
+    let (system, converted) = crate::providers::anthropic::anthropic_messages(&messages);
+
+    // All 3 system blocks cached.
+    let cached_system = system
+        .iter()
+        .filter(|s| s.get("cache_control").is_some())
+        .count();
+    assert_eq!(cached_system, 3, "all 3 system blocks should be cached");
+
+    // The tool result should be cached (higher priority than user message).
+    let tool_msg = converted
+        .iter()
+        .find(|m| {
+            m["role"] == "user"
+                && m["content"]
+                    .as_array()
+                    .map(|a| a.iter().any(|c| c["type"] == "tool_result"))
+                    .unwrap_or(false)
+        })
+        .unwrap();
+    let tool_content = tool_msg["content"].as_array().unwrap();
+    assert_eq!(tool_content[0]["cache_control"]["type"], "ephemeral");
+
+    // The stable user message (Q1) should NOT be cached (budget exhausted).
+    let q1_msg = &converted[0];
+    assert!(q1_msg["content"].is_string(), "Q1 stays plain string (no budget)");
+}
+
+#[test]
+fn model_supports_extended_cache_gpt5() {
+    assert!(crate::providers::openai::model_supports_extended_cache("gpt-5"));
+    assert!(crate::providers::openai::model_supports_extended_cache("gpt-5.5"));
+    assert!(crate::providers::openai::model_supports_extended_cache("gpt-5.5-pro"));
+    assert!(crate::providers::openai::model_supports_extended_cache("gpt-5-codex"));
+    assert!(crate::providers::openai::model_supports_extended_cache("gpt-4.1"));
+    assert!(!crate::providers::openai::model_supports_extended_cache("gpt-4o"));
+    assert!(!crate::providers::openai::model_supports_extended_cache("gpt-4o-mini"));
 }
 
 #[test]

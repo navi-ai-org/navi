@@ -12,6 +12,11 @@ use navi_core::{
 use serde_json::{Value, json};
 use std::time::Duration;
 
+const RUNTIME_CONTEXT_MARKER: &str = "=== Runtime Context ===";
+/// Anthropic allows at most 4 explicit cache breakpoints per request.
+/// We budget them as: tools(1) + system(1) + last tool result(1) + last user message(1).
+const MAX_CACHE_BREAKPOINTS: usize = 4;
+
 impl crate::provider::OpenAiProvider {
     pub(crate) fn stream_anthropic_messages(&self, request: ModelRequest) -> ModelStream {
         let client = self.client.clone();
@@ -36,6 +41,7 @@ impl crate::provider::OpenAiProvider {
                 "model": request.model,
                 "max_tokens": max_tokens,
                 "stream": true,
+                "cache_control": { "type": "ephemeral" },
                 "messages": messages,
             });
             if !system.is_empty() {
@@ -45,7 +51,7 @@ impl crate::provider::OpenAiProvider {
                 body["thinking"] = json!({ "type": "enabled", "budget_tokens": budget });
             }
             if !request.tools.is_empty() {
-                body["tools"] = json!(request.tools.iter().map(anthropic_tool_to_json).collect::<Vec<_>>());
+                body["tools"] = json!(anthropic_tools_to_json(&request.tools));
             }
 
             let url = if base_url.ends_with("/v1") {
@@ -211,34 +217,123 @@ pub(crate) fn parse_anthropic_sse_with_state(
 
 // ── Anthropic message conversion ─────────────────────────────────────────────
 
+/// Converts NAVI messages into Anthropic Messages API format.
+///
+/// Manages explicit cache breakpoints (max 4 per Anthropic limit):
+///   1. Last tool definition (set in `anthropic_tools_to_json`)
+///   2. Stable system prefix (before RUNTIME_CONTEXT_MARKER)
+///   3. Last tool result
+///   4. Last stable user message (before the current turn)
+///
+/// The top-level `cache_control` in the request body handles automatic caching
+/// for the remaining content.
 pub(crate) fn anthropic_messages(messages: &[ModelMessage]) -> (Vec<Value>, Vec<Value>) {
     let mut system = Vec::new();
-    let mut converted = Vec::new();
 
-    for message in messages {
-        match message.role {
-            ModelRole::System => {
-                // Send system messages as structured content blocks with
-                // cache_control to enable Anthropic prompt caching.
-                system.push(json!({
-                    "type": "text",
-                    "text": message.content,
-                    "cache_control": { "type": "ephemeral" }
-                }));
+    // Pre-compute indices for breakpoint placement.
+    let last_tool_index = messages
+        .iter()
+        .rposition(|m| m.role == ModelRole::Tool);
+    // Last user message that is NOT at the end of the conversation
+    // (i.e., a stable user message from a previous turn).
+    let last_stable_user_index = messages
+        .iter()
+        .enumerate()
+        .rev()
+        .find(|(i, m)| {
+            m.role == ModelRole::User
+                && *i + 1 < messages.len()
+                && !matches!(messages[*i + 1].role, ModelRole::User)
+        })
+        .map(|(i, _)| i);
+
+    // Count system blocks that want caching to pre-allocate budget.
+    let system_cache_count = messages
+        .iter()
+        .filter(|m| m.role == ModelRole::System)
+        .map(|m| {
+            if let Some((stable, _)) = m.content.split_once(RUNTIME_CONTEXT_MARKER) {
+                if stable.trim_end().is_empty() { 0 } else { 1 }
+            } else {
+                1
             }
-            ModelRole::User => converted.push(json!({
-                "role": "user",
-                "content": message.content,
-            })),
+        })
+        .sum::<usize>()
+        .min(MAX_CACHE_BREAKPOINTS);
+
+    // Remaining budget after system blocks.
+    let remaining = MAX_CACHE_BREAKPOINTS.saturating_sub(system_cache_count);
+    // Tool result has higher priority than user message.
+    let cache_tool_result = remaining >= 1 && last_tool_index.is_some();
+    let cache_user = remaining >= 2 && last_stable_user_index.is_some();
+
+    // ── System messages ───────────────────────────────────────────────────
+    let mut system_breakpoints = 0usize;
+    for message in messages {
+        if message.role != ModelRole::System {
+            continue;
+        }
+        if let Some((stable, dynamic)) = message.content.split_once(RUNTIME_CONTEXT_MARKER) {
+            let stable = stable.trim_end();
+            if !stable.is_empty() {
+                let cache = system_breakpoints < system_cache_count;
+                let mut block = json!({ "type": "text", "text": stable });
+                if cache {
+                    block["cache_control"] = json!({ "type": "ephemeral" });
+                    system_breakpoints += 1;
+                }
+                system.push(block);
+            }
+            // Dynamic tail (runtime context) — never cached.
+            system.push(json!({
+                "type": "text",
+                "text": format!("{RUNTIME_CONTEXT_MARKER}{dynamic}"),
+            }));
+        } else {
+            let cache = system_breakpoints < system_cache_count;
+            let mut block = json!({ "type": "text", "text": message.content });
+            if cache {
+                block["cache_control"] = json!({ "type": "ephemeral" });
+                system_breakpoints += 1;
+            }
+            system.push(block);
+        }
+    }
+
+    // ── Conversation messages ─────────────────────────────────────────────
+    let mut converted = Vec::new();
+    for (index, message) in messages.iter().enumerate() {
+        match message.role {
+            ModelRole::System => {} // already handled above
+            ModelRole::User => {
+                let mut msg = json!({
+                    "role": "user",
+                    "content": message.content,
+                });
+                // Cache the last stable user message (previous turn).
+                if Some(index) == last_stable_user_index && cache_user {
+                    msg["content"] = json!([{
+                        "type": "text",
+                        "text": message.content,
+                        "cache_control": { "type": "ephemeral" },
+                    }]);
+                }
+                converted.push(msg);
+            }
             ModelRole::Tool => {
                 let tool_use_id = message.tool_call_id.as_deref().unwrap_or("");
+                let mut tool_result = json!({
+                    "type": "tool_result",
+                    "tool_use_id": tool_use_id,
+                    "content": message.content,
+                });
+                // Cache the last tool result.
+                if Some(index) == last_tool_index && cache_tool_result {
+                    tool_result["cache_control"] = json!({ "type": "ephemeral" });
+                }
                 converted.push(json!({
                     "role": "user",
-                    "content": [{
-                        "type": "tool_result",
-                        "tool_use_id": tool_use_id,
-                        "content": message.content,
-                    }],
+                    "content": [tool_result],
                 }));
             }
             ModelRole::Assistant => {
@@ -267,10 +362,24 @@ pub(crate) fn anthropic_messages(messages: &[ModelMessage]) -> (Vec<Value>, Vec<
 
 // ── Anthropic tool definition conversion ─────────────────────────────────────
 
-fn anthropic_tool_to_json(tool: &ToolDefinition) -> Value {
-    json!({
+/// Converts tool definitions to Anthropic format.
+/// Places `cache_control` on the last tool definition to cache the full tools prefix.
+pub(crate) fn anthropic_tools_to_json(tools: &[ToolDefinition]) -> Vec<Value> {
+    tools
+        .iter()
+        .enumerate()
+        .map(|(index, tool)| anthropic_tool_to_json(tool, index + 1 == tools.len()))
+        .collect()
+}
+
+fn anthropic_tool_to_json(tool: &ToolDefinition, cache: bool) -> Value {
+    let mut value = json!({
         "name": tool.name,
         "description": tool.description,
         "input_schema": tool.input_schema,
-    })
+    });
+    if cache {
+        value["cache_control"] = json!({ "type": "ephemeral" });
+    }
+    value
 }

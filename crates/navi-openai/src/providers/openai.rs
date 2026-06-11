@@ -44,6 +44,10 @@ impl crate::provider::OpenAiProvider {
         );
         body["stream"] = json!(true);
         body["stream_options"] = json!({ "include_usage": true });
+        body["prompt_cache_key"] = json!(provider_id);
+        if model_supports_extended_cache(&request.model) {
+            body["prompt_cache_retention"] = json!("24h");
+        }
 
         let response = client
             .post(format!("{}/responses", base_url.trim_end_matches('/')))
@@ -114,6 +118,10 @@ impl crate::provider::OpenAiProvider {
         );
         body["stream"] = json!(true);
         body["stream_options"] = json!({ "include_usage": true });
+        body["prompt_cache_key"] = json!(provider_id);
+        if model_supports_extended_cache(&request.model) {
+            body["prompt_cache_retention"] = json!("24h");
+        }
 
         let req = client
             .post(format!(
@@ -337,4 +345,14 @@ impl ChatToolCallAccumulator {
             })
             .collect()
     }
+}
+
+/// Returns `true` if the model supports OpenAI's extended prompt cache retention (24h).
+pub(crate) fn model_supports_extended_cache(model: &str) -> bool {
+    let m = model.to_ascii_lowercase();
+    // gpt-5.5, gpt-5.5-pro, gpt-5.4, gpt-5.2, gpt-5.1*, gpt-5, gpt-5-codex, gpt-4.1
+    m.starts_with("gpt-5")
+        || m.starts_with("gpt-4.1")
+        || m.starts_with("o4")
+        || m.starts_with("o3")
 }
