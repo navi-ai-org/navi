@@ -2,10 +2,11 @@ use ratatui::layout::{Constraint, Direction, Layout, Margin, Rect};
 use ratatui::prelude::{Frame, Line, Span};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::Text;
-use ratatui::widgets::{Block, BorderType, Borders, Paragraph};
+use ratatui::widgets::{Block, Paragraph};
 
 use crate::TuiApp;
 use crate::input::{COMPOSER_MAX_VISIBLE_LINES, input_visual_line_count};
+use crate::providers::selected_provider_label;
 use crate::render::cursor_span;
 use crate::theme::*;
 use crate::ui::interaction::HitAction;
@@ -18,35 +19,35 @@ pub(super) fn render_input(frame: &mut Frame<'_>, app: &mut TuiApp, area: Rect) 
     });
     let rows = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Min(3), Constraint::Length(1)])
+        .constraints([Constraint::Min(2), Constraint::Length(1)])
         .split(inner);
 
-    let border_style = if app.is_loading {
-        Style::default().fg(accent()).bg(bg())
-    } else {
-        Style::default().fg(ghost()).bg(bg())
-    };
     frame.render_widget(
-        Block::new()
-            .borders(Borders::ALL)
-            .border_type(BorderType::Plain)
-            .border_style(border_style)
-            .style(Style::default().bg(bg())),
+        Block::new().style(Style::default().fg(text()).bg(composer_panel_bg(app))),
         rows[0],
     );
 
-    let input_area = rows[0].inner(Margin {
-        horizontal: 1,
-        vertical: 1,
-    });
+    let panel_rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(1), Constraint::Length(1)])
+        .split(rows[0].inner(Margin {
+            horizontal: 2,
+            vertical: 0,
+        }));
+    let input_area = panel_rows[0];
     app.input_wrap_width = input_area.width as usize;
     let (lines, cursor_line) = input_lines(app, input_area.width as usize);
     let input_lines = visible_input_lines(lines, input_area.height as usize, cursor_line);
     frame.render_widget(
         Paragraph::new(Text::from(input_lines))
-            .style(Style::default().bg(bg()))
-            .block(Block::new().borders(Borders::NONE)),
+            .style(Style::default().fg(text()).bg(composer_panel_bg(app)))
+            .block(Block::new()),
         input_area,
+    );
+    frame.render_widget(
+        Paragraph::new(composer_status_line(app, panel_rows[1].width as usize))
+            .style(Style::default().bg(composer_panel_bg(app))),
+        panel_rows[1],
     );
     frame.render_widget(
         Paragraph::new(shortcut_tips(app, rows[1].width as usize)).style(Style::default().bg(bg())),
@@ -68,6 +69,14 @@ pub(super) fn composer_height(app: &TuiApp, input_width: usize) -> u16 {
     visible_lines + 3
 }
 
+fn composer_panel_bg(app: &TuiApp) -> ratatui::style::Color {
+    if app.is_loading {
+        interactive_hover_bg()
+    } else {
+        panel()
+    }
+}
+
 fn visible_input_lines(
     lines: Vec<Line<'static>>,
     height: usize,
@@ -82,7 +91,7 @@ fn visible_input_lines(
 }
 
 fn input_lines(app: &TuiApp, width: usize) -> (Vec<Line<'static>>, usize) {
-    let prompt = "} ";
+    let prompt = "";
     let continuation = " ".repeat(prompt.chars().count());
     let width = width.max(prompt.chars().count() + 1);
     let text_style = Style::default().fg(text());
@@ -226,58 +235,51 @@ fn shortcut_tips(app: &TuiApp, width: usize) -> Line<'static> {
         ]);
     }
 
-    let items = [
-        ("Ctrl+.", "shortcuts", text()),
-        ("Ctrl+P", "commands", text()),
-        ("Ctrl+M", "models", text()),
-    ];
+    let context = app.compact_state.usage_label(0);
+    let help = "ctrl+p commands";
+    let footer = format!("{context}  {help}");
+    let padding = width.saturating_sub(footer.chars().count());
+    Line::from(vec![
+        Span::styled(" ".repeat(padding), Style::default().fg(muted())),
+        Span::styled(context, Style::default().fg(muted())),
+        Span::styled("  ", Style::default().fg(ghost())),
+        Span::styled(
+            "ctrl+p",
+            Style::default().fg(text()).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(" commands", Style::default().fg(muted())),
+    ])
+}
 
-    let mut spans = vec![Span::styled(" ", Style::default().fg(muted()))];
-    let mut used = 3usize;
+fn composer_status_line(app: &TuiApp, width: usize) -> Line<'static> {
+    let provider = selected_provider_label(app);
+    let thinking = app.thinking_level.label();
+    let status = if app.is_loading { "Build" } else { "Ready" };
+    let model = selected_model_label(app);
+    let text_width = status.chars().count()
+        + model.chars().count()
+        + provider.chars().count()
+        + thinking.chars().count()
+        + 9;
+    let mut spans = vec![Span::styled(
+        status.to_string(),
+        Style::default().fg(accent()),
+    )];
 
-    for (index, (key, label, key_color)) in items.iter().enumerate() {
-        let item_width = key.chars().count()
-            + if label.is_empty() {
-                0
-            } else {
-                1 + label.chars().count()
-            };
-        let separator_width = if index == 0 { 0 } else { 5 };
-        if used + separator_width + item_width > width {
-            break;
-        }
-        if index > 0 {
-            spans.push(Span::styled(" · ", Style::default().fg(ghost())));
-            used += separator_width;
-        }
-        spans.push(Span::styled(
-            (*key).to_string(),
-            Style::default().fg(*key_color).add_modifier(Modifier::BOLD),
-        ));
-        used += key.chars().count();
-        if !label.is_empty() {
-            spans.push(Span::styled(
-                format!(" {label}"),
-                Style::default().fg(muted()),
-            ));
-            used += 1 + label.chars().count();
-        }
-    }
-
-    let mode_label = if app.yolo_mode {
-        "always-approve"
-    } else {
-        "approve"
-    };
-    let composer_text = format!("Composer {} · {mode_label}", selected_model_label(app));
-    let composer_width = composer_text.chars().count();
-    if used + composer_width + 2 < width {
-        let padding = width.saturating_sub(used + composer_width + 1);
-        spans.push(Span::styled(
-            " ".repeat(padding),
-            Style::default().fg(muted()),
-        ));
-        spans.push(Span::styled(composer_text, Style::default().fg(muted())));
+    if text_width <= width {
+        spans.extend([
+            Span::styled(" · ", Style::default().fg(ghost())),
+            Span::styled(model, Style::default().fg(muted())),
+            Span::styled(" ", Style::default().fg(ghost())),
+            Span::styled(provider.to_string(), Style::default().fg(muted())),
+            Span::styled(" · ", Style::default().fg(ghost())),
+            Span::styled(
+                thinking.to_string(),
+                Style::default()
+                    .fg(code_const())
+                    .add_modifier(Modifier::BOLD),
+            ),
+        ]);
     }
 
     Line::from(spans)
@@ -334,7 +336,7 @@ mod tests {
 
         assert_eq!(visible.len(), 2);
         assert_eq!(cursor_line, 1);
-        assert!(text.contains("} abc"));
-        assert!(text.lines().last().unwrap_or_default().starts_with("  "));
+        assert!(text.contains("abc"));
+        assert!(text.lines().last().unwrap_or_default().starts_with(' '));
     }
 }
