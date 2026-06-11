@@ -209,6 +209,45 @@ fn mouse_up_outside_chat_finishes_existing_selection() {
 }
 
 #[test]
+fn ctrl_shift_c_copies_selection_from_lowercase_shift_key_event() {
+    let mut app = test_app("");
+    seed_chat_cache(&mut app, &["hello world"]);
+    app.selection = Some(SelectionState {
+        start: (0, 0),
+        end: (0, 5),
+        active: false,
+    });
+
+    let should_quit = handle_key(
+        &mut app,
+        KeyCode::Char('c'),
+        KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+    );
+
+    assert!(!should_quit);
+    let notification = app.notification().expect("clipboard notification");
+    assert_eq!(notification.title, "Clipboard");
+}
+
+#[test]
+fn ctrl_shift_c_reaches_global_shortcut_from_question_mode() {
+    let mut app = test_app("");
+    seed_chat_cache(&mut app, &["hello world"]);
+    app.mode = Mode::Question;
+    app.selection = Some(SelectionState {
+        start: (0, 6),
+        end: (0, 11),
+        active: false,
+    });
+
+    let should_quit = handle_key(&mut app, KeyCode::Char('C'), KeyModifiers::CONTROL);
+
+    assert!(!should_quit);
+    let notification = app.notification().expect("clipboard notification");
+    assert_eq!(notification.title, "Clipboard");
+}
+
+#[test]
 fn mouse_down_on_user_chat_message_opens_message_actions() {
     let mut app = test_app("");
     app.messages

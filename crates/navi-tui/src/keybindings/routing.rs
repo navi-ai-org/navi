@@ -3,7 +3,7 @@ use crate::tools::{approve_pending_tool, cancel_stream, deny_pending_tool};
 use crate::ui::keymap::KeyOutcome;
 use crossterm::event::{KeyCode, KeyModifiers};
 
-use super::global::route_global_key;
+use super::global::{is_copy_selection_key, route_global_key};
 
 pub(crate) fn handle_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyModifiers) -> bool {
     route_key(app, code, modifiers).should_quit()
@@ -22,8 +22,7 @@ pub(crate) fn route_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyModifiers
         return normal_cancel;
     }
 
-    if app.mode == crate::state::Mode::Question
-        && !(modifiers.contains(KeyModifiers::CONTROL) && matches!(code, KeyCode::Char('c')))
+    if app.mode == crate::state::Mode::Question && !is_question_global_control_key(code, modifiers)
     {
         return super::route_mode_key(app, code, modifiers);
     }
@@ -34,6 +33,11 @@ pub(crate) fn route_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyModifiers
     }
 
     super::route_mode_key(app, code, modifiers)
+}
+
+fn is_question_global_control_key(code: KeyCode, modifiers: KeyModifiers) -> bool {
+    modifiers.contains(KeyModifiers::CONTROL)
+        && (matches!(code, KeyCode::Char('c')) || is_copy_selection_key(code, modifiers))
 }
 
 fn route_approval_key(app: &mut TuiApp, code: KeyCode) -> KeyOutcome {
