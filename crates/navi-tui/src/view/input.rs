@@ -17,9 +17,19 @@ pub(super) fn render_input(frame: &mut Frame<'_>, app: &mut TuiApp, area: Rect) 
         horizontal: 1,
         vertical: 0,
     });
+
+    // When input is empty, show a single clean panel with status inside
+    // When input has content, show input + status
+    let is_empty = app.input.is_empty() && !app.is_loading;
+    let constraints = if is_empty {
+        [Constraint::Min(1), Constraint::Length(1)]
+    } else {
+        [Constraint::Min(2), Constraint::Length(1)]
+    };
+
     let rows = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Min(2), Constraint::Length(1)])
+        .constraints(constraints)
         .split(inner);
 
     frame.render_widget(
@@ -27,13 +37,15 @@ pub(super) fn render_input(frame: &mut Frame<'_>, app: &mut TuiApp, area: Rect) 
         rows[0],
     );
 
+    let panel_margin = Margin {
+        horizontal: 2,
+        vertical: 0,
+    };
     let panel_rows = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Min(1), Constraint::Length(1)])
-        .split(rows[0].inner(Margin {
-            horizontal: 2,
-            vertical: 0,
-        }));
+        .split(rows[0].inner(panel_margin));
+
     let input_area = panel_rows[0];
     app.input_wrap_width = input_area.width as usize;
     let (lines, cursor_line) = input_lines(app, input_area.width as usize);
@@ -44,15 +56,22 @@ pub(super) fn render_input(frame: &mut Frame<'_>, app: &mut TuiApp, area: Rect) 
             .block(Block::new()),
         input_area,
     );
+
     frame.render_widget(
         Paragraph::new(composer_status_line(app, panel_rows[1].width as usize))
             .style(Style::default().bg(composer_panel_bg(app))),
         panel_rows[1],
     );
-    frame.render_widget(
-        Paragraph::new(shortcut_tips(app, rows[1].width as usize)).style(Style::default().bg(bg())),
-        rows[1],
-    );
+
+    // Only show shortcut tips row when there's actual content or loading
+    if !is_empty {
+        frame.render_widget(
+            Paragraph::new(shortcut_tips(app, rows[1].width as usize))
+                .style(Style::default().bg(bg())),
+            rows[1],
+        );
+    }
+
     if !app.pending_questions.is_empty() {
         app.register_hit(
             rows[1],
@@ -66,7 +85,13 @@ pub(super) fn render_input(frame: &mut Frame<'_>, app: &mut TuiApp, area: Rect) 
 pub(super) fn composer_height(app: &TuiApp, input_width: usize) -> u16 {
     let visible_lines = input_visual_line_count(&app.input, input_width)
         .clamp(1, COMPOSER_MAX_VISIBLE_LINES) as u16;
-    visible_lines + 3
+    // When empty and not loading: panel + status (2 lines)
+    // Otherwise: panel + status + tips row (3 lines)
+    if app.input.is_empty() && !app.is_loading {
+        visible_lines + 2
+    } else {
+        visible_lines + 3
+    }
 }
 
 fn composer_panel_bg(app: &TuiApp) -> ratatui::style::Color {
@@ -122,7 +147,11 @@ fn input_lines(app: &TuiApp, width: usize) -> (Vec<Line<'static>>, usize) {
 
     if app.input.is_empty() {
         current.push(cursor_span(" "));
-        let placeholder = if app.is_loading { " thinking..." } else { "" };
+        let placeholder = if app.is_loading {
+            " thinking..."
+        } else {
+            "type a task, or ctrl+p for commands"
+        };
         current.push(Span::styled(
             placeholder.to_string(),
             Style::default().fg(muted()),
