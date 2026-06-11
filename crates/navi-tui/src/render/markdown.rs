@@ -372,9 +372,6 @@ fn render_collapsed_tool_group(
     tools: &[(&ToolInvocation, &ToolResult)],
     chat_width: usize,
 ) -> Line<'static> {
-    let marker = "◆ ";
-    let marker_width = marker.chars().count();
-    let text_width = chat_width.saturating_sub(marker_width).max(12);
     let errors = tools.iter().filter(|(_, result)| !result.ok).count();
     let mut counts = BTreeMap::new();
     for (invocation, _) in tools {
@@ -402,15 +399,16 @@ fn render_collapsed_tool_group(
     }
 
     let noun = if tools.len() == 1 { "tool" } else { "tools" };
+    let text = truncate_chars(
+        &format!("{} {noun} · {detail}", tools.len()),
+        chat_width.saturating_sub(6),
+    );
+    let bar_color = if errors > 0 { Color::Red } else { accent() };
+    let bg = interactive_bg();
     Line::from(vec![
-        Span::styled(
-            marker,
-            Style::default().fg(if errors > 0 { Color::Red } else { Color::Green }),
-        ),
-        Span::styled(
-            truncate_chars(&format!("{} {noun} · {detail}", tools.len()), text_width),
-            Style::default().fg(muted()),
-        ),
+        Span::styled("│", Style::default().fg(bar_color).bg(bg)),
+        Span::styled(" ", Style::default().bg(bg)),
+        Span::styled(text, Style::default().fg(muted()).bg(bg)),
     ])
 }
 
@@ -431,17 +429,20 @@ fn render_compact_tool_line_with_width(
     result: &ToolResult,
     chat_width: usize,
 ) -> Line<'static> {
-    let marker = "◆ ";
-    let marker_width = marker.chars().count();
-    let text_width = chat_width.saturating_sub(marker_width).max(12);
+    let text = truncate_chars(
+        &tool_compact_text(invocation, result),
+        chat_width.saturating_sub(6),
+    );
+    let bar_color = if result.ok { Color::Green } else { Color::Red };
+    let bg = interactive_bg();
     Line::from(vec![
+        Span::styled("│", Style::default().fg(bar_color).bg(bg)),
+        Span::styled(" ", Style::default().bg(bg)),
         Span::styled(
-            marker,
-            Style::default().fg(if result.ok { Color::Green } else { Color::Red }),
-        ),
-        Span::styled(
-            truncate_chars(&tool_compact_text(invocation, result), text_width),
-            Style::default().fg(if result.ok { muted() } else { text() }),
+            text,
+            Style::default()
+                .fg(if result.ok { muted() } else { text() })
+                .bg(bg),
         ),
     ])
 }
