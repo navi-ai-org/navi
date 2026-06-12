@@ -237,6 +237,12 @@ pub struct ProviderConfig {
     /// Whether to force-include the tool prompt manifest for this provider.
     #[serde(default)]
     pub tool_prompt_manifest: Option<bool>,
+    /// Provider-specific request fields that are not universally supported by
+    /// OpenAI-compatible APIs. `None` means "not specified" so the catalog
+    /// can fill in the canonical defaults; `Some(opts)` honors the user's
+    /// explicit configuration even when the value is empty.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request_options: Option<ProviderRequestOptions>,
 }
 
 impl Default for ProviderConfig {
@@ -256,6 +262,7 @@ impl Default for ProviderConfig {
             websocket_connect_timeout_ms: None,
             retry_429: None,
             tool_prompt_manifest: None,
+            request_options: None,
         }
     }
 }
@@ -289,6 +296,29 @@ impl ProviderConfig {
     /// Whether to retry on HTTP 429 (rate limit), defaulting to `false`.
     pub fn retry_429(&self) -> bool {
         self.retry_429.unwrap_or(false)
+    }
+}
+
+/// Optional request features that individual providers may opt into.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ProviderRequestOptions {
+    /// OpenAI `prompt_cache_key` routing hint. Omit to disable for
+    /// OpenAI-compatible providers that reject this field.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompt_cache_key: Option<String>,
+    /// OpenAI `prompt_cache_retention` value, for example `"in_memory"` or `"24h"`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompt_cache_retention: Option<String>,
+    /// Anthropic `cache_control` object, for example `{ "type": "ephemeral" }`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub anthropic_cache_control: Option<serde_json::Value>,
+}
+
+impl ProviderRequestOptions {
+    pub fn is_empty(&self) -> bool {
+        self.prompt_cache_key.is_none()
+            && self.prompt_cache_retention.is_none()
+            && self.anthropic_cache_control.is_none()
     }
 }
 

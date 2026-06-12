@@ -5,6 +5,11 @@
   "kind": "anthropic-messages",
   "api_key_env": "ANTHROPIC_API_KEY",
   "base_url": "https://api.anthropic.com/v1",
+  "request_options": {
+    "anthropic_cache_control": {
+      "type": "ephemeral"
+    }
+  },
   "models": [
     {
       "name": "claude-opus-4",

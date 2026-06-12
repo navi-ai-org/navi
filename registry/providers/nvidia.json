@@ -50,6 +50,11 @@
       "name": "microsoft/phi-4",
       "task_size": "small",
       "context_window_tokens": 16000
+    },
+    {
+      "name": "minimaxai/minimax-m3",
+      "task_size": "large",
+      "context_window_tokens": 1000000
     }
   ]
 }

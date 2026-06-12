@@ -22,8 +22,9 @@ pub mod turn;
 pub use compact::{CompactState, CompactThreshold};
 pub use config::{
     HarnessProfile, LoadedConfig, McpConfig, McpServerConfig, ModelOption, ModelTaskSize,
-    NaviConfig, PluginConfig, ProviderConfig, ProviderKind, ProviderModelConfig, SecurityConfig,
-    ToolPromptManifest, WasmPluginConfig, available_model_options, canonical_provider_id,
+    NaviConfig, PluginConfig, ProviderConfig, ProviderKind, ProviderModelConfig,
+    ProviderRequestOptions, SecurityConfig, ToolPromptManifest, WasmPluginConfig,
+    available_model_options, canonical_provider_id, default_request_options_for,
     effective_context_window, is_free_model_name, model_can_run_publicly, provider_catalog,
     provider_request_model_name, resolve_provider_config, save_global_config, save_project_config,
     set_registry_store,
