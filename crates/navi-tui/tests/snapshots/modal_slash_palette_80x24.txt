@@ -1,4 +1,4 @@
-  main  /tmp/navi-test-project                               │ 0 / 200K │ 0 0 ✓
+  main  /tmp/navi-test-project
 
 
     ███╗   ██╗ █████╗ ██╗   ██╗██╗      project navi-tui
@@ -13,11 +13,11 @@
       │ Providers                                                      █ │
       │ Skills                                                         █ │
     NA│ Plugins                                                        │ │
+      │ MCP Servers                                                    │ │
       │ Retry Last Response                                            │ │
-      │ Thinking Mode                                                  │ │
-      │                                                                  │
-      ╰──────────────────────────────────────────────────────────────────╯
-
-
-  ▌  type a task, or ctrl+p for commands
-  ▌ Ready · gpt-5.5 OpenAI · adaptive
+  ▌   │                                                                  │
+  ▌   ╰──────────────────────────────────────────────────────────────────╯
+  ▌
+  ▌
+  ▌
+  ▌  Ready · gpt-5.5 OpenAI · adaptive · 0 / 200k (0%)   Enter send · Shift+

@@ -1,11 +1,11 @@
-  main  /tmp/navi-test-project                              │ 18 / 200K │ 1 1 ✓
+  main  /tmp/navi-test-project
 
    │ read the file
 
-     ⠋ approval: tool...
+
 
     ╭ Tool Approval ───────────────────────────────────────────────────────╮
-    │ Tool: unknown                                                        │
+   ││ Tool: unknown                                                        │
     │                                                                      │
     │ {  "summary": "read src/main.rs"}                                    │
     │                                                                      │
@@ -15,10 +15,9 @@
     │                                                                      │
     │                                                                      │
     │                                                                      │
-    ╰──────────────────────────────────────────────────────────────────────╯
-
-
-  ▌   thinking...
+  ▌ ╰──────────────────────────────────────────────────────────────────────╯
+  ▌    thinking...
   ▌
-  ▌ Build · gpt-5.5 OpenAI · adaptive
-                                               18 / 200k (0%)  ctrl+p commands
+  ▌
+  ▌
+  ▌  Build · gpt-5.5 OpenAI · adaptive · 18 / 200k (0%)   Enter send · Shift

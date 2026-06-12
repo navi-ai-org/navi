@@ -200,7 +200,10 @@ async fn scenario_cancel_mid_stream() {
     h.submit();
     wait_for_calls(&mock, 3).await;
 
-    // The TUI is now loading. Pressing Esc cancels the stream.
+    // The TUI is now loading. The first Esc shows a confirmation, the
+    // second Esc actually cancels the stream.
+    assert!(h.is_loading());
+    h.press(KeyCode::Esc, KeyModifiers::NONE);
     assert!(h.is_loading());
     h.press(KeyCode::Esc, KeyModifiers::NONE);
     flush_events(&mut h).await;

@@ -823,18 +823,25 @@ pub(super) fn handle_mcp_key(app: &mut TuiApp, code: KeyCode, _modifiers: KeyMod
         KeyCode::Down | KeyCode::Char('j') => {
             if len > 0 {
                 if app.mcp_ui_state.is_focused_on_tools {
-                    app.mcp_ui_state.selected_tool = app.mcp_ui_state.selected_tool.saturating_add(1);
+                    app.mcp_ui_state.selected_tool =
+                        app.mcp_ui_state.selected_tool.saturating_add(1);
                 } else {
-                    app.mcp_ui_state.selected_server = app.mcp_ui_state.selected_server.saturating_add(1).min(len - 1);
+                    app.mcp_ui_state.selected_server = app
+                        .mcp_ui_state
+                        .selected_server
+                        .saturating_add(1)
+                        .min(len - 1);
                 }
             }
         }
         KeyCode::Up | KeyCode::Char('k') => {
             if len > 0 {
                 if app.mcp_ui_state.is_focused_on_tools {
-                    app.mcp_ui_state.selected_tool = app.mcp_ui_state.selected_tool.saturating_sub(1);
+                    app.mcp_ui_state.selected_tool =
+                        app.mcp_ui_state.selected_tool.saturating_sub(1);
                 } else {
-                    app.mcp_ui_state.selected_server = app.mcp_ui_state.selected_server.saturating_sub(1);
+                    app.mcp_ui_state.selected_server =
+                        app.mcp_ui_state.selected_server.saturating_sub(1);
                 }
             }
         }

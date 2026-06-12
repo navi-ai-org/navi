@@ -185,7 +185,11 @@ pub(crate) fn handle_mouse(app: &mut TuiApp, mouse: MouseEvent) {
                 return;
             }
             let pos = map_mouse_to_text(app, mouse.column, mouse.row);
-            finish_selection(app, pos);
+            if finish_selection(app, pos) {
+                if let Some(text) = selected_text(app) {
+                    copy_text_to_clipboard(app, &text);
+                }
+            }
         }
         MouseEventKind::Moved => {
             if let Some(hit) = app.hit_test(mouse.column, mouse.row) {

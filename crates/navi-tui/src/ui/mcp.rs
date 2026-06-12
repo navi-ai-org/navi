@@ -1,20 +1,15 @@
+use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Wrap};
-use ratatui::Frame;
 
 use crate::app::TuiApp;
 use crate::theme::ThemePalette;
 use crate::ui::interaction::HitAction;
 
-pub(crate) fn draw_mcp_modal(
-    f: &mut Frame,
-    area: Rect,
-    app: &mut TuiApp,
-    palette: &ThemePalette,
-) {
-        let block = Block::default()
+pub(crate) fn draw_mcp_modal(f: &mut Frame, area: Rect, app: &mut TuiApp, palette: &ThemePalette) {
+    let block = Block::default()
         .title(" MCP Servers ")
         .borders(Borders::ALL)
         .style(Style::default().fg(palette.text).bg(palette.bg));
@@ -51,7 +46,7 @@ pub(crate) fn draw_mcp_modal(
     let mut list_items = Vec::new();
     for (i, server) in config_servers.iter().enumerate() {
         let is_connected = connected_servers.iter().any(|cs| cs.id == server.id);
-        
+
         let status_symbol = if !server.enabled {
             "⏸ "
         } else if is_connected {
@@ -103,7 +98,12 @@ pub(crate) fn draw_mcp_modal(
         let mut detail_lines = Vec::new();
         detail_lines.push(Line::from(vec![
             Span::styled("ID: ", Style::default().fg(palette.ghost)),
-            Span::styled(server.id.clone(), Style::default().fg(palette.text).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                server.id.clone(),
+                Style::default()
+                    .fg(palette.text)
+                    .add_modifier(Modifier::BOLD),
+            ),
         ]));
 
         if let Some(url) = &server.url {
@@ -127,11 +127,19 @@ pub(crate) fn draw_mcp_modal(
         }
 
         detail_lines.push(Line::from(""));
-        detail_lines.push(Line::from(Span::styled("Tools:", Style::default().fg(palette.ghost).add_modifier(Modifier::BOLD))));
+        detail_lines.push(Line::from(Span::styled(
+            "Tools:",
+            Style::default()
+                .fg(palette.ghost)
+                .add_modifier(Modifier::BOLD),
+        )));
 
         if let Some(connected_info) = connected_servers.iter().find(|cs| cs.id == server.id) {
             if connected_info.tools.is_empty() {
-                detail_lines.push(Line::from(Span::styled("  No tools available.", Style::default().fg(palette.ghost))));
+                detail_lines.push(Line::from(Span::styled(
+                    "  No tools available.",
+                    Style::default().fg(palette.ghost),
+                )));
             } else {
                 for (j, tool) in connected_info.tools.iter().enumerate() {
                     let mut style = Style::default().fg(palette.text);
@@ -142,14 +150,27 @@ pub(crate) fn draw_mcp_modal(
                 }
             }
         } else if server.enabled {
-            detail_lines.push(Line::from(Span::styled("  Connecting or failed...", Style::default().fg(palette.signal))));
+            detail_lines.push(Line::from(Span::styled(
+                "  Connecting or failed...",
+                Style::default().fg(palette.signal),
+            )));
         } else {
-            detail_lines.push(Line::from(Span::styled("  Server disabled.", Style::default().fg(palette.ghost))));
+            detail_lines.push(Line::from(Span::styled(
+                "  Server disabled.",
+                Style::default().fg(palette.ghost),
+            )));
         }
 
         detail_lines.push(Line::from(""));
-        let toggle_msg = if server.enabled { "Press Enter to disable server" } else { "Press Enter to enable server" };
-        detail_lines.push(Line::from(Span::styled(toggle_msg, Style::default().fg(palette.accent))));
+        let toggle_msg = if server.enabled {
+            "Press Enter to disable server"
+        } else {
+            "Press Enter to enable server"
+        };
+        detail_lines.push(Line::from(Span::styled(
+            toggle_msg,
+            Style::default().fg(palette.accent),
+        )));
 
         let details = Paragraph::new(detail_lines).wrap(Wrap { trim: false });
         f.render_widget(details, right_area);
