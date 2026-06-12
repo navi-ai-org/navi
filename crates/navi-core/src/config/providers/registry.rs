@@ -1,4 +1,29 @@
-use crate::config::types::{ModelTaskSize, ProviderConfig, ProviderKind, ProviderModelConfig};
+use crate::config::types::{
+    ModelTaskSize, ProviderConfig, ProviderKind, ProviderModelConfig, ProviderRequestOptions,
+};
+
+/// Returns the built-in default [`ProviderRequestOptions`] for a canonical
+/// provider id, or `None` when the provider has no known defaults.
+///
+/// This is the single source of truth for the "out of the box" prompt
+/// caching settings. The catalog layer merges these defaults into the resolved
+/// [`ProviderConfig`] whenever the user has not explicitly configured the
+/// options, so prompt caching stays enabled even when the local registry
+/// cache is stale or when a user override replaces the provider wholesale.
+pub fn default_request_options_for(provider_id: &str) -> Option<ProviderRequestOptions> {
+    match provider_id {
+        "openai" | "openai-responses" => Some(ProviderRequestOptions {
+            prompt_cache_key: Some("openai".to_string()),
+            prompt_cache_retention: Some("24h".to_string()),
+            ..Default::default()
+        }),
+        "anthropic" => Some(ProviderRequestOptions {
+            anthropic_cache_control: Some(serde_json::json!({ "type": "ephemeral" })),
+            ..Default::default()
+        }),
+        _ => None,
+    }
+}
 
 pub(super) fn model(name: &str, task_size: ModelTaskSize) -> ProviderModelConfig {
     ProviderModelConfig {
@@ -80,6 +105,7 @@ pub(super) fn built_in_providers() -> Vec<ProviderConfig> {
                 model_ctx("gpt-oss-120b", ModelTaskSize::Large, 128_000),
                 model_ctx("gpt-oss-20b", ModelTaskSize::Small, 128_000),
             ],
+            request_options: default_request_options_for("openai"),
             ..Default::default()
         },
         ProviderConfig {
@@ -107,6 +133,7 @@ pub(super) fn built_in_providers() -> Vec<ProviderConfig> {
                 model_ctx("claude-3-sonnet-20240229", ModelTaskSize::Large, 200_000),
                 model_ctx("claude-3-haiku-20240307", ModelTaskSize::Small, 200_000),
             ],
+            request_options: default_request_options_for("anthropic"),
             ..Default::default()
         },
         ProviderConfig {
@@ -508,6 +535,7 @@ pub(super) fn built_in_providers() -> Vec<ProviderConfig> {
                 model_ctx("mistralai/mistral-large", ModelTaskSize::Large, 128_000),
                 model_ctx("deepseek-ai/deepseek-r1", ModelTaskSize::Large, 128_000),
                 model_ctx("microsoft/phi-4", ModelTaskSize::Small, 16_000),
+                model_ctx("minimaxai/minimax-m3", ModelTaskSize::Large, 1_000_000),
             ],
             ..Default::default()
         },

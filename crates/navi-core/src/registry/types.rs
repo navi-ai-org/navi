@@ -2,6 +2,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::config::types::ProviderRequestOptions;
+
 /// A single model entry in the remote registry JSON.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RegistryModel {
@@ -20,6 +22,8 @@ pub struct RegistryProvider {
     pub kind: String,
     pub api_key_env: String,
     pub base_url: Option<String>,
+    #[serde(default, skip_serializing_if = "ProviderRequestOptions::is_empty")]
+    pub request_options: ProviderRequestOptions,
     #[serde(default)]
     pub models: Vec<RegistryModel>,
 }

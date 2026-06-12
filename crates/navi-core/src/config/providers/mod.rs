@@ -10,6 +10,7 @@ use crate::config::types::{
 use crate::registry::RegistryStore;
 
 pub use opencode::{is_free_model_name, model_can_run_publicly, provider_request_model_name};
+pub use registry::default_request_options_for;
 
 // ── Thread-local registry store for zero-API-change catalog integration ──
 
@@ -51,6 +52,7 @@ pub fn provider_catalog(config: &NaviConfig) -> Vec<ProviderConfig> {
 
     let mut providers = registry_providers.unwrap_or_else(registry::built_in_providers);
     merge_provider_configs(&mut providers, config.providers.clone());
+    apply_default_request_options(&mut providers);
     providers
 }
 
@@ -229,6 +231,27 @@ pub(crate) fn merge_provider_configs(
             existing.id = canonical_provider_id(&existing.id).to_string();
         } else {
             providers.push(override_config);
+        }
+    }
+}
+
+/// Fills in the canonical default [`ProviderRequestOptions`] for any provider
+/// whose `request_options` field is `None`. This guarantees that prompt
+/// caching stays enabled for known providers (OpenAI, Anthropic) even when:
+///   * the local registry cache is stale and ships no `request_options`
+///   * a user override in `config.toml` replaces the provider wholesale
+///     without setting `request_options`
+///
+/// Providers that explicitly carry `Some(opts)` keep the user's configuration
+/// verbatim — including the empty `ProviderRequestOptions` value that opts
+/// out of prompt caching.
+fn apply_default_request_options(providers: &mut [ProviderConfig]) {
+    for provider in providers {
+        if provider.request_options.is_some() {
+            continue;
+        }
+        if let Some(defaults) = default_request_options_for(canonical_provider_id(&provider.id)) {
+            provider.request_options = Some(defaults);
         }
     }
 }
