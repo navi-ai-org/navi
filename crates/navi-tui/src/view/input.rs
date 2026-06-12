@@ -15,18 +15,13 @@ use crate::theme::*;
 use crate::ui::interaction::HitAction;
 use crate::ui::text_input::floor_char_boundary;
 
+const INPUT_TOP_PADDING_ROWS: u16 = 1;
+
 pub(super) fn render_input(frame: &mut Frame<'_>, app: &mut TuiApp, area: Rect) {
     let inner = area.inner(Margin {
         horizontal: 1,
         vertical: 0,
     });
-
-    let constraints = [Constraint::Min(2), Constraint::Length(1)];
-
-    let rows = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints(constraints)
-        .split(inner);
 
     let block = Block::new()
         .borders(ratatui::widgets::Borders::LEFT)
@@ -37,10 +32,9 @@ pub(super) fn render_input(frame: &mut Frame<'_>, app: &mut TuiApp, area: Rect) 
         .border_style(Style::default().fg(accent()).bg(composer_panel_bg(app)))
         .style(Style::default().fg(text()).bg(composer_panel_bg(app)));
 
-    let inner_block_area = block.inner(rows[0]);
-    frame.render_widget(block, rows[0]);
+    let inner_block_area = block.inner(inner);
+    frame.render_widget(block, inner);
 
-    // Fill the background of the inner area so horizontal margins aren't uncolored
     frame.render_widget(
         Block::new().style(Style::default().bg(composer_panel_bg(app))),
         inner_block_area,
@@ -48,18 +42,18 @@ pub(super) fn render_input(frame: &mut Frame<'_>, app: &mut TuiApp, area: Rect) 
 
     let panel_margin = Margin {
         horizontal: 2,
-        vertical: 1,
+        vertical: 0,
     };
     let panel_rows = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Min(1),
-            Constraint::Length(1),
+            Constraint::Length(INPUT_TOP_PADDING_ROWS),
+            Constraint::Min(4),
             Constraint::Length(1),
         ])
         .split(inner_block_area.inner(panel_margin));
 
-    let input_area = panel_rows[0];
+    let input_area = panel_rows[1];
     app.input_wrap_width = input_area.width as usize;
     let (lines, cursor_line) = input_lines(app, input_area.width as usize);
     let input_lines = visible_input_lines(lines, input_area.height as usize, cursor_line);
@@ -71,19 +65,14 @@ pub(super) fn render_input(frame: &mut Frame<'_>, app: &mut TuiApp, area: Rect) 
     );
 
     frame.render_widget(
-        Paragraph::new(composer_status_line(app, panel_rows[2].width as usize))
+        Paragraph::new(composer_footer_line(app, panel_rows[2].width as usize))
             .style(Style::default().bg(composer_panel_bg(app))),
         panel_rows[2],
     );
 
-    frame.render_widget(
-        Paragraph::new(shortcut_tips(app, rows[1].width as usize)).style(Style::default().bg(bg())),
-        rows[1],
-    );
-
     if !app.pending_questions.is_empty() {
         app.register_hit(
-            rows[1],
+            panel_rows[2],
             3,
             "reopen pending question",
             HitAction::ReopenQuestion,
@@ -92,12 +81,11 @@ pub(super) fn render_input(frame: &mut Frame<'_>, app: &mut TuiApp, area: Rect) 
 }
 
 pub(super) fn composer_height(app: &TuiApp, input_width: usize) -> u16 {
-    // 4 chars taken by margins (horizontal: 2 on each side)
-    let wrap_width = input_width.saturating_sub(4);
+    let wrap_width = input_width.saturating_sub(6);
     let visible_lines =
         input_visual_line_count(&app.input, wrap_width).clamp(1, COMPOSER_MAX_VISIBLE_LINES) as u16;
-    // panel (1 line) + spacer (1 line) + status (1 line) + vertical margins (2 lines) + tips row (1 line) = 6
-    visible_lines + 5
+    // top inset + text area (min 4 rows) + footer
+    INPUT_TOP_PADDING_ROWS + visible_lines.max(4) + 1
 }
 
 fn composer_panel_bg(_app: &TuiApp) -> ratatui::style::Color {
@@ -126,7 +114,7 @@ fn input_lines(app: &TuiApp, width: usize) -> (Vec<Line<'static>>, usize) {
         let placeholder = if app.is_loading {
             " thinking..."
         } else {
-            "Ask anything... \"Fix broken tests\""
+            "Describe the task..."
         };
         current.push(Span::styled(
             placeholder.to_string(),
@@ -174,41 +162,19 @@ fn input_lines(app: &TuiApp, width: usize) -> (Vec<Line<'static>>, usize) {
     (lines, cursor_line)
 }
 
-fn shortcut_tips(app: &TuiApp, width: usize) -> Line<'static> {
+fn composer_footer_line(app: &TuiApp, _width: usize) -> Line<'static> {
     if !app.pending_questions.is_empty() {
         return Line::from(vec![
-            Span::styled(" ", Style::default().fg(muted())),
-            Span::styled("pending question  ", Style::default().fg(muted())),
+            Span::styled("Question pending", Style::default().fg(code_const())),
+            Span::styled(" · ", Style::default().fg(ghost())),
             Span::styled(
                 "ctrl+enter",
-                Style::default().fg(text()).add_modifier(Modifier::BOLD),
+                Style::default().fg(signal()).add_modifier(Modifier::BOLD),
             ),
             Span::styled(" reopen", Style::default().fg(muted())),
         ]);
     }
 
-    let context = app.compact_state.usage_label(0);
-    let help = "ctrl+p commands";
-    let footer = format!("{context}  {help}");
-    let padding = width.saturating_sub(footer.chars().count());
-    Line::from(vec![
-        Span::styled(" ".repeat(padding), Style::default().fg(muted())),
-        Span::styled(
-            context,
-            Style::default()
-                .fg(code_number())
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::styled("  ", Style::default().fg(ghost())),
-        Span::styled(
-            "ctrl+p",
-            Style::default().fg(signal()).add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(" commands", Style::default().fg(muted())),
-    ])
-}
-
-fn composer_status_line(app: &TuiApp, _width: usize) -> Line<'static> {
     let provider = selected_provider_label(app);
     let thinking = app.thinking_level.label();
     let status = if app.is_loading { "Build" } else { "Ready" };
@@ -218,15 +184,15 @@ fn composer_status_line(app: &TuiApp, _width: usize) -> Line<'static> {
         accent()
     };
     let model = selected_model_label(app);
+    let context = app.compact_state.usage_label(0);
 
-    let mut spans = vec![Span::styled(
-        status.to_string(),
-        Style::default()
-            .fg(status_color)
-            .add_modifier(Modifier::BOLD),
-    )];
-
-    spans.extend([
+    Line::from(vec![
+        Span::styled(
+            status,
+            Style::default()
+                .fg(status_color)
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::styled(" · ", Style::default().fg(ghost())),
         Span::styled(model, Style::default().fg(code_type())),
         Span::styled(" ", Style::default().fg(ghost())),
@@ -241,9 +207,38 @@ fn composer_status_line(app: &TuiApp, _width: usize) -> Line<'static> {
                 .fg(code_const())
                 .add_modifier(Modifier::BOLD),
         ),
-    ]);
-
-    Line::from(spans)
+        Span::styled(" · ", Style::default().fg(ghost())),
+        Span::styled(
+            context,
+            Style::default()
+                .fg(code_number())
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled("   ", Style::default().fg(ghost())),
+        Span::styled(
+            "Enter",
+            Style::default().fg(signal()).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(" send", Style::default().fg(muted())),
+        Span::styled(" · ", Style::default().fg(ghost())),
+        Span::styled(
+            "Shift+Enter",
+            Style::default().fg(signal()).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(" newline", Style::default().fg(muted())),
+        Span::styled(" · ", Style::default().fg(ghost())),
+        Span::styled(
+            "Ctrl+A",
+            Style::default().fg(signal()).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(" select", Style::default().fg(muted())),
+        Span::styled(" · ", Style::default().fg(ghost())),
+        Span::styled(
+            "Ctrl+P",
+            Style::default().fg(signal()).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(" commands", Style::default().fg(muted())),
+    ])
 }
 
 fn selected_model_label(app: &TuiApp) -> String {

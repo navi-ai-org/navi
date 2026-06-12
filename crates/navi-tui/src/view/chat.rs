@@ -66,12 +66,6 @@ pub(super) fn render_chat_area(frame: &mut Frame<'_>, app: &mut TuiApp, area: Re
         app,
         inner.width as usize,
     );
-    style_active_generation_lines(
-        &mut visible_lines,
-        &visible_sources,
-        app,
-        inner.width as usize,
-    );
     pad_code_block_bg(&mut visible_lines, inner.width as usize);
 
     if let Some(selection) = &app.selection {
@@ -180,37 +174,6 @@ fn style_interactive_lines(
             interactive_bg()
         };
         apply_card_bg(line, width, bg, hovered || selected);
-    }
-}
-
-fn style_active_generation_lines(
-    lines: &mut [Line<'static>],
-    sources: &[ChatLineSource],
-    app: &TuiApp,
-    width: usize,
-) {
-    if !app.is_loading && app.running_tools.is_empty() {
-        return;
-    }
-    let Some(active_index) = app.messages.iter().rposition(|message| {
-        message.role == ChatRole::Assistant
-            && message.status.as_deref().is_some_and(|status| {
-                matches!(status, "thinking" | "receiving")
-                    || status.starts_with("tool:")
-                    || status.starts_with("approval:")
-            })
-    }) else {
-        return;
-    };
-    let bg = if (app.tick() / 12) % 2 == 0 {
-        interactive_bg()
-    } else {
-        code_block_bg()
-    };
-    for (line, source) in lines.iter_mut().zip(sources.iter()) {
-        if *source == ChatLineSource::Message(active_index) {
-            apply_card_bg(line, width, bg, true);
-        }
     }
 }
 
@@ -355,7 +318,9 @@ fn chat_render_signature(app: &TuiApp) -> u64 {
     app.theme_id.config_value().hash(&mut hasher);
     app.compact_tool_visible_limit.hash(&mut hasher);
     if app.is_loading || !app.running_tools.is_empty() {
-        (app.tick() / 6).hash(&mut hasher);
+        app.loading_start
+            .map(|start| start.elapsed().as_secs())
+            .hash(&mut hasher);
     }
     for msg in &app.messages {
         msg.role.hash(&mut hasher);
@@ -401,7 +366,6 @@ fn build_chat_render(
         &app.expanded_tool_results,
         &app.running_tools,
         &mut app.chat_render_cache.borrow_mut().tool_render_cache,
-        app.tick(),
         app.loading_start
             .map(|start| start.elapsed().as_millis() as u64),
     )

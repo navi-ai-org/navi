@@ -219,7 +219,10 @@ pub(crate) fn remove_active_tool_placeholder(app: &mut TuiApp) {
             && message.content.trim().is_empty()
             && message.thinking_content.trim().is_empty()
             && message.status.as_deref().is_some_and(|status| {
-                status.starts_with("tool:") || status.starts_with("approval:")
+                status.starts_with("tool:")
+                    || status.starts_with("approval:")
+                    || status == "thinking"
+                    || status == "receiving"
             })
     }) else {
         return;
