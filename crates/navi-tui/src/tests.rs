@@ -1835,7 +1835,7 @@ fn opencode_free_models_can_use_public_access_without_key() {
 }
 
 #[test]
-fn escape_cancels_active_tool_task_state() {
+fn escape_double_press_cancels_active_tool_task_state() {
     let mut app = test_app("");
     app.is_loading = true;
     app.skip_next_model_done = true;
@@ -1844,8 +1844,14 @@ fn escape_cancels_active_tool_task_state() {
         ..ChatMessage::new(ChatRole::Assistant, String::new())
     });
 
+    // First Esc shows a confirmation notification but keeps the operation running.
     let should_quit = handle_key(&mut app, KeyCode::Esc, KeyModifiers::NONE);
+    assert!(!should_quit);
+    assert!(app.is_loading);
+    assert!(app.cancel_esc_pressed);
 
+    // Second Esc actually cancels the operation.
+    let should_quit = handle_key(&mut app, KeyCode::Esc, KeyModifiers::NONE);
     assert!(!should_quit);
     assert!(!app.is_loading);
     assert!(!app.skip_next_model_done);

@@ -141,10 +141,10 @@ async fn connect_server(
     // startup indefinitely.
     let connect = async {
         if let Some(url) = &server.url {
-
             let url_parsed = reqwest::Url::parse(url)
                 .with_context(|| format!("invalid url for MCP server `{server_id}`: {url}"))?;
-            let transport = rmcp::transport::StreamableHttpClientTransport::from_uri(url_parsed.as_str());
+            let transport =
+                rmcp::transport::StreamableHttpClientTransport::from_uri(url_parsed.as_str());
             let service = tokio::time::timeout(timeout, ().serve(transport))
                 .await
                 .with_context(|| format!("timed out initializing MCP server `{server_id}`"))?
@@ -288,7 +288,8 @@ mod tests {
     fn prefixes_mcp_tool_names() {
         let server = McpServerConfig {
             id: "memory".to_string(),
-            command: "mcp-memory".to_string(),
+            command: Some("mcp-memory".to_string()),
+            url: None,
             args: Vec::new(),
             env: Default::default(),
             cwd: None,
@@ -303,7 +304,8 @@ mod tests {
     fn maps_remote_tool_to_core_definition() {
         let server = McpServerConfig {
             id: "notes".to_string(),
-            command: "notes-mcp".to_string(),
+            command: Some("notes-mcp".to_string()),
+            url: None,
             args: Vec::new(),
             env: Default::default(),
             cwd: None,
@@ -329,7 +331,8 @@ mod tests {
             enabled: true,
             servers: vec![McpServerConfig {
                 id: "disabled".to_string(),
-                command: "nope".to_string(),
+                command: Some("nope".to_string()),
+                url: None,
                 args: Vec::new(),
                 env: Default::default(),
                 cwd: None,
@@ -349,7 +352,8 @@ mod tests {
             enabled: false,
             servers: vec![McpServerConfig {
                 id: "ignored".to_string(),
-                command: "nope".to_string(),
+                command: Some("nope".to_string()),
+                url: None,
                 args: Vec::new(),
                 env: Default::default(),
                 cwd: None,
@@ -386,7 +390,8 @@ mod tests {
             enabled: true,
             servers: vec![McpServerConfig {
                 id: "hanging".to_string(),
-                command: "sleep".to_string(),
+                command: Some("sleep".to_string()),
+                url: None,
                 args: vec!["10".to_string()],
                 env: Default::default(),
                 cwd: None,
@@ -420,7 +425,8 @@ mod tests {
             enabled: true,
             servers: vec![McpServerConfig {
                 id: "missing".to_string(),
-                command: "this-binary-does-not-exist-navimcptest".to_string(),
+                command: Some("this-binary-does-not-exist-navimcptest".to_string()),
+                url: None,
                 args: Vec::new(),
                 env: Default::default(),
                 cwd: None,

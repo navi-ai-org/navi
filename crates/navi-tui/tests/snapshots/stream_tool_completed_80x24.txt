@@ -1,24 +1,23 @@
-  main  /tmp/navi-test-project                               │ 0 / 200K │ 0 0 ✓
+  main  /tmp/navi-test-project
 
    │ read the file
 
-     ⠋ thinking...
-
-   │ Read src/main.rs
-
-     ⠋ thinking...
 
 
 
+   │ • Thinking: planning next step · 0s
+
+   │ ✓ Read src/main.rs
 
 
 
 
+   │ • Thinking: planning next step · 0s
 
 
-
-
-  ▌   thinking...
   ▌
-  ▌ Build · gpt-5.5 OpenAI · adaptive
-                                                0 / 200k (0%)  ctrl+p commands
+  ▌    thinking...
+  ▌
+  ▌
+  ▌
+  ▌  Build · gpt-5.5 OpenAI · adaptive · 0 / 200k (0%)   Enter send · Shift+

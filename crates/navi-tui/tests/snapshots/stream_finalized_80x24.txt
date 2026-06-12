@@ -1,6 +1,9 @@
-  main  /tmp/navi-test-project                               │ 3 / 200K │ 0 0 ✓
+  main  /tmp/navi-test-project
 
    │ Hello, world
+
+
+
 
    Hi there!
 
@@ -12,12 +15,9 @@
 
 
 
-
-
-
-
-
-
-
-  ▌  type a task, or ctrl+p for commands
-  ▌ Ready · gpt-5.5 OpenAI · adaptive
+  ▌
+  ▌   Describe the task...
+  ▌
+  ▌
+  ▌
+  ▌  Ready · gpt-5.5 OpenAI · adaptive · 3 / 200k (0%)   Enter send · Shift+

@@ -26,7 +26,6 @@ pub(crate) fn build_chat_render_for_messages(
     expanded_tool_results: &HashSet<String>,
     running_tools: &HashMap<String, ToolInvocation>,
     tool_render_cache: &mut HashMap<String, Vec<Line<'static>>>,
-    tick: u64,
     loading_elapsed_ms: Option<u64>,
 ) -> ChatRenderOutput {
     let mut rendered_lines: Vec<Line<'static>> = Vec::new();
@@ -49,10 +48,17 @@ pub(crate) fn build_chat_render_for_messages(
                         rendered_lines.push(render_running_tool_line(
                             invocation,
                             chat_width,
-                            tick,
                             loading_elapsed_ms,
                         ));
                         line_sources.push(ChatLineSource::Message(index));
+                        push_min_card_lines(
+                            &mut rendered_lines,
+                            &mut line_sources,
+                            ChatLineSource::Message(index),
+                            chat_width,
+                            interactive_bg(),
+                            3,
+                        );
                     }
                 } else if matches!(status, "thinking" | "receiving")
                     || status.starts_with("approval:")
@@ -67,7 +73,6 @@ pub(crate) fn build_chat_render_for_messages(
                         status,
                         running_tools,
                         chat_width,
-                        tick,
                         loading_elapsed_ms,
                     ));
                     line_sources.push(ChatLineSource::Message(index));
@@ -179,7 +184,6 @@ pub(crate) fn build_chat_render_for_messages(
                             "thinking",
                             running_tools,
                             chat_width,
-                            tick,
                             loading_elapsed_ms,
                         ));
                         line_sources.push(ChatLineSource::Message(index));
@@ -266,14 +270,33 @@ fn push_sourced_lines(
     }
 }
 
+fn push_min_card_lines(
+    lines: &mut Vec<Line<'static>>,
+    sources: &mut Vec<ChatLineSource>,
+    source: ChatLineSource,
+    width: usize,
+    bg: Color,
+    count: usize,
+) {
+    for _ in 0..count {
+        lines.push(blank_card_line(width, bg));
+        sources.push(source.clone());
+    }
+}
+
+fn blank_card_line(width: usize, bg: Color) -> Line<'static> {
+    Line::from(vec![Span::styled(
+        " ".repeat(width.max(1)),
+        Style::default().fg(muted()).bg(bg),
+    )])
+}
+
 fn render_running_tool_line(
     invocation: &ToolInvocation,
     chat_width: usize,
-    tick: u64,
     loading_elapsed_ms: Option<u64>,
 ) -> Line<'static> {
-    let frame = spinner_frame(tick);
-    let action_color = pulse_color(tick, tool_color(invocation.tool_name.as_str()));
+    let action_color = tool_color(invocation.tool_name.as_str());
     let tool_label = tool_group_label(&invocation.tool_name);
     let mut detail = tool_compact_text(
         invocation,
@@ -304,7 +327,7 @@ fn render_running_tool_line(
     Line::from(vec![
         Span::styled("│ ", Style::default().fg(action_color)),
         Span::styled(
-            format!("{frame} "),
+            "• ",
             Style::default()
                 .fg(action_color)
                 .add_modifier(Modifier::BOLD),
@@ -326,7 +349,6 @@ fn render_activity_line(
     status: &str,
     running_tools: &HashMap<String, ToolInvocation>,
     chat_width: usize,
-    tick: u64,
     loading_elapsed_ms: Option<u64>,
 ) -> Line<'static> {
     let (label, phase, color) = if status == "receiving" {
@@ -351,7 +373,6 @@ fn render_activity_line(
     } else {
         ("Thinking", thinking_phase(message), code_operator())
     };
-    let color = pulse_color(tick, color);
     let elapsed = loading_elapsed_ms.map(format_elapsed).unwrap_or_default();
     let suffix = if elapsed.is_empty() {
         String::new()
@@ -368,7 +389,7 @@ fn render_activity_line(
     Line::from(vec![
         Span::styled("│ ", Style::default().fg(color)),
         Span::styled(
-            format!("{} ", spinner_frame(tick)),
+            "• ",
             Style::default().fg(color).add_modifier(Modifier::BOLD),
         ),
         Span::styled(
@@ -413,19 +434,6 @@ fn clean_activity_text(text: &str) -> String {
         .to_string()
 }
 
-fn spinner_frame(tick: u64) -> char {
-    const FRAMES: [char; 10] = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
-    FRAMES[(tick / 6) as usize % FRAMES.len()]
-}
-
-fn pulse_color(tick: u64, base: Color) -> Color {
-    if (tick / 12).is_multiple_of(2) {
-        base
-    } else {
-        signal()
-    }
-}
-
 fn format_elapsed(ms: u64) -> String {
     let seconds = ms / 1_000;
     if seconds < 60 {
@@ -438,7 +446,7 @@ fn format_elapsed(ms: u64) -> String {
 fn render_user_message_lines(text: &str, chat_width: usize) -> Vec<Line<'static>> {
     let width = chat_width.max(8);
     let wrapped = wrap_text(text, width.saturating_sub(4));
-    wrapped
+    let mut lines = wrapped
         .into_iter()
         .enumerate()
         .map(|(index, line)| {
@@ -471,7 +479,11 @@ fn render_user_message_lines(text: &str, chat_width: usize) -> Vec<Line<'static>
             }
             Line::from(spans)
         })
-        .collect()
+        .collect::<Vec<_>>();
+    while lines.len() < 4 {
+        lines.push(blank_card_line(width, panel()));
+    }
+    lines
 }
 
 fn text_color_for_user() -> Color {
@@ -524,10 +536,18 @@ fn render_compact_tool_group(
         .map(|(_, result)| result.invocation_id.clone())
         .collect::<Vec<_>>();
     if !expanded {
-        return vec![(
+        let source = ChatLineSource::ToolGroup(ids);
+        let mut rows = vec![(
             render_collapsed_tool_group(tools, chat_width),
-            ChatLineSource::ToolGroup(ids),
+            source.clone(),
         )];
+        while rows.len() < 4 {
+            rows.push((
+                blank_card_line(chat_width, interactive_bg()),
+                source.clone(),
+            ));
+        }
+        return rows;
     }
 
     let mut lines = Vec::new();
@@ -577,8 +597,14 @@ fn render_compact_tool_group(
         } else {
             lines.push((
                 render_compact_tool_line_with_width(invocation, result, chat_width),
-                source,
+                source.clone(),
             ));
+            while lines.len() < 4 {
+                lines.push((
+                    blank_card_line(chat_width, interactive_bg()),
+                    source.clone(),
+                ));
+            }
         }
     }
     lines
