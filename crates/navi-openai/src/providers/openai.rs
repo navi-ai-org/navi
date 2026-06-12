@@ -21,6 +21,7 @@ impl crate::provider::OpenAiProvider {
         let base_url = self.base_url.clone();
         let provider_id = self.provider_id.clone();
         let stream_idle_timeout_ms = self.config.stream_idle_timeout_ms();
+        let request_options = self.config.request_options.clone().unwrap_or_default();
         let behavior = self.behavior.clone();
 
         Box::pin(try_stream! {
@@ -44,9 +45,13 @@ impl crate::provider::OpenAiProvider {
         );
         body["stream"] = json!(true);
         body["stream_options"] = json!({ "include_usage": true });
-        body["prompt_cache_key"] = json!(provider_id);
-        if model_supports_extended_cache(&request.model) {
-            body["prompt_cache_retention"] = json!("24h");
+        if let Some(prompt_cache_key) = &request_options.prompt_cache_key {
+            body["prompt_cache_key"] = json!(prompt_cache_key);
+        }
+        if let Some(retention) = &request_options.prompt_cache_retention
+            && should_send_prompt_cache_retention(&model, retention)
+        {
+            body["prompt_cache_retention"] = json!(retention);
         }
 
         let response = client
@@ -93,6 +98,7 @@ impl crate::provider::OpenAiProvider {
         let base_url = self.base_url.clone();
         let provider_id = self.provider_id.clone();
         let stream_idle_timeout_ms = self.config.stream_idle_timeout_ms();
+        let request_options = self.config.request_options.clone().unwrap_or_default();
         let behavior = self.behavior.clone();
 
         Box::pin(try_stream! {
@@ -118,9 +124,13 @@ impl crate::provider::OpenAiProvider {
         );
         body["stream"] = json!(true);
         body["stream_options"] = json!({ "include_usage": true });
-        body["prompt_cache_key"] = json!(provider_id);
-        if model_supports_extended_cache(&request.model) {
-            body["prompt_cache_retention"] = json!("24h");
+        if let Some(prompt_cache_key) = &request_options.prompt_cache_key {
+            body["prompt_cache_key"] = json!(prompt_cache_key);
+        }
+        if let Some(retention) = &request_options.prompt_cache_retention
+            && should_send_prompt_cache_retention(&model, retention)
+        {
+            body["prompt_cache_retention"] = json!(retention);
         }
 
         let req = client
@@ -352,4 +362,8 @@ pub(crate) fn model_supports_extended_cache(model: &str) -> bool {
     let m = model.to_ascii_lowercase();
     // gpt-5.5, gpt-5.5-pro, gpt-5.4, gpt-5.2, gpt-5.1*, gpt-5, gpt-5-codex, gpt-4.1
     m.starts_with("gpt-5") || m.starts_with("gpt-4.1") || m.starts_with("o4") || m.starts_with("o3")
+}
+
+fn should_send_prompt_cache_retention(model: &str, retention: &str) -> bool {
+    retention != "24h" || model_supports_extended_cache(model)
 }

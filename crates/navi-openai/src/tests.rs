@@ -592,6 +592,107 @@ async fn test_stream_normal() {
 }
 
 #[tokio::test]
+async fn chat_completions_omits_prompt_cache_fields_by_default() {
+    use wiremock::matchers::{body_json, method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .and(body_json(json!({
+            "model": "minimaxai/minimax-m3",
+            "messages": [{"role": "user", "content": "Hi"}],
+            "stream": true,
+            "stream_options": {"include_usage": true}
+        })))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string("data: {\"choices\":[{\"delta\":{\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
+                .insert_header("content-type", "text/event-stream"),
+        )
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let config = navi_core::ProviderConfig {
+        id: "nvidia".to_string(),
+        kind: navi_core::ProviderKind::OpenAiChatCompletions,
+        base_url: Some(mock_server.uri()),
+        ..navi_core::ProviderConfig::default()
+    };
+
+    let provider = OpenAiProvider::from_provider_config_with_key(&config, "test_key".to_string())
+        .expect("provider");
+
+    let request = navi_core::ModelRequest {
+        model: "minimaxai/minimax-m3".to_string(),
+        messages: vec![ModelMessage::user("Hi".to_string())],
+        thinking: navi_core::ThinkingConfig::Off,
+        tools: vec![],
+    };
+
+    let mut stream = provider.stream(request);
+    while let Some(event) = stream.next().await {
+        event.unwrap();
+    }
+}
+
+#[tokio::test]
+async fn chat_completions_includes_configured_openai_prompt_cache_fields() {
+    use wiremock::matchers::{body_json, method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .and(body_json(json!({
+            "model": "gpt-5",
+            "messages": [{"role": "user", "content": "Hi"}],
+            "stream": true,
+            "stream_options": {"include_usage": true},
+            "prompt_cache_key": "openai",
+            "prompt_cache_retention": "24h"
+        })))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string("data: {\"choices\":[{\"delta\":{\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
+                .insert_header("content-type", "text/event-stream"),
+        )
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let config = navi_core::ProviderConfig {
+        id: "openai".to_string(),
+        kind: navi_core::ProviderKind::OpenAiChatCompletions,
+        base_url: Some(mock_server.uri()),
+        request_options: Some(navi_core::ProviderRequestOptions {
+            prompt_cache_key: Some("openai".to_string()),
+            prompt_cache_retention: Some("24h".to_string()),
+            ..Default::default()
+        }),
+        ..navi_core::ProviderConfig::default()
+    };
+
+    let provider = OpenAiProvider::from_provider_config_with_key(&config, "test_key".to_string())
+        .expect("provider");
+
+    let request = navi_core::ModelRequest {
+        model: "gpt-5".to_string(),
+        messages: vec![ModelMessage::user("Hi".to_string())],
+        thinking: navi_core::ThinkingConfig::Off,
+        tools: vec![],
+    };
+
+    let mut stream = provider.stream(request);
+    while let Some(event) = stream.next().await {
+        event.unwrap();
+    }
+}
+
+#[tokio::test]
 async fn test_opencode_zen_chat_request_uses_bearer_api_key() {
     use wiremock::matchers::{header, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};

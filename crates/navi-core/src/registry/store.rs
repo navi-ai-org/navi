@@ -1,6 +1,8 @@
 //! Local SQLite cache for the provider registry.
 
-use crate::config::types::{ModelTaskSize, ProviderConfig, ProviderKind, ProviderModelConfig};
+use crate::config::types::{
+    ModelTaskSize, ProviderConfig, ProviderKind, ProviderModelConfig, ProviderRequestOptions,
+};
 use anyhow::{Context, Result};
 use rusqlite::{Connection, params};
 use std::path::Path;
@@ -58,13 +60,14 @@ impl RegistryStore {
             );
 
             CREATE TABLE IF NOT EXISTS providers (
-                id          TEXT PRIMARY KEY,
-                label       TEXT NOT NULL,
-                description TEXT NOT NULL DEFAULT '',
-                kind        TEXT NOT NULL,
-                api_key_env TEXT NOT NULL,
-                base_url    TEXT,
-                updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
+                id              TEXT PRIMARY KEY,
+                label           TEXT NOT NULL,
+                description     TEXT NOT NULL DEFAULT '',
+                kind            TEXT NOT NULL,
+                api_key_env     TEXT NOT NULL,
+                base_url        TEXT,
+                request_options TEXT NOT NULL DEFAULT '{}',
+                updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
             );
 
             CREATE TABLE IF NOT EXISTS models (
@@ -78,6 +81,7 @@ impl RegistryStore {
             );
             ",
         )?;
+        ensure_provider_request_options_column(&conn)?;
         Ok(())
     }
 
@@ -137,8 +141,8 @@ impl RegistryStore {
         let tx = conn.unchecked_transaction()?;
 
         tx.execute(
-            "INSERT OR REPLACE INTO providers (id, label, description, kind, api_key_env, base_url, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, datetime('now'))",
+            "INSERT OR REPLACE INTO providers (id, label, description, kind, api_key_env, base_url, request_options, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, datetime('now'))",
             params![
                 provider.id,
                 provider.label,
@@ -146,6 +150,7 @@ impl RegistryStore {
                 provider.kind,
                 provider.api_key_env,
                 provider.base_url,
+                serde_json::to_string(&provider.request_options)?,
             ],
         )?;
 
@@ -182,7 +187,7 @@ impl RegistryStore {
         let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
 
         let mut stmt = conn.prepare(
-            "SELECT id, label, description, kind, api_key_env, base_url FROM providers ORDER BY id",
+            "SELECT id, label, description, kind, api_key_env, base_url, request_options FROM providers ORDER BY id",
         )?;
 
         let provider_rows = stmt.query_map([], |row| {
@@ -193,14 +198,17 @@ impl RegistryStore {
                 row.get::<_, String>(3)?,
                 row.get::<_, String>(4)?,
                 row.get::<_, Option<String>>(5)?,
+                row.get::<_, String>(6)?,
             ))
         })?;
 
         let mut providers = Vec::new();
 
         for row in provider_rows {
-            let (id, label, description, kind_str, api_key_env, base_url) = row?;
+            let (id, label, description, kind_str, api_key_env, base_url, request_options_json) =
+                row?;
             let kind = parse_provider_kind(&kind_str);
+            let request_options = serde_json::from_str(&request_options_json).ok();
 
             let mut model_stmt = conn.prepare(
                 "SELECT name, task_size, context_window_tokens, tool_prompt_manifest
@@ -234,6 +242,7 @@ impl RegistryStore {
                 api_key_env,
                 base_url,
                 models,
+                request_options,
                 ..Default::default()
             });
         }
@@ -293,6 +302,22 @@ fn parse_provider_kind(s: &str) -> ProviderKind {
     }
 }
 
+fn ensure_provider_request_options_column(conn: &Connection) -> Result<()> {
+    let mut stmt = conn.prepare("PRAGMA table_info(providers)")?;
+    let has_column = stmt
+        .query_map([], |row| row.get::<_, String>(1))?
+        .any(|name| matches!(name, Ok(name) if name == "request_options"));
+
+    if !has_column {
+        conn.execute(
+            "ALTER TABLE providers ADD COLUMN request_options TEXT NOT NULL DEFAULT '{}'",
+            [],
+        )?;
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -306,6 +331,7 @@ mod tests {
             kind: "openai-chat-completions".to_string(),
             api_key_env: "TEST_API_KEY".to_string(),
             base_url: Some("https://api.test.com/v1".to_string()),
+            request_options: Default::default(),
             models: vec![
                 RegistryModel {
                     name: "test-model-large".to_string(),
@@ -385,6 +411,7 @@ mod tests {
             kind: "anthropic-messages".to_string(),
             api_key_env: "OTHER_KEY".to_string(),
             base_url: None,
+            request_options: Default::default(),
             models: vec![],
         }];
         store.replace_all(&new_providers).expect("replace");
@@ -419,6 +446,7 @@ mod tests {
             kind: "openai-chat-completions".to_string(),
             api_key_env: "K".to_string(),
             base_url: None,
+            request_options: Default::default(),
             models: vec![RegistryModel {
                 name: "m".to_string(),
                 task_size: "small".to_string(),
@@ -428,5 +456,36 @@ mod tests {
         store.upsert_provider(&provider).expect("upsert");
         let loaded = store.load_all_providers().expect("load");
         assert_eq!(loaded[0].models[0].context_window_tokens, None);
+    }
+
+    #[test]
+    fn request_options_survive_roundtrip() {
+        let store = RegistryStore::open_memory().expect("open");
+        let mut provider = sample_provider();
+        provider.request_options = ProviderRequestOptions {
+            prompt_cache_key: Some("openai".to_string()),
+            prompt_cache_retention: Some("24h".to_string()),
+            anthropic_cache_control: Some(serde_json::json!({
+                "type": "ephemeral",
+                "ttl": "1h"
+            })),
+        };
+
+        store.upsert_provider(&provider).expect("upsert");
+        let loaded = store.load_all_providers().expect("load");
+
+        let opts = loaded[0]
+            .request_options
+            .as_ref()
+            .expect("request_options roundtripped");
+        assert_eq!(opts.prompt_cache_key.as_deref(), Some("openai"));
+        assert_eq!(opts.prompt_cache_retention.as_deref(), Some("24h"));
+        assert_eq!(
+            opts.anthropic_cache_control
+                .as_ref()
+                .and_then(|value| value.get("ttl"))
+                .and_then(serde_json::Value::as_str),
+            Some("1h")
+        );
     }
 }

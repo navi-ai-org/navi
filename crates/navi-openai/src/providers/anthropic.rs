@@ -24,6 +24,11 @@ impl crate::provider::OpenAiProvider {
         let base_url = self.base_url.clone();
         let provider_id = self.provider_id.clone();
         let stream_idle_timeout_ms = self.config.stream_idle_timeout_ms();
+        let cache_control = self
+            .config
+            .request_options
+            .as_ref()
+            .and_then(|opts| opts.anthropic_cache_control.clone());
         let behavior = self.behavior.clone();
 
         Box::pin(try_stream! {
@@ -33,7 +38,8 @@ impl crate::provider::OpenAiProvider {
             )?;
             let model = request.model.clone();
             tracing::info!(provider = %provider_id, model = %model, api = "anthropic-messages", tools = request.tools.len(), "provider stream started");
-            let (system, messages) = anthropic_messages(&request.messages);
+            let (system, messages) =
+                anthropic_messages_with_cache_control(&request.messages, cache_control.as_ref());
             let thinking = request.thinking.to_thinking_request();
             let budget = thinking.budget_tokens.unwrap_or(0);
             let max_tokens = (budget + 1024).max(4096);
@@ -41,9 +47,11 @@ impl crate::provider::OpenAiProvider {
                 "model": request.model,
                 "max_tokens": max_tokens,
                 "stream": true,
-                "cache_control": { "type": "ephemeral" },
                 "messages": messages,
             });
+            if let Some(cache_control) = &cache_control {
+                body["cache_control"] = cache_control.clone();
+            }
             if !system.is_empty() {
                 body["system"] = json!(system);
             }
@@ -51,7 +59,10 @@ impl crate::provider::OpenAiProvider {
                 body["thinking"] = json!({ "type": "enabled", "budget_tokens": budget });
             }
             if !request.tools.is_empty() {
-                body["tools"] = json!(anthropic_tools_to_json(&request.tools));
+                body["tools"] = json!(anthropic_tools_to_json_with_cache_control(
+                    &request.tools,
+                    cache_control.as_ref()
+                ));
             }
 
             let url = if base_url.ends_with("/v1") {
@@ -227,8 +238,18 @@ pub(crate) fn parse_anthropic_sse_with_state(
 ///
 /// The top-level `cache_control` in the request body handles automatic caching
 /// for the remaining content.
+#[cfg(test)]
 pub(crate) fn anthropic_messages(messages: &[ModelMessage]) -> (Vec<Value>, Vec<Value>) {
+    let cache_control = default_anthropic_cache_control();
+    anthropic_messages_with_cache_control(messages, Some(&cache_control))
+}
+
+pub(crate) fn anthropic_messages_with_cache_control(
+    messages: &[ModelMessage],
+    cache_control: Option<&Value>,
+) -> (Vec<Value>, Vec<Value>) {
     let mut system = Vec::new();
+    let caching_enabled = cache_control.is_some();
 
     // Pre-compute indices for breakpoint placement.
     let last_tool_index = messages.iter().rposition(|m| m.role == ModelRole::Tool);
@@ -246,24 +267,28 @@ pub(crate) fn anthropic_messages(messages: &[ModelMessage]) -> (Vec<Value>, Vec<
         .map(|(i, _)| i);
 
     // Count system blocks that want caching to pre-allocate budget.
-    let system_cache_count = messages
-        .iter()
-        .filter(|m| m.role == ModelRole::System)
-        .map(|m| {
-            if let Some((stable, _)) = m.content.split_once(RUNTIME_CONTEXT_MARKER) {
-                if stable.trim_end().is_empty() { 0 } else { 1 }
-            } else {
-                1
-            }
-        })
-        .sum::<usize>()
-        .min(MAX_CACHE_BREAKPOINTS);
+    let system_cache_count = if caching_enabled {
+        messages
+            .iter()
+            .filter(|m| m.role == ModelRole::System)
+            .map(|m| {
+                if let Some((stable, _)) = m.content.split_once(RUNTIME_CONTEXT_MARKER) {
+                    if stable.trim_end().is_empty() { 0 } else { 1 }
+                } else {
+                    1
+                }
+            })
+            .sum::<usize>()
+            .min(MAX_CACHE_BREAKPOINTS)
+    } else {
+        0
+    };
 
     // Remaining budget after system blocks.
     let remaining = MAX_CACHE_BREAKPOINTS.saturating_sub(system_cache_count);
     // Tool result has higher priority than user message.
-    let cache_tool_result = remaining >= 1 && last_tool_index.is_some();
-    let cache_user = remaining >= 2 && last_stable_user_index.is_some();
+    let cache_tool_result = caching_enabled && remaining >= 1 && last_tool_index.is_some();
+    let cache_user = caching_enabled && remaining >= 2 && last_stable_user_index.is_some();
 
     // ── System messages ───────────────────────────────────────────────────
     let mut system_breakpoints = 0usize;
@@ -277,7 +302,9 @@ pub(crate) fn anthropic_messages(messages: &[ModelMessage]) -> (Vec<Value>, Vec<
                 let cache = system_breakpoints < system_cache_count;
                 let mut block = json!({ "type": "text", "text": stable });
                 if cache {
-                    block["cache_control"] = json!({ "type": "ephemeral" });
+                    if let Some(cache_control) = cache_control {
+                        block["cache_control"] = cache_control.clone();
+                    }
                     system_breakpoints += 1;
                 }
                 system.push(block);
@@ -291,7 +318,9 @@ pub(crate) fn anthropic_messages(messages: &[ModelMessage]) -> (Vec<Value>, Vec<
             let cache = system_breakpoints < system_cache_count;
             let mut block = json!({ "type": "text", "text": message.content });
             if cache {
-                block["cache_control"] = json!({ "type": "ephemeral" });
+                if let Some(cache_control) = cache_control {
+                    block["cache_control"] = cache_control.clone();
+                }
                 system_breakpoints += 1;
             }
             system.push(block);
@@ -309,12 +338,16 @@ pub(crate) fn anthropic_messages(messages: &[ModelMessage]) -> (Vec<Value>, Vec<
                     "content": message.content,
                 });
                 // Cache the last stable user message (previous turn).
-                if Some(index) == last_stable_user_index && cache_user {
-                    msg["content"] = json!([{
+                if Some(index) == last_stable_user_index
+                    && cache_user
+                    && let Some(cache_control) = cache_control
+                {
+                    let content = json!({
                         "type": "text",
                         "text": message.content,
-                        "cache_control": { "type": "ephemeral" },
-                    }]);
+                        "cache_control": cache_control,
+                    });
+                    msg["content"] = json!([content]);
                 }
                 converted.push(msg);
             }
@@ -326,8 +359,11 @@ pub(crate) fn anthropic_messages(messages: &[ModelMessage]) -> (Vec<Value>, Vec<
                     "content": message.content,
                 });
                 // Cache the last tool result.
-                if Some(index) == last_tool_index && cache_tool_result {
-                    tool_result["cache_control"] = json!({ "type": "ephemeral" });
+                if Some(index) == last_tool_index
+                    && cache_tool_result
+                    && let Some(cache_control) = cache_control
+                {
+                    tool_result["cache_control"] = cache_control.clone();
                 }
                 converted.push(json!({
                     "role": "user",
@@ -362,22 +398,40 @@ pub(crate) fn anthropic_messages(messages: &[ModelMessage]) -> (Vec<Value>, Vec<
 
 /// Converts tool definitions to Anthropic format.
 /// Places `cache_control` on the last tool definition to cache the full tools prefix.
+#[cfg(test)]
 pub(crate) fn anthropic_tools_to_json(tools: &[ToolDefinition]) -> Vec<Value> {
+    let cache_control = default_anthropic_cache_control();
+    anthropic_tools_to_json_with_cache_control(tools, Some(&cache_control))
+}
+
+pub(crate) fn anthropic_tools_to_json_with_cache_control(
+    tools: &[ToolDefinition],
+    cache_control: Option<&Value>,
+) -> Vec<Value> {
     tools
         .iter()
         .enumerate()
-        .map(|(index, tool)| anthropic_tool_to_json(tool, index + 1 == tools.len()))
+        .map(|(index, tool)| anthropic_tool_to_json(tool, index + 1 == tools.len(), cache_control))
         .collect()
 }
 
-fn anthropic_tool_to_json(tool: &ToolDefinition, cache: bool) -> Value {
+fn anthropic_tool_to_json(
+    tool: &ToolDefinition,
+    cache: bool,
+    cache_control: Option<&Value>,
+) -> Value {
     let mut value = json!({
         "name": tool.name,
         "description": tool.description,
         "input_schema": tool.input_schema,
     });
-    if cache {
-        value["cache_control"] = json!({ "type": "ephemeral" });
+    if cache && let Some(cache_control) = cache_control {
+        value["cache_control"] = cache_control.clone();
     }
     value
+}
+
+#[cfg(test)]
+fn default_anthropic_cache_control() -> Value {
+    json!({ "type": "ephemeral" })
 }

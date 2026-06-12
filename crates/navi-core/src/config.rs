@@ -68,7 +68,8 @@ mod tests {
                 enabled: true,
                 servers: vec![McpServerConfig {
                     id: "project-mcp".to_string(),
-                    command: "malicious".to_string(),
+                    command: Some("malicious".to_string()),
+                    url: None,
                     args: Vec::new(),
                     env: Default::default(),
                     cwd: None,
@@ -253,5 +254,138 @@ timeout_ms = 1000
         let provider = resolve_provider_config(&config, "charm-hyper").expect("provider");
         assert_eq!(provider.api_key_env, "CUSTOM_CHARM_KEY");
         assert_eq!(provider.models[0].name, "Custom Model");
+    }
+
+    #[test]
+    fn default_request_options_for_known_providers() {
+        let openai = default_request_options_for("openai").expect("openai defaults");
+        assert_eq!(openai.prompt_cache_key.as_deref(), Some("openai"));
+        assert_eq!(openai.prompt_cache_retention.as_deref(), Some("24h"));
+        assert!(openai.anthropic_cache_control.is_none());
+
+        let anthropic = default_request_options_for("anthropic").expect("anthropic defaults");
+        assert_eq!(
+            anthropic
+                .anthropic_cache_control
+                .as_ref()
+                .and_then(|value| value.get("type"))
+                .and_then(serde_json::Value::as_str),
+            Some("ephemeral")
+        );
+        assert!(anthropic.prompt_cache_key.is_none());
+
+        assert!(default_request_options_for("nvidia").is_none());
+    }
+
+    #[test]
+    fn catalog_fills_default_request_options_for_known_providers() {
+        // Built-in providers always come with the right defaults set.
+        let config = NaviConfig::default();
+        let openai = resolve_provider_config(&config, "openai").expect("openai");
+        let openai_opts = openai
+            .request_options
+            .as_ref()
+            .expect("openai request_options filled");
+        assert_eq!(openai_opts.prompt_cache_key.as_deref(), Some("openai"));
+        assert_eq!(openai_opts.prompt_cache_retention.as_deref(), Some("24h"));
+
+        let anthropic = resolve_provider_config(&config, "anthropic").expect("anthropic");
+        let anthropic_opts = anthropic
+            .request_options
+            .as_ref()
+            .expect("anthropic request_options filled");
+        assert!(anthropic_opts.anthropic_cache_control.is_some());
+    }
+
+    #[test]
+    fn catalog_fills_defaults_when_override_replaces_provider_wholesale() {
+        // Simulates the user writing a [[providers]] block in config.toml
+        // without setting request_options. The merge in merge_provider_configs
+        // replaces the cached provider, so defaults would be lost without
+        // the post-merge fill step.
+        let mut config = NaviConfig::default();
+        config.providers.push(ProviderConfig {
+            id: "openai".to_string(),
+            label: "OpenAI (custom url)".to_string(),
+            description: "OpenAI with a proxied base URL".to_string(),
+            kind: ProviderKind::OpenAiResponses,
+            api_key_env: "OPENAI_API_KEY".to_string(),
+            base_url: Some("https://proxy.example/v1".to_string()),
+            models: vec![ProviderModelConfig {
+                name: "gpt-5".to_string(),
+                task_size: ModelTaskSize::Large,
+                context_window_tokens: None,
+                tool_prompt_manifest: None,
+            }],
+            ..Default::default()
+        });
+
+        let openai = resolve_provider_config(&config, "openai").expect("openai");
+        assert_eq!(openai.base_url.as_deref(), Some("https://proxy.example/v1"));
+        // The override did not set request_options, so the catalog fills the
+        // canonical OpenAI defaults — otherwise prompt caching would silently
+        // stop working.
+        let opts = openai
+            .request_options
+            .as_ref()
+            .expect("openai defaults filled even with override");
+        assert_eq!(opts.prompt_cache_key.as_deref(), Some("openai"));
+        assert_eq!(opts.prompt_cache_retention.as_deref(), Some("24h"));
+    }
+
+    #[test]
+    fn catalog_respects_explicit_request_options_in_override() {
+        // If the user explicitly disables prompt caching, the catalog must
+        // honor that — the fill step only applies when request_options is
+        // None, not when the user opted out with an explicit Some(empty).
+        let mut config = NaviConfig::default();
+        config.providers.push(ProviderConfig {
+            id: "openai".to_string(),
+            label: "OpenAI".to_string(),
+            description: "OpenAI with prompt caching disabled".to_string(),
+            kind: ProviderKind::OpenAiResponses,
+            api_key_env: "OPENAI_API_KEY".to_string(),
+            base_url: Some("https://api.openai.com/v1".to_string()),
+            models: vec![ProviderModelConfig {
+                name: "gpt-5".to_string(),
+                task_size: ModelTaskSize::Large,
+                context_window_tokens: None,
+                tool_prompt_manifest: None,
+            }],
+            request_options: Some(ProviderRequestOptions::default()), // explicit opt-out
+            ..Default::default()
+        });
+
+        let openai = resolve_provider_config(&config, "openai").expect("openai");
+        let opts = openai
+            .request_options
+            .as_ref()
+            .expect("explicit value preserved");
+        assert!(opts.prompt_cache_key.is_none());
+        assert!(opts.prompt_cache_retention.is_none());
+    }
+
+    #[test]
+    fn catalog_does_not_fill_defaults_for_unknown_providers() {
+        let mut config = NaviConfig::default();
+        config.providers.push(ProviderConfig {
+            id: "my-private-proxy".to_string(),
+            label: "Private proxy".to_string(),
+            description: "user-supplied".to_string(),
+            kind: ProviderKind::OpenAiChatCompletions,
+            api_key_env: "PROXY_KEY".to_string(),
+            base_url: Some("https://proxy.test/v1".to_string()),
+            models: vec![ProviderModelConfig {
+                name: "some-model".to_string(),
+                task_size: ModelTaskSize::Small,
+                context_window_tokens: None,
+                tool_prompt_manifest: None,
+            }],
+            ..Default::default()
+        });
+
+        let provider = resolve_provider_config(&config, "my-private-proxy").expect("provider");
+        // No default exists for unknown provider ids, so options stay None.
+        assert!(provider.request_options.is_none());
     }
 }

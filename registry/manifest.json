@@ -1,10 +1,10 @@
 {
-  "version": 1,
-  "updated_at": "2026-06-10T13:35:49Z",
+  "version": 2,
+  "updated_at": "2026-06-12T21:28:39Z",
   "providers": {
     "anthropic": {
       "file": "providers/anthropic.json",
-      "sha256": "e0e21f0c1f39fbf597367d143a3ae316a416cf7163bace7572cba80a8227f778",
+      "sha256": "d6ba1cf6a87e9f29565d315421ac526c64be6a1360ec9d4cd2737fb67d726879",
       "model_count": 16
     },
     "charm-hyper": {
@@ -84,8 +84,8 @@
     },
     "nvidia": {
       "file": "providers/nvidia.json",
-      "sha256": "18f725f1ea6d1c2d919499ba00e2175e1a58fd29aee5e4b71275ffc7315d3061",
-      "model_count": 9
+      "sha256": "21bdc5992ab83be3a6758ccb31da8a68e48c65a7921c1564c1a85c78e4624ff4",
+      "model_count": 10
     },
     "ollama": {
       "file": "providers/ollama.json",
@@ -94,7 +94,7 @@
     },
     "openai": {
       "file": "providers/openai.json",
-      "sha256": "a35cb872556b06c52b2e6eb6638c6d4377579ac2b5e0b9c6f6140756bb481b05",
+      "sha256": "1d1d797d19d0ad8b0db11d8cdf99edce2128cbd9ecf297764da37045eca10add",
       "model_count": 29
     },
     "opencode-go": {
