@@ -1,6 +1,6 @@
 use ratatui::prelude::{Line, Modifier, Span, Style};
 use ratatui::style::Color;
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
 
 use navi_sdk::{ToolInvocation, ToolResult};
 
@@ -9,7 +9,7 @@ use crate::theme::*;
 
 use super::syntax::{CodeHighlighter, highlight_code_line};
 use super::text::{display_width, wrap_spans_to_width, wrap_text};
-use super::tool::{tool_compact_text, tool_full_content};
+use super::tool::{tool_compact_text, tool_detail_block, tool_full_content};
 
 #[derive(Debug, Clone)]
 pub(crate) struct ChatRenderOutput {
@@ -22,7 +22,7 @@ pub(crate) fn build_chat_render_for_messages(
     chat_width: usize,
     full_tool_view: bool,
     show_thinking: bool,
-    compact_tool_visible_limit: usize,
+    _compact_tool_visible_limit: usize,
     expanded_tool_results: &HashSet<String>,
     running_tools: &HashMap<String, ToolInvocation>,
     tool_render_cache: &mut HashMap<String, Vec<Line<'static>>>,
@@ -30,12 +30,10 @@ pub(crate) fn build_chat_render_for_messages(
 ) -> ChatRenderOutput {
     let mut rendered_lines: Vec<Line<'static>> = Vec::new();
     let mut line_sources: Vec<ChatLineSource> = Vec::new();
-    let messages = messages.iter().collect::<Vec<_>>();
-    let latest_tool_group_start = latest_tool_group_start(&messages);
     let mut index = 0;
 
     while index < messages.len() {
-        let msg = messages[index];
+        let msg = &messages[index];
         if is_empty_tool_placeholder(msg) {
             if let Some(status) = msg.status.as_deref() {
                 if status.starts_with("tool:") && !running_tools.is_empty() {
@@ -83,36 +81,25 @@ pub(crate) fn build_chat_render_for_messages(
             continue;
         }
         if !full_tool_view && tool_result_parts(msg).is_some() {
-            let mut group = Vec::new();
-            let group_start = index;
-            while index < messages.len() {
-                let group_msg = messages[index];
-                if is_transparent_tool_placeholder(group_msg) {
-                    index += 1;
-                    continue;
-                }
-                let Some(parts) = tool_result_parts(group_msg) else {
-                    break;
-                };
-                group.push(parts);
+            let Some((invocation, result)) = tool_result_parts(msg) else {
                 index += 1;
-            }
+                continue;
+            };
             push_block_gap(&mut rendered_lines, &mut line_sources);
-            let expanded = latest_tool_group_start == Some(group_start)
-                || group
-                    .iter()
-                    .any(|(_, result)| expanded_tool_results.contains(&result.invocation_id));
-            let rendered_group = render_compact_tool_group(
-                &group,
+            let rendered_tool = render_compact_tool_result(
+                invocation,
+                result,
                 chat_width,
-                expanded,
-                compact_tool_visible_limit,
                 expanded_tool_results,
                 tool_render_cache,
             );
-            for (line, source) in rendered_group {
+            for (line, source) in rendered_tool {
                 rendered_lines.push(line);
                 line_sources.push(source);
+            }
+            index += 1;
+            while index < messages.len() && is_transparent_tool_placeholder(&messages[index]) {
+                index += 1;
             }
             continue;
         }
@@ -233,22 +220,6 @@ pub(crate) fn build_chat_render_for_messages(
         lines: rendered_lines,
         sources: line_sources,
     }
-}
-
-fn latest_tool_group_start(messages: &[&ChatMessage]) -> Option<usize> {
-    let mut latest = None;
-    let mut previous_was_tool = false;
-    for (index, message) in messages.iter().enumerate() {
-        if is_transparent_tool_placeholder(message) {
-            continue;
-        }
-        let is_tool = tool_result_parts(message).is_some();
-        if is_tool && !previous_was_tool {
-            latest = Some(index);
-        }
-        previous_was_tool = is_tool;
-    }
-    latest
 }
 
 fn push_block_gap(lines: &mut Vec<Line<'static>>, sources: &mut Vec<ChatLineSource>) {
@@ -523,143 +494,56 @@ fn render_compact_tool_line(invocation: &ToolInvocation, result: &ToolResult) ->
     render_compact_tool_line_with_width(invocation, result, usize::MAX)
 }
 
-fn render_compact_tool_group(
-    tools: &[(&ToolInvocation, &ToolResult)],
+fn render_compact_tool_result(
+    invocation: &ToolInvocation,
+    result: &ToolResult,
     chat_width: usize,
-    expanded: bool,
-    visible_limit: usize,
     expanded_tool_results: &HashSet<String>,
     tool_render_cache: &mut HashMap<String, Vec<Line<'static>>>,
 ) -> Vec<(Line<'static>, ChatLineSource)> {
-    let ids = tools
-        .iter()
-        .map(|(_, result)| result.invocation_id.clone())
-        .collect::<Vec<_>>();
-    if !expanded {
-        let source = ChatLineSource::ToolGroup(ids);
-        let mut rows = vec![(
-            render_collapsed_tool_group(tools, chat_width),
-            source.clone(),
-        )];
-        while rows.len() < 4 {
-            rows.push((
-                blank_card_line(chat_width, interactive_bg()),
-                source.clone(),
-            ));
-        }
-        return rows;
-    }
-
+    let source = ChatLineSource::ToolResult(result.invocation_id.clone());
     let mut lines = Vec::new();
-    let visible_limit = visible_limit.max(1);
-    let hidden = tools.len().saturating_sub(visible_limit);
-    if hidden > 0 {
-        lines.push((
-            Line::from(vec![
-                Span::styled("  ", Style::default().fg(ghost())),
-                Span::styled(
-                    format!("{hidden} earlier tool calls"),
-                    Style::default().fg(muted()).add_modifier(Modifier::BOLD),
-                ),
-            ]),
-            ChatLineSource::ToolGroup(ids.clone()),
-        ));
-    }
 
-    let start = tools.len().saturating_sub(visible_limit);
-    for (invocation, result) in &tools[start..] {
-        let source = ChatLineSource::ToolResult(result.invocation_id.clone());
-        if expanded_tool_results.contains(&result.invocation_id) {
-            lines.push((
-                Line::from(Span::styled(
-                    "Click to collapse",
-                    Style::default().fg(muted()).add_modifier(Modifier::BOLD),
-                )),
-                source.clone(),
-            ));
-            let cache_key = result.invocation_id.clone();
-            let rendered = if let Some(cached) = tool_render_cache.get(&cache_key) {
-                cached.clone()
-            } else {
-                let rendered = render_markdown_lines(
-                    &tool_full_content(invocation, result),
-                    chat_width.saturating_sub(2),
-                    text(),
-                    text(),
-                    false,
-                );
-                tool_render_cache.insert(cache_key, rendered.clone());
-                rendered
-            };
+    if expanded_tool_results.contains(&result.invocation_id) {
+        lines.push((
+            Line::from(Span::styled(
+                "Click to collapse",
+                Style::default().fg(muted()).add_modifier(Modifier::BOLD),
+            )),
+            source.clone(),
+        ));
+        let cache_key = result.invocation_id.clone();
+        let rendered = if let Some(cached) = tool_render_cache.get(&cache_key) {
+            cached.clone()
+        } else {
+            let rendered = render_markdown_lines(
+                &tool_full_content(invocation, result),
+                chat_width.saturating_sub(2),
+                text(),
+                text(),
+                false,
+            );
+            tool_render_cache.insert(cache_key, rendered.clone());
+            rendered
+        };
+        for line in rendered {
+            lines.push((line, source.clone()));
+        }
+    } else {
+        lines.push((
+            render_compact_tool_line_with_width(invocation, result, chat_width),
+            source.clone(),
+        ));
+        if let Some(detail) = tool_detail_block(invocation, result) {
+            let rendered =
+                render_markdown_lines(&detail, chat_width.saturating_sub(2), text(), text(), false);
             for line in rendered {
                 lines.push((line, source.clone()));
             }
-        } else {
-            lines.push((
-                render_compact_tool_line_with_width(invocation, result, chat_width),
-                source.clone(),
-            ));
-            while lines.len() < 4 {
-                lines.push((
-                    blank_card_line(chat_width, interactive_bg()),
-                    source.clone(),
-                ));
-            }
         }
     }
+
     lines
-}
-
-fn render_collapsed_tool_group(
-    tools: &[(&ToolInvocation, &ToolResult)],
-    chat_width: usize,
-) -> Line<'static> {
-    let errors = tools.iter().filter(|(_, result)| !result.ok).count();
-    let mut counts = BTreeMap::new();
-    for (invocation, _) in tools {
-        *counts
-            .entry(tool_group_label(&invocation.tool_name))
-            .or_insert(0usize) += 1;
-    }
-
-    let mut detail = counts
-        .into_iter()
-        .map(|(label, count)| {
-            if count == 1 {
-                label
-            } else {
-                format!("{label} x{count}")
-            }
-        })
-        .collect::<Vec<_>>()
-        .join(", ");
-    if errors > 0 {
-        detail = format!(
-            "{errors} error{} · {detail}",
-            if errors == 1 { "" } else { "s" }
-        );
-    }
-
-    let noun = if tools.len() == 1 { "tool" } else { "tools" };
-    let text = truncate_chars(
-        &format!("{} {noun} · {detail}", tools.len()),
-        chat_width.saturating_sub(6),
-    );
-    let bar_color = if errors > 0 { Color::Red } else { accent() };
-    let bg = interactive_bg();
-    let mut spans = vec![
-        Span::styled("│", Style::default().fg(bar_color).bg(bg)),
-        Span::styled(" ", Style::default().bg(bg)),
-    ];
-    spans.extend(
-        semantic_plain_spans(&text, muted())
-            .into_iter()
-            .map(|mut span| {
-                span.style = span.style.bg(bg);
-                span
-            }),
-    );
-    Line::from(spans)
 }
 
 fn tool_group_label(tool_name: &str) -> String {
@@ -679,7 +563,7 @@ fn render_compact_tool_line_with_width(
     result: &ToolResult,
     chat_width: usize,
 ) -> Line<'static> {
-    let marker = "│ ";
+    let marker = "";
     let marker_width = marker.chars().count();
     let text_width = chat_width.saturating_sub(marker_width).max(12);
     let status_color = if result.ok { accent() } else { red() };
@@ -693,7 +577,7 @@ fn render_compact_tool_line_with_width(
     let mut spans = vec![
         Span::styled(marker, Style::default().fg(status_color)),
         Span::styled(
-            if result.ok { "✓ " } else { "✗ " },
+            tool_line_prefix(invocation, result),
             Style::default()
                 .fg(status_color)
                 .add_modifier(Modifier::BOLD),
@@ -713,6 +597,17 @@ fn render_compact_tool_line_with_width(
         ));
     }
     Line::from(spans)
+}
+
+fn tool_line_prefix(invocation: &ToolInvocation, result: &ToolResult) -> &'static str {
+    if !result.ok {
+        return "✗ ";
+    }
+    if invocation.tool_name == "grep" {
+        "* "
+    } else {
+        "→ "
+    }
 }
 
 fn tool_color(tool_name: &str) -> Color {
