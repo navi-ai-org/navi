@@ -297,6 +297,84 @@ fn parses_chat_completions_text_delta() {
 }
 
 #[test]
+fn parses_chat_completions_inline_think_tags_as_thinking() {
+    let events = parse_chat_completions_sse(
+        r#"{"choices":[{"delta":{"content":"hello <think>hidden reasoning</think> world"},"finish_reason":null}]}"#,
+    );
+
+    assert_eq!(
+        events.into_iter().map(Result::unwrap).collect::<Vec<_>>(),
+        vec![
+            ModelStreamEvent::TextDelta {
+                text: "hello ".to_string(),
+            },
+            ModelStreamEvent::ThinkingDelta {
+                text: "hidden reasoning".to_string(),
+            },
+            ModelStreamEvent::TextDelta {
+                text: " world".to_string(),
+            },
+        ]
+    );
+}
+
+#[test]
+fn parses_chat_completions_think_tags_split_across_chunks() {
+    let mut state = ChatToolCallAccumulator::default();
+    let mut events = Vec::new();
+    for data in [
+        r#"{"choices":[{"delta":{"content":"<thi"},"finish_reason":null}]}"#,
+        r#"{"choices":[{"delta":{"content":"nk>hidden</thi"},"finish_reason":null}]}"#,
+        r#"{"choices":[{"delta":{"content":"nk>visible"},"finish_reason":null}]}"#,
+    ] {
+        events.extend(
+            parse_chat_completions_sse_with_state(data, &mut state)
+                .into_iter()
+                .map(Result::unwrap),
+        );
+    }
+
+    assert_eq!(
+        events,
+        vec![
+            ModelStreamEvent::ThinkingDelta {
+                text: "hidden".to_string(),
+            },
+            ModelStreamEvent::TextDelta {
+                text: "visible".to_string(),
+            },
+        ]
+    );
+}
+
+#[test]
+fn parses_chat_completions_unclosed_think_tag_as_thinking_until_done() {
+    let mut state = ChatToolCallAccumulator::default();
+    let mut events = parse_chat_completions_sse_with_state(
+        r#"{"choices":[{"delta":{"content":"<think>hidden"},"finish_reason":null}]}"#,
+        &mut state,
+    )
+    .into_iter()
+    .map(Result::unwrap)
+    .collect::<Vec<_>>();
+    events.extend(
+        parse_chat_completions_sse_with_state("[DONE]", &mut state)
+            .into_iter()
+            .map(Result::unwrap),
+    );
+
+    assert_eq!(
+        events,
+        vec![
+            ModelStreamEvent::ThinkingDelta {
+                text: "hidden".to_string(),
+            },
+            ModelStreamEvent::Done,
+        ]
+    );
+}
+
+#[test]
 fn parses_chat_completions_object_reasoning_delta() {
     let events = parse_chat_completions_sse(
         r#"{"choices":[{"delta":{"reasoning_details":[{"text":"I should inspect files."}]},"finish_reason":null}]}"#,

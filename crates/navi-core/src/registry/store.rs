@@ -1,8 +1,6 @@
 //! Local SQLite cache for the provider registry.
 
-use crate::config::types::{
-    ModelTaskSize, ProviderConfig, ProviderKind, ProviderModelConfig, ProviderRequestOptions,
-};
+use crate::config::types::{ModelTaskSize, ProviderConfig, ProviderKind, ProviderModelConfig};
 use anyhow::{Context, Result};
 use rusqlite::{Connection, params};
 use std::path::Path;
@@ -320,6 +318,8 @@ fn ensure_provider_request_options_column(conn: &Connection) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    use crate::config::types::ProviderRequestOptions;
+
     use super::*;
     use crate::registry::types::RegistryModel;
 

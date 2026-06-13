@@ -1388,7 +1388,7 @@ fn compact_tool_render_hides_full_input_and_output() {
 }
 
 #[test]
-fn compact_tool_render_groups_consecutive_tools_and_keeps_recent_five() {
+fn compact_tool_render_keeps_consecutive_tools_progressive() {
     let mut app = test_app("");
     for index in 0..8 {
         let id = format!("call-{index}");
@@ -1416,16 +1416,15 @@ fn compact_tool_render_groups_consecutive_tools_and_keeps_recent_five() {
         .collect::<Vec<_>>()
         .join("\n");
 
-    assert!(text.contains("3 earlier tool calls"));
-    assert!(!text.contains("needle-0"));
-    assert!(!text.contains("needle-2"));
-    assert!(text.contains("needle-3"));
+    assert!(!text.contains("earlier tool calls"));
+    assert!(text.contains("needle-0"));
+    assert!(text.contains("needle-2"));
     assert!(text.contains("needle-7"));
-    assert_eq!(text.matches("Search \"").count(), 5);
+    assert_eq!(text.matches("Search \"").count(), 8);
 }
 
 #[test]
-fn compact_tool_render_collapses_older_tool_groups() {
+fn compact_tool_render_keeps_older_tool_runs_progressive() {
     let mut app = test_app("");
     for index in 0..6 {
         let id = format!("old-call-{index}");
@@ -1469,14 +1468,15 @@ fn compact_tool_render_collapses_older_tool_groups() {
         .collect::<Vec<_>>()
         .join("\n");
 
-    assert!(text.contains("6 tools · Search x6"));
-    assert!(!text.contains("old-needle-5"));
+    assert!(!text.contains("6 tools · Search x6"));
+    assert!(text.contains("old-needle-0"));
+    assert!(text.contains("old-needle-5"));
     assert!(text.contains("intermediate thought"));
     assert!(text.contains("Read README.md"));
 }
 
 #[test]
-fn compact_tool_render_splits_groups_at_thinking_placeholder() {
+fn compact_tool_render_does_not_group_across_thinking_placeholder() {
     let mut app = test_app("");
     for path in ["src/a.rs", "src/b.rs"] {
         app.messages.push(ChatMessage {
@@ -1519,9 +1519,10 @@ fn compact_tool_render_splits_groups_at_thinking_placeholder() {
         .collect::<Vec<_>>()
         .join("\n");
 
-    assert!(text.contains("2 tools · Read x2"));
+    assert!(text.contains("Read src/a.rs"));
+    assert!(text.contains("Read src/b.rs"));
     assert!(text.contains("Read src/c.rs"));
-    assert!(!text.contains("3 tools · Read x3"));
+    assert!(!text.contains("tools · Read"));
 }
 
 #[test]

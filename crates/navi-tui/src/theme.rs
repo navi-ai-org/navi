@@ -433,15 +433,7 @@ pub(crate) fn selection_bg() -> Color {
 }
 
 pub(crate) fn code_block_bg() -> Color {
-    let palette = p();
-    match palette.panel {
-        Color::Rgb(r, g, b) => Color::Rgb(
-            r.saturating_add(8),
-            g.saturating_add(8),
-            b.saturating_add(8),
-        ),
-        _ => Color::Rgb(24, 27, 32),
-    }
+    Color::Rgb(34, 36, 54)
 }
 
 pub(crate) fn active_item_style() -> Style {

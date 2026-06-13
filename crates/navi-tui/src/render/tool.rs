@@ -55,6 +55,82 @@ pub(crate) fn tool_full_content(invocation: &ToolInvocation, result: &ToolResult
     content
 }
 
+pub(crate) fn tool_detail_block(
+    invocation: &ToolInvocation,
+    result: &ToolResult,
+) -> Option<String> {
+    if !result.ok {
+        return Some(tool_full_content(invocation, result));
+    }
+
+    match invocation.tool_name.as_str() {
+        "apply_patch" => invocation
+            .input
+            .get("patch")
+            .and_then(|v| v.as_str())
+            .filter(|patch| !patch.trim().is_empty())
+            .map(|patch| fenced_block("diff", patch)),
+        "bash" => bash_detail_block(result),
+        name if !matches!(name, "read_file" | "view_file" | "grep" | "fs_browser") => {
+            generic_data_block(result)
+        }
+        _ => None,
+    }
+}
+
+fn bash_detail_block(result: &ToolResult) -> Option<String> {
+    let obj = result.output.as_object()?;
+    let stdout = obj.get("stdout").and_then(|v| v.as_str()).unwrap_or("");
+    let stderr = obj.get("stderr").and_then(|v| v.as_str()).unwrap_or("");
+    if stdout.is_empty() && stderr.is_empty() {
+        return None;
+    }
+
+    let mut content = String::new();
+    if !stdout.is_empty() {
+        content.push_str("Stdout\n");
+        content.push_str(&fenced_block(
+            "",
+            truncate_to_lines(stdout, MAX_TOOL_RENDER_LINES),
+        ));
+    }
+    if !stderr.is_empty() {
+        if !content.is_empty() {
+            content.push('\n');
+        }
+        content.push_str("Stderr\n");
+        content.push_str(&fenced_block(
+            "",
+            truncate_to_lines(stderr, MAX_TOOL_RENDER_LINES),
+        ));
+    }
+    Some(content)
+}
+
+fn generic_data_block(result: &ToolResult) -> Option<String> {
+    if result.output.is_null() {
+        return None;
+    }
+    if result
+        .output
+        .as_object()
+        .is_some_and(serde_json::Map::is_empty)
+    {
+        return None;
+    }
+    serde_json::to_string_pretty(&result.output)
+        .ok()
+        .map(|json| fenced_block("json", &json))
+}
+
+fn fenced_block(language: &str, content: &str) -> String {
+    let mut block = format!("```{language}\n");
+    block.push_str(content.trim_end_matches('\n'));
+    block.push('\n');
+    block.push_str("```\n");
+    block
+}
+
 fn formatted_tool_output(invocation: &ToolInvocation, result: &ToolResult) -> Option<String> {
     let obj = result.output.as_object()?;
     let mut content = String::new();

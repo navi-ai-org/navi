@@ -353,7 +353,7 @@ impl Tool for BashTool {
     fn definition(&self) -> ToolDefinition {
         helpers::definition(
             "bash",
-            "Run a shell command in the current project. Use background=true and wait_ms for long-running commands, then poll or cancel with task_id.",
+            "Run an ad-hoc shell command in the current project. Common git, test, build, grep, ls/find, and package-manager commands are not executed here; bash returns a native_tool_available suggestion so the agent can call the structured native tool instead. Use background=true and wait_ms for long-running ad-hoc commands, then poll or cancel with task_id.",
             ToolKind::Command,
             helpers::bash_json_schema(),
         )
@@ -383,6 +383,13 @@ impl Tool for BashTool {
         }
 
         let command = helpers::required_string(&invocation.input, "command")?;
+        if let Some(suggestion) = native_tool_suggestion(command) {
+            return Ok(ToolResult {
+                invocation_id: invocation.id,
+                ok: false,
+                output: suggestion,
+            });
+        }
         if helpers::optional_bool(&invocation.input, "background").unwrap_or(false) {
             let timeout_ms = helpers::optional_u64(&invocation.input, "timeout_ms")
                 .unwrap_or(BASH_DEFAULT_BACKGROUND_TIMEOUT_MS)
@@ -408,6 +415,361 @@ impl Tool for BashTool {
 
         self.run_foreground(command, timeout_ms, invocation.id)
             .await
+    }
+}
+
+fn native_tool_suggestion(command: &str) -> Option<Value> {
+    let argv = split_shell_words(command)?;
+    let program = argv.first()?.as_str();
+
+    let suggestion = match program {
+        "git" => suggest_git(&argv[1..])?,
+        "cargo" => suggest_cargo(&argv[1..])?,
+        "go" => suggest_go(&argv[1..])?,
+        "npm" | "bun" => suggest_js_package_manager(program, &argv[1..])?,
+        "rg" | "grep" => suggest_grep(program, &argv[1..])?,
+        "ls" => suggest_list(&argv[1..]),
+        "find" => suggest_find(&argv[1..]),
+        _ => return None,
+    };
+
+    Some(json!({
+        "error": "native_tool_available",
+        "message": "This common shell command was not executed. Use the suggested native tool for structured output.",
+        "original_command": command,
+        "native_tool": suggestion.tool,
+        "native_input": suggestion.input,
+        "recoverable": true,
+    }))
+}
+
+struct NativeSuggestion {
+    tool: &'static str,
+    input: Value,
+}
+
+fn suggest_git(args: &[String]) -> Option<NativeSuggestion> {
+    let subcommand = args.first()?;
+    let mapped = match subcommand.as_str() {
+        "status" | "diff" | "log" | "branch" | "stash" | "remote" | "add" | "commit"
+        | "restore" | "checkout" | "merge" | "rebase" | "pull" | "fetch" | "reset" | "clean"
+        | "tag" | "rm" | "mv" | "init" | "clone" => subcommand.as_str(),
+        "push"
+            if args
+                .iter()
+                .any(|arg| matches!(arg.as_str(), "--force" | "-f")) =>
+        {
+            "push-force"
+        }
+        "push" if args.iter().any(|arg| arg == "--delete") => "push_delete",
+        "push" => "push",
+        _ => return None,
+    };
+    let mut input = json!({
+        "command": mapped,
+        "args": args[1..],
+    });
+    if matches!(mapped, "diff" | "log") {
+        input["format"] = json!("json");
+    }
+    Some(NativeSuggestion {
+        tool: "git_ops",
+        input,
+    })
+}
+
+fn suggest_cargo(args: &[String]) -> Option<NativeSuggestion> {
+    let subcommand = args.first()?;
+    match subcommand.as_str() {
+        "test" | "nextest" => Some(NativeSuggestion {
+            tool: "test_runner",
+            input: flags_input(&args[1..]),
+        }),
+        "check" | "build" => {
+            let input = cargo_build_input(&args[1..])?;
+            Some(NativeSuggestion {
+                tool: "build_runner",
+                input,
+            })
+        }
+        "add" | "remove" | "update" => Some(NativeSuggestion {
+            tool: "package_manager",
+            input: package_manager_input(map_package_action(subcommand), "cargo", &args[1..]),
+        }),
+        _ => None,
+    }
+}
+
+fn suggest_go(args: &[String]) -> Option<NativeSuggestion> {
+    let subcommand = args.first()?;
+    match subcommand.as_str() {
+        "test" => Some(NativeSuggestion {
+            tool: "test_runner",
+            input: flags_input(&args[1..]),
+        }),
+        "mod"
+            if args
+                .get(1)
+                .is_some_and(|arg| matches!(arg.as_str(), "download" | "tidy")) =>
+        {
+            Some(NativeSuggestion {
+                tool: "package_manager",
+                input: json!({ "action": "install", "manager": "go" }),
+            })
+        }
+        "get" => Some(NativeSuggestion {
+            tool: "package_manager",
+            input: package_manager_input("add", "go", &args[1..]),
+        }),
+        _ => None,
+    }
+}
+
+fn suggest_js_package_manager(program: &str, args: &[String]) -> Option<NativeSuggestion> {
+    let subcommand = args.first()?;
+    let manager = program;
+    match subcommand.as_str() {
+        "install" | "i" if args.len() == 1 => Some(NativeSuggestion {
+            tool: "package_manager",
+            input: json!({ "action": "install", "manager": manager }),
+        }),
+        "install" | "i" | "add" => Some(NativeSuggestion {
+            tool: "package_manager",
+            input: package_manager_input("add", manager, &args[1..]),
+        }),
+        "remove" | "rm" | "uninstall" => Some(NativeSuggestion {
+            tool: "package_manager",
+            input: package_manager_input("remove", manager, &args[1..]),
+        }),
+        "update" | "upgrade" => Some(NativeSuggestion {
+            tool: "package_manager",
+            input: package_manager_input("update", manager, &args[1..]),
+        }),
+        "test" => Some(NativeSuggestion {
+            tool: "test_runner",
+            input: flags_input(&args[1..]),
+        }),
+        _ => None,
+    }
+}
+
+fn suggest_grep(program: &str, args: &[String]) -> Option<NativeSuggestion> {
+    let mut values = args
+        .iter()
+        .filter(|arg| !arg.starts_with('-'))
+        .cloned()
+        .collect::<Vec<_>>();
+    if program == "grep" {
+        values.retain(|arg| arg != "-R" && arg != "-r");
+    }
+    let pattern = values.first()?.clone();
+    let path = values.get(1).cloned().unwrap_or_else(|| ".".to_string());
+    Some(NativeSuggestion {
+        tool: "grep",
+        input: json!({ "pattern": pattern, "path": path }),
+    })
+}
+
+fn suggest_list(args: &[String]) -> NativeSuggestion {
+    let path = args
+        .iter()
+        .find(|arg| !arg.starts_with('-'))
+        .cloned()
+        .unwrap_or_else(|| ".".to_string());
+    NativeSuggestion {
+        tool: "fs_browser",
+        input: json!({ "action": "list", "path": path }),
+    }
+}
+
+fn suggest_find(args: &[String]) -> NativeSuggestion {
+    let path = args.first().cloned().unwrap_or_else(|| ".".to_string());
+    let pattern = args
+        .windows(2)
+        .find_map(|window| (window[0] == "-name").then(|| window[1].clone()));
+    let mut input = json!({ "action": "find", "path": path });
+    if let Some(pattern) = pattern {
+        input["pattern"] = json!(pattern.trim_matches('*'));
+    }
+    NativeSuggestion {
+        tool: "fs_browser",
+        input,
+    }
+}
+
+fn flags_input(args: &[String]) -> Value {
+    if args.is_empty() {
+        json!({})
+    } else {
+        json!({ "flags": args.join(" ") })
+    }
+}
+
+fn cargo_build_input(args: &[String]) -> Option<Value> {
+    let mut input = json!({});
+    let mut index = 0;
+    while index < args.len() {
+        match args[index].as_str() {
+            "--release" => input["profile"] = json!("release"),
+            "--features" | "-F" => {
+                index += 1;
+                input["features"] = json!(args.get(index)?.clone());
+            }
+            flag if flag.starts_with("--features=") => {
+                input["features"] = json!(flag.trim_start_matches("--features="));
+            }
+            _ => return None,
+        }
+        index += 1;
+    }
+    Some(input)
+}
+
+fn package_manager_input(action: &str, manager: &str, args: &[String]) -> Value {
+    let dev = args
+        .iter()
+        .any(|arg| matches!(arg.as_str(), "-D" | "--dev" | "--save-dev"));
+    let packages = args
+        .iter()
+        .filter(|arg| !arg.starts_with('-'))
+        .cloned()
+        .collect::<Vec<_>>();
+    json!({
+        "action": action,
+        "manager": manager,
+        "packages": packages,
+        "dev": dev,
+    })
+}
+
+fn map_package_action(action: &str) -> &'static str {
+    match action {
+        "add" => "add",
+        "remove" => "remove",
+        "update" => "update",
+        _ => "install",
+    }
+}
+
+fn split_shell_words(command: &str) -> Option<Vec<String>> {
+    let mut words = Vec::new();
+    let mut current = String::new();
+    let mut chars = command.chars().peekable();
+    let mut quote = None;
+    let mut escaped = false;
+
+    while let Some(ch) = chars.next() {
+        if escaped {
+            current.push(ch);
+            escaped = false;
+            continue;
+        }
+        if ch == '\\' {
+            escaped = true;
+            continue;
+        }
+        if let Some(active_quote) = quote {
+            if ch == active_quote {
+                quote = None;
+            } else {
+                current.push(ch);
+            }
+            continue;
+        }
+        match ch {
+            '\'' | '"' => quote = Some(ch),
+            ' ' | '\t' | '\n' if !current.is_empty() => {
+                words.push(std::mem::take(&mut current));
+                while chars.peek().is_some_and(|next| next.is_whitespace()) {
+                    chars.next();
+                }
+            }
+            ' ' | '\t' | '\n' => {}
+            '|' | '&' | ';' | '>' | '<' => return None,
+            _ => current.push(ch),
+        }
+    }
+
+    if escaped || quote.is_some() {
+        return None;
+    }
+    if !current.is_empty() {
+        words.push(current);
+    }
+    (!words.is_empty()).then_some(words)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn suggests_git_ops_for_git_diff() {
+        let suggestion = native_tool_suggestion("git diff -- Cargo.toml").expect("suggestion");
+
+        assert_eq!(suggestion["native_tool"], "git_ops");
+        assert_eq!(suggestion["native_input"]["command"], "diff");
+        assert_eq!(
+            suggestion["native_input"]["args"],
+            json!(["--", "Cargo.toml"])
+        );
+        assert_eq!(suggestion["native_input"]["format"], "json");
+        assert_eq!(suggestion["recoverable"], true);
+    }
+
+    #[test]
+    fn suggests_test_runner_for_cargo_test() {
+        let suggestion = native_tool_suggestion("cargo test -p navi-core").expect("suggestion");
+
+        assert_eq!(suggestion["native_tool"], "test_runner");
+        assert_eq!(
+            suggestion["native_input"],
+            json!({ "flags": "-p navi-core" })
+        );
+    }
+
+    #[test]
+    fn suggests_grep_for_rg() {
+        let suggestion =
+            native_tool_suggestion("rg \"fn main\" crates/navi-core/src").expect("suggestion");
+
+        assert_eq!(suggestion["native_tool"], "grep");
+        assert_eq!(suggestion["native_input"]["pattern"], "fn main");
+        assert_eq!(suggestion["native_input"]["path"], "crates/navi-core/src");
+    }
+
+    #[test]
+    fn suggests_fs_browser_for_ls() {
+        let suggestion = native_tool_suggestion("ls -la crates").expect("suggestion");
+
+        assert_eq!(suggestion["native_tool"], "fs_browser");
+        assert_eq!(
+            suggestion["native_input"],
+            json!({ "action": "list", "path": "crates" })
+        );
+    }
+
+    #[test]
+    fn suggests_schema_valid_build_runner_for_cargo_build() {
+        let suggestion =
+            native_tool_suggestion("cargo build --release --features simd").expect("suggestion");
+
+        assert_eq!(suggestion["native_tool"], "build_runner");
+        assert_eq!(suggestion["native_input"]["profile"], "release");
+        assert_eq!(suggestion["native_input"]["features"], "simd");
+        assert!(suggestion["native_input"].get("flags").is_none());
+    }
+
+    #[test]
+    fn leaves_unsupported_native_command_variants_to_bash() {
+        assert!(native_tool_suggestion("pnpm install").is_none());
+        assert!(native_tool_suggestion("cargo check -p navi-core").is_none());
+    }
+
+    #[test]
+    fn leaves_ad_hoc_shell_commands_to_bash() {
+        assert!(native_tool_suggestion("printf 'hello'").is_none());
+        assert!(native_tool_suggestion("git diff | less").is_none());
     }
 }
 

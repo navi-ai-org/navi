@@ -263,15 +263,13 @@ async fn collect_model_output(ctx: &TurnContext, request: ModelRequest) -> Resul
         thinking: String::new(),
         tool_calls: Vec::new(),
     };
+    let mut think_tags = ThinkTagSplitter::default();
 
     while let Some(event) = stream.next().await {
         ensure_not_cancelled(ctx)?;
         match event? {
             ModelStreamEvent::TextDelta { text } => {
-                output.text.push_str(&text);
-                if let Some(ref tx) = ctx.event_tx {
-                    let _ = tx.send(AgentEvent::ModelDelta { text });
-                }
+                emit_split_text(ctx, &mut output, think_tags.push(&text));
             }
             ModelStreamEvent::ThinkingDelta { text } => {
                 output.thinking.push_str(&text);
@@ -311,12 +309,126 @@ async fn collect_model_output(ctx: &TurnContext, request: ModelRequest) -> Resul
                 let mut state = ctx.compact_state.lock().await;
                 state.update_usage(in_tok);
             }
-            ModelStreamEvent::Done => break,
+            ModelStreamEvent::Done => {
+                emit_split_text(ctx, &mut output, think_tags.drain_pending());
+                break;
+            }
             ModelStreamEvent::Status { .. } => {}
         }
     }
 
     Ok(output)
+}
+
+fn emit_split_text(ctx: &TurnContext, output: &mut ModelTurnOutput, parts: Vec<SplitTextPart>) {
+    for part in parts {
+        match part {
+            SplitTextPart::Text(text) => {
+                output.text.push_str(&text);
+                if let Some(ref tx) = ctx.event_tx {
+                    let _ = tx.send(AgentEvent::ModelDelta { text });
+                }
+            }
+            SplitTextPart::Thinking(text) => {
+                output.thinking.push_str(&text);
+                if let Some(ref tx) = ctx.event_tx {
+                    let _ = tx.send(AgentEvent::ModelThinkingDelta { text });
+                }
+            }
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum SplitTextPart {
+    Text(String),
+    Thinking(String),
+}
+
+#[derive(Default)]
+struct ThinkTagSplitter {
+    in_think: bool,
+    pending: String,
+}
+
+impl ThinkTagSplitter {
+    fn push(&mut self, content: &str) -> Vec<SplitTextPart> {
+        let mut input = std::mem::take(&mut self.pending);
+        input.push_str(content);
+        self.split(&input, false)
+    }
+
+    fn drain_pending(&mut self) -> Vec<SplitTextPart> {
+        let pending = std::mem::take(&mut self.pending);
+        let tag = if self.in_think { "</think>" } else { "<think>" };
+        if is_partial_tag_prefix(&pending, tag) {
+            return Vec::new();
+        }
+        self.split(&pending, true)
+    }
+
+    fn split(&mut self, input: &str, final_chunk: bool) -> Vec<SplitTextPart> {
+        let mut parts = Vec::new();
+        let mut remaining = input;
+
+        while !remaining.is_empty() {
+            let tag = if self.in_think { "</think>" } else { "<think>" };
+            if let Some(pos) = find_ascii_case_insensitive(remaining, tag) {
+                self.push_segment(&mut parts, &remaining[..pos]);
+                remaining = &remaining[pos + tag.len()..];
+                self.in_think = !self.in_think;
+                continue;
+            }
+
+            let keep = if final_chunk {
+                0
+            } else {
+                partial_tag_suffix_len(remaining, tag)
+            };
+            let emit_len = remaining.len().saturating_sub(keep);
+            self.push_segment(&mut parts, &remaining[..emit_len]);
+            self.pending.push_str(&remaining[emit_len..]);
+            break;
+        }
+
+        parts
+    }
+
+    fn push_segment(&self, parts: &mut Vec<SplitTextPart>, text: &str) {
+        if text.is_empty() {
+            return;
+        }
+        if self.in_think {
+            parts.push(SplitTextPart::Thinking(text.to_string()));
+        } else {
+            parts.push(SplitTextPart::Text(text.to_string()));
+        }
+    }
+}
+
+fn find_ascii_case_insensitive(haystack: &str, needle: &str) -> Option<usize> {
+    haystack
+        .as_bytes()
+        .windows(needle.len())
+        .position(|window| window.eq_ignore_ascii_case(needle.as_bytes()))
+}
+
+fn partial_tag_suffix_len(text: &str, tag: &str) -> usize {
+    let bytes = text.as_bytes();
+    let tag_bytes = tag.as_bytes();
+    let max_len = bytes.len().min(tag_bytes.len().saturating_sub(1));
+    for len in (1..=max_len).rev() {
+        if bytes[bytes.len() - len..].eq_ignore_ascii_case(&tag_bytes[..len]) {
+            return len;
+        }
+    }
+    0
+}
+
+fn is_partial_tag_prefix(text: &str, tag: &str) -> bool {
+    !text.is_empty()
+        && text.len() < tag.len()
+        && tag.as_bytes()[..text.len()].eq_ignore_ascii_case(text.as_bytes())
 }
 
 async fn handle_tool_calls(
