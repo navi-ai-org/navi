@@ -168,6 +168,14 @@ fn style_interactive_lines(
         let Some((hovered, selected)) = interactive_state(app, source) else {
             continue;
         };
+        if matches!(
+            source,
+            ChatLineSource::ToolResult(_) | ChatLineSource::ToolGroup(_)
+        ) && !hovered
+            && !selected
+        {
+            continue;
+        }
         let bg = if hovered || selected {
             interactive_hover_bg()
         } else {

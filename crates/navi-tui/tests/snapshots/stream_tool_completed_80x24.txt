@@ -7,12 +7,12 @@
 
    │ • Thinking: planning next step · 0s
 
-   │ ✓ Read src/main.rs
-
-
-
+   → Read src/main.rs
 
    │ • Thinking: planning next step · 0s
+
+
+
 
 
   ▌

@@ -114,6 +114,46 @@ async fn test_turn_loop_with_parallel_tools() {
     assert_eq!(tool_results.len(), 2);
 }
 
+#[test]
+fn think_tag_splitter_moves_inline_thinking_out_of_text() {
+    let mut splitter = ThinkTagSplitter::default();
+
+    assert_eq!(
+        splitter.push("hello <think>hidden</think> world"),
+        vec![
+            SplitTextPart::Text("hello ".to_string()),
+            SplitTextPart::Thinking("hidden".to_string()),
+            SplitTextPart::Text(" world".to_string()),
+        ]
+    );
+}
+
+#[test]
+fn think_tag_splitter_handles_tags_split_across_chunks() {
+    let mut splitter = ThinkTagSplitter::default();
+    let mut parts = Vec::new();
+
+    parts.extend(splitter.push("<thi"));
+    parts.extend(splitter.push("nk>hidden</thi"));
+    parts.extend(splitter.push("nk>visible"));
+
+    assert_eq!(
+        parts,
+        vec![
+            SplitTextPart::Thinking("hidden".to_string()),
+            SplitTextPart::Text("visible".to_string()),
+        ]
+    );
+}
+
+#[test]
+fn think_tag_splitter_drops_partial_open_tag_on_drain() {
+    let mut splitter = ThinkTagSplitter::default();
+
+    assert!(splitter.push("<thi").is_empty());
+    assert!(splitter.drain_pending().is_empty());
+}
+
 /// Helper to build a TurnContext pointing at a given project directory.
 fn build_test_ctx(project_dir: PathBuf) -> TurnContext {
     let security_policy = SecurityPolicy::new(

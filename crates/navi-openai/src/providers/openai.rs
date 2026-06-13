@@ -258,7 +258,9 @@ pub(crate) fn parse_chat_completions_sse_with_state(
     tool_calls: &mut ChatToolCallAccumulator,
 ) -> Vec<Result<ModelStreamEvent>> {
     if data == "[DONE]" {
-        return vec![Ok(ModelStreamEvent::Done)];
+        let mut events = tool_calls.drain_pending_text();
+        events.push(Ok(ModelStreamEvent::Done));
+        return events;
     }
     let value = match serde_json::from_str::<Value>(data) {
         Ok(value) => value,
@@ -273,7 +275,7 @@ pub(crate) fn parse_chat_completions_sse_with_state(
         .and_then(|choice| choice.get("delta"))
     {
         if let Some(content) = delta.get("content").and_then(Value::as_str) {
-            events.push(text_delta(content));
+            events.extend(tool_calls.push_content(content));
         }
         if let Some(chunks) = delta.get("tool_calls").and_then(Value::as_array) {
             tool_calls.push_chunks(chunks);
@@ -305,6 +307,7 @@ pub(crate) fn parse_chat_completions_sse_with_state(
 #[derive(Default)]
 pub(crate) struct ChatToolCallAccumulator {
     calls: Vec<PartialChatToolCall>,
+    think_tags: ThinkTagSplitter,
 }
 
 #[derive(Default)]
@@ -315,6 +318,14 @@ struct PartialChatToolCall {
 }
 
 impl ChatToolCallAccumulator {
+    fn push_content(&mut self, content: &str) -> Vec<Result<ModelStreamEvent>> {
+        self.think_tags.push(content)
+    }
+
+    fn drain_pending_text(&mut self) -> Vec<Result<ModelStreamEvent>> {
+        self.think_tags.drain_pending()
+    }
+
     fn push_chunks(&mut self, chunks: &[Value]) {
         for chunk in chunks {
             let index = chunk.get("index").and_then(Value::as_u64).unwrap_or(0) as usize;
@@ -355,6 +366,94 @@ impl ChatToolCallAccumulator {
             })
             .collect()
     }
+}
+
+#[derive(Default)]
+struct ThinkTagSplitter {
+    in_think: bool,
+    pending: String,
+}
+
+impl ThinkTagSplitter {
+    fn push(&mut self, content: &str) -> Vec<Result<ModelStreamEvent>> {
+        let mut input = std::mem::take(&mut self.pending);
+        input.push_str(content);
+        self.split(&input, false)
+    }
+
+    fn drain_pending(&mut self) -> Vec<Result<ModelStreamEvent>> {
+        let pending = std::mem::take(&mut self.pending);
+        let tag = if self.in_think { "</think>" } else { "<think>" };
+        if is_partial_tag_prefix(&pending, tag) {
+            return Vec::new();
+        }
+        self.split(&pending, true)
+    }
+
+    fn split(&mut self, input: &str, final_chunk: bool) -> Vec<Result<ModelStreamEvent>> {
+        let mut events = Vec::new();
+        let mut remaining = input;
+
+        while !remaining.is_empty() {
+            let tag = if self.in_think { "</think>" } else { "<think>" };
+            if let Some(pos) = find_ascii_case_insensitive(remaining, tag) {
+                self.push_segment(&mut events, &remaining[..pos]);
+                remaining = &remaining[pos + tag.len()..];
+                self.in_think = !self.in_think;
+                continue;
+            }
+
+            let keep = if final_chunk {
+                0
+            } else {
+                partial_tag_suffix_len(remaining, tag)
+            };
+            let emit_len = remaining.len().saturating_sub(keep);
+            self.push_segment(&mut events, &remaining[..emit_len]);
+            self.pending.push_str(&remaining[emit_len..]);
+            break;
+        }
+
+        events
+    }
+
+    fn push_segment(&self, events: &mut Vec<Result<ModelStreamEvent>>, text: &str) {
+        if text.is_empty() {
+            return;
+        }
+        if self.in_think {
+            events.push(Ok(ModelStreamEvent::ThinkingDelta {
+                text: text.to_string(),
+            }));
+        } else {
+            events.push(text_delta(text));
+        }
+    }
+}
+
+fn find_ascii_case_insensitive(haystack: &str, needle: &str) -> Option<usize> {
+    haystack
+        .as_bytes()
+        .windows(needle.len())
+        .position(|window| window.eq_ignore_ascii_case(needle.as_bytes()))
+}
+
+fn partial_tag_suffix_len(text: &str, tag: &str) -> usize {
+    let bytes = text.as_bytes();
+    let tag_bytes = tag.as_bytes();
+    let max_len = bytes.len().min(tag_bytes.len().saturating_sub(1));
+    for len in (1..=max_len).rev() {
+        if bytes[bytes.len() - len..].eq_ignore_ascii_case(&tag_bytes[..len]) {
+            return len;
+        }
+    }
+    0
+}
+
+fn is_partial_tag_prefix(text: &str, tag: &str) -> bool {
+    !text.is_empty()
+        && text.len() < tag.len()
+        && tag.as_bytes()[..text.len()].eq_ignore_ascii_case(text.as_bytes())
 }
 
 /// Returns `true` if the model supports OpenAI's extended prompt cache retention (24h).
