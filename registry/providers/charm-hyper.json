@@ -1,7 +1,7 @@
 {
   "id": "charm-hyper",
   "label": "Charm Hyper",
-  "description": "Hyper provider",
+  "description": "Aggregator provider with curated model access",
   "kind": "openai-chat-completions",
   "api_key_env": "CHARM_HYPER_API_KEY",
   "base_url": null,
@@ -9,57 +9,90 @@
     {
       "name": "Kimi K2.6",
       "task_size": "large",
-      "context_window_tokens": 256000
+      "context_window_tokens": 256000,
+      "max_output_tokens": 16384,
+      "recommended_temperature": 1.0,
+      "supports_thinking": true
     },
     {
       "name": "Kimi K2.5",
       "task_size": "large",
-      "context_window_tokens": 256000
+      "context_window_tokens": 256000,
+      "max_output_tokens": 16384,
+      "recommended_temperature": 1.0,
+      "supports_thinking": true
     },
     {
       "name": "DeepSeek V4 Pro",
       "task_size": "large",
-      "context_window_tokens": 1000000
+      "context_window_tokens": 1000000,
+      "max_output_tokens": 16384,
+      "recommended_temperature": 1.0,
+      "supports_thinking": true
     },
     {
       "name": "DeepSeek V4 Flash",
       "task_size": "small",
-      "context_window_tokens": 1000000
+      "context_window_tokens": 1000000,
+      "max_output_tokens": 16384,
+      "recommended_temperature": 1.0,
+      "supports_thinking": true
     },
     {
       "name": "Gemma 4 26B A4B",
       "task_size": "small",
-      "context_window_tokens": 262144
+      "context_window_tokens": 262144,
+      "max_output_tokens": 8192,
+      "recommended_temperature": 1.0,
+      "supports_thinking": true
     },
     {
       "name": "GLM-5.1",
       "task_size": "large",
-      "context_window_tokens": 200000
+      "context_window_tokens": 200000,
+      "max_output_tokens": 16384,
+      "recommended_temperature": 1.0,
+      "supports_thinking": true
     },
     {
       "name": "GLM-5",
       "task_size": "large",
-      "context_window_tokens": 200000
+      "context_window_tokens": 200000,
+      "max_output_tokens": 16384,
+      "recommended_temperature": 1.0,
+      "supports_thinking": true
     },
     {
       "name": "Qwen 3 32B",
       "task_size": "small",
-      "context_window_tokens": 128000
+      "context_window_tokens": 128000,
+      "max_output_tokens": 8192,
+      "recommended_temperature": 1.0,
+      "supports_thinking": true
     },
     {
       "name": "MiniMax M2.1",
       "task_size": "small",
-      "context_window_tokens": 204800
+      "context_window_tokens": 204800,
+      "max_output_tokens": 8192,
+      "recommended_temperature": 1.0,
+      "supports_thinking": true
     },
     {
       "name": "gpt-oss-120b",
       "task_size": "large",
-      "context_window_tokens": 128000
+      "context_window_tokens": 128000,
+      "max_output_tokens": 16384,
+      "recommended_temperature": 1.0,
+      "supports_thinking": false
     },
     {
       "name": "gpt-oss-20b",
       "task_size": "small",
-      "context_window_tokens": 128000
+      "context_window_tokens": 128000,
+      "max_output_tokens": 8192,
+      "recommended_temperature": 1.0,
+      "supports_thinking": false
     }
   ]
 }

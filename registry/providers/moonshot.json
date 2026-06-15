@@ -1,7 +1,7 @@
 {
   "id": "moonshot",
   "label": "Moonshot AI",
-  "description": "Kimi models via API",
+  "description": "Kimi models via Moonshot AI — multimodal, long-context, and reasoning models",
   "kind": "openai-chat-completions",
   "api_key_env": "MOONSHOT_API_KEY",
   "base_url": "https://api.moonshot.cn/v1",
@@ -9,57 +9,90 @@
     {
       "name": "kimi-k2.6",
       "task_size": "large",
-      "context_window_tokens": 256000
+      "context_window_tokens": 262144,
+      "max_output_tokens": 65536,
+      "recommended_temperature": 1.0,
+      "supports_thinking": true
     },
     {
       "name": "kimi-k2.5",
       "task_size": "large",
-      "context_window_tokens": 256000
+      "context_window_tokens": 262144,
+      "max_output_tokens": 65536,
+      "recommended_temperature": 1.0,
+      "supports_thinking": true
     },
     {
       "name": "kimi-k2-thinking",
       "task_size": "large",
-      "context_window_tokens": 256000
+      "context_window_tokens": 256000,
+      "max_output_tokens": 65536,
+      "recommended_temperature": 1.0,
+      "supports_thinking": true
     },
     {
       "name": "kimi-k2",
       "task_size": "large",
-      "context_window_tokens": 128000
+      "context_window_tokens": 128000,
+      "max_output_tokens": 65536,
+      "recommended_temperature": 1.0,
+      "supports_thinking": false
     },
     {
       "name": "kimi-k2-0711-preview",
       "task_size": "large",
-      "context_window_tokens": 262144
+      "context_window_tokens": 262144,
+      "max_output_tokens": 65536,
+      "recommended_temperature": 1.0,
+      "supports_thinking": false
     },
     {
       "name": "kimi-latest",
       "task_size": "large",
-      "context_window_tokens": 128000
+      "context_window_tokens": 128000,
+      "max_output_tokens": 65536,
+      "recommended_temperature": 1.0,
+      "supports_thinking": false
     },
     {
       "name": "kimi-thinking-preview",
       "task_size": "large",
-      "context_window_tokens": 128000
+      "context_window_tokens": 128000,
+      "max_output_tokens": 65536,
+      "recommended_temperature": 1.0,
+      "supports_thinking": true
     },
     {
       "name": "moonshot-v1-128k",
       "task_size": "large",
-      "context_window_tokens": 128000
+      "context_window_tokens": 131072,
+      "max_output_tokens": 65536,
+      "recommended_temperature": 1.0,
+      "supports_thinking": false
     },
     {
       "name": "moonshot-v1-32k",
       "task_size": "small",
-      "context_window_tokens": 32000
+      "context_window_tokens": 32768,
+      "max_output_tokens": 16384,
+      "recommended_temperature": 1.0,
+      "supports_thinking": false
     },
     {
       "name": "moonshot-v1-8k",
       "task_size": "small",
-      "context_window_tokens": 8000
+      "context_window_tokens": 8192,
+      "max_output_tokens": 4096,
+      "recommended_temperature": 1.0,
+      "supports_thinking": false
     },
     {
       "name": "moonshot-v1-auto",
       "task_size": "large",
-      "context_window_tokens": 128000
+      "context_window_tokens": 131072,
+      "max_output_tokens": 65536,
+      "recommended_temperature": 1.0,
+      "supports_thinking": false
     }
   ]
 }

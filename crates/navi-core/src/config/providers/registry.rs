@@ -30,6 +30,9 @@ pub(super) fn model(name: &str, task_size: ModelTaskSize) -> ProviderModelConfig
         name: name.to_string(),
         task_size,
         context_window_tokens: None,
+        max_output_tokens: None,
+        recommended_temperature: None,
+        supports_thinking: None,
         tool_prompt_manifest: None,
     }
 }
@@ -39,6 +42,27 @@ pub(super) fn model_ctx(name: &str, task_size: ModelTaskSize, ctx: u64) -> Provi
         name: name.to_string(),
         task_size,
         context_window_tokens: Some(ctx),
+        max_output_tokens: None,
+        recommended_temperature: None,
+        supports_thinking: None,
+        tool_prompt_manifest: None,
+    }
+}
+
+pub(super) fn model_full(
+    name: &str,
+    task_size: ModelTaskSize,
+    ctx: u64,
+    max_output: u64,
+    temperature: f64,
+) -> ProviderModelConfig {
+    ProviderModelConfig {
+        name: name.to_string(),
+        task_size,
+        context_window_tokens: Some(ctx),
+        max_output_tokens: Some(max_output),
+        recommended_temperature: Some(temperature),
+        supports_thinking: None,
         tool_prompt_manifest: None,
     }
 }

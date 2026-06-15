@@ -9,62 +9,98 @@
     {
       "name": "big-pickle",
       "task_size": "large",
-      "context_window_tokens": 256000
+      "context_window_tokens": 256000,
+      "max_output_tokens": 16384,
+      "recommended_temperature": 1.0,
+      "supports_thinking": true
     },
     {
       "name": "deepseek-v4-flash-free",
       "task_size": "small",
-      "context_window_tokens": 1000000
+      "context_window_tokens": 1000000,
+      "max_output_tokens": 16384,
+      "recommended_temperature": 1.0,
+      "supports_thinking": true
     },
     {
       "name": "nemotron-3-super-free",
       "task_size": "small",
-      "context_window_tokens": 128000
+      "context_window_tokens": 128000,
+      "max_output_tokens": 8192,
+      "recommended_temperature": 1.0,
+      "supports_thinking": true
     },
     {
       "name": "qwen3.6-plus",
       "task_size": "large",
-      "context_window_tokens": 128000
+      "context_window_tokens": 128000,
+      "max_output_tokens": 16384,
+      "recommended_temperature": 1.0,
+      "supports_thinking": true
     },
     {
       "name": "qwen3.5-plus",
       "task_size": "large",
-      "context_window_tokens": 128000
+      "context_window_tokens": 128000,
+      "max_output_tokens": 16384,
+      "recommended_temperature": 1.0,
+      "supports_thinking": true
     },
     {
       "name": "kimi-k2.6",
       "task_size": "large",
-      "context_window_tokens": 262144
+      "context_window_tokens": 262144,
+      "max_output_tokens": 16384,
+      "recommended_temperature": 1.0,
+      "supports_thinking": true
     },
     {
       "name": "kimi-k2.5",
       "task_size": "large",
-      "context_window_tokens": 262144
+      "context_window_tokens": 262144,
+      "max_output_tokens": 16384,
+      "recommended_temperature": 1.0,
+      "supports_thinking": true
     },
     {
       "name": "glm-5.1",
       "task_size": "large",
-      "context_window_tokens": 200000
+      "context_window_tokens": 200000,
+      "max_output_tokens": 16384,
+      "recommended_temperature": 1.0,
+      "supports_thinking": true
     },
     {
       "name": "glm-5",
       "task_size": "large",
-      "context_window_tokens": 200000
+      "context_window_tokens": 200000,
+      "max_output_tokens": 16384,
+      "recommended_temperature": 1.0,
+      "supports_thinking": true
     },
     {
       "name": "minimax-m2.7",
       "task_size": "small",
-      "context_window_tokens": 204800
+      "context_window_tokens": 204800,
+      "max_output_tokens": 8192,
+      "recommended_temperature": 1.0,
+      "supports_thinking": true
     },
     {
       "name": "minimax-m2.5",
       "task_size": "small",
-      "context_window_tokens": 204800
+      "context_window_tokens": 204800,
+      "max_output_tokens": 8192,
+      "recommended_temperature": 1.0,
+      "supports_thinking": true
     },
     {
       "name": "grok-build-0.1",
       "task_size": "small",
-      "context_window_tokens": 256000
+      "context_window_tokens": 256000,
+      "max_output_tokens": 8192,
+      "recommended_temperature": 1.0,
+      "supports_thinking": false
     }
   ]
 }

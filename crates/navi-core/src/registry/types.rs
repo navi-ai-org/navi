@@ -10,6 +10,15 @@ pub struct RegistryModel {
     pub name: String,
     pub task_size: String,
     pub context_window_tokens: Option<u64>,
+    /// Maximum tokens the model can generate in a single response.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_output_tokens: Option<u64>,
+    /// Recommended temperature for the model (0.0–2.0).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recommended_temperature: Option<f64>,
+    /// Whether the model supports extended thinking / reasoning mode.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub supports_thinking: Option<bool>,
 }
 
 /// A full provider entry as stored in `registry/providers/<id>.json`.

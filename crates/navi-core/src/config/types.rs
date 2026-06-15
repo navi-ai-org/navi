@@ -344,6 +344,15 @@ pub struct ProviderModelConfig {
     /// Context window size in tokens, if known.
     #[serde(default)]
     pub context_window_tokens: Option<u64>,
+    /// Maximum tokens the model can generate in a single response.
+    #[serde(default)]
+    pub max_output_tokens: Option<u64>,
+    /// Recommended temperature for the model (0.0–2.0).
+    #[serde(default)]
+    pub recommended_temperature: Option<f64>,
+    /// Whether the model supports extended thinking / reasoning mode.
+    #[serde(default)]
+    pub supports_thinking: Option<bool>,
     /// Whether to force-include the tool prompt manifest for this model.
     #[serde(default)]
     pub tool_prompt_manifest: Option<bool>,
