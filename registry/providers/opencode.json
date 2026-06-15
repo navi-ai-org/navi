@@ -9,7 +9,7 @@
     {
       "name": "big-pickle",
       "task_size": "large",
-      "context_window_tokens": 256000,
+      "context_window_tokens": 200000,
       "max_output_tokens": 16384,
       "recommended_temperature": 1.0,
       "supports_thinking": true
@@ -25,7 +25,7 @@
     {
       "name": "nemotron-3-super-free",
       "task_size": "small",
-      "context_window_tokens": 128000,
+      "context_window_tokens": 1000000,
       "max_output_tokens": 8192,
       "recommended_temperature": 1.0,
       "supports_thinking": true
@@ -33,7 +33,7 @@
     {
       "name": "qwen3.6-plus",
       "task_size": "large",
-      "context_window_tokens": 128000,
+      "context_window_tokens": 1000000,
       "max_output_tokens": 16384,
       "recommended_temperature": 1.0,
       "supports_thinking": true
@@ -41,7 +41,7 @@
     {
       "name": "qwen3.5-plus",
       "task_size": "large",
-      "context_window_tokens": 128000,
+      "context_window_tokens": 1000000,
       "max_output_tokens": 16384,
       "recommended_temperature": 1.0,
       "supports_thinking": true

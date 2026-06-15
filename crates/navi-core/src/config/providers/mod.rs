@@ -30,6 +30,13 @@ pub fn set_registry_store(store: Arc<RegistryStore>) {
 /// user-configured overrides. Falls back to built-in providers if the
 /// registry cache is empty or unavailable.
 pub fn provider_catalog(config: &NaviConfig) -> Vec<ProviderConfig> {
+    let mut providers = base_provider_catalog();
+    merge_provider_configs(&mut providers, config.providers.clone());
+    apply_default_request_options(&mut providers);
+    providers
+}
+
+fn base_provider_catalog() -> Vec<ProviderConfig> {
     // Try loading from the SQLite registry cache first.
     let registry_providers = REGISTRY_STORE.with(|cell| {
         cell.borrow()
@@ -50,10 +57,7 @@ pub fn provider_catalog(config: &NaviConfig) -> Vec<ProviderConfig> {
             })
     });
 
-    let mut providers = registry_providers.unwrap_or_else(registry::built_in_providers);
-    merge_provider_configs(&mut providers, config.providers.clone());
-    apply_default_request_options(&mut providers);
-    providers
+    registry_providers.unwrap_or_else(registry::built_in_providers)
 }
 
 /// Maps provider aliases to their canonical form (e.g. `"opencode-zen"` to `"opencode"`).
@@ -142,46 +146,34 @@ impl NaviConfig {
 
         let provider_id = canonical_provider_id(provider_id).to_string();
 
-        // Look up existing metadata from the catalog (which now comes from SQLite
-        // registry cache when available, falling back to built-in).
-        if let Some(built_in) = provider_catalog(self)
-            .into_iter()
-            .find(|p| canonical_provider_id(&p.id) == provider_id)
-        {
-            for m in built_in.models {
-                existing_models.insert(
-                    m.name.clone(),
-                    (m.task_size, m.context_window_tokens, m.tool_prompt_manifest),
-                );
-            }
-        }
-
-        // Also check user overrides.
+        // Start with user overrides as a fallback for custom models.
         if let Some(existing_override) = self
             .providers
             .iter()
             .find(|p| canonical_provider_id(&p.id) == provider_id)
         {
             for m in &existing_override.models {
-                existing_models.insert(
-                    m.name.clone(),
-                    (m.task_size, m.context_window_tokens, m.tool_prompt_manifest),
-                );
+                existing_models.insert(m.name.clone(), m.clone());
+            }
+        }
+
+        // Registry metadata is authoritative for models it knows about. This
+        // lets `sync models` refresh stale context windows saved in config.
+        if let Some(registry_provider) = base_provider_catalog()
+            .into_iter()
+            .find(|p| canonical_provider_id(&p.id) == provider_id)
+        {
+            for m in registry_provider.models {
+                existing_models.insert(m.name.clone(), m);
             }
         }
 
         let mut new_models = Vec::new();
         for name in model_names {
-            if let Some(&(size, ctx, tool_prompt_manifest)) = existing_models.get(name) {
-                new_models.push(ProviderModelConfig {
-                    name: name.clone(),
-                    task_size: size,
-                    context_window_tokens: ctx,
-                    max_output_tokens: None,
-                    recommended_temperature: None,
-                    supports_thinking: None,
-                    tool_prompt_manifest,
-                });
+            if let Some(model) = existing_models.get(name) {
+                let mut model = model.clone();
+                model.name = name.clone();
+                new_models.push(model);
             } else {
                 new_models.push(ProviderModelConfig {
                     name: name.clone(),
@@ -236,12 +228,11 @@ pub(crate) fn merge_provider_configs(
             // Merge models by name: preserve registry metadata (context_window_tokens,
             // max_output_tokens, recommended_temperature, supports_thinking,
             // tool_prompt_manifest) when the user override doesn't specify them.
-            let existing_models: std::collections::HashMap<String, ProviderModelConfig> =
-                existing
-                    .models
-                    .drain(..)
-                    .map(|m| (m.name.clone(), m))
-                    .collect();
+            let existing_models: std::collections::HashMap<String, ProviderModelConfig> = existing
+                .models
+                .drain(..)
+                .map(|m| (m.name.clone(), m))
+                .collect();
 
             let mut merged_models = Vec::new();
             for override_model in override_config.models {
@@ -329,5 +320,37 @@ fn apply_default_request_options(providers: &mut [ProviderConfig]) {
         if let Some(defaults) = default_request_options_for(canonical_provider_id(&provider.id)) {
             provider.request_options = Some(defaults);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::config::types::{ModelTaskSize, NaviConfig, ProviderConfig, ProviderModelConfig};
+
+    #[test]
+    fn update_provider_models_prefers_registry_metadata_over_stale_override() {
+        let mut config = NaviConfig::default();
+        config.providers.push(ProviderConfig {
+            id: "opencode".to_string(),
+            models: vec![ProviderModelConfig {
+                name: "deepseek-v4-flash-free".to_string(),
+                task_size: ModelTaskSize::Small,
+                context_window_tokens: Some(128_000),
+                max_output_tokens: None,
+                recommended_temperature: None,
+                supports_thinking: None,
+                tool_prompt_manifest: None,
+            }],
+            ..Default::default()
+        });
+
+        config.update_provider_models("opencode", &["deepseek-v4-flash-free".to_string()]);
+
+        let provider = config
+            .providers
+            .iter()
+            .find(|provider| provider.id == "opencode")
+            .expect("opencode override");
+        assert_eq!(provider.models[0].context_window_tokens, Some(1_000_000));
     }
 }
