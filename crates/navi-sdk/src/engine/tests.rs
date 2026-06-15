@@ -54,6 +54,12 @@ fn test_config() -> NaviConfig {
 
             context_window_tokens: Some(8192),
 
+            max_output_tokens: None,
+
+            recommended_temperature: None,
+
+            supports_thinking: None,
+
             tool_prompt_manifest: None,
         }],
 

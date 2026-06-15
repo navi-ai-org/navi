@@ -1,7 +1,7 @@
 {
   "id": "mistral",
-  "label": "Mistral",
-  "description": "Mistral AI API",
+  "label": "Mistral AI",
+  "description": "Mistral AI's model family spanning large, medium, small, and specialized coding models",
   "kind": "openai-chat-completions",
   "api_key_env": "MISTRAL_API_KEY",
   "base_url": "https://api.mistral.ai/v1",
@@ -9,137 +9,218 @@
     {
       "name": "mistral-large-latest",
       "task_size": "large",
-      "context_window_tokens": 128000
+      "context_window_tokens": 128000,
+      "max_output_tokens": 32768,
+      "recommended_temperature": 0.7,
+      "supports_thinking": false
     },
     {
       "name": "mistral-large-2411",
       "task_size": "large",
-      "context_window_tokens": 128000
+      "context_window_tokens": 128000,
+      "max_output_tokens": 32768,
+      "recommended_temperature": 0.7,
+      "supports_thinking": false
     },
     {
       "name": "mistral-large-2407",
       "task_size": "large",
-      "context_window_tokens": 128000
+      "context_window_tokens": 128000,
+      "max_output_tokens": 32768,
+      "recommended_temperature": 0.7,
+      "supports_thinking": false
     },
     {
       "name": "mistral-medium-latest",
       "task_size": "large",
-      "context_window_tokens": 64000
+      "context_window_tokens": 128000,
+      "max_output_tokens": 32768,
+      "recommended_temperature": 0.7,
+      "supports_thinking": false
     },
     {
       "name": "mistral-medium-2508",
       "task_size": "large",
-      "context_window_tokens": 64000
+      "context_window_tokens": 262144,
+      "max_output_tokens": 32768,
+      "recommended_temperature": 0.7,
+      "supports_thinking": true
     },
     {
       "name": "mistral-small-latest",
       "task_size": "small",
-      "context_window_tokens": 32000
+      "context_window_tokens": 256000,
+      "max_output_tokens": 32768,
+      "recommended_temperature": 0.7,
+      "supports_thinking": true
     },
     {
       "name": "mistral-small-2506",
       "task_size": "small",
-      "context_window_tokens": 32000
+      "context_window_tokens": 256000,
+      "max_output_tokens": 32768,
+      "recommended_temperature": 0.7,
+      "supports_thinking": true
     },
     {
       "name": "mistral-small-2503",
       "task_size": "small",
-      "context_window_tokens": 32000
+      "context_window_tokens": 128000,
+      "max_output_tokens": 32768,
+      "recommended_temperature": 0.7,
+      "supports_thinking": true
     },
     {
       "name": "codestral-latest",
-      "task_size": "large",
-      "context_window_tokens": 128000
+      "task_size": "small",
+      "context_window_tokens": 256000,
+      "max_output_tokens": 32768,
+      "recommended_temperature": 0.0,
+      "supports_thinking": false
     },
     {
       "name": "codestral-2508",
-      "task_size": "large",
-      "context_window_tokens": 128000
+      "task_size": "small",
+      "context_window_tokens": 128000,
+      "max_output_tokens": 32768,
+      "recommended_temperature": 0.0,
+      "supports_thinking": false
     },
     {
       "name": "codestral-2501",
-      "task_size": "large",
-      "context_window_tokens": 128000
+      "task_size": "small",
+      "context_window_tokens": 256000,
+      "max_output_tokens": 32768,
+      "recommended_temperature": 0.0,
+      "supports_thinking": false
     },
     {
       "name": "codestral-2405",
-      "task_size": "large",
-      "context_window_tokens": 32768
+      "task_size": "small",
+      "context_window_tokens": 32000,
+      "max_output_tokens": 32768,
+      "recommended_temperature": 0.0,
+      "supports_thinking": false
     },
     {
       "name": "devstral-medium-latest",
       "task_size": "large",
-      "context_window_tokens": 256000
+      "context_window_tokens": 256000,
+      "max_output_tokens": 32768,
+      "recommended_temperature": 0.3,
+      "supports_thinking": false
     },
     {
       "name": "devstral-medium-2507",
       "task_size": "large",
-      "context_window_tokens": 256000
+      "context_window_tokens": 256000,
+      "max_output_tokens": 32768,
+      "recommended_temperature": 0.3,
+      "supports_thinking": false
     },
     {
       "name": "devstral-small-latest",
       "task_size": "small",
-      "context_window_tokens": 32000
+      "context_window_tokens": 256000,
+      "max_output_tokens": 32768,
+      "recommended_temperature": 0.3,
+      "supports_thinking": false
     },
     {
       "name": "devstral-small-2507",
       "task_size": "small",
-      "context_window_tokens": 32000
+      "context_window_tokens": 256000,
+      "max_output_tokens": 32768,
+      "recommended_temperature": 0.3,
+      "supports_thinking": false
     },
     {
       "name": "devstral-small-2505",
       "task_size": "small",
-      "context_window_tokens": 32000
+      "context_window_tokens": 256000,
+      "max_output_tokens": 32768,
+      "recommended_temperature": 0.3,
+      "supports_thinking": false
     },
     {
       "name": "magistral-medium-latest",
       "task_size": "large",
-      "context_window_tokens": 128000
+      "context_window_tokens": 128000,
+      "max_output_tokens": 32768,
+      "recommended_temperature": 0.7,
+      "supports_thinking": true
     },
     {
       "name": "magistral-small-latest",
       "task_size": "small",
-      "context_window_tokens": 32000
+      "context_window_tokens": 128000,
+      "max_output_tokens": 32768,
+      "recommended_temperature": 0.7,
+      "supports_thinking": true
     },
     {
       "name": "pixtral-large-latest",
       "task_size": "large",
-      "context_window_tokens": 128000
+      "context_window_tokens": 128000,
+      "max_output_tokens": 32768,
+      "recommended_temperature": 0.7,
+      "supports_thinking": false
     },
     {
       "name": "pixtral-12b-2409",
       "task_size": "small",
-      "context_window_tokens": 128000
+      "context_window_tokens": 128000,
+      "max_output_tokens": 32768,
+      "recommended_temperature": 0.7,
+      "supports_thinking": false
     },
     {
       "name": "open-mistral-nemo",
       "task_size": "small",
-      "context_window_tokens": 128000
+      "context_window_tokens": 128000,
+      "max_output_tokens": 32768,
+      "recommended_temperature": 0.7,
+      "supports_thinking": false
     },
     {
       "name": "open-mixtral-8x22b",
       "task_size": "large",
-      "context_window_tokens": 64000
+      "context_window_tokens": 65536,
+      "max_output_tokens": 32768,
+      "recommended_temperature": 0.7,
+      "supports_thinking": false
     },
     {
       "name": "open-mixtral-8x7b",
       "task_size": "small",
-      "context_window_tokens": 32000
+      "context_window_tokens": 32768,
+      "max_output_tokens": 32768,
+      "recommended_temperature": 0.7,
+      "supports_thinking": false
     },
     {
       "name": "open-mistral-7b",
       "task_size": "small",
-      "context_window_tokens": 32000
+      "context_window_tokens": 32768,
+      "max_output_tokens": 32768,
+      "recommended_temperature": 0.7,
+      "supports_thinking": false
     },
     {
       "name": "ministral-8b-latest",
       "task_size": "small",
-      "context_window_tokens": 32000
+      "context_window_tokens": 128000,
+      "max_output_tokens": 32768,
+      "recommended_temperature": 0.7,
+      "supports_thinking": false
     },
     {
       "name": "ministral-3b-latest",
       "task_size": "small",
-      "context_window_tokens": 32000
+      "context_window_tokens": 128000,
+      "max_output_tokens": 32768,
+      "recommended_temperature": 0.7,
+      "supports_thinking": false
     }
   ]
 }

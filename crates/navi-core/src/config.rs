@@ -225,6 +225,9 @@ timeout_ms = 1000
                 name: "compat-model".to_string(),
                 task_size: ModelTaskSize::Small,
                 context_window_tokens: None,
+                max_output_tokens: None,
+                recommended_temperature: None,
+                supports_thinking: None,
                 tool_prompt_manifest: Some(true),
             }],
             ..Default::default()
@@ -246,6 +249,9 @@ timeout_ms = 1000
                 name: "Custom Model".to_string(),
                 task_size: ModelTaskSize::Large,
                 context_window_tokens: None,
+                max_output_tokens: None,
+                recommended_temperature: None,
+                supports_thinking: None,
                 tool_prompt_manifest: None,
             }],
             ..Default::default()
@@ -315,6 +321,9 @@ timeout_ms = 1000
                 name: "gpt-5".to_string(),
                 task_size: ModelTaskSize::Large,
                 context_window_tokens: None,
+                max_output_tokens: None,
+                recommended_temperature: None,
+                supports_thinking: None,
                 tool_prompt_manifest: None,
             }],
             ..Default::default()
@@ -350,6 +359,9 @@ timeout_ms = 1000
                 name: "gpt-5".to_string(),
                 task_size: ModelTaskSize::Large,
                 context_window_tokens: None,
+                max_output_tokens: None,
+                recommended_temperature: None,
+                supports_thinking: None,
                 tool_prompt_manifest: None,
             }],
             request_options: Some(ProviderRequestOptions::default()), // explicit opt-out
@@ -379,6 +391,9 @@ timeout_ms = 1000
                 name: "some-model".to_string(),
                 task_size: ModelTaskSize::Small,
                 context_window_tokens: None,
+                max_output_tokens: None,
+                recommended_temperature: None,
+                supports_thinking: None,
                 tool_prompt_manifest: None,
             }],
             ..Default::default()

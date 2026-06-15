@@ -75,6 +75,9 @@ fn app_with_missing_provider_key() -> TuiApp {
             name: "test-large".to_string(),
             task_size: navi_sdk::ModelTaskSize::Large,
             context_window_tokens: None,
+            max_output_tokens: None,
+            recommended_temperature: None,
+            supports_thinking: None,
             tool_prompt_manifest: None,
         }],
         ..Default::default()

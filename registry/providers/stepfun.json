@@ -1,7 +1,7 @@
 {
   "id": "stepfun",
   "label": "StepFun",
-  "description": "StepFun AI models",
+  "description": "Chinese AI company developing the Step series of multimodal and reasoning models with OpenAI-compatible API",
   "kind": "openai-chat-completions",
   "api_key_env": "STEP_API_KEY",
   "base_url": "https://api.stepfun.ai/v1",
@@ -9,52 +9,82 @@
     {
       "name": "step-3.5-flash",
       "task_size": "large",
-      "context_window_tokens": 256000
+      "context_window_tokens": 262144,
+      "max_output_tokens": 65536,
+      "recommended_temperature": 1.0,
+      "supports_thinking": true
     },
     {
       "name": "step-3",
       "task_size": "large",
-      "context_window_tokens": 128000
+      "context_window_tokens": 262144,
+      "max_output_tokens": 16384,
+      "recommended_temperature": 1.0,
+      "supports_thinking": false
     },
     {
       "name": "step-2-16k",
       "task_size": "large",
-      "context_window_tokens": 16000
+      "context_window_tokens": 16384,
+      "max_output_tokens": 8192,
+      "recommended_temperature": 0.7,
+      "supports_thinking": false
     },
     {
       "name": "step-2",
       "task_size": "large",
-      "context_window_tokens": 256000
+      "context_window_tokens": 1000000,
+      "max_output_tokens": 8192,
+      "recommended_temperature": 0.7,
+      "supports_thinking": false
     },
     {
       "name": "step-1-256k",
       "task_size": "large",
-      "context_window_tokens": 256000
+      "context_window_tokens": 262144,
+      "max_output_tokens": 8192,
+      "recommended_temperature": 0.7,
+      "supports_thinking": false
     },
     {
       "name": "step-1-128k",
       "task_size": "large",
-      "context_window_tokens": 128000
+      "context_window_tokens": 131072,
+      "max_output_tokens": 8192,
+      "recommended_temperature": 0.7,
+      "supports_thinking": false
     },
     {
       "name": "step-1-32k",
-      "task_size": "small",
-      "context_window_tokens": 32000
+      "task_size": "large",
+      "context_window_tokens": 32768,
+      "max_output_tokens": 32768,
+      "recommended_temperature": 0.7,
+      "supports_thinking": false
     },
     {
       "name": "step-1-8k",
-      "task_size": "small",
-      "context_window_tokens": 8000
+      "task_size": "large",
+      "context_window_tokens": 8192,
+      "max_output_tokens": 8192,
+      "recommended_temperature": 0.7,
+      "supports_thinking": false
     },
     {
       "name": "step-1v",
-      "task_size": "small",
-      "context_window_tokens": 32000
+      "task_size": "large",
+      "context_window_tokens": 131072,
+      "max_output_tokens": 8192,
+      "recommended_temperature": 0.7,
+      "supports_thinking": false
     },
     {
       "name": "step-1",
-      "task_size": "small",
-      "context_window_tokens": 32000
+      "task_size": "large",
+      "context_window_tokens": 131072,
+      "max_output_tokens": 8192,
+      "recommended_temperature": 0.7,
+      "supports_thinking": false
     }
   ]
 }

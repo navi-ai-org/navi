@@ -1,7 +1,7 @@
 {
   "id": "groq",
   "label": "Groq",
-  "description": "Ultra-fast inference",
+  "description": "Ultra-fast LPU inference for open and hosted models",
   "kind": "openai-chat-completions",
   "api_key_env": "GROQ_API_KEY",
   "base_url": "https://api.groq.com/openai/v1",
@@ -9,62 +9,98 @@
     {
       "name": "llama-3.3-70b-versatile",
       "task_size": "large",
-      "context_window_tokens": 128000
+      "context_window_tokens": 131072,
+      "max_output_tokens": 32768,
+      "recommended_temperature": 0.7,
+      "supports_thinking": false
     },
     {
       "name": "llama-3.1-8b-instant",
       "task_size": "small",
-      "context_window_tokens": 32000
+      "context_window_tokens": 131072,
+      "max_output_tokens": 8192,
+      "recommended_temperature": 0.7,
+      "supports_thinking": false
     },
     {
       "name": "openai/gpt-oss-120b",
       "task_size": "large",
-      "context_window_tokens": 128000
+      "context_window_tokens": 131072,
+      "max_output_tokens": 32768,
+      "recommended_temperature": 0.7,
+      "supports_thinking": true
     },
     {
       "name": "openai/gpt-oss-20b",
       "task_size": "small",
-      "context_window_tokens": 128000
+      "context_window_tokens": 131072,
+      "max_output_tokens": 32768,
+      "recommended_temperature": 0.7,
+      "supports_thinking": true
     },
     {
       "name": "qwen/qwen3-32b",
-      "task_size": "small",
-      "context_window_tokens": 131072
+      "task_size": "large",
+      "context_window_tokens": 131072,
+      "max_output_tokens": 16384,
+      "recommended_temperature": 0.6,
+      "supports_thinking": true
     },
     {
       "name": "deepseek-r1-distill-llama-70b",
       "task_size": "large",
-      "context_window_tokens": 128000
+      "context_window_tokens": 131072,
+      "max_output_tokens": 16384,
+      "recommended_temperature": 0.6,
+      "supports_thinking": true
     },
     {
       "name": "moonshotai/kimi-k2-instruct",
       "task_size": "large",
-      "context_window_tokens": 128000
+      "context_window_tokens": 131072,
+      "max_output_tokens": 16384,
+      "recommended_temperature": 0.7,
+      "supports_thinking": false
     },
     {
       "name": "meta-llama/llama-4-maverick-17b-128e-instruct",
       "task_size": "large",
-      "context_window_tokens": 524288
+      "context_window_tokens": 131072,
+      "max_output_tokens": 16384,
+      "recommended_temperature": 0.7,
+      "supports_thinking": false
     },
     {
       "name": "meta-llama/llama-4-scout-17b-16e-instruct",
       "task_size": "small",
-      "context_window_tokens": 1048576
+      "context_window_tokens": 131072,
+      "max_output_tokens": 16384,
+      "recommended_temperature": 0.7,
+      "supports_thinking": false
     },
     {
       "name": "meta-llama/llama-guard-4-12b",
       "task_size": "small",
-      "context_window_tokens": 32000
+      "context_window_tokens": 131072,
+      "max_output_tokens": 4096,
+      "recommended_temperature": 0.0,
+      "supports_thinking": false
     },
     {
       "name": "mistral-saba-24b",
       "task_size": "small",
-      "context_window_tokens": 32000
+      "context_window_tokens": 32768,
+      "max_output_tokens": 32768,
+      "recommended_temperature": 0.7,
+      "supports_thinking": false
     },
     {
       "name": "gemma2-9b-it",
       "task_size": "small",
-      "context_window_tokens": 8192
+      "context_window_tokens": 8192,
+      "max_output_tokens": 8192,
+      "recommended_temperature": 0.7,
+      "supports_thinking": false
     }
   ]
 }

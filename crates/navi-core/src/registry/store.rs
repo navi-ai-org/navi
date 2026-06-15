@@ -73,6 +73,9 @@ impl RegistryStore {
                 name                TEXT NOT NULL,
                 task_size           TEXT NOT NULL,
                 context_window_tokens INTEGER,
+                max_output_tokens   INTEGER,
+                recommended_temperature REAL,
+                supports_thinking   INTEGER,
                 tool_prompt_manifest INTEGER,
                 PRIMARY KEY (provider_id, name),
                 FOREIGN KEY (provider_id) REFERENCES providers(id) ON DELETE CASCADE
@@ -80,6 +83,7 @@ impl RegistryStore {
             ",
         )?;
         ensure_provider_request_options_column(&conn)?;
+        ensure_model_output_columns(&conn)?;
         Ok(())
     }
 
@@ -160,8 +164,8 @@ impl RegistryStore {
 
         {
             let mut stmt = tx.prepare(
-                "INSERT INTO models (provider_id, name, task_size, context_window_tokens, tool_prompt_manifest)
-                 VALUES (?1, ?2, ?3, ?4, NULL)",
+                "INSERT INTO models (provider_id, name, task_size, context_window_tokens, max_output_tokens, recommended_temperature, supports_thinking, tool_prompt_manifest)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, NULL)",
             )?;
 
             for model in &provider.models {
@@ -170,6 +174,9 @@ impl RegistryStore {
                     model.name,
                     model.task_size,
                     model.context_window_tokens.map(|v| v as i64),
+                    model.max_output_tokens.map(|v| v as i64),
+                    model.recommended_temperature,
+                    model.supports_thinking.map(|v| v as i64),
                 ])?;
             }
         }
@@ -209,7 +216,7 @@ impl RegistryStore {
             let request_options = serde_json::from_str(&request_options_json).ok();
 
             let mut model_stmt = conn.prepare(
-                "SELECT name, task_size, context_window_tokens, tool_prompt_manifest
+                "SELECT name, task_size, context_window_tokens, max_output_tokens, recommended_temperature, supports_thinking, tool_prompt_manifest
                  FROM models WHERE provider_id = ?1 ORDER BY rowid",
             )?;
 
@@ -218,7 +225,10 @@ impl RegistryStore {
                     let name: String = row.get(0)?;
                     let task_size_str: String = row.get(1)?;
                     let ctx: Option<i64> = row.get(2)?;
-                    let tpm: Option<i64> = row.get(3)?;
+                    let max_out: Option<i64> = row.get(3)?;
+                    let temp: Option<f64> = row.get(4)?;
+                    let thinking: Option<i64> = row.get(5)?;
+                    let tpm: Option<i64> = row.get(6)?;
 
                     Ok(ProviderModelConfig {
                         name,
@@ -227,6 +237,9 @@ impl RegistryStore {
                             _ => ModelTaskSize::Large,
                         },
                         context_window_tokens: ctx.map(|v| v as u64),
+                        max_output_tokens: max_out.map(|v| v as u64),
+                        recommended_temperature: temp,
+                        supports_thinking: thinking.map(|v| v != 0),
                         tool_prompt_manifest: tpm.map(|v| v != 0),
                     })
                 })?
@@ -316,6 +329,35 @@ fn ensure_provider_request_options_column(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
+fn ensure_model_output_columns(conn: &Connection) -> Result<()> {
+    let mut stmt = conn.prepare("PRAGMA table_info(models)")?;
+    let columns: Vec<String> = stmt
+        .query_map([], |row| row.get::<_, String>(1))?
+        .filter_map(|r| r.ok())
+        .collect();
+
+    if !columns.contains(&"max_output_tokens".to_string()) {
+        conn.execute(
+            "ALTER TABLE models ADD COLUMN max_output_tokens INTEGER",
+            [],
+        )?;
+    }
+    if !columns.contains(&"recommended_temperature".to_string()) {
+        conn.execute(
+            "ALTER TABLE models ADD COLUMN recommended_temperature REAL",
+            [],
+        )?;
+    }
+    if !columns.contains(&"supports_thinking".to_string()) {
+        conn.execute(
+            "ALTER TABLE models ADD COLUMN supports_thinking INTEGER",
+            [],
+        )?;
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use crate::config::types::ProviderRequestOptions;
@@ -337,11 +379,17 @@ mod tests {
                     name: "test-model-large".to_string(),
                     task_size: "large".to_string(),
                     context_window_tokens: Some(200_000),
+                    max_output_tokens: Some(8_192),
+                    recommended_temperature: Some(0.7),
+                    supports_thinking: None,
                 },
                 RegistryModel {
                     name: "test-model-small".to_string(),
                     task_size: "small".to_string(),
                     context_window_tokens: Some(128_000),
+                    max_output_tokens: Some(4_096),
+                    recommended_temperature: Some(0.5),
+                    supports_thinking: None,
                 },
             ],
         }
@@ -368,6 +416,8 @@ mod tests {
         assert_eq!(loaded[0].models.len(), 2);
         assert_eq!(loaded[0].models[0].name, "test-model-large");
         assert_eq!(loaded[0].models[0].context_window_tokens, Some(200_000));
+        assert_eq!(loaded[0].models[0].max_output_tokens, Some(8_192));
+        assert_eq!(loaded[0].models[0].recommended_temperature, Some(0.7));
         assert_eq!(loaded[0].models[0].task_size, ModelTaskSize::Large);
         assert_eq!(loaded[0].models[1].task_size, ModelTaskSize::Small);
         assert_eq!(loaded[0].kind, ProviderKind::OpenAiChatCompletions);
@@ -389,6 +439,9 @@ mod tests {
             name: "new-model".to_string(),
             task_size: "large".to_string(),
             context_window_tokens: Some(500_000),
+            max_output_tokens: Some(16_384),
+            recommended_temperature: Some(0.8),
+            supports_thinking: None,
         }];
         store.upsert_provider(&provider).expect("upsert again");
 
@@ -396,6 +449,8 @@ mod tests {
         let loaded = store.load_all_providers().expect("load");
         assert_eq!(loaded[0].models[0].name, "new-model");
         assert_eq!(loaded[0].models[0].context_window_tokens, Some(500_000));
+        assert_eq!(loaded[0].models[0].max_output_tokens, Some(16_384));
+        assert_eq!(loaded[0].models[0].recommended_temperature, Some(0.8));
     }
 
     #[test]
@@ -451,6 +506,9 @@ mod tests {
                 name: "m".to_string(),
                 task_size: "small".to_string(),
                 context_window_tokens: None,
+                max_output_tokens: None,
+                recommended_temperature: None,
+                supports_thinking: None,
             }],
         };
         store.upsert_provider(&provider).expect("upsert");

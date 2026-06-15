@@ -177,6 +177,9 @@ impl NaviConfig {
                     name: name.clone(),
                     task_size: size,
                     context_window_tokens: ctx,
+                    max_output_tokens: None,
+                    recommended_temperature: None,
+                    supports_thinking: None,
                     tool_prompt_manifest,
                 });
             } else {
@@ -184,6 +187,9 @@ impl NaviConfig {
                     name: name.clone(),
                     task_size: registry::determine_task_size(name),
                     context_window_tokens: None,
+                    max_output_tokens: None,
+                    recommended_temperature: None,
+                    supports_thinking: None,
                     tool_prompt_manifest: None,
                 });
             }

@@ -8,8 +8,7 @@
   "models": [
     {
       "name": "custom-model",
-      "task_size": "large",
-      "context_window_tokens": null
+      "task_size": "large"
     }
   ]
 }
