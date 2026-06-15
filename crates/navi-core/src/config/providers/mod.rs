@@ -233,8 +233,78 @@ pub(crate) fn merge_provider_configs(
         if let Some(existing) = providers.iter_mut().find(|provider| {
             canonical_provider_id(&provider.id) == canonical_provider_id(&override_config.id)
         }) {
-            *existing = override_config;
+            // Merge models by name: preserve registry metadata (context_window_tokens,
+            // max_output_tokens, recommended_temperature, supports_thinking,
+            // tool_prompt_manifest) when the user override doesn't specify them.
+            let existing_models: std::collections::HashMap<String, ProviderModelConfig> =
+                existing
+                    .models
+                    .drain(..)
+                    .map(|m| (m.name.clone(), m))
+                    .collect();
+
+            let mut merged_models = Vec::new();
+            for override_model in override_config.models {
+                if let Some(registry_model) = existing_models.get(&override_model.name) {
+                    merged_models.push(ProviderModelConfig {
+                        name: override_model.name,
+                        task_size: override_model.task_size,
+                        context_window_tokens: override_model
+                            .context_window_tokens
+                            .or(registry_model.context_window_tokens),
+                        max_output_tokens: override_model
+                            .max_output_tokens
+                            .or(registry_model.max_output_tokens),
+                        recommended_temperature: override_model
+                            .recommended_temperature
+                            .or(registry_model.recommended_temperature),
+                        supports_thinking: override_model
+                            .supports_thinking
+                            .or(registry_model.supports_thinking),
+                        tool_prompt_manifest: override_model
+                            .tool_prompt_manifest
+                            .or(registry_model.tool_prompt_manifest),
+                    });
+                } else {
+                    merged_models.push(override_model);
+                }
+            }
+
+            // Override provider-level fields, keep merged models.
             existing.id = canonical_provider_id(&existing.id).to_string();
+            existing.label = override_config.label;
+            existing.description = override_config.description;
+            existing.kind = override_config.kind;
+            existing.api_key_env = override_config.api_key_env;
+            if override_config.base_url.is_some() {
+                existing.base_url = override_config.base_url;
+            }
+            existing.models = merged_models;
+            if override_config.request_options.is_some() {
+                existing.request_options = override_config.request_options;
+            }
+            if override_config.request_timeout_ms.is_some() {
+                existing.request_timeout_ms = override_config.request_timeout_ms;
+            }
+            if override_config.request_max_retries.is_some() {
+                existing.request_max_retries = override_config.request_max_retries;
+            }
+            if override_config.stream_idle_timeout_ms.is_some() {
+                existing.stream_idle_timeout_ms = override_config.stream_idle_timeout_ms;
+            }
+            if override_config.stream_max_retries.is_some() {
+                existing.stream_max_retries = override_config.stream_max_retries;
+            }
+            if override_config.websocket_connect_timeout_ms.is_some() {
+                existing.websocket_connect_timeout_ms =
+                    override_config.websocket_connect_timeout_ms;
+            }
+            if override_config.retry_429.is_some() {
+                existing.retry_429 = override_config.retry_429;
+            }
+            if override_config.tool_prompt_manifest.is_some() {
+                existing.tool_prompt_manifest = override_config.tool_prompt_manifest;
+            }
         } else {
             providers.push(override_config);
         }
