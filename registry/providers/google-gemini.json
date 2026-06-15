@@ -1,65 +1,115 @@
 {
   "id": "google-gemini",
   "label": "Google Gemini",
-  "description": "Gemini API key",
+  "description": "Google Gemini models via the Generate Content API",
   "kind": "gemini-generate-content",
   "api_key_env": "GEMINI_API_KEY",
   "base_url": "https://generativelanguage.googleapis.com/v1beta/openai/",
+  "request_options": {},
   "models": [
     {
       "name": "gemini-2.5-pro",
       "task_size": "large",
-      "context_window_tokens": 1000000
+      "context_window_tokens": 1048576,
+      "max_output_tokens": 65536,
+      "recommended_temperature": 1.0,
+      "supports_thinking": true
+    },
+    {
+      "name": "gemini-2.5-pro-preview-06-05",
+      "task_size": "large",
+      "context_window_tokens": 1048576,
+      "max_output_tokens": 65536,
+      "recommended_temperature": 1.0,
+      "supports_thinking": true
     },
     {
       "name": "gemini-2.5-flash",
       "task_size": "small",
-      "context_window_tokens": 1000000
+      "context_window_tokens": 1048576,
+      "max_output_tokens": 65536,
+      "recommended_temperature": 1.0,
+      "supports_thinking": true
+    },
+    {
+      "name": "gemini-2.5-flash-preview-05-20",
+      "task_size": "small",
+      "context_window_tokens": 1048576,
+      "max_output_tokens": 65536,
+      "recommended_temperature": 1.0,
+      "supports_thinking": true
     },
     {
       "name": "gemini-2.5-flash-lite",
       "task_size": "small",
-      "context_window_tokens": 1000000
+      "context_window_tokens": 1048576,
+      "max_output_tokens": 65536,
+      "recommended_temperature": 1.0,
+      "supports_thinking": true
     },
     {
       "name": "gemini-2.0-flash",
       "task_size": "small",
-      "context_window_tokens": 1000000
+      "context_window_tokens": 1048576,
+      "max_output_tokens": 8192,
+      "recommended_temperature": 1.0,
+      "supports_thinking": false
     },
     {
       "name": "gemini-2.0-flash-001",
       "task_size": "small",
-      "context_window_tokens": 1000000
+      "context_window_tokens": 1048576,
+      "max_output_tokens": 8192,
+      "recommended_temperature": 1.0,
+      "supports_thinking": false
     },
     {
       "name": "gemini-2.0-flash-lite",
       "task_size": "small",
-      "context_window_tokens": 1000000
+      "context_window_tokens": 1048576,
+      "max_output_tokens": 8192,
+      "recommended_temperature": 1.0,
+      "supports_thinking": false
     },
     {
       "name": "gemini-1.5-pro",
       "task_size": "large",
-      "context_window_tokens": 2000000
+      "context_window_tokens": 1048576,
+      "max_output_tokens": 8192,
+      "recommended_temperature": 1.0,
+      "supports_thinking": false
     },
     {
       "name": "gemini-1.5-pro-002",
       "task_size": "large",
-      "context_window_tokens": 2000000
+      "context_window_tokens": 1048576,
+      "max_output_tokens": 8192,
+      "recommended_temperature": 1.0,
+      "supports_thinking": false
     },
     {
       "name": "gemini-1.5-flash",
       "task_size": "small",
-      "context_window_tokens": 1000000
+      "context_window_tokens": 1048576,
+      "max_output_tokens": 8192,
+      "recommended_temperature": 1.0,
+      "supports_thinking": false
     },
     {
       "name": "gemini-1.5-flash-002",
       "task_size": "small",
-      "context_window_tokens": 1000000
+      "context_window_tokens": 1048576,
+      "max_output_tokens": 8192,
+      "recommended_temperature": 1.0,
+      "supports_thinking": false
     },
     {
       "name": "gemini-1.5-flash-8b",
       "task_size": "small",
-      "context_window_tokens": 1000000
+      "context_window_tokens": 1048576,
+      "max_output_tokens": 8192,
+      "recommended_temperature": 1.0,
+      "supports_thinking": false
     }
   ]
 }

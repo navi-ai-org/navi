@@ -1,35 +1,55 @@
 {
   "id": "xiaomi",
-  "label": "MiMo",
-  "description": "MiMo models via Tokens Plan",
+  "label": "Xiaomi MiMo",
+  "description": "Xiaomi's MiMo series of agentic reasoning and multimodal models with Anthropic-compatible API",
   "kind": "anthropic-messages",
   "api_key_env": "XIAOMI_API_KEY",
   "base_url": "https://token-plan-sgp.xiaomimimo.com/anthropic",
+  "request_options": {
+    "anthropic_cache_control": {
+      "type": "ephemeral"
+    }
+  },
   "models": [
     {
       "name": "mimo-v2.5-pro",
       "task_size": "large",
-      "context_window_tokens": 1048576
+      "context_window_tokens": 1048576,
+      "max_output_tokens": 131072,
+      "recommended_temperature": 1.0,
+      "supports_thinking": true
     },
     {
       "name": "mimo-v2.5",
-      "task_size": "small",
-      "context_window_tokens": 1048576
+      "task_size": "large",
+      "context_window_tokens": 1048576,
+      "max_output_tokens": 131072,
+      "recommended_temperature": 1.0,
+      "supports_thinking": false
     },
     {
       "name": "mimo-v2-pro",
       "task_size": "large",
-      "context_window_tokens": 1048576
+      "context_window_tokens": 1048576,
+      "max_output_tokens": 131072,
+      "recommended_temperature": 1.0,
+      "supports_thinking": true
     },
     {
       "name": "mimo-v2-omni",
-      "task_size": "small",
-      "context_window_tokens": 262144
+      "task_size": "large",
+      "context_window_tokens": 262144,
+      "max_output_tokens": 131072,
+      "recommended_temperature": 1.0,
+      "supports_thinking": false
     },
     {
       "name": "mimo-v2-flash",
       "task_size": "small",
-      "context_window_tokens": 262144
+      "context_window_tokens": 262144,
+      "max_output_tokens": 16384,
+      "recommended_temperature": 0.7,
+      "supports_thinking": true
     }
   ]
 }
