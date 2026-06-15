@@ -1,6 +1,7 @@
 //! HTTP fetcher for the remote registry files hosted in the NAVI repo.
 
 use anyhow::{Context, Result};
+use std::path::Path;
 
 use super::types::{RegistryManifest, RegistryProvider};
 
@@ -102,6 +103,53 @@ impl Default for RegistryFetcher {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// Loads all providers from a local registry directory.
+///
+/// The directory must contain `manifest.json` and the provider files referenced
+/// by that manifest, matching the repository `registry/` layout.
+pub fn load_local_registry(
+    registry_dir: &Path,
+) -> Result<(RegistryManifest, Vec<RegistryProvider>)> {
+    let manifest_path = registry_dir.join("manifest.json");
+    let manifest_text = std::fs::read_to_string(&manifest_path)
+        .with_context(|| format!("failed to read {}", manifest_path.display()))?;
+    let manifest = serde_json::from_str::<RegistryManifest>(&manifest_text)
+        .with_context(|| format!("failed to parse {}", manifest_path.display()))?;
+
+    let mut providers = Vec::new();
+    for (provider_id, entry) in &manifest.providers {
+        let provider_path = registry_dir.join(&entry.file);
+        let provider_text = std::fs::read_to_string(&provider_path)
+            .with_context(|| format!("failed to read {}", provider_path.display()))?;
+        let provider = serde_json::from_str::<RegistryProvider>(&provider_text)
+            .with_context(|| format!("failed to parse provider '{provider_id}' JSON"))?;
+        providers.push(provider);
+    }
+
+    Ok((manifest, providers))
+}
+
+/// Syncs a local `registry/` directory into the SQLite store.
+pub fn sync_local_registry(
+    store: &super::store::RegistryStore,
+    registry_dir: &Path,
+) -> Result<bool> {
+    let (manifest, providers) = load_local_registry(registry_dir)?;
+
+    store.replace_all(&providers)?;
+    store.save_manifest_meta(&manifest)?;
+
+    tracing::info!(
+        version = manifest.version,
+        providers = providers.len(),
+        models = providers.iter().map(|p| p.models.len()).sum::<usize>(),
+        path = %registry_dir.display(),
+        "registry cache updated from local directory"
+    );
+
+    Ok(true)
 }
 
 /// Syncs the remote registry into the local SQLite store.
@@ -235,5 +283,52 @@ mod tests {
     fn parse_iso_timestamp_old() {
         let diff = parse_iso_timestamp("2020-01-01T00:00:00Z").expect("parse");
         assert!(diff.hours_ago > 1000);
+    }
+
+    #[test]
+    fn load_local_registry_reads_manifest_and_providers() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let registry_dir = tempdir.path();
+        std::fs::create_dir(registry_dir.join("providers")).expect("providers dir");
+        std::fs::write(
+            registry_dir.join("manifest.json"),
+            r#"{
+              "version": 1,
+              "updated_at": "2026-01-01T00:00:00Z",
+              "providers": {
+                "local": {
+                  "file": "providers/local.json",
+                  "sha256": "",
+                  "model_count": 1
+                }
+              }
+            }"#,
+        )
+        .expect("manifest");
+        std::fs::write(
+            registry_dir.join("providers/local.json"),
+            r#"{
+              "id": "local",
+              "label": "Local",
+              "kind": "openai-chat-completions",
+              "api_key_env": "LOCAL_API_KEY",
+              "base_url": null,
+              "models": [
+                {
+                  "name": "local-model",
+                  "task_size": "large",
+                  "context_window_tokens": 123456
+                }
+              ]
+            }"#,
+        )
+        .expect("provider");
+
+        let (manifest, providers) = load_local_registry(registry_dir).expect("load");
+
+        assert_eq!(manifest.version, 1);
+        assert_eq!(providers.len(), 1);
+        assert_eq!(providers[0].id, "local");
+        assert_eq!(providers[0].models[0].context_window_tokens, Some(123_456));
     }
 }
