@@ -402,16 +402,24 @@ impl NaviEngine {
         Ok(session.events.resubscribe())
     }
 
-    /// Syncs the remote provider registry into the local SQLite cache.
+    /// Syncs the provider registry into the local SQLite cache.
     ///
-    /// Fetches the manifest and all provider definitions from the NAVI repo
-    /// on GitHub. Returns  if the cache was updated.
+    /// Prefers a project-local `registry/` directory when present, otherwise
+    /// fetches the manifest and provider definitions from GitHub. Returns
+    /// `true` if the cache was updated.
     pub async fn sync_registry(&self, force: bool) -> Result<bool> {
         let store = self
             .inner
             .registry_store
             .as_ref()
             .ok_or_else(|| NaviError::Config("registry store is not available".into()))?;
+
+        let local_registry = self.inner.project_dir.join("registry");
+        if local_registry.join("manifest.json").is_file() {
+            return navi_core::registry::sync_local_registry(store, &local_registry)
+                .map_err(|e| NaviError::Config(e.to_string()));
+        }
+
         let fetcher = navi_core::registry::RegistryFetcher::new();
         navi_core::registry::sync_registry(store, &fetcher, force)
             .await
@@ -622,6 +630,10 @@ impl NaviEngine {
         provider_id: Option<String>,
         save_target: NaviConfigSaveTarget,
     ) -> Result<NaviProviderSyncReport> {
+        if let Err(err) = self.sync_registry(false).await {
+            tracing::warn!(error = %err, "registry sync failed before model sync");
+        }
+
         let mut loaded_config = self.loaded_config();
         let credential_store = CredentialStore::new(loaded_config.data_dir.clone());
         let providers = provider_catalog(&loaded_config.config);

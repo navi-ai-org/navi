@@ -12,5 +12,5 @@ mod fetcher;
 mod store;
 pub mod types;
 
-pub use fetcher::{RegistryFetcher, sync_registry};
+pub use fetcher::{RegistryFetcher, sync_local_registry, sync_registry};
 pub use store::RegistryStore;
