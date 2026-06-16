@@ -6,7 +6,8 @@ use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::sync::Arc;
 
-mod builtin;
+pub mod background;
+pub(crate) mod builtin;
 #[cfg(test)]
 mod tests;
 
@@ -15,6 +16,8 @@ use builtin::{
     PackageManagerTool, PlanTool, QuestionTool, ReadFileTool, RuntimeInfoTool, TestRunnerTool,
     ToolWorkflowTool, TopFilesTool, WriteFileTool, truncate_tool_result,
 };
+
+pub use builtin::SubagentTool;
 
 /// Trait for executable tools that can be invoked by the agent.
 ///
@@ -350,6 +353,63 @@ impl ToolExecutor {
             "tool invocation finished"
         );
         result
+    }
+
+    /// Lists all active background bash commands by invoking the `bash` tool
+    /// with `action=list`. Returns parsed snapshots.
+    pub async fn list_background_commands(&self) -> Vec<background::BackgroundCommandSnapshot> {
+        let invocation = ToolInvocation {
+            id: "bg-list".to_string(),
+            tool_name: "bash".to_string(),
+            input: json!({ "action": "list" }),
+        };
+        let result = self.invoke(invocation).await;
+        if !result.ok {
+            return Vec::new();
+        }
+        let Some(tasks) = result.output.get("tasks").and_then(|v| v.as_array()) else {
+            return Vec::new();
+        };
+        tasks
+            .iter()
+            .filter_map(background::BackgroundCommandSnapshot::from_json)
+            .collect()
+    }
+
+    /// Polls a specific background bash command by invoking the `bash` tool
+    /// with `task_id`.
+    pub async fn poll_background_command(
+        &self,
+        task_id: &str,
+    ) -> Option<background::BackgroundCommandSnapshot> {
+        let invocation = ToolInvocation {
+            id: "bg-poll".to_string(),
+            tool_name: "bash".to_string(),
+            input: json!({ "task_id": task_id }),
+        };
+        let result = self.invoke(invocation).await;
+        if !result.ok {
+            return None;
+        }
+        background::BackgroundCommandSnapshot::from_json(&result.output)
+    }
+
+    /// Cancels a specific background bash command by invoking the `bash` tool
+    /// with `task_id` and `action=cancel`.
+    pub async fn cancel_background_command(
+        &self,
+        task_id: &str,
+    ) -> Option<background::BackgroundCommandSnapshot> {
+        let invocation = ToolInvocation {
+            id: "bg-cancel".to_string(),
+            tool_name: "bash".to_string(),
+            input: json!({ "task_id": task_id, "action": "cancel" }),
+        };
+        let result = self.invoke(invocation).await;
+        if !result.ok {
+            return None;
+        }
+        background::BackgroundCommandSnapshot::from_json(&result.output)
     }
 
     fn register(&mut self, tool: impl Tool + 'static) {

@@ -12,6 +12,7 @@ pub mod patch;
 pub mod prompt;
 mod provider_id;
 pub mod registry;
+pub mod repetition;
 pub mod runtime;
 pub mod security;
 pub mod session;
@@ -59,4 +60,6 @@ pub use session::{
     session_title_from_events,
 };
 pub use skills::{SkillManifest, active_skills, discover_configured_skills};
+pub use tool::SubagentTool;
+pub use tool::background::{BackgroundCommandSnapshot, BackgroundTaskStatus};
 pub use tool::{Tool, ToolDefinition, ToolExecutor, ToolInvocation, ToolKind, ToolResult};
