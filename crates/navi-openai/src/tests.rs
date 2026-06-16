@@ -375,6 +375,231 @@ fn parses_chat_completions_unclosed_think_tag_as_thinking_until_done() {
 }
 
 #[test]
+fn parses_chat_completions_inline_tool_call_xml_in_text() {
+    let events = parse_chat_completions_sse(
+        r#"{"choices":[{"delta":{"content":"I will <tool_call>{\"name\":\"read_file\",\"arguments\":{\"path\":\"main.rs\"}}</tool_call> read the file"},"finish_reason":null}]}"#,
+    );
+
+    let results: Vec<_> = events.into_iter().map(Result::unwrap).collect();
+    let tool_calls: Vec<_> = results
+        .iter()
+        .filter_map(|e| match e {
+            ModelStreamEvent::ToolCall(inv) => Some(inv),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(tool_calls.len(), 1);
+    assert_eq!(tool_calls[0].tool_name, "read_file");
+    assert_eq!(tool_calls[0].input["path"], "main.rs");
+    let text_deltas: Vec<&str> = results
+        .iter()
+        .filter_map(|e| match e {
+            ModelStreamEvent::TextDelta { text } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect();
+    // In single-chunk processing, text before and after tool call is
+    // concatenated into one TextDelta.
+    let combined: String = text_deltas.iter().copied().collect();
+    assert!(combined.contains("I will"), "combined text: {combined:?}");
+    assert!(
+        combined.contains("read the file"),
+        "combined text: {combined:?}"
+    );
+}
+
+#[test]
+fn parses_chat_completions_tool_call_xml_with_minimal_prefix() {
+    let events = parse_chat_completions_sse(
+        r#"{"choices":[{"delta":{"content":"<|minimal|>[<tool_call>{\"name\":\"bash\",\"args\":{\"command\":\"ls\"}}</tool_call>done"},"finish_reason":null}]}"#,
+    );
+
+    let results: Vec<_> = events.into_iter().map(Result::unwrap).collect();
+    assert!(results.iter().any(|e| matches!(
+        e,
+        ModelStreamEvent::ToolCall(inv)
+        if inv.tool_name == "bash" && inv.input["command"] == "ls"
+    )));
+    assert!(results.iter().any(|e| matches!(
+        e,
+        ModelStreamEvent::TextDelta { text } if text == "done"
+    )));
+}
+
+#[test]
+fn parses_chat_completions_tool_call_xml_array_of_calls() {
+    let events = parse_chat_completions_sse(
+        r#"{"choices":[{"delta":{"content":"<tool_call>[{\"name\":\"read_file\",\"arguments\":{\"path\":\"a.rs\"}},{\"name\":\"grep\",\"args\":\"{\\\"pattern\\\":\\\"fn\\\"}\"}]</tool_call>"},"finish_reason":null}]}"#,
+    );
+
+    let results: Vec<_> = events.into_iter().map(Result::unwrap).collect();
+    let tool_calls: Vec<_> = results
+        .iter()
+        .filter_map(|e| match e {
+            ModelStreamEvent::ToolCall(inv) => Some(inv),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(tool_calls.len(), 2);
+    assert_eq!(tool_calls[0].tool_name, "read_file");
+    assert_eq!(tool_calls[1].tool_name, "grep");
+    assert_eq!(tool_calls[1].input["pattern"], "fn");
+}
+
+#[test]
+fn parses_chat_completions_tool_call_xml_split_across_chunks() {
+    let mut state = ChatToolCallAccumulator::default();
+    let mut events = Vec::new();
+    for data in [
+        r#"{"choices":[{"delta":{"content":"text <tool_ca"},"finish_reason":null}]}"#,
+        r#"{"choices":[{"delta":{"content":"ll>{\"name\":\"bash\",\"args\":{\"command\":\"ls\"}}</tool_call> more"},"finish_reason":null}]}"#,
+    ] {
+        events.extend(
+            parse_chat_completions_sse_with_state(data, &mut state)
+                .into_iter()
+                .map(Result::unwrap),
+        );
+    }
+
+    let tool_calls: Vec<_> = events
+        .iter()
+        .filter_map(|e| match e {
+            ModelStreamEvent::ToolCall(inv) => Some(inv),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(tool_calls.len(), 1);
+    assert_eq!(tool_calls[0].tool_name, "bash");
+    assert_eq!(tool_calls[0].input["command"], "ls");
+    assert!(events.iter().any(|e| matches!(
+        e,
+        ModelStreamEvent::TextDelta { text } if text == "text "
+    )));
+    assert!(events.iter().any(|e| matches!(
+        e,
+        ModelStreamEvent::TextDelta { text } if text == " more"
+    )));
+}
+
+#[test]
+fn parses_chat_completions_tool_call_inside_think_tags() {
+    let mut state = ChatToolCallAccumulator::default();
+    let mut events = Vec::new();
+    for data in [
+        r#"{"choices":[{"delta":{"content":"<think>Let me use <tool_call>{\"name\":\"grep\",\"args\":{\"pattern\":\"x\"}}</tool_call></think> result"},"finish_reason":null}]}"#,
+    ] {
+        events.extend(
+            parse_chat_completions_sse_with_state(data, &mut state)
+                .into_iter()
+                .map(Result::unwrap),
+        );
+    }
+
+    let tool_calls: Vec<_> = events
+        .iter()
+        .filter_map(|e| match e {
+            ModelStreamEvent::ToolCall(inv) => Some(inv),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(tool_calls.len(), 1, "tool call extracted from think block");
+    assert_eq!(tool_calls[0].tool_name, "grep");
+    assert!(events.iter().any(|e| matches!(
+        e,
+        ModelStreamEvent::ThinkingDelta { text } if text == "Let me use "
+    )));
+    assert!(events.iter().any(|e| matches!(
+        e,
+        ModelStreamEvent::TextDelta { text } if text.contains("result")
+    )));
+}
+
+#[test]
+fn parses_chat_completions_unclosed_tool_call_drained_on_done() {
+    let mut state = ChatToolCallAccumulator::default();
+    let mut events = parse_chat_completions_sse_with_state(
+        r#"{"choices":[{"delta":{"content":"<tool_call>{\"name\":\"bash\",\"args\":{\"command\":\"pwd\"}}"},"finish_reason":null}]}"#,
+        &mut state,
+    )
+    .into_iter()
+    .map(Result::unwrap)
+    .collect::<Vec<_>>();
+    events.extend(
+        parse_chat_completions_sse_with_state("[DONE]", &mut state)
+            .into_iter()
+            .map(Result::unwrap),
+    );
+
+    let tool_calls: Vec<_> = events
+        .iter()
+        .filter_map(|e| match e {
+            ModelStreamEvent::ToolCall(inv) => Some(inv),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(tool_calls.len(), 1, "unclosed tool_call drained on [DONE]");
+    assert_eq!(tool_calls[0].tool_name, "bash");
+}
+
+#[test]
+fn parses_chat_completions_tool_call_xml_with_minimax_bracket_prefix() {
+    let events = parse_chat_completions_sse(
+        r#"{"choices":[{"delta":{"content":"before ]<]minimax[>[<tool_call>{\"name\":\"bash\",\"args\":{\"command\":\"ls\"}}</tool_call> after"},"finish_reason":null}]}"#,
+    );
+
+    let results: Vec<_> = events.into_iter().map(Result::unwrap).collect();
+    let tool_calls: Vec<_> = results
+        .iter()
+        .filter_map(|e| match e {
+            ModelStreamEvent::ToolCall(inv) => Some(inv),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(tool_calls.len(), 1, "tool call with minimax bracket prefix");
+    assert_eq!(tool_calls[0].tool_name, "bash");
+    assert_eq!(tool_calls[0].input["command"], "ls");
+    let text_deltas: Vec<&str> = results
+        .iter()
+        .filter_map(|e| match e {
+            ModelStreamEvent::TextDelta { text } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect();
+    let combined: String = text_deltas.iter().copied().collect();
+    assert!(combined.contains("before"), "combined: {combined:?}");
+    assert!(combined.contains("after"), "combined: {combined:?}");
+}
+
+#[test]
+fn parses_chat_completions_tool_call_xml_with_generic_bracket_prefix() {
+    let events = parse_chat_completions_sse(
+        r#"{"choices":[{"delta":{"content":"text ]<]some-engine[>[<tool_call>{\"name\":\"read_file\",\"arguments\":{\"path\":\"x.rs\"}}</tool_call> more"},"finish_reason":null}]}"#,
+    );
+
+    let results: Vec<_> = events.into_iter().map(Result::unwrap).collect();
+    let tool_calls: Vec<_> = results
+        .iter()
+        .filter_map(|e| match e {
+            ModelStreamEvent::ToolCall(inv) => Some(inv),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(tool_calls.len(), 1, "generic bracket prefix detected");
+    assert_eq!(tool_calls[0].tool_name, "read_file");
+    assert_eq!(tool_calls[0].input["path"], "x.rs");
+    let text_deltas: Vec<&str> = results
+        .iter()
+        .filter_map(|e| match e {
+            ModelStreamEvent::TextDelta { text } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect();
+    let combined: String = text_deltas.iter().copied().collect();
+    assert!(combined.contains("text"), "combined: {combined:?}");
+    assert!(combined.contains("more"), "combined: {combined:?}");
+}
+
+#[test]
 fn parses_chat_completions_object_reasoning_delta() {
     let events = parse_chat_completions_sse(
         r#"{"choices":[{"delta":{"reasoning_details":[{"text":"I should inspect files."}]},"finish_reason":null}]}"#,
@@ -495,7 +720,7 @@ fn sse_decoder_collects_data_frames() {
     let first = decoder.push_bytes(b"event: message\ndata: {\"a\":");
     let second = decoder.push_bytes(b"1}\n\ndata: [DONE]\n\n");
 
-    assert!(first.is_empty());
+    assert_eq!(first, vec!["event: message".to_string()]);
     assert_eq!(second, vec![r#"{"a":1}"#.to_string(), "[DONE]".to_string()]);
 }
 

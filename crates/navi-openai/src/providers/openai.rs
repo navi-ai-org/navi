@@ -308,6 +308,7 @@ pub(crate) fn parse_chat_completions_sse_with_state(
 pub(crate) struct ChatToolCallAccumulator {
     calls: Vec<PartialChatToolCall>,
     think_tags: ThinkTagSplitter,
+    tool_call_extractor: TextToolCallExtractor,
 }
 
 #[derive(Default)]
@@ -319,11 +320,20 @@ struct PartialChatToolCall {
 
 impl ChatToolCallAccumulator {
     fn push_content(&mut self, content: &str) -> Vec<Result<ModelStreamEvent>> {
-        self.think_tags.push(content)
+        let clean_text = self.tool_call_extractor.push_text(content);
+        let mut events = self.tool_call_extractor.take_tool_call_events();
+        events.extend(self.think_tags.push(&clean_text));
+        events
     }
 
     fn drain_pending_text(&mut self) -> Vec<Result<ModelStreamEvent>> {
-        self.think_tags.drain_pending()
+        let clean_text = self.tool_call_extractor.drain_pending_text();
+        let mut events = self.tool_call_extractor.take_tool_call_events();
+        if !clean_text.is_empty() {
+            events.extend(self.think_tags.push(&clean_text));
+        }
+        events.extend(self.think_tags.drain_pending());
+        events
     }
 
     fn push_chunks(&mut self, chunks: &[Value]) {
@@ -366,6 +376,221 @@ impl ChatToolCallAccumulator {
             })
             .collect()
     }
+}
+
+#[derive(Default)]
+struct TextToolCallExtractor {
+    pending: String,
+    in_tool_call: bool,
+    next_tool_call_index: u64,
+    tool_call_events: Vec<Result<ModelStreamEvent>>,
+}
+
+impl TextToolCallExtractor {
+    fn push_text(&mut self, text: &str) -> String {
+        self.pending.push_str(text);
+        self.drain(false)
+    }
+
+    fn drain_pending_text(&mut self) -> String {
+        self.drain(true)
+    }
+
+    fn take_tool_call_events(&mut self) -> Vec<Result<ModelStreamEvent>> {
+        std::mem::take(&mut self.tool_call_events)
+    }
+
+    fn drain(&mut self, final_chunk: bool) -> String {
+        let mut clean_text = String::new();
+
+        loop {
+            if self.in_tool_call {
+                if let Some(end) = find_ascii_case_insensitive(&self.pending, "</tool_call>") {
+                    let block = self.pending[..end].to_string();
+                    self.pending.drain(..end + "</tool_call>".len());
+                    self.in_tool_call = false;
+                    let calls = self.parse_tool_call_block(&block);
+                    self.tool_call_events.extend(calls);
+                    continue;
+                }
+
+                if final_chunk {
+                    let block = std::mem::take(&mut self.pending);
+                    self.in_tool_call = false;
+                    let calls = self.parse_tool_call_block(&block);
+                    self.tool_call_events.extend(calls);
+                }
+                break;
+            }
+
+            if let Some((start, marker_len)) = find_tool_call_start(&self.pending) {
+                if start > 0 {
+                    clean_text.push_str(&self.pending[..start]);
+                }
+                self.pending.drain(..start + marker_len);
+                self.in_tool_call = true;
+                continue;
+            }
+
+            let keep = if final_chunk {
+                0
+            } else {
+                partial_tool_call_start_suffix_len(&self.pending)
+            };
+            let emit_len = self.pending.len().saturating_sub(keep);
+            if emit_len > 0 {
+                clean_text.push_str(&self.pending[..emit_len]);
+                self.pending.drain(..emit_len);
+            }
+            break;
+        }
+
+        clean_text
+    }
+
+    fn parse_tool_call_block(&mut self, block: &str) -> Vec<Result<ModelStreamEvent>> {
+        parse_tool_call_values(block)
+            .into_iter()
+            .filter_map(|value| self.tool_invocation_from_value(value))
+            .map(|invocation| Ok(ModelStreamEvent::ToolCall(invocation)))
+            .collect()
+    }
+
+    fn tool_invocation_from_value(&mut self, value: Value) -> Option<ToolInvocation> {
+        let tool_name = value
+            .get("name")
+            .or_else(|| value.get("toolName"))
+            .or_else(|| value.get("tool_name"))
+            .and_then(Value::as_str)?
+            .to_string();
+        let id = value
+            .get("id")
+            .or_else(|| value.get("toolCallId"))
+            .or_else(|| value.get("tool_call_id"))
+            .and_then(Value::as_str)
+            .map(str::to_string)
+            .unwrap_or_else(|| {
+                let id = format!("text-tool-{}", self.next_tool_call_index);
+                self.next_tool_call_index += 1;
+                id
+            });
+        let input = value
+            .get("arguments")
+            .or_else(|| value.get("args"))
+            .or_else(|| value.get("input"))
+            .map(normalize_tool_input)
+            .unwrap_or_else(|| json!({}));
+
+        Some(ToolInvocation {
+            id,
+            tool_name,
+            input,
+        })
+    }
+}
+
+fn parse_tool_call_values(block: &str) -> Vec<Value> {
+    let trimmed = block.trim();
+    if trimmed.is_empty() {
+        return Vec::new();
+    }
+    if let Ok(value) = serde_json::from_str::<Value>(trimmed) {
+        return match value {
+            Value::Array(values) => values,
+            value => vec![value],
+        };
+    }
+    let stream = serde_json::Deserializer::from_str(trimmed).into_iter::<Value>();
+    stream.filter_map(std::result::Result::ok).collect()
+}
+
+fn normalize_tool_input(value: &Value) -> Value {
+    match value {
+        Value::String(text) => {
+            serde_json::from_str::<Value>(text).unwrap_or_else(|_| value.clone())
+        }
+        value => value.clone(),
+    }
+}
+
+fn find_tool_call_start(text: &str) -> Option<(usize, usize)> {
+    let patterns: &[&str] = &[
+        "]<]minimax[>[<tool_call>",
+        "<]minimax[>[<tool_call>",
+        "]<|minimal|>[<tool_call>",
+        "<|minimal|>[<tool_call>",
+        "<tool_call>",
+    ];
+
+    if let Some(result) = patterns
+        .iter()
+        .filter_map(|marker| {
+            find_ascii_case_insensitive(text, marker).map(|pos| (pos, marker.len()))
+        })
+        .min_by_key(|(pos, _)| *pos)
+    {
+        return Some(result);
+    }
+
+    find_generic_bracket_tool_call_prefix(text)
+}
+
+fn find_generic_bracket_tool_call_prefix(text: &str) -> Option<(usize, usize)> {
+    let tc_pos = find_ascii_case_insensitive(text, "<tool_call>")?;
+    let before = &text[..tc_pos];
+    let bracket_end = before.rfind(">[")?;
+    if bracket_end > before.len().saturating_sub(64) && bracket_end >= 1 {
+        let candidate = &before[..bracket_end];
+        let openers = [']', '<', '|'];
+        if let Some(prefix_start) = candidate.rfind(|c: char| openers.contains(&c)) {
+            let full_len = tc_pos + "<tool_call>".len() - prefix_start;
+            return Some((prefix_start, full_len));
+        }
+    }
+    None
+}
+
+fn partial_tool_call_start_suffix_len(text: &str) -> usize {
+    let patterns: &[&str] = &[
+        "]<]minimax[>[<tool_call>",
+        "<]minimax[>[<tool_call>",
+        "]<|minimal|>[<tool_call>",
+        "<|minimal|>[<tool_call>",
+        "<tool_call>",
+    ];
+
+    let specific = patterns
+        .iter()
+        .map(|marker| partial_tag_suffix_len(text, marker))
+        .max()
+        .unwrap_or(0);
+
+    let generic = partial_generic_bracket_suffix_len(text);
+    specific.max(generic)
+}
+
+fn partial_generic_bracket_suffix_len(text: &str) -> usize {
+    let bytes = text.as_bytes();
+    let needle = b">[<tool_call>";
+    if bytes.len() < 3 {
+        return 0;
+    }
+    if bytes.ends_with(b"<")
+        || bytes.ends_with(b"<t")
+        || bytes.ends_with(b"<to")
+        || bytes.ends_with(b"<too")
+        || bytes.ends_with(b"<tool")
+    {
+        return 1;
+    }
+    let max_len = bytes.len().min(needle.len());
+    for len in (3..=max_len).rev() {
+        let suffix = &bytes[bytes.len() - len..];
+        if suffix.eq_ignore_ascii_case(&needle[..len]) {
+            return len;
+        }
+    }
+    0
 }
 
 #[derive(Default)]
