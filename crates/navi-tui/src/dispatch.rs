@@ -1,6 +1,6 @@
 use navi_sdk::{
-    AgentEvent, ApprovalDecision, ApprovalRisk, LoadedConfig, ModelMessage,
-    available_model_options, canonical_provider_id, compact_tool_observation,
+    AgentEvent, ApprovalDecision, ApprovalRisk, BackgroundCommandSnapshot, LoadedConfig,
+    ModelMessage, available_model_options, canonical_provider_id, compact_tool_observation,
 };
 
 use crate::app::TuiApp;
@@ -12,7 +12,7 @@ use crate::errors::handle_model_error;
 use crate::notifications::{push_diagnostic, show_notification};
 use crate::providers::rebuild_provider;
 use crate::runtime::spawn_runtime_task;
-use crate::state::{ChatMessage, ChatRole, ModalKind, Mode, QuestionUiState};
+use crate::state::{ChatMessage, ChatRole, ModalKind, Mode, OAuthUiState, QuestionUiState};
 use crate::stream::start_streaming_request;
 use crate::tools::record_tool_requested;
 
@@ -51,6 +51,7 @@ pub enum AsyncEvent {
     },
     PluginsReloadNeeded,
     ClearSyncMessages,
+    BackgroundCommandsUpdated(Vec<BackgroundCommandSnapshot>),
 }
 
 pub(crate) fn handle_async_event(app: &mut TuiApp, event: AsyncEvent) {
@@ -145,20 +146,13 @@ pub(crate) fn handle_async_event(app: &mut TuiApp, event: AsyncEvent) {
             verification_uri,
             user_code,
         } => {
-            show_notification(
-                app,
-                "OAuth",
-                format!("{provider_id}: open {verification_uri} and enter {user_code}"),
-            );
-            app.messages.push(ChatMessage {
-                status: Some("oauth".to_string()),
-                ..ChatMessage::new(
-                    ChatRole::Assistant,
-                    format!(
-                        "OAuth started for {provider_id}.\nOpen {verification_uri}\nEnter code: {user_code}"
-                    ),
-                )
+            app.oauth_state = Some(OAuthUiState {
+                provider_id,
+                verification_uri,
+                user_code,
             });
+            crate::keybindings::replace_modal(app, ModalKind::OAuth);
+            show_notification(app, "OAuth", "Open the login link to continue.");
         }
         AsyncEvent::OAuthCompleted {
             provider_id,
@@ -170,7 +164,17 @@ pub(crate) fn handle_async_event(app: &mut TuiApp, event: AsyncEvent) {
             match result {
                 Ok(()) => {
                     rebuild_provider(app);
-                    show_notification(app, "OAuth", format!("{provider_id} connected."));
+                    app.oauth_state = None;
+                    if app.mode == Mode::OAuth {
+                        crate::keybindings::close_active_modal(app);
+                    }
+                    show_notification(
+                        app,
+                        "OAuth",
+                        format!(
+                            "{provider_id} credentials saved. API access depends on provider plan."
+                        ),
+                    );
                 }
                 Err(err) => {
                     show_notification(app, "OAuth", format!("{provider_id} failed: {err}"));
@@ -181,6 +185,9 @@ pub(crate) fn handle_async_event(app: &mut TuiApp, event: AsyncEvent) {
             app.messages
                 .retain(|m| !matches!(m.status.as_deref(), Some("syncing")));
             app.scroll_offset = 0;
+        }
+        AsyncEvent::BackgroundCommandsUpdated(commands) => {
+            app.background_commands = commands;
         }
     }
 }
@@ -203,6 +210,11 @@ fn handle_agent_event(app: &mut TuiApp, event: AgentEvent) {
         AgentEvent::ToolCompleted(result) => {
             app.running_tools.remove(&result.invocation_id);
             if let Some(invocation) = app.tool_invocations.get(&result.invocation_id).cloned() {
+                // Check if this is a background bash command that's still running
+                let is_background_running = invocation.tool_name == "bash"
+                    && result.output.get("background").and_then(|v| v.as_bool()) == Some(true)
+                    && result.output.get("status").and_then(|v| v.as_str()) == Some("running");
+
                 remove_active_tool_placeholder(app);
                 app.messages.push(ChatMessage {
                     status: Some("tool result".to_string()),
@@ -218,6 +230,11 @@ fn handle_agent_event(app: &mut TuiApp, event: AgentEvent) {
                     invocation.tool_name.clone(),
                     observation,
                 ));
+
+                // Start background poller if this is a running background command
+                if is_background_running {
+                    crate::background::start_background_poller(app);
+                }
             }
             app.events.push(AgentEvent::ToolCompleted(result));
             update_active_assistant_status(app);
@@ -358,6 +375,14 @@ fn handle_agent_event(app: &mut TuiApp, event: AgentEvent) {
         } => {}
         AgentEvent::RepeatedToolCallWarning { tool_name, message } => {
             show_notification(app, format!("Repeated call: {tool_name}"), &message);
+            push_diagnostic(app, message);
+        }
+        AgentEvent::RepetitionDetected { kind, message } => {
+            let title = match &kind {
+                navi_sdk::RepetitionWarningKind::CharRun { .. } => "Character run",
+                navi_sdk::RepetitionWarningKind::AlternatingPattern { .. } => "Alternating pattern",
+            };
+            show_notification(app, title.to_string(), &message);
             push_diagnostic(app, message);
         }
     }

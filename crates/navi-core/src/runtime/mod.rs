@@ -20,6 +20,7 @@ use crate::model::{ModelMessage, ModelProvider, ModelResponse};
 use crate::security::SecurityPolicy;
 use crate::session::{SessionId, SessionStore, current_unix_timestamp};
 use crate::skills::{SkillManifest, active_skills, discover_configured_skills};
+use crate::tool::builtin::SubagentTool;
 use crate::tool::{Tool, ToolExecutor};
 use crate::{
     ModelOption, SessionSnapshot, available_model_options, canonical_provider_id,
@@ -52,6 +53,14 @@ pub struct QuestionResolver {
 impl QuestionResolver {
     #[cfg(test)]
     pub fn new_for_test() -> Self {
+        let (tx, _) = broadcast::channel(16);
+        Self {
+            pending_questions: Arc::new(std::sync::Mutex::new(HashMap::new())),
+            runtime_events_tx: tx,
+        }
+    }
+
+    pub(crate) fn new_standalone() -> Self {
         let (tx, _) = broadcast::channel(16);
         Self {
             pending_questions: Arc::new(std::sync::Mutex::new(HashMap::new())),
@@ -95,6 +104,14 @@ impl QuestionResolver {
 impl ApprovalResolver {
     #[cfg(test)]
     pub fn new_for_test() -> Self {
+        let (tx, _) = broadcast::channel(16);
+        Self {
+            pending_approvals: Arc::new(std::sync::Mutex::new(HashMap::new())),
+            runtime_events_tx: tx,
+        }
+    }
+
+    pub(crate) fn new_standalone() -> Self {
         let (tx, _) = broadcast::channel(16);
         Self {
             pending_approvals: Arc::new(std::sync::Mutex::new(HashMap::new())),
@@ -536,7 +553,20 @@ impl AgentRuntime {
         let profile_name = format!("{:?}", harness_policy.profile).to_lowercase();
         let mut executor = ToolExecutor::new(security_policy);
         executor.set_harness_profile(profile_name);
-        let executor = Arc::new(executor);
+
+        let executor = Arc::new_cyclic(|executor_weak| {
+            let subagent = SubagentTool::new(
+                executor_weak.clone(),
+                self.shared_model_provider.clone(),
+                self.project_dir.clone(),
+                self.shared_model_name.clone(),
+                self.loaded_config.config.harness.clone(),
+                self.shared_config.clone(),
+                self.prompt_cache.clone(),
+            );
+            executor.register_tool(Arc::new(subagent));
+            executor
+        });
         self.tool_executor = Some(executor.clone());
         Ok(executor)
     }
@@ -708,5 +738,6 @@ fn runtime_event_kind_from_agent_event(event: &AgentEvent) -> Option<RuntimeEven
         }),
         AgentEvent::UserTaskSubmitted { .. } | AgentEvent::ModelOutput { .. } => None,
         AgentEvent::RepeatedToolCallWarning { .. } => None,
+        AgentEvent::RepetitionDetected { .. } => None,
     }
 }

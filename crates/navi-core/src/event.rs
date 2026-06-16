@@ -234,11 +234,19 @@ pub enum AgentEvent {
     /// An interactive user choice was resolved.
     QuestionResolved(QuestionResponse),
     /// The same tool was called consecutively with identical arguments.
-    /// The tool still executes; this is a notification to the user.
+    /// The tool is NOT executed; this is a notification to the user.
     RepeatedToolCallWarning {
         /// Name of the repeated tool.
         tool_name: String,
         /// Warning message describing the repetition.
+        message: String,
+    },
+    /// Repetitive/degenerate model output was detected (character runs,
+    /// alternating patterns, or duplicate thinking blocks).
+    RepetitionDetected {
+        /// What kind of repetition was detected.
+        kind: RepetitionWarningKind,
+        /// Human-readable warning message.
         message: String,
     },
     /// An error occurred.
@@ -273,6 +281,26 @@ pub enum AgentEvent {
     AutoCompactFailed {
         /// Human-readable failure reason.
         reason: String,
+    },
+}
+
+/// Kind of repetitive/degenerate output detected by the repetition detector.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type")]
+pub enum RepetitionWarningKind {
+    /// Same character repeated many times (e.g. "aaaaaa...").
+    CharRun {
+        /// The repeating character.
+        ch: char,
+        /// How many consecutive occurrences.
+        count: usize,
+    },
+    /// Two characters alternating many times (e.g. "-_-_-_").
+    AlternatingPattern {
+        /// The two-character pattern (e.g. "-_").
+        pattern: String,
+        /// How many cycles detected.
+        cycles: usize,
     },
 }
 

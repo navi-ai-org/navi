@@ -36,9 +36,12 @@ pub use navi_core::{
     AgentEvent, AgentRunState, ModelMessage, ModelRole, QuestionOption, QuestionRequest,
     QuestionResponse, RuntimeEvent, RuntimeEventKind, SessionId, SessionSnapshot,
 };
+// Event auxiliary types
+pub use navi_core::event::RepetitionWarningKind;
 // Tool/approval types
 pub use navi_core::{
-    ApprovalDecision, ApprovalRequest, ApprovalRisk, PatchProposal, ToolInvocation, ToolResult,
+    ApprovalDecision, ApprovalRequest, ApprovalRisk, BackgroundCommandSnapshot,
+    BackgroundTaskStatus, PatchProposal, ToolInvocation, ToolResult,
 };
 // Config/provider types
 pub use navi_core::{

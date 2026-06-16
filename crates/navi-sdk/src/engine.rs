@@ -136,11 +136,33 @@ impl NaviEngine {
     ///
     /// Returns a [`NaviSessionInfo`] with the session ID and model details.
     /// The session can then receive turns via [`send_turn`](Self::send_turn).
+    ///
+    /// If a session with the same ID already exists, returns the existing session
+    /// info without recreating. This preserves background command state across turns.
     pub async fn start_session(&self, request: NaviSessionRequest) -> Result<NaviSessionInfo> {
         let project_dir = request
             .project_dir
             .clone()
             .unwrap_or_else(|| self.inner.project_dir.clone());
+
+        // If a session with this ID already exists, return it without recreating.
+        if let Some(session_id) = &request.session_id {
+            let sessions = self
+                .inner
+                .sessions
+                .read()
+                .unwrap_or_else(|e| e.into_inner());
+            if sessions.contains_key(session_id) {
+                let loaded_config = self.loaded_config();
+                return Ok(NaviSessionInfo {
+                    id: session_id.clone(),
+                    project_dir,
+                    model: loaded_config.config.model.name.clone(),
+                    provider: loaded_config.config.model.provider.clone(),
+                });
+            }
+        }
+
         let loaded_config = self.loaded_config();
         let provider = build_model_provider(&loaded_config)?;
         let mut tool_executor = build_local_tooling(&loaded_config, project_dir.clone())?;
@@ -159,6 +181,23 @@ impl NaviEngine {
         }
         for warning in &tool_executor.warnings {
             tracing::warn!(warning = %warning, "plugin load warning");
+        }
+
+        // Register the subagent tool so models can spawn isolated worker agents.
+        let weak_exec = Arc::downgrade(&tool_executor.tool_executor);
+        let subagent = navi_core::SubagentTool::new(
+            weak_exec,
+            Arc::new(std::sync::RwLock::new(provider.clone())),
+            project_dir.clone(),
+            Arc::new(std::sync::RwLock::new(
+                loaded_config.config.model.name.clone(),
+            )),
+            loaded_config.config.harness.clone(),
+            Arc::new(std::sync::RwLock::new(loaded_config.config.clone())),
+            Arc::new(navi_core::PromptCache::new()),
+        );
+        if let Some(executor) = Arc::get_mut(&mut tool_executor.tool_executor) {
+            executor.register_tool(Arc::new(subagent));
         }
 
         let mut runtime = AgentRuntime::new(AgentRuntimeOptions {
@@ -299,6 +338,53 @@ impl NaviEngine {
             session.turn_canceller.cancel();
         }
         Ok(removed.is_some())
+    }
+
+    /// Lists all active background bash commands for a session.
+    pub async fn list_background_commands(
+        &self,
+        session_id: &str,
+    ) -> Result<Vec<navi_core::BackgroundCommandSnapshot>> {
+        let session = self.session(session_id)?;
+        let runtime = session.runtime.lock().await;
+        let Some(executor) = runtime.tool_executor() else {
+            return Ok(Vec::new());
+        };
+        Ok(executor.list_background_commands().await)
+    }
+
+    /// Polls a specific background bash command for a session.
+    pub async fn poll_background_command(
+        &self,
+        session_id: &str,
+        task_id: &str,
+    ) -> Result<navi_core::BackgroundCommandSnapshot> {
+        let session = self.session(session_id)?;
+        let runtime = session.runtime.lock().await;
+        let Some(executor) = runtime.tool_executor() else {
+            return Err(NaviError::Config("tool executor unavailable".into()));
+        };
+        executor
+            .poll_background_command(task_id)
+            .await
+            .ok_or_else(|| NaviError::Config(format!("background task `{task_id}` not found")))
+    }
+
+    /// Cancels a specific background bash command for a session.
+    pub async fn cancel_background_command(
+        &self,
+        session_id: &str,
+        task_id: &str,
+    ) -> Result<navi_core::BackgroundCommandSnapshot> {
+        let session = self.session(session_id)?;
+        let runtime = session.runtime.lock().await;
+        let Some(executor) = runtime.tool_executor() else {
+            return Err(NaviError::Config("tool executor unavailable".into()));
+        };
+        executor
+            .cancel_background_command(task_id)
+            .await
+            .ok_or_else(|| NaviError::Config(format!("background task `{task_id}` not found")))
     }
 
     /// Lists all available models across configured providers.
