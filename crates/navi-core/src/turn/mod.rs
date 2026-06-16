@@ -1,7 +1,7 @@
 use crate::cancel::CancelToken;
 use crate::compact::{self, CompactState};
 use crate::context::ContextPacket;
-use crate::event::AgentEvent;
+use crate::event::{AgentEvent, RepetitionWarningKind};
 use crate::harness::{
     AgentRunState, HarnessPolicy, ToolLoopDecision, compact_tool_observation, record_tool_call,
     tool_error_result, trace_request_summary,
@@ -264,14 +264,31 @@ async fn collect_model_output(ctx: &TurnContext, request: ModelRequest) -> Resul
         tool_calls: Vec::new(),
     };
     let mut think_tags = ThinkTagSplitter::default();
+    let mut repetition_detector = crate::repetition::RepetitionDetector::default();
 
     while let Some(event) = stream.next().await {
         ensure_not_cancelled(ctx)?;
         match event? {
             ModelStreamEvent::TextDelta { text } => {
+                if let Some(warning) = repetition_detector.feed_text(&text) {
+                    if let Some(ref tx) = ctx.event_tx {
+                        let _ = tx.send(AgentEvent::RepetitionDetected {
+                            kind: map_repetition_kind(&warning.kind),
+                            message: warning.message,
+                        });
+                    }
+                }
                 emit_split_text(ctx, &mut output, think_tags.push(&text));
             }
             ModelStreamEvent::ThinkingDelta { text } => {
+                if let Some(warning) = repetition_detector.feed_thinking(&text) {
+                    if let Some(ref tx) = ctx.event_tx {
+                        let _ = tx.send(AgentEvent::RepetitionDetected {
+                            kind: map_repetition_kind(&warning.kind),
+                            message: warning.message,
+                        });
+                    }
+                }
                 output.thinking.push_str(&text);
                 if let Some(ref tx) = ctx.event_tx {
                     let _ = tx.send(AgentEvent::ModelThinkingDelta { text });
@@ -721,6 +738,23 @@ fn persist_final_model_output(
             output.text.clone(),
             (!output.thinking.is_empty()).then(|| output.thinking.clone()),
         ));
+    }
+}
+
+fn map_repetition_kind(kind: &crate::repetition::RepetitionKind) -> RepetitionWarningKind {
+    match kind {
+        crate::repetition::RepetitionKind::CharRun { ch, count } => {
+            RepetitionWarningKind::CharRun {
+                ch: *ch,
+                count: *count,
+            }
+        }
+        crate::repetition::RepetitionKind::AlternatingPattern { pattern, cycles } => {
+            RepetitionWarningKind::AlternatingPattern {
+                pattern: pattern.clone(),
+                cycles: *cycles,
+            }
+        }
     }
 }
 
