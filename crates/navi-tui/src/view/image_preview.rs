@@ -236,7 +236,7 @@ pub(crate) fn render_maximized_image(frame: &mut Frame<'_>, app: &mut TuiApp, ar
 
     if let Some(img) = app.pending_images.get_mut(idx) {
         if let Some(ref mut protocol) = img.protocol {
-            let image_widget = ratatui_image::StatefulImage::new();
+            let image_widget = ratatui_image::StatefulImage::new().resize(ratatui_image::Resize::Scale(None));
             frame.render_stateful_widget(image_widget, inner_area, protocol);
         } else {
             let fallback = Paragraph::new(img.label())
