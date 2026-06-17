@@ -2,7 +2,6 @@ use crate::state::PendingImage;
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use ratatui_image::picker::Picker;
-use ratatui_image::protocol::Protocol;
 
 /// Maximum image size to accept from the clipboard (10 MiB of raw RGBA → ~5 MiB PNG).
 const MAX_IMAGE_BYTES: usize = 10 * 1024 * 1024;
