@@ -14,10 +14,10 @@
     │     glm-5                                                          █ │
     │     minimax-m2.7                                                   █ │
     │     minimax-m2.5                                                   █ │
-    │     grok-build-0.1                                                 █ │
+  ▌ │     grok-build-0.1                                                 █ │
   ▌ │   OpenCode Go  ↻ tab                                               │ │
   ▌ │     deepseek-v4-flash                                              │ │
   ▌ │     deepseek-v4-pro                                                │ │
   ▌ │ search  •  ctrl+e setup  •  tab refresh provider  •  ctrl+r refresh  │
   ▌ ╰──────────────────────────────────────────────────────────────────────╯
-  ▌  Ready · big-pickle OpenAI · adaptive · 0 / 200k (0%)   Enter send · Shi
+  ▌

@@ -78,6 +78,23 @@ pub(super) fn route_global_key(
                 save_preferences(app);
                 return KeyOutcome::Handled;
             }
+            KeyCode::Char('b') => {
+                super::replace_modal(app, ModalKind::BackgroundCommands);
+                app.bg_command_selected = 0;
+                app.bg_command_scroll = 0;
+                // Refresh the list when opening
+                let engine = app.engine();
+                let session_id = app.session_id.as_str().to_string();
+                let tx = app.async_sender();
+                crate::runtime::spawn_runtime_task(async move {
+                    if let Ok(commands) = engine.list_background_commands(&session_id).await {
+                        let _ = tx.send(crate::dispatch::AsyncEvent::BackgroundCommandsUpdated(
+                            commands,
+                        ));
+                    }
+                });
+                return KeyOutcome::Handled;
+            }
             KeyCode::Enter => {
                 if !app.pending_questions.is_empty() {
                     return super::apply_ui_effect(
@@ -91,7 +108,20 @@ pub(super) fn route_global_key(
                 return KeyOutcome::Handled;
             }
             KeyCode::Char('n') => {
+                // Close existing session so background tasks are cleaned up
+                let old_session_id = app.session_id.as_str().to_string();
+                let engine = app.engine();
+                crate::runtime::spawn_runtime_task(async move {
+                    let _ = engine.close_session(&old_session_id).await;
+                });
                 app.messages.clear();
+                app.session_id = navi_sdk::SessionId::new(
+                    navi_sdk::SessionStore::create_id().as_str().to_string(),
+                );
+                app.background_commands.clear();
+                if let Some(task) = app.bg_poll_task.take() {
+                    task.abort();
+                }
                 reset_system_context(app);
                 app.input.clear();
                 app.input_cursor = 0;
@@ -105,6 +135,28 @@ pub(super) fn route_global_key(
         }
     }
     KeyOutcome::Ignored
+}
+
+pub(super) fn route_system_global_key(
+    app: &mut TuiApp,
+    code: KeyCode,
+    modifiers: KeyModifiers,
+) -> KeyOutcome {
+    if !modifiers.contains(KeyModifiers::CONTROL) {
+        return KeyOutcome::Ignored;
+    }
+
+    if is_copy_selection_key(code, modifiers) {
+        if let Some(text) = selected_text(app) {
+            copy_text_to_clipboard(app, &text);
+        }
+        return KeyOutcome::Handled;
+    }
+
+    match code {
+        KeyCode::Char('c') => super::apply_ui_effect(app, UiEffect::Quit),
+        _ => KeyOutcome::Ignored,
+    }
 }
 
 pub(super) fn is_copy_selection_key(code: KeyCode, modifiers: KeyModifiers) -> bool {

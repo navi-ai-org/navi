@@ -10,4 +10,5 @@ pub(crate) enum StreamRoute {
     ChatCompletions,
     AnthropicMessages,
     GeminiGenerateContent,
+    CommandCodeAlphaGenerate,
 }

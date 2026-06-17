@@ -14,6 +14,7 @@ pub use navi_openai::DeviceOAuthStarted;
 pub use navi_openai::OpenAiApiKind;
 pub use navi_openai::OpenAiProvider;
 pub use navi_openai::ProviderError;
+pub use navi_openai::commandcode_browser_oauth;
 pub use navi_openai::github_copilot_device_oauth;
 
 // Convenience re-export matching navi-openai's public surface.

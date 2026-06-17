@@ -6,6 +6,7 @@ use navi_tui::TuiApp;
 use std::path::PathBuf;
 
 mod acp;
+mod mcp_cmd;
 mod plugin_cmd;
 
 #[derive(Debug, Parser)]
@@ -53,6 +54,17 @@ enum Commands {
         #[command(subcommand)]
         action: PluginAction,
     },
+    /// Manage MCP servers
+    Mcp {
+        #[command(subcommand)]
+        action: McpAction,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum McpAction {
+    /// List configured MCP servers, connection status, and tools
+    List,
 }
 
 #[derive(Debug, Subcommand)]
@@ -120,6 +132,11 @@ async fn main() -> Result<()> {
     // Handle plugin subcommand early
     if let Some(Commands::Plugin { action }) = cli.command {
         return plugin_cmd::handle_plugin_command(action, &loaded_config, &cwd);
+    }
+
+    // Handle mcp subcommand early
+    if let Some(Commands::Mcp { action }) = cli.command {
+        return mcp_cmd::handle_mcp_command(action, &loaded_config).await;
     }
 
     if cli.print_log_path {

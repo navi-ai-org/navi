@@ -154,6 +154,11 @@ timeout_ms = 1000
                 .any(|provider| provider.id == "charm-hyper")
         );
         assert!(providers.iter().any(|provider| provider.id == "opencode"));
+        assert!(
+            providers
+                .iter()
+                .any(|provider| provider.id == "commandcode")
+        );
         assert_eq!(canonical_provider_id("opencode-zen"), "opencode");
         assert_eq!(
             resolve_provider_config(&config, "opencode-zen")
@@ -177,6 +182,27 @@ timeout_ms = 1000
                 .models
                 .iter()
                 .any(|model| model.name == "nemotron-3-super-free")
+        );
+        let commandcode = providers
+            .iter()
+            .find(|provider| provider.id == "commandcode")
+            .expect("commandcode provider");
+        assert_eq!(commandcode.api_key_env, "CMD_API_KEY");
+        assert_eq!(
+            commandcode.base_url.as_deref(),
+            Some("https://api.commandcode.ai")
+        );
+        assert!(
+            commandcode
+                .models
+                .iter()
+                .any(|model| model.name == "deepseek/deepseek-v4-flash")
+        );
+        assert!(
+            commandcode
+                .models
+                .iter()
+                .any(|model| model.name == "claude-sonnet-4-6")
         );
         let nvidia = providers
             .iter()

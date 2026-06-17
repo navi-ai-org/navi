@@ -123,6 +123,77 @@ pub(super) fn render_api_key_entry(frame: &mut Frame<'_>, app: &TuiApp, area: Re
     );
 }
 
+pub(super) fn render_oauth(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
+    clear_modal_area(frame, area);
+    frame.render_widget(modal_block("OAuth Login"), area);
+
+    let inner = area.inner(Margin {
+        horizontal: 2,
+        vertical: 1,
+    });
+    let Some(state) = &app.oauth_state else {
+        return;
+    };
+
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(1),
+            Constraint::Length(1),
+            Constraint::Length(1),
+            Constraint::Min(3),
+            Constraint::Length(1),
+        ])
+        .split(inner);
+
+    frame.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::styled("Provider: ", Style::default().fg(muted())),
+            Span::styled(
+                state.provider_id.clone(),
+                Style::default().fg(text()).add_modifier(Modifier::BOLD),
+            ),
+        ]))
+        .style(Style::default().bg(modal_bg())),
+        rows[0],
+    );
+    frame.render_widget(
+        Paragraph::new("Complete login in your browser.")
+            .style(Style::default().fg(text()).bg(modal_bg())),
+        rows[1],
+    );
+
+    let link_style = Style::default()
+        .fg(signal())
+        .bg(modal_bg())
+        .add_modifier(Modifier::UNDERLINED);
+    let link_lines = wrap_plain(&state.verification_uri, rows[3].width as usize);
+    for (offset, line) in link_lines.iter().take(rows[3].height as usize).enumerate() {
+        let row = line_rect(rows[3], offset);
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled(line.clone(), link_style)))
+                .style(Style::default().bg(modal_bg())),
+            row,
+        );
+        app.register_hit(
+            Rect::new(row.x, row.y, line.len().min(row.width as usize) as u16, 1),
+            30,
+            "open oauth link",
+            HitAction::OAuthOpen,
+        );
+    }
+
+    let help = if state.user_code.is_empty() {
+        "c copy link     ctrl+o open browser     esc close"
+    } else {
+        "c copy link     ctrl+o open browser     esc close"
+    };
+    frame.render_widget(
+        Paragraph::new(help).style(Style::default().fg(muted()).bg(modal_bg())),
+        rows[4],
+    );
+}
+
 pub(super) fn render_tool_approval(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
     let Some(req) = app.pending_approvals.first() else {
         return;
@@ -1088,4 +1159,25 @@ pub(super) fn render_theme_picker(frame: &mut Frame<'_>, app: &TuiApp, area: Rec
         "close theme picker",
         HitAction::CloseModal,
     );
+}
+
+fn wrap_plain(text: &str, width: usize) -> Vec<String> {
+    let width = width.max(1);
+    if text.is_empty() {
+        return vec![String::new()];
+    }
+
+    let mut lines = Vec::new();
+    let mut current = String::new();
+    for ch in text.chars() {
+        if current.chars().count() >= width {
+            lines.push(current);
+            current = String::new();
+        }
+        current.push(ch);
+    }
+    if !current.is_empty() {
+        lines.push(current);
+    }
+    lines
 }

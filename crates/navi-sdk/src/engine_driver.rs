@@ -15,10 +15,10 @@ use tokio::sync::broadcast;
 
 use crate::types::NaviError;
 use crate::{
-    ApprovalDecision, LoadedConfig, NaviConfigSaveTarget, NaviModelSelectionRequest,
-    NaviModelSelectionResult, NaviProviderCredentialStatus, NaviProviderSyncReport,
-    NaviSessionInfo, NaviSessionRequest, NaviSkillInfo, NaviTurnRequest, NaviTurnResponse,
-    QuestionResponse, RuntimeEvent, SessionSnapshot,
+    ApprovalDecision, BackgroundCommandSnapshot, LoadedConfig, NaviConfigSaveTarget,
+    NaviModelSelectionRequest, NaviModelSelectionResult, NaviProviderCredentialStatus,
+    NaviProviderSyncReport, NaviSessionInfo, NaviSessionRequest, NaviSkillInfo, NaviTurnRequest,
+    NaviTurnResponse, QuestionResponse, RuntimeEvent, SessionSnapshot,
 };
 use navi_mcp::McpServerInfo;
 
@@ -56,6 +56,9 @@ pub trait EngineDriver: Send + Sync {
 
     /// Take a persistence snapshot of the session.
     async fn snapshot_session(&self, session_id: &str) -> Result<SessionSnapshot>;
+
+    /// Close an active in-memory session. Returns `true` when a session was removed.
+    async fn close_session(&self, session_id: &str) -> Result<bool>;
 
     /// Reload WASM plugin tools across all active sessions.
     async fn reload_wasm_plugins(&self) -> Result<Vec<String>>;
@@ -97,6 +100,26 @@ pub trait EngineDriver: Send + Sync {
     /// List connected MCP servers.
     fn list_mcp_servers(&self, session_id: &str) -> Result<Vec<McpServerInfo>>;
 
+    /// List active background bash commands for a session.
+    async fn list_background_commands(
+        &self,
+        session_id: &str,
+    ) -> Result<Vec<BackgroundCommandSnapshot>>;
+
+    /// Poll a specific background bash command for a session.
+    async fn poll_background_command(
+        &self,
+        session_id: &str,
+        task_id: &str,
+    ) -> Result<BackgroundCommandSnapshot>;
+
+    /// Cancel a specific background bash command for a session.
+    async fn cancel_background_command(
+        &self,
+        session_id: &str,
+        task_id: &str,
+    ) -> Result<BackgroundCommandSnapshot>;
+
     // ── Saved sessions ─────────────────────────────────────────────────
 
     /// Delete a saved session. Returns `true` if a session was removed.
@@ -136,6 +159,10 @@ impl EngineDriver for crate::NaviEngine {
 
     async fn snapshot_session(&self, session_id: &str) -> Result<SessionSnapshot> {
         crate::NaviEngine::snapshot_session(self, session_id).await
+    }
+
+    async fn close_session(&self, session_id: &str) -> Result<bool> {
+        crate::NaviEngine::close_session(self, session_id).await
     }
 
     async fn reload_wasm_plugins(&self) -> Result<Vec<String>> {
@@ -184,5 +211,28 @@ impl EngineDriver for crate::NaviEngine {
 
     fn list_mcp_servers(&self, session_id: &str) -> Result<Vec<McpServerInfo>> {
         crate::NaviEngine::list_mcp_servers(self, session_id)
+    }
+
+    async fn list_background_commands(
+        &self,
+        session_id: &str,
+    ) -> Result<Vec<BackgroundCommandSnapshot>> {
+        crate::NaviEngine::list_background_commands(self, session_id).await
+    }
+
+    async fn poll_background_command(
+        &self,
+        session_id: &str,
+        task_id: &str,
+    ) -> Result<BackgroundCommandSnapshot> {
+        crate::NaviEngine::poll_background_command(self, session_id, task_id).await
+    }
+
+    async fn cancel_background_command(
+        &self,
+        session_id: &str,
+        task_id: &str,
+    ) -> Result<BackgroundCommandSnapshot> {
+        crate::NaviEngine::cancel_background_command(self, session_id, task_id).await
     }
 }

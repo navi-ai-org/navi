@@ -163,6 +163,7 @@ pub(crate) fn handle_async_event(app: &mut TuiApp, event: AsyncEvent) {
             app.clear_stream_task();
             match result {
                 Ok(()) => {
+                    crate::providers::push_recent_provider(app, &provider_id);
                     rebuild_provider(app);
                     app.oauth_state = None;
                     if app.mode == Mode::OAuth {

@@ -14,10 +14,10 @@
          │ ctrl+enter  send prompt                                    │
     NAVI │ enter       new line                                       │
          │ ctrl+j      new line                                       │
-         │ /           commands when input is empty                   │
+  ▌      │ /           commands when input is empty                   │
   ▌      │ ?           shortcuts                                      │
-  ▌   Des│                                                            │
+  ▌    De│                                                            │
   ▌      ╰────────────────────────────────────────────────────────────╯
   ▌
+  ▌   gpt-5.5 OpenAI · adaptive · 0 / 200k (0%)
   ▌
-  ▌  Ready · gpt-5.5 OpenAI · adaptive · 0 / 200k (0%)   Enter send · Shift+

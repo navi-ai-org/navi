@@ -49,24 +49,6 @@ pub(super) fn model_ctx(name: &str, task_size: ModelTaskSize, ctx: u64) -> Provi
     }
 }
 
-pub(super) fn model_full(
-    name: &str,
-    task_size: ModelTaskSize,
-    ctx: u64,
-    max_output: u64,
-    temperature: f64,
-) -> ProviderModelConfig {
-    ProviderModelConfig {
-        name: name.to_string(),
-        task_size,
-        context_window_tokens: Some(ctx),
-        max_output_tokens: Some(max_output),
-        recommended_temperature: Some(temperature),
-        supports_thinking: None,
-        tool_prompt_manifest: None,
-    }
-}
-
 pub(super) fn determine_task_size(name: &str) -> ModelTaskSize {
     let name_lower = name.to_lowercase();
     if name_lower.contains("mini")
@@ -697,6 +679,59 @@ pub(super) fn built_in_providers() -> Vec<ProviderConfig> {
                 model_ctx("glm-5", ModelTaskSize::Large, 200_000),
                 model_ctx("kimi-k2.5", ModelTaskSize::Large, 262_144),
                 model_ctx("minimax-m2.5", ModelTaskSize::Small, 204_800),
+            ],
+            ..Default::default()
+        },
+        ProviderConfig {
+            id: "commandcode".to_string(),
+            label: "Command Code".to_string(),
+            description: "Command Code CLI API (alpha/generate)".to_string(),
+            kind: ProviderKind::OpenAiChatCompletions,
+            api_key_env: "CMD_API_KEY".to_string(),
+            base_url: Some("https://api.commandcode.ai".to_string()),
+            models: vec![
+                model_ctx("claude-sonnet-4-6", ModelTaskSize::Large, 1_000_000),
+                model_ctx("claude-fable-5", ModelTaskSize::Large, 1_000_000),
+                model_ctx("claude-opus-4-8", ModelTaskSize::Large, 1_000_000),
+                model_ctx("claude-opus-4-7", ModelTaskSize::Large, 1_000_000),
+                model_ctx("claude-haiku-4-5-20251001", ModelTaskSize::Small, 200_000),
+                model_ctx("gpt-5.5", ModelTaskSize::Large, 200_000),
+                model_ctx("gpt-5.4", ModelTaskSize::Large, 400_000),
+                model_ctx("gpt-5.3-codex", ModelTaskSize::Large, 400_000),
+                model_ctx("gpt-5.4-mini", ModelTaskSize::Small, 400_000),
+                model_ctx("MiniMaxAI/MiniMax-M3", ModelTaskSize::Large, 1_000_000),
+                model_ctx("deepseek/deepseek-v4-pro", ModelTaskSize::Large, 1_000_000),
+                model_ctx(
+                    "deepseek/deepseek-v4-flash",
+                    ModelTaskSize::Small,
+                    1_000_000,
+                ),
+                model_ctx("moonshotai/Kimi-K2.7-Code", ModelTaskSize::Large, 256_000),
+                model_ctx("moonshotai/Kimi-K2.6", ModelTaskSize::Large, 256_000),
+                model_ctx("moonshotai/Kimi-K2.5", ModelTaskSize::Large, 256_000),
+                model_ctx("zai-org/GLM-5.1", ModelTaskSize::Large, 200_000),
+                model_ctx("zai-org/GLM-5", ModelTaskSize::Large, 200_000),
+                model_ctx("MiniMaxAI/MiniMax-M2.7", ModelTaskSize::Small, 200_000),
+                model_ctx("MiniMaxAI/MiniMax-M2.5", ModelTaskSize::Small, 200_000),
+                model_ctx("xiaomi/mimo-v2.5-pro", ModelTaskSize::Large, 1_000_000),
+                model_ctx("xiaomi/mimo-v2.5", ModelTaskSize::Small, 1_000_000),
+                model_ctx("Qwen/Qwen3.6-Max-Preview", ModelTaskSize::Large, 200_000),
+                model_ctx("Qwen/Qwen3.6-Plus", ModelTaskSize::Large, 200_000),
+                model_ctx("Qwen/Qwen3.7-Max", ModelTaskSize::Large, 1_000_000),
+                model_ctx("Qwen/Qwen3.7-Plus", ModelTaskSize::Large, 1_000_000),
+                model_ctx("stepfun/Step-3.7-Flash", ModelTaskSize::Small, 256_000),
+                model_ctx("stepfun/Step-3.5-Flash", ModelTaskSize::Small, 1_000_000),
+                model_ctx("google/gemini-3.5-flash", ModelTaskSize::Small, 1_000_000),
+                model_ctx(
+                    "google/gemini-3.1-flash-lite",
+                    ModelTaskSize::Small,
+                    1_000_000,
+                ),
+                model_ctx(
+                    "nvidia/nemotron-3-ultra-550b-a55b",
+                    ModelTaskSize::Large,
+                    1_000_000,
+                ),
             ],
             ..Default::default()
         },

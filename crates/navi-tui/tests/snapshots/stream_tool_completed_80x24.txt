@@ -1,7 +1,7 @@
   main  /tmp/navi-test-project
 
-   │ read the file
 
+        read the file
 
 
 
@@ -14,10 +14,10 @@
 
 
 
-
-  ▌
-  ▌    thinking...
   ▌
   ▌
+  ▌     thinking...
   ▌
-  ▌  Build · gpt-5.5 OpenAI · adaptive · 0 / 200k (0%)   Enter send · Shift+
+  ▌
+  ▌   gpt-5.5 OpenAI · adaptive · 0 / 200k (0%)
+  ▌

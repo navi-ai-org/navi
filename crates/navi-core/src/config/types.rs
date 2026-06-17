@@ -58,6 +58,12 @@ pub struct TuiConfig {
     pub thinking_level: String,
     /// Auto-approve tools without confirmation (YOLO mode).
     pub yolo_mode: bool,
+    /// Most-recently used provider ids, ordered newest first.
+    /// Capped (see `navi-tui::providers::push_recent_provider`).
+    pub recent_provider_ids: Vec<String>,
+    /// Most-recently used model keys in `provider:model` form, ordered newest first.
+    /// Capped (see `navi-tui::providers::push_recent_model`).
+    pub recent_model_ids: Vec<String>,
 }
 
 impl Default for TuiConfig {
@@ -69,6 +75,8 @@ impl Default for TuiConfig {
             compact_tool_visible_limit: 5,
             thinking_level: "adaptive".to_string(),
             yolo_mode: false,
+            recent_provider_ids: Vec::new(),
+            recent_model_ids: Vec::new(),
         }
     }
 }

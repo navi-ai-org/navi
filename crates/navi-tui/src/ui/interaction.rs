@@ -18,6 +18,7 @@ pub(crate) enum HitAction {
     ModelProviderRefresh(String),
     ProviderApiKey(usize),
     ProviderOAuth(usize),
+    OAuthOpen,
     Session(usize),
     Skill(usize),
     Setting(usize),

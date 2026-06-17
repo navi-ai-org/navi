@@ -120,6 +120,19 @@ impl CredentialStore {
             .find_map(|path| opencode_key_from_auth_file(&path))
     }
 
+    /// Reads an API key from Command Code's auth.json file, if it exists.
+    pub fn get_commandcode_api_key(&self) -> Option<String> {
+        if let Ok(content) = std::env::var("COMMAND_CODE_AUTH_CONTENT")
+            && let Some(key) = commandcode_key_from_auth_content(&content)
+        {
+            return Some(key);
+        }
+
+        commandcode_auth_paths()
+            .into_iter()
+            .find_map(|path| commandcode_key_from_auth_file(&path))
+    }
+
     /// Stores an API key for the given provider, creating the credentials file
     /// if needed.
     pub fn set_api_key(&self, provider_id: &str, api_key: &str) -> Result<()> {
@@ -210,6 +223,7 @@ pub fn resolve_provider_api_key(
 
     provider_env_api_key_for_config(provider_config)
         .or_else(|| opencode_auth_json_api_key(credential_store, &provider_config.id))
+        .or_else(|| commandcode_auth_json_api_key(credential_store, &provider_config.id))
         .or_else(|| credential_store.get_api_key(&provider_config.id))
         .or_else(|| {
             if requested_provider_id != provider_config.id {
@@ -254,6 +268,17 @@ pub fn resolve_provider_credential_status(
             source: Some(CredentialSource::External),
             label: "opencode".to_string(),
             detail: Some("OpenCode auth.json".to_string()),
+        };
+    }
+
+    if provider_config.id == ProviderId::COMMANDCODE
+        && credential_store.get_commandcode_api_key().is_some()
+    {
+        return CredentialStatus {
+            configured: true,
+            source: Some(CredentialSource::External),
+            label: "commandcode".to_string(),
+            detail: Some("Command Code auth.json".to_string()),
         };
     }
 
@@ -302,6 +327,20 @@ fn provider_env_var_for_config(provider_config: &ProviderConfig) -> Option<Strin
 }
 
 fn provider_env_vars_for_config(provider_config: &ProviderConfig) -> Vec<String> {
+    if provider_config.id == ProviderId::COMMANDCODE {
+        let mut env_vars = vec![
+            "COMMAND_CODE_API_KEY".to_string(),
+            "CMD_API_KEY".to_string(),
+        ];
+        if !env_vars
+            .iter()
+            .any(|env_var| env_var == &provider_config.api_key_env)
+        {
+            env_vars.push(provider_config.api_key_env.clone());
+        }
+        return env_vars;
+    }
+
     if !ProviderId::from_config_id(&provider_config.id).is_opencode_family() {
         return vec![provider_config.api_key_env.clone()];
     }
@@ -325,6 +364,17 @@ fn opencode_auth_json_api_key(
 ) -> Option<String> {
     if ProviderId::from_config_id(provider_id).is_opencode_family() {
         credential_store.get_opencode_api_key()
+    } else {
+        None
+    }
+}
+
+fn commandcode_auth_json_api_key(
+    credential_store: &CredentialStore,
+    provider_id: &str,
+) -> Option<String> {
+    if provider_id == ProviderId::COMMANDCODE {
+        credential_store.get_commandcode_api_key()
     } else {
         None
     }
@@ -363,6 +413,27 @@ fn opencode_key_from_auth_content(content: &str) -> Option<String> {
     ["opencode", "opencode/"]
         .into_iter()
         .find_map(|provider_id| api_key_from_opencode_auth_entry(data.get(provider_id)?))
+}
+
+fn commandcode_auth_paths() -> Vec<PathBuf> {
+    BaseDirs::new()
+        .map(|base_dirs| vec![base_dirs.home_dir().join(".commandcode").join("auth.json")])
+        .unwrap_or_default()
+}
+
+fn commandcode_key_from_auth_file(path: &Path) -> Option<String> {
+    let content = fs::read_to_string(path).ok()?;
+    commandcode_key_from_auth_content(&content)
+}
+
+fn commandcode_key_from_auth_content(content: &str) -> Option<String> {
+    let data: Value = serde_json::from_str(content).ok()?;
+    let key = data.get("apiKey")?.as_str()?.trim();
+    if key.is_empty() {
+        None
+    } else {
+        Some(key.to_string())
+    }
 }
 
 fn api_key_from_opencode_auth_entry(entry: &Value) -> Option<String> {
@@ -608,6 +679,77 @@ mod tests {
         }"#;
 
         assert!(opencode_key_from_auth_content(content).is_none());
+    }
+
+    #[test]
+    fn reads_commandcode_api_key_from_auth_content() {
+        let content = r#"{
+            "apiKey": "cmd-key",
+            "userName": "test-user",
+            "keyName": "cli-manual-entry"
+        }"#;
+
+        assert_eq!(
+            commandcode_key_from_auth_content(content).as_deref(),
+            Some("cmd-key")
+        );
+    }
+
+    #[test]
+    fn ignores_empty_commandcode_auth_content() {
+        let content = r#"{
+            "apiKey": "   ",
+            "userName": "test-user"
+        }"#;
+
+        assert!(commandcode_key_from_auth_content(content).is_none());
+    }
+
+    #[test]
+    fn commandcode_provider_checks_cli_env_aliases() {
+        let provider = ProviderConfig {
+            id: ProviderId::COMMANDCODE.to_string(),
+            label: "Command Code".to_string(),
+            description: String::new(),
+            kind: ProviderKind::OpenAiChatCompletions,
+            api_key_env: "CMD_API_KEY".to_string(),
+            base_url: Some("https://api.commandcode.ai".to_string()),
+            ..Default::default()
+        };
+
+        assert_eq!(
+            provider_env_vars_for_config(&provider),
+            vec![
+                "COMMAND_CODE_API_KEY".to_string(),
+                "CMD_API_KEY".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn provider_resolver_uses_commandcode_auth_content() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let store = CredentialStore::new(tempdir.path().to_path_buf());
+        let provider = ProviderConfig {
+            id: ProviderId::COMMANDCODE.to_string(),
+            label: "Command Code".to_string(),
+            description: String::new(),
+            kind: ProviderKind::OpenAiChatCompletions,
+            api_key_env: "NAVI_NONEXISTENT_ENV_VAR_98770".to_string(),
+            base_url: Some("https://api.commandcode.ai".to_string()),
+            ..Default::default()
+        };
+
+        unsafe {
+            std::env::set_var(
+                "COMMAND_CODE_AUTH_CONTENT",
+                r#"{"apiKey":"cmd-external-key","userName":"test-user"}"#,
+            )
+        };
+        let result = resolve_provider_api_key(&store, &provider, ProviderId::COMMANDCODE);
+        unsafe { std::env::remove_var("COMMAND_CODE_AUTH_CONTENT") };
+
+        assert_eq!(result.as_deref(), Some("cmd-external-key"));
     }
 
     #[cfg(unix)]

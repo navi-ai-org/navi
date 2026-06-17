@@ -11,13 +11,13 @@
       │ Share Session                                                  █ │h
       │ Models                                              ctrl+m     █ │
       │ Providers                                                      █ │
-      │ Skills                                                         █ │
+      │ Skills                                                         │ │
     NA│ Plugins                                                        │ │
       │ MCP Servers                                                    │ │
-      │ Retry Last Response                                            │ │
+  ▌   │ Background Commands                                 ctrl+b     │ │
   ▌   │                                                                  │
   ▌   ╰──────────────────────────────────────────────────────────────────╯
   ▌
   ▌
+  ▌   gpt-5.5 OpenAI · adaptive · 0 / 200k (0%)
   ▌
-  ▌  Ready · gpt-5.5 OpenAI · adaptive · 0 / 200k (0%)   Enter send · Shift+

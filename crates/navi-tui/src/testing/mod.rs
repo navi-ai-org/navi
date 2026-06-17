@@ -89,6 +89,7 @@ impl Harness {
             None,
         )
         .expect("test app");
+        let _ = app.credential_store().delete_api_key("commandcode");
         Self::from_app(config, app)
     }
 
@@ -109,6 +110,7 @@ impl Harness {
             None,
         )
         .expect("test app");
+        let _ = app.credential_store().delete_api_key("commandcode");
         app.set_engine(engine);
         Self::from_app(config, app)
     }

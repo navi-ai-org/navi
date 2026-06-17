@@ -34,6 +34,10 @@ impl<M: Copy + PartialEq> ModalStack<M> {
     pub(crate) fn top(&self) -> Option<M> {
         self.stack.last().copied()
     }
+
+    pub(crate) fn is_active(&self) -> bool {
+        !self.stack.is_empty()
+    }
 }
 
 #[cfg(test)]
@@ -68,5 +72,16 @@ mod tests {
 
         assert_eq!(stack.close(), Some(Modal::Parent));
         assert_eq!(stack.top(), None);
+    }
+
+    #[test]
+    fn is_active_tracks_modal_presence() {
+        let mut stack = ModalStack::default();
+
+        assert!(!stack.is_active());
+        stack.open(Modal::Parent);
+        assert!(stack.is_active());
+        stack.close();
+        assert!(!stack.is_active());
     }
 }

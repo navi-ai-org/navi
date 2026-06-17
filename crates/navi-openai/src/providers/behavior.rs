@@ -10,6 +10,7 @@ const OPENAI_BASE_URL: &str = "https://api.openai.com/v1";
 const GEMINI_BASE_URL: &str = "https://generativelanguage.googleapis.com";
 const OPENCODE_ZEN_BASE_URL: &str = "https://opencode.ai/zen/v1";
 const OPENCODE_GO_BASE_URL: &str = "https://opencode.ai/zen/go/v1";
+const COMMANDCODE_BASE_URL: &str = "https://api.commandcode.ai";
 
 const ANTHROPIC_VERSION: &str = "2023-06-01";
 const OPENROUTER_REFERER: &str = "https://github.com/enrell/navi";
@@ -354,6 +355,28 @@ impl ProviderBehavior for OpencodeGoBehavior {
     }
 }
 
+// ─── Command Code ─────────────────────────────────────────────────────────────
+
+pub(crate) struct CommandCodeBehavior;
+
+impl ProviderBehavior for CommandCodeBehavior {
+    fn default_base_url(&self) -> Option<&str> {
+        Some(COMMANDCODE_BASE_URL)
+    }
+
+    fn stream_route(&self, _model: &str, _configured_kind: OpenAiApiKind) -> StreamRoute {
+        StreamRoute::CommandCodeAlphaGenerate
+    }
+
+    fn build_headers(&self, api_key: &str, endpoint: Endpoint) -> Result<HeaderMap, ProviderError> {
+        let content_type = matches!(
+            endpoint,
+            Endpoint::ChatCompletions | Endpoint::AnthropicMessages
+        );
+        standard_bearer_headers(api_key, content_type)
+    }
+}
+
 // ─── Groq ─────────────────────────────────────────────────────────────────────
 
 pub(crate) struct GroqBehavior;
@@ -444,8 +467,32 @@ pub(crate) fn behavior_for_provider(provider_id: &ProviderId) -> Box<dyn Provide
         ProviderId::OPENCODE => Box::new(OpencodeBehavior),
         ProviderId::OPENCODE_ZEN => Box::new(OpencodeZenBehavior),
         ProviderId::OPENCODE_GO => Box::new(OpencodeGoBehavior),
+        ProviderId::COMMANDCODE => Box::new(CommandCodeBehavior),
         ProviderId::GROQ => Box::new(GroqBehavior),
         ProviderId::XAI => Box::new(XaiBehavior),
         _ => Box::new(CustomBehavior),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn commandcode_routes_all_models_to_alpha_generate() {
+        let behavior = behavior_for_provider(&ProviderId::from_config_id(ProviderId::COMMANDCODE));
+
+        assert!(matches!(
+            behavior.stream_route("claude-sonnet-4-6", OpenAiApiKind::ChatCompletions),
+            StreamRoute::CommandCodeAlphaGenerate
+        ));
+        assert!(matches!(
+            behavior.stream_route("xiaomi/mimo-v2.5-pro", OpenAiApiKind::ChatCompletions),
+            StreamRoute::CommandCodeAlphaGenerate
+        ));
+        assert!(matches!(
+            behavior.stream_route("deepseek/deepseek-v4-flash", OpenAiApiKind::ChatCompletions),
+            StreamRoute::CommandCodeAlphaGenerate
+        ));
     }
 }

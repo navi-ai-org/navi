@@ -46,17 +46,21 @@ pub(crate) fn handle_model_error(app: &mut TuiApp, message: String) {
         return;
     }
 
-    tracing::error!(error = %message, "model stream failed");
-    push_diagnostic(app, format!("Model error: {message}"));
-    app.skip_next_model_done = false;
-    app.messages.push(ChatMessage {
-        status: Some("error".to_string()),
-        ..ChatMessage::new(
-            ChatRole::Assistant,
-            format_model_error_message(app, &message),
-        )
+    let formatted_message = format_model_error_message(app, &message);
+    let is_duplicate_tail_error = app.messages.last().is_some_and(|last| {
+        last.status.as_deref() == Some("error") && last.content == formatted_message
     });
-    app.events.push(AgentEvent::Error { message });
+
+    if !is_duplicate_tail_error {
+        tracing::error!(error = %message, "model stream failed");
+        push_diagnostic(app, format!("Model error: {message}"));
+        app.messages.push(ChatMessage {
+            status: Some("error".to_string()),
+            ..ChatMessage::new(ChatRole::Assistant, formatted_message)
+        });
+        app.events.push(AgentEvent::Error { message });
+    }
+    app.skip_next_model_done = false;
     app.is_loading = false;
     app.loading_start = None;
     app.clear_stream_task();
@@ -189,5 +193,26 @@ mod tests {
         );
 
         assert_eq!(delay, Duration::from_secs(60));
+    }
+
+    #[test]
+    fn handle_model_error_deduplicates_identical_tail_error() {
+        let mut app = crate::tests::test_app("");
+
+        handle_model_error(&mut app, "access denied".to_string());
+        handle_model_error(&mut app, "access denied".to_string());
+
+        let error_messages = app
+            .messages
+            .iter()
+            .filter(|message| message.status.as_deref() == Some("error"))
+            .count();
+        let error_events = app
+            .events
+            .iter()
+            .filter(|event| matches!(event, AgentEvent::Error { .. }))
+            .count();
+        assert_eq!(error_messages, 1);
+        assert_eq!(error_events, 1);
     }
 }

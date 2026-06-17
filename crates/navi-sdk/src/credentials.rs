@@ -11,14 +11,17 @@ use navi_core::{
 pub use navi_core::{CredentialSource, CredentialStatus};
 pub use navi_providers::DeviceOAuthStarted;
 
-/// Whether the provider supports device-code OAuth through the SDK.
+/// Whether the provider supports browser/device OAuth through the SDK.
 pub fn provider_supports_device_oauth(provider_id: &str) -> bool {
-    matches!(canonical_provider_id(provider_id), "github-copilot")
+    matches!(
+        canonical_provider_id(provider_id),
+        "commandcode" | "github-copilot"
+    )
 }
 
-/// Start device-code OAuth for a supported provider.
+/// Start browser/device OAuth for a supported provider.
 ///
-/// Currently supported: `github-copilot`.
+/// Currently supported: `commandcode`, `github-copilot`.
 pub async fn start_provider_device_oauth<F>(
     credential_store: &CredentialStore,
     provider_id: &str,
@@ -28,6 +31,13 @@ where
     F: FnMut(DeviceOAuthStarted) + Send,
 {
     match canonical_provider_id(provider_id) {
+        "commandcode" => navi_providers::commandcode_browser_oauth(
+            credential_store.clone(),
+            provider_id,
+            on_started,
+        )
+        .await
+        .map_err(|err| anyhow::anyhow!(err)),
         "github-copilot" => navi_providers::github_copilot_device_oauth(
             credential_store.clone(),
             provider_id,

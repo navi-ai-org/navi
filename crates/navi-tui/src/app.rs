@@ -10,19 +10,19 @@ use tokio::task::JoinHandle;
 use std::sync::Arc;
 
 use navi_sdk::{
-    AgentEvent, AgentRunState, ApprovalRequest, CompactState, CredentialStore, EngineDriver,
-    HarnessPolicy, LoadedConfig, ModelMessage, ModelOption, NaviSkillInfo, ProviderConfig,
-    SessionId, SessionSnapshot, SessionStore, ToolInvocation, available_model_options,
-    build_system_prompt, canonical_provider_id, clean_session_title, effective_context_window,
-    log_path, provider_catalog, select_harness_policy,
+    AgentEvent, AgentRunState, ApprovalRequest, BackgroundCommandSnapshot, CompactState,
+    CredentialStore, EngineDriver, HarnessPolicy, LoadedConfig, ModelMessage, ModelOption,
+    NaviSkillInfo, ProviderConfig, SessionId, SessionSnapshot, SessionStore, ToolInvocation,
+    available_model_options, build_system_prompt, canonical_provider_id, clean_session_title,
+    effective_context_window, log_path, provider_catalog, select_harness_policy,
 };
 
 use crate::dispatch::AsyncEvent;
 use crate::runtime::{build_engine, selected_model_runtime_available};
 use crate::session::load_saved_sessions;
 use crate::state::{
-    ChatMessage, ChatRenderCache, McpUiState, ModalKind, Mode, Notification, PluginApprovalRequest,
-    QuestionUiState, SelectionState, ThinkingLevel,
+    ChatMessage, ChatRenderCache, McpUiState, ModalKind, Mode, Notification, OAuthUiState,
+    PluginApprovalRequest, QuestionUiState, SelectionState, ThinkingLevel,
 };
 use crate::theme::{ThemeId, ThemePalette};
 use crate::ui::interaction::{HitAction, HitRegion, InteractionRegistry};
@@ -104,6 +104,7 @@ pub struct TuiApp {
     pub(crate) selected_provider_setting: usize,
     pub(crate) provider_settings_scroll: usize,
     pub(crate) provider_filter: String,
+    pub(crate) oauth_state: Option<OAuthUiState>,
     notification: Option<Notification>,
     diagnostics: Vec<String>,
     log_path: PathBuf,
@@ -142,6 +143,12 @@ pub struct TuiApp {
 
     // mcp
     pub(crate) mcp_ui_state: McpUiState,
+
+    // background commands
+    pub(crate) background_commands: Vec<BackgroundCommandSnapshot>,
+    pub(crate) bg_command_selected: usize,
+    pub(crate) bg_command_scroll: usize,
+    pub(crate) bg_poll_task: Option<JoinHandle<()>>,
 }
 
 impl TuiApp {
@@ -254,6 +261,7 @@ impl TuiApp {
             selected_provider_setting: 0,
             provider_settings_scroll: 0,
             provider_filter: String::new(),
+            oauth_state: None,
             notification: None,
             diagnostics: Vec::new(),
             log_path,
@@ -281,6 +289,10 @@ impl TuiApp {
             pending_plugin_approvals: Vec::new(),
             plugin_approval_scroll: 0,
             mcp_ui_state: Default::default(),
+            background_commands: Vec::new(),
+            bg_command_selected: 0,
+            bg_command_scroll: 0,
+            bg_poll_task: None,
         };
 
         // If a task was passed via CLI, pre-fill input
@@ -293,6 +305,18 @@ impl TuiApp {
 
         // Cache authenticated provider IDs for fast model picker filtering
         app.refresh_authenticated_providers();
+
+        // Seed recents with the configured provider/model so they appear under
+        // the "Recent" sections on first open, before the user has done any
+        // explicit switching.
+        {
+            let provider = app.loaded_config.config.model.provider.clone();
+            let model = app.loaded_config.config.model.name.clone();
+            if !provider.is_empty() && !model.is_empty() {
+                crate::providers::push_recent_provider(&mut app, &provider);
+                crate::providers::push_recent_model(&mut app, &provider, &model);
+            }
+        }
 
         Ok(app)
     }
@@ -510,20 +534,95 @@ impl TuiApp {
             .collect()
     }
 
-    pub(crate) fn filtered_providers(&self) -> Vec<ProviderConfig> {
+    pub(crate) fn filtered_providers(&self) -> Vec<crate::providers::ProviderListRow> {
+        use crate::providers::ProviderListRow;
+
         let filter = self.provider_filter.trim().to_lowercase();
         let providers = provider_catalog(&self.loaded_config.config);
-        if filter.is_empty() {
-            return providers;
+        let total = providers.len();
+
+        let index_of = |id: &str| -> Option<usize> {
+            let canonical = navi_sdk::canonical_provider_id(id);
+            providers
+                .iter()
+                .position(|p| navi_sdk::canonical_provider_id(&p.id) == canonical)
+        };
+
+        if !filter.is_empty() {
+            return providers
+                .into_iter()
+                .enumerate()
+                .filter(|(_, p)| {
+                    p.id.to_lowercase().contains(&filter)
+                        || p.label.to_lowercase().contains(&filter)
+                        || p.description.to_lowercase().contains(&filter)
+                })
+                .map(|(index, _)| ProviderListRow::Provider { index })
+                .collect();
         }
-        providers
-            .into_iter()
-            .filter(|p| {
-                p.id.to_lowercase().contains(&filter)
-                    || p.label.to_lowercase().contains(&filter)
-                    || p.description.to_lowercase().contains(&filter)
+
+        let mut rows: Vec<ProviderListRow> = Vec::new();
+        let mut emitted: Vec<bool> = vec![false; total];
+
+        let recents: Vec<usize> = self
+            .loaded_config
+            .config
+            .tui
+            .recent_provider_ids
+            .iter()
+            .filter_map(|id| index_of(id))
+            .filter(|idx| {
+                if emitted[*idx] {
+                    false
+                } else {
+                    emitted[*idx] = true;
+                    true
+                }
             })
-            .collect()
+            .collect();
+        if !recents.is_empty() {
+            rows.push(ProviderListRow::Header {
+                label: format!("— Recent —"),
+            });
+            for idx in &recents {
+                rows.push(ProviderListRow::Provider { index: *idx });
+            }
+        }
+
+        let connected: Vec<usize> = providers
+            .iter()
+            .enumerate()
+            .filter_map(|(index, p)| {
+                if !self.authenticated_providers.contains(p.id.as_str()) {
+                    return None;
+                }
+                if emitted[index] {
+                    return None;
+                }
+                emitted[index] = true;
+                Some(index)
+            })
+            .collect();
+        if !connected.is_empty() {
+            rows.push(ProviderListRow::Header {
+                label: format!("— Connected —"),
+            });
+            for idx in connected {
+                rows.push(ProviderListRow::Provider { index: idx });
+            }
+        }
+
+        let others: Vec<usize> = (0..total).filter(|i| !emitted[*i]).collect();
+        if !others.is_empty() {
+            rows.push(ProviderListRow::Header {
+                label: format!("— Other providers —"),
+            });
+            for idx in others {
+                rows.push(ProviderListRow::Provider { index: idx });
+            }
+        }
+
+        rows
     }
 }
 

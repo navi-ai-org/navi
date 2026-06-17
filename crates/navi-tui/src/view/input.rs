@@ -1,4 +1,4 @@
-use ratatui::layout::{Constraint, Direction, Layout, Margin, Rect};
+use ratatui::layout::{Margin, Rect};
 use ratatui::prelude::{Frame, Line, Span};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::Text;
@@ -15,7 +15,9 @@ use crate::theme::*;
 use crate::ui::interaction::HitAction;
 use crate::ui::text_input::floor_char_boundary;
 
-const INPUT_TOP_PADDING_ROWS: u16 = 1;
+const INPUT_TOP_PADDING_ROWS: u16 = 2;
+const FOOTER_BOTTOM_PADDING_ROWS: u16 = 1;
+const INPUT_TEXT_INSET_COLUMNS: u16 = 3;
 
 pub(super) fn render_input(frame: &mut Frame<'_>, app: &mut TuiApp, area: Rect) {
     let inner = area.inner(Margin {
@@ -40,20 +42,32 @@ pub(super) fn render_input(frame: &mut Frame<'_>, app: &mut TuiApp, area: Rect) 
         inner_block_area,
     );
 
-    let panel_margin = Margin {
-        horizontal: 2,
+    let panel_area = inner_block_area.inner(Margin {
+        horizontal: INPUT_TEXT_INSET_COLUMNS,
         vertical: 0,
-    };
-    let panel_rows = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(INPUT_TOP_PADDING_ROWS),
-            Constraint::Min(4),
-            Constraint::Length(1),
-        ])
-        .split(inner_block_area.inner(panel_margin));
-
-    let input_area = panel_rows[1];
+    });
+    let input_y = panel_area.y + INPUT_TOP_PADDING_ROWS.min(panel_area.height);
+    let last_panel_y = panel_area.y + panel_area.height.saturating_sub(1);
+    let desired_footer_y = panel_area.y
+        + panel_area
+            .height
+            .saturating_sub(1 + FOOTER_BOTTOM_PADDING_ROWS);
+    let footer_y = desired_footer_y
+        .max(input_y.saturating_add(1))
+        .min(last_panel_y);
+    let footer_area = Rect::new(
+        panel_area.x,
+        footer_y,
+        panel_area.width,
+        1.min(panel_area.height),
+    );
+    let input_bottom = footer_area.y;
+    let input_area = Rect::new(
+        panel_area.x,
+        input_y,
+        panel_area.width,
+        input_bottom.saturating_sub(input_y).max(1),
+    );
     app.input_wrap_width = input_area.width as usize;
     let (lines, cursor_line) = input_lines(app, input_area.width as usize);
     let input_lines = visible_input_lines(lines, input_area.height as usize, cursor_line);
@@ -65,14 +79,14 @@ pub(super) fn render_input(frame: &mut Frame<'_>, app: &mut TuiApp, area: Rect) 
     );
 
     frame.render_widget(
-        Paragraph::new(composer_footer_line(app, panel_rows[2].width as usize))
+        Paragraph::new(composer_footer_line(app, footer_area.width as usize))
             .style(Style::default().bg(composer_panel_bg(app))),
-        panel_rows[2],
+        footer_area,
     );
 
     if !app.pending_questions.is_empty() {
         app.register_hit(
-            panel_rows[2],
+            footer_area,
             3,
             "reopen pending question",
             HitAction::ReopenQuestion,
@@ -177,23 +191,10 @@ fn composer_footer_line(app: &TuiApp, _width: usize) -> Line<'static> {
 
     let provider = selected_provider_label(app);
     let thinking = app.thinking_level.label();
-    let status = if app.is_loading { "Build" } else { "Ready" };
-    let status_color = if app.is_loading {
-        code_const()
-    } else {
-        accent()
-    };
     let model = selected_model_label(app);
     let context = app.compact_state.usage_label(0);
 
     Line::from(vec![
-        Span::styled(
-            status,
-            Style::default()
-                .fg(status_color)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(" · ", Style::default().fg(ghost())),
         Span::styled(model, Style::default().fg(code_type())),
         Span::styled(" ", Style::default().fg(ghost())),
         Span::styled(
@@ -214,30 +215,6 @@ fn composer_footer_line(app: &TuiApp, _width: usize) -> Line<'static> {
                 .fg(code_number())
                 .add_modifier(Modifier::BOLD),
         ),
-        Span::styled("   ", Style::default().fg(ghost())),
-        Span::styled(
-            "Enter",
-            Style::default().fg(signal()).add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(" send", Style::default().fg(muted())),
-        Span::styled(" · ", Style::default().fg(ghost())),
-        Span::styled(
-            "Shift+Enter",
-            Style::default().fg(signal()).add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(" newline", Style::default().fg(muted())),
-        Span::styled(" · ", Style::default().fg(ghost())),
-        Span::styled(
-            "Ctrl+A",
-            Style::default().fg(signal()).add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(" select", Style::default().fg(muted())),
-        Span::styled(" · ", Style::default().fg(ghost())),
-        Span::styled(
-            "Ctrl+P",
-            Style::default().fg(signal()).add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(" commands", Style::default().fg(muted())),
     ])
 }
 
@@ -247,6 +224,7 @@ fn selected_model_label(app: &TuiApp) -> String {
         .get(app.selected_model)
         .map(|model| model.name.as_str())
         .unwrap_or("model");
+    let label = label.rsplit('/').next().unwrap_or(label);
     if label.chars().count() <= 24 {
         return label.to_string();
     }
@@ -294,5 +272,14 @@ mod tests {
         assert_eq!(cursor_line, 1);
         assert!(text.contains("abc"));
         assert!(text.lines().last().unwrap_or_default().starts_with(' '));
+    }
+
+    #[test]
+    fn selected_model_label_hides_provider_prefix() {
+        let mut app = crate::tests::test_app("");
+        let selected = app.selected_model;
+        app.models[selected].name = "ai21/jamba-large-1.7".to_string();
+
+        assert_eq!(selected_model_label(&app), "jamba-large-1.7");
     }
 }

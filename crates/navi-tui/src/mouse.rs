@@ -327,6 +327,15 @@ fn dispatch_hit(app: &mut TuiApp, hit: HitRegion) {
                 }
             }
         }
+        HitAction::OAuthOpen => {
+            if let Some(uri) = app
+                .oauth_state
+                .as_ref()
+                .map(|state| state.verification_uri.clone())
+            {
+                crate::browser::open_url(app, uri);
+            }
+        }
         HitAction::Session(index) => {
             if let Some(snapshot) = app.saved_sessions.get(index).cloned() {
                 app.selected_session = index;
@@ -498,8 +507,9 @@ fn active_scroll_target(app: &TuiApp) -> Option<ScrollTarget> {
         | Mode::Thinking
         | Mode::Help
         | Mode::Debug
-        | Mode::MessageActions => None,
-        Mode::Normal | Mode::ApiKeyEntry | Mode::Mcp => None,
+        | Mode::MessageActions
+        | Mode::OAuth => None,
+        Mode::Normal | Mode::ApiKeyEntry | Mode::Mcp | Mode::BackgroundCommands => None,
     }
 }
 

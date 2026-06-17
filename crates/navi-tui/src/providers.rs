@@ -16,6 +16,42 @@ use crate::{
     notifications::{push_diagnostic, show_notification},
 };
 
+/// Maximum number of entries kept in the recent-provider and recent-model lists.
+pub(crate) const RECENTS_LIMIT: usize = 8;
+
+/// Push a provider id to the front of the recents list, deduping and capping
+/// the list to `RECENTS_LIMIT` entries. Persists the change via `save_preferences`.
+pub(crate) fn push_recent_provider(app: &mut TuiApp, provider_id: &str) {
+    if provider_id.is_empty() {
+        return;
+    }
+    let canonical = navi_sdk::canonical_provider_id(provider_id).to_string();
+    let tui = &mut app.loaded_config.config.tui;
+    tui.recent_provider_ids.retain(|id| id != &canonical);
+    tui.recent_provider_ids.insert(0, canonical);
+    if tui.recent_provider_ids.len() > RECENTS_LIMIT {
+        tui.recent_provider_ids.truncate(RECENTS_LIMIT);
+    }
+    crate::persistence::save_preferences(app);
+}
+
+/// Push a `provider:model` key to the front of the recents list, deduping and
+/// capping to `RECENTS_LIMIT` entries. Persists via `save_preferences`.
+pub(crate) fn push_recent_model(app: &mut TuiApp, provider_id: &str, model_name: &str) {
+    if provider_id.is_empty() || model_name.is_empty() {
+        return;
+    }
+    let canonical = navi_sdk::canonical_provider_id(provider_id).to_string();
+    let key = format!("{canonical}:{model_name}");
+    let tui = &mut app.loaded_config.config.tui;
+    tui.recent_model_ids.retain(|k| k != &key);
+    tui.recent_model_ids.insert(0, key);
+    if tui.recent_model_ids.len() > RECENTS_LIMIT {
+        tui.recent_model_ids.truncate(RECENTS_LIMIT);
+    }
+    crate::persistence::save_preferences(app);
+}
+
 pub(crate) fn rebuild_provider(app: &mut TuiApp) {
     match build_engine(&app.loaded_config, app.project_dir.clone()) {
         Ok(engine) => app
@@ -50,6 +86,8 @@ pub(crate) fn apply_model_selection(app: &mut TuiApp, model_index: usize) {
     let Some(model) = app.models.get(model_index).cloned() else {
         return;
     };
+
+    push_recent_model(app, &model.provider_id, &model.name);
 
     let result = app.engine().select_model(NaviModelSelectionRequest {
         provider_id: model.provider_id.clone(),
@@ -107,14 +145,18 @@ pub(crate) fn save_api_key_and_rebuild(app: &mut TuiApp) {
     }
 
     let provider_id = selected_or_pending_provider_id(app);
-    if let Err(err) = app.engine().set_provider_api_key(&provider_id, &key) {
+    let set_result = app.engine().set_provider_api_key(&provider_id, &key);
+    if let Err(err) = set_result.as_ref() {
         show_notification(app, "Credentials", format!("Failed to save key: {err:#}"));
-    } else {
+    }
+    let saved_ok = set_result.is_ok();
+    if saved_ok {
         show_notification(
             app,
             "Credentials",
             format!("API key saved for provider \"{provider_id}\"."),
         );
+        push_recent_provider(app, &provider_id);
     }
 
     let return_to_providers = app.pending_provider_setup.take().is_some();
@@ -229,6 +271,47 @@ pub(crate) enum ListRow {
     Model {
         index: usize,
     },
+}
+
+/// Row used by the Provider Accounts modal. Headers are non-selectable
+/// dividers; `Provider` rows reference a position in the catalog returned by
+/// `provider_catalog(&app.loaded_config.config)`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum ProviderListRow {
+    Header { label: String },
+    Provider { index: usize },
+}
+
+impl ProviderListRow {
+    pub(crate) fn provider(rows: &[ProviderListRow], index: usize) -> Option<usize> {
+        rows.iter().position(|row| matches!(row, ProviderListRow::Provider { index: i } if *i == index))
+    }
+
+    pub(crate) fn first_provider(rows: &[ProviderListRow]) -> Option<usize> {
+        rows.iter().find_map(|row| match row {
+            ProviderListRow::Provider { index } => Some(*index),
+            ProviderListRow::Header { .. } => None,
+        })
+    }
+
+    pub(crate) fn next_provider(rows: &[ProviderListRow], current: usize) -> Option<usize> {
+        rows.iter()
+            .skip(current + 1)
+            .find_map(|row| match row {
+                ProviderListRow::Provider { index } => Some(*index),
+                ProviderListRow::Header { .. } => None,
+            })
+    }
+
+    pub(crate) fn previous_provider(rows: &[ProviderListRow], current: usize) -> Option<usize> {
+        rows.iter()
+            .take(current)
+            .rev()
+            .find_map(|row| match row {
+                ProviderListRow::Provider { index } => Some(*index),
+                ProviderListRow::Header { .. } => None,
+            })
+    }
 }
 
 pub(crate) fn build_model_rows(app: &TuiApp) -> Vec<ListRow> {
