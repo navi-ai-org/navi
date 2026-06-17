@@ -5,10 +5,64 @@ use navi_sdk::{QuestionRequest, ThinkingConfig, ToolInvocation, ToolResult};
 use ratatui::layout::Rect;
 use ratatui::text::Line;
 
+/// An image captured from the clipboard, waiting to be sent with the next message.
+pub struct PendingImage {
+    /// MIME type of the image (e.g. `"image/png"`, `"image/jpeg"`).
+    pub media_type: String,
+    /// Base64-encoded image data (raw, no data-URL prefix).
+    pub data: String,
+    /// Image width in pixels, if known.
+    pub width: Option<u32>,
+    /// Image height in pixels, if known.
+    pub height: Option<u32>,
+    /// Rendered image protocol for terminal display (thumbnail and maximized).
+    pub protocol: Option<ratatui_image::protocol::StatefulProtocol>,
+}
+
+impl std::fmt::Debug for PendingImage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PendingImage")
+            .field("media_type", &self.media_type)
+            .field("width", &self.width)
+            .field("height", &self.height)
+            .field("protocol", &self.protocol.as_ref().map(|_| "StatefulProtocol"))
+            .finish()
+    }
+}
+
+impl PendingImage {
+    /// Returns a human-readable label like `"PNG 1200×800"`.
+    pub fn label(&self) -> String {
+        let mime_short = self
+            .media_type
+            .strip_prefix("image/")
+            .unwrap_or(&self.media_type)
+            .to_uppercase();
+        match (self.width, self.height) {
+            (Some(w), Some(h)) => format!("{mime_short} {w}×{h}"),
+            _ => mime_short,
+        }
+    }
+
+    /// Returns a numbered label like `"[1] PNG 1200×800"`.
+    pub fn numbered_label(&self, index: usize) -> String {
+        format!("[{}] {}", index + 1, self.label())
+    }
+
+    /// Estimated base64 size in bytes (for size-cap enforcement).
+    pub fn estimated_bytes(&self) -> usize {
+        self.data.len()
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct ChatMessage {
     pub role: ChatRole,
     pub content: String,
+    /// Image attachments carried with this message (display metadata only).
+    /// The actual base64 data lives in `content_parts` on the engine side;
+    /// this field stores labels/dimensions for the TUI render.
+    pub image_labels: Vec<String>,
     pub model_label: Option<String>,
     pub provider_label: Option<String>,
     pub elapsed_ms: Option<u64>,
@@ -25,6 +79,7 @@ impl ChatMessage {
         Self {
             role,
             content,
+            image_labels: Vec::new(),
             model_label: None,
             provider_label: None,
             elapsed_ms: None,
