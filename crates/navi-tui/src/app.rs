@@ -12,7 +12,7 @@ use std::sync::Arc;
 use navi_sdk::{
     AgentEvent, AgentRunState, ApprovalRequest, BackgroundCommandSnapshot, CompactState,
     CredentialStore, EngineDriver, HarnessPolicy, LoadedConfig, ModelMessage, ModelOption,
-    NaviSkillInfo, ProviderConfig, SessionId, SessionSnapshot, SessionStore, ToolInvocation,
+    NaviSkillInfo, SessionId, SessionSnapshot, SessionStore, ToolInvocation,
     available_model_options, build_system_prompt, canonical_provider_id, clean_session_title,
     effective_context_window, log_path, provider_catalog, select_harness_policy,
 };
@@ -582,7 +582,7 @@ impl TuiApp {
             .collect();
         if !recents.is_empty() {
             rows.push(ProviderListRow::Header {
-                label: format!("— Recent —"),
+                label: "— Recent —".to_string(),
             });
             for idx in &recents {
                 rows.push(ProviderListRow::Provider { index: *idx });
@@ -605,7 +605,7 @@ impl TuiApp {
             .collect();
         if !connected.is_empty() {
             rows.push(ProviderListRow::Header {
-                label: format!("— Connected —"),
+                label: "— Connected —".to_string(),
             });
             for idx in connected {
                 rows.push(ProviderListRow::Provider { index: idx });
@@ -615,7 +615,7 @@ impl TuiApp {
         let others: Vec<usize> = (0..total).filter(|i| !emitted[*i]).collect();
         if !others.is_empty() {
             rows.push(ProviderListRow::Header {
-                label: format!("— Other providers —"),
+                label: "— Other providers —".to_string(),
             });
             for idx in others {
                 rows.push(ProviderListRow::Provider { index: idx });
