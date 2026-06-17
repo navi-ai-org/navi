@@ -87,13 +87,28 @@ pub(crate) fn open_model_picker(app: &mut TuiApp) {
     app.refresh_authenticated_providers();
 
     let rows = build_model_rows(app);
-    app.selected_model = first_model_index(&rows).unwrap_or(app.selected_model);
+    // Keep the current selection if it still exists in the filtered rows;
+    // otherwise fall back to the first model.
+    let currently_selected = app.selected_model;
+    if crate::providers::selected_model_in_rows(&rows, currently_selected).is_some() {
+        app.selected_model = currently_selected;
+    } else {
+        app.selected_model = first_model_index(&rows).unwrap_or(currently_selected);
+    }
+    app.model_scroll = 0;
+    crate::providers::sync_scroll_to_selection(app, &rows, 14);
 }
 
 fn open_provider_settings(app: &mut TuiApp) {
     replace_modal(app, ModalKind::Providers);
-    app.selected_provider_setting = 0;
     app.provider_settings_scroll = 0;
+    // Land on the first non-header row so the highlight is on a selectable
+    // provider instead of a "— Recent —" divider.
+    let rows = app.filtered_providers();
+    app.selected_provider_setting = rows
+        .iter()
+        .position(|row| matches!(row, crate::providers::ProviderListRow::Provider { .. }))
+        .unwrap_or(0);
 }
 
 fn open_thinking_picker(app: &mut TuiApp) {
