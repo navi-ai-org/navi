@@ -1109,7 +1109,10 @@ mod tests {
             },
         );
 
-        assert_eq!(decision, SecurityDecision::NeedsApproval(SecurityRisk::Write));
+        assert_eq!(
+            decision,
+            SecurityDecision::NeedsApproval(SecurityRisk::Write)
+        );
     }
 
     #[test]
