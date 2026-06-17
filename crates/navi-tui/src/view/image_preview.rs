@@ -208,12 +208,8 @@ pub(crate) fn render_maximized_image(frame: &mut Frame<'_>, app: &mut TuiApp, ar
     use ratatui::widgets::Clear;
     use crate::render::modal_rect;
 
-    // Use a large rect for the preview, leaving some margins
-    let modal_area = modal_rect(area, area.width.saturating_mul(90) / 100, area.height.saturating_mul(90) / 100);
-
-    // Register close hit areas
-    app.register_hit(area, 20, "close_maximized_bg", HitAction::CloseMaximizedImage);
-    app.register_hit(modal_area, 21, "close_maximized_fg", HitAction::CloseMaximizedImage);
+    let max_modal_width = area.width.saturating_mul(90) / 100;
+    let max_modal_height = area.height.saturating_mul(90) / 100;
 
     let title_span = Span::styled(
         " Ⓧ ",
@@ -230,8 +226,33 @@ pub(crate) fn render_maximized_image(frame: &mut Frame<'_>, app: &mut TuiApp, ar
         .style(Style::default().bg(bg()))
         .title_top(title_line);
 
-    frame.render_widget(Clear, modal_area);
+    let mut modal_area = modal_rect(area, max_modal_width, max_modal_height);
+
+    if let Some(img) = app.pending_images.get(idx) {
+        if let Some(ref protocol) = img.protocol {
+            let max_inner_area = ratatui::layout::Rect {
+                x: 0,
+                y: 0,
+                width: max_modal_width.saturating_sub(2),
+                height: max_modal_height.saturating_sub(2),
+            };
+
+            let img_size = protocol.size_for(ratatui_image::Resize::Scale(None), max_inner_area.into());
+            
+            let target_modal_width = img_size.width.saturating_add(2).min(max_modal_width).max(20);
+            let target_modal_height = img_size.height.saturating_add(2).min(max_modal_height).max(5);
+            
+            modal_area = modal_rect(area, target_modal_width, target_modal_height);
+        }
+    }
+
     let inner_area = container.inner(modal_area);
+
+    // Register close hit areas before mutable borrow
+    app.register_hit(area, 20, "close_maximized_bg", HitAction::CloseMaximizedImage);
+    app.register_hit(modal_area, 21, "close_maximized_fg", HitAction::CloseMaximizedImage);
+
+    frame.render_widget(Clear, modal_area);
     frame.render_widget(container, modal_area);
 
     if let Some(img) = app.pending_images.get_mut(idx) {
