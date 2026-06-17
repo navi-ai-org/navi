@@ -2,7 +2,6 @@ use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::prelude::{Frame, Line, Span};
 use ratatui::style::{Modifier, Style};
 use ratatui::widgets::{Block, BorderType, Borders, Paragraph};
-use ratatui_image::Image;
 
 use crate::app::TuiApp;
 use crate::theme::*;
