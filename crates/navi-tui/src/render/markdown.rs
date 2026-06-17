@@ -416,45 +416,70 @@ fn format_elapsed(ms: u64) -> String {
 
 fn render_user_message_lines(text: &str, chat_width: usize) -> Vec<Line<'static>> {
     let width = chat_width.max(8);
-    let wrapped = wrap_text(text, width.saturating_sub(4));
-    let mut lines = wrapped
-        .into_iter()
-        .enumerate()
-        .map(|(index, line)| {
-            let prefix = if index == 0 { "│ " } else { "  " };
-            let mut spans = vec![Span::styled(
-                prefix,
-                Style::default()
-                    .fg(user_accent())
-                    .bg(panel())
-                    .add_modifier(Modifier::BOLD),
-            )];
-            spans.extend(
-                inline_text_spans(&line, text_color_for_user())
-                    .into_iter()
-                    .map(|mut span| {
-                        span.style = span.style.bg(panel());
-                        span
-                    }),
-            );
-            let used = spans
-                .iter()
-                .map(|span| display_width(&span.content))
-                .sum::<usize>();
+    let accent_width = 3usize;
+    let text_padding = 2usize;
+    let min_height = 4usize;
+    let content_width = width.saturating_sub(accent_width + text_padding + 1);
+    let wrapped = wrap_text(text, content_width);
+    let top_padding = min_height.saturating_sub(wrapped.len()) / 2;
+    let mut lines = Vec::new();
 
-            if used < width {
-                spans.push(Span::styled(
-                    " ".repeat(width - used),
-                    Style::default().fg(muted()).bg(panel()),
-                ));
-            }
-            Line::from(spans)
-        })
-        .collect::<Vec<_>>();
+    for _ in 0..top_padding {
+        lines.push(user_blank_card_line(width, accent_width));
+    }
+
+    lines.extend(wrapped.into_iter().map(|line| {
+        let mut spans = vec![
+            Span::styled(
+                " ".repeat(accent_width),
+                Style::default().fg(user_accent()).bg(user_accent()),
+            ),
+            Span::styled(
+                " ".repeat(text_padding),
+                Style::default().fg(muted()).bg(panel()),
+            ),
+        ];
+        spans.extend(
+            inline_text_spans(&line, text_color_for_user())
+                .into_iter()
+                .map(|mut span| {
+                    span.style = span.style.bg(panel());
+                    span
+                }),
+        );
+        let used = spans
+            .iter()
+            .map(|span| display_width(&span.content))
+            .sum::<usize>();
+
+        if used < width {
+            spans.push(Span::styled(
+                " ".repeat(width - used),
+                Style::default().fg(muted()).bg(panel()),
+            ));
+        }
+        Line::from(spans)
+    }));
+
     while lines.len() < 4 {
-        lines.push(blank_card_line(width, panel()));
+        lines.push(user_blank_card_line(width, accent_width));
     }
     lines
+}
+
+fn user_blank_card_line(width: usize, accent_width: usize) -> Line<'static> {
+    let accent_width = accent_width.min(width);
+    let mut spans = vec![Span::styled(
+        " ".repeat(accent_width),
+        Style::default().fg(user_accent()).bg(user_accent()),
+    )];
+    if accent_width < width {
+        spans.push(Span::styled(
+            " ".repeat(width - accent_width),
+            Style::default().fg(muted()).bg(panel()),
+        ));
+    }
+    Line::from(spans)
 }
 
 fn text_color_for_user() -> Color {

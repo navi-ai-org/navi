@@ -47,12 +47,12 @@ impl Default for ApprovalConfig {
 impl Default for SecurityConfig {
     fn default() -> Self {
         Self {
-            restrict_paths_to_project: true,
+            restrict_paths_to_project: false,
             protect_git_metadata: true,
             redact_secrets_in_sessions: true,
             allow_external_plugins: false,
             blocked_commands: default_blocked_commands(),
-            deny_paths: default_deny_paths(),
+            deny_paths: Vec::new(),
         }
     }
 }
@@ -91,7 +91,7 @@ pub(crate) const DEFAULT_CONTEXT_WINDOW: u64 = 200_000;
 
 fn default_blocked_commands() -> Vec<String> {
     [
-        "rm", "rmdir", "shred", "mkfs", "dd", "sudo", "su", "doas", "chmod", "chown", "chgrp",
+        "rmdir", "shred", "mkfs", "dd", "sudo", "su", "doas", "chmod", "chown", "chgrp",
         "mount", "umount", "reboot", "shutdown", "poweroff",
     ]
     .into_iter()

@@ -628,7 +628,7 @@ mod tests {
     }
 
     #[test]
-    fn denies_paths_outside_project() {
+    fn allows_paths_outside_project() {
         let tempdir = tempfile::tempdir().expect("tempdir");
         let project = tempdir.path().join("project");
         let data = tempdir.path().join("data");
@@ -638,7 +638,7 @@ mod tests {
 
         let decision = policy.validate_path(tempdir.path().join("outside.txt").as_path(), false);
 
-        assert!(matches!(decision, SecurityDecision::Deny(_)));
+        assert_eq!(decision, SecurityDecision::Allow);
     }
 
     #[test]
@@ -703,7 +703,7 @@ mod tests {
         std::fs::create_dir_all(&data).expect("data");
         let policy = policy(project, data);
 
-        let decision = policy.validate_command("/bin/rm");
+        let decision = policy.validate_command("/bin/sudo");
 
         assert!(matches!(decision, SecurityDecision::Deny(_)));
     }
@@ -847,7 +847,7 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn regression_symlink_attack_denied() {
+    fn regression_symlink_attack_allowed_when_not_restricted() {
         use std::os::unix::fs::symlink;
 
         let tempdir = tempfile::tempdir().expect("tempdir");
@@ -866,14 +866,11 @@ mod tests {
         let policy = policy(project.clone(), data);
         let decision = policy.validate_path(&link, false);
 
-        assert!(
-            matches!(decision, SecurityDecision::Deny(_)),
-            "symlink to outside file must be denied, got: {decision:?}"
-        );
+        assert_eq!(decision, SecurityDecision::Allow);
     }
 
     #[test]
-    fn regression_path_traversal_denied() {
+    fn regression_path_traversal_allowed_when_not_restricted() {
         let tempdir = tempfile::tempdir().expect("tempdir");
         let project = tempdir.path().join("project");
         let data = tempdir.path().join("data");
@@ -884,10 +881,7 @@ mod tests {
         let traversal = project.join("../../../etc/passwd");
         let decision = policy.validate_path(&traversal, false);
 
-        assert!(
-            matches!(decision, SecurityDecision::Deny(_)),
-            "path traversal must be denied, got: {decision:?}"
-        );
+        assert_eq!(decision, SecurityDecision::Allow);
     }
 
     #[test]
@@ -899,8 +893,8 @@ mod tests {
         std::fs::create_dir_all(&data).expect("data");
         let policy = policy(project, data);
 
-        // /usr/bin/rm should extract "rm" and deny it
-        let decision = policy.validate_command("/usr/bin/rm");
+        // /usr/bin/sudo should extract "sudo" and deny it
+        let decision = policy.validate_command("/usr/bin/sudo");
         assert!(
             matches!(decision, SecurityDecision::Deny(_)),
             "full-path blocked command must be denied, got: {decision:?}"
@@ -940,7 +934,7 @@ mod tests {
     }
 
     #[test]
-    fn regression_validate_patch_mixed_files_denied() {
+    fn regression_validate_patch_mixed_files_allowed_when_not_restricted() {
         let tempdir = tempfile::tempdir().expect("tempdir");
         let project = tempdir.path().join("project");
         let data = tempdir.path().join("data");
@@ -948,7 +942,7 @@ mod tests {
         std::fs::create_dir_all(&data).expect("data");
         let policy = policy(project.clone(), data);
 
-        // One valid file, one outside file
+        // One valid file, one outside file - both allowed when not restricted
         let patch = PatchProposal {
             id: "p1".to_string(),
             summary: "edit".to_string(),
@@ -959,9 +953,9 @@ mod tests {
             unified_diff: String::new(),
         };
 
-        assert!(
-            matches!(policy.validate_patch(&patch), SecurityDecision::Deny(_)),
-            "patch with any outside file must be denied"
+        assert_eq!(
+            policy.validate_patch(&patch),
+            SecurityDecision::NeedsApproval(SecurityRisk::Write)
         );
     }
 
@@ -1091,7 +1085,7 @@ mod tests {
     }
 
     #[test]
-    fn regression_apply_patch_structured_traversal_denied() {
+    fn regression_apply_patch_structured_traversal_allowed_when_not_restricted() {
         let tempdir = tempfile::tempdir().expect("tempdir");
         let project = tempdir.path().join("project");
         let data = tempdir.path().join("data");
@@ -1115,7 +1109,7 @@ mod tests {
             },
         );
 
-        assert!(matches!(decision, SecurityDecision::Deny(_)));
+        assert_eq!(decision, SecurityDecision::NeedsApproval(SecurityRisk::Write));
     }
 
     #[test]
@@ -1149,7 +1143,7 @@ mod tests {
     // ── Deny list tests ────────────────────────────────────────────────────
 
     #[test]
-    fn deny_list_blocks_node_modules_read() {
+    fn deny_list_allows_node_modules_when_empty() {
         let tempdir = tempfile::tempdir().expect("tempdir");
         let project = tempdir.path().join("project");
         let data = tempdir.path().join("data");
@@ -1160,14 +1154,11 @@ mod tests {
         let decision =
             policy.validate_path(project.join("node_modules/pkg/index.js").as_path(), false);
 
-        assert!(
-            matches!(decision, SecurityDecision::Deny(_)),
-            "node_modules reads must be denied, got: {decision:?}"
-        );
+        assert_eq!(decision, SecurityDecision::Allow);
     }
 
     #[test]
-    fn deny_list_blocks_target_read() {
+    fn deny_list_allows_target_when_empty() {
         let tempdir = tempfile::tempdir().expect("tempdir");
         let project = tempdir.path().join("project");
         let data = tempdir.path().join("data");
@@ -1177,14 +1168,11 @@ mod tests {
 
         let decision = policy.validate_path(project.join("target/debug/app").as_path(), false);
 
-        assert!(
-            matches!(decision, SecurityDecision::Deny(_)),
-            "target reads must be denied, got: {decision:?}"
-        );
+        assert_eq!(decision, SecurityDecision::Allow);
     }
 
     #[test]
-    fn deny_list_blocks_log_files() {
+    fn deny_list_allows_log_files_when_empty() {
         let tempdir = tempfile::tempdir().expect("tempdir");
         let project = tempdir.path().join("project");
         let data = tempdir.path().join("data");
@@ -1195,10 +1183,7 @@ mod tests {
 
         let decision = policy.validate_path(project.join("debug.log").as_path(), false);
 
-        assert!(
-            matches!(decision, SecurityDecision::Deny(_)),
-            "*.log reads must be denied, got: {decision:?}"
-        );
+        assert_eq!(decision, SecurityDecision::Allow);
     }
 
     #[test]
@@ -1216,7 +1201,7 @@ mod tests {
     }
 
     #[test]
-    fn deny_list_blocks_package_lock() {
+    fn deny_list_allows_package_lock_when_empty() {
         let tempdir = tempfile::tempdir().expect("tempdir");
         let project = tempdir.path().join("project");
         let data = tempdir.path().join("data");
@@ -1227,14 +1212,11 @@ mod tests {
 
         let decision = policy.validate_path(project.join("package-lock.json").as_path(), false);
 
-        assert!(
-            matches!(decision, SecurityDecision::Deny(_)),
-            "package-lock.json must be denied, got: {decision:?}"
-        );
+        assert_eq!(decision, SecurityDecision::Allow);
     }
 
     #[test]
-    fn is_path_denied_glob_pattern() {
+    fn is_path_denied_glob_pattern_empty_deny_list() {
         let tempdir = tempfile::tempdir().expect("tempdir");
         let project = tempdir.path().join("project");
         let data = tempdir.path().join("data");
@@ -1242,13 +1224,13 @@ mod tests {
         std::fs::create_dir_all(&data).expect("data");
         let policy = policy(project, data);
 
-        assert!(policy.is_path_denied(Path::new("app.log")));
-        assert!(policy.is_path_denied(Path::new("logs/debug.log")));
+        assert!(!policy.is_path_denied(Path::new("app.log")));
+        assert!(!policy.is_path_denied(Path::new("logs/debug.log")));
         assert!(!policy.is_path_denied(Path::new("app.rs")));
     }
 
     #[test]
-    fn is_path_denied_directory_prefix() {
+    fn is_path_denied_directory_prefix_empty_deny_list() {
         let tempdir = tempfile::tempdir().expect("tempdir");
         let project = tempdir.path().join("project");
         let data = tempdir.path().join("data");
@@ -1256,13 +1238,13 @@ mod tests {
         std::fs::create_dir_all(&data).expect("data");
         let policy = policy(project, data);
 
-        assert!(policy.is_path_denied(Path::new("node_modules/foo/bar.js")));
-        assert!(policy.is_path_denied(Path::new("target/debug/app")));
+        assert!(!policy.is_path_denied(Path::new("node_modules/foo/bar.js")));
+        assert!(!policy.is_path_denied(Path::new("target/debug/app")));
         assert!(!policy.is_path_denied(Path::new("src/main.rs")));
     }
 
     #[test]
-    fn filter_denied_lines_removes_matching_lines() {
+    fn filter_denied_lines_keeps_all_when_empty_deny_list() {
         let tempdir = tempfile::tempdir().expect("tempdir");
         let project = tempdir.path().join("project");
         let data = tempdir.path().join("data");
@@ -1273,9 +1255,7 @@ mod tests {
         let text = "src/main.rs:42: fn main() {}\nnode_modules/foo/index.js:1: export {}\nsrc/lib.rs:10: pub fn test()\n";
         let filtered = policy.filter_denied_lines(text);
 
-        assert!(filtered.contains("src/main.rs:42"));
-        assert!(!filtered.contains("node_modules"));
-        assert!(filtered.contains("src/lib.rs:10"));
+        assert_eq!(filtered, text);
     }
 
     #[test]

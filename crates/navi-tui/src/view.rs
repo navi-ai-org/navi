@@ -1,3 +1,4 @@
+mod background_commands;
 mod chat;
 mod command_palette;
 mod debug;
@@ -15,10 +16,10 @@ use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::prelude::Frame;
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Paragraph};
+use ratatui::widgets::Paragraph;
 
 use crate::TuiApp;
-use crate::render::{fill_modal_scrim, modal_rect};
+use crate::render::{fill_modal_scrim, modal_rect, opaque_fill};
 use crate::state::Mode;
 use crate::theme;
 use crate::theme::{bg, ghost, muted, text};
@@ -31,7 +32,7 @@ pub(crate) fn render(frame: &mut Frame<'_>, app: &mut TuiApp) {
 fn render_inner(frame: &mut Frame<'_>, app: &mut TuiApp) {
     app.clear_interactions();
     let area = frame.area();
-    frame.render_widget(Block::new().style(Style::default().bg(theme::bg())), area);
+    opaque_fill(frame, area, Style::default().bg(theme::bg()));
     let content_area = viewport_rect(area);
 
     let input_width = content_area.width.saturating_sub(4) as usize;
@@ -77,6 +78,10 @@ fn render_inner(frame: &mut Frame<'_>, app: &mut TuiApp) {
         Mode::Mcp => {
             let palette = app.theme_palette();
             crate::ui::mcp::draw_mcp_modal(frame, modal_rect(area, 90, 22), app, &palette)
+        }
+        Mode::OAuth => modals::render_oauth(frame, app, modal_rect(area, 78, 12)),
+        Mode::BackgroundCommands => {
+            background_commands::render(frame, app, modal_rect(area, 80, 20))
         }
         Mode::Normal => {}
     }

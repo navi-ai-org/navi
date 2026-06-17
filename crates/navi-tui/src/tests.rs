@@ -6,6 +6,7 @@ use crate::chat::{
 };
 use crate::commands::CommandAction;
 use crate::commands::filtered_commands;
+use crate::dispatch::{AsyncEvent, handle_async_event};
 use crate::errors::handle_model_error;
 use crate::input::insert_input_char;
 use crate::keybindings::{
@@ -54,6 +55,7 @@ pub(crate) fn test_app(input: &str) -> TuiApp {
         None,
     )
     .expect("test app");
+    let _ = app.credential_store().delete_api_key("commandcode");
     app.input = input.to_string();
     app.input_cursor = app.input.len();
     app.mode = Mode::Normal;
@@ -110,6 +112,21 @@ fn seed_chat_cache(app: &mut TuiApp, lines: &[&str]) {
         .map(|line| Line::from((*line).to_string()))
         .collect();
     cache.chat_rect = Some(Rect::new(0, 0, 80, lines.len() as u16));
+}
+
+fn terminal_buffer_text(terminal: &Terminal<TestBackend>) -> String {
+    let buffer = terminal.backend().buffer();
+    let area = buffer.area;
+    let mut out = String::new();
+    for y in 0..area.height {
+        for x in 0..area.width {
+            if let Some(cell) = buffer.cell((x, y)) {
+                out.push_str(cell.symbol());
+            }
+        }
+        out.push('\n');
+    }
+    out
 }
 
 #[test]
@@ -810,6 +827,131 @@ fn ctrl_o_toggles_full_tool_view() {
 }
 
 #[test]
+fn ctrl_o_in_provider_modal_does_not_toggle_full_tool_view() {
+    let mut app = test_app("");
+    app.mode = Mode::Commands;
+    app.command_filter = "providers".to_string();
+    assert!(!run_selected_command(&mut app));
+    assert_eq!(app.mode, Mode::Providers);
+    assert!(!app.full_tool_view);
+
+    handle_key(&mut app, KeyCode::Char('o'), KeyModifiers::CONTROL);
+    assert_eq!(app.mode, Mode::Providers);
+    assert!(!app.full_tool_view);
+
+    handle_key(&mut app, KeyCode::Char('O'), KeyModifiers::CONTROL);
+    assert_eq!(app.mode, Mode::Providers);
+    assert!(!app.full_tool_view);
+}
+
+#[test]
+fn oauth_started_opens_modal_without_chat_message() {
+    let mut app = test_app("");
+
+    handle_async_event(
+        &mut app,
+        AsyncEvent::OAuthDeviceStarted {
+            provider_id: "commandcode".to_string(),
+            verification_uri: "https://commandcode.ai/studio/auth/cli?state=test".to_string(),
+            user_code: String::new(),
+        },
+    );
+
+    assert_eq!(app.mode, Mode::OAuth);
+    assert!(app.oauth_state.is_some());
+    assert!(app.messages.is_empty());
+}
+
+#[test]
+fn oauth_modal_copy_shortcut_copies_link() {
+    let mut app = test_app("");
+    handle_async_event(
+        &mut app,
+        AsyncEvent::OAuthDeviceStarted {
+            provider_id: "commandcode".to_string(),
+            verification_uri: "https://commandcode.ai/studio/auth/cli?state=test".to_string(),
+            user_code: String::new(),
+        },
+    );
+
+    handle_key(&mut app, KeyCode::Char('c'), KeyModifiers::NONE);
+
+    assert_eq!(app.mode, Mode::OAuth);
+    assert!(
+        app.notification()
+            .is_some_and(|notification| notification.title == "Clipboard")
+    );
+}
+
+#[test]
+fn oauth_modal_registers_clickable_link_hit_region() {
+    let mut app = test_app("");
+    handle_async_event(
+        &mut app,
+        AsyncEvent::OAuthDeviceStarted {
+            provider_id: "commandcode".to_string(),
+            verification_uri: "https://commandcode.ai/studio/auth/cli?state=test".to_string(),
+            user_code: String::new(),
+        },
+    );
+    let backend = TestBackend::new(80, 24);
+    let mut terminal = Terminal::new(backend).expect("terminal");
+    terminal
+        .draw(|frame| crate::view::render(frame, &mut app))
+        .expect("draw");
+
+    let hit = app
+        .hit_test(4, 10)
+        .or_else(|| app.hit_test(6, 10))
+        .or_else(|| app.hit_test(8, 10));
+    assert!(matches!(
+        hit.map(|hit| hit.action),
+        Some(HitAction::OAuthOpen)
+    ));
+}
+
+#[test]
+fn oauth_completion_clears_modal_text_from_next_frame() {
+    let mut app = test_app("");
+    let mut terminal = Terminal::new(TestBackend::new(96, 24)).expect("terminal");
+    handle_async_event(
+        &mut app,
+        AsyncEvent::OAuthDeviceStarted {
+            provider_id: "commandcode".to_string(),
+            verification_uri: "https://example.test/stale-oauth-marker".to_string(),
+            user_code: String::new(),
+        },
+    );
+    terminal
+        .draw(|frame| crate::view::render(frame, &mut app))
+        .expect("draw oauth");
+    let oauth_frame = terminal_buffer_text(&terminal);
+    assert!(oauth_frame.contains("OAuth Login"));
+    assert!(oauth_frame.contains("stale-oauth-marker"));
+
+    handle_async_event(
+        &mut app,
+        AsyncEvent::OAuthCompleted {
+            provider_id: "commandcode".to_string(),
+            result: Ok(()),
+        },
+    );
+    let notification = app.notification().expect("oauth notification");
+    assert_eq!(notification.title, "OAuth");
+    assert!(notification.message.contains("credentials saved"));
+    assert!(notification.message.contains("provider plan"));
+    app.clear_notification();
+    terminal
+        .draw(|frame| crate::view::render(frame, &mut app))
+        .expect("draw normal");
+
+    let normal_frame = terminal_buffer_text(&terminal);
+    assert_eq!(app.mode, Mode::Normal);
+    assert!(!normal_frame.contains("OAuth Login"));
+    assert!(!normal_frame.contains("stale-oauth-marker"));
+}
+
+#[test]
 fn slash_opens_commands_and_question_mark_opens_help() {
     let mut app = test_app("");
     assert_eq!(app.mode, Mode::Normal);
@@ -862,6 +1004,12 @@ fn ctrl_dot_and_ctrl_s_open_help_and_sessions() {
 
     handle_key(&mut app, KeyCode::Char('.'), KeyModifiers::CONTROL);
     assert_eq!(app.mode, Mode::Help);
+
+    handle_key(&mut app, KeyCode::Char('s'), KeyModifiers::CONTROL);
+    assert_eq!(app.mode, Mode::Help);
+
+    handle_help_key(&mut app, KeyCode::Esc);
+    assert_eq!(app.mode, Mode::Normal);
 
     handle_key(&mut app, KeyCode::Char('s'), KeyModifiers::CONTROL);
     assert_eq!(app.mode, Mode::Sessions);

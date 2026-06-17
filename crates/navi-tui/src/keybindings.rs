@@ -51,6 +51,7 @@ pub(crate) fn replace_modal(app: &mut TuiApp, modal: ModalKind) {
 
 pub(crate) fn close_active_modal(app: &mut TuiApp) {
     let was_message_actions = app.mode == Mode::MessageActions;
+    let was_oauth = app.mode == Mode::OAuth;
     app.modal_stack.close();
     app.mode = app
         .modal_stack
@@ -63,6 +64,9 @@ pub(crate) fn close_active_modal(app: &mut TuiApp) {
         app.selected_message_action = 0;
         app.hovered_chat_source = None;
     }
+    if was_oauth {
+        app.oauth_state = None;
+    }
 }
 
 pub(crate) fn close_all_modals(app: &mut TuiApp) {
@@ -72,6 +76,7 @@ pub(crate) fn close_all_modals(app: &mut TuiApp) {
     app.message_action_target = None;
     app.selected_message_action = 0;
     app.hovered_chat_source = None;
+    app.oauth_state = None;
 }
 
 pub(crate) fn open_model_picker(app: &mut TuiApp) {
@@ -140,6 +145,8 @@ fn route_mode_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyModifiers) -> K
         Mode::ThemePicker => self::modals::handle_theme_picker_key(app, code),
         Mode::MessageActions => self::modals::handle_message_actions_key(app, code),
         Mode::Mcp => self::modals::handle_mcp_key(app, code, modifiers),
+        Mode::OAuth => self::modals::handle_oauth_key(app, code, modifiers),
+        Mode::BackgroundCommands => self::modals::handle_background_commands_key(app, code),
     };
     if should_quit {
         KeyOutcome::Quit

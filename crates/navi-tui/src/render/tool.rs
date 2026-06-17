@@ -80,13 +80,39 @@ pub(crate) fn tool_detail_block(
 
 fn bash_detail_block(result: &ToolResult) -> Option<String> {
     let obj = result.output.as_object()?;
+    let is_background = obj
+        .get("background")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
     let stdout = obj.get("stdout").and_then(|v| v.as_str()).unwrap_or("");
     let stderr = obj.get("stderr").and_then(|v| v.as_str()).unwrap_or("");
-    if stdout.is_empty() && stderr.is_empty() {
-        return None;
-    }
 
     let mut content = String::new();
+
+    if is_background {
+        if let Some(task_id) = obj.get("task_id").and_then(|v| v.as_str()) {
+            content.push_str(&format!("Task: {task_id}\n"));
+        }
+        if let Some(status) = obj.get("status").and_then(|v| v.as_str()) {
+            content.push_str(&format!("Status: {status}\n"));
+        }
+        if let Some(elapsed) = obj.get("elapsed_ms").and_then(|v| v.as_u64()) {
+            content.push_str(&format!(
+                "Elapsed: {}\n",
+                crate::background::format_duration_ms(elapsed)
+            ));
+        }
+        if let Some(exit_code) = obj.get("exit_code").and_then(|v| v.as_i64()) {
+            content.push_str(&format!("Exit code: {exit_code}\n"));
+        }
+        if let Some(err) = obj.get("error").and_then(|v| v.as_str()) {
+            content.push_str(&format!("Error: {err}\n"));
+        }
+        if !content.is_empty() && (!stdout.is_empty() || !stderr.is_empty()) {
+            content.push('\n');
+        }
+    }
+
     if !stdout.is_empty() {
         content.push_str("Stdout\n");
         content.push_str(&fenced_block(
@@ -95,7 +121,7 @@ fn bash_detail_block(result: &ToolResult) -> Option<String> {
         ));
     }
     if !stderr.is_empty() {
-        if !content.is_empty() {
+        if !content.is_empty() && !content.ends_with("\n\n") {
             content.push('\n');
         }
         content.push_str("Stderr\n");
@@ -104,7 +130,12 @@ fn bash_detail_block(result: &ToolResult) -> Option<String> {
             truncate_to_lines(stderr, MAX_TOOL_RENDER_LINES),
         ));
     }
-    Some(content)
+
+    if content.is_empty() {
+        None
+    } else {
+        Some(content)
+    }
 }
 
 fn generic_data_block(result: &ToolResult) -> Option<String> {
@@ -421,11 +452,38 @@ fn bash_summary(invocation: &ToolInvocation, result: &ToolResult) -> String {
         .get("command")
         .and_then(|v| v.as_str())
         .unwrap_or("command");
-    let mut summary = format!("Run {}", one_line(command));
-    if let Some(status) = result.output.get("status").and_then(|v| v.as_i64()) {
-        summary.push_str(&format!(" (exit {status})"));
+    let is_background = result.output.get("background").and_then(|v| v.as_bool()) == Some(true);
+
+    if is_background {
+        let status = result
+            .output
+            .get("status")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown");
+        let elapsed = result
+            .output
+            .get("elapsed_ms")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
+        let elapsed_str = crate::background::format_duration_ms(elapsed);
+        let mut summary = format!("Run {} ({} · {})", one_line(command), status, elapsed_str);
+        if let Some(exit_code) = result.output.get("exit_code").and_then(|v| v.as_i64()) {
+            summary = format!(
+                "Run {} ({} · exit {} · {})",
+                one_line(command),
+                status,
+                exit_code,
+                elapsed_str
+            );
+        }
+        summary
+    } else {
+        let mut summary = format!("Run {}", one_line(command));
+        if let Some(status) = result.output.get("status").and_then(|v| v.as_i64()) {
+            summary.push_str(&format!(" (exit {status})"));
+        }
+        summary
     }
-    summary
 }
 
 fn grep_summary(invocation: &ToolInvocation, result: &ToolResult) -> String {

@@ -16,6 +16,7 @@ NAVI is an opinionated, extensible code agent with a terminal UI, built in Rust.
 
 - [Conversation Compaction](compaction.md) — Micro-compact, auto-compact, and session memory behavior.
 - [TUI Internals](tui.md) — TUI state, keybindings, rendering, modals, and performance rules.
+- [Vision-Based Desktop Control Pipeline](vision-desktop-control.md) — Linux desktop-control architecture for vision-capable models using Wayland portals, PipeWire, libei/EIS, compositor context, and safety gates.
 
 ## Contributing
 

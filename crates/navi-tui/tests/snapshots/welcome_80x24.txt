@@ -14,10 +14,10 @@
 
     NAVI · wired code agent for local-first builders
 
-
-  ▌
-  ▌   Describe the task...
   ▌
   ▌
+  ▌    Describe the task...
   ▌
-  ▌  Ready · gpt-5.5 OpenAI · adaptive · 0 / 200k (0%)   Enter send · Shift+
+  ▌
+  ▌   gpt-5.5 OpenAI · adaptive · 0 / 200k (0%)
+  ▌

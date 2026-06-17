@@ -30,10 +30,10 @@
 
 
 
-
-  ▌
-  ▌   Describe the task...
   ▌
   ▌
+  ▌    Describe the task...
   ▌
-  ▌  Ready · gpt-5.5 OpenAI · adaptive · 0 / 200k (0%)   Enter send · Shift+Enter newline · Ctrl+A select · Ctrl+P c
+  ▌
+  ▌   gpt-5.5 OpenAI · adaptive · 0 / 200k (0%)
+  ▌

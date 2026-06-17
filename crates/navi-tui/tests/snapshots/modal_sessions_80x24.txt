@@ -14,10 +14,10 @@
     │                                                                      │
     │                                                                      │
     │                                                                      │
-    │                                                                      │
+  ▌ │                                                                      │
   ▌ │                                                                      │
   ▌ │ del delete                                                           │
   ▌ ╰──────────────────────────────────────────────────────────────────────╯
   ▌
+  ▌   gpt-5.5 OpenAI · adaptive · 0 / 200k (0%)
   ▌
-  ▌  Ready · gpt-5.5 OpenAI · adaptive · 0 / 200k (0%)   Enter send · Shift+

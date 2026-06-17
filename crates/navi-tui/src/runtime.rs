@@ -6,7 +6,7 @@ use tokio::sync::mpsc;
 
 use navi_sdk::{
     CredentialStore, LoadedConfig, NaviEngine, NaviEngineBuilder, RuntimeEvent,
-    resolve_provider_config, resolve_provider_credential_status,
+    provider_supports_device_oauth, resolve_provider_config, resolve_provider_credential_status,
 };
 
 use crate::dispatch::AsyncEvent;
@@ -57,7 +57,7 @@ pub(crate) fn selected_model_runtime_available(
 }
 
 pub(crate) fn provider_supports_oauth(provider_id: &str) -> bool {
-    provider_id == navi_sdk::ProviderId::GITHUB_COPILOT
+    provider_supports_device_oauth(provider_id)
 }
 
 #[cfg(test)]

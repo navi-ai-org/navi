@@ -2,6 +2,8 @@ mod chat;
 mod ui;
 
 mod app;
+mod background;
+mod browser;
 mod commands;
 mod dispatch;
 mod errors;
