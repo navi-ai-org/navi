@@ -26,6 +26,7 @@ pub use types::{
 };
 
 // Re-export engine types so TUI/clients can import from navi_sdk instead of navi_core.
+pub use navi_core::ContentPart;
 pub use navi_core::ProviderId;
 // Session utilities
 pub use navi_core::session::{

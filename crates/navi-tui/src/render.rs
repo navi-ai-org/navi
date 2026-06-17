@@ -21,7 +21,7 @@ mod tests {
     use crate::render::markdown::render_markdown_lines;
     use crate::render::syntax::highlight_code_line;
     use crate::render::text::{display_width, wrap_spans_to_width, wrap_text};
-    use crate::render::tool::{tool_compact_text, tool_full_content};
+    use crate::render::tool::{tool_compact_text, tool_detail_block, tool_full_content};
     use crate::theme::ThemeId;
     use crate::theme::code_block_bg;
 
@@ -396,6 +396,67 @@ mod tests {
 
         assert!(content.contains("```rust"));
         assert!(content.contains("fn main() {}"));
+    }
+
+    #[test]
+    fn git_ops_text_log_renders_readable_log_without_json_escapes() {
+        let invocation = ToolInvocation {
+            id: "call-1".to_string(),
+            tool_name: "git_ops".to_string(),
+            input: serde_json::json!({
+                "command": "log",
+                "args": "--oneline --graph --all",
+                "format": "text"
+            }),
+        };
+        let result = ToolResult {
+            invocation_id: "call-1".to_string(),
+            ok: true,
+            output: serde_json::json!({
+                "schema_version": 1,
+                "log": "* abc1234 initial commit\n* def5678 second commit\n"
+            }),
+        };
+
+        let compact = tool_compact_text(&invocation, &result);
+        let content = tool_full_content(&invocation, &result);
+        let detail = tool_detail_block(&invocation, &result).expect("git log detail");
+
+        assert_eq!(compact, "Git log --oneline --graph --all (2 lines)");
+        assert!(content.contains("Log\n```\n* abc1234 initial commit"));
+        assert!(detail.contains("* def5678 second commit"));
+        assert!(!content.contains("\"log\""));
+        assert!(!content.contains("\\n"));
+        assert!(!content.contains("```json"));
+        assert!(!detail.contains("```json"));
+    }
+
+    #[test]
+    fn git_ops_structured_log_renders_commit_rows() {
+        let invocation = ToolInvocation {
+            id: "call-1".to_string(),
+            tool_name: "git_ops".to_string(),
+            input: serde_json::json!({ "command": "log" }),
+        };
+        let result = ToolResult {
+            invocation_id: "call-1".to_string(),
+            ok: true,
+            output: serde_json::json!({
+                "schema_version": 1,
+                "commits": [{
+                    "hash": "abcdef123456",
+                    "author": "NAVI",
+                    "date": "2026-06-17 10:00:00 +0000",
+                    "message": "fix: readable git output"
+                }]
+            }),
+        };
+
+        let content = tool_full_content(&invocation, &result);
+
+        assert!(content.contains("Git log (1 commit)"));
+        assert!(content.contains("Commits\nabcdef12  fix: readable git output"));
+        assert!(!content.contains("```json"));
     }
 
     #[test]

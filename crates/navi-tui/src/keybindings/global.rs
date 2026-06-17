@@ -1,5 +1,6 @@
 use crate::TuiApp;
 use crate::chat::reset_system_context;
+use crate::clipboard::try_read_clipboard_image;
 use crate::mouse::{copy_text_to_clipboard, selected_text};
 use crate::notifications::show_notification;
 use crate::persistence::save_preferences;
@@ -64,6 +65,21 @@ pub(super) fn route_global_key(
                 super::open_sessions_picker(app);
                 return KeyOutcome::Handled;
             }
+            KeyCode::Char('i') | KeyCode::Char('v') => {
+                if app.mode == crate::state::Mode::Normal && !app.is_loading {
+                    match try_read_clipboard_image(app.image_picker.as_ref()) {
+                        Some(image) => {
+                            let label = image.label();
+                            app.pending_images.push(image);
+                            show_notification(app, "Image", format!("{} attached", label));
+                        }
+                        None => {
+                            show_notification(app, "Image", "No image found in clipboard.");
+                        }
+                    }
+                }
+                return KeyOutcome::Handled;
+            }
             KeyCode::Char('o') | KeyCode::Char('O') => {
                 app.full_tool_view = !app.full_tool_view;
                 show_notification(
@@ -102,7 +118,9 @@ pub(super) fn route_global_key(
                         UiEffect::ReplaceModal(ModalKind::Question),
                     );
                 }
-                if !app.input.trim().is_empty() && !app.is_loading {
+                if (!app.input.trim().is_empty() || !app.pending_images.is_empty())
+                    && !app.is_loading
+                {
                     crate::chat::submit_message(app);
                 }
                 return KeyOutcome::Handled;

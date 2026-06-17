@@ -299,7 +299,16 @@ fn build_conversation_text(messages: &[ModelMessage]) -> String {
                 text.push_str(&format!("[Tool]: {}\n", msg.content));
             }
         } else {
-            text.push_str(&format!("[{}]: {}\n", role_label, msg.content));
+            let image_note = if msg.content_parts.iter().any(|p| p.is_image()) {
+                let count = msg.content_parts.iter().filter(|p| p.is_image()).count();
+                format!(" [{} image(s) attached]", count)
+            } else {
+                String::new()
+            };
+            text.push_str(&format!(
+                "[{}]: {}{}\n",
+                role_label, msg.content, image_note
+            ));
         }
     }
     text

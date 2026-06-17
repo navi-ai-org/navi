@@ -15,7 +15,7 @@ use crate::theme::*;
 use crate::ui::interaction::HitAction;
 use crate::ui::text_input::floor_char_boundary;
 
-const INPUT_TOP_PADDING_ROWS: u16 = 2;
+const INPUT_TOP_PADDING_ROWS: u16 = 1;
 const FOOTER_BOTTOM_PADDING_ROWS: u16 = 1;
 const INPUT_TEXT_INSET_COLUMNS: u16 = 3;
 
@@ -98,11 +98,11 @@ pub(super) fn composer_height(app: &TuiApp, input_width: usize) -> u16 {
     let wrap_width = input_width.saturating_sub(6);
     let visible_lines =
         input_visual_line_count(&app.input, wrap_width).clamp(1, COMPOSER_MAX_VISIBLE_LINES) as u16;
-    // top inset + text area (min 4 rows) + footer
-    INPUT_TOP_PADDING_ROWS + visible_lines.max(4) + 1
+    // top inset + text area (min 3 rows) + footer
+    INPUT_TOP_PADDING_ROWS + visible_lines.max(3) + 1
 }
 
-fn composer_panel_bg(_app: &TuiApp) -> ratatui::style::Color {
+pub(crate) fn composer_panel_bg(_app: &TuiApp) -> ratatui::style::Color {
     interactive_bg()
 }
 
@@ -126,14 +126,26 @@ fn input_lines(app: &TuiApp, width: usize) -> (Vec<Line<'static>>, usize) {
     if app.input.is_empty() {
         let mut current = vec![cursor_span(" ")];
         let placeholder = if app.is_loading {
-            " thinking..."
+            let glitches = [
+                "processing...",
+                "pr0cessing...",
+                "processing...",
+                "proce55ing...",
+                "processing...",
+                "pr0c3ss1ng...",
+                "p#ocessing...",
+                "processing...",
+                "process!ng...",
+                "pr0cessin9...",
+                "processing...",
+                "p-r-o-c-e-s-s-i-n-g...",
+            ];
+            let frame = (app.tick() / 4) as usize % glitches.len();
+            format!(" {}", glitches[frame])
         } else {
-            "Describe the task..."
+            "Describe the task...".to_string()
         };
-        current.push(Span::styled(
-            placeholder.to_string(),
-            Style::default().fg(muted()),
-        ));
+        current.push(Span::styled(placeholder, Style::default().fg(muted())));
         return (vec![Line::from(current)], 0);
     }
 
@@ -189,33 +201,51 @@ fn composer_footer_line(app: &TuiApp, _width: usize) -> Line<'static> {
         ]);
     }
 
+    let mut spans: Vec<Span<'static>> = Vec::new();
+
+    // Show pending image indicator if any images are attached.
+    if !app.pending_images.is_empty() {
+        let count = app.pending_images.len();
+        spans.push(Span::styled(
+            format!("{} image{}", count, if count > 1 { "s" } else { "" }),
+            Style::default().fg(signal()).add_modifier(Modifier::BOLD),
+        ));
+        spans.push(Span::styled(" · ", Style::default().fg(ghost())));
+    } else if app.input.is_empty() {
+        spans.push(Span::styled(
+            "ctrl+v paste image",
+            Style::default().fg(ghost()).add_modifier(Modifier::ITALIC),
+        ));
+        spans.push(Span::styled(" · ", Style::default().fg(ghost())));
+    }
+
     let provider = selected_provider_label(app);
     let thinking = app.thinking_level.label();
     let model = selected_model_label(app);
     let context = app.compact_state.usage_label(0);
 
-    Line::from(vec![
-        Span::styled(model, Style::default().fg(code_type())),
-        Span::styled(" ", Style::default().fg(ghost())),
-        Span::styled(
-            provider.to_string(),
-            Style::default().fg(signal()).add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(" · ", Style::default().fg(ghost())),
-        Span::styled(
-            thinking.to_string(),
-            Style::default()
-                .fg(code_const())
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(" · ", Style::default().fg(ghost())),
-        Span::styled(
-            context,
-            Style::default()
-                .fg(code_number())
-                .add_modifier(Modifier::BOLD),
-        ),
-    ])
+    spans.push(Span::styled(model, Style::default().fg(code_type())));
+    spans.push(Span::styled(" ", Style::default().fg(ghost())));
+    spans.push(Span::styled(
+        provider.to_string(),
+        Style::default().fg(signal()).add_modifier(Modifier::BOLD),
+    ));
+    spans.push(Span::styled(" · ", Style::default().fg(ghost())));
+    spans.push(Span::styled(
+        thinking.to_string(),
+        Style::default()
+            .fg(code_const())
+            .add_modifier(Modifier::BOLD),
+    ));
+    spans.push(Span::styled(" · ", Style::default().fg(ghost())));
+    spans.push(Span::styled(
+        context,
+        Style::default()
+            .fg(code_number())
+            .add_modifier(Modifier::BOLD),
+    ));
+
+    Line::from(spans)
 }
 
 fn selected_model_label(app: &TuiApp) -> String {

@@ -531,6 +531,7 @@ impl SubagentTool {
             ModelMessage {
                 role: ModelRole::System,
                 content: system,
+                content_parts: Vec::new(),
                 tool_call_id: None,
                 tool_name: None,
                 tool_calls: vec![],
@@ -540,6 +541,7 @@ impl SubagentTool {
             ModelMessage {
                 role: ModelRole::User,
                 content: prompt.to_string(),
+                content_parts: Vec::new(),
                 tool_call_id: None,
                 tool_name: None,
                 tool_calls: vec![],

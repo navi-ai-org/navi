@@ -46,9 +46,13 @@ pub(crate) fn start_streaming_request(app: &mut TuiApp) {
     });
 
     let mut initial_messages = app.conversation_history.clone();
-    let user_prompt = initial_messages
-        .pop()
-        .map(|last| last.content)
+    let last_message = initial_messages.pop();
+    let user_prompt = last_message
+        .as_ref()
+        .map(|last| last.content.clone())
+        .unwrap_or_default();
+    let content_parts = last_message
+        .map(|last| last.content_parts)
         .unwrap_or_default();
 
     let tx = app.async_sender();
@@ -64,6 +68,7 @@ pub(crate) fn start_streaming_request(app: &mut TuiApp) {
             project_dir,
             initial_messages,
             user_prompt,
+            content_parts,
             tx.clone(),
             active_skills,
         )
@@ -72,6 +77,8 @@ pub(crate) fn start_streaming_request(app: &mut TuiApp) {
     }));
 }
 
+use navi_sdk::ContentPart;
+
 #[allow(clippy::too_many_arguments)]
 async fn run_sdk_turn(
     engine: Arc<dyn EngineDriver>,
@@ -79,6 +86,7 @@ async fn run_sdk_turn(
     project_dir: PathBuf,
     initial_messages: Vec<ModelMessage>,
     user_prompt: String,
+    content_parts: Vec<ContentPart>,
     tx: mpsc::UnboundedSender<AsyncEvent>,
     active_skills: Vec<String>,
 ) -> std::result::Result<String, String> {
@@ -99,6 +107,7 @@ async fn run_sdk_turn(
     let turn = engine.send_turn(NaviTurnRequest {
         session_id: session_id.clone(),
         message: user_prompt,
+        content_parts,
         context_packets: Vec::new(),
     });
     tokio::pin!(turn);

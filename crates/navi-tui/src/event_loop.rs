@@ -169,11 +169,25 @@ where
     Ok(())
 }
 
-/// Handle a bracketed paste event by inserting the full text into the active
-/// input field.
+/// Handle a bracketed paste event. In normal mode, tries to read an image
+/// from the clipboard first (Ctrl+V paste); falls back to inserting text.
 fn handle_paste(app: &mut TuiApp, content: &str) {
+    use crate::clipboard::try_read_clipboard_image;
+    use crate::notifications::show_notification;
+
     match app.mode {
-        Mode::Normal => insert_input_text(app, content),
+        Mode::Normal => {
+            if !app.is_loading {
+                if let Some(image) = try_read_clipboard_image(app.image_picker.as_ref()) {
+                    let label = image.label();
+                    app.pending_images.push(image);
+                    show_notification(app, "Image", format!("{} attached via paste", label));
+                }
+            }
+            if !content.is_empty() {
+                insert_input_text(app, content);
+            }
+        }
         Mode::ApiKeyEntry => insert_api_key_text(app, content),
         _ => {}
     }

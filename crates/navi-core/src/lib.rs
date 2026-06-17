@@ -45,7 +45,7 @@ pub use harness::{
 };
 pub use logging::{LoggingGuard, LoggingRuntimeConfig, init_logging, log_dir, log_path};
 pub use model::{
-    ModelMessage, ModelProvider, ModelRequest, ModelResponse, ModelRole, ModelStream,
+    ContentPart, ModelMessage, ModelProvider, ModelRequest, ModelResponse, ModelRole, ModelStream,
     ModelStreamEvent, ThinkingConfig, ThinkingRequest,
 };
 pub use patch::PatchProposal;

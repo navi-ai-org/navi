@@ -6,8 +6,8 @@ use anyhow::Result;
 use async_stream::try_stream;
 use futures_util::StreamExt;
 use navi_core::{
-    ModelMessage, ModelRequest, ModelRole, ModelStream, ModelStreamEvent, ToolDefinition,
-    ToolInvocation,
+    ContentPart, ModelMessage, ModelRequest, ModelRole, ModelStream, ModelStreamEvent,
+    ToolDefinition, ToolInvocation,
 };
 use serde_json::{Value, json};
 use std::time::Duration;
@@ -150,10 +150,33 @@ pub(crate) fn gemini_contents(messages: &[ModelMessage]) -> (String, Vec<Value>)
     for message in messages {
         match message.role {
             ModelRole::System => system.push(message.content.clone()),
-            ModelRole::User => contents.push(json!({
-                "role": "user",
-                "parts": [{ "text": message.content }],
-            })),
+            ModelRole::User => {
+                if !message.content_parts.is_empty() {
+                    // Multimodal message: emit Gemini-native inlineData parts.
+                    let parts: Vec<Value> = message
+                        .content_parts
+                        .iter()
+                        .map(|part| match part {
+                            ContentPart::Text { text } => json!({ "text": text }),
+                            ContentPart::Image { media_type, data } => json!({
+                                "inlineData": {
+                                    "mimeType": media_type,
+                                    "data": data,
+                                }
+                            }),
+                        })
+                        .collect();
+                    contents.push(json!({
+                        "role": "user",
+                        "parts": parts,
+                    }));
+                } else {
+                    contents.push(json!({
+                        "role": "user",
+                        "parts": [{ "text": message.content }],
+                    }));
+                }
+            }
             ModelRole::Tool => {
                 let function_name = message.tool_name.as_deref().unwrap_or("");
                 let response_value: Value = serde_json::from_str(&message.content)

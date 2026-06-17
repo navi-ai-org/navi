@@ -5,7 +5,7 @@ use crate::transport::ensure_success;
 use anyhow::Result;
 use async_stream::try_stream;
 use futures_util::StreamExt;
-use navi_core::{ModelRequest, ModelStream, ModelStreamEvent, ToolInvocation};
+use navi_core::{ContentPart, ModelRequest, ModelStream, ModelStreamEvent, ToolInvocation};
 use serde_json::{Value, json};
 use std::time::Duration;
 
@@ -294,7 +294,26 @@ fn commandcode_messages(messages: &[navi_core::ModelMessage]) -> (String, Vec<Va
                 }
             }
             navi_core::ModelRole::User => {
-                converted.push(json!({ "role": "user", "content": message.content }));
+                if !message.content_parts.is_empty() {
+                    let content: Vec<Value> = message
+                        .content_parts
+                        .iter()
+                        .map(|part| match part {
+                            ContentPart::Text { text } => {
+                                json!({ "type": "text", "text": text })
+                            }
+                            ContentPart::Image { media_type, data } => {
+                                json!({
+                                    "type": "input_image",
+                                    "image_url": format!("data:{media_type};base64,{data}")
+                                })
+                            }
+                        })
+                        .collect();
+                    converted.push(json!({ "role": "user", "content": content }));
+                } else {
+                    converted.push(json!({ "role": "user", "content": message.content }));
+                }
             }
             navi_core::ModelRole::Assistant => {
                 if message.tool_calls.is_empty() {

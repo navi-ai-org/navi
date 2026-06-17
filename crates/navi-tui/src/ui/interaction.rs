@@ -39,6 +39,9 @@ pub(crate) enum HitAction {
         target: ScrollTarget,
         offset: usize,
     },
+    RemoveImage(usize),
+    MaximizeImage(usize),
+    CloseMaximizedImage,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

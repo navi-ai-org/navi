@@ -437,6 +437,26 @@ fn dispatch_hit(app: &mut TuiApp, hit: HitRegion) {
             app.mcp_ui_state.selected_server = index;
             app.mcp_ui_state.is_focused_on_tools = false;
         }
+        HitAction::RemoveImage(index) => {
+            if index < app.pending_images.len() {
+                app.pending_images.remove(index);
+                if app.maximized_image == Some(index) {
+                    app.maximized_image = None;
+                } else if let Some(max_idx) = app.maximized_image {
+                    if max_idx > index {
+                        app.maximized_image = Some(max_idx - 1);
+                    }
+                }
+            }
+        }
+        HitAction::MaximizeImage(index) => {
+            if index < app.pending_images.len() {
+                app.maximized_image = Some(index);
+            }
+        }
+        HitAction::CloseMaximizedImage => {
+            app.maximized_image = None;
+        }
     }
 }
 

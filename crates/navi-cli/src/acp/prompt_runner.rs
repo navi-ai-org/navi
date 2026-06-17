@@ -15,6 +15,7 @@ pub(crate) async fn run_prompt_task(
     let turn = engine.send_turn(NaviTurnRequest {
         session_id: acp_session_id.clone(),
         message: prompt,
+        content_parts: Vec::new(),
         context_packets: Vec::new(),
     });
     tokio::pin!(turn);
