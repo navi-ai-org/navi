@@ -2776,6 +2776,7 @@ dependencies = [
  "anyhow",
  "clap",
  "navi-core",
+ "navi-mcp",
  "navi-plugin-broker",
  "navi-plugin-manifest",
  "navi-plugin-orchestrator",

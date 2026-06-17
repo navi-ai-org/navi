@@ -1,7 +1,7 @@
   main  /tmp/navi-test-project
 
-   │ read the file
 
+        read the file
 
 
     ╭ Tool Approval ───────────────────────────────────────────────────────╮
@@ -14,10 +14,10 @@
     │                                                                      │
     │                                                                      │
     │                                                                      │
-    │                                                                      │
+  ▌ │                                                                      │
   ▌ ╰──────────────────────────────────────────────────────────────────────╯
-  ▌    thinking...
+  ▌     thinking...
   ▌
   ▌
+  ▌   gpt-5.5 OpenAI · adaptive · 18 / 200k (0%)
   ▌
-  ▌  Build · gpt-5.5 OpenAI · adaptive · 18 / 200k (0%)   Enter send · Shift

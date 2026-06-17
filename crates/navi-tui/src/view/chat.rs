@@ -325,7 +325,10 @@ fn chat_render_signature(app: &TuiApp) -> u64 {
     app.show_thinking.hash(&mut hasher);
     app.theme_id.config_value().hash(&mut hasher);
     app.compact_tool_visible_limit.hash(&mut hasher);
-    if app.is_loading || !app.running_tools.is_empty() {
+    if app.is_loading
+        || !app.running_tools.is_empty()
+        || app.background_commands.iter().any(|c| c.is_running())
+    {
         app.loading_start
             .map(|start| start.elapsed().as_secs())
             .hash(&mut hasher);
@@ -343,6 +346,14 @@ fn chat_render_signature(app: &TuiApp) -> u64 {
         if let Some(result) = &msg.tool_result {
             result.ok.hash(&mut hasher);
         }
+    }
+    // Include background command state so chat re-renders when they update
+    for cmd in &app.background_commands {
+        cmd.task_id.hash(&mut hasher);
+        cmd.status.hash(&mut hasher);
+        cmd.elapsed_ms.hash(&mut hasher);
+        cmd.stdout.len().hash(&mut hasher);
+        cmd.stderr.len().hash(&mut hasher);
     }
     hasher.finish()
 }

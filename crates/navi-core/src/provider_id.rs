@@ -15,6 +15,7 @@ impl ProviderId {
     pub const OPENCODE: &'static str = "opencode";
     pub const OPENCODE_ZEN: &'static str = "opencode-zen";
     pub const OPENCODE_GO: &'static str = "opencode-go";
+    pub const COMMANDCODE: &'static str = "commandcode";
     pub const GROQ: &'static str = "groq";
     pub const XAI: &'static str = "xai";
     pub const MIMO_ANTHROPIC_CN: &'static str = "mimo-anthropic-cn";
@@ -42,6 +43,7 @@ impl ProviderId {
                 Self::OPENCODE,
                 Self::OPENCODE_ZEN,
                 Self::OPENCODE_GO,
+                Self::COMMANDCODE,
                 Self::GROQ,
                 Self::XAI,
                 Self::MIMO_ANTHROPIC_CN,
@@ -110,6 +112,7 @@ mod tests {
             ProviderId::OPENCODE,
             ProviderId::OPENCODE_ZEN,
             ProviderId::OPENCODE_GO,
+            ProviderId::COMMANDCODE,
             ProviderId::GROQ,
             ProviderId::XAI,
             ProviderId::MIMO_ANTHROPIC_CN,
@@ -133,6 +136,7 @@ mod tests {
     fn is_opencode_family_returns_false_for_others() {
         assert!(!ProviderId::from_config_id("openai").is_opencode_family());
         assert!(!ProviderId::from_config_id("anthropic").is_opencode_family());
+        assert!(!ProviderId::from_config_id("commandcode").is_opencode_family());
         assert!(!ProviderId::from_config_id("google-gemini").is_opencode_family());
         assert!(!ProviderId::from_config_id("custom").is_opencode_family());
     }

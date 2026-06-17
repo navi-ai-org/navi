@@ -5,7 +5,7 @@
     project navi-tui
    ████╗  ██║██╔══██╗██║   ██║██║
 
-  ▌   Describe the task...
   ▌
   ▌
-  ▌
+  ▌    Describe the task...
+  ▌   gpt-5.5 OpenAI · adaptive · 0

@@ -121,6 +121,8 @@ pub enum Mode {
     ThemePicker,
     MessageActions,
     Mcp,
+    OAuth,
+    BackgroundCommands,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -141,6 +143,8 @@ pub(crate) enum ModalKind {
     ThemePicker,
     MessageActions,
     Mcp,
+    OAuth,
+    BackgroundCommands,
 }
 
 impl ModalKind {
@@ -162,8 +166,17 @@ impl ModalKind {
             Self::ThemePicker => Mode::ThemePicker,
             Self::MessageActions => Mode::MessageActions,
             Self::Mcp => Mode::Mcp,
+            Self::OAuth => Mode::OAuth,
+            Self::BackgroundCommands => Mode::BackgroundCommands,
         }
     }
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct OAuthUiState {
+    pub provider_id: String,
+    pub verification_uri: String,
+    pub user_code: String,
 }
 
 #[derive(Debug, Clone)]

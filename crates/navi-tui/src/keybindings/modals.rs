@@ -1,5 +1,6 @@
 use crate::TuiApp;
 use crate::input::api_key_input_ref;
+use crate::mouse::copy_text_to_clipboard;
 use crate::notifications::show_notification;
 use crate::persistence::{load_session, save_current_session, save_preferences};
 use crate::providers::{
@@ -368,24 +369,90 @@ pub(crate) fn handle_providers_key(
     code: KeyCode,
     modifiers: KeyModifiers,
 ) -> bool {
-    let providers = app.filtered_providers();
-    let mut list_state =
-        SelectListState::new(app.selected_provider_setting, app.provider_settings_scroll);
+    use crate::providers::ProviderListRow;
+    use navi_sdk::provider_catalog;
+
+    let list_rows = app.filtered_providers();
+    let catalog = provider_catalog(&app.loaded_config.config);
+    let count = list_rows.len();
+
+    // Helper: get the catalog index of the currently selected row (if any).
+    let current_catalog_idx = list_rows
+        .get(app.selected_provider_setting)
+        .and_then(|row| match row {
+            ProviderListRow::Provider { index } => Some(*index),
+            ProviderListRow::Header { .. } => None,
+        });
+
+    // Helper: find the nearest non-header catalog index at or after `start`.
+    let first_selectable = |start: usize| -> Option<usize> {
+        list_rows
+            .iter()
+            .skip(start)
+            .find_map(|row| match row {
+                ProviderListRow::Provider { index } => Some(*index),
+                ProviderListRow::Header { .. } => None,
+            })
+    };
+
+    // Helper: find the nearest non-header catalog index strictly before `start`.
+    let last_selectable_before = |start: usize| -> Option<usize> {
+        list_rows
+            .iter()
+            .take(start)
+            .rev()
+            .find_map(|row| match row {
+                ProviderListRow::Provider { index } => Some(*index),
+                ProviderListRow::Header { .. } => None,
+            })
+    };
+
+    // Helper: convert a catalog index back to a list row position.
+    let row_pos_of = |catalog_idx: usize| -> Option<usize> {
+        list_rows.iter().position(|row| matches!(row, ProviderListRow::Provider { index } if *index == catalog_idx))
+    };
+
+    // Selected row position in the visible list (the row whose underlying
+    // catalog provider matches the current selection, or fallback to the
+    // current numeric position so the highlight stays in place when only
+    // headers change).
+    let current_row_pos = current_catalog_idx
+        .and_then(row_pos_of)
+        .unwrap_or(app.selected_provider_setting.min(count.saturating_sub(1)));
+
+    // Helper that returns the provider at a list row position.
+    let provider_at = |pos: usize| -> Option<&navi_sdk::ProviderConfig> {
+        match list_rows.get(pos)? {
+            ProviderListRow::Provider { index } => catalog.get(*index),
+            ProviderListRow::Header { .. } => None,
+        }
+    };
+
+    let mut new_row_pos = current_row_pos;
+    let mut reset_to_first = false;
+
     match code {
         KeyCode::Esc => {
             app.provider_filter.clear();
             super::close_active_modal(app);
         }
         KeyCode::Down => {
-            list_state.select_next(providers.len());
-            list_state.sync_scroll(12);
+            // Move to the next Provider row; if at the end, stay.
+            if let Some(next) = first_selectable(current_row_pos + 1) {
+                new_row_pos = row_pos_of(next).unwrap_or(current_row_pos);
+            } else {
+                new_row_pos = current_row_pos;
+            }
         }
         KeyCode::Up => {
-            list_state.select_previous();
-            list_state.sync_scroll(12);
+            if let Some(prev) = last_selectable_before(current_row_pos) {
+                new_row_pos = row_pos_of(prev).unwrap_or(current_row_pos);
+            } else {
+                new_row_pos = current_row_pos;
+            }
         }
         KeyCode::Enter => {
-            if let Some(provider) = providers.get(app.selected_provider_setting) {
+            if let Some(provider) = provider_at(current_row_pos).cloned() {
                 app.pending_provider_setup = Some(provider.id.clone());
                 app.pending_model_selection = None;
                 app.api_key_input.clear();
@@ -394,7 +461,7 @@ pub(crate) fn handle_providers_key(
             }
         }
         KeyCode::Char('k') if modifiers.contains(KeyModifiers::CONTROL) => {
-            if let Some(provider) = providers.get(app.selected_provider_setting) {
+            if let Some(provider) = provider_at(current_row_pos).cloned() {
                 app.pending_provider_setup = Some(provider.id.clone());
                 app.pending_model_selection = None;
                 app.api_key_input.clear();
@@ -402,34 +469,76 @@ pub(crate) fn handle_providers_key(
                 super::apply_ui_effect(app, UiEffect::OpenModal(ModalKind::ApiKeyEntry));
             }
         }
-        KeyCode::Char('o') if modifiers.contains(KeyModifiers::CONTROL) => {
-            if let Some(provider) = providers.get(app.selected_provider_setting) {
-                start_provider_oauth(app, provider);
+        KeyCode::Char('o') | KeyCode::Char('O') if modifiers.contains(KeyModifiers::CONTROL) => {
+            if let Some(provider) = provider_at(current_row_pos).cloned() {
+                start_provider_oauth(app, &provider);
             }
         }
         KeyCode::Char('r') if modifiers.contains(KeyModifiers::CONTROL) => {
-            if let Some(provider) = providers.get(app.selected_provider_setting) {
-                let provider_id = provider.id.clone();
-                super::provider_sync::sync_provider_tui(app, &provider_id);
+            if let Some(provider) = provider_at(current_row_pos).cloned() {
+                super::provider_sync::sync_provider_tui(app, &provider.id);
             }
         }
         KeyCode::Char('d') if modifiers.contains(KeyModifiers::CONTROL) => {
-            if let Some(provider) = providers.get(app.selected_provider_setting) {
+            if let Some(provider) = provider_at(current_row_pos).cloned() {
                 let _ = app.credential_store().delete_api_key(&provider.id);
             }
         }
         KeyCode::Char(ch) => {
             app.provider_filter.push(ch);
-            list_state = SelectListState::new(0, 0);
+            reset_to_first = true;
         }
         KeyCode::Backspace => {
             app.provider_filter.pop();
-            list_state = SelectListState::new(0, 0);
+            reset_to_first = true;
         }
         _ => {}
     }
-    app.selected_provider_setting = list_state.selected();
-    app.provider_settings_scroll = list_state.scroll();
+
+    if reset_to_first {
+        // After filter change, jump to the first non-header row.
+        new_row_pos = first_selectable(0).and_then(row_pos_of).unwrap_or(0);
+        app.provider_settings_scroll = 0;
+    } else {
+        // Sync scroll so the selected row is visible.
+        let visible_rows = 12usize;
+        let mut state = SelectListState::new(new_row_pos, app.provider_settings_scroll);
+        state.sync_scroll(visible_rows);
+        state.clamp_scroll(count, visible_rows);
+        app.provider_settings_scroll = state.scroll();
+    }
+
+    app.selected_provider_setting = new_row_pos.min(count.saturating_sub(1));
+
+    false
+}
+
+pub(crate) fn handle_oauth_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyModifiers) -> bool {
+    match code {
+        KeyCode::Esc => {
+            app.oauth_state = None;
+            super::close_active_modal(app);
+        }
+        KeyCode::Char('c') | KeyCode::Char('C') if modifiers.is_empty() => {
+            if let Some(uri) = app
+                .oauth_state
+                .as_ref()
+                .map(|state| state.verification_uri.clone())
+            {
+                copy_text_to_clipboard(app, &uri);
+            }
+        }
+        KeyCode::Char('o') | KeyCode::Char('O') if modifiers.contains(KeyModifiers::CONTROL) => {
+            if let Some(uri) = app
+                .oauth_state
+                .as_ref()
+                .map(|state| state.verification_uri.clone())
+            {
+                crate::browser::open_url(app, uri);
+            }
+        }
+        _ => {}
+    }
     false
 }
 
@@ -859,6 +968,53 @@ pub(super) fn handle_mcp_key(app: &mut TuiApp, code: KeyCode, _modifiers: KeyMod
                     server.enabled = !server.enabled;
                 }
             }
+        }
+        _ => {}
+    }
+    false
+}
+
+pub(crate) fn handle_background_commands_key(app: &mut TuiApp, code: KeyCode) -> bool {
+    let len = app.background_commands.len();
+    match code {
+        KeyCode::Esc => super::close_active_modal(app),
+        KeyCode::Up | KeyCode::Char('k') => {
+            if app.bg_command_selected > 0 {
+                app.bg_command_selected -= 1;
+            }
+        }
+        KeyCode::Down | KeyCode::Char('j') => {
+            if app.bg_command_selected + 1 < len {
+                app.bg_command_selected += 1;
+            }
+        }
+        KeyCode::Char('c') => {
+            // Cancel selected background command
+            if let Some(cmd) = app.background_commands.get(app.bg_command_selected) {
+                if cmd.is_running() {
+                    let task_id = cmd.task_id.clone();
+                    let engine = app.engine();
+                    let session_id = app.session_id.as_str().to_string();
+                    spawn_runtime_task(async move {
+                        let _ = engine
+                            .cancel_background_command(&session_id, &task_id)
+                            .await;
+                    });
+                }
+            }
+        }
+        KeyCode::Char('r') => {
+            // Refresh background commands
+            let engine = app.engine();
+            let session_id = app.session_id.as_str().to_string();
+            let tx = app.async_sender();
+            spawn_runtime_task(async move {
+                if let Ok(commands) = engine.list_background_commands(&session_id).await {
+                    let _ = tx.send(crate::dispatch::AsyncEvent::BackgroundCommandsUpdated(
+                        commands,
+                    ));
+                }
+            });
         }
         _ => {}
     }

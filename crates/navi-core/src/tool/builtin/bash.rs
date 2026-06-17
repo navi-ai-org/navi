@@ -159,6 +159,9 @@ impl BashBackgroundTask {
     }
 
     async fn cancel(&self, invocation_id: String) -> ToolResult {
+        // Refresh status first to avoid race condition with completed tasks
+        self.refresh_status().await;
+
         let mut child = self.child.lock().await;
         if let Some(child) = child.as_mut() {
             let _ = child.kill().await;
@@ -423,7 +426,6 @@ fn native_tool_suggestion(command: &str) -> Option<Value> {
     let program = argv.first()?.as_str();
 
     let suggestion = match program {
-        "git" => suggest_git(&argv[1..])?,
         "cargo" => suggest_cargo(&argv[1..])?,
         "go" => suggest_go(&argv[1..])?,
         "npm" | "bun" => suggest_js_package_manager(program, &argv[1..])?,
@@ -446,36 +448,6 @@ fn native_tool_suggestion(command: &str) -> Option<Value> {
 struct NativeSuggestion {
     tool: &'static str,
     input: Value,
-}
-
-fn suggest_git(args: &[String]) -> Option<NativeSuggestion> {
-    let subcommand = args.first()?;
-    let mapped = match subcommand.as_str() {
-        "status" | "diff" | "log" | "branch" | "stash" | "remote" | "add" | "commit"
-        | "restore" | "checkout" | "merge" | "rebase" | "pull" | "fetch" | "reset" | "clean"
-        | "tag" | "rm" | "mv" | "init" | "clone" => subcommand.as_str(),
-        "push"
-            if args
-                .iter()
-                .any(|arg| matches!(arg.as_str(), "--force" | "-f")) =>
-        {
-            "push-force"
-        }
-        "push" if args.iter().any(|arg| arg == "--delete") => "push_delete",
-        "push" => "push",
-        _ => return None,
-    };
-    let mut input = json!({
-        "command": mapped,
-        "args": args[1..],
-    });
-    if matches!(mapped, "diff" | "log") {
-        input["format"] = json!("json");
-    }
-    Some(NativeSuggestion {
-        tool: "git_ops",
-        input,
-    })
 }
 
 fn suggest_cargo(args: &[String]) -> Option<NativeSuggestion> {
@@ -699,80 +671,6 @@ fn split_shell_words(command: &str) -> Option<Vec<String>> {
     (!words.is_empty()).then_some(words)
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn suggests_git_ops_for_git_diff() {
-        let suggestion = native_tool_suggestion("git diff -- Cargo.toml").expect("suggestion");
-
-        assert_eq!(suggestion["native_tool"], "git_ops");
-        assert_eq!(suggestion["native_input"]["command"], "diff");
-        assert_eq!(
-            suggestion["native_input"]["args"],
-            json!(["--", "Cargo.toml"])
-        );
-        assert_eq!(suggestion["native_input"]["format"], "json");
-        assert_eq!(suggestion["recoverable"], true);
-    }
-
-    #[test]
-    fn suggests_test_runner_for_cargo_test() {
-        let suggestion = native_tool_suggestion("cargo test -p navi-core").expect("suggestion");
-
-        assert_eq!(suggestion["native_tool"], "test_runner");
-        assert_eq!(
-            suggestion["native_input"],
-            json!({ "flags": "-p navi-core" })
-        );
-    }
-
-    #[test]
-    fn suggests_grep_for_rg() {
-        let suggestion =
-            native_tool_suggestion("rg \"fn main\" crates/navi-core/src").expect("suggestion");
-
-        assert_eq!(suggestion["native_tool"], "grep");
-        assert_eq!(suggestion["native_input"]["pattern"], "fn main");
-        assert_eq!(suggestion["native_input"]["path"], "crates/navi-core/src");
-    }
-
-    #[test]
-    fn suggests_fs_browser_for_ls() {
-        let suggestion = native_tool_suggestion("ls -la crates").expect("suggestion");
-
-        assert_eq!(suggestion["native_tool"], "fs_browser");
-        assert_eq!(
-            suggestion["native_input"],
-            json!({ "action": "list", "path": "crates" })
-        );
-    }
-
-    #[test]
-    fn suggests_schema_valid_build_runner_for_cargo_build() {
-        let suggestion =
-            native_tool_suggestion("cargo build --release --features simd").expect("suggestion");
-
-        assert_eq!(suggestion["native_tool"], "build_runner");
-        assert_eq!(suggestion["native_input"]["profile"], "release");
-        assert_eq!(suggestion["native_input"]["features"], "simd");
-        assert!(suggestion["native_input"].get("flags").is_none());
-    }
-
-    #[test]
-    fn leaves_unsupported_native_command_variants_to_bash() {
-        assert!(native_tool_suggestion("pnpm install").is_none());
-        assert!(native_tool_suggestion("cargo check -p navi-core").is_none());
-    }
-
-    #[test]
-    fn leaves_ad_hoc_shell_commands_to_bash() {
-        assert!(native_tool_suggestion("printf 'hello'").is_none());
-        assert!(native_tool_suggestion("git diff | less").is_none());
-    }
-}
-
 impl BashTool {
     async fn run_foreground(
         &self,
@@ -845,5 +743,72 @@ impl BashTool {
                 }),
             })
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn git_commands_are_not_intercepted() {
+        assert!(native_tool_suggestion("git diff -- Cargo.toml").is_none());
+        assert!(native_tool_suggestion("git status").is_none());
+        assert!(native_tool_suggestion("git log --oneline").is_none());
+    }
+
+    #[test]
+    fn suggests_test_runner_for_cargo_test() {
+        let suggestion = native_tool_suggestion("cargo test -p navi-core").expect("suggestion");
+
+        assert_eq!(suggestion["native_tool"], "test_runner");
+        assert_eq!(
+            suggestion["native_input"],
+            json!({ "flags": "-p navi-core" })
+        );
+    }
+
+    #[test]
+    fn suggests_grep_for_rg() {
+        let suggestion =
+            native_tool_suggestion("rg \"fn main\" crates/navi-core/src").expect("suggestion");
+
+        assert_eq!(suggestion["native_tool"], "grep");
+        assert_eq!(suggestion["native_input"]["pattern"], "fn main");
+        assert_eq!(suggestion["native_input"]["path"], "crates/navi-core/src");
+    }
+
+    #[test]
+    fn suggests_fs_browser_for_ls() {
+        let suggestion = native_tool_suggestion("ls -la crates").expect("suggestion");
+
+        assert_eq!(suggestion["native_tool"], "fs_browser");
+        assert_eq!(
+            suggestion["native_input"],
+            json!({ "action": "list", "path": "crates" })
+        );
+    }
+
+    #[test]
+    fn suggests_schema_valid_build_runner_for_cargo_build() {
+        let suggestion =
+            native_tool_suggestion("cargo build --release --features simd").expect("suggestion");
+
+        assert_eq!(suggestion["native_tool"], "build_runner");
+        assert_eq!(suggestion["native_input"]["profile"], "release");
+        assert_eq!(suggestion["native_input"]["features"], "simd");
+        assert!(suggestion["native_input"].get("flags").is_none());
+    }
+
+    #[test]
+    fn leaves_unsupported_native_command_variants_to_bash() {
+        assert!(native_tool_suggestion("pnpm install").is_none());
+        assert!(native_tool_suggestion("cargo check -p navi-core").is_none());
+    }
+
+    #[test]
+    fn leaves_ad_hoc_shell_commands_to_bash() {
+        assert!(native_tool_suggestion("printf 'hello'").is_none());
+        assert!(native_tool_suggestion("git diff | less").is_none());
     }
 }

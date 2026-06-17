@@ -16,6 +16,7 @@ serde_json.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 navi-core.workspace = true
+navi-mcp.workspace = true
 navi-plugin-broker.workspace = true
 navi-plugin-manifest.workspace = true
 navi-plugin-orchestrator.workspace = true

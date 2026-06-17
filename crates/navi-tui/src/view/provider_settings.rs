@@ -1,15 +1,15 @@
-use ratatui::layout::{Constraint, Direction, Layout, Margin, Rect};
-use ratatui::prelude::{Frame, Span};
-use ratatui::style::Style;
-use ratatui::widgets::{List, ListItem, Paragraph};
-
 use crate::TuiApp;
-use crate::providers::provider_auth_status;
+use crate::providers::{ProviderListRow, provider_auth_status};
 use crate::render::{clear_modal_area, modal_block};
 use crate::runtime::provider_supports_oauth;
 use crate::theme::*;
 use crate::ui::interaction::{HitAction, line_rect};
 use crate::ui::list::render_scrollbar;
+use navi_sdk::provider_catalog;
+use ratatui::layout::{Constraint, Direction, Layout, Margin, Rect};
+use ratatui::prelude::{Frame, Span};
+use ratatui::style::{Modifier, Style};
+use ratatui::widgets::{List, ListItem, Paragraph};
 
 pub(super) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
     clear_modal_area(frame, area);
@@ -40,34 +40,52 @@ pub(super) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
         rows[0],
     );
 
-    let providers = app.filtered_providers();
+    let list_rows = app.filtered_providers();
+    let catalog = provider_catalog(&app.loaded_config.config);
     let height = rows[1].height as usize;
-    let start = app.provider_settings_scroll.min(providers.len());
-    let end = (start + height).min(providers.len());
-    let items = providers[start..end]
+    let start = app.provider_settings_scroll.min(list_rows.len());
+    let end = (start + height).min(list_rows.len());
+
+    let items = list_rows[start..end]
         .iter()
         .enumerate()
-        .map(|(offset, provider)| {
+        .map(|(offset, row)| {
             let index = start + offset;
-            let selected = index == app.selected_provider_setting;
-            let status = provider_auth_status(app, provider);
-            let oauth = if provider_supports_oauth(&provider.id) {
-                "OAuth"
-            } else {
-                ""
-            };
-            let line = format!(
-                "{:<30} {:<12} {:<10} {}",
-                provider.label, status.label, oauth, provider.description
-            );
-            let style = if app.hover_index == Some(index) || selected {
-                active_item_style()
-            } else if status.configured {
-                Style::default().fg(signal()).bg(modal_bg())
-            } else {
-                inactive_item_style()
-            };
-            ListItem::new(Span::styled(line, style)).style(style)
+            match row {
+                ProviderListRow::Header { label } => {
+                    let header_style = Style::default()
+                        .fg(text())
+                        .bg(modal_bg())
+                        .add_modifier(Modifier::BOLD);
+                    ListItem::new(Span::styled(format!("  {label}"), header_style))
+                        .style(header_style)
+                }
+                ProviderListRow::Provider { index: catalog_idx } => {
+                    let Some(provider) = catalog.get(*catalog_idx) else {
+                        return ListItem::new(Span::styled("", inactive_item_style()))
+                            .style(inactive_item_style());
+                    };
+                    let selected = index == app.selected_provider_setting;
+                    let status = provider_auth_status(app, provider);
+                    let oauth = if provider_supports_oauth(&provider.id) {
+                        "OAuth"
+                    } else {
+                        ""
+                    };
+                    let line = format!(
+                        "{:<30} {:<12} {:<10} {}",
+                        provider.label, status.label, oauth, provider.description
+                    );
+                    let style = if app.hover_index == Some(index) || selected {
+                        active_item_style()
+                    } else if status.configured {
+                        Style::default().fg(signal()).bg(modal_bg())
+                    } else {
+                        inactive_item_style()
+                    };
+                    ListItem::new(Span::styled(line, style)).style(style)
+                }
+            }
         })
         .collect::<Vec<_>>();
 
@@ -79,26 +97,38 @@ pub(super) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
         frame,
         app,
         rows[1],
-        providers.len(),
+        list_rows.len(),
         start,
         crate::ui::interaction::ScrollTarget::Providers,
     );
-    for (offset, provider) in providers[start..end].iter().enumerate() {
+
+    // Hit tests: only register for Provider rows (headers are non-selectable).
+    for (offset, row) in list_rows[start..end].iter().enumerate() {
         let index = start + offset;
-        let row = line_rect(rows[1], offset);
-        app.register_hit(
-            row,
-            20,
-            format!("provider {} api key", provider.label),
-            HitAction::ProviderApiKey(index),
-        );
-        if provider_supports_oauth(&provider.id) {
+        if let ProviderListRow::Provider { index: catalog_idx } = row {
+            let Some(provider) = catalog.get(*catalog_idx) else {
+                continue;
+            };
+            let row_rect = line_rect(rows[1], offset);
             app.register_hit(
-                Rect::new(row.x + 43, row.y, 10.min(row.width.saturating_sub(43)), 1),
-                21,
-                format!("provider {} oauth", provider.label),
-                HitAction::ProviderOAuth(index),
+                row_rect,
+                20,
+                format!("provider {} api key", provider.label),
+                HitAction::ProviderApiKey(index),
             );
+            if provider_supports_oauth(&provider.id) {
+                app.register_hit(
+                    Rect::new(
+                        row_rect.x + 43,
+                        row_rect.y,
+                        10.min(row_rect.width.saturating_sub(43)),
+                        1,
+                    ),
+                    21,
+                    format!("provider {} oauth", provider.label),
+                    HitAction::ProviderOAuth(index),
+                );
+            }
         }
     }
 

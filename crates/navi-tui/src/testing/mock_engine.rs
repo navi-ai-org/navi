@@ -232,6 +232,10 @@ impl EngineDriver for MockEngine {
         Err(NaviError::SessionNotFound(session_id.to_string()))
     }
 
+    async fn close_session(&self, _session_id: &str) -> Result<bool> {
+        Ok(false)
+    }
+
     async fn reload_wasm_plugins(&self) -> Result<Vec<String>> {
         self.state
             .lock()
@@ -359,5 +363,28 @@ impl EngineDriver for MockEngine {
 
     fn list_mcp_servers(&self, _session_id: &str) -> Result<Vec<McpServerInfo>> {
         Ok(vec![])
+    }
+
+    async fn list_background_commands(
+        &self,
+        _session_id: &str,
+    ) -> Result<Vec<navi_sdk::BackgroundCommandSnapshot>> {
+        Ok(vec![])
+    }
+
+    async fn poll_background_command(
+        &self,
+        _session_id: &str,
+        _task_id: &str,
+    ) -> Result<navi_sdk::BackgroundCommandSnapshot> {
+        Err(NaviError::Config("mock engine: no background tasks".into()))
+    }
+
+    async fn cancel_background_command(
+        &self,
+        _session_id: &str,
+        _task_id: &str,
+    ) -> Result<navi_sdk::BackgroundCommandSnapshot> {
+        Err(NaviError::Config("mock engine: no background tasks".into()))
     }
 }
