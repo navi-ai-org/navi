@@ -117,11 +117,7 @@ pub(crate) fn handle_normal_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyM
             }
         }
         KeyCode::Esc => {
-            if app.maximized_image.is_some() {
-                app.maximized_image = None;
-            } else {
-                app.scroll_offset = 0;
-            }
+            app.scroll_offset = 0;
         }
         _ => {}
     }

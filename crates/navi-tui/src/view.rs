@@ -38,7 +38,7 @@ fn render_inner(frame: &mut Frame<'_>, app: &mut TuiApp) {
 
     let input_width = content_area.width.saturating_sub(4) as usize;
     let input_height = input::composer_height(app, input_width);
-    let image_preview_height = if app.pending_images.is_empty() || app.maximized_image.is_some() { 0 } else { 6 };
+    let image_preview_height = if app.pending_images.is_empty() { 0 } else { 6 };
     let vertical = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -54,7 +54,7 @@ fn render_inner(frame: &mut Frame<'_>, app: &mut TuiApp) {
     chat::render_chat_area(frame, app, vertical[1]);
 
     // Render image previews above input
-    let input_area = if !app.pending_images.is_empty() && app.maximized_image.is_none() {
+    let input_area = if !app.pending_images.is_empty() {
         image_preview::render_image_previews(frame, app, vertical[2]);
         vertical[3]
     } else {
@@ -102,9 +102,6 @@ fn render_inner(frame: &mut Frame<'_>, app: &mut TuiApp) {
         modals::render_tool_approval(frame, app, modal_rect(area, 72, 12));
     }
 
-    if let Some(idx) = app.maximized_image {
-        image_preview::render_maximized_image(frame, app, area, idx);
-    }
 
     notification::render_notification(frame, app, area);
 }

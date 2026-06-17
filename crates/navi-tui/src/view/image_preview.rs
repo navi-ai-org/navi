@@ -127,12 +127,7 @@ fn render_thumbnail_row(frame: &mut Frame<'_>, app: &mut TuiApp, area: Rect) {
             format!("remove_image_{}", i),
             HitAction::RemoveImage(i),
         );
-        app.register_hit(
-            thumb_area,
-            5,
-            format!("maximize_image_{}", i),
-            HitAction::MaximizeImage(i),
-        );
+
 
         // Render thumbnail if protocol is available
         if let Some(ref mut protocol) = app.pending_images[i].protocol {
@@ -161,18 +156,7 @@ fn render_compact_labels(frame: &mut Frame<'_>, app: &mut TuiApp, area: Rect) {
             
             let text_width = text_label.chars().count() as u16;
             let close_width = close_label.chars().count() as u16;
-            
-            app.register_hit(
-                Rect {
-                    x: current_x,
-                    y: area.y,
-                    width: text_width,
-                    height: 1,
-                },
-                10,
-                format!("maximize_image_{}", i),
-                HitAction::MaximizeImage(i),
-            );
+
             current_x += text_width;
 
             app.register_hit(
@@ -204,67 +188,3 @@ fn render_compact_labels(frame: &mut Frame<'_>, app: &mut TuiApp, area: Rect) {
     frame.render_widget(Paragraph::new(line), area);
 }
 
-pub(crate) fn render_maximized_image(frame: &mut Frame<'_>, app: &mut TuiApp, area: Rect, idx: usize) {
-    use ratatui::widgets::Clear;
-    use crate::render::modal_rect;
-
-    let max_modal_width = area.width.saturating_mul(90) / 100;
-    let max_modal_height = area.height.saturating_mul(90) / 100;
-
-    let title_span = Span::styled(
-        " Ⓧ ",
-        Style::default()
-            .fg(ratatui::style::Color::White)
-            .add_modifier(Modifier::BOLD),
-    );
-    let title_line = Line::from(title_span).alignment(Alignment::Right);
-
-    let container = Block::default()
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(muted()))
-        .style(Style::default().bg(bg()))
-        .title_top(title_line);
-
-    let mut modal_area = modal_rect(area, max_modal_width, max_modal_height);
-
-    if let Some(img) = app.pending_images.get(idx) {
-        if let Some(ref protocol) = img.protocol {
-            let max_inner_area = ratatui::layout::Rect {
-                x: 0,
-                y: 0,
-                width: max_modal_width.saturating_sub(2),
-                height: max_modal_height.saturating_sub(2),
-            };
-
-            let img_size = protocol.size_for(ratatui_image::Resize::Scale(None), max_inner_area.into());
-            
-            let target_modal_width = img_size.width.saturating_add(2).min(max_modal_width).max(20);
-            let target_modal_height = img_size.height.saturating_add(2).min(max_modal_height).max(5);
-            
-            modal_area = modal_rect(area, target_modal_width, target_modal_height);
-        }
-    }
-
-    let inner_area = container.inner(modal_area);
-
-    // Register close hit areas before mutable borrow
-    app.register_hit(area, 20, "close_maximized_bg", HitAction::CloseMaximizedImage);
-    app.register_hit(modal_area, 21, "close_maximized_fg", HitAction::CloseMaximizedImage);
-
-    frame.render_widget(Clear, modal_area);
-    frame.render_widget(container, modal_area);
-
-    if let Some(img) = app.pending_images.get_mut(idx) {
-        if let Some(ref mut protocol) = img.protocol {
-            let image_widget = ratatui_image::StatefulImage::new().resize(ratatui_image::Resize::Scale(None));
-            frame.render_stateful_widget(image_widget, inner_area, protocol);
-        } else {
-            let fallback = Paragraph::new(img.label())
-                .style(Style::default().fg(muted()))
-                .alignment(Alignment::Center)
-                .block(Block::default().padding(ratatui::widgets::Padding::vertical(1)));
-            frame.render_widget(fallback, inner_area);
-        }
-    }
-}

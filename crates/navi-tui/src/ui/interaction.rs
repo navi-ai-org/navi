@@ -40,8 +40,7 @@ pub(crate) enum HitAction {
         offset: usize,
     },
     RemoveImage(usize),
-    MaximizeImage(usize),
-    CloseMaximizedImage,
+
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

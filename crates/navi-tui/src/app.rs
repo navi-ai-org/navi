@@ -89,8 +89,6 @@ pub struct TuiApp {
     // clipboard images
     /// Images captured from the clipboard, waiting to be attached to the next message.
     pub(crate) pending_images: Vec<crate::state::PendingImage>,
-    /// Currently maximized image preview
-    pub(crate) maximized_image: Option<usize>,
     /// Image protocol picker for terminal rendering.
     pub(crate) image_picker: Option<Picker>,
 
@@ -251,7 +249,6 @@ impl TuiApp {
             pending_provider_setup: None,
             compact_state: CompactState::new(context_window),
             pending_images: Vec::new(),
-            maximized_image: None,
             #[cfg(not(test))]
             image_picker: if std::env::var("NAVI_SMOKE_TEST").is_ok() {
                 None
