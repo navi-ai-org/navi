@@ -1,4 +1,4 @@
-use navi_sdk::{AgentEvent, ModelMessage, ModelRole, build_system_prompt};
+use navi_sdk::{AgentEvent, ContentPart, ModelMessage, ModelRole, build_system_prompt};
 
 use crate::TuiApp;
 use crate::providers::selected_provider_label;
@@ -14,7 +14,8 @@ struct ChatPrefix {
 }
 
 pub(crate) fn submit_message(app: &mut TuiApp) {
-    if app.input.trim().is_empty() {
+    let has_images = !app.pending_images.is_empty();
+    if app.input.trim().is_empty() && !has_images {
         return;
     }
     let text = app.input.clone();
@@ -22,15 +23,47 @@ pub(crate) fn submit_message(app: &mut TuiApp) {
         model = %app.loaded_config.config.model.name,
         provider = %app.loaded_config.config.model.provider,
         chars = text.len(),
+        images = has_images,
         "TUI prompt submitted"
     );
 
-    app.messages
-        .push(ChatMessage::new(ChatRole::User, text.clone()));
+    let mut chat_msg = ChatMessage::new(ChatRole::User, text.clone());
+
+    // Collect pending images into ContentParts and labels.
+    let content_parts: Vec<ContentPart> = if has_images {
+        let parts: Vec<ContentPart> = app
+            .pending_images
+            .drain(..)
+            .map(|img| {
+                chat_msg.image_labels.push(img.label());
+                ContentPart::Image {
+                    media_type: img.media_type,
+                    data: img.data,
+                }
+            })
+            .collect();
+        // Only include a text part when there is actual text; some providers
+        // reject empty multimodal text blocks for image-only messages.
+        let mut all_parts = Vec::new();
+        if !text.trim().is_empty() {
+            all_parts.push(ContentPart::Text { text: text.clone() });
+        }
+        all_parts.extend(parts);
+        all_parts
+    } else {
+        Vec::new()
+    };
+
+    app.messages.push(chat_msg);
 
     app.compact_state.add_unsent_bytes(text.len());
-    app.conversation_history
-        .push(ModelMessage::user(text.clone()));
+    if content_parts.is_empty() {
+        app.conversation_history
+            .push(ModelMessage::user(text.clone()));
+    } else {
+        app.conversation_history
+            .push(ModelMessage::user_multimodal(text.clone(), content_parts));
+    }
 
     app.events
         .push(AgentEvent::UserTaskSubmitted { text: text.clone() });

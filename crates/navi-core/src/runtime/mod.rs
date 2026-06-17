@@ -433,7 +433,15 @@ impl AgentRuntime {
 
     /// Sends a user task to the agent and waits for the full response.
     /// Starts a session automatically if one is not active.
-    pub async fn send_turn(&mut self, task: String) -> Result<ModelResponse> {
+    /// Sends a user turn with optional multimodal content parts.
+    ///
+    /// When `content_parts` is non-empty, the message is created as a
+    /// multimodal user message containing both text and images.
+    pub async fn send_turn_with_parts(
+        &mut self,
+        task: String,
+        content_parts: Vec<crate::model::ContentPart>,
+    ) -> Result<ModelResponse> {
         if !self.session.started() || self.session.runtime().is_none() {
             self.start_session()?;
         }
@@ -465,7 +473,11 @@ impl AgentRuntime {
         });
 
         let (response_tx, response_rx) = tokio::sync::oneshot::channel();
-        if let Err(e) = submission_tx.send(crate::session::Submission { task, response_tx }) {
+        if let Err(e) = submission_tx.send(crate::session::Submission {
+            task,
+            content_parts,
+            response_tx,
+        }) {
             self.session.set_event_rx(event_rx);
             return Err(anyhow::anyhow!("failed to send submission: {}", e));
         }
@@ -514,7 +526,12 @@ impl AgentRuntime {
     }
 
     pub async fn submit_task(&mut self, task: String) -> Result<ModelResponse> {
-        self.send_turn(task).await
+        self.send_turn_with_parts(task, Vec::new()).await
+    }
+
+    /// Sends a plain text user turn (no images).
+    pub async fn send_turn(&mut self, task: String) -> Result<ModelResponse> {
+        self.send_turn_with_parts(task, Vec::new()).await
     }
 
     /// Creates a [`SessionSnapshot`] of the current session state for persistence.

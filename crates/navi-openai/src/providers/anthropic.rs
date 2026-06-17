@@ -6,8 +6,8 @@ use anyhow::Result;
 use async_stream::try_stream;
 use futures_util::StreamExt;
 use navi_core::{
-    ModelMessage, ModelRequest, ModelRole, ModelStream, ModelStreamEvent, ToolDefinition,
-    ToolInvocation,
+    ContentPart, ModelMessage, ModelRequest, ModelRole, ModelStream, ModelStreamEvent,
+    ToolDefinition, ToolInvocation,
 };
 use serde_json::{Value, json};
 use std::time::Duration;
@@ -333,23 +333,58 @@ pub(crate) fn anthropic_messages_with_cache_control(
         match message.role {
             ModelRole::System => {} // already handled above
             ModelRole::User => {
-                let mut msg = json!({
-                    "role": "user",
-                    "content": message.content,
-                });
-                // Cache the last stable user message (previous turn).
-                if Some(index) == last_stable_user_index
-                    && cache_user
-                    && let Some(cache_control) = cache_control
-                {
-                    let content = json!({
-                        "type": "text",
-                        "text": message.content,
-                        "cache_control": cache_control,
+                if !message.content_parts.is_empty() {
+                    // Multimodal message: emit Anthropic-native content blocks.
+                    let mut blocks: Vec<Value> = message
+                        .content_parts
+                        .iter()
+                        .map(|part| match part {
+                            ContentPart::Text { text } => {
+                                json!({ "type": "text", "text": text })
+                            }
+                            ContentPart::Image { media_type, data } => {
+                                json!({
+                                    "type": "image",
+                                    "source": {
+                                        "type": "base64",
+                                        "media_type": media_type,
+                                        "data": data,
+                                    }
+                                })
+                            }
+                        })
+                        .collect();
+                    // Cache last stable user message.
+                    if Some(index) == last_stable_user_index
+                        && cache_user
+                        && let Some(cache_control) = cache_control
+                        && let Some(last) = blocks.last_mut()
+                    {
+                        last["cache_control"] = cache_control.clone();
+                    }
+                    converted.push(json!({
+                        "role": "user",
+                        "content": blocks,
+                    }));
+                } else {
+                    let mut msg = json!({
+                        "role": "user",
+                        "content": message.content,
                     });
-                    msg["content"] = json!([content]);
+                    // Cache the last stable user message (previous turn).
+                    if Some(index) == last_stable_user_index
+                        && cache_user
+                        && let Some(cache_control) = cache_control
+                    {
+                        let content = json!({
+                            "type": "text",
+                            "text": message.content,
+                            "cache_control": cache_control,
+                        });
+                        msg["content"] = json!([content]);
+                    }
+                    converted.push(msg);
                 }
-                converted.push(msg);
             }
             ModelRole::Tool => {
                 let tool_use_id = message.tool_call_id.as_deref().unwrap_or("");

@@ -460,10 +460,15 @@ fn current_unix_millis() -> u128 {
         .unwrap_or_default()
 }
 
+use crate::model::ContentPart;
+
 /// A user task submission sent to the session background loop.
 pub struct Submission {
     /// The user's task text.
     pub task: String,
+    /// Optional multimodal content parts (images + text).
+    /// When non-empty, the session loop creates a multimodal user message.
+    pub content_parts: Vec<ContentPart>,
     /// Channel to send the assistant's response back to the caller.
     pub response_tx: tokio::sync::oneshot::Sender<Result<String>>,
 }
@@ -501,7 +506,14 @@ impl SessionRuntime {
             };
 
             while let Some(submission) = rx.recv().await {
-                messages.push(crate::model::ModelMessage::user(submission.task));
+                if submission.content_parts.is_empty() {
+                    messages.push(crate::model::ModelMessage::user(submission.task));
+                } else {
+                    messages.push(crate::model::ModelMessage::user_multimodal(
+                        submission.task,
+                        submission.content_parts,
+                    ));
+                }
                 let res = crate::turn::run_turn(&ctx, &mut messages, policy).await;
                 let _ = submission.response_tx.send(res);
             }
@@ -706,6 +718,7 @@ mod tests {
         let (tx, rx) = tokio::sync::oneshot::channel();
         let submission = Submission {
             task: "hello world".to_string(),
+            content_parts: Vec::new(),
             response_tx: tx,
         };
 

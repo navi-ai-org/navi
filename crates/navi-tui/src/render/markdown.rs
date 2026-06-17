@@ -111,6 +111,25 @@ pub(crate) fn build_chat_render_for_messages(
 
         match msg.role {
             ChatRole::User => {
+                // Show image attachment indicators before the text content.
+                if !msg.image_labels.is_empty() {
+                    for (i, label) in msg.image_labels.iter().enumerate() {
+                        rendered_lines.push(Line::from(vec![
+                            Span::styled(
+                                " ".repeat(3),
+                                Style::default().fg(user_accent()).bg(user_accent()),
+                            ),
+                            Span::styled(
+                                format!("[{}] {} ", i + 1, label),
+                                Style::default()
+                                    .fg(muted())
+                                    .bg(panel())
+                                    .add_modifier(Modifier::ITALIC),
+                            ),
+                        ]));
+                        line_sources.push(ChatLineSource::Message(index));
+                    }
+                }
                 let lines = render_user_message_lines(&msg.content, chat_width);
                 for line in lines {
                     rendered_lines.push(line);
@@ -579,6 +598,7 @@ fn tool_group_label(tool_name: &str) -> String {
         "bash" => "Run".to_string(),
         "grep" => "Search".to_string(),
         "fs_browser" => "Browse".to_string(),
+        "git_ops" => "Git".to_string(),
         other => other.replace('_', " "),
     }
 }
@@ -637,7 +657,7 @@ fn tool_line_prefix(invocation: &ToolInvocation, result: &ToolResult) -> &'stati
 
 fn tool_color(tool_name: &str) -> Color {
     match tool_name {
-        "read_file" | "view_file" | "grep" | "fs_browser" => code_type(),
+        "read_file" | "view_file" | "grep" | "fs_browser" | "git_ops" => code_type(),
         "write_file" | "apply_patch" => code_const(),
         "bash" => code_operator(),
         _ => accent(),

@@ -1,4 +1,4 @@
-use navi_core::{ContextPacket, LoadedConfig, ModelMessage, ToolExecutor};
+use navi_core::{ContentPart, ContextPacket, LoadedConfig, ModelMessage, ToolExecutor};
 use navi_plugin_host::LoadedPlugin;
 use serde::{Deserialize, Serialize};
 use std::error::Error;
@@ -48,6 +48,11 @@ pub struct NaviSessionInfo {
 pub struct NaviTurnRequest {
     pub session_id: String,
     pub message: String,
+    /// Optional multimodal content parts (images + text) for this turn.
+    /// When non-empty, the engine creates a [`ModelMessage::user_multimodal`]
+    /// instead of a plain text message.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub content_parts: Vec<ContentPart>,
     #[serde(default)]
     pub context_packets: Vec<ContextPacket>,
 }

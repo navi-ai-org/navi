@@ -20,7 +20,7 @@ pub(crate) fn draw_mcp_modal(f: &mut Frame, area: Rect, app: &mut TuiApp, palett
     // Layout: Left (Server list), Right (Details/Tools)
     let chunks = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(40), Constraint::Percentage(60)].as_ref())
+        .constraints([Constraint::Percentage(40), Constraint::Percentage(60)].as_slice())
         .split(inner_area);
 
     let left_area = chunks[0];

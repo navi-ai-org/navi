@@ -69,7 +69,11 @@ pub(crate) fn handle_normal_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyM
         }
         KeyCode::Char(ch) => insert_input_char(app, ch),
         KeyCode::Backspace => {
-            delete_input_previous_char(app);
+            if app.input.is_empty() && !app.pending_images.is_empty() {
+                app.pending_images.pop();
+            } else {
+                delete_input_previous_char(app);
+            }
         }
         KeyCode::Delete => {
             delete_input_next_char(app);
@@ -106,12 +110,18 @@ pub(crate) fn handle_normal_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyM
         KeyCode::Enter => {
             if !app.pending_questions.is_empty() {
                 super::replace_modal(app, ModalKind::Question);
-            } else if !app.input.trim().is_empty() && !app.is_loading {
+            } else if (!app.input.trim().is_empty() || !app.pending_images.is_empty())
+                && !app.is_loading
+            {
                 submit_message(app);
             }
         }
         KeyCode::Esc => {
-            app.scroll_offset = 0;
+            if app.maximized_image.is_some() {
+                app.maximized_image = None;
+            } else {
+                app.scroll_offset = 0;
+            }
         }
         _ => {}
     }
