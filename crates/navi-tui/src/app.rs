@@ -17,6 +17,8 @@ use navi_sdk::{
     effective_context_window, log_path, provider_catalog, select_harness_policy,
 };
 
+use ratatui_image::picker::Picker;
+
 use crate::dispatch::AsyncEvent;
 use crate::runtime::{build_engine, selected_model_runtime_available};
 use crate::session::load_saved_sessions;
@@ -83,6 +85,14 @@ pub struct TuiApp {
 
     // stats
     pub(crate) compact_state: CompactState,
+
+    // clipboard images
+    /// Images captured from the clipboard, waiting to be attached to the next message.
+    pub(crate) pending_images: Vec<crate::state::PendingImage>,
+    /// Currently maximized image preview
+    pub(crate) maximized_image: Option<usize>,
+    /// Image protocol picker for terminal rendering.
+    pub(crate) image_picker: Option<Picker>,
 
     // persistence
     pub(crate) session_store: SessionStore,
@@ -240,6 +250,16 @@ impl TuiApp {
             pending_model_selection: None,
             pending_provider_setup: None,
             compact_state: CompactState::new(context_window),
+            pending_images: Vec::new(),
+            maximized_image: None,
+            #[cfg(not(test))]
+            image_picker: if std::env::var("NAVI_SMOKE_TEST").is_ok() {
+                None
+            } else {
+                Picker::from_query_stdio().ok()
+            },
+            #[cfg(test)]
+            image_picker: None,
             session_store,
             events: Vec::new(),
             session_id,

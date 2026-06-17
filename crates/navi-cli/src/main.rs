@@ -291,6 +291,7 @@ async fn run_headless(
         .send_turn(NaviTurnRequest {
             session_id: session.id.clone(),
             message: task,
+            content_parts: Vec::new(),
             context_packets: Vec::new(),
         })
         .await?;

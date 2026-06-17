@@ -1,6 +1,44 @@
 use crate::types::OpenAiApiKind;
-use navi_core::{ModelMessage, ModelRole, ThinkingRequest, ToolDefinition, ToolInvocation};
+use navi_core::{
+    ContentPart, ModelMessage, ModelRole, ThinkingRequest, ToolDefinition, ToolInvocation,
+};
 use serde_json::{Map, Value, json};
+
+/// Converts content_parts into OpenAI Chat Completions content array format.
+///
+/// Text parts become `{ "type": "text", "text": "..." }`.
+/// Image parts become `{ "type": "image_url", "image_url": { "url": "data:<mime>;base64,<data>" } }`.
+fn content_parts_to_chat_json(parts: &[ContentPart]) -> Vec<Value> {
+    parts
+        .iter()
+        .map(|part| match part {
+            ContentPart::Text { text } => json!({ "type": "text", "text": text }),
+            ContentPart::Image { media_type, data } => json!({
+                "type": "image_url",
+                "image_url": {
+                    "url": format!("data:{media_type};base64,{data}")
+                }
+            }),
+        })
+        .collect()
+}
+
+/// Converts content_parts into OpenAI Responses input content array format.
+///
+/// Text parts become `{ "type": "input_text", "text": "..." }`.
+/// Image parts become `{ "type": "input_image", "image_url": "data:<mime>;base64,<data>" }`.
+fn content_parts_to_responses_json(parts: &[ContentPart]) -> Vec<Value> {
+    parts
+        .iter()
+        .map(|part| match part {
+            ContentPart::Text { text } => json!({ "type": "input_text", "text": text }),
+            ContentPart::Image { media_type, data } => json!({
+                "type": "input_image",
+                "image_url": format!("data:{media_type};base64,{data}")
+            }),
+        })
+        .collect()
+}
 
 pub(crate) fn message_to_json(message: &ModelMessage) -> Value {
     // Pre-size the map for the common case of role + content (+ tool fields).
@@ -13,7 +51,16 @@ pub(crate) fn message_to_json(message: &ModelMessage) -> Value {
         ModelRole::Tool => "tool",
     };
     obj.insert("role".into(), Value::String(role.into()));
-    obj.insert("content".into(), Value::String(message.content.clone()));
+    // Use multimodal content array when content_parts is non-empty,
+    // otherwise fall back to plain text string.
+    if !message.content_parts.is_empty() {
+        obj.insert(
+            "content".into(),
+            Value::Array(content_parts_to_chat_json(&message.content_parts)),
+        );
+    } else {
+        obj.insert("content".into(), Value::String(message.content.clone()));
+    }
 
     if let Some(tool_call_id) = &message.tool_call_id {
         obj.insert("tool_call_id".into(), Value::String(tool_call_id.clone()));
@@ -65,6 +112,17 @@ pub(crate) fn responses_input_item_to_json(message: &ModelMessage) -> Vec<Value>
                 })
             })
             .collect();
+    }
+
+    // For multimodal user messages in Responses API, emit a message item
+    // with the content array in Responses format.
+    if !message.content_parts.is_empty() && message.role == ModelRole::User {
+        let content = content_parts_to_responses_json(&message.content_parts);
+        return vec![json!({
+            "type": "message",
+            "role": "user",
+            "content": Value::Array(content),
+        })];
     }
 
     vec![message_to_json(message)]

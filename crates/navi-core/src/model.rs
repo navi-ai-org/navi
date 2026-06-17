@@ -5,6 +5,59 @@ use futures_util::StreamExt;
 use futures_util::stream::BoxStream;
 use serde::{Deserialize, Serialize};
 
+/// A single part of a multimodal message content.
+///
+/// Models like GPT-4o, Claude, and Gemini accept messages with mixed
+/// text and image parts. When a [`ModelMessage`] contains non-empty
+/// [`ModelMessage::content_parts`], providers serialize each part
+/// according to their native wire format instead of using the plain
+/// [`ModelMessage::content`] string.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ContentPart {
+    /// A plain text content block.
+    Text {
+        /// The text content.
+        text: String,
+    },
+    /// An inline image (base64-encoded).
+    Image {
+        /// MIME type of the image (e.g. `"image/png"`, `"image/jpeg"`).
+        media_type: String,
+        /// Base64-encoded image data (no data-URL prefix, raw base64 only).
+        data: String,
+    },
+}
+
+impl ContentPart {
+    /// Returns `true` if this is a text part.
+    pub fn is_text(&self) -> bool {
+        matches!(self, Self::Text { .. })
+    }
+
+    /// Returns `true` if this is an image part.
+    pub fn is_image(&self) -> bool {
+        matches!(self, Self::Image { .. })
+    }
+
+    /// Extracts the text content if this is a text part.
+    pub fn as_text(&self) -> Option<&str> {
+        match self {
+            Self::Text { text } => Some(text),
+            _ => None,
+        }
+    }
+
+    /// Returns all text content from a slice of parts, concatenated.
+    pub fn text_from_parts(parts: &[ContentPart]) -> String {
+        parts
+            .iter()
+            .filter_map(|p| p.as_text())
+            .collect::<Vec<_>>()
+            .join("")
+    }
+}
+
 /// Trait for model provider backends that can stream and complete requests.
 ///
 /// Implementors handle the wire protocol for a specific API (OpenAI, Anthropic,
@@ -72,6 +125,13 @@ pub struct ModelMessage {
     pub role: ModelRole,
     /// The text content of the message.
     pub content: String,
+    /// Multimodal content parts (text + images).
+    ///
+    /// When non-empty, providers use these parts instead of the plain
+    /// [`content`](Self::content) field to build the wire-format message.
+    /// This allows attaching images alongside text in user messages.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub content_parts: Vec<ContentPart>,
     /// For tool-result messages, the id of the tool call being answered.
     #[serde(default)]
     pub tool_call_id: Option<String>,
@@ -156,6 +216,20 @@ impl ModelMessage {
         Self::new(ModelRole::User, content)
     }
 
+    /// Creates a user-role message with text and optional image attachments.
+    pub fn user_multimodal(content: impl Into<String>, parts: Vec<ContentPart>) -> Self {
+        Self {
+            role: ModelRole::User,
+            content: content.into(),
+            content_parts: parts,
+            tool_call_id: None,
+            tool_name: None,
+            tool_calls: Vec::new(),
+            created_at: Some(current_unix_millis()),
+            thinking_content: None,
+        }
+    }
+
     /// Creates an assistant-role message without thinking content.
     pub fn assistant(content: impl Into<String>) -> Self {
         Self {
@@ -181,6 +255,7 @@ impl ModelMessage {
         Self {
             role: ModelRole::Tool,
             content: content.into(),
+            content_parts: Vec::new(),
             tool_call_id: Some(tool_call_id.into()),
             tool_name: Some(tool_name.into()),
             tool_calls: Vec::new(),
@@ -212,6 +287,7 @@ impl ModelMessage {
         Self {
             role: ModelRole::Assistant,
             content: content.into(),
+            content_parts: Vec::new(),
             tool_call_id: None,
             tool_name: None,
             tool_calls: invocations,
@@ -224,6 +300,7 @@ impl ModelMessage {
         Self {
             role,
             content: content.into(),
+            content_parts: Vec::new(),
             tool_call_id: None,
             tool_name: None,
             tool_calls: Vec::new(),
@@ -509,6 +586,7 @@ mod tests {
         let msg = ModelMessage {
             role: ModelRole::Assistant,
             content: "hello".to_string(),
+            content_parts: Vec::new(),
             tool_call_id: None,
             tool_name: None,
             tool_calls: vec![],

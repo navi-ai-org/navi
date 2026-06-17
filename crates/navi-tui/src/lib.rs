@@ -1,4 +1,5 @@
 mod chat;
+pub mod clipboard;
 mod ui;
 
 mod app;

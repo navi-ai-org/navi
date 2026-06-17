@@ -874,6 +874,7 @@ async fn test_stream_normal() {
         messages: vec![ModelMessage {
             role: navi_core::ModelRole::User,
             content: "Hi".to_string(),
+            content_parts: Vec::new(),
             tool_call_id: None,
             tool_name: None,
             tool_calls: vec![],
