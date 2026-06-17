@@ -91,8 +91,8 @@ pub(crate) const DEFAULT_CONTEXT_WINDOW: u64 = 200_000;
 
 fn default_blocked_commands() -> Vec<String> {
     [
-        "rmdir", "shred", "mkfs", "dd", "sudo", "su", "doas", "chmod", "chown", "chgrp",
-        "mount", "umount", "reboot", "shutdown", "poweroff",
+        "rmdir", "shred", "mkfs", "dd", "sudo", "su", "doas", "chmod", "chown", "chgrp", "mount",
+        "umount", "reboot", "shutdown", "poweroff",
     ]
     .into_iter()
     .map(str::to_string)
