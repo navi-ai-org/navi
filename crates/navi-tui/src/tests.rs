@@ -1030,7 +1030,14 @@ fn command_palette_opens_providers() {
     );
     assert!(!run_selected_command(&mut app));
     assert_eq!(app.mode, Mode::Providers);
-    assert_eq!(app.selected_provider_setting, 0);
+    // The picker now lands on the first non-header (Provider) row instead of
+    // the section divider.
+    let rows = app.filtered_providers();
+    let first_provider_pos = rows
+        .iter()
+        .position(|r| matches!(r, crate::providers::ProviderListRow::Provider { .. }))
+        .expect("at least one provider row");
+    assert_eq!(app.selected_provider_setting, first_provider_pos);
     assert_eq!(app.provider_settings_scroll, 0);
 }
 
@@ -2010,5 +2017,198 @@ fn escape_double_press_cancels_active_tool_task_state() {
     assert_eq!(
         active_assistant_message(&mut app).and_then(|message| message.status.clone()),
         Some("cancelled".to_string())
+    );
+}
+
+// ─── recent provider / model lists ────────────────────────────────────────
+
+#[test]
+fn push_recent_provider_dedupes_and_caps() {
+    let mut app = test_app("");
+    app.loaded_config.config.tui.recent_provider_ids.clear();
+
+    for _ in 0..20 {
+        crate::providers::push_recent_provider(&mut app, "openai");
+    }
+    assert_eq!(
+        app.loaded_config.config.tui.recent_provider_ids,
+        vec!["openai".to_string()]
+    );
+
+    crate::providers::push_recent_provider(&mut app, "anthropic");
+    crate::providers::push_recent_provider(&mut app, "google-gemini");
+    crate::providers::push_recent_provider(&mut app, "openai");
+    assert_eq!(
+        app.loaded_config.config.tui.recent_provider_ids,
+        vec![
+            "openai".to_string(),
+            "google-gemini".to_string(),
+            "anthropic".to_string(),
+        ]
+    );
+
+    // Fill past the cap and confirm the oldest entries fall off.
+    for id in ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j"] {
+        crate::providers::push_recent_provider(&mut app, id);
+    }
+    assert_eq!(
+        app.loaded_config.config.tui.recent_provider_ids.len(),
+        crate::providers::RECENTS_LIMIT
+    );
+    assert_eq!(
+        app.loaded_config
+            .config
+            .tui
+            .recent_provider_ids
+            .first()
+            .map(String::as_str),
+        Some("j"),
+    );
+}
+
+#[test]
+fn push_recent_model_uses_provider_model_key() {
+    let mut app = test_app("");
+    app.loaded_config.config.tui.recent_model_ids.clear();
+
+    crate::providers::push_recent_model(&mut app, "openai", "gpt-5.5");
+    crate::providers::push_recent_model(&mut app, "anthropic", "claude-sonnet-4-20250514");
+    crate::providers::push_recent_model(&mut app, "openai", "gpt-5.5");
+
+    assert_eq!(
+        app.loaded_config.config.tui.recent_model_ids,
+        vec![
+            "openai:gpt-5.5".to_string(),
+            "anthropic:claude-sonnet-4-20250514".to_string(),
+        ]
+    );
+}
+
+#[test]
+fn push_recent_provider_canonicalizes_aliases() {
+    let mut app = test_app("");
+    app.loaded_config.config.tui.recent_provider_ids.clear();
+
+    crate::providers::push_recent_provider(&mut app, "opencode-zen");
+    crate::providers::push_recent_provider(&mut app, "opencode");
+
+    // Both should collapse to the canonical `opencode`.
+    assert_eq!(
+        app.loaded_config.config.tui.recent_provider_ids,
+        vec!["opencode".to_string()],
+    );
+}
+
+fn provider_rows_labels(app: &TuiApp) -> Vec<String> {
+    app.filtered_providers()
+        .into_iter()
+        .map(|row| match row {
+            crate::providers::ProviderListRow::Header { label } => {
+                format!("section: {label}")
+            }
+            crate::providers::ProviderListRow::Provider { index } => {
+                let catalog = navi_sdk::provider_catalog(&app.loaded_config.config);
+                catalog
+                    .get(index)
+                    .map(|p| p.id.clone())
+                    .unwrap_or_else(|| format!("#{index}"))
+            }
+        })
+        .collect()
+}
+
+#[test]
+fn filtered_providers_orders_recent_connected_other() {
+    let mut app = test_app("");
+    // Mark two arbitrary providers as recent.
+    app.loaded_config.config.tui.recent_provider_ids.clear();
+    app.loaded_config.config.tui.recent_provider_ids =
+        vec!["anthropic".to_string(), "openai".to_string()];
+    // Mark a different provider as connected.
+    app.authenticated_providers.clear();
+    app.authenticated_providers
+        .insert("google-gemini".to_string());
+
+    let rows = provider_rows_labels(&app);
+
+    // Recent header first, then the two recents (in recents order).
+    assert!(rows[0].starts_with("section:"));
+    assert!(rows[0].contains("Recent"));
+    assert!(rows[1].ends_with("anthropic"));
+    assert!(rows[2].ends_with("openai"));
+    // Connected section next.
+    let connected_idx = rows
+        .iter()
+        .position(|r| r.contains("Connected"))
+        .expect("connected header present");
+    assert!(rows[connected_idx + 1].ends_with("google-gemini"));
+    // The trailing "Other" section appears last.
+    assert!(rows.iter().any(|r| r.contains("Other providers")));
+}
+
+#[test]
+fn filtered_providers_skips_sections_when_filtering() {
+    let mut app = test_app("");
+    app.loaded_config.config.tui.recent_provider_ids =
+        vec!["anthropic".to_string(), "openai".to_string()];
+    app.authenticated_providers.clear();
+    app.authenticated_providers
+        .insert("google-gemini".to_string());
+    app.provider_filter = "ant".to_string();
+
+    let rows = provider_rows_labels(&app);
+
+    // No section headers when filtering, and only matches show up.
+    assert!(rows.iter().all(|r| !r.starts_with("section:")));
+    assert!(rows.iter().any(|r| r.contains("anthropic")));
+}
+
+#[test]
+fn open_model_picker_keeps_current_model_selected() {
+    let mut app = test_app("");
+    if app.models.len() >= 2 {
+        app.selected_model = 1;
+        let current_index = app.selected_model;
+        let current_name = app.models[current_index].name.clone();
+
+        open_model_picker(&mut app);
+
+        assert_eq!(app.selected_model, current_index);
+        // The model is still the one we picked.
+        assert_eq!(app.models[app.selected_model].name, current_name);
+    }
+}
+
+#[test]
+fn build_model_rows_prepends_recent_section() {
+    let mut app = test_app("");
+    if app.models.is_empty() {
+        return;
+    }
+    // Force the first model to be a "recent" so it appears at the top.
+    let first = &app.models[0];
+    app.loaded_config.config.tui.recent_model_ids.clear();
+    app.loaded_config.config.tui.recent_model_ids =
+        vec![format!("{}:{}", first.provider_id, first.name)];
+
+    let rows = build_model_rows(&app);
+
+    // The first non-header row should be the recent model.
+    let first_model = rows
+        .iter()
+        .find_map(|r| match r {
+            ListRow::Model { index } => Some(*index),
+            ListRow::Header { .. } => None,
+        })
+        .expect("at least one model row");
+    assert_eq!(first_model, 0);
+    // And there must be a recent header above it.
+    let has_recent_header = rows.iter().any(|r| match r {
+        ListRow::Header { label, .. } => label.contains("Recent"),
+        _ => false,
+    });
+    assert!(
+        has_recent_header,
+        "expected a Recent header in the rendered model rows"
     );
 }

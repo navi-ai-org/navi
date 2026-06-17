@@ -377,22 +377,20 @@ pub(crate) fn handle_providers_key(
     let count = list_rows.len();
 
     // Helper: get the catalog index of the currently selected row (if any).
-    let current_catalog_idx = list_rows
-        .get(app.selected_provider_setting)
-        .and_then(|row| match row {
-            ProviderListRow::Provider { index } => Some(*index),
-            ProviderListRow::Header { .. } => None,
-        });
+    let current_catalog_idx =
+        list_rows
+            .get(app.selected_provider_setting)
+            .and_then(|row| match row {
+                ProviderListRow::Provider { index } => Some(*index),
+                ProviderListRow::Header { .. } => None,
+            });
 
     // Helper: find the nearest non-header catalog index at or after `start`.
     let first_selectable = |start: usize| -> Option<usize> {
-        list_rows
-            .iter()
-            .skip(start)
-            .find_map(|row| match row {
-                ProviderListRow::Provider { index } => Some(*index),
-                ProviderListRow::Header { .. } => None,
-            })
+        list_rows.iter().skip(start).find_map(|row| match row {
+            ProviderListRow::Provider { index } => Some(*index),
+            ProviderListRow::Header { .. } => None,
+        })
     };
 
     // Helper: find the nearest non-header catalog index strictly before `start`.
@@ -409,7 +407,9 @@ pub(crate) fn handle_providers_key(
 
     // Helper: convert a catalog index back to a list row position.
     let row_pos_of = |catalog_idx: usize| -> Option<usize> {
-        list_rows.iter().position(|row| matches!(row, ProviderListRow::Provider { index } if *index == catalog_idx))
+        list_rows.iter().position(
+            |row| matches!(row, ProviderListRow::Provider { index } if *index == catalog_idx),
+        )
     };
 
     // Selected row position in the visible list (the row whose underlying

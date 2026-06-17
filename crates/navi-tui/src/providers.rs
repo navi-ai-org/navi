@@ -282,43 +282,53 @@ pub(crate) enum ProviderListRow {
     Provider { index: usize },
 }
 
-impl ProviderListRow {
-    pub(crate) fn provider(rows: &[ProviderListRow], index: usize) -> Option<usize> {
-        rows.iter().position(|row| matches!(row, ProviderListRow::Provider { index: i } if *i == index))
-    }
-
-    pub(crate) fn first_provider(rows: &[ProviderListRow]) -> Option<usize> {
-        rows.iter().find_map(|row| match row {
-            ProviderListRow::Provider { index } => Some(*index),
-            ProviderListRow::Header { .. } => None,
-        })
-    }
-
-    pub(crate) fn next_provider(rows: &[ProviderListRow], current: usize) -> Option<usize> {
-        rows.iter()
-            .skip(current + 1)
-            .find_map(|row| match row {
-                ProviderListRow::Provider { index } => Some(*index),
-                ProviderListRow::Header { .. } => None,
-            })
-    }
-
-    pub(crate) fn previous_provider(rows: &[ProviderListRow], current: usize) -> Option<usize> {
-        rows.iter()
-            .take(current)
-            .rev()
-            .find_map(|row| match row {
-                ProviderListRow::Provider { index } => Some(*index),
-                ProviderListRow::Header { .. } => None,
-            })
-    }
-}
-
 pub(crate) fn build_model_rows(app: &TuiApp) -> Vec<ListRow> {
     let filter = app.model_filter.trim().to_lowercase();
 
     let mut rows = Vec::new();
     let mut current_provider: Option<&str> = None;
+    let mut emitted: std::collections::HashSet<usize> = std::collections::HashSet::new();
+
+    // Section 1: Recent models. Only meaningful when no filter is active and
+    // there is at least one persisted recent that we know about.
+    if filter.is_empty() {
+        let mut current_section_provider: Option<&str> = None;
+        for key in &app.loaded_config.config.tui.recent_model_ids {
+            // Keys are stored as `provider:model`.
+            let (provider_id, model_name) = match key.split_once(':') {
+                Some(parts) => parts,
+                None => continue,
+            };
+            let canonical = navi_sdk::canonical_provider_id(provider_id);
+            let Some((index, model)) = app.models.iter().enumerate().find(|(_, m)| {
+                navi_sdk::canonical_provider_id(&m.provider_id) == canonical && m.name == model_name
+            }) else {
+                continue;
+            };
+            if !model_is_available_for_selection(app, model) {
+                continue;
+            }
+            if emitted.insert(index) {
+                if current_section_provider != Some(model.provider_label.as_str()) {
+                    current_section_provider = Some(model.provider_label.as_str());
+                    // Insert the Recent header only on the first recent row.
+                    if rows.is_empty() {
+                        rows.push(ListRow::Header {
+                            label: "— Recent models —".to_string(),
+                            description: String::new(),
+                            provider_id: String::new(),
+                        });
+                    }
+                    rows.push(ListRow::Header {
+                        label: model.provider_label.clone(),
+                        description: model.provider_description.clone(),
+                        provider_id: model.provider_id.clone(),
+                    });
+                }
+                rows.push(ListRow::Model { index });
+            }
+        }
+    }
 
     for (index, model) in app.models.iter().enumerate() {
         // Only show models from authenticated providers (or free/public models).
@@ -333,6 +343,9 @@ pub(crate) fn build_model_rows(app: &TuiApp) -> Vec<ListRow> {
             && !model.provider_label.to_lowercase().contains(&filter)
             && !model.provider_description.to_lowercase().contains(&filter)
         {
+            continue;
+        }
+        if !emitted.insert(index) {
             continue;
         }
         if current_provider != Some(model.provider_label.as_str()) {
