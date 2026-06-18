@@ -295,6 +295,19 @@ fn handle_agent_event(app: &mut TuiApp, event: AgentEvent) {
         AgentEvent::HarnessTrace(value) => {
             app.events.push(AgentEvent::HarnessTrace(value));
         }
+        AgentEvent::HarnessStopped {
+            reason,
+            message,
+            tool_name,
+        } => {
+            show_notification(app, "Harness stopped", &message);
+            push_diagnostic(app, format!("Harness stopped ({reason}): {message}"));
+            app.events.push(AgentEvent::HarnessStopped {
+                reason,
+                message,
+                tool_name,
+            });
+        }
         AgentEvent::PatchProposed(patch) => {
             app.events.push(AgentEvent::PatchProposed(patch));
         }
@@ -369,7 +382,10 @@ fn handle_agent_event(app: &mut TuiApp, event: AgentEvent) {
                 app.compact_state.consecutive_failures.saturating_add(1);
             app.events.push(AgentEvent::AutoCompactFailed { reason });
         }
-        AgentEvent::UserTaskSubmitted { text: _, content_parts: _ } => {}
+        AgentEvent::UserTaskSubmitted {
+            text: _,
+            content_parts: _,
+        } => {}
         AgentEvent::ModelOutput {
             text: _,
             thinking: _,

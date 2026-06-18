@@ -5,7 +5,7 @@ use std::cell::RefCell;
 use std::sync::Arc;
 
 use crate::config::types::{
-    ModelOption, NaviConfig, ProviderConfig, ProviderKind, ProviderModelConfig,
+    ModelOption, NaviConfig, ProviderConfig, ProviderKind, ProviderModelConfig, ToolCallingMode,
 };
 use crate::registry::RegistryStore;
 
@@ -120,6 +120,12 @@ pub(crate) fn effective_tool_prompt_manifest(config: &NaviConfig) -> bool {
         ToolPromptManifest::Auto => {}
     }
 
+    match effective_tool_calling_mode(config) {
+        ToolCallingMode::TextExtracted | ToolCallingMode::ManifestOnly => return true,
+        ToolCallingMode::Disabled => return false,
+        ToolCallingMode::Native => {}
+    }
+
     let selected_provider = &config.model.provider;
     let selected_model = &config.model.name;
     provider_catalog(config)
@@ -136,6 +142,18 @@ pub(crate) fn effective_tool_prompt_manifest(config: &NaviConfig) -> bool {
                 .or(provider.tool_prompt_manifest)
         })
         .unwrap_or(false)
+}
+
+/// Returns the selected provider's resolved tool calling compatibility mode.
+pub fn effective_tool_calling_mode(config: &NaviConfig) -> ToolCallingMode {
+    let selected_provider = &config.model.provider;
+    provider_catalog(config)
+        .into_iter()
+        .find(|provider| {
+            canonical_provider_id(&provider.id) == canonical_provider_id(selected_provider)
+        })
+        .and_then(|provider| provider.tool_calling_mode)
+        .unwrap_or(ToolCallingMode::Native)
 }
 
 impl NaviConfig {
@@ -296,6 +314,9 @@ pub(crate) fn merge_provider_configs(
             if override_config.tool_prompt_manifest.is_some() {
                 existing.tool_prompt_manifest = override_config.tool_prompt_manifest;
             }
+            if override_config.tool_calling_mode.is_some() {
+                existing.tool_calling_mode = override_config.tool_calling_mode;
+            }
         } else {
             providers.push(override_config);
         }
@@ -314,11 +335,14 @@ pub(crate) fn merge_provider_configs(
 /// out of prompt caching.
 fn apply_default_request_options(providers: &mut [ProviderConfig]) {
     for provider in providers {
-        if provider.request_options.is_some() {
-            continue;
-        }
-        if let Some(defaults) = default_request_options_for(canonical_provider_id(&provider.id)) {
+        let id = canonical_provider_id(&provider.id);
+        if provider.request_options.is_none()
+            && let Some(defaults) = default_request_options_for(id)
+        {
             provider.request_options = Some(defaults);
+        }
+        if provider.tool_calling_mode.is_none() && id == "commandcode" {
+            provider.tool_calling_mode = Some(ToolCallingMode::Disabled);
         }
     }
 }

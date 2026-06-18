@@ -3,8 +3,9 @@ use crate::compact::{self, CompactState};
 use crate::context::ContextPacket;
 use crate::event::{AgentEvent, RepetitionWarningKind};
 use crate::harness::{
-    AgentRunState, HarnessPolicy, ToolLoopDecision, compact_tool_observation, record_tool_call,
-    tool_error_result, trace_request_summary,
+    AgentRunState, HarnessPolicy, HarnessStop, HarnessStopReason, ToolLoopDecision,
+    compact_tool_observation, record_tool_call, record_tool_result, tool_error_result,
+    trace_request_summary,
 };
 use crate::model::{
     ModelMessage, ModelProvider, ModelRequest, ModelRole, ModelStreamEvent, ThinkingConfig,
@@ -19,7 +20,7 @@ use serde_json::{Value, json};
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 
-const TURN_LOOP_LIMIT: usize = 150;
+const HARD_TURN_LOOP_LIMIT: usize = 150;
 const QUESTION_TOOL_NAME: &str = "question";
 
 struct ModelTurnOutput {
@@ -100,8 +101,17 @@ pub async fn run_turn(
     let mut run_state = AgentRunState::default();
     let final_text = loop {
         loop_count += 1;
-        if loop_count > TURN_LOOP_LIMIT {
-            break "Loop execution limit reached".to_string();
+        if loop_count > policy.max_turn_loops || loop_count > HARD_TURN_LOOP_LIMIT {
+            let stop = HarnessStop {
+                reason: HarnessStopReason::TurnLoopLimit,
+                message: format!(
+                    "Loop execution limit reached ({} iterations); stopping to avoid an uncontrolled turn",
+                    policy.max_turn_loops.min(HARD_TURN_LOOP_LIMIT)
+                ),
+                tool_name: None,
+            };
+            let text = finalize_harness_stop(ctx, messages, stop);
+            break text;
         }
         ensure_not_cancelled(ctx)?;
         maintain_context_budget(ctx, messages).await;
@@ -114,7 +124,11 @@ pub async fn run_turn(
         ensure_not_cancelled(ctx)?;
 
         if !output.tool_calls.is_empty() {
-            handle_tool_calls(ctx, messages, &mut run_state, policy, output).await;
+            if let Some(text) =
+                handle_tool_calls(ctx, messages, &mut run_state, policy, output).await
+            {
+                break text;
+            }
             continue;
         }
 
@@ -236,7 +250,12 @@ fn build_model_request(ctx: &TurnContext, messages: &[ModelMessage]) -> ModelReq
         model: ctx.active_model_name(),
         messages: messages.to_vec(),
         thinking,
-        tools: ctx.tool_executor.definitions(),
+        tools: match crate::config::effective_tool_calling_mode(&config) {
+            crate::config::ToolCallingMode::Native => ctx.tool_executor.definitions(),
+            crate::config::ToolCallingMode::TextExtracted
+            | crate::config::ToolCallingMode::ManifestOnly
+            | crate::config::ToolCallingMode::Disabled => Vec::new(),
+        },
     }
 }
 
@@ -253,6 +272,46 @@ fn emit_request_trace(ctx: &TurnContext, request: &ModelRequest, policy: Harness
         tools = request.tools.len(),
         "turn request started"
     );
+}
+
+fn finalize_harness_stop(
+    ctx: &TurnContext,
+    messages: &mut Vec<ModelMessage>,
+    stop: HarnessStop,
+) -> String {
+    emit_harness_stop(ctx, &stop);
+    let text = persist_harness_stop_output(messages, &stop);
+    if let Some(ref tx) = ctx.event_tx {
+        let _ = tx.send(AgentEvent::ModelOutput {
+            text: text.clone(),
+            thinking: None,
+        });
+    }
+    text
+}
+
+fn emit_harness_stop(ctx: &TurnContext, stop: &HarnessStop) {
+    if let Some(ref tx) = ctx.event_tx {
+        let _ = tx.send(AgentEvent::HarnessStopped {
+            reason: stop.reason.as_str().to_string(),
+            message: stop.message.clone(),
+            tool_name: stop.tool_name.clone(),
+        });
+    }
+}
+
+fn persist_harness_stop_output(messages: &mut Vec<ModelMessage>, stop: &HarnessStop) -> String {
+    let mut text = format!(
+        "Interrompi a execução porque o harness detectou `{}`.\n\n{}",
+        stop.reason.as_str(),
+        stop.message
+    );
+    if let Some(tool_name) = &stop.tool_name {
+        text.push_str(&format!("\n\nÚltima ferramenta: `{tool_name}`."));
+    }
+    text.push_str("\n\nTente novamente com uma instrução menor ou troque para um modelo/provider com tool calling mais estável.");
+    messages.push(ModelMessage::assistant(text.clone()));
+    text
 }
 
 async fn collect_model_output(ctx: &TurnContext, request: ModelRequest) -> Result<ModelTurnOutput> {
@@ -454,7 +513,7 @@ async fn handle_tool_calls(
     run_state: &mut AgentRunState,
     policy: HarnessPolicy,
     mut output: ModelTurnOutput,
-) {
+) -> Option<String> {
     let tool_call_content = std::mem::take(&mut output.text);
     let tool_call_thinking =
         (!output.thinking.is_empty()).then(|| std::mem::take(&mut output.thinking));
@@ -469,35 +528,49 @@ async fn handle_tool_calls(
     for invocation in output.tool_calls {
         match record_tool_call(run_state, policy, &invocation) {
             ToolLoopDecision::Continue => executable_calls.push(invocation),
-            ToolLoopDecision::RepeatedCall(reason) => {
-                let result = tool_error_result(&invocation, &reason);
-                // Notify the user about the hallucination loop.
-                if let Some(ref tx) = ctx.event_tx {
-                    let _ = tx.send(AgentEvent::RepeatedToolCallWarning {
-                        tool_name: invocation.tool_name.clone(),
-                        message: reason,
-                    });
-                    let _ = tx.send(AgentEvent::ToolCompleted(result.clone()));
-                }
+            ToolLoopDecision::Stop(stop) => {
+                let result = tool_error_result(&invocation, &stop.message);
                 let observation = compact_tool_observation(&invocation, &result, policy);
                 immediate_results.push((invocation, result, observation));
+                for (invocation, _result, observation) in immediate_results {
+                    messages.push(ModelMessage::tool_result(
+                        invocation.id,
+                        invocation.tool_name,
+                        observation,
+                    ));
+                }
+                let text = finalize_harness_stop(ctx, messages, stop);
+                return Some(text);
             }
         }
     }
 
-    let tool_futures = executable_calls
-        .into_iter()
-        .map(|invocation| execute_tool_call(ctx, policy, invocation));
     let mut all_results = immediate_results;
-    all_results.extend(futures_util::future::join_all(tool_futures).await);
+    for chunk in executable_calls.chunks(policy.max_parallel_tool_calls.max(1)) {
+        let tool_futures = chunk
+            .iter()
+            .cloned()
+            .map(|invocation| execute_tool_call(ctx, policy, invocation));
+        all_results.extend(futures_util::future::join_all(tool_futures).await);
+    }
 
-    for (invocation, _result, observation) in all_results {
+    for (invocation, result, observation) in all_results {
+        let stop = match record_tool_result(run_state, policy, &invocation, &result) {
+            ToolLoopDecision::Continue => None,
+            ToolLoopDecision::Stop(stop) => Some(stop),
+        };
         messages.push(ModelMessage::tool_result(
             invocation.id,
             invocation.tool_name,
             observation,
         ));
+        if let Some(stop) = stop {
+            let text = finalize_harness_stop(ctx, messages, stop);
+            return Some(text);
+        }
     }
+
+    None
 }
 
 async fn execute_tool_call(
@@ -703,7 +776,6 @@ async fn approve_and_invoke_tool(
     match approved {
         Some(decision) => {
             let is_approved = matches!(decision, crate::event::ApprovalDecision::Approved { .. });
-            let _ = tx.send(AgentEvent::ApprovalResolved(decision));
             if is_approved {
                 ctx.tool_executor.invoke(invocation.clone()).await
             } else {

@@ -111,6 +111,26 @@ pub struct HarnessConfig {
     pub observation_bytes_small: usize,
     /// Max observation bytes for the `medium` profile.
     pub observation_bytes_medium: usize,
+    /// Max model/tool loop iterations for the `small` profile.
+    pub max_turn_loops_small: usize,
+    /// Max model/tool loop iterations for the `medium` profile.
+    pub max_turn_loops_medium: usize,
+    /// Max total tool calls in one turn for the `small` profile.
+    pub max_tool_calls_small: usize,
+    /// Max total tool calls in one turn for the `medium` profile.
+    pub max_tool_calls_medium: usize,
+    /// Max tool calls executed in parallel for the `small` profile.
+    pub max_parallel_tool_calls_small: usize,
+    /// Max tool calls executed in parallel for the `medium` profile.
+    pub max_parallel_tool_calls_medium: usize,
+    /// Max consecutive tool failures before stopping a turn.
+    pub max_consecutive_tool_errors: usize,
+    /// Max consecutive schema-invalid tool calls before stopping a turn.
+    pub max_consecutive_invalid_arguments: usize,
+    /// Max consecutive malformed-JSON tool calls before stopping a turn.
+    pub max_consecutive_malformed_arguments: usize,
+    /// Max consecutive unknown-tool calls before stopping a turn.
+    pub max_consecutive_unknown_tools: usize,
     /// Minutes of idle time before a micro-compact is triggered.
     pub micro_compact_gap_minutes: u64,
     /// Token buffer reserved below the context limit for autocompact.
@@ -245,6 +265,9 @@ pub struct ProviderConfig {
     /// Whether to force-include the tool prompt manifest for this provider.
     #[serde(default)]
     pub tool_prompt_manifest: Option<bool>,
+    /// How NAVI should expose tools to this provider.
+    #[serde(default)]
+    pub tool_calling_mode: Option<ToolCallingMode>,
     /// Provider-specific request fields that are not universally supported by
     /// OpenAI-compatible APIs. `None` means "not specified" so the catalog
     /// can fill in the canonical defaults; `Some(opts)` honors the user's
@@ -270,9 +293,24 @@ impl Default for ProviderConfig {
             websocket_connect_timeout_ms: None,
             retry_429: None,
             tool_prompt_manifest: None,
+            tool_calling_mode: None,
             request_options: None,
         }
     }
+}
+
+/// Tool calling compatibility mode for a provider or model.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ToolCallingMode {
+    /// Send native tool definitions and expect provider-native tool calls.
+    Native,
+    /// Include a textual manifest and extract tool calls from model text.
+    TextExtracted,
+    /// Include a textual manifest but do not send native tool definitions.
+    ManifestOnly,
+    /// Do not expose NAVI tools to the provider.
+    Disabled,
 }
 
 impl ProviderConfig {

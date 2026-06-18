@@ -12,6 +12,20 @@ pub struct HarnessPolicy {
     pub profile: HarnessProfile,
     /// Maximum bytes of tool output captured per observation.
     pub observation_max_bytes: usize,
+    /// Maximum model/tool loop iterations in one turn.
+    pub max_turn_loops: usize,
+    /// Maximum total tool calls in one turn.
+    pub max_tool_calls: usize,
+    /// Maximum tool calls executed concurrently.
+    pub max_parallel_tool_calls: usize,
+    /// Maximum consecutive failed tool calls before stopping.
+    pub max_consecutive_tool_errors: usize,
+    /// Maximum consecutive schema-invalid tool calls before stopping.
+    pub max_consecutive_invalid_arguments: usize,
+    /// Maximum consecutive malformed-JSON tool calls before stopping.
+    pub max_consecutive_malformed_arguments: usize,
+    /// Maximum consecutive unknown-tool calls before stopping.
+    pub max_consecutive_unknown_tools: usize,
 }
 
 /// Mutable state tracked across tool-loop iterations for detecting repetition
@@ -20,10 +34,84 @@ pub struct HarnessPolicy {
 pub struct AgentRunState {
     /// Total tool-loop iterations so far.
     pub tool_iterations: usize,
+    /// Total tool calls requested so far.
+    pub total_tool_calls: usize,
+    /// Total failed tool calls so far.
+    pub total_tool_errors: usize,
+    /// Consecutive failed tool calls.
+    pub consecutive_tool_errors: usize,
+    /// Consecutive invalid-argument tool calls.
+    pub consecutive_invalid_arguments: usize,
+    /// Consecutive malformed-argument tool calls.
+    pub consecutive_malformed_arguments: usize,
+    /// Consecutive unknown-tool calls.
+    pub consecutive_unknown_tools: usize,
     /// Serialized signature of the last tool invocation, for repetition detection.
     pub last_tool_signature: Option<String>,
     /// Consecutive count of the same repeated tool call.
     pub repeated_tool_calls: usize,
+    /// Last classified tool failure kind.
+    pub last_failure_kind: Option<ToolFailureKind>,
+}
+
+/// Classifies tool failures so the harness can stop bad loops early.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToolFailureKind {
+    UnknownTool,
+    InvalidArguments,
+    MalformedArguments,
+    InvalidSchema,
+    SecurityDenied,
+    ExecutionFailed,
+    Cancelled,
+}
+
+impl ToolFailureKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::UnknownTool => "unknown_tool",
+            Self::InvalidArguments => "invalid_arguments",
+            Self::MalformedArguments => "malformed_arguments",
+            Self::InvalidSchema => "invalid_schema",
+            Self::SecurityDenied => "security_denied",
+            Self::ExecutionFailed => "execution_failed",
+            Self::Cancelled => "cancelled",
+        }
+    }
+}
+
+/// Reason the harness stopped a turn before asking the model again.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HarnessStopReason {
+    TurnLoopLimit,
+    ToolCallLimit,
+    RepeatedToolCall,
+    ConsecutiveToolErrors,
+    ConsecutiveInvalidArguments,
+    ConsecutiveMalformedArguments,
+    ConsecutiveUnknownTools,
+}
+
+impl HarnessStopReason {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::TurnLoopLimit => "turn_loop_limit",
+            Self::ToolCallLimit => "tool_call_limit",
+            Self::RepeatedToolCall => "repeated_tool_call",
+            Self::ConsecutiveToolErrors => "consecutive_tool_errors",
+            Self::ConsecutiveInvalidArguments => "consecutive_invalid_arguments",
+            Self::ConsecutiveMalformedArguments => "consecutive_malformed_arguments",
+            Self::ConsecutiveUnknownTools => "consecutive_unknown_tools",
+        }
+    }
+}
+
+/// Details for a controlled harness stop.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HarnessStop {
+    pub reason: HarnessStopReason,
+    pub message: String,
+    pub tool_name: Option<String>,
 }
 
 /// Decision returned by the harness after evaluating a tool iteration.
@@ -31,8 +119,8 @@ pub struct AgentRunState {
 pub enum ToolLoopDecision {
     /// Proceed to the next iteration.
     Continue,
-    /// The same tool call was repeated; the loop should break with a warning message.
-    RepeatedCall(String),
+    /// The loop should stop with a clear diagnostic.
+    Stop(HarnessStop),
 }
 
 /// Selects a [`HarnessPolicy`] from the config, inferring `Auto` profile from
@@ -52,10 +140,24 @@ pub fn policy_for_profile(config: &HarnessConfig, profile: HarnessProfile) -> Ha
         HarnessProfile::Small => HarnessPolicy {
             profile,
             observation_max_bytes: config.observation_bytes_small,
+            max_turn_loops: config.max_turn_loops_small,
+            max_tool_calls: config.max_tool_calls_small,
+            max_parallel_tool_calls: config.max_parallel_tool_calls_small,
+            max_consecutive_tool_errors: config.max_consecutive_tool_errors,
+            max_consecutive_invalid_arguments: config.max_consecutive_invalid_arguments,
+            max_consecutive_malformed_arguments: config.max_consecutive_malformed_arguments,
+            max_consecutive_unknown_tools: config.max_consecutive_unknown_tools,
         },
         HarnessProfile::Medium => HarnessPolicy {
             profile,
             observation_max_bytes: config.observation_bytes_medium,
+            max_turn_loops: config.max_turn_loops_medium,
+            max_tool_calls: config.max_tool_calls_medium,
+            max_parallel_tool_calls: config.max_parallel_tool_calls_medium,
+            max_consecutive_tool_errors: config.max_consecutive_tool_errors,
+            max_consecutive_invalid_arguments: config.max_consecutive_invalid_arguments,
+            max_consecutive_malformed_arguments: config.max_consecutive_malformed_arguments,
+            max_consecutive_unknown_tools: config.max_consecutive_unknown_tools,
         },
     }
 }
@@ -127,6 +229,21 @@ fn build_system_prompt_inner(
         HarnessProfile::Small => "small",
         HarnessProfile::Medium => "medium",
     };
+    let tool_calling_mode = crate::config::effective_tool_calling_mode(config);
+    let tool_calling_rule = match tool_calling_mode {
+        crate::config::ToolCallingMode::Native => {
+            "- Use native tool calling when available; do not write tool calls in markdown, XML, or prose."
+        }
+        crate::config::ToolCallingMode::TextExtracted => {
+            "- Tool calls are extracted from text for this provider; use the available tool manifest exactly when a tool is needed."
+        }
+        crate::config::ToolCallingMode::ManifestOnly => {
+            "- This provider receives a text tool manifest only; follow the manifest exactly and keep tool requests minimal."
+        }
+        crate::config::ToolCallingMode::Disabled => {
+            "- NAVI tools are disabled for this provider; answer directly without requesting local tools."
+        }
+    };
     let mut prompt = format!(
         concat!(
             "You are NAVI, an autonomous code agent running in a terminal.\n",
@@ -151,7 +268,7 @@ fn build_system_prompt_inner(
             "- For long-running commands, call bash with background=true, wait_ms, and timeout_ms; poll or cancel the returned task_id instead of waiting indefinitely.\n",
             "- File paths should be project-relative when possible.\n",
             "- Writes and commands may require approval.\n",
-            "- Use native tool calling when available; do not write tool calls in markdown, XML, or prose.\n",
+            "{tool_calling_rule}\n",
             "- Use runtime_info to inspect harness profile and project environment.\n",
             "\n",
             "Response rules:\n",
@@ -177,6 +294,7 @@ fn build_system_prompt_inner(
         ),
         profile = profile,
         cwd = cwd.display(),
+        tool_calling_rule = tool_calling_rule,
     );
     if let Some(memory) = memory_injection {
         prompt.push('\n');
@@ -231,7 +349,7 @@ pub fn tool_prompt_manifest(tools: &[ToolDefinition]) -> String {
 /// indicating the model is likely hallucinating / stuck in a loop.
 pub fn record_tool_call(
     state: &mut AgentRunState,
-    _policy: HarnessPolicy,
+    policy: HarnessPolicy,
     invocation: &ToolInvocation,
 ) -> ToolLoopDecision {
     let signature = tool_signature(invocation);
@@ -242,16 +360,150 @@ pub fn record_tool_call(
     }
     state.last_tool_signature = Some(signature);
     state.tool_iterations += 1;
+    state.total_tool_calls += 1;
+
+    if state.total_tool_calls > policy.max_tool_calls {
+        return ToolLoopDecision::Stop(HarnessStop {
+            reason: HarnessStopReason::ToolCallLimit,
+            message: format!(
+                "Tool call limit reached ({} calls); stopping to avoid an uncontrolled loop",
+                policy.max_tool_calls
+            ),
+            tool_name: Some(invocation.tool_name.clone()),
+        });
+    }
 
     if state.repeated_tool_calls >= 20 {
-        return ToolLoopDecision::RepeatedCall(format!(
-            "Repeated identical tool call `{}` {} times in a row — the model appears stuck",
-            invocation.tool_name,
-            state.repeated_tool_calls + 1,
+        return ToolLoopDecision::Stop(HarnessStop {
+            reason: HarnessStopReason::RepeatedToolCall,
+            message: format!(
+                "Repeated identical tool call `{}` {} times in a row; the model appears stuck",
+                invocation.tool_name,
+                state.repeated_tool_calls + 1,
+            ),
+            tool_name: Some(invocation.tool_name.clone()),
+        });
+    }
+
+    ToolLoopDecision::Continue
+}
+
+/// Records a completed tool result and returns a stop decision if a failure
+/// pattern crossed the selected harness policy.
+pub fn record_tool_result(
+    state: &mut AgentRunState,
+    policy: HarnessPolicy,
+    invocation: &ToolInvocation,
+    result: &ToolResult,
+) -> ToolLoopDecision {
+    if result.ok {
+        state.consecutive_tool_errors = 0;
+        state.consecutive_invalid_arguments = 0;
+        state.consecutive_malformed_arguments = 0;
+        state.consecutive_unknown_tools = 0;
+        state.last_failure_kind = None;
+        return ToolLoopDecision::Continue;
+    }
+
+    let kind = classify_tool_failure(result);
+    state.total_tool_errors += 1;
+    state.consecutive_tool_errors += 1;
+    state.last_failure_kind = Some(kind);
+    match kind {
+        ToolFailureKind::InvalidArguments => state.consecutive_invalid_arguments += 1,
+        ToolFailureKind::MalformedArguments => state.consecutive_malformed_arguments += 1,
+        ToolFailureKind::UnknownTool => state.consecutive_unknown_tools += 1,
+        _ => {}
+    }
+    if kind != ToolFailureKind::InvalidArguments {
+        state.consecutive_invalid_arguments = 0;
+    }
+    if kind != ToolFailureKind::MalformedArguments {
+        state.consecutive_malformed_arguments = 0;
+    }
+    if kind != ToolFailureKind::UnknownTool {
+        state.consecutive_unknown_tools = 0;
+    }
+
+    if state.consecutive_malformed_arguments >= policy.max_consecutive_malformed_arguments {
+        return ToolLoopDecision::Stop(stop_for_failure(
+            HarnessStopReason::ConsecutiveMalformedArguments,
+            invocation,
+            "malformed tool arguments",
+            state.consecutive_malformed_arguments,
+        ));
+    }
+    if state.consecutive_invalid_arguments >= policy.max_consecutive_invalid_arguments {
+        return ToolLoopDecision::Stop(stop_for_failure(
+            HarnessStopReason::ConsecutiveInvalidArguments,
+            invocation,
+            "schema-invalid tool arguments",
+            state.consecutive_invalid_arguments,
+        ));
+    }
+    if state.consecutive_unknown_tools >= policy.max_consecutive_unknown_tools {
+        return ToolLoopDecision::Stop(stop_for_failure(
+            HarnessStopReason::ConsecutiveUnknownTools,
+            invocation,
+            "unknown tools",
+            state.consecutive_unknown_tools,
+        ));
+    }
+    if state.consecutive_tool_errors >= policy.max_consecutive_tool_errors {
+        return ToolLoopDecision::Stop(stop_for_failure(
+            HarnessStopReason::ConsecutiveToolErrors,
+            invocation,
+            "tool failures",
+            state.consecutive_tool_errors,
         ));
     }
 
     ToolLoopDecision::Continue
+}
+
+pub fn classify_tool_failure(result: &ToolResult) -> ToolFailureKind {
+    let output = &result.output;
+    if output
+        .get("error_kind")
+        .and_then(Value::as_str)
+        .is_some_and(|kind| kind == ToolFailureKind::MalformedArguments.as_str())
+    {
+        return ToolFailureKind::MalformedArguments;
+    }
+    match output.get("error_code").and_then(Value::as_str) {
+        Some("unknown_tool") => ToolFailureKind::UnknownTool,
+        Some("invalid_arguments") => ToolFailureKind::InvalidArguments,
+        Some("malformed_arguments") => ToolFailureKind::MalformedArguments,
+        Some("invalid_schema") => ToolFailureKind::InvalidSchema,
+        Some("security_denied") => ToolFailureKind::SecurityDenied,
+        _ => {
+            if output
+                .get("error")
+                .and_then(Value::as_str)
+                .is_some_and(|error| error.contains("turn cancelled"))
+            {
+                ToolFailureKind::Cancelled
+            } else {
+                ToolFailureKind::ExecutionFailed
+            }
+        }
+    }
+}
+
+fn stop_for_failure(
+    reason: HarnessStopReason,
+    invocation: &ToolInvocation,
+    label: &str,
+    count: usize,
+) -> HarnessStop {
+    HarnessStop {
+        reason,
+        message: format!(
+            "Stopping because the model produced {count} consecutive {label}. Last tool: `{}`.",
+            invocation.tool_name
+        ),
+        tool_name: Some(invocation.tool_name.clone()),
+    }
 }
 
 /// Truncates tool output to the policy's observation byte limit with a
@@ -288,9 +540,13 @@ pub fn trace_request_summary(request: &ModelRequest, policy: HarnessPolicy) -> V
     json!({
         "model": request.model,
         "profile": format!("{:?}", policy.profile).to_lowercase(),
+        "tool_calling_mode": if request.tools.is_empty() { "no-native-tools" } else { "native" },
         "messages": request.messages.len(),
         "tools": request.tools.len(),
         "observation_max_bytes": policy.observation_max_bytes,
+        "max_turn_loops": policy.max_turn_loops,
+        "max_tool_calls": policy.max_tool_calls,
+        "max_parallel_tool_calls": policy.max_parallel_tool_calls,
     })
 }
 
@@ -315,6 +571,14 @@ mod tests {
     use super::*;
     use crate::config::HarnessConfig;
     use crate::{HarnessProfile, NaviConfig};
+
+    fn test_policy(max_tool_calls: usize) -> HarnessPolicy {
+        let config = HarnessConfig {
+            max_tool_calls_small: max_tool_calls,
+            ..HarnessConfig::default()
+        };
+        policy_for_profile(&config, HarnessProfile::Small)
+    }
 
     #[test]
     fn auto_profile_infers_small_from_selected_model() {
@@ -344,10 +608,7 @@ mod tests {
 
     #[test]
     fn repeated_tool_call_is_flagged_at_20() {
-        let policy = HarnessPolicy {
-            profile: HarnessProfile::Small,
-            observation_max_bytes: 100,
-        };
+        let policy = test_policy(100);
         let invocation = ToolInvocation {
             id: "call-1".to_string(),
             tool_name: "read_file".to_string(),
@@ -365,19 +626,16 @@ mod tests {
                 "call {i} should continue"
             );
         }
-        // 21st consecutive identical call (repeated=20) triggers RepeatedCall.
+        // 21st consecutive identical call (repeated=20) triggers a stop.
         assert!(matches!(
             record_tool_call(&mut state, policy, &invocation),
-            ToolLoopDecision::RepeatedCall(_)
+            ToolLoopDecision::Stop(_)
         ));
     }
 
     #[test]
     fn repeated_tool_call_resets_on_different_input() {
-        let policy = HarnessPolicy {
-            profile: HarnessProfile::Small,
-            observation_max_bytes: 100,
-        };
+        let policy = test_policy(100);
         let invocation_a = ToolInvocation {
             id: "call-1".to_string(),
             tool_name: "read_file".to_string(),
@@ -409,10 +667,8 @@ mod tests {
 
     #[test]
     fn compact_observation_is_bounded() {
-        let policy = HarnessPolicy {
-            profile: HarnessProfile::Small,
-            observation_max_bytes: 16,
-        };
+        let mut policy = test_policy(100);
+        policy.observation_max_bytes = 16;
         let invocation = ToolInvocation {
             id: "call-1".to_string(),
             tool_name: "read_file".to_string(),
@@ -428,6 +684,70 @@ mod tests {
 
         assert!(observation.contains("<truncated>"));
         assert!(observation.contains("status: success"));
+    }
+
+    #[test]
+    fn malformed_arguments_stop_after_policy_limit() {
+        let policy = policy_for_profile(
+            &HarnessConfig {
+                max_consecutive_malformed_arguments: 2,
+                ..HarnessConfig::default()
+            },
+            HarnessProfile::Small,
+        );
+        let invocation = ToolInvocation {
+            id: "call-1".to_string(),
+            tool_name: "memory_query".to_string(),
+            input: json!({ "raw_arguments": "{\"limit\": {\"limit\": " }),
+        };
+        let result = ToolResult {
+            invocation_id: "call-1".to_string(),
+            ok: false,
+            output: json!({
+                "error_code": "invalid_arguments",
+                "error_kind": "malformed_arguments"
+            }),
+        };
+        let mut state = AgentRunState::default();
+
+        assert_eq!(
+            record_tool_result(&mut state, policy, &invocation, &result),
+            ToolLoopDecision::Continue
+        );
+        assert!(matches!(
+            record_tool_result(&mut state, policy, &invocation, &result),
+            ToolLoopDecision::Stop(stop)
+                if stop.reason == HarnessStopReason::ConsecutiveMalformedArguments
+        ));
+    }
+
+    #[test]
+    fn unknown_tools_stop_after_policy_limit() {
+        let policy = policy_for_profile(
+            &HarnessConfig {
+                max_consecutive_unknown_tools: 2,
+                ..HarnessConfig::default()
+            },
+            HarnessProfile::Small,
+        );
+        let invocation = ToolInvocation {
+            id: "call-1".to_string(),
+            tool_name: "glob".to_string(),
+            input: json!({}),
+        };
+        let result = ToolResult {
+            invocation_id: "call-1".to_string(),
+            ok: false,
+            output: json!({ "error_code": "unknown_tool" }),
+        };
+        let mut state = AgentRunState::default();
+
+        record_tool_result(&mut state, policy, &invocation, &result);
+        assert!(matches!(
+            record_tool_result(&mut state, policy, &invocation, &result),
+            ToolLoopDecision::Stop(stop)
+                if stop.reason == HarnessStopReason::ConsecutiveUnknownTools
+        ));
     }
 
     #[test]

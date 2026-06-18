@@ -74,6 +74,16 @@ pub enum RuntimeEventKind {
     ToolCompleted(ToolResult),
     /// A harness-level diagnostic trace (profile, message count, tool count).
     HarnessTrace(Value),
+    /// The harness stopped a turn before another model iteration.
+    HarnessStopped {
+        /// Machine-readable stop reason.
+        reason: String,
+        /// Human-readable diagnostic.
+        message: String,
+        /// Tool involved in the stop, when applicable.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        tool_name: Option<String>,
+    },
     /// A file patch has been proposed by the assistant.
     PatchProposed(PatchProposal),
     /// The conversation context has been updated.
@@ -159,6 +169,15 @@ impl RuntimeEventKind {
             }
             RuntimeEventKind::ToolCompleted(result) => Some(AgentEvent::ToolCompleted(result)),
             RuntimeEventKind::HarnessTrace(value) => Some(AgentEvent::HarnessTrace(value)),
+            RuntimeEventKind::HarnessStopped {
+                reason,
+                message,
+                tool_name,
+            } => Some(AgentEvent::HarnessStopped {
+                reason,
+                message,
+                tool_name,
+            }),
             RuntimeEventKind::PatchProposed(patch) => Some(AgentEvent::PatchProposed(patch)),
             RuntimeEventKind::TokensUpdated {
                 input_tokens,
@@ -226,6 +245,16 @@ pub enum AgentEvent {
     ToolCompleted(ToolResult),
     /// A harness-level diagnostic trace.
     HarnessTrace(Value),
+    /// The harness stopped a turn before another model iteration.
+    HarnessStopped {
+        /// Machine-readable stop reason.
+        reason: String,
+        /// Human-readable diagnostic.
+        message: String,
+        /// Tool involved in the stop, when applicable.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        tool_name: Option<String>,
+    },
     /// A file patch was proposed by the assistant.
     PatchProposed(PatchProposal),
     /// A tool invocation requires user approval.
