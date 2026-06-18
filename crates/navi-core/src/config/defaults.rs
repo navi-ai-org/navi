@@ -98,4 +98,3 @@ fn default_blocked_commands() -> Vec<String> {
     .map(str::to_string)
     .collect()
 }
-

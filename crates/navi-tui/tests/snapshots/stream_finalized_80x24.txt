@@ -15,9 +15,10 @@
 
 
 
+  ▌
+  ▌
+  ▌
+  ▌   gpt-5.5 OpenAI · adaptive · 3 / 200k (0%)
+  ▌
 
-  ▌
-  ▌    Describe the task...
-  ▌
-  ▌   ctrl+v paste image · gpt-5.5 OpenAI · adaptive · 3 / 200k (0%)
-  ▌
+                                                             ctrl+v paste image

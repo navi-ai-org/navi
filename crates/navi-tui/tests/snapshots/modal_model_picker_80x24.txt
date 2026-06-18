@@ -15,9 +15,10 @@
     │     minimax-m2.7                                                   █ │
     │     minimax-m2.5                                                   █ │
     │     grok-build-0.1                                                 █ │
-    │   OpenCode Go  ↻ tab                                               │ │
+  ▌ │   OpenCode Go  ↻ tab                                               │ │
   ▌ │     deepseek-v4-flash                                              │ │
   ▌ │     deepseek-v4-pro                                                │ │
   ▌ │ search  •  ctrl+e setup  •  tab refresh provider  •  ctrl+r refresh  │
   ▌ ╰──────────────────────────────────────────────────────────────────────╯
-  ▌
+
+                                                             ctrl+v paste image

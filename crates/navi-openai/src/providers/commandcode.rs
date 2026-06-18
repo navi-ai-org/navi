@@ -68,6 +68,11 @@ impl crate::provider::OpenAiProvider {
                     }
                 }
             }
+            for data in decoder.drain() {
+                for event in parse_commandcode_sse_with_state(&data, &mut text_accumulator) {
+                    yield event?;
+                }
+            }
             for event in text_accumulator.drain_pending_text() {
                 yield event?;
             }
@@ -137,18 +142,6 @@ fn build_commandcode_headers(api_key: &str, cli_version: &str) -> reqwest::heade
 fn build_alpha_generate_body(request: &ModelRequest) -> Value {
     let (system_prompt, messages) = commandcode_messages(&request.messages);
 
-    let tools: Vec<Value> = request
-        .tools
-        .iter()
-        .map(|tool| {
-            json!({
-                "name": tool.name,
-                "description": tool.description,
-                "input_schema": tool.input_schema,
-            })
-        })
-        .collect();
-
     let cwd = std::env::current_dir()
         .map(|p| p.to_string_lossy().to_string())
         .unwrap_or_default();
@@ -168,9 +161,9 @@ fn build_alpha_generate_body(request: &ModelRequest) -> Value {
         params["system"] = json!(system_prompt);
     }
 
-    if !tools.is_empty() {
-        params["tools"] = json!(tools);
-    }
+    // Command Code /alpha/generate only supports its own built-in tools
+    // (web_search, web_fetch). Sending custom tool definitions causes a 400 error.
+    // Skip NAVI tools to keep the request compatible.
 
     json!({
         "config": {
@@ -304,8 +297,8 @@ fn commandcode_messages(messages: &[navi_core::ModelMessage]) -> (String, Vec<Va
                             }
                             ContentPart::Image { media_type, data } => {
                                 json!({
-                                    "type": "input_image",
-                                    "image_url": format!("data:{media_type};base64,{data}")
+                                    "type": "image",
+                                    "image": format!("data:{media_type};base64,{data}")
                                 })
                             }
                         })
@@ -486,8 +479,39 @@ fn parse_commandcode_sse_with_state(
             events.push(Ok(ModelStreamEvent::Done));
             events
         }
+        Some("error") => vec![Err(commandcode_stream_error(&value).into())],
         _ => Vec::new(),
     }
+}
+
+fn commandcode_stream_error(value: &Value) -> ProviderError {
+    let error = value.get("error").unwrap_or(value);
+    let message = error
+        .get("message")
+        .and_then(Value::as_str)
+        .or_else(|| value.get("message").and_then(Value::as_str))
+        .or_else(|| value.get("error").and_then(Value::as_str))
+        .unwrap_or("Command Code stream error");
+    let status = error
+        .get("statusCode")
+        .or_else(|| error.get("status"))
+        .or_else(|| value.get("statusCode"))
+        .and_then(Value::as_u64);
+    let code = error
+        .get("code")
+        .or_else(|| error.get("type"))
+        .or_else(|| value.get("code"))
+        .and_then(Value::as_str);
+
+    let mut detail = format!("Command Code stream error: {message}");
+    if let Some(code) = code {
+        detail.push_str(&format!(" ({code})"));
+    }
+    if let Some(status) = status {
+        detail.push_str(&format!(" [status {status}]"));
+    }
+
+    ProviderError::Other(detail)
 }
 
 #[derive(Default)]
@@ -888,6 +912,18 @@ mod tests {
     }
 
     #[test]
+    fn parse_error_event_returns_provider_error() {
+        let events = parse_commandcode_sse(
+            r#"{"type":"error","error":{"message":"quota exhausted","code":"rate_limit","statusCode":429}}"#,
+        );
+        assert_eq!(events.len(), 1);
+        let err = events.into_iter().next().unwrap().unwrap_err().to_string();
+        assert!(err.contains("quota exhausted"));
+        assert!(err.contains("rate_limit"));
+        assert!(err.contains("429"));
+    }
+
+    #[test]
     fn parse_finish_step_with_usage() {
         let events = parse_commandcode_sse(
             r#"{"type":"finish-step","finishReason":"stop","usage":{"inputTokens":50,"outputTokens":10}}"#,
@@ -974,6 +1010,38 @@ mod tests {
         assert_eq!(messages[1]["content"][0]["type"], "tool-call");
         assert_eq!(messages[2]["role"], "tool");
         assert_eq!(messages[2]["content"][0]["type"], "tool-result");
+    }
+
+    #[test]
+    fn build_body_uses_commandcode_image_parts() {
+        use navi_core::{ContentPart, ModelMessage, ThinkingConfig};
+
+        let request = ModelRequest {
+            model: "minimax-m3".to_string(),
+            messages: vec![ModelMessage::user_multimodal(
+                "describe this image",
+                vec![
+                    ContentPart::Text {
+                        text: "describe this image".to_string(),
+                    },
+                    ContentPart::Image {
+                        media_type: "image/png".to_string(),
+                        data: "abc123".to_string(),
+                    },
+                ],
+            )],
+            thinking: ThinkingConfig::Off,
+            tools: vec![],
+        };
+
+        let body = build_alpha_generate_body(&request);
+        let content = body["params"]["messages"][0]["content"].as_array().unwrap();
+
+        assert_eq!(content[0]["type"], "text");
+        assert_eq!(content[0]["text"], "describe this image");
+        assert_eq!(content[1]["type"], "image");
+        assert_eq!(content[1]["image"], "data:image/png;base64,abc123");
+        assert!(content[1].get("image_url").is_none());
     }
 
     #[test]

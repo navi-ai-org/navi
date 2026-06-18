@@ -6,7 +6,7 @@ use navi_sdk::{
 use crate::app::TuiApp;
 use crate::chat::reset_system_context;
 use crate::session::session_created_at;
-use crate::state::{ChatMessage, ChatRole};
+use crate::state::{ChatImage, ChatMessage, ChatRole};
 
 pub(crate) fn save_current_session(app: &mut TuiApp) {
     if app.messages.is_empty() && app.events.is_empty() {
@@ -85,11 +85,35 @@ pub(crate) fn load_session(app: &mut TuiApp, snapshot: &SessionSnapshot) {
 
     for event in &snapshot.events {
         match event {
-            AgentEvent::UserTaskSubmitted { text } => {
-                app.messages
-                    .push(ChatMessage::new(ChatRole::User, text.clone()));
-                app.conversation_history
-                    .push(ModelMessage::user(text.clone()));
+            AgentEvent::UserTaskSubmitted {
+                text,
+                content_parts,
+            } => {
+                let mut msg = ChatMessage::new(ChatRole::User, text.clone());
+                for part in content_parts.iter() {
+                    if let navi_core::model::ContentPart::Image { media_type, .. } = part {
+                        let mime_short = media_type
+                            .strip_prefix("image/")
+                            .unwrap_or(media_type)
+                            .to_uppercase();
+                        msg.image_labels.push(mime_short.clone());
+                        msg.images.push(ChatImage {
+                            label: mime_short,
+                            protocol: None,
+                        });
+                    }
+                }
+                app.messages.push(msg);
+
+                if content_parts.is_empty() {
+                    app.conversation_history
+                        .push(ModelMessage::user(text.clone()));
+                } else {
+                    app.conversation_history.push(ModelMessage::user_multimodal(
+                        text.clone(),
+                        content_parts.clone(),
+                    ));
+                }
             }
             AgentEvent::ModelOutput { text, thinking } => {
                 app.messages.push(ChatMessage {

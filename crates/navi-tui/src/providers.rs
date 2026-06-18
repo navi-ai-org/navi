@@ -231,6 +231,7 @@ pub(crate) fn start_provider_oauth(app: &mut TuiApp, provider: &ProviderConfig) 
 
     app.is_loading = true;
     app.loading_start = Some(Instant::now());
+    crate::view::mascot::reset_mascot_animation(app);
     let tx = app.async_sender();
     let credential_store = app.credential_store_clone();
     let provider_id = provider.id.clone();

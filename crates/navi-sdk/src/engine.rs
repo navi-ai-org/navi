@@ -208,6 +208,9 @@ impl NaviEngine {
             context_packets: request.context_packets,
             active_skills: request.active_skills,
             initial_messages: request.initial_messages,
+            initial_events: request.initial_events,
+            initial_created_at: request.initial_created_at,
+            initial_updated_at: request.initial_updated_at,
             session_id: request.session_id.map(SessionId::new),
             event_tx: None,
         });
@@ -572,14 +575,14 @@ impl NaviEngine {
             loaded_config.config.security.redact_secrets_in_sessions,
         );
         Ok(store
-            .list()
+            .list_info()
             .into_iter()
-            .map(|snapshot| NaviSavedSessionInfo {
-                id: snapshot.id.into_inner(),
-                title: navi_core::session_title_from_events(&snapshot.events),
-                project: snapshot.project,
-                created_at: snapshot.created_at,
-                updated_at: snapshot.updated_at,
+            .map(|info| NaviSavedSessionInfo {
+                id: info.id.into_inner(),
+                title: info.title,
+                project: info.project,
+                created_at: info.created_at,
+                updated_at: info.updated_at,
             })
             .collect())
     }
@@ -592,15 +595,15 @@ impl NaviEngine {
             loaded_config.config.security.redact_secrets_in_sessions,
         );
         Ok(store
-            .list_async()
+            .list_info_async()
             .await
             .into_iter()
-            .map(|snapshot| NaviSavedSessionInfo {
-                id: snapshot.id.into_inner(),
-                title: navi_core::session_title_from_events(&snapshot.events),
-                project: snapshot.project,
-                created_at: snapshot.created_at,
-                updated_at: snapshot.updated_at,
+            .map(|info| NaviSavedSessionInfo {
+                id: info.id.into_inner(),
+                title: info.title,
+                project: info.project,
+                created_at: info.created_at,
+                updated_at: info.updated_at,
             })
             .collect())
     }
