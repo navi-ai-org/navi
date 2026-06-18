@@ -5,3 +5,10 @@ mutants.out.old/
 /coverage/
 /quality/metricsSummary.json
 /quality/qualityReport.json
+# Scratch files
+/expanded.rs
+/libtest.rlib
+/scratch
+/scratch.rs
+/test.rs
+/test_size_for.rs

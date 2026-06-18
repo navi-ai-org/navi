@@ -40,7 +40,6 @@ pub(crate) enum HitAction {
         offset: usize,
     },
     RemoveImage(usize),
-
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

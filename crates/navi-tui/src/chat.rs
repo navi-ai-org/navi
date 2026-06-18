@@ -2,7 +2,7 @@ use navi_sdk::{AgentEvent, ContentPart, ModelMessage, ModelRole, build_system_pr
 
 use crate::TuiApp;
 use crate::providers::selected_provider_label;
-use crate::state::{ChatMessage, ChatRole};
+use crate::state::{ChatImage, ChatMessage, ChatRole};
 use crate::stream::start_streaming_request;
 use crate::tools::cancel_stream;
 
@@ -35,7 +35,12 @@ pub(crate) fn submit_message(app: &mut TuiApp) {
             .pending_images
             .drain(..)
             .map(|img| {
-                chat_msg.image_labels.push(img.label());
+                let label = img.label();
+                chat_msg.image_labels.push(label.clone());
+                chat_msg.images.push(ChatImage {
+                    label,
+                    protocol: img.protocol,
+                });
                 ContentPart::Image {
                     media_type: img.media_type,
                     data: img.data,
@@ -61,12 +66,16 @@ pub(crate) fn submit_message(app: &mut TuiApp) {
         app.conversation_history
             .push(ModelMessage::user(text.clone()));
     } else {
-        app.conversation_history
-            .push(ModelMessage::user_multimodal(text.clone(), content_parts));
+        app.conversation_history.push(ModelMessage::user_multimodal(
+            text.clone(),
+            content_parts.clone(),
+        ));
     }
 
-    app.events
-        .push(AgentEvent::UserTaskSubmitted { text: text.clone() });
+    app.events.push(AgentEvent::UserTaskSubmitted {
+        text: text.clone(),
+        content_parts: content_parts.clone(),
+    });
 
     app.input.clear();
     app.input_cursor = 0;

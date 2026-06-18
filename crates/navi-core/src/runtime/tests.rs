@@ -119,6 +119,9 @@ async fn headless_runtime_executes_read_tools_and_continues() {
         }],
         active_skills: Vec::new(),
         initial_messages: Vec::new(),
+        initial_events: Vec::new(),
+        initial_created_at: None,
+        initial_updated_at: None,
         session_id: None,
         event_tx: None,
     });
@@ -173,6 +176,9 @@ async fn runtime_session_lifecycle_streams_events_and_snapshots() {
         }],
         active_skills: Vec::new(),
         initial_messages: Vec::new(),
+        initial_events: Vec::new(),
+        initial_created_at: None,
+        initial_updated_at: None,
         session_id: None,
         event_tx: None,
     });
@@ -248,6 +254,9 @@ async fn runtime_uses_requested_session_id_once() {
         context_packets: Vec::new(),
         active_skills: Vec::new(),
         initial_messages: Vec::new(),
+        initial_events: Vec::new(),
+        initial_created_at: None,
+        initial_updated_at: None,
         session_id: Some(crate::SessionId::new(
             "navi_tutor_algoritmos_2026-05-25_14-32-10".to_string(),
         )),
@@ -287,6 +296,9 @@ async fn active_session_uses_replaced_model_provider_on_next_turn() {
         context_packets: Vec::new(),
         active_skills: Vec::new(),
         initial_messages: Vec::new(),
+        initial_events: Vec::new(),
+        initial_created_at: None,
+        initial_updated_at: None,
         session_id: None,
         event_tx: None,
     });

@@ -11,6 +11,9 @@ use super::syntax::{CodeHighlighter, highlight_code_line};
 use super::text::{display_width, wrap_spans_to_width, wrap_text};
 use super::tool::{tool_compact_text, tool_detail_block, tool_full_content};
 
+pub(crate) const USER_IMAGE_ROW_HEIGHT: usize = 8;
+pub(crate) const USER_IMAGES_PER_ROW: usize = 2;
+
 #[derive(Debug, Clone)]
 pub(crate) struct ChatRenderOutput {
     pub(crate) lines: Vec<Line<'static>>,
@@ -111,22 +114,21 @@ pub(crate) fn build_chat_render_for_messages(
 
         match msg.role {
             ChatRole::User => {
-                // Show image attachment indicators before the text content.
-                if !msg.image_labels.is_empty() {
+                if !msg.images.is_empty() {
+                    for row_start in (0..msg.images.len()).step_by(USER_IMAGES_PER_ROW) {
+                        let count = (msg.images.len() - row_start).min(USER_IMAGES_PER_ROW);
+                        for _ in 0..USER_IMAGE_ROW_HEIGHT {
+                            rendered_lines.push(user_card_blank_line(chat_width));
+                            line_sources.push(ChatLineSource::ImageRow {
+                                message_index: index,
+                                start_index: row_start,
+                                count,
+                            });
+                        }
+                    }
+                } else if !msg.image_labels.is_empty() {
                     for (i, label) in msg.image_labels.iter().enumerate() {
-                        rendered_lines.push(Line::from(vec![
-                            Span::styled(
-                                " ".repeat(3),
-                                Style::default().fg(user_accent()).bg(user_accent()),
-                            ),
-                            Span::styled(
-                                format!("[{}] {} ", i + 1, label),
-                                Style::default()
-                                    .fg(muted())
-                                    .bg(panel())
-                                    .add_modifier(Modifier::ITALIC),
-                            ),
-                        ]));
+                        rendered_lines.push(user_image_fallback_line(i, label));
                         line_sources.push(ChatLineSource::Message(index));
                     }
                 }
@@ -239,6 +241,35 @@ pub(crate) fn build_chat_render_for_messages(
         lines: rendered_lines,
         sources: line_sources,
     }
+}
+
+fn user_card_blank_line(chat_width: usize) -> Line<'static> {
+    Line::from(vec![
+        Span::styled(
+            " ".repeat(3),
+            Style::default().fg(user_accent()).bg(user_accent()),
+        ),
+        Span::styled(
+            " ".repeat(chat_width.saturating_sub(3)),
+            Style::default().fg(text()).bg(panel()),
+        ),
+    ])
+}
+
+fn user_image_fallback_line(index: usize, label: &str) -> Line<'static> {
+    Line::from(vec![
+        Span::styled(
+            " ".repeat(3),
+            Style::default().fg(user_accent()).bg(user_accent()),
+        ),
+        Span::styled(
+            format!("[{}] {} ", index + 1, label),
+            Style::default()
+                .fg(muted())
+                .bg(panel())
+                .add_modifier(Modifier::ITALIC),
+        ),
+    ])
 }
 
 fn push_block_gap(lines: &mut Vec<Line<'static>>, sources: &mut Vec<ChatLineSource>) {
@@ -611,7 +642,7 @@ fn render_compact_tool_line_with_width(
     let marker = "";
     let marker_width = marker.chars().count();
     let text_width = chat_width.saturating_sub(marker_width).max(12);
-    let status_color = if result.ok { accent() } else { red() };
+    let status_color = if result.ok { Color::Green } else { red() };
     let label = truncate_chars(&tool_compact_text(invocation, result), text_width);
     let (action, detail) = label.split_once(' ').unwrap_or((&label, ""));
     let action_color = if result.ok {
@@ -622,7 +653,7 @@ fn render_compact_tool_line_with_width(
     let mut spans = vec![
         Span::styled(marker, Style::default().fg(status_color)),
         Span::styled(
-            tool_line_prefix(invocation, result),
+            tool_line_prefix(result),
             Style::default()
                 .fg(status_color)
                 .add_modifier(Modifier::BOLD),
@@ -644,15 +675,11 @@ fn render_compact_tool_line_with_width(
     Line::from(spans)
 }
 
-fn tool_line_prefix(invocation: &ToolInvocation, result: &ToolResult) -> &'static str {
+fn tool_line_prefix(result: &ToolResult) -> &'static str {
     if !result.ok {
         return "✗ ";
     }
-    if invocation.tool_name == "grep" {
-        "* "
-    } else {
-        "→ "
-    }
+    "✓ "
 }
 
 fn tool_color(tool_name: &str) -> Color {
@@ -1490,6 +1517,47 @@ fn code_panel_prefix_spans() -> Vec<Span<'static>> {
         Span::styled("│", Style::default().fg(ghost()).bg(bg)),
         Span::styled("  ", Style::default().fg(text()).bg(bg)),
     ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::state::{ChatImage, ChatMessage, ChatRole};
+
+    #[test]
+    fn user_images_reserve_thumbnail_rows() {
+        let mut message = ChatMessage::new(ChatRole::User, "describe".to_string());
+        message.image_labels.push("PNG".to_string());
+        message.images.push(ChatImage {
+            label: "PNG".to_string(),
+            protocol: None,
+        });
+
+        let output = build_chat_render_for_messages(
+            &[message],
+            80,
+            false,
+            false,
+            0,
+            &HashSet::new(),
+            &HashMap::new(),
+            &mut HashMap::new(),
+            None,
+        );
+
+        let image_rows = output
+            .sources
+            .iter()
+            .filter(|source| matches!(source, ChatLineSource::ImageRow { .. }))
+            .count();
+
+        assert_eq!(image_rows, USER_IMAGE_ROW_HEIGHT);
+        assert!(!output.lines.iter().any(|line| {
+            line.spans
+                .iter()
+                .any(|span| span.content.contains("[1] PNG"))
+        }));
+    }
 }
 
 fn code_panel_prefix_width() -> usize {

@@ -1,6 +1,4 @@
-use ratatui::prelude::{Modifier, Span, Style};
-
-use crate::theme::*;
+use ratatui::prelude::Span;
 
 /// Split styled spans into multiple lines that each fit within `max_width` columns.
 pub(crate) fn wrap_spans_to_width(
@@ -94,16 +92,6 @@ pub(crate) fn wrap_text(text: &str, max_width: usize) -> Vec<String> {
     }
 
     lines
-}
-
-pub(crate) fn cursor_span(value: impl Into<String>) -> Span<'static> {
-    Span::styled(
-        value.into(),
-        Style::default()
-            .fg(bg())
-            .bg(signal())
-            .add_modifier(Modifier::BOLD),
-    )
 }
 
 pub(crate) fn mask_key_segment(segment: &str) -> String {

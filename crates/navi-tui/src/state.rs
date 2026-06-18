@@ -19,13 +19,42 @@ pub struct PendingImage {
     pub protocol: Option<ratatui_image::protocol::StatefulProtocol>,
 }
 
+pub struct ChatImage {
+    pub label: String,
+    pub protocol: Option<ratatui_image::protocol::StatefulProtocol>,
+}
+
+impl std::fmt::Debug for ChatImage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ChatImage")
+            .field("label", &self.label)
+            .field(
+                "protocol",
+                &self.protocol.as_ref().map(|_| "StatefulProtocol"),
+            )
+            .finish()
+    }
+}
+
+impl Clone for ChatImage {
+    fn clone(&self) -> Self {
+        Self {
+            label: self.label.clone(),
+            protocol: None,
+        }
+    }
+}
+
 impl std::fmt::Debug for PendingImage {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("PendingImage")
             .field("media_type", &self.media_type)
             .field("width", &self.width)
             .field("height", &self.height)
-            .field("protocol", &self.protocol.as_ref().map(|_| "StatefulProtocol"))
+            .field(
+                "protocol",
+                &self.protocol.as_ref().map(|_| "StatefulProtocol"),
+            )
             .finish()
     }
 }
@@ -63,6 +92,7 @@ pub struct ChatMessage {
     /// The actual base64 data lives in `content_parts` on the engine side;
     /// this field stores labels/dimensions for the TUI render.
     pub image_labels: Vec<String>,
+    pub images: Vec<ChatImage>,
     pub model_label: Option<String>,
     pub provider_label: Option<String>,
     pub elapsed_ms: Option<u64>,
@@ -80,6 +110,7 @@ impl ChatMessage {
             role,
             content,
             image_labels: Vec::new(),
+            images: Vec::new(),
             model_label: None,
             provider_label: None,
             elapsed_ms: None,
@@ -126,6 +157,11 @@ pub(crate) enum ChatLineSource {
     #[default]
     None,
     Message(usize),
+    ImageRow {
+        message_index: usize,
+        start_index: usize,
+        count: usize,
+    },
     ToolResult(String),
     ToolGroup(Vec<String>),
 }

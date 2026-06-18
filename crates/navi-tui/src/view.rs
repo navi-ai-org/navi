@@ -4,6 +4,7 @@ mod command_palette;
 mod debug;
 mod image_preview;
 mod input;
+pub(crate) mod mascot;
 mod modals;
 mod model_picker;
 mod notification;
@@ -24,7 +25,12 @@ use crate::render::{fill_modal_scrim, modal_rect, opaque_fill};
 use crate::state::Mode;
 use crate::theme;
 use crate::theme::{bg, ghost, muted, text};
+use crate::ui::layer::{LayerStack, z};
 use crate::ui::layout::viewport_rect;
+
+enum Overlay {
+    Mascot(Rect),
+}
 
 pub(crate) fn render(frame: &mut Frame<'_>, app: &mut TuiApp) {
     theme::with_palette(&app.theme_palette(), || render_inner(frame, app));
@@ -35,10 +41,16 @@ fn render_inner(frame: &mut Frame<'_>, app: &mut TuiApp) {
     let area = frame.area();
     opaque_fill(frame, area, Style::default().bg(theme::bg()));
     let content_area = viewport_rect(area);
+    let mut overlays = LayerStack::default();
 
     let input_width = content_area.width.saturating_sub(4) as usize;
     let input_height = input::composer_height(app, input_width);
-    let image_preview_height = if app.pending_images.is_empty() { 0 } else { 6 };
+    let input_hint_height = input::composer_hint_height(app);
+    let image_preview_height = if app.pending_images.is_empty() {
+        0
+    } else {
+        image_preview::IMAGE_PREVIEW_HEIGHT
+    };
     let vertical = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -46,7 +58,7 @@ fn render_inner(frame: &mut Frame<'_>, app: &mut TuiApp) {
             Constraint::Min(6),
             Constraint::Length(image_preview_height),
             Constraint::Length(input_height),
-            Constraint::Length(1),
+            Constraint::Length(input_hint_height),
         ])
         .split(content_area);
 
@@ -61,7 +73,16 @@ fn render_inner(frame: &mut Frame<'_>, app: &mut TuiApp) {
         vertical[3]
     };
 
-    input::render_input(frame, app, input_area);
+    if let Some(mascot_area) = input::render_input(frame, app, input_area) {
+        overlays.push(z::FLOATING, Overlay::Mascot(mascot_area));
+    }
+    input::render_input_hint(frame, app, vertical[4]);
+
+    for overlay in overlays.into_paint_order() {
+        match overlay.item {
+            Overlay::Mascot(area) => mascot::render_mascot(frame, app, area),
+        }
+    }
 
     if modal_backdrop_active(app) {
         fill_modal_scrim(frame, content_area);
@@ -101,7 +122,6 @@ fn render_inner(frame: &mut Frame<'_>, app: &mut TuiApp) {
     if !app.pending_approvals.is_empty() {
         modals::render_tool_approval(frame, app, modal_rect(area, 72, 12));
     }
-
 
     notification::render_notification(frame, app, area);
 }

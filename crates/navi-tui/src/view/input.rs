@@ -1,4 +1,4 @@
-use ratatui::layout::{Margin, Rect};
+use ratatui::layout::{Alignment, Margin, Position, Rect};
 use ratatui::prelude::{Frame, Line, Span};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::Text;
@@ -10,7 +10,6 @@ use crate::input::{
     selected_input_range,
 };
 use crate::providers::selected_provider_label;
-use crate::render::cursor_span;
 use crate::theme::*;
 use crate::ui::interaction::HitAction;
 use crate::ui::text_input::floor_char_boundary;
@@ -19,7 +18,7 @@ const INPUT_TOP_PADDING_ROWS: u16 = 1;
 const FOOTER_BOTTOM_PADDING_ROWS: u16 = 1;
 const INPUT_TEXT_INSET_COLUMNS: u16 = 3;
 
-pub(super) fn render_input(frame: &mut Frame<'_>, app: &mut TuiApp, area: Rect) {
+pub(super) fn render_input(frame: &mut Frame<'_>, app: &mut TuiApp, area: Rect) -> Option<Rect> {
     let inner = area.inner(Margin {
         horizontal: 1,
         vertical: 0,
@@ -62,21 +61,36 @@ pub(super) fn render_input(frame: &mut Frame<'_>, app: &mut TuiApp, area: Rect) 
         1.min(panel_area.height),
     );
     let input_bottom = footer_area.y;
-    let input_area = Rect::new(
+    let full_input_area = Rect::new(
         panel_area.x,
         input_y,
-        panel_area.width,
+        panel_area.width.saturating_add(INPUT_TEXT_INSET_COLUMNS),
         input_bottom.saturating_sub(input_y).max(1),
     );
+    let mascot_area = crate::view::mascot::mascot_overlay_area(app, inner_block_area);
+    let input_area = full_input_area;
+
     app.input_wrap_width = input_area.width as usize;
-    let (lines, cursor_line) = input_lines(app, input_area.width as usize);
-    let input_lines = visible_input_lines(lines, input_area.height as usize, cursor_line);
+    let (lines, cursor_line, cursor_column) = input_lines(app, input_area.width as usize);
+    let (input_lines, visible_start) =
+        visible_input_lines(lines, input_area.height as usize, cursor_line);
     frame.render_widget(
         Paragraph::new(Text::from(input_lines))
             .style(Style::default().fg(text()).bg(composer_panel_bg(app)))
             .block(Block::new()),
         input_area,
     );
+    if app.mode == crate::state::Mode::Normal {
+        let cursor_x = input_area
+            .x
+            .saturating_add(cursor_column.min(input_area.width.saturating_sub(1) as usize) as u16);
+        let cursor_y = input_area.y.saturating_add(
+            cursor_line
+                .saturating_sub(visible_start)
+                .min(input_area.height.saturating_sub(1) as usize) as u16,
+        );
+        frame.set_cursor_position(Position::new(cursor_x, cursor_y));
+    }
 
     frame.render_widget(
         Paragraph::new(composer_footer_line(app, footer_area.width as usize))
@@ -92,6 +106,8 @@ pub(super) fn render_input(frame: &mut Frame<'_>, app: &mut TuiApp, area: Rect) 
             HitAction::ReopenQuestion,
         );
     }
+
+    mascot_area
 }
 
 pub(super) fn composer_height(app: &TuiApp, input_width: usize) -> u16 {
@@ -102,6 +118,36 @@ pub(super) fn composer_height(app: &TuiApp, input_width: usize) -> u16 {
     INPUT_TOP_PADDING_ROWS + visible_lines.max(3) + 1
 }
 
+pub(super) fn composer_hint_height(app: &TuiApp) -> u16 {
+    if show_paste_image_hint(app) { 2 } else { 0 }
+}
+
+pub(super) fn render_input_hint(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
+    if area.height == 0 || !show_paste_image_hint(app) {
+        return;
+    }
+
+    let hint_area = Rect::new(
+        area.x,
+        area.y + area.height.saturating_sub(1),
+        area.width,
+        1,
+    );
+    frame.render_widget(
+        Paragraph::new(Line::from(vec![Span::styled(
+            "ctrl+v paste image",
+            Style::default().fg(ghost()).add_modifier(Modifier::ITALIC),
+        )]))
+        .alignment(Alignment::Right)
+        .style(Style::default().bg(bg())),
+        hint_area,
+    );
+}
+
+fn show_paste_image_hint(app: &TuiApp) -> bool {
+    app.input.is_empty() && app.pending_images.is_empty()
+}
+
 pub(crate) fn composer_panel_bg(_app: &TuiApp) -> ratatui::style::Color {
     interactive_bg()
 }
@@ -110,43 +156,21 @@ fn visible_input_lines(
     lines: Vec<Line<'static>>,
     height: usize,
     cursor_line: usize,
-) -> Vec<Line<'static>> {
+) -> (Vec<Line<'static>>, usize) {
     let height = height.max(1);
     let mut start = cursor_line.saturating_add(1).saturating_sub(height);
     if start + height > lines.len() {
         start = lines.len().saturating_sub(height);
     }
-    lines.into_iter().skip(start).take(height).collect()
+    (lines.into_iter().skip(start).take(height).collect(), start)
 }
 
-fn input_lines(app: &TuiApp, width: usize) -> (Vec<Line<'static>>, usize) {
+fn input_lines(app: &TuiApp, width: usize) -> (Vec<Line<'static>>, usize, usize) {
     let width = width.max(1);
     let text_style = Style::default().fg(text());
 
     if app.input.is_empty() {
-        let mut current = vec![cursor_span(" ")];
-        let placeholder = if app.is_loading {
-            let glitches = [
-                "processing...",
-                "pr0cessing...",
-                "processing...",
-                "proce55ing...",
-                "processing...",
-                "pr0c3ss1ng...",
-                "p#ocessing...",
-                "processing...",
-                "process!ng...",
-                "pr0cessin9...",
-                "processing...",
-                "p-r-o-c-e-s-s-i-n-g...",
-            ];
-            let frame = (app.tick() / 4) as usize % glitches.len();
-            format!(" {}", glitches[frame])
-        } else {
-            "Describe the task...".to_string()
-        };
-        current.push(Span::styled(placeholder, Style::default().fg(muted())));
-        return (vec![Line::from(current)], 0);
+        return (vec![Line::from("")], 0, 0);
     }
 
     let cursor = app.input_cursor.min(app.input.len());
@@ -154,38 +178,26 @@ fn input_lines(app: &TuiApp, width: usize) -> (Vec<Line<'static>>, usize) {
     let selected = selected_input_range(app);
     let ranges = input_visual_line_ranges(&app.input, width);
     let mut cursor_line = ranges.len().saturating_sub(1);
+    let mut cursor_column = 0;
     let mut lines = Vec::new();
 
     for (line_index, (start, end)) in ranges.iter().copied().enumerate() {
         if cursor >= start && cursor <= end {
             cursor_line = line_index;
+            cursor_column = app.input[start..cursor].chars().count();
         }
         let mut spans = Vec::new();
-        let mut cursor_drawn = false;
         for (offset, ch) in app.input[start..end].char_indices() {
             let byte = start + offset;
-            if cursor == byte {
-                let cursor_text = if ch == '\t' {
-                    " ".to_string()
-                } else {
-                    ch.to_string()
-                };
-                spans.push(cursor_span(cursor_text));
-                cursor_drawn = true;
-                continue;
-            }
             let mut style = text_style;
             if selected.is_some_and(|(sel_start, sel_end)| byte >= sel_start && byte < sel_end) {
                 style = style.fg(selection_fg()).bg(selection_bg());
             }
             spans.push(Span::styled(ch.to_string(), style));
         }
-        if !cursor_drawn && cursor == end {
-            spans.push(cursor_span(" "));
-        }
         lines.push(Line::from(spans));
     }
-    (lines, cursor_line)
+    (lines, cursor_line, cursor_column)
 }
 
 fn composer_footer_line(app: &TuiApp, _width: usize) -> Line<'static> {
@@ -209,12 +221,6 @@ fn composer_footer_line(app: &TuiApp, _width: usize) -> Line<'static> {
         spans.push(Span::styled(
             format!("{} image{}", count, if count > 1 { "s" } else { "" }),
             Style::default().fg(signal()).add_modifier(Modifier::BOLD),
-        ));
-        spans.push(Span::styled(" · ", Style::default().fg(ghost())));
-    } else if app.input.is_empty() {
-        spans.push(Span::styled(
-            "ctrl+v paste image",
-            Style::default().fg(ghost()).add_modifier(Modifier::ITALIC),
         ));
         spans.push(Span::styled(" · ", Style::default().fg(ghost())));
     }
@@ -279,14 +285,14 @@ mod tests {
         let mut app = crate::tests::test_app(&"a".repeat(30));
         app.input_cursor = app.input.len();
 
-        let (lines, cursor_line) = input_lines(&app, 12);
-        let visible = visible_input_lines(lines, 2, cursor_line);
+        let (lines, cursor_line, _) = input_lines(&app, 12);
+        let (visible, _) = visible_input_lines(lines, 2, cursor_line);
         let text = visible.iter().map(line_text).collect::<Vec<_>>().join("\n");
 
         assert_eq!(visible.len(), 2);
         assert!(cursor_line >= 2);
         assert!(text.contains("aaa"));
-        assert!(text.ends_with(' '));
+        assert!(text.ends_with('a'));
     }
 
     #[test]
@@ -294,14 +300,15 @@ mod tests {
         let mut app = crate::tests::test_app("abc\n");
         app.input_cursor = app.input.len();
 
-        let (lines, cursor_line) = input_lines(&app, 20);
-        let visible = visible_input_lines(lines, 2, cursor_line);
+        let (lines, cursor_line, cursor_column) = input_lines(&app, 20);
+        let (visible, _) = visible_input_lines(lines, 2, cursor_line);
         let text = visible.iter().map(line_text).collect::<Vec<_>>().join("\n");
 
         assert_eq!(visible.len(), 2);
         assert_eq!(cursor_line, 1);
+        assert_eq!(cursor_column, 0);
         assert!(text.contains("abc"));
-        assert!(text.lines().last().unwrap_or_default().starts_with(' '));
+        assert!(line_text(visible.last().unwrap()).is_empty());
     }
 
     #[test]

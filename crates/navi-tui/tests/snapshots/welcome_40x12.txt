@@ -6,6 +6,7 @@
    ████╗  ██║██╔══██╗██║   ██║██║
 
   ▌
-  ▌    Describe the task...
-  ▌   ctrl+v paste image · gpt-5.5
   ▌
+  ▌   gpt-5.5 OpenAI · adaptive · 0
+
+                     ctrl+v paste image

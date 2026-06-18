@@ -365,8 +365,9 @@ pub fn redact_snapshot_events(events: &[AgentEvent]) -> Vec<AgentEvent> {
 /// Redacts secrets from a single agent event's text fields.
 pub fn redact_agent_event(event: &AgentEvent) -> AgentEvent {
     match event {
-        AgentEvent::UserTaskSubmitted { text } => AgentEvent::UserTaskSubmitted {
+        AgentEvent::UserTaskSubmitted { text, content_parts } => AgentEvent::UserTaskSubmitted {
             text: redact_secrets(text),
+            content_parts: content_parts.clone(),
         },
         AgentEvent::ModelOutput { text, thinking } => AgentEvent::ModelOutput {
             text: redact_secrets(text),
@@ -827,6 +828,7 @@ mod tests {
         let events = vec![
             AgentEvent::UserTaskSubmitted {
                 text: "OPENAI_API_KEY=sk-proj-1234567890abcdef".to_string(),
+                content_parts: vec![],
             },
             AgentEvent::ModelOutput {
                 text: "ok".to_string(),

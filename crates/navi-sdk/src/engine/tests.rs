@@ -118,6 +118,7 @@ fn write_session_file(tempdir: &tempfile::TempDir, session_id: &str) {
 
         events: vec![AgentEvent::UserTaskSubmitted {
             text: "test task".to_string(),
+            content_parts: vec![],
         }],
 
         memory: None,

@@ -9,7 +9,7 @@ pub(crate) use layout::{
     modal_block, modal_list_highlight_style, modal_rect, model_row_simple, opaque_fill,
     truncate_display,
 };
-pub(crate) use text::{cursor_span, mask_key_segment, project_label};
+pub(crate) use text::{mask_key_segment, project_label};
 
 #[cfg(test)]
 mod tests {

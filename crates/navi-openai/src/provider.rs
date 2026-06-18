@@ -258,6 +258,27 @@ impl ModelProvider for OpenAiProvider {
     }
 
     async fn list_models(&self) -> Result<Vec<String>> {
+        // Some providers don't expose a standard /models endpoint.
+        // Return models from the registry config instead of hitting a non-existent API.
+        if self.provider_identity.is_opencode_family()
+            || self.provider_identity.as_str() == navi_core::ProviderId::COMMANDCODE
+        {
+            let models: Vec<String> = self
+                .config
+                .models
+                .iter()
+                .map(|m| m.name.clone())
+                .collect();
+            if !models.is_empty() {
+                tracing::info!(
+                    provider = %self.provider_id,
+                    models = models.len(),
+                    "provider model list from registry (no remote endpoint)"
+                );
+                return Ok(models);
+            }
+        }
+
         let mut base_url = self.base_url.trim_end_matches('/').to_string();
         if base_url.ends_with("/anthropic") {
             base_url = base_url.replace("/anthropic", "/v1");

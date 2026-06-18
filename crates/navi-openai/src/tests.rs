@@ -720,8 +720,22 @@ fn sse_decoder_collects_data_frames() {
     let first = decoder.push_bytes(b"event: message\ndata: {\"a\":");
     let second = decoder.push_bytes(b"1}\n\ndata: [DONE]\n\n");
 
-    assert_eq!(first, vec!["event: message".to_string()]);
+    assert!(first.is_empty());
     assert_eq!(second, vec![r#"{"a":1}"#.to_string(), "[DONE]".to_string()]);
+}
+
+#[test]
+fn sse_decoder_drains_final_ndjson_line() {
+    let mut decoder = SseDecoder::default();
+
+    let events = decoder.push_bytes(br#"{"type":"text-delta","text":"hello"}"#);
+    let final_events = decoder.drain();
+
+    assert!(events.is_empty());
+    assert_eq!(
+        final_events,
+        vec![r#"{"type":"text-delta","text":"hello"}"#.to_string()]
+    );
 }
 
 #[test]

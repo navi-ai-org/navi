@@ -1,6 +1,7 @@
 pub(crate) mod effect;
 pub(crate) mod interaction;
 pub(crate) mod keymap;
+pub(crate) mod layer;
 pub(crate) mod layout;
 pub(crate) mod list;
 pub(crate) mod mcp;

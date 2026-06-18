@@ -1,4 +1,4 @@
-use navi_core::{ContentPart, ContextPacket, LoadedConfig, ModelMessage, ToolExecutor};
+use navi_core::{AgentEvent, ContentPart, ContextPacket, LoadedConfig, ModelMessage, ToolExecutor};
 use navi_plugin_host::LoadedPlugin;
 use serde::{Deserialize, Serialize};
 use std::error::Error;
@@ -24,6 +24,12 @@ pub struct NaviSessionRequest {
     pub active_skills: Vec<String>,
     #[serde(default)]
     pub initial_messages: Vec<ModelMessage>,
+    #[serde(default)]
+    pub initial_events: Vec<AgentEvent>,
+    #[serde(default)]
+    pub initial_created_at: Option<u64>,
+    #[serde(default)]
+    pub initial_updated_at: Option<u64>,
 }
 
 /// Summary returned after a session is started.

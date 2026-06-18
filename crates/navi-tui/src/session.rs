@@ -58,6 +58,7 @@ mod tests {
         let events = vec![
             AgentEvent::UserTaskSubmitted {
                 text: "make a dashboard".to_string(),
+                content_parts: vec![],
             },
             AgentEvent::ModelOutput {
                 text: "## Cyberpunk Analytics Dashboard\n\nImplemented.".to_string(),

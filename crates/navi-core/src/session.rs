@@ -3,6 +3,7 @@ use crate::security::{redact_memory, redact_snapshot_events};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::fs;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::task;
@@ -62,7 +63,7 @@ pub fn session_title_from_events(events: &[AgentEvent]) -> Option<String> {
         })
         .or_else(|| {
             events.iter().find_map(|event| match event {
-                AgentEvent::UserTaskSubmitted { text } => title_from_user_text(text),
+                AgentEvent::UserTaskSubmitted { text, .. } => title_from_user_text(text),
                 _ => None,
             })
         })
@@ -201,9 +202,55 @@ pub struct SessionSnapshot {
     pub memory: Option<ProjectMemory>,
 }
 
+/// Lightweight metadata for listing saved sessions without loading event history.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionSnapshotInfo {
+    /// Unique session identifier.
+    pub id: SessionId,
+    /// Short human-readable title, derived when the snapshot was saved.
+    #[serde(default)]
+    pub title: Option<String>,
+    /// Project directory this session belongs to.
+    pub project: PathBuf,
+    /// Unix timestamp (seconds) when the session was created.
+    #[serde(default)]
+    pub created_at: u64,
+    /// Unix timestamp (seconds) when the session was last updated.
+    #[serde(default)]
+    pub updated_at: u64,
+}
+
 impl SessionSnapshot {
     /// Current snapshot schema version.
     pub const CURRENT_VERSION: u32 = 1;
+}
+
+fn read_session_info(path: &Path) -> Result<SessionSnapshotInfo> {
+    const METADATA_READ_LIMIT: usize = 64 * 1024;
+
+    let mut file = fs::File::open(path)
+        .with_context(|| format!("failed to open {}", path.display()))?;
+    let mut buffer = vec![0; METADATA_READ_LIMIT];
+    let bytes_read = file
+        .read(&mut buffer)
+        .with_context(|| format!("failed to read {}", path.display()))?;
+    buffer.truncate(bytes_read);
+
+    let prefix = std::str::from_utf8(&buffer)
+        .with_context(|| format!("failed to decode metadata prefix from {}", path.display()))?;
+
+    if let Some(events_index) = prefix.find("\"events\"")
+        && let Some(comma_index) = prefix[..events_index].rfind(',')
+    {
+        let metadata_json = format!("{}\n}}", &prefix[..comma_index]);
+        return serde_json::from_str::<SessionSnapshotInfo>(&metadata_json)
+            .with_context(|| format!("failed to parse metadata from {}", path.display()));
+    }
+
+    let content = fs::read_to_string(path)
+        .with_context(|| format!("failed to read {}", path.display()))?;
+    serde_json::from_str::<SessionSnapshotInfo>(&content)
+        .with_context(|| format!("failed to parse metadata from {}", path.display()))
 }
 
 impl SessionStore {
@@ -296,11 +343,40 @@ impl SessionStore {
         sessions
     }
 
+    /// Loads only session metadata from disk, sorted by most recently updated first.
+    pub fn list_info(&self) -> Vec<SessionSnapshotInfo> {
+        let mut sessions = Vec::new();
+        if let Ok(entries) = fs::read_dir(&self.root) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.extension().and_then(|e| e.to_str()) == Some("json")
+                    && let Ok(info) = read_session_info(&path)
+                {
+                    sessions.push(info);
+                }
+            }
+        }
+        sessions.sort_by(|a, b| {
+            b.updated_at
+                .cmp(&a.updated_at)
+                .then_with(|| b.id.as_str().cmp(a.id.as_str()))
+        });
+        sessions
+    }
+
     /// Async wrapper around [`Self::list`] that runs the blocking filesystem
     /// operations on the Tokio blocking thread pool.
     pub async fn list_async(&self) -> Vec<SessionSnapshot> {
         let store = self.clone();
         task::spawn_blocking(move || store.list())
+            .await
+            .unwrap_or_default()
+    }
+
+    /// Async wrapper around [`Self::list_info`] that avoids blocking the async runtime.
+    pub async fn list_info_async(&self) -> Vec<SessionSnapshotInfo> {
+        let store = self.clone();
+        task::spawn_blocking(move || store.list_info())
             .await
             .unwrap_or_default()
     }
@@ -596,6 +672,7 @@ mod tests {
             updated_at: 2,
             events: vec![AgentEvent::UserTaskSubmitted {
                 text: "OPENAI_API_KEY=sk-proj-1234567890abcdef".to_string(),
+                content_parts: vec![],
             }],
             memory: None,
         };
@@ -649,6 +726,7 @@ mod tests {
             updated_at: 2,
             events: vec![AgentEvent::UserTaskSubmitted {
                 text: "OPENAI_API_KEY=sk-proj-1234567890abcdef".to_string(),
+                content_parts: vec![],
             }],
             memory: None,
         };
@@ -910,6 +988,7 @@ mod tests {
             events: vec![
                 AgentEvent::UserTaskSubmitted {
                     text: "hello".to_string(),
+                    content_parts: vec![],
                 },
                 AgentEvent::ModelOutput {
                     text: "response".to_string(),
@@ -929,6 +1008,7 @@ mod tests {
         let events = vec![
             AgentEvent::UserTaskSubmitted {
                 text: "do something".to_string(),
+                content_parts: vec![],
             },
             AgentEvent::ModelOutput {
                 text: "# My Analysis\n\nSome content here".to_string(),
@@ -943,6 +1023,7 @@ mod tests {
     fn session_title_from_events_falls_back_to_user_text() {
         let events = vec![AgentEvent::UserTaskSubmitted {
             text: "Fix the bug".to_string(),
+            content_parts: vec![],
         }];
         let title = session_title_from_events(&events);
         assert_eq!(title.as_deref(), Some("Fix the bug"));
@@ -980,6 +1061,7 @@ mod tests {
             events: vec![
                 AgentEvent::UserTaskSubmitted {
                     text: "task".to_string(),
+                    content_parts: vec![],
                 },
                 AgentEvent::ToolRequested(ToolInvocation {
                     id: "c1".to_string(),

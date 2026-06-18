@@ -198,6 +198,9 @@ pub enum AgentEvent {
     UserTaskSubmitted {
         /// The user's input text.
         text: String,
+        /// Optional multimodal content parts (images + text).
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        content_parts: Vec<crate::model::ContentPart>,
     },
     /// A complete model output with optional thinking/reasoning content.
     ModelOutput {

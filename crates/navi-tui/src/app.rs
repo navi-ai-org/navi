@@ -92,6 +92,11 @@ pub struct TuiApp {
     /// Image protocol picker for terminal rendering.
     pub(crate) image_picker: Option<Picker>,
 
+    // mascot animation
+    pub(crate) mascot_frames: Option<crate::view::mascot::MascotFrames>,
+    pub(crate) mascot_frame_index: usize,
+    pub(crate) mascot_tick_counter: u64,
+
     // persistence
     pub(crate) session_store: SessionStore,
     pub(crate) events: Vec<AgentEvent>,
@@ -204,6 +209,25 @@ impl TuiApp {
         let thinking_level = ThinkingLevel::from_config(&loaded_config.config.tui.thinking_level);
         let git_branch = detect_git_branch(&project_dir);
 
+        let terminal_picker = if std::env::var("NAVI_SMOKE_TEST").is_ok() {
+            tracing::debug!("NAVI_SMOKE_TEST set, skipping terminal image support detection");
+            None
+        } else {
+            match Picker::from_query_stdio() {
+                Ok(picker) => {
+                    tracing::info!("terminal image protocol detected — mascot supported");
+                    Some(picker)
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, "no terminal image protocol detected — mascot disabled");
+                    None
+                }
+            }
+        };
+        let mascot_frames = terminal_picker
+            .as_ref()
+            .and_then(crate::view::mascot::MascotFrames::load);
+
         let mut app = Self {
             loaded_config,
             input: String::new(),
@@ -250,13 +274,12 @@ impl TuiApp {
             compact_state: CompactState::new(context_window),
             pending_images: Vec::new(),
             #[cfg(not(test))]
-            image_picker: if std::env::var("NAVI_SMOKE_TEST").is_ok() {
-                None
-            } else {
-                Picker::from_query_stdio().ok()
-            },
+            image_picker: terminal_picker,
             #[cfg(test)]
             image_picker: None,
+            mascot_frames,
+            mascot_frame_index: 0,
+            mascot_tick_counter: 0,
             session_store,
             events: Vec::new(),
             session_id,
@@ -340,6 +363,7 @@ impl TuiApp {
 
     pub(crate) fn advance_tick(&mut self) {
         self.tick = self.tick.wrapping_add(1);
+        crate::view::mascot::advance_mascot_animation(self);
     }
 
     pub(crate) fn tick(&self) -> u64 {

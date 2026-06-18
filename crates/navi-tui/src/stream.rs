@@ -29,6 +29,7 @@ pub(crate) fn start_streaming_request(app: &mut TuiApp) {
 
     app.is_loading = true;
     app.loading_start = Some(Instant::now());
+    crate::view::mascot::reset_mascot_animation(app);
     tracing::info!(
         provider = %app.loaded_config.config.model.provider,
         model = %app.loaded_config.config.model.name,
@@ -97,6 +98,7 @@ async fn run_sdk_turn(
             context_packets: Vec::new(),
             active_skills,
             initial_messages,
+            ..NaviSessionRequest::default()
         })
         .await
         .map_err(|err| format!("{err:#}"))?;

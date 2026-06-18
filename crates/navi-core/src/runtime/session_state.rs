@@ -16,6 +16,9 @@ pub struct SessionState {
     runtime: Option<SessionRuntime>,
     event_rx: Option<mpsc::UnboundedReceiver<AgentEvent>>,
     events: Vec<AgentEvent>,
+    initial_events: Vec<AgentEvent>,
+    initial_created_at: Option<u64>,
+    initial_updated_at: Option<u64>,
 }
 
 impl SessionState {
@@ -32,20 +35,42 @@ impl SessionState {
             runtime: None,
             event_rx: None,
             events: Vec::new(),
+            initial_events: Vec::new(),
+            initial_created_at: None,
+            initial_updated_at: None,
+        }
+    }
+
+    pub fn new_with_history(
+        requested_id: Option<SessionId>,
+        events: Vec<AgentEvent>,
+        created_at: Option<u64>,
+        updated_at: Option<u64>,
+    ) -> Self {
+        Self {
+            initial_events: events,
+            initial_created_at: created_at,
+            initial_updated_at: updated_at,
+            ..Self::new(requested_id)
         }
     }
 
     pub fn start(&mut self) {
+        let now = current_unix_timestamp();
+        let initial_events = std::mem::take(&mut self.initial_events);
         self.id = self
             .requested_id
             .take()
             .unwrap_or_else(SessionStore::create_id);
-        self.created_at = current_unix_timestamp();
-        self.updated_at = self.created_at;
-        self.title = None;
-        self.turn_sequence = 0;
+        self.created_at = self.initial_created_at.take().unwrap_or(now);
+        self.updated_at = self.initial_updated_at.take().unwrap_or(self.created_at);
+        self.title = session_title_from_events(&initial_events);
+        self.turn_sequence = initial_events
+            .iter()
+            .filter(|event| matches!(event, AgentEvent::UserTaskSubmitted { .. }))
+            .count() as u64;
         self.started = true;
-        self.events.clear();
+        self.events = initial_events;
         self.runtime = None;
         self.event_rx = None;
     }
