@@ -40,10 +40,97 @@ pub fn try_read_clipboard_image(picker: Option<&Picker>) -> Option<PendingImage>
     None
 }
 
+/// Attempts to parse the given string as a file path and load it if it is an image.
+/// This enables "drag and drop" functionality because terminal emulators paste
+/// the dropped file's path.
+pub fn try_read_image_from_path(picker: Option<&Picker>, text: &str) -> Option<PendingImage> {
+    let raw = text.trim();
+    // Strip quotes often added by terminals when dropping files
+    let unquoted = raw.strip_prefix('\'').and_then(|s| s.strip_suffix('\''))
+        .or_else(|| raw.strip_prefix('"').and_then(|s| s.strip_suffix('"')))
+        .unwrap_or(raw);
+    
+    // Strip file:// scheme if present
+    let path_str = unquoted.strip_prefix("file://").unwrap_or(unquoted);
+    
+    let path = std::path::Path::new(path_str);
+    if !path.is_file() {
+        return None;
+    }
+
+    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
+    let media_type = match ext.as_str() {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "webp" => "image/webp",
+        "gif" => "image/gif",
+        "svg" => "image/svg+xml",
+        _ => return None, // Not a supported image format
+    };
+
+    let bytes = std::fs::read(path).ok()?;
+    if bytes.len() > MAX_IMAGE_BYTES {
+        tracing::warn!(
+            bytes = bytes.len(),
+            limit = MAX_IMAGE_BYTES,
+            "dropped image exceeds size limit"
+        );
+        return None;
+    }
+
+    let data = BASE64.encode(&bytes);
+    
+    // For vector images we don't try to generate a thumbnail protocol
+    let protocol = if media_type == "image/svg+xml" {
+        None
+    } else {
+        // Only try to thumbnail it if we can
+        try_create_protocol(picker, &bytes)
+    };
+
+    tracing::info!(
+        path = %path.display(),
+        size = bytes.len(),
+        "loaded image from path"
+    );
+
+    Some(PendingImage {
+        media_type: media_type.to_string(),
+        data,
+        width: None,
+        height: None,
+        protocol,
+    })
+}
+
 /// Try to create a terminal Protocol from PNG bytes using the picker.
-fn try_create_protocol(picker: Option<&Picker>, png_bytes: &[u8]) -> Option<ratatui_image::protocol::StatefulProtocol> {
+fn try_create_protocol(
+    picker: Option<&Picker>,
+    png_bytes: &[u8],
+) -> Option<ratatui_image::protocol::StatefulProtocol> {
     let picker = picker?;
-    let dyn_img = image::load_from_memory(png_bytes).ok()?;
+    let mut dyn_img = image::load_from_memory(png_bytes).ok()?;
+
+    // Center crop to target aspect ratio (26 cols / 10 rows => 2.6 chars aspect ratio).
+    // Given character font cell aspect ratio of ~1:2 (width:height),
+    // target physical aspect ratio = 26.0 / (10.0 * 2.0) = 1.3
+    let target_ratio = 1.3_f64;
+    let orig_width = dyn_img.width() as f64;
+    let orig_height = dyn_img.height() as f64;
+    let orig_ratio = orig_width / orig_height;
+
+    if orig_ratio > target_ratio {
+        // Wider than target ratio: crop horizontally centered
+        let new_width = orig_height * target_ratio;
+        let x = ((orig_width - new_width) / 2.0).round() as u32;
+        dyn_img = dyn_img.crop_imm(x, 0, new_width.round() as u32, orig_height as u32);
+    } else if orig_ratio < target_ratio {
+        // Taller than target ratio: crop vertically centered
+        let new_height = orig_width / target_ratio;
+        let y = ((orig_height - new_height) / 2.0).round() as u32;
+        dyn_img = dyn_img.crop_imm(0, y, orig_width as u32, new_height.round() as u32);
+    }
+
     Some(picker.new_resize_protocol(dyn_img))
 }
 
@@ -92,7 +179,6 @@ fn try_arboard_image(picker: Option<&Picker>) -> Option<PendingImage> {
                 width: Some(width),
                 height: Some(height),
                 protocol,
-                
             })
         }
         None => {
@@ -109,7 +195,6 @@ fn try_arboard_image(picker: Option<&Picker>) -> Option<PendingImage> {
                 width: Some(width),
                 height: Some(height),
                 protocol: None,
-                
             })
         }
     }
@@ -117,6 +202,30 @@ fn try_arboard_image(picker: Option<&Picker>) -> Option<PendingImage> {
 
 /// Fallback clipboard image reader using wl-paste (Wayland) or xclip (X11).
 fn try_wl_paste_image(picker: Option<&Picker>) -> Option<PendingImage> {
+    // Try SVG first
+    if let Ok(output) = std::process::Command::new("wl-paste")
+        .args(["--type", "image/svg+xml", "--no-newline"])
+        .output()
+    {
+        if output.status.success() && !output.stdout.is_empty() {
+            let svg_bytes = output.stdout;
+            if svg_bytes.len() <= MAX_IMAGE_BYTES {
+                let data = BASE64.encode(&svg_bytes);
+                tracing::info!(
+                    svg_size = svg_bytes.len(),
+                    "clipboard image captured as SVG via wl-paste"
+                );
+                return Some(PendingImage {
+                    media_type: "image/svg+xml".to_string(),
+                    data,
+                    width: None,
+                    height: None,
+                    protocol: None, // No SVG rendering in terminal
+                });
+            }
+        }
+    }
+
     let output = std::process::Command::new("wl-paste")
         .args(["--type", "image/png", "--no-newline"])
         .output()
@@ -148,11 +257,34 @@ fn try_wl_paste_image(picker: Option<&Picker>) -> Option<PendingImage> {
         width: None,
         height: None,
         protocol,
-        
     })
 }
 
 fn try_xclip_image(picker: Option<&Picker>) -> Option<PendingImage> {
+    // Try SVG first
+    if let Ok(output) = std::process::Command::new("xclip")
+        .args(["-selection", "clipboard", "-target", "image/svg+xml", "-out"])
+        .output()
+    {
+        if output.status.success() && !output.stdout.is_empty() {
+            let svg_bytes = output.stdout;
+            if svg_bytes.len() <= MAX_IMAGE_BYTES {
+                let data = BASE64.encode(&svg_bytes);
+                tracing::info!(
+                    svg_size = svg_bytes.len(),
+                    "clipboard image captured as SVG via xclip"
+                );
+                return Some(PendingImage {
+                    media_type: "image/svg+xml".to_string(),
+                    data,
+                    width: None,
+                    height: None,
+                    protocol: None, // No SVG rendering in terminal
+                });
+            }
+        }
+    }
+
     let output = std::process::Command::new("xclip")
         .args(["-selection", "clipboard", "-target", "image/png", "-out"])
         .output()
@@ -184,7 +316,6 @@ fn try_xclip_image(picker: Option<&Picker>) -> Option<PendingImage> {
         width: None,
         height: None,
         protocol,
-        
     })
 }
 

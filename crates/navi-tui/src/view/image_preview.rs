@@ -9,9 +9,9 @@ use crate::ui::interaction::HitAction;
 use crate::view::input::composer_panel_bg;
 
 /// Height of the image preview area in rows (including borders).
-const IMAGE_PREVIEW_HEIGHT: u16 = 6;
+pub(crate) const IMAGE_PREVIEW_HEIGHT: u16 = 12;
 /// Width of each image thumbnail in characters.
-const THUMBNAIL_WIDTH: u16 = 14;
+const THUMBNAIL_WIDTH: u16 = 28;
 
 /// Render image previews above the input area.
 /// Returns the area consumed by the preview, so the input can be placed below.
@@ -79,7 +79,7 @@ fn render_image_strip(frame: &mut Frame<'_>, app: &mut TuiApp, area: Rect) {
 /// Render image thumbnails as a horizontal row.
 fn render_thumbnail_row(frame: &mut Frame<'_>, app: &mut TuiApp, area: Rect) {
     let thumb_width = THUMBNAIL_WIDTH.min(area.width);
-    let thumb_height = area.height.min(6);
+    let thumb_height = area.height.min(IMAGE_PREVIEW_HEIGHT);
 
     let num_images = app.pending_images.len();
     for i in 0..num_images {
@@ -127,7 +127,6 @@ fn render_thumbnail_row(frame: &mut Frame<'_>, app: &mut TuiApp, area: Rect) {
             HitAction::RemoveImage(i),
         );
 
-
         // Render thumbnail if protocol is available
         if let Some(ref mut protocol) = app.pending_images[i].protocol {
             let image_widget = ratatui_image::StatefulImage::new();
@@ -152,7 +151,7 @@ fn render_compact_labels(frame: &mut Frame<'_>, app: &mut TuiApp, area: Rect) {
         .flat_map(|(i, img)| {
             let text_label = format!(" {} ", img.label());
             let close_label = "Ⓧ ";
-            
+
             let text_width = text_label.chars().count() as u16;
             let close_width = close_label.chars().count() as u16;
 
@@ -186,4 +185,3 @@ fn render_compact_labels(frame: &mut Frame<'_>, app: &mut TuiApp, area: Rect) {
     let line = Line::from(labels);
     frame.render_widget(Paragraph::new(line), area);
 }
-

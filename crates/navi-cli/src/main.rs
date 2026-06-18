@@ -284,6 +284,7 @@ async fn run_headless(
             context_packets: Vec::new(),
             active_skills: Vec::new(),
             initial_messages: Vec::new(),
+            ..NaviSessionRequest::default()
         })
         .await?;
 

@@ -369,7 +369,7 @@ fn handle_agent_event(app: &mut TuiApp, event: AgentEvent) {
                 app.compact_state.consecutive_failures.saturating_add(1);
             app.events.push(AgentEvent::AutoCompactFailed { reason });
         }
-        AgentEvent::UserTaskSubmitted { text: _ } => {}
+        AgentEvent::UserTaskSubmitted { text: _, content_parts: _ } => {}
         AgentEvent::ModelOutput {
             text: _,
             thinking: _,
@@ -890,6 +890,7 @@ mod tests {
             &mut app,
             AsyncEvent::Agent(AgentEvent::UserTaskSubmitted {
                 text: "do something".to_string(),
+                content_parts: vec![],
             }),
         );
 

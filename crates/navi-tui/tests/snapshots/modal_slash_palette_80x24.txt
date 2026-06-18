@@ -15,9 +15,10 @@
     NA│ Plugins                                                        │ │
       │ MCP Servers                                                    │ │
       │ Background Commands                                 ctrl+b     │ │
-      │                                                                  │
+  ▌   │                                                                  │
   ▌   ╰──────────────────────────────────────────────────────────────────╯
-  ▌    Describe the task...
   ▌
-  ▌   ctrl+v paste image · gpt-5.5 OpenAI · adaptive · 0 / 200k (0%)
+  ▌   gpt-5.5 OpenAI · adaptive · 0 / 200k (0%)
   ▌
+
+                                                             ctrl+v paste image

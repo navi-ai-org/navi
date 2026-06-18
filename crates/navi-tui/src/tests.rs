@@ -351,6 +351,7 @@ fn revert_to_user_message_truncates_cacheable_prefix_without_rewriting_it() {
     app.events = vec![
         AgentEvent::UserTaskSubmitted {
             text: "first".to_string(),
+            content_parts: vec![],
         },
         AgentEvent::ModelOutput {
             text: "answer one".to_string(),
@@ -358,6 +359,7 @@ fn revert_to_user_message_truncates_cacheable_prefix_without_rewriting_it() {
         },
         AgentEvent::UserTaskSubmitted {
             text: "second".to_string(),
+            content_parts: vec![],
         },
         AgentEvent::ModelOutput {
             text: "answer two".to_string(),
@@ -394,6 +396,7 @@ fn fork_from_user_message_saves_original_and_keeps_prefix_in_new_session() {
     app.events = vec![
         AgentEvent::UserTaskSubmitted {
             text: "first".to_string(),
+            content_parts: vec![],
         },
         AgentEvent::ModelOutput {
             text: "answer one".to_string(),
@@ -401,6 +404,7 @@ fn fork_from_user_message_saves_original_and_keeps_prefix_in_new_session() {
         },
         AgentEvent::UserTaskSubmitted {
             text: "second".to_string(),
+            content_parts: vec![],
         },
     ];
 

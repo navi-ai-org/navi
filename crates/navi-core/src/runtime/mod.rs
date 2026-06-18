@@ -185,6 +185,12 @@ pub struct AgentRuntimeOptions {
     pub active_skills: Vec<String>,
     /// Seed messages for restoring a session.
     pub initial_messages: Vec<ModelMessage>,
+    /// Seed events for restoring a persisted session without losing history.
+    pub initial_events: Vec<AgentEvent>,
+    /// Original creation timestamp for restored sessions.
+    pub initial_created_at: Option<u64>,
+    /// Original update timestamp for restored sessions.
+    pub initial_updated_at: Option<u64>,
     /// Session id for restoring an existing session.
     pub session_id: Option<SessionId>,
     /// Optional channel for forwarding agent events outside the runtime.
@@ -258,7 +264,12 @@ impl AgentRuntime {
             pending_approvals: Arc::new(std::sync::Mutex::new(HashMap::new())),
             pending_questions: Arc::new(std::sync::Mutex::new(HashMap::new())),
             event_bus: EventBus::new(),
-            session: SessionState::new(options.session_id),
+            session: SessionState::new_with_history(
+                options.session_id,
+                options.initial_events,
+                options.initial_created_at,
+                options.initial_updated_at,
+            ),
         }
     }
 
@@ -467,7 +478,10 @@ impl AgentRuntime {
             model = %self.loaded_config.config.model.name,
             "agent task submitted"
         );
-        self.record_event(AgentEvent::UserTaskSubmitted { text: task.clone() });
+        self.record_event(AgentEvent::UserTaskSubmitted {
+            text: task.clone(),
+            content_parts: content_parts.clone(),
+        });
         self.event_bus.publish(RuntimeEventKind::TurnStarted {
             turn_id: turn_id.clone(),
         });
