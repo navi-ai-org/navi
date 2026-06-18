@@ -46,19 +46,25 @@ pub fn try_read_clipboard_image(picker: Option<&Picker>) -> Option<PendingImage>
 pub fn try_read_image_from_path(picker: Option<&Picker>, text: &str) -> Option<PendingImage> {
     let raw = text.trim();
     // Strip quotes often added by terminals when dropping files
-    let unquoted = raw.strip_prefix('\'').and_then(|s| s.strip_suffix('\''))
+    let unquoted = raw
+        .strip_prefix('\'')
+        .and_then(|s| s.strip_suffix('\''))
         .or_else(|| raw.strip_prefix('"').and_then(|s| s.strip_suffix('"')))
         .unwrap_or(raw);
-    
+
     // Strip file:// scheme if present
     let path_str = unquoted.strip_prefix("file://").unwrap_or(unquoted);
-    
+
     let path = std::path::Path::new(path_str);
     if !path.is_file() {
         return None;
     }
 
-    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_lowercase();
     let media_type = match ext.as_str() {
         "png" => "image/png",
         "jpg" | "jpeg" => "image/jpeg",
@@ -79,7 +85,7 @@ pub fn try_read_image_from_path(picker: Option<&Picker>, text: &str) -> Option<P
     }
 
     let data = BASE64.encode(&bytes);
-    
+
     // For vector images we don't try to generate a thumbnail protocol
     let protocol = if media_type == "image/svg+xml" {
         None
@@ -263,7 +269,13 @@ fn try_wl_paste_image(picker: Option<&Picker>) -> Option<PendingImage> {
 fn try_xclip_image(picker: Option<&Picker>) -> Option<PendingImage> {
     // Try SVG first
     if let Ok(output) = std::process::Command::new("xclip")
-        .args(["-selection", "clipboard", "-target", "image/svg+xml", "-out"])
+        .args([
+            "-selection",
+            "clipboard",
+            "-target",
+            "image/svg+xml",
+            "-out",
+        ])
         .output()
     {
         if output.status.success() && !output.stdout.is_empty() {

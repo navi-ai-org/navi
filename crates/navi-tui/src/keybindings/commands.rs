@@ -173,7 +173,10 @@ fn session_transcript(app: &TuiApp) -> String {
     let mut lines = Vec::new();
     for event in &app.events {
         match event {
-            AgentEvent::UserTaskSubmitted { text, content_parts: _ } => {
+            AgentEvent::UserTaskSubmitted {
+                text,
+                content_parts: _,
+            } => {
                 lines.push(format!("User:\n{}", text.trim_end()));
             }
             AgentEvent::ModelOutput { text, thinking: _ } => {

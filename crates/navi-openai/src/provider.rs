@@ -263,12 +263,7 @@ impl ModelProvider for OpenAiProvider {
         if self.provider_identity.is_opencode_family()
             || self.provider_identity.as_str() == navi_core::ProviderId::COMMANDCODE
         {
-            let models: Vec<String> = self
-                .config
-                .models
-                .iter()
-                .map(|m| m.name.clone())
-                .collect();
+            let models: Vec<String> = self.config.models.iter().map(|m| m.name.clone()).collect();
             if !models.is_empty() {
                 tracing::info!(
                     provider = %self.provider_id,

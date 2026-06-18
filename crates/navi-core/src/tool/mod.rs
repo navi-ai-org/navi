@@ -119,6 +119,15 @@ pub enum ToolCallInvalid {
         /// Description of the schema error.
         message: String,
     },
+    /// The model emitted tool arguments that were not valid JSON.
+    MalformedArguments {
+        /// The tool name with malformed arguments.
+        tool_name: String,
+        /// Bounded preview of the raw malformed arguments.
+        raw_arguments_preview: String,
+        /// A valid example input for reference.
+        example: Value,
+    },
     /// The input arguments fail schema validation.
     InvalidArguments {
         /// The tool name with invalid arguments.
@@ -219,6 +228,21 @@ impl ToolExecutor {
             return Err(ToolCallInvalid::InvalidSchema {
                 tool_name: invocation.tool_name.clone(),
                 message: error.clone(),
+            });
+        }
+        if let Some(raw_arguments) = invocation
+            .input
+            .get("raw_arguments")
+            .and_then(Value::as_str)
+        {
+            let example = self
+                .definition(&invocation.tool_name)
+                .map(|definition| example_from_schema(&definition.input_schema))
+                .unwrap_or_else(|| json!({}));
+            return Err(ToolCallInvalid::MalformedArguments {
+                tool_name: invocation.tool_name.clone(),
+                raw_arguments_preview: raw_arguments.chars().take(200).collect(),
+                example,
             });
         }
         let Some(validator) = self.validators.get(&invocation.tool_name) else {
@@ -447,14 +471,29 @@ fn tool_call_advice(invalid: ToolCallInvalid) -> Value {
             available_tools,
         } => json!({
             "error_code": "unknown_tool",
+            "error_kind": "unknown_tool",
             "tool": tool_name,
             "message": "Requested tool is not registered. Use one of the available tool names.",
-            "available_tools": available_tools,
+            "suggestions": suggest_tool_replacements(&tool_name, &available_tools),
+            "available_tools": available_tools.into_iter().take(20).collect::<Vec<_>>(),
         }),
         ToolCallInvalid::InvalidSchema { tool_name, message } => json!({
             "error_code": "invalid_schema",
+            "error_kind": "invalid_schema",
             "tool": tool_name,
             "message": format!("Tool schema is invalid: {message}"),
+        }),
+        ToolCallInvalid::MalformedArguments {
+            tool_name,
+            raw_arguments_preview,
+            example,
+        } => json!({
+            "error_code": "invalid_arguments",
+            "error_kind": "malformed_arguments",
+            "tool": tool_name,
+            "message": "Tool arguments were not valid JSON. Emit one complete JSON object matching the schema before calling the tool again.",
+            "raw_arguments_preview": raw_arguments_preview,
+            "example": example,
         }),
         ToolCallInvalid::InvalidArguments {
             tool_name,
@@ -462,6 +501,7 @@ fn tool_call_advice(invalid: ToolCallInvalid) -> Value {
             example,
         } => json!({
             "error_code": "invalid_arguments",
+            "error_kind": "invalid_arguments",
             "tool": tool_name,
             "message": "Tool arguments do not match the JSON schema. Fix the arguments and call the tool again.",
             "problems": problems,
@@ -478,6 +518,13 @@ fn tool_call_advice_message(invalid: &ToolCallInvalid) -> String {
         ToolCallInvalid::InvalidSchema { tool_name, message } => {
             format!("invalid input schema for tool `{tool_name}`: {message}")
         }
+        ToolCallInvalid::MalformedArguments {
+            tool_name,
+            raw_arguments_preview,
+            ..
+        } => {
+            format!("malformed JSON arguments for tool `{tool_name}`: {raw_arguments_preview}")
+        }
         ToolCallInvalid::InvalidArguments {
             tool_name,
             problems,
@@ -490,6 +537,23 @@ fn tool_call_advice_message(invalid: &ToolCallInvalid) -> String {
             )
         }
     }
+}
+
+fn suggest_tool_replacements(tool_name: &str, available_tools: &[String]) -> Vec<String> {
+    let candidates: &[&str] = match tool_name {
+        "glob" | "list_files" | "ls" | "find" => &["fs_browser", "grep"],
+        "read" | "cat" => &["read_file"],
+        "edit" | "patch" => &["apply_patch"],
+        "write" => &["write_file"],
+        "shell" | "run" | "terminal" => &["bash"],
+        "search" | "rg" => &["grep"],
+        _ => &[],
+    };
+    candidates
+        .iter()
+        .filter(|candidate| available_tools.iter().any(|tool| tool == **candidate))
+        .map(|candidate| (*candidate).to_string())
+        .collect()
 }
 
 /// Generates a minimal example JSON value from a JSON Schema by extracting

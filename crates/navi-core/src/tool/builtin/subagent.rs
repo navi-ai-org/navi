@@ -12,7 +12,6 @@ use crate::cancel::CancelToken;
 use crate::compact::CompactState;
 use crate::config::{HarnessConfig, NaviConfig};
 use crate::event::{AgentEvent, ApprovalDecision};
-use crate::harness::HarnessPolicy;
 use crate::model::{ModelMessage, ModelProvider, ModelRole};
 use crate::prompt::PromptCache;
 use crate::runtime::ApprovalResolver;
@@ -286,10 +285,8 @@ impl SubagentTool {
             config: self.config.clone(),
         };
 
-        let policy = HarnessPolicy {
-            profile: self.harness_config.profile,
-            observation_max_bytes: self.harness_config.observation_bytes_medium,
-        };
+        let policy =
+            crate::harness::policy_for_profile(&self.harness_config, self.harness_config.profile);
 
         let result = crate::turn::run_turn(&sub_ctx, &mut messages, policy).await;
         let elapsed = started.elapsed();
@@ -392,10 +389,8 @@ impl SubagentTool {
                 config: Arc::new(std::sync::RwLock::new(config_snapshot)),
             };
 
-            let policy = HarnessPolicy {
-                profile: harness_config.profile,
-                observation_max_bytes: harness_config.observation_bytes_medium,
-            };
+            let policy =
+                crate::harness::policy_for_profile(&harness_config, harness_config.profile);
 
             let result = crate::turn::run_turn(&sub_ctx, &mut messages, policy).await;
             let output = match result {

@@ -752,6 +752,15 @@ fn runtime_event_kind_from_agent_event(event: &AgentEvent) -> Option<RuntimeEven
             Some(RuntimeEventKind::QuestionResolved(response.clone()))
         }
         AgentEvent::HarnessTrace(value) => Some(RuntimeEventKind::HarnessTrace(value.clone())),
+        AgentEvent::HarnessStopped {
+            reason,
+            message,
+            tool_name,
+        } => Some(RuntimeEventKind::HarnessStopped {
+            reason: reason.clone(),
+            message: message.clone(),
+            tool_name: tool_name.clone(),
+        }),
         AgentEvent::PatchProposed(patch) => Some(RuntimeEventKind::PatchProposed(patch.clone())),
         AgentEvent::MicroCompactApplied { messages_cleared } => {
             Some(RuntimeEventKind::MicroCompactApplied {

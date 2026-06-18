@@ -365,7 +365,10 @@ pub fn redact_snapshot_events(events: &[AgentEvent]) -> Vec<AgentEvent> {
 /// Redacts secrets from a single agent event's text fields.
 pub fn redact_agent_event(event: &AgentEvent) -> AgentEvent {
     match event {
-        AgentEvent::UserTaskSubmitted { text, content_parts } => AgentEvent::UserTaskSubmitted {
+        AgentEvent::UserTaskSubmitted {
+            text,
+            content_parts,
+        } => AgentEvent::UserTaskSubmitted {
             text: redact_secrets(text),
             content_parts: content_parts.clone(),
         },
@@ -387,6 +390,15 @@ pub fn redact_agent_event(event: &AgentEvent) -> AgentEvent {
         }
         AgentEvent::ToolCompleted(result) => AgentEvent::ToolCompleted(redact_tool_result(result)),
         AgentEvent::HarnessTrace(value) => AgentEvent::HarnessTrace(redact_json_value(value)),
+        AgentEvent::HarnessStopped {
+            reason,
+            message,
+            tool_name,
+        } => AgentEvent::HarnessStopped {
+            reason: reason.clone(),
+            message: redact_secrets(message),
+            tool_name: tool_name.clone(),
+        },
         AgentEvent::PatchProposed(patch) => AgentEvent::PatchProposed(redact_patch_proposal(patch)),
         AgentEvent::ApprovalRequested(request) => {
             AgentEvent::ApprovalRequested(redact_approval_request(request))

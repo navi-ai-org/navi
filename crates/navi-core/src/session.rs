@@ -228,8 +228,8 @@ impl SessionSnapshot {
 fn read_session_info(path: &Path) -> Result<SessionSnapshotInfo> {
     const METADATA_READ_LIMIT: usize = 64 * 1024;
 
-    let mut file = fs::File::open(path)
-        .with_context(|| format!("failed to open {}", path.display()))?;
+    let mut file =
+        fs::File::open(path).with_context(|| format!("failed to open {}", path.display()))?;
     let mut buffer = vec![0; METADATA_READ_LIMIT];
     let bytes_read = file
         .read(&mut buffer)
@@ -247,8 +247,8 @@ fn read_session_info(path: &Path) -> Result<SessionSnapshotInfo> {
             .with_context(|| format!("failed to parse metadata from {}", path.display()));
     }
 
-    let content = fs::read_to_string(path)
-        .with_context(|| format!("failed to read {}", path.display()))?;
+    let content =
+        fs::read_to_string(path).with_context(|| format!("failed to read {}", path.display()))?;
     serde_json::from_str::<SessionSnapshotInfo>(&content)
         .with_context(|| format!("failed to parse metadata from {}", path.display()))
 }
@@ -786,10 +786,13 @@ mod tests {
             )),
         });
 
-        let policy = crate::harness::HarnessPolicy {
-            profile: crate::config::HarnessProfile::Small,
-            observation_max_bytes: 1000,
-        };
+        let policy = crate::harness::policy_for_profile(
+            &crate::config::HarnessConfig {
+                observation_bytes_small: 1000,
+                ..crate::config::HarnessConfig::default()
+            },
+            crate::config::HarnessProfile::Small,
+        );
 
         let runtime = SessionRuntime::spawn(ctx, policy, Vec::new(), None);
 
