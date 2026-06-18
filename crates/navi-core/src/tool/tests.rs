@@ -720,6 +720,50 @@ async fn invalid_tool_arguments_return_structured_error() {
 }
 
 #[tokio::test]
+async fn malformed_raw_arguments_return_structured_error() {
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let executor = executor(tempdir.path());
+
+    let result = executor
+        .invoke(ToolInvocation {
+            id: "bad-json".to_string(),
+            tool_name: "read_file".to_string(),
+            input: json!({ "raw_arguments": "{\"path\": " }),
+        })
+        .await;
+
+    assert!(!result.ok);
+    assert_eq!(result.output["error_code"], "invalid_arguments");
+    assert_eq!(result.output["error_kind"], "malformed_arguments");
+    assert_eq!(result.output["tool"], "read_file");
+    assert_eq!(result.output["example"], json!({ "path": "example" }));
+}
+
+#[tokio::test]
+async fn unknown_tool_returns_bounded_suggestions() {
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let executor = executor(tempdir.path());
+
+    let result = executor
+        .invoke(ToolInvocation {
+            id: "glob".to_string(),
+            tool_name: "glob".to_string(),
+            input: json!({ "pattern": "*.rs" }),
+        })
+        .await;
+
+    assert!(!result.ok);
+    assert_eq!(result.output["error_code"], "unknown_tool");
+    assert_eq!(result.output["error_kind"], "unknown_tool");
+    assert!(
+        result.output["suggestions"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("fs_browser"))
+    );
+}
+
+#[tokio::test]
 async fn read_file_missing_path_returns_structured_error() {
     let tempdir = tempfile::tempdir().expect("tempdir");
     let executor = executor(tempdir.path());

@@ -178,10 +178,16 @@ fn handle_paste(app: &mut TuiApp, content: &str) {
     match app.mode {
         Mode::Normal => {
             if !app.is_loading {
-                if let Some(image) = crate::clipboard::try_read_image_from_path(app.image_picker.as_ref(), content) {
+                if let Some(image) =
+                    crate::clipboard::try_read_image_from_path(app.image_picker.as_ref(), content)
+                {
                     let label = image.label();
                     app.pending_images.push(image);
-                    show_notification(app, "Image", format!("{} attached via drag and drop", label));
+                    show_notification(
+                        app,
+                        "Image",
+                        format!("{} attached via drag and drop", label),
+                    );
                     return;
                 }
 

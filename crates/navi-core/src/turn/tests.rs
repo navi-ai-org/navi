@@ -67,6 +67,30 @@ impl ModelProvider for MockProvider {
     }
 }
 
+struct MalformedToolProvider {
+    calls: Mutex<usize>,
+}
+
+#[async_trait]
+impl ModelProvider for MalformedToolProvider {
+    fn stream(&self, _request: ModelRequest) -> ModelStream {
+        let mut calls = self.calls.lock().unwrap();
+        *calls += 1;
+        Box::pin(stream::iter(vec![
+            Ok(ModelStreamEvent::ToolCall(ToolInvocation {
+                id: format!("call-{}", *calls),
+                tool_name: "read_file".to_string(),
+                input: json!({ "raw_arguments": "{\"path\": " }),
+            })),
+            Ok(ModelStreamEvent::Done),
+        ]))
+    }
+
+    async fn complete(&self, request: ModelRequest) -> Result<ModelResponse> {
+        ModelProvider::complete(self, request).await
+    }
+}
+
 #[tokio::test]
 async fn test_turn_loop_with_parallel_tools() {
     let tempdir = tempfile::tempdir().unwrap();
@@ -100,10 +124,13 @@ async fn test_turn_loop_with_parallel_tools() {
     };
 
     let mut messages = vec![];
-    let policy = HarnessPolicy {
-        profile: crate::config::HarnessProfile::Small,
-        observation_max_bytes: 1000,
-    };
+    let policy = crate::harness::policy_for_profile(
+        &crate::config::HarnessConfig {
+            observation_bytes_small: 1000,
+            ..crate::config::HarnessConfig::default()
+        },
+        crate::config::HarnessProfile::Small,
+    );
 
     let result = run_turn(&ctx, &mut messages, policy).await.unwrap();
     assert_eq!(result, "done");
@@ -112,6 +139,52 @@ async fn test_turn_loop_with_parallel_tools() {
         .filter(|m| m.role == ModelRole::Tool)
         .collect();
     assert_eq!(tool_results.len(), 2);
+}
+
+#[tokio::test]
+async fn malformed_tool_arguments_stop_the_turn() {
+    let tempdir = tempfile::tempdir().unwrap();
+    let security_policy = SecurityPolicy::new(
+        tempdir.path().to_path_buf(),
+        tempdir.path().to_path_buf(),
+        SecurityConfig::default(),
+    )
+    .unwrap();
+    let executor = ToolExecutor::new(security_policy);
+    let provider = Arc::new(MalformedToolProvider {
+        calls: Mutex::new(0),
+    });
+
+    let ctx = TurnContext {
+        model_provider: Arc::new(std::sync::RwLock::new(provider.clone())),
+        tool_executor: Arc::new(executor),
+        project_dir: tempdir.path().to_path_buf(),
+        model_name: Arc::new(std::sync::RwLock::new("gpt-4".to_string())),
+        event_tx: None,
+        approval_resolver: crate::runtime::ApprovalResolver::new_for_test(),
+        question_resolver: crate::runtime::QuestionResolver::new_for_test(),
+        compact_state: Arc::new(tokio::sync::Mutex::new(CompactState::new(128_000))),
+        harness_config: crate::config::HarnessConfig::default(),
+        include_tool_prompt_manifest: false,
+        context_packets: Arc::new(std::sync::Mutex::new(Vec::new())),
+        active_skills: Arc::new(std::sync::Mutex::new(Vec::new())),
+        prompt_cache: Arc::new(crate::prompt::PromptCache::new()),
+        cancel_token: CancelToken::new(),
+        config: Arc::new(std::sync::RwLock::new(crate::config::NaviConfig::default())),
+    };
+    let policy = crate::harness::policy_for_profile(
+        &crate::config::HarnessConfig {
+            max_consecutive_malformed_arguments: 2,
+            ..crate::config::HarnessConfig::default()
+        },
+        crate::config::HarnessProfile::Small,
+    );
+    let mut messages = vec![];
+
+    let result = run_turn(&ctx, &mut messages, policy).await.unwrap();
+
+    assert!(result.contains("consecutive_malformed_arguments"));
+    assert_eq!(*provider.calls.lock().unwrap(), 2);
 }
 
 #[test]
