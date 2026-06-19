@@ -342,14 +342,17 @@ fn apply_default_request_options(providers: &mut [ProviderConfig]) {
             provider.request_options = Some(defaults);
         }
         if provider.tool_calling_mode.is_none() && id == "commandcode" {
-            provider.tool_calling_mode = Some(ToolCallingMode::Disabled);
+            provider.tool_calling_mode = Some(ToolCallingMode::Native);
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::config::types::{ModelTaskSize, NaviConfig, ProviderConfig, ProviderModelConfig};
+    use super::{effective_tool_calling_mode, effective_tool_prompt_manifest};
+    use crate::config::types::{
+        ModelTaskSize, NaviConfig, ProviderConfig, ProviderModelConfig, ToolCallingMode,
+    };
 
     #[test]
     fn update_provider_models_prefers_registry_metadata_over_stale_override() {
@@ -376,5 +379,17 @@ mod tests {
             .find(|provider| provider.id == "opencode")
             .expect("opencode override");
         assert_eq!(provider.models[0].context_window_tokens, Some(1_000_000));
+    }
+
+    #[test]
+    fn commandcode_uses_native_tool_mode() {
+        let mut config = NaviConfig::default();
+        config.model.provider = "commandcode".to_string();
+
+        assert_eq!(
+            effective_tool_calling_mode(&config),
+            ToolCallingMode::Native
+        );
+        assert!(!effective_tool_prompt_manifest(&config));
     }
 }
