@@ -161,9 +161,9 @@ fn build_alpha_generate_body(request: &ModelRequest) -> Value {
         params["system"] = json!(system_prompt);
     }
 
-    // Command Code /alpha/generate only supports its own built-in tools
-    // (web_search, web_fetch). Sending custom tool definitions causes a 400 error.
-    // Skip NAVI tools to keep the request compatible.
+    if !request.tools.is_empty() {
+        params["tools"] = json!(commandcode_tools(&request.tools));
+    }
 
     json!({
         "config": {
@@ -184,6 +184,19 @@ fn build_alpha_generate_body(request: &ModelRequest) -> Value {
         "params": params,
         "threadId": uuid_v4(),
     })
+}
+
+fn commandcode_tools(tools: &[navi_core::ToolDefinition]) -> Vec<Value> {
+    tools
+        .iter()
+        .map(|tool| {
+            json!({
+                "name": tool.name,
+                "description": tool.description,
+                "input_schema": tool.input_schema,
+            })
+        })
+        .collect()
 }
 
 fn chrono_now_date() -> String {
@@ -517,8 +530,13 @@ fn commandcode_stream_error(value: &Value) -> ProviderError {
 #[derive(Default)]
 struct CommandCodeTextAccumulator {
     pending: String,
-    in_tool_call: bool,
+    active_tool_call: Option<ActiveTextToolCall>,
     next_tool_call_index: u64,
+}
+
+struct ActiveTextToolCall {
+    tool_name: Option<String>,
+    end_tag: String,
 }
 
 impl CommandCodeTextAccumulator {
@@ -535,29 +553,33 @@ impl CommandCodeTextAccumulator {
         let mut events = Vec::new();
 
         loop {
-            if self.in_tool_call {
-                if let Some(end) = find_ascii_case_insensitive(&self.pending, "</tool_call>") {
+            if let Some(active) = &self.active_tool_call {
+                let end_tag = active.end_tag.clone();
+                if let Some(end) = find_ascii_case_insensitive(&self.pending, &end_tag) {
                     let block = self.pending[..end].to_string();
-                    self.pending.drain(..end + "</tool_call>".len());
-                    self.in_tool_call = false;
-                    events.extend(self.parse_tool_call_block(&block));
+                    self.pending.drain(..end + end_tag.len());
+                    let active = self.active_tool_call.take().expect("active tool call");
+                    events.extend(self.parse_tool_call_block(&block, active.tool_name.as_deref()));
                     continue;
                 }
 
                 if final_chunk {
                     let block = std::mem::take(&mut self.pending);
-                    self.in_tool_call = false;
-                    events.extend(self.parse_tool_call_block(&block));
+                    let active = self.active_tool_call.take().expect("active tool call");
+                    events.extend(self.parse_tool_call_block(&block, active.tool_name.as_deref()));
                 }
                 break;
             }
 
-            if let Some((start, marker_len)) = find_tool_call_start(&self.pending) {
-                if start > 0 {
-                    events.push(text_delta(&self.pending[..start]));
+            if let Some(start) = find_tool_call_start(&self.pending) {
+                if start.position > 0 {
+                    events.push(text_delta(&self.pending[..start.position]));
                 }
-                self.pending.drain(..start + marker_len);
-                self.in_tool_call = true;
+                self.pending.drain(..start.position + start.marker_len);
+                self.active_tool_call = Some(ActiveTextToolCall {
+                    tool_name: start.tool_name,
+                    end_tag: start.end_tag,
+                });
                 continue;
             }
 
@@ -577,7 +599,17 @@ impl CommandCodeTextAccumulator {
         events
     }
 
-    fn parse_tool_call_block(&mut self, block: &str) -> Vec<Result<ModelStreamEvent>> {
+    fn parse_tool_call_block(
+        &mut self,
+        block: &str,
+        tool_name: Option<&str>,
+    ) -> Vec<Result<ModelStreamEvent>> {
+        if let Some(tool_name) = tool_name
+            && let Some(invocation) = self.named_tool_invocation(tool_name, block)
+        {
+            return vec![Ok(ModelStreamEvent::ToolCall(invocation))];
+        }
+
         parse_tool_call_values(block)
             .into_iter()
             .filter_map(|value| self.tool_invocation_from_value(value))
@@ -585,15 +617,29 @@ impl CommandCodeTextAccumulator {
             .collect()
     }
 
+    fn named_tool_invocation(&mut self, tool_name: &str, block: &str) -> Option<ToolInvocation> {
+        let input = parse_named_tool_input(tool_name, block)?;
+        let id = format!("commandcode-text-tool-{}", self.next_tool_call_index);
+        self.next_tool_call_index += 1;
+
+        Some(ToolInvocation {
+            id,
+            tool_name: tool_name.to_string(),
+            input,
+        })
+    }
+
     fn tool_invocation_from_value(&mut self, value: Value) -> Option<ToolInvocation> {
         let tool_name = value
             .get("name")
             .or_else(|| value.get("toolName"))
+            .or_else(|| value.get("tool_name"))
             .and_then(Value::as_str)?
             .to_string();
         let id = value
             .get("id")
             .or_else(|| value.get("toolCallId"))
+            .or_else(|| value.get("tool_call_id"))
             .and_then(Value::as_str)
             .map(str::to_string)
             .unwrap_or_else(|| {
@@ -642,7 +688,77 @@ fn normalize_tool_input(value: &Value) -> Value {
     }
 }
 
-fn find_tool_call_start(text: &str) -> Option<(usize, usize)> {
+fn parse_named_tool_input(tool_name: &str, block: &str) -> Option<Value> {
+    let trimmed = block.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    if let Ok(value) = serde_json::from_str::<Value>(trimmed) {
+        return Some(match value {
+            Value::Object(_) => value,
+            value => json!({ "value": value }),
+        });
+    }
+
+    if tool_name == "tool_workflow"
+        && let Some(script) = parse_script_field(trimmed)
+    {
+        return Some(json!({ "script": script }));
+    }
+
+    None
+}
+
+fn parse_script_field(text: &str) -> Option<String> {
+    let script_pos = find_ascii_case_insensitive(text, "script")?;
+    let mut rest = &text[script_pos + "script".len()..];
+    rest = rest.trim_start();
+    rest = rest.strip_prefix(':').or_else(|| rest.strip_prefix('='))?;
+    rest = rest.trim_start();
+    parse_quoted_value(rest).or_else(|| (!rest.is_empty()).then(|| rest.trim().to_string()))
+}
+
+fn parse_quoted_value(text: &str) -> Option<String> {
+    let quote = text.chars().next()?;
+    if quote != '"' && quote != '\'' {
+        return None;
+    }
+
+    let mut value = String::new();
+    let mut escaped = false;
+    for ch in text[quote.len_utf8()..].chars() {
+        if escaped {
+            if ch == quote || ch == '\\' {
+                value.push(ch);
+            } else {
+                value.push('\\');
+                value.push(ch);
+            }
+            escaped = false;
+            continue;
+        }
+        if ch == '\\' {
+            escaped = true;
+            continue;
+        }
+        if ch == quote {
+            return Some(value);
+        }
+        value.push(ch);
+    }
+
+    None
+}
+
+struct ToolCallStart {
+    position: usize,
+    marker_len: usize,
+    tool_name: Option<String>,
+    end_tag: String,
+}
+
+fn find_tool_call_start(text: &str) -> Option<ToolCallStart> {
     let patterns: &[&str] = &[
         "]<]minimax[>[<tool_call>",
         "<]minimax[>[<tool_call>",
@@ -654,9 +770,22 @@ fn find_tool_call_start(text: &str) -> Option<(usize, usize)> {
     if let Some(result) = patterns
         .iter()
         .filter_map(|marker| {
-            find_ascii_case_insensitive(text, marker).map(|pos| (pos, marker.len()))
+            find_ascii_case_insensitive(text, marker).map(|pos| ToolCallStart {
+                position: pos,
+                marker_len: marker.len(),
+                tool_name: None,
+                end_tag: "</tool_call>".to_string(),
+            })
         })
-        .min_by_key(|(pos, _)| *pos)
+        .chain(named_tool_tags().iter().filter_map(|tag| {
+            find_ascii_case_insensitive(text, tag.start_tag).map(|pos| ToolCallStart {
+                position: pos,
+                marker_len: tag.start_tag.len(),
+                tool_name: Some(tag.tool_name.to_string()),
+                end_tag: tag.end_tag.to_string(),
+            })
+        }))
+        .min_by_key(|start| start.position)
     {
         return Some(result);
     }
@@ -664,7 +793,21 @@ fn find_tool_call_start(text: &str) -> Option<(usize, usize)> {
     find_generic_bracket_tool_call_prefix(text)
 }
 
-fn find_generic_bracket_tool_call_prefix(text: &str) -> Option<(usize, usize)> {
+struct NamedToolTag {
+    tool_name: &'static str,
+    start_tag: &'static str,
+    end_tag: &'static str,
+}
+
+fn named_tool_tags() -> &'static [NamedToolTag] {
+    &[NamedToolTag {
+        tool_name: "tool_workflow",
+        start_tag: "<tool_workflow>",
+        end_tag: "</tool_workflow>",
+    }]
+}
+
+fn find_generic_bracket_tool_call_prefix(text: &str) -> Option<ToolCallStart> {
     let tc_pos = find_ascii_case_insensitive(text, "<tool_call>")?;
     let before = &text[..tc_pos];
     let bracket_end = before.rfind(">[")?;
@@ -673,7 +816,12 @@ fn find_generic_bracket_tool_call_prefix(text: &str) -> Option<(usize, usize)> {
         let openers = [']', '<', '|'];
         if let Some(prefix_start) = candidate.rfind(|c: char| openers.contains(&c)) {
             let full_len = tc_pos + "<tool_call>".len() - prefix_start;
-            return Some((prefix_start, full_len));
+            return Some(ToolCallStart {
+                position: prefix_start,
+                marker_len: full_len,
+                tool_name: None,
+                end_tag: "</tool_call>".to_string(),
+            });
         }
     }
     None
@@ -686,6 +834,7 @@ fn partial_tool_call_start_suffix_len(text: &str) -> usize {
         "]<|minimal|>[<tool_call>",
         "<|minimal|>[<tool_call>",
         "<tool_call>",
+        "<tool_workflow>",
     ];
 
     let specific = patterns
@@ -892,6 +1041,52 @@ mod tests {
     }
 
     #[test]
+    fn parse_named_tool_workflow_block() {
+        let data = json!({
+            "type": "text-delta",
+            "text": "Before <tool_workflow>\nscript: \"\ndef workflow():\n    thumb = read_file('psyche-api/src/thumbnails.rs')\n    return thumb\nworkflow()\n\"\n</tool_workflow> after",
+        })
+        .to_string();
+        let events = parse_commandcode_sse(&data)
+            .into_iter()
+            .map(Result::unwrap)
+            .collect::<Vec<_>>();
+
+        assert_eq!(events.len(), 3);
+        assert_eq!(
+            events[0],
+            ModelStreamEvent::TextDelta {
+                text: "Before ".to_string(),
+            }
+        );
+        match &events[1] {
+            ModelStreamEvent::ToolCall(invocation) => {
+                assert_eq!(invocation.id, "commandcode-text-tool-0");
+                assert_eq!(invocation.tool_name, "tool_workflow");
+                assert!(
+                    invocation.input["script"]
+                        .as_str()
+                        .unwrap()
+                        .contains("def workflow()")
+                );
+                assert!(
+                    invocation.input["script"]
+                        .as_str()
+                        .unwrap()
+                        .contains("read_file('psyche-api/src/thumbnails.rs')")
+                );
+            }
+            other => panic!("expected ToolCall, got {other:?}"),
+        }
+        assert_eq!(
+            events[2],
+            ModelStreamEvent::TextDelta {
+                text: " after".to_string(),
+            }
+        );
+    }
+
+    #[test]
     fn parse_finish_event_with_usage() {
         let events = parse_commandcode_sse(
             r#"{"type":"finish","finishReason":"stop","totalUsage":{"inputTokens":100,"outputTokens":20}}"#,
@@ -1010,6 +1205,38 @@ mod tests {
         assert_eq!(messages[1]["content"][0]["type"], "tool-call");
         assert_eq!(messages[2]["role"], "tool");
         assert_eq!(messages[2]["content"][0]["type"], "tool-result");
+    }
+
+    #[test]
+    fn build_body_includes_native_tool_definitions() {
+        use navi_core::{ModelMessage, ThinkingConfig, ToolDefinition, ToolKind};
+        use serde_json::json;
+
+        let request = ModelRequest {
+            model: "claude-sonnet-4-6".to_string(),
+            messages: vec![ModelMessage::user("test")],
+            thinking: ThinkingConfig::Off,
+            tools: vec![ToolDefinition {
+                name: "read_file".to_string(),
+                description: "Read a file".to_string(),
+                kind: ToolKind::Read,
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "path": { "type": "string" }
+                    },
+                    "required": ["path"]
+                }),
+            }],
+        };
+
+        let body = build_alpha_generate_body(&request);
+        let tools = body["params"]["tools"].as_array().unwrap();
+        assert_eq!(tools.len(), 1);
+        assert_eq!(tools[0]["name"], "read_file");
+        assert_eq!(tools[0]["description"], "Read a file");
+        assert_eq!(tools[0]["input_schema"]["type"], "object");
+        assert_eq!(tools[0]["input_schema"]["required"][0], "path");
     }
 
     #[test]
