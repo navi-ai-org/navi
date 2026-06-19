@@ -8,7 +8,7 @@
   "models": [
     {
       "name": "deepseek-v4-flash",
-      "task_size": "large",
+      "task_size": "small",
       "context_window_tokens": 1000000,
       "max_output_tokens": 384000,
       "recommended_temperature": 1.0,
@@ -48,7 +48,7 @@
     },
     {
       "name": "minimax-m2.5",
-      "task_size": "large",
+      "task_size": "small",
       "context_window_tokens": 204800,
       "max_output_tokens": 131072,
       "recommended_temperature": 1.0,

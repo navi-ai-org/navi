@@ -358,10 +358,10 @@ mod tests {
     fn update_provider_models_prefers_registry_metadata_over_stale_override() {
         let mut config = NaviConfig::default();
         config.providers.push(ProviderConfig {
-            id: "opencode".to_string(),
+            id: "commandcode".to_string(),
             models: vec![ProviderModelConfig {
-                name: "deepseek-v4-flash-free".to_string(),
-                task_size: ModelTaskSize::Small,
+                name: "claude-sonnet-4-6".to_string(),
+                task_size: ModelTaskSize::Large,
                 context_window_tokens: Some(128_000),
                 max_output_tokens: None,
                 recommended_temperature: None,
@@ -371,13 +371,13 @@ mod tests {
             ..Default::default()
         });
 
-        config.update_provider_models("opencode", &["deepseek-v4-flash-free".to_string()]);
+        config.update_provider_models("commandcode", &["claude-sonnet-4-6".to_string()]);
 
         let provider = config
             .providers
             .iter()
-            .find(|provider| provider.id == "opencode")
-            .expect("opencode override");
+            .find(|provider| provider.id == "commandcode")
+            .expect("commandcode override");
         assert_eq!(provider.models[0].context_window_tokens, Some(1_000_000));
     }
 
