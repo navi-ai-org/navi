@@ -690,7 +690,7 @@ pub(super) fn built_in_providers() -> Vec<ProviderConfig> {
             kind: ProviderKind::OpenAiChatCompletions,
             api_key_env: "CMD_API_KEY".to_string(),
             base_url: Some("https://api.commandcode.ai".to_string()),
-            tool_calling_mode: Some(ToolCallingMode::Disabled),
+            tool_calling_mode: Some(ToolCallingMode::Native),
             models: vec![
                 model_ctx("claude-sonnet-4-6", ModelTaskSize::Large, 1_000_000),
                 model_ctx("claude-fable-5", ModelTaskSize::Large, 1_000_000),
