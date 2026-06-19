@@ -91,7 +91,7 @@
     "opencode": {
       "file": "providers/opencode.json",
       "sha256": "8d5c62631624396996ad02a3284865305f55ed78f5788d3a21cf106c0babc703",
-      "model_count": 12
+      "model_count": 18
     },
     "openrouter": {
       "file": "providers/openrouter.json",
