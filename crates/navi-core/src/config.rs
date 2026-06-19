@@ -39,6 +39,7 @@ mod tests {
             wasm_plugins: Vec::new(),
             plugin_marketplace: PluginMarketplaceConfig::default(),
             tui: TuiConfig::default(),
+            background_models: BackgroundModelsConfig::default(),
         };
 
         let mut project = NaviConfig {
@@ -81,6 +82,7 @@ mod tests {
             wasm_plugins: Vec::new(),
             plugin_marketplace: PluginMarketplaceConfig::default(),
             tui: TuiConfig::default(),
+            background_models: BackgroundModelsConfig::default(),
         };
         project.plugins.clear();
         project.mcp = McpConfig::default();
@@ -171,18 +173,7 @@ timeout_ms = 1000
             .find(|provider| provider.id == "opencode")
             .expect("opencode provider");
         assert_eq!(opencode.api_key_env, "OPENCODE_API_KEY");
-        assert!(
-            opencode
-                .models
-                .iter()
-                .any(|model| model.name == "big-pickle")
-        );
-        assert!(
-            opencode
-                .models
-                .iter()
-                .any(|model| model.name == "nemotron-3-super-free")
-        );
+        assert!(opencode.models.is_empty(), "opencode models come from registry JSON, not hardcoded");
         let commandcode = providers
             .iter()
             .find(|provider| provider.id == "commandcode")
@@ -212,13 +203,18 @@ timeout_ms = 1000
             nvidia.base_url.as_deref(),
             Some("https://integrate.api.nvidia.com/v1")
         );
-        assert!(providers.iter().all(|provider| !provider.models.is_empty()));
+        assert!(
+            providers
+                .iter()
+                .filter(|p| p.id != "opencode" && p.id != "opencode-go")
+                .all(|provider| !provider.models.is_empty())
+        );
         assert!(
             providers
                 .iter()
                 .map(|provider| provider.models.len())
                 .sum::<usize>()
-                >= 160
+                >= 142
         );
     }
 

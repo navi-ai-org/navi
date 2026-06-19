@@ -650,20 +650,7 @@ pub(super) fn built_in_providers() -> Vec<ProviderConfig> {
             kind: ProviderKind::OpenAiChatCompletions,
             api_key_env: "OPENCODE_API_KEY".to_string(),
             base_url: None,
-            models: vec![
-                model_ctx("big-pickle", ModelTaskSize::Large, 200_000),
-                model_ctx("deepseek-v4-flash-free", ModelTaskSize::Small, 1_000_000),
-                model_ctx("nemotron-3-super-free", ModelTaskSize::Small, 1_000_000),
-                model_ctx("qwen3.6-plus", ModelTaskSize::Large, 1_000_000),
-                model_ctx("qwen3.5-plus", ModelTaskSize::Large, 1_000_000),
-                model_ctx("kimi-k2.6", ModelTaskSize::Large, 262_144),
-                model_ctx("kimi-k2.5", ModelTaskSize::Large, 262_144),
-                model_ctx("glm-5.1", ModelTaskSize::Large, 200_000),
-                model_ctx("glm-5", ModelTaskSize::Large, 200_000),
-                model_ctx("minimax-m2.7", ModelTaskSize::Small, 204_800),
-                model_ctx("minimax-m2.5", ModelTaskSize::Small, 204_800),
-                model_ctx("grok-build-0.1", ModelTaskSize::Small, 256_000),
-            ],
+            models: Vec::new(),
             ..Default::default()
         },
         ProviderConfig {
@@ -673,14 +660,7 @@ pub(super) fn built_in_providers() -> Vec<ProviderConfig> {
             kind: ProviderKind::OpenAiChatCompletions,
             api_key_env: "OPENCODE_GO_API_KEY".to_string(),
             base_url: None,
-            models: vec![
-                model_ctx("deepseek-v4-flash", ModelTaskSize::Small, 1_000_000),
-                model_ctx("deepseek-v4-pro", ModelTaskSize::Large, 1_000_000),
-                model_ctx("qwen3.6-plus", ModelTaskSize::Large, 1_000_000),
-                model_ctx("glm-5", ModelTaskSize::Large, 200_000),
-                model_ctx("kimi-k2.5", ModelTaskSize::Large, 262_144),
-                model_ctx("minimax-m2.5", ModelTaskSize::Small, 204_800),
-            ],
+            models: Vec::new(),
             ..Default::default()
         },
         ProviderConfig {
