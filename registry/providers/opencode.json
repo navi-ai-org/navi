@@ -7,6 +7,54 @@
   "base_url": null,
   "models": [
     {
+      "name": "gpt-5.2",
+      "task_size": "large",
+      "context_window_tokens": 400000,
+      "max_output_tokens": 16384,
+      "recommended_temperature": 1.0,
+      "supports_thinking": true
+    },
+    {
+      "name": "gpt-5.1-codex",
+      "task_size": "large",
+      "context_window_tokens": 400000,
+      "max_output_tokens": 16384,
+      "recommended_temperature": 1.0,
+      "supports_thinking": true
+    },
+    {
+      "name": "claude-opus-4.5",
+      "task_size": "large",
+      "context_window_tokens": 200000,
+      "max_output_tokens": 16384,
+      "recommended_temperature": 1.0,
+      "supports_thinking": true
+    },
+    {
+      "name": "claude-sonnet-4.5",
+      "task_size": "large",
+      "context_window_tokens": 200000,
+      "max_output_tokens": 16384,
+      "recommended_temperature": 1.0,
+      "supports_thinking": true
+    },
+    {
+      "name": "minimax-m2.1",
+      "task_size": "small",
+      "context_window_tokens": 204800,
+      "max_output_tokens": 8192,
+      "recommended_temperature": 1.0,
+      "supports_thinking": true
+    },
+    {
+      "name": "gemini-3-pro",
+      "task_size": "large",
+      "context_window_tokens": 1000000,
+      "max_output_tokens": 65536,
+      "recommended_temperature": 1.0,
+      "supports_thinking": true
+    },
+    {
       "name": "big-pickle",
       "task_size": "large",
       "context_window_tokens": 200000,
