@@ -468,6 +468,7 @@ If a single test exceeds 500MB or hangs for more than 60 seconds, it is a bug an
 ## Gotchas
 
 - The worktree may be dirty; do not revert changes you did not make.
+- Treat staged changes as protected user/agent intent. Do not overwrite, unstage, amend, stash-pop over, or otherwise mix new work into staged changes unless the user explicitly asks. Before applying a stash/pop or any operation that can replay changes over the index, inspect `git status --short`, `git diff`, and `git diff --cached`, then preserve staged content or stop and ask.
 - `target/` is gitignored.
 - `test_reqwest.rs` may exist as an untracked local scratch file. Leave it alone unless the user explicitly asks.
 - No CI, clippy, or rustfmt config is committed; use default cargo behavior.
