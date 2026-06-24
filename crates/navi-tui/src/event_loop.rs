@@ -1,5 +1,7 @@
 use std::io;
-use std::time::Duration;
+use std::panic;
+use std::sync::{Mutex, Once, OnceLock};
+use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use crossterm::event::{
@@ -40,6 +42,7 @@ pub struct CrosstermInput;
 
 impl InputSource for CrosstermInput {
     fn poll(&mut self, timeout: Duration) -> io::Result<bool> {
+        maybe_refresh_terminal_input_modes();
         event::poll(timeout)
     }
 
@@ -54,12 +57,15 @@ struct TerminalModeGuard {
 
 impl TerminalModeGuard {
     fn enter() -> Result<Self> {
+        let mut guard = Self { active: false };
         enable_raw_mode()?;
+        guard.active = true;
         let mut stdout = io::stdout();
-        reset_terminal_input_modes(&mut stdout)?;
-        execute!(stdout, EnterAlternateScreen, EnableBracketedPaste)?;
-        enable_mouse_capture(&mut stdout)?;
-        Ok(Self { active: true })
+        if let Err(err) = enter_terminal_modes(&mut stdout) {
+            let _ = guard.restore();
+            return Err(err.into());
+        }
+        Ok(guard)
     }
 
     fn restore(&mut self) -> io::Result<()> {
@@ -67,11 +73,7 @@ impl TerminalModeGuard {
             return Ok(());
         }
         self.active = false;
-
-        let mut stdout = io::stdout();
-        reset_terminal_input_modes(&mut stdout)?;
-        execute!(stdout, LeaveAlternateScreen, DisableBracketedPaste)?;
-        disable_raw_mode()
+        restore_terminal_modes_best_effort()
     }
 }
 
@@ -86,6 +88,7 @@ impl Drop for TerminalModeGuard {
 // runtime, so `tokio::spawn` works from inside this synchronous event loop.
 // We must NOT create a second runtime here.
 pub fn run(app: TuiApp) -> Result<()> {
+    install_terminal_restore_panic_hook();
     let mut terminal_modes = TerminalModeGuard::enter()?;
     let backend = CrosstermBackend::new(io::stdout());
     let mut terminal = Terminal::new(backend)?;
@@ -94,18 +97,28 @@ pub fn run(app: TuiApp) -> Result<()> {
     let mut app = app;
     let result = run_loop(&mut terminal, &mut app, &mut input);
 
-    terminal.show_cursor()?;
-    terminal_modes.restore()?;
+    let cursor_result = terminal.show_cursor();
+    let restore_result = terminal_modes.restore();
+
+    cursor_result?;
+    restore_result?;
 
     result
+}
+
+fn enter_terminal_modes(w: &mut impl io::Write) -> io::Result<()> {
+    reset_terminal_input_modes(w)?;
+    execute!(w, EnterAlternateScreen, EnableBracketedPaste)?;
+    enable_mouse_capture(w)
 }
 
 fn reset_terminal_input_modes(w: &mut impl io::Write) -> io::Result<()> {
     disable_mouse_capture(w)?;
     execute!(w, DisableBracketedPaste, PopKeyboardEnhancementFlags)?;
-    // Reset xterm modifyOtherKeys as well; a previous run may have left the
-    // terminal encoding control keys as CSI-u instead of normal key bytes.
-    write!(w, "\x1B[>4;0m")?;
+    // Reset xterm modifyOtherKeys and Kitty keyboard protocol as well; a
+    // previous run or child process may have left the terminal encoding normal
+    // control keys as escape sequences instead of key events.
+    write!(w, "\x1B[>4;0m\x1B[<u")?;
     w.flush()
 }
 
@@ -123,9 +136,70 @@ fn enable_mouse_capture(w: &mut impl io::Write) -> io::Result<()> {
 /// Disable mouse modes defensively.
 fn disable_mouse_capture(w: &mut impl io::Write) -> io::Result<()> {
     // Disable every common mouse mode defensively in case a previous session
-    // left the terminal in motion tracking.
-    write!(w, "\x1B[?1006l\x1B[?1005l\x1B[?1003l\x1B[?1002l\x1B[?1000l")?;
+    // or a child process left the terminal in motion/focus tracking.
+    write!(
+        w,
+        "\x1B[?9l\x1B[?1000l\x1B[?1001l\x1B[?1002l\x1B[?1003l\x1B[?1004l\x1B[?1005l\x1B[?1006l\x1B[?1015l"
+    )?;
     w.flush()
+}
+
+fn restore_terminal_modes_best_effort() -> io::Result<()> {
+    let mut first_error = None;
+    let mut stdout = io::stdout();
+
+    remember_error(&mut first_error, reset_terminal_input_modes(&mut stdout));
+    remember_error(
+        &mut first_error,
+        execute!(stdout, LeaveAlternateScreen, DisableBracketedPaste),
+    );
+    remember_error(&mut first_error, disable_raw_mode());
+
+    match first_error {
+        Some(err) => Err(err),
+        None => Ok(()),
+    }
+}
+
+fn remember_error(slot: &mut Option<io::Error>, result: io::Result<()>) {
+    if let Err(err) = result
+        && slot.is_none()
+    {
+        *slot = Some(err);
+    }
+}
+
+static TERMINAL_RESTORE_PANIC_HOOK: Once = Once::new();
+
+fn install_terminal_restore_panic_hook() {
+    TERMINAL_RESTORE_PANIC_HOOK.call_once(|| {
+        let previous = panic::take_hook();
+        panic::set_hook(Box::new(move |info| {
+            let _ = restore_terminal_modes_best_effort();
+            previous(info);
+        }));
+    });
+}
+
+const TERMINAL_MODE_REFRESH_INTERVAL: Duration = Duration::from_secs(2);
+static LAST_TERMINAL_MODE_REFRESH: OnceLock<Mutex<Instant>> = OnceLock::new();
+
+fn maybe_refresh_terminal_input_modes() {
+    let now = Instant::now();
+    let last = LAST_TERMINAL_MODE_REFRESH.get_or_init(|| Mutex::new(now));
+    let Ok(mut last) = last.try_lock() else {
+        return;
+    };
+    if now.duration_since(*last) < TERMINAL_MODE_REFRESH_INTERVAL {
+        return;
+    }
+
+    let mut stdout = io::stdout();
+    let _ = enable_raw_mode();
+    let _ = reset_terminal_input_modes(&mut stdout);
+    let _ = execute!(stdout, EnableBracketedPaste);
+    let _ = enable_mouse_capture(&mut stdout);
+    *last = now;
 }
 
 #[cfg(test)]
@@ -152,9 +226,24 @@ mod tests {
         disable_mouse_capture(&mut out).expect("disable mouse capture");
         let text = String::from_utf8(out).expect("utf8 escape sequences");
 
+        assert!(text.contains("\x1B[?9l"));
         assert!(text.contains("\x1B[?1003l"));
         assert!(text.contains("\x1B[?1002l"));
+        assert!(text.contains("\x1B[?1004l"));
         assert!(text.contains("\x1B[?1000l"));
+    }
+
+    #[test]
+    fn terminal_input_reset_clears_keyboard_protocols() {
+        let mut out = Vec::new();
+
+        reset_terminal_input_modes(&mut out).expect("reset terminal input modes");
+        let text = String::from_utf8(out).expect("utf8 escape sequences");
+
+        assert!(text.contains("\x1B[?1003l"));
+        assert!(text.contains("\x1B[?1002l"));
+        assert!(text.contains("\x1B[>4;0m"));
+        assert!(text.contains("\x1B[<u"));
     }
 }
 

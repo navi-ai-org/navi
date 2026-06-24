@@ -91,6 +91,23 @@ impl ModelProvider for MalformedToolProvider {
     }
 }
 
+struct CapturingProvider {
+    requests: Arc<Mutex<Vec<ModelRequest>>>,
+}
+
+#[async_trait]
+impl ModelProvider for CapturingProvider {
+    fn stream(&self, request: ModelRequest) -> ModelStream {
+        self.requests.lock().unwrap().push(request);
+        Box::pin(stream::iter(vec![
+            Ok(ModelStreamEvent::TextDelta {
+                text: "captured".to_string(),
+            }),
+            Ok(ModelStreamEvent::Done),
+        ]))
+    }
+}
+
 #[tokio::test]
 async fn test_turn_loop_with_parallel_tools() {
     let tempdir = tempfile::tempdir().unwrap();
@@ -109,6 +126,7 @@ async fn test_turn_loop_with_parallel_tools() {
         }))),
         tool_executor: Arc::new(executor),
         project_dir: tempdir.path().to_path_buf(),
+        data_dir: tempdir.path().join("data"),
         model_name: Arc::new(std::sync::RwLock::new("gpt-4".to_string())),
         event_tx: None,
         approval_resolver: crate::runtime::ApprovalResolver::new_for_test(),
@@ -121,6 +139,7 @@ async fn test_turn_loop_with_parallel_tools() {
         prompt_cache: Arc::new(crate::prompt::PromptCache::new()),
         cancel_token: CancelToken::new(),
         config: Arc::new(std::sync::RwLock::new(crate::config::NaviConfig::default())),
+        memory_injection: None,
         compaction_provider: None,
         compaction_model_name: None,
         session_id: "test-session".to_string(),
@@ -145,6 +164,85 @@ async fn test_turn_loop_with_parallel_tools() {
 }
 
 #[tokio::test]
+async fn system_prompt_includes_session_memory_and_rebuild_context() {
+    let tempdir = tempfile::tempdir().unwrap();
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let mut ctx = build_test_ctx(tempdir.path().to_path_buf());
+    ctx.model_provider = Arc::new(std::sync::RwLock::new(Arc::new(CapturingProvider {
+        requests: requests.clone(),
+    })));
+    ctx.memory_injection = Some("Previous session context: durable session memory".to_string());
+    {
+        let mut state = ctx.compact_state.lock().await;
+        state.rebuild_context =
+            Some("=== SESSION CHECKPOINT ===\nDurable rebuild state".to_string());
+    }
+
+    let mut messages = vec![ModelMessage::user("continue")];
+    let policy = crate::harness::policy_for_profile(
+        &crate::config::HarnessConfig::default(),
+        crate::config::HarnessProfile::Small,
+    );
+
+    let _ = run_turn(&ctx, &mut messages, policy).await.unwrap();
+
+    let requests = requests.lock().unwrap();
+    let system = requests[0]
+        .messages
+        .iter()
+        .find(|msg| msg.role == ModelRole::System)
+        .expect("system message");
+    assert!(system.content.contains("durable session memory"));
+    assert!(system.content.contains("Durable rebuild state"));
+}
+
+#[tokio::test]
+async fn history_sync_continues_after_messages_are_shortened() {
+    let tempdir = tempfile::tempdir().unwrap();
+    let project_dir = tempdir.path().join("project");
+    let data_dir = tempdir.path().join("data");
+    std::fs::create_dir_all(&project_dir).unwrap();
+
+    let mut ctx = build_test_ctx(project_dir.clone());
+    ctx.data_dir = data_dir.clone();
+    ctx.session_id = "history-shortened".to_string();
+
+    let mut messages = vec![
+        ModelMessage::system("base prompt"),
+        ModelMessage::user("first user"),
+        ModelMessage::assistant("first assistant"),
+    ];
+    sync_messages_to_history(&ctx, &messages).await.unwrap();
+
+    let manager = crate::memory::MemoryManager::new(
+        project_dir.clone(),
+        data_dir.clone(),
+        &ctx.active_config().memory,
+    )
+    .unwrap();
+    assert_eq!(
+        manager
+            .history
+            .get_event_count(&ctx.session_id, "message")
+            .unwrap(),
+        3
+    );
+
+    messages.clear();
+    messages.push(ModelMessage::system("rebuilt prompt"));
+    messages.push(ModelMessage::user("post rebuild user"));
+    sync_messages_to_history(&ctx, &messages).await.unwrap();
+
+    assert_eq!(
+        manager
+            .history
+            .get_event_count(&ctx.session_id, "message")
+            .unwrap(),
+        5
+    );
+}
+
+#[tokio::test]
 async fn malformed_tool_arguments_stop_the_turn() {
     let tempdir = tempfile::tempdir().unwrap();
     let security_policy = SecurityPolicy::new(
@@ -162,6 +260,7 @@ async fn malformed_tool_arguments_stop_the_turn() {
         model_provider: Arc::new(std::sync::RwLock::new(provider.clone())),
         tool_executor: Arc::new(executor),
         project_dir: tempdir.path().to_path_buf(),
+        data_dir: tempdir.path().join("data"),
         model_name: Arc::new(std::sync::RwLock::new("gpt-4".to_string())),
         event_tx: None,
         approval_resolver: crate::runtime::ApprovalResolver::new_for_test(),
@@ -174,6 +273,7 @@ async fn malformed_tool_arguments_stop_the_turn() {
         prompt_cache: Arc::new(crate::prompt::PromptCache::new()),
         cancel_token: CancelToken::new(),
         config: Arc::new(std::sync::RwLock::new(crate::config::NaviConfig::default())),
+        memory_injection: None,
         compaction_provider: None,
         compaction_model_name: None,
         session_id: "test-session".to_string(),
@@ -249,6 +349,7 @@ fn build_test_ctx(project_dir: PathBuf) -> TurnContext {
             calls: Mutex::new(0),
         }))),
         tool_executor: Arc::new(executor),
+        data_dir: project_dir.join("data"),
         project_dir,
         model_name: Arc::new(std::sync::RwLock::new("gpt-4".to_string())),
         event_tx: None,
@@ -262,6 +363,7 @@ fn build_test_ctx(project_dir: PathBuf) -> TurnContext {
         prompt_cache: Arc::new(crate::prompt::PromptCache::new()),
         cancel_token: CancelToken::new(),
         config: Arc::new(std::sync::RwLock::new(crate::config::NaviConfig::default())),
+        memory_injection: None,
         compaction_provider: None,
         compaction_model_name: None,
         session_id: "test-session".to_string(),

@@ -90,7 +90,7 @@ impl Default for MemoryConfig {
             session_memory_enabled: false,
             max_memory_entries: 3,
             enabled: true,
-            root: ".agent-memory".to_string(),
+            root: "memory/projects".to_string(),
             global_memory_path: "~/.code-agent/global-memory.md".to_string(),
             checkpoint_thresholds: vec![0.20, 0.45, 0.70],
             rebuild_threshold: 0.85,

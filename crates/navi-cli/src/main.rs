@@ -89,7 +89,17 @@ pub enum MemoryAction {
         session_id: Option<String>,
     },
     /// Run dream maintenance
-    Dream,
+    Dream {
+        /// Apply the dream output to active memory after writing the review copy
+        #[arg(long)]
+        apply: bool,
+        /// Number of recent sessions to mine, capped at 100
+        #[arg(long, default_value_t = 10)]
+        sessions: usize,
+        /// High-level synthesis guidance for the dream
+        #[arg(long)]
+        instructions: Option<String>,
+    },
     /// Run distill maintenance
     Distill,
     /// Validate files, paths, permissions, SQLite schema, and config

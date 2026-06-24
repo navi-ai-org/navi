@@ -1,6 +1,7 @@
 use crate::config::HarnessConfig;
 use crate::model::{ModelMessage, ModelProvider, ModelRequest, ModelRole, ThinkingConfig};
 use anyhow::Result;
+use std::collections::HashSet;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 const READ_ONLY_TOOLS: &[&str] = &["read_file", "fs_browser", "grep", "git_ops"];
@@ -82,8 +83,13 @@ pub struct CompactState {
     pub consecutive_failures: u32,
     pub summary: Option<String>,
     pub summary_message_count: usize,
+    /// Latest long-horizon rebuild context that must stay attached to the
+    /// system prompt across subsequent turns.
+    pub rebuild_context: Option<String>,
     /// List of checkpoint thresholds crossed in the current context cycle.
     pub crossed_thresholds: Vec<f64>,
+    /// Fingerprints of messages already copied into long-horizon history.
+    pub history_synced_message_keys: HashSet<u64>,
 }
 
 impl CompactState {

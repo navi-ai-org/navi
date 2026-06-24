@@ -1,6 +1,6 @@
 # Compaction
 
-NAVI implements a three-level conversation compaction system that manages context window usage across long sessions. The system runs micro-compact and auto-compact before each model request in `navi-core/src/turn.rs`, and persists session summaries as project memory across sessions.
+NAVI implements conversation compaction and memory layers that manage context window usage across long sessions. The system runs micro-compact and auto-compact before each model request in `navi-core/src/turn.rs`, persists session summaries across sessions, and maintains long-horizon project memory under the NAVI data directory.
 
 All compaction logic lives in `navi-core/src/compact.rs`. Configuration is spread across `HarnessConfig` and `MemoryConfig` in `navi-core/src/config.rs`. The TUI mirrors compaction state via events and displays context usage in the status bar.
 
@@ -11,6 +11,7 @@ All compaction logic lives in `navi-core/src/compact.rs`. Configuration is sprea
 | Micro-compact | Time gap > 60 min since last assistant message | Clears read-only tool result content in-place | Tool output text only |
 | Auto-compact | `input_tokens + buffer >= context_window` | Summarizes full conversation via model, replaces messages with system + summary | Full conversation replaced by summary |
 | Session memory | Session end with compact summary | Saves summary to `<data_dir>/memory/<project_hash>.json`, injected on next session | None (additive) |
+| Long-horizon project memory | Context utilization crosses checkpoint/rebuild thresholds | Stores checkpoint, notes, project memory, and history under `<data_dir>/memory/projects/<project_hash>/` | None (additive/rebuild context replaces live messages only) |
 
 ## Micro-Compact
 
@@ -113,6 +114,56 @@ When `MemoryConfig.session_memory_enabled` is true and a new session starts (emp
 
 When a session ends and the `CompactState` has a `summary`, the TUI calls `SessionStore::add_memory_entry()` to append the summary to the project memory file.
 
+## Long-Horizon Project Memory
+
+NAVI's checkpoint memory is stored outside the project tree. By default, each project gets a private memory directory under:
+
+```txt
+<data_dir>/memory/projects/<project_hash>/
+```
+
+The directory contains:
+
+- `checkpoint.md`
+- `notes.md`
+- `MEMORY.md`
+- `history.sqlite`
+- optional archive/maintenance subdirectories, including dream review copies
+
+If an older project-side `.agent-memory/` directory exists and the new data-dir memory directory is empty, NAVI copies the legacy contents into the data-dir location once. It does not delete the legacy project-side directory.
+
+## Dream Maintenance
+
+Dream maintenance is an offline memory synthesis pass inspired by Claude's managed-agent Dreams. It reads the existing project memory, global memory, checkpoint, notes, and recent session history, then asks the selected model to produce a separate reviewed memory store.
+
+By default, dreams do not modify active memory. NAVI writes each dream result under:
+
+```txt
+<data_dir>/memory/projects/<project_hash>/dreams/dream-<timestamp>/
+```
+
+Each dream directory contains:
+
+- `MEMORY.md`
+- `global-memory.md`
+- `dream-report.md`
+
+Use the CLI to run a review-only dream:
+
+```bash
+navi memory dream
+```
+
+Useful options:
+
+```bash
+navi memory dream --sessions 25
+navi memory dream --instructions "Preserve active implementation details and remove stale debugging notes"
+navi memory dream --apply
+```
+
+`--sessions` controls how many recent sessions are mined, capped at 100. `--instructions` steers synthesis. `--apply` first writes the review copy, then replaces the active project and global memory files with the dream output.
+
 ## Configuration
 
 ### HarnessConfig (compaction fields)
@@ -132,6 +183,8 @@ When a session ends and the `CompactState` has a `summary`, the TUI calls `Sessi
 |---|---|---|
 | `session_memory_enabled` | false | Enable project memory across sessions |
 | `max_memory_entries` | 3 | Number of recent summaries to inject |
+| `enabled` | true | Enable long-horizon checkpoint/rebuild memory |
+| `root` | `memory/projects` | Data-dir-relative base directory for per-project long-horizon memory |
 
 Example `.navi/config.toml`:
 
@@ -139,6 +192,7 @@ Example `.navi/config.toml`:
 [memory]
 session_memory_enabled = true
 max_memory_entries = 5
+root = "memory/projects"
 
 [harness]
 micro_compact_gap_minutes = 30

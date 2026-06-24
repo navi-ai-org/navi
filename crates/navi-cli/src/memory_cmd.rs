@@ -1,7 +1,7 @@
 use anyhow::Result;
 use navi_core::memory::{
-    HistoryEvent, MemoryManager, build_rebuild_context, run_checkpoint_writer,
-    run_distill_maintenance, run_dream_maintenance,
+    DreamOptions, HistoryEvent, MemoryManager, build_rebuild_context, run_checkpoint_writer,
+    run_distill_maintenance, run_dream_maintenance_with_options,
 };
 use navi_core::{LoadedConfig, ModelMessage, ModelRole, effective_context_window};
 use navi_sdk::build_provider_for_config;
@@ -13,7 +13,11 @@ pub async fn handle_memory_command(
     cwd: &Path,
 ) -> Result<()> {
     let memory_config = &loaded_config.config.memory;
-    let manager = MemoryManager::new(cwd.to_path_buf(), memory_config)?;
+    let manager = MemoryManager::new(
+        cwd.to_path_buf(),
+        loaded_config.data_dir.clone(),
+        memory_config,
+    )?;
 
     match action {
         crate::MemoryAction::Status => {
@@ -152,21 +156,41 @@ pub async fn handle_memory_command(
                 }
             }
         }
-        crate::MemoryAction::Dream => {
+        crate::MemoryAction::Dream {
+            apply,
+            sessions,
+            instructions,
+        } => {
             let provider = build_provider_for_config(loaded_config)?;
             let model_name = &loaded_config.config.model.name;
             println!(
                 "Running memory dream maintenance using model '{}'...",
                 model_name
             );
-            run_dream_maintenance(
+            let result = run_dream_maintenance_with_options(
                 &manager.store,
                 &manager.history,
                 provider.as_ref(),
                 model_name,
+                DreamOptions {
+                    session_limit: sessions,
+                    instructions,
+                    apply,
+                },
             )
             .await?;
             println!("Dream maintenance finished successfully.");
+            println!("  Output directory: {}", result.output_dir.display());
+            println!(
+                "  Project memory candidate: {}",
+                result.project_memory_path.display()
+            );
+            println!(
+                "  Global memory candidate: {}",
+                result.global_memory_path.display()
+            );
+            println!("  Report: {}", result.report_path.display());
+            println!("  Applied to active memory: {}", result.applied);
         }
         crate::MemoryAction::Distill => {
             let provider = build_provider_for_config(loaded_config)?;

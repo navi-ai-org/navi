@@ -1,11 +1,16 @@
 use anyhow::{Context, Result};
 use directories::BaseDirs;
 use std::fs::{self, File};
+use std::hash::{Hash, Hasher};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-/// Helper to expand `~` in paths using `directories::BaseDirs`.
-pub fn resolve_path(path_str: &str, project_dir: &Path) -> PathBuf {
+/// Resolves a memory configuration path.
+///
+/// Relative paths are rooted in NAVI's data directory so memory files do not
+/// spill into the project workspace. `~` and absolute paths remain explicit
+/// user-selected locations.
+pub fn resolve_memory_path(path_str: &str, data_dir: &Path) -> PathBuf {
     if path_str.starts_with("~/") || path_str == "~" {
         if let Some(base_dirs) = BaseDirs::new() {
             let home = base_dirs.home_dir();
@@ -18,8 +23,20 @@ pub fn resolve_path(path_str: &str, project_dir: &Path) -> PathBuf {
             PathBuf::from(path_str)
         }
     } else {
-        project_dir.join(path_str)
+        let configured = PathBuf::from(path_str);
+        if configured.is_absolute() {
+            configured
+        } else {
+            data_dir.join(configured)
+        }
     }
+}
+
+/// Stable per-project directory name used for data-dir scoped memory.
+pub fn project_hash(project_dir: &Path) -> String {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    project_dir.to_string_lossy().hash(&mut hasher);
+    format!("{:x}", hasher.finish())
 }
 
 /// Validates that `path` is not a symlink and that its resolved parent directory
@@ -124,9 +141,15 @@ pub struct MemoryStore {
 }
 
 impl MemoryStore {
-    pub fn new(project_dir: PathBuf, root_config: &str, global_config_path: &str) -> Self {
-        let memory_root = resolve_path(root_config, &project_dir);
-        let global_memory_path = resolve_path(global_config_path, &project_dir);
+    pub fn new(
+        project_dir: PathBuf,
+        data_dir: PathBuf,
+        root_config: &str,
+        global_config_path: &str,
+    ) -> Self {
+        let memory_root =
+            resolve_memory_path(root_config, &data_dir).join(project_hash(&project_dir));
+        let global_memory_path = resolve_memory_path(global_config_path, &data_dir);
         Self {
             project_dir,
             memory_root,
@@ -282,4 +305,50 @@ impl MemoryStore {
         }
         Ok(())
     }
+
+    pub fn migrate_legacy_project_memory_if_empty(&self) -> Result<()> {
+        let legacy_root = self.project_dir.join(".agent-memory");
+        if !legacy_root.exists()
+            || !legacy_root.is_dir()
+            || !target_dir_is_empty(&self.memory_root)?
+        {
+            return Ok(());
+        }
+
+        copy_dir_without_symlinks(&legacy_root, &self.memory_root)?;
+        Ok(())
+    }
+}
+
+fn target_dir_is_empty(path: &Path) -> Result<bool> {
+    if !path.exists() {
+        return Ok(true);
+    }
+    Ok(fs::read_dir(path)?.next().is_none())
+}
+
+fn copy_dir_without_symlinks(source: &Path, target: &Path) -> Result<()> {
+    fs::create_dir_all(target)?;
+    for entry in fs::read_dir(source).with_context(|| format!("Failed to read {:?}", source))? {
+        let entry = entry?;
+        let source_path = entry.path();
+        let metadata = fs::symlink_metadata(&source_path)
+            .with_context(|| format!("Failed to inspect {:?}", source_path))?;
+        if metadata.file_type().is_symlink() {
+            continue;
+        }
+
+        let target_path = target.join(entry.file_name());
+        if metadata.is_dir() {
+            copy_dir_without_symlinks(&source_path, &target_path)?;
+        } else if metadata.is_file() {
+            fs::copy(&source_path, &target_path).with_context(|| {
+                format!(
+                    "Failed to copy legacy memory file {:?} to {:?}",
+                    source_path, target_path
+                )
+            })?;
+        }
+    }
+    Ok(())
 }
