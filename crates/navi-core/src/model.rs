@@ -433,9 +433,7 @@ impl TaskComplexity {
         let has_write_tools = tool_names
             .iter()
             .any(|t| matches!(t.as_str(), "write_file" | "apply_patch"));
-        let has_complex_tools = tool_names
-            .iter()
-            .any(|t| matches!(t.as_str(), "bash" | "test_runner" | "build_runner"));
+        let has_complex_tools = tool_names.iter().any(|t| matches!(t.as_str(), "bash"));
         let has_read_only = tool_names
             .iter()
             .any(|t| matches!(t.as_str(), "read_file" | "grep" | "fs_browser" | "git_ops"));

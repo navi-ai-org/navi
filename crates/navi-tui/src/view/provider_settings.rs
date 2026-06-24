@@ -72,13 +72,26 @@ pub(super) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
                     } else {
                         ""
                     };
-                    let line = format!(
-                        "{:<30} {:<12} {:<10} {}",
-                        provider.label, status.label, oauth, provider.description
-                    );
+                    let line = format!("{:<30} {:<12} {:<10}", provider.label, status.label, oauth);
                     let style = if app.hover_index == Some(index) || selected {
                         active_item_style()
                     } else if status.configured {
+                        Style::default().fg(signal()).bg(modal_bg())
+                    } else {
+                        inactive_item_style()
+                    };
+                    ListItem::new(Span::styled(line, style)).style(style)
+                }
+                ProviderListRow::Account {
+                    label, selected, ..
+                } => {
+                    let marker = if *selected { "●" } else { "○" };
+                    let line = format!("  {marker} account  {label}");
+                    let style = if app.hover_index == Some(index)
+                        || index == app.selected_provider_setting
+                    {
+                        active_item_style()
+                    } else if *selected {
                         Style::default().fg(signal()).bg(modal_bg())
                     } else {
                         inactive_item_style()
@@ -105,36 +118,48 @@ pub(super) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
     // Hit tests: only register for Provider rows (headers are non-selectable).
     for (offset, row) in list_rows[start..end].iter().enumerate() {
         let index = start + offset;
-        if let ProviderListRow::Provider { index: catalog_idx } = row {
-            let Some(provider) = catalog.get(*catalog_idx) else {
-                continue;
-            };
-            let row_rect = line_rect(rows[1], offset);
-            app.register_hit(
-                row_rect,
-                20,
-                format!("provider {} api key", provider.label),
-                HitAction::ProviderApiKey(index),
-            );
-            if provider_supports_oauth(&provider.id) {
+        match row {
+            ProviderListRow::Provider { index: catalog_idx } => {
+                let Some(provider) = catalog.get(*catalog_idx) else {
+                    continue;
+                };
+                let row_rect = line_rect(rows[1], offset);
                 app.register_hit(
-                    Rect::new(
-                        row_rect.x + 43,
-                        row_rect.y,
-                        10.min(row_rect.width.saturating_sub(43)),
-                        1,
-                    ),
-                    21,
-                    format!("provider {} oauth", provider.label),
-                    HitAction::ProviderOAuth(index),
+                    row_rect,
+                    20,
+                    format!("provider {} api key", provider.label),
+                    HitAction::ProviderApiKey(index),
+                );
+                if provider_supports_oauth(&provider.id) {
+                    app.register_hit(
+                        Rect::new(
+                            row_rect.x + 43,
+                            row_rect.y,
+                            10.min(row_rect.width.saturating_sub(43)),
+                            1,
+                        ),
+                        21,
+                        format!("provider {} oauth", provider.label),
+                        HitAction::ProviderOAuth(index),
+                    );
+                }
+            }
+            ProviderListRow::Account { .. } => {
+                let row_rect = line_rect(rows[1], offset);
+                app.register_hit(
+                    row_rect,
+                    20,
+                    "select provider account",
+                    HitAction::ProviderApiKey(index),
                 );
             }
+            ProviderListRow::Header { .. } => {}
         }
     }
 
     frame.render_widget(
         Paragraph::new(
-            "Enter configure key     ctrl-o OAuth     ctrl-r sync models     ctrl-d delete",
+            "Enter select account/key     ctrl-o OAuth     ctrl-r sync models     ctrl-d delete",
         )
         .style(Style::default().fg(text()).bg(modal_bg())),
         rows[3],

@@ -69,7 +69,7 @@ impl Tool for ToolWorkflowTool {
     fn definition(&self) -> ToolDefinition {
         helpers::definition(
             "tool_workflow",
-            "Run a sandboxed Starlark workflow for batching read-only tool calls. Allowed nested tools: read_file, grep, fs_browser, git_ops read-only commands.",
+            "Run a sandboxed Starlark workflow for batching read-only tool calls. Allowed nested tools: read_file, grep, fs_browser, git_ops read-only commands, symbols_overview, find_symbol, find_references, code_diagnostics.",
             ToolKind::Read,
             json!({
                 "type": "object",
@@ -191,14 +191,23 @@ impl WorkflowContext {
             max_nested_output_bytes,
             trace: RefCell::new(Vec::new()),
             emits: RefCell::new(Vec::new()),
-            allowed_tools: BTreeSet::from(["read_file", "grep", "fs_browser", "git_ops"]),
+            allowed_tools: BTreeSet::from([
+                "read_file",
+                "grep",
+                "fs_browser",
+                "git_ops",
+                "symbols_overview",
+                "find_symbol",
+                "find_references",
+                "code_diagnostics",
+            ]),
         }
     }
 
     fn call_tool(&self, name: &str, input: JsonValue) -> Result<JsonValue> {
         if !self.allowed_tools.contains(name) {
             bail!(
-                "tool_workflow only allows read_file, grep, fs_browser, and read-only git_ops; got `{name}`"
+                "tool_workflow only allows read_file, grep, fs_browser, read-only git_ops, symbols_overview, find_symbol, find_references, and code_diagnostics; got `{name}`"
             );
         }
         if name == "git_ops" {

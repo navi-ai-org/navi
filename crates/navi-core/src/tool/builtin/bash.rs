@@ -453,17 +453,6 @@ struct NativeSuggestion {
 fn suggest_cargo(args: &[String]) -> Option<NativeSuggestion> {
     let subcommand = args.first()?;
     match subcommand.as_str() {
-        "test" | "nextest" => Some(NativeSuggestion {
-            tool: "test_runner",
-            input: flags_input(&args[1..]),
-        }),
-        "check" | "build" => {
-            let input = cargo_build_input(&args[1..])?;
-            Some(NativeSuggestion {
-                tool: "build_runner",
-                input,
-            })
-        }
         "add" | "remove" | "update" => Some(NativeSuggestion {
             tool: "package_manager",
             input: package_manager_input(map_package_action(subcommand), "cargo", &args[1..]),
@@ -475,10 +464,6 @@ fn suggest_cargo(args: &[String]) -> Option<NativeSuggestion> {
 fn suggest_go(args: &[String]) -> Option<NativeSuggestion> {
     let subcommand = args.first()?;
     match subcommand.as_str() {
-        "test" => Some(NativeSuggestion {
-            tool: "test_runner",
-            input: flags_input(&args[1..]),
-        }),
         "mod"
             if args
                 .get(1)
@@ -516,10 +501,6 @@ fn suggest_js_package_manager(program: &str, args: &[String]) -> Option<NativeSu
         "update" | "upgrade" => Some(NativeSuggestion {
             tool: "package_manager",
             input: package_manager_input("update", manager, &args[1..]),
-        }),
-        "test" => Some(NativeSuggestion {
-            tool: "test_runner",
-            input: flags_input(&args[1..]),
         }),
         _ => None,
     }
@@ -567,34 +548,6 @@ fn suggest_find(args: &[String]) -> NativeSuggestion {
         tool: "fs_browser",
         input,
     }
-}
-
-fn flags_input(args: &[String]) -> Value {
-    if args.is_empty() {
-        json!({})
-    } else {
-        json!({ "flags": args.join(" ") })
-    }
-}
-
-fn cargo_build_input(args: &[String]) -> Option<Value> {
-    let mut input = json!({});
-    let mut index = 0;
-    while index < args.len() {
-        match args[index].as_str() {
-            "--release" => input["profile"] = json!("release"),
-            "--features" | "-F" => {
-                index += 1;
-                input["features"] = json!(args.get(index)?.clone());
-            }
-            flag if flag.starts_with("--features=") => {
-                input["features"] = json!(flag.trim_start_matches("--features="));
-            }
-            _ => return None,
-        }
-        index += 1;
-    }
-    Some(input)
 }
 
 fn package_manager_input(action: &str, manager: &str, args: &[String]) -> Value {
@@ -758,17 +711,6 @@ mod tests {
     }
 
     #[test]
-    fn suggests_test_runner_for_cargo_test() {
-        let suggestion = native_tool_suggestion("cargo test -p navi-core").expect("suggestion");
-
-        assert_eq!(suggestion["native_tool"], "test_runner");
-        assert_eq!(
-            suggestion["native_input"],
-            json!({ "flags": "-p navi-core" })
-        );
-    }
-
-    #[test]
     fn suggests_grep_for_rg() {
         let suggestion =
             native_tool_suggestion("rg \"fn main\" crates/navi-core/src").expect("suggestion");
@@ -787,17 +729,6 @@ mod tests {
             suggestion["native_input"],
             json!({ "action": "list", "path": "crates" })
         );
-    }
-
-    #[test]
-    fn suggests_schema_valid_build_runner_for_cargo_build() {
-        let suggestion =
-            native_tool_suggestion("cargo build --release --features simd").expect("suggestion");
-
-        assert_eq!(suggestion["native_tool"], "build_runner");
-        assert_eq!(suggestion["native_input"]["profile"], "release");
-        assert_eq!(suggestion["native_input"]["features"], "simd");
-        assert!(suggestion["native_input"].get("flags").is_none());
     }
 
     #[test]

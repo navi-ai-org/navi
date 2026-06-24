@@ -24,6 +24,8 @@ pub(crate) enum CommandAction {
     Plugins,
     McpServers,
     BackgroundCommands,
+    BackgroundModels,
+    ReSetup,
 }
 
 pub(crate) const COMMANDS: &[CommandItem] = &[
@@ -73,9 +75,14 @@ pub(crate) const COMMANDS: &[CommandItem] = &[
         action: CommandAction::McpServers,
     },
     CommandItem {
-        label: "Background Commands",
-        shortcut: Some("ctrl+b"),
+        label: "Background Tasks",
+        shortcut: Some("ctrl+t"),
         action: CommandAction::BackgroundCommands,
+    },
+    CommandItem {
+        label: "Background Agents",
+        shortcut: Some("ctrl+b"),
+        action: CommandAction::BackgroundModels,
     },
     CommandItem {
         label: "Retry Last Response",
@@ -111,6 +118,11 @@ pub(crate) const COMMANDS: &[CommandItem] = &[
         label: "Quit",
         shortcut: None,
         action: CommandAction::Quit,
+    },
+    CommandItem {
+        label: "Setup Wizard",
+        shortcut: None,
+        action: CommandAction::ReSetup,
     },
 ];
 

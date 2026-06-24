@@ -6,17 +6,42 @@ use tokio::sync::mpsc;
 
 use navi_sdk::{
     CredentialStore, LoadedConfig, NaviEngine, NaviEngineBuilder, RuntimeEvent,
-    provider_supports_device_oauth, resolve_provider_config, resolve_provider_credential_status,
+    provider_supports_device_oauth, resolve_provider_api_key_for_project, resolve_provider_config,
+    resolve_provider_credential_status,
 };
 
 use crate::dispatch::AsyncEvent;
 
+#[cfg(test)]
 pub(crate) fn forward_runtime_event_to_tui(
     event: RuntimeEvent,
     tx: &mpsc::UnboundedSender<AsyncEvent>,
 ) {
+    forward_runtime_event_to_tui_inner(event, tx, None);
+}
+
+pub(crate) fn forward_runtime_event_to_tui_for_session(
+    event: RuntimeEvent,
+    session_id: &str,
+    tx: &mpsc::UnboundedSender<AsyncEvent>,
+) {
+    forward_runtime_event_to_tui_inner(event, tx, Some(session_id));
+}
+
+fn forward_runtime_event_to_tui_inner(
+    event: RuntimeEvent,
+    tx: &mpsc::UnboundedSender<AsyncEvent>,
+    session_id: Option<&str>,
+) {
     if let Some(event) = event.into_agent_event() {
-        let _ = tx.send(AsyncEvent::Agent(event));
+        let async_event = match session_id {
+            Some(session_id) => AsyncEvent::AgentForSession {
+                session_id: session_id.to_string(),
+                event,
+            },
+            None => AsyncEvent::Agent(event),
+        };
+        let _ = tx.send(async_event);
     }
 }
 
@@ -41,12 +66,24 @@ pub(crate) fn build_engine(
 pub(crate) fn selected_model_runtime_available(
     loaded_config: &LoadedConfig,
     credential_store: &CredentialStore,
+    project_dir: &std::path::Path,
 ) -> bool {
     let Some(provider_config) =
         resolve_provider_config(&loaded_config.config, &loaded_config.config.model.provider)
     else {
         return false;
     };
+    if resolve_provider_api_key_for_project(
+        credential_store,
+        &provider_config,
+        &loaded_config.config.model.provider,
+        project_dir,
+    )
+    .is_some()
+    {
+        return true;
+    }
+
     resolve_provider_credential_status(
         credential_store,
         &provider_config,

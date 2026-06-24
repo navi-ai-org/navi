@@ -11,7 +11,7 @@ use crate::errors::handle_model_error;
 use crate::input::insert_input_char;
 use crate::keybindings::{
     handle_command_key, handle_help_key, handle_key, handle_model_key, handle_normal_key,
-    handle_settings_key, open_model_picker, run_selected_command, sync_models_tui,
+    handle_settings_key, open_modal, open_model_picker, run_selected_command, sync_models_tui,
 };
 use crate::mouse::{finish_selection, handle_mouse, selected_text};
 use crate::notifications::expire_notification;
@@ -22,7 +22,9 @@ use crate::providers::{
 use crate::render::command_scroll_offset;
 use crate::render::markdown::is_empty_tool_placeholder;
 use crate::render::tool::tool_full_content;
-use crate::state::{ChatLineSource, ChatMessage, ChatRole, Mode, Notification, SelectionState};
+use crate::state::{
+    ChatLineSource, ChatMessage, ChatRole, ModalKind, Mode, Notification, SelectionState,
+};
 use crate::theme::NOTIFICATION_TTL;
 use crate::tools::record_tool_requested;
 use crate::ui::interaction::HitAction;
@@ -33,7 +35,8 @@ use crate::ui::text_input::{
 use crate::view::build_chat_lines;
 use crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use navi_sdk::{
-    AgentEvent, LoadedConfig, ModelMessage, ModelOption, SessionId, ToolInvocation, ToolResult,
+    AgentEvent, LoadedConfig, ModelMessage, ModelOption, SessionId, SessionSnapshot,
+    ToolInvocation, ToolResult,
 };
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
@@ -418,6 +421,172 @@ fn fork_from_user_message_saves_original_and_keeps_prefix_in_new_session() {
 }
 
 #[test]
+fn ctrl_n_starts_clean_session_without_old_events_or_context() {
+    let mut app = test_app("");
+    app.session_id = SessionId::new("old-session".to_string());
+    let system = app.conversation_history[0].clone();
+    app.messages = vec![
+        ChatMessage::new(ChatRole::User, "old prompt".to_string()),
+        ChatMessage::new(ChatRole::Assistant, "old answer".to_string()),
+    ];
+    app.conversation_history = vec![
+        system,
+        ModelMessage::user("old prompt"),
+        ModelMessage::assistant("old answer"),
+    ];
+    app.events = vec![
+        AgentEvent::UserTaskSubmitted {
+            text: "old prompt".to_string(),
+            content_parts: vec![],
+        },
+        AgentEvent::ModelOutput {
+            text: "old answer".to_string(),
+            thinking: None,
+        },
+    ];
+    app.compact_state.add_unsent_bytes(1024);
+    app.session_title = Some("Old session".to_string());
+    app.running_tools.insert(
+        "call-1".to_string(),
+        ToolInvocation {
+            id: "call-1".to_string(),
+            tool_name: "bash".to_string(),
+            input: serde_json::json!({"command": "echo old"}),
+        },
+    );
+
+    handle_key(&mut app, KeyCode::Char('n'), KeyModifiers::CONTROL);
+
+    assert_ne!(app.session_id.as_str(), "old-session");
+    assert!(app.messages.is_empty());
+    assert!(app.events.is_empty());
+    assert_eq!(app.conversation_history.len(), 1);
+    assert!(
+        app.conversation_history
+            .first()
+            .is_some_and(|message| matches!(&message.role, navi_sdk::ModelRole::System))
+    );
+    assert_eq!(app.compact_state.estimated_unsent_bytes, 0);
+    assert!(app.compact_state.last_input_tokens.is_none());
+    assert!(app.session_title.is_none());
+    assert!(app.running_tools.is_empty());
+    assert!(app.tool_invocations.is_empty());
+}
+
+#[test]
+fn command_palette_new_session_uses_full_session_reset() {
+    let mut app = test_app("");
+    app.session_id = SessionId::new("old-session".to_string());
+    let system = app.conversation_history[0].clone();
+    app.messages = vec![
+        ChatMessage::new(ChatRole::User, "old prompt".to_string()),
+        ChatMessage::new(ChatRole::Assistant, "old answer".to_string()),
+    ];
+    app.conversation_history = vec![
+        system,
+        ModelMessage::user("old prompt"),
+        ModelMessage::assistant("old answer"),
+    ];
+    app.events = vec![
+        AgentEvent::UserTaskSubmitted {
+            text: "old prompt".to_string(),
+            content_parts: vec![],
+        },
+        AgentEvent::ModelOutput {
+            text: "old answer".to_string(),
+            thinking: None,
+        },
+    ];
+    app.compact_state.context_window = 60_000;
+    app.compact_state.last_input_tokens = Some(60_000);
+    app.compact_state.add_unsent_bytes(1024);
+    app.session_title = Some("Old session".to_string());
+    app.running_tools.insert(
+        "call-1".to_string(),
+        ToolInvocation {
+            id: "call-1".to_string(),
+            tool_name: "bash".to_string(),
+            input: serde_json::json!({"command": "echo old"}),
+        },
+    );
+    app.selected_command = 0;
+
+    run_selected_command(&mut app);
+
+    assert_ne!(app.session_id.as_str(), "old-session");
+    assert!(app.messages.is_empty());
+    assert!(app.events.is_empty());
+    assert_eq!(app.conversation_history.len(), 1);
+    assert_eq!(
+        app.compact_state.context_window,
+        navi_sdk::effective_context_window(&app.loaded_config.config)
+    );
+    assert_eq!(app.compact_state.estimated_unsent_bytes, 0);
+    assert!(app.compact_state.last_input_tokens.is_none());
+    assert!(app.session_title.is_none());
+    assert!(app.running_tools.is_empty());
+    assert!(app.tool_invocations.is_empty());
+}
+
+#[test]
+fn stale_stream_events_do_not_mutate_new_session() {
+    let mut app = test_app("");
+    let current_session = app.session_id.as_str().to_string();
+
+    handle_async_event(
+        &mut app,
+        AsyncEvent::AgentForSession {
+            session_id: "old-session".to_string(),
+            event: AgentEvent::ModelDelta {
+                text: "stale".to_string(),
+            },
+        },
+    );
+
+    assert!(app.messages.is_empty());
+
+    handle_async_event(
+        &mut app,
+        AsyncEvent::AgentForSession {
+            session_id: current_session,
+            event: AgentEvent::ModelDelta {
+                text: "current".to_string(),
+            },
+        },
+    );
+
+    assert_eq!(app.messages.len(), 1);
+    assert_eq!(app.messages[0].content, "current");
+}
+
+#[test]
+fn loading_saved_session_restores_snapshot_session_id() {
+    let mut app = test_app("");
+    app.session_id = SessionId::new("transient-session".to_string());
+    let snapshot = SessionSnapshot {
+        version: SessionSnapshot::CURRENT_VERSION,
+        id: SessionId::new("saved-session".to_string()),
+        title: Some("Saved".to_string()),
+        project: PathBuf::from("/tmp/test-project"),
+        created_at: 1,
+        updated_at: 2,
+        events: vec![AgentEvent::UserTaskSubmitted {
+            text: "saved prompt".to_string(),
+            content_parts: vec![],
+        }],
+        memory: None,
+    };
+
+    crate::persistence::load_session(&mut app, &snapshot);
+
+    assert_eq!(app.session_id.as_str(), "saved-session");
+    assert_eq!(app.session_title.as_deref(), Some("Saved"));
+    assert_eq!(app.messages.len(), 1);
+    assert_eq!(app.messages[0].content, "saved prompt");
+    assert_eq!(app.conversation_history.len(), 2);
+}
+
+#[test]
 fn model_delta_after_tool_result_creates_visible_response() {
     let mut app = test_app("");
     let invocation = ToolInvocation {
@@ -682,6 +851,14 @@ fn selecting_model_without_provider_key_opens_key_prompt() {
 #[test]
 fn model_picker_filters_by_model_and_provider_text() {
     let mut app = test_app("");
+    app.models.push(ModelOption {
+        name: "DeepSeek V4 Flash Free".to_string(),
+        provider_id: "opencode".to_string(),
+        provider_label: "OpenCode Zen".to_string(),
+        provider_description: "Free public models".to_string(),
+        task_size: navi_sdk::ModelTaskSize::Small,
+        context_window_tokens: None,
+    });
     open_model_picker(&mut app);
 
     // Only free/public models should appear without API keys
@@ -700,9 +877,14 @@ fn model_picker_filters_by_model_and_provider_text() {
     // Free models should still appear
     app.model_filter = "free".to_string();
     let rows = build_model_rows(&app);
-    assert!(rows.iter().any(|row| match row {
-        ListRow::Model { index } => app.models[*index].name.contains("free"),
-        ListRow::Header { .. } => false,
+    assert!(rows.iter().any(|row| {
+        match row {
+            ListRow::Model { index } => app.models[*index]
+                .name
+                .to_ascii_lowercase()
+                .contains("free"),
+            ListRow::Header { .. } => false,
+        }
     }));
 }
 
@@ -798,7 +980,8 @@ fn ctrl_enter_sends_non_empty_message() {
 fn ctrl_a_selects_entire_input_and_typing_replaces_it() {
     let mut app = test_app("replace me");
 
-    handle_normal_key(&mut app, KeyCode::Char('a'), KeyModifiers::CONTROL);
+    handle_key(&mut app, KeyCode::Char('a'), KeyModifiers::CONTROL);
+    assert_eq!(app.mode, Mode::Normal);
     assert_eq!(app.input_selection, Some((0, "replace me".len())));
 
     handle_normal_key(&mut app, KeyCode::Char('x'), KeyModifiers::NONE);
@@ -1000,6 +1183,35 @@ fn ctrl_p_opens_commands_and_tab_is_ignored_in_composer() {
     handle_key(&mut app, KeyCode::Tab, KeyModifiers::NONE);
     assert_eq!(app.mode, Mode::Normal);
     assert_eq!(app.input, "draft");
+}
+
+#[test]
+fn ctrl_t_opens_background_tasks_and_ctrl_b_opens_background_agents() {
+    let mut app = test_app("");
+
+    handle_key(&mut app, KeyCode::Char('t'), KeyModifiers::CONTROL);
+    assert_eq!(app.mode, Mode::BackgroundCommands);
+
+    app.mode = Mode::Normal;
+    handle_key(&mut app, KeyCode::Char('b'), KeyModifiers::CONTROL);
+    assert_eq!(app.mode, Mode::BackgroundModels);
+}
+
+#[test]
+fn composer_hint_stays_visible_while_typing() {
+    let mut app = test_app("typed text");
+    let backend = TestBackend::new(100, 28);
+    let mut terminal = Terminal::new(backend).expect("terminal");
+
+    terminal
+        .draw(|frame| crate::view::render(frame, &mut app))
+        .expect("draw normal");
+
+    let frame = terminal_buffer_text(&terminal);
+    assert!(frame.contains("ctrl+p commands"));
+    assert!(frame.contains("ctrl+t background tasks"));
+    assert!(frame.contains("ctrl+b background agents"));
+    assert!(frame.contains("ctrl+v paste image"));
 }
 
 #[test]
@@ -1765,6 +1977,50 @@ fn compact_tool_render_expands_only_clicked_tool_result() {
 }
 
 #[test]
+fn compact_tool_render_hides_bash_output_until_expanded() {
+    let mut app = test_app("");
+    let invocation = ToolInvocation {
+        id: "call-1".to_string(),
+        tool_name: "bash".to_string(),
+        input: serde_json::json!({ "command": "just test-crate navi-tui" }),
+    };
+    let result = ToolResult {
+        invocation_id: "call-1".to_string(),
+        ok: true,
+        output: serde_json::json!({
+            "stdout": "hidden stdout",
+            "stderr": "hidden stderr",
+            "exit_code": 0
+        }),
+    };
+    app.messages.push(ChatMessage {
+        status: Some("tool result".to_string()),
+        tool_invocation: Some(invocation),
+        tool_result: Some(result),
+        ..ChatMessage::new(ChatRole::Assistant, String::new())
+    });
+
+    let collapsed = build_chat_lines(&mut app, 80)
+        .iter()
+        .map(line_text)
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(collapsed.contains("Run just test-crate navi-tui"));
+    assert!(!collapsed.contains("hidden stdout"));
+    assert!(!collapsed.contains("hidden stderr"));
+
+    app.expanded_tool_results.insert("call-1".to_string());
+    let expanded = build_chat_lines(&mut app, 80)
+        .iter()
+        .map(line_text)
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    assert!(expanded.contains("hidden stdout"));
+    assert!(expanded.contains("hidden stderr"));
+}
+
+#[test]
 fn apply_patch_tool_full_content_uses_edit_summary() {
     let invocation = ToolInvocation {
         id: "call-1".to_string(),
@@ -2117,6 +2373,12 @@ fn provider_rows_labels(app: &TuiApp) -> Vec<String> {
                     .map(|p| p.id.clone())
                     .unwrap_or_else(|| format!("#{index}"))
             }
+            crate::providers::ProviderListRow::Account {
+                label, selected, ..
+            } => {
+                let indicator = if selected { "●" } else { "○" };
+                format!("  {indicator} {label}")
+            }
         })
         .collect()
 }
@@ -2165,6 +2427,53 @@ fn filtered_providers_skips_sections_when_filtering() {
     // No section headers when filtering, and only matches show up.
     assert!(rows.iter().all(|r| !r.starts_with("section:")));
     assert!(rows.iter().any(|r| r.contains("anthropic")));
+}
+
+#[test]
+fn provider_modal_arrow_keys_skip_section_headers() {
+    let mut app = test_app("");
+    app.loaded_config.config.tui.recent_provider_ids =
+        vec!["anthropic".to_string(), "openai".to_string()];
+    app.authenticated_providers.clear();
+    open_modal(&mut app, ModalKind::Providers);
+
+    let rows = app.filtered_providers();
+    let recent_openai = rows
+        .iter()
+        .position(|row| {
+            matches!(
+                row,
+                crate::providers::ProviderListRow::Provider { index }
+                    if navi_sdk::provider_catalog(&app.loaded_config.config)
+                        .get(*index)
+                        .is_some_and(|provider| provider.id == "openai")
+            )
+        })
+        .expect("recent openai row");
+    let next_header = rows
+        .iter()
+        .enumerate()
+        .skip(recent_openai + 1)
+        .find_map(|(index, row)| {
+            matches!(row, crate::providers::ProviderListRow::Header { .. }).then_some(index)
+        })
+        .expect("section header after recent providers");
+    let last_selectable_before_header = next_header - 1;
+    let next_provider_after_header = rows
+        .iter()
+        .enumerate()
+        .skip(next_header + 1)
+        .find_map(|(index, row)| {
+            matches!(row, crate::providers::ProviderListRow::Provider { .. }).then_some(index)
+        })
+        .expect("provider after next section header");
+
+    app.selected_provider_setting = last_selectable_before_header;
+    handle_key(&mut app, KeyCode::Down, KeyModifiers::empty());
+    assert_eq!(app.selected_provider_setting, next_provider_after_header);
+
+    handle_key(&mut app, KeyCode::Up, KeyModifiers::empty());
+    assert_eq!(app.selected_provider_setting, last_selectable_before_header);
 }
 
 #[test]

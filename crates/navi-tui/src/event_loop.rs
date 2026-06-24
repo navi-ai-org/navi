@@ -2,15 +2,13 @@ use std::io;
 use std::time::Duration;
 
 use anyhow::Result;
-use crossterm::event::{self, Event, KeyEventKind, KeyboardEnhancementFlags};
 use crossterm::event::{
-    DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
-    PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
+    self, DisableBracketedPaste, EnableBracketedPaste, Event, KeyEventKind,
+    PopKeyboardEnhancementFlags,
 };
 use crossterm::execute;
 use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
-    supports_keyboard_enhancement,
 };
 use ratatui::backend::Backend;
 use ratatui::prelude::{CrosstermBackend, Terminal};
@@ -50,51 +48,114 @@ impl InputSource for CrosstermInput {
     }
 }
 
+struct TerminalModeGuard {
+    active: bool,
+}
+
+impl TerminalModeGuard {
+    fn enter() -> Result<Self> {
+        enable_raw_mode()?;
+        let mut stdout = io::stdout();
+        reset_terminal_input_modes(&mut stdout)?;
+        execute!(stdout, EnterAlternateScreen, EnableBracketedPaste)?;
+        enable_mouse_capture(&mut stdout)?;
+        Ok(Self { active: true })
+    }
+
+    fn restore(&mut self) -> io::Result<()> {
+        if !self.active {
+            return Ok(());
+        }
+        self.active = false;
+
+        let mut stdout = io::stdout();
+        reset_terminal_input_modes(&mut stdout)?;
+        execute!(stdout, LeaveAlternateScreen, DisableBracketedPaste)?;
+        disable_raw_mode()
+    }
+}
+
+impl Drop for TerminalModeGuard {
+    fn drop(&mut self) {
+        let _ = self.restore();
+    }
+}
+
 // ─── entry point (sync — no nested runtime) ────────────────────────────────────
 // The caller (navi-cli `#[tokio::main]`) already owns a multi-thread tokio
 // runtime, so `tokio::spawn` works from inside this synchronous event loop.
 // We must NOT create a second runtime here.
 pub fn run(app: TuiApp) -> Result<()> {
-    enable_raw_mode()?;
-    let mut stdout = io::stdout();
-    execute!(
-        stdout,
-        EnterAlternateScreen,
-        EnableMouseCapture,
-        EnableBracketedPaste
-    )?;
-
-    // Enable the kitty keyboard protocol so the terminal can distinguish
-    // Ctrl+Enter from plain Enter (and report other modifier combos).
-    let enhanced_keyboard = supports_keyboard_enhancement().unwrap_or(false);
-    if enhanced_keyboard {
-        execute!(
-            stdout,
-            PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES)
-        )?;
-    }
-
-    let backend = CrosstermBackend::new(stdout);
+    let mut terminal_modes = TerminalModeGuard::enter()?;
+    let backend = CrosstermBackend::new(io::stdout());
     let mut terminal = Terminal::new(backend)?;
 
     let mut input = CrosstermInput;
     let mut app = app;
     let result = run_loop(&mut terminal, &mut app, &mut input);
 
-    // Restore keyboard mode before leaving.
-    if enhanced_keyboard {
-        execute!(terminal.backend_mut(), PopKeyboardEnhancementFlags)?;
-    }
-    execute!(
-        terminal.backend_mut(),
-        LeaveAlternateScreen,
-        DisableMouseCapture,
-        DisableBracketedPaste
-    )?;
-    disable_raw_mode()?;
     terminal.show_cursor()?;
+    terminal_modes.restore()?;
 
     result
+}
+
+fn reset_terminal_input_modes(w: &mut impl io::Write) -> io::Result<()> {
+    disable_mouse_capture(w)?;
+    execute!(w, DisableBracketedPaste, PopKeyboardEnhancementFlags)?;
+    // Reset xterm modifyOtherKeys as well; a previous run may have left the
+    // terminal encoding control keys as CSI-u instead of normal key bytes.
+    write!(w, "\x1B[>4;0m")?;
+    w.flush()
+}
+
+/// Enable mouse clicks/scroll with SGR coordinates, but without motion/drag
+/// tracking. The TUI only needs click/scroll events for interactions.
+fn enable_mouse_capture(w: &mut impl io::Write) -> io::Result<()> {
+    // Normal tracking: report button press/release (?1000h)
+    // SGR extended coordinates: supports >223 columns/rows (?1006h)
+    // Intentionally omitting ?1002h/?1003h because the TUI does not need
+    // mouse-motion events.
+    write!(w, "\x1B[?1000h\x1B[?1006h")?;
+    w.flush()
+}
+
+/// Disable mouse modes defensively.
+fn disable_mouse_capture(w: &mut impl io::Write) -> io::Result<()> {
+    // Disable every common mouse mode defensively in case a previous session
+    // left the terminal in motion tracking.
+    write!(w, "\x1B[?1006l\x1B[?1005l\x1B[?1003l\x1B[?1002l\x1B[?1000l")?;
+    w.flush()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn mouse_capture_does_not_enable_motion_tracking() {
+        let mut out = Vec::new();
+
+        enable_mouse_capture(&mut out).expect("enable mouse capture");
+        let text = String::from_utf8(out).expect("utf8 escape sequences");
+
+        assert!(text.contains("\x1B[?1000h"));
+        assert!(text.contains("\x1B[?1006h"));
+        assert!(!text.contains("\x1B[?1002h"));
+        assert!(!text.contains("\x1B[?1003h"));
+    }
+
+    #[test]
+    fn mouse_capture_disable_clears_motion_tracking_modes() {
+        let mut out = Vec::new();
+
+        disable_mouse_capture(&mut out).expect("disable mouse capture");
+        let text = String::from_utf8(out).expect("utf8 escape sequences");
+
+        assert!(text.contains("\x1B[?1003l"));
+        assert!(text.contains("\x1B[?1002l"));
+        assert!(text.contains("\x1B[?1000l"));
+    }
 }
 
 /// The TUI's main loop, factored out so it can be tested with a `TestBackend`
@@ -142,7 +203,9 @@ where
 
         if input.poll(timeout)? {
             match input.read()? {
-                Event::Key(key) if key.kind == KeyEventKind::Press => {
+                Event::Key(key)
+                    if matches!(key.kind, KeyEventKind::Press | KeyEventKind::Repeat) =>
+                {
                     needs_draw = true;
                     if handle_key(app, key.code, key.modifiers) {
                         break;

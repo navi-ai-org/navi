@@ -8,9 +8,10 @@ use async_trait::async_trait;
 use serde_json::json;
 
 use super::helpers;
+use crate::background_model::BackgroundModelResolver;
 use crate::cancel::CancelToken;
 use crate::compact::CompactState;
-use crate::config::{HarnessConfig, NaviConfig};
+use crate::config::{HarnessConfig, LoadedConfig, NaviConfig};
 use crate::event::{AgentEvent, ApprovalDecision};
 use crate::model::{ModelMessage, ModelProvider, ModelRole};
 use crate::prompt::PromptCache;
@@ -19,6 +20,10 @@ use crate::tool::{Tool, ToolDefinition, ToolInvocation, ToolKind, ToolResult};
 use crate::turn::TurnContext;
 
 const MAX_BACKGROUND_SUBAGENTS: usize = 8;
+
+/// Callback for building a `ModelProvider` from a `LoadedConfig`.
+pub type ProviderBuilderFn =
+    dyn Fn(&LoadedConfig) -> anyhow::Result<Arc<dyn ModelProvider>> + Send + Sync;
 
 pub struct SubagentTool {
     tool_executor: Weak<crate::tool::ToolExecutor>,
@@ -30,6 +35,12 @@ pub struct SubagentTool {
     prompt_cache: Arc<PromptCache>,
     background_tasks: tokio::sync::Mutex<HashMap<String, Arc<SubagentBackgroundTask>>>,
     next_task_id: AtomicU64,
+    /// Optional resolver for selecting background models by profile.
+    background_resolver: Option<Arc<BackgroundModelResolver>>,
+    /// Data directory for building providers.
+    data_dir: std::path::PathBuf,
+    /// Callback for building a provider from config.
+    provider_builder: Option<Arc<ProviderBuilderFn>>,
 }
 
 impl SubagentTool {
@@ -52,7 +63,23 @@ impl SubagentTool {
             prompt_cache,
             background_tasks: tokio::sync::Mutex::new(HashMap::new()),
             next_task_id: AtomicU64::new(1),
+            background_resolver: None,
+            data_dir: std::path::PathBuf::new(),
+            provider_builder: None,
         }
+    }
+
+    /// Sets the background model resolver for profile-based model selection.
+    pub fn with_background_resolver(
+        mut self,
+        resolver: Arc<BackgroundModelResolver>,
+        data_dir: std::path::PathBuf,
+        provider_builder: Arc<ProviderBuilderFn>,
+    ) -> Self {
+        self.background_resolver = Some(resolver);
+        self.data_dir = data_dir;
+        self.provider_builder = Some(provider_builder);
+        self
     }
 }
 
@@ -192,6 +219,11 @@ impl Tool for SubagentTool {
                         "type": "string",
                         "description": "Additional context or constraints for the subagent (optional)."
                     },
+                    "profile": {
+                        "type": "string",
+                        "enum": ["cheap_general", "cheap_code", "repo_search", "naming", "long_context_cheap", "research_synthesis"],
+                        "description": "Model profile to use for this subagent. Selects a cheaper model appropriate for the task type. Omit to use the main agent's model."
+                    },
                     "background": {
                         "type": "boolean",
                         "description": "When true, spawn the subagent in the background and return a task_id. Poll or cancel later."
@@ -233,14 +265,15 @@ impl Tool for SubagentTool {
             helpers::optional_bool(&invocation.input, "background").unwrap_or(false);
         let prompt = helpers::required_string(&invocation.input, "prompt")?.to_string();
         let description = helpers::optional_string(&invocation.input, "description");
+        let profile = helpers::optional_string(&invocation.input, "profile");
 
         if is_background {
             return self
-                .spawn_background(invocation.id, prompt, description)
+                .spawn_background(invocation.id, prompt, description, profile)
                 .await;
         }
 
-        self.run_foreground(invocation.id, prompt, description)
+        self.run_foreground(invocation.id, prompt, description, profile)
             .await
     }
 }
@@ -251,6 +284,7 @@ impl SubagentTool {
         invocation_id: String,
         prompt: String,
         description: Option<String>,
+        profile: Option<String>,
     ) -> Result<ToolResult> {
         let executor = self
             .tool_executor
@@ -258,16 +292,19 @@ impl SubagentTool {
             .context("subagent tool executor has been dropped")?;
         let started = Instant::now();
 
+        // Resolve model provider based on profile.
+        let (provider, model) = self.resolve_model_for_profile(profile.as_deref());
+
         let (mut messages, event_tx, _approval_handle, resolver) =
             self.prepare_subagent_context(&prompt, &description);
 
         let include_tool_prompt = self.include_tool_prompt_manifest();
 
         let sub_ctx = TurnContext {
-            model_provider: self.model_provider.clone(),
+            model_provider: Arc::new(RwLock::new(provider)),
             tool_executor: executor,
             project_dir: self.project_dir.clone(),
-            model_name: self.model_name.clone(),
+            model_name: Arc::new(RwLock::new(model)),
             event_tx: Some(event_tx),
             approval_resolver: resolver,
             question_resolver: crate::runtime::QuestionResolver::new_standalone(),
@@ -283,6 +320,9 @@ impl SubagentTool {
             prompt_cache: self.prompt_cache.clone(),
             cancel_token: CancelToken::new(),
             config: self.config.clone(),
+            compaction_provider: None,
+            compaction_model_name: None,
+            session_id: "subagent".to_string(),
         };
 
         let policy =
@@ -310,6 +350,7 @@ impl SubagentTool {
         invocation_id: String,
         prompt: String,
         description: Option<String>,
+        profile: Option<String>,
     ) -> Result<ToolResult> {
         let executor = match self.tool_executor.upgrade() {
             Some(ex) => ex,
@@ -353,12 +394,15 @@ impl SubagentTool {
         });
         tasks.insert(task_id.clone(), task.clone());
 
-        let model_provider = self.model_provider.clone();
+        // Resolve model provider based on profile.
+        let (resolved_provider, resolved_model) =
+            self.resolve_model_for_profile(profile.as_deref());
+        let model_provider = Arc::new(RwLock::new(resolved_provider));
+        let model_name = Arc::new(RwLock::new(resolved_model));
         let prompt_cache = self.prompt_cache.clone();
         let harness_config = self.harness_config.clone();
         let config = self.config.clone();
         let project_dir = self.project_dir.clone();
-        let model_name = self.model_name.clone();
         let cancel_token = task.cancel_token.clone();
 
         tokio::spawn(async move {
@@ -387,6 +431,9 @@ impl SubagentTool {
                 prompt_cache,
                 cancel_token,
                 config: Arc::new(std::sync::RwLock::new(config_snapshot)),
+                compaction_provider: None,
+                compaction_model_name: None,
+                session_id: "subagent-bg".to_string(),
             };
 
             let policy =
@@ -478,6 +525,58 @@ impl SubagentTool {
     fn include_tool_prompt_manifest(&self) -> bool {
         crate::config::effective_tool_prompt_manifest(
             &self.config.read().unwrap_or_else(|e| e.into_inner()),
+        )
+    }
+
+    /// Resolves a model provider and name for the given profile. Falls back to
+    /// the main agent's model when no profile is specified or resolution fails.
+    fn resolve_model_for_profile(&self, profile: Option<&str>) -> (Arc<dyn ModelProvider>, String) {
+        let Some(profile) = profile else {
+            return self.main_model();
+        };
+
+        let Some(ref resolver) = self.background_resolver else {
+            return self.main_model();
+        };
+
+        let Some(ref builder) = self.provider_builder else {
+            return self.main_model();
+        };
+
+        let resolved = resolver.resolve(profile);
+
+        // Build a provider for the resolved model.
+        let config_snapshot = self
+            .config
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        let mut bg_config = config_snapshot.clone();
+        bg_config.model.provider = resolved.provider_id.clone();
+        bg_config.model.name = resolved.model_name.clone();
+        let bg_loaded = LoadedConfig {
+            config: bg_config,
+            global_config_path: None,
+            project_config_path: None,
+            data_dir: self.data_dir.clone(),
+        };
+
+        match builder(&bg_loaded) {
+            Ok(provider) => (provider, resolved.model_name),
+            Err(_) => self.main_model(),
+        }
+    }
+
+    fn main_model(&self) -> (Arc<dyn ModelProvider>, String) {
+        (
+            self.model_provider
+                .read()
+                .unwrap_or_else(|e| e.into_inner())
+                .clone(),
+            self.model_name
+                .read()
+                .unwrap_or_else(|e| e.into_inner())
+                .clone(),
         )
     }
 

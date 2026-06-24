@@ -76,7 +76,7 @@ fn formatter_spec(lang: LangId) -> FormatterSpec {
             command: "ruff",
             args: &["format", "--quiet"],
         },
-        LangId::JavaScript | LangId::TypeScript => FormatterSpec {
+        LangId::JavaScript | LangId::TypeScript | LangId::Tsx => FormatterSpec {
             command: "biome",
             args: &["format", "--write", "--no-errors-on-unmatched"],
         },

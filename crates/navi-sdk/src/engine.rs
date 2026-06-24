@@ -16,7 +16,9 @@ use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 use tokio::sync::{Mutex as AsyncMutex, broadcast};
 
-use crate::tooling::{build_local_tooling, build_model_provider, list_models_for_provider};
+use crate::tooling::{
+    build_local_tooling, build_provider_for_project_config, list_models_for_provider,
+};
 use crate::types::{
     NaviConfigSaveTarget, NaviModelInfo, NaviModelSelectionRequest, NaviModelSelectionResult,
     NaviProviderAccountInfo, NaviProviderCredentialStatus, NaviProviderSyncFailure,
@@ -164,7 +166,7 @@ impl NaviEngine {
         }
 
         let loaded_config = self.loaded_config();
-        let provider = build_model_provider(&loaded_config)?;
+        let provider = build_provider_for_project_config(&loaded_config, &project_dir)?;
         let mut tool_executor = build_local_tooling(&loaded_config, project_dir.clone())?;
         for tool in &self.inner.host_tools {
             let executor = Arc::get_mut(&mut tool_executor.tool_executor).ok_or_else(|| {
@@ -183,22 +185,38 @@ impl NaviEngine {
             tracing::warn!(warning = %warning, "plugin load warning");
         }
 
-        // Register the subagent tool so models can spawn isolated worker agents.
-        let weak_exec = Arc::downgrade(&tool_executor.tool_executor);
-        let subagent = navi_core::SubagentTool::new(
-            weak_exec,
-            Arc::new(std::sync::RwLock::new(provider.clone())),
-            project_dir.clone(),
-            Arc::new(std::sync::RwLock::new(
-                loaded_config.config.model.name.clone(),
-            )),
-            loaded_config.config.harness.clone(),
-            Arc::new(std::sync::RwLock::new(loaded_config.config.clone())),
-            Arc::new(navi_core::PromptCache::new()),
-        );
-        if let Some(executor) = Arc::get_mut(&mut tool_executor.tool_executor) {
+        // Register tools that need a weak reference back to the executor.
+        let mut executor = Arc::try_unwrap(tool_executor.tool_executor).map_err(|_| {
+            NaviError::Config("cannot finalize cyclic tools after executor is shared".into())
+        })?;
+        let shared_provider = Arc::new(std::sync::RwLock::new(provider.clone()));
+        let shared_model = Arc::new(std::sync::RwLock::new(
+            loaded_config.config.model.name.clone(),
+        ));
+        let shared_config = Arc::new(std::sync::RwLock::new(loaded_config.config.clone()));
+        let prompt_cache = Arc::new(navi_core::PromptCache::new());
+        tool_executor.tool_executor = Arc::new_cyclic(|weak_exec| {
+            let subagent = navi_core::SubagentTool::new(
+                weak_exec.clone(),
+                shared_provider.clone(),
+                project_dir.clone(),
+                shared_model.clone(),
+                loaded_config.config.harness.clone(),
+                shared_config.clone(),
+                prompt_cache.clone(),
+            );
             executor.register_tool(Arc::new(subagent));
-        }
+            executor.register_tool(Arc::new(navi_core::RepoExploreTool::new(
+                weak_exec.clone(),
+                shared_provider.clone(),
+                project_dir.clone(),
+                shared_model.clone(),
+                loaded_config.config.harness.clone(),
+                shared_config.clone(),
+                prompt_cache.clone(),
+            )));
+            executor
+        });
 
         let mut runtime = AgentRuntime::new(AgentRuntimeOptions {
             loaded_config: loaded_config.clone(),
@@ -216,6 +234,10 @@ impl NaviEngine {
         });
         let events = runtime.stream_events();
         let session_id = runtime.start_session()?;
+        // Propagate session ID to the file lock manager for cross-instance coordination.
+        if let Some(executor) = runtime.tool_executor() {
+            executor.set_session_id_on_locks(session_id.as_str());
+        }
         let approval_resolver = runtime.approval_resolver();
         let question_resolver = runtime.question_resolver();
         let turn_canceller = runtime.turn_canceller();
@@ -323,7 +345,8 @@ impl NaviEngine {
             .with_context(|| format!("unknown provider {provider}"))?;
         loaded_config.config.model.provider = provider_config.id.clone();
         loaded_config.config.model.name = model.to_string();
-        let model_provider = build_model_provider(&loaded_config)?;
+        let model_provider =
+            build_provider_for_project_config(&loaded_config, &self.inner.project_dir)?;
 
         {
             let mut runtime = session.runtime.lock().await;

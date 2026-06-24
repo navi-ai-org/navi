@@ -437,6 +437,10 @@ fn dispatch_hit(app: &mut TuiApp, hit: HitRegion) {
             app.mcp_ui_state.selected_server = index;
             app.mcp_ui_state.is_focused_on_tools = false;
         }
+        HitAction::McpTool(index) => {
+            app.mcp_ui_state.selected_tool = index;
+            app.mcp_ui_state.is_focused_on_tools = true;
+        }
         HitAction::RemoveImage(index) => {
             if index < app.pending_images.len() {
                 app.pending_images.remove(index);
@@ -514,7 +518,13 @@ fn active_scroll_target(app: &TuiApp) -> Option<ScrollTarget> {
         | Mode::Debug
         | Mode::MessageActions
         | Mode::OAuth => None,
-        Mode::Normal | Mode::ApiKeyEntry | Mode::Mcp | Mode::BackgroundCommands => None,
+        Mode::Normal
+        | Mode::ApiKeyEntry
+        | Mode::Mcp
+        | Mode::BackgroundCommands
+        | Mode::BackgroundModels
+        | Mode::BgModelPicker => None,
+        Mode::Setup => None,
     }
 }
 

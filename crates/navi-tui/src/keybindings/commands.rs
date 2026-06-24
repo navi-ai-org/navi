@@ -1,11 +1,13 @@
 use crate::TuiApp;
-use crate::chat::{reset_system_context, retry_last_response};
+use crate::chat::{retry_last_response, start_new_session};
 use crate::commands::{CommandAction, filtered_commands};
 use crate::mouse::copy_text_to_clipboard;
 use crate::notifications::show_notification;
 use crate::render::command_scroll_offset;
 use crate::session::session_created_at;
-use crate::state::ModalKind;
+use crate::state::Mode;
+use crate::state::{ChatMessage, ChatRole};
+use crate::state::{ModalKind, SetupPhase};
 use crate::ui::list::SelectListState;
 use crossterm::event::KeyCode;
 use navi_sdk::{AgentEvent, session_title_from_events};
@@ -53,11 +55,7 @@ pub(crate) fn run_selected_command(app: &mut TuiApp) -> bool {
 
     match command.action {
         CommandAction::NewSession => {
-            app.messages.clear();
-            reset_system_context(app);
-            app.input.clear();
-            app.input_cursor = 0;
-            app.scroll_offset = 0;
+            start_new_session(app);
             super::close_all_modals(app);
         }
         CommandAction::SwitchModel => {
@@ -129,10 +127,31 @@ pub(crate) fn run_selected_command(app: &mut TuiApp) -> bool {
                 }
             });
         }
+        CommandAction::BackgroundModels => {
+            super::replace_modal(app, ModalKind::BackgroundModels);
+            app.bg_models_selected = 0;
+            app.bg_models_scroll = 0;
+            app.bg_model_picker_active = false;
+            app.bg_model_picker_task = None;
+        }
         CommandAction::Quit => return true,
         CommandAction::Settings => {
             super::replace_modal(app, ModalKind::Settings);
             app.selected_setting = 0;
+        }
+        CommandAction::ReSetup => {
+            app.setup_phase = Some(SetupPhase::ProviderLogin);
+            app.mode = Mode::Setup;
+            super::close_all_modals(app);
+            app.modal_stack.open(ModalKind::Models);
+            app.model_filter.clear();
+            app.model_scroll = 0;
+            app.refresh_authenticated_providers();
+            app.messages.push(ChatMessage::new(
+                ChatRole::Assistant,
+                "Setting up again. Choose your provider.".to_string(),
+            ));
+            // onboarding_completed field removed
         }
         _ => super::close_all_modals(app),
     }

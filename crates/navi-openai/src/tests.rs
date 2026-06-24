@@ -639,6 +639,22 @@ fn parses_openai_responses_tool_call() {
 }
 
 #[test]
+fn responses_tool_call_preserves_malformed_arguments() {
+    let events = parse_openai_responses_sse(
+        r#"{"type":"response.output_item.done","item":{"type":"function_call","call_id":"call_1","name":"read_file","arguments":"{\"path\":"}}"#,
+    );
+
+    assert_eq!(
+        events.into_iter().map(Result::unwrap).collect::<Vec<_>>(),
+        vec![ModelStreamEvent::ToolCall(ToolInvocation {
+            id: "call_1".to_string(),
+            tool_name: "read_file".to_string(),
+            input: json!({ "raw_arguments": "{\"path\":" }),
+        })]
+    );
+}
+
+#[test]
 fn accumulates_chat_completion_tool_call_arguments() {
     let mut state = ChatToolCallAccumulator::default();
     let first = parse_chat_completions_sse_with_state(

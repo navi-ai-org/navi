@@ -13,8 +13,10 @@ pub struct HarnessPolicy {
     /// Maximum bytes of tool output captured per observation.
     pub observation_max_bytes: usize,
     /// Maximum model/tool loop iterations in one turn.
-    pub max_turn_loops: usize,
-    /// Maximum total tool calls in one turn.
+    /// `None` means unlimited (only stopped by cancellation, repetition, or errors).
+    pub max_turn_loops: Option<usize>,
+    /// Legacy configured tool-call budget for old small/medium configs.
+    /// Tool calls are counted but not capped; long-running uses 0 here.
     pub max_tool_calls: usize,
     /// Maximum tool calls executed concurrently.
     pub max_parallel_tool_calls: usize,
@@ -46,7 +48,7 @@ pub struct AgentRunState {
     pub consecutive_malformed_arguments: usize,
     /// Consecutive unknown-tool calls.
     pub consecutive_unknown_tools: usize,
-    /// Serialized signature of the last tool invocation, for repetition detection.
+    /// Hash of the last exact tool invocation signature, for repetition detection.
     pub last_tool_signature: Option<String>,
     /// Consecutive count of the same repeated tool call.
     pub repeated_tool_calls: usize,
@@ -84,7 +86,6 @@ impl ToolFailureKind {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HarnessStopReason {
     TurnLoopLimit,
-    ToolCallLimit,
     RepeatedToolCall,
     ConsecutiveToolErrors,
     ConsecutiveInvalidArguments,
@@ -96,7 +97,6 @@ impl HarnessStopReason {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::TurnLoopLimit => "turn_loop_limit",
-            Self::ToolCallLimit => "tool_call_limit",
             Self::RepeatedToolCall => "repeated_tool_call",
             Self::ConsecutiveToolErrors => "consecutive_tool_errors",
             Self::ConsecutiveInvalidArguments => "consecutive_invalid_arguments",
@@ -133,32 +133,37 @@ pub fn select_harness_policy(config: &NaviConfig) -> HarnessPolicy {
     policy_for_profile(&config.harness, profile)
 }
 
-/// Builds a [`HarnessPolicy`] for an explicit profile (resolving `Auto` to `Medium`).
+/// Builds a [`HarnessPolicy`] for an explicit profile.
+/// `turn_loop_limit` from config overrides the per-profile limit; `None` means unlimited.
 pub fn policy_for_profile(config: &HarnessConfig, profile: HarnessProfile) -> HarnessPolicy {
-    match profile {
-        HarnessProfile::Auto => policy_for_profile(config, HarnessProfile::Medium),
-        HarnessProfile::Small => HarnessPolicy {
-            profile,
-            observation_max_bytes: config.observation_bytes_small,
-            max_turn_loops: config.max_turn_loops_small,
-            max_tool_calls: config.max_tool_calls_small,
-            max_parallel_tool_calls: config.max_parallel_tool_calls_small,
-            max_consecutive_tool_errors: config.max_consecutive_tool_errors,
-            max_consecutive_invalid_arguments: config.max_consecutive_invalid_arguments,
-            max_consecutive_malformed_arguments: config.max_consecutive_malformed_arguments,
-            max_consecutive_unknown_tools: config.max_consecutive_unknown_tools,
-        },
-        HarnessProfile::Medium => HarnessPolicy {
-            profile,
-            observation_max_bytes: config.observation_bytes_medium,
-            max_turn_loops: config.max_turn_loops_medium,
-            max_tool_calls: config.max_tool_calls_medium,
-            max_parallel_tool_calls: config.max_parallel_tool_calls_medium,
-            max_consecutive_tool_errors: config.max_consecutive_tool_errors,
-            max_consecutive_invalid_arguments: config.max_consecutive_invalid_arguments,
-            max_consecutive_malformed_arguments: config.max_consecutive_malformed_arguments,
-            max_consecutive_unknown_tools: config.max_consecutive_unknown_tools,
-        },
+    let (obs_bytes, max_tool_calls, max_parallel) = match profile {
+        HarnessProfile::Auto => return policy_for_profile(config, HarnessProfile::Medium),
+        HarnessProfile::Small => (
+            config.observation_bytes_small,
+            config.max_tool_calls_small,
+            config.max_parallel_tool_calls_small,
+        ),
+        HarnessProfile::Medium => (
+            config.observation_bytes_medium,
+            config.max_tool_calls_medium,
+            config.max_parallel_tool_calls_medium,
+        ),
+        HarnessProfile::LongRunning => (
+            config.observation_bytes_medium,
+            0,
+            config.max_parallel_tool_calls_long_running,
+        ),
+    };
+    HarnessPolicy {
+        profile,
+        observation_max_bytes: obs_bytes,
+        max_turn_loops: config.turn_loop_limit,
+        max_tool_calls,
+        max_parallel_tool_calls: max_parallel,
+        max_consecutive_tool_errors: config.max_consecutive_tool_errors,
+        max_consecutive_invalid_arguments: config.max_consecutive_invalid_arguments,
+        max_consecutive_malformed_arguments: config.max_consecutive_malformed_arguments,
+        max_consecutive_unknown_tools: config.max_consecutive_unknown_tools,
     }
 }
 
@@ -228,6 +233,7 @@ fn build_system_prompt_inner(
         HarnessProfile::Auto => "medium",
         HarnessProfile::Small => "small",
         HarnessProfile::Medium => "medium",
+        HarnessProfile::LongRunning => "long-running",
     };
     let tool_calling_mode = crate::config::effective_tool_calling_mode(config);
     let tool_calling_rule = match tool_calling_mode {
@@ -235,7 +241,7 @@ fn build_system_prompt_inner(
             "- Use native tool calling when available; do not write tool calls in markdown, XML, or prose."
         }
         crate::config::ToolCallingMode::TextExtracted => {
-            "- Tool calls are extracted from text for this provider; use the available tool manifest exactly when a tool is needed."
+            "- Tool calls are extracted from text for this provider. When a tool is needed, emit exactly `<tool_call>{\"name\":\"tool_name\",\"arguments\":{...}}</tool_call>` using the available tool manifest."
         }
         crate::config::ToolCallingMode::ManifestOnly => {
             "- This provider receives a text tool manifest only; follow the manifest exactly and keep tool requests minimal."
@@ -244,6 +250,7 @@ fn build_system_prompt_inner(
             "- NAVI tools are disabled for this provider; answer directly without requesting local tools."
         }
     };
+    let tools_enabled = !matches!(tool_calling_mode, crate::config::ToolCallingMode::Disabled);
     let mut prompt = format!(
         concat!(
             "You are NAVI, an autonomous code agent running in a terminal.\n",
@@ -259,9 +266,9 @@ fn build_system_prompt_inner(
             "Tool rules:\n",
             "- Prefer top_files for first-pass exploration of unfamiliar code areas before issuing many read_file calls.\n",
             "- Prefer read_file, fs_browser, and grep for focused follow-up inspection.\n",
-            "- Prefer apply_patch for targeted edits; write_file is for whole-file replacement.\n",
-            "- Prefer test_runner over bash for running tests — structured output is faster to process.\n",
-            "- Prefer build_runner over bash for compilation — cached builds skip redundant work.\n",
+            "- Prefer apply_patch for targeted text edits; write_file is for whole-file replacement.\n",
+            "- apply_patch accepts exactly one of {{patch: string}} or {{patches: string[]}}; never pass path/content/old_string/new_string to apply_patch.\n",
+            "- There is no `edit` tool. For multiple known edits, use one apply_patch call with `patches`.\n",
             "- Prefer git_ops over bash for git operations — structured status, diff, log, and branch output.\n",
             "- Prefer package_manager over bash for dependency management — structured install, add, remove, update.\n",
             "- Use bash for genuinely ad-hoc commands that don't fit specialized tools.\n",
@@ -296,15 +303,67 @@ fn build_system_prompt_inner(
         cwd = cwd.display(),
         tool_calling_rule = tool_calling_rule,
     );
+    if tools_enabled {
+        prompt.push_str(
+        "tool_workflow guidance:\n\
+         - Use tool_workflow to batch many read-only operations into a single tool call.\n\
+         - tool_workflow runs a sandboxed Starlark script. Allowed nested tools: read_file, grep, fs_browser, git_ops (read-only).\n\
+         - Prefer tool_workflow over many individual read_file/grep calls when exploring 3+ files.\n\
+         - Example: find all .rs files, read each, collect files containing 'TODO'.\n\
+         - Call tool_workflow with this shape:\n\
+           tool_workflow({\n\
+             script: \"\\n\
+         def workflow():\\n\
+             files = find(pattern='*.rs')['files']\\n\
+             result = []\\n\
+             for f in files:\\n\
+                 content = read_file(f)['content']\\n\
+                 if 'TODO' in content:\\n\
+                     result.append(f)\\n\
+             return result\\n\
+         workflow()\\n\
+         \"\n\
+           })\n\
+         - Available helpers inside script: tool(name, input), read_file(path), grep(pattern, path), find(path, pattern), stat(path), emit(value), fail(message).\n",
+        );
+        prompt.push_str(
+        "Code tools:\n\
+         - symbols_overview: compact symbol tree for a file or directory. Use before broad read_file calls when navigating or refactoring.\n\
+         - find_symbol: search symbols by name/kind/path. Returns symbol id and hash for precise follow-up edits.\n\
+         - find_references: exact identifier references in source files (token-level, not compiler-semantic). Ignores comments/strings where the grammar exposes them.\n\
+         - code_diagnostics: tree-sitter parse diagnostics for a file or directory. Use before and after structural edits.\n\
+         - replace_symbol_body: replace a full symbol definition/body by symbol id or unique name. Use expected_hash from symbols_overview/find_symbol to reject stale edits.\n\
+         - insert_before_symbol / insert_after_symbol: insert source text before/after a symbol id or unique name.\n\
+         - rename_symbol: exact identifier rename across a file or directory. Prefer find_references first for review. This is token-aware, not compiler/LSP semantic rename.\n",
+        );
+    }
+    if policy.profile == HarnessProfile::LongRunning {
+        prompt.push_str(
+            "\nLong-running sprint contract:\n\
+             - Start by calling `init_session` if `.navi/feature_list.json` is missing.\n\
+             - Work on exactly one feature at a time from `feature_list.json`.\n\
+             - Do not mark a feature done manually; call `mark_feature_done` with the exact verification_steps from the feature.\n\
+             - `mark_feature_done` runs every verification command and only sets `passes=true` after all commands succeed.\n\
+             - Keep `.navi/navi-progress.txt` as the human handoff for the next coding agent.\n",
+        );
+    }
     if let Some(memory) = memory_injection {
         prompt.push('\n');
         prompt.push_str(memory);
         prompt.push('\n');
     }
     if let Some(manifest) = tool_manifest {
-        prompt.push_str(
-            "\nAvailable tools (compatibility manifest; still use native tool calling):\n",
-        );
+        let manifest_header = match tool_calling_mode {
+            crate::config::ToolCallingMode::TextExtracted
+            | crate::config::ToolCallingMode::ManifestOnly => {
+                "\nAvailable tools (text tool manifest):\n"
+            }
+            crate::config::ToolCallingMode::Native => {
+                "\nAvailable tools (compatibility manifest; still use native tool calling):\n"
+            }
+            crate::config::ToolCallingMode::Disabled => "\nAvailable tools:\n",
+        };
+        prompt.push_str(manifest_header);
         prompt.push_str(manifest);
     }
     prompt
@@ -349,10 +408,10 @@ pub fn tool_prompt_manifest(tools: &[ToolDefinition]) -> String {
 /// indicating the model is likely hallucinating / stuck in a loop.
 pub fn record_tool_call(
     state: &mut AgentRunState,
-    policy: HarnessPolicy,
+    _policy: HarnessPolicy,
     invocation: &ToolInvocation,
 ) -> ToolLoopDecision {
-    let signature = tool_signature(invocation);
+    let signature = tool_signature_hash(invocation);
     if state.last_tool_signature.as_deref() == Some(signature.as_str()) {
         state.repeated_tool_calls += 1;
     } else {
@@ -361,17 +420,6 @@ pub fn record_tool_call(
     state.last_tool_signature = Some(signature);
     state.tool_iterations += 1;
     state.total_tool_calls += 1;
-
-    if state.total_tool_calls > policy.max_tool_calls {
-        return ToolLoopDecision::Stop(HarnessStop {
-            reason: HarnessStopReason::ToolCallLimit,
-            message: format!(
-                "Tool call limit reached ({} calls); stopping to avoid an uncontrolled loop",
-                policy.max_tool_calls
-            ),
-            tool_name: Some(invocation.tool_name.clone()),
-        });
-    }
 
     if state.repeated_tool_calls >= 20 {
         return ToolLoopDecision::Stop(HarnessStop {
@@ -545,13 +593,23 @@ pub fn trace_request_summary(request: &ModelRequest, policy: HarnessPolicy) -> V
         "tools": request.tools.len(),
         "observation_max_bytes": policy.observation_max_bytes,
         "max_turn_loops": policy.max_turn_loops,
-        "max_tool_calls": policy.max_tool_calls,
+        "max_tool_calls": Value::Null,
+        "tool_call_limit": "disabled",
         "max_parallel_tool_calls": policy.max_parallel_tool_calls,
     })
 }
 
-fn tool_signature(invocation: &ToolInvocation) -> String {
-    format!("{}:{}", invocation.tool_name, invocation.input)
+fn tool_signature_hash(invocation: &ToolInvocation) -> String {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+
+    let mut hasher = DefaultHasher::new();
+    invocation.tool_name.hash(&mut hasher);
+    0xff_u8.hash(&mut hasher);
+    let input = serde_json::to_vec(&invocation.input)
+        .unwrap_or_else(|_| invocation.input.to_string().into_bytes());
+    input.hash(&mut hasher);
+    format!("{:016x}", hasher.finish())
 }
 
 fn truncate_string(mut value: String, max_bytes: usize) -> String {
@@ -604,6 +662,56 @@ mod tests {
 
         assert_eq!(small.observation_max_bytes, 10);
         assert_eq!(medium.observation_max_bytes, 20);
+    }
+
+    #[test]
+    fn legacy_tool_call_budget_still_lifts_turn_loop_limit() {
+        let config = HarnessConfig {
+            max_turn_loops_medium: 40,
+            max_tool_calls_medium: 100,
+            turn_loop_limit: Some(100),
+            ..HarnessConfig::default()
+        };
+
+        let policy = policy_for_profile(&config, HarnessProfile::Medium);
+
+        assert_eq!(policy.max_turn_loops, Some(100));
+        assert_eq!(policy.max_tool_calls, 100);
+    }
+
+    #[test]
+    fn long_running_profile_has_no_tool_call_budget() {
+        let config = HarnessConfig {
+            max_turn_loops_long_running: 80,
+            max_tool_calls_medium: 100,
+            turn_loop_limit: Some(80),
+            ..HarnessConfig::default()
+        };
+
+        let policy = policy_for_profile(&config, HarnessProfile::LongRunning);
+
+        assert_eq!(policy.max_turn_loops, Some(80));
+        assert_eq!(policy.max_tool_calls, 0);
+    }
+
+    #[test]
+    fn total_tool_calls_are_counted_but_not_capped() {
+        let policy = test_policy(1);
+        let mut state = AgentRunState::default();
+
+        for i in 0..25 {
+            let invocation = ToolInvocation {
+                id: format!("call-{i}"),
+                tool_name: "read_file".to_string(),
+                input: json!({ "path": format!("file-{i}.rs") }),
+            };
+            assert_eq!(
+                record_tool_call(&mut state, policy, &invocation),
+                ToolLoopDecision::Continue,
+            );
+        }
+
+        assert_eq!(state.total_tool_calls, 25);
     }
 
     #[test]
@@ -663,6 +771,33 @@ mod tests {
             record_tool_call(&mut state, policy, &invocation_a),
             ToolLoopDecision::Continue,
         );
+    }
+
+    #[test]
+    fn repeated_tool_call_uses_exact_argument_hash() {
+        let policy = test_policy(100);
+        let invocation_a = ToolInvocation {
+            id: "call-1".to_string(),
+            tool_name: "read_file".to_string(),
+            input: json!({ "raw_arguments": "{\"path\":" }),
+        };
+        let invocation_b = ToolInvocation {
+            id: "call-2".to_string(),
+            tool_name: "read_file".to_string(),
+            input: json!({ "raw_arguments": "{\"path\":\"Cargo.toml\"" }),
+        };
+        let mut state = AgentRunState::default();
+
+        assert_eq!(
+            record_tool_call(&mut state, policy, &invocation_a),
+            ToolLoopDecision::Continue,
+        );
+        assert_eq!(
+            record_tool_call(&mut state, policy, &invocation_b),
+            ToolLoopDecision::Continue,
+        );
+
+        assert_eq!(state.repeated_tool_calls, 0);
     }
 
     #[test]
@@ -772,5 +907,34 @@ mod tests {
         assert!(manifest.contains("read_file"));
         assert!(manifest.contains("Required: path"));
         assert!(manifest.contains(r#"{"path":"example"}"#));
+    }
+
+    #[test]
+    fn system_prompt_includes_tool_workflow_guidance() {
+        let config = NaviConfig::default();
+        let prompt = build_system_prompt(&config, std::path::Path::new("/tmp"));
+
+        assert!(
+            prompt.contains("tool_workflow"),
+            "system prompt must mention tool_workflow"
+        );
+        assert!(
+            prompt.contains("def workflow()"),
+            "system prompt must include a concrete tool_workflow example"
+        );
+        assert!(
+            prompt.contains("read_file"),
+            "tool_workflow example must show allowed tools"
+        );
+    }
+
+    #[test]
+    fn system_prompt_includes_apply_patch_guidance() {
+        let config = NaviConfig::default();
+        let prompt = build_system_prompt(&config, std::path::Path::new("/tmp"));
+
+        assert!(prompt.contains("There is no `edit` tool"));
+        assert!(prompt.contains("{patches: string[]}"));
+        assert!(prompt.contains("never pass path/content/old_string/new_string"));
     }
 }
