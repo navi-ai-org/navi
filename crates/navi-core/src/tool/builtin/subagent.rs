@@ -48,6 +48,7 @@ impl SubagentTool {
         tool_executor: Weak<crate::tool::ToolExecutor>,
         model_provider: Arc<RwLock<Arc<dyn ModelProvider>>>,
         project_dir: std::path::PathBuf,
+        data_dir: std::path::PathBuf,
         model_name: Arc<RwLock<String>>,
         harness_config: HarnessConfig,
         config: Arc<RwLock<NaviConfig>>,
@@ -57,6 +58,7 @@ impl SubagentTool {
             tool_executor,
             model_provider,
             project_dir,
+            data_dir,
             model_name,
             harness_config,
             config,
@@ -64,7 +66,6 @@ impl SubagentTool {
             background_tasks: tokio::sync::Mutex::new(HashMap::new()),
             next_task_id: AtomicU64::new(1),
             background_resolver: None,
-            data_dir: std::path::PathBuf::new(),
             provider_builder: None,
         }
     }
@@ -304,6 +305,7 @@ impl SubagentTool {
             model_provider: Arc::new(RwLock::new(provider)),
             tool_executor: executor,
             project_dir: self.project_dir.clone(),
+            data_dir: self.data_dir.clone(),
             model_name: Arc::new(RwLock::new(model)),
             event_tx: Some(event_tx),
             approval_resolver: resolver,
@@ -320,6 +322,7 @@ impl SubagentTool {
             prompt_cache: self.prompt_cache.clone(),
             cancel_token: CancelToken::new(),
             config: self.config.clone(),
+            memory_injection: None,
             compaction_provider: None,
             compaction_model_name: None,
             session_id: "subagent".to_string(),
@@ -403,6 +406,7 @@ impl SubagentTool {
         let harness_config = self.harness_config.clone();
         let config = self.config.clone();
         let project_dir = self.project_dir.clone();
+        let data_dir = self.data_dir.clone();
         let cancel_token = task.cancel_token.clone();
 
         tokio::spawn(async move {
@@ -415,6 +419,7 @@ impl SubagentTool {
                 model_provider,
                 tool_executor: executor,
                 project_dir,
+                data_dir,
                 model_name,
                 event_tx: Some(event_tx),
                 approval_resolver: resolver,
@@ -431,6 +436,7 @@ impl SubagentTool {
                 prompt_cache,
                 cancel_token,
                 config: Arc::new(std::sync::RwLock::new(config_snapshot)),
+                memory_injection: None,
                 compaction_provider: None,
                 compaction_model_name: None,
                 session_id: "subagent-bg".to_string(),

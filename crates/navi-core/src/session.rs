@@ -613,22 +613,12 @@ impl SessionRuntime {
         ctx: std::sync::Arc<crate::turn::TurnContext>,
         policy: crate::harness::HarnessPolicy,
         initial_messages: Vec<crate::model::ModelMessage>,
-        memory_injection: Option<String>,
+        _memory_injection: Option<String>,
     ) -> Self {
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<Submission>();
 
         tokio::spawn(async move {
-            let mut messages = if initial_messages.is_empty() {
-                vec![crate::model::ModelMessage::system(
-                    crate::harness::build_system_prompt_with_memory(
-                        &crate::config::NaviConfig::default(),
-                        &ctx.project_dir,
-                        memory_injection.as_deref(),
-                    ),
-                )]
-            } else {
-                initial_messages
-            };
+            let mut messages = initial_messages;
 
             while let Some(submission) = rx.recv().await {
                 if submission.content_parts.is_empty() {
@@ -817,6 +807,7 @@ mod tests {
             ))),
             tool_executor,
             project_dir: tempdir.path().to_path_buf(),
+            data_dir: tempdir.path().join("data"),
             model_name: std::sync::Arc::new(std::sync::RwLock::new("test-model".to_string())),
             event_tx: None,
             approval_resolver: crate::runtime::ApprovalResolver::new_for_test(),
@@ -833,6 +824,7 @@ mod tests {
             config: std::sync::Arc::new(std::sync::RwLock::new(
                 crate::config::NaviConfig::default(),
             )),
+            memory_injection: None,
             compaction_provider: None,
             compaction_model_name: None,
             session_id: "test-session".to_string(),

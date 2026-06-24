@@ -37,7 +37,11 @@ impl Tool for AppendNoteTool {
         let content = helpers::required_string(&invocation.input, "content")?;
 
         let loaded_config = NaviConfig::load(&self.project_root).unwrap_or_default();
-        let manager = MemoryManager::new(self.project_root.clone(), &loaded_config.config.memory)?;
+        let manager = MemoryManager::new(
+            self.project_root.clone(),
+            loaded_config.data_dir.clone(),
+            &loaded_config.config.memory,
+        )?;
 
         manager.store.append_note(content)?;
 
@@ -104,7 +108,11 @@ impl Tool for HistoryOpsTool {
         let action = helpers::required_string(&invocation.input, "action")?;
 
         let loaded_config = NaviConfig::load(&self.project_root).unwrap_or_default();
-        let manager = MemoryManager::new(self.project_root.clone(), &loaded_config.config.memory)?;
+        let manager = MemoryManager::new(
+            self.project_root.clone(),
+            loaded_config.data_dir.clone(),
+            &loaded_config.config.memory,
+        )?;
 
         let output = match action {
             "search" => {

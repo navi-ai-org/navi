@@ -105,13 +105,16 @@ fn test_history_store_operations() {
 #[test]
 fn test_memory_store_atomic_writes_and_backups() {
     let temp_dir = tempdir().unwrap();
-    let project_dir = temp_dir.path().to_path_buf();
+    let project_dir = temp_dir.path().join("project");
+    let data_dir = temp_dir.path().join("data");
+    fs::create_dir_all(&project_dir).unwrap();
 
-    let memory_root = ".agent-memory";
+    let memory_root = "memory/projects";
     let global_path = temp_dir.path().join("global-memory.md");
 
     let store = memory_store::MemoryStore::new(
         project_dir.clone(),
+        data_dir.clone(),
         memory_root,
         &global_path.to_string_lossy(),
     );
@@ -119,7 +122,8 @@ fn test_memory_store_atomic_writes_and_backups() {
     store.ensure_initialized().unwrap();
 
     // Check default directories/files created
-    assert!(project_dir.join(memory_root).exists());
+    assert!(!project_dir.join(".agent-memory").exists());
+    assert!(store.memory_root.starts_with(data_dir.join(memory_root)));
     assert!(store.notes_path().exists());
     assert!(store.checkpoint_path().exists());
     assert!(store.project_memory_path().exists());
@@ -135,17 +139,83 @@ fn test_memory_store_atomic_writes_and_backups() {
     let cleared_notes = store.read_notes().unwrap();
     assert!(cleared_notes.is_empty());
 
-    let archive_dir = project_dir.join(memory_root).join("archive");
+    let archive_dir = store.memory_root.join("archive");
     assert!(archive_dir.exists());
 
     // Test atomic writing and backup preservation on success
-    let test_file = project_dir.join(memory_root).join("test.txt");
+    let test_file = store.memory_root.join("test.txt");
     memory_store::write_atomic(&test_file, "hello version 1").unwrap();
     assert_eq!(fs::read_to_string(&test_file).unwrap(), "hello version 1");
 
     // Write again
     memory_store::write_atomic(&test_file, "hello version 2").unwrap();
     assert_eq!(fs::read_to_string(&test_file).unwrap(), "hello version 2");
+}
+
+#[test]
+fn test_memory_manager_defaults_to_data_dir_project_hash() {
+    let temp_dir = tempdir().unwrap();
+    let project_a = temp_dir.path().join("project-a");
+    let project_b = temp_dir.path().join("project-b");
+    let data_dir = temp_dir.path().join("data");
+    fs::create_dir_all(&project_a).unwrap();
+    fs::create_dir_all(&project_b).unwrap();
+
+    let config = MemoryConfig::default();
+    let manager_a = MemoryManager::new(project_a.clone(), data_dir.clone(), &config).unwrap();
+    let manager_b = MemoryManager::new(project_b.clone(), data_dir.clone(), &config).unwrap();
+
+    assert!(!project_a.join(".agent-memory").exists());
+    assert!(!project_b.join(".agent-memory").exists());
+    assert!(
+        manager_a
+            .store
+            .memory_root
+            .starts_with(data_dir.join("memory/projects"))
+    );
+    assert!(
+        manager_b
+            .store
+            .memory_root
+            .starts_with(data_dir.join("memory/projects"))
+    );
+    assert_ne!(manager_a.store.memory_root, manager_b.store.memory_root);
+    assert_eq!(
+        manager_a.history.db_path,
+        manager_a.store.memory_root.join("history.sqlite")
+    );
+    assert!(manager_a.store.checkpoint_path().exists());
+    assert!(manager_a.store.notes_path().exists());
+    assert!(manager_a.store.project_memory_path().exists());
+}
+
+#[test]
+fn test_memory_manager_migrates_legacy_project_memory_once() {
+    let temp_dir = tempdir().unwrap();
+    let project_dir = temp_dir.path().join("project");
+    let data_dir = temp_dir.path().join("data");
+    let legacy_root = project_dir.join(".agent-memory");
+    fs::create_dir_all(&legacy_root).unwrap();
+    fs::write(legacy_root.join("checkpoint.md"), "# Legacy Checkpoint\n").unwrap();
+    fs::write(legacy_root.join("notes.md"), "legacy note\n").unwrap();
+    fs::write(legacy_root.join("MEMORY.md"), "# Legacy Memory\n").unwrap();
+
+    let config = MemoryConfig::default();
+    let manager = MemoryManager::new(project_dir.clone(), data_dir, &config).unwrap();
+
+    assert_eq!(
+        fs::read_to_string(manager.store.checkpoint_path()).unwrap(),
+        "# Legacy Checkpoint\n"
+    );
+    assert_eq!(
+        fs::read_to_string(manager.store.notes_path()).unwrap(),
+        "legacy note\n"
+    );
+    assert_eq!(
+        fs::read_to_string(manager.store.project_memory_path()).unwrap(),
+        "# Legacy Memory\n"
+    );
+    assert!(legacy_root.exists());
 }
 
 #[test]
@@ -186,11 +256,15 @@ fn test_checkpoint_triggering_thresholds() {
 #[test]
 fn test_rebuild_context_budget_scaling() {
     let temp_dir = tempdir().unwrap();
+    let project_dir = temp_dir.path().join("project");
+    let data_dir = temp_dir.path().join("data");
     let global_path = temp_dir.path().join("global-memory.md");
+    fs::create_dir_all(&project_dir).unwrap();
 
     let store = memory_store::MemoryStore::new(
-        temp_dir.path().to_path_buf(),
-        ".agent-memory",
+        project_dir,
+        data_dir,
+        "memory/projects",
         &global_path.to_string_lossy(),
     );
     store.ensure_initialized().unwrap();
@@ -299,15 +373,160 @@ impl crate::model::ModelProvider for TestMemoryProvider {
 }
 
 #[tokio::test]
+async fn test_dream_writes_candidate_without_applying_by_default() {
+    let temp_dir = tempdir().unwrap();
+    let project_dir = temp_dir.path().join("project");
+    let data_dir = temp_dir.path().join("data");
+    fs::create_dir_all(&project_dir).unwrap();
+
+    let manager = MemoryManager::new(project_dir.clone(), data_dir, &MemoryConfig::default())
+        .expect("manager");
+    manager
+        .store
+        .write_project_memory("# Project Memory\nold project fact")
+        .unwrap();
+    manager
+        .store
+        .write_global_memory("# Global Memory\nold global fact")
+        .unwrap();
+    manager
+        .history
+        .record_session_start("dream-session", &project_dir.to_string_lossy())
+        .unwrap();
+    manager
+        .history
+        .record_event(
+            "dream-session",
+            "message",
+            Some("user"),
+            Some("Remember that NAVI uses just test-crate for focused tests."),
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+
+    let provider = TestMemoryProvider {
+        checkpoint_response: r#"
+<updated_project_memory>
+# Project Memory
+- Use just test-crate for focused tests.
+</updated_project_memory>
+<updated_global_memory>
+# Global Memory
+- Prefer focused validation.
+</updated_global_memory>
+<dream_report>
+Merged a focused testing preference.
+</dream_report>
+"#
+        .to_string(),
+    };
+
+    let result = run_dream_maintenance(&manager.store, &manager.history, &provider, "test-model")
+        .await
+        .unwrap();
+
+    assert!(!result.applied);
+    assert!(result.output_dir.exists());
+    assert!(
+        fs::read_to_string(result.project_memory_path)
+            .unwrap()
+            .contains("Use just test-crate")
+    );
+    assert!(
+        fs::read_to_string(result.report_path)
+            .unwrap()
+            .contains("Merged a focused testing preference")
+    );
+    assert!(
+        manager
+            .store
+            .read_project_memory()
+            .unwrap()
+            .contains("old project fact")
+    );
+}
+
+#[tokio::test]
+async fn test_dream_apply_replaces_active_memory() {
+    let temp_dir = tempdir().unwrap();
+    let project_dir = temp_dir.path().join("project");
+    let data_dir = temp_dir.path().join("data");
+    fs::create_dir_all(&project_dir).unwrap();
+
+    let manager =
+        MemoryManager::new(project_dir, data_dir, &MemoryConfig::default()).expect("manager");
+    manager
+        .store
+        .write_project_memory("# Project Memory\nold")
+        .unwrap();
+    manager
+        .store
+        .write_global_memory("# Global Memory\nold")
+        .unwrap();
+
+    let provider = TestMemoryProvider {
+        checkpoint_response: r#"
+<updated_project_memory>
+# Project Memory
+- New project memory.
+</updated_project_memory>
+<updated_global_memory>
+# Global Memory
+- New global memory.
+</updated_global_memory>
+<dream_report>
+Applied replacement.
+</dream_report>
+"#
+        .to_string(),
+    };
+
+    let result = run_dream_maintenance_with_options(
+        &manager.store,
+        &manager.history,
+        &provider,
+        "test-model",
+        DreamOptions {
+            apply: true,
+            ..DreamOptions::default()
+        },
+    )
+    .await
+    .unwrap();
+
+    assert!(result.applied);
+    assert!(
+        manager
+            .store
+            .read_project_memory()
+            .unwrap()
+            .contains("New project memory")
+    );
+    assert!(
+        manager
+            .store
+            .read_global_memory()
+            .unwrap()
+            .contains("New global memory")
+    );
+}
+
+#[tokio::test]
 async fn test_full_continuity_session_rebuild() {
     let temp_dir = tempdir().unwrap();
-    let project_dir = temp_dir.path().to_path_buf();
+    let project_dir = temp_dir.path().join("project");
+    let data_dir = temp_dir.path().join("data");
+    fs::create_dir_all(&project_dir).unwrap();
 
     let memory_config = MemoryConfig {
         session_memory_enabled: false,
         max_memory_entries: 5,
         enabled: true,
-        root: ".agent-memory".to_string(),
+        root: "memory/projects".to_string(),
         global_memory_path: temp_dir
             .path()
             .join("global-memory.md")
@@ -320,7 +539,7 @@ async fn test_full_continuity_session_rebuild() {
         distill_interval_days: 30,
         history: HistoryConfig {
             enabled: true,
-            sqlite_path: ".agent-memory/history.sqlite".to_string(),
+            sqlite_path: "history.sqlite".to_string(),
         },
     };
 
@@ -390,6 +609,7 @@ None.
         )),
         tool_executor: Arc::new(mock_tool_executor),
         project_dir: project_dir.clone(),
+        data_dir: data_dir.clone(),
         model_name: Arc::new(std::sync::RwLock::new("test-model".to_string())),
         event_tx: None,
         approval_resolver: crate::runtime::ApprovalResolver::new_for_test(),
@@ -402,6 +622,7 @@ None.
         prompt_cache: Arc::new(crate::prompt::PromptCache::new()),
         cancel_token: CancelToken::new(),
         config: Arc::new(std::sync::RwLock::new(navi_config)),
+        memory_injection: None,
         compaction_provider: None,
         compaction_model_name: None,
         session_id: "integration-session".to_string(),
@@ -419,7 +640,15 @@ None.
     }];
 
     // Initialize MemoryManager to initialize folders/DB
-    let manager = MemoryManager::new(project_dir.clone(), &memory_config).unwrap();
+    let manager =
+        MemoryManager::new(project_dir.clone(), data_dir.clone(), &memory_config).unwrap();
+    assert!(!project_dir.join(".agent-memory").exists());
+    assert!(
+        manager
+            .store
+            .memory_root
+            .starts_with(data_dir.join("memory/projects"))
+    );
     manager
         .history
         .record_session_start(&turn_ctx.session_id, &project_dir.to_string_lossy())

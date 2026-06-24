@@ -17,6 +17,7 @@ use crate::tool::ToolExecutor;
 use anyhow::Result;
 use futures_util::StreamExt;
 use serde_json::{Value, json};
+use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 
@@ -34,6 +35,7 @@ pub struct TurnContext {
     pub model_provider: Arc<RwLock<Arc<dyn ModelProvider>>>,
     pub tool_executor: Arc<ToolExecutor>,
     pub project_dir: PathBuf,
+    pub data_dir: PathBuf,
     pub model_name: Arc<RwLock<String>>,
     pub event_tx: Option<tokio::sync::mpsc::UnboundedSender<AgentEvent>>,
     pub approval_resolver: crate::runtime::ApprovalResolver,
@@ -49,6 +51,8 @@ pub struct TurnContext {
     /// `ensure_system_prompt` so the model sees the user-configured harness
     /// profile, model and provider rather than the defaults.
     pub config: Arc<RwLock<crate::config::NaviConfig>>,
+    /// Optional previous-session memory loaded at session startup.
+    pub memory_injection: Option<String>,
     /// Optional separate provider for compaction/summarization. When set,
     /// auto_compact uses this instead of the main model provider.
     pub compaction_provider: Option<Arc<dyn ModelProvider>>,
@@ -143,7 +147,7 @@ pub async fn run_turn(
         break output.text;
     };
 
-    let _ = sync_messages_to_history(ctx, messages);
+    let _ = sync_messages_to_history(ctx, messages).await;
     Ok(final_text)
 }
 
@@ -166,10 +170,11 @@ async fn ensure_system_prompt(ctx: &TurnContext, messages: &mut Vec<ModelMessage
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .clone();
+    let memory_injection = combined_memory_injection(ctx).await;
     let input = SystemPromptInput {
         config: ctx.active_config(),
         project_dir: ctx.project_dir.clone(),
-        memory_injection: None,
+        memory_injection,
         tools: ctx.tool_executor.definitions(),
         include_tool_prompt_manifest: ctx.include_tool_prompt_manifest,
         context_packets,
@@ -190,7 +195,7 @@ async fn ensure_system_prompt(ctx: &TurnContext, messages: &mut Vec<ModelMessage
 }
 
 async fn maintain_context_budget(ctx: &TurnContext, messages: &mut Vec<ModelMessage>) {
-    let _ = sync_messages_to_history(ctx, messages);
+    let _ = sync_messages_to_history(ctx, messages).await;
     if let Ok(true) = evaluate_memory_triggers(ctx, messages).await {
         return;
     }
@@ -856,54 +861,102 @@ fn map_repetition_kind(kind: &crate::repetition::RepetitionKind) -> RepetitionWa
 }
 
 /// Synchronizes new messages in the session conversation history to SQLite.
-pub fn sync_messages_to_history(ctx: &TurnContext, messages: &[ModelMessage]) -> Result<()> {
+async fn combined_memory_injection(ctx: &TurnContext) -> Option<String> {
+    let rebuild_context = {
+        let state = ctx.compact_state.lock().await;
+        state.rebuild_context.clone()
+    };
+
+    match (ctx.memory_injection.clone(), rebuild_context) {
+        (Some(session_memory), Some(rebuild_context)) => Some(format!(
+            "{session_memory}\n\nRebuilt session context:\n\n{rebuild_context}"
+        )),
+        (Some(session_memory), None) => Some(session_memory),
+        (None, Some(rebuild_context)) => {
+            Some(format!("Rebuilt session context:\n\n{rebuild_context}"))
+        }
+        (None, None) => None,
+    }
+}
+
+pub async fn sync_messages_to_history(ctx: &TurnContext, messages: &[ModelMessage]) -> Result<()> {
     let memory_config = ctx.active_config().memory;
     if !memory_config.enabled {
         return Ok(());
     }
-    let manager = crate::memory::MemoryManager::new(ctx.project_dir.clone(), &memory_config)?;
+    let manager = crate::memory::MemoryManager::new(
+        ctx.project_dir.clone(),
+        ctx.data_dir.clone(),
+        &memory_config,
+    )?;
     manager
         .history
         .record_session_start(&ctx.session_id, &ctx.project_dir.to_string_lossy())?;
 
-    let conn = &manager.history;
-    // Get count of existing messages in the DB for this session
-    let existing_count = conn
-        .get_event_count(&ctx.session_id, "message")
-        .unwrap_or(0);
+    let pending: Vec<(u64, &ModelMessage)> = {
+        let state = ctx.compact_state.lock().await;
+        messages
+            .iter()
+            .filter_map(|msg| {
+                let key = history_message_key(msg);
+                (!state.history_synced_message_keys.contains(&key)).then_some((key, msg))
+            })
+            .collect()
+    };
 
-    // Slice messages to log only new ones
-    if (existing_count as usize) < messages.len() {
-        for msg in &messages[existing_count as usize..] {
-            let role_str = match msg.role {
-                crate::model::ModelRole::User => "user",
-                crate::model::ModelRole::Assistant => "assistant",
-                crate::model::ModelRole::Tool => "tool",
-                crate::model::ModelRole::System => "system",
-            };
+    let mut recorded_keys = Vec::new();
+    for (key, msg) in pending {
+        let role_str = match msg.role {
+            crate::model::ModelRole::User => "user",
+            crate::model::ModelRole::Assistant => "assistant",
+            crate::model::ModelRole::Tool => "tool",
+            crate::model::ModelRole::System => "system",
+        };
 
-            let tool_name = msg.tool_name.clone();
-            let tool_input: Option<String> = None;
-            let mut tool_output = None;
+        let tool_name = msg.tool_name.clone();
+        let tool_input: Option<String> = None;
+        let mut tool_output = None;
 
-            if msg.role == crate::model::ModelRole::Tool {
-                tool_output = Some(msg.content.clone());
-            }
-
-            conn.record_event(
-                &ctx.session_id,
-                "message",
-                Some(role_str),
-                Some(&msg.content),
-                tool_name.as_deref(),
-                tool_input.as_deref(),
-                tool_output.as_deref(),
-                None,
-                None,
-            )?;
+        if msg.role == crate::model::ModelRole::Tool {
+            tool_output = Some(msg.content.clone());
         }
+
+        manager.history.record_event(
+            &ctx.session_id,
+            "message",
+            Some(role_str),
+            Some(&msg.content),
+            tool_name.as_deref(),
+            tool_input.as_deref(),
+            tool_output.as_deref(),
+            None,
+            None,
+        )?;
+        recorded_keys.push(key);
+    }
+
+    if !recorded_keys.is_empty() {
+        let mut state = ctx.compact_state.lock().await;
+        state.history_synced_message_keys.extend(recorded_keys);
     }
     Ok(())
+}
+
+fn history_message_key(msg: &ModelMessage) -> u64 {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    std::mem::discriminant(&msg.role).hash(&mut hasher);
+    msg.content.hash(&mut hasher);
+    msg.tool_call_id.hash(&mut hasher);
+    msg.tool_name.hash(&mut hasher);
+    msg.created_at.hash(&mut hasher);
+    serde_json::to_string(&msg.content_parts)
+        .unwrap_or_default()
+        .hash(&mut hasher);
+    serde_json::to_string(&msg.tool_calls)
+        .unwrap_or_default()
+        .hash(&mut hasher);
+    msg.thinking_content.hash(&mut hasher);
+    hasher.finish()
 }
 
 /// Evaluates memory system checkpoint and rebuild thresholds based on context utilization.
@@ -936,7 +989,11 @@ pub(crate) async fn evaluate_memory_triggers(
     }
 
     if !thresholds_to_trigger.is_empty() {
-        let manager = crate::memory::MemoryManager::new(ctx.project_dir.clone(), &memory_config)?;
+        let manager = crate::memory::MemoryManager::new(
+            ctx.project_dir.clone(),
+            ctx.data_dir.clone(),
+            &memory_config,
+        )?;
         manager
             .history
             .record_session_start(&ctx.session_id, &ctx.project_dir.to_string_lossy())?;
@@ -980,7 +1037,11 @@ pub(crate) async fn evaluate_memory_triggers(
             percentage * 100.0,
             memory_config.rebuild_threshold * 100.0
         );
-        let manager = crate::memory::MemoryManager::new(ctx.project_dir.clone(), &memory_config)?;
+        let manager = crate::memory::MemoryManager::new(
+            ctx.project_dir.clone(),
+            ctx.data_dir.clone(),
+            &memory_config,
+        )?;
 
         let context_window = {
             let state = ctx.compact_state.lock().await;
@@ -999,6 +1060,7 @@ pub(crate) async fn evaluate_memory_triggers(
         let cycle_num = {
             let mut state = ctx.compact_state.lock().await;
             state.crossed_thresholds.clear(); // reset thresholds for the new cycle!
+            state.rebuild_context = Some(boot_context.clone());
             1 // Default cycle sequence number
         };
         manager
@@ -1007,7 +1069,7 @@ pub(crate) async fn evaluate_memory_triggers(
 
         // Re-assemble conversation messages
         messages.clear();
-        messages.push(ModelMessage::system(boot_context));
+        ensure_system_prompt(ctx, messages).await;
 
         // Reset compaction state token usage
         {

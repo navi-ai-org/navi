@@ -10,8 +10,11 @@ pub mod tests;
 
 pub use checkpoint_writer::run_checkpoint_writer;
 pub use history_store::{HistoryEvent, HistoryStore, SessionSummary};
-pub use maintenance::{run_distill_maintenance, run_dream_maintenance};
-pub use memory_store::{MemoryStore, resolve_path, write_atomic};
+pub use maintenance::{
+    DreamOptions, DreamResult, run_distill_maintenance, run_dream_maintenance,
+    run_dream_maintenance_with_options,
+};
+pub use memory_store::{MemoryStore, write_atomic};
 pub use rebuild_context::build_rebuild_context;
 pub use schemas::SessionCheckpoint;
 
@@ -27,12 +30,22 @@ pub struct MemoryManager {
 
 impl MemoryManager {
     /// Constructs and initializes a new `MemoryManager` from the configuration.
-    pub fn new(project_dir: PathBuf, config: &crate::config::MemoryConfig) -> Result<Self> {
-        let store = MemoryStore::new(project_dir, &config.root, &config.global_memory_path);
+    pub fn new(
+        project_dir: PathBuf,
+        data_dir: PathBuf,
+        config: &crate::config::MemoryConfig,
+    ) -> Result<Self> {
+        let store = MemoryStore::new(
+            project_dir,
+            data_dir.clone(),
+            &config.root,
+            &config.global_memory_path,
+        );
+        store.migrate_legacy_project_memory_if_empty()?;
         store.ensure_initialized()?;
 
         let resolved_sqlite_path =
-            memory_store::resolve_path(&config.history.sqlite_path, &store.project_dir);
+            memory_store::resolve_memory_path(&config.history.sqlite_path, &store.memory_root);
         let history = HistoryStore::new(&resolved_sqlite_path)?;
 
         Ok(Self { store, history })
