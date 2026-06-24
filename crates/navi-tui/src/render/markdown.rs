@@ -196,11 +196,11 @@ pub(crate) fn build_chat_render_for_messages(
 fn user_card_blank_line(chat_width: usize) -> Line<'static> {
     Line::from(vec![
         Span::styled(
-            " ".repeat(3),
+            " ",
             Style::default().fg(user_accent()).bg(user_accent()),
         ),
         Span::styled(
-            " ".repeat(chat_width.saturating_sub(3)),
+            " ".repeat(chat_width.saturating_sub(1)),
             Style::default().fg(text()).bg(panel()),
         ),
     ])
@@ -209,11 +209,11 @@ fn user_card_blank_line(chat_width: usize) -> Line<'static> {
 fn user_image_fallback_line(index: usize, label: &str) -> Line<'static> {
     Line::from(vec![
         Span::styled(
-            " ".repeat(3),
+            " ",
             Style::default().fg(user_accent()).bg(user_accent()),
         ),
         Span::styled(
-            format!("[{}] {} ", index + 1, label),
+            format!("  [{}] {} ", index + 1, label),
             Style::default()
                 .fg(muted())
                 .bg(panel())
@@ -243,9 +243,9 @@ fn push_sourced_lines(
 
 fn render_user_message_lines(text: &str, chat_width: usize) -> Vec<Line<'static>> {
     let width = chat_width.max(8);
-    let accent_width = 3usize;
-    let text_padding = 2usize;
-    let min_height = 4usize;
+    let accent_width = 1usize;
+    let text_padding = 4usize;
+    let min_height = 3usize;
     let content_width = width.saturating_sub(accent_width + text_padding + 1);
     let wrapped = wrap_text(text, content_width);
     let top_padding = min_height.saturating_sub(wrapped.len()) / 2;
@@ -288,7 +288,7 @@ fn render_user_message_lines(text: &str, chat_width: usize) -> Vec<Line<'static>
         Line::from(spans)
     }));
 
-    while lines.len() < 4 {
+    while lines.len() < min_height {
         lines.push(user_blank_card_line(width, accent_width));
     }
     lines

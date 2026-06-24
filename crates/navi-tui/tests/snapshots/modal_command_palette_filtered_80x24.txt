@@ -1,24 +1,24 @@
   main  /tmp/navi-test-project
 
 
-
-      ╭ Commands ────────────────────────────────────────────────────────╮
-      │ > mode                                                           │
+    ███╗   ██╗ █████╗ ██╗   ██╗██╗      project navi-tui
+    ██╭ Commands ────────────────────────────────────────────────────────╮
+    ██│ > mode                                                           │
+    ██│                                                                  │
+    ██│ Models                                              ctrl+m       │
+    ╚═│ Thinking Mode                                                    │
+      │ Sync Models                                                      │
+      │                                                                  │h
       │                                                                  │
-      │ Models                                              ctrl+m       │
-  ▌   │ Thinking Mode                                                    │
-  ▌   │ Sync Models                                                      │
-  ▌   │                                                                  │
-  ▌ gp│                                                                  │
-  ▌   │                                                                  │
- NAVI │                                                                  │
- proje│                                                                  │
- model│                                                                  │
- via O│                                                                  │
- think│                                                                  │
- conte╰──────────────────────────────────────────────────────────────────╯
- session new
-
-
-
+      │                                                                  │
+      │                                                                  │
+      │                                                                  │
+      │                                                                  │
+      │                                                                  │
+      │                                                                  │
+  ▌   ╰──────────────────────────────────────────────────────────────────╯
+  ▌
+  ▌
+  ▌ gpt-5.5 OpenAI · adaptive · 0 / 200k (0%)
+  ▌
                ctrl+p commands · ctrl+m models · ctrl+enter send · ctrl+v image

@@ -1,24 +1,24 @@
   main  /tmp/navi-test-project
 
 
-
-      ╭ Commands ────────────────────────────────────────────────────────╮
-      │ > type to search                                                 │
+    ███╗   ██╗ █████╗ ██╗   ██╗██╗      project navi-tui
+    ██╭ Commands ────────────────────────────────────────────────────────╮
+    ██│ > type to search                                                 │
+    ██│                                                                  │
+    ██│ New Session                                         ctrl+n     █ │
+    ╚═│ Sessions                                            ctrl+s     █ │
+      │ Copy Session                                                   █ │
+      │ Share Session                                                  █ │h
+      │ Models                                              ctrl+m     █ │
+      │ Providers                                                      █ │
+      │ Skills                                                         │ │
+      │ Plugins                                                        │ │
+      │ MCP Servers                                                    │ │
+      │ Background Tasks                                    ctrl+t     │ │
       │                                                                  │
-      │ New Session                                         ctrl+n     █ │
-  ▌   │ Sessions                                            ctrl+s     █ │
-  ▌   │ Copy Session                                                   █ │
-  ▌   │ Share Session                                                  █ │
-  ▌ gp│ Models                                              ctrl+m     █ │
-  ▌   │ Providers                                                      █ │
- NAVI │ Skills                                                         │ │
- proje│ Plugins                                                        │ │
- model│ MCP Servers                                                    │ │
- via O│ Background Tasks                                    ctrl+t     │ │
- think│                                                                  │
- conte╰──────────────────────────────────────────────────────────────────╯
- session new
-
-
-
+  ▌   ╰──────────────────────────────────────────────────────────────────╯
+  ▌
+  ▌
+  ▌ gpt-5.5 OpenAI · adaptive · 0 / 200k (0%)
+  ▌
                ctrl+p commands · ctrl+m models · ctrl+enter send · ctrl+v image
