@@ -17,7 +17,7 @@ use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::prelude::Frame;
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Paragraph, Wrap};
+use ratatui::widgets::Paragraph;
 
 use crate::TuiApp;
 use crate::render::{fill_modal_scrim, modal_rect, opaque_fill};
@@ -57,30 +57,7 @@ fn render_inner(frame: &mut Frame<'_>, app: &mut TuiApp) {
         image_preview::IMAGE_PREVIEW_HEIGHT
     };
     let input_activity_height = input::composer_activity_height(app);
-    let show_welcome = app.messages.is_empty() && !app.is_loading;
-    let chat_min_height = if compact_viewport || show_welcome {
-        1
-    } else {
-        6
-    };
-    let welcome_height = if show_welcome {
-        let reserved_height = 1
-            + chat_min_height
-            + image_preview_height
-            + input_activity_height
-            + input_height
-            + input_hint_height;
-        let available_height = content_area.height.saturating_sub(reserved_height);
-        let min_height = if compact_viewport { 3 } else { 6 };
-        let max_height = if compact_viewport { 6 } else { 10 };
-        if available_height < min_height {
-            0
-        } else {
-            available_height.clamp(min_height, max_height)
-        }
-    } else {
-        0
-    };
+    let chat_min_height = if compact_viewport { 1 } else { 6 };
     let vertical = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -89,7 +66,6 @@ fn render_inner(frame: &mut Frame<'_>, app: &mut TuiApp) {
             Constraint::Length(image_preview_height),
             Constraint::Length(input_activity_height),
             Constraint::Length(input_height),
-            Constraint::Length(welcome_height),
             Constraint::Length(input_hint_height),
         ])
         .split(content_area);
@@ -107,17 +83,7 @@ fn render_inner(frame: &mut Frame<'_>, app: &mut TuiApp) {
 
     input::render_input_activity(frame, app, vertical[3]);
     input::render_input(frame, app, input_area);
-    if show_welcome && vertical[5].height > 0 {
-        let welcome =
-            welcome::welcome_text(app, vertical[5].width as usize, vertical[5].height as usize);
-        frame.render_widget(
-            Paragraph::new(welcome)
-                .style(Style::default().bg(theme::bg()))
-                .wrap(Wrap { trim: false }),
-            vertical[5],
-        );
-    }
-    input::render_input_hint(frame, app, vertical[6]);
+    input::render_input_hint(frame, app, vertical[5]);
 
     if modal_backdrop_active(app) {
         fill_modal_scrim(frame, content_area);
