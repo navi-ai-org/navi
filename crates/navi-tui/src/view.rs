@@ -64,8 +64,8 @@ fn render_inner(frame: &mut Frame<'_>, app: &mut TuiApp) {
             Constraint::Length(1),
             Constraint::Min(chat_min_height),
             Constraint::Length(image_preview_height),
-            Constraint::Length(input_activity_height),
             Constraint::Length(input_height),
+            Constraint::Length(input_activity_height),
             Constraint::Length(input_hint_height),
         ])
         .split(content_area);
@@ -76,13 +76,13 @@ fn render_inner(frame: &mut Frame<'_>, app: &mut TuiApp) {
     // Render image previews above input
     let input_area = if !app.pending_images.is_empty() {
         image_preview::render_image_previews(frame, app, vertical[2]);
-        vertical[4]
+        vertical[3]
     } else {
-        vertical[4]
+        vertical[3]
     };
 
-    input::render_input_activity(frame, app, vertical[3]);
     input::render_input(frame, app, input_area);
+    input::render_input_activity(frame, app, vertical[4]);
     input::render_input_hint(frame, app, vertical[5]);
 
     if modal_backdrop_active(app) {
