@@ -1,24 +1,24 @@
   main  /tmp/navi-test-project
 
 
-    ███╗   ██╗ █████╗ ██╗   ██╗██╗      project navi-tui
-    ████╗  ██║██╔══██╗██║   ██║██║      model   gpt-5.5
-    ██╔██╗ ██║███████║██║   ██║██║      via     OpenAI
-    ██║╚██╗██║██╔══██║╚██╗ ██╔╝██║      thinking adaptive
-    ██║ ╚████║██║  █╭ Thinking Mode ───────────────────────╮)
-    ╚═╝  ╚═══╝╚═╝  ╚│ ● adaptive                           │
-                    │   max                                │
-                    │   high                               │rite grep patch
-                    │   medium                             │
-                    │   low                                │
-                    │   off                                │
-                    │                                      │
-                    │                                      │
-                    ╰──────────────────────────────────────╯
 
-  ▌
-  ▌
-  ▌
-  ▌ gpt-5.5 OpenAI · adaptive · 0 / 200k (0%)
-  ▌
+
+
+
+                    ╭ Thinking Mode ───────────────────────╮
+  ▌                 │ ● adaptive                           │
+  ▌                 │   max                                │
+  ▌                 │   high                               │
+  ▌ gpt-5.5 OpenAI ·│   medium                             │
+  ▌                 │   low                                │
+ NAVI local agent   │   off                                │
+ project navi-tui   │                                      │
+ model gpt-5.5      │                                      │
+ via OpenAI         ╰──────────────────────────────────────╯
+ thinking adaptive
+ context 0 / 200k (0%)
+ session new
+
+
+
                ctrl+p commands · ctrl+m models · ctrl+enter send · ctrl+v image
