@@ -195,10 +195,7 @@ pub(crate) fn build_chat_render_for_messages(
 
 fn user_card_blank_line(chat_width: usize) -> Line<'static> {
     Line::from(vec![
-        Span::styled(
-            " ",
-            Style::default().fg(user_accent()).bg(user_accent()),
-        ),
+        Span::styled(" ", Style::default().fg(user_accent()).bg(user_accent())),
         Span::styled(
             " ".repeat(chat_width.saturating_sub(1)),
             Style::default().fg(text()).bg(panel()),
@@ -208,10 +205,7 @@ fn user_card_blank_line(chat_width: usize) -> Line<'static> {
 
 fn user_image_fallback_line(index: usize, label: &str) -> Line<'static> {
     Line::from(vec![
-        Span::styled(
-            " ",
-            Style::default().fg(user_accent()).bg(user_accent()),
-        ),
+        Span::styled(" ", Style::default().fg(user_accent()).bg(user_accent())),
         Span::styled(
             format!("  [{}] {} ", index + 1, label),
             Style::default()

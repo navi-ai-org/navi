@@ -521,7 +521,7 @@ fn default_memory_enabled() -> bool {
     true
 }
 fn default_memory_root() -> String {
-    ".agent-memory".to_string()
+    "memory/projects".to_string()
 }
 fn default_global_memory_path() -> String {
     "~/.code-agent/global-memory.md".to_string()
@@ -553,14 +553,14 @@ pub struct HistoryConfig {
 }
 
 fn default_history_sqlite_path() -> String {
-    ".agent-memory/history.sqlite".to_string()
+    "history.sqlite".to_string()
 }
 
 impl Default for HistoryConfig {
     fn default() -> Self {
         Self {
             enabled: true,
-            sqlite_path: ".agent-memory/history.sqlite".to_string(),
+            sqlite_path: default_history_sqlite_path(),
         }
     }
 }

@@ -1,10 +1,20 @@
 use crate::memory::history_store::HistoryStore;
 use crate::memory::memory_store::MemoryStore;
 use crate::model::{ModelMessage, ModelProvider, ModelRequest, ThinkingConfig};
-use anyhow::Result;
+use anyhow::{Context, Result};
+use std::path::PathBuf;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 pub const DREAM_PROMPT: &str = r#"You are a memory maintenance subagent named NAVI Dream.
-Your task is to review the existing MEMORY.md and global-memory.md, clean up duplicates, resolve contradictions, and output a consolidated, compact version of these files.
+Your task is to reflect on NAVI's persistent memory and recent session transcripts, then produce a separate consolidated memory store.
+
+This is an offline synthesis pass:
+- Do not merely append a transcript summary.
+- Merge duplicates.
+- Resolve contradictions by preferring the newest verified session evidence.
+- Drop stale, temporary, speculative, or one-off debugging notes.
+- Preserve stable project architecture, commands, conventions, user preferences, and reusable lessons.
+- Surface new durable insights that should help future sessions.
 
 Existing MEMORY.md:
 {project_memory}
@@ -12,14 +22,23 @@ Existing MEMORY.md:
 Existing global-memory.md:
 {global_memory}
 
-Recent Checkpoints:
-{recent_checkpoints}
+Current checkpoint.md:
+{checkpoint}
+
+Current notes.md:
+{notes}
+
+Recent sessions:
+{recent_sessions}
+
+Additional dream instructions:
+{instructions}
 
 INSTRUCTIONS:
-1. Merge duplicate rules or observations.
-2. Remove outdated or temporary entries that are no longer true.
-3. Keep verified conventions, architecture notes, commands, and rules.
-4. Output the updated files inside distinct XML blocks: `<updated_project_memory>...</updated_project_memory>` and `<updated_global_memory>...</updated_global_memory>`.
+Output the dream result inside distinct XML blocks:
+<updated_project_memory>...</updated_project_memory>
+<updated_global_memory>...</updated_global_memory>
+<dream_report>Briefly list what changed, what was removed, and notable unresolved contradictions.</dream_report>
 "#;
 
 pub const DISTILL_PROMPT: &str = r#"You are a process distillation subagent named NAVI Distill.
@@ -39,8 +58,39 @@ fn sanitize_input(text: &str) -> String {
         .replace("</updated_project_memory>", "[/updated_project_memory]")
         .replace("<updated_global_memory>", "[updated_global_memory]")
         .replace("</updated_global_memory>", "[/updated_global_memory]")
+        .replace("<dream_report>", "[dream_report]")
+        .replace("</dream_report>", "[/dream_report]")
         .replace("<sop_artifact", "[sop_artifact")
         .replace("</sop_artifact>", "[/sop_artifact]")
+}
+
+#[derive(Debug, Clone)]
+pub struct DreamOptions {
+    /// Number of recent sessions to mine. Claude dreams accept up to 100 sessions.
+    pub session_limit: usize,
+    /// High-level synthesis guidance.
+    pub instructions: Option<String>,
+    /// Replace active memory files with the dream output after writing it.
+    pub apply: bool,
+}
+
+impl Default for DreamOptions {
+    fn default() -> Self {
+        Self {
+            session_limit: 10,
+            instructions: None,
+            apply: false,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct DreamResult {
+    pub output_dir: PathBuf,
+    pub project_memory_path: PathBuf,
+    pub global_memory_path: PathBuf,
+    pub report_path: PathBuf,
+    pub applied: bool,
 }
 
 pub async fn run_dream_maintenance(
@@ -48,25 +98,43 @@ pub async fn run_dream_maintenance(
     history_store: &HistoryStore,
     model_provider: &dyn ModelProvider,
     model_name: &str,
-) -> Result<()> {
+) -> Result<DreamResult> {
+    run_dream_maintenance_with_options(
+        memory_store,
+        history_store,
+        model_provider,
+        model_name,
+        DreamOptions::default(),
+    )
+    .await
+}
+
+pub async fn run_dream_maintenance_with_options(
+    memory_store: &MemoryStore,
+    history_store: &HistoryStore,
+    model_provider: &dyn ModelProvider,
+    model_name: &str,
+    options: DreamOptions,
+) -> Result<DreamResult> {
     let project_memory = sanitize_input(&memory_store.read_project_memory().unwrap_or_default());
     let global_memory = sanitize_input(&memory_store.read_global_memory().unwrap_or_default());
-
-    // Fetch checkpoints from DB
-    let conn_guard = history_store.search_history("Checkpoint", None, Some(5))?;
-    let mut recent_checkpoints = String::new();
-    for event in conn_guard {
-        if let Some(ref content) = event.content {
-            recent_checkpoints.push_str(content);
-            recent_checkpoints.push_str("\n---\n");
-        }
-    }
-    let recent_checkpoints = sanitize_input(&recent_checkpoints);
+    let checkpoint = sanitize_input(&memory_store.read_checkpoint().unwrap_or_default());
+    let notes = sanitize_input(&memory_store.read_notes().unwrap_or_default());
+    let recent_sessions = sanitize_input(&format_recent_sessions(
+        history_store,
+        options.session_limit.clamp(1, 100),
+    )?);
+    let instructions = sanitize_input(options.instructions.as_deref().unwrap_or(
+        "Focus on stable coding workflow, project architecture, commands, and user preferences.",
+    ));
 
     let prompt = DREAM_PROMPT
         .replace("{project_memory}", &project_memory)
         .replace("{global_memory}", &global_memory)
-        .replace("{recent_checkpoints}", &recent_checkpoints);
+        .replace("{checkpoint}", &checkpoint)
+        .replace("{notes}", &notes)
+        .replace("{recent_sessions}", &recent_sessions)
+        .replace("{instructions}", &instructions);
 
     let request = ModelRequest {
         model: model_name.to_string(),
@@ -83,25 +151,47 @@ pub async fn run_dream_maintenance(
     let response = model_provider.complete(request).await?;
     let text = response.text;
 
-    if let Some(updated_pm) = extract_block(
+    let updated_pm = extract_block(
         &text,
         "<updated_project_memory>",
         "</updated_project_memory>",
-    ) {
-        if !updated_pm.trim().is_empty() {
-            memory_store.write_project_memory(&updated_pm)?;
-        }
+    )
+    .context("dream response did not include <updated_project_memory>")?;
+    let updated_gm = extract_block(&text, "<updated_global_memory>", "</updated_global_memory>")
+        .context("dream response did not include <updated_global_memory>")?;
+    let dream_report = extract_block(&text, "<dream_report>", "</dream_report>")
+        .unwrap_or_else(|| "Dream completed without a report.".to_string());
+
+    if updated_pm.trim().is_empty() {
+        anyhow::bail!("dream response produced empty project memory");
+    }
+    if updated_gm.trim().is_empty() {
+        anyhow::bail!("dream response produced empty global memory");
     }
 
-    if let Some(updated_gm) =
-        extract_block(&text, "<updated_global_memory>", "</updated_global_memory>")
-    {
-        if !updated_gm.trim().is_empty() {
-            memory_store.write_global_memory(&updated_gm)?;
-        }
+    let output_dir = dream_output_dir(memory_store)?;
+    std::fs::create_dir_all(&output_dir)
+        .with_context(|| format!("failed to create {}", output_dir.display()))?;
+
+    let project_memory_path = output_dir.join("MEMORY.md");
+    let global_memory_path = output_dir.join("global-memory.md");
+    let report_path = output_dir.join("dream-report.md");
+    crate::memory::memory_store::write_atomic(&project_memory_path, updated_pm.trim())?;
+    crate::memory::memory_store::write_atomic(&global_memory_path, updated_gm.trim())?;
+    crate::memory::memory_store::write_atomic(&report_path, dream_report.trim())?;
+
+    if options.apply {
+        memory_store.write_project_memory(updated_pm.trim())?;
+        memory_store.write_global_memory(updated_gm.trim())?;
     }
 
-    Ok(())
+    Ok(DreamResult {
+        output_dir,
+        project_memory_path,
+        global_memory_path,
+        report_path,
+        applied: options.apply,
+    })
 }
 
 pub async fn run_distill_maintenance(
@@ -163,6 +253,69 @@ fn extract_block(text: &str, start_tag: &str, end_tag: &str) -> Option<String> {
     } else {
         None
     }
+}
+
+fn dream_output_dir(memory_store: &MemoryStore) -> Result<PathBuf> {
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .unwrap_or_default();
+    let dreams_dir = memory_store.memory_root.join("dreams");
+    let mut candidate = dreams_dir.join(format!("dream-{timestamp}"));
+    let mut suffix = 1;
+    while candidate.exists() {
+        candidate = dreams_dir.join(format!("dream-{timestamp}-{suffix}"));
+        suffix += 1;
+    }
+    Ok(candidate)
+}
+
+fn format_recent_sessions(history_store: &HistoryStore, session_limit: usize) -> Result<String> {
+    let sessions = history_store.list_sessions()?;
+    if sessions.is_empty() {
+        return Ok("No recorded sessions yet.".to_string());
+    }
+
+    let mut rendered = String::new();
+    for session in sessions.iter().take(session_limit) {
+        rendered.push_str(&format!(
+            "## Session {}\nStarted: {}\nProject: {}\n",
+            session.id, session.started_at, session.project_id
+        ));
+        let events = history_store.get_recent_events(&session.id, Some(80))?;
+        for event in events {
+            if event.event_type != "message" {
+                continue;
+            }
+            let role = event.role.as_deref().unwrap_or("unknown");
+            if let Some(content) = event.content {
+                rendered.push_str(&format!(
+                    "[{}] {}\n",
+                    role,
+                    truncate_chars(content.trim(), 2_000)
+                ));
+            }
+            if let Some(tool_output) = event.tool_output {
+                rendered.push_str(&format!(
+                    "[tool-output] {}\n",
+                    truncate_chars(tool_output.trim(), 1_000)
+                ));
+            }
+        }
+        rendered.push_str("\n---\n");
+    }
+
+    Ok(truncate_chars(&rendered, 80_000))
+}
+
+fn truncate_chars(text: &str, max_chars: usize) -> String {
+    if text.chars().count() <= max_chars {
+        return text.to_string();
+    }
+
+    let mut truncated: String = text.chars().take(max_chars).collect();
+    truncated.push_str("\n[truncated]");
+    truncated
 }
 
 fn extract_block_with_attr(

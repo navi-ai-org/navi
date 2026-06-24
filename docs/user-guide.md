@@ -217,15 +217,26 @@ NAVI persists sessions as JSON snapshots under `<data_dir>/sessions/`. Each sess
 
 ### Compaction
 
-NAVI implements three levels of conversation management:
+NAVI implements these conversation management layers:
 
 | Level | Trigger | Effect |
 |---|---|---|
 | Micro-compact | Time gap > 60 min since last assistant message | Clears read-only tool result content in-place |
 | Auto-compact | `input_tokens + buffer >= context_window` | Summarizes conversation, replaces messages with summary |
 | Session memory | Session end with compact summary | Saves summary to `<data_dir>/memory/`, injected on next session |
+| Long-horizon memory | Context checkpoints/rebuilds | Stores checkpoint, notes, project memory, and history under `<data_dir>/memory/projects/<project_hash>/` |
 
 See [compaction.md](compaction.md) for details.
+
+Dream maintenance can synthesize existing memory and recent sessions into a separate reviewed memory store:
+
+```bash
+navi memory dream
+navi memory dream --sessions 25 --instructions "Preserve implementation decisions"
+navi memory dream --apply
+```
+
+Review-only dreams write to `<data_dir>/memory/projects/<project_hash>/dreams/dream-<timestamp>/`. `--apply` writes the review copy first, then replaces the active project and global memory files.
 
 ## Logs
 
@@ -249,6 +260,7 @@ In the TUI, `ctrl+d` opens the Debug modal with the current log path, session id
 | Credentials | `<data_dir>/credentials.toml` |
 | Sessions | `<data_dir>/sessions/*.json` |
 | Session memory | `<data_dir>/memory/<project_hash>.json` |
+| Long-horizon memory | `<data_dir>/memory/projects/<project_hash>/` |
 | Logs | `<data_dir>/logs/navi.log` |
 
 `<data_dir>` is platform-dependent via the `directories` crate. On Linux it is typically `~/.local/share/navi/`.
