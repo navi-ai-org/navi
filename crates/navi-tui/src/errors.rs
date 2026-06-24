@@ -91,11 +91,8 @@ fn format_model_error_message(app: &TuiApp, message: &str) -> String {
     }
 }
 
-fn max_model_retries(app: &TuiApp) -> usize {
-    match app.harness_policy().profile {
-        navi_sdk::HarnessProfile::Small => 2,
-        _ => 3,
-    }
+fn max_model_retries(_app: &TuiApp) -> usize {
+    5
 }
 
 pub(crate) fn human_duration(duration: Duration) -> String {
@@ -108,12 +105,13 @@ pub(crate) fn human_duration(duration: Duration) -> String {
 
 pub(crate) fn should_retry_model_error(message: &str) -> bool {
     let message = message.to_ascii_lowercase();
-    message.contains("429")
-        || message.contains("too many requests")
-        || message.contains("unexpected eof")
-        || message.contains("connection")
-        || message.contains("timeout")
-        || message.contains("timed out")
+    !message.contains("provider stream failed after")
+        && (message.contains("429")
+            || message.contains("too many requests")
+            || message.contains("unexpected eof")
+            || message.contains("connection")
+            || message.contains("timeout")
+            || message.contains("timed out"))
 }
 
 pub(crate) fn is_usage_limit_error(message: &str) -> bool {
@@ -164,6 +162,13 @@ mod tests {
     use std::time::Duration;
 
     use super::*;
+
+    #[test]
+    fn exhausted_provider_reconnects_are_not_retried_by_the_tui() {
+        assert!(!should_retry_model_error(
+            "Provider stream failed after 5 attempts: Connection failed"
+        ));
+    }
 
     #[test]
     fn model_retry_delay_uses_rate_limit_backoff_without_requested_delay() {

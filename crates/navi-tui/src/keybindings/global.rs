@@ -1,5 +1,5 @@
 use crate::TuiApp;
-use crate::chat::reset_system_context;
+use crate::chat::start_new_session;
 use crate::clipboard::try_read_clipboard_image;
 use crate::mouse::{copy_text_to_clipboard, selected_text};
 use crate::notifications::show_notification;
@@ -94,7 +94,7 @@ pub(super) fn route_global_key(
                 save_preferences(app);
                 return KeyOutcome::Handled;
             }
-            KeyCode::Char('b') => {
+            KeyCode::Char('t') => {
                 super::replace_modal(app, ModalKind::BackgroundCommands);
                 app.bg_command_selected = 0;
                 app.bg_command_scroll = 0;
@@ -109,6 +109,14 @@ pub(super) fn route_global_key(
                         ));
                     }
                 });
+                return KeyOutcome::Handled;
+            }
+            KeyCode::Char('b') => {
+                super::replace_modal(app, ModalKind::BackgroundModels);
+                app.bg_models_selected = 0;
+                app.bg_models_scroll = 0;
+                app.bg_model_picker_active = false;
+                app.bg_model_picker_task = None;
                 return KeyOutcome::Handled;
             }
             KeyCode::Enter => {
@@ -126,25 +134,7 @@ pub(super) fn route_global_key(
                 return KeyOutcome::Handled;
             }
             KeyCode::Char('n') => {
-                // Close existing session so background tasks are cleaned up
-                let old_session_id = app.session_id.as_str().to_string();
-                let engine = app.engine();
-                crate::runtime::spawn_runtime_task(async move {
-                    let _ = engine.close_session(&old_session_id).await;
-                });
-                app.messages.clear();
-                app.session_id = navi_sdk::SessionId::new(
-                    navi_sdk::SessionStore::create_id().as_str().to_string(),
-                );
-                app.background_commands.clear();
-                if let Some(task) = app.bg_poll_task.take() {
-                    task.abort();
-                }
-                reset_system_context(app);
-                app.input.clear();
-                app.input_cursor = 0;
-                app.input_selection = None;
-                app.scroll_offset = 0;
+                start_new_session(app);
                 let outcome = super::apply_ui_effect(app, UiEffect::CloseAllModals);
                 show_notification(app, "Layer", "New layer started.");
                 return outcome;

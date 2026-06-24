@@ -1,3 +1,4 @@
+use crate::state::SetupPhase;
 use navi_sdk::{
     AgentEvent, ApprovalDecision, ApprovalRisk, BackgroundCommandSnapshot, LoadedConfig,
     ModelMessage, available_model_options, canonical_provider_id, compact_tool_observation,
@@ -33,7 +34,15 @@ pub enum AsyncEvent {
         result: std::result::Result<(), String>,
     },
     Agent(AgentEvent),
+    AgentForSession {
+        session_id: String,
+        event: AgentEvent,
+    },
     TurnCompleted(std::result::Result<String, String>),
+    TurnCompletedForSession {
+        session_id: String,
+        result: std::result::Result<String, String>,
+    },
     RetryModel,
     PluginCatalogLoaded {
         entries: Vec<navi_plugin_manifest::PluginCatalogEntry>,
@@ -57,7 +66,29 @@ pub enum AsyncEvent {
 pub(crate) fn handle_async_event(app: &mut TuiApp, event: AsyncEvent) {
     match event {
         AsyncEvent::Agent(agent_event) => handle_agent_event(app, agent_event),
+        AsyncEvent::AgentForSession { session_id, event } => {
+            if session_id == app.session_id.as_str() {
+                handle_agent_event(app, event);
+            } else {
+                tracing::debug!(
+                    event_session = %session_id,
+                    current_session = %app.session_id.as_str(),
+                    "ignored stale agent event"
+                );
+            }
+        }
         AsyncEvent::TurnCompleted(res) => handle_turn_completed(app, res),
+        AsyncEvent::TurnCompletedForSession { session_id, result } => {
+            if session_id == app.session_id.as_str() {
+                handle_turn_completed(app, result);
+            } else {
+                tracing::debug!(
+                    event_session = %session_id,
+                    current_session = %app.session_id.as_str(),
+                    "ignored stale turn completion"
+                );
+            }
+        }
         AsyncEvent::RetryModel => {
             app.clear_stream_task();
             if app.is_loading {
@@ -169,6 +200,7 @@ pub(crate) fn handle_async_event(app: &mut TuiApp, event: AsyncEvent) {
                     if app.mode == Mode::OAuth {
                         crate::keybindings::close_active_modal(app);
                     }
+                    crate::providers::maybe_start_setup_interview(app);
                     show_notification(
                         app,
                         "OAuth",
@@ -413,6 +445,19 @@ fn handle_turn_completed(app: &mut TuiApp, res: std::result::Result<String, Stri
     match res {
         Ok(text) => {
             finalize_active_assistant(app, elapsed_ms, &text);
+
+            // Detect setup interview completion
+            if let Some(SetupPhase::Interview) = app.setup_phase {
+                let lower = text.to_lowercase();
+                if lower.contains("all set")
+                    || lower.contains("onboarding complete")
+                    || lower.contains("setup complete")
+                    || lower.contains("welcome to navi")
+                {
+                    handle_setup_interview_done(app);
+                    return;
+                }
+            }
         }
         Err(err) => {
             handle_model_error(app, err);
@@ -429,11 +474,30 @@ fn handle_turn_completed(app: &mut TuiApp, res: std::result::Result<String, Stri
     }
 }
 
+/// React to setup interview completion — exit setup wizard, mark onboarding done.
+fn handle_setup_interview_done(app: &mut TuiApp) {
+    use crate::persistence::save_global_config_for_app;
+
+    app.setup_phase = None;
+    app.mode = Mode::Normal;
+    let _ = save_global_config_for_app(app);
+    app.conversation_history = vec![navi_sdk::ModelMessage::system(
+        navi_core::build_system_prompt(&app.loaded_config.config, &app.project_dir),
+    )];
+    app.messages.clear();
+    app.messages.push(ChatMessage::new(
+        ChatRole::Assistant,
+        "Setup complete! You can now start using NAVI normally.".to_string(),
+    ));
+    app.events.clear();
+    app.reset_run_state();
+    show_notification(app, "Setup", "Onboarding complete. Welcome to NAVI!");
+}
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::state::{ChatMessage, ChatRole};
-    use crate::tests::test_app;
+    use crate::tests::test_app; // function exists in tests.rs
     use navi_sdk::{ApprovalRequest, ModelRole, ToolInvocation, ToolResult};
     use std::time::Instant;
 

@@ -25,12 +25,48 @@ pub(crate) fn insert_input_char(app: &mut TuiApp, ch: char) {
 }
 
 pub(crate) fn insert_input_text(app: &mut TuiApp, text: &str) {
+    let sanitized = strip_terminal_control_sequences(text);
+    if sanitized.is_empty() {
+        return;
+    }
     replace_input_selection(app);
-    chat_input_ref(app).insert_text(text);
+    chat_input_ref(app).insert_text(&sanitized);
 }
 
 pub(crate) fn insert_api_key_text(app: &mut TuiApp, text: &str) {
-    api_key_input_ref(app).insert_text(text);
+    let sanitized = strip_terminal_control_sequences(text);
+    if !sanitized.is_empty() {
+        api_key_input_ref(app).insert_text(&sanitized);
+    }
+}
+
+fn strip_terminal_control_sequences(text: &str) -> String {
+    let mut cleaned = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+
+    while let Some(ch) = chars.next() {
+        if ch == '\u{1b}' {
+            if chars.peek() == Some(&'[') {
+                chars.next();
+                for next in chars.by_ref() {
+                    if ('@'..='~').contains(&next) {
+                        break;
+                    }
+                }
+            } else {
+                chars.next();
+            }
+            continue;
+        }
+
+        if ch.is_control() && !matches!(ch, '\n' | '\r' | '\t') {
+            continue;
+        }
+
+        cleaned.push(ch);
+    }
+
+    cleaned
 }
 
 pub(crate) fn delete_input_previous_char(app: &mut TuiApp) {
@@ -267,6 +303,24 @@ pub(crate) fn delete_input_previous_space_word(app: &mut TuiApp) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn insert_input_text_drops_csi_u_keyboard_sequences() {
+        let mut app = crate::tests::test_app("");
+
+        insert_input_text(&mut app, "ok \u{1b}[99;133u\u{1b}[127;133u text");
+
+        assert_eq!(app.input, "ok  text");
+    }
+
+    #[test]
+    fn insert_input_text_drops_sgr_mouse_sequences() {
+        let mut app = crate::tests::test_app("");
+
+        insert_input_text(&mut app, "ok \u{1b}[<0;41;12M\u{1b}[<0;42;12m text");
+
+        assert_eq!(app.input, "ok  text");
+    }
 
     #[test]
     fn visual_line_count_wraps_and_preserves_trailing_newline() {

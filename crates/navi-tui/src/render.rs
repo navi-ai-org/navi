@@ -6,8 +6,7 @@ pub(crate) mod tool;
 
 pub(crate) use layout::{
     clear_modal_area, command_row, command_scroll_offset, fill_modal_scrim, fill_modal_surface,
-    modal_block, modal_list_highlight_style, modal_rect, model_row_simple, opaque_fill,
-    truncate_display,
+    modal_block, modal_list_highlight_style, modal_rect, opaque_fill, truncate_display,
 };
 pub(crate) use text::{mask_key_segment, project_label};
 
@@ -21,7 +20,7 @@ mod tests {
     use crate::render::markdown::render_markdown_lines;
     use crate::render::syntax::highlight_code_line;
     use crate::render::text::{display_width, wrap_spans_to_width, wrap_text};
-    use crate::render::tool::{tool_compact_text, tool_detail_block, tool_full_content};
+    use crate::render::tool::{tool_compact_text, tool_full_content};
     use crate::theme::ThemeId;
     use crate::theme::code_block_bg;
 
@@ -245,8 +244,9 @@ mod tests {
             vec![
                 "▣ Project Overview",
                 "",
-                "Crate     Purpose     ",
-                "navi-cli  Entry binary",
+                "Crate    │ Purpose     ",
+                "─────────┼─────────────",
+                "navi-cli │ Entry binary",
             ]
         );
         assert!(!rendered.iter().any(|line| line.contains("##")));
@@ -264,9 +264,13 @@ mod tests {
         );
         let rendered = lines.iter().map(line_text).collect::<Vec<_>>();
 
-        assert!(rendered.iter().any(|line| line.starts_with("Problema:")));
-        assert!(rendered.iter().any(|line| line.starts_with("Onde:")));
-        assert!(rendered.iter().any(|line| line.starts_with("Gravidade:")));
+        let text = rendered.join("\n");
+        assert!(text.contains("Problema"));
+        assert!(text.contains("OAuth Device Flow na TUI"));
+        assert!(text.contains("Onde"));
+        assert!(text.contains("navi-tui/src/runtime.rs"));
+        assert!(text.contains("Gravidade"));
+        assert!(text.contains("CRÍTICO"));
         assert!(rendered.iter().all(|line| !line.contains('|')));
         for line in rendered.iter().filter(|line| !line.is_empty()) {
             assert!(line.chars().count() <= 64, "line too wide: {line}");
@@ -420,15 +424,13 @@ mod tests {
 
         let compact = tool_compact_text(&invocation, &result);
         let content = tool_full_content(&invocation, &result);
-        let detail = tool_detail_block(&invocation, &result).expect("git log detail");
 
         assert_eq!(compact, "Git log --oneline --graph --all (2 lines)");
         assert!(content.contains("Log\n```\n* abc1234 initial commit"));
-        assert!(detail.contains("* def5678 second commit"));
+        assert!(content.contains("* def5678 second commit"));
         assert!(!content.contains("\"log\""));
         assert!(!content.contains("\\n"));
         assert!(!content.contains("```json"));
-        assert!(!detail.contains("```json"));
     }
 
     #[test]

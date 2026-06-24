@@ -23,8 +23,8 @@ use crate::dispatch::AsyncEvent;
 use crate::runtime::{build_engine, selected_model_runtime_available};
 use crate::session::load_saved_sessions;
 use crate::state::{
-    ChatMessage, ChatRenderCache, McpUiState, ModalKind, Mode, Notification, OAuthUiState,
-    PluginApprovalRequest, QuestionUiState, SelectionState, ThinkingLevel,
+    ChatMessage, ChatRenderCache, ChatRole, McpUiState, ModalKind, Mode, Notification,
+    OAuthUiState, PluginApprovalRequest, QuestionUiState, SelectionState, ThinkingLevel,
 };
 use crate::theme::{ThemeId, ThemePalette};
 use crate::ui::interaction::{HitAction, HitRegion, InteractionRegistry};
@@ -92,11 +92,6 @@ pub struct TuiApp {
     /// Image protocol picker for terminal rendering.
     pub(crate) image_picker: Option<Picker>,
 
-    // mascot animation
-    pub(crate) mascot_frames: Option<crate::view::mascot::MascotFrames>,
-    pub(crate) mascot_frame_index: usize,
-    pub(crate) mascot_tick_counter: u64,
-
     // persistence
     pub(crate) session_store: SessionStore,
     pub(crate) events: Vec<AgentEvent>,
@@ -135,6 +130,8 @@ pub struct TuiApp {
     /// Cached set of canonical provider IDs with resolved credentials.
     /// Populated by refresh_authenticated_providers().
     pub(crate) authenticated_providers: HashSet<String>,
+    /// Setup wizard phase (None when not in setup mode).
+    pub(crate) setup_phase: Option<crate::state::SetupPhase>,
 
     // skills
     pub(crate) available_skills: Vec<NaviSkillInfo>,
@@ -162,6 +159,18 @@ pub struct TuiApp {
     pub(crate) bg_command_selected: usize,
     pub(crate) bg_command_scroll: usize,
     pub(crate) bg_poll_task: Option<JoinHandle<()>>,
+
+    // session naming
+    pub(crate) session_title: Option<String>,
+    /// How many background model tasks are actively running (naming, compaction, etc.)
+    pub(crate) bg_models_running: usize,
+
+    // background models config
+    pub(crate) bg_models_selected: usize,
+    pub(crate) bg_models_scroll: usize,
+    pub(crate) bg_model_picker_active: bool,
+    pub(crate) bg_model_picker_task: Option<String>,
+    pub(crate) bg_model_picker_selected: usize,
 }
 
 impl TuiApp {
@@ -185,7 +194,7 @@ impl TuiApp {
         let engine: Arc<dyn EngineDriver> =
             Arc::new(build_engine(&loaded_config, project_dir.clone())?);
         let provider_configured =
-            selected_model_runtime_available(&loaded_config, &credential_store);
+            selected_model_runtime_available(&loaded_config, &credential_store, &project_dir);
         let session_store = SessionStore::with_redaction(
             loaded_config.data_dir.clone(),
             loaded_config.config.security.redact_secrets_in_sessions,
@@ -209,24 +218,8 @@ impl TuiApp {
         let thinking_level = ThinkingLevel::from_config(&loaded_config.config.tui.thinking_level);
         let git_branch = detect_git_branch(&project_dir);
 
-        let terminal_picker = if std::env::var("NAVI_SMOKE_TEST").is_ok() {
-            tracing::debug!("NAVI_SMOKE_TEST set, skipping terminal image support detection");
-            None
-        } else {
-            match Picker::from_query_stdio() {
-                Ok(picker) => {
-                    tracing::info!("terminal image protocol detected — mascot supported");
-                    Some(picker)
-                }
-                Err(e) => {
-                    tracing::warn!(error = %e, "no terminal image protocol detected — mascot disabled");
-                    None
-                }
-            }
-        };
-        let mascot_frames = terminal_picker
-            .as_ref()
-            .and_then(crate::view::mascot::MascotFrames::load);
+        #[cfg(not(test))]
+        let terminal_picker = terminal_image_picker();
 
         let mut app = Self {
             loaded_config,
@@ -277,9 +270,6 @@ impl TuiApp {
             image_picker: terminal_picker,
             #[cfg(test)]
             image_picker: None,
-            mascot_frames,
-            mascot_frame_index: 0,
-            mascot_tick_counter: 0,
             session_store,
             events: Vec::new(),
             session_id,
@@ -333,6 +323,14 @@ impl TuiApp {
             bg_command_selected: 0,
             bg_command_scroll: 0,
             bg_poll_task: None,
+            session_title: None,
+            bg_models_running: 0,
+            bg_models_selected: 0,
+            bg_models_scroll: 0,
+            bg_model_picker_active: false,
+            bg_model_picker_task: None,
+            bg_model_picker_selected: 0,
+            setup_phase: None,
         };
 
         // If a task was passed via CLI, pre-fill input
@@ -360,10 +358,31 @@ impl TuiApp {
 
         Ok(app)
     }
+    /// Create a TuiApp in setup wizard mode.
+    /// Opens the model picker and transitions to the setup interview when
+    /// a provider is configured.
+    pub fn setup_mode(loaded_config: LoadedConfig, project_dir: PathBuf) -> Result<Self> {
+        let mut app = Self::new(loaded_config, project_dir, None)?;
+        app.setup_phase = Some(crate::state::SetupPhase::ProviderLogin);
+        app.mode = Mode::Setup;
+        // Open model picker immediately so the user can select a provider.
+        app.modal_stack.open(ModalKind::Models);
+        app.model_filter.clear();
+        app.model_scroll = 0;
+        app.refresh_authenticated_providers();
+        // Pre-populate a welcome message for the setup flow.
+        app.messages.push(ChatMessage::new(
+            ChatRole::Assistant,
+            "Welcome to NAVI! Let's get you set up.\n\n\
+            First, choose a provider and enter your API key.\n\
+            Press ctrl+m or click the model picker above."
+                .to_string(),
+        ));
+        Ok(app)
+    }
 
     pub(crate) fn advance_tick(&mut self) {
         self.tick = self.tick.wrapping_add(1);
-        crate::view::mascot::advance_mascot_animation(self);
     }
 
     pub(crate) fn tick(&self) -> u64 {
@@ -604,6 +623,27 @@ impl TuiApp {
 
         let mut rows: Vec<ProviderListRow> = Vec::new();
         let mut emitted: Vec<bool> = vec![false; total];
+        let push_provider_with_accounts =
+            |rows: &mut Vec<ProviderListRow>, provider_index: usize, app: &TuiApp| {
+                rows.push(ProviderListRow::Provider {
+                    index: provider_index,
+                });
+                let Some(provider) = providers.get(provider_index) else {
+                    return;
+                };
+                let accounts = app
+                    .credential_store
+                    .list_credential_accounts(&provider.id, Some(&app.project_dir))
+                    .unwrap_or_default();
+                for account in accounts {
+                    rows.push(ProviderListRow::Account {
+                        provider_index,
+                        account_id: account.account_id,
+                        label: account.label,
+                        selected: account.is_project_selected,
+                    });
+                }
+            };
 
         let recents: Vec<usize> = self
             .loaded_config
@@ -626,7 +666,7 @@ impl TuiApp {
                 label: "— Recent —".to_string(),
             });
             for idx in &recents {
-                rows.push(ProviderListRow::Provider { index: *idx });
+                push_provider_with_accounts(&mut rows, *idx, self);
             }
         }
 
@@ -649,7 +689,7 @@ impl TuiApp {
                 label: "— Connected —".to_string(),
             });
             for idx in connected {
-                rows.push(ProviderListRow::Provider { index: idx });
+                push_provider_with_accounts(&mut rows, idx, self);
             }
         }
 
@@ -659,12 +699,64 @@ impl TuiApp {
                 label: "— Other providers —".to_string(),
             });
             for idx in others {
-                rows.push(ProviderListRow::Provider { index: idx });
+                push_provider_with_accounts(&mut rows, idx, self);
             }
         }
 
         rows
     }
+}
+
+#[cfg(not(test))]
+fn terminal_image_picker() -> Option<Picker> {
+    if let Some(reason) = terminal_image_detection_skip_reason() {
+        tracing::debug!(reason, "skipping terminal image support detection");
+        return None;
+    }
+
+    match Picker::from_query_stdio() {
+        Ok(picker) => {
+            tracing::info!("terminal image protocol detected");
+            Some(picker)
+        }
+        Err(e) => {
+            tracing::debug!(error = %e, "no terminal image protocol detected");
+            None
+        }
+    }
+}
+
+#[cfg(not(test))]
+fn terminal_image_detection_skip_reason() -> Option<&'static str> {
+    terminal_image_detection_skip_reason_from_env(|key| {
+        std::env::var_os(key).map(|value| value.to_string_lossy().into_owned())
+    })
+}
+
+fn terminal_image_detection_skip_reason_from_env(
+    mut env: impl FnMut(&str) -> Option<String>,
+) -> Option<&'static str> {
+    if env("NAVI_SMOKE_TEST").is_some() {
+        return Some("NAVI_SMOKE_TEST");
+    }
+    if env("NAVI_DISABLE_TERMINAL_IMAGES").is_some() {
+        return Some("NAVI_DISABLE_TERMINAL_IMAGES");
+    }
+    if is_termux_environment(&mut env) {
+        return Some("termux");
+    }
+    None
+}
+
+fn is_termux_environment(env: &mut impl FnMut(&str) -> Option<String>) -> bool {
+    if env("TERMUX_VERSION").is_some() {
+        return true;
+    }
+
+    ["PREFIX", "HOME", "TMPDIR"]
+        .into_iter()
+        .filter_map(env)
+        .any(|value| value.contains("/com.termux/") || value.contains("/data/data/com.termux"))
 }
 
 fn detect_git_branch(project_dir: &Path) -> Option<String> {
@@ -677,4 +769,57 @@ fn detect_git_branch(project_dir: &Path) -> Option<String> {
         return Some(head.chars().take(7).collect());
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn skip_reason(vars: &[(&str, &str)]) -> Option<&'static str> {
+        terminal_image_detection_skip_reason_from_env(|key| {
+            vars.iter()
+                .find(|(candidate, _)| *candidate == key)
+                .map(|(_, value)| (*value).to_string())
+        })
+    }
+
+    #[test]
+    fn terminal_image_detection_skips_termux_version() {
+        assert_eq!(
+            skip_reason(&[("TERMUX_VERSION", "0.118.1")]),
+            Some("termux")
+        );
+    }
+
+    #[test]
+    fn terminal_image_detection_skips_termux_paths() {
+        assert_eq!(
+            skip_reason(&[("PREFIX", "/data/data/com.termux/files/usr")]),
+            Some("termux")
+        );
+        assert_eq!(
+            skip_reason(&[("HOME", "/data/data/com.termux/files/home")]),
+            Some("termux")
+        );
+    }
+
+    #[test]
+    fn terminal_image_detection_respects_explicit_disable() {
+        assert_eq!(
+            skip_reason(&[("NAVI_DISABLE_TERMINAL_IMAGES", "1")]),
+            Some("NAVI_DISABLE_TERMINAL_IMAGES")
+        );
+    }
+
+    #[test]
+    fn terminal_image_detection_runs_for_normal_terminals() {
+        assert_eq!(
+            skip_reason(&[
+                ("TERM", "xterm-256color"),
+                ("HOME", "/home/enrell"),
+                ("PREFIX", "/usr")
+            ]),
+            None
+        );
+    }
 }

@@ -12,13 +12,13 @@
                                         session new
                                         cost    $0.00
 
-    NAVI · wired code agent for local-first builders
 
 
 
 
   ▌
-  ▌   explain the routing module
+  ▌ explain the routing module
   ▌
-  ▌   gpt-5.5 OpenAI · adaptive · 0 / 200k (0%)
+  ▌ gpt-5.5 OpenAI · adaptive · 0 / 200k (0%)
   ▌
+               ctrl+p commands · ctrl+m models · ctrl+enter send · ctrl+v image

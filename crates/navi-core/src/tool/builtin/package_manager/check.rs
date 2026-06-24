@@ -13,6 +13,7 @@ pub(super) async fn cmd_check(
     packages: &[String],
 ) -> Result<ToolResult> {
     match manager {
+        "dart" => check_dart(project_root, invocation_id, packages).await,
         "npm" | "bun" => check_npm(project_root, invocation_id, manager, packages).await,
         "cargo" => check_cargo(project_root, invocation_id, packages).await,
         "go" => check_go(project_root, invocation_id, packages).await,
@@ -28,6 +29,54 @@ pub(super) async fn cmd_check(
             ),
         }),
     }
+}
+
+pub(super) async fn check_dart(
+    project_root: &Path,
+    invocation_id: &str,
+    packages: &[String],
+) -> Result<ToolResult> {
+    let manifest = std::fs::read_to_string(project_root.join("pubspec.yaml")).unwrap_or_default();
+    let mut installed: Vec<PackageEntry> = Vec::new();
+    let mut not_found: Vec<String> = Vec::new();
+
+    for pkg in packages {
+        if finders::find_dart_package(&manifest, pkg) {
+            installed.push(PackageEntry {
+                name: pkg.clone(),
+                status: "found",
+                section: Some("dependencies".to_string()),
+            });
+        } else {
+            not_found.push(pkg.clone());
+        }
+    }
+
+    if packages.is_empty() {
+        let has_lock = project_root.join("pubspec.lock").exists();
+        return Ok(helpers::ok(
+            invocation_id.to_string(),
+            json!({
+                "schema_version": helpers::SPECIALIZED_SCHEMA_VERSION,
+                "status": if has_lock { "installed" } else { "not_installed" },
+                "manager": "dart",
+            }),
+        ));
+    }
+
+    Ok(helpers::ok(
+        invocation_id.to_string(),
+        helpers::versioned(PackageCheckOutput {
+            status: if not_found.is_empty() {
+                "success"
+            } else {
+                "not_found"
+            },
+            manager: "dart".to_string(),
+            installed,
+            not_found,
+        }),
+    ))
 }
 
 pub(super) async fn check_npm(

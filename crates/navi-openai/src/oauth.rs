@@ -1,5 +1,6 @@
-use navi_core::CredentialStore;
-use serde::Deserialize;
+use navi_core::{CommandCodeCredentialMetadata, CredentialStore};
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::time::Duration;
@@ -8,6 +9,20 @@ use std::time::Duration;
 pub struct DeviceOAuthStarted {
     pub verification_uri: String,
     pub user_code: String,
+}
+
+const COMMANDCODE_DEFAULT_API_BASE: &str = "https://api.commandcode.ai";
+const COMMANDCODE_DEFAULT_STUDIO_BASE: &str = "https://commandcode.ai";
+const COMMANDCODE_CLI_VERSION: &str = "0.38.2";
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommandCodeUsageData {
+    pub whoami: Value,
+    pub credits: Option<Value>,
+    pub subscription: Option<Value>,
+    pub usage_summary: Option<Value>,
+    pub models: Vec<String>,
 }
 
 pub async fn github_copilot_device_oauth<F>(
@@ -134,7 +149,7 @@ pub async fn commandcode_browser_oauth<F>(
     credential_store: CredentialStore,
     provider_id: &str,
     mut on_started: F,
-) -> std::result::Result<(), String>
+) -> std::result::Result<String, String>
 where
     F: FnMut(DeviceOAuthStarted) + Send,
 {
@@ -152,13 +167,146 @@ where
     .await
     .map_err(|err| err.to_string())??;
 
-    // Store only the provider key in NAVI's private credential store. The
-    // callback also includes display metadata, but the runtime only needs the key.
-    credential_store
-        .set_api_key(provider_id, &callback.api_key)
+    let client = reqwest::Client::new();
+    commandcode_get_json(&client, &callback.api_key, "/alpha/whoami")
+        .await
+        .map_err(|err| format!("Command Code credential validation failed: {err}"))?;
+
+    let account_id = credential_store
+        .set_commandcode_credential(
+            provider_id,
+            &callback.api_key,
+            CommandCodeCredentialMetadata {
+                user_id: callback.user_id.clone(),
+                user_name: callback.user_name.clone(),
+                key_name: callback.key_name.clone(),
+                authenticated_at: current_unix_timestamp().to_string(),
+            },
+        )
         .map_err(|err| err.to_string())?;
 
-    Ok(())
+    Ok(account_id)
+}
+
+pub async fn commandcode_fetch_usage_data(
+    api_key: &str,
+) -> std::result::Result<CommandCodeUsageData, String> {
+    let client = reqwest::Client::new();
+    let whoami = commandcode_get_json(&client, api_key, "/alpha/whoami").await?;
+    let org_id = whoami
+        .get("org")
+        .and_then(|org| org.get("id"))
+        .and_then(Value::as_str);
+    let credits_endpoint = commandcode_endpoint_with_params("/alpha/billing/credits", org_id, None);
+    let subscription_endpoint =
+        commandcode_endpoint_with_params("/alpha/billing/subscriptions", org_id, None);
+
+    let credits = commandcode_get_json(&client, api_key, &credits_endpoint)
+        .await
+        .ok();
+    let subscription = commandcode_get_json(&client, api_key, &subscription_endpoint)
+        .await
+        .ok();
+    let since = subscription
+        .as_ref()
+        .and_then(|value| value.get("data"))
+        .and_then(|data| data.get("currentPeriodStart"))
+        .and_then(Value::as_str);
+    let usage_endpoint = commandcode_endpoint_with_params("/alpha/usage/summary", org_id, since);
+    let usage_summary = commandcode_get_json(&client, api_key, &usage_endpoint)
+        .await
+        .ok();
+    let models = commandcode_list_models(api_key).await.unwrap_or_default();
+
+    Ok(CommandCodeUsageData {
+        whoami,
+        credits,
+        subscription,
+        usage_summary,
+        models,
+    })
+}
+
+pub async fn commandcode_list_models(api_key: &str) -> std::result::Result<Vec<String>, String> {
+    let client = reqwest::Client::new();
+    let value = commandcode_get_json(&client, api_key, "/provider/v1/models").await?;
+    let models = value
+        .get("data")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "missing models data".to_string())?
+        .iter()
+        .filter_map(|item| item.get("id").and_then(Value::as_str))
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    Ok(models)
+}
+
+async fn commandcode_get_json(
+    client: &reqwest::Client,
+    api_key: &str,
+    endpoint: &str,
+) -> std::result::Result<Value, String> {
+    let url = format!("{}{}", commandcode_api_base_url(), endpoint);
+    let response = client
+        .get(url)
+        .headers(commandcode_headers(api_key))
+        .send()
+        .await
+        .map_err(|err| err.to_string())?;
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        return Err(format!("{status}: {body}"));
+    }
+    response.json().await.map_err(|err| err.to_string())
+}
+
+fn commandcode_headers(api_key: &str) -> reqwest::header::HeaderMap {
+    use reqwest::header::{AUTHORIZATION, CONTENT_TYPE, HeaderMap, HeaderValue, USER_AGENT};
+
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        AUTHORIZATION,
+        HeaderValue::from_str(&format!("Bearer {api_key}")).expect("valid auth header"),
+    );
+    headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+    headers.insert(
+        USER_AGENT,
+        HeaderValue::from_static("command-code/0.38.2 navi"),
+    );
+    headers.insert(
+        "x-command-code-version",
+        HeaderValue::from_static(COMMANDCODE_CLI_VERSION),
+    );
+    headers
+}
+
+fn commandcode_endpoint_with_params(
+    endpoint: &str,
+    org_id: Option<&str>,
+    since: Option<&str>,
+) -> String {
+    let mut params = Vec::new();
+    if let Some(org_id) = org_id {
+        params.push(format!("orgId={}", url_encode_component(org_id)));
+    }
+    if let Some(since) = since {
+        params.push(format!("since={}", url_encode_component(since)));
+    }
+    if params.is_empty() {
+        endpoint.to_string()
+    } else {
+        format!("{}?{}", endpoint, params.join("&"))
+    }
+}
+
+fn commandcode_api_base_url() -> String {
+    std::env::var("COMMANDCODE_API_URL")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| COMMANDCODE_DEFAULT_API_BASE.to_string())
+        .trim_end_matches('/')
+        .to_string()
 }
 
 fn commandcode_auth_listener() -> std::result::Result<(u16, TcpListener), String> {
@@ -177,9 +325,36 @@ fn commandcode_auth_listener() -> std::result::Result<(u16, TcpListener), String
 }
 
 fn commandcode_auth_url(port: u16, state: &str) -> String {
+    let studio_base = std::env::var("COMMANDCODE_STUDIO_URL")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| COMMANDCODE_DEFAULT_STUDIO_BASE.to_string())
+        .trim_end_matches('/')
+        .to_string();
     format!(
-        "https://commandcode.ai/studio/auth/cli?callback=http%3A%2F%2Flocalhost%3A{port}%2Fcallback&state={state}"
+        "{studio_base}/studio/auth/cli?callback=http%3A%2F%2Flocalhost%3A{port}%2Fcallback&state={}",
+        url_encode_component(state)
     )
+}
+
+fn current_unix_timestamp() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+}
+
+fn url_encode_component(value: &str) -> String {
+    let mut encoded = String::new();
+    for byte in value.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                encoded.push(byte as char)
+            }
+            _ => encoded.push_str(&format!("%{byte:02X}")),
+        }
+    }
+    encoded
 }
 
 fn generate_commandcode_state() -> String {
