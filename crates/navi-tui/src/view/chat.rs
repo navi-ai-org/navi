@@ -16,12 +16,25 @@ use crate::state::{ChatLineSource, ChatRole, Mode};
 use crate::theme::*;
 use crate::ui::interaction::{HitAction, line_rect};
 
+use super::welcome::welcome_text;
+
 pub(super) fn render_chat_area(frame: &mut Frame<'_>, app: &mut TuiApp, area: Rect) {
     let inner = area.inner(Margin {
         horizontal: 2,
         vertical: 1,
     });
     app.chat_render_cache.borrow_mut().chat_rect = Some(inner);
+
+    if app.messages.is_empty() && !app.is_loading {
+        let welcome = welcome_text(app, inner.width as usize, inner.height as usize);
+        frame.render_widget(
+            Paragraph::new(welcome)
+                .style(Style::default().bg(bg()))
+                .wrap(Wrap { trim: false }),
+            inner,
+        );
+        return;
+    }
 
     let chat_width = inner.width as usize;
     ensure_chat_cache(app, chat_width);

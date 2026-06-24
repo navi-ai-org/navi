@@ -1,24 +1,24 @@
   main  /tmp/navi-test-project
 
          ╭ Shortcuts ─────────────────────────────────────────────────╮
-         │ ctrl+p      commands                                       │
-         │ ctrl+t      background tasks                               │
-         │ ctrl+b      background agents                              │
-         │ ctrl+a      select input text                              │
-         │ ctrl+v      paste image                                    │
-  ▌      │ tab         refresh/provider actions                       │
-  ▌      │ ctrl+m      models                                         │
-  ▌      │ ctrl+n      new layer                                      │
-  ▌ gpt-5│ ctrl+s      memory                                         │
-  ▌      │ ctrl+o      compact/full tool output                       │
- NAVI loc│ ctrl+d      debug                                          │
- project │ ctrl+g      toggle YOLO mode                               │
- model gp│ ctrl+enter  send prompt                                    │
- via Open│ enter       new line                                       │
- thinking│ ctrl+j      new line                                       │
- context │ /           commands when input is empty                   │
- session │                                                            │
-         ╰────────────────────────────────────────────────────────────╯
-
-
+    ███╗ │ ctrl+p      commands                                       │
+    ████╗│ ctrl+t      background tasks                               │
+    ██╔██│ ctrl+b      background agents                              │
+    ██║╚█│ ctrl+a      select input text                              │
+    ██║ ╚│ ctrl+v      paste image                                    │
+    ╚═╝  │ tab         refresh/provider actions                       │
+         │ ctrl+m      models                                         │
+         │ ctrl+n      new layer                                      │atch
+         │ ctrl+s      memory                                         │
+         │ ctrl+o      compact/full tool output                       │
+         │ ctrl+d      debug                                          │
+         │ ctrl+g      toggle YOLO mode                               │
+         │ ctrl+enter  send prompt                                    │
+         │ enter       new line                                       │
+         │ ctrl+j      new line                                       │
+  ▌      │ /           commands when input is empty                   │
+  ▌      │                                                            │
+  ▌      ╰────────────────────────────────────────────────────────────╯
+  ▌ gpt-5.5 OpenAI · adaptive · 0 / 200k (0%)
+  ▌
                ctrl+p commands · ctrl+m models · ctrl+enter send · ctrl+v image

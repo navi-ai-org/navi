@@ -6,19 +6,19 @@
     │                                                                      │
     │   No models available.                                               │
     │                                                                      │
-  ▌ │   Configure a provider to get started:                               │
+    │   Configure a provider to get started:                               │
+    │                                                                      │
+    │   1. ctrl+p → Providers to add an API key                            │
+    │   2. Set an env var like OPENAI_API_KEY                              │
+    │   3. Or add a [providers] entry in config.toml                       │
+    │                                                                      │
+    │                                                                      │
+    │                                                                      │
+    │                                                                      │
+    │                                                                      │
   ▌ │                                                                      │
-  ▌ │   1. ctrl+p → Providers to add an API key                            │
-  ▌ │   2. Set an env var like OPENAI_API_KEY                              │
-  ▌ │   3. Or add a [providers] entry in config.toml                       │
- NAV│                                                                      │
- pro│                                                                      │
- mod│                                                                      │
- via│                                                                      │
- thi│                                                                      │
- con│                                                                      │
- ses│                                                                      │
-    │   Connect provider  ctrl+e                                           │
-    ╰──────────────────────────────────────────────────────────────────────╯
-
+  ▌ │                                                                      │
+  ▌ │   Connect provider  ctrl+e                                           │
+  ▌ ╰──────────────────────────────────────────────────────────────────────╯
+  ▌
                ctrl+p commands · ctrl+m models · ctrl+enter send · ctrl+v image
