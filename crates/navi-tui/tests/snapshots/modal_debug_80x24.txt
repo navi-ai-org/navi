@@ -6,19 +6,19 @@
     │ Session:  session-test                                               │
     │ Project:  /tmp/navi-test-project                                     │
     │ Model:    gpt-5.5 via OpenAI                                         │
-    │ API key:  missing                                                    │
-    │ State:    idle                                                       │
-    │                                                                      │
-    │ Recent diagnostics                                                   │
-    │ none                                                                 │
-    │                                                                      │
-    │                                                                      │
-    │                                                                      │
-    │                                                                      │
-    │                                                                      │
+  ▌ │ API key:  missing                                                    │
+  ▌ │ State:    idle                                                       │
   ▌ │                                                                      │
-  ▌ │                                                                      │
-  ▌ ╰──────────────────────────────────────────────────────────────────────╯
-  ▌ gpt-5.5 OpenAI · adaptive · 0 / 200k (0%)
-  ▌
+  ▌ │ Recent diagnostics                                                   │
+  ▌ │ none                                                                 │
+ NAV│                                                                      │
+ pro│                                                                      │
+ mod│                                                                      │
+ via│                                                                      │
+ thi│                                                                      │
+ con│                                                                      │
+ ses│                                                                      │
+    ╰──────────────────────────────────────────────────────────────────────╯
+
+
                ctrl+p commands · ctrl+m models · ctrl+enter send · ctrl+v image
