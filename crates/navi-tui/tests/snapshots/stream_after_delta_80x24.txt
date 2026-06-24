@@ -15,10 +15,10 @@
 
 
 
-    .   Composing response · 0s
   ▌
   ▌
   ▌
   ▌ gpt-5.5 OpenAI · adaptive · 0 / 200k (0%)
   ▌
+    .   Composing response · 0s
                ctrl+p commands · ctrl+m models · ctrl+enter send · ctrl+v image
