@@ -17,6 +17,27 @@ impl NaviConfig {
         let project_config_path =
             merge_from_file(&mut config, &project_path, ConfigSource::Project)?;
 
+        // Apply environment overrides for memory configuration
+        if let Ok(val) = std::env::var("NAVI_MEMORY_ENABLED") {
+            if let Ok(b) = val.parse::<bool>() {
+                config.memory.enabled = b;
+            }
+        }
+        if let Ok(val) = std::env::var("NAVI_MEMORY_REBUILD_THRESHOLD") {
+            if let Ok(f) = val.parse::<f64>() {
+                config.memory.rebuild_threshold = f;
+            }
+        }
+        if let Ok(val) = std::env::var("NAVI_MEMORY_CHECKPOINT_THRESHOLDS") {
+            let parsed: Vec<f64> = val
+                .split(',')
+                .filter_map(|s| s.trim().parse::<f64>().ok())
+                .collect();
+            if !parsed.is_empty() {
+                config.memory.checkpoint_thresholds = parsed;
+            }
+        }
+
         Ok(LoadedConfig {
             config,
             global_config_path: Some(global_path),
@@ -27,7 +48,8 @@ impl NaviConfig {
 
     pub(crate) fn merge(&mut self, other: NaviConfig) {
         use crate::config::types::{
-            McpConfig, ModelConfig, PluginMarketplaceConfig, SkillsConfig, TuiConfig,
+            BackgroundModelsConfig, McpConfig, ModelConfig, PluginMarketplaceConfig, SkillsConfig,
+            TuiConfig,
         };
 
         if other.model != ModelConfig::default() {
@@ -49,6 +71,9 @@ impl NaviConfig {
         }
         if other.plugin_marketplace != PluginMarketplaceConfig::default() {
             self.plugin_marketplace = other.plugin_marketplace;
+        }
+        if other.background_models != BackgroundModelsConfig::default() {
+            self.background_models = other.background_models;
         }
         crate::config::providers::merge_provider_configs(&mut self.providers, other.providers);
         self.plugins.extend(other.plugins);

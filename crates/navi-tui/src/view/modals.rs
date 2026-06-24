@@ -722,6 +722,10 @@ pub(super) fn render_help_modal(frame: &mut Frame<'_>, app: &TuiApp, area: Rect)
         .split(inner);
     let shortcuts = [
         ("ctrl+p", "commands"),
+        ("ctrl+t", "background tasks"),
+        ("ctrl+b", "background agents"),
+        ("ctrl+a", "select input text"),
+        ("ctrl+v", "paste image"),
         ("tab", "refresh/provider actions"),
         ("ctrl+m", "models"),
         ("ctrl+n", "new layer"),
@@ -1180,4 +1184,100 @@ fn wrap_plain(text: &str, width: usize) -> Vec<String> {
         lines.push(current);
     }
     lines
+}
+
+pub(super) fn render_background_models(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
+    clear_modal_area(frame, area);
+    let block = modal_block("Background Agents");
+    frame.render_widget(block, area);
+
+    let inner = area.inner(Margin {
+        horizontal: 2,
+        vertical: 1,
+    });
+
+    let tasks: &[(&str, &str)] = &[
+        ("naming", "Session title generation"),
+        ("compaction", "Conversation summarization"),
+        ("repo_search", "Repository exploration"),
+        ("subagent_research", "Research subagents"),
+        ("simple_code_edit", "Code edit subagents"),
+    ];
+
+    let mut rows: Vec<Line> = Vec::new();
+    let bg = &app.loaded_config.config.background_models;
+
+    for (i, (task_id, description)) in tasks.iter().enumerate() {
+        let selected = i == app.bg_models_selected;
+        let resolved_label = resolve_bg_model_label(app, task_id);
+        let has_override = bg_model_has_override(bg, task_id);
+
+        let task_style = if selected {
+            Style::default().fg(signal()).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(text())
+        };
+        let model_style = if selected {
+            Style::default().fg(accent()).add_modifier(Modifier::BOLD)
+        } else if has_override {
+            Style::default().fg(accent())
+        } else {
+            Style::default().fg(muted())
+        };
+        let desc_style = Style::default().fg(ghost());
+
+        rows.push(Line::from(vec![
+            Span::styled(format!("{:>20}", task_id), task_style),
+            Span::styled("  →  ", desc_style),
+            Span::styled(resolved_label, model_style),
+        ]));
+        rows.push(Line::from(vec![Span::styled(
+            format!("  {:>20}  ", description),
+            desc_style,
+        )]));
+    }
+
+    let list = Paragraph::new(rows).style(Style::default().bg(modal_bg()));
+    frame.render_widget(list, inner);
+
+    // Footer hints.
+    let footer_y = inner.y + inner.height.saturating_sub(1);
+    if footer_y > inner.y {
+        let footer_rect = Rect::new(inner.x, footer_y, inner.width, 1);
+        let hints = Line::from(vec![
+            Span::styled("  [enter]", Style::default().fg(signal())),
+            Span::styled(" pick model  ", Style::default().fg(muted())),
+            Span::styled("[d]", Style::default().fg(signal())),
+            Span::styled(" reset  ", Style::default().fg(muted())),
+            Span::styled("[esc]", Style::default().fg(signal())),
+            Span::styled(" close", Style::default().fg(muted())),
+        ]);
+        frame.render_widget(
+            Paragraph::new(hints).style(Style::default().bg(modal_bg())),
+            footer_rect,
+        );
+    }
+}
+
+fn resolve_bg_model_label(app: &TuiApp, task: &str) -> String {
+    let bg = &app.loaded_config.config.background_models;
+    if let Some(entry) = bg.resolve(task) {
+        if let (Some(provider), Some(model)) = (&entry.provider, &entry.model) {
+            return format!("{provider}:{model}");
+        }
+    }
+    let main_provider = &app.loaded_config.config.model.provider;
+    let main_model = &app.loaded_config.config.model.name;
+    format!("{main_provider}:{main_model} (default)")
+}
+
+fn bg_model_has_override(bg: &navi_sdk::BackgroundModelsConfig, task: &str) -> bool {
+    match task {
+        "naming" => bg.naming.is_some(),
+        "compaction" => bg.compaction.is_some(),
+        "repo_search" => bg.repo_search.is_some(),
+        "subagent_research" => bg.subagent_research.is_some(),
+        "simple_code_edit" => bg.simple_code_edit.is_some(),
+        _ => bg.default.is_some(),
+    }
 }

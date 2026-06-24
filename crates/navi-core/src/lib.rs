@@ -4,9 +4,11 @@ pub mod config;
 pub mod context;
 pub mod credentials;
 pub mod event;
+pub mod file_lock;
 mod fs_util;
 pub mod harness;
 pub mod logging;
+pub mod memory;
 pub mod model;
 pub mod patch;
 pub mod prompt;
@@ -16,29 +18,34 @@ pub mod repetition;
 pub mod runtime;
 pub mod security;
 pub mod session;
+pub mod setup;
 pub mod skills;
 pub mod tool;
 pub mod turn;
 
+pub mod background_model;
+
 pub use compact::{CompactState, CompactThreshold};
 pub use config::{
-    HarnessProfile, LoadedConfig, McpConfig, McpServerConfig, ModelOption, ModelTaskSize,
-    NaviConfig, PluginConfig, ProviderConfig, ProviderKind, ProviderModelConfig,
-    ProviderRequestOptions, SecurityConfig, ToolCallingMode, ToolPromptManifest, WasmPluginConfig,
-    available_model_options, canonical_provider_id, default_request_options_for,
-    effective_context_window, effective_tool_calling_mode, is_free_model_name,
-    model_can_run_publicly, provider_catalog, provider_request_model_name, resolve_provider_config,
-    save_global_config, save_project_config, set_registry_store,
+    BackgroundModelEntry, BackgroundModelsConfig, HarnessProfile, LoadedConfig, McpConfig,
+    McpServerConfig, ModelOption, ModelTaskSize, NaviConfig, PluginConfig, ProviderConfig,
+    ProviderKind, ProviderModelConfig, ProviderRequestOptions, SecurityConfig, ToolCallingMode,
+    ToolPromptManifest, WasmPluginConfig, available_model_options, canonical_provider_id,
+    default_request_options_for, effective_context_window, effective_tool_calling_mode,
+    is_free_model_name, model_can_run_publicly, provider_catalog, provider_request_model_name,
+    resolve_provider_config, save_global_config, save_project_config, set_registry_store,
 };
 pub use context::{ContextPacket, ContextSource};
 pub use credentials::{
-    CredentialSource, CredentialStatus, CredentialStore, resolve_provider_api_key,
+    CommandCodeCredentialMetadata, CredentialAccountInfo, CredentialSource, CredentialStatus,
+    CredentialStore, resolve_provider_api_key, resolve_provider_api_key_for_project,
     resolve_provider_credential_status,
 };
 pub use event::{
     AgentEvent, ApprovalDecision, ApprovalRequest, ApprovalRisk, QuestionOption, QuestionRequest,
     QuestionResponse, RuntimeEvent, RuntimeEventKind,
 };
+pub use file_lock::{FileLockInfo, FileLockManager, LockGuard};
 pub use harness::{
     AgentRunState, HarnessPolicy, build_system_prompt, build_system_prompt_with_memory,
     compact_tool_observation, record_tool_call, select_harness_policy, tool_error_result,
@@ -59,7 +66,13 @@ pub use session::{
     SessionId, SessionRuntime, SessionSnapshot, SessionStore, clean_session_title,
     session_title_from_events,
 };
+pub use setup::{SETUP_INTERVIEW_COMPLETE_MARKER, SETUP_INTERVIEW_PROMPT};
 pub use skills::{SkillManifest, active_skills, discover_configured_skills};
-pub use tool::SubagentTool;
 pub use tool::background::{BackgroundCommandSnapshot, BackgroundTaskStatus};
-pub use tool::{Tool, ToolDefinition, ToolExecutor, ToolInvocation, ToolKind, ToolResult};
+pub use tool::{
+    ProviderBuilderFn, RepoExploreTool, SubagentTool, Tool, ToolDefinition, ToolExecutor,
+    ToolInvocation, ToolKind, ToolResult,
+};
+
+pub use background_model::{BackgroundModelResolver, ResolvedBackgroundModel};
+pub use memory::{HistoryStore, MemoryManager, MemoryStore, SessionCheckpoint};

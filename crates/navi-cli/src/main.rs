@@ -7,6 +7,7 @@ use std::path::PathBuf;
 
 mod acp;
 mod mcp_cmd;
+mod memory_cmd;
 mod plugin_cmd;
 
 #[derive(Debug, Parser)]
@@ -59,6 +60,40 @@ enum Commands {
         #[command(subcommand)]
         action: McpAction,
     },
+    /// Manage state-continuity memory
+    Memory {
+        #[command(subcommand)]
+        action: MemoryAction,
+    },
+    /// Run interactive setup wizard (provider login, agent-configured interview)
+    Setup,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum MemoryAction {
+    /// Show current memory system status
+    Status,
+    /// Manually run checkpoint writer
+    Checkpoint,
+    /// Print the context that would be injected on rebuild
+    RebuildPreview,
+    /// Search raw history
+    History {
+        /// Search query
+        query: String,
+        /// Optional limit
+        #[arg(long)]
+        limit: Option<i64>,
+        /// Filter by session ID
+        #[arg(long)]
+        session_id: Option<String>,
+    },
+    /// Run dream maintenance
+    Dream,
+    /// Run distill maintenance
+    Distill,
+    /// Validate files, paths, permissions, SQLite schema, and config
+    Doctor,
 }
 
 #[derive(Debug, Subcommand)]
@@ -139,6 +174,28 @@ async fn main() -> Result<()> {
         return mcp_cmd::handle_mcp_command(action, &loaded_config).await;
     }
 
+    // Handle memory subcommand early
+    if let Some(Commands::Memory { action }) = cli.command {
+        return memory_cmd::handle_memory_command(action, &loaded_config, &cwd).await;
+    }
+
+    // Handle setup subcommand early — launch TUI in setup mode
+    if let Some(Commands::Setup) = cli.command {
+        let _logging_guard = init_logging(
+            &loaded_config.config.logging,
+            &loaded_config.data_dir,
+            LoggingRuntimeConfig {
+                stdout_enabled: cli.no_tui,
+                file_enabled: !cli.no_log_file,
+                level: cli.log_level.clone(),
+                include_payloads: cli.debug_payloads,
+            },
+        )?;
+        tracing::info!("starting interactive setup wizard");
+        navi_tui::run(TuiApp::setup_mode(loaded_config, cwd)?)?;
+        return Ok(());
+    }
+
     if cli.print_log_path {
         println!("{}", log_path(&loaded_config.data_dir).display());
         return Ok(());
@@ -202,6 +259,9 @@ async fn main() -> Result<()> {
         run_headless(loaded_config, cwd, task).await?;
         return Ok(());
     }
+
+    // Onboarding wizard removed — config v2 doesn't track onboarding_completed
+    // The TUI will now start normally and prompt for setup if needed.
 
     tracing::info!(project = %cwd.display(), "starting TUI");
     navi_tui::run(TuiApp::new(loaded_config, cwd.clone(), task)?)?;

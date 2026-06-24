@@ -8,8 +8,8 @@ use crate::state::{ChatLineSource, ChatMessage, ChatRole};
 use crate::theme::*;
 
 use super::syntax::{CodeHighlighter, highlight_code_line};
-use super::text::{display_width, wrap_spans_to_width, wrap_text};
-use super::tool::{tool_compact_text, tool_detail_block, tool_full_content};
+use super::text::{display_width, wrap_inline_spans_to_width, wrap_spans_to_width, wrap_text};
+use super::tool::{tool_compact_text, tool_full_content};
 
 pub(crate) const USER_IMAGE_ROW_HEIGHT: usize = 8;
 pub(crate) const USER_IMAGES_PER_ROW: usize = 2;
@@ -27,9 +27,9 @@ pub(crate) fn build_chat_render_for_messages(
     show_thinking: bool,
     _compact_tool_visible_limit: usize,
     expanded_tool_results: &HashSet<String>,
-    running_tools: &HashMap<String, ToolInvocation>,
+    _running_tools: &HashMap<String, ToolInvocation>,
     tool_render_cache: &mut HashMap<String, Vec<Line<'static>>>,
-    loading_elapsed_ms: Option<u64>,
+    _loading_elapsed_ms: Option<u64>,
 ) -> ChatRenderOutput {
     let mut rendered_lines: Vec<Line<'static>> = Vec::new();
     let mut line_sources: Vec<ChatLineSource> = Vec::new();
@@ -38,48 +38,6 @@ pub(crate) fn build_chat_render_for_messages(
     while index < messages.len() {
         let msg = &messages[index];
         if is_empty_tool_placeholder(msg) {
-            if let Some(status) = msg.status.as_deref() {
-                if status.starts_with("tool:") && !running_tools.is_empty() {
-                    if !rendered_lines.is_empty() {
-                        rendered_lines.push(Line::from(""));
-                        line_sources.push(ChatLineSource::None);
-                    }
-
-                    for invocation in running_tools.values() {
-                        rendered_lines.push(render_running_tool_line(
-                            invocation,
-                            chat_width,
-                            loading_elapsed_ms,
-                        ));
-                        line_sources.push(ChatLineSource::Message(index));
-                        push_min_card_lines(
-                            &mut rendered_lines,
-                            &mut line_sources,
-                            ChatLineSource::Message(index),
-                            chat_width,
-                            interactive_bg(),
-                            3,
-                        );
-                    }
-                } else if matches!(status, "thinking" | "receiving")
-                    || status.starts_with("approval:")
-                    || status.starts_with("question")
-                {
-                    if !rendered_lines.is_empty() {
-                        rendered_lines.push(Line::from(""));
-                        line_sources.push(ChatLineSource::None);
-                    }
-                    rendered_lines.push(render_activity_line(
-                        msg,
-                        status,
-                        running_tools,
-                        chat_width,
-                        loading_elapsed_ms,
-                    ));
-                    line_sources.push(ChatLineSource::Message(index));
-                }
-            }
-
             index += 1;
             continue;
         }
@@ -187,14 +145,6 @@ pub(crate) fn build_chat_render_for_messages(
                             .as_deref()
                             .is_some_and(|status| status == "thinking")
                     {
-                        rendered_lines.push(render_activity_line(
-                            msg,
-                            "thinking",
-                            running_tools,
-                            chat_width,
-                            loading_elapsed_ms,
-                        ));
-                        line_sources.push(ChatLineSource::Message(index));
                         if msg.content.trim().is_empty() {
                             index += 1;
                             continue;
@@ -288,179 +238,6 @@ fn push_sourced_lines(
     for line in next {
         lines.push(line);
         sources.push(source.clone());
-    }
-}
-
-fn push_min_card_lines(
-    lines: &mut Vec<Line<'static>>,
-    sources: &mut Vec<ChatLineSource>,
-    source: ChatLineSource,
-    width: usize,
-    bg: Color,
-    count: usize,
-) {
-    for _ in 0..count {
-        lines.push(blank_card_line(width, bg));
-        sources.push(source.clone());
-    }
-}
-
-fn blank_card_line(width: usize, bg: Color) -> Line<'static> {
-    Line::from(vec![Span::styled(
-        " ".repeat(width.max(1)),
-        Style::default().fg(muted()).bg(bg),
-    )])
-}
-
-fn render_running_tool_line(
-    invocation: &ToolInvocation,
-    chat_width: usize,
-    loading_elapsed_ms: Option<u64>,
-) -> Line<'static> {
-    let action_color = tool_color(invocation.tool_name.as_str());
-    let tool_label = tool_group_label(&invocation.tool_name);
-    let mut detail = tool_compact_text(
-        invocation,
-        &ToolResult {
-            invocation_id: invocation.id.clone(),
-            ok: true,
-            output: serde_json::json!({}),
-        },
-    );
-    if let Some(rest) = detail.strip_prefix(&tool_label) {
-        detail = rest.trim_start().to_string();
-    }
-    if detail.is_empty() {
-        detail = running_tool_detail(invocation);
-    }
-    let elapsed = loading_elapsed_ms.map(format_elapsed).unwrap_or_default();
-    let suffix = if elapsed.is_empty() {
-        String::new()
-    } else {
-        format!(" · {elapsed}")
-    };
-    let content_width = chat_width.saturating_sub(6).max(12);
-    let detail = truncate_chars(
-        &detail,
-        content_width.saturating_sub(tool_label.len() + suffix.len() + 2),
-    );
-
-    Line::from(vec![
-        Span::styled("│ ", Style::default().fg(action_color)),
-        Span::styled(
-            "• ",
-            Style::default()
-                .fg(action_color)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(
-            format!("{tool_label}:"),
-            Style::default()
-                .fg(action_color)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(" ", Style::default().fg(ghost())),
-        Span::styled(detail, Style::default().fg(text())),
-        Span::styled(suffix, Style::default().fg(code_number())),
-    ])
-}
-
-fn render_activity_line(
-    message: &ChatMessage,
-    status: &str,
-    running_tools: &HashMap<String, ToolInvocation>,
-    chat_width: usize,
-    loading_elapsed_ms: Option<u64>,
-) -> Line<'static> {
-    let (label, phase, color) = if status == "receiving" {
-        ("Writing", "composing response".to_string(), accent())
-    } else if status.starts_with("approval:") {
-        (
-            "Approval",
-            status.trim_start_matches("approval: ").to_string(),
-            code_const(),
-        )
-    } else if status.starts_with("question") {
-        ("Question", "waiting for input".to_string(), code_const())
-    } else if let Some(invocation) = running_tools.values().next() {
-        (
-            "Thinking",
-            format!(
-                "preparing {}",
-                tool_group_label(&invocation.tool_name).to_lowercase()
-            ),
-            code_operator(),
-        )
-    } else {
-        ("Thinking", thinking_phase(message), code_operator())
-    };
-    let elapsed = loading_elapsed_ms.map(format_elapsed).unwrap_or_default();
-    let suffix = if elapsed.is_empty() {
-        String::new()
-    } else {
-        format!(" · {elapsed}")
-    };
-    let phase = truncate_chars(
-        &phase,
-        chat_width
-            .saturating_sub(label.len() + suffix.len() + 8)
-            .max(12),
-    );
-
-    Line::from(vec![
-        Span::styled("│ ", Style::default().fg(color)),
-        Span::styled(
-            "• ",
-            Style::default().fg(color).add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(
-            format!("{label}:"),
-            Style::default().fg(color).add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(" ", Style::default().fg(ghost())),
-        Span::styled(
-            phase,
-            Style::default().fg(text()).add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(suffix, Style::default().fg(code_number())),
-    ])
-}
-
-fn running_tool_detail(invocation: &ToolInvocation) -> String {
-    invocation
-        .input
-        .get("command")
-        .or_else(|| invocation.input.get("path"))
-        .or_else(|| invocation.input.get("query"))
-        .and_then(|value| value.as_str())
-        .map(str::to_string)
-        .unwrap_or_else(|| "working".to_string())
-}
-
-fn thinking_phase(message: &ChatMessage) -> String {
-    message
-        .thinking_content
-        .lines()
-        .rev()
-        .map(str::trim)
-        .find(|line| !line.is_empty())
-        .map(clean_activity_text)
-        .filter(|line| !line.is_empty())
-        .unwrap_or_else(|| "planning next step".to_string())
-}
-
-fn clean_activity_text(text: &str) -> String {
-    text.trim_matches(|ch: char| matches!(ch, '#' | '*' | '-' | '`' | '>' | ' '))
-        .trim()
-        .to_string()
-}
-
-fn format_elapsed(ms: u64) -> String {
-    let seconds = ms / 1_000;
-    if seconds < 60 {
-        format!("{seconds}s")
-    } else {
-        format!("{}m {}s", seconds / 60, seconds % 60)
     }
 }
 
@@ -609,29 +386,9 @@ fn render_compact_tool_result(
             render_compact_tool_line_with_width(invocation, result, chat_width),
             source.clone(),
         ));
-        if let Some(detail) = tool_detail_block(invocation, result) {
-            let rendered =
-                render_markdown_lines(&detail, chat_width.saturating_sub(2), text(), text(), false);
-            for line in rendered {
-                lines.push((line, source.clone()));
-            }
-        }
     }
 
     lines
-}
-
-fn tool_group_label(tool_name: &str) -> String {
-    match tool_name {
-        "read_file" | "view_file" => "Read".to_string(),
-        "write_file" => "Write".to_string(),
-        "apply_patch" => "Edit".to_string(),
-        "bash" => "Run".to_string(),
-        "grep" => "Search".to_string(),
-        "fs_browser" => "Browse".to_string(),
-        "git_ops" => "Git".to_string(),
-        other => other.replace('_', " "),
-    }
 }
 
 fn render_compact_tool_line_with_width(
@@ -778,6 +535,12 @@ pub(crate) fn render_markdown_lines(
                 }
                 lines.push(Line::from(line_spans).style(Style::default().bg(bg)));
             }
+            index += 1;
+            continue;
+        }
+
+        if is_thematic_break(trimmed) {
+            lines.push(thematic_break_line(show_marker, marker_color, max_width));
             index += 1;
             continue;
         }
@@ -945,6 +708,10 @@ fn table_block_lines(
     marker_color: Color,
     max_width: usize,
 ) -> Vec<Line<'static>> {
+    const MAX_TABLE_WIDTH: usize = 140;
+    const MIN_COLUMN_WIDTH: usize = 8;
+    const COLUMN_SEPARATOR_WIDTH: usize = 3;
+
     let rows = table_rows
         .iter()
         .map(|row| table_cells(row))
@@ -958,20 +725,167 @@ fn table_block_lines(
     }
 
     let marker_width = if show_marker { 2 } else { 0 };
-    let table_width =
-        marker_width + widths.iter().sum::<usize>() + widths.len().saturating_sub(1) * 2;
-    if table_width > max_width && rows.len() > 1 {
+    let available_width = max_width.saturating_sub(marker_width).min(MAX_TABLE_WIDTH);
+    let separators_width = widths
+        .len()
+        .saturating_sub(1)
+        .saturating_mul(COLUMN_SEPARATOR_WIDTH);
+    let columns_width = available_width.saturating_sub(separators_width);
+    let minimum_widths = rows
+        .first()
+        .map(|headers| {
+            (0..column_count)
+                .map(|index| {
+                    headers
+                        .get(index)
+                        .map(|header| rendered_inline_width(header))
+                        .unwrap_or(0)
+                        .max(MIN_COLUMN_WIDTH)
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+
+    if columns_width < minimum_widths.iter().sum::<usize>() && rows.len() > 1 {
         return stacked_table_lines(&rows, show_marker, marker_color, max_width);
     }
 
-    rows.iter()
+    shrink_table_widths(&mut widths, &minimum_widths, columns_width);
+
+    let mut lines = Vec::new();
+    for (row_index, cells) in rows.iter().enumerate() {
+        lines.extend(wrapped_table_row_lines(
+            cells,
+            &widths,
+            row_index == 0,
+            show_marker,
+            marker_color,
+        ));
+        if row_index == 0 {
+            lines.push(table_header_rule(&widths, show_marker, marker_color));
+        }
+    }
+    lines
+}
+
+fn shrink_table_widths(widths: &mut [usize], minimum_widths: &[usize], target: usize) {
+    while widths.iter().sum::<usize>() > target {
+        let Some((index, _)) = widths
+            .iter()
+            .enumerate()
+            .filter(|(index, width)| **width > minimum_widths.get(*index).copied().unwrap_or(1))
+            .max_by_key(|(index, width)| {
+                width.saturating_sub(minimum_widths.get(*index).copied().unwrap_or(1))
+            })
+        else {
+            break;
+        };
+        widths[index] = widths[index].saturating_sub(1);
+    }
+}
+
+fn wrapped_table_row_lines(
+    cells: &[String],
+    widths: &[usize],
+    header: bool,
+    show_marker: bool,
+    marker_color: Color,
+) -> Vec<Line<'static>> {
+    let color = if header { code_type() } else { text() };
+    let wrapped_cells = widths
+        .iter()
         .enumerate()
-        .map(|(row_index, cells)| {
+        .map(|(index, width)| {
+            wrapped_table_cell(
+                cells.get(index).map(String::as_str).unwrap_or_default(),
+                *width,
+                color,
+                header,
+            )
+        })
+        .collect::<Vec<_>>();
+    let row_height = wrapped_cells.iter().map(Vec::len).max().unwrap_or(1);
+
+    (0..row_height)
+        .map(|line_index| {
             let mut spans = marker_spans(show_marker, marker_color);
-            spans.extend(table_row_spans_with_header(cells, &widths, row_index == 0));
+            for (column_index, width) in widths.iter().copied().enumerate() {
+                if column_index > 0 {
+                    spans.push(Span::styled(" │ ", Style::default().fg(ghost())));
+                }
+                let cell_line = wrapped_cells
+                    .get(column_index)
+                    .and_then(|lines| lines.get(line_index))
+                    .cloned()
+                    .unwrap_or_default();
+                let used = cell_line
+                    .iter()
+                    .map(|span| display_width(&span.content))
+                    .sum::<usize>();
+                spans.extend(cell_line);
+                if used < width {
+                    spans.push(Span::styled(
+                        " ".repeat(width - used),
+                        Style::default().fg(color),
+                    ));
+                }
+            }
             Line::from(spans)
         })
         .collect()
+}
+
+fn wrapped_table_cell(
+    content: &str,
+    width: usize,
+    color: Color,
+    bold: bool,
+) -> Vec<Vec<Span<'static>>> {
+    let mut spans = inline_text_spans(content, color);
+    if bold {
+        for span in &mut spans {
+            span.style = span.style.add_modifier(Modifier::BOLD);
+        }
+    }
+    wrap_inline_spans_to_width(&spans, width)
+}
+
+fn table_header_rule(widths: &[usize], show_marker: bool, marker_color: Color) -> Line<'static> {
+    let mut spans = marker_spans(show_marker, marker_color);
+    for (index, width) in widths.iter().copied().enumerate() {
+        if index > 0 {
+            spans.push(Span::styled("─┼─", Style::default().fg(ghost())));
+        }
+        spans.push(Span::styled(
+            "─".repeat(width),
+            Style::default().fg(ghost()),
+        ));
+    }
+    Line::from(spans)
+}
+
+fn is_thematic_break(text: &str) -> bool {
+    let compact = text
+        .chars()
+        .filter(|ch| !ch.is_whitespace())
+        .collect::<String>();
+    let Some(marker) = compact.chars().next() else {
+        return false;
+    };
+    compact.len() >= 3
+        && matches!(marker, '-' | '*' | '_')
+        && compact.chars().all(|ch| ch == marker)
+}
+
+fn thematic_break_line(show_marker: bool, marker_color: Color, max_width: usize) -> Line<'static> {
+    let mut spans = marker_spans(show_marker, marker_color);
+    let marker_width = if show_marker { 2 } else { 0 };
+    let width = max_width.saturating_sub(marker_width).min(96).max(3);
+    spans.push(Span::styled(
+        "─".repeat(width),
+        Style::default().fg(ghost()),
+    ));
+    Line::from(spans)
 }
 
 fn stacked_table_lines(
@@ -1557,6 +1471,84 @@ mod tests {
                 .iter()
                 .any(|span| span.content.contains("[1] PNG"))
         }));
+    }
+
+    #[test]
+    fn thematic_break_is_rendered_as_a_rule() {
+        let lines = render_markdown_lines("---", 80, text(), text(), false);
+
+        assert_eq!(lines.len(), 1);
+        let rendered = lines[0]
+            .spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect::<String>();
+        assert_eq!(rendered, "─".repeat(80));
+        assert!(!rendered.contains("---"));
+    }
+
+    #[test]
+    fn wide_tables_are_bounded_and_wrap_long_cells() {
+        let markdown = "| Empresa | Pessoa(s) | Posição |\n\
+                        | --- | --- | --- |\n\
+                        | Trainline ⛵ | Yan Pitangui | #23 |\n\
+                        | **ABLA ONE / Microsoft FoundersHub** | Bruno (bmtec) | #47, #48 |\n\
+                        | Open to work 🔍 | BGLuis, tqrcisio, rlevider, rust-ivf, oliveirajhony, gogoncalves, dalvorsn, bmtec, nathan | #25, #28, #30, #36, #37, #38, #40, #45, #47 |";
+        let lines = render_markdown_lines(markdown, 220, text(), text(), false);
+
+        assert!(
+            lines.len() > 3,
+            "long cells should wrap onto continuation lines"
+        );
+        assert!(
+            lines
+                .iter()
+                .any(|line| { line.spans.iter().any(|span| span.content.contains('│')) })
+        );
+        assert!(
+            lines
+                .iter()
+                .any(|line| { line.spans.iter().any(|span| span.content.contains('┼')) })
+        );
+        assert!(lines.iter().all(|line| {
+            line.spans
+                .iter()
+                .map(|span| display_width(&span.content))
+                .sum::<usize>()
+                <= 140
+        }));
+        assert!(
+            !lines
+                .iter()
+                .any(|line| { line.spans.iter().any(|span| span.content.contains("**")) })
+        );
+
+        let separator_positions = lines
+            .iter()
+            .filter(|line| line.spans.iter().any(|span| span.content.contains('│')))
+            .map(|line| {
+                let rendered = line
+                    .spans
+                    .iter()
+                    .map(|span| span.content.as_ref())
+                    .collect::<String>();
+                let mut positions = Vec::new();
+                let mut width = 0;
+                for ch in rendered.chars() {
+                    if ch == '│' {
+                        positions.push(width);
+                    }
+                    width += display_width(&ch.to_string());
+                }
+                positions
+            })
+            .collect::<Vec<_>>();
+        assert!(separator_positions.len() > 1);
+        assert!(
+            separator_positions
+                .windows(2)
+                .all(|pair| pair[0] == pair[1])
+        );
     }
 }
 

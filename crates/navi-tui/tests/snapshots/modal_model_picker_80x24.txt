@@ -1,24 +1,24 @@
   main  /tmp/navi-test-project
 
-    ╭ Switch Protocol ─────────────────────────────────────────────────────╮
-    │ > search providers or models                                         │
-    │   OpenCode Zen  ↻ tab                                              █ │
-    │     big-pickle                                                     █ │
-    │     deepseek-v4-flash-free                                         █ │
-    │     nemotron-3-super-free                                          █ │
-    │     qwen3.6-plus                                                   █ │
-    │     qwen3.5-plus                                                   █ │
-    │     kimi-k2.6                                                      █ │
-    │     kimi-k2.5                                                      █ │
-    │     glm-5.1                                                        █ │
-    │     glm-5                                                          █ │
-    │     minimax-m2.7                                                   █ │
-    │     minimax-m2.5                                                   █ │
-    │     grok-build-0.1                                                 █ │
-  ▌ │   OpenCode Go  ↻ tab                                               │ │
-  ▌ │     deepseek-v4-flash                                              │ │
-  ▌ │     deepseek-v4-pro                                                │ │
-  ▌ │ search  •  ctrl+e setup  •  tab refresh provider  •  ctrl+r refresh  │
+    ╭  ────────────────────────────────────────────────────────────────────╮
+    │   Select model                                                   esc │
+    │   Search                                                             │
+    │                                                                      │
+    │   No models available.                                               │
+    │                                                                      │
+    │   Configure a provider to get started:                               │
+    │                                                                      │
+    │   1. ctrl+p → Providers to add an API key                            │
+    │   2. Set an env var like OPENAI_API_KEY                              │
+    │   3. Or add a [providers] entry in config.toml                       │
+    │                                                                      │
+    │                                                                      │
+    │                                                                      │
+    │                                                                      │
+    │                                                                      │
+  ▌ │                                                                      │
+  ▌ │                                                                      │
+  ▌ │   Connect provider  ctrl+e                                           │
   ▌ ╰──────────────────────────────────────────────────────────────────────╯
-
-                                                             ctrl+v paste image
+  ▌
+               ctrl+p commands · ctrl+m models · ctrl+enter send · ctrl+v image

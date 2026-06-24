@@ -14,3 +14,4 @@ pub mod types;
 
 pub use fetcher::{RegistryFetcher, sync_local_registry, sync_registry};
 pub use store::RegistryStore;
+pub use types::{ModelCapability, ModelPricing, ModelProfileEntry, Profile, RankedModel};

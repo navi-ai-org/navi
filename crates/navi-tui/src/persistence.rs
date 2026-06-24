@@ -1,6 +1,6 @@
 use navi_sdk::{
-    AgentEvent, ModelMessage, SessionSnapshot, SessionStore, save_global_config,
-    session_title_from_events,
+    AgentEvent, CompactState, ModelMessage, SessionSnapshot, SessionStore,
+    effective_context_window, save_global_config, session_title_from_events,
 };
 
 use crate::app::TuiApp;
@@ -8,15 +8,20 @@ use crate::chat::reset_system_context;
 use crate::session::session_created_at;
 use crate::state::{ChatImage, ChatMessage, ChatRole};
 
-pub(crate) fn save_current_session(app: &mut TuiApp) {
+/// Save current session snapshot without destroying in-memory state.
+pub(crate) fn snapshot_current_session(app: &TuiApp) {
     if app.messages.is_empty() && app.events.is_empty() {
         return;
     }
     let now = navi_sdk::current_unix_timestamp();
+    let title = app
+        .session_title
+        .clone()
+        .or_else(|| session_title_from_events(&app.events));
     let snapshot = SessionSnapshot {
         version: SessionSnapshot::CURRENT_VERSION,
         id: app.session_id.clone(),
-        title: session_title_from_events(&app.events),
+        title,
         project: app.project_dir.clone(),
         created_at: session_created_at(&app.session_id).unwrap_or(now),
         updated_at: now,
@@ -35,6 +40,12 @@ pub(crate) fn save_current_session(app: &mut TuiApp) {
     {
         tracing::warn!("failed to save project memory: {err:#}");
     }
+}
+
+/// Destructive save: writes snapshot, then creates fresh session id and clears state.
+/// Used for fork/session-switch operations.
+pub(crate) fn save_current_session(app: &mut TuiApp) {
+    snapshot_current_session(app);
     app.session_id = SessionStore::create_id();
     app.events.clear();
     app.message_action_target = None;
@@ -76,10 +87,28 @@ pub(crate) fn save_preferences(app: &mut TuiApp) {
     }
 }
 
+/// Save the global config to disk using the app's resolved path.
+pub(crate) fn save_global_config_for_app(app: &TuiApp) -> anyhow::Result<()> {
+    let Some(global_path) = app.loaded_config.global_config_path.clone() else {
+        anyhow::bail!("global config path not resolved");
+    };
+    save_global_config(&global_path, &app.loaded_config.config)?;
+    Ok(())
+}
+
 pub(crate) fn load_session(app: &mut TuiApp, snapshot: &SessionSnapshot) {
     app.messages.clear();
+    app.session_id = snapshot.id.clone();
+    app.session_title = snapshot.title.clone();
     reset_system_context(app);
     app.events.clear();
+    app.compact_state = CompactState::new(effective_context_window(&app.loaded_config.config));
+    app.pending_approvals.clear();
+    app.pending_questions.clear();
+    app.running_tools.clear();
+    app.tool_invocations.clear();
+    app.pending_images.clear();
+    app.background_commands.clear();
 
     let mut tool_invocations = std::collections::HashMap::new();
 

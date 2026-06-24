@@ -4,9 +4,10 @@ use crate::mouse::copy_text_to_clipboard;
 use crate::notifications::show_notification;
 use crate::persistence::{load_session, save_current_session, save_preferences};
 use crate::providers::{
-    apply_model_selection, build_model_rows, first_model_index, model_is_available_for_selection,
-    next_model_index, previous_model_index, save_api_key_and_rebuild, selected_model_in_rows,
-    start_provider_oauth, sync_scroll_to_selection,
+    ListRow, apply_model_selection, build_model_rows, first_model_index,
+    model_is_available_for_selection, next_model_index, previous_model_index, rebuild_provider,
+    save_api_key_and_rebuild, selected_model_in_rows, start_provider_oauth,
+    sync_scroll_to_model_index, sync_scroll_to_selection,
 };
 use crate::session::load_saved_sessions;
 use crate::state::{MessageAction, ModalKind, ThinkingLevel};
@@ -376,55 +377,55 @@ pub(crate) fn handle_providers_key(
     let catalog = provider_catalog(&app.loaded_config.config);
     let count = list_rows.len();
 
-    // Helper: get the catalog index of the currently selected row (if any).
-    let current_catalog_idx =
-        list_rows
-            .get(app.selected_provider_setting)
-            .and_then(|row| match row {
-                ProviderListRow::Provider { index } => Some(*index),
-                ProviderListRow::Header { .. } => None,
-            });
+    // Current row position (clamped to valid range).
+    let current_row_pos = app.selected_provider_setting.min(count.saturating_sub(1));
 
-    // Helper: find the nearest non-header catalog index at or after `start`.
+    // Returns the row index of the next/previous selectable (non-header) row.
     let first_selectable = |start: usize| -> Option<usize> {
-        list_rows.iter().skip(start).find_map(|row| match row {
-            ProviderListRow::Provider { index } => Some(*index),
-            ProviderListRow::Header { .. } => None,
-        })
-    };
-
-    // Helper: find the nearest non-header catalog index strictly before `start`.
-    let last_selectable_before = |start: usize| -> Option<usize> {
         list_rows
             .iter()
+            .skip(start)
+            .position(|row| !matches!(row, ProviderListRow::Header { .. }))
+            .map(|offset| start + offset)
+    };
+    let next_selectable_after = |start: usize| -> Option<usize> {
+        list_rows
+            .iter()
+            .enumerate()
+            .skip(start.saturating_add(1))
+            .find_map(|(index, row)| {
+                (!matches!(row, ProviderListRow::Header { .. })).then_some(index)
+            })
+    };
+    let previous_selectable_before = |start: usize| -> Option<usize> {
+        list_rows
+            .iter()
+            .enumerate()
             .take(start)
             .rev()
-            .find_map(|row| match row {
-                ProviderListRow::Provider { index } => Some(*index),
-                ProviderListRow::Header { .. } => None,
+            .find_map(|(index, row)| {
+                (!matches!(row, ProviderListRow::Header { .. })).then_some(index)
             })
     };
 
-    // Helper: convert a catalog index back to a list row position.
-    let row_pos_of = |catalog_idx: usize| -> Option<usize> {
-        list_rows.iter().position(
-            |row| matches!(row, ProviderListRow::Provider { index } if *index == catalog_idx),
-        )
-    };
-
-    // Selected row position in the visible list (the row whose underlying
-    // catalog provider matches the current selection, or fallback to the
-    // current numeric position so the highlight stays in place when only
-    // headers change).
-    let current_row_pos = current_catalog_idx
-        .and_then(row_pos_of)
-        .unwrap_or(app.selected_provider_setting.min(count.saturating_sub(1)));
-
-    // Helper that returns the provider at a list row position.
-    let provider_at = |pos: usize| -> Option<&navi_sdk::ProviderConfig> {
+    // Helper that returns the provider config at a list row position.
+    fn provider_at_row<'a>(
+        list_rows: &[ProviderListRow],
+        catalog: &'a [navi_sdk::ProviderConfig],
+        pos: usize,
+    ) -> Option<&'a navi_sdk::ProviderConfig> {
         match list_rows.get(pos)? {
             ProviderListRow::Provider { index } => catalog.get(*index),
+            ProviderListRow::Account { provider_index, .. } => catalog.get(*provider_index),
             ProviderListRow::Header { .. } => None,
+        }
+    }
+
+    // Escape-hatch: the current row is an Account row being acted on.
+    let selected_account = |pos: usize| -> Option<String> {
+        match list_rows.get(pos)? {
+            ProviderListRow::Account { account_id, .. } => Some(account_id.clone()),
+            _ => None,
         }
     };
 
@@ -437,22 +438,30 @@ pub(crate) fn handle_providers_key(
             super::close_active_modal(app);
         }
         KeyCode::Down => {
-            // Move to the next Provider row; if at the end, stay.
-            if let Some(next) = first_selectable(current_row_pos + 1) {
-                new_row_pos = row_pos_of(next).unwrap_or(current_row_pos);
-            } else {
-                new_row_pos = current_row_pos;
+            if let Some(next) = next_selectable_after(current_row_pos) {
+                new_row_pos = next;
             }
         }
         KeyCode::Up => {
-            if let Some(prev) = last_selectable_before(current_row_pos) {
-                new_row_pos = row_pos_of(prev).unwrap_or(current_row_pos);
-            } else {
-                new_row_pos = current_row_pos;
+            if let Some(prev) = previous_selectable_before(current_row_pos) {
+                new_row_pos = prev;
             }
         }
         KeyCode::Enter => {
-            if let Some(provider) = provider_at(current_row_pos).cloned() {
+            if let Some(account_id) = selected_account(current_row_pos) {
+                let provider = provider_at_row(&list_rows, &catalog, current_row_pos);
+                if let Some(provider) = provider {
+                    let _ = app.credential_store().set_project_account(
+                        &app.project_dir,
+                        &provider.id,
+                        &account_id,
+                    );
+                    rebuild_provider(app);
+                    super::close_active_modal(app);
+                }
+            } else if let Some(provider) =
+                provider_at_row(&list_rows, &catalog, current_row_pos).cloned()
+            {
                 app.pending_provider_setup = Some(provider.id.clone());
                 app.pending_model_selection = None;
                 app.api_key_input.clear();
@@ -461,7 +470,8 @@ pub(crate) fn handle_providers_key(
             }
         }
         KeyCode::Char('k') if modifiers.contains(KeyModifiers::CONTROL) => {
-            if let Some(provider) = provider_at(current_row_pos).cloned() {
+            if let Some(provider) = provider_at_row(&list_rows, &catalog, current_row_pos).cloned()
+            {
                 app.pending_provider_setup = Some(provider.id.clone());
                 app.pending_model_selection = None;
                 app.api_key_input.clear();
@@ -470,18 +480,31 @@ pub(crate) fn handle_providers_key(
             }
         }
         KeyCode::Char('o') | KeyCode::Char('O') if modifiers.contains(KeyModifiers::CONTROL) => {
-            if let Some(provider) = provider_at(current_row_pos).cloned() {
+            if let Some(provider) = provider_at_row(&list_rows, &catalog, current_row_pos).cloned()
+            {
                 start_provider_oauth(app, &provider);
             }
         }
         KeyCode::Char('r') if modifiers.contains(KeyModifiers::CONTROL) => {
-            if let Some(provider) = provider_at(current_row_pos).cloned() {
+            if let Some(provider) = provider_at_row(&list_rows, &catalog, current_row_pos).cloned()
+            {
                 super::provider_sync::sync_provider_tui(app, &provider.id);
             }
         }
         KeyCode::Char('d') if modifiers.contains(KeyModifiers::CONTROL) => {
-            if let Some(provider) = provider_at(current_row_pos).cloned() {
+            if let Some(account_id) = selected_account(current_row_pos) {
+                let provider = provider_at_row(&list_rows, &catalog, current_row_pos);
+                if let Some(provider) = provider {
+                    let _ = app
+                        .credential_store()
+                        .delete_credential_account(&provider.id, &account_id);
+                    rebuild_provider(app);
+                }
+            } else if let Some(provider) =
+                provider_at_row(&list_rows, &catalog, current_row_pos).cloned()
+            {
                 let _ = app.credential_store().delete_api_key(&provider.id);
+                rebuild_provider(app);
             }
         }
         KeyCode::Char(ch) => {
@@ -496,11 +519,9 @@ pub(crate) fn handle_providers_key(
     }
 
     if reset_to_first {
-        // After filter change, jump to the first non-header row.
-        new_row_pos = first_selectable(0).and_then(row_pos_of).unwrap_or(0);
+        new_row_pos = first_selectable(0).unwrap_or(0);
         app.provider_settings_scroll = 0;
     } else {
-        // Sync scroll so the selected row is visible.
         let visible_rows = 12usize;
         let mut state = SelectListState::new(new_row_pos, app.provider_settings_scroll);
         state.sync_scroll(visible_rows);
@@ -758,6 +779,7 @@ pub(crate) fn handle_model_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyMo
                 apply_model_selection(app, app.selected_model);
                 app.pending_model_selection = None;
                 super::close_all_modals(app);
+                crate::providers::maybe_start_setup_interview(app);
             } else {
                 app.pending_model_selection = Some(app.selected_model);
                 super::replace_modal(app, ModalKind::ApiKeyEntry);
@@ -1019,4 +1041,177 @@ pub(crate) fn handle_background_commands_key(app: &mut TuiApp, code: KeyCode) ->
         _ => {}
     }
     false
+}
+
+const BG_MODEL_TASKS: &[(&str, &str)] = &[
+    ("naming", "Session title generation"),
+    ("compaction", "Conversation summarization"),
+    ("repo_search", "Repository exploration"),
+    ("subagent_research", "Research subagents"),
+    ("simple_code_edit", "Code edit subagents"),
+];
+
+pub(crate) fn handle_background_models_key(app: &mut TuiApp, code: KeyCode) -> bool {
+    let len = BG_MODEL_TASKS.len();
+    match code {
+        KeyCode::Esc => super::close_active_modal(app),
+        KeyCode::Up | KeyCode::Char('k') => {
+            if app.bg_models_selected > 0 {
+                app.bg_models_selected -= 1;
+            }
+        }
+        KeyCode::Down | KeyCode::Char('j') => {
+            if app.bg_models_selected + 1 < len {
+                app.bg_models_selected += 1;
+            }
+        }
+        KeyCode::Enter => {
+            // Open model picker sub-modal for the selected task.
+            if let Some((task_id, _)) = BG_MODEL_TASKS.get(app.bg_models_selected) {
+                app.bg_model_picker_active = true;
+                app.bg_model_picker_task = Some(task_id.to_string());
+                app.bg_model_picker_selected = 0;
+                app.model_scroll = 0;
+                app.model_filter.clear();
+                super::replace_modal(app, ModalKind::BgModelPicker);
+                app.refresh_authenticated_providers();
+            }
+        }
+        KeyCode::Char('d') => {
+            // Reset selected task to default (remove override).
+            if let Some((task_id, _)) = BG_MODEL_TASKS.get(app.bg_models_selected) {
+                clear_bg_model_override(app, task_id);
+                save_preferences(app);
+                show_notification(
+                    app,
+                    "Background Agents",
+                    format!("{task_id} reset to default."),
+                );
+            }
+        }
+        _ => {}
+    }
+    false
+}
+
+pub(crate) fn handle_bg_model_picker_key(app: &mut TuiApp, code: KeyCode) -> bool {
+    let rows = build_model_rows(app);
+    let task_id = app.bg_model_picker_task.clone().unwrap_or_default();
+    const VISIBLE_ROWS: u16 = 14;
+
+    match code {
+        KeyCode::Esc => {
+            // Go back to the background models list.
+            app.bg_model_picker_active = false;
+            app.bg_model_picker_task = None;
+            super::replace_modal(app, ModalKind::BackgroundModels);
+        }
+        KeyCode::Up | KeyCode::Char('k') => {
+            if let Some(current) = rows.iter().position(|row| match row {
+                ListRow::Model { index } => *index == app.bg_model_picker_selected,
+                _ => false,
+            }) {
+                if let Some(prev) = rows.iter().take(current).rev().find_map(|row| match row {
+                    ListRow::Model { index } => Some(*index),
+                    _ => None,
+                }) {
+                    app.bg_model_picker_selected = prev;
+                }
+            }
+            sync_scroll_to_model_index(
+                app,
+                app.bg_model_picker_selected,
+                &rows,
+                VISIBLE_ROWS.into(),
+            );
+        }
+        KeyCode::Down | KeyCode::Char('j') => {
+            if let Some(current) = rows.iter().position(|row| match row {
+                ListRow::Model { index } => *index == app.bg_model_picker_selected,
+                _ => false,
+            }) {
+                if let Some(next) = rows.iter().skip(current + 1).find_map(|row| match row {
+                    ListRow::Model { index } => Some(*index),
+                    _ => None,
+                }) {
+                    app.bg_model_picker_selected = next;
+                }
+            }
+            sync_scroll_to_model_index(
+                app,
+                app.bg_model_picker_selected,
+                &rows,
+                VISIBLE_ROWS.into(),
+            );
+        }
+        KeyCode::Enter => {
+            // Apply the selected model to the background task.
+            if let Some(model) = app.models.get(app.bg_model_picker_selected) {
+                let provider_id = model.provider_id.clone();
+                let model_name = model.name.clone();
+                set_bg_model_override(app, &task_id, &provider_id, &model_name);
+                save_preferences(app);
+                show_notification(
+                    app,
+                    "Background Agents",
+                    format!("{} → {}:{}", task_id, provider_id, model_name),
+                );
+            }
+            app.bg_model_picker_active = false;
+            app.bg_model_picker_task = None;
+            super::replace_modal(app, ModalKind::BackgroundModels);
+        }
+        KeyCode::Backspace => {
+            app.model_filter.pop();
+            app.model_scroll = 0;
+            let rows = build_model_rows(app);
+            app.bg_model_picker_selected =
+                first_model_index(&rows).unwrap_or(app.bg_model_picker_selected);
+        }
+        KeyCode::Char('/') | KeyCode::Char('f') => {
+            // Focus the filter input — handled by input routing.
+        }
+        _ => {
+            // Forward printable chars to the model filter.
+            if let KeyCode::Char(c) = code {
+                app.model_filter.push(c);
+                app.model_scroll = 0;
+                let rows = build_model_rows(app);
+                app.bg_model_picker_selected =
+                    first_model_index(&rows).unwrap_or(app.bg_model_picker_selected);
+            }
+        }
+    }
+    false
+}
+
+fn set_bg_model_override(app: &mut TuiApp, task: &str, provider: &str, model: &str) {
+    use navi_sdk::BackgroundModelEntry;
+    let bg = &mut app.loaded_config.config.background_models;
+    let entry = BackgroundModelEntry {
+        profile: None,
+        provider: Some(provider.to_string()),
+        model: Some(model.to_string()),
+        fallback: None,
+    };
+    match task {
+        "naming" => bg.naming = Some(entry),
+        "compaction" => bg.compaction = Some(entry),
+        "repo_search" => bg.repo_search = Some(entry),
+        "subagent_research" => bg.subagent_research = Some(entry),
+        "simple_code_edit" => bg.simple_code_edit = Some(entry),
+        _ => bg.default = Some(entry),
+    }
+}
+
+fn clear_bg_model_override(app: &mut TuiApp, task: &str) {
+    let bg = &mut app.loaded_config.config.background_models;
+    match task {
+        "naming" => bg.naming = None,
+        "compaction" => bg.compaction = None,
+        "repo_search" => bg.repo_search = None,
+        "subagent_research" => bg.subagent_research = None,
+        "simple_code_edit" => bg.simple_code_edit = None,
+        _ => bg.default = None,
+    }
 }

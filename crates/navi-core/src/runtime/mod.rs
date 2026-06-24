@@ -20,7 +20,7 @@ use crate::model::{ModelMessage, ModelProvider, ModelResponse};
 use crate::security::SecurityPolicy;
 use crate::session::{SessionId, SessionStore, current_unix_timestamp};
 use crate::skills::{SkillManifest, active_skills, discover_configured_skills};
-use crate::tool::builtin::SubagentTool;
+use crate::tool::builtin::{RepoExploreTool, SubagentTool};
 use crate::tool::{Tool, ToolExecutor};
 use crate::{
     ModelOption, SessionSnapshot, available_model_options, canonical_provider_id,
@@ -492,7 +492,6 @@ impl AgentRuntime {
             content_parts,
             response_tx,
         }) {
-            self.session.set_event_rx(event_rx);
             return Err(anyhow::anyhow!("failed to send submission: {}", e));
         }
 
@@ -515,7 +514,7 @@ impl AgentRuntime {
         while let Ok(event) = event_rx.try_recv() {
             self.record_event(event);
         }
-        self.session.set_event_rx(event_rx);
+        drop(event_rx);
         self.session.set_updated_at(current_unix_timestamp());
         self.session.update_title_from_events();
 
@@ -596,6 +595,16 @@ impl AgentRuntime {
                 self.prompt_cache.clone(),
             );
             executor.register_tool(Arc::new(subagent));
+            let repo_explore = RepoExploreTool::new(
+                executor_weak.clone(),
+                self.shared_model_provider.clone(),
+                self.project_dir.clone(),
+                self.shared_model_name.clone(),
+                self.loaded_config.config.harness.clone(),
+                self.shared_config.clone(),
+                self.prompt_cache.clone(),
+            );
+            executor.register_tool(Arc::new(repo_explore));
             executor
         });
         self.tool_executor = Some(executor.clone());
@@ -653,6 +662,9 @@ impl AgentRuntime {
             prompt_cache: self.prompt_cache.clone(),
             cancel_token: self.cancel_token.clone(),
             config: self.shared_config.clone(),
+            compaction_provider: None,
+            compaction_model_name: None,
+            session_id: self.session.id().as_str().to_string(),
         });
 
         let policy = select_harness_policy(&self.loaded_config.config);

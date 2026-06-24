@@ -239,12 +239,20 @@ fn parse_responses_tool_call(item: &Value) -> Option<ToolInvocation> {
     let input = item
         .get("arguments")
         .and_then(Value::as_str)
-        .and_then(|arguments| serde_json::from_str::<Value>(arguments).ok())
+        .map(parse_tool_arguments)
         .unwrap_or_else(|| serde_json::json!({}));
     Some(ToolInvocation {
         id,
         tool_name,
         input,
+    })
+}
+
+fn parse_tool_arguments(arguments: &str) -> Value {
+    serde_json::from_str::<Value>(arguments).unwrap_or_else(|_| {
+        serde_json::json!({
+            "raw_arguments": arguments,
+        })
     })
 }
 

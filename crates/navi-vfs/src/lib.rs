@@ -1,3 +1,4 @@
+pub mod code;
 pub mod format;
 pub mod lang;
 pub mod minify;
@@ -40,6 +41,7 @@ impl VfsConfig {
             return true;
         }
         self.languages.contains(&lang)
+            || (lang == LangId::Tsx && self.languages.contains(&LangId::TypeScript))
     }
 }
 
@@ -191,6 +193,24 @@ mod tests {
             engine
                 .minify(Path::new("main.rs"), "fn main() {}")
                 .is_none()
+        );
+    }
+
+    #[test]
+    fn typescript_filter_includes_tsx() {
+        let engine = VfsEngine::new(VfsConfig {
+            enabled: true,
+            languages: vec![LangId::TypeScript],
+            ..Default::default()
+        });
+
+        assert!(
+            engine
+                .minify(
+                    Path::new("View.tsx"),
+                    "export const View = () => <div>{'hello'}</div>;\n",
+                )
+                .is_some()
         );
     }
 

@@ -432,7 +432,7 @@ async fn tool_workflow_rejects_non_read_only_nested_tools() {
         result.output["error"]
             .as_str()
             .unwrap()
-            .contains("only allows read_file, grep, fs_browser, and read-only git_ops")
+            .contains("only allows read_file, grep, fs_browser, read-only git_ops, symbols_overview, find_symbol, find_references, and code_diagnostics")
     );
 }
 
@@ -664,6 +664,46 @@ fn executor_definitions_include_input_schemas() {
 }
 
 #[test]
+fn model_definitions_use_simplified_tool_schemas() {
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let executor = executor(tempdir.path());
+
+    for definition in executor.definitions() {
+        assert!(
+            !schema_contains_composition_keyword(&definition.input_schema),
+            "model-facing schema for {} should not contain oneOf/anyOf/allOf/const: {}",
+            definition.name,
+            definition.input_schema
+        );
+    }
+
+    let grep = executor
+        .definitions()
+        .into_iter()
+        .find(|definition| definition.name == "grep")
+        .expect("grep definition");
+    assert_eq!(grep.input_schema["required"], json!(["pattern"]));
+
+    let git_ops = executor
+        .definitions()
+        .into_iter()
+        .find(|definition| definition.name == "git_ops")
+        .expect("git_ops definition");
+    assert_eq!(git_ops.input_schema["properties"]["args"]["type"], "array");
+}
+
+fn schema_contains_composition_keyword(value: &serde_json::Value) -> bool {
+    match value {
+        serde_json::Value::Object(object) => object.iter().any(|(key, value)| {
+            matches!(key.as_str(), "oneOf" | "anyOf" | "allOf" | "const")
+                || schema_contains_composition_keyword(value)
+        }),
+        serde_json::Value::Array(values) => values.iter().any(schema_contains_composition_keyword),
+        _ => false,
+    }
+}
+
+#[test]
 fn validates_tool_arguments_against_input_schema() {
     let tempdir = tempfile::tempdir().expect("tempdir");
     let executor = executor(tempdir.path());
@@ -761,6 +801,119 @@ async fn unknown_tool_returns_bounded_suggestions() {
             .unwrap()
             .contains(&json!("fs_browser"))
     );
+}
+
+#[tokio::test]
+async fn init_session_creates_feature_contract_files() {
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let executor = executor(tempdir.path());
+
+    let result = executor
+        .invoke(ToolInvocation {
+            id: "init".to_string(),
+            tool_name: "init_session".to_string(),
+            input: json!({
+                "goal": "Build long-running harness",
+                "features": [{
+                    "id": "Feature One",
+                    "title": "First feature",
+                    "description": "Implement the first slice",
+                    "verification_steps": ["true"]
+                }]
+            }),
+        })
+        .await;
+
+    assert!(result.ok);
+    assert_eq!(result.output["status"], "initialized");
+    let feature_list = tempdir.path().join(".navi/feature_list.json");
+    let progress = tempdir.path().join(".navi/navi-progress.txt");
+    assert!(feature_list.exists());
+    assert!(progress.exists());
+    let content = std::fs::read_to_string(feature_list).expect("feature list");
+    assert!(content.contains("feature-one"));
+    assert!(content.contains(r#""passes": false"#));
+}
+
+#[tokio::test]
+async fn mark_feature_done_runs_verification_before_passing() {
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let executor = executor(tempdir.path());
+    executor
+        .invoke(ToolInvocation {
+            id: "init".to_string(),
+            tool_name: "init_session".to_string(),
+            input: json!({
+                "goal": "Ship feature",
+                "features": [{
+                    "id": "ship-it",
+                    "title": "Ship it",
+                    "verification_steps": ["true"]
+                }]
+            }),
+        })
+        .await;
+
+    let result = executor
+        .invoke(ToolInvocation {
+            id: "done".to_string(),
+            tool_name: "mark_feature_done".to_string(),
+            input: json!({
+                "feature_id": "ship-it",
+                "verification_steps": ["true"],
+                "notes": "verified"
+            }),
+        })
+        .await;
+
+    assert!(result.ok);
+    assert_eq!(result.output["status"], "feature_completed");
+    assert_eq!(result.output["passes"], true);
+    let content = std::fs::read_to_string(tempdir.path().join(".navi/feature_list.json"))
+        .expect("feature list");
+    assert!(content.contains(r#""passes": true"#));
+    assert!(content.contains("verified"));
+}
+
+#[tokio::test]
+async fn mark_feature_done_rejects_verification_contract_mismatch() {
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let executor = executor(tempdir.path());
+    executor
+        .invoke(ToolInvocation {
+            id: "init".to_string(),
+            tool_name: "init_session".to_string(),
+            input: json!({
+                "goal": "Ship feature",
+                "features": [{
+                    "id": "ship-it",
+                    "title": "Ship it",
+                    "verification_steps": ["true"]
+                }]
+            }),
+        })
+        .await;
+
+    let result = executor
+        .invoke(ToolInvocation {
+            id: "done".to_string(),
+            tool_name: "mark_feature_done".to_string(),
+            input: json!({
+                "feature_id": "ship-it",
+                "verification_steps": ["echo skipped"]
+            }),
+        })
+        .await;
+
+    assert!(result.ok);
+    assert_eq!(result.output["status"], "error");
+    assert_eq!(
+        result.output["error_code"],
+        "verification_contract_mismatch"
+    );
+    let content = std::fs::read_to_string(tempdir.path().join(".navi/feature_list.json"))
+        .expect("feature list");
+    assert!(content.contains(r#""passes": false"#));
 }
 
 #[tokio::test]
@@ -950,6 +1103,88 @@ async fn apply_patch_accepts_structured_add_delete_and_move() {
 }
 
 #[tokio::test]
+async fn apply_patch_accepts_multiple_structured_patches() {
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let executor = executor(tempdir.path());
+    std::fs::write(tempdir.path().join("one.txt"), "old one\n").unwrap();
+    std::fs::write(tempdir.path().join("two.txt"), "old two\n").unwrap();
+
+    let result = executor
+        .invoke(ToolInvocation {
+            id: "patches-structured".to_string(),
+            tool_name: "apply_patch".to_string(),
+            input: json!({
+                "patches": [
+                    "*** Begin Patch\n*** Update File: one.txt\n@@\n-old one\n+new one\n*** End Patch\n",
+                    "*** Begin Patch\n*** Update File: two.txt\n@@\n-old two\n+new two\n*** End Patch\n"
+                ]
+            }),
+        })
+        .await;
+
+    assert!(result.ok, "{}", result.output);
+    assert_eq!(result.output["method"], "structured apply_patch");
+    assert_eq!(result.output["patches_applied"], 2);
+    assert_eq!(
+        std::fs::read_to_string(tempdir.path().join("one.txt")).unwrap(),
+        "new one\n"
+    );
+    assert_eq!(
+        std::fs::read_to_string(tempdir.path().join("two.txt")).unwrap(),
+        "new two\n"
+    );
+}
+
+#[tokio::test]
+async fn apply_patch_multiple_structured_patches_are_sequential() {
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let executor = executor(tempdir.path());
+    std::fs::write(tempdir.path().join("same.txt"), "one\ntwo\nthree\n").unwrap();
+
+    let result = executor
+        .invoke(ToolInvocation {
+            id: "patches-same-file".to_string(),
+            tool_name: "apply_patch".to_string(),
+            input: json!({
+                "patches": [
+                    "*** Begin Patch\n*** Update File: same.txt\n@@\n-one\n+ONE\n two\n*** End Patch\n",
+                    "*** Begin Patch\n*** Update File: same.txt\n@@\n TWO\n-three\n+THREE\n*** End Patch\n"
+                ]
+            }),
+        })
+        .await;
+
+    assert!(
+        !result.ok,
+        "second patch should fail against unmatched context"
+    );
+    assert_eq!(
+        std::fs::read_to_string(tempdir.path().join("same.txt")).unwrap(),
+        "one\ntwo\nthree\n",
+        "failed multi-patch calls must roll back earlier patches"
+    );
+
+    let result = executor
+        .invoke(ToolInvocation {
+            id: "patches-same-file-success".to_string(),
+            tool_name: "apply_patch".to_string(),
+            input: json!({
+                "patches": [
+                    "*** Begin Patch\n*** Update File: same.txt\n@@\n-one\n+ONE\n two\n*** End Patch\n",
+                    "*** Begin Patch\n*** Update File: same.txt\n@@\n two\n-three\n+THREE\n*** End Patch\n"
+                ]
+            }),
+        })
+        .await;
+
+    assert!(result.ok, "{}", result.output);
+    assert_eq!(
+        std::fs::read_to_string(tempdir.path().join("same.txt")).unwrap(),
+        "ONE\ntwo\nTHREE\n"
+    );
+}
+
+#[tokio::test]
 async fn apply_patch_structured_failure_does_not_apply_prior_files() {
     let tempdir = tempfile::tempdir().expect("tempdir");
     let executor = executor(tempdir.path());
@@ -971,6 +1206,40 @@ async fn apply_patch_structured_failure_does_not_apply_prior_files() {
         std::fs::read_to_string(tempdir.path().join("existing.txt")).unwrap(),
         "actual\n"
     );
+}
+
+#[tokio::test]
+async fn apply_patch_failure_returns_twenty_line_context_window() {
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let executor = executor(tempdir.path());
+    let path = tempdir.path().join("src/lib.rs");
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    let content = (1..=60)
+        .map(|line| format!("line {line}"))
+        .collect::<Vec<_>>()
+        .join("\n")
+        + "\n";
+    std::fs::write(&path, content).unwrap();
+
+    let result = executor
+        .invoke(ToolInvocation {
+            id: "patch-context".to_string(),
+            tool_name: "apply_patch".to_string(),
+            input: json!({
+                "patch": "*** Begin Patch\n*** Update File: src/lib.rs\n@@\n line 30\n-line 31 old\n+line 31 new\n line 32\n*** End Patch\n"
+            }),
+        })
+        .await;
+
+    assert!(!result.ok, "{}", result.output);
+    let context = result.output["context_lines"][0].as_object().unwrap();
+    assert_eq!(context["path"], "src/lib.rs");
+    assert_eq!(context["start_line"], 10);
+    assert_eq!(context["end_line"], 50);
+    assert!(context["lines"].as_array().unwrap().contains(&json!({
+        "line": 30,
+        "text": "line 30"
+    })));
 }
 
 #[tokio::test]
@@ -1211,38 +1480,6 @@ async fn fs_browser_list_skips_hidden_and_build_dirs() {
 
 // ── test_runner regression tests ─────────────────────────────────────────────
 
-#[test]
-fn test_runner_definition_has_expected_schema() {
-    let tempdir = tempfile::tempdir().expect("tempdir");
-    let executor = executor(tempdir.path());
-
-    let def = executor.definition("test_runner").expect("test_runner");
-    assert_eq!(def.name, "test_runner");
-    assert_eq!(def.input_schema["type"], "object");
-    // test_runner has no required fields
-    assert!(
-        def.input_schema.get("required").is_none()
-            || def.input_schema["required"].as_array().unwrap().is_empty()
-    );
-}
-
-// ── build_runner regression tests ────────────────────────────────────────────
-
-#[test]
-fn build_runner_definition_has_expected_schema() {
-    let tempdir = tempfile::tempdir().expect("tempdir");
-    let executor = executor(tempdir.path());
-
-    let def = executor.definition("build_runner").expect("build_runner");
-    assert_eq!(def.name, "build_runner");
-    assert_eq!(def.input_schema["type"], "object");
-    // build_runner has no required fields
-    assert!(
-        def.input_schema.get("required").is_none()
-            || def.input_schema["required"].as_array().unwrap().is_empty()
-    );
-}
-
 // ── git_ops regression tests ─────────────────────────────────────────────────
 
 #[test]
@@ -1310,8 +1547,6 @@ fn all_specialized_tools_registered_in_definitions() {
     let executor = executor(tempdir.path());
     let names = executor.tool_names();
 
-    assert!(names.contains(&"test_runner".to_string()));
-    assert!(names.contains(&"build_runner".to_string()));
     assert!(names.contains(&"fs_browser".to_string()));
     assert!(names.contains(&"git_ops".to_string()));
     assert!(names.contains(&"package_manager".to_string()));
@@ -1322,13 +1557,7 @@ fn all_specialized_tools_have_valid_schemas() {
     let tempdir = tempfile::tempdir().expect("tempdir");
     let executor = executor(tempdir.path());
 
-    for name in [
-        "test_runner",
-        "build_runner",
-        "fs_browser",
-        "git_ops",
-        "package_manager",
-    ] {
+    for name in ["fs_browser", "git_ops", "package_manager"] {
         let def = executor.definition(name).expect(name);
         assert_eq!(def.input_schema["type"], "object");
         assert!(

@@ -4,7 +4,6 @@ mod command_palette;
 mod debug;
 mod image_preview;
 mod input;
-pub(crate) mod mascot;
 mod modals;
 mod model_picker;
 mod notification;
@@ -18,19 +17,16 @@ use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::prelude::Frame;
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::Paragraph;
+use ratatui::widgets::{Paragraph, Wrap};
 
 use crate::TuiApp;
 use crate::render::{fill_modal_scrim, modal_rect, opaque_fill};
 use crate::state::Mode;
-use crate::theme;
-use crate::theme::{bg, ghost, muted, text};
-use crate::ui::layer::{LayerStack, z};
+use crate::theme::{self, bg, ghost, muted, text};
 use crate::ui::layout::viewport_rect;
 
-enum Overlay {
-    Mascot(Rect),
-}
+/// Setup-specific rendering: welcome text or interview chat.
+mod setup;
 
 pub(crate) fn render(frame: &mut Frame<'_>, app: &mut TuiApp) {
     theme::with_palette(&app.theme_palette(), || render_inner(frame, app));
@@ -41,23 +37,59 @@ fn render_inner(frame: &mut Frame<'_>, app: &mut TuiApp) {
     let area = frame.area();
     opaque_fill(frame, area, Style::default().bg(theme::bg()));
     let content_area = viewport_rect(area);
-    let mut overlays = LayerStack::default();
 
-    let input_width = content_area.width.saturating_sub(4) as usize;
-    let input_height = input::composer_height(app, input_width);
-    let input_hint_height = input::composer_hint_height(app);
-    let image_preview_height = if app.pending_images.is_empty() {
+    let input_width = composer_text_width(app, content_area.width);
+    let compact_viewport = content_area.width < 64 || content_area.height < 18;
+    let mut input_height = input::composer_height(app, input_width);
+    if compact_viewport {
+        input_height = input_height.min(3);
+    }
+    let input_hint_height = if compact_viewport {
         0
     } else {
+        input::composer_hint_height(app)
+    };
+    let image_preview_height = if app.pending_images.is_empty() {
+        0
+    } else if compact_viewport {
+        4
+    } else {
         image_preview::IMAGE_PREVIEW_HEIGHT
+    };
+    let input_activity_height = input::composer_activity_height(app);
+    let show_welcome = app.messages.is_empty() && !app.is_loading;
+    let chat_min_height = if compact_viewport || show_welcome {
+        1
+    } else {
+        6
+    };
+    let welcome_height = if show_welcome {
+        let reserved_height = 1
+            + chat_min_height
+            + image_preview_height
+            + input_activity_height
+            + input_height
+            + input_hint_height;
+        let available_height = content_area.height.saturating_sub(reserved_height);
+        let min_height = if compact_viewport { 3 } else { 6 };
+        let max_height = if compact_viewport { 6 } else { 10 };
+        if available_height < min_height {
+            0
+        } else {
+            available_height.clamp(min_height, max_height)
+        }
+    } else {
+        0
     };
     let vertical = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(1),
-            Constraint::Min(6),
+            Constraint::Min(chat_min_height),
             Constraint::Length(image_preview_height),
+            Constraint::Length(input_activity_height),
             Constraint::Length(input_height),
+            Constraint::Length(welcome_height),
             Constraint::Length(input_hint_height),
         ])
         .split(content_area);
@@ -68,21 +100,24 @@ fn render_inner(frame: &mut Frame<'_>, app: &mut TuiApp) {
     // Render image previews above input
     let input_area = if !app.pending_images.is_empty() {
         image_preview::render_image_previews(frame, app, vertical[2]);
-        vertical[3]
+        vertical[4]
     } else {
-        vertical[3]
+        vertical[4]
     };
 
-    if let Some(mascot_area) = input::render_input(frame, app, input_area) {
-        overlays.push(z::FLOATING, Overlay::Mascot(mascot_area));
+    input::render_input_activity(frame, app, vertical[3]);
+    input::render_input(frame, app, input_area);
+    if show_welcome && vertical[5].height > 0 {
+        let welcome =
+            welcome::welcome_text(app, vertical[5].width as usize, vertical[5].height as usize);
+        frame.render_widget(
+            Paragraph::new(welcome)
+                .style(Style::default().bg(theme::bg()))
+                .wrap(Wrap { trim: false }),
+            vertical[5],
+        );
     }
-    input::render_input_hint(frame, app, vertical[4]);
-
-    for overlay in overlays.into_paint_order() {
-        match overlay.item {
-            Overlay::Mascot(area) => mascot::render_mascot(frame, app, area),
-        }
-    }
+    input::render_input_hint(frame, app, vertical[6]);
 
     if modal_backdrop_active(app) {
         fill_modal_scrim(frame, content_area);
@@ -97,7 +132,7 @@ fn render_inner(frame: &mut Frame<'_>, app: &mut TuiApp) {
         Mode::Settings => modals::render_settings(frame, app, modal_rect(area, 52, 12)),
         Mode::Providers => provider_settings::render(frame, app, modal_rect(area, 110, 26)),
         Mode::Debug => debug::render(frame, app, modal_rect(area, 76, 18)),
-        Mode::Help => modals::render_help_modal(frame, app, modal_rect(area, 62, 16)),
+        Mode::Help => modals::render_help_modal(frame, app, modal_rect(area, 62, 19)),
         Mode::Skills => skills::render(frame, app, modal_rect(area, 72, 20)),
         Mode::Plugins => plugins::render(frame, app, modal_rect(area, 76, 22)),
         Mode::PluginApproval => {
@@ -116,7 +151,12 @@ fn render_inner(frame: &mut Frame<'_>, app: &mut TuiApp) {
         Mode::BackgroundCommands => {
             background_commands::render(frame, app, modal_rect(area, 80, 20))
         }
+        Mode::BackgroundModels => {
+            modals::render_background_models(frame, app, modal_rect(area, 70, 14))
+        }
+        Mode::BgModelPicker => model_picker::render(frame, app, modal_rect(area, 72, 22)),
         Mode::Normal => {}
+        Mode::Setup => setup::render_setup(frame, app, content_area),
     }
 
     if !app.pending_approvals.is_empty() {
@@ -124,6 +164,22 @@ fn render_inner(frame: &mut Frame<'_>, app: &mut TuiApp) {
     }
 
     notification::render_notification(frame, app, area);
+}
+
+fn composer_text_width(_app: &TuiApp, width: u16) -> usize {
+    width.saturating_sub(4) as usize
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn composer_areas_use_full_width() {
+        let app = crate::tests::test_app("");
+        let width = composer_text_width(&app, 100);
+        assert_eq!(width, 96);
+    }
 }
 
 fn modal_backdrop_active(app: &TuiApp) -> bool {
@@ -160,7 +216,7 @@ fn project_path_label(app: &TuiApp) -> String {
             return if stripped.is_empty() {
                 "~".to_string()
             } else {
-                format!("~/{}", stripped)
+                format!("~/{stripped}")
             };
         }
     }

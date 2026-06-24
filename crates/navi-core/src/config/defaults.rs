@@ -3,8 +3,8 @@ use crate::compact::{
     MAX_OUTPUT_TOKENS_FOR_SUMMARY, WARNING_THRESHOLD_BUFFER_TOKENS,
 };
 use crate::config::types::{
-    ApprovalConfig, HarnessConfig, HarnessProfile, LoggingConfig, MemoryConfig, ModelConfig,
-    SecurityConfig, ToolPromptManifest,
+    ApprovalConfig, HarnessConfig, HarnessProfile, HistoryConfig, LoggingConfig, MemoryConfig,
+    ModelConfig, SecurityConfig, ToolPromptManifest,
 };
 
 impl Default for ModelConfig {
@@ -23,12 +23,15 @@ impl Default for HarnessConfig {
             tool_prompt_manifest: ToolPromptManifest::Auto,
             observation_bytes_small: 12 * 1024,
             observation_bytes_medium: 48 * 1024,
-            max_turn_loops_small: 20,
-            max_turn_loops_medium: 40,
+            max_turn_loops_small: 40,
+            max_turn_loops_medium: 100,
+            max_turn_loops_long_running: 80,
+            turn_loop_limit: None,
             max_tool_calls_small: 40,
             max_tool_calls_medium: 100,
             max_parallel_tool_calls_small: 4,
             max_parallel_tool_calls_medium: 8,
+            max_parallel_tool_calls_long_running: 4,
             max_consecutive_tool_errors: 4,
             max_consecutive_invalid_arguments: 3,
             max_consecutive_malformed_arguments: 2,
@@ -86,6 +89,15 @@ impl Default for MemoryConfig {
         Self {
             session_memory_enabled: false,
             max_memory_entries: 3,
+            enabled: true,
+            root: ".agent-memory".to_string(),
+            global_memory_path: "~/.code-agent/global-memory.md".to_string(),
+            checkpoint_thresholds: vec![0.20, 0.45, 0.70],
+            rebuild_threshold: 0.85,
+            injected_context_token_budget: 65000,
+            dream_interval_days: 7,
+            distill_interval_days: 30,
+            history: HistoryConfig::default(),
         }
     }
 }

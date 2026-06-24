@@ -39,6 +39,9 @@ pub struct NaviConfig {
     /// Terminal UI preferences.
     #[serde(default)]
     pub tui: TuiConfig,
+    /// Background model routing configuration.
+    #[serde(default)]
+    pub background_models: BackgroundModelsConfig,
 }
 
 /// TUI-specific settings (global config).
@@ -115,6 +118,11 @@ pub struct HarnessConfig {
     pub max_turn_loops_small: usize,
     /// Max model/tool loop iterations for the `medium` profile.
     pub max_turn_loops_medium: usize,
+    /// Max model/tool loop iterations for the `long-running` profile.
+    pub max_turn_loops_long_running: usize,
+    /// Optional global override for max turn loop iterations. When set, overrides
+    /// the per-profile limit for all profiles. `None` (default) means unlimited.
+    pub turn_loop_limit: Option<usize>,
     /// Max total tool calls in one turn for the `small` profile.
     pub max_tool_calls_small: usize,
     /// Max total tool calls in one turn for the `medium` profile.
@@ -123,6 +131,8 @@ pub struct HarnessConfig {
     pub max_parallel_tool_calls_small: usize,
     /// Max tool calls executed in parallel for the `medium` profile.
     pub max_parallel_tool_calls_medium: usize,
+    /// Max tool calls executed in parallel for the `long-running` profile.
+    pub max_parallel_tool_calls_long_running: usize,
     /// Max consecutive tool failures before stopping a turn.
     pub max_consecutive_tool_errors: usize,
     /// Max consecutive schema-invalid tool calls before stopping a turn.
@@ -158,6 +168,8 @@ pub enum HarnessProfile {
     Small,
     /// Standard limits for capable models.
     Medium,
+    /// One-feature-at-a-time workflow with persistent sprint artifacts.
+    LongRunning,
 }
 
 /// Controls when the tool prompt manifest is appended to the system prompt.
@@ -505,14 +517,135 @@ pub struct McpServerConfig {
     pub timeout_ms: Option<u64>,
 }
 
+fn default_memory_enabled() -> bool {
+    true
+}
+fn default_memory_root() -> String {
+    ".agent-memory".to_string()
+}
+fn default_global_memory_path() -> String {
+    "~/.code-agent/global-memory.md".to_string()
+}
+fn default_checkpoint_thresholds() -> Vec<f64> {
+    vec![0.20, 0.45, 0.70]
+}
+fn default_rebuild_threshold() -> f64 {
+    0.85
+}
+fn default_injected_context_token_budget() -> usize {
+    65000
+}
+fn default_dream_interval_days() -> u64 {
+    7
+}
+fn default_distill_interval_days() -> u64 {
+    30
+}
+
+/// SQLite history store settings.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct HistoryConfig {
+    #[serde(default = "default_memory_enabled")]
+    pub enabled: bool,
+    #[serde(default = "default_history_sqlite_path")]
+    pub sqlite_path: String,
+}
+
+fn default_history_sqlite_path() -> String {
+    ".agent-memory/history.sqlite".to_string()
+}
+
+impl Default for HistoryConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            sqlite_path: ".agent-memory/history.sqlite".to_string(),
+        }
+    }
+}
+
 /// Session memory settings.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct MemoryConfig {
     /// Whether to inject past session memory into new sessions.
     pub session_memory_enabled: bool,
     /// Maximum number of memory entries to inject.
     pub max_memory_entries: usize,
+    /// Whether long-horizon memory is enabled.
+    #[serde(default = "default_memory_enabled")]
+    pub enabled: bool,
+    /// Root directory for memory files.
+    #[serde(default = "default_memory_root")]
+    pub root: String,
+    /// Path to the user-level global memory file.
+    #[serde(default = "default_global_memory_path")]
+    pub global_memory_path: String,
+    /// Context utilization thresholds that trigger checkpoints.
+    #[serde(default = "default_checkpoint_thresholds")]
+    pub checkpoint_thresholds: Vec<f64>,
+    /// Context utilization threshold that triggers a rebuild.
+    #[serde(default = "default_rebuild_threshold")]
+    pub rebuild_threshold: f64,
+    /// Maximum token budget for the injected rebuild context.
+    #[serde(default = "default_injected_context_token_budget")]
+    pub injected_context_token_budget: usize,
+    /// Interval in days for the dream/compaction maintenance job.
+    #[serde(default = "default_dream_interval_days")]
+    pub dream_interval_days: u64,
+    /// Interval in days for the distill/SOPS maintenance job.
+    #[serde(default = "default_distill_interval_days")]
+    pub distill_interval_days: u64,
+    /// History database configuration.
+    #[serde(default)]
+    pub history: HistoryConfig,
+}
+
+/// Background model configuration — maps task types to model profiles or explicit overrides.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct BackgroundModelsConfig {
+    /// Default background model entry (used when no task-specific entry is set).
+    pub default: Option<BackgroundModelEntry>,
+    /// Model for session title generation.
+    pub naming: Option<BackgroundModelEntry>,
+    /// Model for repository exploration subagent.
+    pub repo_search: Option<BackgroundModelEntry>,
+    /// Model for conversation compaction/summarization.
+    pub compaction: Option<BackgroundModelEntry>,
+    /// Model for research-oriented subagents.
+    pub subagent_research: Option<BackgroundModelEntry>,
+    /// Model for simple code edit subagents.
+    pub simple_code_edit: Option<BackgroundModelEntry>,
+}
+
+impl BackgroundModelsConfig {
+    /// Resolves the entry for a given task key, falling back to `default`.
+    pub fn resolve(&self, task: &str) -> Option<&BackgroundModelEntry> {
+        let entry = match task {
+            "naming" => self.naming.as_ref(),
+            "repo_search" => self.repo_search.as_ref(),
+            "compaction" => self.compaction.as_ref(),
+            "subagent_research" => self.subagent_research.as_ref(),
+            "simple_code_edit" => self.simple_code_edit.as_ref(),
+            _ => None,
+        };
+        entry.or(self.default.as_ref())
+    }
+}
+
+/// A single background model entry: either a profile name or an explicit provider+model.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct BackgroundModelEntry {
+    /// Profile identifier (e.g. "cheap_general", "naming").
+    pub profile: Option<String>,
+    /// Explicit provider override (used when profile is None).
+    pub provider: Option<String>,
+    /// Explicit model override (used when profile is None).
+    pub model: Option<String>,
+    /// Fallback strategy: "main_model" or an explicit "provider:model".
+    pub fallback: Option<String>,
 }
 
 /// A fully resolved configuration with paths and merged config layers.
@@ -526,6 +659,20 @@ pub struct LoadedConfig {
     pub project_config_path: Option<PathBuf>,
     /// NAVI data directory (sessions, logs, credentials).
     pub data_dir: PathBuf,
+}
+
+impl Default for LoadedConfig {
+    fn default() -> Self {
+        let data_dir = directories::ProjectDirs::from("dev", "navi", "navi")
+            .map(|dirs| dirs.data_local_dir().to_path_buf())
+            .unwrap_or_else(|| PathBuf::from(""));
+        Self {
+            config: NaviConfig::default(),
+            global_config_path: None,
+            project_config_path: None,
+            data_dir,
+        }
+    }
 }
 
 #[cfg(test)]

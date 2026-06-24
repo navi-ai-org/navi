@@ -12,7 +12,7 @@ use crate::theme::*;
 
 pub(super) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
     clear_modal_area(frame, area);
-    let title = "Background Commands";
+    let title = "Background Tasks";
     let block = modal_block(title);
     frame.render_widget(block, area);
 

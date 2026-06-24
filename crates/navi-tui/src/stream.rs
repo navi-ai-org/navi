@@ -9,7 +9,7 @@ use crate::app::TuiApp;
 use crate::dispatch::AsyncEvent;
 use crate::notifications::push_diagnostic;
 use crate::providers::selected_provider_label;
-use crate::runtime::forward_runtime_event_to_tui;
+use crate::runtime::forward_runtime_event_to_tui_for_session;
 use crate::state::{ChatMessage, ChatRole};
 
 pub(crate) fn start_streaming_request(app: &mut TuiApp) {
@@ -29,7 +29,6 @@ pub(crate) fn start_streaming_request(app: &mut TuiApp) {
 
     app.is_loading = true;
     app.loading_start = Some(Instant::now());
-    crate::view::mascot::reset_mascot_animation(app);
     tracing::info!(
         provider = %app.loaded_config.config.model.provider,
         model = %app.loaded_config.config.model.name,
@@ -74,7 +73,7 @@ pub(crate) fn start_streaming_request(app: &mut TuiApp) {
             active_skills,
         )
         .await;
-        let _ = tx.send(AsyncEvent::TurnCompleted(result));
+        let _ = tx.send(AsyncEvent::TurnCompletedForSession { session_id, result });
     }));
 }
 
@@ -121,14 +120,14 @@ async fn run_sdk_turn(
             }
             event = events.recv() => {
                 if let Ok(event) = event {
-                    forward_runtime_event_to_tui(event, &tx);
+                    forward_runtime_event_to_tui_for_session(event, &session_id, &tx);
                 }
             }
         }
     };
 
     while let Ok(event) = events.try_recv() {
-        forward_runtime_event_to_tui(event, &tx);
+        forward_runtime_event_to_tui_for_session(event, &session_id, &tx);
     }
     let _ = engine.snapshot_session(&session_id).await;
     result

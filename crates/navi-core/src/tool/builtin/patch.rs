@@ -1,6 +1,7 @@
+use crate::file_lock::{FileLockManager, LockGuard};
 use anyhow::{Context, Result, bail};
 use async_trait::async_trait;
-use serde_json::json;
+use serde_json::{Value, json};
 use std::fs;
 use std::path::{Path, PathBuf};
 use tokio::io::AsyncWriteExt;
@@ -9,13 +10,30 @@ use tokio::process::Command;
 use super::helpers;
 use crate::tool::{Tool, ToolDefinition, ToolInvocation, ToolKind, ToolResult};
 
+const PATCH_CONTEXT_RADIUS: usize = 20;
+const MAX_PATCH_CONTEXT_WINDOWS: usize = 6;
+
 pub(crate) struct ApplyPatchTool {
     project_root: PathBuf,
+    lock_manager: Option<std::sync::Arc<FileLockManager>>,
 }
 
 impl ApplyPatchTool {
     pub(crate) fn new(project_root: PathBuf) -> Self {
-        Self { project_root }
+        Self {
+            project_root,
+            lock_manager: None,
+        }
+    }
+
+    pub(crate) fn with_lock_manager(
+        project_root: PathBuf,
+        lock_manager: std::sync::Arc<FileLockManager>,
+    ) -> Self {
+        Self {
+            project_root,
+            lock_manager: Some(lock_manager),
+        }
     }
 }
 
@@ -24,44 +42,67 @@ impl Tool for ApplyPatchTool {
     fn definition(&self) -> ToolDefinition {
         helpers::definition(
             "apply_patch",
-            "Apply a patch to the current project. Prefer the structured format inside the single `patch` field: *** Begin Patch, *** Update File/Add File/Delete File, optional *** Move to, hunks with @@, then *** End Patch. Unified diff is also accepted. Do not pass path/content fields.",
+            "Apply one or more patches to the current project. Use exactly one input shape: {patch: string} for one patch, or {patches: string[]} for multiple patches. Prefer structured patches: *** Begin Patch, file operation headers, @@ hunks, then *** End Patch. Do not pass path/content/old_string/new_string fields and do not wrap patches in markdown fences.",
             ToolKind::Write,
             apply_patch_json_schema(),
         )
     }
 
     async fn invoke(&self, invocation: ToolInvocation) -> Result<ToolResult> {
-        let patch = helpers::required_string(&invocation.input, "patch")?;
+        let patches = patch_inputs(&invocation.input)?;
+        let affected = patch_affected_files(&patches)?;
+        let mut _lock_guards: Vec<LockGuard> = Vec::new();
+        if let Some(lock_manager) = &self.lock_manager {
+            for file in &affected {
+                match lock_manager.try_lock(Path::new(file)) {
+                    Ok(Some(guard)) => _lock_guards.push(guard),
+                    Ok(None) => {
+                        return Ok(ToolResult {
+                            invocation_id: invocation.id,
+                            ok: false,
+                            output: json!({
+                                "error": format!(
+                                    "O arquivo `{file}` está bloqueado por outra instância do NAVI. Use a ferramenta `wait` com `file_path=\"{file}\"` para aguardar."
+                                ),
+                                "error_code": "file_locked",
+                                "file_path": file,
+                            }),
+                        });
+                    }
+                    Err(err) => {
+                        tracing::warn!(path = %file, error = %err, "failed to acquire patch file lock");
+                    }
+                }
+            }
+        }
 
-        if is_structured_patch(patch) {
-            return match apply_structured_patch(&self.project_root, patch) {
+        if patches.iter().all(|patch| is_structured_patch(patch)) {
+            return match apply_structured_patches(&self.project_root, &patches) {
                 Ok(files_patched) => Ok(ToolResult {
                     invocation_id: invocation.id,
                     ok: true,
                     output: json!({
                         "method": "structured apply_patch",
                         "status": 0,
+                        "patches_applied": patches.len(),
                         "files_patched": files_patched,
                     }),
                 }),
                 Err(err) => Ok(ToolResult {
                     invocation_id: invocation.id,
                     ok: false,
-                    output: helpers::tool_error(
+                    output: patch_failed_output(
                         "patch_failed",
                         format!("structured apply_patch failed: {err:#}"),
-                        true,
-                        Some(
-                            "Re-read the target file and regenerate a structured patch using exactly one `patch` string: *** Begin Patch, file operation headers, @@ hunks, and *** End Patch.",
-                        ),
+                        "Use one input object with either `patch` or `patches`. Rebuild the structured patch with exact context from `context_lines`: *** Begin Patch, file operation headers, @@ hunks, and *** End Patch.",
                         None,
+                        patch_failure_contexts(&self.project_root, &patches),
                     ),
                 }),
             };
         }
 
-        let affected = extract_patched_files(patch);
-
+        let patch = patches.join("\n");
         for file in &affected {
             let full = self.project_root.join(file);
             if let Some(parent) = full.parent() {
@@ -70,7 +111,7 @@ impl Tool for ApplyPatchTool {
         }
 
         // Stage 1: git apply with --whitespace=fix.
-        let git_result = run_git_apply(&self.project_root, patch).await?;
+        let git_result = run_git_apply(&self.project_root, &patch).await?;
 
         if git_result.status.success() {
             return Ok(ToolResult {
@@ -79,6 +120,7 @@ impl Tool for ApplyPatchTool {
                 output: json!({
                     "method": "git apply",
                     "status": git_result.status.code(),
+                    "patches_applied": patches.len(),
                     "stdout": String::from_utf8_lossy(&git_result.stdout),
                     "stderr": String::from_utf8_lossy(&git_result.stderr),
                     "files_patched": affected.len(),
@@ -89,7 +131,7 @@ impl Tool for ApplyPatchTool {
         let git_stderr = String::from_utf8_lossy(&git_result.stderr).to_string();
 
         // Stage 2: fall back to `patch -p1`.
-        let patch_result = run_patch_command(&self.project_root, patch).await?;
+        let patch_result = run_patch_command(&self.project_root, &patch).await?;
 
         if patch_result.status.success() {
             return Ok(ToolResult {
@@ -98,6 +140,7 @@ impl Tool for ApplyPatchTool {
                 output: json!({
                     "method": "patch",
                     "status": patch_result.status.code(),
+                    "patches_applied": patches.len(),
                     "stdout": String::from_utf8_lossy(&patch_result.stdout),
                     "stderr": String::from_utf8_lossy(&patch_result.stderr),
                     "files_patched": affected.len(),
@@ -111,23 +154,86 @@ impl Tool for ApplyPatchTool {
         Ok(ToolResult {
             invocation_id: invocation.id,
             ok: false,
-            output: helpers::tool_error(
+            output: patch_failed_output(
                 "patch_failed",
                 format!(
                     "git apply failed: {}\npatch -p1 failed: {}",
                     git_stderr.trim(),
                     patch_stderr.trim()
                 ),
-                true,
-                Some(hint),
+                hint,
                 Some(format!(
                     "git apply stderr: {}\npatch stderr: {}",
                     git_stderr.trim(),
                     patch_stderr.trim()
                 )),
+                patch_failure_contexts(&self.project_root, &patches),
             ),
         })
     }
+}
+
+fn patch_affected_files(patches: &[String]) -> Result<Vec<String>> {
+    let mut files = Vec::new();
+    for patch in patches {
+        if is_structured_patch(patch) {
+            for op in parse_structured_patch(patch)? {
+                match op {
+                    StructuredOp::Add { path, .. } | StructuredOp::Delete { path } => {
+                        push_unique_string(&mut files, path);
+                    }
+                    StructuredOp::Update { path, move_to, .. } => {
+                        push_unique_string(&mut files, path);
+                        if let Some(target) = move_to {
+                            push_unique_string(&mut files, target);
+                        }
+                    }
+                }
+            }
+        } else {
+            for path in extract_patched_files(patch) {
+                push_unique_string(&mut files, path);
+            }
+        }
+    }
+    files.sort();
+    Ok(files)
+}
+
+fn push_unique_string(values: &mut Vec<String>, value: String) {
+    if !values.contains(&value) {
+        values.push(value);
+    }
+}
+
+fn patch_inputs(input: &Value) -> Result<Vec<String>> {
+    let has_patch = input.get("patch").is_some();
+    let has_patches = input.get("patches").is_some();
+    if has_patch == has_patches {
+        bail!("apply_patch requires exactly one of `patch` or `patches`");
+    }
+    if has_patch {
+        return Ok(vec![helpers::required_string(input, "patch")?.to_string()]);
+    }
+
+    let patches = input
+        .get("patches")
+        .and_then(Value::as_array)
+        .context("`patches` must be a non-empty array of patch strings")?;
+    if patches.is_empty() {
+        bail!("`patches` must contain at least one patch string");
+    }
+    patches
+        .iter()
+        .enumerate()
+        .map(|(index, patch)| {
+            patch
+                .as_str()
+                .filter(|value| !value.is_empty())
+                .map(str::to_string)
+                .with_context(|| format!("patches[{index}] must be a non-empty string"))
+        })
+        .collect()
 }
 
 fn apply_patch_json_schema() -> serde_json::Value {
@@ -136,12 +242,23 @@ fn apply_patch_json_schema() -> serde_json::Value {
         "properties": {
             "patch": {
                 "type": "string",
-                "description": "Patch text. Preferred structured format: *** Begin Patch\n*** Update File: path\n@@\n old context\n-old line\n+new line\n*** End Patch. Unified diff is also accepted.",
+                "description": "A single complete patch string. Prefer structured format: *** Begin Patch\n*** Update File: path\n@@\n context line\n-old line\n+new line\n*** End Patch. Add-file content lines must start with +. Unified diff is also accepted.",
                 "examples": ["*** Begin Patch\n*** Update File: src/lib.rs\n@@\n-old\n+new\n*** End Patch\n"]
+            },
+            "patches": {
+                "type": "array",
+                "description": "Multiple complete patch strings to apply as one tool call. Use this instead of making repeated apply_patch calls when you already know several independent edits.",
+                "items": { "type": "string" },
+                "minItems": 1,
+                "examples": [["*** Begin Patch\n*** Update File: src/lib.rs\n@@\n-old\n+new\n*** End Patch\n", "*** Begin Patch\n*** Add File: src/new.rs\n+pub fn new() {}\n*** End Patch\n"]]
             }
         },
-        "required": ["patch"],
+        "minProperties": 1,
+        "maxProperties": 1,
         "additionalProperties": false,
+        "examples": [{
+            "patch": "*** Begin Patch\n*** Update File: src/lib.rs\n@@\n-old\n+new\n*** End Patch\n"
+        }]
     })
 }
 
@@ -151,11 +268,36 @@ fn is_structured_patch(patch: &str) -> bool {
 
 // ── Structured patch: parse → plan → commit with rollback ────────────────
 
-fn apply_structured_patch(project_root: &Path, patch: &str) -> Result<usize> {
-    let ops = parse_structured_patch(patch)?;
-    let changes = plan_structured_changes(project_root, &ops)?;
-    let files_patched = changes.len();
-    commit_structured_changes(&changes)?;
+fn apply_structured_patches(project_root: &Path, patches: &[String]) -> Result<usize> {
+    let mut all_ops = Vec::new();
+    for patch in patches {
+        all_ops.extend(parse_structured_patch(patch)?);
+    }
+
+    let backup_paths = structured_backup_paths(project_root, &all_ops)?;
+    let backups = collect_path_backups(backup_paths)?;
+    let mut files_patched = 0;
+    for patch in patches {
+        let ops = match parse_structured_patch(patch) {
+            Ok(ops) => ops,
+            Err(err) => {
+                rollback_backups(backups);
+                return Err(err);
+            }
+        };
+        let changes = match plan_structured_changes(project_root, &ops) {
+            Ok(c) => c,
+            Err(err) => {
+                rollback_backups(backups);
+                return Err(err);
+            }
+        };
+        files_patched += changes.len();
+        if let Err(err) = write_planned_changes(&changes) {
+            rollback_backups(backups);
+            return Err(err);
+        }
+    }
     Ok(files_patched)
 }
 
@@ -409,28 +551,25 @@ fn find_hunk_position(old_lines: &[String], start: usize, hunk: &[HunkLine]) -> 
     })
 }
 
-fn commit_structured_changes(changes: &[PlannedChange]) -> Result<()> {
-    let backups = collect_backups(changes)?;
-    if let Err(err) = write_planned_changes(changes) {
-        rollback_backups(backups);
-        return Err(err);
-    }
-    Ok(())
-}
-
-fn collect_backups(changes: &[PlannedChange]) -> Result<Vec<(PathBuf, Option<Vec<u8>>)>> {
+fn structured_backup_paths(project_root: &Path, ops: &[StructuredOp]) -> Result<Vec<PathBuf>> {
     let mut paths = Vec::new();
-    for change in changes {
-        match change {
-            PlannedChange::Write { path, .. } | PlannedChange::Delete { path } => {
-                push_unique_path(&mut paths, path.clone());
+    for op in ops {
+        match op {
+            StructuredOp::Add { path, .. } | StructuredOp::Delete { path } => {
+                push_unique_path(&mut paths, checked_project_path(project_root, path)?);
             }
-            PlannedChange::Update { source, target, .. } => {
-                push_unique_path(&mut paths, source.clone());
-                push_unique_path(&mut paths, target.clone());
+            StructuredOp::Update { path, move_to, .. } => {
+                push_unique_path(&mut paths, checked_project_path(project_root, path)?);
+                if let Some(move_to) = move_to {
+                    push_unique_path(&mut paths, checked_project_path(project_root, move_to)?);
+                }
             }
         }
     }
+    Ok(paths)
+}
+
+fn collect_path_backups(paths: Vec<PathBuf>) -> Result<Vec<(PathBuf, Option<Vec<u8>>)>> {
     paths
         .into_iter()
         .map(|path| {
@@ -582,6 +721,188 @@ fn extract_patched_files(patch: &str) -> Vec<String> {
         }
     }
     files
+}
+
+fn patch_failed_output(
+    error_code: &str,
+    message: impl Into<String>,
+    hint: &str,
+    stderr: Option<String>,
+    context_lines: Vec<Value>,
+) -> Value {
+    let mut output = helpers::tool_error(error_code, message, true, Some(hint), stderr);
+    if !context_lines.is_empty()
+        && let Value::Object(object) = &mut output
+    {
+        object.insert("context_lines".to_string(), Value::Array(context_lines));
+        object.insert(
+            "context_note".to_string(),
+            Value::String(
+                "Each context window includes up to 20 lines before and 20 lines after the nearest relevant patch hunk location.".to_string(),
+            ),
+        );
+    }
+    output
+}
+
+fn patch_failure_contexts(project_root: &Path, patches: &[String]) -> Vec<Value> {
+    let mut contexts = Vec::new();
+    for patch in patches {
+        if is_structured_patch(patch) {
+            contexts.extend(structured_patch_contexts(project_root, patch));
+        } else {
+            contexts.extend(unified_patch_contexts(project_root, patch));
+        }
+        if contexts.len() >= MAX_PATCH_CONTEXT_WINDOWS {
+            contexts.truncate(MAX_PATCH_CONTEXT_WINDOWS);
+            break;
+        }
+    }
+    contexts
+}
+
+fn structured_patch_contexts(project_root: &Path, patch: &str) -> Vec<Value> {
+    let Ok(ops) = parse_structured_patch(patch) else {
+        return extract_structured_patch_paths(patch)
+            .into_iter()
+            .filter_map(|path| file_context_window(project_root, &path, 1))
+            .collect();
+    };
+
+    let mut contexts = Vec::new();
+    for op in ops {
+        match op {
+            StructuredOp::Update { path, hunks, .. } => {
+                for hunk in hunks {
+                    let preferred_line = preferred_structured_hunk_line(project_root, &path, &hunk);
+                    if let Some(context) = file_context_window(project_root, &path, preferred_line)
+                    {
+                        contexts.push(context);
+                    }
+                }
+            }
+            StructuredOp::Delete { path } => {
+                if let Some(context) = file_context_window(project_root, &path, 1) {
+                    contexts.push(context);
+                }
+            }
+            StructuredOp::Add { .. } => {}
+        }
+    }
+    contexts
+}
+
+fn extract_structured_patch_paths(patch: &str) -> Vec<String> {
+    let mut paths = Vec::new();
+    for line in patch.lines() {
+        if let Some(path) = line.strip_prefix("*** Update File: ") {
+            push_unique_path(&mut paths, PathBuf::from(path));
+        } else if let Some(path) = line.strip_prefix("*** Delete File: ") {
+            push_unique_path(&mut paths, PathBuf::from(path));
+        }
+    }
+    paths
+        .into_iter()
+        .filter_map(|path| path.to_str().map(str::to_string))
+        .collect()
+}
+
+fn preferred_structured_hunk_line(project_root: &Path, path: &str, hunk: &[HunkLine]) -> usize {
+    let Ok(full_path) = checked_project_path(project_root, path) else {
+        return 1;
+    };
+    let Ok(content) = fs::read_to_string(full_path) else {
+        return 1;
+    };
+    let lines = content.lines().map(str::to_string).collect::<Vec<_>>();
+    if let Some(pos) = find_hunk_position(&lines, 0, hunk) {
+        return pos + 1;
+    }
+    hunk.iter()
+        .filter_map(|line| match line {
+            HunkLine::Context(content) | HunkLine::Remove(content) if !content.is_empty() => {
+                Some(content)
+            }
+            _ => None,
+        })
+        .find_map(|expected| {
+            lines
+                .iter()
+                .position(|line| line == expected)
+                .map(|pos| pos + 1)
+        })
+        .unwrap_or(1)
+}
+
+fn unified_patch_contexts(project_root: &Path, patch: &str) -> Vec<Value> {
+    let mut contexts = Vec::new();
+    let mut old_path: Option<String> = None;
+    let mut current_path: Option<String> = None;
+
+    for line in patch.lines() {
+        if let Some(path) = line.strip_prefix("--- ") {
+            old_path = clean_unified_path(path);
+        } else if let Some(path) = line.strip_prefix("+++ ") {
+            current_path = clean_unified_path(path).or_else(|| old_path.clone());
+        } else if line.starts_with("@@") {
+            let preferred_line = parse_unified_old_start(line).unwrap_or(1);
+            if let Some(path) = current_path.as_deref()
+                && let Some(context) = file_context_window(project_root, path, preferred_line)
+            {
+                contexts.push(context);
+            }
+        }
+    }
+    contexts
+}
+
+fn clean_unified_path(path: &str) -> Option<String> {
+    let path = path.split_whitespace().next().unwrap_or(path);
+    if path == "/dev/null" {
+        return None;
+    }
+    Some(
+        path.strip_prefix("a/")
+            .or_else(|| path.strip_prefix("b/"))
+            .unwrap_or(path)
+            .to_string(),
+    )
+}
+
+fn parse_unified_old_start(hunk_header: &str) -> Option<usize> {
+    let after_dash = hunk_header.split_once('-')?.1;
+    let number = after_dash
+        .chars()
+        .take_while(|ch| ch.is_ascii_digit())
+        .collect::<String>();
+    number.parse::<usize>().ok().filter(|line| *line > 0)
+}
+
+fn file_context_window(project_root: &Path, path: &str, preferred_line: usize) -> Option<Value> {
+    let full_path = checked_project_path(project_root, path).ok()?;
+    let content = fs::read_to_string(full_path).ok()?;
+    let lines = content.lines().collect::<Vec<_>>();
+    if lines.is_empty() {
+        return None;
+    }
+    let preferred_line = preferred_line.clamp(1, lines.len());
+    let start_line = preferred_line.saturating_sub(PATCH_CONTEXT_RADIUS).max(1);
+    let end_line = (preferred_line + PATCH_CONTEXT_RADIUS).min(lines.len());
+    let context = (start_line..=end_line)
+        .map(|line| {
+            json!({
+                "line": line,
+                "text": lines[line - 1],
+            })
+        })
+        .collect::<Vec<_>>();
+
+    Some(json!({
+        "path": path,
+        "start_line": start_line,
+        "end_line": end_line,
+        "lines": context,
+    }))
 }
 
 fn git_apply_error_hint(stderr: &str) -> &'static str {

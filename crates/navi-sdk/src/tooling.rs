@@ -1,7 +1,8 @@
 use anyhow::Result;
 use navi_core::{
-    CredentialStore, LoadedConfig, ModelProvider, SecurityPolicy, ToolExecutor,
-    model_can_run_publicly, resolve_provider_api_key, resolve_provider_config,
+    CredentialStore, FileLockManager, LoadedConfig, ModelProvider, SecurityPolicy, ToolExecutor,
+    model_can_run_publicly, resolve_provider_api_key, resolve_provider_api_key_for_project,
+    resolve_provider_config,
 };
 use navi_plugin_host::{LoadOptions, load_configured_plugins_with_options};
 use navi_plugin_manifest::{SecurityDefaults, aggregate_lockfile_path, installed_plugins_dir};
@@ -23,6 +24,21 @@ pub(crate) fn build_local_tooling(
         loaded_config.config.security.clone(),
     )?;
     let mut tool_executor = ToolExecutor::new(security_policy.clone());
+
+    // Initialize cross-instance file lock manager.
+    {
+        let hostname = gethostname();
+        let pid = std::process::id();
+        let instance_id = format!("{hostname}-{pid}");
+        match FileLockManager::new(&project_dir, instance_id) {
+            Ok(lm) => {
+                tool_executor.set_lock_manager(Arc::new(lm));
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "failed to init file lock manager");
+            }
+        }
+    }
 
     // Dual plugin runtime: native .so (global config) + WASM store (data_dir/plugins + wasm_plugins).
     // See docs/plugin-system.md Appendix A.1.
@@ -68,6 +84,18 @@ pub(crate) fn build_local_tooling(
 }
 
 /// Directories to scan for installed WASM plugin subfolders.
+fn gethostname() -> String {
+    std::env::var("HOSTNAME")
+        .or_else(|_| std::env::var("HOST"))
+        .ok()
+        .or_else(|| {
+            std::fs::read_to_string("/etc/hostname")
+                .ok()
+                .map(|s| s.trim().to_string())
+        })
+        .unwrap_or_else(|| "unknown".to_string())
+}
+
 fn wasm_plugin_scan_roots(
     data_dir: &Path,
     configured: &[navi_core::WasmPluginConfig],
@@ -159,30 +187,59 @@ fn load_wasm_plugins_from_root(
     }
 }
 
-pub(crate) fn build_model_provider(loaded_config: &LoadedConfig) -> Result<Arc<dyn ModelProvider>> {
+/// Builds a `ModelProvider` for the given loaded configuration.
+///
+/// This is the standard way to construct a provider from config. It resolves
+/// the provider config, checks credentials, and returns a boxed provider.
+pub fn build_provider_for_config(loaded_config: &LoadedConfig) -> Result<Arc<dyn ModelProvider>> {
+    build_provider_for_config_inner(loaded_config, None)
+}
+
+pub fn build_provider_for_project_config(
+    loaded_config: &LoadedConfig,
+    project_dir: &Path,
+) -> Result<Arc<dyn ModelProvider>> {
+    build_provider_for_config_inner(loaded_config, Some(project_dir))
+}
+
+fn build_provider_for_config_inner(
+    loaded_config: &LoadedConfig,
+    project_dir: Option<&Path>,
+) -> Result<Arc<dyn ModelProvider>> {
     let provider_config =
         resolve_provider_config(&loaded_config.config, &loaded_config.config.model.provider)
             .ok_or_else(|| {
                 anyhow::anyhow!("unknown provider {}", loaded_config.config.model.provider)
             })?;
     let credential_store = CredentialStore::new(loaded_config.data_dir.clone());
-    let api_key = resolve_provider_api_key(
-        &credential_store,
-        &provider_config,
-        &loaded_config.config.model.provider,
-    )
-    .or_else(|| {
-        (model_can_run_publicly(
-            &loaded_config.config.model.provider,
-            &loaded_config.config.model.name,
-        ) || model_can_run_publicly(&provider_config.id, &loaded_config.config.model.name))
-        .then(|| "public".to_string())
-    })
-    .ok_or_else(|| NaviMissingCredentialError {
-        provider_id: provider_config.id.clone(),
-        env_var: provider_config.api_key_env.clone(),
-        credential_store_path: credential_store.path().to_path_buf(),
-    })?;
+    let api_key = project_dir
+        .and_then(|project_dir| {
+            resolve_provider_api_key_for_project(
+                &credential_store,
+                &provider_config,
+                &loaded_config.config.model.provider,
+                project_dir,
+            )
+        })
+        .or_else(|| {
+            resolve_provider_api_key(
+                &credential_store,
+                &provider_config,
+                &loaded_config.config.model.provider,
+            )
+        })
+        .or_else(|| {
+            (model_can_run_publicly(
+                &loaded_config.config.model.provider,
+                &loaded_config.config.model.name,
+            ) || model_can_run_publicly(&provider_config.id, &loaded_config.config.model.name))
+            .then(|| "public".to_string())
+        })
+        .ok_or_else(|| NaviMissingCredentialError {
+            provider_id: provider_config.id.clone(),
+            env_var: provider_config.api_key_env.clone(),
+            credential_store_path: credential_store.path().to_path_buf(),
+        })?;
 
     Ok(Arc::new(OpenAiProvider::from_provider_config_with_key(
         &provider_config,
@@ -322,7 +379,7 @@ mod tests {
     }
 
     #[test]
-    fn build_model_provider_returns_structured_error_for_missing_credentials() {
+    fn build_provider_for_config_returns_structured_error_for_missing_credentials() {
         let tempdir = tempfile::tempdir().unwrap();
         let loaded_config = LoadedConfig {
             config: NaviConfig {
@@ -345,7 +402,7 @@ mod tests {
             data_dir: tempdir.path().to_path_buf(),
         };
 
-        let error = match build_model_provider(&loaded_config) {
+        let error = match build_provider_for_config(&loaded_config) {
             Ok(_) => panic!("expected missing credential error"),
             Err(e) => e,
         };
@@ -362,7 +419,7 @@ mod tests {
     }
 
     #[test]
-    fn build_model_provider_returns_error_for_unknown_provider() {
+    fn build_provider_for_config_returns_error_for_unknown_provider() {
         let tempdir = tempfile::tempdir().unwrap();
         let loaded_config = LoadedConfig {
             config: NaviConfig {
@@ -377,7 +434,7 @@ mod tests {
             data_dir: tempdir.path().to_path_buf(),
         };
 
-        let error = match build_model_provider(&loaded_config) {
+        let error = match build_provider_for_config(&loaded_config) {
             Ok(_) => panic!("expected error for unknown provider"),
             Err(e) => e,
         };

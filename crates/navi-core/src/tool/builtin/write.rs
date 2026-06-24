@@ -1,17 +1,27 @@
+use crate::file_lock::FileLockManager;
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use serde_json::json;
 use std::fs;
 use std::path::Path;
+use std::sync::Arc;
 
 use super::helpers;
 use crate::tool::{Tool, ToolDefinition, ToolInvocation, ToolKind, ToolResult};
 
-pub(crate) struct WriteFileTool;
+pub(crate) struct WriteFileTool {
+    lock_manager: Option<Arc<FileLockManager>>,
+}
 
 impl WriteFileTool {
     pub(crate) fn new() -> Self {
-        Self
+        Self { lock_manager: None }
+    }
+
+    pub(crate) fn with_lock_manager(lock_manager: Arc<FileLockManager>) -> Self {
+        Self {
+            lock_manager: Some(lock_manager),
+        }
     }
 }
 
@@ -37,11 +47,40 @@ impl Tool for WriteFileTool {
         let content = helpers::required_string(&invocation.input, "content")?.to_string();
         let path_clone = path.clone();
         let content_clone = content.clone();
-        let line_counts = tokio::task::spawn_blocking(move || {
-            let lines_removed = fs::read_to_string(&path_clone)
-                .ok()
-                .map(|existing| count_lines(&existing))
-                .unwrap_or(0);
+
+        // Acquire file lock if lock manager is configured.
+        let _guard = if let Some(ref lm) = self.lock_manager {
+            let lock_path = Path::new(&path_clone);
+            match lm.try_lock(lock_path) {
+                Ok(Some(guard)) => Some(guard),
+                Ok(None) => {
+                    return Ok(ToolResult {
+                        invocation_id: invocation.id,
+                        ok: false,
+                        output: json!({
+                            "error": format!(
+                                "O arquivo `{}` está bloqueado por outra instância do NAVI. \
+                                 Use a ferramenta `wait` com `file_path=\"{}\"` para aguardar.",
+                                path_clone, path_clone
+                            ),
+                            "error_code": "file_locked",
+                            "file_path": path_clone,
+                        }),
+                    });
+                }
+                Err(e) => {
+                    tracing::warn!(path = %path_clone, error = %e, "failed to acquire file lock");
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
+        let (line_counts, _existing_content) = tokio::task::spawn_blocking(move || {
+            let existing = fs::read_to_string(&path_clone).ok();
+            let lines_removed = existing.as_ref().map(|c| count_lines(c)).unwrap_or(0);
+
             if let Some(parent) = Path::new(&path_clone).parent()
                 && !parent.as_os_str().is_empty()
             {
@@ -51,17 +90,21 @@ impl Tool for WriteFileTool {
             fs::write(&path_clone, content_clone)
                 .with_context(|| format!("failed to write {path_clone}"))?;
 
-            Ok::<_, anyhow::Error>(lines_removed)
+            Ok::<_, anyhow::Error>((lines_removed, existing))
         })
         .await
         .map_err(|e| anyhow::anyhow!("task join error: {}", e))??;
+
         let lines_added = count_lines(&content);
         let output = json!({
             "path": path,
             "bytes": content.len(),
             "lines_added": lines_added,
             "lines_removed": line_counts,
+            "total_lines": lines_added,
         });
+
+        // Lock guard released automatically when _guard drops here.
         Ok(helpers::ok(invocation.id, output))
     }
 }

@@ -173,7 +173,10 @@ timeout_ms = 1000
             .find(|provider| provider.id == "opencode")
             .expect("opencode provider");
         assert_eq!(opencode.api_key_env, "OPENCODE_API_KEY");
-        assert!(opencode.models.is_empty(), "opencode models come from registry JSON, not hardcoded");
+        assert!(
+            opencode.models.is_empty(),
+            "opencode models come from registry JSON, not hardcoded"
+        );
         let commandcode = providers
             .iter()
             .find(|provider| provider.id == "commandcode")

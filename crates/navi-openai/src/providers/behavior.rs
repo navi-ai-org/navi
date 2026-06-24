@@ -18,6 +18,7 @@ const OPENROUTER_TITLE: &str = "Navi";
 const COPILOT_USER_AGENT: &str = "navi/0.1.0";
 const COPILOT_INTENT: &str = "conversation-edits";
 const COPILOT_INITIATOR: &str = "user";
+const COMMANDCODE_CLI_VERSION: &str = "0.38.2";
 
 /// Endpoint category — used to select auth headers per provider.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -368,12 +369,21 @@ impl ProviderBehavior for CommandCodeBehavior {
         StreamRoute::CommandCodeAlphaGenerate
     }
 
-    fn build_headers(&self, api_key: &str, endpoint: Endpoint) -> Result<HeaderMap, ProviderError> {
-        let content_type = matches!(
-            endpoint,
-            Endpoint::ChatCompletions | Endpoint::AnthropicMessages
+    fn build_headers(
+        &self,
+        api_key: &str,
+        _endpoint: Endpoint,
+    ) -> Result<HeaderMap, ProviderError> {
+        let mut headers = standard_bearer_headers(api_key, true)?;
+        headers.insert(
+            USER_AGENT,
+            HeaderValue::from_static("command-code/0.38.2 navi"),
         );
-        standard_bearer_headers(api_key, content_type)
+        headers.insert(
+            "x-command-code-version",
+            HeaderValue::from_static(COMMANDCODE_CLI_VERSION),
+        );
+        Ok(headers)
     }
 }
 

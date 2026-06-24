@@ -40,6 +40,42 @@ pub(super) fn find_cargo_package(manifest: &str, package: &str) -> Option<String
     None
 }
 
+pub(super) fn find_dart_package(manifest: &str, package: &str) -> bool {
+    // pubspec.yaml is YAML. Use simple line-based parsing of key: value pairs
+    // under dependencies: and dev_dependencies: sections.
+    let mut in_deps = false;
+    let mut in_dev_deps = false;
+    for line in manifest.lines() {
+        let trimmed = line.trim();
+        if trimmed == "dependencies:" {
+            in_deps = true;
+            in_dev_deps = false;
+            continue;
+        }
+        if trimmed == "dev_dependencies:" {
+            in_deps = false;
+            in_dev_deps = true;
+            continue;
+        }
+        if in_deps || in_dev_deps {
+            // Check if we're still in a dependency section (indented lines)
+            if !line.starts_with(' ') && !line.starts_with('\t') && !trimmed.is_empty() {
+                // Top-level key encountered — exited dependency section
+                in_deps = false;
+                in_dev_deps = false;
+                continue;
+            }
+            // Match dependency name before colon
+            if let Some(name) = trimmed.split(':').next() {
+                if name.trim() == package {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
 pub(super) fn find_go_package(manifest: &str, package: &str) -> bool {
     let mut in_require_block = false;
     for line in manifest.lines().map(str::trim) {

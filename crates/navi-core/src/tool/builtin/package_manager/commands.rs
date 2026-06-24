@@ -12,6 +12,7 @@ pub(super) async fn cmd_install(
     manager: &str,
 ) -> Result<ToolResult> {
     let cmd = match manager {
+        "dart" => "dart pub get",
         "npm" => "npm install",
         "bun" => "bun install",
         "cargo" => "cargo fetch",
@@ -66,6 +67,13 @@ pub(super) async fn cmd_add(
 
     let pkgs = packages.join(" ");
     let cmd = match manager {
+        "dart" => {
+            if dev {
+                format!("dart pub add --dev {pkgs}")
+            } else {
+                format!("dart pub add {pkgs}")
+            }
+        }
         "npm" => {
             if dev {
                 format!("npm install --save-dev {pkgs}")
@@ -144,6 +152,7 @@ pub(super) async fn cmd_remove(
 
     let pkgs = packages.join(" ");
     let cmd = match manager {
+        "dart" => format!("dart pub remove {pkgs}"),
         "npm" => format!("npm uninstall {pkgs}"),
         "bun" => format!("bun remove {pkgs}"),
         "cargo" => format!("cargo rm {pkgs}"),
@@ -185,6 +194,7 @@ pub(super) async fn cmd_update(
 ) -> Result<ToolResult> {
     let cmd = if packages.is_empty() {
         match manager {
+            "dart" => "dart pub upgrade".to_string(),
             "npm" => "npm update".to_string(),
             "bun" => "bun update".to_string(),
             "cargo" => "cargo update".to_string(),
@@ -194,6 +204,7 @@ pub(super) async fn cmd_update(
     } else {
         let pkgs = packages.join(" ");
         match manager {
+            "dart" => format!("dart pub upgrade {pkgs}"),
             "npm" => format!("npm update {pkgs}"),
             "bun" => format!("bun update {pkgs}"),
             "cargo" => format!("cargo update {pkgs}"),

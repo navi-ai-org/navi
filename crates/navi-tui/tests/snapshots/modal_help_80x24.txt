@@ -1,24 +1,24 @@
   main  /tmp/navi-test-project
 
-
-    ███╗   ██╗ █████╗ ██╗   ██╗██╗      project navi-tui
-    ████╗╭ Shortcuts ─────────────────────────────────────────────────╮
-    ██╔██│ ctrl+p      commands                                       │
-    ██║╚█│ tab         refresh/provider actions                       │
-    ██║ ╚│ ctrl+m      models                                         │
-    ╚═╝  │ ctrl+n      new layer                                      │
+         ╭ Shortcuts ─────────────────────────────────────────────────╮
+    ███╗ │ ctrl+p      commands                                       │
+    ████╗│ ctrl+t      background tasks                               │
+    ██╔██│ ctrl+b      background agents                              │
+    ██║╚█│ ctrl+a      select input text                              │
+    ██║ ╚│ ctrl+v      paste image                                    │
+    ╚═╝  │ tab         refresh/provider actions                       │
+         │ ctrl+m      models                                         │
+         │ ctrl+n      new layer                                      │atch
          │ ctrl+s      memory                                         │
-         │ ctrl+o      compact/full tool output                       │atch
+         │ ctrl+o      compact/full tool output                       │
          │ ctrl+d      debug                                          │
          │ ctrl+g      toggle YOLO mode                               │
          │ ctrl+enter  send prompt                                    │
-    NAVI │ enter       new line                                       │
+         │ enter       new line                                       │
          │ ctrl+j      new line                                       │
-         │ /           commands when input is empty                   │
-  ▌      │ ?           shortcuts                                      │
+  ▌      │ /           commands when input is empty                   │
   ▌      │                                                            │
   ▌      ╰────────────────────────────────────────────────────────────╯
-  ▌   gpt-5.5 OpenAI · adaptive · 0 / 200k (0%)
+  ▌ gpt-5.5 OpenAI · adaptive · 0 / 200k (0%)
   ▌
-
-                                                             ctrl+v paste image
+               ctrl+p commands · ctrl+m models · ctrl+enter send · ctrl+v image

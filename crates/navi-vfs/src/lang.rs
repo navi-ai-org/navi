@@ -10,6 +10,7 @@ pub enum LangId {
     Cpp,
     JavaScript,
     TypeScript,
+    Tsx,
     Python,
     Java,
     // Tier 2
@@ -32,6 +33,7 @@ impl LangId {
             Self::Cpp => "cpp",
             Self::JavaScript => "javascript",
             Self::TypeScript => "typescript",
+            Self::Tsx => "tsx",
             Self::Python => "python",
             Self::Java => "java",
             Self::Ruby => "ruby",
@@ -53,6 +55,7 @@ impl LangId {
             Self::Cpp => tree_sitter_cpp::LANGUAGE.into(),
             Self::JavaScript => tree_sitter_javascript::LANGUAGE.into(),
             Self::TypeScript => tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
+            Self::Tsx => tree_sitter_typescript::LANGUAGE_TSX.into(),
             Self::Python => tree_sitter_python::LANGUAGE.into(),
             Self::Java => tree_sitter_java::LANGUAGE.into(),
             Self::Ruby => tree_sitter_ruby::LANGUAGE.into(),
@@ -75,6 +78,7 @@ impl LangId {
             Self::Cpp,
             Self::JavaScript,
             Self::TypeScript,
+            Self::Tsx,
             Self::Python,
             Self::Java,
             // Tier 2
@@ -97,6 +101,7 @@ impl LangId {
             "cpp" | "c++" | "cxx" | "cc" => Some(Self::Cpp),
             "javascript" | "js" => Some(Self::JavaScript),
             "typescript" | "ts" => Some(Self::TypeScript),
+            "tsx" => Some(Self::Tsx),
             "python" | "py" => Some(Self::Python),
             "java" => Some(Self::Java),
             "ruby" | "rb" => Some(Self::Ruby),
@@ -120,6 +125,7 @@ impl LangId {
                 | Self::Cpp
                 | Self::JavaScript
                 | Self::TypeScript
+                | Self::Tsx
                 | Self::Python
                 | Self::Java
                 | Self::Ruby
@@ -146,7 +152,8 @@ pub fn detect_language(path: &Path) -> Option<LangId> {
         "c" | "h" => Some(LangId::C),
         "cpp" | "cc" | "cxx" | "hpp" | "hxx" | "hh" | "c++" => Some(LangId::Cpp),
         "js" | "mjs" | "cjs" | "jsx" => Some(LangId::JavaScript),
-        "ts" | "mts" | "cts" | "tsx" => Some(LangId::TypeScript),
+        "ts" | "mts" | "cts" => Some(LangId::TypeScript),
+        "tsx" => Some(LangId::Tsx),
         "py" | "pyi" => Some(LangId::Python),
         "java" => Some(LangId::Java),
         // Tier 2
@@ -200,10 +207,7 @@ mod tests {
             detect_language(Path::new("app.ts")),
             Some(LangId::TypeScript)
         );
-        assert_eq!(
-            detect_language(Path::new("app.tsx")),
-            Some(LangId::TypeScript)
-        );
+        assert_eq!(detect_language(Path::new("app.tsx")), Some(LangId::Tsx));
     }
 
     #[test]

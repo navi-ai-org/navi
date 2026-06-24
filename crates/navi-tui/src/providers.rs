@@ -58,8 +58,11 @@ pub(crate) fn rebuild_provider(app: &mut TuiApp) {
             .set_engine(std::sync::Arc::new(engine) as std::sync::Arc<dyn navi_sdk::EngineDriver>),
         Err(err) => push_diagnostic(app, format!("Failed to rebuild runtime engine: {err:#}")),
     }
-    app.provider_configured =
-        selected_model_runtime_available(&app.loaded_config, app.credential_store());
+    app.provider_configured = selected_model_runtime_available(
+        &app.loaded_config,
+        app.credential_store(),
+        &app.project_dir,
+    );
     app.refresh_harness_policy();
     app.compact_state.context_window =
         navi_sdk::effective_context_window(&app.loaded_config.config);
@@ -172,6 +175,23 @@ pub(crate) fn save_api_key_and_rebuild(app: &mut TuiApp) {
     } else {
         close_all_modals(app);
     }
+    maybe_start_setup_interview(app);
+}
+
+pub(crate) fn maybe_start_setup_interview(app: &mut TuiApp) {
+    if app.setup_phase != Some(crate::state::SetupPhase::ProviderLogin) || !app.provider_configured
+    {
+        return;
+    }
+
+    app.setup_phase = Some(crate::state::SetupPhase::Interview);
+    app.mode = crate::state::Mode::Setup;
+    app.conversation_history = vec![navi_sdk::ModelMessage::system(
+        navi_core::SETUP_INTERVIEW_PROMPT,
+    )];
+    app.input = "Start the setup interview.".to_string();
+    app.input_cursor = app.input.len();
+    crate::chat::submit_message(app);
 }
 
 pub(crate) fn current_provider_env_var(app: &TuiApp) -> String {
@@ -231,7 +251,6 @@ pub(crate) fn start_provider_oauth(app: &mut TuiApp, provider: &ProviderConfig) 
 
     app.is_loading = true;
     app.loading_start = Some(Instant::now());
-    crate::view::mascot::reset_mascot_animation(app);
     let tx = app.async_sender();
     let credential_store = app.credential_store_clone();
     let provider_id = provider.id.clone();
@@ -244,10 +263,10 @@ pub(crate) fn start_provider_oauth(app: &mut TuiApp, provider: &ProviderConfig) 
             });
         })
         .await
-        .map_err(|err| err.to_string());
+        .map(|_| ());
         let _ = tx.send(AsyncEvent::OAuthCompleted {
             provider_id,
-            result,
+            result: result.map_err(|e| format!("{e:#}")),
         });
     }));
 }
@@ -279,8 +298,19 @@ pub(crate) enum ListRow {
 /// `provider_catalog(&app.loaded_config.config)`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum ProviderListRow {
-    Header { label: String },
-    Provider { index: usize },
+    Header {
+        label: String,
+    },
+    Provider {
+        index: usize,
+    },
+    /// A credential account tied to a provider (multi-account support).
+    Account {
+        provider_index: usize,
+        account_id: String,
+        label: String,
+        selected: bool,
+    },
 }
 
 pub(crate) fn build_model_rows(app: &TuiApp) -> Vec<ListRow> {
@@ -293,7 +323,6 @@ pub(crate) fn build_model_rows(app: &TuiApp) -> Vec<ListRow> {
     // Section 1: Recent models. Only meaningful when no filter is active and
     // there is at least one persisted recent that we know about.
     if filter.is_empty() {
-        let mut current_section_provider: Option<&str> = None;
         for key in &app.loaded_config.config.tui.recent_model_ids {
             // Keys are stored as `provider:model`.
             let (provider_id, model_name) = match key.split_once(':') {
@@ -310,20 +339,12 @@ pub(crate) fn build_model_rows(app: &TuiApp) -> Vec<ListRow> {
                 continue;
             }
             if emitted.insert(index) {
-                if current_section_provider != Some(model.provider_label.as_str()) {
-                    current_section_provider = Some(model.provider_label.as_str());
-                    // Insert the Recent header only on the first recent row.
-                    if rows.is_empty() {
-                        rows.push(ListRow::Header {
-                            label: "— Recent models —".to_string(),
-                            description: String::new(),
-                            provider_id: String::new(),
-                        });
-                    }
+                // Insert the Recent header only on the first recent row.
+                if rows.is_empty() {
                     rows.push(ListRow::Header {
-                        label: model.provider_label.clone(),
-                        description: model.provider_description.clone(),
-                        provider_id: model.provider_id.clone(),
+                        label: "— Recent models —".to_string(),
+                        description: String::new(),
+                        provider_id: String::new(),
                     });
                 }
                 rows.push(ListRow::Model { index });
@@ -428,4 +449,19 @@ pub(crate) fn sync_scroll_to_selection(app: &mut TuiApp, rows: &[ListRow], visib
     state.sync_scroll_with_context(visible_rows, 4);
     state.clamp_scroll(rows.len(), visible_rows);
     app.model_scroll = state.scroll();
+}
+
+/// Scroll the model list to ensure `model_index` is within the visible window.
+pub(crate) fn sync_scroll_to_model_index(
+    app: &mut TuiApp,
+    model_index: usize,
+    rows: &[ListRow],
+    visible_rows: usize,
+) {
+    let row = selected_model_in_rows(rows, model_index).unwrap_or(0);
+    if row < app.model_scroll {
+        app.model_scroll = row;
+    } else if row >= app.model_scroll + visible_rows {
+        app.model_scroll = row.saturating_sub(visible_rows.saturating_sub(1));
+    }
 }

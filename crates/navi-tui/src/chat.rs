@@ -1,4 +1,7 @@
-use navi_sdk::{AgentEvent, ContentPart, ModelMessage, ModelRole, build_system_prompt};
+use navi_sdk::{
+    AgentEvent, CompactState, ContentPart, ModelMessage, ModelRole, SessionStore,
+    build_system_prompt, effective_context_window,
+};
 
 use crate::TuiApp;
 use crate::providers::selected_provider_label;
@@ -329,6 +332,52 @@ pub(crate) fn fork_from_user_message(app: &mut TuiApp, message_index: usize) -> 
     app.input_cursor = app.input.len();
     app.scroll_offset = 0;
     Ok(())
+}
+
+pub(crate) fn start_new_session(app: &mut TuiApp) {
+    crate::persistence::snapshot_current_session(app);
+
+    let old_session_id = app.session_id.as_str().to_string();
+    let engine = app.engine();
+    crate::runtime::spawn_runtime_task(async move {
+        let _ = engine.close_session(&old_session_id).await;
+    });
+
+    app.abort_async_tasks();
+    if let Some(task) = app.bg_poll_task.take() {
+        task.abort();
+    }
+
+    app.session_id = SessionStore::create_id();
+    app.messages.clear();
+    app.events.clear();
+    reset_system_context(app);
+    app.compact_state = CompactState::new(effective_context_window(&app.loaded_config.config));
+
+    app.input.clear();
+    app.input_cursor = 0;
+    app.input_selection = None;
+    app.pending_images.clear();
+    app.scroll_offset = 0;
+    app.is_loading = false;
+    app.loading_start = None;
+    app.skip_next_model_done = false;
+    app.model_retry_attempts = 0;
+    app.cancel_esc_pressed = false;
+
+    app.pending_approvals.clear();
+    app.pending_questions.clear();
+    app.running_tools.clear();
+    app.tool_invocations.clear();
+    app.background_commands.clear();
+    app.message_action_target = None;
+    app.selected_message_action = 0;
+    app.expanded_tool_results.clear();
+    app.hovered_chat_source = None;
+    app.selection = None;
+    app.hover_index = None;
+    app.session_title = None;
+    app.chat_render_cache.borrow_mut().signature_hash = 0;
 }
 
 fn user_message_text(app: &TuiApp, message_index: usize) -> Result<String, String> {

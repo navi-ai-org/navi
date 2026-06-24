@@ -15,10 +15,10 @@
     │                                                                      │
     │                                                                      │
     │                                                                      │
-  ▌ │                                                                      │
+    │                                                                      │
   ▌ │                                                                      │
   ▌ │                                                                      │
   ▌ ╰──────────────────────────────────────────────────────────────────────╯
+  ▌ gpt-5.5 OpenAI · adaptive · 0 / 200k (0%)
   ▌
-
-                                                             ctrl+v paste image
+               ctrl+p commands · ctrl+m models · ctrl+enter send · ctrl+v image

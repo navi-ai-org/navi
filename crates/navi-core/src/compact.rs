@@ -3,7 +3,7 @@ use crate::model::{ModelMessage, ModelProvider, ModelRequest, ModelRole, Thinkin
 use anyhow::Result;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-const READ_ONLY_TOOLS: &[&str] = &["read_file", "fs_browser", "grep", "bash", "git_ops"];
+const READ_ONLY_TOOLS: &[&str] = &["read_file", "fs_browser", "grep", "git_ops"];
 
 /// Removes read-only tool results from older messages when idle time exceeds
 /// the gap threshold. Returns the number of messages cleared.
@@ -82,6 +82,8 @@ pub struct CompactState {
     pub consecutive_failures: u32,
     pub summary: Option<String>,
     pub summary_message_count: usize,
+    /// List of checkpoint thresholds crossed in the current context cycle.
+    pub crossed_thresholds: Vec<f64>,
 }
 
 impl CompactState {
@@ -375,7 +377,8 @@ mod tests {
             ModelMessage::tool_result("call-1", "read_file", "file content here".to_string()),
             ModelMessage::tool_result("call-2", "write_file", "written content".to_string()),
             ModelMessage::tool_result("call-3", "grep", "match results".to_string()),
-            ModelMessage::tool_result("call-4", "bash", "command output".to_string()),
+            ModelMessage::tool_result("call-4", "git_ops", "git status".to_string()),
+            ModelMessage::tool_result("call-5", "bash", "command output".to_string()),
         ];
 
         let cleared = micro_compact(&mut messages, 60);
@@ -396,6 +399,7 @@ mod tests {
                 .content
                 .contains("[Old tool result content cleared]")
         );
+        assert_eq!(messages[7].content, "command output");
     }
 
     #[test]
@@ -563,18 +567,18 @@ mod tests {
                 m.created_at = Some(now.saturating_sub(gap_ms));
                 m
             },
-            ModelMessage::tool_result("c1", "test_runner", "tests passed"),
-            ModelMessage::tool_result("c2", "build_runner", "build ok"),
-            ModelMessage::tool_result("c3", "package_manager", "deps ok"),
-            ModelMessage::tool_result("c4", "apply_patch", "patch applied"),
+            ModelMessage::tool_result("c1", "write_file", "file written"),
+            ModelMessage::tool_result("c2", "package_manager", "deps ok"),
+            ModelMessage::tool_result("c3", "apply_patch", "patch applied"),
+            ModelMessage::tool_result("c4", "bash", "command ok"),
         ];
 
         let cleared = micro_compact(&mut messages, 60);
         assert_eq!(cleared, 0, "non-read-only tools must not be cleared");
-        assert_eq!(messages[2].content, "tests passed");
-        assert_eq!(messages[3].content, "build ok");
-        assert_eq!(messages[4].content, "deps ok");
-        assert_eq!(messages[5].content, "patch applied");
+        assert_eq!(messages[2].content, "file written");
+        assert_eq!(messages[3].content, "deps ok");
+        assert_eq!(messages[4].content, "patch applied");
+        assert_eq!(messages[5].content, "command ok");
     }
 
     #[test]

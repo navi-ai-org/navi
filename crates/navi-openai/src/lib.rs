@@ -10,7 +10,10 @@ mod transport;
 
 pub use errors::ProviderError;
 pub use navi_core::ProviderId;
-pub use oauth::{DeviceOAuthStarted, commandcode_browser_oauth, github_copilot_device_oauth};
+pub use oauth::{
+    CommandCodeUsageData, DeviceOAuthStarted, commandcode_browser_oauth,
+    commandcode_fetch_usage_data, commandcode_list_models, github_copilot_device_oauth,
+};
 pub use provider::OpenAiProvider;
 pub use types::OpenAiApiKind;
 

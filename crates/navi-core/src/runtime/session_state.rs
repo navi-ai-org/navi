@@ -3,7 +3,45 @@ use crate::session::{
     SessionId, SessionRuntime, SessionStore, current_unix_timestamp, session_title_from_events,
 };
 use anyhow::Result;
+use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
+
+type EventReceiverSlot = Arc<Mutex<Option<mpsc::UnboundedReceiver<AgentEvent>>>>;
+
+pub(crate) struct SessionEventReceiver {
+    slot: EventReceiverSlot,
+    rx: Option<mpsc::UnboundedReceiver<AgentEvent>>,
+}
+
+impl SessionEventReceiver {
+    pub(crate) async fn recv(&mut self) -> Option<AgentEvent> {
+        match self.rx.as_mut() {
+            Some(rx) => rx.recv().await,
+            None => None,
+        }
+    }
+
+    pub(crate) fn try_recv(&mut self) -> Result<AgentEvent, mpsc::error::TryRecvError> {
+        match self.rx.as_mut() {
+            Some(rx) => rx.try_recv(),
+            None => Err(mpsc::error::TryRecvError::Disconnected),
+        }
+    }
+}
+
+impl Drop for SessionEventReceiver {
+    fn drop(&mut self) {
+        let Some(rx) = self.rx.take() else {
+            return;
+        };
+        let mut slot = self.slot.lock().unwrap_or_else(|e| e.into_inner());
+        if slot.is_none() {
+            *slot = Some(rx);
+        } else {
+            tracing::warn!("session event stream receiver was replaced before checkout returned");
+        }
+    }
+}
 
 pub struct SessionState {
     id: SessionId,
@@ -14,7 +52,7 @@ pub struct SessionState {
     started: bool,
     requested_id: Option<SessionId>,
     runtime: Option<SessionRuntime>,
-    event_rx: Option<mpsc::UnboundedReceiver<AgentEvent>>,
+    event_rx: EventReceiverSlot,
     events: Vec<AgentEvent>,
     initial_events: Vec<AgentEvent>,
     initial_created_at: Option<u64>,
@@ -33,7 +71,7 @@ impl SessionState {
             started: false,
             requested_id,
             runtime: None,
-            event_rx: None,
+            event_rx: Arc::new(Mutex::new(None)),
             events: Vec::new(),
             initial_events: Vec::new(),
             initial_created_at: None,
@@ -72,7 +110,7 @@ impl SessionState {
         self.started = true;
         self.events = initial_events;
         self.runtime = None;
-        self.event_rx = None;
+        *self.event_rx.lock().unwrap_or_else(|e| e.into_inner()) = None;
     }
 
     pub fn id(&self) -> &SessionId {
@@ -113,15 +151,19 @@ impl SessionState {
         event_rx: mpsc::UnboundedReceiver<AgentEvent>,
     ) {
         self.runtime = Some(runtime);
-        self.event_rx = Some(event_rx);
+        *self.event_rx.lock().unwrap_or_else(|e| e.into_inner()) = Some(event_rx);
     }
 
-    pub fn take_event_rx(&mut self) -> Option<mpsc::UnboundedReceiver<AgentEvent>> {
-        self.event_rx.take()
-    }
-
-    pub fn set_event_rx(&mut self, rx: mpsc::UnboundedReceiver<AgentEvent>) {
-        self.event_rx = Some(rx);
+    pub(crate) fn take_event_rx(&mut self) -> Option<SessionEventReceiver> {
+        let rx = self
+            .event_rx
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take()?;
+        Some(SessionEventReceiver {
+            slot: Arc::clone(&self.event_rx),
+            rx: Some(rx),
+        })
     }
 
     pub fn next_turn_id(&mut self) -> String {

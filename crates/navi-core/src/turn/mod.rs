@@ -20,7 +20,6 @@ use serde_json::{Value, json};
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 
-const HARD_TURN_LOOP_LIMIT: usize = 150;
 const QUESTION_TOOL_NAME: &str = "question";
 
 struct ModelTurnOutput {
@@ -50,6 +49,12 @@ pub struct TurnContext {
     /// `ensure_system_prompt` so the model sees the user-configured harness
     /// profile, model and provider rather than the defaults.
     pub config: Arc<RwLock<crate::config::NaviConfig>>,
+    /// Optional separate provider for compaction/summarization. When set,
+    /// auto_compact uses this instead of the main model provider.
+    pub compaction_provider: Option<Arc<dyn ModelProvider>>,
+    /// Model name for the compaction provider.
+    pub compaction_model_name: Option<String>,
+    pub session_id: String,
 }
 
 impl TurnContext {
@@ -97,21 +102,23 @@ pub async fn run_turn(
     ensure_not_cancelled(ctx)?;
     ensure_system_prompt(ctx, messages).await;
 
-    let mut loop_count = 0;
     let mut run_state = AgentRunState::default();
+    let mut loop_count = 0;
     let final_text = loop {
         loop_count += 1;
-        if loop_count > policy.max_turn_loops || loop_count > HARD_TURN_LOOP_LIMIT {
-            let stop = HarnessStop {
-                reason: HarnessStopReason::TurnLoopLimit,
-                message: format!(
-                    "Loop execution limit reached ({} iterations); stopping to avoid an uncontrolled turn",
-                    policy.max_turn_loops.min(HARD_TURN_LOOP_LIMIT)
-                ),
-                tool_name: None,
-            };
-            let text = finalize_harness_stop(ctx, messages, stop);
-            break text;
+        if let Some(limit) = policy.max_turn_loops {
+            if loop_count > limit {
+                let stop = HarnessStop {
+                    reason: HarnessStopReason::TurnLoopLimit,
+                    message: format!(
+                        "Loop execution limit reached ({} iterations); stopping to avoid an uncontrolled turn",
+                        limit
+                    ),
+                    tool_name: None,
+                };
+                let text = finalize_harness_stop(ctx, messages, stop);
+                break text;
+            }
         }
         ensure_not_cancelled(ctx)?;
         maintain_context_budget(ctx, messages).await;
@@ -136,6 +143,7 @@ pub async fn run_turn(
         break output.text;
     };
 
+    let _ = sync_messages_to_history(ctx, messages);
     Ok(final_text)
 }
 
@@ -182,6 +190,11 @@ async fn ensure_system_prompt(ctx: &TurnContext, messages: &mut Vec<ModelMessage
 }
 
 async fn maintain_context_budget(ctx: &TurnContext, messages: &mut Vec<ModelMessage>) {
+    let _ = sync_messages_to_history(ctx, messages);
+    if let Ok(true) = evaluate_memory_triggers(ctx, messages).await {
+        return;
+    }
+
     let cleared = compact::micro_compact(messages, ctx.harness_config.micro_compact_gap_minutes);
     if cleared > 0 {
         tracing::info!(cleared, "micro-compact applied");
@@ -204,11 +217,23 @@ async fn maintain_context_budget(ctx: &TurnContext, messages: &mut Vec<ModelMess
         let _ = tx.send(AgentEvent::AutoCompactStarted);
     }
     let mut state = ctx.compact_state.lock().await;
+    let compaction_provider: Arc<dyn ModelProvider>;
+    let compaction_model: String;
+    if let Some(ref cp) = ctx.compaction_provider {
+        compaction_provider = cp.clone();
+        compaction_model = ctx
+            .compaction_model_name
+            .clone()
+            .unwrap_or_else(|| ctx.active_model_name());
+    } else {
+        compaction_provider = ctx.active_model_provider();
+        compaction_model = ctx.active_model_name();
+    }
     match state
         .auto_compact(
             messages,
-            ctx.active_model_provider().as_ref(),
-            &ctx.active_model_name(),
+            compaction_provider.as_ref(),
+            &compaction_model,
             &ctx.harness_config,
         )
         .await
@@ -828,6 +853,180 @@ fn map_repetition_kind(kind: &crate::repetition::RepetitionKind) -> RepetitionWa
             }
         }
     }
+}
+
+/// Synchronizes new messages in the session conversation history to SQLite.
+pub fn sync_messages_to_history(ctx: &TurnContext, messages: &[ModelMessage]) -> Result<()> {
+    let memory_config = ctx.active_config().memory;
+    if !memory_config.enabled {
+        return Ok(());
+    }
+    let manager = crate::memory::MemoryManager::new(ctx.project_dir.clone(), &memory_config)?;
+    manager
+        .history
+        .record_session_start(&ctx.session_id, &ctx.project_dir.to_string_lossy())?;
+
+    let conn = &manager.history;
+    // Get count of existing messages in the DB for this session
+    let existing_count = conn
+        .get_event_count(&ctx.session_id, "message")
+        .unwrap_or(0);
+
+    // Slice messages to log only new ones
+    if (existing_count as usize) < messages.len() {
+        for msg in &messages[existing_count as usize..] {
+            let role_str = match msg.role {
+                crate::model::ModelRole::User => "user",
+                crate::model::ModelRole::Assistant => "assistant",
+                crate::model::ModelRole::Tool => "tool",
+                crate::model::ModelRole::System => "system",
+            };
+
+            let tool_name = msg.tool_name.clone();
+            let tool_input: Option<String> = None;
+            let mut tool_output = None;
+
+            if msg.role == crate::model::ModelRole::Tool {
+                tool_output = Some(msg.content.clone());
+            }
+
+            conn.record_event(
+                &ctx.session_id,
+                "message",
+                Some(role_str),
+                Some(&msg.content),
+                tool_name.as_deref(),
+                tool_input.as_deref(),
+                tool_output.as_deref(),
+                None,
+                None,
+            )?;
+        }
+    }
+    Ok(())
+}
+
+/// Evaluates memory system checkpoint and rebuild thresholds based on context utilization.
+pub(crate) async fn evaluate_memory_triggers(
+    ctx: &TurnContext,
+    messages: &mut Vec<ModelMessage>,
+) -> Result<bool> {
+    let memory_config = ctx.active_config().memory;
+    if !memory_config.enabled {
+        return Ok(false);
+    }
+
+    let (percentage, _total_tokens) = {
+        let state = ctx.compact_state.lock().await;
+        (
+            state.context_percentage(0) as f64 / 100.0,
+            state.total_estimated_tokens(0),
+        )
+    };
+
+    // 1. Checkpoint thresholds
+    let mut thresholds_to_trigger = Vec::new();
+    {
+        let state = ctx.compact_state.lock().await;
+        for &t in &memory_config.checkpoint_thresholds {
+            if percentage >= t && !state.crossed_thresholds.contains(&t) {
+                thresholds_to_trigger.push(t);
+            }
+        }
+    }
+
+    if !thresholds_to_trigger.is_empty() {
+        let manager = crate::memory::MemoryManager::new(ctx.project_dir.clone(), &memory_config)?;
+        manager
+            .history
+            .record_session_start(&ctx.session_id, &ctx.project_dir.to_string_lossy())?;
+
+        let provider = ctx.active_model_provider();
+        let model_name = ctx.active_model_name();
+
+        crate::memory::run_checkpoint_writer(
+            &ctx.session_id,
+            messages,
+            &manager.store,
+            provider.as_ref(),
+            &model_name,
+        )
+        .await?;
+
+        // Mark thresholds as crossed
+        {
+            let mut state = ctx.compact_state.lock().await;
+            for t in thresholds_to_trigger {
+                state.crossed_thresholds.push(t);
+                let cp_path = manager
+                    .store
+                    .checkpoint_path()
+                    .to_string_lossy()
+                    .to_string();
+                manager.history.record_checkpoint(
+                    &ctx.session_id,
+                    state.crossed_thresholds.len() as i64,
+                    percentage,
+                    &cp_path,
+                )?;
+            }
+        }
+    }
+
+    // 2. Rebuild threshold
+    if percentage >= memory_config.rebuild_threshold {
+        tracing::info!(
+            "Rebuild threshold reached ({}% >= {}%)",
+            percentage * 100.0,
+            memory_config.rebuild_threshold * 100.0
+        );
+        let manager = crate::memory::MemoryManager::new(ctx.project_dir.clone(), &memory_config)?;
+
+        let context_window = {
+            let state = ctx.compact_state.lock().await;
+            state.context_window
+        };
+
+        // Rebuild context!
+        let boot_context = crate::memory::build_rebuild_context(
+            messages,
+            &manager.store,
+            context_window,
+            memory_config.injected_context_token_budget,
+        );
+
+        // Record rebuild in SQLite
+        let cycle_num = {
+            let mut state = ctx.compact_state.lock().await;
+            state.crossed_thresholds.clear(); // reset thresholds for the new cycle!
+            1 // Default cycle sequence number
+        };
+        manager
+            .history
+            .record_rebuild(&ctx.session_id, cycle_num, cycle_num + 1, &boot_context)?;
+
+        // Re-assemble conversation messages
+        messages.clear();
+        messages.push(ModelMessage::system(boot_context));
+
+        // Reset compaction state token usage
+        {
+            let mut state = ctx.compact_state.lock().await;
+            state.last_input_tokens = None;
+            state.clear_unsent_bytes();
+        }
+
+        if let Some(ref tx) = ctx.event_tx {
+            let _ = tx.send(AgentEvent::Error {
+                message: "Context limit approached. Initiated physical context rebuild cycle."
+                    .to_string(),
+            });
+        }
+
+        return Ok(true);
+    }
+
+    Ok(false)
 }
 
 #[cfg(test)]

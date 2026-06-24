@@ -122,8 +122,8 @@ impl Tool for GitOpsTool {
                     },
                     "args": {
                         "oneOf": [
-                            { "type": "string" },
-                            { "type": "array", "items": { "type": "string" } }
+                            { "type": "array", "items": { "type": "string" } },
+                            { "type": "string" }
                         ],
                         "description": "Extra git arguments. Prefer an array for multiple arguments (e.g. [\"v0.1.0\", \"v0.2.0\"]); shell-like strings are also split."
                     },

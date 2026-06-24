@@ -6,8 +6,10 @@ mod tooling;
 mod types;
 
 pub use credentials::{
-    CredentialSource, CredentialStatus, DeviceOAuthStarted, provider_api_key,
-    provider_credential_status, provider_supports_device_oauth, start_provider_device_oauth,
+    CommandCodeUsageData, CredentialAccountInfo, CredentialSource, CredentialStatus,
+    DeviceOAuthStarted, commandcode_remote_models, commandcode_usage_data, provider_api_key,
+    provider_credential_accounts, provider_credential_status, provider_supports_device_oauth,
+    start_provider_device_oauth,
 };
 pub use engine::{NaviEngine, NaviEngineBuilder, NaviSession};
 pub use engine_driver::EngineDriver;
@@ -17,6 +19,7 @@ pub use host_tool::{
 /// Deprecated: use [`start_provider_device_oauth`] instead.
 pub use navi_providers::github_copilot_device_oauth;
 pub use tooling::reload_wasm_plugins_on_executor;
+pub use tooling::{build_provider_for_config, build_provider_for_project_config};
 pub use types::{
     NaviConfigSaveTarget, NaviError, NaviMissingCredentialError, NaviModelInfo,
     NaviModelSelectionRequest, NaviModelSelectionResult, NaviProviderAccountInfo,
@@ -46,16 +49,18 @@ pub use navi_core::{
 };
 // Config/provider types
 pub use navi_core::{
-    CompactState, CompactThreshold, CredentialStore, HarnessPolicy, HarnessProfile, LoadedConfig,
-    ModelOption, ModelTaskSize, NaviConfig, ProviderConfig, ProviderKind, ProviderModelConfig,
-    SessionStore, ThinkingConfig, select_harness_policy,
+    BackgroundModelEntry, BackgroundModelsConfig, CompactState, CompactThreshold, CredentialStore,
+    HarnessPolicy, HarnessProfile, LoadedConfig, ModelOption, ModelTaskSize, NaviConfig,
+    ProviderConfig, ProviderKind, ProviderModelConfig, SessionStore, ThinkingConfig,
+    select_harness_policy,
 };
 // Utility functions
 pub use navi_core::{
     available_model_options, build_system_prompt, canonical_provider_id, compact_tool_observation,
     effective_context_window, is_free_model_name, log_path, model_can_run_publicly,
-    provider_catalog, provider_request_model_name, resolve_provider_config,
-    resolve_provider_credential_status, save_global_config, set_registry_store,
+    provider_catalog, provider_request_model_name, resolve_provider_api_key_for_project,
+    resolve_provider_config, resolve_provider_credential_status, save_global_config,
+    set_registry_store,
 };
 // Registry
 pub use navi_core::registry::{RegistryFetcher, RegistryStore};
@@ -64,7 +69,7 @@ pub use navi_mcp::McpServerInfo;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tooling::build_model_provider;
+    use crate::tooling::build_provider_for_config;
     use navi_core::config::ModelConfig;
     use navi_core::{NaviConfig, ProviderConfig, ProviderKind};
 
@@ -93,7 +98,7 @@ mod tests {
             data_dir: tempdir.path().to_path_buf(),
         };
 
-        let error = match build_model_provider(&loaded_config) {
+        let error = match build_provider_for_config(&loaded_config) {
             Ok(_) => panic!("expected missing credential"),
             Err(error) => error,
         };

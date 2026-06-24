@@ -121,6 +121,9 @@ async fn test_turn_loop_with_parallel_tools() {
         prompt_cache: Arc::new(crate::prompt::PromptCache::new()),
         cancel_token: CancelToken::new(),
         config: Arc::new(std::sync::RwLock::new(crate::config::NaviConfig::default())),
+        compaction_provider: None,
+        compaction_model_name: None,
+        session_id: "test-session".to_string(),
     };
 
     let mut messages = vec![];
@@ -171,6 +174,9 @@ async fn malformed_tool_arguments_stop_the_turn() {
         prompt_cache: Arc::new(crate::prompt::PromptCache::new()),
         cancel_token: CancelToken::new(),
         config: Arc::new(std::sync::RwLock::new(crate::config::NaviConfig::default())),
+        compaction_provider: None,
+        compaction_model_name: None,
+        session_id: "test-session".to_string(),
     };
     let policy = crate::harness::policy_for_profile(
         &crate::config::HarnessConfig {
@@ -256,6 +262,9 @@ fn build_test_ctx(project_dir: PathBuf) -> TurnContext {
         prompt_cache: Arc::new(crate::prompt::PromptCache::new()),
         cancel_token: CancelToken::new(),
         config: Arc::new(std::sync::RwLock::new(crate::config::NaviConfig::default())),
+        compaction_provider: None,
+        compaction_model_name: None,
+        session_id: "test-session".to_string(),
     }
 }
 

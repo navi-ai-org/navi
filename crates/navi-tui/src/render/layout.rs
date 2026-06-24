@@ -10,7 +10,7 @@ pub(crate) fn command_scroll_offset(selected: usize, visible_rows: usize) -> usi
     SelectListState::scroll_offset_for_selected(selected, visible_rows)
 }
 
-pub(crate) fn modal_block(title: &'static str) -> Block<'static> {
+pub(crate) fn modal_block(title: &str) -> Block<'_> {
     Block::new()
         .title(Line::from(Span::styled(
             format!(" {title} "),
@@ -96,18 +96,6 @@ pub(crate) fn command_row(label: &str, shortcut: &str, width: usize) -> String {
         "{:<label_width$} {:<shortcut_width$}",
         fit_text(label, label_width),
         fit_text(shortcut, shortcut_width)
-    )
-}
-
-pub(crate) fn model_row_simple(name: &str, configured: bool, width: usize) -> String {
-    let marker_width = 3usize.min(width);
-    let name_width = width.saturating_sub(marker_width + 4);
-    let marker = if configured { "✓" } else { "" };
-
-    format!(
-        "    {:<name_width$} {:<marker_width$}",
-        fit_text(name, name_width),
-        marker
     )
 }
 

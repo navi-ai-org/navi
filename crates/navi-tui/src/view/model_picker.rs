@@ -1,20 +1,25 @@
-use navi_sdk::canonical_provider_id;
+use navi_sdk::{canonical_provider_id, model_can_run_publicly};
 use ratatui::layout::{Constraint, Direction, Layout, Margin, Rect};
 use ratatui::prelude::{Frame, Line, Span};
-use ratatui::style::{Modifier, Style};
+use ratatui::style::Style;
 use ratatui::text::Text;
 use ratatui::widgets::{List, ListItem, ListState, Paragraph};
 
 use crate::TuiApp;
 use crate::providers::{ListRow, build_model_rows, selected_model_in_rows};
-use crate::render::{clear_modal_area, modal_block, modal_list_highlight_style, model_row_simple};
+use crate::render::{clear_modal_area, modal_block, modal_list_highlight_style};
 use crate::theme::*;
 use crate::ui::interaction::{HitAction, line_rect};
 use crate::ui::list::render_scrollbar;
 
 pub(super) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
     clear_modal_area(frame, area);
-    let block = modal_block("Switch Protocol");
+    let title: &str = if app.mode == crate::state::Mode::BgModelPicker {
+        "Background Model"
+    } else {
+        "Select model"
+    };
+    let block = modal_block("");
     frame.render_widget(block, area);
 
     let inner = area.inner(Margin {
@@ -25,34 +30,48 @@ pub(super) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(1),
+            Constraint::Length(1),
             Constraint::Min(8),
             Constraint::Length(1),
         ])
         .split(inner);
 
+    let left = format!("  {title}");
+    let right = "esc";
+    let gap = rows[0]
+        .width
+        .saturating_sub((left.chars().count() + right.chars().count()) as u16)
+        .max(1) as usize;
+    let title_line = Line::from(vec![
+        Span::styled(left, Style::default().fg(text()).bg(modal_bg())),
+        Span::styled(" ".repeat(gap), Style::default().bg(modal_bg())),
+        Span::styled(right, Style::default().fg(muted()).bg(modal_bg())),
+    ]);
+    frame.render_widget(
+        Paragraph::new(title_line).style(Style::default().bg(modal_bg())),
+        rows[0],
+    );
+
     let filter_text = if app.model_filter.is_empty() {
-        "search providers or models"
+        "Search"
     } else {
         app.model_filter.as_str()
     };
     frame.render_widget(
-        Paragraph::new(Text::from(vec![Line::from(vec![
-            Span::styled("> ", Style::default().fg(signal())),
-            Span::styled(
-                filter_text,
-                Style::default().fg(if app.model_filter.is_empty() {
-                    muted()
-                } else {
-                    text()
-                }),
-            ),
-        ])]))
+        Paragraph::new(Text::from(vec![Line::from(Span::styled(
+            format!("  {filter_text}"),
+            Style::default().fg(if app.model_filter.is_empty() {
+                muted()
+            } else {
+                text()
+            }),
+        ))]))
         .style(Style::default().bg(modal_bg())),
-        rows[0],
+        rows[1],
     );
 
     let list_rows = build_model_rows(app);
-    let list_area = rows[1];
+    let list_area = rows[2];
     let row_width = list_area.width as usize;
 
     if list_rows.is_empty() {
@@ -87,14 +106,19 @@ pub(super) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
             list_area,
         );
         frame.render_widget(
-            Paragraph::new("ctrl+p command palette  •  ctrl+e setup")
+            Paragraph::new("  Connect provider  ctrl+e")
                 .style(Style::default().fg(text()).bg(modal_bg())),
-            rows[2],
+            rows[3],
         );
         return;
     }
 
-    let selected_row = selected_model_in_rows(&list_rows, app.selected_model).unwrap_or(0);
+    let selected_model = if app.mode == crate::state::Mode::BgModelPicker {
+        app.bg_model_picker_selected
+    } else {
+        app.selected_model
+    };
+    let selected_row = selected_model_in_rows(&list_rows, selected_model).unwrap_or(0);
     let hover_row = app
         .hover_index
         .and_then(|idx| selected_model_in_rows(&list_rows, idx));
@@ -106,34 +130,31 @@ pub(super) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
         .iter()
         .map(|row| match row {
             ListRow::Header { label, .. } => {
-                let header_style = Style::default()
-                    .fg(text())
-                    .bg(modal_bg())
-                    .add_modifier(Modifier::BOLD);
-                let refresh_style = Style::default().fg(ghost()).bg(modal_bg());
-
-                let mut spans = vec![Span::styled(format!("  {}", label), header_style)];
-                spans.push(Span::styled("  ↻ tab", refresh_style));
-                ListItem::new(Line::from(spans)).style(header_style)
+                let header_style = Style::default().fg(signal()).bg(modal_bg());
+                let label = clean_section_label(label);
+                ListItem::new(Line::from(Span::styled(format!("  {label}"), header_style)))
+                    .style(header_style)
             }
             ListRow::Model { index } => {
                 let model = &app.models[*index];
-                let selected = *index == app.selected_model;
+                let selected = *index == selected_model;
                 let hovered = app.hover_index == Some(*index);
-                let configured = model.name == app.loaded_config.config.model.name
-                    && canonical_provider_id(&model.provider_id)
-                        == canonical_provider_id(&app.loaded_config.config.model.provider);
+                let configured = if app.mode == crate::state::Mode::BgModelPicker {
+                    // In bg model picker, show which model is the current override.
+                    bg_model_is_current_override(app, model)
+                } else {
+                    model.name == app.loaded_config.config.model.name
+                        && canonical_provider_id(&model.provider_id)
+                            == canonical_provider_id(&app.loaded_config.config.model.provider)
+                };
                 let style = if hovered || selected {
                     active_item_style()
                 } else {
                     inactive_item_style()
                 };
-
-                ListItem::new(Span::styled(
-                    model_row_simple(model.name.as_str(), configured, row_width),
-                    style,
-                ))
-                .style(style)
+                let recent = model_is_recent(app, model);
+                ListItem::new(model_row_line(model, configured, recent, row_width, style))
+                    .style(style)
             }
         })
         .collect::<Vec<_>>();
@@ -182,8 +203,123 @@ pub(super) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
         }
     }
     frame.render_widget(
-        Paragraph::new("search  •  ctrl+e setup  •  tab refresh provider  •  ctrl+r refresh all")
+        Paragraph::new("  Connect provider  ctrl+e   Favorite  ctrl+f")
             .style(Style::default().fg(text()).bg(modal_bg())),
-        rows[2],
+        rows[3],
     );
+}
+
+fn clean_section_label(label: &str) -> String {
+    let cleaned = label.trim().trim_matches('—').trim().to_string();
+    if cleaned.eq_ignore_ascii_case("recent models") {
+        "Recent".to_string()
+    } else {
+        cleaned
+    }
+}
+
+fn model_is_recent(app: &TuiApp, model: &navi_sdk::ModelOption) -> bool {
+    app.loaded_config
+        .config
+        .tui
+        .recent_model_ids
+        .iter()
+        .any(|recent| {
+            recent
+                .split_once(':')
+                .is_some_and(|(provider_id, model_name)| {
+                    canonical_provider_id(provider_id) == canonical_provider_id(&model.provider_id)
+                        && model_name == model.name
+                })
+        })
+}
+
+fn model_row_line(
+    model: &navi_sdk::ModelOption,
+    configured: bool,
+    recent: bool,
+    width: usize,
+    style: Style,
+) -> Line<'static> {
+    let marker = if configured { "● " } else { "  " };
+    let name = display_model_name(&model.name);
+    let left = format!("  {marker}{name}");
+    let right = if model_can_run_publicly(&model.provider_id, &model.name) {
+        "Free".to_string()
+    } else if recent {
+        model.provider_label.clone()
+    } else {
+        String::new()
+    };
+    let reserved = right.chars().count().saturating_add(1);
+    let left_width = width.saturating_sub(reserved).max(1);
+    let left = fit_chars(&left, left_width);
+    let used = left.chars().count() + right.chars().count();
+    let gap = width.saturating_sub(used).max(1);
+    Line::from(vec![
+        Span::styled(left, style),
+        Span::styled(" ".repeat(gap), style),
+        Span::styled(
+            right,
+            Style::default()
+                .fg(muted())
+                .bg(style.bg.unwrap_or(modal_bg())),
+        ),
+    ])
+}
+
+fn fit_chars(value: &str, max_chars: usize) -> String {
+    if max_chars == 0 {
+        return String::new();
+    }
+    if value.chars().count() <= max_chars {
+        return value.to_string();
+    }
+    if max_chars == 1 {
+        return "…".to_string();
+    }
+    let mut result = value.chars().take(max_chars - 1).collect::<String>();
+    result.push('…');
+    result
+}
+
+fn display_model_name(name: &str) -> String {
+    name.split('/')
+        .last()
+        .unwrap_or(name)
+        .split('-')
+        .map(|part| {
+            if part.chars().all(|ch| ch.is_ascii_uppercase()) {
+                part.to_string()
+            } else {
+                let mut chars = part.chars();
+                match chars.next() {
+                    Some(first) => {
+                        first.to_uppercase().collect::<String>() + &chars.as_str().to_lowercase()
+                    }
+                    None => String::new(),
+                }
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn bg_model_is_current_override(app: &TuiApp, model: &navi_sdk::ModelOption) -> bool {
+    let bg = &app.loaded_config.config.background_models;
+    let task = app.bg_model_picker_task.as_deref().unwrap_or("");
+    let entry = match task {
+        "naming" => bg.naming.as_ref(),
+        "compaction" => bg.compaction.as_ref(),
+        "repo_search" => bg.repo_search.as_ref(),
+        "subagent_research" => bg.subagent_research.as_ref(),
+        "simple_code_edit" => bg.simple_code_edit.as_ref(),
+        _ => bg.default.as_ref(),
+    };
+    if let Some(entry) = entry {
+        entry.provider.as_deref() == Some(&model.provider_id)
+            && entry.model.as_deref() == Some(&model.name)
+    } else {
+        false
+    }
 }

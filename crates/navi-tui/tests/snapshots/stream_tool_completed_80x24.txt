@@ -5,20 +5,20 @@
 
 
 
-   │ • Thinking: planning next step · 0s
-
    ✓ Read src/main.rs
 
-   │ • Thinking: planning next step · 0s
 
 
 
 
 
+
+
+
+    .   Reading context · 0s
   ▌
   ▌
   ▌
-  ▌   gpt-5.5 OpenAI · adaptive · 0 / 200k (0%)
+  ▌ gpt-5.5 OpenAI · adaptive · 0 / 200k (0%)
   ▌
-
-                                                             ctrl+v paste image
+               ctrl+p commands · ctrl+m models · ctrl+enter send · ctrl+v image

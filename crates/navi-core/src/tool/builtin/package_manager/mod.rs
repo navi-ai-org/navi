@@ -47,7 +47,7 @@ impl Tool for PackageManagerTool {
     fn definition(&self) -> ToolDefinition {
         helpers::definition(
             "package_manager",
-            "Manage project dependencies. Auto-detects package manager from lockfiles (npm, bun, cargo, go). Actions: install (install all deps), add (add packages), remove (remove packages), update (update packages), check (verify installed).",
+            "Manage project dependencies. Auto-detects package manager from lockfiles (npm, bun, cargo, go, dart). Actions: install (install all deps), add (add packages), remove (remove packages), update (update packages), check (verify installed).",
             ToolKind::Write,
             json!({
                 "type": "object",
@@ -68,7 +68,7 @@ impl Tool for PackageManagerTool {
                     },
                     "manager": {
                         "type": "string",
-                        "enum": ["auto", "npm", "bun", "cargo", "go"],
+                        "enum": ["auto", "npm", "bun", "cargo", "go", "dart"],
                         "description": "Package manager to use. Defaults to auto-detect."
                     }
                 },
@@ -153,6 +153,9 @@ async fn run_pkg(project_root: &Path, args: &[&str]) -> Result<(bool, String, St
 }
 
 async fn detect_package_manager(project_root: &Path) -> Result<String> {
+    if project_root.join("pubspec.yaml").exists() {
+        return Ok("dart".to_string());
+    }
     if project_root.join("bun.lockb").exists() {
         return Ok("bun".to_string());
     }

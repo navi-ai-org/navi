@@ -31,7 +31,7 @@ pub(crate) fn route_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyModifiers
         return system_global;
     }
 
-    if app.modal_stack.is_active() {
+    if app.modal_stack.is_active() && app.mode != crate::state::Mode::Normal {
         return super::route_mode_key(app, code, modifiers);
     }
 

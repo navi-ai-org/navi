@@ -11,8 +11,10 @@ use rmcp::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use std::process::Stdio;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
+use tokio::io::{AsyncBufReadExt, BufReader};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct McpServerInfo {
@@ -172,8 +174,22 @@ async fn connect_server(
                 command.current_dir(cwd);
             }
 
-            let transport = tokio::task::block_in_place(|| TokioChildProcess::new(command))
-                .with_context(|| format!("failed to spawn MCP server `{server_id}`"))?;
+            // Pipe stderr instead of inheriting it. rmcp's `TokioChildProcess::new`
+            // defaults to `Stdio::inherit()` for stderr, which would write MCP
+            // server output (banners, warnings, CrUX/usage-stat notices, panics)
+            // directly to the controlling terminal. In TUI mode the terminal is
+            // in raw mode under ratatui, so any byte the MCP child writes there
+            // interleaves with the rendered frame and visibly corrupts the UI.
+            // Capture stderr here and route it through `tracing` instead.
+            let (transport, stderr) = tokio::task::block_in_place(|| {
+                TokioChildProcess::builder(command)
+                    .stderr(Stdio::piped())
+                    .spawn()
+            })
+            .with_context(|| format!("failed to spawn MCP server `{server_id}`"))?;
+            if let Some(stderr) = stderr {
+                spawn_stderr_drain(server_id.clone(), stderr);
+            }
             let service = tokio::time::timeout(timeout, ().serve(transport))
                 .await
                 .with_context(|| format!("timed out initializing MCP server `{server_id}`"))?
@@ -219,6 +235,32 @@ fn tool_definition(server: &McpServerConfig, tool: &rmcp::model::Tool) -> ToolDe
 fn prefixed_tool_name(server: &McpServerConfig, remote_name: &str) -> String {
     let prefix = server.tool_prefix.as_deref().unwrap_or(&server.id);
     format!("{prefix}__{remote_name}")
+}
+
+/// Drains an MCP server's stderr and routes each line through `tracing`.
+///
+/// This is spawned on the tokio runtime and runs until the child closes its
+/// stderr (EOF) or the runtime shuts down. Lines are logged at `warn` level
+/// because they almost always indicate either a noisy banner from a
+/// well-behaved server (chrome-devtools-mcp prints CrUX/usage-stat notices)
+/// or a real misbehavior (stack traces, protocol errors). We deliberately
+/// never write to stdout/stderr here so the TUI remains untouched.
+///
+/// We also drop trailing content without a newline: the child may exit
+/// mid-line and we'd rather surface what we have than swallow it.
+fn spawn_stderr_drain(server_id: String, stderr: tokio::process::ChildStderr) {
+    tokio::spawn(async move {
+        // `next_line` returns `Ok(None)` on EOF (child closed stderr) and
+        // `Err(_)` on read failure; both stop the loop. Dropping `stderr`
+        // closes the pipe. We log at `warn` because MCP server stderr almost
+        // always carries either noisy banners (chrome-devtools-mcp prints
+        // CrUX/usage-stat notices) or real misbehavior (stack traces,
+        // protocol errors). The TUI never sees any of these bytes.
+        let mut lines = BufReader::new(stderr).lines();
+        while let Ok(Some(line)) = lines.next_line().await {
+            tracing::warn!(server = %server_id, "mcp server stderr: {line}");
+        }
+    });
 }
 
 struct McpTool {

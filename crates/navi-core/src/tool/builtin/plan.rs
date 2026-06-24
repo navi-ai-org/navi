@@ -95,7 +95,7 @@ impl Tool for PlanTool {
         helpers::definition(
             "plan",
             "Create and manage work plans with checklist steps. Use this for multi-step tasks to track progress. Actions:\n\
-             - create: Create a new plan with title, description, and steps.\n\
+             - create: Create a new plan with title, description, and steps. If title is omitted, it is derived from description.\n\
              - update: Add, remove, or reorder steps. Set status.\n\
              - complete_step: Mark a step as completed (by index, 0-based). Add optional notes.\n\
              - get: Retrieve the full plan by id.\n\
@@ -117,7 +117,7 @@ impl Tool for PlanTool {
                     },
                     "title": {
                         "type": "string",
-                        "description": "Plan title (required for create)."
+                        "description": "Plan title for create/update. Optional for create; defaults to description or first step."
                     },
                     "description": {
                         "type": "string",
@@ -144,6 +144,10 @@ impl Tool for PlanTool {
                     "step_notes": {
                         "type": "string",
                         "description": "Notes to attach when completing a step."
+                    },
+                    "notes": {
+                        "type": "string",
+                        "description": "Alias for step_notes, accepted for compatibility."
                     },
                     "status": {
                         "type": "string",
@@ -191,10 +195,12 @@ impl Tool for PlanTool {
 // ── Actions ────────────────────────────────────────────────────────────────
 
 fn action_create(invocation: &ToolInvocation, plans_dir: &Path) -> Result<ToolResult> {
-    let title = helpers::required_string(&invocation.input, "title")?.to_string();
     let description =
         helpers::optional_string(&invocation.input, "description").unwrap_or_default();
     let steps = parse_steps(&invocation.input)?;
+    let title = helpers::optional_string(&invocation.input, "title")
+        .filter(|title| !title.trim().is_empty())
+        .unwrap_or_else(|| derive_plan_title(&description, &steps));
 
     if steps.is_empty() {
         return Ok(ToolResult {
@@ -276,7 +282,9 @@ fn action_complete_step(invocation: &ToolInvocation, plans_dir: &Path) -> Result
     let step_index = helpers::optional_u64(&invocation.input, "step_index")
         .ok_or_else(|| anyhow::anyhow!("missing required 'step_index'"))?
         as usize;
-    let notes = helpers::optional_string(&invocation.input, "step_notes").unwrap_or_default();
+    let notes = helpers::optional_string(&invocation.input, "step_notes")
+        .or_else(|| helpers::optional_string(&invocation.input, "notes"))
+        .unwrap_or_default();
 
     let mut plan = load_plan(&plan_id, plans_dir)?;
 
@@ -394,6 +402,18 @@ fn action_active(plans_dir: &Path) -> Result<ToolResult> {
 
 fn required_plan_id(invocation: &ToolInvocation) -> Result<String> {
     helpers::required_string(&invocation.input, "plan_id").map(|s| s.to_string())
+}
+
+fn derive_plan_title(description: &str, steps: &[PlanStep]) -> String {
+    if !description.trim().is_empty() {
+        return description.trim().to_string();
+    }
+    steps
+        .first()
+        .map(|step| step.description.trim())
+        .filter(|title| !title.is_empty())
+        .unwrap_or("Plan")
+        .to_string()
 }
 
 fn parse_steps(input: &Value) -> Result<Vec<PlanStep>> {
@@ -572,6 +592,25 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn create_plan_derives_title_when_omitted() {
+        let (policy, _td) = temp_policy();
+        let tool = PlanTool::new(policy);
+        let inv = make_invocation(
+            "c1",
+            json!({
+                "action": "create",
+                "description": "Add extractor support",
+                "steps": [{ "description": "Explore code" }]
+            }),
+        );
+
+        let result = tool.invoke(inv).await.unwrap();
+
+        assert!(result.ok);
+        assert_eq!(result.output["title"], "Add extractor support");
+    }
+
+    #[tokio::test]
     async fn create_plan_requires_steps() {
         let (policy, _td) = temp_policy();
         let tool = PlanTool::new(policy);
@@ -635,6 +674,37 @@ mod tests {
         assert_eq!(result.output["completed_steps"], 2);
         assert_eq!(result.output["plan_status"], "completed");
         assert_eq!(result.output["all_complete"], true);
+    }
+
+    #[tokio::test]
+    async fn complete_step_accepts_notes_alias() {
+        let (policy, _td) = temp_policy();
+        let tool = PlanTool::new(policy);
+        let create = make_invocation(
+            "c1",
+            json!({
+                "action": "create",
+                "title": "Small plan",
+                "steps": [{ "description": "Step A" }]
+            }),
+        );
+        let plan_id = tool.invoke(create).await.unwrap().output["plan_id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+
+        let complete = make_invocation(
+            "c2",
+            json!({
+                "action": "complete_step",
+                "plan_id": plan_id,
+                "step_index": 0,
+                "notes": "done via alias"
+            }),
+        );
+        let result = tool.invoke(complete).await.unwrap();
+
+        assert!(result.ok);
     }
 
     #[tokio::test]

@@ -2,7 +2,7 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Wrap};
+use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph, Wrap};
 
 use crate::app::TuiApp;
 use crate::theme::ThemePalette;
@@ -17,10 +17,9 @@ pub(crate) fn draw_mcp_modal(f: &mut Frame, area: Rect, app: &mut TuiApp, palett
     let inner_area = block.inner(area);
     f.render_widget(block, area);
 
-    // Layout: Left (Server list), Right (Details/Tools)
     let chunks = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(40), Constraint::Percentage(60)].as_slice())
+        .constraints([Constraint::Percentage(40), Constraint::Percentage(60)])
         .split(inner_area);
 
     let left_area = chunks[0];
@@ -30,6 +29,8 @@ pub(crate) fn draw_mcp_modal(f: &mut Frame, area: Rect, app: &mut TuiApp, palett
     let connected_servers_result = app.engine().list_mcp_servers(app.session_id.as_str());
     let connected_servers = connected_servers_result.unwrap_or_default();
 
+    let max_visible = left_area.height as usize;
+
     if config_servers.is_empty() {
         let msg = Paragraph::new("No MCP servers configured.")
             .style(Style::default().fg(palette.ghost))
@@ -38,13 +39,29 @@ pub(crate) fn draw_mcp_modal(f: &mut Frame, area: Rect, app: &mut TuiApp, palett
         return;
     }
 
-    // Ensure selected_server is within bounds
     if app.mcp_ui_state.selected_server >= config_servers.len() {
         app.mcp_ui_state.selected_server = config_servers.len().saturating_sub(1);
     }
 
+    if app.mcp_ui_state.selected_server < app.mcp_ui_state.scroll {
+        app.mcp_ui_state.scroll = app.mcp_ui_state.selected_server;
+    }
+    if max_visible > 0 && app.mcp_ui_state.selected_server >= app.mcp_ui_state.scroll + max_visible
+    {
+        app.mcp_ui_state.scroll = app
+            .mcp_ui_state
+            .selected_server
+            .saturating_add(1)
+            .saturating_sub(max_visible);
+    }
+
     let mut list_items = Vec::new();
-    for (i, server) in config_servers.iter().enumerate() {
+    for i in app.mcp_ui_state.scroll..config_servers.len() {
+        if i >= app.mcp_ui_state.scroll + max_visible {
+            break;
+        }
+        let server = &config_servers[i];
+
         let is_connected = connected_servers.iter().any(|cs| cs.id == server.id);
 
         let status_symbol = if !server.enabled {
@@ -75,10 +92,11 @@ pub(crate) fn draw_mcp_modal(f: &mut Frame, area: Rect, app: &mut TuiApp, palett
 
         list_items.push(ListItem::new(line).style(style));
 
+        let visible_index = i - app.mcp_ui_state.scroll;
         app.interaction_registry.borrow_mut().register(
             Rect {
                 x: left_area.x,
-                y: left_area.y + i.saturating_sub(app.mcp_ui_state.scroll) as u16,
+                y: left_area.y + visible_index as u16,
                 width: left_area.width,
                 height: 1,
             },
@@ -89,11 +107,8 @@ pub(crate) fn draw_mcp_modal(f: &mut Frame, area: Rect, app: &mut TuiApp, palett
     }
 
     let list = List::new(list_items);
-    let mut state = ListState::default();
-    state.select(Some(app.mcp_ui_state.selected_server));
-    f.render_stateful_widget(list, left_area, &mut state);
+    f.render_widget(list, left_area);
 
-    // Right side: Details
     if let Some(server) = config_servers.get(app.mcp_ui_state.selected_server) {
         let mut detail_lines = Vec::new();
         detail_lines.push(Line::from(vec![
@@ -147,6 +162,18 @@ pub(crate) fn draw_mcp_modal(f: &mut Frame, area: Rect, app: &mut TuiApp, palett
                         style = style.bg(palette.panel).add_modifier(Modifier::BOLD);
                     }
                     detail_lines.push(Line::styled(format!("  • {}", tool), style));
+
+                    app.interaction_registry.borrow_mut().register(
+                        Rect {
+                            x: right_area.x,
+                            y: right_area.y + 4 + j as u16,
+                            width: right_area.width,
+                            height: 1,
+                        },
+                        11,
+                        format!("Select tool {}", tool),
+                        HitAction::McpTool(j),
+                    );
                 }
             }
         } else if server.enabled {

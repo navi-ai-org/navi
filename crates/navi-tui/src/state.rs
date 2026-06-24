@@ -194,6 +194,14 @@ impl MessageAction {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SetupPhase {
+    /// User needs to pick/configure a provider.
+    ProviderLogin,
+    /// Model is interviewing the user with `question` tool.
+    Interview,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Mode {
     Normal,
     Commands,
@@ -214,6 +222,9 @@ pub enum Mode {
     Mcp,
     OAuth,
     BackgroundCommands,
+    BackgroundModels,
+    BgModelPicker,
+    Setup,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -236,6 +247,8 @@ pub(crate) enum ModalKind {
     Mcp,
     OAuth,
     BackgroundCommands,
+    BackgroundModels,
+    BgModelPicker,
 }
 
 impl ModalKind {
@@ -259,6 +272,8 @@ impl ModalKind {
             Self::Mcp => Mode::Mcp,
             Self::OAuth => Mode::OAuth,
             Self::BackgroundCommands => Mode::BackgroundCommands,
+            Self::BackgroundModels => Mode::BackgroundModels,
+            Self::BgModelPicker => Mode::BgModelPicker,
         }
     }
 }

@@ -15,10 +15,10 @@
 
 
 
-  ▌
-  ▌
-  ▌
-  ▌   gpt-5.5 OpenAI · adaptive · 3 / 200k (0%)
-  ▌
 
-                                                             ctrl+v paste image
+  ▌
+  ▌
+  ▌
+  ▌ gpt-5.5 OpenAI · adaptive · 3 / 200k (0%)
+  ▌
+               ctrl+p commands · ctrl+m models · ctrl+enter send · ctrl+v image

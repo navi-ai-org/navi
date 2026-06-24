@@ -1,12 +1,12 @@
   main  /tmp/navi-test-project
 
+   NAVI local agent
+   project navi-tui
+   model gpt-5.5
+   via OpenAI
+   thinking adaptive
 
-   ███╗   ██╗ █████╗ ██╗   ██╗██╗
-    project navi-tui
-   ████╗  ██║██╔══██╗██║   ██║██║
 
   ▌
   ▌
-  ▌   gpt-5.5 OpenAI · adaptive · 0
-
-                     ctrl+v paste image
+  ▌ gpt-5.5 · 0 / 200k (0%)

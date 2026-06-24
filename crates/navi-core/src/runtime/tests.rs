@@ -5,6 +5,7 @@ use crate::{
 };
 use anyhow::Result;
 use async_trait::async_trait;
+use futures_util::StreamExt;
 use futures_util::stream;
 use serde_json::json;
 use std::sync::Mutex;
@@ -324,4 +325,77 @@ async fn active_session_uses_replaced_model_provider_on_next_turn() {
             .text,
         "second-model"
     );
+}
+
+struct BlockingProvider {
+    gate: Arc<tokio::sync::Notify>,
+}
+
+#[async_trait]
+impl ModelProvider for BlockingProvider {
+    fn stream(&self, _request: ModelRequest) -> ModelStream {
+        let gate = self.gate.clone();
+        Box::pin(
+            futures_util::stream::once(async move {
+                gate.notified().await;
+                Ok(ModelStreamEvent::TextDelta {
+                    text: "unblocked".to_string(),
+                })
+            })
+            .chain(futures_util::stream::iter(vec![Ok(ModelStreamEvent::Done)])),
+        )
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn dropped_turn_future_does_not_poison_session_event_stream() {
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let gate = Arc::new(tokio::sync::Notify::new());
+    let loaded_config = crate::LoadedConfig {
+        config: NaviConfig {
+            harness: HarnessConfig::default(),
+            approvals: ApprovalConfig::default(),
+            security: SecurityConfig::default(),
+            ..NaviConfig::default()
+        },
+        global_config_path: None,
+        project_config_path: None,
+        data_dir: tempdir.path().join("data"),
+    };
+    let mut runtime = AgentRuntime::new(AgentRuntimeOptions {
+        loaded_config: loaded_config.clone(),
+        model_provider: Arc::new(BlockingProvider { gate: gate.clone() }),
+        project_dir: tempdir.path().to_path_buf(),
+        tool_executor: None,
+        context_packets: Vec::new(),
+        active_skills: Vec::new(),
+        initial_messages: Vec::new(),
+        initial_events: Vec::new(),
+        initial_created_at: None,
+        initial_updated_at: None,
+        session_id: None,
+        event_tx: None,
+    });
+
+    runtime.start_session().expect("start session");
+
+    let first = tokio::time::timeout(
+        Duration::from_millis(50),
+        runtime.send_turn("first".to_string()),
+    )
+    .await;
+    assert!(first.is_err(), "first turn should time out while blocked");
+
+    gate.notify_one();
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    let mut next_config = loaded_config.clone();
+    next_config.config.model.name = "next-model".to_string();
+    runtime.set_model_provider(next_config, Arc::new(EchoModelProvider));
+
+    let second = runtime
+        .send_turn("second".to_string())
+        .await
+        .expect("second turn must not fail with session event stream unavailable");
+    assert_eq!(second.text, "next-model");
 }

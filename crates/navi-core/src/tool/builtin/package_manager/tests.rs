@@ -100,7 +100,30 @@ fn find_cargo_package_returns_none_for_invalid_toml() {
     assert_eq!(finders::find_cargo_package("not toml [[[", "pkg"), None);
 }
 
-// ── find_go_package ──────────────────────────────────────────────────
+// ── find_dart_package ────────────────────────────────────────────────
+
+#[test]
+fn find_dart_package_in_dependencies() {
+    let manifest = "dependencies:\n  http: ^1.0.0\n";
+    assert!(finders::find_dart_package(manifest, "http"));
+}
+
+#[test]
+fn find_dart_package_in_dev_dependencies() {
+    let manifest = "dev_dependencies:\n  test: ^1.24.0\n";
+    assert!(finders::find_dart_package(manifest, "test"));
+}
+
+#[test]
+fn find_dart_package_returns_false_for_missing() {
+    let manifest = "dependencies:\n  http: ^1.0.0\n";
+    assert!(!finders::find_dart_package(manifest, "missing"));
+}
+
+#[test]
+fn find_dart_package_returns_false_for_invalid_yaml() {
+    assert!(!finders::find_dart_package("not yaml [[[", "pkg"));
+}
 
 #[test]
 fn find_go_package_in_require_block() {
@@ -136,6 +159,16 @@ async fn detect_bun_from_lockfile() {
     std::fs::write(tempdir.path().join("bun.lockb"), "").unwrap();
     let _guard = ChangeDirGuard::new(tempdir.path());
     assert_eq!(detect_package_manager(tempdir.path()).await.unwrap(), "bun");
+}
+#[tokio::test]
+async fn detect_dart_from_pubspec() {
+    let tempdir = tempfile::tempdir().unwrap();
+    std::fs::write(tempdir.path().join("pubspec.yaml"), "name: test").unwrap();
+    let _guard = ChangeDirGuard::new(tempdir.path());
+    assert_eq!(
+        detect_package_manager(tempdir.path()).await.unwrap(),
+        "dart"
+    );
 }
 
 #[tokio::test]
@@ -329,6 +362,64 @@ async fn check_go_parses_require_block() {
     assert!(result.ok);
     assert_eq!(result.output["status"], "success");
     assert_eq!(result.output["installed"][0]["section"], "require");
+}
+#[tokio::test]
+async fn check_dart_finds_packages_in_manifest() {
+    let tempdir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        tempdir.path().join("pubspec.yaml"),
+        "dependencies:\n  http: ^1.0.0\n  path: ^1.8.0\n",
+    )
+    .unwrap();
+    let _guard = ChangeDirGuard::new(tempdir.path());
+
+    let result = check::check_dart(
+        tempdir.path(),
+        "test",
+        &["http".to_string(), "missing".to_string()],
+    )
+    .await
+    .unwrap();
+
+    assert!(result.ok);
+    let installed = result.output["installed"].as_array().unwrap();
+    assert_eq!(installed.len(), 1);
+    assert_eq!(installed[0]["name"], "http");
+    assert_eq!(installed[0]["section"], "dependencies");
+    let not_found = result.output["not_found"].as_array().unwrap();
+    assert_eq!(not_found.len(), 1);
+    assert_eq!(not_found[0], "missing");
+}
+
+#[tokio::test]
+async fn check_dart_finds_packages_in_dev_dependencies() {
+    let tempdir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        tempdir.path().join("pubspec.yaml"),
+        "dev_dependencies:\n  test: ^1.24.0\n",
+    )
+    .unwrap();
+    let _guard = ChangeDirGuard::new(tempdir.path());
+
+    let result = check::check_dart(tempdir.path(), "test", &["test".to_string()])
+        .await
+        .unwrap();
+
+    assert!(result.ok);
+    assert_eq!(result.output["installed"][0]["name"], "test");
+}
+
+#[tokio::test]
+async fn check_dart_empty_packages_checks_lock() {
+    let tempdir = tempfile::tempdir().unwrap();
+    std::fs::write(tempdir.path().join("pubspec.lock"), "").unwrap();
+    let _guard = ChangeDirGuard::new(tempdir.path());
+
+    let result = check::check_dart(tempdir.path(), "test", &[])
+        .await
+        .unwrap();
+    assert!(result.ok);
+    assert_eq!(result.output["status"], "installed");
 }
 
 #[tokio::test]

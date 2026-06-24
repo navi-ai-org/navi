@@ -83,6 +83,20 @@ impl SecurityPolicy {
             ));
         }
 
+        // Single-writer memory protection: deny direct writes to memory files
+        let path_str = path.to_string_lossy();
+        if write
+            && (path.ends_with("checkpoint.md")
+                || path.ends_with("MEMORY.md")
+                || path_str.contains("global-memory.md")
+                || path_str.contains(".agent-memory"))
+        {
+            return SecurityDecision::Deny(format!(
+                "Direct edits to memory files are restricted to the checkpoint writer: {}",
+                path.display()
+            ));
+        }
+
         // Deny list: block reads of wasteful/sensitive paths.
         if !write && self.is_path_denied(&path) {
             return SecurityDecision::Deny(format!(
@@ -181,6 +195,9 @@ impl SecurityPolicy {
                 {
                     return SecurityDecision::Allow;
                 }
+                if definition.name == "mark_feature_done" {
+                    return self.validate_verification_steps(invocation);
+                }
                 invocation
                     .input
                     .get("program")
@@ -213,10 +230,20 @@ impl SecurityPolicy {
     }
 
     fn validate_apply_patch_invocation(&self, invocation: &ToolInvocation) -> SecurityDecision {
-        let Some(patch) = invocation.input.get("patch").and_then(Value::as_str) else {
+        let mut patches = Vec::new();
+        if let Some(patch) = invocation.input.get("patch").and_then(Value::as_str) {
+            patches.push(patch);
+        }
+        if let Some(values) = invocation.input.get("patches").and_then(Value::as_array) {
+            patches.extend(values.iter().filter_map(Value::as_str));
+        }
+        if patches.is_empty() {
             return SecurityDecision::NeedsApproval(SecurityRisk::Write);
-        };
-        let paths = extract_apply_patch_paths(patch);
+        }
+        let paths = patches
+            .iter()
+            .flat_map(|patch| extract_apply_patch_paths(patch))
+            .collect::<Vec<_>>();
         if paths.is_empty() {
             return SecurityDecision::NeedsApproval(SecurityRisk::Write);
         }
@@ -227,6 +254,21 @@ impl SecurityPolicy {
             }
         }
         SecurityDecision::NeedsApproval(SecurityRisk::Write)
+    }
+
+    fn validate_verification_steps(&self, invocation: &ToolInvocation) -> SecurityDecision {
+        if let Some(steps) = invocation
+            .input
+            .get("verification_steps")
+            .and_then(Value::as_array)
+        {
+            for command in steps.iter().filter_map(Value::as_str) {
+                if let SecurityDecision::Deny(reason) = self.validate_command(command) {
+                    return SecurityDecision::Deny(reason);
+                }
+            }
+        }
+        SecurityDecision::NeedsApproval(SecurityRisk::Command)
     }
 
     /// Returns the normalized project root used as the execution sandbox.
@@ -1068,6 +1110,35 @@ mod tests {
             ),
             "git_ops push should require guarded approval, got: {decision:?}"
         );
+    }
+
+    #[test]
+    fn regression_mark_feature_done_denies_blocked_verification_steps() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let project = tempdir.path().join("project");
+        let data = tempdir.path().join("data");
+        std::fs::create_dir_all(&project).expect("project");
+        std::fs::create_dir_all(&data).expect("data");
+        let policy = policy(project, data);
+
+        let decision = policy.validate_tool_invocation(
+            &ToolDefinition {
+                name: "mark_feature_done".to_string(),
+                description: String::new(),
+                kind: ToolKind::Command,
+                input_schema: serde_json::json!({}),
+            },
+            &ToolInvocation {
+                id: "done".to_string(),
+                tool_name: "mark_feature_done".to_string(),
+                input: serde_json::json!({
+                    "feature_id": "danger",
+                    "verification_steps": ["sudo rm -rf /"]
+                }),
+            },
+        );
+
+        assert!(matches!(decision, SecurityDecision::Deny(_)));
     }
 
     #[test]
