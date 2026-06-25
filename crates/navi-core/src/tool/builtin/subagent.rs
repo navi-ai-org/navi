@@ -6,17 +6,20 @@ use std::time::Instant;
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use serde_json::json;
+use tokio::sync::mpsc;
 
 use super::helpers;
 use crate::background_model::BackgroundModelResolver;
 use crate::cancel::CancelToken;
 use crate::compact::CompactState;
 use crate::config::{HarnessConfig, LoadedConfig, NaviConfig};
-use crate::event::{AgentEvent, ApprovalDecision};
+use crate::event::{AgentEvent, ApprovalDecision, SubagentTranscriptItem, SubagentTranscriptKind};
 use crate::model::{ModelMessage, ModelProvider, ModelRole};
 use crate::prompt::PromptCache;
 use crate::runtime::ApprovalResolver;
-use crate::tool::{Tool, ToolDefinition, ToolInvocation, ToolKind, ToolResult};
+use crate::tool::{
+    Tool, ToolDefinition, ToolInvocation, ToolInvocationContext, ToolKind, ToolResult,
+};
 use crate::turn::TurnContext;
 
 const MAX_BACKGROUND_SUBAGENTS: usize = 8;
@@ -250,6 +253,15 @@ impl Tool for SubagentTool {
     }
 
     async fn invoke(&self, invocation: ToolInvocation) -> Result<ToolResult> {
+        self.invoke_with_context(invocation, ToolInvocationContext::default())
+            .await
+    }
+
+    async fn invoke_with_context(
+        &self,
+        invocation: ToolInvocation,
+        context: ToolInvocationContext,
+    ) -> Result<ToolResult> {
         if let Some(task_id) = helpers::optional_string(&invocation.input, "task_id") {
             let action = helpers::optional_string(&invocation.input, "action")
                 .unwrap_or_else(|| "poll".to_string());
@@ -270,12 +282,24 @@ impl Tool for SubagentTool {
 
         if is_background {
             return self
-                .spawn_background(invocation.id, prompt, description, profile)
+                .spawn_background(
+                    invocation.id,
+                    prompt,
+                    description,
+                    profile,
+                    context.event_tx,
+                )
                 .await;
         }
 
-        self.run_foreground(invocation.id, prompt, description, profile)
-            .await
+        self.run_foreground(
+            invocation.id,
+            prompt,
+            description,
+            profile,
+            context.event_tx,
+        )
+        .await
     }
 }
 
@@ -286,6 +310,7 @@ impl SubagentTool {
         prompt: String,
         description: Option<String>,
         profile: Option<String>,
+        parent_event_tx: Option<mpsc::UnboundedSender<AgentEvent>>,
     ) -> Result<ToolResult> {
         let executor = self
             .tool_executor
@@ -296,8 +321,12 @@ impl SubagentTool {
         // Resolve model provider based on profile.
         let (provider, model) = self.resolve_model_for_profile(profile.as_deref());
 
-        let (mut messages, event_tx, _approval_handle, resolver) =
-            self.prepare_subagent_context(&prompt, &description);
+        let (mut messages, event_tx, _approval_handle, resolver) = self.prepare_subagent_context(
+            &invocation_id,
+            &prompt,
+            &description,
+            parent_event_tx.clone(),
+        );
 
         let include_tool_prompt = self.include_tool_prompt_manifest();
 
@@ -338,6 +367,16 @@ impl SubagentTool {
             Ok(output) => output,
             Err(err) => format!("Subagent failed: {err:#}"),
         };
+        emit_subagent_transcript(
+            &parent_event_tx,
+            &invocation_id,
+            SubagentTranscriptItem {
+                kind: SubagentTranscriptKind::Text,
+                title: "Final response".to_string(),
+                detail: Some(one_line(&text)),
+                ok: Some(!text.starts_with("Subagent failed:")),
+            },
+        );
 
         Ok(helpers::ok(
             invocation_id,
@@ -354,6 +393,7 @@ impl SubagentTool {
         prompt: String,
         description: Option<String>,
         profile: Option<String>,
+        parent_event_tx: Option<mpsc::UnboundedSender<AgentEvent>>,
     ) -> Result<ToolResult> {
         let executor = match self.tool_executor.upgrade() {
             Some(ex) => ex,
@@ -408,10 +448,16 @@ impl SubagentTool {
         let project_dir = self.project_dir.clone();
         let data_dir = self.data_dir.clone();
         let cancel_token = task.cancel_token.clone();
+        let parent_invocation_id = invocation_id.clone();
 
         tokio::spawn(async move {
             let (mut messages, event_tx, _approval_handle, resolver) =
-                Self::build_subagent_context_static(&prompt, &description);
+                Self::build_subagent_context_static(
+                    &parent_invocation_id,
+                    &prompt,
+                    &description,
+                    parent_event_tx.clone(),
+                );
 
             let config_snapshot = config.read().unwrap_or_else(|e| e.into_inner()).clone();
 
@@ -450,6 +496,16 @@ impl SubagentTool {
                 Ok(output) => output,
                 Err(err) => format!("Background subagent failed: {err:#}"),
             };
+            emit_subagent_transcript(
+                &parent_event_tx,
+                &parent_invocation_id,
+                SubagentTranscriptItem {
+                    kind: SubagentTranscriptKind::Text,
+                    title: "Final response".to_string(),
+                    detail: Some(one_line(&output)),
+                    ok: Some(!output.starts_with("Background subagent failed:")),
+                },
+            );
             let _ = result_tx.send(output);
         });
 
@@ -588,22 +644,30 @@ impl SubagentTool {
 
     fn prepare_subagent_context(
         &self,
+        parent_invocation_id: &str,
         prompt: &str,
         description: &Option<String>,
+        parent_event_tx: Option<mpsc::UnboundedSender<AgentEvent>>,
     ) -> (
         Vec<ModelMessage>,
         tokio::sync::mpsc::UnboundedSender<AgentEvent>,
         tokio::task::JoinHandle<()>,
         ApprovalResolver,
     ) {
-        let (messages, tx, handle, resolver) =
-            Self::build_subagent_context_static(prompt, description);
+        let (messages, tx, handle, resolver) = Self::build_subagent_context_static(
+            parent_invocation_id,
+            prompt,
+            description,
+            parent_event_tx,
+        );
         (messages, tx, handle, resolver)
     }
 
     fn build_subagent_context_static(
+        parent_invocation_id: &str,
         prompt: &str,
         description: &Option<String>,
+        parent_event_tx: Option<mpsc::UnboundedSender<AgentEvent>>,
     ) -> (
         Vec<ModelMessage>,
         tokio::sync::mpsc::UnboundedSender<AgentEvent>,
@@ -653,9 +717,21 @@ impl SubagentTool {
         let (event_tx, mut event_rx) = tokio::sync::mpsc::unbounded_channel::<AgentEvent>();
         let resolver = ApprovalResolver::new_standalone();
         let resolver_bg = resolver.clone();
+        let parent_invocation_id = parent_invocation_id.to_string();
 
         let approval_handle = tokio::spawn(async move {
             while let Some(event) = event_rx.recv().await {
+                if let Some(message) = subagent_activity_message(&event)
+                    && let Some(tx) = &parent_event_tx
+                {
+                    let _ = tx.send(AgentEvent::SubagentActivity {
+                        invocation_id: parent_invocation_id.clone(),
+                        message,
+                    });
+                }
+                if let Some(item) = subagent_transcript_item(&event) {
+                    emit_subagent_transcript(&parent_event_tx, &parent_invocation_id, item);
+                }
                 if let AgentEvent::ApprovalRequested(req) = event {
                     resolver_bg.resolve(ApprovalDecision::Approved { id: req.id.clone() });
                 }
@@ -664,4 +740,146 @@ impl SubagentTool {
 
         (messages, event_tx, approval_handle, resolver)
     }
+}
+
+fn emit_subagent_transcript(
+    parent_event_tx: &Option<mpsc::UnboundedSender<AgentEvent>>,
+    invocation_id: &str,
+    item: SubagentTranscriptItem,
+) {
+    if let Some(tx) = parent_event_tx {
+        let _ = tx.send(AgentEvent::SubagentTranscript {
+            invocation_id: invocation_id.to_string(),
+            item,
+        });
+    }
+}
+
+fn subagent_activity_message(event: &AgentEvent) -> Option<String> {
+    match event {
+        AgentEvent::ToolRequested(invocation) => Some(format_tool_activity(invocation)),
+        AgentEvent::ToolCompleted(result) if !result.ok => Some(format!(
+            "{} failed",
+            result
+                .output
+                .get("tool")
+                .and_then(|value| value.as_str())
+                .unwrap_or("Tool")
+        )),
+        _ => None,
+    }
+}
+
+fn subagent_transcript_item(event: &AgentEvent) -> Option<SubagentTranscriptItem> {
+    match event {
+        AgentEvent::ToolRequested(invocation) => Some(SubagentTranscriptItem {
+            kind: SubagentTranscriptKind::ToolRequested,
+            title: format_tool_activity(invocation),
+            detail: None,
+            ok: None,
+        }),
+        AgentEvent::ToolCompleted(result) => Some(SubagentTranscriptItem {
+            kind: SubagentTranscriptKind::ToolCompleted,
+            title: if result.ok {
+                "Tool completed".to_string()
+            } else {
+                "Tool failed".to_string()
+            },
+            detail: Some(compact_result_detail(result)),
+            ok: Some(result.ok),
+        }),
+        _ => None,
+    }
+}
+
+fn compact_result_detail(result: &ToolResult) -> String {
+    if let Some(error) = result.output.get("error").and_then(|value| value.as_str()) {
+        return one_line(error);
+    }
+    if let Some(path) = result.output.get("path").and_then(|value| value.as_str()) {
+        return path.to_string();
+    }
+    if let Some(result_text) = result.output.get("result").and_then(|value| value.as_str()) {
+        return one_line(result_text);
+    }
+    if result.output.is_null()
+        || result
+            .output
+            .as_object()
+            .is_some_and(serde_json::Map::is_empty)
+    {
+        return "ok".to_string();
+    }
+    serde_json::to_string(&result.output)
+        .map(|value| one_line(&value))
+        .unwrap_or_else(|_| "ok".to_string())
+}
+
+fn format_tool_activity(invocation: &ToolInvocation) -> String {
+    match invocation.tool_name.as_str() {
+        "read_file" | "view_file" => format!("Read {}", input_path(invocation).unwrap_or("file")),
+        "write_file" => format!("Write {}", input_path(invocation).unwrap_or("file")),
+        "grep" => invocation
+            .input
+            .get("pattern")
+            .and_then(|value| value.as_str())
+            .map(|pattern| format!("Search \"{}\"", one_line(pattern)))
+            .unwrap_or_else(|| "Search".to_string()),
+        "fs_browser" => {
+            let action = invocation
+                .input
+                .get("action")
+                .and_then(|value| value.as_str())
+                .unwrap_or("browse");
+            format!(
+                "{} {}",
+                capitalize(action),
+                input_path(invocation).unwrap_or("filesystem")
+            )
+        }
+        "bash" => invocation
+            .input
+            .get("command")
+            .or_else(|| invocation.input.get("program"))
+            .and_then(|value| value.as_str())
+            .map(|command| format!("Run {}", one_line(command)))
+            .unwrap_or_else(|| "Run command".to_string()),
+        "git_ops" => invocation
+            .input
+            .get("operation")
+            .or_else(|| invocation.input.get("action"))
+            .and_then(|value| value.as_str())
+            .map(|operation| format!("Git {operation}"))
+            .unwrap_or_else(|| "Git operation".to_string()),
+        "apply_patch" => "Apply patch".to_string(),
+        "subagent" => invocation
+            .input
+            .get("description")
+            .or_else(|| invocation.input.get("prompt"))
+            .and_then(|value| value.as_str())
+            .map(|task| format!("Subagent {}", one_line(task)))
+            .unwrap_or_else(|| "Subagent task".to_string()),
+        name => capitalize(&name.replace('_', " ")),
+    }
+}
+
+fn input_path(invocation: &ToolInvocation) -> Option<&str> {
+    invocation
+        .input
+        .get("path")
+        .or_else(|| invocation.input.get("file"))
+        .or_else(|| invocation.input.get("target"))
+        .and_then(|value| value.as_str())
+}
+
+fn one_line(value: &str) -> String {
+    value.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn capitalize(value: &str) -> String {
+    let mut chars = value.chars().collect::<Vec<_>>();
+    if let Some(first) = chars.first_mut() {
+        first.make_ascii_uppercase();
+    }
+    chars.into_iter().collect()
 }

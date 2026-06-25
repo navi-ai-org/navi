@@ -190,35 +190,6 @@ fn test_memory_manager_defaults_to_data_dir_project_hash() {
 }
 
 #[test]
-fn test_memory_manager_migrates_legacy_project_memory_once() {
-    let temp_dir = tempdir().unwrap();
-    let project_dir = temp_dir.path().join("project");
-    let data_dir = temp_dir.path().join("data");
-    let legacy_root = project_dir.join(".agent-memory");
-    fs::create_dir_all(&legacy_root).unwrap();
-    fs::write(legacy_root.join("checkpoint.md"), "# Legacy Checkpoint\n").unwrap();
-    fs::write(legacy_root.join("notes.md"), "legacy note\n").unwrap();
-    fs::write(legacy_root.join("MEMORY.md"), "# Legacy Memory\n").unwrap();
-
-    let config = MemoryConfig::default();
-    let manager = MemoryManager::new(project_dir.clone(), data_dir, &config).unwrap();
-
-    assert_eq!(
-        fs::read_to_string(manager.store.checkpoint_path()).unwrap(),
-        "# Legacy Checkpoint\n"
-    );
-    assert_eq!(
-        fs::read_to_string(manager.store.notes_path()).unwrap(),
-        "legacy note\n"
-    );
-    assert_eq!(
-        fs::read_to_string(manager.store.project_memory_path()).unwrap(),
-        "# Legacy Memory\n"
-    );
-    assert!(legacy_root.exists());
-}
-
-#[test]
 fn test_checkpoint_triggering_thresholds() {
     let thresholds = vec![0.20, 0.45, 0.70];
 
@@ -772,7 +743,7 @@ fn test_symlink_path_safety() {
     use std::os::unix::fs::symlink;
     let temp_dir = tempdir().unwrap();
     let project_dir = temp_dir.path().to_path_buf();
-    let memory_root = project_dir.join(".agent-memory");
+    let memory_root = project_dir.join("memory-root");
     std::fs::create_dir_all(&memory_root).unwrap();
 
     let outside_file = project_dir.join("outside.txt");

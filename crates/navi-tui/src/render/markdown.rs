@@ -27,9 +27,10 @@ pub(crate) fn build_chat_render_for_messages(
     show_thinking: bool,
     _compact_tool_visible_limit: usize,
     expanded_tool_results: &HashSet<String>,
-    _running_tools: &HashMap<String, ToolInvocation>,
+    running_tools: &HashMap<String, ToolInvocation>,
+    subagent_activity: &HashMap<String, String>,
     tool_render_cache: &mut HashMap<String, Vec<Line<'static>>>,
-    _loading_elapsed_ms: Option<u64>,
+    loading_elapsed_ms: Option<u64>,
 ) -> ChatRenderOutput {
     let mut rendered_lines: Vec<Line<'static>> = Vec::new();
     let mut line_sources: Vec<ChatLineSource> = Vec::new();
@@ -187,6 +188,14 @@ pub(crate) fn build_chat_render_for_messages(
         }
         index += 1;
     }
+    push_running_subagents(
+        &mut rendered_lines,
+        &mut line_sources,
+        running_tools,
+        subagent_activity,
+        chat_width,
+        loading_elapsed_ms,
+    );
     ChatRenderOutput {
         lines: rendered_lines,
         sources: line_sources,
@@ -336,6 +345,109 @@ fn tool_result_parts(message: &ChatMessage) -> Option<(&ToolInvocation, &ToolRes
     }
 }
 
+fn push_running_subagents(
+    rendered_lines: &mut Vec<Line<'static>>,
+    line_sources: &mut Vec<ChatLineSource>,
+    running_tools: &HashMap<String, ToolInvocation>,
+    subagent_activity: &HashMap<String, String>,
+    chat_width: usize,
+    loading_elapsed_ms: Option<u64>,
+) {
+    let mut subagents = running_tools
+        .values()
+        .filter(|invocation| invocation.tool_name == "subagent")
+        .collect::<Vec<_>>();
+    subagents.sort_by(|left, right| left.id.cmp(&right.id));
+
+    for invocation in subagents {
+        push_block_gap(rendered_lines, line_sources);
+        let task = subagent_task_label(invocation);
+        let detail = subagent_activity
+            .get(&invocation.id)
+            .cloned()
+            .unwrap_or_else(|| subagent_detail_label(invocation, &task));
+        let spinner = running_spinner(loading_elapsed_ms);
+        let width = chat_width.max(12);
+        let label_width = width.saturating_sub(display_width(spinner) + 3).max(8);
+        let detail_width = width.saturating_sub(4).max(8);
+
+        rendered_lines.push(Line::from(vec![
+            Span::styled(
+                spinner.to_string(),
+                Style::default()
+                    .fg(code_operator())
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(" Subagent Task ", Style::default().fg(muted())),
+            Span::styled("— ", Style::default().fg(ghost())),
+            Span::styled(
+                truncate_chars(&task, label_width),
+                Style::default().fg(text()).add_modifier(Modifier::BOLD),
+            ),
+        ]));
+        line_sources.push(ChatLineSource::Subagent(invocation.id.clone()));
+
+        if !detail.is_empty() {
+            rendered_lines.push(Line::from(vec![
+                Span::styled("  ↳ ", Style::default().fg(ghost())),
+                Span::styled(
+                    truncate_chars(&detail, detail_width),
+                    Style::default().fg(muted()),
+                ),
+            ]));
+            line_sources.push(ChatLineSource::Subagent(invocation.id.clone()));
+        }
+    }
+}
+
+fn subagent_task_label(invocation: &ToolInvocation) -> String {
+    invocation
+        .input
+        .get("description")
+        .and_then(|value| value.as_str())
+        .or_else(|| {
+            invocation
+                .input
+                .get("prompt")
+                .and_then(|value| value.as_str())
+        })
+        .map(one_line)
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "Working".to_string())
+}
+
+fn subagent_detail_label(invocation: &ToolInvocation, task: &str) -> String {
+    let prompt = invocation
+        .input
+        .get("prompt")
+        .and_then(|value| value.as_str())
+        .map(one_line)
+        .unwrap_or_default();
+    if prompt.is_empty() || prompt == task {
+        invocation
+            .input
+            .get("profile")
+            .and_then(|value| value.as_str())
+            .map(|profile| format!("Profile {profile}"))
+            .unwrap_or_default()
+    } else {
+        prompt
+    }
+}
+
+fn running_spinner(loading_elapsed_ms: Option<u64>) -> &'static str {
+    match loading_elapsed_ms.unwrap_or_default() / 300 % 4 {
+        0 => "◐",
+        1 => "◓",
+        2 => "◑",
+        _ => "◒",
+    }
+}
+
+fn one_line(value: &str) -> String {
+    value.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
 fn render_compact_tool_line(invocation: &ToolInvocation, result: &ToolResult) -> Line<'static> {
     render_compact_tool_line_with_width(invocation, result, usize::MAX)
 }
@@ -347,7 +459,11 @@ fn render_compact_tool_result(
     expanded_tool_results: &HashSet<String>,
     tool_render_cache: &mut HashMap<String, Vec<Line<'static>>>,
 ) -> Vec<(Line<'static>, ChatLineSource)> {
-    let source = ChatLineSource::ToolResult(result.invocation_id.clone());
+    let source = if invocation.tool_name == "subagent" {
+        ChatLineSource::Subagent(result.invocation_id.clone())
+    } else {
+        ChatLineSource::ToolResult(result.invocation_id.clone())
+    };
     let mut lines = Vec::new();
 
     if expanded_tool_results.contains(&result.invocation_id) {
@@ -1448,6 +1564,7 @@ mod tests {
             false,
             0,
             &HashSet::new(),
+            &HashMap::new(),
             &HashMap::new(),
             &mut HashMap::new(),
             None,

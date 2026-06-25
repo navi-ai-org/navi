@@ -43,7 +43,8 @@ pub use credentials::{
 };
 pub use event::{
     AgentEvent, ApprovalDecision, ApprovalRequest, ApprovalRisk, QuestionOption, QuestionRequest,
-    QuestionResponse, RuntimeEvent, RuntimeEventKind,
+    QuestionResponse, RuntimeEvent, RuntimeEventKind, SubagentTranscriptItem,
+    SubagentTranscriptKind,
 };
 pub use file_lock::{FileLockInfo, FileLockManager, LockGuard};
 pub use harness::{

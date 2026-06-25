@@ -633,7 +633,11 @@ async fn execute_tool_call(
     }
 
     let result = match ctx.tool_executor.validate(&invocation) {
-        SecurityDecision::Allow => ctx.tool_executor.invoke(invocation.clone()).await,
+        SecurityDecision::Allow => {
+            ctx.tool_executor
+                .invoke_with_event_tx(invocation.clone(), ctx.event_tx.clone())
+                .await
+        }
         SecurityDecision::NeedsApproval(risk) => {
             approve_and_invoke_tool(ctx, &invocation, risk).await
         }
@@ -807,7 +811,9 @@ async fn approve_and_invoke_tool(
         Some(decision) => {
             let is_approved = matches!(decision, crate::event::ApprovalDecision::Approved { .. });
             if is_approved {
-                ctx.tool_executor.invoke(invocation.clone()).await
+                ctx.tool_executor
+                    .invoke_with_event_tx(invocation.clone(), ctx.event_tx.clone())
+                    .await
             } else {
                 tool_error_result(invocation, "user denied tool execution")
             }
