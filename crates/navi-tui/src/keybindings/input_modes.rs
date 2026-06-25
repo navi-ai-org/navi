@@ -11,6 +11,13 @@ use crate::state::ModalKind;
 use crossterm::event::{KeyCode, KeyModifiers};
 
 pub(crate) fn handle_normal_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyModifiers) -> bool {
+    if matches!(app.chat_view, crate::state::ChatView::Subagent { .. })
+        && modifiers.is_empty()
+        && handle_subagent_view_key(app, code)
+    {
+        return false;
+    }
+
     if modifiers.contains(KeyModifiers::CONTROL) {
         match code {
             KeyCode::Left | KeyCode::Char('b') => move_input_previous_control_stop(app),
@@ -123,4 +130,30 @@ pub(crate) fn handle_normal_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyM
     }
 
     false
+}
+
+fn handle_subagent_view_key(app: &mut TuiApp, code: KeyCode) -> bool {
+    match code {
+        KeyCode::Up | KeyCode::Esc => {
+            app.close_subagent_view();
+            true
+        }
+        KeyCode::Left => {
+            app.select_adjacent_subagent(-1);
+            true
+        }
+        KeyCode::Right => {
+            app.select_adjacent_subagent(1);
+            true
+        }
+        KeyCode::PageUp => {
+            app.scroll_offset = app.scroll_offset.saturating_add(15);
+            true
+        }
+        KeyCode::PageDown | KeyCode::Down => {
+            app.scroll_offset = app.scroll_offset.saturating_sub(15);
+            true
+        }
+        _ => false,
+    }
 }

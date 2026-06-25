@@ -1,6 +1,5 @@
 /target
 .navi/
-.agent-memory/
 mutants.out/
 mutants.out.old/
 /coverage/

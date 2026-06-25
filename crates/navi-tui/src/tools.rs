@@ -98,6 +98,8 @@ pub(crate) fn cancel_stream(app: &mut TuiApp) {
     app.loading_start = None;
     app.pending_approvals.clear();
     app.running_tools.clear();
+    app.subagent_activity.clear();
+    app.close_subagent_view();
     app.skip_next_model_done = false;
     if let Some(active) = active_assistant_message(app) {
         active.status = Some("cancelled".to_string());

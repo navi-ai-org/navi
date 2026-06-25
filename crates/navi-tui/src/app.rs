@@ -23,8 +23,9 @@ use crate::dispatch::AsyncEvent;
 use crate::runtime::{build_engine, selected_model_runtime_available};
 use crate::session::load_saved_sessions;
 use crate::state::{
-    ChatMessage, ChatRenderCache, ChatRole, McpUiState, ModalKind, Mode, Notification,
-    OAuthUiState, PluginApprovalRequest, QuestionUiState, SelectionState, ThinkingLevel,
+    ChatMessage, ChatRenderCache, ChatRole, ChatView, McpUiState, ModalKind, Mode, Notification,
+    OAuthUiState, PluginApprovalRequest, QuestionUiState, SelectionState, SubagentTranscript,
+    ThinkingLevel,
 };
 use crate::theme::{ThemeId, ThemePalette};
 use crate::ui::interaction::{HitAction, HitRegion, InteractionRegistry};
@@ -72,6 +73,10 @@ pub struct TuiApp {
 
     // orchestration
     pub(crate) running_tools: HashMap<String, ToolInvocation>,
+    pub(crate) subagent_activity: HashMap<String, String>,
+    pub(crate) subagent_transcripts: HashMap<String, SubagentTranscript>,
+    pub(crate) subagent_order: Vec<String>,
+    pub(crate) chat_view: ChatView,
     pub(crate) pending_approvals: Vec<ApprovalRequest>,
     pub(crate) pending_questions: Vec<QuestionUiState>,
     pub(crate) tool_invocations: HashMap<String, ToolInvocation>,
@@ -256,6 +261,10 @@ impl TuiApp {
             skip_next_model_done: false,
             model_retry_attempts: 0,
             running_tools: HashMap::new(),
+            subagent_activity: HashMap::new(),
+            subagent_transcripts: HashMap::new(),
+            subagent_order: Vec::new(),
+            chat_view: ChatView::Parent,
             pending_approvals: Vec::new(),
             pending_questions: Vec::new(),
             tool_invocations: HashMap::new(),
@@ -427,6 +436,64 @@ impl TuiApp {
 
     pub(crate) fn hit_test(&self, col: u16, row: u16) -> Option<HitRegion> {
         self.interaction_registry.borrow().hit(col, row)
+    }
+
+    pub(crate) fn open_subagent_view(&mut self, invocation_id: impl Into<String>) {
+        let invocation_id = invocation_id.into();
+        if self.subagent_transcripts.contains_key(&invocation_id)
+            || self.running_tools.contains_key(&invocation_id)
+            || self
+                .tool_invocations
+                .get(&invocation_id)
+                .is_some_and(|invocation| invocation.tool_name == "subagent")
+        {
+            self.chat_view = ChatView::Subagent { invocation_id };
+            self.scroll_offset = 0;
+            self.hovered_chat_source = None;
+            self.chat_render_cache.borrow_mut().signature_hash = 0;
+        }
+    }
+
+    pub(crate) fn close_subagent_view(&mut self) {
+        if !matches!(self.chat_view, ChatView::Parent) {
+            self.chat_view = ChatView::Parent;
+            self.scroll_offset = 0;
+            self.hovered_chat_source = None;
+            self.chat_render_cache.borrow_mut().signature_hash = 0;
+        }
+    }
+
+    pub(crate) fn select_adjacent_subagent(&mut self, delta: isize) {
+        let ChatView::Subagent { invocation_id } = &self.chat_view else {
+            return;
+        };
+        let Some(current) = self
+            .subagent_order
+            .iter()
+            .position(|id| id == invocation_id)
+        else {
+            return;
+        };
+        let len = self.subagent_order.len();
+        if len <= 1 {
+            return;
+        }
+        let next = if delta.is_negative() {
+            current
+                .saturating_add(len)
+                .saturating_sub(delta.unsigned_abs() % len)
+                % len
+        } else {
+            current.saturating_add(delta as usize) % len
+        };
+        let Some(next_id) = self.subagent_order.get(next).cloned() else {
+            return;
+        };
+        self.chat_view = ChatView::Subagent {
+            invocation_id: next_id,
+        };
+        self.scroll_offset = 0;
+        self.chat_render_cache.borrow_mut().signature_hash = 0;
     }
 
     pub(crate) fn set_theme(&mut self, theme_id: ThemeId) {

@@ -41,7 +41,6 @@ impl MemoryManager {
             &config.root,
             &config.global_memory_path,
         );
-        store.migrate_legacy_project_memory_if_empty()?;
         store.ensure_initialized()?;
 
         let resolved_sqlite_path =

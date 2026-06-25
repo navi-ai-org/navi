@@ -130,8 +130,6 @@ The directory contains:
 - `history.sqlite`
 - optional archive/maintenance subdirectories, including dream review copies
 
-If an older project-side `.agent-memory/` directory exists and the new data-dir memory directory is empty, NAVI copies the legacy contents into the data-dir location once. It does not delete the legacy project-side directory.
-
 ## Dream Maintenance
 
 Dream maintenance is an offline memory synthesis pass inspired by Claude's managed-agent Dreams. It reads the existing project memory, global memory, checkpoint, notes, and recent session history, then asks the selected model to produce a separate reviewed memory store.

@@ -1,5 +1,5 @@
 use crate::config::SecurityConfig;
-use crate::event::{AgentEvent, ApprovalRequest};
+use crate::event::{AgentEvent, ApprovalRequest, SubagentTranscriptItem};
 use crate::patch::PatchProposal;
 use crate::session::ProjectMemory;
 use crate::tool::{ToolDefinition, ToolInvocation, ToolKind, ToolResult};
@@ -69,7 +69,14 @@ impl SecurityPolicy {
             ));
         }
 
-        if path.starts_with(&self.data_dir) {
+        if contains_component(&path, ".agent-memory") {
+            return SecurityDecision::Deny(format!(
+                "project-local .agent-memory is not supported; NAVI memory lives under {}",
+                self.data_dir.display()
+            ));
+        }
+
+        if self.is_data_dir_private_path(&path) {
             return SecurityDecision::Deny(format!(
                 "path {} is inside NAVI private storage",
                 path.display()
@@ -79,20 +86,6 @@ impl SecurityPolicy {
         if write && self.config.protect_git_metadata && contains_component(&path, ".git") {
             return SecurityDecision::Deny(format!(
                 "writes to git metadata are blocked: {}",
-                path.display()
-            ));
-        }
-
-        // Single-writer memory protection: deny direct writes to memory files
-        let path_str = path.to_string_lossy();
-        if write
-            && (path.ends_with("checkpoint.md")
-                || path.ends_with("MEMORY.md")
-                || path_str.contains("global-memory.md")
-                || path_str.contains(".agent-memory"))
-        {
-            return SecurityDecision::Deny(format!(
-                "Direct edits to memory files are restricted to the checkpoint writer: {}",
                 path.display()
             ));
         }
@@ -133,6 +126,35 @@ impl SecurityPolicy {
             .any(|blocked| blocked == command)
         {
             return SecurityDecision::Deny(format!("command `{command}` is blocked"));
+        }
+
+        for target in extract_shell_path_mentions(program) {
+            if is_dynamic_shell_target(&target) {
+                continue;
+            }
+            let path = self.resolve_project_path(Path::new(&target));
+            let Ok(path) = normalize_existing_or_parent(&path) else {
+                continue;
+            };
+            if self.is_data_dir_private_path(&path) {
+                return SecurityDecision::Deny(format!(
+                    "command references NAVI private storage: {}",
+                    path.display()
+                ));
+            }
+        }
+
+        for target in extract_shell_write_targets(program) {
+            if is_dynamic_shell_target(&target) {
+                return SecurityDecision::Deny(format!(
+                    "command writes to an unresolved shell-expanded path: {target}"
+                ));
+            }
+            if let SecurityDecision::Deny(reason) = self.validate_path(Path::new(&target), true) {
+                return SecurityDecision::Deny(format!(
+                    "command writes to a denied path via shell redirection: {reason}"
+                ));
+            }
         }
 
         SecurityDecision::NeedsApproval(SecurityRisk::Command)
@@ -287,6 +309,10 @@ impl SecurityPolicy {
         &self.data_dir
     }
 
+    fn is_data_dir_private_path(&self, path: &Path) -> bool {
+        path.starts_with(&self.data_dir) && !path.starts_with(self.data_dir.join("plugins"))
+    }
+
     /// Resolves relative tool paths against the project root instead of the
     /// process CWD. This keeps SDK/ACP embeddings from accidentally reading or
     /// writing outside the requested project when NAVI is launched elsewhere.
@@ -431,6 +457,20 @@ pub fn redact_agent_event(event: &AgentEvent) -> AgentEvent {
             AgentEvent::ToolRequested(redact_tool_invocation(invocation))
         }
         AgentEvent::ToolCompleted(result) => AgentEvent::ToolCompleted(redact_tool_result(result)),
+        AgentEvent::SubagentActivity {
+            invocation_id,
+            message,
+        } => AgentEvent::SubagentActivity {
+            invocation_id: invocation_id.clone(),
+            message: redact_secrets(message),
+        },
+        AgentEvent::SubagentTranscript {
+            invocation_id,
+            item,
+        } => AgentEvent::SubagentTranscript {
+            invocation_id: invocation_id.clone(),
+            item: redact_subagent_transcript_item(item),
+        },
         AgentEvent::HarnessTrace(value) => AgentEvent::HarnessTrace(redact_json_value(value)),
         AgentEvent::HarnessStopped {
             reason,
@@ -446,6 +486,15 @@ pub fn redact_agent_event(event: &AgentEvent) -> AgentEvent {
             AgentEvent::ApprovalRequested(redact_approval_request(request))
         }
         other => other.clone(),
+    }
+}
+
+fn redact_subagent_transcript_item(item: &SubagentTranscriptItem) -> SubagentTranscriptItem {
+    SubagentTranscriptItem {
+        kind: item.kind,
+        title: redact_secrets(&item.title),
+        detail: item.detail.as_ref().map(|detail| redact_secrets(detail)),
+        ok: item.ok,
     }
 }
 
@@ -607,6 +656,227 @@ fn contains_component(path: &Path, needle: &str) -> bool {
     })
 }
 
+fn extract_shell_write_targets(command: &str) -> Vec<String> {
+    let tokens = shell_tokens(command);
+    let mut targets = Vec::new();
+    let mut index = 0;
+
+    while index < tokens.len() {
+        let token = &tokens[index];
+        if is_output_redirection_operator(token) {
+            if let Some(target) = tokens
+                .get(index + 1)
+                .and_then(|value| clean_shell_target(value))
+            {
+                push_unique_string(&mut targets, &target);
+            }
+            index += 2;
+            continue;
+        }
+
+        if let Some(target) = attached_output_redirection_target(token) {
+            push_unique_string(&mut targets, &target);
+            index += 1;
+            continue;
+        }
+
+        if command_token_name(token) == "tee" {
+            index += 1;
+            while index < tokens.len() && !is_shell_command_separator(&tokens[index]) {
+                let arg = &tokens[index];
+                if arg == "--" {
+                    index += 1;
+                    continue;
+                }
+                if !arg.starts_with('-')
+                    && let Some(target) = clean_shell_target(arg)
+                {
+                    push_unique_string(&mut targets, &target);
+                }
+                index += 1;
+            }
+            continue;
+        }
+
+        index += 1;
+    }
+
+    targets
+}
+
+fn extract_shell_path_mentions(command: &str) -> Vec<String> {
+    let mut paths = Vec::new();
+    for token in shell_tokens(command) {
+        if is_shell_command_separator(&token) || is_output_redirection_operator(&token) {
+            continue;
+        }
+        if let Some(target) = attached_output_redirection_target(&token) {
+            push_unique_string(&mut paths, &target);
+            continue;
+        }
+        if let Some(path) = clean_shell_target(&token)
+            && looks_like_path(&path)
+        {
+            push_unique_string(&mut paths, &path);
+        }
+    }
+    paths
+}
+
+fn shell_tokens(command: &str) -> Vec<String> {
+    let mut tokens = Vec::new();
+    let mut token = String::new();
+    let mut chars = command.chars().peekable();
+    let mut quote: Option<char> = None;
+    let mut escaped = false;
+
+    while let Some(ch) = chars.next() {
+        if escaped {
+            token.push(ch);
+            escaped = false;
+            continue;
+        }
+
+        if ch == '\\' && quote != Some('\'') {
+            escaped = true;
+            continue;
+        }
+
+        if let Some(quote_ch) = quote {
+            if ch == quote_ch {
+                quote = None;
+            } else {
+                token.push(ch);
+            }
+            continue;
+        }
+
+        match ch {
+            '\'' | '"' => quote = Some(ch),
+            ch if ch.is_whitespace() => {
+                push_shell_token(&mut tokens, &mut token);
+            }
+            '>' | '<' => {
+                push_shell_token(&mut tokens, &mut token);
+                let mut operator = String::from(ch);
+                while let Some(next) = chars.peek().copied() {
+                    if next == '>' || next == '<' || next == '&' || next == '|' {
+                        operator.push(next);
+                        chars.next();
+                    } else {
+                        break;
+                    }
+                }
+                tokens.push(operator);
+            }
+            '&' | '|' | ';' => {
+                push_shell_token(&mut tokens, &mut token);
+                let mut operator = String::from(ch);
+                if let Some(next) = chars.peek().copied()
+                    && next == ch
+                {
+                    operator.push(next);
+                    chars.next();
+                }
+                tokens.push(operator);
+            }
+            _ => token.push(ch),
+        }
+    }
+
+    push_shell_token(&mut tokens, &mut token);
+    tokens
+}
+
+fn push_shell_token(tokens: &mut Vec<String>, token: &mut String) {
+    if !token.is_empty() {
+        tokens.push(std::mem::take(token));
+    }
+}
+
+fn is_output_redirection_operator(token: &str) -> bool {
+    matches!(token, ">" | ">>" | ">|" | "&>" | "&>>")
+        || token
+            .strip_suffix('>')
+            .or_else(|| token.strip_suffix(">>"))
+            .is_some_and(|prefix| prefix.chars().all(|ch| ch.is_ascii_digit()))
+}
+
+fn attached_output_redirection_target(token: &str) -> Option<String> {
+    let operators = ["&>>", "&>", ">|", ">>", ">"];
+    for operator in operators {
+        if let Some(target) = token.strip_prefix(operator) {
+            return clean_shell_target(target);
+        }
+    }
+
+    let digit_count = token.chars().take_while(|ch| ch.is_ascii_digit()).count();
+    if digit_count == 0 {
+        return None;
+    }
+    let rest = &token[digit_count..];
+    for operator in [">>", ">", ">|"] {
+        if let Some(target) = rest.strip_prefix(operator) {
+            return clean_shell_target(target);
+        }
+    }
+    None
+}
+
+fn clean_shell_target(target: &str) -> Option<String> {
+    let target = target.trim();
+    if target.is_empty()
+        || target == "-"
+        || target == "/dev/null"
+        || target.starts_with('&')
+        || target.starts_with('(')
+    {
+        return None;
+    }
+    Some(expand_home_shell_target(target))
+}
+
+fn expand_home_shell_target(target: &str) -> String {
+    let Some(home) = std::env::var_os("HOME").map(PathBuf::from) else {
+        return target.to_string();
+    };
+    if let Some(rest) = target.strip_prefix("~/") {
+        return home.join(rest).display().to_string();
+    }
+    if let Some(rest) = target.strip_prefix("$HOME/") {
+        return home.join(rest).display().to_string();
+    }
+    if let Some(rest) = target.strip_prefix("${HOME}/") {
+        return home.join(rest).display().to_string();
+    }
+    target.to_string()
+}
+
+fn is_dynamic_shell_target(target: &str) -> bool {
+    target.contains('$') || target.contains('`')
+}
+
+fn is_shell_command_separator(token: &str) -> bool {
+    matches!(token, "|" | "||" | "&&" | ";" | "&")
+}
+
+fn looks_like_path(token: &str) -> bool {
+    token.starts_with('/')
+        || token.starts_with("./")
+        || token.starts_with("../")
+        || token.starts_with("~/")
+        || token.starts_with("$HOME/")
+        || token.starts_with("${HOME}/")
+        || token.contains('/')
+}
+
+fn command_token_name(token: &str) -> &str {
+    Path::new(token)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or(token)
+}
+
 fn normalize_existing_or_parent(path: &Path) -> Result<PathBuf> {
     if path.exists() {
         return path.canonicalize().map_err(Into::into);
@@ -761,6 +1031,166 @@ mod tests {
         let decision = policy.validate_command("/bin/sudo");
 
         assert!(matches!(decision, SecurityDecision::Deny(_)));
+    }
+
+    #[test]
+    fn allows_regular_project_memory_named_file() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let project = tempdir.path().join("project");
+        let data = tempdir.path().join("data");
+        std::fs::create_dir_all(project.join("docs")).expect("project");
+        std::fs::create_dir_all(&data).expect("data");
+        let policy = policy(project.clone(), data);
+
+        let decision = policy.validate_path(project.join("docs/MEMORY.md").as_path(), true);
+
+        assert_eq!(
+            decision,
+            SecurityDecision::NeedsApproval(SecurityRisk::Write)
+        );
+    }
+
+    #[test]
+    fn denies_project_side_agent_memory_direct_access() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let project = tempdir.path().join("project");
+        let data = tempdir.path().join("data");
+        std::fs::create_dir_all(project.join(".agent-memory")).expect("memory");
+        std::fs::create_dir_all(&data).expect("data");
+        let policy = policy(project.clone(), data);
+
+        let decision =
+            policy.validate_path(project.join(".agent-memory/MEMORY.md").as_path(), true);
+
+        assert!(matches!(decision, SecurityDecision::Deny(_)));
+    }
+
+    #[test]
+    fn denies_bash_redirection_to_project_side_agent_memory() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let project = tempdir.path().join("project");
+        let data = tempdir.path().join("data");
+        std::fs::create_dir_all(project.join(".agent-memory")).expect("memory");
+        std::fs::create_dir_all(&data).expect("data");
+        let policy = policy(project, data);
+
+        let decision = policy.validate_command("cat >> .agent-memory/MEMORY.md <<'EOF'\ntext\nEOF");
+
+        assert!(matches!(decision, SecurityDecision::Deny(_)));
+    }
+
+    #[test]
+    fn denies_bash_redirection_to_data_dir_memory() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let project = tempdir.path().join("project");
+        let data = tempdir.path().join("data");
+        std::fs::create_dir_all(&project).expect("project");
+        std::fs::create_dir_all(data.join("memory/projects/abc")).expect("memory");
+        let policy = policy(project, data.clone());
+        let target = data.join("memory/projects/abc/MEMORY.md");
+
+        let decision =
+            policy.validate_command(&format!("cat >> {} <<'EOF'\ntext\nEOF", target.display()));
+
+        assert!(matches!(decision, SecurityDecision::Deny(_)));
+    }
+
+    #[test]
+    fn denies_bash_reference_to_data_dir() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let project = tempdir.path().join("project");
+        let data = tempdir.path().join("data");
+        std::fs::create_dir_all(&project).expect("project");
+        std::fs::create_dir_all(&data).expect("data");
+        let policy = policy(project, data.clone());
+
+        let decision = policy.validate_command(&format!("ls {}", data.display()));
+
+        assert!(matches!(decision, SecurityDecision::Deny(_)));
+    }
+
+    #[test]
+    fn allows_bash_reference_to_data_dir_plugins() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let project = tempdir.path().join("project");
+        let data = tempdir.path().join("data");
+        let plugins = data.join("plugins");
+        std::fs::create_dir_all(&project).expect("project");
+        std::fs::create_dir_all(&plugins).expect("plugins");
+        let policy = policy(project, data);
+
+        let decision = policy.validate_command(&format!("ls {}", plugins.display()));
+
+        assert_eq!(
+            decision,
+            SecurityDecision::NeedsApproval(SecurityRisk::Command)
+        );
+    }
+
+    #[test]
+    fn allows_data_dir_plugins_path() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let project = tempdir.path().join("project");
+        let data = tempdir.path().join("data");
+        let plugins = data.join("plugins");
+        std::fs::create_dir_all(&project).expect("project");
+        std::fs::create_dir_all(&plugins).expect("plugins");
+        let policy = policy(project, data);
+
+        let decision = policy.validate_path(plugins.join("plugin.wasm").as_path(), true);
+
+        assert_eq!(
+            decision,
+            SecurityDecision::NeedsApproval(SecurityRisk::Write)
+        );
+    }
+
+    #[test]
+    fn denies_tee_write_to_data_dir_memory() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let project = tempdir.path().join("project");
+        let data = tempdir.path().join("data");
+        std::fs::create_dir_all(&project).expect("project");
+        std::fs::create_dir_all(data.join("memory/projects/abc")).expect("memory");
+        let policy = policy(project, data.clone());
+        let target = data.join("memory/projects/abc/MEMORY.md");
+
+        let decision =
+            policy.validate_command(&format!("printf text | tee -a {}", target.display()));
+
+        assert!(matches!(decision, SecurityDecision::Deny(_)));
+    }
+
+    #[test]
+    fn denies_bash_redirection_to_unresolved_dynamic_path() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let project = tempdir.path().join("project");
+        let data = tempdir.path().join("data");
+        std::fs::create_dir_all(&project).expect("project");
+        std::fs::create_dir_all(&data).expect("data");
+        let policy = policy(project, data);
+
+        let decision =
+            policy.validate_command("cat >> \"$NAVI_MEMORY_DIR/MEMORY.md\" <<'EOF'\ntext\nEOF");
+
+        assert!(matches!(decision, SecurityDecision::Deny(_)));
+    }
+
+    #[test]
+    fn allows_bash_redirection_to_regular_project_memory_named_file() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let project = tempdir.path().join("project");
+        let data = tempdir.path().join("data");
+        std::fs::create_dir_all(project.join("docs")).expect("project");
+        std::fs::create_dir_all(&data).expect("data");
+        let policy = policy(project, data);
+
+        let decision = policy.validate_command("cat >> docs/MEMORY.md <<'EOF'\ntext\nEOF");
+
+        assert_eq!(
+            decision,
+            SecurityDecision::NeedsApproval(SecurityRisk::Command)
+        );
     }
 
     #[test]

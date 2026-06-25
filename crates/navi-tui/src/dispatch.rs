@@ -13,7 +13,9 @@ use crate::errors::handle_model_error;
 use crate::notifications::{push_diagnostic, show_notification};
 use crate::providers::rebuild_provider;
 use crate::runtime::spawn_runtime_task;
-use crate::state::{ChatMessage, ChatRole, ModalKind, Mode, OAuthUiState, QuestionUiState};
+use crate::state::{
+    ChatMessage, ChatRole, ModalKind, Mode, OAuthUiState, QuestionUiState, SubagentTranscript,
+};
 use crate::stream::start_streaming_request;
 use crate::tools::record_tool_requested;
 
@@ -238,10 +240,19 @@ fn handle_agent_event(app: &mut TuiApp, event: AgentEvent) {
             message.status = Some("thinking".to_string());
         }
         AgentEvent::ToolRequested(invocation) => {
+            if invocation.tool_name == "subagent" {
+                if !app.subagent_order.iter().any(|id| id == &invocation.id) {
+                    app.subagent_order.push(invocation.id.clone());
+                }
+                app.subagent_transcripts
+                    .entry(invocation.id.clone())
+                    .or_insert_with(|| SubagentTranscript::new(subagent_title(&invocation)));
+            }
             record_tool_requested(app, invocation);
         }
         AgentEvent::ToolCompleted(result) => {
             app.running_tools.remove(&result.invocation_id);
+            app.subagent_activity.remove(&result.invocation_id);
             if let Some(invocation) = app.tool_invocations.get(&result.invocation_id).cloned() {
                 // Check if this is a background bash command that's still running
                 let is_background_running = invocation.tool_name == "bash"
@@ -271,6 +282,28 @@ fn handle_agent_event(app: &mut TuiApp, event: AgentEvent) {
             }
             app.events.push(AgentEvent::ToolCompleted(result));
             update_active_assistant_status(app);
+        }
+        AgentEvent::SubagentActivity {
+            invocation_id,
+            message,
+        } => {
+            if app.running_tools.contains_key(&invocation_id) {
+                app.subagent_activity.insert(invocation_id, message);
+            }
+        }
+        AgentEvent::SubagentTranscript {
+            invocation_id,
+            item,
+        } => {
+            app.subagent_transcripts
+                .entry(invocation_id.clone())
+                .or_insert_with(|| SubagentTranscript::new("Subagent".to_string()))
+                .items
+                .push(item);
+            if !app.subagent_order.iter().any(|id| id == &invocation_id) {
+                app.subagent_order.push(invocation_id);
+            }
+            app.chat_render_cache.borrow_mut().signature_hash = 0;
         }
         AgentEvent::ApprovalRequested(request) => {
             let is_guarded = matches!(request.risk, ApprovalRisk::Guarded);
@@ -437,6 +470,22 @@ fn handle_agent_event(app: &mut TuiApp, event: AgentEvent) {
     }
 }
 
+fn subagent_title(invocation: &navi_sdk::ToolInvocation) -> String {
+    invocation
+        .input
+        .get("description")
+        .and_then(|value| value.as_str())
+        .or_else(|| {
+            invocation
+                .input
+                .get("prompt")
+                .and_then(|value| value.as_str())
+        })
+        .map(|text| text.split_whitespace().collect::<Vec<_>>().join(" "))
+        .filter(|text| !text.is_empty())
+        .unwrap_or_else(|| "Subagent".to_string())
+}
+
 fn handle_turn_completed(app: &mut TuiApp, res: std::result::Result<String, String>) {
     let elapsed_ms = app
         .loading_start
@@ -467,6 +516,7 @@ fn handle_turn_completed(app: &mut TuiApp, res: std::result::Result<String, Stri
     app.loading_start = None;
     app.clear_stream_task();
     app.running_tools.clear();
+    app.subagent_activity.clear();
     app.pending_approvals.clear();
     app.pending_questions.clear();
     if app.mode == Mode::Question {

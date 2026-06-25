@@ -35,6 +35,7 @@ pub(crate) enum HitAction {
     ChatMessage(usize),
     ToolResult(String),
     ToolGroup(Vec<String>),
+    Subagent(String),
     MessageAction(usize),
     ScrollTo {
         target: ScrollTarget,

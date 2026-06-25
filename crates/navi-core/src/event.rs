@@ -3,6 +3,29 @@ use crate::tool::{ToolInvocation, ToolResult};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+/// One display item in a transient subagent transcript.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SubagentTranscriptItem {
+    /// Kind of transcript item.
+    pub kind: SubagentTranscriptKind,
+    /// Main one-line item text.
+    pub title: String,
+    /// Optional secondary text, already compacted for UI display.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+    /// Optional success state for completed work.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ok: Option<bool>,
+}
+
+/// Display item kind for a transient subagent transcript.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SubagentTranscriptKind {
+    ToolRequested,
+    ToolCompleted,
+    Text,
+}
+
 /// A versioned runtime event emitted during agent execution.
 ///
 /// Wraps a [`RuntimeEventKind`] with a schema version so consumers can handle
@@ -72,6 +95,20 @@ pub enum RuntimeEventKind {
     ToolStarted(ToolInvocation),
     /// A tool invocation has completed.
     ToolCompleted(ToolResult),
+    /// A nested subagent emitted a transient UI activity update.
+    SubagentActivity {
+        /// Parent subagent tool invocation id.
+        invocation_id: String,
+        /// Human-readable description of the latest nested activity.
+        message: String,
+    },
+    /// A nested subagent emitted a transient transcript item for UI drill-down.
+    SubagentTranscript {
+        /// Parent subagent tool invocation id.
+        invocation_id: String,
+        /// Transcript item to append for the active UI session.
+        item: SubagentTranscriptItem,
+    },
     /// A harness-level diagnostic trace (profile, message count, tool count).
     HarnessTrace(Value),
     /// The harness stopped a turn before another model iteration.
@@ -168,6 +205,20 @@ impl RuntimeEventKind {
                 Some(AgentEvent::QuestionResolved(response))
             }
             RuntimeEventKind::ToolCompleted(result) => Some(AgentEvent::ToolCompleted(result)),
+            RuntimeEventKind::SubagentActivity {
+                invocation_id,
+                message,
+            } => Some(AgentEvent::SubagentActivity {
+                invocation_id,
+                message,
+            }),
+            RuntimeEventKind::SubagentTranscript {
+                invocation_id,
+                item,
+            } => Some(AgentEvent::SubagentTranscript {
+                invocation_id,
+                item,
+            }),
             RuntimeEventKind::HarnessTrace(value) => Some(AgentEvent::HarnessTrace(value)),
             RuntimeEventKind::HarnessStopped {
                 reason,
@@ -243,6 +294,20 @@ pub enum AgentEvent {
     ToolRequested(ToolInvocation),
     /// A tool invocation completed.
     ToolCompleted(ToolResult),
+    /// Transient status for a nested subagent.
+    SubagentActivity {
+        /// Parent subagent tool invocation id.
+        invocation_id: String,
+        /// Human-readable description of the latest nested activity.
+        message: String,
+    },
+    /// Transient drill-down transcript item for a nested subagent.
+    SubagentTranscript {
+        /// Parent subagent tool invocation id.
+        invocation_id: String,
+        /// Transcript item to append for this UI session.
+        item: SubagentTranscriptItem,
+    },
     /// A harness-level diagnostic trace.
     HarnessTrace(Value),
     /// The harness stopped a turn before another model iteration.

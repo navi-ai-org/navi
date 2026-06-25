@@ -7,12 +7,14 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::Text;
 use ratatui::widgets::{Block, Paragraph, Wrap};
 
+use navi_sdk::SubagentTranscriptKind;
+
 use crate::TuiApp;
 use crate::render::markdown::{
     USER_IMAGE_ROW_HEIGHT, USER_IMAGES_PER_ROW, build_chat_render_for_messages,
 };
 use crate::render::text::display_width;
-use crate::state::{ChatLineSource, ChatRole, Mode};
+use crate::state::{ChatLineSource, ChatRole, ChatView, Mode};
 use crate::theme::*;
 use crate::ui::interaction::{HitAction, line_rect};
 
@@ -24,6 +26,11 @@ pub(super) fn render_chat_area(frame: &mut Frame<'_>, app: &mut TuiApp, area: Re
         vertical: 1,
     });
     app.chat_render_cache.borrow_mut().chat_rect = Some(inner);
+
+    if let ChatView::Subagent { invocation_id } = app.chat_view.clone() {
+        render_subagent_chat_area(frame, app, inner, &invocation_id);
+        return;
+    }
 
     if app.messages.is_empty() && !app.is_loading {
         let welcome = welcome_text(app, inner.width as usize, inner.height as usize);
@@ -156,6 +163,7 @@ pub(super) fn render_chat_area(frame: &mut Frame<'_>, app: &mut TuiApp, area: Re
                 ChatLineSource::ToolGroup(ids) if !ids.is_empty() => {
                     Some(HitAction::ToolGroup(ids))
                 }
+                ChatLineSource::Subagent(id) => Some(HitAction::Subagent(id)),
                 _ => None,
             };
             if let Some(action) = action {
@@ -163,6 +171,196 @@ pub(super) fn render_chat_area(frame: &mut Frame<'_>, app: &mut TuiApp, area: Re
             }
         }
     }
+}
+
+fn render_subagent_chat_area(
+    frame: &mut Frame<'_>,
+    app: &mut TuiApp,
+    inner: Rect,
+    invocation_id: &str,
+) {
+    let footer_height = 1;
+    let body_height = inner.height.saturating_sub(footer_height);
+    let body = Rect::new(inner.x, inner.y, inner.width, body_height);
+    let footer = Rect::new(
+        inner.x,
+        inner.y.saturating_add(body_height),
+        inner.width,
+        footer_height,
+    );
+    let lines = build_subagent_lines(app, invocation_id, inner.width as usize);
+    let visible_height = body.height as usize;
+    let max_scroll = lines.len().saturating_sub(visible_height);
+    app.scroll_offset = app.scroll_offset.min(max_scroll);
+    let start = lines
+        .len()
+        .saturating_sub(visible_height)
+        .saturating_sub(app.scroll_offset);
+    let end = (start + visible_height).min(lines.len());
+
+    frame.render_widget(
+        Paragraph::new(Text::from(lines[start..end].to_vec()))
+            .style(Style::default().bg(bg()))
+            .wrap(Wrap { trim: false }),
+        body,
+    );
+    frame.render_widget(
+        Paragraph::new(Line::from(subagent_footer_spans(
+            app,
+            invocation_id,
+            inner.width as usize,
+        )))
+        .style(Style::default().bg(panel())),
+        footer,
+    );
+}
+
+fn build_subagent_lines(app: &TuiApp, invocation_id: &str, width: usize) -> Vec<Line<'static>> {
+    let mut lines = Vec::new();
+    let index = app
+        .subagent_order
+        .iter()
+        .position(|id| id == invocation_id)
+        .map(|idx| idx + 1)
+        .unwrap_or(1);
+    let total = app.subagent_order.len().max(1);
+    let title = app
+        .subagent_transcripts
+        .get(invocation_id)
+        .map(|transcript| transcript.title.as_str())
+        .or_else(|| {
+            app.tool_invocations
+                .get(invocation_id)
+                .and_then(|invocation| {
+                    invocation
+                        .input
+                        .get("description")
+                        .and_then(|value| value.as_str())
+                        .or_else(|| {
+                            invocation
+                                .input
+                                .get("prompt")
+                                .and_then(|value| value.as_str())
+                        })
+                })
+        })
+        .unwrap_or("Subagent");
+
+    lines.push(Line::from(vec![
+        Span::styled(
+            " Subagent ",
+            Style::default().fg(accent()).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            format!("({index} of {total}) "),
+            Style::default().fg(muted()),
+        ),
+        Span::styled(
+            truncate_display(title, width.saturating_sub(20).max(8)),
+            Style::default().fg(text()).add_modifier(Modifier::BOLD),
+        ),
+    ]));
+    lines.push(Line::from(""));
+
+    let Some(transcript) = app.subagent_transcripts.get(invocation_id) else {
+        lines.push(Line::from(Span::styled(
+            "Waiting for subagent events...",
+            Style::default().fg(muted()).add_modifier(Modifier::ITALIC),
+        )));
+        return lines;
+    };
+
+    if transcript.items.is_empty() {
+        lines.push(Line::from(Span::styled(
+            "Waiting for subagent events...",
+            Style::default().fg(muted()).add_modifier(Modifier::ITALIC),
+        )));
+        return lines;
+    }
+
+    for item in &transcript.items {
+        let (marker, color) = match item.kind {
+            SubagentTranscriptKind::ToolRequested => ("→", code_type()),
+            SubagentTranscriptKind::ToolCompleted => {
+                if item.ok == Some(false) {
+                    ("✗", red())
+                } else {
+                    ("✓", code_operator())
+                }
+            }
+            SubagentTranscriptKind::Text => {
+                if item.ok == Some(false) {
+                    ("✗", red())
+                } else {
+                    ("●", accent())
+                }
+            }
+        };
+        lines.push(Line::from(vec![
+            Span::styled(format!("{marker} "), Style::default().fg(color)),
+            Span::styled(
+                truncate_display(&item.title, width.saturating_sub(4).max(8)),
+                Style::default().fg(color).add_modifier(Modifier::BOLD),
+            ),
+        ]));
+        if let Some(detail) = &item.detail
+            && !detail.trim().is_empty()
+        {
+            lines.push(Line::from(vec![
+                Span::styled("  ↳ ", Style::default().fg(ghost())),
+                Span::styled(
+                    truncate_display(detail, width.saturating_sub(5).max(8)),
+                    Style::default().fg(muted()),
+                ),
+            ]));
+        }
+    }
+
+    lines
+}
+
+fn subagent_footer_spans(app: &TuiApp, invocation_id: &str, width: usize) -> Vec<Span<'static>> {
+    let index = app
+        .subagent_order
+        .iter()
+        .position(|id| id == invocation_id)
+        .map(|idx| idx + 1)
+        .unwrap_or(1);
+    let total = app.subagent_order.len().max(1);
+    let left = format!("  Subagent ({index} of {total})");
+    let right = "Parent up   Prev left   Next right";
+    let gap = width.saturating_sub(display_width(&left) + display_width(right));
+    vec![
+        Span::styled(left, Style::default().fg(text()).bg(panel())),
+        Span::styled(" ".repeat(gap), Style::default().fg(muted()).bg(panel())),
+        Span::styled("Parent ", Style::default().fg(text()).bg(panel())),
+        Span::styled("up   ", Style::default().fg(muted()).bg(panel())),
+        Span::styled("Prev ", Style::default().fg(text()).bg(panel())),
+        Span::styled("left   ", Style::default().fg(muted()).bg(panel())),
+        Span::styled("Next ", Style::default().fg(text()).bg(panel())),
+        Span::styled("right", Style::default().fg(muted()).bg(panel())),
+    ]
+}
+
+fn truncate_display(value: &str, max_width: usize) -> String {
+    if display_width(value) <= max_width {
+        return value.to_string();
+    }
+    if max_width <= 1 {
+        return "…".to_string();
+    }
+    let mut out = String::new();
+    let mut used = 0usize;
+    for ch in value.chars() {
+        let next = ch.len_utf8().min(2);
+        if used.saturating_add(next).saturating_add(1) > max_width {
+            break;
+        }
+        used = used.saturating_add(next);
+        out.push(ch);
+    }
+    out.push('…');
+    out
 }
 
 fn render_chat_images(
@@ -273,7 +471,9 @@ fn style_interactive_lines(
         };
         if matches!(
             source,
-            ChatLineSource::ToolResult(_) | ChatLineSource::ToolGroup(_)
+            ChatLineSource::ToolResult(_)
+                | ChatLineSource::ToolGroup(_)
+                | ChatLineSource::Subagent(_)
         ) && !hovered
             && !selected
         {
@@ -311,6 +511,10 @@ fn interactive_state(app: &TuiApp, source: &ChatLineSource) -> Option<(bool, boo
         ChatLineSource::ToolGroup(ids) => {
             !ids.is_empty() && ids.iter().any(|id| app.expanded_tool_results.contains(id))
         }
+        ChatLineSource::Subagent(id) => matches!(
+            &app.chat_view,
+            crate::state::ChatView::Subagent { invocation_id } if invocation_id == id
+        ),
         ChatLineSource::None => return None,
     };
     let hovered = app
@@ -349,6 +553,7 @@ fn chat_sources_match(a: &ChatLineSource, b: &ChatLineSource) -> bool {
         ) => left == right,
         (ChatLineSource::ToolResult(left), ChatLineSource::ToolResult(right)) => left == right,
         (ChatLineSource::ToolGroup(left), ChatLineSource::ToolGroup(right)) => left == right,
+        (ChatLineSource::Subagent(left), ChatLineSource::Subagent(right)) => left == right,
         _ => false,
     }
 }
@@ -454,6 +659,7 @@ fn chat_render_signature(app: &TuiApp) -> u64 {
     let mut hasher = DefaultHasher::new();
     app.full_tool_view.hash(&mut hasher);
     app.show_thinking.hash(&mut hasher);
+    app.chat_view.hash(&mut hasher);
     app.theme_id.config_value().hash(&mut hasher);
     app.compact_tool_visible_limit.hash(&mut hasher);
     if app.is_loading
@@ -464,6 +670,19 @@ fn chat_render_signature(app: &TuiApp) -> u64 {
         app.loading_start
             .map(|start| start.elapsed().as_secs())
             .hash(&mut hasher);
+    }
+    let mut running_tools = app.running_tools.values().collect::<Vec<_>>();
+    running_tools.sort_by(|left, right| left.id.cmp(&right.id));
+    for invocation in running_tools {
+        invocation.id.hash(&mut hasher);
+        invocation.tool_name.hash(&mut hasher);
+        invocation.input.to_string().hash(&mut hasher);
+    }
+    let mut subagent_activity = app.subagent_activity.iter().collect::<Vec<_>>();
+    subagent_activity.sort_by(|left, right| left.0.cmp(right.0));
+    for (invocation_id, message) in subagent_activity {
+        invocation_id.hash(&mut hasher);
+        message.hash(&mut hasher);
     }
     for msg in &app.messages {
         msg.role.hash(&mut hasher);
@@ -518,6 +737,7 @@ fn build_chat_render(
         app.compact_tool_visible_limit,
         &app.expanded_tool_results,
         &app.running_tools,
+        &app.subagent_activity,
         &mut app.chat_render_cache.borrow_mut().tool_render_cache,
         app.loading_start
             .map(|start| start.elapsed().as_millis() as u64),

@@ -368,6 +368,10 @@ pub(crate) fn start_new_session(app: &mut TuiApp) {
     app.pending_approvals.clear();
     app.pending_questions.clear();
     app.running_tools.clear();
+    app.subagent_activity.clear();
+    app.subagent_transcripts.clear();
+    app.subagent_order.clear();
+    app.chat_view = crate::state::ChatView::Parent;
     app.tool_invocations.clear();
     app.background_commands.clear();
     app.message_action_target = None;
@@ -464,6 +468,10 @@ fn apply_prefix(app: &mut TuiApp, prefix: ChatPrefix) {
     app.pending_approvals.clear();
     app.pending_questions.clear();
     app.running_tools.clear();
+    app.subagent_activity.clear();
+    app.subagent_transcripts.clear();
+    app.subagent_order.clear();
+    app.chat_view = crate::state::ChatView::Parent;
     app.expanded_tool_results.clear();
     app.hovered_chat_source = None;
     app.tool_invocations.clear();

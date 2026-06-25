@@ -239,6 +239,7 @@ fn chat_source_for_action(action: &HitAction) -> Option<crate::state::ChatLineSo
         HitAction::ChatMessage(index) => Some(crate::state::ChatLineSource::Message(*index)),
         HitAction::ToolResult(id) => Some(crate::state::ChatLineSource::ToolResult(id.clone())),
         HitAction::ToolGroup(ids) => Some(crate::state::ChatLineSource::ToolGroup(ids.clone())),
+        HitAction::Subagent(id) => Some(crate::state::ChatLineSource::Subagent(id.clone())),
         _ => None,
     }
 }
@@ -428,6 +429,9 @@ fn dispatch_hit(app: &mut TuiApp, hit: HitRegion) {
                 }
             }
             app.chat_render_cache.borrow_mut().signature_hash = 0;
+        }
+        HitAction::Subagent(id) => {
+            app.open_subagent_view(id);
         }
         HitAction::MessageAction(index) => {
             run_message_action(app, index);
