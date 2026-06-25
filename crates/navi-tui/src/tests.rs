@@ -36,7 +36,7 @@ use crate::view::build_chat_lines;
 use crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use navi_sdk::{
     AgentEvent, LoadedConfig, ModelMessage, ModelOption, SessionId, SessionSnapshot,
-    ToolInvocation, ToolResult,
+    SubagentTranscriptItem, SubagentTranscriptKind, ToolInvocation, ToolResult,
 };
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
@@ -1932,6 +1932,176 @@ fn full_tool_render_generates_sanitized_metadata_view() {
     assert!(!text.contains("Input"));
     assert!(!text.contains("Output"));
     assert!(!text.contains("```json"));
+}
+
+#[test]
+fn running_subagent_renders_active_task_block() {
+    let mut app = test_app("");
+    record_tool_requested(
+        &mut app,
+        ToolInvocation {
+            id: "subagent-1".to_string(),
+            tool_name: "subagent".to_string(),
+            input: serde_json::json!({
+                "description": "Analyze repository structure",
+                "prompt": "Read justfile and summarize the main crates",
+                "profile": "repo_search",
+            }),
+        },
+    );
+
+    let text = build_chat_lines(&mut app, 80)
+        .iter()
+        .map(line_text)
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    assert!(text.contains("Subagent Task"));
+    assert!(text.contains("Analyze repository structure"));
+    assert!(text.contains("Read justfile and summarize the main crates"));
+}
+
+#[test]
+fn subagent_activity_replaces_single_status_without_context_leak() {
+    let mut app = test_app("");
+    record_tool_requested(
+        &mut app,
+        ToolInvocation {
+            id: "subagent-1".to_string(),
+            tool_name: "subagent".to_string(),
+            input: serde_json::json!({
+                "description": "Analyze repository structure",
+                "prompt": "Inspect project files",
+            }),
+        },
+    );
+    let history_len = app.conversation_history.len();
+    let event_len = app.events.len();
+
+    handle_async_event(
+        &mut app,
+        AsyncEvent::Agent(AgentEvent::SubagentActivity {
+            invocation_id: "subagent-1".to_string(),
+            message: "Read justfile".to_string(),
+        }),
+    );
+    handle_async_event(
+        &mut app,
+        AsyncEvent::Agent(AgentEvent::SubagentActivity {
+            invocation_id: "subagent-1".to_string(),
+            message: "Search \"SubagentTool\"".to_string(),
+        }),
+    );
+
+    let text = build_chat_lines(&mut app, 80)
+        .iter()
+        .map(line_text)
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    assert!(text.contains("Subagent Task"));
+    assert!(text.contains("Search \"SubagentTool\""));
+    assert!(!text.contains("Read justfile"));
+    assert_eq!(app.conversation_history.len(), history_len);
+    assert_eq!(app.events.len(), event_len);
+}
+
+#[test]
+fn subagent_view_renders_transcript_and_footer() {
+    let mut app = test_app("");
+    handle_async_event(
+        &mut app,
+        AsyncEvent::Agent(AgentEvent::ToolRequested(ToolInvocation {
+            id: "subagent-1".to_string(),
+            tool_name: "subagent".to_string(),
+            input: serde_json::json!({
+                "description": "Analyze repository structure",
+                "prompt": "Inspect project files",
+            }),
+        })),
+    );
+    handle_async_event(
+        &mut app,
+        AsyncEvent::Agent(AgentEvent::SubagentTranscript {
+            invocation_id: "subagent-1".to_string(),
+            item: SubagentTranscriptItem {
+                kind: SubagentTranscriptKind::ToolRequested,
+                title: "Read justfile".to_string(),
+                detail: None,
+                ok: None,
+            },
+        }),
+    );
+    handle_async_event(
+        &mut app,
+        AsyncEvent::Agent(AgentEvent::SubagentTranscript {
+            invocation_id: "subagent-1".to_string(),
+            item: SubagentTranscriptItem {
+                kind: SubagentTranscriptKind::Text,
+                title: "Final response".to_string(),
+                detail: Some("Repository summary ready".to_string()),
+                ok: Some(true),
+            },
+        }),
+    );
+    app.open_subagent_view("subagent-1");
+
+    let backend = TestBackend::new(96, 24);
+    let mut terminal = Terminal::new(backend).expect("terminal");
+    terminal
+        .draw(|frame| crate::view::render(frame, &mut app))
+        .expect("draw");
+    let text = terminal_buffer_text(&terminal);
+
+    assert!(text.contains("Analyze repository structure"));
+    assert!(text.contains("Read justfile"));
+    assert!(text.contains("Final response"));
+    assert!(text.contains("Parent up"));
+    assert!(text.contains("Prev left"));
+    assert!(text.contains("Next right"));
+}
+
+#[test]
+fn subagent_view_keyboard_navigation_and_context_isolation() {
+    let mut app = test_app("");
+    for id in ["subagent-1", "subagent-2"] {
+        handle_async_event(
+            &mut app,
+            AsyncEvent::Agent(AgentEvent::ToolRequested(ToolInvocation {
+                id: id.to_string(),
+                tool_name: "subagent".to_string(),
+                input: serde_json::json!({
+                    "description": format!("Task {id}"),
+                    "prompt": "Inspect project files",
+                }),
+            })),
+        );
+    }
+    let history_len = app.conversation_history.len();
+    let event_len = app.events.len();
+
+    app.open_subagent_view("subagent-1");
+    assert!(matches!(
+        app.chat_view,
+        crate::state::ChatView::Subagent { ref invocation_id } if invocation_id == "subagent-1"
+    ));
+
+    handle_normal_key(&mut app, KeyCode::Right, KeyModifiers::NONE);
+    assert!(matches!(
+        app.chat_view,
+        crate::state::ChatView::Subagent { ref invocation_id } if invocation_id == "subagent-2"
+    ));
+
+    handle_normal_key(&mut app, KeyCode::Left, KeyModifiers::NONE);
+    assert!(matches!(
+        app.chat_view,
+        crate::state::ChatView::Subagent { ref invocation_id } if invocation_id == "subagent-1"
+    ));
+
+    handle_normal_key(&mut app, KeyCode::Up, KeyModifiers::NONE);
+    assert!(matches!(app.chat_view, crate::state::ChatView::Parent));
+    assert_eq!(app.conversation_history.len(), history_len);
+    assert_eq!(app.events.len(), event_len);
 }
 
 #[test]

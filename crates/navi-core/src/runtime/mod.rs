@@ -686,10 +686,16 @@ impl AgentRuntime {
         if let Some(tx) = &self.event_tx {
             let _ = tx.send(event.clone());
         }
+        let transient = matches!(
+            event,
+            AgentEvent::SubagentActivity { .. } | AgentEvent::SubagentTranscript { .. }
+        );
         if let Some(kind) = runtime_event_kind_from_agent_event(&event) {
             self.event_bus.publish(kind);
         }
-        self.session.push_event(event);
+        if !transient {
+            self.session.push_event(event);
+        }
     }
 
     fn update_shared_model_state(&self) {
@@ -741,6 +747,20 @@ fn runtime_event_kind_from_agent_event(event: &AgentEvent) -> Option<RuntimeEven
             Some(RuntimeEventKind::ToolRequested(invocation.clone()))
         }
         AgentEvent::ToolCompleted(result) => Some(RuntimeEventKind::ToolCompleted(result.clone())),
+        AgentEvent::SubagentActivity {
+            invocation_id,
+            message,
+        } => Some(RuntimeEventKind::SubagentActivity {
+            invocation_id: invocation_id.clone(),
+            message: message.clone(),
+        }),
+        AgentEvent::SubagentTranscript {
+            invocation_id,
+            item,
+        } => Some(RuntimeEventKind::SubagentTranscript {
+            invocation_id: invocation_id.clone(),
+            item: item.clone(),
+        }),
         AgentEvent::ApprovalRequested(request) => {
             Some(RuntimeEventKind::ApprovalRequired(request.clone()))
         }

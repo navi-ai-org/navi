@@ -1,3 +1,4 @@
+use crate::event::AgentEvent;
 use crate::file_lock::FileLockManager;
 use crate::security::{SecurityDecision, SecurityPolicy};
 use anyhow::Result;
@@ -7,6 +8,7 @@ use serde_json::{Map, Value, json};
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
+use tokio::sync::mpsc;
 
 pub mod background;
 pub(crate) mod builtin;
@@ -28,6 +30,19 @@ pub use builtin::{ProviderBuilderFn, RepoExploreTool, SubagentTool};
 pub trait Tool: Send + Sync {
     fn definition(&self) -> ToolDefinition;
     async fn invoke(&self, invocation: ToolInvocation) -> Result<ToolResult>;
+    async fn invoke_with_context(
+        &self,
+        invocation: ToolInvocation,
+        context: ToolInvocationContext,
+    ) -> Result<ToolResult> {
+        let _ = context;
+        self.invoke(invocation).await
+    }
+}
+
+#[derive(Clone, Default)]
+pub struct ToolInvocationContext {
+    pub event_tx: Option<mpsc::UnboundedSender<AgentEvent>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -303,6 +318,14 @@ impl ToolExecutor {
     }
 
     pub async fn invoke(&self, invocation: ToolInvocation) -> ToolResult {
+        self.invoke_with_event_tx(invocation, None).await
+    }
+
+    pub async fn invoke_with_event_tx(
+        &self,
+        invocation: ToolInvocation,
+        event_tx: Option<mpsc::UnboundedSender<AgentEvent>>,
+    ) -> ToolResult {
         let inv_id = invocation.id.clone();
         let tool_name = invocation.tool_name.clone();
         let started = std::time::Instant::now();
@@ -327,7 +350,10 @@ impl ToolExecutor {
                 output: json!({"error": format!("unknown `{}`", invocation.tool_name)}),
             };
         };
-        let result = match tool.invoke(invocation).await {
+        let result = match tool
+            .invoke_with_context(invocation, ToolInvocationContext { event_tx })
+            .await
+        {
             Ok(r) => truncate_tool_result(r),
             Err(e) => ToolResult {
                 invocation_id: inv_id,

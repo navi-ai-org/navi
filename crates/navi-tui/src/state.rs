@@ -1,7 +1,9 @@
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
-use navi_sdk::{QuestionRequest, ThinkingConfig, ToolInvocation, ToolResult};
+use navi_sdk::{
+    QuestionRequest, SubagentTranscriptItem, ThinkingConfig, ToolInvocation, ToolResult,
+};
 use ratatui::layout::Rect;
 use ratatui::text::Line;
 
@@ -152,6 +154,30 @@ pub(crate) struct ChatRenderCache {
     pub tool_render_cache: HashMap<String, Vec<Line<'static>>>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
+pub(crate) enum ChatView {
+    #[default]
+    Parent,
+    Subagent {
+        invocation_id: String,
+    },
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct SubagentTranscript {
+    pub(crate) title: String,
+    pub(crate) items: Vec<SubagentTranscriptItem>,
+}
+
+impl SubagentTranscript {
+    pub(crate) fn new(title: String) -> Self {
+        Self {
+            title,
+            items: Vec::new(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub(crate) enum ChatLineSource {
     #[default]
@@ -164,6 +190,7 @@ pub(crate) enum ChatLineSource {
     },
     ToolResult(String),
     ToolGroup(Vec<String>),
+    Subagent(String),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
