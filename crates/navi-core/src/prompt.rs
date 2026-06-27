@@ -212,6 +212,7 @@ mod tests {
                 description: "read".to_string(),
                 kind: ToolKind::Read,
                 input_schema: json!({"type":"object"}),
+                ..Default::default()
             }],
             include_tool_prompt_manifest: true,
             context_packets: Vec::new(),

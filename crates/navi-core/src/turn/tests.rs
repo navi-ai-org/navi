@@ -17,6 +17,7 @@ impl Tool for MockTool {
             description: "mock tool".to_string(),
             kind: ToolKind::Custom,
             input_schema: json!({}),
+            metadata: Default::default(),
         }
     }
     async fn invoke(&self, invocation: ToolInvocation) -> Result<ToolResult> {
@@ -79,7 +80,7 @@ impl ModelProvider for MalformedToolProvider {
         Box::pin(stream::iter(vec![
             Ok(ModelStreamEvent::ToolCall(ToolInvocation {
                 id: format!("call-{}", *calls),
-                tool_name: "read_file".to_string(),
+                tool_name: "read".to_string(),
                 input: json!({ "raw_arguments": "{\"path\": " }),
             })),
             Ok(ModelStreamEvent::Done),
@@ -102,6 +103,20 @@ impl ModelProvider for CapturingProvider {
         Box::pin(stream::iter(vec![
             Ok(ModelStreamEvent::TextDelta {
                 text: "captured".to_string(),
+            }),
+            Ok(ModelStreamEvent::Done),
+        ]))
+    }
+}
+
+struct DegenerateOutputProvider;
+
+#[async_trait]
+impl ModelProvider for DegenerateOutputProvider {
+    fn stream(&self, _request: ModelRequest) -> ModelStream {
+        Box::pin(stream::iter(vec![
+            Ok(ModelStreamEvent::TextDelta {
+                text: "a".repeat(80),
             }),
             Ok(ModelStreamEvent::Done),
         ]))
@@ -143,6 +158,7 @@ async fn test_turn_loop_with_parallel_tools() {
         compaction_provider: None,
         compaction_model_name: None,
         session_id: "test-session".to_string(),
+        allowed_tool_names: None,
     };
 
     let mut messages = vec![];
@@ -161,6 +177,28 @@ async fn test_turn_loop_with_parallel_tools() {
         .filter(|m| m.role == ModelRole::Tool)
         .collect();
     assert_eq!(tool_results.len(), 2);
+}
+
+#[tokio::test]
+async fn degenerate_streaming_output_stops_the_turn() {
+    let tempdir = tempfile::tempdir().unwrap();
+    let mut ctx = build_test_ctx(tempdir.path().to_path_buf());
+    ctx.model_provider = Arc::new(std::sync::RwLock::new(Arc::new(DegenerateOutputProvider)));
+    let mut messages = vec![ModelMessage::user("repeat")];
+    let policy = crate::harness::policy_for_profile(
+        &crate::config::HarnessConfig::default(),
+        crate::config::HarnessProfile::Small,
+    );
+
+    let result = run_turn(&ctx, &mut messages, policy).await.unwrap();
+
+    assert!(result.contains("degenerate_model_output"));
+    assert!(
+        messages
+            .iter()
+            .any(|message| message.role == ModelRole::Assistant
+                && message.content.contains("degenerate_model_output"))
+    );
 }
 
 #[tokio::test]
@@ -277,6 +315,7 @@ async fn malformed_tool_arguments_stop_the_turn() {
         compaction_provider: None,
         compaction_model_name: None,
         session_id: "test-session".to_string(),
+        allowed_tool_names: None,
     };
     let policy = crate::harness::policy_for_profile(
         &crate::config::HarnessConfig {
@@ -367,6 +406,7 @@ fn build_test_ctx(project_dir: PathBuf) -> TurnContext {
         compaction_provider: None,
         compaction_model_name: None,
         session_id: "test-session".to_string(),
+        allowed_tool_names: None,
     }
 }
 

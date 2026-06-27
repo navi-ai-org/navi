@@ -1,45 +1,54 @@
 mod bash;
-mod code;
-mod fs_browser;
+mod code_edit_tool;
+mod code_tool;
+mod extra_tools;
 mod git_ops;
-mod grep;
 mod helpers;
 mod long_running;
 mod memory;
+mod metadata;
 mod package_manager;
-mod patch;
 mod plan;
+mod process;
 mod question;
-mod read;
+mod read_tool;
 mod repo_explore;
 mod runtime_info;
+mod sandbox_tool;
+mod search_tool;
 mod subagent;
 mod top_files;
+mod verifier_tool;
 mod wait;
 mod workflow;
-mod write;
+mod write_tool;
 
 pub(super) use memory::{AppendNoteTool, HistoryOpsTool};
 
-pub(super) use bash::BashTool;
-pub(super) use code::{
-    CodeDiagnosticsTool, FindReferencesTool, FindSymbolTool, InsertAfterSymbolTool,
-    InsertBeforeSymbolTool, RenameSymbolTool, ReplaceSymbolBodyTool, SymbolsOverviewTool,
+pub(super) use extra_tools::{
+    ContextRemainingTool, CurrentTimeTool, NewContextWindowTool, RequestUserInputTool, SleepTool,
+    ToolSearchTool, ViewImageTool,
 };
-pub(super) use fs_browser::FsBrowserTool;
+
+pub(super) use bash::BashTool;
+pub(super) use code_edit_tool::CodeEditTool;
+pub(super) use code_tool::CodeReadTool;
 pub(super) use git_ops::GitOpsTool;
-pub(super) use grep::GrepTool;
 pub(super) use helpers::truncate_tool_result;
 pub(super) use long_running::{InitSessionTool, MarkFeatureDoneTool};
+pub(super) use metadata::builtin_metadata;
 pub(super) use package_manager::PackageManagerTool;
-pub(super) use patch::ApplyPatchTool;
 pub(super) use plan::PlanTool;
+pub(super) use process::ProcessTool;
 pub(super) use question::QuestionTool;
-pub(super) use read::ReadFileTool;
+pub(super) use read_tool::ReadTool;
 pub use repo_explore::RepoExploreTool;
 pub(super) use runtime_info::RuntimeInfoTool;
-pub use subagent::{ProviderBuilderFn, SubagentTool};
+pub(super) use sandbox_tool::SandboxTool;
+pub(super) use search_tool::SearchTool;
+pub use subagent::{AgentProfile, ApprovalMode, ProviderBuilderFn, SubagentTool};
 pub(super) use top_files::TopFilesTool;
+pub(super) use verifier_tool::VerifierTool;
 pub(super) use wait::WaitTool;
 pub(super) use workflow::ToolWorkflowTool;
-pub(super) use write::WriteFileTool;
+pub(super) use write_tool::WriteTool;

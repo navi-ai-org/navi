@@ -174,7 +174,11 @@ impl NaviEngine {
             })?;
             executor.register_tool(tool.clone());
         }
-        let mcp = load_configured_mcp_servers(&loaded_config.config.mcp).await;
+        let mcp = load_configured_mcp_servers(
+            &loaded_config.config.mcp,
+            &loaded_config.config.security.allowed_mcp_servers,
+        )
+        .await;
         for tool in &mcp.tools {
             let executor = Arc::get_mut(&mut tool_executor.tool_executor).ok_or_else(|| {
                 NaviError::Config("cannot register MCP tool after tool executor is shared".into())

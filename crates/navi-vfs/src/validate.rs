@@ -14,7 +14,7 @@ pub fn validate_minified(minified: &str, _original: &str, lang: LangId) -> Resul
 
     // Re-parse with tree-sitter and check for ERROR nodes.
     let mut parser = tree_sitter::Parser::new();
-    parser.set_language(&lang.tree_sitter_language())?;
+    parser.set_language(&lang.tree_sitter_language()?)?;
     let tree = parser
         .parse(minified, None)
         .ok_or_else(|| anyhow::anyhow!("re-parse returned None"))?;

@@ -1,6 +1,6 @@
 use std::path::Path;
 
-/// Supported languages for VFS minification.
+/// Supported languages for VFS operations.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum LangId {
     // Tier 1
@@ -46,26 +46,39 @@ impl LangId {
         }
     }
 
-    /// Returns the tree-sitter Language for this language.
-    pub fn tree_sitter_language(self) -> tree_sitter::Language {
+    /// Name of the compiled `.so` library (without `lib` prefix / extension).
+    pub(crate) fn so_name(self) -> &'static str {
         match self {
-            Self::Rust => tree_sitter_rust::LANGUAGE.into(),
-            Self::Go => tree_sitter_go::LANGUAGE.into(),
-            Self::C => tree_sitter_c::LANGUAGE.into(),
-            Self::Cpp => tree_sitter_cpp::LANGUAGE.into(),
-            Self::JavaScript => tree_sitter_javascript::LANGUAGE.into(),
-            Self::TypeScript => tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
-            Self::Tsx => tree_sitter_typescript::LANGUAGE_TSX.into(),
-            Self::Python => tree_sitter_python::LANGUAGE.into(),
-            Self::Java => tree_sitter_java::LANGUAGE.into(),
-            Self::Ruby => tree_sitter_ruby::LANGUAGE.into(),
-            Self::Php => tree_sitter_php::LANGUAGE_PHP.into(),
-            Self::Bash => tree_sitter_bash::LANGUAGE.into(),
-            Self::Html => tree_sitter_html::LANGUAGE.into(),
-            Self::Css => tree_sitter_css::LANGUAGE.into(),
-            Self::Json => tree_sitter_json::LANGUAGE.into(),
-            Self::CSharp => tree_sitter_c_sharp::LANGUAGE.into(),
+            Self::Rust => "tree_sitter_rust",
+            Self::Go => "tree_sitter_go",
+            Self::C => "tree_sitter_c",
+            Self::Cpp => "tree_sitter_cpp",
+            Self::JavaScript => "tree_sitter_javascript",
+            Self::TypeScript => "tree_sitter_typescript",
+            Self::Tsx => "tree_sitter_tsx",
+            Self::Python => "tree_sitter_python",
+            Self::Java => "tree_sitter_java",
+            Self::Ruby => "tree_sitter_ruby",
+            Self::Php => "tree_sitter_php",
+            Self::Bash => "tree_sitter_bash",
+            Self::Html => "tree_sitter_html",
+            Self::Css => "tree_sitter_css",
+            Self::Json => "tree_sitter_json",
+            Self::CSharp => "tree_sitter_c_sharp",
         }
+    }
+
+    /// Exported C symbol name inside the `.so`.
+    pub(crate) fn symbol_name(self) -> &'static str {
+        // For regular grammars the symbol matches the so_name.
+        self.so_name()
+    }
+
+    /// Load and return the tree-sitter `Language` for this language.
+    ///
+    /// The grammar shared library is loaded on first access and cached.
+    pub fn tree_sitter_language(self) -> anyhow::Result<tree_sitter::Language> {
+        crate::dynamic::load_language(self)
     }
 
     /// All supported languages.
@@ -109,7 +122,7 @@ impl LangId {
             "bash" | "sh" | "shell" | "zsh" => Some(Self::Bash),
             "html" | "htm" => Some(Self::Html),
             "css" | "scss" => Some(Self::Css),
-            "json" => Some(Self::Json),
+            "json" | "jsonc" => Some(Self::Json),
             "csharp" | "c#" | "cs" => Some(Self::CSharp),
             _ => None,
         }

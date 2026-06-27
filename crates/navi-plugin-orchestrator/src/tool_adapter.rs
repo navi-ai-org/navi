@@ -78,6 +78,7 @@ impl WasmPluginTool {
             description,
             kind,
             input_schema,
+            ..Default::default()
         };
 
         // Create brokers from capabilities

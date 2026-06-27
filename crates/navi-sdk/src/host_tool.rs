@@ -89,6 +89,7 @@ impl Tool for SdkHostTool {
             description: self.definition.description.clone(),
             kind: self.definition.kind,
             input_schema: self.definition.input_schema.clone(),
+            ..Default::default()
         }
     }
 

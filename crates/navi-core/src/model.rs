@@ -430,13 +430,19 @@ impl TaskComplexity {
         }
 
         // Check recent tool calls for complexity signals.
-        let has_write_tools = tool_names
-            .iter()
-            .any(|t| matches!(t.as_str(), "write_file" | "apply_patch"));
+        let has_write_tools = tool_names.iter().any(|t| {
+            matches!(
+                t.as_str(),
+                "write_file" | "apply_patch" | "write" | "code_edit"
+            )
+        });
         let has_complex_tools = tool_names.iter().any(|t| matches!(t.as_str(), "bash"));
-        let has_read_only = tool_names
-            .iter()
-            .any(|t| matches!(t.as_str(), "read_file" | "grep" | "fs_browser" | "git_ops"));
+        let has_read_only = tool_names.iter().any(|t| {
+            matches!(
+                t.as_str(),
+                "read_file" | "grep" | "fs_browser" | "git_ops" | "read" | "search" | "code"
+            )
+        });
 
         if has_write_tools {
             score += 2;
