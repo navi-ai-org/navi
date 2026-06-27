@@ -66,6 +66,7 @@ impl Default for SecurityConfig {
             allow_external_plugins: false,
             blocked_commands: default_blocked_commands(),
             deny_paths: Vec::new(),
+            allowed_mcp_servers: Vec::new(),
         }
     }
 }

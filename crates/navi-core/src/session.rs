@@ -828,6 +828,7 @@ mod tests {
             compaction_provider: None,
             compaction_model_name: None,
             session_id: "test-session".to_string(),
+            allowed_tool_names: None,
         });
 
         let policy = crate::harness::policy_for_profile(

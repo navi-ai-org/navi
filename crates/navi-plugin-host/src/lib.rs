@@ -68,6 +68,7 @@ fn plugin_def_to_core(def: PluginToolDefinition) -> ToolDefinition {
             PluginToolKind::Custom => ToolKind::Custom,
         },
         input_schema: def.input_schema,
+        ..Default::default()
     }
 }
 

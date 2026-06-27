@@ -664,6 +664,19 @@ pub(super) fn built_in_providers() -> Vec<ProviderConfig> {
             ..Default::default()
         },
         ProviderConfig {
+            id: "claudinio".to_string(),
+            label: "Claudin.io".to_string(),
+            description: "Flat monthly, unlimited usage".to_string(),
+            kind: ProviderKind::OpenAiChatCompletions,
+            api_key_env: "CLAUDINIO_API_KEY".to_string(),
+            base_url: Some("https://api.claudin.io/v1".to_string()),
+            models: vec![
+                model_ctx("claudinio", ModelTaskSize::Large, 256_000),
+                model_ctx("claudius", ModelTaskSize::Large, 256_000),
+            ],
+            ..Default::default()
+        },
+        ProviderConfig {
             id: "commandcode".to_string(),
             label: "Command Code".to_string(),
             description: "Command Code CLI API (alpha/generate)".to_string(),

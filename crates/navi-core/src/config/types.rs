@@ -114,14 +114,17 @@ pub struct HarnessConfig {
     pub observation_bytes_small: usize,
     /// Max observation bytes for the `medium` profile.
     pub observation_bytes_medium: usize,
-    /// Max model/tool loop iterations for the `small` profile.
+    /// Legacy max model/tool loop iterations for the `small` profile.
+    /// Retained for config compatibility; hard turn-loop caps are not enforced.
     pub max_turn_loops_small: usize,
-    /// Max model/tool loop iterations for the `medium` profile.
+    /// Legacy max model/tool loop iterations for the `medium` profile.
+    /// Retained for config compatibility; hard turn-loop caps are not enforced.
     pub max_turn_loops_medium: usize,
-    /// Max model/tool loop iterations for the `long-running` profile.
+    /// Legacy max model/tool loop iterations for the `long-running` profile.
+    /// Retained for config compatibility; hard turn-loop caps are not enforced.
     pub max_turn_loops_long_running: usize,
-    /// Optional global override for max turn loop iterations. When set, overrides
-    /// the per-profile limit for all profiles. `None` (default) means unlimited.
+    /// Legacy global override for max turn loop iterations.
+    /// Retained for config compatibility; hard turn-loop caps are not enforced.
     pub turn_loop_limit: Option<usize>,
     /// Max total tool calls in one turn for the `small` profile.
     pub max_tool_calls_small: usize,
@@ -214,6 +217,21 @@ pub struct SecurityConfig {
     /// directory prefixes. Lines referencing denied paths in grep/fs_browser
     /// output are filtered before entering context.
     pub deny_paths: Vec<String>,
+    /// MCP server allowlist. When non-empty, only MCP servers whose `id`
+    /// appears in this list may be loaded. Empty means all servers are allowed.
+    #[serde(default)]
+    pub allowed_mcp_servers: Vec<String>,
+}
+
+impl SecurityConfig {
+    /// Returns `true` if the given MCP server id is allowed by the allowlist.
+    /// An empty allowlist means all servers are allowed.
+    pub fn is_mcp_server_allowed(&self, server_id: &str) -> bool {
+        if self.allowed_mcp_servers.is_empty() {
+            return true;
+        }
+        self.allowed_mcp_servers.iter().any(|id| id == server_id)
+    }
 }
 
 /// Structured logging configuration.

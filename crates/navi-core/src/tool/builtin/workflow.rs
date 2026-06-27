@@ -36,22 +36,22 @@ def read_file(path, start_line = None, end_line = None):
         input["start_line"] = start_line
     if end_line != None:
         input["end_line"] = end_line
-    return tool("read_file", input)
+    return tool("read", input)
 
 def grep(pattern, path = ".", max_results = None):
     input = {"pattern": pattern, "path": path}
     if max_results != None:
         input["max_results"] = max_results
-    return tool("grep", input)
+    return tool("search", input)
 
 def find(path = ".", pattern = None, hidden = False):
     input = {"action": "find", "path": path, "hidden": hidden}
     if pattern != None:
         input["pattern"] = pattern
-    return tool("fs_browser", input)
+    return tool("search", input)
 
 def stat(path):
-    return tool("fs_browser", {"action": "stat", "path": path})
+    return tool("search", {"action": "stat", "path": path})
 "#;
 
 pub(crate) struct ToolWorkflowTool {
@@ -69,7 +69,7 @@ impl Tool for ToolWorkflowTool {
     fn definition(&self) -> ToolDefinition {
         helpers::definition(
             "tool_workflow",
-            "Run a sandboxed Starlark workflow for batching read-only tool calls. Allowed nested tools: read_file, grep, fs_browser, git_ops read-only commands, symbols_overview, find_symbol, find_references, code_diagnostics.",
+            "Run a sandboxed Starlark workflow for batching read-only tool calls. Allowed nested tools: read, search, git_ops read-only commands, symbols_overview, find_symbol, find_references, code_diagnostics.",
             ToolKind::Read,
             json!({
                 "type": "object",
@@ -193,7 +193,9 @@ impl WorkflowContext {
             emits: RefCell::new(Vec::new()),
             allowed_tools: BTreeSet::from([
                 "read_file",
+                "read",
                 "grep",
+                "search",
                 "fs_browser",
                 "git_ops",
                 "symbols_overview",
@@ -207,7 +209,7 @@ impl WorkflowContext {
     fn call_tool(&self, name: &str, input: JsonValue) -> Result<JsonValue> {
         if !self.allowed_tools.contains(name) {
             bail!(
-                "tool_workflow only allows read_file, grep, fs_browser, read-only git_ops, symbols_overview, find_symbol, find_references, and code_diagnostics; got `{name}`"
+                "tool_workflow only allows read_file, read, grep, search, fs_browser, read-only git_ops, symbols_overview, find_symbol, find_references, and code_diagnostics; got `{name}`"
             );
         }
         if name == "git_ops" {

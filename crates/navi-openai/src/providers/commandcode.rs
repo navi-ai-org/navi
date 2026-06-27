@@ -1227,6 +1227,7 @@ mod tests {
                     },
                     "required": ["path"]
                 }),
+                ..Default::default()
             }],
         };
 

@@ -1,4 +1,5 @@
 pub mod code;
+pub(crate) mod dynamic;
 pub mod format;
 pub mod lang;
 pub mod minify;

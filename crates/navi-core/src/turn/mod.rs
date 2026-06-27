@@ -27,6 +27,7 @@ struct ModelTurnOutput {
     text: String,
     thinking: String,
     tool_calls: Vec<crate::tool::ToolInvocation>,
+    harness_stop: Option<HarnessStop>,
 }
 
 type ToolExecutionResult = (crate::tool::ToolInvocation, crate::tool::ToolResult, String);
@@ -59,6 +60,11 @@ pub struct TurnContext {
     /// Model name for the compaction provider.
     pub compaction_model_name: Option<String>,
     pub session_id: String,
+    /// Optional set of tool names the subagent is allowed to call.
+    /// When set, tool calls outside this set are denied and definitions
+    /// outside this set are hidden from the model.
+    /// `None` means all registered tools are permitted.
+    pub allowed_tool_names: Option<Vec<String>>,
 }
 
 impl TurnContext {
@@ -107,23 +113,7 @@ pub async fn run_turn(
     ensure_system_prompt(ctx, messages).await;
 
     let mut run_state = AgentRunState::default();
-    let mut loop_count = 0;
     let final_text = loop {
-        loop_count += 1;
-        if let Some(limit) = policy.max_turn_loops {
-            if loop_count > limit {
-                let stop = HarnessStop {
-                    reason: HarnessStopReason::TurnLoopLimit,
-                    message: format!(
-                        "Loop execution limit reached ({} iterations); stopping to avoid an uncontrolled turn",
-                        limit
-                    ),
-                    tool_name: None,
-                };
-                let text = finalize_harness_stop(ctx, messages, stop);
-                break text;
-            }
-        }
         ensure_not_cancelled(ctx)?;
         maintain_context_budget(ctx, messages).await;
         ensure_not_cancelled(ctx)?;
@@ -133,6 +123,11 @@ pub async fn run_turn(
 
         let output = collect_model_output(ctx, request).await?;
         ensure_not_cancelled(ctx)?;
+
+        if let Some(stop) = output.harness_stop.clone() {
+            let text = finalize_harness_stop(ctx, messages, stop);
+            break text;
+        }
 
         if !output.tool_calls.is_empty() {
             if let Some(text) =
@@ -175,7 +170,10 @@ async fn ensure_system_prompt(ctx: &TurnContext, messages: &mut Vec<ModelMessage
         config: ctx.active_config(),
         project_dir: ctx.project_dir.clone(),
         memory_injection,
-        tools: ctx.tool_executor.definitions(),
+        tools: filter_allowed_tools(
+            ctx.tool_executor.definitions(),
+            ctx.allowed_tool_names.as_ref(),
+        ),
         include_tool_prompt_manifest: ctx.include_tool_prompt_manifest,
         context_packets,
         active_skills,
@@ -281,7 +279,10 @@ fn build_model_request(ctx: &TurnContext, messages: &[ModelMessage]) -> ModelReq
         messages: messages.to_vec(),
         thinking,
         tools: match crate::config::effective_tool_calling_mode(&config) {
-            crate::config::ToolCallingMode::Native => ctx.tool_executor.definitions(),
+            crate::config::ToolCallingMode::Native => {
+                let all_tools = ctx.tool_executor.definitions();
+                filter_allowed_tools(all_tools, ctx.allowed_tool_names.as_ref())
+            }
             crate::config::ToolCallingMode::TextExtracted
             | crate::config::ToolCallingMode::ManifestOnly
             | crate::config::ToolCallingMode::Disabled => Vec::new(),
@@ -351,6 +352,7 @@ async fn collect_model_output(ctx: &TurnContext, request: ModelRequest) -> Resul
         text: String::new(),
         thinking: String::new(),
         tool_calls: Vec::new(),
+        harness_stop: None,
     };
     let mut think_tags = ThinkTagSplitter::default();
     let mut repetition_detector = crate::repetition::RepetitionDetector::default();
@@ -359,28 +361,22 @@ async fn collect_model_output(ctx: &TurnContext, request: ModelRequest) -> Resul
         ensure_not_cancelled(ctx)?;
         match event? {
             ModelStreamEvent::TextDelta { text } => {
-                if let Some(warning) = repetition_detector.feed_text(&text) {
-                    if let Some(ref tx) = ctx.event_tx {
-                        let _ = tx.send(AgentEvent::RepetitionDetected {
-                            kind: map_repetition_kind(&warning.kind),
-                            message: warning.message,
-                        });
-                    }
-                }
+                let warning = repetition_detector.feed_text(&text);
                 emit_split_text(ctx, &mut output, think_tags.push(&text));
+                if let Some(warning) = warning {
+                    output.harness_stop = Some(stop_for_repetition(ctx, warning));
+                    break;
+                }
             }
             ModelStreamEvent::ThinkingDelta { text } => {
-                if let Some(warning) = repetition_detector.feed_thinking(&text) {
-                    if let Some(ref tx) = ctx.event_tx {
-                        let _ = tx.send(AgentEvent::RepetitionDetected {
-                            kind: map_repetition_kind(&warning.kind),
-                            message: warning.message,
-                        });
-                    }
-                }
+                let warning = repetition_detector.feed_thinking(&text);
                 output.thinking.push_str(&text);
                 if let Some(ref tx) = ctx.event_tx {
                     let _ = tx.send(AgentEvent::ModelThinkingDelta { text });
+                }
+                if let Some(warning) = warning {
+                    output.harness_stop = Some(stop_for_repetition(ctx, warning));
+                    break;
                 }
             }
             ModelStreamEvent::ToolCall(invocation) => {
@@ -612,6 +608,24 @@ async fn execute_tool_call(
         let result = tool_error_result(&invocation, "turn cancelled");
         let observation = compact_tool_observation(&invocation, &result, policy);
         return (invocation, result, observation);
+    }
+
+    // Check allowed tool names for subagent tool filtering.
+    if let Some(ref allowed) = ctx.allowed_tool_names {
+        if !allowed.contains(&invocation.tool_name) {
+            let result = tool_error_result(
+                &invocation,
+                format!(
+                    "tool `{}` is not in the allowed tool set for this subagent",
+                    invocation.tool_name
+                ),
+            );
+            if let Some(ref tx) = ctx.event_tx {
+                let _ = tx.send(AgentEvent::ToolCompleted(result.clone()));
+            }
+            let observation = compact_tool_observation(&invocation, &result, policy);
+            return (invocation, result, observation);
+        }
     }
 
     if let Err(invalid) = ctx.tool_executor.validate_arguments(&invocation) {
@@ -846,6 +860,23 @@ fn persist_final_model_output(
             output.text.clone(),
             (!output.thinking.is_empty()).then(|| output.thinking.clone()),
         ));
+    }
+}
+
+fn stop_for_repetition(
+    ctx: &TurnContext,
+    warning: crate::repetition::RepetitionWarning,
+) -> HarnessStop {
+    if let Some(ref tx) = ctx.event_tx {
+        let _ = tx.send(AgentEvent::RepetitionDetected {
+            kind: map_repetition_kind(&warning.kind),
+            message: warning.message.clone(),
+        });
+    }
+    HarnessStop {
+        reason: HarnessStopReason::DegenerateModelOutput,
+        message: warning.message,
+        tool_name: None,
     }
 }
 
@@ -1095,6 +1126,21 @@ pub(crate) async fn evaluate_memory_triggers(
     }
 
     Ok(false)
+}
+
+/// Filters tool definitions to only those in `allowed_names`, if `allowed_names` is set.
+/// Returns all tools when `allowed_names` is `None`.
+fn filter_allowed_tools(
+    tools: Vec<crate::tool::ToolDefinition>,
+    allowed_names: Option<&Vec<String>>,
+) -> Vec<crate::tool::ToolDefinition> {
+    let Some(whitelist) = allowed_names else {
+        return tools;
+    };
+    tools
+        .into_iter()
+        .filter(|tool| whitelist.contains(&tool.name))
+        .collect()
 }
 
 #[cfg(test)]

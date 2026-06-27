@@ -12,9 +12,6 @@ pub struct HarnessPolicy {
     pub profile: HarnessProfile,
     /// Maximum bytes of tool output captured per observation.
     pub observation_max_bytes: usize,
-    /// Maximum model/tool loop iterations in one turn.
-    /// `None` means unlimited (only stopped by cancellation, repetition, or errors).
-    pub max_turn_loops: Option<usize>,
     /// Legacy configured tool-call budget for old small/medium configs.
     /// Tool calls are counted but not capped; long-running uses 0 here.
     pub max_tool_calls: usize,
@@ -85,8 +82,8 @@ impl ToolFailureKind {
 /// Reason the harness stopped a turn before asking the model again.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HarnessStopReason {
-    TurnLoopLimit,
     RepeatedToolCall,
+    DegenerateModelOutput,
     ConsecutiveToolErrors,
     ConsecutiveInvalidArguments,
     ConsecutiveMalformedArguments,
@@ -96,8 +93,8 @@ pub enum HarnessStopReason {
 impl HarnessStopReason {
     pub fn as_str(self) -> &'static str {
         match self {
-            Self::TurnLoopLimit => "turn_loop_limit",
             Self::RepeatedToolCall => "repeated_tool_call",
+            Self::DegenerateModelOutput => "degenerate_model_output",
             Self::ConsecutiveToolErrors => "consecutive_tool_errors",
             Self::ConsecutiveInvalidArguments => "consecutive_invalid_arguments",
             Self::ConsecutiveMalformedArguments => "consecutive_malformed_arguments",
@@ -134,7 +131,8 @@ pub fn select_harness_policy(config: &NaviConfig) -> HarnessPolicy {
 }
 
 /// Builds a [`HarnessPolicy`] for an explicit profile.
-/// `turn_loop_limit` from config overrides the per-profile limit; `None` means unlimited.
+/// Per-profile loop limit config is retained for compatibility, but hard turn
+/// loop caps are disabled. The harness stops only on behavioral loop guards.
 pub fn policy_for_profile(config: &HarnessConfig, profile: HarnessProfile) -> HarnessPolicy {
     let (obs_bytes, max_tool_calls, max_parallel) = match profile {
         HarnessProfile::Auto => return policy_for_profile(config, HarnessProfile::Medium),
@@ -157,7 +155,6 @@ pub fn policy_for_profile(config: &HarnessConfig, profile: HarnessProfile) -> Ha
     HarnessPolicy {
         profile,
         observation_max_bytes: obs_bytes,
-        max_turn_loops: config.turn_loop_limit,
         max_tool_calls,
         max_parallel_tool_calls: max_parallel,
         max_consecutive_tool_errors: config.max_consecutive_tool_errors,
@@ -455,8 +452,12 @@ pub fn record_tool_result(
 
     let kind = classify_tool_failure(result);
     state.total_tool_errors += 1;
-    state.consecutive_tool_errors += 1;
     state.last_failure_kind = Some(kind);
+    if counts_towards_consecutive_tool_error(kind) {
+        state.consecutive_tool_errors += 1;
+    } else {
+        state.consecutive_tool_errors = 0;
+    }
     match kind {
         ToolFailureKind::InvalidArguments => state.consecutive_invalid_arguments += 1,
         ToolFailureKind::MalformedArguments => state.consecutive_malformed_arguments += 1,
@@ -507,6 +508,10 @@ pub fn record_tool_result(
     }
 
     ToolLoopDecision::Continue
+}
+
+fn counts_towards_consecutive_tool_error(kind: ToolFailureKind) -> bool {
+    !matches!(kind, ToolFailureKind::ExecutionFailed)
 }
 
 pub fn classify_tool_failure(result: &ToolResult) -> ToolFailureKind {
@@ -592,7 +597,6 @@ pub fn trace_request_summary(request: &ModelRequest, policy: HarnessPolicy) -> V
         "messages": request.messages.len(),
         "tools": request.tools.len(),
         "observation_max_bytes": policy.observation_max_bytes,
-        "max_turn_loops": policy.max_turn_loops,
         "max_tool_calls": Value::Null,
         "tool_call_limit": "disabled",
         "max_parallel_tool_calls": policy.max_parallel_tool_calls,
@@ -628,6 +632,7 @@ fn truncate_string(mut value: String, max_bytes: usize) -> String {
 mod tests {
     use super::*;
     use crate::config::HarnessConfig;
+    use crate::model::ThinkingConfig;
     use crate::{HarnessProfile, NaviConfig};
 
     fn test_policy(max_tool_calls: usize) -> HarnessPolicy {
@@ -650,7 +655,7 @@ mod tests {
     }
 
     #[test]
-    fn profile_policy_uses_configured_limits() {
+    fn profile_policy_uses_configured_observation_limits() {
         let config = HarnessConfig {
             observation_bytes_small: 10,
             observation_bytes_medium: 20,
@@ -665,7 +670,7 @@ mod tests {
     }
 
     #[test]
-    fn legacy_tool_call_budget_still_lifts_turn_loop_limit() {
+    fn turn_loop_limit_does_not_create_hard_policy_cap() {
         let config = HarnessConfig {
             max_turn_loops_medium: 40,
             max_tool_calls_medium: 100,
@@ -675,8 +680,17 @@ mod tests {
 
         let policy = policy_for_profile(&config, HarnessProfile::Medium);
 
-        assert_eq!(policy.max_turn_loops, Some(100));
         assert_eq!(policy.max_tool_calls, 100);
+        let trace = trace_request_summary(
+            &ModelRequest {
+                model: "test-model".to_string(),
+                messages: Vec::new(),
+                thinking: ThinkingConfig::Off,
+                tools: Vec::new(),
+            },
+            policy,
+        );
+        assert!(trace.get("max_turn_loops").is_none());
     }
 
     #[test]
@@ -690,7 +704,6 @@ mod tests {
 
         let policy = policy_for_profile(&config, HarnessProfile::LongRunning);
 
-        assert_eq!(policy.max_turn_loops, Some(80));
         assert_eq!(policy.max_tool_calls, 0);
     }
 
@@ -886,6 +899,76 @@ mod tests {
     }
 
     #[test]
+    fn execution_failures_do_not_trigger_consecutive_tool_error_stop() {
+        let policy = policy_for_profile(
+            &HarnessConfig {
+                max_consecutive_tool_errors: 2,
+                ..HarnessConfig::default()
+            },
+            HarnessProfile::Small,
+        );
+        let invocation = ToolInvocation {
+            id: "call-1".to_string(),
+            tool_name: "bash".to_string(),
+            input: json!({ "command": "grep -A8 \"needle\" missing" }),
+        };
+        let result = ToolResult {
+            invocation_id: "call-1".to_string(),
+            ok: false,
+            output: json!({ "error": "command exited with status 2" }),
+        };
+        let mut state = AgentRunState::default();
+
+        for _ in 0..4 {
+            assert_eq!(
+                record_tool_result(&mut state, policy, &invocation, &result),
+                ToolLoopDecision::Continue
+            );
+        }
+        assert_eq!(state.total_tool_errors, 4);
+        assert_eq!(state.consecutive_tool_errors, 0);
+        assert_eq!(
+            state.last_failure_kind,
+            Some(ToolFailureKind::ExecutionFailed)
+        );
+    }
+
+    #[test]
+    fn invalid_schema_still_stops_after_generic_tool_error_limit() {
+        let policy = policy_for_profile(
+            &HarnessConfig {
+                max_consecutive_tool_errors: 2,
+                max_consecutive_invalid_arguments: 10,
+                max_consecutive_malformed_arguments: 10,
+                max_consecutive_unknown_tools: 10,
+                ..HarnessConfig::default()
+            },
+            HarnessProfile::Small,
+        );
+        let invocation = ToolInvocation {
+            id: "call-1".to_string(),
+            tool_name: "host__bad_schema".to_string(),
+            input: json!({}),
+        };
+        let result = ToolResult {
+            invocation_id: "call-1".to_string(),
+            ok: false,
+            output: json!({ "error_code": "invalid_schema" }),
+        };
+        let mut state = AgentRunState::default();
+
+        assert_eq!(
+            record_tool_result(&mut state, policy, &invocation, &result),
+            ToolLoopDecision::Continue
+        );
+        assert!(matches!(
+            record_tool_result(&mut state, policy, &invocation, &result),
+            ToolLoopDecision::Stop(stop)
+                if stop.reason == HarnessStopReason::ConsecutiveToolErrors
+        ));
+    }
+
+    #[test]
     fn tool_prompt_manifest_lists_required_fields_and_examples() {
         let tool = ToolDefinition {
             name: "read_file".to_string(),
@@ -900,6 +983,7 @@ mod tests {
                 "required": ["path"],
                 "additionalProperties": false
             }),
+            ..Default::default()
         };
 
         let manifest = tool_prompt_manifest(&[tool]);

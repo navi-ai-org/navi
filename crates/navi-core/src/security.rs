@@ -1,4 +1,5 @@
 use crate::config::SecurityConfig;
+use crate::effect::{BlastRadius, EffectAnalyzer, PostDecision};
 use crate::event::{AgentEvent, ApprovalRequest, SubagentTranscriptItem};
 use crate::patch::PatchProposal;
 use crate::session::ProjectMemory;
@@ -183,6 +184,18 @@ impl SecurityPolicy {
         }
     }
 
+    /// Validates an MCP server id against the configured allowlist.
+    ///
+    /// When `allowlist` is non-empty, only server ids present in the list
+    /// are allowed. An empty allowlist permits all MCP servers.
+    pub fn validate_mcp_server(&self, server_id: &str) -> SecurityDecision {
+        if self.config.is_mcp_server_allowed(server_id) {
+            SecurityDecision::Allow
+        } else {
+            SecurityDecision::Deny(format!("MCP server `{server_id}` is not in the allowlist"))
+        }
+    }
+
     /// Validates a tool invocation by dispatching to the appropriate validator
     /// based on tool kind.
     pub fn validate_tool_invocation(
@@ -196,7 +209,7 @@ impl SecurityPolicy {
                 .map(|path| self.validate_path(&path, false))
                 .unwrap_or(SecurityDecision::Allow),
             ToolKind::Write => {
-                if definition.name == "apply_patch" {
+                if definition.name == "apply_patch" || definition.name == "write" {
                     return self.validate_apply_patch_invocation(invocation);
                 }
                 self.path_from_invocation(invocation)
@@ -204,6 +217,13 @@ impl SecurityPolicy {
                     .unwrap_or(SecurityDecision::NeedsApproval(SecurityRisk::Write))
             }
             ToolKind::Command => {
+                if let Some(cwd) = invocation.input.get("cwd").and_then(Value::as_str)
+                    && let SecurityDecision::Deny(reason) =
+                        self.validate_path(Path::new(cwd), false)
+                {
+                    return SecurityDecision::Deny(format!("command cwd is denied: {reason}"));
+                }
+
                 // git_ops uses `command` for a git subcommand, not a shell program.
                 if definition.name == "git_ops"
                     && let Some(cmd) = invocation.input.get("command").and_then(Value::as_str)
@@ -252,6 +272,18 @@ impl SecurityPolicy {
     }
 
     fn validate_apply_patch_invocation(&self, invocation: &ToolInvocation) -> SecurityDecision {
+        if invocation
+            .input
+            .get("path")
+            .and_then(Value::as_str)
+            .is_some()
+        {
+            return self
+                .path_from_invocation(invocation)
+                .map(|path| self.validate_path(&path, true))
+                .unwrap_or(SecurityDecision::NeedsApproval(SecurityRisk::Write));
+        }
+
         let mut patches = Vec::new();
         if let Some(patch) = invocation.input.get("patch").and_then(Value::as_str) {
             patches.push(patch);
@@ -291,6 +323,59 @@ impl SecurityPolicy {
             }
         }
         SecurityDecision::NeedsApproval(SecurityRisk::Command)
+    }
+
+    /// Performs a post-execution effect check on the paths touched by a tool.
+    ///
+    /// Analyses created, modified, and deleted paths through the
+    /// [`EffectAnalyzer`] and produces a [`PostDecision`] that the harness
+    /// can act on (allow, ask, deny, or roll back).
+    ///
+    /// `tool_name` is used for contextual messaging. `paths` are the filesystem
+    /// paths the tool reported touching. `command` is the shell command string,
+    /// if any (used for context, not analysed here).
+    pub fn post_execution_effect_check(
+        &self,
+        tool_name: &str,
+        paths: &[PathBuf],
+        _command: Option<&str>,
+    ) -> PostDecision {
+        // Classify paths into created / modified / deleted.
+        // We don't have reliable create-vs-modify-vs-delete metadata from the
+        // generic path list, so we conservatively treat all as modified.
+        let report = EffectAnalyzer::analyze(&[], paths, &[]);
+
+        if report.key_files_affected.is_empty() {
+            return PostDecision::Allow;
+        }
+
+        match report.blast_radius {
+            BlastRadius::SecuritySensitive => {
+                let details = report.key_files_affected.join(", ");
+                PostDecision::Rollback(format!(
+                    "{} touched security-sensitive file(s): {details}. \
+                     Modification may expose secrets or credentials.",
+                    tool_name,
+                ))
+            }
+            BlastRadius::CiConfig => {
+                let details = report.key_files_affected.join(", ");
+                PostDecision::Ask(format!(
+                    "{} modified CI configuration: {details}. \
+                     Review before proceeding.",
+                    tool_name,
+                ))
+            }
+            BlastRadius::DependencyChange => {
+                let details = report.key_files_affected.join(", ");
+                PostDecision::Ask(format!(
+                    "{} modified dependency/lockfile(s): {details}. \
+                     This may affect builds across the team.",
+                    tool_name,
+                ))
+            }
+            BlastRadius::MultipleFiles | BlastRadius::SingleFile => PostDecision::Allow,
+        }
     }
 
     /// Returns the normalized project root used as the execution sandbox.
@@ -907,7 +992,7 @@ fn normalize_existing_or_parent(path: &Path) -> Result<PathBuf> {
     Ok(normalized)
 }
 
-fn extract_apply_patch_paths(patch: &str) -> Vec<String> {
+pub(crate) fn extract_apply_patch_paths(patch: &str) -> Vec<String> {
     let mut paths = Vec::new();
     for line in patch.lines() {
         if let Some(path) = line.strip_prefix("*** Add File: ") {
@@ -1508,8 +1593,9 @@ mod tests {
         let git_def = crate::tool::ToolDefinition {
             name: "git_ops".to_string(),
             description: "git".to_string(),
-            input_schema: serde_json::json!({}),
             kind: crate::tool::ToolKind::Command,
+            input_schema: serde_json::json!({}),
+            ..Default::default()
         };
 
         for cmd in &[
@@ -1557,6 +1643,7 @@ mod tests {
                 description: String::new(),
                 kind: ToolKind::Command,
                 input_schema: serde_json::json!({}),
+                ..Default::default()
             },
             &ToolInvocation {
                 id: "done".to_string(),
@@ -1564,6 +1651,47 @@ mod tests {
                 input: serde_json::json!({
                     "feature_id": "danger",
                     "verification_steps": ["sudo rm -rf /"]
+                }),
+            },
+        );
+
+        assert!(matches!(decision, SecurityDecision::Deny(_)));
+    }
+
+    #[test]
+    fn regression_command_cwd_outside_project_denied() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let project = tempdir.path().join("project");
+        let data = tempdir.path().join("data");
+        let outside = tempdir.path().join("outside");
+        std::fs::create_dir_all(&project).expect("project");
+        std::fs::create_dir_all(&data).expect("data");
+        std::fs::create_dir_all(&outside).expect("outside");
+        let policy = SecurityPolicy::new(
+            project,
+            data,
+            SecurityConfig {
+                restrict_paths_to_project: true,
+                ..SecurityConfig::default()
+            },
+        )
+        .expect("policy");
+
+        let decision = policy.validate_tool_invocation(
+            &ToolDefinition {
+                name: "verifier".to_string(),
+                description: String::new(),
+                kind: ToolKind::Command,
+                input_schema: serde_json::json!({}),
+                ..Default::default()
+            },
+            &ToolInvocation {
+                id: "verify".to_string(),
+                tool_name: "verifier".to_string(),
+                input: serde_json::json!({
+                    "action": "run",
+                    "command": "pwd",
+                    "cwd": outside
                 }),
             },
         );
@@ -1586,12 +1714,43 @@ mod tests {
                 description: String::new(),
                 kind: ToolKind::Write,
                 input_schema: serde_json::json!({}),
+                ..Default::default()
             },
             &ToolInvocation {
                 id: "patch".to_string(),
                 tool_name: "apply_patch".to_string(),
                 input: serde_json::json!({
                     "patch": "*** Begin Patch\n*** Add File: .git/config\n+bad\n*** End Patch\n"
+                }),
+            },
+        );
+
+        assert!(matches!(decision, SecurityDecision::Deny(_)));
+    }
+
+    #[test]
+    fn regression_unified_write_direct_git_path_denied() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let project = tempdir.path().join("project");
+        let data = tempdir.path().join("data");
+        std::fs::create_dir_all(project.join(".git")).expect("project");
+        std::fs::create_dir_all(&data).expect("data");
+        let policy = policy(project, data);
+
+        let decision = policy.validate_tool_invocation(
+            &ToolDefinition {
+                name: "write".to_string(),
+                description: String::new(),
+                kind: ToolKind::Write,
+                input_schema: serde_json::json!({}),
+                ..Default::default()
+            },
+            &ToolInvocation {
+                id: "write".to_string(),
+                tool_name: "write".to_string(),
+                input: serde_json::json!({
+                    "path": ".git/config",
+                    "content": "bad"
                 }),
             },
         );
@@ -1614,6 +1773,7 @@ mod tests {
                 description: String::new(),
                 kind: ToolKind::Write,
                 input_schema: serde_json::json!({}),
+                ..Default::default()
             },
             &ToolInvocation {
                 id: "patch".to_string(),
@@ -1645,6 +1805,7 @@ mod tests {
                 description: String::new(),
                 kind: ToolKind::Write,
                 input_schema: serde_json::json!({}),
+                ..Default::default()
             },
             &ToolInvocation {
                 id: "patch".to_string(),
@@ -1794,5 +1955,65 @@ mod tests {
         let filtered = policy.filter_denied_lines(text);
 
         assert_eq!(filtered, text);
+    }
+
+    // ── MCP server allowlist tests ──────────────────────────────────────────
+
+    #[test]
+    fn mcp_allowlist_empty_allows_all_servers() {
+        let config = SecurityConfig::default();
+        assert!(config.is_mcp_server_allowed("any-server"));
+        assert!(config.is_mcp_server_allowed(""));
+    }
+
+    #[test]
+    fn mcp_allowlist_blocks_disallowed_servers() {
+        let config = SecurityConfig {
+            allowed_mcp_servers: vec!["safe-server".to_string()],
+            ..Default::default()
+        };
+        assert!(!config.is_mcp_server_allowed("unsafe-server"));
+        assert!(config.is_mcp_server_allowed("safe-server"));
+    }
+
+    #[test]
+    fn validate_mcp_server_respects_allowlist() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let project = tempdir.path().join("project");
+        let data = tempdir.path().join("data");
+        std::fs::create_dir_all(&project).expect("project");
+        std::fs::create_dir_all(&data).expect("data");
+
+        let config = SecurityConfig {
+            allowed_mcp_servers: vec!["trusted".to_string()],
+            ..Default::default()
+        };
+        let policy = SecurityPolicy::new(project, data, config).expect("policy");
+
+        assert_eq!(
+            policy.validate_mcp_server("trusted"),
+            SecurityDecision::Allow
+        );
+        assert!(matches!(
+            policy.validate_mcp_server("untrusted"),
+            SecurityDecision::Deny(_)
+        ));
+    }
+
+    #[test]
+    fn validate_mcp_server_empty_allowlist_allows_all() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let project = tempdir.path().join("project");
+        let data = tempdir.path().join("data");
+        std::fs::create_dir_all(&project).expect("project");
+        std::fs::create_dir_all(&data).expect("data");
+
+        let config = SecurityConfig::default();
+        let policy = SecurityPolicy::new(project, data, config).expect("policy");
+
+        assert_eq!(
+            policy.validate_mcp_server("any-server"),
+            SecurityDecision::Allow
+        );
     }
 }

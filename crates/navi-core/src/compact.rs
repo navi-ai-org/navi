@@ -4,7 +4,18 @@ use anyhow::Result;
 use std::collections::HashSet;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-const READ_ONLY_TOOLS: &[&str] = &["read_file", "fs_browser", "grep", "git_ops"];
+const READ_ONLY_TOOLS: &[&str] = &[
+    "read_file",
+    "fs_browser",
+    "grep",
+    "git_ops",
+    "read",
+    "search",
+    "code",
+    "current_time",
+    "get_context_remaining",
+    "view_image",
+];
 
 /// Removes read-only tool results from older messages when idle time exceeds
 /// the gap threshold. Returns the number of messages cleared.

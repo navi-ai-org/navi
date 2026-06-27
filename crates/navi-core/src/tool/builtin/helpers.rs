@@ -6,7 +6,7 @@ use std::fs;
 #[cfg(test)]
 use std::path::Path;
 
-use crate::tool::{ToolDefinition, ToolKind, ToolResult};
+use crate::tool::{ToolDefinition, ToolKind, ToolMetadata, ToolResult};
 
 pub(super) const SPECIALIZED_SCHEMA_VERSION: u32 = 1;
 
@@ -16,12 +16,21 @@ pub(super) fn definition(
     kind: ToolKind,
     input_schema: Value,
 ) -> ToolDefinition {
-    ToolDefinition {
-        name: name.to_string(),
-        description: description.to_string(),
-        kind,
-        input_schema,
-    }
+    ToolDefinition::new(name, description, kind, input_schema)
+}
+
+/// Creates a tool definition with rich metadata.
+/// Currently unused but retained for tool authors who want to specify metadata
+/// directly in their definition() method rather than relying on the builtin_metadata registry.
+#[allow(dead_code)]
+pub(super) fn definition_with_meta(
+    name: &str,
+    description: &str,
+    kind: ToolKind,
+    input_schema: Value,
+    metadata: ToolMetadata,
+) -> ToolDefinition {
+    ToolDefinition::with_metadata(name, description, kind, input_schema, metadata)
 }
 
 pub(super) fn json_schema(properties: &[(&str, &str)], required: &[&str]) -> Value {
@@ -142,6 +151,7 @@ pub(super) fn tool_error(
         "error_code": error_code,
         "message": message.into(),
         "recoverable": recoverable,
+        "retryable": recoverable,
         "hint": hint,
         "stderr": stderr,
     })

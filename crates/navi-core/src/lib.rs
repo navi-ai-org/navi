@@ -3,6 +3,7 @@ pub mod compact;
 pub mod config;
 pub mod context;
 pub mod credentials;
+pub mod effect;
 pub mod event;
 pub mod file_lock;
 mod fs_util;
@@ -16,12 +17,15 @@ mod provider_id;
 pub mod registry;
 pub mod repetition;
 pub mod runtime;
+pub mod sandbox;
 pub mod security;
 pub mod session;
 pub mod setup;
 pub mod skills;
 pub mod tool;
+pub mod trace;
 pub mod turn;
+pub mod verifier;
 
 pub mod background_model;
 
@@ -41,6 +45,7 @@ pub use credentials::{
     CredentialStore, resolve_provider_api_key, resolve_provider_api_key_for_project,
     resolve_provider_credential_status,
 };
+pub use effect::{BlastRadius, EffectAnalyzer, EffectReport, PostDecision};
 pub use event::{
     AgentEvent, ApprovalDecision, ApprovalRequest, ApprovalRisk, QuestionOption, QuestionRequest,
     QuestionResponse, RuntimeEvent, RuntimeEventKind, SubagentTranscriptItem,
@@ -70,10 +75,13 @@ pub use session::{
 pub use setup::{SETUP_INTERVIEW_COMPLETE_MARKER, SETUP_INTERVIEW_PROMPT};
 pub use skills::{SkillManifest, active_skills, discover_configured_skills};
 pub use tool::background::{BackgroundCommandSnapshot, BackgroundTaskStatus};
+pub use tool::registry::{ToolRegistry, ToolSet, phases};
 pub use tool::{
-    ProviderBuilderFn, RepoExploreTool, SubagentTool, Tool, ToolDefinition, ToolExecutor,
-    ToolInvocation, ToolKind, ToolResult,
+    AgentProfile, ApprovalMode, ProviderBuilderFn, RepoExploreTool, SubagentTool, Tool,
+    ToolDefinition, ToolExecutor, ToolExposure, ToolInvocation, ToolKind, ToolMetadata, ToolResult,
+    ToolRisk, capabilities,
 };
 
 pub use background_model::{BackgroundModelResolver, ResolvedBackgroundModel};
 pub use memory::{HistoryStore, MemoryManager, MemoryStore, SessionCheckpoint};
+pub use verifier::{VerificationStore, VerifierResult, VerifierRunner, VerifierSpec};

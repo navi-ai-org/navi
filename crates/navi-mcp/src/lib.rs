@@ -1,8 +1,10 @@
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use navi_core::{
-    McpConfig, McpServerConfig, Tool, ToolDefinition, ToolInvocation, ToolKind, ToolResult,
+    McpConfig, McpServerConfig, Tool, ToolDefinition, ToolInvocation, ToolKind, ToolMetadata,
+    ToolResult, ToolRisk,
 };
+
 use rmcp::{
     RoleClient, ServiceExt,
     model::CallToolRequestParams,
@@ -83,7 +85,10 @@ impl Drop for McpConnection {
     }
 }
 
-pub async fn load_configured_mcp_servers(config: &McpConfig) -> LoadedMcpServers {
+pub async fn load_configured_mcp_servers(
+    config: &McpConfig,
+    allowed_servers: &[String],
+) -> LoadedMcpServers {
     if !config.enabled {
         tracing::debug!("MCP integration disabled by config; no servers will be loaded");
         return LoadedMcpServers {
@@ -96,13 +101,24 @@ pub async fn load_configured_mcp_servers(config: &McpConfig) -> LoadedMcpServers
     let mut tools = Vec::new();
     let mut servers = Vec::new();
     let mut connections = Vec::new();
-    for server in config.servers.iter().filter(|server| server.enabled) {
+    'servers: for server in config.servers.iter().filter(|server| server.enabled) {
+        // Allowlist enforcement: if allowed_servers is non-empty, the server
+        // id must be present.
+        if !allowed_servers.is_empty() && !allowed_servers.contains(&server.id) {
+            tracing::warn!(
+                server = %server.id,
+                "MCP server not in allowlist; skipping"
+            );
+            continue 'servers;
+        }
         match connect_server(server).await {
             Ok((connection, server_tools)) => {
                 let connection = Arc::new(connection);
                 let mut tool_names = Vec::new();
                 for remote_tool in server_tools {
-                    let definition = tool_definition(server, &remote_tool);
+                    let Some(definition) = tool_definition(server, &remote_tool) else {
+                        continue;
+                    };
                     tool_names.push(definition.name.clone());
                     tools.push(Arc::new(McpTool {
                         definition,
@@ -219,16 +235,55 @@ async fn connect_server(
         .with_context(|| format!("timed out connecting MCP server `{server_id}` (overall)"))?
 }
 
-fn tool_definition(server: &McpServerConfig, tool: &rmcp::model::Tool) -> ToolDefinition {
-    ToolDefinition {
+fn tool_definition(server: &McpServerConfig, tool: &rmcp::model::Tool) -> Option<ToolDefinition> {
+    let raw_description = tool
+        .description
+        .as_ref()
+        .map(ToString::to_string)
+        .unwrap_or_else(|| format!("MCP tool `{}` from server `{}`.", tool.name, server.id));
+    let description = sanitize_description(&raw_description);
+
+    let input_schema = Value::Object((*tool.input_schema).clone());
+    if let Err(e) = jsonschema::validator_for(&input_schema) {
+        tracing::warn!(
+            server = %server.id,
+            tool = %tool.name,
+            error = %e,
+            "MCP tool has invalid JSON Schema; skipping tool"
+        );
+        return None;
+    }
+
+    Some(ToolDefinition {
         name: prefixed_tool_name(server, &tool.name),
-        description: tool
-            .description
-            .as_ref()
-            .map(ToString::to_string)
-            .unwrap_or_else(|| format!("MCP tool `{}` from server `{}`.", tool.name, server.id)),
+        description,
         kind: ToolKind::Custom,
-        input_schema: Value::Object((*tool.input_schema).clone()),
+        input_schema,
+        metadata: ToolMetadata::deferred("mcp", ToolRisk::Medium, &["mcp", &server.id]),
+    })
+}
+
+/// Sanitize a tool description for safe display: truncate at 1024 chars,
+/// strip control characters (keep newlines and tabs).
+fn sanitize_description(desc: &str) -> String {
+    let sanitized: String = desc
+        .chars()
+        .filter(|&ch| {
+            ch == '\n'
+                || ch == '\t'
+                || ch.is_alphabetic()
+                || ch.is_ascii_digit()
+                || ch.is_whitespace()
+                || ch.is_ascii_punctuation()
+        })
+        .collect();
+    if sanitized.len() <= 1024 {
+        sanitized
+    } else {
+        let mut truncated: String = sanitized.chars().take(1024).collect();
+        // Ensure we end at a char boundary (already guaranteed by .take() on chars)
+        truncated.push_str("\n[description truncated]");
+        truncated
     }
 }
 
@@ -312,6 +367,9 @@ impl Tool for McpTool {
             .structured_content
             .unwrap_or_else(|| serde_json::to_value(result.content).unwrap_or_else(|_| json!([])));
 
+        // MCP output truncation at 64 KB to prevent runaway context usage.
+        let output = truncate_mcp_output(output);
+
         Ok(ToolResult {
             invocation_id: invocation.id,
             ok,
@@ -320,9 +378,32 @@ impl Tool for McpTool {
     }
 }
 
+/// Truncate MCP tool output to 64 KB, wrapping large values with a
+/// `truncated` marker to prevent runaway context usage.
+const MCP_OUTPUT_MAX_BYTES: usize = 64 * 1024;
+
+fn truncate_mcp_output(value: Value) -> Value {
+    let serialized = value.to_string();
+    if serialized.len() <= MCP_OUTPUT_MAX_BYTES {
+        return value;
+    }
+    let mut truncated = serialized;
+    truncated.truncate(MCP_OUTPUT_MAX_BYTES);
+    // Re-truncate at a char boundary so we never emit invalid UTF-8.
+    while !truncated.is_char_boundary(truncated.len()) {
+        truncated.pop();
+    }
+    truncated.push_str("\n[MCP output truncated]");
+    json!({
+        "truncated": true,
+        "content": truncated,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use navi_core::ToolExposure;
     use rmcp::model::Tool as McpRemoteTool;
     use std::borrow::Cow;
 
@@ -343,7 +424,7 @@ mod tests {
     }
 
     #[test]
-    fn maps_remote_tool_to_core_definition() {
+    fn maps_remote_tool_to_core_definition_with_metadata() {
         let server = McpServerConfig {
             id: "notes".to_string(),
             command: Some("notes-mcp".to_string()),
@@ -360,11 +441,124 @@ mod tests {
             Cow::Borrowed("Lookup a note"),
             serde_json::Map::new(),
         );
-        let definition = tool_definition(&server, &remote);
+        let definition = tool_definition(&server, &remote).expect("valid mcp tool");
 
         assert_eq!(definition.name, "n__lookup");
         assert_eq!(definition.kind, ToolKind::Custom);
         assert!(definition.description.contains("Lookup"));
+
+        // -- Sprint P9: deferred metadata checks --
+        assert_eq!(definition.metadata.namespace, "mcp");
+        assert_eq!(definition.metadata.risk, ToolRisk::Medium);
+        assert_eq!(definition.metadata.exposure, ToolExposure::Deferred);
+        assert!(definition.metadata.tags.contains(&"mcp".to_string()));
+        assert!(definition.metadata.tags.contains(&"notes".to_string()));
+    }
+
+    #[test]
+    fn mcp_tool_gets_deferred_metadata() {
+        let server = McpServerConfig {
+            id: "fs".to_string(),
+            command: Some("fs-mcp".to_string()),
+            url: None,
+            args: Vec::new(),
+            env: Default::default(),
+            cwd: None,
+            enabled: true,
+            tool_prefix: None,
+            timeout_ms: None,
+        };
+        let remote = McpRemoteTool::new(
+            "read_file",
+            Cow::Borrowed("Read a file"),
+            serde_json::Map::new(),
+        );
+        let def = tool_definition(&server, &remote).expect("valid mcp tool");
+        assert_eq!(def.metadata.namespace, "mcp");
+        assert_eq!(def.metadata.risk, ToolRisk::Medium);
+        assert_eq!(def.metadata.exposure, ToolExposure::Deferred);
+        assert!(def.metadata.tags.contains(&"mcp".to_string()));
+        assert!(def.metadata.tags.contains(&"fs".to_string()));
+    }
+
+    #[test]
+    fn invalid_mcp_schema_does_not_crash() {
+        // A schema that is not a valid JSON Schema object should not panic
+        // when tool_definition validates it; it logs a warning and proceeds.
+        let server = McpServerConfig {
+            id: "bad".to_string(),
+            command: Some("bad-mcp".to_string()),
+            url: None,
+            args: Vec::new(),
+            env: Default::default(),
+            cwd: None,
+            enabled: true,
+            tool_prefix: None,
+            timeout_ms: None,
+        };
+        // An empty Map is a valid JSON Schema (accepts anything).
+        // Use something actually invalid: a non-JSON Schema object.
+        let invalid_schema = {
+            let mut m = serde_json::Map::new();
+            m.insert(
+                "type".to_string(),
+                serde_json::Value::String("not-a-valid-type-that-json-schema-rejects".to_string()),
+            );
+            m.insert(
+                "additionalProperties".to_string(),
+                serde_json::Value::Bool(false),
+            );
+            m
+        };
+        let remote = rmcp::model::Tool::new(
+            "bad_tool",
+            Cow::Borrowed("A tool with a dodgy schema"),
+            invalid_schema,
+        );
+        assert!(tool_definition(&server, &remote).is_none());
+    }
+
+    #[test]
+    fn mcp_output_truncation_works() {
+        // Output under 64KB is unchanged
+        let small = json!({"key": "value"});
+        let result = truncate_mcp_output(small.clone());
+        assert_eq!(result, small);
+
+        // Output over 64KB gets wrapped
+        let large_string = "x".repeat(70 * 1024);
+        let large = json!({"data": large_string});
+        let truncated = truncate_mcp_output(large);
+        assert_eq!(truncated["truncated"], true);
+        let content = truncated["content"].as_str().unwrap();
+        assert!(content.ends_with("[MCP output truncated]"));
+        // Content should be roughly 64KB + suffix
+        assert!(content.len() <= MCP_OUTPUT_MAX_BYTES + "\n[MCP output truncated]".len());
+        // The content should still contain the original data (truncated)
+        assert!(content.starts_with("{\"data\":\"x"));
+    }
+
+    #[test]
+    fn sanitize_description_truncates_long_description() {
+        let long = "a".repeat(2000);
+        let result = sanitize_description(&long);
+        assert_eq!(result.len(), 1024 + "\n[description truncated]".len());
+        assert!(result.ends_with("[description truncated]"));
+    }
+
+    #[test]
+    fn sanitize_description_strips_control_chars() {
+        let input = "hello\x00world\x01test\nnewline\ttab";
+        let result = sanitize_description(input);
+        // Control chars null and SOH should be stripped
+        assert_eq!(result, "helloworldtest\nnewline\ttab");
+    }
+
+    #[test]
+    fn sanitize_description_preserves_short_text() {
+        let input = "Simple description.";
+        let result = sanitize_description(input);
+        assert_eq!(result, "Simple description.");
     }
 
     #[tokio::test]
@@ -383,7 +577,7 @@ mod tests {
                 timeout_ms: None,
             }],
         };
-        let loaded = load_configured_mcp_servers(&config).await;
+        let loaded = load_configured_mcp_servers(&config, &[]).await;
         assert!(loaded.tools.is_empty());
         assert!(loaded.servers.is_empty());
     }
@@ -404,7 +598,7 @@ mod tests {
                 timeout_ms: None,
             }],
         };
-        let loaded = load_configured_mcp_servers(&config).await;
+        let loaded = load_configured_mcp_servers(&config, &[]).await;
         assert!(loaded.tools.is_empty());
         assert!(loaded.servers.is_empty());
     }
@@ -420,6 +614,57 @@ mod tests {
             _connections: Vec::new(),
         };
         loaded.shutdown();
+    }
+
+    #[tokio::test]
+    async fn server_allowlist_blocks_disallowed_servers() {
+        // A server not in the allowlist should be skipped without attempting
+        // to connect (no "nope" binary required).
+        let config = McpConfig {
+            enabled: true,
+            servers: vec![McpServerConfig {
+                id: "not-allowed".to_string(),
+                command: Some("nope".to_string()),
+                url: None,
+                args: Vec::new(),
+                env: Default::default(),
+                cwd: None,
+                enabled: true,
+                tool_prefix: None,
+                timeout_ms: None,
+            }],
+        };
+        let allowed = vec!["allowed-server".to_string()];
+        let loaded = load_configured_mcp_servers(&config, &allowed).await;
+        assert!(loaded.tools.is_empty());
+        assert!(loaded.servers.is_empty());
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn server_allowlist_allows_allowed_servers() {
+        // A server on the allowlist is processed normally (will fail to connect
+        // since "nope" doesn't exist, but that's a connect error, not an allowlist
+        // skip).
+        let config = McpConfig {
+            enabled: true,
+            servers: vec![McpServerConfig {
+                id: "allowed-server".to_string(),
+                command: Some("nope".to_string()),
+                url: None,
+                args: Vec::new(),
+                env: Default::default(),
+                cwd: None,
+                enabled: true,
+                tool_prefix: None,
+                timeout_ms: None,
+            }],
+        };
+        let allowed = vec!["allowed-server".to_string()];
+        let loaded = load_configured_mcp_servers(&config, &allowed).await;
+        // The server is allowed, so it will attempt to connect and fail.
+        // It should still return empty tools (connect fails), but not panic.
+        assert!(loaded.tools.is_empty());
+        assert!(loaded.servers.is_empty());
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -443,7 +688,7 @@ mod tests {
             }],
         };
         let start = std::time::Instant::now();
-        let loaded = load_configured_mcp_servers(&config).await;
+        let loaded = load_configured_mcp_servers(&config, &[]).await;
         let elapsed = start.elapsed();
 
         // The load must complete (returning an empty LoadedMcpServers because
@@ -478,7 +723,7 @@ mod tests {
             }],
         };
         let start = std::time::Instant::now();
-        let loaded = load_configured_mcp_servers(&config).await;
+        let loaded = load_configured_mcp_servers(&config, &[]).await;
         let elapsed = start.elapsed();
 
         assert!(loaded.tools.is_empty());

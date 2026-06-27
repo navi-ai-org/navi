@@ -669,6 +669,7 @@ impl AgentRuntime {
             compaction_provider: None,
             compaction_model_name: None,
             session_id: self.session.id().as_str().to_string(),
+            allowed_tool_names: None,
         });
 
         let policy = select_harness_policy(&self.loaded_config.config);

@@ -81,6 +81,186 @@ async fn builtins_read_write_and_grep_files() {
 }
 
 #[tokio::test]
+async fn legacy_file_tool_aliases_remain_registered_and_invokable() {
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let executor = executor(tempdir.path());
+
+    for name in [
+        "read_file",
+        "write_file",
+        "apply_patch",
+        "grep",
+        "fs_browser",
+        "list_dir",
+        "glob",
+        "inspect_image",
+    ] {
+        assert!(
+            executor.definition(name).is_some(),
+            "missing compatibility alias `{name}`"
+        );
+    }
+
+    let write = executor
+        .invoke(ToolInvocation {
+            id: "write-file".to_string(),
+            tool_name: "write_file".to_string(),
+            input: json!({"path": "src/lib.rs", "content": "pub fn alias_marker() {}\n"}),
+        })
+        .await;
+    assert!(write.ok, "{:?}", write.output);
+
+    let read = executor
+        .invoke(ToolInvocation {
+            id: "read-file".to_string(),
+            tool_name: "read_file".to_string(),
+            input: json!({"path": "src/lib.rs"}),
+        })
+        .await;
+    assert_eq!(read.output["content"], "pub fn alias_marker() {}\n");
+
+    let grep = executor
+        .invoke(ToolInvocation {
+            id: "grep".to_string(),
+            tool_name: "grep".to_string(),
+            input: json!({"pattern": "alias_marker", "path": "src"}),
+        })
+        .await;
+    assert!(grep.ok, "{:?}", grep.output);
+    assert_eq!(grep.output["matches"][0]["path"], "src/lib.rs");
+
+    let listed = executor
+        .invoke(ToolInvocation {
+            id: "list".to_string(),
+            tool_name: "fs_browser".to_string(),
+            input: json!({"action": "list", "path": "src"}),
+        })
+        .await;
+    assert!(listed.ok, "{:?}", listed.output);
+    assert!(
+        listed.output["files"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|path| path.as_str().unwrap().ends_with("src/lib.rs"))
+    );
+
+    let patch = executor
+        .invoke(ToolInvocation {
+            id: "patch".to_string(),
+            tool_name: "apply_patch".to_string(),
+            input: json!({
+                "patch": "*** Begin Patch\n*** Update File: src/lib.rs\n@@\n-pub fn alias_marker() {}\n+pub fn patched_alias_marker() {}\n*** End Patch\n"
+            }),
+        })
+        .await;
+    assert!(patch.ok, "{:?}", patch.output);
+    assert_eq!(
+        std::fs::read_to_string(tempdir.path().join("src/lib.rs")).unwrap(),
+        "pub fn patched_alias_marker() {}\n"
+    );
+}
+
+struct LateRegisteredTool;
+
+#[async_trait::async_trait]
+impl Tool for LateRegisteredTool {
+    fn definition(&self) -> ToolDefinition {
+        ToolDefinition::with_metadata(
+            "host__late_tool",
+            "Late host tool for registry freshness checks.",
+            ToolKind::Read,
+            json!({
+                "type": "object",
+                "properties": {},
+                "additionalProperties": false,
+            }),
+            ToolMetadata {
+                namespace: "host".to_string(),
+                risk: ToolRisk::Low,
+                is_read_only: true,
+                is_concurrency_safe: true,
+                exposure: ToolExposure::Deferred,
+                tags: vec!["latecap".to_string()],
+                ..ToolMetadata::default()
+            },
+        )
+    }
+
+    async fn invoke(&self, invocation: ToolInvocation) -> anyhow::Result<ToolResult> {
+        Ok(ToolResult {
+            invocation_id: invocation.id,
+            ok: true,
+            output: json!({"ok": true}),
+        })
+    }
+}
+
+#[tokio::test]
+async fn tool_search_uses_live_registry_for_late_registered_tools() {
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let mut executor = executor(tempdir.path());
+    executor.register_tool(std::sync::Arc::new(LateRegisteredTool));
+
+    assert!(
+        !executor
+            .definitions()
+            .iter()
+            .any(|definition| definition.name == "host__late_tool"),
+        "deferred host tool should not be directly visible"
+    );
+
+    let result = executor
+        .invoke(ToolInvocation {
+            id: "search-tools".to_string(),
+            tool_name: "tool_search".to_string(),
+            input: json!({"query": "latecap", "max_results": 5}),
+        })
+        .await;
+
+    assert!(result.ok, "{:?}", result.output);
+    let names = result.output["results"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|entry| entry["name"].as_str().unwrap())
+        .collect::<Vec<_>>();
+    assert!(names.contains(&"host__late_tool"), "{names:?}");
+}
+
+#[tokio::test]
+async fn write_sensitive_file_is_rolled_back_by_effect_policy() {
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let executor = executor(tempdir.path());
+
+    let result = executor
+        .invoke(ToolInvocation {
+            id: "write-env".to_string(),
+            tool_name: "write_file".to_string(),
+            input: json!({"path": ".env", "content": "TOKEN=secret\n"}),
+        })
+        .await;
+
+    assert!(!result.ok, "{:?}", result.output);
+    assert_eq!(result.output["error_code"], "effect_rollback");
+    assert_eq!(result.output["rolled_back"], true);
+    assert!(!tempdir.path().join(".env").exists());
+}
+
+#[test]
+fn tool_search_is_visible_in_initial_definitions() {
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let executor = executor(tempdir.path());
+    let visible = executor
+        .definitions()
+        .into_iter()
+        .map(|definition| definition.name)
+        .collect::<Vec<_>>();
+
+    assert!(visible.contains(&"tool_search".to_string()), "{visible:?}");
+}
+
+#[tokio::test]
 async fn top_files_is_registered() {
     let tempdir = tempfile::tempdir().expect("tempdir");
     let executor = executor(tempdir.path());
@@ -432,7 +612,7 @@ async fn tool_workflow_rejects_non_read_only_nested_tools() {
         result.output["error"]
             .as_str()
             .unwrap()
-            .contains("only allows read_file, grep, fs_browser, read-only git_ops, symbols_overview, find_symbol, find_references, and code_diagnostics")
+            .contains("only allows read_file, read, grep, search, fs_browser, read-only git_ops, symbols_overview, find_symbol, find_references, and code_diagnostics")
     );
 }
 
@@ -786,8 +966,8 @@ async fn unknown_tool_returns_bounded_suggestions() {
 
     let result = executor
         .invoke(ToolInvocation {
-            id: "glob".to_string(),
-            tool_name: "glob".to_string(),
+            id: "list-files".to_string(),
+            tool_name: "list_files".to_string(),
             input: json!({ "pattern": "*.rs" }),
         })
         .await;
@@ -799,7 +979,7 @@ async fn unknown_tool_returns_bounded_suggestions() {
         result.output["suggestions"]
             .as_array()
             .unwrap()
-            .contains(&json!("fs_browser"))
+            .contains(&json!("search"))
     );
 }
 
@@ -989,7 +1169,7 @@ async fn grep_defaults_to_project_root_when_path_omitted() {
         .invoke(ToolInvocation {
             id: "grep-default-root".to_string(),
             tool_name: "grep".to_string(),
-            input: json!({ "pattern": "needle" }),
+            input: json!({"pattern": "needle" }),
         })
         .await;
 
@@ -998,7 +1178,7 @@ async fn grep_defaults_to_project_root_when_path_omitted() {
 }
 
 #[tokio::test]
-async fn grep_accepts_search_style_arguments() {
+async fn search_accepts_grep_style_arguments() {
     let tempdir = tempfile::tempdir().expect("tempdir");
     let executor = executor(tempdir.path());
     std::fs::create_dir_all(tempdir.path().join("src")).unwrap();
@@ -1014,6 +1194,7 @@ async fn grep_accepts_search_style_arguments() {
             id: "search-style".to_string(),
             tool_name: "search".to_string(),
             input: json!({
+                "action": "grep",
                 "query": "needle",
                 "include": "*.rs",
                 "limit": 1,
@@ -1065,7 +1246,7 @@ async fn apply_patch_accepts_structured_update() {
         .await;
 
     assert!(result.ok, "{}", result.output);
-    assert_eq!(result.output["method"], "structured apply_patch");
+    assert_eq!(result.output["method"], "structured");
     assert_eq!(
         std::fs::read_to_string(path).unwrap(),
         "fn old() {\n    println!(\"new\");\n}\n"
@@ -1123,7 +1304,7 @@ async fn apply_patch_accepts_multiple_structured_patches() {
         .await;
 
     assert!(result.ok, "{}", result.output);
-    assert_eq!(result.output["method"], "structured apply_patch");
+    assert_eq!(result.output["method"], "structured");
     assert_eq!(result.output["patches_applied"], 2);
     assert_eq!(
         std::fs::read_to_string(tempdir.path().join("one.txt")).unwrap(),
@@ -1258,11 +1439,12 @@ async fn unknown_tool_returns_available_tools_advice() {
     assert!(!result.ok);
     assert_eq!(result.output["error_code"], "unknown_tool");
     assert!(
-        result.output["available_tools"]
+        !result.output["available_tools"]
             .as_array()
             .unwrap()
-            .contains(&json!("read_file"))
+            .is_empty()
     );
+    assert!(result.output["available_tools"].as_array().unwrap().len() <= 20);
 }
 
 // ── fs_browser regression tests ──────────────────────────────────────────────
@@ -1546,8 +1728,12 @@ fn all_specialized_tools_registered_in_definitions() {
     let tempdir = tempfile::tempdir().expect("tempdir");
     let executor = executor(tempdir.path());
     let names = executor.tool_names();
-
+    assert!(names.contains(&"read_file".to_string()));
+    assert!(names.contains(&"write_file".to_string()));
+    assert!(names.contains(&"apply_patch".to_string()));
+    assert!(names.contains(&"grep".to_string()));
     assert!(names.contains(&"fs_browser".to_string()));
+    assert!(names.contains(&"search".to_string()));
     assert!(names.contains(&"git_ops".to_string()));
     assert!(names.contains(&"package_manager".to_string()));
 }
@@ -1557,7 +1743,7 @@ fn all_specialized_tools_have_valid_schemas() {
     let tempdir = tempfile::tempdir().expect("tempdir");
     let executor = executor(tempdir.path());
 
-    for name in ["fs_browser", "git_ops", "package_manager"] {
+    for name in ["search", "git_ops", "package_manager"] {
         let def = executor.definition(name).expect(name);
         assert_eq!(def.input_schema["type"], "object");
         assert!(

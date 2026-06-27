@@ -22,7 +22,7 @@ pub fn minify(source: &str, lang: LangId, keep_comments: bool) -> Result<String>
 
 fn parse(source: &str, lang: LangId) -> Result<tree_sitter::Tree> {
     let mut parser = Parser::new();
-    parser.set_language(&lang.tree_sitter_language())?;
+    parser.set_language(&lang.tree_sitter_language()?)?;
     parser
         .parse(source, None)
         .ok_or_else(|| anyhow::anyhow!("tree-sitter returned None"))
