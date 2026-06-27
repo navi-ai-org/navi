@@ -24,7 +24,11 @@ async fn list_mcp_servers(config: &LoadedConfig) -> Result<()> {
 
     println!("Connecting to {} server(s)...\n", mcp_config.servers.len());
 
-    let loaded = navi_mcp::load_configured_mcp_servers(mcp_config).await;
+    let loaded = navi_mcp::load_configured_mcp_servers(
+        mcp_config,
+        &config.config.security.allowed_mcp_servers,
+    )
+    .await;
 
     let connected_ids: std::collections::HashSet<String> =
         loaded.servers.iter().map(|s| s.id.clone()).collect();

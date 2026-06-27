@@ -1999,12 +1999,14 @@ fn anthropic_tool_definitions_cache_only_last_tool() {
             description: "A".to_string(),
             kind: navi_core::ToolKind::Read,
             input_schema: json!({"type":"object"}),
+            metadata: Default::default(),
         },
         navi_core::ToolDefinition {
             name: "b".to_string(),
             description: "B".to_string(),
             kind: navi_core::ToolKind::Read,
             input_schema: json!({"type":"object"}),
+            metadata: Default::default(),
         },
     ];
     let body = serde_json::to_value(crate::providers::anthropic::anthropic_tools_to_json(&tools))
