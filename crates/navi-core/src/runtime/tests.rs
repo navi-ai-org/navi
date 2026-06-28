@@ -230,6 +230,10 @@ async fn runtime_session_lifecycle_streams_events_and_snapshots() {
         .root()
         .join(format!("{}.json", snapshot.id.as_str()));
     assert!(snapshot_path.exists());
+    let traces = crate::TraceStore::new(&tempdir.path().join("data"))
+        .load_session_traces(snapshot.id.as_str());
+    assert_eq!(traces.len(), 1);
+    assert_eq!(traces[0].task, "inspect");
 }
 
 #[tokio::test]

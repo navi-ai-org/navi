@@ -1,0 +1,12 @@
+version = 1
+id = "b6-mcp-firewall"
+title = "MCP firewall wraps untrusted tools and output"
+category = "mcp_stress"
+mode = "verifier-first"
+task = "Verify that MCP tool descriptions are sanitized and outputs carry provenance/taint information."
+tags = ["beyond", "b6", "mcp"]
+
+[[verifiers]]
+verifier_type = "command"
+command = "test -f crates/navi-core/src/mcp_firewall.rs && rg -q 'McpFirewallPolicy|sanitize_tool_description|wrap_output|provenance|tainted|capability_for_tool' crates/navi-core/src/mcp_firewall.rs crates/navi-mcp/src/lib.rs"
+required = true

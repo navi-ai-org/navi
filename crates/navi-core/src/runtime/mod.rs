@@ -22,6 +22,7 @@ use crate::session::{SessionId, SessionStore, current_unix_timestamp};
 use crate::skills::{SkillManifest, active_skills, discover_configured_skills};
 use crate::tool::builtin::{RepoExploreTool, SubagentTool};
 use crate::tool::{Tool, ToolExecutor};
+use crate::trace::{TraceStore, turn_traces_from_events};
 use crate::{
     ModelOption, SessionSnapshot, available_model_options, canonical_provider_id,
     provider_request_model_name,
@@ -551,17 +552,39 @@ impl AgentRuntime {
     pub fn snapshot_session(&mut self) -> Result<SessionSnapshot> {
         self.session.set_updated_at(current_unix_timestamp());
         self.session.update_title_from_events();
-        self.session
-            .snapshot(&self.project_dir, &self.session_store, &self.event_bus)
+        let snapshot =
+            self.session
+                .snapshot(&self.project_dir, &self.session_store, &self.event_bus)?;
+        self.save_trace_snapshot(snapshot.id.as_str());
+        Ok(snapshot)
     }
 
     /// Creates and persists a session snapshot without blocking the async runtime.
     pub async fn snapshot_session_async(&mut self) -> Result<SessionSnapshot> {
         self.session.set_updated_at(current_unix_timestamp());
         self.session.update_title_from_events();
-        self.session
+        let snapshot = self
+            .session
             .snapshot_async(&self.project_dir, &self.session_store, &self.event_bus)
-            .await
+            .await?;
+        self.save_trace_snapshot(snapshot.id.as_str());
+        Ok(snapshot)
+    }
+
+    fn save_trace_snapshot(&self, session_id: &str) {
+        let traces = turn_traces_from_events(
+            session_id,
+            &self.loaded_config.config.model.provider,
+            &self.loaded_config.config.model.name,
+            self.session.events(),
+        );
+        if traces.is_empty() {
+            return;
+        }
+        let store = TraceStore::new(&self.loaded_config.data_dir);
+        if let Err(err) = store.save_session_traces(session_id, &traces) {
+            tracing::warn!(error = %err, session_id, "failed to save turn traces");
+        }
     }
 
     #[cfg_attr(not(test), allow(dead_code))]
@@ -781,6 +804,9 @@ fn runtime_event_kind_from_agent_event(event: &AgentEvent) -> Option<RuntimeEven
         }),
         AgentEvent::ApprovalResolved(decision) => {
             Some(RuntimeEventKind::ApprovalResolved(decision.clone()))
+        }
+        AgentEvent::CapabilityRecorded(entry) => {
+            Some(RuntimeEventKind::CapabilityRecorded(entry.clone()))
         }
         AgentEvent::QuestionRequested(request) => {
             Some(RuntimeEventKind::QuestionRequired(request.clone()))

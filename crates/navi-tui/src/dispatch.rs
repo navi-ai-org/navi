@@ -331,6 +331,9 @@ fn handle_agent_event(app: &mut TuiApp, event: AgentEvent) {
             app.events.push(AgentEvent::ApprovalResolved(decision));
             update_active_assistant_status(app);
         }
+        AgentEvent::CapabilityRecorded(entry) => {
+            app.events.push(AgentEvent::CapabilityRecorded(entry));
+        }
         AgentEvent::QuestionRequested(request) => {
             if !app
                 .pending_questions

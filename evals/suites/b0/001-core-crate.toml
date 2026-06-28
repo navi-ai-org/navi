@@ -1,0 +1,12 @@
+version = 1
+id = "b0-core-crate"
+title = "navi-core crate exists"
+category = "simple_repo_task"
+task = "Verify that the core runtime crate is present."
+tags = ["b0", "repo-structure", "core"]
+
+[[verifiers]]
+verifier_type = "command"
+command = "test -f crates/navi-core/Cargo.toml"
+required = true
+

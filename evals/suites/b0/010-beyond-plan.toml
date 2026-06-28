@@ -1,0 +1,12 @@
+version = 1
+id = "b0-beyond-plan"
+title = "beyond parity plan exists"
+category = "simple_repo_task"
+task = "Verify that the beyond-parity roadmap is versioned."
+tags = ["b0", "docs", "plan"]
+
+[[verifiers]]
+verifier_type = "command"
+command = "test -f docs/harness-beyond-parity-plan.md"
+required = true
+

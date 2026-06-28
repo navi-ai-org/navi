@@ -295,6 +295,15 @@ impl Harness {
         self
     }
 
+    /// Clear model picker rows for snapshots that intentionally assert the
+    /// empty-model state independent of the built-in/public provider catalog.
+    pub fn clear_models(&mut self) -> &mut Self {
+        self.app.models.clear();
+        self.app.authenticated_providers.clear();
+        self.app.loaded_config.config.tui.recent_model_ids.clear();
+        self
+    }
+
     /// Simulate the start of a streaming model response: push a user message
     /// and a thinking-placeholder assistant message, and set the loading state.
     pub fn begin_thinking_response(&mut self, user_text: &str) -> &mut Self {

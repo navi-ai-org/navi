@@ -1,6 +1,9 @@
+use crate::capability::CapabilityLedgerEntry;
+use crate::event::{AgentEvent, ApprovalDecision};
 use crate::security::redact_secrets;
 use crate::tool::{ToolInvocation, ToolResult};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -52,6 +55,10 @@ pub struct TurnTrace {
     /// Approval decisions made during this turn.
     #[serde(default)]
     pub approvals: Vec<ApprovalTrace>,
+
+    /// Capability lifecycle entries recorded during this turn.
+    #[serde(default)]
+    pub capabilities: Vec<CapabilityLedgerEntry>,
 
     /// Verifier results from this turn.
     #[serde(default)]
@@ -200,6 +207,7 @@ impl TurnTrace {
             deferred_tools_discovered: Vec::new(),
             tool_calls: Vec::new(),
             approvals: Vec::new(),
+            capabilities: Vec::new(),
             verifier_results: Vec::new(),
             metrics: TurnMetrics::default(),
             outcome: TurnOutcome::Success,
@@ -259,6 +267,11 @@ impl TurnTrace {
         });
     }
 
+    /// Records a capability lifecycle entry.
+    pub fn record_capability(&mut self, entry: CapabilityLedgerEntry) {
+        self.capabilities.push(entry);
+    }
+
     /// Records a verifier run.
     pub fn record_verifier(
         &mut self,
@@ -289,6 +302,9 @@ impl TurnTrace {
         }
         for verifier in &mut trace.verifier_results {
             verifier.command = redact_secrets(&verifier.command);
+        }
+        for capability in &mut trace.capabilities {
+            capability.justification = redact_secrets(&capability.justification);
         }
         trace
     }
@@ -330,6 +346,24 @@ impl TraceStore {
         Ok(path)
     }
 
+    /// Replaces the trace JSONL for a session with the provided traces.
+    pub fn save_session_traces(
+        &self,
+        session_id: &str,
+        traces: &[TurnTrace],
+    ) -> std::io::Result<PathBuf> {
+        std::fs::create_dir_all(&self.root)?;
+        let path = self.root.join(format!("{session_id}.jsonl"));
+        let mut file = std::fs::File::create(&path)?;
+        use std::io::Write;
+        for trace in traces {
+            let redacted = trace.redacted();
+            let line = serde_json::to_string(&redacted)?;
+            writeln!(file, "{line}")?;
+        }
+        Ok(path)
+    }
+
     /// Loads all turn traces for the given session.
     pub fn load_session_traces(&self, session_id: &str) -> Vec<TurnTrace> {
         let path = self.root.join(format!("{session_id}.jsonl"));
@@ -358,6 +392,183 @@ impl TraceStore {
             })
             .collect()
     }
+}
+
+pub fn turn_traces_from_events(
+    session_id: &str,
+    model_provider: &str,
+    model_name: &str,
+    events: &[AgentEvent],
+) -> Vec<TurnTrace> {
+    let mut traces = Vec::new();
+    let mut current: Option<TurnTrace> = None;
+    let mut invocations: HashMap<String, ToolInvocation> = HashMap::new();
+
+    for event in events {
+        match event {
+            AgentEvent::UserTaskSubmitted { text, .. } => {
+                if let Some(mut trace) = current.take() {
+                    trace.finalize();
+                    traces.push(trace);
+                }
+                invocations.clear();
+                current = Some(TurnTrace::new(
+                    format!("{}-trace-{}", session_id, traces.len() + 1),
+                    session_id.to_string(),
+                    model_provider.to_string(),
+                    model_name.to_string(),
+                    text.clone(),
+                ));
+            }
+            AgentEvent::ToolRequested(invocation) => {
+                invocations.insert(invocation.id.clone(), invocation.clone());
+            }
+            AgentEvent::ToolCompleted(result) => {
+                if let Some(trace) = current.as_mut() {
+                    let invocation =
+                        invocations
+                            .get(&result.invocation_id)
+                            .cloned()
+                            .unwrap_or(ToolInvocation {
+                                id: result.invocation_id.clone(),
+                                tool_name: result
+                                    .output
+                                    .get("tool")
+                                    .and_then(serde_json::Value::as_str)
+                                    .unwrap_or("unknown")
+                                    .to_string(),
+                                input: serde_json::json!({}),
+                            });
+                    trace.record_tool_call(&invocation, result, 0);
+                    if invocation.tool_name == "verifier" {
+                        if let Some(verifier_trace) = verifier_trace_from_tool(&invocation, result)
+                        {
+                            trace.metrics.verifier_count += 1;
+                            trace.verifier_results.push(verifier_trace);
+                        }
+                    }
+                }
+            }
+            AgentEvent::ApprovalRequested(request) => {
+                if let Some(trace) = current.as_mut() {
+                    trace.metrics.approval_count += 1;
+                    trace.approvals.push(ApprovalTrace {
+                        tool_name: request.id.clone(),
+                        risk: format!("{:?}", request.risk).to_lowercase(),
+                        decision: "requested".to_string(),
+                        duration_ms: 0,
+                    });
+                }
+            }
+            AgentEvent::ApprovalResolved(decision) => {
+                if let Some(trace) = current.as_mut() {
+                    let (id, label) = match decision {
+                        ApprovalDecision::Approved { id } => (id, "approved"),
+                        ApprovalDecision::Denied { id } => (id, "denied"),
+                    };
+                    trace.approvals.push(ApprovalTrace {
+                        tool_name: id.clone(),
+                        risk: String::new(),
+                        decision: label.to_string(),
+                        duration_ms: 0,
+                    });
+                }
+            }
+            AgentEvent::CapabilityRecorded(entry) => {
+                if let Some(trace) = current.as_mut() {
+                    trace.record_capability(entry.clone());
+                }
+            }
+            AgentEvent::UsageReported {
+                input_tokens,
+                output_tokens,
+                cache_creation_tokens,
+                cache_read_tokens,
+            } => {
+                if let Some(trace) = current.as_mut() {
+                    trace.metrics.input_tokens =
+                        trace.metrics.input_tokens.saturating_add(*input_tokens);
+                    trace.metrics.output_tokens =
+                        trace.metrics.output_tokens.saturating_add(*output_tokens);
+                    trace.metrics.cache_creation_tokens = trace
+                        .metrics
+                        .cache_creation_tokens
+                        .saturating_add(*cache_creation_tokens);
+                    trace.metrics.cache_read_tokens = trace
+                        .metrics
+                        .cache_read_tokens
+                        .saturating_add(*cache_read_tokens);
+                }
+            }
+            AgentEvent::ModelOutput { text, .. } => {
+                if let Some(trace) = current.as_mut() {
+                    trace.final_message = text.clone();
+                }
+            }
+            AgentEvent::Error { message } => {
+                if let Some(trace) = current.as_mut() {
+                    trace.outcome = TurnOutcome::Failed(message.clone());
+                }
+            }
+            AgentEvent::HarnessStopped { reason, .. } => {
+                if let Some(trace) = current.as_mut() {
+                    trace.outcome = TurnOutcome::Stopped(reason.clone());
+                }
+            }
+            _ => {}
+        }
+    }
+
+    if let Some(mut trace) = current {
+        trace.finalize();
+        if trace.metrics.failed_tool_calls > 0 && trace.outcome == TurnOutcome::Success {
+            trace.outcome = TurnOutcome::PartialSuccess;
+        }
+        traces.push(trace);
+    }
+
+    traces
+}
+
+fn verifier_trace_from_tool(
+    invocation: &ToolInvocation,
+    result: &ToolResult,
+) -> Option<VerifierTrace> {
+    let command = result
+        .output
+        .get("command")
+        .and_then(serde_json::Value::as_str)
+        .or_else(|| {
+            invocation
+                .input
+                .get("command")
+                .and_then(serde_json::Value::as_str)
+        })?;
+    let status = result
+        .output
+        .get("status")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or(if result.ok { "pass" } else { "fail" });
+    Some(VerifierTrace {
+        verifier: invocation
+            .input
+            .get("verifier")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("command")
+            .to_string(),
+        command: redact_secrets(command),
+        passed: matches!(status, "pass" | "skipped"),
+        duration_ms: result
+            .output
+            .get("duration_ms")
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or_default(),
+        exit_code: result
+            .output
+            .get("exit_code")
+            .and_then(serde_json::Value::as_i64)
+            .map(|value| value as i32),
+    })
 }
 
 fn current_unix_millis() -> u64 {
@@ -448,6 +659,27 @@ mod tests {
     }
 
     #[test]
+    fn trace_records_and_redacts_capability_entries() {
+        let mut trace = TurnTrace::new("t1", "s1", "p", "m", "task");
+        trace.record_capability(CapabilityLedgerEntry {
+            capability: crate::capability::Capability::RepoRead,
+            scope: crate::capability::CapabilityScope::Turn("t1".to_string()),
+            decision: crate::capability::CapabilityDecision::Granted,
+            at_ms: 1,
+            justification: "read token=sk-proj-1234567890abcdef".to_string(),
+        });
+
+        let redacted = trace.redacted();
+        assert_eq!(redacted.capabilities.len(), 1);
+        assert!(!redacted.capabilities[0].justification.contains("sk-proj"));
+        assert!(
+            redacted.capabilities[0]
+                .justification
+                .contains("<redacted>")
+        );
+    }
+
+    #[test]
     fn trace_store_save_and_load() {
         let dir = tempfile::tempdir().unwrap();
         let store = TraceStore::new(dir.path());
@@ -506,6 +738,25 @@ mod tests {
     }
 
     #[test]
+    fn trace_store_save_session_traces_replaces_existing_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = TraceStore::new(dir.path());
+        let mut first = TurnTrace::new("t1", "session-replace", "p", "m", "task1");
+        first.finalize();
+        store.save_trace(&first).unwrap();
+
+        let mut second = TurnTrace::new("t2", "session-replace", "p", "m", "task2");
+        second.finalize();
+        store
+            .save_session_traces("session-replace", &[second])
+            .unwrap();
+
+        let loaded = store.load_session_traces("session-replace");
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].turn_id, "t2");
+    }
+
+    #[test]
     fn trace_store_list_sessions() {
         let dir = tempfile::tempdir().unwrap();
         let store = TraceStore::new(dir.path());
@@ -526,5 +777,51 @@ mod tests {
         let store = TraceStore::new(dir.path());
         let loaded = store.load_session_traces("nonexistent");
         assert!(loaded.is_empty());
+    }
+
+    #[test]
+    fn session_events_generate_turn_trace_with_capabilities() {
+        let events = vec![
+            AgentEvent::UserTaskSubmitted {
+                text: "verify".to_string(),
+                content_parts: Vec::new(),
+            },
+            AgentEvent::CapabilityRecorded(CapabilityLedgerEntry {
+                capability: crate::capability::Capability::RepoRead,
+                scope: crate::capability::CapabilityScope::SingleCall("read".to_string()),
+                decision: crate::capability::CapabilityDecision::Requested,
+                at_ms: 1,
+                justification: "read".to_string(),
+            }),
+            AgentEvent::ToolRequested(ToolInvocation {
+                id: "verify".to_string(),
+                tool_name: "verifier".to_string(),
+                input: json!({"verifier": "test", "command": "true"}),
+            }),
+            AgentEvent::ToolCompleted(ToolResult {
+                invocation_id: "verify".to_string(),
+                ok: true,
+                output: json!({"status": "pass", "command": "true", "duration_ms": 3, "exit_code": 0}),
+            }),
+            AgentEvent::UsageReported {
+                input_tokens: 100,
+                output_tokens: 20,
+                cache_creation_tokens: 0,
+                cache_read_tokens: 0,
+            },
+            AgentEvent::ModelOutput {
+                text: "done".to_string(),
+                thinking: None,
+            },
+        ];
+
+        let traces = turn_traces_from_events("s", "p", "m", &events);
+
+        assert_eq!(traces.len(), 1);
+        assert_eq!(traces[0].task, "verify");
+        assert_eq!(traces[0].tool_calls.len(), 1);
+        assert_eq!(traces[0].verifier_results.len(), 1);
+        assert_eq!(traces[0].capabilities.len(), 1);
+        assert_eq!(traces[0].metrics.input_tokens, 100);
     }
 }

@@ -1,0 +1,12 @@
+version = 1
+id = "b4-subagents"
+title = "specialized subagent profiles are isolated"
+category = "security_stress"
+mode = "verifier-first"
+task = "Verify that planner/security reviewer profiles exist and read-only tool restrictions include write/code exec tools."
+tags = ["beyond", "b4", "subagent"]
+
+[[verifiers]]
+verifier_type = "command"
+command = "rg -q 'Planner|SecurityReviewer|READONLY_DENIED_TOOLS|resolve_allowed_tool_names|code_exec' crates/navi-core/src/tool/builtin/subagent.rs"
+required = true

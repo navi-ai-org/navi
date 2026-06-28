@@ -28,12 +28,16 @@ use serde_json::Value;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AgentProfile {
+    /// Plans tasks and decomposes work. No write tool access.
+    Planner,
     /// Reads files and searches the codebase. No write tool access.
     Explorer,
     /// Writes and edits code. Full write access, normal approvals.
     Implementer,
     /// Reviews code and proposes changes without applying them.
     Reviewer,
+    /// Reviews security effects, capability use, and sensitive diffs.
+    SecurityReviewer,
     /// Runs tests and verifies changes. Read-only access.
     Verifier,
     /// Summarizes conversations, code, or documentation.
@@ -50,7 +54,7 @@ pub enum ApprovalMode {
     Escalate,
     /// Reject all write operations. The subagent can only read/query.
     ReadOnly,
-    /// Deny any tool with Write or Command kind.
+    /// Deny write-oriented tools but allow read-only inspection and verifier commands.
     DenyWrite,
 }
 
@@ -88,9 +92,23 @@ const MAX_BACKGROUND_SUBAGENTS: usize = 8;
 /// Tool names considered to be "write" operations for ReadOnly mode.
 const READONLY_DENIED_TOOLS: &[&str] = &[
     "write",
+    "write_file",
     "apply_patch",
+    "code_edit",
+    "code_exec",
     "bash",
     "process",
+    "sandbox",
+    "package_manager",
+    "mark_feature_done",
+    "append_note",
+];
+const WRITE_DENIED_TOOLS: &[&str] = &[
+    "write",
+    "write_file",
+    "apply_patch",
+    "code_edit",
+    "code_exec",
     "sandbox",
     "package_manager",
     "mark_feature_done",
@@ -307,8 +325,8 @@ impl Tool for SubagentTool {
                         "properties": {
                             "agent_profile": {
                                 "type": "string",
-                                "enum": ["explorer", "implementer", "reviewer", "verifier", "summarizer"],
-                                "description": "Agent role profile that sets default tool access and approval behavior. Explorer/Reviewer/Verifier/Summarizer default to read-only; Implementer has full access."
+                                "enum": ["planner", "explorer", "implementer", "reviewer", "security_reviewer", "verifier", "summarizer"],
+                                "description": "Agent role profile that sets default tool access and approval behavior. Planner/Explorer/Reviewer/SecurityReviewer/Verifier/Summarizer default to read-only; Implementer has full access."
                             },
                             "model": {
                                 "type": "string",
@@ -430,13 +448,8 @@ impl SubagentTool {
 
         // Determine if this subagent should be read-only based on agent profile.
         let effective_approval = resolve_approval_mode(&options);
-        let allowed_tool_names = if effective_approval == ApprovalMode::ReadOnly {
-            Some(allowed_tools_for_executor(&executor))
-        } else if let Some(ref tools) = options.tools {
-            Some(tools.clone())
-        } else {
-            None
-        };
+        let allowed_tool_names =
+            resolve_allowed_tool_names(&executor, &options, effective_approval);
 
         let (mut messages, event_tx, _approval_handle, resolver) = self.prepare_subagent_context(
             &invocation_id,
@@ -571,13 +584,8 @@ impl SubagentTool {
         let parent_invocation_id = invocation_id.clone();
 
         let effective_approval = resolve_approval_mode(&options);
-        let allowed_tool_names_clone = if effective_approval == ApprovalMode::ReadOnly {
-            Some(allowed_tools_for_executor(&executor))
-        } else if let Some(ref tools) = options.tools {
-            Some(tools.clone())
-        } else {
-            None
-        };
+        let allowed_tool_names_clone =
+            resolve_allowed_tool_names(&executor, &options, effective_approval);
 
         tokio::spawn(async move {
             let (mut messages, event_tx, _approval_handle, resolver) =
@@ -807,21 +815,33 @@ impl SubagentTool {
         tokio::task::JoinHandle<()>,
         ApprovalResolver,
     ) {
+        let access_note = match approval_mode {
+            ApprovalMode::ReadOnly => {
+                "Your tool access is read-only. Inspect, reason, and report findings; do not attempt writes or command execution."
+            }
+            ApprovalMode::DenyWrite => {
+                "Write tools are unavailable. You may inspect and run allowed verification commands when needed, then report findings."
+            }
+            ApprovalMode::Escalate => {
+                "Any risky action must be escalated to the parent session approval flow."
+            }
+            ApprovalMode::Inherit => "Use tools according to the parent session policy.",
+        };
         let system = if let Some(desc) = description {
             format!(
                 "You are a subagent worker. Execute the assigned task autonomously \
-                 using whatever tools are needed. You have access to all the same \
-                 tools as the main agent.\n\nContext: {desc}\n\n\
+                 within your assigned access policy. {access_note}\n\nContext: {desc}\n\n\
                  When the task is complete, report your findings and any relevant output. \
                  Be concise and focus on delivering the result."
             )
         } else {
             "You are a subagent worker. Execute the assigned task autonomously \
-             using whatever tools are needed. You have access to all the same \
-             tools as the main agent.\n\n\
+             within your assigned access policy. "
+                .to_string()
+                + access_note
+                + "\n\n\
              When the task is complete, report your findings and any relevant output. \
              Be concise and focus on delivering the result."
-                .to_string()
         };
 
         let messages = vec![
@@ -1066,8 +1086,10 @@ fn resolve_approval_mode(options: &SubagentOptions) -> ApprovalMode {
         return options.approval;
     }
     match options.profile {
-        Some(AgentProfile::Explorer)
+        Some(AgentProfile::Planner)
+        | Some(AgentProfile::Explorer)
         | Some(AgentProfile::Reviewer)
+        | Some(AgentProfile::SecurityReviewer)
         | Some(AgentProfile::Verifier)
         | Some(AgentProfile::Summarizer) => ApprovalMode::ReadOnly,
         Some(AgentProfile::Implementer) | None => ApprovalMode::Inherit,
@@ -1077,12 +1099,34 @@ fn resolve_approval_mode(options: &SubagentOptions) -> ApprovalMode {
 /// Returns the set of tool names allowed for read-only subagents.
 /// This is the complement of READONLY_DENIED_TOOLS, derived from the
 /// provided executor's full tool list.
-fn allowed_tools_for_executor(executor: &crate::tool::ToolExecutor) -> Vec<String> {
-    executor
-        .tool_names()
-        .into_iter()
-        .filter(|name| !READONLY_DENIED_TOOLS.contains(&name.as_str()))
-        .collect()
+fn resolve_allowed_tool_names(
+    executor: &crate::tool::ToolExecutor,
+    options: &SubagentOptions,
+    approval_mode: ApprovalMode,
+) -> Option<Vec<String>> {
+    let mut allowed = options
+        .tools
+        .clone()
+        .unwrap_or_else(|| executor.tool_names());
+    match approval_mode {
+        ApprovalMode::ReadOnly => {
+            allowed.retain(|name| !READONLY_DENIED_TOOLS.contains(&name.as_str()));
+        }
+        ApprovalMode::DenyWrite => {
+            allowed.retain(|name| !WRITE_DENIED_TOOLS.contains(&name.as_str()));
+        }
+        ApprovalMode::Inherit | ApprovalMode::Escalate => {}
+    }
+    if options.tools.is_some()
+        || matches!(
+            approval_mode,
+            ApprovalMode::ReadOnly | ApprovalMode::DenyWrite
+        )
+    {
+        Some(allowed)
+    } else {
+        None
+    }
 }
 
 #[cfg(test)]
@@ -1144,6 +1188,8 @@ mod tests {
         for profile in &[
             AgentProfile::Explorer,
             AgentProfile::Reviewer,
+            AgentProfile::Planner,
+            AgentProfile::SecurityReviewer,
             AgentProfile::Verifier,
             AgentProfile::Summarizer,
         ] {
@@ -1202,12 +1248,72 @@ mod tests {
     }
 
     #[test]
+    fn explicit_tool_allowlist_is_intersected_with_readonly_profile() {
+        let temp = tempfile::tempdir().unwrap();
+        let policy = crate::security::SecurityPolicy::new(
+            temp.path().to_path_buf(),
+            temp.path().join(".navi-data"),
+            crate::config::SecurityConfig::default(),
+        )
+        .unwrap();
+        let executor = crate::tool::ToolExecutor::new(policy);
+        let opts = SubagentOptions {
+            profile: Some(AgentProfile::Reviewer),
+            tools: Some(vec![
+                "read".to_string(),
+                "search".to_string(),
+                "write_file".to_string(),
+                "code_exec".to_string(),
+            ]),
+            ..Default::default()
+        };
+
+        let allowed = resolve_allowed_tool_names(&executor, &opts, resolve_approval_mode(&opts))
+            .expect("restricted tools");
+
+        assert!(allowed.contains(&"read".to_string()));
+        assert!(allowed.contains(&"search".to_string()));
+        assert!(!allowed.contains(&"write_file".to_string()));
+        assert!(!allowed.contains(&"code_exec".to_string()));
+    }
+
+    #[test]
+    fn deny_write_keeps_command_tools_available_for_verification() {
+        let temp = tempfile::tempdir().unwrap();
+        let policy = crate::security::SecurityPolicy::new(
+            temp.path().to_path_buf(),
+            temp.path().join(".navi-data"),
+            crate::config::SecurityConfig::default(),
+        )
+        .unwrap();
+        let executor = crate::tool::ToolExecutor::new(policy);
+        let opts = SubagentOptions {
+            approval: ApprovalMode::DenyWrite,
+            tools: Some(vec![
+                "read".to_string(),
+                "bash".to_string(),
+                "write_file".to_string(),
+            ]),
+            ..Default::default()
+        };
+
+        let allowed = resolve_allowed_tool_names(&executor, &opts, ApprovalMode::DenyWrite)
+            .expect("restricted tools");
+
+        assert!(allowed.contains(&"read".to_string()));
+        assert!(allowed.contains(&"bash".to_string()));
+        assert!(!allowed.contains(&"write_file".to_string()));
+    }
+
+    #[test]
     fn agent_profile_serde_roundtrip() {
         for profile in &[
             AgentProfile::Explorer,
             AgentProfile::Implementer,
             AgentProfile::Reviewer,
+            AgentProfile::SecurityReviewer,
             AgentProfile::Verifier,
+            AgentProfile::Planner,
             AgentProfile::Summarizer,
         ] {
             let json = serde_json::to_value(profile).unwrap();

@@ -1,0 +1,12 @@
+version = 1
+id = "b8-skill-mining"
+title = "trace-driven skill mining requires replay"
+category = "long_horizon_task"
+mode = "verifier-first"
+task = "Verify that successful repeated traces create inactive skills and replay thresholds control activation."
+tags = ["beyond", "b8", "skills"]
+
+[[verifiers]]
+verifier_type = "command"
+command = "test -f crates/navi-core/src/skill_mining.rs && rg -q 'SkillDraft|draft_skill_from_traces|required_capabilities|activate_skill_after_replay|replay_pass_rate' crates/navi-core/src/skill_mining.rs"
+required = true

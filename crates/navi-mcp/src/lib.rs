@@ -1,8 +1,8 @@
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use navi_core::{
-    McpConfig, McpServerConfig, Tool, ToolDefinition, ToolInvocation, ToolKind, ToolMetadata,
-    ToolResult, ToolRisk,
+    McpConfig, McpFirewallPolicy, McpServerConfig, Tool, ToolDefinition, ToolInvocation, ToolKind,
+    ToolMetadata, ToolResult, ToolRisk,
 };
 
 use rmcp::{
@@ -241,7 +241,15 @@ fn tool_definition(server: &McpServerConfig, tool: &rmcp::model::Tool) -> Option
         .as_ref()
         .map(ToString::to_string)
         .unwrap_or_else(|| format!("MCP tool `{}` from server `{}`.", tool.name, server.id));
-    let description = sanitize_description(&raw_description);
+    let firewall = McpFirewallPolicy::inspect_tool_description(
+        &server.id,
+        tool.name.as_ref(),
+        &raw_description,
+    );
+    for warning in &firewall.warnings {
+        tracing::warn!(server = %server.id, tool = %tool.name, warning = %warning);
+    }
+    let description = firewall.sanitized_description;
 
     let input_schema = Value::Object((*tool.input_schema).clone());
     if let Err(e) = jsonschema::validator_for(&input_schema) {
@@ -259,12 +267,17 @@ fn tool_definition(server: &McpServerConfig, tool: &rmcp::model::Tool) -> Option
         description,
         kind: ToolKind::Custom,
         input_schema,
-        metadata: ToolMetadata::deferred("mcp", ToolRisk::Medium, &["mcp", &server.id]),
+        metadata: ToolMetadata::deferred("mcp", ToolRisk::Medium, &["mcp", &server.id])
+            .with_capability(&[&McpFirewallPolicy::capability_for_tool(
+                &server.id,
+                tool.name.as_ref(),
+            )]),
     })
 }
 
 /// Sanitize a tool description for safe display: truncate at 1024 chars,
 /// strip control characters (keep newlines and tabs).
+#[cfg(test)]
 fn sanitize_description(desc: &str) -> String {
     let sanitized: String = desc
         .chars()
@@ -367,8 +380,9 @@ impl Tool for McpTool {
             .structured_content
             .unwrap_or_else(|| serde_json::to_value(result.content).unwrap_or_else(|_| json!([])));
 
-        // MCP output truncation at 64 KB to prevent runaway context usage.
-        let output = truncate_mcp_output(output);
+        // MCP output truncation and provenance/taint wrapping to prevent
+        // untrusted content from entering context as trusted instructions.
+        let output = McpFirewallPolicy::wrap_output(&self.server_id, &self.remote_name, output);
 
         Ok(ToolResult {
             invocation_id: invocation.id,
@@ -380,8 +394,10 @@ impl Tool for McpTool {
 
 /// Truncate MCP tool output to 64 KB, wrapping large values with a
 /// `truncated` marker to prevent runaway context usage.
+#[cfg(test)]
 const MCP_OUTPUT_MAX_BYTES: usize = 64 * 1024;
 
+#[cfg(test)]
 fn truncate_mcp_output(value: Value) -> Value {
     let serialized = value.to_string();
     if serialized.len() <= MCP_OUTPUT_MAX_BYTES {

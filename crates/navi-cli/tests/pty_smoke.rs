@@ -94,11 +94,12 @@ fn pty_smoke_renders_welcome_then_quits_cleanly() {
     let output = read_handle.join().expect("read thread");
     let text = strip_ansi(&String::from_utf8_lossy(&output));
 
-    // The TUI should have rendered the NAVI banner. The exact content
-    // depends on the default state, but the brand name must appear.
+    // The TUI should have rendered the welcome/chat screen. The block logo does
+    // not contain a plain "NAVI" substring after ratatui layout compaction, so
+    // assert on stable shortcut labels instead of the logo glyphs.
     assert!(
-        text.contains("NAVI"),
-        "expected NAVI banner in PTY output, got:\n{text}"
+        text.contains("commands") && text.contains("models") && text.contains("send"),
+        "expected NAVI welcome controls in PTY output, got:\n{text}"
     );
 
     // The binary should not have left the TUI in alt-screen on exit.

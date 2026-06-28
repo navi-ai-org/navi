@@ -1,0 +1,12 @@
+version = 1
+id = "b5-capability-ledger"
+title = "capability ledger is traceable"
+category = "security_stress"
+mode = "verifier-first"
+task = "Verify that capability lifecycle types exist, events are serializable, and traces persist capability entries."
+tags = ["beyond", "b5", "capability"]
+
+[[verifiers]]
+verifier_type = "command"
+command = "test -f crates/navi-core/src/capability.rs && rg -q 'CapabilityRecorded|capabilities: Vec<CapabilityLedgerEntry>|record_capability|unsafe_guarded_auto_approval_count' crates/navi-core/src/event.rs crates/navi-core/src/trace.rs crates/navi-core/src/replay_gate.rs"
+required = true
