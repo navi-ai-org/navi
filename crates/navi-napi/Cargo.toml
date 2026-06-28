@@ -1,0 +1,20 @@
+[package]
+name = "navi-napi"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
+napi.workspace = true
+napi-derive.workspace = true
+navi-core.workspace = true
+navi-sdk.workspace = true
+serde_json.workspace = true
+
+[build-dependencies]
+napi-build.workspace = true
