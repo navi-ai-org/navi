@@ -235,7 +235,7 @@ fn nested_invocation(index: usize, op: &CodeExecOp) -> Result<ToolInvocation> {
                     map.insert("max_results".to_string(), json!(value));
                 }
             }
-            ("ast.search".to_string(), input)
+            ("ast_search".to_string(), input)
         }
         CodeExecOp::VerifyRun {
             command,

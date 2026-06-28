@@ -12,7 +12,7 @@ pub(crate) struct BranchRaceTool;
 impl Tool for BranchRaceTool {
     fn definition(&self) -> ToolDefinition {
         helpers::definition(
-            "branch_race.start",
+            "branch_race_start",
             "Plan branch-race hypotheses for uncertain implementation tasks. Returns strategies to execute in isolated snapshots/worktrees and score by verifier evidence.",
             ToolKind::Read,
             json!({

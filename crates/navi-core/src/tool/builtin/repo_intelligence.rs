@@ -32,12 +32,12 @@ impl RepoIntelligenceTool {
 
     fn name(&self) -> &'static str {
         match self.action {
-            RepoIntelligenceAction::AstSearch => "ast.search",
-            RepoIntelligenceAction::SymbolGoto => "symbol.goto",
-            RepoIntelligenceAction::SymbolReferences => "symbol.references",
-            RepoIntelligenceAction::DependencyGraph => "dependency_graph.query",
+            RepoIntelligenceAction::AstSearch => "ast_search",
+            RepoIntelligenceAction::SymbolGoto => "symbol_goto",
+            RepoIntelligenceAction::SymbolReferences => "symbol_references",
+            RepoIntelligenceAction::DependencyGraph => "dependency_graph_query",
             RepoIntelligenceAction::TestDiscovery => "test_discovery",
-            RepoIntelligenceAction::OwnershipChurn => "ownership_churn.query",
+            RepoIntelligenceAction::OwnershipChurn => "ownership_churn_query",
         }
     }
 }
