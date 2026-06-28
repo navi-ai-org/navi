@@ -250,7 +250,7 @@ let engine = NaviEngineBuilder::from_project(".")
 - [x] Add a NAPI wrapper crate only after the Rust SDK customization surface is
   stable.
 - [x] Expose host tools as TypeScript callbacks or classes.
-- [ ] Expose runtime events as a stream or async iterator.
+- [x] Expose runtime events as a stream or async iterator.
 - [x] Expose safe component options first: permissive security, prompt templates,
   tool filtering, hooks, and compaction rules.
 - [ ] Decide which components need full TypeScript callback implementations versus
@@ -289,12 +289,13 @@ export function createTutorEngine(workspace: string) {
 - Host tool callbacks receive `{ invocationId, input }` and return a promise
   resolving to `{ ok, output }`.
 - Session lifecycle methods expose start, send turn, snapshot, and close.
-- Runtime event streaming is still pending; current TypeScript callers use
-  request/response turn execution.
+- `NaviNapiEngine::subscribeEvents(sessionId)` returns an event stream object
+  with async `next()` over serialized `RuntimeEvent` payloads.
 
 ### Suggested Validation
 
-- NAPI unit tests for host tool result parsing and tool kind mapping.
+- NAPI unit tests for host tool result parsing, tool kind mapping, and runtime
+  event serialization.
 - End-to-end tutor session smoke test.
 
 ## Phase 6: NAVI Learning Runtime
@@ -370,4 +371,4 @@ Update this section during each implementation step.
 | 2026-06-28 | 3 | Completed | Added SDK builder setters for security, harness, prompt, compaction, hooks, and full runtime components. |
 | 2026-06-28 | 4 | Partial | Plugin registry declarations for agent policies/TUI components now produce warnings; real component factories remain pending. |
 | 2026-06-28 | 6 | Completed | Added learning runtime preset with permissive security, learning harness, tutor prompt builder, study compaction, and SDK `.learning_tutor()`. |
-| 2026-06-28 | 5 | Partial | Added `navi-napi` crate, TypeScript engine builder, learning tutor toggle, session methods, and async TypeScript host-tool callbacks. Runtime event async iterator remains pending. |
+| 2026-06-28 | 5 | Partial | Added `navi-napi` crate, TypeScript engine builder, learning tutor toggle, session methods, async TypeScript host-tool callbacks, and event stream `next()` support. Full TypeScript component callback strategy remains pending. |

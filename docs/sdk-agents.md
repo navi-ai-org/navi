@@ -244,13 +244,17 @@ builder.hostTool(
 
 const engine = builder.build();
 const session = await engine.startSession();
+const events = engine.subscribeEvents(session.id);
 const response = await engine.sendTurn(session.id, "Explique limites com exemplos");
+const firstEvent = await events.next();
 ```
 
 The callback receives `{ invocationId, input }` and returns a promise for
 `{ ok, output }`. The tool is registered through the same SDK `SdkHostTool`
 adapter used by Rust hosts, so it is visible to the model without changing
-`navi-core` or depending on `navi-tui`.
+`navi-core` or depending on `navi-tui`. `subscribeEvents(sessionId)` returns a
+stream object whose `next()` method resolves to the next serialized
+`RuntimeEvent`, or `null` when the stream closes.
 
 ## Runtime Customization
 
