@@ -81,6 +81,66 @@ async fn builtins_read_write_and_grep_files() {
 }
 
 #[tokio::test]
+async fn executor_emits_capability_lifecycle_for_allowed_tool() {
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    std::fs::write(tempdir.path().join("file.txt"), "hello\n").unwrap();
+    let executor = executor(tempdir.path());
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+
+    let result = executor
+        .invoke_with_event_tx(
+            ToolInvocation {
+                id: "read-cap".to_string(),
+                tool_name: "read_file".to_string(),
+                input: json!({"path": "file.txt"}),
+            },
+            Some(tx),
+        )
+        .await;
+
+    assert!(result.ok, "{:?}", result.output);
+    let mut decisions = Vec::new();
+    while let Ok(event) = rx.try_recv() {
+        if let AgentEvent::CapabilityRecorded(entry) = event {
+            decisions.push((entry.capability.as_key(), entry.decision));
+        }
+    }
+    assert!(decisions.contains(&(
+        "repo.read".to_string(),
+        crate::CapabilityDecision::Requested
+    )));
+    assert!(decisions.contains(&("repo.read".to_string(), crate::CapabilityDecision::Consumed)));
+}
+
+#[tokio::test]
+async fn executor_emits_denied_capability_for_blocked_tool() {
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let executor = executor(tempdir.path());
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+
+    let result = executor
+        .invoke_with_event_tx(
+            ToolInvocation {
+                id: "blocked-cap".to_string(),
+                tool_name: "bash".to_string(),
+                input: json!({"command": "sudo true"}),
+            },
+            Some(tx),
+        )
+        .await;
+
+    assert!(!result.ok);
+    let mut saw_denied = false;
+    while let Ok(event) = rx.try_recv() {
+        if let AgentEvent::CapabilityRecorded(entry) = event {
+            saw_denied |= matches!(entry.decision, crate::CapabilityDecision::Denied)
+                && entry.capability.as_key() == "shell.safe";
+        }
+    }
+    assert!(saw_denied, "expected denied shell capability event");
+}
+
+#[tokio::test]
 async fn legacy_file_tool_aliases_remain_registered_and_invokable() {
     let tempdir = tempfile::tempdir().expect("tempdir");
     let executor = executor(tempdir.path());
@@ -590,6 +650,65 @@ workflow()
     assert!(result.ok, "{:?}", result.output);
     assert_eq!(result.output["result"]["count"], 2);
     assert_eq!(result.output["tool_calls"], 3);
+}
+
+#[tokio::test]
+async fn code_exec_runs_typed_nested_plan_with_verifier() {
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let executor = executor(tempdir.path());
+    std::fs::create_dir_all(tempdir.path().join("src")).expect("mkdir");
+    std::fs::write(
+        tempdir.path().join("src/lib.rs"),
+        "pub fn code_exec_marker() {}\n",
+    )
+    .expect("write lib");
+
+    let result = executor
+        .invoke(ToolInvocation {
+            id: "code-exec".to_string(),
+            tool_name: "code_exec".to_string(),
+            input: json!({
+                "cell_id": "cell-1",
+                "ops": [
+                    { "op": "repo-read", "path": "src/lib.rs" },
+                    { "op": "ast-search", "query": "code_exec_marker", "kind": "function" },
+                    { "op": "verify-run", "command": "test -f src/lib.rs", "verifier": "command" },
+                    { "op": "trace-note", "note": "verified file exists" }
+                ]
+            }),
+        })
+        .await;
+
+    assert!(result.ok, "{:?}", result.output);
+    assert_eq!(result.output["status"], "passed");
+    assert_eq!(result.output["ops_executed"], 4);
+    assert_eq!(result.output["artifact"]["ops"][1]["op"], "ast-search");
+}
+
+#[tokio::test]
+async fn code_exec_rejects_untyped_operation_shape() {
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let executor = executor(tempdir.path());
+
+    let result = executor
+        .invoke(ToolInvocation {
+            id: "code-exec".to_string(),
+            tool_name: "code_exec".to_string(),
+            input: json!({
+                "ops": [
+                    { "op": "repo-read" }
+                ]
+            }),
+        })
+        .await;
+
+    assert!(!result.ok);
+    assert!(
+        result.output["error"]
+            .as_str()
+            .unwrap()
+            .contains("invalid code_exec request")
+    );
 }
 
 #[tokio::test]

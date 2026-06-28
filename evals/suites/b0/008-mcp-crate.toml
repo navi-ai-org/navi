@@ -1,0 +1,12 @@
+version = 1
+id = "b0-mcp-crate"
+title = "MCP crate exists"
+category = "mcp_stress_task"
+task = "Verify that the MCP integration crate is present."
+tags = ["b0", "mcp"]
+
+[[verifiers]]
+verifier_type = "command"
+command = "test -f crates/navi-mcp/Cargo.toml"
+required = true
+

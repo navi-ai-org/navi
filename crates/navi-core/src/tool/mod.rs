@@ -1,3 +1,6 @@
+use crate::capability::{
+    CapabilityDecision, CapabilityLedgerEntry, CapabilityScope, capabilities_from_tool_metadata,
+};
 use crate::effect::PostDecision;
 use crate::event::AgentEvent;
 use crate::file_lock::FileLockManager;
@@ -18,13 +21,14 @@ pub mod registry;
 #[cfg(test)]
 mod tests;
 
+use builtin::BranchRaceTool;
 use builtin::{
-    AppendNoteTool, BashTool, CodeEditTool, CodeReadTool, ContextRemainingTool, CurrentTimeTool,
-    GitOpsTool, HistoryOpsTool, InitSessionTool, MarkFeatureDoneTool, NewContextWindowTool,
-    PackageManagerTool, PlanTool, ProcessTool, QuestionTool, ReadTool, RequestUserInputTool,
-    RuntimeInfoTool, SandboxTool, SearchTool, SleepTool, ToolSearchTool, ToolWorkflowTool,
-    TopFilesTool, VerifierTool, ViewImageTool, WaitTool, WriteTool, builtin_metadata,
-    truncate_tool_result,
+    AppendNoteTool, BashTool, CodeEditTool, CodeExecTool, CodeReadTool, ContextRemainingTool,
+    CurrentTimeTool, GitOpsTool, HistoryOpsTool, InitSessionTool, MarkFeatureDoneTool,
+    NewContextWindowTool, PackageManagerTool, PlanTool, ProcessTool, QuestionTool, ReadTool,
+    RepoIntelligenceAction, RepoIntelligenceTool, RequestUserInputTool, RuntimeInfoTool,
+    SandboxTool, SearchTool, SleepTool, ToolSearchTool, ToolWorkflowTool, TopFilesTool,
+    VerifierTool, ViewImageTool, WaitTool, WriteTool, builtin_metadata, truncate_tool_result,
 };
 
 pub use builtin::{AgentProfile, ApprovalMode, ProviderBuilderFn, RepoExploreTool, SubagentTool};
@@ -250,6 +254,36 @@ impl ToolExecutor {
         executor
     }
 
+    pub(crate) fn new_code_exec_host(policy: SecurityPolicy) -> Self {
+        let pr = policy.project_root().to_path_buf();
+        let mut executor = Self {
+            tools: HashMap::new(),
+            validators: HashMap::new(),
+            invalid_schemas: HashMap::new(),
+            policy: policy.clone(),
+            harness_profile: "medium".to_string(),
+            lock_manager: None,
+            registry: ToolRegistry::new(),
+        };
+        executor.register(ReadTool::new(pr.clone()));
+        executor.register(ReadTool::alias(pr.clone(), "read_file"));
+        executor.register(SearchTool::new(pr.clone()));
+        executor.register(SearchTool::grep(pr.clone()));
+        executor.register(SearchTool::fs_browser(pr.clone()));
+        executor.register(GitOpsTool::new(pr.clone()));
+        executor.register(WriteTool::apply_patch(pr.clone()));
+        executor.register(VerifierTool::new(pr));
+        executor.register(RepoIntelligenceTool::new(
+            policy.clone(),
+            RepoIntelligenceAction::AstSearch,
+        ));
+        executor.register(RepoIntelligenceTool::new(
+            policy,
+            RepoIntelligenceAction::TestDiscovery,
+        ));
+        executor
+    }
+
     pub fn definitions(&self) -> Vec<ToolDefinition> {
         // Use registry exposure info to filter, but get definitions from live tools.
         // Merge in the enriched metadata from the registry so that schema
@@ -463,11 +497,26 @@ impl ToolExecutor {
             .as_ref()
             .and_then(|d| d.metadata.verifier.as_deref())
             .map(|v| v.to_string());
+        let capability_event_tx = event_tx.clone();
+        emit_capability_events(
+            capability_event_tx.as_ref(),
+            &invocation,
+            tool_def.as_ref(),
+            CapabilityDecision::Requested,
+            "tool invocation requested",
+        );
 
         if let Err(e) = self.validate_arguments(&invocation) {
             return self.invalid_tool_result(&invocation, e);
         }
         if let SecurityDecision::Deny(r) = self.validate(&invocation) {
+            emit_capability_events(
+                capability_event_tx.as_ref(),
+                &invocation,
+                tool_def.as_ref(),
+                CapabilityDecision::Denied,
+                &r,
+            );
             return ToolResult {
                 invocation_id: inv_id,
                 ok: false,
@@ -573,6 +622,17 @@ impl ToolExecutor {
                                 .as_ref()
                                 .map(crate::sandbox::SandboxManager::rollback);
                             let (rolled_back, rollback_error) = rollback_outcome(rollback);
+                            emit_capability_events(
+                                capability_event_tx.as_ref(),
+                                &ToolInvocation {
+                                    id: inv_id.clone(),
+                                    tool_name: tool_name.clone(),
+                                    input: json!({}),
+                                },
+                                tool_def.as_ref(),
+                                CapabilityDecision::Violated,
+                                &reason,
+                            );
                             return ToolResult {
                                 invocation_id: inv_id,
                                 ok: false,
@@ -594,6 +654,17 @@ impl ToolExecutor {
                                 .as_ref()
                                 .map(crate::sandbox::SandboxManager::rollback);
                             let (rolled_back, rollback_error) = rollback_outcome(rollback);
+                            emit_capability_events(
+                                capability_event_tx.as_ref(),
+                                &ToolInvocation {
+                                    id: inv_id.clone(),
+                                    tool_name: tool_name.clone(),
+                                    input: json!({}),
+                                },
+                                tool_def.as_ref(),
+                                CapabilityDecision::Violated,
+                                &reason,
+                            );
                             return ToolResult {
                                 invocation_id: inv_id,
                                 ok: false,
@@ -609,6 +680,26 @@ impl ToolExecutor {
                 }
             }
         }
+
+        emit_capability_events(
+            capability_event_tx.as_ref(),
+            &ToolInvocation {
+                id: inv_id.clone(),
+                tool_name: tool_name.clone(),
+                input: json!({}),
+            },
+            tool_def.as_ref(),
+            if result.ok {
+                CapabilityDecision::Consumed
+            } else {
+                CapabilityDecision::Violated
+            },
+            if result.ok {
+                "tool invocation completed"
+            } else {
+                "tool invocation failed"
+            },
+        );
 
         // Post-execution verifier hint injection: if the tool metadata advertises
         // a verifier hint, surface it in the result so the harness (and model)
@@ -811,6 +902,32 @@ impl ToolExecutor {
         ));
         self.register(CodeReadTool::new(self.policy.clone()));
         self.register(CodeEditTool::new(self.policy.clone()));
+        self.register(CodeExecTool::new(self.policy.clone()));
+        self.register(RepoIntelligenceTool::new(
+            self.policy.clone(),
+            RepoIntelligenceAction::AstSearch,
+        ));
+        self.register(RepoIntelligenceTool::new(
+            self.policy.clone(),
+            RepoIntelligenceAction::SymbolGoto,
+        ));
+        self.register(RepoIntelligenceTool::new(
+            self.policy.clone(),
+            RepoIntelligenceAction::SymbolReferences,
+        ));
+        self.register(RepoIntelligenceTool::new(
+            self.policy.clone(),
+            RepoIntelligenceAction::DependencyGraph,
+        ));
+        self.register(RepoIntelligenceTool::new(
+            self.policy.clone(),
+            RepoIntelligenceAction::TestDiscovery,
+        ));
+        self.register(RepoIntelligenceTool::new(
+            self.policy.clone(),
+            RepoIntelligenceAction::OwnershipChurn,
+        ));
+        self.register(BranchRaceTool);
         self.register(InitSessionTool::new(self.policy.clone()));
         self.register(MarkFeatureDoneTool::new(self.policy.clone()));
         self.register(AppendNoteTool::new(pr.clone()));
@@ -964,6 +1081,37 @@ fn rollback_outcome(rollback: Option<std::result::Result<(), String>>) -> (bool,
         Some(Err(error)) => (false, Some(error)),
         None => (false, None),
     }
+}
+
+fn emit_capability_events(
+    event_tx: Option<&mpsc::UnboundedSender<AgentEvent>>,
+    invocation: &ToolInvocation,
+    definition: Option<&ToolDefinition>,
+    decision: CapabilityDecision,
+    justification: &str,
+) {
+    let Some(event_tx) = event_tx else {
+        return;
+    };
+    let Some(definition) = definition else {
+        return;
+    };
+    for capability in capabilities_from_tool_metadata(&definition.metadata.capabilities) {
+        let _ = event_tx.send(AgentEvent::CapabilityRecorded(CapabilityLedgerEntry {
+            capability,
+            scope: CapabilityScope::SingleCall(invocation.id.clone()),
+            decision: decision.clone(),
+            at_ms: tool_unix_millis(),
+            justification: format!("{}: {justification}", invocation.tool_name),
+        }));
+    }
+}
+
+fn tool_unix_millis() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as u64)
+        .unwrap_or(0)
 }
 
 pub fn example_from_schema(schema: &Value) -> Value {

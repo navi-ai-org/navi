@@ -1,3 +1,4 @@
+use crate::capability::CapabilityLedgerEntry;
 use crate::patch::PatchProposal;
 use crate::tool::{ToolInvocation, ToolResult};
 use serde::{Deserialize, Serialize};
@@ -87,6 +88,8 @@ pub enum RuntimeEventKind {
     ApprovalRequired(ApprovalRequest),
     /// An approval request has been resolved (approved or denied).
     ApprovalResolved(ApprovalDecision),
+    /// A capability lifecycle event was recorded by the policy layer.
+    CapabilityRecorded(CapabilityLedgerEntry),
     /// The assistant has requested an interactive user choice.
     QuestionRequired(QuestionRequest),
     /// An interactive user choice has been resolved.
@@ -197,6 +200,9 @@ impl RuntimeEventKind {
             }
             RuntimeEventKind::ApprovalResolved(decision) => {
                 Some(AgentEvent::ApprovalResolved(decision))
+            }
+            RuntimeEventKind::CapabilityRecorded(entry) => {
+                Some(AgentEvent::CapabilityRecorded(entry))
             }
             RuntimeEventKind::QuestionRequired(request) => {
                 Some(AgentEvent::QuestionRequested(request))
@@ -326,6 +332,8 @@ pub enum AgentEvent {
     ApprovalRequested(ApprovalRequest),
     /// An approval request was resolved.
     ApprovalResolved(ApprovalDecision),
+    /// A capability lifecycle event was recorded by the policy layer.
+    CapabilityRecorded(CapabilityLedgerEntry),
     /// The assistant requested an interactive user choice.
     QuestionRequested(QuestionRequest),
     /// An interactive user choice was resolved.

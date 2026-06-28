@@ -221,6 +221,75 @@ static LOOKUP: LazyLock<std::collections::HashMap<&'static str, ToolMetadata>> =
         );
         insert(
             &mut map,
+            "code_exec",
+            ToolMetadata {
+                namespace: "code".to_string(),
+                risk: crate::tool::ToolRisk::High,
+                is_read_only: false,
+                is_concurrency_safe: false,
+                supports_rollback: true,
+                exposure: crate::tool::ToolExposure::Deferred,
+                capabilities: vec![
+                    "repo.read".to_string(),
+                    "repo.write.src".to_string(),
+                    "code.exec".to_string(),
+                    "verifier.run".to_string(),
+                ],
+                tags: vec!["code", "exec", "sdk", "nested-tools", "verifier"]
+                    .into_iter()
+                    .map(|s| s.to_string())
+                    .collect(),
+                max_output_bytes: Some(131072),
+                ..ToolMetadata::default()
+            },
+        );
+        for name in [
+            "ast.search",
+            "symbol.goto",
+            "symbol.references",
+            "dependency_graph.query",
+            "test_discovery",
+            "ownership_churn.query",
+        ] {
+            insert(
+                &mut map,
+                name,
+                ToolMetadata {
+                    namespace: "repo_intelligence".to_string(),
+                    risk: crate::tool::ToolRisk::Low,
+                    is_read_only: true,
+                    is_concurrency_safe: true,
+                    exposure: crate::tool::ToolExposure::Direct,
+                    capabilities: vec!["repo.read".to_string(), "code.analyze".to_string()],
+                    tags: vec!["ast", "symbol", "dependency", "test", "repo"]
+                        .into_iter()
+                        .map(|s| s.to_string())
+                        .collect(),
+                    max_output_bytes: Some(32768),
+                    ..ToolMetadata::default()
+                },
+            );
+        }
+        insert(
+            &mut map,
+            "branch_race.start",
+            ToolMetadata {
+                namespace: "orchestration".to_string(),
+                risk: crate::tool::ToolRisk::Medium,
+                is_read_only: true,
+                is_concurrency_safe: true,
+                exposure: crate::tool::ToolExposure::Deferred,
+                capabilities: vec!["orchestration.branch_race".to_string()],
+                tags: vec!["branch", "race", "hypothesis", "verifier"]
+                    .into_iter()
+                    .map(|s| s.to_string())
+                    .collect(),
+                max_output_bytes: Some(32768),
+                ..ToolMetadata::default()
+            },
+        );
+        insert(
+            &mut map,
             "git_ops",
             ToolMetadata {
                 namespace: "git".to_string(),
@@ -510,6 +579,14 @@ mod tests {
             "process",
             "code",
             "code_edit",
+            "code_exec",
+            "ast.search",
+            "symbol.goto",
+            "symbol.references",
+            "dependency_graph.query",
+            "test_discovery",
+            "ownership_churn.query",
+            "branch_race.start",
             "git_ops",
             "question",
             "plan",

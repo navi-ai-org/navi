@@ -1,0 +1,12 @@
+version = 1
+id = "b0-parity-test-suite"
+title = "parity test suite exists"
+category = "long_horizon_task"
+task = "Verify that the parity test suite exists as a baseline gate."
+tags = ["b0", "parity", "tests"]
+
+[[verifiers]]
+verifier_type = "command"
+command = "test -f crates/navi-core/tests/parity_check.rs"
+required = true
+

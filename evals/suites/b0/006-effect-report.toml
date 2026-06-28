@@ -1,0 +1,12 @@
+version = 1
+id = "b0-effect-report"
+title = "effect report module exists"
+category = "security_stress"
+task = "Verify that effect reporting code is available for safety scoring."
+tags = ["b0", "effect", "security"]
+
+[[verifiers]]
+verifier_type = "command"
+command = "test -f crates/navi-core/src/effect.rs"
+required = true
+

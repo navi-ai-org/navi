@@ -1,0 +1,12 @@
+version = 1
+id = "b2-code-exec"
+title = "typed code_exec SDK exists"
+category = "long_horizon_task"
+mode = "verifier-first"
+task = "Verify that code_exec uses typed operations, nested ToolExecutor routing, verifier execution, and reproducible artifacts."
+tags = ["beyond", "b2", "code-exec"]
+
+[[verifiers]]
+verifier_type = "command"
+command = "test -f crates/navi-core/src/tool/builtin/code_exec.rs && rg -q 'RepoRead|RepoSearch|RepoPatch|AstSearch|VerifyRun|TraceNote|artifact|new_code_exec_host' crates/navi-core/src/tool/builtin/code_exec.rs crates/navi-core/src/tool/mod.rs"
+required = true

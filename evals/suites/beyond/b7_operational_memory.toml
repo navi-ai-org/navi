@@ -1,0 +1,12 @@
+version = 1
+id = "b7-operational-memory"
+title = "operational memory supports scoped retrieval and prompt injection budget"
+category = "long_horizon_task"
+mode = "verifier-first"
+task = "Verify that operational memory has scopes, expiry, verifier evidence, redaction, retrieval, and prompt budget rendering."
+tags = ["beyond", "b7", "memory"]
+
+[[verifiers]]
+verifier_type = "command"
+command = "test -f crates/navi-core/src/operational_memory.rs && rg -q 'MemoryScope|verifier_evidence|expires_at_ms|redact_secrets|retrieve|render_prompt_context' crates/navi-core/src/operational_memory.rs"
+required = true

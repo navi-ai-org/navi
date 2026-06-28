@@ -42,6 +42,10 @@ test *args:
 test-crate crate *args:
     cargo test -p {{crate}} -- --test-threads={{test_threads}} {{args}}
 
+harness-replay:
+    cargo run -p navi-cli -- eval run evals/suites/b0
+    cargo run -p navi-cli -- eval run evals/suites/beyond
+
 # Regenerate the TUI golden snapshots in crates/navi-tui/tests/snapshots/.
 # Run this after an intentional rendering change is reviewed by hand.
 snapshot-update:

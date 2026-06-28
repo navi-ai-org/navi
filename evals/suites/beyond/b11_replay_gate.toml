@@ -1,0 +1,12 @@
+version = 1
+id = "b11-replay-gate"
+title = "release replay gate exists"
+category = "security_stress"
+mode = "verifier-first"
+task = "Verify that replay gate enforces success-rate drops and unsafe guarded auto-approval failures."
+tags = ["beyond", "b11", "replay-gate"]
+
+[[verifiers]]
+verifier_type = "command"
+command = "test -f crates/navi-core/src/replay_gate.rs && rg -q 'ReplayGateConfig|evaluate_replay_gate|max_success_rate_drop|unsafe_guarded_auto_approval_count|harness-replay' crates/navi-core/src/replay_gate.rs justfile"
+required = true

@@ -1,0 +1,12 @@
+version = 1
+id = "b9-dataset-flywheel"
+title = "trace-to-eval and dataset export exist"
+category = "long_horizon_task"
+mode = "verifier-first"
+task = "Verify that traces generate eval candidates, dataset JSONL rows, permission classifier rows, and CLI export."
+tags = ["beyond", "b9", "dataset"]
+
+[[verifiers]]
+verifier_type = "command"
+command = "test -f crates/navi-core/src/dataset.rs && rg -q 'traces_to_eval_candidates|PermissionClassifier|export_jsonl|GenerateFromTraces|dataset_jsonl' crates/navi-core/src/dataset.rs crates/navi-cli/src/eval_cmd.rs crates/navi-cli/src/main.rs"
+required = true

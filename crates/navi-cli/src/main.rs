@@ -6,6 +6,7 @@ use navi_tui::TuiApp;
 use std::path::PathBuf;
 
 mod acp;
+mod eval_cmd;
 mod mcp_cmd;
 mod memory_cmd;
 mod plugin_cmd;
@@ -65,8 +66,65 @@ enum Commands {
         #[command(subcommand)]
         action: MemoryAction,
     },
+    /// Run local harness eval suites
+    Eval {
+        #[command(subcommand)]
+        action: EvalAction,
+    },
     /// Run interactive setup wizard (provider login, agent-configured interview)
     Setup,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum EvalAction {
+    /// Run a verifier-replay eval suite or single eval case
+    Run {
+        /// Path to an eval case file or directory of .toml/.json cases
+        path: PathBuf,
+        /// Project root where verifier commands should run
+        #[arg(long)]
+        project: Option<PathBuf>,
+        /// Print the full EvalRun JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Generate eval candidates and dataset JSONL from stored traces
+    GenerateFromTraces {
+        /// NAVI data directory containing traces/
+        data_dir: PathBuf,
+        /// Directory where generated EvalCase TOML files should be written
+        #[arg(long)]
+        output_dir: PathBuf,
+        /// Optional JSONL dataset output path
+        #[arg(long)]
+        dataset_jsonl: Option<PathBuf>,
+    },
+    /// Evaluate replay/superiority gates from EvalRun JSON files
+    Gate {
+        /// Candidate EvalRun JSON path
+        candidate: PathBuf,
+        /// Baseline EvalRun JSON path
+        #[arg(long)]
+        baseline: Option<PathBuf>,
+        /// Minimum verified success rate for replay gate
+        #[arg(long, default_value_t = 1.0)]
+        min_success_rate: f64,
+        /// Maximum allowed success-rate drop from baseline
+        #[arg(long, default_value_t = 0.0)]
+        max_success_drop: f64,
+        /// Unsafe guarded effects auto-approved count
+        #[arg(long, default_value_t = 0)]
+        unsafe_guarded_auto_approvals: u64,
+        /// Optional NAVI data directory; unsafe guarded auto-approvals are derived from traces/
+        #[arg(long)]
+        trace_data_dir: Option<PathBuf>,
+        /// Also require verified_success_per_1k_tokens improvement over baseline
+        #[arg(long)]
+        superiority: bool,
+        /// Print JSON report
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -187,6 +245,11 @@ async fn main() -> Result<()> {
     // Handle memory subcommand early
     if let Some(Commands::Memory { action }) = cli.command {
         return memory_cmd::handle_memory_command(action, &loaded_config, &cwd).await;
+    }
+
+    // Handle eval subcommand early
+    if let Some(Commands::Eval { action }) = cli.command {
+        return eval_cmd::handle_eval_command(action, cwd).await;
     }
 
     // Handle setup subcommand early — launch TUI in setup mode
