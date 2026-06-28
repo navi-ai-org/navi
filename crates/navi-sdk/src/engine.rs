@@ -153,6 +153,31 @@ impl NaviEngineBuilder {
     }
 }
 
+fn runtime_components_for_plugin_policies(
+    mut components: RuntimeComponents,
+    agent_policies: &[String],
+    warnings: &mut Vec<String>,
+) -> RuntimeComponents {
+    for policy in agent_policies {
+        match normalize_plugin_policy_name(policy).as_str() {
+            "learning_tutor" | "navi_learning" | "tutor" => {
+                components = navi_core::learning_runtime_components();
+            }
+            "default" | "code_agent" => {
+                components = RuntimeComponents::default();
+            }
+            other => warnings.push(format!(
+                "plugin registered unknown agent policy `{other}`; known policies are learning_tutor, navi_learning, tutor, default, and code_agent"
+            )),
+        }
+    }
+    components
+}
+
+fn normalize_plugin_policy_name(name: &str) -> String {
+    name.trim().to_ascii_lowercase().replace('-', "_")
+}
+
 /// The main NAVI engine handle. Clone-safe (wraps `Arc` internally).
 ///
 /// Provides session lifecycle, model management, credential management,
@@ -221,6 +246,11 @@ impl NaviEngine {
             project_dir.clone(),
             &self.inner.runtime_components,
         )?;
+        let runtime_components = runtime_components_for_plugin_policies(
+            self.inner.runtime_components.clone(),
+            &tool_executor.agent_policies,
+            &mut tool_executor.warnings,
+        );
         for tool in &self.inner.host_tools {
             let executor = Arc::get_mut(&mut tool_executor.tool_executor).ok_or_else(|| {
                 NaviError::Config("cannot register host tool after tool executor is shared".into())
@@ -262,7 +292,7 @@ impl NaviEngine {
                 loaded_config.config.harness.clone(),
                 shared_config.clone(),
                 prompt_cache.clone(),
-                self.inner.runtime_components.clone(),
+                runtime_components.clone(),
             );
             executor.register_tool(Arc::new(subagent));
             executor.register_tool(Arc::new(navi_core::RepoExploreTool::new(
@@ -274,7 +304,7 @@ impl NaviEngine {
                 loaded_config.config.harness.clone(),
                 shared_config.clone(),
                 prompt_cache.clone(),
-                self.inner.runtime_components.clone(),
+                runtime_components.clone(),
             )));
             executor
         });
@@ -292,7 +322,7 @@ impl NaviEngine {
             initial_updated_at: request.initial_updated_at,
             session_id: request.session_id.map(SessionId::new),
             event_tx: None,
-            runtime_components: Some(self.inner.runtime_components.clone()),
+            runtime_components: Some(runtime_components),
         });
         let events = runtime.stream_events();
         let session_id = runtime.start_session()?;

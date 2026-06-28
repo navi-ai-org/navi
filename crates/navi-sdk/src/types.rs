@@ -229,6 +229,8 @@ pub struct NaviSavedSessionInfo {
 pub struct NaviRuntimeTooling {
     pub tool_executor: Arc<ToolExecutor>,
     pub warnings: Vec<String>,
+    pub agent_policies: Vec<String>,
+    pub tui_components: Vec<String>,
     pub(crate) _plugins: Vec<LoadedPlugin>,
 }
 

@@ -65,6 +65,8 @@ pub(crate) fn build_local_tooling(
     );
 
     let mut warnings = plugin_report.warnings;
+    let agent_policies = plugin_report.agent_policies;
+    let tui_components = plugin_report.tui_components;
 
     // Load WASM plugins from the data-dir store and any configured scan roots.
     let security_defaults = SecurityDefaults::default();
@@ -83,6 +85,8 @@ pub(crate) fn build_local_tooling(
     Ok(NaviRuntimeTooling {
         tool_executor: Arc::new(tool_executor),
         warnings,
+        agent_policies,
+        tui_components,
         _plugins: plugin_report.loaded_plugins,
     })
 }
