@@ -267,6 +267,21 @@ stream object whose `next()` method resolves to the next serialized
 maps structured TypeScript options onto the Rust learning harness, tutor prompt
 builder, and study compaction strategy.
 
+## Native Plugin Policies
+
+Native plugins can call `register_agent_policy(name)`. The SDK consumes known
+policy names before constructing the session runtime:
+
+| Policy | Effect |
+|---|---|
+| `learning_tutor`, `navi_learning`, `tutor` | Uses `learning_runtime_components()`. |
+| `default`, `code_agent` | Uses `RuntimeComponents::default()`. |
+
+Unknown policy names are reported as plugin warnings and do not replace the
+host-configured runtime components. `register_tui_component(...)` remains a
+TUI-scoped declaration; `navi-core` and `navi-sdk` do not instantiate terminal
+widgets.
+
 ## Runtime Customization
 
 `NaviEngineBuilder` can replace runtime components while keeping the default
