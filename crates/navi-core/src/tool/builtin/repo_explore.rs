@@ -17,6 +17,7 @@ use crate::config::{HarnessConfig, NaviConfig};
 use crate::model::{ModelMessage, ModelProvider, ModelRole};
 use crate::prompt::PromptCache;
 use crate::runtime::ApprovalResolver;
+use crate::runtime_components::RuntimeComponents;
 use crate::tool::{Tool, ToolDefinition, ToolInvocation, ToolKind, ToolResult};
 use crate::turn::TurnContext;
 
@@ -45,6 +46,7 @@ pub struct RepoExploreTool {
     harness_config: HarnessConfig,
     config: Arc<RwLock<NaviConfig>>,
     prompt_cache: Arc<PromptCache>,
+    components: RuntimeComponents,
 }
 
 impl RepoExploreTool {
@@ -57,6 +59,7 @@ impl RepoExploreTool {
         harness_config: HarnessConfig,
         config: Arc<RwLock<NaviConfig>>,
         prompt_cache: Arc<PromptCache>,
+        components: RuntimeComponents,
     ) -> Self {
         Self {
             tool_executor,
@@ -67,6 +70,7 @@ impl RepoExploreTool {
             harness_config,
             config,
             prompt_cache,
+            components,
         }
     }
 }
@@ -174,6 +178,7 @@ impl Tool for RepoExploreTool {
             context_packets: Arc::new(std::sync::Mutex::new(Vec::new())),
             active_skills: Arc::new(std::sync::Mutex::new(Vec::new())),
             prompt_cache: self.prompt_cache.clone(),
+            components: self.components.clone(),
             cancel_token: CancelToken::new(),
             config: self.config.clone(),
             memory_injection: None,
@@ -232,6 +237,7 @@ mod tests {
             HarnessConfig::default(),
             Arc::new(RwLock::new(NaviConfig::default())),
             Arc::new(PromptCache::new()),
+            RuntimeComponents::default(),
         );
 
         let def = tool.definition();

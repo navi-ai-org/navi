@@ -820,6 +820,7 @@ mod tests {
             context_packets: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
             active_skills: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
             prompt_cache: std::sync::Arc::new(crate::prompt::PromptCache::new()),
+            components: crate::RuntimeComponents::default(),
             cancel_token: crate::cancel::CancelToken::new(),
             config: std::sync::Arc::new(std::sync::RwLock::new(
                 crate::config::NaviConfig::default(),

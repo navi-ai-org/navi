@@ -591,6 +591,7 @@ None.
         context_packets: Arc::new(std::sync::Mutex::new(Vec::new())),
         active_skills: Arc::new(std::sync::Mutex::new(Vec::new())),
         prompt_cache: Arc::new(crate::prompt::PromptCache::new()),
+        components: crate::RuntimeComponents::default(),
         cancel_token: CancelToken::new(),
         config: Arc::new(std::sync::RwLock::new(navi_config)),
         memory_injection: None,
