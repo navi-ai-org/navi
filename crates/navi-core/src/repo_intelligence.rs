@@ -6,7 +6,8 @@
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::cmp::Ordering;
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
@@ -38,6 +39,22 @@ pub struct SymbolRecord {
     pub path: PathBuf,
     pub line: usize,
     pub signature: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct RankedSymbolRecord {
+    pub symbol: SymbolRecord,
+    pub score: f64,
+    pub reasons: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct TextMatchRecord {
+    pub path: PathBuf,
+    pub line: usize,
+    pub kind: String,
+    pub text: String,
+    pub score: f64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -100,37 +117,585 @@ pub fn build_index(root: &Path) -> Result<RepoIndex> {
 }
 
 pub fn search_symbols(index: &RepoIndex, query: &str, kind: Option<&str>) -> Vec<SymbolRecord> {
-    let query = query.to_lowercase();
-    let kind = kind.map(str::to_lowercase);
-    index
-        .symbols
-        .iter()
-        .filter(|symbol| {
-            kind.as_ref()
-                .map(|kind| symbol.kind.eq_ignore_ascii_case(kind))
-                .unwrap_or(true)
-        })
-        .filter(|symbol| {
-            query.is_empty()
-                || symbol.name.to_lowercase().contains(&query)
-                || symbol.signature.to_lowercase().contains(&query)
-        })
-        .cloned()
+    ranked_symbol_matches(index, query, kind)
+        .into_iter()
+        .map(|ranked| ranked.symbol)
         .collect()
 }
 
 pub fn goto_symbol(index: &RepoIndex, name: &str) -> Option<SymbolRecord> {
+    ranked_symbol_matches(index, name, None)
+        .into_iter()
+        .next()
+        .map(|ranked| ranked.symbol)
+}
+
+pub fn ranked_symbol_matches(
+    index: &RepoIndex,
+    query: &str,
+    kind: Option<&str>,
+) -> Vec<RankedSymbolRecord> {
+    SymbolRanker::new(query).rank(index, kind)
+}
+
+pub fn search_text_matches(
+    index: &RepoIndex,
+    query: &str,
+    max_results: usize,
+) -> Vec<TextMatchRecord> {
+    let query_alternatives = query_alternatives(query);
+    if query_alternatives
+        .iter()
+        .all(|alternative| alternative.tokens.is_empty())
+    {
+        return Vec::new();
+    }
+
+    let documents = text_documents(index);
+    let mut best_matches = documents
+        .iter()
+        .filter_map(|document| {
+            let score = query_alternatives
+                .iter()
+                .map(|alternative| bm25_score(&documents, &alternative.tokens, document))
+                .fold(0.0, f64::max);
+            (score > 0.0).then(|| TextMatchRecord {
+                path: document.path.clone(),
+                line: document.line,
+                kind: document.kind.clone(),
+                text: document.text.clone(),
+                score: round_score(score),
+            })
+        })
+        .collect::<Vec<_>>();
+
+    best_matches.sort_by(|left, right| {
+        score_cmp(right.score, left.score)
+            .then_with(|| left.path.cmp(&right.path))
+            .then_with(|| left.line.cmp(&right.line))
+            .then_with(|| left.kind.cmp(&right.kind))
+            .then_with(|| left.text.cmp(&right.text))
+    });
+    best_matches.truncate(max_results);
+    best_matches
+}
+
+#[derive(Debug, Clone)]
+struct QueryAlternative {
+    normalized: String,
+    tokens: Vec<String>,
+}
+
+#[derive(Debug)]
+struct SymbolRanker {
+    alternatives: Vec<QueryAlternative>,
+}
+
+#[derive(Debug, Clone)]
+struct SymbolScore {
+    score: f64,
+    reasons: Vec<String>,
+}
+
+impl SymbolRanker {
+    fn new(query: &str) -> Self {
+        Self {
+            alternatives: query_alternatives(query),
+        }
+    }
+
+    fn rank(&self, index: &RepoIndex, kind: Option<&str>) -> Vec<RankedSymbolRecord> {
+        let signature_documents = symbol_signature_documents(index);
+        let kind = kind.map(str::to_ascii_lowercase);
+        let mut ranked = index
+            .symbols
+            .iter()
+            .filter(|symbol| {
+                kind.as_ref()
+                    .map(|kind| symbol.kind.eq_ignore_ascii_case(kind))
+                    .unwrap_or(true)
+            })
+            .filter_map(|symbol| {
+                let score = self.score_symbol(symbol, &signature_documents);
+                (score.score > 0.0).then(|| RankedSymbolRecord {
+                    symbol: symbol.clone(),
+                    score: round_score(score.score),
+                    reasons: score.reasons,
+                })
+            })
+            .collect::<Vec<_>>();
+
+        ranked.sort_by(|left, right| {
+            score_cmp(right.score, left.score)
+                .then_with(|| left.symbol.path.cmp(&right.symbol.path))
+                .then_with(|| left.symbol.line.cmp(&right.symbol.line))
+                .then_with(|| left.symbol.name.cmp(&right.symbol.name))
+        });
+        ranked
+    }
+
+    fn score_symbol(
+        &self,
+        symbol: &SymbolRecord,
+        signature_documents: &[TextDocument],
+    ) -> SymbolScore {
+        if self
+            .alternatives
+            .iter()
+            .all(|alternative| alternative.tokens.is_empty())
+        {
+            return SymbolScore {
+                score: 1.0 + kind_boost(symbol),
+                reasons: vec!["empty_query".to_string()],
+            };
+        }
+
+        self.alternatives
+            .iter()
+            .map(|alternative| {
+                score_symbol_for_alternative(symbol, alternative, signature_documents)
+            })
+            .max_by(|left, right| score_cmp(left.score, right.score))
+            .unwrap_or(SymbolScore {
+                score: 0.0,
+                reasons: Vec::new(),
+            })
+    }
+}
+
+fn score_symbol_for_alternative(
+    symbol: &SymbolRecord,
+    query: &QueryAlternative,
+    signature_documents: &[TextDocument],
+) -> SymbolScore {
+    let name_tokens = tokenize_identifier(&symbol.name);
+    let signature_tokens = tokenize_identifier(&symbol.signature);
+    let path_text = symbol.path.to_string_lossy();
+    let path_tokens = tokenize_identifier(&path_text);
+    let qualified_text = format!("{}::{}", path_text, symbol.name);
+    let normalized_name = normalize_identifier(&symbol.name);
+    let normalized_signature = normalize_identifier(&symbol.signature);
+    let normalized_path = normalize_identifier(&path_text);
+    let normalized_qualified = normalize_identifier(&qualified_text);
+
+    let mut score = 0.0;
+    let mut reasons = Vec::new();
+
+    if normalized_name == query.normalized {
+        score += 1000.0;
+        reasons.push("exact_name".to_string());
+    } else if normalized_qualified == query.normalized {
+        score += 950.0;
+        reasons.push("exact_qualified".to_string());
+    }
+
+    if !query.tokens.is_empty() {
+        let name_coverage = token_coverage(&query.tokens, &name_tokens);
+        if name_coverage > 0.0 {
+            score += 360.0 * name_coverage;
+            reasons.push(format!("name_token_coverage:{name_coverage:.2}"));
+            if name_coverage >= 1.0 {
+                score += 140.0;
+                reasons.push("all_name_tokens".to_string());
+            }
+        }
+
+        if tokens_in_order(&query.tokens, &name_tokens) {
+            score += 90.0;
+            reasons.push("tokens_in_order".to_string());
+        }
+
+        let path_coverage = token_coverage(&query.tokens, &path_tokens);
+        if path_coverage > 0.0 {
+            score += 22.0 * path_coverage;
+            reasons.push(format!("path_tokens:{path_coverage:.2}"));
+        }
+
+        let signature_coverage = token_coverage(&query.tokens, &signature_tokens);
+        if signature_coverage > 0.0 {
+            score += 28.0 * signature_coverage;
+            reasons.push(format!("signature_tokens:{signature_coverage:.2}"));
+        }
+    }
+
+    if !query.normalized.is_empty() {
+        if normalized_name.starts_with(&query.normalized) {
+            score += 160.0;
+            reasons.push("name_prefix".to_string());
+        }
+        if normalized_name.ends_with(&query.normalized) {
+            score += 95.0;
+            reasons.push("name_suffix".to_string());
+        }
+        if normalized_name.contains(&query.normalized) {
+            score += 130.0;
+            reasons.push("name_contains".to_string());
+        } else if is_subsequence(&query.normalized, &normalized_name) {
+            score += 65.0;
+            reasons.push("name_subsequence".to_string());
+        }
+
+        if normalized_signature.contains(&query.normalized) {
+            score += 32.0;
+            reasons.push("signature_contains".to_string());
+        }
+        if normalized_path.contains(&query.normalized) {
+            score += 18.0;
+            reasons.push("path_contains".to_string());
+        }
+
+        if let Some(distance_score) = edit_distance_score(&query.normalized, &normalized_name) {
+            score += distance_score;
+            reasons.push("edit_distance".to_string());
+        }
+    }
+
+    let bm25 = signature_documents
+        .iter()
+        .find(|document| document.path == symbol.path && document.line == symbol.line)
+        .map(|document| bm25_score(signature_documents, &query.tokens, document))
+        .unwrap_or(0.0)
+        .min(35.0);
+    if bm25 > 0.0 {
+        score += bm25;
+        reasons.push("bm25_signature".to_string());
+    }
+
+    if score > 0.0 {
+        let boost = kind_boost(symbol);
+        if boost > 0.0 {
+            score += boost;
+            reasons.push(format!("kind:{}", symbol.kind));
+        }
+    }
+
+    SymbolScore { score, reasons }
+}
+
+fn query_alternatives(query: &str) -> Vec<QueryAlternative> {
+    let alternatives = query
+        .split('|')
+        .map(str::trim)
+        .filter(|alternative| !alternative.is_empty())
+        .map(|alternative| QueryAlternative {
+            normalized: normalize_identifier(alternative),
+            tokens: tokenize_identifier(alternative),
+        })
+        .collect::<Vec<_>>();
+    if alternatives.is_empty() {
+        vec![QueryAlternative {
+            normalized: String::new(),
+            tokens: Vec::new(),
+        }]
+    } else {
+        alternatives
+    }
+}
+
+fn tokenize_identifier(text: &str) -> Vec<String> {
+    let mut parts = Vec::new();
+    let mut current = String::new();
+    let mut previous: Option<char> = None;
+    let mut chars = text.chars().peekable();
+
+    while let Some(ch) = chars.next() {
+        if !ch.is_ascii_alphanumeric() {
+            push_token(&mut parts, &mut current);
+            previous = None;
+            continue;
+        }
+
+        let next = chars.peek().copied();
+        let boundary = previous.is_some_and(|prev| {
+            (prev.is_ascii_lowercase() && ch.is_ascii_uppercase())
+                || (prev.is_ascii_alphabetic() && ch.is_ascii_digit())
+                || (prev.is_ascii_digit() && ch.is_ascii_alphabetic())
+                || (prev.is_ascii_uppercase()
+                    && ch.is_ascii_uppercase()
+                    && next.is_some_and(|next| next.is_ascii_lowercase()))
+        });
+        if boundary {
+            push_token(&mut parts, &mut current);
+        }
+        current.push(ch);
+        previous = Some(ch);
+    }
+    push_token(&mut parts, &mut current);
+    parts
+}
+
+fn push_token(parts: &mut Vec<String>, current: &mut String) {
+    if current.is_empty() {
+        return;
+    }
+    let token = normalize_token(current);
+    if !token.is_empty() {
+        parts.push(token);
+    }
+    current.clear();
+}
+
+fn normalize_token(token: &str) -> String {
+    let lower = token.to_ascii_lowercase();
+    if lower.len() > 5 && lower.ends_with("ing") {
+        return lower.trim_end_matches("ing").to_string();
+    }
+    if lower.len() > 4 && lower.ends_with("ies") {
+        return format!("{}y", &lower[..lower.len() - 3]);
+    }
+    if lower.len() > 4 && lower.ends_with("es") && !lower.ends_with("ses") {
+        return lower[..lower.len() - 2].to_string();
+    }
+    if lower.len() > 3 && lower.ends_with('s') && !lower.ends_with("ss") {
+        return lower[..lower.len() - 1].to_string();
+    }
+    lower
+}
+
+fn normalize_identifier(text: &str) -> String {
+    tokenize_identifier(text).join("")
+}
+
+fn token_coverage(query_tokens: &[String], candidate_tokens: &[String]) -> f64 {
+    if query_tokens.is_empty() {
+        return 0.0;
+    }
+    let candidate_tokens = candidate_tokens.iter().collect::<HashSet<_>>();
+    let covered = query_tokens
+        .iter()
+        .filter(|token| candidate_tokens.contains(token))
+        .count();
+    covered as f64 / query_tokens.len() as f64
+}
+
+fn tokens_in_order(query_tokens: &[String], candidate_tokens: &[String]) -> bool {
+    if query_tokens.is_empty() {
+        return false;
+    }
+    let mut candidate_iter = candidate_tokens.iter();
+    query_tokens
+        .iter()
+        .all(|query| candidate_iter.any(|candidate| candidate == query))
+}
+
+fn is_subsequence(needle: &str, haystack: &str) -> bool {
+    if needle.is_empty() {
+        return false;
+    }
+    let mut haystack = haystack.chars();
+    needle
+        .chars()
+        .all(|needle_ch| haystack.any(|haystack_ch| haystack_ch == needle_ch))
+}
+
+fn edit_distance_score(query: &str, candidate: &str) -> Option<f64> {
+    if query.len() < 4 || candidate.len() < 4 || query.len().abs_diff(candidate.len()) > 2 {
+        return None;
+    }
+    let distance = edit_distance(query, candidate);
+    (distance <= 2).then_some(80.0 - (distance as f64 * 22.0))
+}
+
+fn edit_distance(left: &str, right: &str) -> usize {
+    let right_chars = right.chars().collect::<Vec<_>>();
+    let mut previous = (0..=right_chars.len()).collect::<Vec<_>>();
+    for (left_idx, left_ch) in left.chars().enumerate() {
+        let mut current = vec![left_idx + 1];
+        for (right_idx, right_ch) in right_chars.iter().enumerate() {
+            let insert = current[right_idx] + 1;
+            let delete = previous[right_idx + 1] + 1;
+            let replace = previous[right_idx] + usize::from(left_ch != *right_ch);
+            current.push(insert.min(delete).min(replace));
+        }
+        previous = current;
+    }
+    previous[right_chars.len()]
+}
+
+fn kind_boost(symbol: &SymbolRecord) -> f64 {
+    match symbol.kind.as_str() {
+        "function" | "struct" | "class" | "trait" | "interface" => 18.0,
+        "enum" | "type" => 12.0,
+        "impl" | "constant" => 8.0,
+        _ => 0.0,
+    }
+}
+
+#[derive(Debug, Clone)]
+struct TextDocument {
+    path: PathBuf,
+    line: usize,
+    kind: String,
+    text: String,
+    tokens: Vec<String>,
+}
+
+fn text_documents(index: &RepoIndex) -> Vec<TextDocument> {
+    let mut documents = symbol_signature_documents(index);
+    for file in &index.files {
+        let path = index.root.join(&file.path);
+        let Ok(content) = fs::read_to_string(path) else {
+            continue;
+        };
+        documents.extend(comment_documents(&file.path, &file.language, &content));
+        documents.extend(snippet_documents(&file.path, &content));
+    }
+    dedupe_documents(documents)
+}
+
+fn symbol_signature_documents(index: &RepoIndex) -> Vec<TextDocument> {
     index
         .symbols
         .iter()
-        .find(|symbol| symbol.name == name)
-        .or_else(|| {
-            index
-                .symbols
-                .iter()
-                .find(|symbol| symbol.name.contains(name))
+        .map(|symbol| {
+            let text = format!("{} {}", symbol.name, symbol.signature);
+            TextDocument {
+                path: symbol.path.clone(),
+                line: symbol.line,
+                kind: "signature".to_string(),
+                tokens: tokenize_identifier(&text),
+                text: compact_text(&text),
+            }
         })
-        .cloned()
+        .collect()
+}
+
+fn comment_documents(path: &Path, language: &str, content: &str) -> Vec<TextDocument> {
+    let mut documents = Vec::new();
+    for (idx, line) in content.lines().enumerate() {
+        let trimmed = line.trim_start();
+        let (kind, text) = if let Some(text) = trimmed.strip_prefix("///") {
+            ("doc", text)
+        } else if let Some(text) = trimmed.strip_prefix("//!") {
+            ("doc", text)
+        } else if let Some(text) = trimmed.strip_prefix("//") {
+            ("comment", text)
+        } else if language == "python" {
+            if let Some(text) = trimmed.strip_prefix('#') {
+                ("comment", text)
+            } else {
+                continue;
+            }
+        } else if let Some(text) = trimmed
+            .strip_prefix("/*")
+            .map(|value| value.trim_end_matches("*/"))
+        {
+            ("comment", text)
+        } else if let Some(text) = trimmed
+            .strip_prefix('*')
+            .map(|value| value.trim_end_matches("*/"))
+        {
+            ("comment", text)
+        } else {
+            continue;
+        };
+
+        let text = text.trim();
+        if text.is_empty() {
+            continue;
+        }
+        documents.push(TextDocument {
+            path: path.to_path_buf(),
+            line: idx + 1,
+            kind: kind.to_string(),
+            text: compact_text(text),
+            tokens: tokenize_identifier(text),
+        });
+    }
+    documents
+}
+
+fn snippet_documents(path: &Path, content: &str) -> Vec<TextDocument> {
+    content
+        .lines()
+        .enumerate()
+        .filter_map(|(idx, line)| {
+            let text = line.trim();
+            if text.is_empty()
+                || text.starts_with("//")
+                || text.starts_with("///")
+                || text.starts_with("#")
+                || text.len() > 280
+            {
+                return None;
+            }
+            let tokens = tokenize_identifier(text);
+            (tokens.len() >= 3).then(|| TextDocument {
+                path: path.to_path_buf(),
+                line: idx + 1,
+                kind: "snippet".to_string(),
+                text: compact_text(text),
+                tokens,
+            })
+        })
+        .collect()
+}
+
+fn dedupe_documents(documents: Vec<TextDocument>) -> Vec<TextDocument> {
+    let mut seen = BTreeSet::new();
+    documents
+        .into_iter()
+        .filter(|document| {
+            seen.insert((
+                document.path.clone(),
+                document.line,
+                document.kind.clone(),
+                document.text.clone(),
+            ))
+        })
+        .collect()
+}
+
+fn bm25_score(corpus: &[TextDocument], query_tokens: &[String], document: &TextDocument) -> f64 {
+    if corpus.is_empty() || query_tokens.is_empty() || document.tokens.is_empty() {
+        return 0.0;
+    }
+    let average_len = corpus
+        .iter()
+        .map(|doc| doc.tokens.len() as f64)
+        .sum::<f64>()
+        / corpus.len() as f64;
+    let document_len = document.tokens.len() as f64;
+    let mut frequencies = HashMap::<&str, usize>::new();
+    for token in &document.tokens {
+        *frequencies.entry(token.as_str()).or_default() += 1;
+    }
+
+    let unique_query_tokens = query_tokens.iter().collect::<BTreeSet<_>>();
+    let mut score = 0.0;
+    for token in unique_query_tokens {
+        let Some(term_frequency) = frequencies.get(token.as_str()).copied() else {
+            continue;
+        };
+        let document_frequency = corpus
+            .iter()
+            .filter(|doc| doc.tokens.iter().any(|candidate| candidate == token))
+            .count() as f64;
+        let corpus_len = corpus.len() as f64;
+        let idf = (1.0 + (corpus_len - document_frequency + 0.5) / (document_frequency + 0.5)).ln();
+        let tf = term_frequency as f64;
+        let k1 = 1.2;
+        let b = 0.75;
+        score += idf * (tf * (k1 + 1.0)) / (tf + k1 * (1.0 - b + b * document_len / average_len));
+    }
+    score * 12.0
+}
+
+fn compact_text(text: &str) -> String {
+    text.split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .chars()
+        .take(240)
+        .collect()
+}
+
+fn score_cmp(left: f64, right: f64) -> Ordering {
+    left.partial_cmp(&right).unwrap_or(Ordering::Equal)
+}
+
+fn round_score(score: f64) -> f64 {
+    (score * 100.0).round() / 100.0
 }
 
 pub fn references(index: &RepoIndex, name: &str) -> Vec<ReferenceRecord> {
@@ -565,6 +1130,12 @@ pub fn ensure_indexed(index: &RepoIndex) -> Result<()> {
 mod tests {
     use super::*;
 
+    fn write_source(root: &Path, relative: &str, content: &str) {
+        let path = root.join(relative);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, content).unwrap();
+    }
+
     #[test]
     fn indexes_rust_symbols_and_references() {
         let dir = tempfile::tempdir().unwrap();
@@ -610,5 +1181,108 @@ mod tests {
 
         assert_eq!(first.files[0].hash, second.files[0].hash);
         assert_eq!(second.symbols[0].name, "stable");
+    }
+
+    #[test]
+    fn tokenizes_identifiers_and_tool_names() {
+        assert_eq!(
+            tokenize_identifier("FuzzyToolSearch"),
+            vec!["fuzzy", "tool", "search"]
+        );
+        assert_eq!(tokenize_identifier("tool_search"), vec!["tool", "search"]);
+        assert_eq!(tokenize_identifier("symbol.goto"), vec!["symbol", "goto"]);
+        assert_eq!(
+            tokenize_identifier("dependency_graph.query"),
+            vec!["dependency", "graph", "query"]
+        );
+    }
+
+    #[test]
+    fn ranks_symbol_alternatives_by_best_candidate() {
+        let dir = tempfile::tempdir().unwrap();
+        write_source(
+            dir.path(),
+            "src/lib.rs",
+            "pub struct FuzzyToolSearch;\npub struct OtherThing;\n",
+        );
+        let index = build_index(dir.path()).unwrap();
+
+        let matches = search_symbols(&index, "ToolSearch|SearchTool|Search", None);
+
+        assert_eq!(matches[0].name, "FuzzyToolSearch");
+    }
+
+    #[test]
+    fn symbolic_matches_outrank_bm25_text_matches() {
+        let dir = tempfile::tempdir().unwrap();
+        write_source(
+            dir.path(),
+            "src/lib.rs",
+            "/// This comment talks about search but is not the target.\npub struct FuzzyToolSearch;\n",
+        );
+        let index = build_index(dir.path()).unwrap();
+
+        let ranked = ranked_symbol_matches(&index, "Search", None);
+        let text_matches = search_text_matches(&index, "Search", 10);
+
+        assert_eq!(ranked[0].symbol.name, "FuzzyToolSearch");
+        assert!(
+            ranked[0].score > text_matches[0].score,
+            "symbol={:?} text={:?}",
+            ranked[0],
+            text_matches[0]
+        );
+    }
+
+    #[test]
+    fn goto_symbol_uses_ranker_instead_of_first_contains() {
+        let dir = tempfile::tempdir().unwrap();
+        write_source(
+            dir.path(),
+            "src/lib.rs",
+            "pub struct PrefixSearchToolSuffix;\npub struct SearchTool;\n",
+        );
+        let index = build_index(dir.path()).unwrap();
+
+        let symbol = goto_symbol(&index, "SearchTool").unwrap();
+
+        assert_eq!(symbol.name, "SearchTool");
+    }
+
+    #[test]
+    fn bm25_returns_docs_comments_and_snippets_for_natural_language() {
+        let dir = tempfile::tempdir().unwrap();
+        write_source(
+            dir.path(),
+            "src/lib.rs",
+            "/// Tool that searches symbols in docs and comments.\npub fn fuzzy_tool_search() {}\nfn caller() { fuzzy_tool_search(); }\n",
+        );
+        let index = build_index(dir.path()).unwrap();
+
+        let text_matches = search_text_matches(&index, "tool that searches symbols in docs", 10);
+
+        assert!(
+            text_matches.iter().any(|record| record.kind == "doc"),
+            "text_matches: {text_matches:?}"
+        );
+        assert!(
+            text_matches
+                .iter()
+                .any(|record| record.kind == "signature" || record.kind == "snippet"),
+            "text_matches: {text_matches:?}"
+        );
+    }
+
+    #[test]
+    fn ranking_ties_are_deterministic() {
+        let dir = tempfile::tempdir().unwrap();
+        write_source(dir.path(), "src/b.rs", "pub struct SearchThing;\n");
+        write_source(dir.path(), "src/a.rs", "pub struct SearchThing;\n");
+        let index = build_index(dir.path()).unwrap();
+
+        let matches = search_symbols(&index, "SearchThing", Some("struct"));
+
+        assert_eq!(matches[0].path, PathBuf::from("src/a.rs"));
+        assert_eq!(matches[1].path, PathBuf::from("src/b.rs"));
     }
 }
