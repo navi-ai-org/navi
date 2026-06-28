@@ -686,6 +686,77 @@ async fn code_exec_runs_typed_nested_plan_with_verifier() {
 }
 
 #[tokio::test]
+async fn ast_search_returns_ranked_symbols_and_text_matches() {
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let executor = executor(tempdir.path());
+    std::fs::create_dir_all(tempdir.path().join("src")).expect("mkdir");
+    std::fs::write(
+        tempdir.path().join("src/lib.rs"),
+        "/// Tool that searches symbols in docs.\npub struct FuzzyToolSearch;\npub struct OtherThing;\n",
+    )
+    .expect("write lib");
+
+    let result = executor
+        .invoke(ToolInvocation {
+            id: "ast-search".to_string(),
+            tool_name: "ast.search".to_string(),
+            input: json!({
+                "query": "ToolSearch|SearchTool|Search",
+                "max_results": 1
+            }),
+        })
+        .await;
+
+    assert!(result.ok, "{:?}", result.output);
+    assert_eq!(result.output["matches"].as_array().unwrap().len(), 1);
+    assert_eq!(result.output["matches"][0]["name"], "FuzzyToolSearch");
+    assert_eq!(result.output["ranking"][0]["name"], "FuzzyToolSearch");
+    assert!(
+        result.output["ranking"][0]["score"].as_f64().unwrap() > 0.0,
+        "{:?}",
+        result.output
+    );
+    assert!(
+        !result.output["text_matches"].as_array().unwrap().is_empty(),
+        "{:?}",
+        result.output
+    );
+}
+
+#[tokio::test]
+async fn ast_search_kind_filter_only_limits_symbols() {
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let executor = executor(tempdir.path());
+    std::fs::create_dir_all(tempdir.path().join("src")).expect("mkdir");
+    std::fs::write(
+        tempdir.path().join("src/lib.rs"),
+        "/// Search docs remain available as text.\npub struct SearchThing;\npub fn search_thing() {}\n",
+    )
+    .expect("write lib");
+
+    let result = executor
+        .invoke(ToolInvocation {
+            id: "ast-search".to_string(),
+            tool_name: "ast.search".to_string(),
+            input: json!({
+                "query": "SearchThing",
+                "kind": "function",
+                "max_results": 5
+            }),
+        })
+        .await;
+
+    assert!(result.ok, "{:?}", result.output);
+    assert_eq!(result.output["matches"].as_array().unwrap().len(), 1);
+    assert_eq!(result.output["matches"][0]["kind"], "function");
+    assert!(
+        !result.output["text_matches"].as_array().unwrap().is_empty(),
+        "{:?}",
+        result.output
+    );
+}
+
+#[tokio::test]
 async fn code_exec_rejects_untyped_operation_shape() {
     let tempdir = tempfile::tempdir().expect("tempdir");
     let executor = executor(tempdir.path());

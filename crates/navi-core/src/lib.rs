@@ -97,9 +97,10 @@ pub use replay_gate::{
     evaluate_superiority_gate, unsafe_guarded_auto_approval_count,
 };
 pub use repo_intelligence::{
-    ChurnRecord, DependencyEdge, ImportRecord, IndexedFile, ReferenceRecord, RepoIndex,
-    RepoIntelligenceCache, SymbolRecord, TestTarget, build_index, dependency_edges, discover_tests,
-    goto_symbol, references, search_symbols,
+    ChurnRecord, DependencyEdge, ImportRecord, IndexedFile, RankedSymbolRecord, ReferenceRecord,
+    RepoIndex, RepoIntelligenceCache, SymbolRecord, TestTarget, TextMatchRecord, build_index,
+    dependency_edges, discover_tests, goto_symbol, ranked_symbol_matches, references,
+    search_symbols, search_text_matches,
 };
 pub use runtime::{
     AgentRuntime, AgentRuntimeOptions, ApprovalResolver, QuestionResolver, TurnCanceller,

@@ -4,8 +4,8 @@ use serde_json::{Value, json};
 
 use super::helpers;
 use crate::repo_intelligence::{
-    build_index, churn_from_git_log, dependency_edges, discover_tests, goto_symbol, references,
-    search_symbols,
+    build_index, churn_from_git_log, dependency_edges, discover_tests, goto_symbol,
+    ranked_symbol_matches, references, search_text_matches,
 };
 use crate::security::SecurityPolicy;
 use crate::tool::{Tool, ToolDefinition, ToolInvocation, ToolKind, ToolResult};
@@ -147,12 +147,33 @@ fn run_action(
             let kind = helpers::optional_string(input, "kind");
             let max_results = bounded(input, "max_results", 80, 500);
             let index = build_index(root)?;
-            let mut matches = search_symbols(&index, query, kind.as_deref());
-            matches.truncate(max_results);
+            let ranked = ranked_symbol_matches(&index, query, kind.as_deref());
+            let matches = ranked
+                .iter()
+                .take(max_results)
+                .map(|ranked| ranked.symbol.clone())
+                .collect::<Vec<_>>();
+            let ranking = ranked
+                .iter()
+                .take(max_results)
+                .map(|ranked| {
+                    json!({
+                        "name": ranked.symbol.name.clone(),
+                        "kind": ranked.symbol.kind.clone(),
+                        "path": ranked.symbol.path.clone(),
+                        "line": ranked.symbol.line,
+                        "score": ranked.score,
+                        "reasons": ranked.reasons.clone(),
+                    })
+                })
+                .collect::<Vec<_>>();
+            let text_matches = search_text_matches(&index, query, max_results.clamp(5, 40));
             Ok(json!({
                 "schema_version": helpers::SPECIALIZED_SCHEMA_VERSION,
                 "query": query,
                 "matches": matches,
+                "text_matches": text_matches,
+                "ranking": ranking,
                 "files_indexed": index.files.len(),
             }))
         }
