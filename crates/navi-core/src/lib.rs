@@ -1,3 +1,4 @@
+pub mod benchmark;
 pub mod branch_race;
 pub mod cancel;
 pub mod capability;
@@ -128,5 +129,10 @@ pub use trace::{
 };
 
 pub use background_model::{BackgroundModelResolver, ResolvedBackgroundModel};
+pub use benchmark::{
+    BenchAgentConfig, BenchCase, BenchCaseMetrics, BenchCaseResult, BenchCompareConfig,
+    BenchComparison, BenchRun, BenchRunMetrics, BenchSuite, aggregate_bench_metrics,
+    compare_bench_runs,
+};
 pub use memory::{HistoryStore, MemoryManager, MemoryStore, SessionCheckpoint};
 pub use verifier::{VerificationStore, VerifierResult, VerifierRunner, VerifierSpec};

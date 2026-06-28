@@ -1,0 +1,20 @@
+version = 1
+id = "smoke-fix-rust-test"
+title = "fix a simple failing Rust test"
+category = "bug_fix"
+fixture = "benchmarks/fixtures/smoke-rust-bug"
+task = "Fix the failing Rust unit test in this crate. Keep the implementation minimal and run the relevant test."
+max_turns = 6
+max_tool_calls = 40
+timeout_ms = 600000
+tags = ["smoke", "bug-fix", "rust"]
+
+[agent]
+mode = "parity"
+profile = "medium"
+
+[[verifiers]]
+verifier_type = "command"
+command = "cargo test --quiet"
+timeout_ms = 120000
+required = true
