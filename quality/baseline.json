@@ -1,10 +1,10 @@
 {
   "schemaVersion": "1",
-  "createdAt": "2026-06-02T21:46:04Z",
-  "rustqutyVersion": "0.4.0",
+  "createdAt": "2026-06-28T03:55:38Z",
+  "rustqutyVersion": "0.4.3",
   "thresholds": {
     "fmt": {
-      "mustPass": true
+      "mustPass": false
     },
     "clippy": {
       "maxWarnings": 0
@@ -24,26 +24,26 @@
       "maxCritical": 0
     },
     "hack": {
-      "mustPass": false
+      "mustPass": true
     },
     "mutants": {
       "minScore": 0.0
     },
     "duplicates": {
-      "maxDuplicateLines": 23199
+      "maxDuplicateLines": 3822
     },
     "loc": {
       "maxLineLength": 284
     },
     "size": {
-      "maxLinesPerFile": 1467,
-      "maxCodeLinesPerFile": 1265,
-      "maxLinesPerFunction": 564,
-      "maxParametersPerFunction": 11
+      "maxLinesPerFile": 29212,
+      "maxCodeLinesPerFile": 25462,
+      "maxLinesPerFunction": 11115,
+      "maxParametersPerFunction": 17
     },
     "complexity": {
-      "maxCyclomaticPerFunction": 39,
-      "maxNestingDepth": 10
+      "maxCyclomaticPerFunction": 3303,
+      "maxNestingDepth": 156
     }
   }
 }

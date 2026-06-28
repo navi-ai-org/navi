@@ -364,7 +364,9 @@ Existing summary:
 New conversation to summarize:
 {new_conversation}
 
-Return the complete updated summary with all 10 sections (including Active Work Plan if applicable).\n\nIMPORTANT: If there is an active plan, you MUST preserve all plan details including step completion status. The assistant will continue working on the plan after reading the summary."#;
+Return the complete updated summary with all 10 sections (including Active Work Plan if applicable).\n\n\
+IMPORTANT: If there is an active plan, you MUST preserve all plan details including step completion status.\n\
+The assistant will continue working on the plan after reading the summary."#;
 
 fn current_unix_millis() -> u64 {
     SystemTime::now()

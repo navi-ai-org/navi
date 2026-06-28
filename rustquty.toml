@@ -10,6 +10,9 @@ mutants = false
 # Requires deny.toml in the project root.
 # deny = true
 
+[gate.defaults]
+max-line-length = 284
+
 [output]
 dir = "quality"
 

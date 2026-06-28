@@ -76,7 +76,8 @@ impl Tool for ToolWorkflowTool {
                 "properties": {
                     "script": {
                         "type": "string",
-                        "description": "Starlark script. Put loops inside def workflow(), then call workflow() as the final expression. Available helpers: tool(name, input), read_file(path), grep(pattern, path='.'), find(path='.', pattern=None), stat(path), emit(value), fail(message)."
+                        "description": "Starlark script. Put loops inside def workflow(), then call workflow() as the final expression. \
+Available helpers: tool(), read_file(), grep(), find(), stat(), emit(), fail()."
                     },
                     "max_tool_calls": {
                         "type": "integer",

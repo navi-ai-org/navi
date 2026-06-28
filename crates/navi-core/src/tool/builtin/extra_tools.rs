@@ -289,7 +289,8 @@ impl Tool for ViewImageTool {
     fn definition(&self) -> ToolDefinition {
         helpers::definition(
             self.name,
-            "Read metadata about an image file from the project. Returns the file format, dimensions (if detectable from file name heuristics), and size. Note: image content cannot be directly viewed in text mode — the path should be sent to a multimodal model for actual image analysis.",
+            "Read metadata about an image file from the project. \
+Returns file format, dimensions, and size. Image content cannot be directly viewed in text mode.",
             ToolKind::Read,
             json!({
                 "type": "object",
@@ -367,7 +368,8 @@ impl Tool for NewContextWindowTool {
     fn definition(&self) -> ToolDefinition {
         helpers::definition(
             "new_context_window",
-            "Request a fresh context window by summarizing the conversation so far. This signals to the client that the conversation is getting long and should be compacted. Provide a brief summary of what has been accomplished, current state, and next steps — this summary will be used as context after the compaction.",
+            "Request a fresh context window by summarizing the conversation so far. \
+Provide a summary of what has been accomplished, current state, and next steps.",
             ToolKind::Command,
             json!({
                 "type": "object",
