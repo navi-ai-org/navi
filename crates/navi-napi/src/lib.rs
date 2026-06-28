@@ -5,12 +5,12 @@ use napi::bindgen_prelude::*;
 use napi::threadsafe_function::ThreadsafeFunction;
 use napi_derive::napi;
 use navi_core::{
-    LearningHarness, LearningHarnessConfig, RuntimeComponents, StudyCompactionConfig,
+    ContextPacket, LearningHarness, LearningHarnessConfig, RuntimeComponents, StudyCompactionConfig,
     StudyCompactionStrategy, ToolKind, TutorPromptBuilder, TutorPromptOptions,
 };
 use navi_sdk::{
-    HostToolDefinition, HostToolHandler, HostToolInvocation, NaviEngineBuilder, NaviSessionRequest,
-    NaviTurnRequest, RuntimeEvent, SdkHostTool, SdkHostToolResult,
+    ApprovalDecision, HostToolDefinition, HostToolHandler, HostToolInvocation, NaviEngineBuilder,
+    NaviSessionRequest, NaviTurnRequest, RuntimeEvent, SdkHostTool, SdkHostToolResult,
 };
 use serde_json::{Value as JsonValue, json};
 use tokio::sync::{Mutex as AsyncMutex, broadcast};
@@ -210,6 +210,53 @@ impl NaviNapiEngine {
     }
 
     #[napi]
+    pub async fn cancel_turn(&self, session_id: String) -> Result<()> {
+        self.inner
+            .cancel_turn(&session_id)
+            .await
+            .map_err(to_napi_error)
+    }
+
+    #[napi]
+    pub async fn resolve_approval(
+        &self,
+        session_id: String,
+        approval_id: String,
+        approved: bool,
+    ) -> Result<bool> {
+        let decision = if approved {
+            ApprovalDecision::Approved { id: approval_id }
+        } else {
+            ApprovalDecision::Denied { id: approval_id }
+        };
+        self.inner
+            .resolve_approval(&session_id, decision)
+            .await
+            .map_err(to_napi_error)
+    }
+
+    #[napi]
+    pub async fn add_context_packet(&self, session_id: String, packet: JsonValue) -> Result<()> {
+        self.inner
+            .add_context_packet(&session_id, parse_context_packet(packet)?)
+            .await
+            .map_err(to_napi_error)
+    }
+
+    #[napi]
+    pub fn list_models(&self) -> Result<JsonValue> {
+        serde_json::to_value(self.inner.list_models()).map_err(to_napi_error)
+    }
+
+    #[napi]
+    pub async fn set_model(&self, session_id: String, provider: String, model: String) -> Result<()> {
+        self.inner
+            .set_model(&session_id, &provider, &model)
+            .await
+            .map_err(to_napi_error)
+    }
+
+    #[napi]
     pub fn subscribe_events(&self, session_id: String) -> Result<NaviNapiEventStream> {
         let receiver = self
             .inner
@@ -288,6 +335,10 @@ fn parse_host_tool_result(value: JsonValue) -> anyhow::Result<SdkHostToolResult>
 
 fn runtime_event_to_json(event: RuntimeEvent) -> Result<JsonValue> {
     serde_json::to_value(event).map_err(to_napi_error)
+}
+
+fn parse_context_packet(value: JsonValue) -> Result<ContextPacket> {
+    serde_json::from_value(value).map_err(to_napi_error)
 }
 
 fn learning_components(config: Option<&JsLearningRuntimeConfig>) -> RuntimeComponents {
@@ -389,6 +440,21 @@ mod tests {
 
         assert_eq!(value["version"], 1);
         assert_eq!(value["kind"]["AssistantDelta"]["text"], "oi");
+    }
+
+    #[test]
+    fn parses_context_packet_from_json() {
+        let packet = parse_context_packet(json!({
+            "source": "StudyBlock",
+            "title": "Limites",
+            "content": "definicao formal",
+            "priority": 3,
+        }))
+        .expect("packet");
+
+        assert_eq!(packet.title.as_deref(), Some("Limites"));
+        assert_eq!(packet.content, "definicao formal");
+        assert_eq!(packet.priority, 3);
     }
 
     #[test]
