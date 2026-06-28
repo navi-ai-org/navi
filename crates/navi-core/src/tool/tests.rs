@@ -699,7 +699,7 @@ async fn ast_search_returns_ranked_symbols_and_text_matches() {
     let result = executor
         .invoke(ToolInvocation {
             id: "ast-search".to_string(),
-            tool_name: "ast.search".to_string(),
+            tool_name: "ast_search".to_string(),
             input: json!({
                 "query": "ToolSearch|SearchTool|Search",
                 "max_results": 1
@@ -737,7 +737,7 @@ async fn ast_search_kind_filter_only_limits_symbols() {
     let result = executor
         .invoke(ToolInvocation {
             id: "ast-search".to_string(),
-            tool_name: "ast.search".to_string(),
+            tool_name: "ast_search".to_string(),
             input: json!({
                 "query": "SearchThing",
                 "kind": "function",

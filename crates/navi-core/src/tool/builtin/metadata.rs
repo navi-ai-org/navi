@@ -244,12 +244,12 @@ static LOOKUP: LazyLock<std::collections::HashMap<&'static str, ToolMetadata>> =
             },
         );
         for name in [
-            "ast.search",
-            "symbol.goto",
-            "symbol.references",
-            "dependency_graph.query",
+            "ast_search",
+            "symbol_goto",
+            "symbol_references",
+            "dependency_graph_query",
             "test_discovery",
-            "ownership_churn.query",
+            "ownership_churn_query",
         ] {
             insert(
                 &mut map,
@@ -272,7 +272,7 @@ static LOOKUP: LazyLock<std::collections::HashMap<&'static str, ToolMetadata>> =
         }
         insert(
             &mut map,
-            "branch_race.start",
+            "branch_race_start",
             ToolMetadata {
                 namespace: "orchestration".to_string(),
                 risk: crate::tool::ToolRisk::Medium,
@@ -580,13 +580,13 @@ mod tests {
             "code",
             "code_edit",
             "code_exec",
-            "ast.search",
-            "symbol.goto",
-            "symbol.references",
-            "dependency_graph.query",
+            "ast_search",
+            "symbol_goto",
+            "symbol_references",
+            "dependency_graph_query",
             "test_discovery",
-            "ownership_churn.query",
-            "branch_race.start",
+            "ownership_churn_query",
+            "branch_race_start",
             "git_ops",
             "question",
             "plan",
