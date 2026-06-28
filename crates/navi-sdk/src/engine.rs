@@ -79,6 +79,15 @@ impl NaviEngineBuilder {
         self
     }
 
+    /// Configures the engine as an autonomous tutor runtime.
+    ///
+    /// This uses permissive tool security, the learning harness, tutor prompt
+    /// builder, and study-aware compaction defaults.
+    pub fn learning_tutor(mut self) -> Self {
+        self.runtime_components = navi_core::learning_runtime_components();
+        self
+    }
+
     /// Replaces the tool security policy component.
     pub fn security(mut self, security: Arc<dyn navi_core::ToolSecurityPolicy>) -> Self {
         self.runtime_components.security = security;

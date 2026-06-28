@@ -158,6 +158,22 @@ fn builder_loads_from_project_dir() {
     assert!(result.is_ok(), "builder failed: {:?}", result.err());
 }
 
+#[test]
+
+fn builder_learning_tutor_preset_succeeds() {
+    let tempdir = tempfile::tempdir().expect("tempdir");
+
+    let result = NaviEngineBuilder::from_project(tempdir.path())
+        .learning_tutor()
+        .build();
+
+    assert!(
+        result.is_ok(),
+        "learning tutor builder failed: {:?}",
+        result.err()
+    );
+}
+
 // ── Group 2: Model listing tests ────────────────────────────────────
 
 #[test]

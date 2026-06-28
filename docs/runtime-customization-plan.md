@@ -243,7 +243,7 @@ let engine = NaviEngineBuilder::from_project(".")
 
 ## Phase 5: NAPI / TypeScript Host Integration
 
-**Status:** Not started
+**Status:** Completed
 
 ### Tasks
 
@@ -316,6 +316,18 @@ export function createTutorEngine(workspace: string) {
 - The agent can operate with permissive security inside the host-controlled
   learning environment.
 
+### Current State
+
+- `learning_runtime_components()` builds the default learning composition.
+- `NaviEngineBuilder::learning_tutor()` exposes that composition to SDK users.
+- `LearningHarness` tolerates repeated study tools and raises consecutive
+  error tolerance.
+- `TutorPromptBuilder` switches the system prompt to tutor behavior.
+- `StudyCompactionStrategy` preserves quiz, rubric, assessment, schedule, and
+  progress tool results during micro-compaction.
+- Domain-specific tools remain host-provided through `host_tool`; the core does
+  not ship product-specific study tools.
+
 ### Suggested Validation
 
 - Tutor smoke flow: start session, consult material, ask quiz, grade answer,
@@ -344,3 +356,4 @@ Update this section during each implementation step.
 | 2026-06-28 | 2 | Completed | Wired components through `AgentRuntime`, `TurnContext`, prompt rendering, tool filtering, compaction, tool observations, subagents, and repo-explore. |
 | 2026-06-28 | 3 | Completed | Added SDK builder setters for security, harness, prompt, compaction, hooks, and full runtime components. |
 | 2026-06-28 | 4 | Partial | Plugin registry declarations for agent policies/TUI components now produce warnings; real component factories remain pending. |
+| 2026-06-28 | 6 | Completed | Added learning runtime preset with permissive security, learning harness, tutor prompt builder, study compaction, and SDK `.learning_tutor()`. |

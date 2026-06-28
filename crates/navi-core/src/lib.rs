@@ -109,8 +109,10 @@ pub use runtime::{
 };
 pub use runtime_components::{
     CompactionStrategy, DefaultCompactionStrategy, DefaultHarnessDriver, DefaultPromptBuilder,
-    DefaultToolSecurityPolicy, HarnessDriver, NoopSessionHooks, PermissiveSecurityPolicy,
-    PromptBuilder, RuntimeComponents, SessionHooks, ToolSecurityPolicy,
+    DefaultToolSecurityPolicy, HarnessDriver, LearningHarness, LearningHarnessConfig,
+    NoopSessionHooks, PermissiveSecurityPolicy, PromptBuilder, RuntimeComponents, SessionHooks,
+    StudyCompactionConfig, StudyCompactionStrategy, ToolSecurityPolicy, TutorPromptBuilder,
+    TutorPromptOptions, learning_runtime_components,
 };
 pub use security::{SecurityDecision, SecurityPolicy};
 pub use session::{
