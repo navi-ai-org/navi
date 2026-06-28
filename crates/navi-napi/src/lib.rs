@@ -7,9 +7,10 @@ use napi_derive::napi;
 use navi_core::ToolKind;
 use navi_sdk::{
     HostToolDefinition, HostToolHandler, HostToolInvocation, NaviEngineBuilder, NaviSessionRequest,
-    NaviTurnRequest, SdkHostTool, SdkHostToolResult,
+    NaviTurnRequest, RuntimeEvent, SdkHostTool, SdkHostToolResult,
 };
 use serde_json::{Value as JsonValue, json};
+use tokio::sync::{Mutex as AsyncMutex, broadcast};
 
 type JsHostToolCallback = ThreadsafeFunction<JsonValue, Promise<JsonValue>>;
 
@@ -38,6 +39,11 @@ pub struct JsHostToolDefinition {
 #[napi]
 pub struct NaviNapiEngine {
     inner: navi_sdk::NaviEngine,
+}
+
+#[napi]
+pub struct NaviNapiEventStream {
+    receiver: AsyncMutex<broadcast::Receiver<RuntimeEvent>>,
 }
 
 #[napi]
@@ -178,6 +184,32 @@ impl NaviNapiEngine {
             .await
             .map_err(to_napi_error)
     }
+
+    #[napi]
+    pub fn subscribe_events(&self, session_id: String) -> Result<NaviNapiEventStream> {
+        let receiver = self
+            .inner
+            .subscribe_events(&session_id)
+            .map_err(to_napi_error)?;
+        Ok(NaviNapiEventStream {
+            receiver: AsyncMutex::new(receiver),
+        })
+    }
+}
+
+#[napi]
+impl NaviNapiEventStream {
+    #[napi]
+    pub async fn next(&self) -> Result<Option<JsonValue>> {
+        let mut receiver = self.receiver.lock().await;
+        loop {
+            match receiver.recv().await {
+                Ok(event) => return runtime_event_to_json(event).map(Some),
+                Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(broadcast::error::RecvError::Closed) => return Ok(None),
+            }
+        }
+    }
 }
 
 struct JsHostToolHandler {
@@ -230,6 +262,10 @@ fn parse_host_tool_result(value: JsonValue) -> anyhow::Result<SdkHostToolResult>
     Ok(SdkHostToolResult { ok, output })
 }
 
+fn runtime_event_to_json(event: RuntimeEvent) -> Result<JsonValue> {
+    serde_json::to_value(event).map_err(to_napi_error)
+}
+
 fn to_napi_error(error: impl std::fmt::Display) -> Error {
     Error::from_reason(error.to_string())
 }
@@ -266,5 +302,17 @@ mod tests {
             ToolKind::Command
         );
         assert!(parse_tool_kind(Some("unknown")).is_err());
+    }
+
+    #[test]
+    fn runtime_event_serializes_for_js_clients() {
+        let event = RuntimeEvent::new(navi_core::RuntimeEventKind::AssistantDelta {
+            text: "oi".to_string(),
+        });
+
+        let value = runtime_event_to_json(event).expect("json");
+
+        assert_eq!(value["version"], 1);
+        assert_eq!(value["kind"]["AssistantDelta"]["text"], "oi");
     }
 }
