@@ -208,6 +208,16 @@ let engine = NaviEngineBuilder::from_project(".")
     .build()?;
 ```
 
+For a tutor-style learning runtime:
+
+```rust
+let engine = NaviEngineBuilder::from_project(".")
+    .learning_tutor()
+    .host_tool(Arc::new(material_lookup_tool))
+    .host_tool(Arc::new(quiz_tool))
+    .build()?;
+```
+
 Custom components can replace:
 
 | Component | Purpose |
@@ -221,6 +231,10 @@ Custom components can replace:
 The default composition preserves NAVI's terminal code-agent behavior. A host
 that wants full tool autonomy, such as NAVI Tutor, should opt in explicitly with
 `PermissiveSecurityPolicy`; permissive security is never the default.
+
+`learning_tutor()` composes `PermissiveSecurityPolicy`, `LearningHarness`,
+`TutorPromptBuilder`, and `StudyCompactionStrategy`. It is intended as the Rust
+SDK preset that NAPI/TypeScript wrappers can expose to `navi-learning`.
 
 ## Context Injection
 
