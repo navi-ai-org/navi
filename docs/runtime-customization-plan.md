@@ -1,6 +1,6 @@
 # NAVI Runtime Customization Plan
 
-**Status:** In progress
+**Status:** Implemented for core/SDK/NAPI; frontend-specific extensions remain scoped
 **Owner:** NAVI core/runtime
 **Last updated:** 2026-06-28
 
@@ -18,8 +18,8 @@ make that behavior the default composition of replaceable runtime components.
 The current plugin system exposes extension points that are not fully wired:
 
 - `PluginRegistry::register_tool` works and registers executable tools.
-- `PluginRegistry::register_agent_policy` records names but no runtime layer
-  consumes them.
+- `PluginRegistry::register_agent_policy` records names. The SDK consumes known
+  runtime policy names and reports unknown names as warnings.
 - `PluginRegistry::register_tui_component` records names but no TUI layer
   consumes them.
 
@@ -209,15 +209,15 @@ let engine = NaviEngineBuilder::from_project(".")
 
 ### Tasks
 
-- Replace placeholder `register_agent_policy` behavior with a real component
+- [x] Replace placeholder `register_agent_policy` behavior with a real component
   registration path.
-- Decide whether native plugins register concrete components directly or
+- [x] Decide whether native plugins register concrete components directly or
   register named factories.
-- Keep plugin ABI compatibility strategy explicit because trait objects across
+- [x] Keep plugin ABI compatibility strategy explicit because trait objects across
   native plugin boundaries are fragile.
-- Define a real TUI extension boundary before wiring
+- [ ] Define a real TUI extension boundary before wiring
   `register_tui_component`.
-- Keep TUI plugins scoped to `navi-tui`; do not move ratatui concepts into
+- [x] Keep TUI plugins scoped to `navi-tui`; do not move ratatui concepts into
   `navi-sdk` or `navi-core`.
 
 ### Acceptance Criteria
@@ -236,10 +236,14 @@ let engine = NaviEngineBuilder::from_project(".")
 ### Current State
 
 - Native plugin tools still register normally.
-- `register_agent_policy` and `register_tui_component` declarations are now
-  reported as warnings instead of being silently ignored.
-- Real component registration from native/WASM plugins remains pending because
-  the ABI/factory boundary needs a separate design.
+- `register_agent_policy` is consumed by the SDK for known named policies:
+  `learning_tutor`, `navi_learning`, `tutor`, `default`, and `code_agent`.
+- Unknown agent policy names are reported as warnings.
+- `register_tui_component` declarations are reported as warnings instead of
+  being silently ignored. Actual terminal widget injection remains a `navi-tui`
+  frontend design task.
+- Native plugins register named policies rather than cross-library Rust trait
+  objects, preserving ABI boundaries.
 
 ## Phase 5: NAPI / TypeScript Host Integration
 
@@ -304,14 +308,16 @@ export function createTutorEngine(workspace: string) {
 
 ## Phase 6: NAVI Learning Runtime
 
-**Status:** Not started
+**Status:** Core runtime implemented; domain tools are host-provided
 
 ### Tasks
 
-- Implement `LearningHarness`.
-- Implement `TutorPromptBuilder`.
-- Implement `StudyCompaction`.
-- Implement study-domain host tools:
+- [x] Implement `LearningHarness`.
+- [x] Implement `TutorPromptBuilder`.
+- [x] Implement `StudyCompaction`.
+- [x] Define study-domain host tool boundary; concrete product tools are
+  provided by `navi-learning` through NAPI `hostTool`.
+- [ ] Implement study-domain host tools in the learning product:
   - material lookup;
   - image generation;
   - quiz generation;
@@ -322,8 +328,8 @@ export function createTutorEngine(workspace: string) {
   - student progress;
   - lesson planning;
   - content recommendation.
-- Implement analytics and persistence hooks.
-- Define which tools are exempt from compaction.
+- [ ] Implement analytics and persistence hooks in the learning product.
+- [x] Define which tools are exempt from compaction.
 
 ### Acceptance Criteria
 
