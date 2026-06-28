@@ -219,7 +219,16 @@ before starting a session:
 import { NaviNapiEngineBuilder } from "@navi/napi";
 
 const builder = new NaviNapiEngineBuilder(process.cwd());
-builder.setLearningTutor(true);
+builder.configureLearning({
+  maxConsecutiveErrors: 7,
+  stopOnRepeatedTool: false,
+  compactObservationMaxBytes: 4096,
+  role: "professor",
+  style: "socratico",
+  language: "pt-BR",
+  keepAllAssessments: true,
+  exemptToolNames: ["questionario", "grill_avaliacao", "student_progress"],
+});
 builder.hostTool(
   {
     name: "consultar_materiais",
@@ -254,7 +263,9 @@ The callback receives `{ invocationId, input }` and returns a promise for
 adapter used by Rust hosts, so it is visible to the model without changing
 `navi-core` or depending on `navi-tui`. `subscribeEvents(sessionId)` returns a
 stream object whose `next()` method resolves to the next serialized
-`RuntimeEvent`, or `null` when the stream closes.
+`RuntimeEvent`, or `null` when the stream closes. `configureLearning(...)`
+maps structured TypeScript options onto the Rust learning harness, tutor prompt
+builder, and study compaction strategy.
 
 ## Runtime Customization
 

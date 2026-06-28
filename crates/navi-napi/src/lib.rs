@@ -4,7 +4,10 @@ use async_trait::async_trait;
 use napi::bindgen_prelude::*;
 use napi::threadsafe_function::ThreadsafeFunction;
 use napi_derive::napi;
-use navi_core::ToolKind;
+use navi_core::{
+    LearningHarness, LearningHarnessConfig, RuntimeComponents, StudyCompactionConfig,
+    StudyCompactionStrategy, ToolKind, TutorPromptBuilder, TutorPromptOptions,
+};
 use navi_sdk::{
     HostToolDefinition, HostToolHandler, HostToolInvocation, NaviEngineBuilder, NaviSessionRequest,
     NaviTurnRequest, RuntimeEvent, SdkHostTool, SdkHostToolResult,
@@ -36,6 +39,19 @@ pub struct JsHostToolDefinition {
     pub input_schema: Option<JsonValue>,
 }
 
+#[derive(Clone, Default)]
+#[napi(object)]
+pub struct JsLearningRuntimeConfig {
+    pub max_consecutive_errors: Option<u32>,
+    pub stop_on_repeated_tool: Option<bool>,
+    pub compact_observation_max_bytes: Option<u32>,
+    pub role: Option<String>,
+    pub style: Option<String>,
+    pub language: Option<String>,
+    pub keep_all_assessments: Option<bool>,
+    pub exempt_tool_names: Option<Vec<String>>,
+}
+
 #[napi]
 pub struct NaviNapiEngine {
     inner: navi_sdk::NaviEngine,
@@ -50,6 +66,7 @@ pub struct NaviNapiEventStream {
 pub struct NaviNapiEngineBuilder {
     project_dir: String,
     learning_tutor: bool,
+    learning_config: Option<JsLearningRuntimeConfig>,
     host_tools: Vec<Arc<dyn navi_core::Tool>>,
 }
 
@@ -60,6 +77,7 @@ impl NaviNapiEngineBuilder {
         Self {
             project_dir,
             learning_tutor: false,
+            learning_config: None,
             host_tools: Vec::new(),
         }
     }
@@ -67,6 +85,12 @@ impl NaviNapiEngineBuilder {
     #[napi]
     pub fn set_learning_tutor(&mut self, enabled: Option<bool>) {
         self.learning_tutor = enabled.unwrap_or(true);
+    }
+
+    #[napi(js_name = "configureLearning")]
+    pub fn configure_learning(&mut self, config: JsLearningRuntimeConfig) {
+        self.learning_tutor = true;
+        self.learning_config = Some(config);
     }
 
     #[napi(js_name = "hostTool")]
@@ -100,7 +124,7 @@ impl NaviNapiEngineBuilder {
     pub fn build(&mut self) -> Result<NaviNapiEngine> {
         let mut builder = NaviEngineBuilder::from_project(self.project_dir.clone());
         if self.learning_tutor {
-            builder = builder.learning_tutor();
+            builder = builder.runtime_components(learning_components(self.learning_config.as_ref()));
         }
         for tool in self.host_tools.drain(..) {
             builder = builder.host_tool(tool);
@@ -266,6 +290,57 @@ fn runtime_event_to_json(event: RuntimeEvent) -> Result<JsonValue> {
     serde_json::to_value(event).map_err(to_napi_error)
 }
 
+fn learning_components(config: Option<&JsLearningRuntimeConfig>) -> RuntimeComponents {
+    let mut components = navi_core::learning_runtime_components();
+    let Some(config) = config else {
+        return components;
+    };
+
+    let harness_defaults = LearningHarnessConfig::default();
+    components.harness = Arc::new(LearningHarness::new(LearningHarnessConfig {
+        max_consecutive_errors: config
+            .max_consecutive_errors
+            .map(|value| value as usize)
+            .unwrap_or(harness_defaults.max_consecutive_errors),
+        stop_on_repeated_tool: config
+            .stop_on_repeated_tool
+            .unwrap_or(harness_defaults.stop_on_repeated_tool),
+        compact_observation_max_bytes: config
+            .compact_observation_max_bytes
+            .map(|value| value as usize)
+            .or(harness_defaults.compact_observation_max_bytes),
+    }));
+
+    let prompt_defaults = TutorPromptOptions::default();
+    components.prompt = Arc::new(TutorPromptBuilder::new(TutorPromptOptions {
+        role: config
+            .role
+            .clone()
+            .unwrap_or_else(|| prompt_defaults.role.clone()),
+        style: config
+            .style
+            .clone()
+            .unwrap_or_else(|| prompt_defaults.style.clone()),
+        language: config
+            .language
+            .clone()
+            .unwrap_or_else(|| prompt_defaults.language.clone()),
+    }));
+
+    let compaction_defaults = StudyCompactionConfig::default();
+    components.compaction = Arc::new(StudyCompactionStrategy::new(StudyCompactionConfig {
+        keep_all_assessments: config
+            .keep_all_assessments
+            .unwrap_or(compaction_defaults.keep_all_assessments),
+        exempt_tool_names: config
+            .exempt_tool_names
+            .clone()
+            .unwrap_or(compaction_defaults.exempt_tool_names),
+    }));
+
+    components
+}
+
 fn to_napi_error(error: impl std::fmt::Display) -> Error {
     Error::from_reason(error.to_string())
 }
@@ -314,5 +389,19 @@ mod tests {
 
         assert_eq!(value["version"], 1);
         assert_eq!(value["kind"]["AssistantDelta"]["text"], "oi");
+    }
+
+    #[test]
+    fn learning_components_accept_structured_js_options() {
+        let _components = learning_components(Some(&JsLearningRuntimeConfig {
+            max_consecutive_errors: Some(7),
+            stop_on_repeated_tool: Some(true),
+            compact_observation_max_bytes: Some(4096),
+            role: Some("professor".to_string()),
+            style: Some("socratico".to_string()),
+            language: Some("pt-BR".to_string()),
+            keep_all_assessments: Some(true),
+            exempt_tool_names: Some(vec!["questionario".to_string()]),
+        }));
     }
 }
