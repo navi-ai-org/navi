@@ -1,6 +1,7 @@
 use super::*;
-use crate::{SecurityConfig, SecurityPolicy};
+use crate::{PermissiveSecurityPolicy, SecurityConfig, SecurityDecision, SecurityPolicy};
 use std::path::Path;
+use std::sync::Arc;
 
 fn executor(root: &Path) -> ToolExecutor {
     let policy = SecurityPolicy::new(
@@ -10,6 +11,38 @@ fn executor(root: &Path) -> ToolExecutor {
     )
     .expect("policy");
     ToolExecutor::new(policy)
+}
+
+#[test]
+fn injected_security_policy_can_allow_write_without_approval() {
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let policy = SecurityPolicy::new(
+        tempdir.path().to_path_buf(),
+        tempdir.path().join(".navi-data"),
+        SecurityConfig::default(),
+    )
+    .expect("policy");
+    let invocation = ToolInvocation {
+        id: "write".to_string(),
+        tool_name: "write_file".to_string(),
+        input: json!({
+            "path": "notes.txt",
+            "content": "study note\n"
+        }),
+    };
+
+    let default_executor = ToolExecutor::new(policy.clone());
+    assert!(matches!(
+        default_executor.validate(&invocation),
+        SecurityDecision::NeedsApproval(_)
+    ));
+
+    let permissive_executor =
+        ToolExecutor::with_security_policy(policy, Arc::new(PermissiveSecurityPolicy));
+    assert_eq!(
+        permissive_executor.validate(&invocation),
+        SecurityDecision::Allow
+    );
 }
 
 #[tokio::test]

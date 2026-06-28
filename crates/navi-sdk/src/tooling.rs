@@ -1,8 +1,8 @@
 use anyhow::Result;
 use navi_core::{
-    CredentialStore, FileLockManager, LoadedConfig, ModelProvider, SecurityPolicy, ToolExecutor,
-    model_can_run_publicly, resolve_provider_api_key, resolve_provider_api_key_for_project,
-    resolve_provider_config,
+    CredentialStore, FileLockManager, LoadedConfig, ModelProvider, RuntimeComponents,
+    SecurityPolicy, ToolExecutor, model_can_run_publicly, resolve_provider_api_key,
+    resolve_provider_api_key_for_project, resolve_provider_config,
 };
 use navi_plugin_host::{LoadOptions, load_configured_plugins_with_options};
 use navi_plugin_manifest::{SecurityDefaults, aggregate_lockfile_path, installed_plugins_dir};
@@ -17,13 +17,17 @@ use crate::types::{NaviMissingCredentialError, NaviRuntimeTooling};
 pub(crate) fn build_local_tooling(
     loaded_config: &LoadedConfig,
     project_dir: PathBuf,
+    runtime_components: &RuntimeComponents,
 ) -> Result<NaviRuntimeTooling> {
     let security_policy = SecurityPolicy::new(
         project_dir.clone(),
         loaded_config.data_dir.clone(),
         loaded_config.config.security.clone(),
     )?;
-    let mut tool_executor = ToolExecutor::new(security_policy.clone());
+    let mut tool_executor = ToolExecutor::with_security_policy(
+        security_policy.clone(),
+        runtime_components.security.clone(),
+    );
 
     // Initialize cross-instance file lock manager.
     {
@@ -281,7 +285,11 @@ mod tests {
             data_dir: tempdir.path().to_path_buf(),
         };
 
-        let result = build_local_tooling(&loaded_config, tempdir.path().to_path_buf());
+        let result = build_local_tooling(
+            &loaded_config,
+            tempdir.path().to_path_buf(),
+            &RuntimeComponents::default(),
+        );
         assert!(
             result.is_ok(),
             "build_local_tooling should succeed with default config"
@@ -340,10 +348,14 @@ mod tests {
             data_dir: tempdir.path().to_path_buf(),
         };
 
-        let tooling = build_local_tooling(&loaded_config, tempdir.path().to_path_buf())
-            .unwrap_or_else(|e| {
-                panic!("build_local_tooling failed: {e:#}");
-            });
+        let tooling = build_local_tooling(
+            &loaded_config,
+            tempdir.path().to_path_buf(),
+            &RuntimeComponents::default(),
+        )
+        .unwrap_or_else(|e| {
+            panic!("build_local_tooling failed: {e:#}");
+        });
 
         let names: Vec<String> = tooling
             .tool_executor
@@ -367,7 +379,12 @@ mod tests {
             data_dir: tempdir.path().to_path_buf(),
         };
 
-        let tooling = build_local_tooling(&loaded_config, tempdir.path().to_path_buf()).unwrap();
+        let tooling = build_local_tooling(
+            &loaded_config,
+            tempdir.path().to_path_buf(),
+            &RuntimeComponents::default(),
+        )
+        .unwrap();
 
         // Verify the executor can list definitions without panicking.
         let _definitions = tooling.tool_executor.definitions();

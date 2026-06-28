@@ -4,6 +4,7 @@ use crate::capability::{
 use crate::effect::PostDecision;
 use crate::event::AgentEvent;
 use crate::file_lock::FileLockManager;
+use crate::runtime_components::{DefaultToolSecurityPolicy, ToolSecurityPolicy};
 use crate::security::{SecurityDecision, SecurityPolicy};
 use anyhow::Result;
 use async_trait::async_trait;
@@ -141,6 +142,7 @@ pub struct ToolExecutor {
     validators: HashMap<String, Arc<jsonschema::Validator>>,
     invalid_schemas: HashMap<String, String>,
     policy: SecurityPolicy,
+    security: Arc<dyn ToolSecurityPolicy>,
     harness_profile: String,
     lock_manager: Option<Arc<FileLockManager>>,
     registry: ToolRegistry,
@@ -172,11 +174,19 @@ const WRITE_TOOL_NAMES: &[&str] = &["write", "write_file"];
 
 impl ToolExecutor {
     pub fn new(policy: SecurityPolicy) -> Self {
+        Self::with_security_policy(policy, Arc::new(DefaultToolSecurityPolicy))
+    }
+
+    pub fn with_security_policy(
+        policy: SecurityPolicy,
+        security: Arc<dyn ToolSecurityPolicy>,
+    ) -> Self {
         let mut executor = Self {
             tools: HashMap::new(),
             validators: HashMap::new(),
             invalid_schemas: HashMap::new(),
             policy,
+            security,
             harness_profile: "medium".to_string(),
             lock_manager: None,
             registry: ToolRegistry::new(),
@@ -241,6 +251,7 @@ impl ToolExecutor {
             validators: HashMap::new(),
             invalid_schemas: HashMap::new(),
             policy,
+            security: Arc::new(DefaultToolSecurityPolicy),
             harness_profile: "medium".to_string(),
             lock_manager: None,
             registry: ToolRegistry::new(),
@@ -261,6 +272,7 @@ impl ToolExecutor {
             validators: HashMap::new(),
             invalid_schemas: HashMap::new(),
             policy: policy.clone(),
+            security: Arc::new(DefaultToolSecurityPolicy),
             harness_profile: "medium".to_string(),
             lock_manager: None,
             registry: ToolRegistry::new(),
@@ -473,7 +485,7 @@ impl ToolExecutor {
         let Some(def) = self.definition(&inv.tool_name) else {
             return SecurityDecision::Deny(format!("unknown `{}`", inv.tool_name));
         };
-        self.policy.validate_tool_invocation(&def, inv)
+        self.security.validate_tool(&self.policy, &def, inv)
     }
 
     pub async fn invoke(&self, invocation: ToolInvocation) -> ToolResult {

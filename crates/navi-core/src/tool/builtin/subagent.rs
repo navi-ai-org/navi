@@ -18,6 +18,7 @@ use crate::event::{AgentEvent, ApprovalDecision, SubagentTranscriptItem, Subagen
 use crate::model::{ModelMessage, ModelProvider, ModelRole};
 use crate::prompt::PromptCache;
 use crate::runtime::ApprovalResolver;
+use crate::runtime_components::RuntimeComponents;
 use crate::tool::{
     Tool, ToolDefinition, ToolInvocation, ToolInvocationContext, ToolKind, ToolResult,
 };
@@ -127,6 +128,7 @@ pub struct SubagentTool {
     harness_config: HarnessConfig,
     config: Arc<RwLock<NaviConfig>>,
     prompt_cache: Arc<PromptCache>,
+    components: RuntimeComponents,
     background_tasks: tokio::sync::Mutex<HashMap<String, Arc<SubagentBackgroundTask>>>,
     next_task_id: AtomicU64,
     /// Optional resolver for selecting background models by profile.
@@ -147,6 +149,7 @@ impl SubagentTool {
         harness_config: HarnessConfig,
         config: Arc<RwLock<NaviConfig>>,
         prompt_cache: Arc<PromptCache>,
+        components: RuntimeComponents,
     ) -> Self {
         Self {
             tool_executor,
@@ -157,6 +160,7 @@ impl SubagentTool {
             harness_config,
             config,
             prompt_cache,
+            components,
             background_tasks: tokio::sync::Mutex::new(HashMap::new()),
             next_task_id: AtomicU64::new(1),
             background_resolver: None,
@@ -480,6 +484,7 @@ impl SubagentTool {
             context_packets: Arc::new(std::sync::Mutex::new(Vec::new())),
             active_skills: Arc::new(std::sync::Mutex::new(Vec::new())),
             prompt_cache: self.prompt_cache.clone(),
+            components: self.components.clone(),
             cancel_token: CancelToken::new(),
             config: self.config.clone(),
             memory_injection: None,
@@ -576,6 +581,7 @@ impl SubagentTool {
         let model_provider = Arc::new(RwLock::new(resolved_provider));
         let model_name = Arc::new(RwLock::new(resolved_model));
         let prompt_cache = self.prompt_cache.clone();
+        let components = self.components.clone();
         let harness_config = self.harness_config.clone();
         let config = self.config.clone();
         let project_dir = self.project_dir.clone();
@@ -618,6 +624,7 @@ impl SubagentTool {
                 context_packets: Arc::new(std::sync::Mutex::new(Vec::new())),
                 active_skills: Arc::new(std::sync::Mutex::new(Vec::new())),
                 prompt_cache,
+                components,
                 cancel_token,
                 config: Arc::new(std::sync::RwLock::new(config_snapshot)),
                 memory_injection: None,

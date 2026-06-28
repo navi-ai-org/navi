@@ -1,0 +1,346 @@
+# NAVI Runtime Customization Plan
+
+**Status:** In progress
+**Owner:** NAVI core/runtime
+**Last updated:** 2026-06-28
+
+This plan tracks the work needed to move NAVI from an opinionated code-agent
+framework into a composable agent runtime toolkit. The target is a runtime that
+can be assembled by downstream clients such as NAVI TUI, NAVI Tutor,
+headless/ACP clients, and future SDK users with custom security, tools,
+harness behavior, prompts, compaction, hooks, and UI integration.
+
+The goal is not to remove NAVI's default code-agent behavior. The goal is to
+make that behavior the default composition of replaceable runtime components.
+
+## Problem Statement
+
+The current plugin system exposes extension points that are not fully wired:
+
+- `PluginRegistry::register_tool` works and registers executable tools.
+- `PluginRegistry::register_agent_policy` records names but no runtime layer
+  consumes them.
+- `PluginRegistry::register_tui_component` records names but no TUI layer
+  consumes them.
+
+At the same time, major runtime decisions are still concrete in `navi-core`:
+
+- security is represented by the concrete `SecurityPolicy` type;
+- `ToolExecutor` owns policy validation through that concrete type;
+- the turn loop calls concrete harness functions;
+- system prompt rendering is selected by concrete prompt code;
+- compaction is called directly from the turn loop;
+- lifecycle hooks are not a first-class runtime concept.
+
+This makes plugins useful for tools, but not yet sufficient for building a
+custom runtime such as `navi-learning`.
+
+## Design Target
+
+NAVI should expose a small set of stable component traits and compose them
+through the SDK:
+
+```rust
+pub struct RuntimeComponents {
+    pub security: Arc<dyn ToolSecurityPolicy>,
+    pub harness: Arc<dyn HarnessDriver>,
+    pub prompt: Arc<dyn PromptBuilder>,
+    pub compaction: Arc<dyn CompactionStrategy>,
+    pub hooks: Arc<dyn SessionHooks>,
+}
+```
+
+Default components must preserve the current code-agent behavior. Custom
+components can replace any stage for other products.
+
+For `navi-learning`, "no security policy" should be modeled as an explicit
+permissive implementation:
+
+```rust
+pub struct PermissiveSecurityPolicy;
+
+impl ToolSecurityPolicy for PermissiveSecurityPolicy {
+    fn validate_tool(
+        &self,
+        _invocation: &ToolInvocation,
+        _definition: &ToolDefinition,
+    ) -> SecurityDecision {
+        SecurityDecision::Allow
+    }
+}
+```
+
+This keeps the runtime pipeline uniform while allowing full tutor autonomy.
+
+## Non-Goals
+
+- Do not make NAVI Tutor depend on `navi-tui`.
+- Do not make WebSocket or daemon mode the primary integration surface.
+- Do not remove native or WASM plugin support.
+- Do not make project config able to enable unsafe native plugin roots.
+- Do not break existing TUI, CLI, headless, ACP, SDK, MCP, or plugin-tool flows.
+
+## Phase 0: Inventory And Compatibility Contract
+
+**Status:** Completed
+
+### Tasks
+
+- Map all concrete runtime decisions in `navi-core`.
+- List every place that constructs `SecurityPolicy`, `ToolExecutor`,
+  `HarnessPolicy`, `SystemPromptRenderer`, and `CompactState`.
+- Record current event behavior that must remain stable for TUI and SDK users.
+- Add parity tests or snapshots around default runtime behavior before
+  refactoring.
+
+### Acceptance Criteria
+
+- A compatibility checklist exists for default runtime behavior.
+- Current plugin limitations are documented as explicit gaps.
+- The default path remains the reference behavior for later phases.
+
+### Suggested Validation
+
+- `just test-crate navi-core`
+- `just test-crate navi-sdk`
+
+## Phase 1: Runtime Component Traits
+
+**Status:** Completed
+
+### Tasks
+
+- Introduce `ToolSecurityPolicy` as a trait.
+- Rename or wrap the current concrete policy as `DefaultSecurityPolicy`.
+- Add `PermissiveSecurityPolicy` for fully autonomous host-controlled runtimes.
+- Introduce `HarnessDriver` for tool-loop decisions, tool filtering, and
+  observation formatting.
+- Introduce `PromptBuilder` for system prompt construction.
+- Introduce `CompactionStrategy` for micro-compact and auto-compact behavior.
+- Introduce `SessionHooks` for lifecycle and analytics callbacks.
+- Add `RuntimeComponents::default_for_config(...)` to preserve current behavior.
+
+### Acceptance Criteria
+
+- Existing code-agent behavior is provided by default component
+  implementations.
+- Custom components can be created in Rust tests without changing global config.
+- The traits use serializable, UI-agnostic inputs where practical.
+- Trait names do not conflict with existing concrete type names.
+
+### Suggested Validation
+
+- `just test-crate navi-core`
+- Focused tests for each default component.
+
+## Phase 2: Wire Components Into AgentRuntime
+
+**Status:** Completed
+
+### Tasks
+
+- Add `runtime_components: RuntimeComponents` to `AgentRuntimeOptions`.
+- Store components in `AgentRuntime` and pass them into `TurnContext`.
+- Replace direct prompt construction in the turn loop with `PromptBuilder`.
+- Replace direct compaction calls with `CompactionStrategy`.
+- Replace direct harness function calls with `HarnessDriver` where behavior is
+  meant to be customizable.
+- Ensure subagent and repo-explore tools inherit the same runtime component
+  choices where appropriate.
+- Keep `HarnessPolicy` as data/config, not as the customization boundary.
+
+### Acceptance Criteria
+
+- `AgentRuntime::new` can build the current runtime without callers specifying
+  components.
+- SDK and TUI sessions still use identical defaults.
+- Tests can start a runtime with permissive security and a custom prompt
+  builder.
+- Runtime events remain stable.
+
+### Suggested Validation
+
+- `just test-crate navi-core`
+- `just test-crate navi-sdk`
+- `just test-crate navi-tui` if TUI session setup changes.
+
+## Phase 3: SDK Builder Surface
+
+**Status:** Completed
+
+### Tasks
+
+- Add component setters to `NaviEngineBuilder`.
+- Allow host tools and runtime components to be configured together.
+- Define what is engine-scoped versus session-scoped.
+- Add examples to `docs/sdk-agents.md`.
+- Make it clear that custom tools still go through the selected security
+  component.
+
+### Target API Sketch
+
+```rust
+let engine = NaviEngineBuilder::from_project(".")
+    .security(Arc::new(PermissiveSecurityPolicy))
+    .harness(Arc::new(LearningHarness::default()))
+    .prompt(Arc::new(TutorPromptBuilder::new("pt-BR")))
+    .compaction(Arc::new(StudyCompaction::default()))
+    .hooks(Arc::new(StudyHooks::new(analytics)))
+    .host_tool(Arc::new(material_lookup_tool))
+    .build()?;
+```
+
+### Acceptance Criteria
+
+- SDK users can assemble a custom runtime without depending on TUI internals.
+- Existing `NaviEngineBuilder::from_project(".").build()` behavior is
+  unchanged.
+- Host tools, MCP tools, WASM plugins, and native plugin tools all share the
+  configured runtime policy.
+
+### Suggested Validation
+
+- `just test-crate navi-sdk`
+- SDK integration test with custom prompt, permissive security, and host tool.
+
+## Phase 4: Plugin Registry Wiring
+
+**Status:** Partially completed
+
+### Tasks
+
+- Replace placeholder `register_agent_policy` behavior with a real component
+  registration path.
+- Decide whether native plugins register concrete components directly or
+  register named factories.
+- Keep plugin ABI compatibility strategy explicit because trait objects across
+  native plugin boundaries are fragile.
+- Define a real TUI extension boundary before wiring
+  `register_tui_component`.
+- Keep TUI plugins scoped to `navi-tui`; do not move ratatui concepts into
+  `navi-sdk` or `navi-core`.
+
+### Acceptance Criteria
+
+- Plugin reports distinguish loaded tools, loaded runtime components, and
+  declared-but-unsupported capabilities.
+- No placeholder registry fields are silently ignored.
+- Native and WASM plugin extension limits are documented.
+
+### Suggested Validation
+
+- `just test-crate navi-plugin-api`
+- `just test-crate navi-plugin-host`
+- `just test-crate navi-sdk`
+
+### Current State
+
+- Native plugin tools still register normally.
+- `register_agent_policy` and `register_tui_component` declarations are now
+  reported as warnings instead of being silently ignored.
+- Real component registration from native/WASM plugins remains pending because
+  the ABI/factory boundary needs a separate design.
+
+## Phase 5: NAPI / TypeScript Host Integration
+
+**Status:** Not started
+
+### Tasks
+
+- Add a NAPI wrapper crate only after the Rust SDK customization surface is
+  stable.
+- Expose host tools as TypeScript callbacks or classes.
+- Expose runtime events as a stream or async iterator.
+- Expose safe component options first: permissive security, prompt templates,
+  tool filtering, hooks, and compaction rules.
+- Decide which components need full TypeScript callback implementations versus
+  structured configuration objects.
+
+### Target TypeScript Sketch
+
+```ts
+export function createTutorEngine(workspace: string) {
+  return new AgentRuntimeBuilder()
+    .security(new PermissiveSecurity())
+    .harness(new LearningHarness({ maxConsecutiveErrors: 5 }))
+    .prompt(new TutorPromptBuilder({ language: "pt-BR", style: "socratic" }))
+    .compaction(new StudyCompaction({ keepAllAssessments: true }))
+    .hooks(new StudyHooks({ onToolCall: analytics.trackToolCall }))
+    .hostTool(new ConsultarMateriais(materialDb))
+    .hostTool(new Questionario(questionBank))
+    .build(workspace);
+}
+```
+
+### Acceptance Criteria
+
+- `navi-learning` can run without native `.so` or `.dylib` plugins.
+- TypeScript host tools can be added without modifying `navi-core`.
+- The web client does not depend on terminal UI internals.
+- The Rust SDK remains the source of truth for runtime behavior.
+
+### Suggested Validation
+
+- NAPI integration test for one host tool.
+- End-to-end tutor session smoke test.
+
+## Phase 6: NAVI Learning Runtime
+
+**Status:** Not started
+
+### Tasks
+
+- Implement `LearningHarness`.
+- Implement `TutorPromptBuilder`.
+- Implement `StudyCompaction`.
+- Implement study-domain host tools:
+  - material lookup;
+  - image generation;
+  - quiz generation;
+  - canvas diagram operations;
+  - grading rubric;
+  - scheduler/cron;
+  - assessment history;
+  - student progress;
+  - lesson planning;
+  - content recommendation.
+- Implement analytics and persistence hooks.
+- Define which tools are exempt from compaction.
+
+### Acceptance Criteria
+
+- Tutor runtime can guide a learning session autonomously.
+- Study tools are TypeScript-hosted or otherwise web-compatible.
+- Assessments and learning state are never lost to generic code-agent
+  compaction.
+- The agent can operate with permissive security inside the host-controlled
+  learning environment.
+
+### Suggested Validation
+
+- Tutor smoke flow: start session, consult material, ask quiz, grade answer,
+  update progress.
+- Regression test that study assessment events survive compaction.
+
+## Migration Rules
+
+- Keep default runtime behavior stable at every phase.
+- Add new component seams before moving behavior behind them.
+- Prefer adapter layers over large rewrites.
+- Do not expose TUI concepts through `navi-sdk`.
+- Do not let plugin placeholders remain silently successful once real component
+  support exists.
+- Treat permissive security as explicit host intent, never as a default.
+
+## Progress Log
+
+Update this section during each implementation step.
+
+| Date | Phase | Status | Notes |
+|---|---|---|---|
+| 2026-06-28 | Planning | Created | Initial plan for runtime component customization. |
+| 2026-06-28 | 0 | Completed | Inventory confirmed concrete security, harness, prompt, compaction, and plugin placeholder call sites. |
+| 2026-06-28 | 1 | Completed | Added `RuntimeComponents`, `ToolSecurityPolicy`, `HarnessDriver`, `PromptBuilder`, `CompactionStrategy`, `SessionHooks`, defaults, and `PermissiveSecurityPolicy`. |
+| 2026-06-28 | 2 | Completed | Wired components through `AgentRuntime`, `TurnContext`, prompt rendering, tool filtering, compaction, tool observations, subagents, and repo-explore. |
+| 2026-06-28 | 3 | Completed | Added SDK builder setters for security, harness, prompt, compaction, hooks, and full runtime components. |
+| 2026-06-28 | 4 | Partial | Plugin registry declarations for agent policies/TUI components now produce warnings; real component factories remain pending. |
