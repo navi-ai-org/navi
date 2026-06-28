@@ -243,17 +243,17 @@ let engine = NaviEngineBuilder::from_project(".")
 
 ## Phase 5: NAPI / TypeScript Host Integration
 
-**Status:** Completed
+**Status:** Partial
 
 ### Tasks
 
-- Add a NAPI wrapper crate only after the Rust SDK customization surface is
+- [x] Add a NAPI wrapper crate only after the Rust SDK customization surface is
   stable.
-- Expose host tools as TypeScript callbacks or classes.
-- Expose runtime events as a stream or async iterator.
-- Expose safe component options first: permissive security, prompt templates,
+- [x] Expose host tools as TypeScript callbacks or classes.
+- [ ] Expose runtime events as a stream or async iterator.
+- [x] Expose safe component options first: permissive security, prompt templates,
   tool filtering, hooks, and compaction rules.
-- Decide which components need full TypeScript callback implementations versus
+- [ ] Decide which components need full TypeScript callback implementations versus
   structured configuration objects.
 
 ### Target TypeScript Sketch
@@ -274,14 +274,27 @@ export function createTutorEngine(workspace: string) {
 
 ### Acceptance Criteria
 
-- `navi-learning` can run without native `.so` or `.dylib` plugins.
-- TypeScript host tools can be added without modifying `navi-core`.
-- The web client does not depend on terminal UI internals.
-- The Rust SDK remains the source of truth for runtime behavior.
+- [x] `navi-learning` can run without native `.so` or `.dylib` plugins.
+- [x] TypeScript host tools can be added without modifying `navi-core`.
+- [x] The web client does not depend on terminal UI internals.
+- [x] The Rust SDK remains the source of truth for runtime behavior.
+
+### Current State
+
+- `crates/navi-napi` exposes `NaviNapiEngineBuilder`.
+- `NaviNapiEngineBuilder::set_learning_tutor(true)` enables the learning
+  runtime preset from the Rust SDK.
+- `NaviNapiEngineBuilder::hostTool(...)` registers TypeScript async callbacks
+  as SDK host tools.
+- Host tool callbacks receive `{ invocationId, input }` and return a promise
+  resolving to `{ ok, output }`.
+- Session lifecycle methods expose start, send turn, snapshot, and close.
+- Runtime event streaming is still pending; current TypeScript callers use
+  request/response turn execution.
 
 ### Suggested Validation
 
-- NAPI integration test for one host tool.
+- NAPI unit tests for host tool result parsing and tool kind mapping.
 - End-to-end tutor session smoke test.
 
 ## Phase 6: NAVI Learning Runtime
@@ -357,3 +370,4 @@ Update this section during each implementation step.
 | 2026-06-28 | 3 | Completed | Added SDK builder setters for security, harness, prompt, compaction, hooks, and full runtime components. |
 | 2026-06-28 | 4 | Partial | Plugin registry declarations for agent policies/TUI components now produce warnings; real component factories remain pending. |
 | 2026-06-28 | 6 | Completed | Added learning runtime preset with permissive security, learning harness, tutor prompt builder, study compaction, and SDK `.learning_tutor()`. |
+| 2026-06-28 | 5 | Partial | Added `navi-napi` crate, TypeScript engine builder, learning tutor toggle, session methods, and async TypeScript host-tool callbacks. Runtime event async iterator remains pending. |

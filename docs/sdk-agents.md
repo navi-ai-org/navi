@@ -167,30 +167,90 @@ MCP servers are started by `navi-sdk` on engine build. Their tools are registere
 Applications embedding NAVI can register custom tools:
 
 ```rust
-use navi_sdk::host_tool::{SdkHostTool, HostToolHandler};
-use navi_core::tool::Invocation;
+use std::sync::Arc;
 use async_trait::async_trait;
+use navi_core::ToolKind;
+use navi_sdk::{
+    HostToolDefinition, HostToolHandler, HostToolInvocation, SdkHostTool,
+    SdkHostToolResult,
+};
+use serde_json::json;
 
 struct MyTool;
 
 #[async_trait]
 impl HostToolHandler for MyTool {
-    fn name(&self) -> &str { "my_custom_tool" }
-
-    async fn invoke(&self, invocation: &Invocation) -> anyhow::Result<serde_json::Value> {
+    async fn invoke(&self, invocation: HostToolInvocation) -> anyhow::Result<SdkHostToolResult> {
         // Return structured JSON result
-        Ok(serde_json::json!({ "status": "ok", "data": "..." }))
+        Ok(SdkHostToolResult::success(json!({
+            "id": invocation.invocation_id,
+            "status": "ok",
+            "data": "..."
+        })))
     }
 }
 
-let host_tool = SdkHostTool::new(MyTool);
+let host_tool = SdkHostTool::new(
+    HostToolDefinition {
+        name: "my_custom_tool".into(),
+        description: "Custom host app capability".into(),
+        kind: ToolKind::Read,
+        input_schema: json!({ "type": "object" }),
+    },
+    Arc::new(MyTool),
+);
+
 // Register during engine build
 let engine = NaviEngineBuilder::from_project(".")
     .host_tool(Arc::new(host_tool))
     .build()?;
 ```
 
-Host tools go through the same `ToolExecutor` and `SecurityPolicy` as built-in tools. They receive invocation metadata including `project_root` and `session_id`.
+Host tools go through the same `ToolExecutor` and `SecurityPolicy` as built-in
+tools. They receive the tool invocation id and model-produced JSON input.
+
+## TypeScript / NAPI
+
+The `navi-napi` crate exposes the SDK to Node clients without native plugin
+libraries. A host can build the learning runtime and register TypeScript tools
+before starting a session:
+
+```ts
+import { NaviNapiEngineBuilder } from "@navi/napi";
+
+const builder = new NaviNapiEngineBuilder(process.cwd());
+builder.setLearningTutor(true);
+builder.hostTool(
+  {
+    name: "consultar_materiais",
+    description: "Consulta materiais didaticos do aluno",
+    kind: "read",
+    inputSchema: {
+      type: "object",
+      properties: {
+        topic: { type: "string" },
+      },
+      required: ["topic"],
+    },
+  },
+  async ({ invocationId, input }) => {
+    const material = await materialDb.lookup(input.topic);
+    return {
+      ok: true,
+      output: { invocationId, material },
+    };
+  },
+);
+
+const engine = builder.build();
+const session = await engine.startSession();
+const response = await engine.sendTurn(session.id, "Explique limites com exemplos");
+```
+
+The callback receives `{ invocationId, input }` and returns a promise for
+`{ ok, output }`. The tool is registered through the same SDK `SdkHostTool`
+adapter used by Rust hosts, so it is visible to the model without changing
+`navi-core` or depending on `navi-tui`.
 
 ## Runtime Customization
 
