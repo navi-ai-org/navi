@@ -3,8 +3,8 @@ use anyhow::Context;
 type Result<T> = std::result::Result<T, NaviError>;
 use navi_core::{
     AgentRuntime, AgentRuntimeOptions, ApprovalDecision, CredentialStore, LoadedConfig,
-    ModelOption, ProviderConfig, QuestionResponse, RuntimeEvent, SessionId, SessionSnapshot,
-    SessionStore, SkillManifest, available_model_options, canonical_provider_id,
+    ModelOption, ProviderConfig, QuestionResponse, RuntimeComponents, RuntimeEvent, SessionId,
+    SessionSnapshot, SessionStore, SkillManifest, available_model_options, canonical_provider_id,
     config::effective_context_window, discover_configured_skills, model_can_run_publicly,
     provider_catalog, registry::RegistryStore, resolve_provider_api_key, resolve_provider_config,
     resolve_provider_credential_status, save_global_config, save_project_config,
@@ -43,6 +43,7 @@ pub struct NaviEngineBuilder {
     project_dir: PathBuf,
     loaded_config: Option<LoadedConfig>,
     host_tools: Vec<Arc<dyn navi_core::Tool>>,
+    runtime_components: RuntimeComponents,
 }
 
 impl NaviEngineBuilder {
@@ -56,6 +57,7 @@ impl NaviEngineBuilder {
             project_dir: project_dir.into(),
             loaded_config: None,
             host_tools: Vec::new(),
+            runtime_components: RuntimeComponents::default(),
         }
     }
 
@@ -68,6 +70,42 @@ impl NaviEngineBuilder {
     /// Registers a host-provided tool that will be available in all sessions.
     pub fn host_tool(mut self, tool: Arc<dyn navi_core::Tool>) -> Self {
         self.host_tools.push(tool);
+        self
+    }
+
+    /// Replaces all runtime components used by sessions created from this engine.
+    pub fn runtime_components(mut self, runtime_components: RuntimeComponents) -> Self {
+        self.runtime_components = runtime_components;
+        self
+    }
+
+    /// Replaces the tool security policy component.
+    pub fn security(mut self, security: Arc<dyn navi_core::ToolSecurityPolicy>) -> Self {
+        self.runtime_components.security = security;
+        self
+    }
+
+    /// Replaces the harness driver component.
+    pub fn harness(mut self, harness: Arc<dyn navi_core::HarnessDriver>) -> Self {
+        self.runtime_components.harness = harness;
+        self
+    }
+
+    /// Replaces the system prompt builder component.
+    pub fn prompt(mut self, prompt: Arc<dyn navi_core::PromptBuilder>) -> Self {
+        self.runtime_components.prompt = prompt;
+        self
+    }
+
+    /// Replaces the compaction strategy component.
+    pub fn compaction(mut self, compaction: Arc<dyn navi_core::CompactionStrategy>) -> Self {
+        self.runtime_components.compaction = compaction;
+        self
+    }
+
+    /// Replaces lifecycle hooks for sessions, turns, and tool execution.
+    pub fn hooks(mut self, hooks: Arc<dyn navi_core::SessionHooks>) -> Self {
+        self.runtime_components.hooks = hooks;
         self
     }
 
@@ -98,6 +136,7 @@ impl NaviEngineBuilder {
                 project_dir: self.project_dir,
                 loaded_config: RwLock::new(loaded_config),
                 host_tools: self.host_tools,
+                runtime_components: self.runtime_components,
                 sessions: RwLock::new(HashMap::new()),
                 registry_store,
             }),
@@ -118,6 +157,7 @@ struct NaviEngineInner {
     project_dir: PathBuf,
     loaded_config: RwLock<LoadedConfig>,
     host_tools: Vec<Arc<dyn navi_core::Tool>>,
+    runtime_components: RuntimeComponents,
     sessions: RwLock<HashMap<String, Arc<NaviSession>>>,
     registry_store: Option<Arc<RegistryStore>>,
 }
@@ -167,7 +207,11 @@ impl NaviEngine {
 
         let loaded_config = self.loaded_config();
         let provider = build_provider_for_project_config(&loaded_config, &project_dir)?;
-        let mut tool_executor = build_local_tooling(&loaded_config, project_dir.clone())?;
+        let mut tool_executor = build_local_tooling(
+            &loaded_config,
+            project_dir.clone(),
+            &self.inner.runtime_components,
+        )?;
         for tool in &self.inner.host_tools {
             let executor = Arc::get_mut(&mut tool_executor.tool_executor).ok_or_else(|| {
                 NaviError::Config("cannot register host tool after tool executor is shared".into())
@@ -209,6 +253,7 @@ impl NaviEngine {
                 loaded_config.config.harness.clone(),
                 shared_config.clone(),
                 prompt_cache.clone(),
+                self.inner.runtime_components.clone(),
             );
             executor.register_tool(Arc::new(subagent));
             executor.register_tool(Arc::new(navi_core::RepoExploreTool::new(
@@ -220,6 +265,7 @@ impl NaviEngine {
                 loaded_config.config.harness.clone(),
                 shared_config.clone(),
                 prompt_cache.clone(),
+                self.inner.runtime_components.clone(),
             )));
             executor
         });
@@ -237,6 +283,7 @@ impl NaviEngine {
             initial_updated_at: request.initial_updated_at,
             session_id: request.session_id.map(SessionId::new),
             event_tx: None,
+            runtime_components: Some(self.inner.runtime_components.clone()),
         });
         let events = runtime.stream_events();
         let session_id = runtime.start_session()?;
@@ -689,7 +736,11 @@ impl NaviEngine {
         for session_id in self.session_ids() {
             let session = self.session(&session_id)?;
             let mut runtime = session.runtime.lock().await;
-            let mut fresh = build_local_tooling(&loaded_config, project_dir.clone())?;
+            let mut fresh = build_local_tooling(
+                &loaded_config,
+                project_dir.clone(),
+                &self.inner.runtime_components,
+            )?;
             for tool in &self.inner.host_tools {
                 let executor = Arc::get_mut(&mut fresh.tool_executor).ok_or_else(|| {
                     NaviError::Config("cannot register host tool during plugin reload".into())

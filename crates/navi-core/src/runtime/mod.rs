@@ -17,6 +17,7 @@ use crate::event::{
 };
 use crate::harness::select_harness_policy;
 use crate::model::{ModelMessage, ModelProvider, ModelResponse};
+use crate::runtime_components::RuntimeComponents;
 use crate::security::SecurityPolicy;
 use crate::session::{SessionId, SessionStore, current_unix_timestamp};
 use crate::skills::{SkillManifest, active_skills, discover_configured_skills};
@@ -196,6 +197,8 @@ pub struct AgentRuntimeOptions {
     pub session_id: Option<SessionId>,
     /// Optional channel for forwarding agent events outside the runtime.
     pub event_tx: Option<tokio::sync::mpsc::UnboundedSender<AgentEvent>>,
+    /// Replaceable runtime components. Defaults preserve NAVI's code-agent behavior.
+    pub runtime_components: Option<RuntimeComponents>,
 }
 
 /// The core agent runtime that manages sessions, turns, approvals, and events.
@@ -213,6 +216,7 @@ pub struct AgentRuntime {
     active_skills: Vec<String>,
     shared_active_skills: Arc<std::sync::Mutex<Vec<crate::skills::SkillManifest>>>,
     prompt_cache: Arc<crate::prompt::PromptCache>,
+    runtime_components: RuntimeComponents,
     initial_messages: Vec<ModelMessage>,
     event_tx: Option<mpsc::UnboundedSender<AgentEvent>>,
     cancel_token: CancelToken,
@@ -244,6 +248,7 @@ impl AgentRuntime {
         )));
         let shared_config = Arc::new(RwLock::new(options.loaded_config.config.clone()));
         let prompt_cache = Arc::new(crate::prompt::PromptCache::new());
+        let runtime_components = options.runtime_components.unwrap_or_default();
 
         Self {
             loaded_config: options.loaded_config,
@@ -259,6 +264,7 @@ impl AgentRuntime {
             active_skills: options.active_skills,
             shared_active_skills,
             prompt_cache,
+            runtime_components,
             initial_messages: options.initial_messages,
             event_tx: options.event_tx,
             cancel_token: CancelToken::new(),
@@ -360,7 +366,10 @@ impl AgentRuntime {
                 self.loaded_config.data_dir.clone(),
                 self.loaded_config.config.security.clone(),
             )?;
-            self.tool_executor = Some(Arc::new(ToolExecutor::new(security_policy)));
+            self.tool_executor = Some(Arc::new(ToolExecutor::with_security_policy(
+                security_policy,
+                self.runtime_components.security.clone(),
+            )));
         }
 
         let Some(executor) = self.tool_executor.as_mut() else {
@@ -423,6 +432,9 @@ impl AgentRuntime {
     /// Returns the session id.
     pub fn start_session(&mut self) -> Result<SessionId> {
         if self.session.started() {
+            self.runtime_components
+                .hooks
+                .on_session_end(self.session.id().as_str());
             self.event_bus.publish(RuntimeEventKind::SessionFinished {
                 session_id: self.session.id().as_str().to_string(),
             });
@@ -436,6 +448,7 @@ impl AgentRuntime {
         self.session.set_runtime(session_runtime, event_rx);
 
         let id = self.session.id().clone();
+        self.runtime_components.hooks.on_session_start(id.as_str());
         self.event_bus.publish(RuntimeEventKind::SessionStarted {
             session_id: id.as_str().to_string(),
         });
@@ -479,6 +492,9 @@ impl AgentRuntime {
             model = %self.loaded_config.config.model.name,
             "agent task submitted"
         );
+        self.runtime_components
+            .hooks
+            .on_turn_start(self.session.id().as_str(), &task);
         self.record_event(AgentEvent::UserTaskSubmitted {
             text: task.clone(),
             content_parts: content_parts.clone(),
@@ -521,6 +537,9 @@ impl AgentRuntime {
 
         match &result {
             Ok(text) => {
+                self.runtime_components
+                    .hooks
+                    .on_turn_end(self.session.id().as_str(), text);
                 self.event_bus.publish(RuntimeEventKind::TurnCompleted {
                     turn_id,
                     text: text.clone(),
@@ -604,7 +623,10 @@ impl AgentRuntime {
         )?;
         let harness_policy = crate::harness::select_harness_policy(&self.loaded_config.config);
         let profile_name = format!("{:?}", harness_policy.profile).to_lowercase();
-        let mut executor = ToolExecutor::new(security_policy);
+        let mut executor = ToolExecutor::with_security_policy(
+            security_policy,
+            self.runtime_components.security.clone(),
+        );
         executor.set_harness_profile(profile_name);
 
         let executor = Arc::new_cyclic(|executor_weak| {
@@ -617,6 +639,7 @@ impl AgentRuntime {
                 self.loaded_config.config.harness.clone(),
                 self.shared_config.clone(),
                 self.prompt_cache.clone(),
+                self.runtime_components.clone(),
             );
             executor.register_tool(Arc::new(subagent));
             let repo_explore = RepoExploreTool::new(
@@ -628,6 +651,7 @@ impl AgentRuntime {
                 self.loaded_config.config.harness.clone(),
                 self.shared_config.clone(),
                 self.prompt_cache.clone(),
+                self.runtime_components.clone(),
             );
             executor.register_tool(Arc::new(repo_explore));
             executor
@@ -686,6 +710,7 @@ impl AgentRuntime {
             context_packets: self.shared_context_packets.clone(),
             active_skills: self.shared_active_skills.clone(),
             prompt_cache: self.prompt_cache.clone(),
+            components: self.runtime_components.clone(),
             cancel_token: self.cancel_token.clone(),
             config: self.shared_config.clone(),
             memory_injection: memory_injection.clone(),

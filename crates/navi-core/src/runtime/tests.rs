@@ -125,6 +125,7 @@ async fn headless_runtime_executes_read_tools_and_continues() {
         initial_updated_at: None,
         session_id: None,
         event_tx: None,
+        runtime_components: None,
     });
 
     let response = runtime
@@ -182,6 +183,7 @@ async fn runtime_session_lifecycle_streams_events_and_snapshots() {
         initial_updated_at: None,
         session_id: None,
         event_tx: None,
+        runtime_components: None,
     });
 
     let mut events = runtime.stream_events();
@@ -266,6 +268,7 @@ async fn runtime_uses_requested_session_id_once() {
             "navi_tutor_algoritmos_2026-05-25_14-32-10".to_string(),
         )),
         event_tx: None,
+        runtime_components: None,
     });
 
     let first_id = runtime.start_session().expect("start first session");
@@ -306,6 +309,7 @@ async fn active_session_uses_replaced_model_provider_on_next_turn() {
         initial_updated_at: None,
         session_id: None,
         event_tx: None,
+        runtime_components: None,
     });
 
     runtime.start_session().expect("start session");
@@ -379,6 +383,7 @@ async fn dropped_turn_future_does_not_poison_session_event_stream() {
         initial_updated_at: None,
         session_id: None,
         event_tx: None,
+        runtime_components: None,
     });
 
     runtime.start_session().expect("start session");

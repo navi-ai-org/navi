@@ -1,16 +1,16 @@
 use crate::cancel::CancelToken;
-use crate::compact::{self, CompactState};
+use crate::compact::CompactState;
 use crate::context::ContextPacket;
 use crate::event::{AgentEvent, RepetitionWarningKind};
 use crate::harness::{
     AgentRunState, HarnessPolicy, HarnessStop, HarnessStopReason, ToolLoopDecision,
-    compact_tool_observation, record_tool_call, record_tool_result, tool_error_result,
-    trace_request_summary,
+    tool_error_result, trace_request_summary,
 };
 use crate::model::{
     ModelMessage, ModelProvider, ModelRequest, ModelRole, ModelStreamEvent, ThinkingConfig,
 };
-use crate::prompt::{PromptCache, SystemPromptInput, SystemPromptRenderer};
+use crate::prompt::{PromptCache, SystemPromptInput};
+use crate::runtime_components::RuntimeComponents;
 use crate::security::SecurityDecision;
 use crate::skills::SkillManifest;
 use crate::tool::ToolExecutor;
@@ -47,6 +47,7 @@ pub struct TurnContext {
     pub context_packets: Arc<std::sync::Mutex<Vec<ContextPacket>>>,
     pub active_skills: Arc<std::sync::Mutex<Vec<SkillManifest>>>,
     pub prompt_cache: Arc<PromptCache>,
+    pub components: RuntimeComponents,
     pub cancel_token: CancelToken,
     /// Snapshot of the active `NaviConfig` taken at turn start. Used by
     /// `ensure_system_prompt` so the model sees the user-configured harness
@@ -170,16 +171,17 @@ async fn ensure_system_prompt(ctx: &TurnContext, messages: &mut Vec<ModelMessage
         config: ctx.active_config(),
         project_dir: ctx.project_dir.clone(),
         memory_injection,
-        tools: filter_allowed_tools(
+        tools: ctx.components.harness.filter_tools(
             ctx.tool_executor.definitions(),
-            ctx.allowed_tool_names.as_ref(),
+            ctx.allowed_tool_names.as_deref(),
         ),
         include_tool_prompt_manifest: ctx.include_tool_prompt_manifest,
         context_packets,
         active_skills,
     };
-    let renderer = SystemPromptRenderer::new(ctx.prompt_cache.clone());
-    let system_content = tokio::task::spawn_blocking(move || renderer.render(input))
+    let prompt = ctx.components.prompt.clone();
+    let prompt_cache = ctx.prompt_cache.clone();
+    let system_content = tokio::task::spawn_blocking(move || prompt.build(input, prompt_cache))
         .await
         .unwrap_or_else(|_| "Default NAVI base instructions".to_string());
 
@@ -198,7 +200,10 @@ async fn maintain_context_budget(ctx: &TurnContext, messages: &mut Vec<ModelMess
         return;
     }
 
-    let cleared = compact::micro_compact(messages, ctx.harness_config.micro_compact_gap_minutes);
+    let cleared = ctx
+        .components
+        .compaction
+        .micro_compact(messages, ctx.harness_config.micro_compact_gap_minutes);
     if cleared > 0 {
         tracing::info!(cleared, "micro-compact applied");
         if let Some(ref tx) = ctx.event_tx {
@@ -232,8 +237,11 @@ async fn maintain_context_budget(ctx: &TurnContext, messages: &mut Vec<ModelMess
         compaction_provider = ctx.active_model_provider();
         compaction_model = ctx.active_model_name();
     }
-    match state
+    match ctx
+        .components
+        .compaction
         .auto_compact(
+            &mut state,
             messages,
             compaction_provider.as_ref(),
             &compaction_model,
@@ -281,7 +289,9 @@ fn build_model_request(ctx: &TurnContext, messages: &[ModelMessage]) -> ModelReq
         tools: match crate::config::effective_tool_calling_mode(&config) {
             crate::config::ToolCallingMode::Native => {
                 let all_tools = ctx.tool_executor.definitions();
-                filter_allowed_tools(all_tools, ctx.allowed_tool_names.as_ref())
+                ctx.components
+                    .harness
+                    .filter_tools(all_tools, ctx.allowed_tool_names.as_deref())
             }
             crate::config::ToolCallingMode::TextExtracted
             | crate::config::ToolCallingMode::ManifestOnly
@@ -552,11 +562,19 @@ async fn handle_tool_calls(
     let mut executable_calls = Vec::new();
     let mut immediate_results = Vec::new();
     for invocation in output.tool_calls {
-        match record_tool_call(run_state, policy, &invocation) {
+        ctx.components.hooks.on_tool_call(&invocation);
+        match ctx
+            .components
+            .harness
+            .record_tool_call(run_state, policy, &invocation)
+        {
             ToolLoopDecision::Continue => executable_calls.push(invocation),
             ToolLoopDecision::Stop(stop) => {
                 let result = tool_error_result(&invocation, &stop.message);
-                let observation = compact_tool_observation(&invocation, &result, policy);
+                let observation =
+                    ctx.components
+                        .harness
+                        .compact_tool_observation(&invocation, &result, policy);
                 immediate_results.push((invocation, result, observation));
                 for (invocation, _result, observation) in immediate_results {
                     messages.push(ModelMessage::tool_result(
@@ -581,10 +599,16 @@ async fn handle_tool_calls(
     }
 
     for (invocation, result, observation) in all_results {
-        let stop = match record_tool_result(run_state, policy, &invocation, &result) {
-            ToolLoopDecision::Continue => None,
-            ToolLoopDecision::Stop(stop) => Some(stop),
-        };
+        ctx.components.hooks.on_tool_result(&result);
+        let stop =
+            match ctx
+                .components
+                .harness
+                .record_tool_result(run_state, policy, &invocation, &result)
+            {
+                ToolLoopDecision::Continue => None,
+                ToolLoopDecision::Stop(stop) => Some(stop),
+            };
         messages.push(ModelMessage::tool_result(
             invocation.id,
             invocation.tool_name,
@@ -606,7 +630,10 @@ async fn execute_tool_call(
 ) -> ToolExecutionResult {
     if ctx.cancellation_requested() {
         let result = tool_error_result(&invocation, "turn cancelled");
-        let observation = compact_tool_observation(&invocation, &result, policy);
+        let observation =
+            ctx.components
+                .harness
+                .compact_tool_observation(&invocation, &result, policy);
         return (invocation, result, observation);
     }
 
@@ -623,7 +650,10 @@ async fn execute_tool_call(
             if let Some(ref tx) = ctx.event_tx {
                 let _ = tx.send(AgentEvent::ToolCompleted(result.clone()));
             }
-            let observation = compact_tool_observation(&invocation, &result, policy);
+            let observation =
+                ctx.components
+                    .harness
+                    .compact_tool_observation(&invocation, &result, policy);
             return (invocation, result, observation);
         }
     }
@@ -633,7 +663,10 @@ async fn execute_tool_call(
         if let Some(ref tx) = ctx.event_tx {
             let _ = tx.send(AgentEvent::ToolCompleted(result.clone()));
         }
-        let observation = compact_tool_observation(&invocation, &result, policy);
+        let observation =
+            ctx.components
+                .harness
+                .compact_tool_observation(&invocation, &result, policy);
         return (invocation, result, observation);
     }
 
@@ -642,7 +675,10 @@ async fn execute_tool_call(
         if let Some(ref tx) = ctx.event_tx {
             let _ = tx.send(AgentEvent::ToolCompleted(result.clone()));
         }
-        let observation = compact_tool_observation(&invocation, &result, policy);
+        let observation =
+            ctx.components
+                .harness
+                .compact_tool_observation(&invocation, &result, policy);
         return (invocation, result, observation);
     }
 
@@ -660,7 +696,10 @@ async fn execute_tool_call(
 
     if ctx.cancellation_requested() {
         let result = tool_error_result(&invocation, "turn cancelled");
-        let observation = compact_tool_observation(&invocation, &result, policy);
+        let observation =
+            ctx.components
+                .harness
+                .compact_tool_observation(&invocation, &result, policy);
         return (invocation, result, observation);
     }
 
@@ -668,7 +707,10 @@ async fn execute_tool_call(
         let _ = tx.send(AgentEvent::ToolCompleted(result.clone()));
     }
 
-    let observation = compact_tool_observation(&invocation, &result, policy);
+    let observation = ctx
+        .components
+        .harness
+        .compact_tool_observation(&invocation, &result, policy);
     (invocation, result, observation)
 }
 
@@ -1126,21 +1168,6 @@ pub(crate) async fn evaluate_memory_triggers(
     }
 
     Ok(false)
-}
-
-/// Filters tool definitions to only those in `allowed_names`, if `allowed_names` is set.
-/// Returns all tools when `allowed_names` is `None`.
-fn filter_allowed_tools(
-    tools: Vec<crate::tool::ToolDefinition>,
-    allowed_names: Option<&Vec<String>>,
-) -> Vec<crate::tool::ToolDefinition> {
-    let Some(whitelist) = allowed_names else {
-        return tools;
-    };
-    tools
-        .into_iter()
-        .filter(|tool| whitelist.contains(&tool.name))
-        .collect()
 }
 
 #[cfg(test)]

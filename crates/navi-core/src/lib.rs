@@ -27,6 +27,7 @@ pub mod repetition;
 pub mod replay_gate;
 pub mod repo_intelligence;
 pub mod runtime;
+pub mod runtime_components;
 pub mod sandbox;
 pub mod security;
 pub mod session;
@@ -105,6 +106,11 @@ pub use repo_intelligence::{
 };
 pub use runtime::{
     AgentRuntime, AgentRuntimeOptions, ApprovalResolver, QuestionResolver, TurnCanceller,
+};
+pub use runtime_components::{
+    CompactionStrategy, DefaultCompactionStrategy, DefaultHarnessDriver, DefaultPromptBuilder,
+    DefaultToolSecurityPolicy, HarnessDriver, NoopSessionHooks, PermissiveSecurityPolicy,
+    PromptBuilder, RuntimeComponents, SessionHooks, ToolSecurityPolicy,
 };
 pub use security::{SecurityDecision, SecurityPolicy};
 pub use session::{

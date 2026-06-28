@@ -192,6 +192,36 @@ let engine = NaviEngineBuilder::from_project(".")
 
 Host tools go through the same `ToolExecutor` and `SecurityPolicy` as built-in tools. They receive invocation metadata including `project_root` and `session_id`.
 
+## Runtime Customization
+
+`NaviEngineBuilder` can replace runtime components while keeping the default
+code-agent behavior available through `RuntimeComponents::default()`:
+
+```rust
+use std::sync::Arc;
+use navi_core::{PermissiveSecurityPolicy, RuntimeComponents};
+use navi_sdk::NaviEngineBuilder;
+
+let engine = NaviEngineBuilder::from_project(".")
+    .security(Arc::new(PermissiveSecurityPolicy))
+    .host_tool(Arc::new(host_tool))
+    .build()?;
+```
+
+Custom components can replace:
+
+| Component | Purpose |
+|---|---|
+| `ToolSecurityPolicy` | Tool approval/deny behavior. |
+| `HarnessDriver` | Tool filtering, loop-stop decisions, and tool-result observations. |
+| `PromptBuilder` | System prompt construction. |
+| `CompactionStrategy` | Micro-compact and auto-compact behavior. |
+| `SessionHooks` | Session, turn, and tool lifecycle callbacks. |
+
+The default composition preserves NAVI's terminal code-agent behavior. A host
+that wants full tool autonomy, such as NAVI Tutor, should opt in explicitly with
+`PermissiveSecurityPolicy`; permissive security is never the default.
+
 ## Context Injection
 
 Inject external context into an active session:
