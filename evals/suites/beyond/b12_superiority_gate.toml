@@ -1,0 +1,12 @@
+version = 1
+id = "b12-superiority-gate"
+title = "superiority gate uses verified success per 1k tokens"
+category = "long_horizon_task"
+mode = "branch-race"
+task = "Verify that the superiority gate requires verified_success_per_1k_tokens improvement over a baseline."
+tags = ["beyond", "b12", "superiority"]
+
+[[verifiers]]
+verifier_type = "command"
+command = "rg -q 'evaluate_superiority_gate|verified_success_per_1k_tokens|tokens_per_success|tool_calls_per_success|superiority' crates/navi-core/src/replay_gate.rs crates/navi-core/src/eval.rs crates/navi-cli/src/eval_cmd.rs"
+required = true

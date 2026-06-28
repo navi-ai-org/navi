@@ -2665,14 +2665,20 @@ fn open_model_picker_keeps_current_model_selected() {
 #[test]
 fn build_model_rows_prepends_recent_section() {
     let mut app = test_app("");
-    if app.models.is_empty() {
+    let Some((recent_index, recent_model)) = app
+        .models
+        .iter()
+        .enumerate()
+        .find(|(_, model)| model_is_available_for_selection(&app, model))
+    else {
         return;
-    }
+    };
     // Force the first model to be a "recent" so it appears at the top.
-    let first = &app.models[0];
     app.loaded_config.config.tui.recent_model_ids.clear();
-    app.loaded_config.config.tui.recent_model_ids =
-        vec![format!("{}:{}", first.provider_id, first.name)];
+    app.loaded_config.config.tui.recent_model_ids = vec![format!(
+        "{}:{}",
+        recent_model.provider_id, recent_model.name
+    )];
 
     let rows = build_model_rows(&app);
 
@@ -2684,7 +2690,7 @@ fn build_model_rows_prepends_recent_section() {
             ListRow::Header { .. } => None,
         })
         .expect("at least one model row");
-    assert_eq!(first_model, 0);
+    assert_eq!(first_model, recent_index);
     // And there must be a recent header above it.
     let has_recent_header = rows.iter().any(|r| match r {
         ListRow::Header { label, .. } => label.contains("Recent"),

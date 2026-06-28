@@ -1,5 +1,7 @@
 mod bash;
+mod branch_race;
 mod code_edit_tool;
+mod code_exec;
 mod code_tool;
 mod extra_tools;
 mod git_ops;
@@ -13,6 +15,7 @@ mod process;
 mod question;
 mod read_tool;
 mod repo_explore;
+mod repo_intelligence;
 mod runtime_info;
 mod sandbox_tool;
 mod search_tool;
@@ -31,7 +34,9 @@ pub(super) use extra_tools::{
 };
 
 pub(super) use bash::BashTool;
+pub(super) use branch_race::BranchRaceTool;
 pub(super) use code_edit_tool::CodeEditTool;
+pub(super) use code_exec::CodeExecTool;
 pub(super) use code_tool::CodeReadTool;
 pub(super) use git_ops::GitOpsTool;
 pub(super) use helpers::truncate_tool_result;
@@ -43,6 +48,7 @@ pub(super) use process::ProcessTool;
 pub(super) use question::QuestionTool;
 pub(super) use read_tool::ReadTool;
 pub use repo_explore::RepoExploreTool;
+pub(super) use repo_intelligence::{RepoIntelligenceAction, RepoIntelligenceTool};
 pub(super) use runtime_info::RuntimeInfoTool;
 pub(super) use sandbox_tool::SandboxTool;
 pub(super) use search_tool::SearchTool;

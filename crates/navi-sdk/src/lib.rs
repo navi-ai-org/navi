@@ -37,8 +37,9 @@ pub use navi_core::session::{
 };
 // Event/session types
 pub use navi_core::{
-    AgentEvent, AgentRunState, ModelMessage, ModelRole, QuestionOption, QuestionRequest,
-    QuestionResponse, RuntimeEvent, RuntimeEventKind, SessionId, SessionSnapshot,
+    AgentEvent, AgentRunState, Capability, CapabilityDecision, CapabilityGrant, CapabilityLedger,
+    CapabilityLedgerEntry, CapabilityScope, ModelMessage, ModelRole, QuestionOption,
+    QuestionRequest, QuestionResponse, RuntimeEvent, RuntimeEventKind, SessionId, SessionSnapshot,
     SubagentTranscriptItem, SubagentTranscriptKind,
 };
 // Event auxiliary types

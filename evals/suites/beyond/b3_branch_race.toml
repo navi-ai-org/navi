@@ -1,0 +1,12 @@
+version = 1
+id = "b3-branch-race"
+title = "branch race planner and tool exist"
+category = "flaky_recovery_task"
+mode = "branch-race"
+task = "Verify that branch racing has hypothesis generation, scoring, and a deferred planning tool."
+tags = ["beyond", "b3", "branch-race"]
+
+[[verifiers]]
+verifier_type = "command"
+command = "test -f crates/navi-core/src/branch_race.rs && test -f crates/navi-core/src/tool/builtin/branch_race.rs && rg -q 'MinimalFix|TestFirst|RefactorSafe|RollbackRevert|BranchRaceReport|branch_race.start' crates/navi-core/src/branch_race.rs crates/navi-core/src/tool/builtin/metadata.rs"
+required = true

@@ -570,6 +570,11 @@ pub fn redact_agent_event(event: &AgentEvent) -> AgentEvent {
         AgentEvent::ApprovalRequested(request) => {
             AgentEvent::ApprovalRequested(redact_approval_request(request))
         }
+        AgentEvent::CapabilityRecorded(entry) => {
+            let mut entry = entry.clone();
+            entry.justification = redact_secrets(&entry.justification);
+            AgentEvent::CapabilityRecorded(entry)
+        }
         other => other.clone(),
     }
 }

@@ -7,10 +7,11 @@
 //! The resulting [`PostDecision`] feeds into the security policy to escalate
 //! guarded effects (e.g. roll back `.env` modifications).
 
+use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
 /// What a tool execution actually affected on disk.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EffectReport {
     /// Files that were created by the tool.
     pub files_created: Vec<PathBuf>,
@@ -29,7 +30,7 @@ pub struct EffectReport {
 ///
 /// Each variant carries a `&'static str` representation matching the
 /// instruction spec for serialisation or display.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum BlastRadius {
     /// A single non-sensitive file was touched.
     SingleFile,

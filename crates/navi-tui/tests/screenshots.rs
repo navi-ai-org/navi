@@ -103,6 +103,7 @@ fn command_palette_filter_typed() {
 #[test]
 fn model_picker_open() {
     let mut h = h();
+    h.clear_models();
     h.press(KeyCode::Char('m'), KeyModifiers::CONTROL);
     assert_eq!(h.mode(), Mode::Models);
     h.render();
