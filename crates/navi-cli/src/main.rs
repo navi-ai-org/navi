@@ -6,6 +6,7 @@ use navi_tui::TuiApp;
 use std::path::PathBuf;
 
 mod acp;
+mod bench_cmd;
 mod eval_cmd;
 mod mcp_cmd;
 mod memory_cmd;
@@ -71,8 +72,60 @@ enum Commands {
         #[command(subcommand)]
         action: EvalAction,
     },
+    /// Run agentic benchmark suites
+    Bench {
+        #[command(subcommand)]
+        action: BenchAction,
+    },
     /// Run interactive setup wizard (provider login, agent-configured interview)
     Setup,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum BenchAction {
+    /// Run an agentic benchmark suite or single benchmark case
+    Run {
+        /// Path to a benchmark case file or directory of .toml/.json cases
+        path: PathBuf,
+        /// Project root used to resolve relative fixtures
+        #[arg(long)]
+        project: Option<PathBuf>,
+        /// Write the full BenchRun JSON to this path
+        #[arg(long)]
+        output: Option<PathBuf>,
+        /// Print the full BenchRun JSON
+        #[arg(long)]
+        json: bool,
+        /// Automatically approve tool approval requests during the benchmark run
+        #[arg(long)]
+        auto_approve: bool,
+        /// Keep temporary workspaces after each case for inspection
+        #[arg(long)]
+        keep_workspaces: bool,
+    },
+    /// Compare a candidate benchmark run against an optional baseline
+    Compare {
+        /// Candidate BenchRun JSON path
+        candidate: PathBuf,
+        /// Baseline BenchRun JSON path
+        #[arg(long)]
+        baseline: Option<PathBuf>,
+        /// Minimum verified success rate for the candidate
+        #[arg(long, default_value_t = 1.0)]
+        min_success_rate: f64,
+        /// Maximum allowed success-rate drop from baseline
+        #[arg(long, default_value_t = 0.0)]
+        max_success_drop: f64,
+        /// Require candidate tokens_per_success to be no worse than baseline
+        #[arg(long)]
+        require_token_improvement: bool,
+        /// Require candidate tool_calls_per_success to be no worse than baseline
+        #[arg(long)]
+        require_tool_call_improvement: bool,
+        /// Print JSON report
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -250,6 +303,11 @@ async fn main() -> Result<()> {
     // Handle eval subcommand early
     if let Some(Commands::Eval { action }) = cli.command {
         return eval_cmd::handle_eval_command(action, cwd).await;
+    }
+
+    // Handle benchmark subcommand early
+    if let Some(Commands::Bench { action }) = cli.command {
+        return bench_cmd::handle_bench_command(action, loaded_config, cwd).await;
     }
 
     // Handle setup subcommand early — launch TUI in setup mode
