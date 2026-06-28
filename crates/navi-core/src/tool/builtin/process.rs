@@ -637,7 +637,9 @@ impl Tool for ProcessTool {
     fn definition(&self) -> ToolDefinition {
         helpers::definition(
             "process",
-            "Execute commands as child processes and manage their lifecycle. Supports foreground execution (exec), writing to stdin (stdin), waiting (wait), listing (list), and cancelling (cancel). Commands are run directly via tokio::process::Command without a shell -- no pipes, redirects, or shell expansion.",
+            "Execute commands as child processes and manage their lifecycle. \
+Supports foreground execution, writing to stdin, waiting, listing, and cancelling. \
+Commands are run without a shell.",
             ToolKind::Command,
             process_json_schema(),
         )

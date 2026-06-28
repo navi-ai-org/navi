@@ -279,7 +279,10 @@ impl HistoryStore {
         let limit_val = limit.unwrap_or(50);
         let like_query = format!("%{}%", query);
 
-        let mut sql = "SELECT id, session_id, sequence, event_type, role, content, tool_name, tool_input_json, tool_output, token_estimate, created_at, metadata_json FROM events WHERE (content LIKE ?1 OR tool_name LIKE ?1 OR tool_input_json LIKE ?1 OR tool_output LIKE ?1)".to_string();
+        let mut sql = "SELECT id, session_id, sequence, event_type, role, content, tool_name, tool_input_json, \
+            tool_output, token_estimate, created_at, metadata_json \
+            FROM events WHERE (content LIKE ?1 OR tool_name LIKE ?1 \
+            OR tool_input_json LIKE ?1 OR tool_output LIKE ?1)".to_string();
 
         let mut params_vec: Vec<rusqlite::types::Value> = vec![like_query.into()];
 

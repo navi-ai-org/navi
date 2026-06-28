@@ -356,7 +356,7 @@ impl Tool for BashTool {
     fn definition(&self) -> ToolDefinition {
         helpers::definition(
             "bash",
-            "Run an ad-hoc shell command in the current project. Common git, test, build, grep, ls/find, and package-manager commands are not executed here; bash returns a native_tool_available suggestion so the agent can call the structured native tool instead. Use background=true and wait_ms for long-running ad-hoc commands, then poll or cancel with task_id.",
+            "Run an ad-hoc shell command in the current project. Common git, test, build, grep, ls/find, and package-manager commands are not executed here; bash returns a native_tool_available suggestion. Use background=true and wait_ms for long-running commands.",
             ToolKind::Command,
             helpers::bash_json_schema(),
         )
