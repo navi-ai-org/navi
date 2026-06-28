@@ -183,13 +183,7 @@ pub fn load_configured_plugins_with_options(
                             executor.register_tool(adapted);
                             report.tools.push(name);
                         }
-                        for policy in registry.agent_policies {
-                            report.warnings.push(format!(
-                                "plugin {} registered agent policy `{policy}`, but runtime component plugin wiring is not implemented yet",
-                                metadata.name
-                            ));
-                            report.agent_policies.push(policy);
-                        }
+                        report.agent_policies.extend(registry.agent_policies);
                         for component in registry.tui_components {
                             report.warnings.push(format!(
                                 "plugin {} registered TUI component `{component}`, but TUI component plugin wiring is not implemented yet",

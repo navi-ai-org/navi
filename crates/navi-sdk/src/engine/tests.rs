@@ -5,6 +5,7 @@ use crate::types::NaviMissingCredentialError;
 use navi_core::{AgentEvent, NaviConfig, SessionId, SessionSnapshot};
 
 use std::path::PathBuf;
+use std::sync::Arc;
 
 fn test_engine() -> (NaviEngine, tempfile::TempDir) {
     let tempdir = tempfile::tempdir().expect("tempdir");
@@ -71,6 +72,46 @@ fn test_config() -> NaviConfig {
     config.model.name = "test-model".to_string();
 
     config
+}
+
+#[test]
+fn plugin_policy_alias_enables_learning_components() {
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let mut warnings = Vec::new();
+    let components = runtime_components_for_plugin_policies(
+        RuntimeComponents::default(),
+        &["navi-learning".to_string()],
+        &mut warnings,
+    );
+
+    let prompt = components.prompt.build(
+        navi_core::prompt::SystemPromptInput {
+            config: NaviConfig::default(),
+            project_dir: tempdir.path().to_path_buf(),
+            memory_injection: None,
+            tools: Vec::new(),
+            include_tool_prompt_manifest: false,
+            context_packets: Vec::new(),
+            active_skills: Vec::new(),
+        },
+        Arc::new(navi_core::prompt::PromptCache::new()),
+    );
+
+    assert!(warnings.is_empty());
+    assert!(prompt.contains("You are NAVI Tutor"));
+}
+
+#[test]
+fn unknown_plugin_policy_warns_without_replacing_components() {
+    let mut warnings = Vec::new();
+    let _components = runtime_components_for_plugin_policies(
+        RuntimeComponents::default(),
+        &["custom-policy".to_string()],
+        &mut warnings,
+    );
+
+    assert_eq!(warnings.len(), 1);
+    assert!(warnings[0].contains("unknown agent policy `custom_policy`"));
 }
 
 fn test_engine_with_project_config() -> (NaviEngine, tempfile::TempDir) {

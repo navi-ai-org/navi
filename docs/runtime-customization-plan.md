@@ -371,6 +371,6 @@ Update this section during each implementation step.
 | 2026-06-28 | 1 | Completed | Added `RuntimeComponents`, `ToolSecurityPolicy`, `HarnessDriver`, `PromptBuilder`, `CompactionStrategy`, `SessionHooks`, defaults, and `PermissiveSecurityPolicy`. |
 | 2026-06-28 | 2 | Completed | Wired components through `AgentRuntime`, `TurnContext`, prompt rendering, tool filtering, compaction, tool observations, subagents, and repo-explore. |
 | 2026-06-28 | 3 | Completed | Added SDK builder setters for security, harness, prompt, compaction, hooks, and full runtime components. |
-| 2026-06-28 | 4 | Partial | Plugin registry declarations for agent policies/TUI components now produce warnings; real component factories remain pending. |
+| 2026-06-28 | 4 | Partial | Native plugin `register_agent_policy` declarations are consumed by the SDK for known runtime policies (`learning_tutor`, `navi_learning`, `tutor`, `default`, `code_agent`). TUI component declarations remain frontend-scoped and are reported as warnings until `navi-tui` owns a TUI plugin registry. |
 | 2026-06-28 | 6 | Completed | Added learning runtime preset with permissive security, learning harness, tutor prompt builder, study compaction, and SDK `.learning_tutor()`. |
 | 2026-06-28 | 5 | Partial | Added `navi-napi` crate, TypeScript engine builder, structured learning runtime options, session methods, async TypeScript host-tool callbacks, and event stream `next()` support. Full TypeScript component callback strategy remains pending. |
