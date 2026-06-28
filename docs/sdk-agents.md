@@ -252,8 +252,15 @@ builder.hostTool(
 );
 
 const engine = builder.build();
+const models = engine.listModels();
 const session = await engine.startSession();
 const events = engine.subscribeEvents(session.id);
+await engine.addContextPacket(session.id, {
+  source: "StudyBlock",
+  title: "Limites",
+  content: "O aluno ja conhece derivadas.",
+  priority: 5,
+});
 const response = await engine.sendTurn(session.id, "Explique limites com exemplos");
 const firstEvent = await events.next();
 ```
@@ -265,7 +272,9 @@ adapter used by Rust hosts, so it is visible to the model without changing
 stream object whose `next()` method resolves to the next serialized
 `RuntimeEvent`, or `null` when the stream closes. `configureLearning(...)`
 maps structured TypeScript options onto the Rust learning harness, tutor prompt
-builder, and study compaction strategy.
+builder, and study compaction strategy. The NAPI engine also exposes runtime
+control methods for `cancelTurn`, `resolveApproval`, `addContextPacket`,
+`listModels`, and `setModel`.
 
 ## Native Plugin Policies
 
