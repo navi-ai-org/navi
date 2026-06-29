@@ -15,10 +15,10 @@
     │                                                                      │
     │                                                                      │
     │                                                                      │
-  ▌ ╰──────────────────────────────────────────────────────────────────────╯
+    ╰──────────────────────────────────────────────────────────────────────╯
+  ▌
   ▌
   ▌
   ▌ gpt-5.5 OpenAI · adaptive · 18 / 200k (0%)
   ▌
-    .   Waiting for approval: tool · 0s
                ctrl+p commands · ctrl+m models · ctrl+enter send · ctrl+v image

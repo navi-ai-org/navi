@@ -2331,7 +2331,9 @@ fn apply_patch_tool_full_content_uses_edit_summary() {
     let content = tool_full_content(&invocation, &result);
 
     assert!(content.contains("Edited crates/navi-tui/src/lib.rs (+2 -1)"));
-    assert!(!content.contains("*** Begin Patch"));
+    assert!(content.contains("Patch:\n```diff\n"));
+    assert!(content.contains("*** Begin Patch"));
+    assert!(content.contains("-    old\n+    new\n+    added"));
     assert!(!content.contains("Input"));
     assert!(!content.contains("Output"));
 }
