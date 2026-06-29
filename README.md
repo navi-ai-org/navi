@@ -4,6 +4,9 @@
 
 One runtime. Swap providers and clients. Keep sessions and config local.
 
+<img width="1025" height="829" alt="image" src="https://github.com/user-attachments/assets/1e94e1ac-ba24-4c8e-846a-fee872dad809" />
+
+
 ```bash
 cargo run -p navi-cli -- "find the main entrypoint and suggest a refactor"
 ```
