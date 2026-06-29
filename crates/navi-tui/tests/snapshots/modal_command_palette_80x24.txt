@@ -10,11 +10,11 @@
       │ Copy Session                                                   █ │
       │ Share Session                                                  █ │h
       │ Models                                              ctrl+m     █ │
-      │ Providers                                                      █ │
+      │ Providers                                                      │ │
+      │ Usage                                                          │ │
       │ Skills                                                         │ │
       │ Plugins                                                        │ │
       │ MCP Servers                                                    │ │
-      │ Background Tasks                                    ctrl+t     │ │
       │                                                                  │
   ▌   ╰──────────────────────────────────────────────────────────────────╯
   ▌

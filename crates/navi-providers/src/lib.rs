@@ -14,11 +14,16 @@ pub use navi_openai::CommandCodeUsageData;
 pub use navi_openai::DeviceOAuthStarted;
 pub use navi_openai::OpenAiApiKind;
 pub use navi_openai::OpenAiProvider;
+pub use navi_openai::OpenAiUsageLimitSnapshot;
+pub use navi_openai::OpenAiUsageReport;
+pub use navi_openai::OpenAiUsageWindow;
 pub use navi_openai::ProviderError;
 pub use navi_openai::commandcode_browser_oauth;
 pub use navi_openai::commandcode_fetch_usage_data;
 pub use navi_openai::commandcode_list_models;
 pub use navi_openai::github_copilot_device_oauth;
+pub use navi_openai::openai_browser_oauth;
+pub use navi_openai::openai_usage_report;
 
 // Convenience re-export matching navi-openai's public surface.
 pub use navi_core::ProviderId;

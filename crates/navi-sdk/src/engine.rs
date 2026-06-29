@@ -2,9 +2,9 @@ use crate::types::NaviError;
 use anyhow::Context;
 type Result<T> = std::result::Result<T, NaviError>;
 use navi_core::{
-    AgentRuntime, AgentRuntimeOptions, ApprovalDecision, CredentialStore,
-    LoadedConfig, ModelOption, ProviderConfig, QuestionResponse, RuntimeComponents, RuntimeEvent,
-    SessionGoal, SessionId, SessionSnapshot, SessionStore, SkillManifest, available_model_options,
+    AgentRuntime, AgentRuntimeOptions, ApprovalDecision, CredentialStore, LoadedConfig,
+    ModelOption, ProviderConfig, QuestionResponse, RuntimeComponents, RuntimeEvent, SessionGoal,
+    SessionId, SessionSnapshot, SessionStore, SkillManifest, available_model_options,
     canonical_provider_id, config::effective_context_window, discover_configured_skills,
     model_can_run_publicly, provider_catalog, registry::RegistryStore, resolve_provider_api_key,
     resolve_provider_config, resolve_provider_credential_status, save_global_config,
@@ -22,9 +22,10 @@ use crate::tooling::{
 };
 use crate::types::{
     NaviConfigSaveTarget, NaviModelInfo, NaviModelSelectionRequest, NaviModelSelectionResult,
-    NaviProviderAccountInfo, NaviProviderCredentialStatus, NaviProviderSyncFailure,
-    NaviProviderSyncReport, NaviProviderSyncSkipped, NaviSavedSessionInfo, NaviSessionInfo,
-    NaviSessionRequest, NaviSkillInfo, NaviSyncedProvider, NaviTurnRequest, NaviTurnResponse,
+    NaviMissingCredentialError, NaviProviderAccountInfo, NaviProviderCredentialStatus,
+    NaviProviderSyncFailure, NaviProviderSyncReport, NaviProviderSyncSkipped,
+    NaviSavedSessionInfo, NaviSessionInfo, NaviSessionRequest, NaviSkillInfo, NaviSyncedProvider,
+    NaviTurnRequest, NaviTurnResponse, NaviUsageLimitSnapshot, NaviUsageReport, NaviUsageWindow,
 };
 
 /// Builder for constructing a [`NaviEngine`] with custom configuration.
@@ -590,6 +591,44 @@ impl NaviEngine {
             .collect::<Result<Vec<_>>>()
     }
 
+    /// Fetches OpenAI/ChatGPT usage windows for the selected OpenAI account.
+    pub async fn usage_report(&self) -> Result<NaviUsageReport> {
+        let loaded_config = self.loaded_config();
+        let provider_id = loaded_config.config.model.provider.as_str();
+        if canonical_provider_id(provider_id) != "openai" {
+            return Err(NaviError::Config(
+                "usage windows are currently available only for the OpenAI provider".into(),
+            ));
+        }
+
+        let provider = resolve_provider_config(&loaded_config.config, provider_id)
+            .with_context(|| format!("unknown provider {provider_id}"))?;
+        let credential_store = self.credential_store();
+        let access_token = resolve_provider_api_key(&credential_store, &provider, provider_id)
+            .ok_or_else(|| {
+                NaviError::MissingCredential(NaviMissingCredentialError {
+                    provider_id: provider_id.to_string(),
+                    env_var: provider.api_key_env.clone(),
+                    credential_store_path: credential_store.path().to_path_buf(),
+                })
+            })?;
+
+        let report = navi_providers::openai_usage_report(&access_token)
+            .await
+            .map_err(NaviError::Provider)?;
+        Ok(NaviUsageReport {
+            provider_id: provider_id.to_string(),
+            provider_label: provider.label,
+            plan_type: report.plan_type,
+            limit_reached_kind: report.limit_reached_kind,
+            limits: report
+                .limits
+                .into_iter()
+                .map(openai_usage_limit_snapshot_to_sdk)
+                .collect(),
+        })
+    }
+
     /// Returns the credential status for a specific provider.
     pub fn credential_status(&self, provider_id: &str) -> Result<NaviProviderCredentialStatus> {
         let loaded_config = self.loaded_config();
@@ -1059,6 +1098,28 @@ impl NaviEngine {
             env_var: provider_config.api_key_env,
             credential_store_path: credential_store.path().to_path_buf(),
         })
+    }
+}
+
+fn openai_usage_limit_snapshot_to_sdk(
+    snapshot: navi_providers::OpenAiUsageLimitSnapshot,
+) -> NaviUsageLimitSnapshot {
+    NaviUsageLimitSnapshot {
+        limit_id: snapshot.limit_id,
+        limit_name: snapshot.limit_name,
+        metered_feature: snapshot.metered_feature,
+        limit_reached: snapshot.limit_reached,
+        primary: snapshot.primary.map(openai_usage_window_to_sdk),
+        secondary: snapshot.secondary.map(openai_usage_window_to_sdk),
+    }
+}
+
+fn openai_usage_window_to_sdk(window: navi_providers::OpenAiUsageWindow) -> NaviUsageWindow {
+    NaviUsageWindow {
+        used_percent: window.used_percent,
+        limit_window_seconds: window.limit_window_seconds,
+        reset_after_seconds: window.reset_after_seconds,
+        reset_at: window.reset_at,
     }
 }
 

@@ -151,6 +151,7 @@ fn route_mode_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyModifiers) -> K
         Mode::Sessions => self::modals::handle_sessions_key(app, code),
         Mode::Settings => self::modals::handle_settings_key(app, code),
         Mode::Providers => self::modals::handle_providers_key(app, code, modifiers),
+        Mode::Usage => self::modals::handle_usage_key(app, code),
         Mode::Debug => self::modals::handle_debug_key(app, code),
         Mode::Help => self::modals::handle_help_key(app, code),
         Mode::Skills => self::modals::handle_skills_key(app, code),

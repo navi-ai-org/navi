@@ -97,6 +97,7 @@ fn render_inner(frame: &mut Frame<'_>, app: &mut TuiApp) {
         Mode::Sessions => sessions::render(frame, app, modal_rect(area, 72, 16)),
         Mode::Settings => modals::render_settings(frame, app, modal_rect(area, 52, 12)),
         Mode::Providers => provider_settings::render(frame, app, modal_rect(area, 110, 26)),
+        Mode::Usage => modals::render_usage(frame, app, modal_rect(area, 78, 18)),
         Mode::Debug => debug::render(frame, app, modal_rect(area, 76, 18)),
         Mode::Help => modals::render_help_modal(frame, app, modal_rect(area, 62, 19)),
         Mode::Skills => skills::render(frame, app, modal_rect(area, 72, 20)),

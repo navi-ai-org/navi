@@ -2,7 +2,8 @@ use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 use navi_sdk::{
-    QuestionRequest, SubagentTranscriptItem, ThinkingConfig, ToolInvocation, ToolResult,
+    NaviUsageReport, QuestionRequest, SubagentTranscriptItem, ThinkingConfig, ToolInvocation,
+    ToolResult,
 };
 use ratatui::layout::Rect;
 use ratatui::text::Line;
@@ -238,6 +239,7 @@ pub enum Mode {
     Sessions,
     Settings,
     Providers,
+    Usage,
     Debug,
     Help,
     Skills,
@@ -264,6 +266,7 @@ pub(crate) enum ModalKind {
     Sessions,
     Settings,
     Providers,
+    Usage,
     Debug,
     Help,
     Skills,
@@ -290,6 +293,7 @@ impl ModalKind {
             Self::Sessions => Mode::Sessions,
             Self::Settings => Mode::Settings,
             Self::Providers => Mode::Providers,
+            Self::Usage => Mode::Usage,
             Self::Debug => Mode::Debug,
             Self::Help => Mode::Help,
             Self::Skills => Mode::Skills,
@@ -306,6 +310,13 @@ impl ModalKind {
             Self::BgModelPicker => Mode::BgModelPicker,
         }
     }
+}
+
+#[derive(Debug, Clone, Default)]
+pub(crate) struct UsageUiState {
+    pub loading: bool,
+    pub report: Option<NaviUsageReport>,
+    pub error: Option<String>,
 }
 
 #[derive(Debug, Clone)]

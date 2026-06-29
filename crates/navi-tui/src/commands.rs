@@ -18,6 +18,7 @@ pub(crate) enum CommandAction {
     InitializeProject,
     SyncModels,
     Providers,
+    Usage,
     Quit,
     Settings,
     Skills,
@@ -58,6 +59,11 @@ pub(crate) const COMMANDS: &[CommandItem] = &[
         label: "Providers",
         shortcut: None,
         action: CommandAction::Providers,
+    },
+    CommandItem {
+        label: "Usage",
+        shortcut: None,
+        action: CommandAction::Usage,
     },
     CommandItem {
         label: "Skills",

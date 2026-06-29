@@ -49,6 +49,17 @@ pub(crate) fn handle_help_key(app: &mut TuiApp, code: KeyCode) -> bool {
     false
 }
 
+pub(crate) fn handle_usage_key(app: &mut TuiApp, code: KeyCode) -> bool {
+    match code {
+        KeyCode::Esc | KeyCode::Enter => {
+            super::apply_ui_effect(app, UiEffect::CloseModal);
+        }
+        KeyCode::Char('r') => crate::usage::refresh_usage(app),
+        _ => {}
+    }
+    false
+}
+
 pub(crate) fn handle_message_actions_key(app: &mut TuiApp, code: KeyCode) -> bool {
     match code {
         KeyCode::Esc => super::close_active_modal(app),
