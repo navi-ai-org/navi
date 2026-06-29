@@ -257,7 +257,7 @@ let engine = NaviEngineBuilder::from_project(".")
 - [x] Expose runtime events as a stream or async iterator.
 - [x] Expose safe component options first: permissive security, prompt templates,
   tool filtering, hooks, and compaction rules.
-- [ ] Decide which components need full TypeScript callback implementations versus
+- [x] Decide which components need full TypeScript callback implementations versus
   structured configuration objects.
 
 ### Target TypeScript Sketch
@@ -292,6 +292,9 @@ export function createTutorEngine(workspace: string) {
   `LearningHarnessConfig`, `TutorPromptOptions`, and `StudyCompactionConfig`.
 - `NaviNapiEngineBuilder::hostTool(...)` registers TypeScript async callbacks
   as SDK host tools.
+- `NaviNapiEngineBuilder::onSessionStart/onTurnStart/onToolCall/onToolResult/onTurnEnd/onSessionEnd`
+  register fire-and-forget TypeScript lifecycle hooks backed by
+  `SessionHooks`.
 - Host tool callbacks receive `{ invocationId, input }` and return a promise
   resolving to `{ ok, output }`.
 - Session lifecycle methods expose start, send turn, snapshot, and close.
@@ -299,6 +302,9 @@ export function createTutorEngine(workspace: string) {
   with async `next()` over serialized `RuntimeEvent` payloads.
 - The NAPI engine exposes stable runtime controls: cancel turn, resolve
   approval, add context packet, list models, and set model.
+- TypeScript component strategy is split deliberately: host tools and
+  lifecycle hooks use callbacks, while security/harness/prompt/compaction use
+  structured options that map to Rust component implementations.
 
 ### Suggested Validation
 
