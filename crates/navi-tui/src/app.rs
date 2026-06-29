@@ -638,7 +638,8 @@ impl TuiApp {
 
     pub(crate) fn filtered_sessions(&self) -> Vec<&SessionSnapshot> {
         let filter = self.session_filter.trim().to_lowercase();
-        self.saved_sessions
+        let mut sessions = self
+            .saved_sessions
             .iter()
             .filter(|snapshot| {
                 if filter.is_empty() {
@@ -658,7 +659,14 @@ impl TuiApp {
                     .to_lowercase();
                 title.contains(&filter) || project.contains(&filter)
             })
-            .collect()
+            .collect::<Vec<_>>();
+        sessions.sort_by(|a, b| {
+            session_project_rank(&a.project, &self.project_dir)
+                .cmp(&session_project_rank(&b.project, &self.project_dir))
+                .then_with(|| b.updated_at.cmp(&a.updated_at))
+                .then_with(|| b.id.as_str().cmp(a.id.as_str()))
+        });
+        sessions
     }
 
     pub(crate) fn filtered_providers(&self) -> Vec<crate::providers::ProviderListRow> {
@@ -772,6 +780,40 @@ impl TuiApp {
 
         rows
     }
+}
+
+pub(crate) fn session_belongs_to_project(
+    session_project: &std::path::Path,
+    current_project: &std::path::Path,
+) -> bool {
+    normalize_session_path(session_project) == normalize_session_path(current_project)
+}
+
+fn session_project_rank(
+    session_project: &std::path::Path,
+    current_project: &std::path::Path,
+) -> u8 {
+    if session_belongs_to_project(session_project, current_project) {
+        0
+    } else {
+        1
+    }
+}
+
+fn normalize_session_path(path: &std::path::Path) -> std::path::PathBuf {
+    use std::path::Component;
+
+    let mut normalized = std::path::PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                normalized.pop();
+            }
+            other => normalized.push(other.as_os_str()),
+        }
+    }
+    normalized
 }
 
 #[cfg(not(test))]

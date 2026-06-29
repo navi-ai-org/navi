@@ -6,6 +6,7 @@ use ratatui::text::Text;
 use ratatui::widgets::{List, ListItem, Paragraph};
 
 use crate::TuiApp;
+use crate::app::session_belongs_to_project;
 use crate::render::{clear_modal_area, modal_block};
 use crate::session::format_session_timestamp;
 use crate::theme::*;
@@ -94,7 +95,14 @@ pub(super) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
                     .unwrap_or_else(|| project.clone());
                 let timestamp = format_session_timestamp(snapshot.updated_at);
                 let event_count = snapshot.events.len();
-                let label = format!("{timestamp}  {title}  ·  {project}  ·  {event_count} events");
+                let scope = if session_belongs_to_project(&snapshot.project, &app.project_dir) {
+                    "current project"
+                } else {
+                    "other project"
+                };
+                let label = format!(
+                    "{timestamp}  {title}  ·  {project}  ·  {scope}  ·  {event_count} events"
+                );
 
                 ListItem::new(Span::styled(label, style)).style(style)
             })
