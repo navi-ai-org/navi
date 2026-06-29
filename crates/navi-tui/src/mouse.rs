@@ -379,6 +379,9 @@ fn dispatch_hit(app: &mut TuiApp, hit: HitRegion) {
             }
         }
         HitAction::PluginRefresh => crate::plugins::refresh_plugin_catalog(app),
+        HitAction::BackgroundCommand(index) => {
+            crate::background::open_background_command_output(app, index);
+        }
         HitAction::ToolApprove => crate::tools::approve_pending_tool(app),
         HitAction::ToolDeny => crate::tools::deny_pending_tool(app),
         HitAction::PluginApprove => {
@@ -515,6 +518,8 @@ fn active_scroll_target(app: &TuiApp) -> Option<ScrollTarget> {
         Mode::Plugins => Some(ScrollTarget::Plugins),
         Mode::PluginApproval => Some(ScrollTarget::PluginApproval),
         Mode::Question => Some(ScrollTarget::QuestionOptions),
+        Mode::BackgroundCommands => Some(ScrollTarget::BackgroundCommands),
+        Mode::BackgroundCommandOutput => Some(ScrollTarget::BackgroundCommandOutput),
         Mode::Settings
         | Mode::ThemePicker
         | Mode::Thinking
@@ -525,7 +530,6 @@ fn active_scroll_target(app: &TuiApp) -> Option<ScrollTarget> {
         Mode::Normal
         | Mode::ApiKeyEntry
         | Mode::Mcp
-        | Mode::BackgroundCommands
         | Mode::BackgroundModels
         | Mode::BgModelPicker => None,
         Mode::Setup => None,
@@ -603,6 +607,29 @@ fn scroll_by(app: &mut TuiApp, target: ScrollTarget, delta: isize) {
                     .clamp(question.option_scroll, question.option_scroll + 7);
             }
         }
+        ScrollTarget::BackgroundCommands => {
+            let len = app.background_commands.len();
+            let (selected, scroll) = shifted_select_state(
+                app.bg_command_selected,
+                app.bg_command_scroll,
+                len,
+                delta,
+                12,
+            );
+            app.bg_command_selected = selected;
+            app.bg_command_scroll = scroll;
+        }
+        ScrollTarget::BackgroundCommandOutput => {
+            app.bg_command_output_follow = false;
+            if delta.is_positive() {
+                app.bg_command_output_scroll =
+                    app.bg_command_output_scroll.saturating_add(delta as usize);
+            } else {
+                app.bg_command_output_scroll = app
+                    .bg_command_output_scroll
+                    .saturating_sub(delta.unsigned_abs());
+            }
+        }
     }
 }
 
@@ -644,6 +671,15 @@ fn scroll_to(app: &mut TuiApp, target: ScrollTarget, offset: usize) {
                     .selected_row
                     .clamp(question.option_scroll, question.option_scroll + 7);
             }
+        }
+        ScrollTarget::BackgroundCommands => {
+            let len = app.background_commands.len();
+            app.bg_command_selected = offset.min(len.saturating_sub(1));
+            app.bg_command_scroll = app.bg_command_selected;
+        }
+        ScrollTarget::BackgroundCommandOutput => {
+            app.bg_command_output_follow = false;
+            app.bg_command_output_scroll = offset;
         }
     }
 }

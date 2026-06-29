@@ -18,6 +18,12 @@ pub(crate) fn snapshot_current_session(app: &TuiApp) {
         .session_title
         .clone()
         .or_else(|| session_title_from_events(&app.events));
+    let existing_goal = tokio::task::block_in_place(|| {
+        app.session_store
+            .load(app.session_id.as_str())
+            .ok()
+            .and_then(|snapshot| snapshot.goal)
+    });
     let snapshot = SessionSnapshot {
         version: SessionSnapshot::CURRENT_VERSION,
         id: app.session_id.clone(),
@@ -27,7 +33,7 @@ pub(crate) fn snapshot_current_session(app: &TuiApp) {
         updated_at: now,
         events: app.events.clone(),
         memory: None,
-        goal: None,
+        goal: existing_goal,
     };
     if let Err(err) = tokio::task::block_in_place(|| app.session_store.save(&snapshot)) {
         tracing::warn!(error = %err, "failed to save session");
