@@ -7,9 +7,9 @@ use napi::threadsafe_function::{
 };
 use napi_derive::napi;
 use navi_core::{
-    ContextPacket, LearningHarness, LearningHarnessConfig, RuntimeComponents, StudyCompactionConfig,
-    StudyCompactionStrategy, ToolInvocation, ToolKind, ToolResult, TutorPromptBuilder,
-    TutorPromptOptions,
+    ContextPacket, LearningHarness, LearningHarnessConfig, RuntimeComponents,
+    StudyCompactionConfig, StudyCompactionStrategy, ToolInvocation, ToolKind, ToolResult,
+    TutorPromptBuilder, TutorPromptOptions,
 };
 use navi_sdk::{
     ApprovalDecision, HostToolDefinition, HostToolHandler, HostToolInvocation, NaviEngineBuilder,
@@ -139,10 +139,7 @@ impl NaviNapiEngineBuilder {
     }
 
     #[napi(js_name = "onToolCall")]
-    pub fn on_tool_call(
-        &mut self,
-        handler: Function<JsonValue, UnknownReturnValue>,
-    ) -> Result<()> {
+    pub fn on_tool_call(&mut self, handler: Function<JsonValue, UnknownReturnValue>) -> Result<()> {
         self.hooks.tool_call = Some(Arc::new(build_hook_callback(handler)?));
         Ok(())
     }
@@ -342,7 +339,12 @@ impl NaviNapiEngine {
     }
 
     #[napi]
-    pub async fn set_model(&self, session_id: String, provider: String, model: String) -> Result<()> {
+    pub async fn set_model(
+        &self,
+        session_id: String,
+        provider: String,
+        model: String,
+    ) -> Result<()> {
         self.inner
             .set_model(&session_id, &provider, &model)
             .await
@@ -418,7 +420,10 @@ impl navi_core::SessionHooks for JsSessionHooks {
     }
 
     fn on_session_end(&self, session_id: &str) {
-        emit_hook(&self.callbacks.session_end, json!({ "sessionId": session_id }));
+        emit_hook(
+            &self.callbacks.session_end,
+            json!({ "sessionId": session_id }),
+        );
     }
 }
 
@@ -476,9 +481,7 @@ fn parse_context_packet(value: JsonValue) -> Result<ContextPacket> {
     serde_json::from_value(value).map_err(to_napi_error)
 }
 
-fn build_hook_callback(
-    handler: Function<JsonValue, UnknownReturnValue>,
-) -> Result<JsHookCallback> {
+fn build_hook_callback(handler: Function<JsonValue, UnknownReturnValue>) -> Result<JsHookCallback> {
     handler
         .build_threadsafe_function::<JsonValue>()
         .callee_handled::<true>()
