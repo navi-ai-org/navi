@@ -24,6 +24,7 @@ pub(crate) enum HitAction {
     Setting(usize),
     PluginInstallOrUpdate(usize),
     PluginRefresh,
+    BackgroundCommand(usize),
     McpServer(usize),
     McpTool(usize),
     ToolApprove,
@@ -54,6 +55,8 @@ pub(crate) enum ScrollTarget {
     Plugins,
     PluginApproval,
     QuestionOptions,
+    BackgroundCommands,
+    BackgroundCommandOutput,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

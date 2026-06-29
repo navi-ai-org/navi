@@ -1,8 +1,30 @@
 {
-  "name": "@navi/napi",
+  "name": "@navi-agent/napi",
   "version": "0.1.0",
-  "description": "Node.js bindings for the NAVI runtime SDK.",
-  "license": "MIT",
+  "description": "Node.js native bindings for the NAVI agent runtime SDK — sessions, turns, tools, events, and context injection.",
+  "license": "Apache-2.0",
+  "author": "NAVI Contributors",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/enrell/navi.git",
+    "directory": "crates/navi-napi"
+  },
+  "homepage": "https://github.com/enrell/navi/tree/main/crates/navi-napi#readme",
+  "bugs": {
+    "url": "https://github.com/enrell/navi/issues"
+  },
+  "keywords": [
+    "navi",
+    "napi",
+    "agent",
+    "llm",
+    "ai",
+    "runtime",
+    "sdk",
+    "native",
+    "tool-use",
+    "session"
+  ],
   "main": "index.js",
   "types": "index.d.ts",
   "exports": {
@@ -16,14 +38,41 @@
     "index.js",
     "index.d.ts",
     "README.md",
-    "scripts/build-native.mjs"
+    "docs/",
+    "scripts/postinstall.mjs",
+    "npm/"
   ],
   "scripts": {
     "build": "node scripts/build-native.mjs",
+    "build:release": "node scripts/build-native.mjs --release",
+    "postinstall": "node scripts/postinstall.mjs",
+    "prepack": "node scripts/prepack.mjs",
     "test": "npm run build && node --test test/*.test.mjs",
-    "test:types": "npm exec --yes --package typescript -- tsc --noEmit --target ES2022 --module NodeNext --moduleResolution NodeNext test/types-smoke.ts"
+    "test:types": "npm exec --yes --package typescript -- tsc --noEmit --target ES2022 --module NodeNext --moduleResolution NodeNext test/types-smoke.ts",
+    "prepublishOnly": "node scripts/prepublish-check.mjs"
   },
   "engines": {
     "node": ">=18"
-  }
+  },
+  "os": [
+    "linux",
+    "darwin",
+    "win32"
+  ],
+  "cpu": [
+    "x64",
+    "arm64"
+  ],
+  "optionalDependencies": {
+    "@navi-agent/napi-linux-x64": "0.1.0",
+    "@navi-agent/napi-linux-arm64": "0.1.0",
+    "@navi-agent/napi-darwin-x64": "0.1.0",
+    "@navi-agent/napi-darwin-arm64": "0.1.0",
+    "@navi-agent/napi-win32-x64": "0.1.0"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
+  "sideEffects": false
 }

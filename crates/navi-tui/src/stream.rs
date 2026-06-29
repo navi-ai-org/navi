@@ -2,7 +2,9 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
 
-use navi_sdk::{ContentPart, EngineDriver, ModelMessage, NaviSessionRequest, NaviTurnRequest};
+use navi_sdk::{
+    ContentPart, EngineDriver, ModelMessage, NaviSessionRequest, NaviTurnRequest, SessionGoal,
+};
 use tokio::sync::mpsc;
 
 use crate::app::TuiApp;
@@ -59,6 +61,12 @@ pub(crate) fn start_streaming_request(app: &mut TuiApp) {
     let engine = app.engine();
     let project_dir = app.project_dir.clone();
     let session_id = app.session_id.as_str().to_string();
+    let initial_goal = tokio::task::block_in_place(|| {
+        app.session_store
+            .load(&session_id)
+            .ok()
+            .and_then(|snapshot| snapshot.goal)
+    });
     let active_skills = app.active_skills.clone();
     let thinking_level = app.thinking_level;
 
@@ -68,6 +76,7 @@ pub(crate) fn start_streaming_request(app: &mut TuiApp) {
             session_id.clone(),
             project_dir,
             initial_messages,
+            initial_goal,
             user_prompt,
             content_parts,
             tx.clone(),
@@ -85,6 +94,7 @@ async fn run_sdk_turn(
     session_id: String,
     project_dir: PathBuf,
     initial_messages: Vec<ModelMessage>,
+    initial_goal: Option<SessionGoal>,
     user_prompt: String,
     content_parts: Vec<ContentPart>,
     tx: mpsc::UnboundedSender<AsyncEvent>,
@@ -98,6 +108,7 @@ async fn run_sdk_turn(
             context_packets: Vec::new(),
             active_skills,
             initial_messages,
+            initial_goal,
             ..NaviSessionRequest::default()
         })
         .await

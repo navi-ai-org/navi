@@ -71,6 +71,28 @@ impl ModelProvider for SimpleProvider {
     }
 }
 
+struct GoalToolsProvider;
+
+#[async_trait]
+impl ModelProvider for GoalToolsProvider {
+    fn stream(&self, request: ModelRequest) -> ModelStream {
+        let tool_names = request
+            .tools
+            .iter()
+            .map(|tool| tool.name.as_str())
+            .collect::<Vec<_>>();
+        assert!(tool_names.contains(&"get_goal"));
+        assert!(tool_names.contains(&"create_goal"));
+        assert!(tool_names.contains(&"update_goal"));
+        Box::pin(stream::iter(vec![
+            Ok(ModelStreamEvent::TextDelta {
+                text: "goal tools available".to_string(),
+            }),
+            Ok(ModelStreamEvent::Done),
+        ]))
+    }
+}
+
 struct EchoModelProvider;
 
 #[async_trait]
@@ -123,6 +145,7 @@ async fn headless_runtime_executes_read_tools_and_continues() {
         initial_events: Vec::new(),
         initial_created_at: None,
         initial_updated_at: None,
+        initial_goal: None,
         session_id: None,
         event_tx: None,
         runtime_components: None,
@@ -181,6 +204,7 @@ async fn runtime_session_lifecycle_streams_events_and_snapshots() {
         initial_events: Vec::new(),
         initial_created_at: None,
         initial_updated_at: None,
+        initial_goal: None,
         session_id: None,
         event_tx: None,
         runtime_components: None,
@@ -188,6 +212,8 @@ async fn runtime_session_lifecycle_streams_events_and_snapshots() {
 
     let mut events = runtime.stream_events();
     let session_id = runtime.start_session().expect("start session");
+    let goal = runtime.set_goal("finish runtime goal".to_string(), Some(1000));
+    assert_eq!(goal.session_id, session_id.as_str());
 
     let first_event = timeout(Duration::from_secs(1), events.recv())
         .await
@@ -226,6 +252,14 @@ async fn runtime_session_lifecycle_streams_events_and_snapshots() {
 
     let snapshot = runtime.snapshot_session().expect("snapshot");
     assert_eq!(snapshot.id.as_str(), session_id.as_str());
+    assert_eq!(
+        snapshot.goal.as_ref().map(|goal| goal.session_id.as_str()),
+        Some(session_id.as_str())
+    );
+    assert_eq!(
+        snapshot.goal.as_ref().map(|goal| goal.objective.as_str()),
+        Some("finish runtime goal")
+    );
     assert!(snapshot.title.is_some());
     let snapshot_path = runtime
         .session_store()
@@ -236,6 +270,54 @@ async fn runtime_session_lifecycle_streams_events_and_snapshots() {
         .load_session_traces(snapshot.id.as_str());
     assert_eq!(traces.len(), 1);
     assert_eq!(traces[0].task, "inspect");
+}
+
+#[tokio::test]
+async fn runtime_registers_goal_tools_on_provided_executor() {
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let loaded_config = crate::LoadedConfig {
+        config: NaviConfig {
+            harness: HarnessConfig::default(),
+            approvals: ApprovalConfig::default(),
+            security: SecurityConfig::default(),
+            ..NaviConfig::default()
+        },
+        global_config_path: None,
+        project_config_path: None,
+        data_dir: tempdir.path().join("data"),
+    };
+    let security_policy = crate::SecurityPolicy::new(
+        tempdir.path().to_path_buf(),
+        tempdir.path().join("data"),
+        SecurityConfig::default(),
+    )
+    .expect("security policy");
+    let executor = Arc::new(crate::ToolExecutor::with_security_policy(
+        security_policy,
+        Arc::new(crate::DefaultToolSecurityPolicy),
+    ));
+    let mut runtime = AgentRuntime::new(AgentRuntimeOptions {
+        loaded_config,
+        model_provider: Arc::new(GoalToolsProvider),
+        project_dir: tempdir.path().to_path_buf(),
+        tool_executor: Some(executor),
+        context_packets: Vec::new(),
+        active_skills: Vec::new(),
+        initial_messages: Vec::new(),
+        initial_events: Vec::new(),
+        initial_created_at: None,
+        initial_updated_at: None,
+        initial_goal: None,
+        session_id: None,
+        event_tx: None,
+        runtime_components: None,
+    });
+
+    let response = runtime
+        .send_turn("check tools".to_string())
+        .await
+        .expect("run turn");
+    assert_eq!(response.text, "goal tools available");
 }
 
 #[tokio::test]
@@ -264,6 +346,7 @@ async fn runtime_uses_requested_session_id_once() {
         initial_events: Vec::new(),
         initial_created_at: None,
         initial_updated_at: None,
+        initial_goal: None,
         session_id: Some(crate::SessionId::new(
             "navi_tutor_algoritmos_2026-05-25_14-32-10".to_string(),
         )),
@@ -307,6 +390,7 @@ async fn active_session_uses_replaced_model_provider_on_next_turn() {
         initial_events: Vec::new(),
         initial_created_at: None,
         initial_updated_at: None,
+        initial_goal: None,
         session_id: None,
         event_tx: None,
         runtime_components: None,
@@ -381,6 +465,7 @@ async fn dropped_turn_future_does_not_poison_session_event_stream() {
         initial_events: Vec::new(),
         initial_created_at: None,
         initial_updated_at: None,
+        initial_goal: None,
         session_id: None,
         event_tx: None,
         runtime_components: None,
