@@ -215,7 +215,7 @@ let engine = NaviEngineBuilder::from_project(".")
   register named factories.
 - [x] Keep plugin ABI compatibility strategy explicit because trait objects across
   native plugin boundaries are fragile.
-- [ ] Define a real TUI extension boundary before wiring
+- [x] Define a real TUI extension boundary before wiring
   `register_tui_component`.
 - [x] Keep TUI plugins scoped to `navi-tui`; do not move ratatui concepts into
   `navi-sdk` or `navi-core`.
@@ -239,9 +239,9 @@ let engine = NaviEngineBuilder::from_project(".")
 - `register_agent_policy` is consumed by the SDK for known named policies:
   `learning_tutor`, `navi_learning`, `tutor`, `default`, and `code_agent`.
 - Unknown agent policy names are reported as warnings.
-- `register_tui_component` declarations are reported as warnings instead of
-  being silently ignored. Actual terminal widget injection remains a `navi-tui`
-  frontend design task.
+- `register_tui_component` declarations are preserved by the SDK and exposed
+  per session through `list_tui_components`; actual terminal widget rendering
+  remains a `navi-tui` frontend responsibility.
 - Native plugins register named policies rather than cross-library Rust trait
   objects, preserving ABI boundaries.
 
@@ -301,7 +301,8 @@ export function createTutorEngine(workspace: string) {
 - `NaviNapiEngine::subscribeEvents(sessionId)` returns an event stream object
   with async `next()` over serialized `RuntimeEvent` payloads.
 - The NAPI engine exposes stable runtime controls: cancel turn, resolve
-  approval, add context packet, list models, and set model.
+  approval, add context packet, list models, list TUI component declarations,
+  and set model.
 - TypeScript component strategy is split deliberately: host tools and
   lifecycle hooks use callbacks, while security/harness/prompt/compaction use
   structured options that map to Rust component implementations.
