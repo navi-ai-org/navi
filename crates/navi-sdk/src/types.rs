@@ -143,6 +143,37 @@ pub struct NaviProviderAccountInfo {
     pub status: NaviProviderCredentialStatus,
 }
 
+/// Normalized provider account usage and rate-limit windows.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NaviUsageReport {
+    pub provider_id: String,
+    pub provider_label: String,
+    pub plan_type: Option<String>,
+    pub limit_reached_kind: Option<String>,
+    pub limits: Vec<NaviUsageLimitSnapshot>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NaviUsageLimitSnapshot {
+    pub limit_id: Option<String>,
+    pub limit_name: Option<String>,
+    pub metered_feature: Option<String>,
+    pub limit_reached: bool,
+    pub primary: Option<NaviUsageWindow>,
+    pub secondary: Option<NaviUsageWindow>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NaviUsageWindow {
+    pub used_percent: i32,
+    pub limit_window_seconds: i32,
+    pub reset_after_seconds: i32,
+    pub reset_at: i32,
+}
+
 /// Where to persist a configuration change.
 ///
 /// `Auto` prefers the project config when one exists, otherwise global.

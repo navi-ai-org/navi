@@ -51,6 +51,8 @@ pub(crate) fn handle_model_error(app: &mut TuiApp, message: String) {
         last.status.as_deref() == Some("error") && last.content == formatted_message
     });
 
+    let is_limit = is_usage_limit_error(&message);
+
     if !is_duplicate_tail_error {
         tracing::error!(error = %message, "model stream failed");
         push_diagnostic(app, format!("Model error: {message}"));
@@ -60,6 +62,12 @@ pub(crate) fn handle_model_error(app: &mut TuiApp, message: String) {
         });
         app.events.push(AgentEvent::Error { message });
     }
+
+    // Auto-fetch usage data on usage-limit errors so the modal has fresh data
+    if is_limit {
+        crate::usage::refresh_usage(app);
+    }
+
     app.skip_next_model_done = false;
     app.is_loading = false;
     app.loading_start = None;
@@ -83,11 +91,72 @@ fn format_model_error_message(app: &TuiApp, message: &str) -> String {
         } else {
             "The selected provider reported a usage-limit error for this request."
         };
+
+        // Try to show when the limit resets from cached usage data
+        let reset_hint = usage_reset_hint(app);
+
         format!(
-            "⚠ Usage limit reached for {model} via {provider}.\n\n{free_hint}\n\n{message}\n\nUse ctrl+m and select a non-free model, or wait for the provider limit window to reset."
+            "⚠ Usage limit reached for {model} via {provider}.\n\n{free_hint}\n\n{message}\n\nUse ctrl+m and select a non-free model, or wait for the provider limit window to reset.{reset_hint}"
         )
     } else {
         format!("⚠ Error: {message}")
+    }
+}
+
+fn usage_reset_hint(app: &TuiApp) -> String {
+    let report = match app.usage_state.report.as_ref() {
+        Some(report) => report,
+        None => return String::new(),
+    };
+
+    // Find the first limit that has a primary window (5h) and is reached
+    for limit in &report.limits {
+        if !limit.limit_reached {
+            continue;
+        }
+        if let Some(ref primary) = limit.primary {
+            if primary.reset_after_seconds > 0 {
+                let hint = format_usage_reset(primary.reset_after_seconds);
+                return format!("\n\n⏰ 5h window resets {hint}.");
+            }
+        }
+    }
+
+    // If no reached limit found, show the first primary window anyway
+    for limit in &report.limits {
+        if let Some(ref primary) = limit.primary {
+            if primary.reset_after_seconds > 0 {
+                let hint = format_usage_reset(primary.reset_after_seconds);
+                return format!("\n\n⏰ 5h window resets {hint}.");
+            }
+        }
+    }
+
+    String::new()
+}
+
+fn format_usage_reset(seconds: i32) -> String {
+    if seconds <= 0 {
+        return "soon".to_string();
+    }
+    let hours = seconds / 3600;
+    let minutes = (seconds % 3600) / 60;
+    if hours >= 24 {
+        let days = hours / 24;
+        let rem_hours = hours % 24;
+        if rem_hours > 0 {
+            format!("in {days}d {rem_hours}h")
+        } else {
+            format!("in {days}d")
+        }
+    } else if hours > 0 {
+        if minutes > 0 {
+            format!("in {hours}h {minutes}m")
+        } else {
+            format!("in {hours}h")
+        }
+    } else {
+        format!("in {minutes}m")
     }
 }
 

@@ -24,6 +24,7 @@ mod state;
 mod stream;
 mod theme;
 mod tools;
+mod usage;
 mod view;
 
 pub use self::app::TuiApp;

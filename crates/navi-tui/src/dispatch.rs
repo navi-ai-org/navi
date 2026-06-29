@@ -1,7 +1,8 @@
 use crate::state::SetupPhase;
 use navi_sdk::{
     AgentEvent, ApprovalDecision, ApprovalRisk, BackgroundCommandSnapshot, LoadedConfig,
-    ModelMessage, available_model_options, canonical_provider_id, compact_tool_observation,
+    ModelMessage, NaviUsageReport, available_model_options, canonical_provider_id,
+    compact_tool_observation,
 };
 
 use crate::app::TuiApp;
@@ -34,6 +35,9 @@ pub enum AsyncEvent {
     OAuthCompleted {
         provider_id: String,
         result: std::result::Result<(), String>,
+    },
+    UsageLoaded {
+        result: std::result::Result<NaviUsageReport, String>,
     },
     Agent(AgentEvent),
     AgentForSession {
@@ -95,6 +99,20 @@ pub(crate) fn handle_async_event(app: &mut TuiApp, event: AsyncEvent) {
             app.clear_stream_task();
             if app.is_loading {
                 start_streaming_request(app);
+            }
+        }
+        AsyncEvent::UsageLoaded { result } => {
+            app.usage_state.loading = false;
+            match result {
+                Ok(report) => {
+                    app.usage_state.error = None;
+                    app.usage_state.report = Some(report);
+                }
+                Err(error) => {
+                    app.usage_state.report = None;
+                    app.usage_state.error = Some(error.clone());
+                    show_notification(app, "Usage", error);
+                }
             }
         }
         AsyncEvent::PluginCatalogLoaded { entries, error } => {

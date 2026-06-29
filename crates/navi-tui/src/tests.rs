@@ -1077,6 +1077,8 @@ fn ctrl_o_in_provider_modal_does_not_toggle_full_tool_view() {
     assert!(!run_selected_command(&mut app));
     assert_eq!(app.mode, Mode::Providers);
     assert!(!app.full_tool_view);
+    app.provider_filter = "anthropic".to_string();
+    app.selected_provider_setting = 0;
 
     handle_key(&mut app, KeyCode::Char('o'), KeyModifiers::CONTROL);
     assert_eq!(app.mode, Mode::Providers);
