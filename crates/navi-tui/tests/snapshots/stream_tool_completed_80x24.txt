@@ -14,11 +14,11 @@
 
 
 
+    .   Reading context · 0s
 
   ▌
   ▌
   ▌
   ▌ gpt-5.5 OpenAI · adaptive · 0 / 200k (0%)
   ▌
-    .   Reading context · 0s
                ctrl+p commands · ctrl+m models · ctrl+enter send · ctrl+v image
