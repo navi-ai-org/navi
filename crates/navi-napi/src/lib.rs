@@ -2,11 +2,14 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use napi::bindgen_prelude::*;
-use napi::threadsafe_function::ThreadsafeFunction;
+use napi::threadsafe_function::{
+    ThreadsafeFunction, ThreadsafeFunctionCallMode, UnknownReturnValue,
+};
 use napi_derive::napi;
 use navi_core::{
     ContextPacket, LearningHarness, LearningHarnessConfig, RuntimeComponents, StudyCompactionConfig,
-    StudyCompactionStrategy, ToolKind, TutorPromptBuilder, TutorPromptOptions,
+    StudyCompactionStrategy, ToolInvocation, ToolKind, ToolResult, TutorPromptBuilder,
+    TutorPromptOptions,
 };
 use navi_sdk::{
     ApprovalDecision, HostToolDefinition, HostToolHandler, HostToolInvocation, NaviEngineBuilder,
@@ -16,6 +19,7 @@ use serde_json::{Value as JsonValue, json};
 use tokio::sync::{Mutex as AsyncMutex, broadcast};
 
 type JsHostToolCallback = ThreadsafeFunction<JsonValue, Promise<JsonValue>>;
+type JsHookCallback = ThreadsafeFunction<JsonValue, UnknownReturnValue>;
 
 #[napi(object)]
 pub struct JsSessionInfo {
@@ -67,7 +71,29 @@ pub struct NaviNapiEngineBuilder {
     project_dir: String,
     learning_tutor: bool,
     learning_config: Option<JsLearningRuntimeConfig>,
+    hooks: JsHookCallbacks,
     host_tools: Vec<Arc<dyn navi_core::Tool>>,
+}
+
+#[derive(Clone, Default)]
+struct JsHookCallbacks {
+    session_start: Option<Arc<JsHookCallback>>,
+    turn_start: Option<Arc<JsHookCallback>>,
+    tool_call: Option<Arc<JsHookCallback>>,
+    tool_result: Option<Arc<JsHookCallback>>,
+    turn_end: Option<Arc<JsHookCallback>>,
+    session_end: Option<Arc<JsHookCallback>>,
+}
+
+impl JsHookCallbacks {
+    fn is_empty(&self) -> bool {
+        self.session_start.is_none()
+            && self.turn_start.is_none()
+            && self.tool_call.is_none()
+            && self.tool_result.is_none()
+            && self.turn_end.is_none()
+            && self.session_end.is_none()
+    }
 }
 
 #[napi]
@@ -78,6 +104,7 @@ impl NaviNapiEngineBuilder {
             project_dir,
             learning_tutor: false,
             learning_config: None,
+            hooks: JsHookCallbacks::default(),
             host_tools: Vec::new(),
         }
     }
@@ -91,6 +118,57 @@ impl NaviNapiEngineBuilder {
     pub fn configure_learning(&mut self, config: JsLearningRuntimeConfig) {
         self.learning_tutor = true;
         self.learning_config = Some(config);
+    }
+
+    #[napi(js_name = "onSessionStart")]
+    pub fn on_session_start(
+        &mut self,
+        handler: Function<JsonValue, UnknownReturnValue>,
+    ) -> Result<()> {
+        self.hooks.session_start = Some(Arc::new(build_hook_callback(handler)?));
+        Ok(())
+    }
+
+    #[napi(js_name = "onTurnStart")]
+    pub fn on_turn_start(
+        &mut self,
+        handler: Function<JsonValue, UnknownReturnValue>,
+    ) -> Result<()> {
+        self.hooks.turn_start = Some(Arc::new(build_hook_callback(handler)?));
+        Ok(())
+    }
+
+    #[napi(js_name = "onToolCall")]
+    pub fn on_tool_call(
+        &mut self,
+        handler: Function<JsonValue, UnknownReturnValue>,
+    ) -> Result<()> {
+        self.hooks.tool_call = Some(Arc::new(build_hook_callback(handler)?));
+        Ok(())
+    }
+
+    #[napi(js_name = "onToolResult")]
+    pub fn on_tool_result(
+        &mut self,
+        handler: Function<JsonValue, UnknownReturnValue>,
+    ) -> Result<()> {
+        self.hooks.tool_result = Some(Arc::new(build_hook_callback(handler)?));
+        Ok(())
+    }
+
+    #[napi(js_name = "onTurnEnd")]
+    pub fn on_turn_end(&mut self, handler: Function<JsonValue, UnknownReturnValue>) -> Result<()> {
+        self.hooks.turn_end = Some(Arc::new(build_hook_callback(handler)?));
+        Ok(())
+    }
+
+    #[napi(js_name = "onSessionEnd")]
+    pub fn on_session_end(
+        &mut self,
+        handler: Function<JsonValue, UnknownReturnValue>,
+    ) -> Result<()> {
+        self.hooks.session_end = Some(Arc::new(build_hook_callback(handler)?));
+        Ok(())
     }
 
     #[napi(js_name = "hostTool")]
@@ -123,9 +201,17 @@ impl NaviNapiEngineBuilder {
     #[napi]
     pub fn build(&mut self) -> Result<NaviNapiEngine> {
         let mut builder = NaviEngineBuilder::from_project(self.project_dir.clone());
-        if self.learning_tutor {
-            builder = builder.runtime_components(learning_components(self.learning_config.as_ref()));
+        let mut components = if self.learning_tutor {
+            learning_components(self.learning_config.as_ref())
+        } else {
+            RuntimeComponents::default()
+        };
+        if !self.hooks.is_empty() {
+            components.hooks = Arc::new(JsSessionHooks {
+                callbacks: self.hooks.clone(),
+            });
         }
+        builder = builder.runtime_components(components);
         for tool in self.host_tools.drain(..) {
             builder = builder.host_tool(tool);
         }
@@ -287,6 +373,48 @@ struct JsHostToolHandler {
     callback: JsHostToolCallback,
 }
 
+struct JsSessionHooks {
+    callbacks: JsHookCallbacks,
+}
+
+impl navi_core::SessionHooks for JsSessionHooks {
+    fn on_session_start(&self, session_id: &str) {
+        emit_hook(
+            &self.callbacks.session_start,
+            json!({ "sessionId": session_id }),
+        );
+    }
+
+    fn on_turn_start(&self, session_id: &str, task: &str) {
+        emit_hook(
+            &self.callbacks.turn_start,
+            json!({ "sessionId": session_id, "task": task }),
+        );
+    }
+
+    fn on_tool_call(&self, invocation: &ToolInvocation) {
+        emit_hook(
+            &self.callbacks.tool_call,
+            json!({ "invocation": invocation }),
+        );
+    }
+
+    fn on_tool_result(&self, result: &ToolResult) {
+        emit_hook(&self.callbacks.tool_result, json!({ "result": result }));
+    }
+
+    fn on_turn_end(&self, session_id: &str, output: &str) {
+        emit_hook(
+            &self.callbacks.turn_end,
+            json!({ "sessionId": session_id, "output": output }),
+        );
+    }
+
+    fn on_session_end(&self, session_id: &str) {
+        emit_hook(&self.callbacks.session_end, json!({ "sessionId": session_id }));
+    }
+}
+
 #[async_trait]
 impl HostToolHandler for JsHostToolHandler {
     async fn invoke(&self, invocation: HostToolInvocation) -> anyhow::Result<SdkHostToolResult> {
@@ -339,6 +467,23 @@ fn runtime_event_to_json(event: RuntimeEvent) -> Result<JsonValue> {
 
 fn parse_context_packet(value: JsonValue) -> Result<ContextPacket> {
     serde_json::from_value(value).map_err(to_napi_error)
+}
+
+fn build_hook_callback(
+    handler: Function<JsonValue, UnknownReturnValue>,
+) -> Result<JsHookCallback> {
+    handler
+        .build_threadsafe_function::<JsonValue>()
+        .callee_handled::<true>()
+        .weak::<false>()
+        .build()
+        .map_err(to_napi_error)
+}
+
+fn emit_hook(callback: &Option<Arc<JsHookCallback>>, payload: JsonValue) {
+    if let Some(callback) = callback {
+        let _ = callback.call(Ok(payload), ThreadsafeFunctionCallMode::NonBlocking);
+    }
 }
 
 fn learning_components(config: Option<&JsLearningRuntimeConfig>) -> RuntimeComponents {
@@ -469,5 +614,10 @@ mod tests {
             keep_all_assessments: Some(true),
             exempt_tool_names: Some(vec!["questionario".to_string()]),
         }));
+    }
+
+    #[test]
+    fn hook_callbacks_default_to_empty() {
+        assert!(JsHookCallbacks::default().is_empty());
     }
 }

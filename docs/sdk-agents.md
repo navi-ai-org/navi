@@ -229,6 +229,9 @@ builder.configureLearning({
   keepAllAssessments: true,
   exemptToolNames: ["questionario", "grill_avaliacao", "student_progress"],
 });
+builder.onSessionStart(({ sessionId }) => analytics.track("session_started", { sessionId }));
+builder.onToolCall(({ invocation }) => analytics.track("tool_called", invocation));
+builder.onToolResult(({ result }) => db.toolResults.insert(result));
 builder.hostTool(
   {
     name: "consultar_materiais",
@@ -274,7 +277,9 @@ stream object whose `next()` method resolves to the next serialized
 maps structured TypeScript options onto the Rust learning harness, tutor prompt
 builder, and study compaction strategy. The NAPI engine also exposes runtime
 control methods for `cancelTurn`, `resolveApproval`, `addContextPacket`,
-`listModels`, and `setModel`.
+`listModels`, and `setModel`. Lifecycle hook callbacks are fire-and-forget:
+the runtime emits JSON payloads through Node's event loop and does not block
+the agent turn waiting for asynchronous analytics or persistence work.
 
 ## Native Plugin Policies
 
