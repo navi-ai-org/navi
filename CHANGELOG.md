@@ -13,7 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Multi-provider support (OpenAI, Anthropic, Gemini, OpenRouter, Groq, xAI, GitHub Copilot, Gitlawb)
 - Agent modes: Plan, Edit, Review, Tutor, Socratic, Recall, Focus
 - Built-in tools: read_file, write_file, apply_patch, grep, bash
-- Specialized tools: test_runner, build_runner, fs_browser, git_ops, package_manager
+- Specialized tools: test_runner, build_runner, fs_browser, package_manager
 - Security policy with path restrictions, command blocking, secret redaction
 - Session persistence with auto-compaction
 - MCP client integration

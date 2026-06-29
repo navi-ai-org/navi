@@ -42,7 +42,7 @@ Config: `~/.config/navi/config.toml` + `.navi/config.toml` per project. Keys fro
 
 ## Harness (coding-first)
 
-- **Tools:** `test_runner`, `build_runner`, `git_ops`, `package_manager`, `fs_browser`, `read_file`, `write_file`, `apply_patch`, `grep`, `bash`
+- **Tools:** `test_runner`, `build_runner`, `package_manager`, `fs_browser`, `read_file`, `write_file`, `apply_patch`, `grep`, `bash`
 - **Modes:** Plan, Edit, Review, Tutor, Socratic, Recall, Focus (`tab` in TUI)
 - **Context:** micro-compact, auto-compact, optional session memory
 - **Harness:** `auto` / `small` / `medium` profiles for observation and loop limits

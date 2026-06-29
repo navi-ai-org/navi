@@ -24,6 +24,7 @@
 use crate::file_lock::{FileLockManager, LockGuard};
 use anyhow::{Context, Result, bail};
 use async_trait::async_trait;
+use navi_vfs::code::{replace_symbol_definition, symbols_for_source};
 use serde_json::{Value, json};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -357,7 +358,10 @@ impl WriteTool {
         // <<'EOF'...EOF, strip the heredoc markers.
         let patches: Vec<String> = raw_patches
             .iter()
-            .map(|p| strip_heredoc(p).unwrap_or_else(|| p.to_string()))
+            .map(|p| {
+                let patch = strip_heredoc(p).unwrap_or_else(|| p.to_string());
+                normalize_structured_patch_hunk_prefixes(&patch)
+            })
             .collect();
 
         let affected = patch_affected_files(&patches)?;
@@ -402,6 +406,28 @@ impl WriteTool {
             }
         }
         if !verification_errors.is_empty() {
+            match apply_structured_symbol_replacement_fallback(&self.project_root, &patches) {
+                Ok(Some(files_patched)) => {
+                    return Ok(ToolResult {
+                        invocation_id: invocation.id,
+                        ok: true,
+                        output: json!({
+                            "method": "structured_symbol_replacement_fallback",
+                            "status": 0,
+                            "patches_applied": patches.len(),
+                            "files_patched": files_patched,
+                            "recovered_from": "verification_failed",
+                            "warnings": verification_errors,
+                            "affected_paths": affected,
+                        }),
+                    });
+                }
+                Ok(None) => {}
+                Err(err) => {
+                    verification_errors
+                        .push(format!("symbol replacement fallback failed: {err:#}"));
+                }
+            }
             let output = json!({
                 "error_code": "verification_failed",
                 "error": format!("Patch verification failed:\n{}", verification_errors.join("\n")),
@@ -543,6 +569,43 @@ fn strip_heredoc(patch: &str) -> Option<String> {
     }
 }
 
+fn normalize_structured_patch_hunk_prefixes(patch: &str) -> String {
+    if !is_structured_patch(patch) {
+        return patch.to_string();
+    }
+
+    let mut normalized = Vec::new();
+    let mut in_hunk = false;
+    for line in patch.lines() {
+        if line.starts_with("*** ") {
+            in_hunk = false;
+            normalized.push(line.to_string());
+            continue;
+        }
+        if line.starts_with("@@") {
+            in_hunk = true;
+            normalized.push(line.to_string());
+            continue;
+        }
+        if in_hunk
+            && !line.is_empty()
+            && !line.starts_with(' ')
+            && !line.starts_with('-')
+            && !line.starts_with('+')
+        {
+            normalized.push(format!(" {line}"));
+        } else {
+            normalized.push(line.to_string());
+        }
+    }
+
+    let mut patch = normalized.join("\n");
+    if patch.ends_with("*** End Patch") || patch.ends_with("*** End of File") {
+        patch.push('\n');
+    }
+    patch
+}
+
 // ── Fuzzy unicode normalisation (Codex feature) ─────────────────────────
 
 /// Normalise punctuation characters that differ between what the model emits
@@ -611,6 +674,178 @@ fn verify_structured_patch(project_root: &Path, patch: &str) -> Result<()> {
         }
     }
     Ok(())
+}
+
+fn apply_structured_symbol_replacement_fallback(
+    project_root: &Path,
+    patches: &[String],
+) -> Result<Option<usize>> {
+    let mut candidates = Vec::new();
+    for patch in patches {
+        if !is_structured_patch(patch) {
+            continue;
+        }
+        candidates.extend(structured_symbol_replacement_candidates(
+            project_root,
+            patch,
+        )?);
+    }
+
+    match candidates.len() {
+        0 => Ok(None),
+        1 => {
+            let candidate = candidates.pop().expect("one candidate");
+            fs::write(&candidate.path, candidate.content)
+                .with_context(|| format!("failed to write {}", candidate.path.display()))?;
+            Ok(Some(1))
+        }
+        _ => bail!(
+            "ambiguous malformed patch recovery: {} symbol replacement candidates",
+            candidates.len()
+        ),
+    }
+}
+
+struct SymbolReplacementCandidate {
+    path: PathBuf,
+    content: String,
+}
+
+fn structured_symbol_replacement_candidates(
+    project_root: &Path,
+    patch: &str,
+) -> Result<Vec<SymbolReplacementCandidate>> {
+    let mut candidates = Vec::new();
+    let mut current_path: Option<String> = None;
+    let mut hunk_lines = Vec::new();
+
+    for line in patch.lines().chain(std::iter::once("*** End Patch")) {
+        if let Some(path) = line.strip_prefix("*** Update File: ") {
+            if let Some(path) = current_path.take() {
+                candidates.extend(symbol_replacements_from_hunks(
+                    project_root,
+                    &path,
+                    &hunk_lines,
+                )?);
+                hunk_lines.clear();
+            }
+            current_path = Some(path.to_string());
+            continue;
+        }
+        if line.starts_with("*** ") {
+            if let Some(path) = current_path.take() {
+                candidates.extend(symbol_replacements_from_hunks(
+                    project_root,
+                    &path,
+                    &hunk_lines,
+                )?);
+                hunk_lines.clear();
+            }
+            continue;
+        }
+        if current_path.is_some() {
+            hunk_lines.push(line.to_string());
+        }
+    }
+
+    Ok(candidates)
+}
+
+fn symbol_replacements_from_hunks(
+    project_root: &Path,
+    relative_path: &str,
+    hunk_lines: &[String],
+) -> Result<Vec<SymbolReplacementCandidate>> {
+    let path = checked_project_path(project_root, relative_path)?;
+    let source =
+        fs::read_to_string(&path).with_context(|| format!("failed to read {relative_path}"))?;
+    let mut candidates = Vec::new();
+
+    for replacement in extract_complete_function_blocks(hunk_lines) {
+        let Ok(symbols) = symbols_for_source(&path, &replacement) else {
+            continue;
+        };
+        if symbols.len() != 1 {
+            continue;
+        }
+        let symbol = &symbols[0];
+        let Ok(edit) = replace_symbol_definition(&path, &source, &symbol.name, &replacement, None)
+        else {
+            continue;
+        };
+        if edit.content != source {
+            candidates.push(SymbolReplacementCandidate {
+                path: path.clone(),
+                content: edit.content,
+            });
+        }
+    }
+
+    Ok(candidates)
+}
+
+fn extract_complete_function_blocks(hunk_lines: &[String]) -> Vec<String> {
+    let mut blocks = Vec::new();
+    let mut index = 0;
+    while index < hunk_lines.len() {
+        let Some(content) = replacement_line_content(&hunk_lines[index]) else {
+            index += 1;
+            continue;
+        };
+        if !looks_like_function_start(content) {
+            index += 1;
+            continue;
+        }
+
+        let mut block = Vec::new();
+        let mut brace_balance = 0isize;
+        let mut saw_open_brace = false;
+        let mut cursor = index;
+        while cursor < hunk_lines.len() {
+            let Some(content) = replacement_line_content(&hunk_lines[cursor]) else {
+                break;
+            };
+            block.push(content.to_string());
+            for ch in content.chars() {
+                match ch {
+                    '{' => {
+                        saw_open_brace = true;
+                        brace_balance += 1;
+                    }
+                    '}' => brace_balance -= 1,
+                    _ => {}
+                }
+            }
+            cursor += 1;
+            if saw_open_brace && brace_balance == 0 {
+                blocks.push(block.join("\n"));
+                break;
+            }
+        }
+
+        index = cursor.max(index + 1);
+    }
+    blocks
+}
+
+fn replacement_line_content(line: &str) -> Option<&str> {
+    if line.starts_with("@@") || line.starts_with('-') {
+        None
+    } else if let Some(content) = line.strip_prefix('+') {
+        Some(content)
+    } else if let Some(content) = line.strip_prefix(' ') {
+        Some(content)
+    } else {
+        Some(line)
+    }
+}
+
+fn looks_like_function_start(line: &str) -> bool {
+    let trimmed = line.trim_start();
+    trimmed.starts_with("fn ")
+        || trimmed.starts_with("pub fn ")
+        || trimmed.starts_with("pub(crate) fn ")
+        || trimmed.starts_with("pub(super) fn ")
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1609,6 +1844,64 @@ mod tests {
             .unwrap();
         assert!(result.ok, "patch failed: {:?}", result.output);
         assert_eq!(fs::read_to_string(&path).unwrap(), "foo\nBAR\nbaz\n");
+    }
+
+    #[tokio::test]
+    async fn test_structured_update_accepts_unprefixed_context_lines() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("lib.rs");
+        fs::write(&path, "pub fn target() -> i32 {\n    1\n}\n").unwrap();
+
+        let tool = WriteTool::new(dir.path().to_path_buf());
+        let result = tool
+            .invoke(ToolInvocation {
+                id: "test-unprefixed-context".into(),
+                tool_name: "write".into(),
+                input: json!({
+                    "patch": "*** Begin Patch\n*** Update File: lib.rs\n@@\npub fn target() -> i32 {\n-    1\n+    2\n}\n*** End Patch",
+                }),
+            })
+            .await
+            .unwrap();
+
+        assert!(result.ok, "patch failed: {:?}", result.output);
+        assert_eq!(
+            fs::read_to_string(&path).unwrap(),
+            "pub fn target() -> i32 {\n    2\n}\n"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_malformed_structured_patch_can_recover_symbol_replacement() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("lib.rs");
+        fs::write(
+            &path,
+            "#[derive(Debug)]\npub struct SymbolRecord;\n\npub fn search_symbols() -> i32 {\n    1\n}\n",
+        )
+        .unwrap();
+
+        let tool = WriteTool::new(dir.path().to_path_buf());
+        let result = tool
+            .invoke(ToolInvocation {
+                id: "test-symbol-fallback".into(),
+                tool_name: "write".into(),
+                input: json!({
+                    "patch": "*** Begin Patch\n*** Update File: lib.rs\n@@\n-use std::collections::HashSet;\n+\n #[derive(Debug)]\n@@\n-use std::collections::HashSet;\n pub fn search_symbols() -> i32 {\n     1\n@@\n pub fn search_symbols() -> i32 {\n     2\n }\n*** End Patch",
+                }),
+            })
+            .await
+            .unwrap();
+
+        assert!(result.ok, "patch failed: {:?}", result.output);
+        assert_eq!(
+            result.output["method"],
+            "structured_symbol_replacement_fallback"
+        );
+        assert_eq!(
+            fs::read_to_string(&path).unwrap(),
+            "#[derive(Debug)]\npub struct SymbolRecord;\n\npub fn search_symbols() -> i32 {\n    2\n}\n"
+        );
     }
 
     #[tokio::test]

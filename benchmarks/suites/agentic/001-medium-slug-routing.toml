@@ -1,0 +1,22 @@
+version = 1
+id = "medium-slug-routing"
+title = "fix product slug routing"
+category = "bug_fix"
+fixture = "benchmarks/fixtures/rust-slug-routing"
+task = "Fix product slug normalization and lookup. Keep the implementation small, preserve the public API, and run the relevant Rust tests."
+timeout_ms = 600000
+tags = ["medium", "rust", "multi-file", "normalization"]
+
+[metadata]
+difficulty = "medium"
+focus = "multi-file debugging, string normalization, targeted tests"
+
+[agent]
+mode = "parity"
+profile = "medium"
+
+[[verifiers]]
+verifier_type = "command"
+command = "cargo test --quiet"
+timeout_ms = 120000
+required = true

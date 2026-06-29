@@ -82,6 +82,11 @@ pub(crate) trait ProviderBehavior: Send + Sync {
             cache_read_tokens,
         }
     }
+
+    /// Whether this provider endpoint accepts OpenAI-compatible `parallel_tool_calls`.
+    fn supports_parallel_tool_calls(&self, _endpoint: Endpoint) -> bool {
+        false
+    }
 }
 
 /// Helper: create a `Bearer` authorization header value from an API key.
@@ -124,6 +129,10 @@ impl ProviderBehavior for OpenAiBehavior {
             Endpoint::ChatCompletions | Endpoint::AnthropicMessages
         );
         standard_bearer_headers(api_key, content_type)
+    }
+
+    fn supports_parallel_tool_calls(&self, endpoint: Endpoint) -> bool {
+        matches!(endpoint, Endpoint::Responses | Endpoint::ChatCompletions)
     }
 }
 
@@ -243,6 +252,10 @@ impl ProviderBehavior for OpenRouterBehavior {
         headers.insert("X-Title", HeaderValue::from_static(OPENROUTER_TITLE));
         Ok(headers)
     }
+
+    fn supports_parallel_tool_calls(&self, endpoint: Endpoint) -> bool {
+        matches!(endpoint, Endpoint::Responses | Endpoint::ChatCompletions)
+    }
 }
 
 // ─── GitHub Copilot ───────────────────────────────────────────────────────────
@@ -304,6 +317,10 @@ impl ProviderBehavior for OpencodeBehavior {
         );
         standard_bearer_headers(api_key, content_type)
     }
+
+    fn supports_parallel_tool_calls(&self, endpoint: Endpoint) -> bool {
+        matches!(endpoint, Endpoint::Responses | Endpoint::ChatCompletions)
+    }
 }
 
 // ─── Opencode Zen ─────────────────────────────────────────────────────────────
@@ -329,6 +346,10 @@ impl ProviderBehavior for OpencodeZenBehavior {
     ) -> Result<HeaderMap, ProviderError> {
         standard_bearer_headers(api_key, true)
     }
+
+    fn supports_parallel_tool_calls(&self, endpoint: Endpoint) -> bool {
+        matches!(endpoint, Endpoint::Responses | Endpoint::ChatCompletions)
+    }
 }
 
 // ─── Opencode Go ──────────────────────────────────────────────────────────────
@@ -353,6 +374,10 @@ impl ProviderBehavior for OpencodeGoBehavior {
         _endpoint: Endpoint,
     ) -> Result<HeaderMap, ProviderError> {
         standard_bearer_headers(api_key, true)
+    }
+
+    fn supports_parallel_tool_calls(&self, endpoint: Endpoint) -> bool {
+        matches!(endpoint, Endpoint::Responses | Endpoint::ChatCompletions)
     }
 }
 
@@ -410,6 +435,10 @@ impl ProviderBehavior for GroqBehavior {
     ) -> Result<HeaderMap, ProviderError> {
         standard_bearer_headers(api_key, true)
     }
+
+    fn supports_parallel_tool_calls(&self, endpoint: Endpoint) -> bool {
+        matches!(endpoint, Endpoint::Responses | Endpoint::ChatCompletions)
+    }
 }
 
 // ─── Xai ──────────────────────────────────────────────────────────────────────
@@ -434,6 +463,10 @@ impl ProviderBehavior for XaiBehavior {
         _endpoint: Endpoint,
     ) -> Result<HeaderMap, ProviderError> {
         standard_bearer_headers(api_key, true)
+    }
+
+    fn supports_parallel_tool_calls(&self, endpoint: Endpoint) -> bool {
+        matches!(endpoint, Endpoint::Responses | Endpoint::ChatCompletions)
     }
 }
 

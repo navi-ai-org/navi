@@ -13,7 +13,7 @@ use crate::prompt::{PromptCache, SystemPromptInput};
 use crate::runtime_components::RuntimeComponents;
 use crate::security::SecurityDecision;
 use crate::skills::SkillManifest;
-use crate::tool::ToolExecutor;
+use crate::tool::{ToolExecutor, ToolParallelism};
 use anyhow::Result;
 use futures_util::StreamExt;
 use serde_json::{Value, json};
@@ -590,11 +590,11 @@ async fn handle_tool_calls(
     }
 
     let mut all_results = immediate_results;
+    let execution_lock = Arc::new(tokio::sync::RwLock::new(()));
     for chunk in executable_calls.chunks(policy.max_parallel_tool_calls.max(1)) {
-        let tool_futures = chunk
-            .iter()
-            .cloned()
-            .map(|invocation| execute_tool_call(ctx, policy, invocation));
+        let tool_futures = chunk.iter().cloned().map(|invocation| {
+            execute_tool_call_with_parallelism(ctx, policy, invocation, execution_lock.clone())
+        });
         all_results.extend(futures_util::future::join_all(tool_futures).await);
     }
 
@@ -621,6 +621,24 @@ async fn handle_tool_calls(
     }
 
     None
+}
+
+async fn execute_tool_call_with_parallelism(
+    ctx: &TurnContext,
+    policy: HarnessPolicy,
+    invocation: crate::tool::ToolInvocation,
+    execution_lock: Arc<tokio::sync::RwLock<()>>,
+) -> ToolExecutionResult {
+    match ctx.tool_executor.parallelism_for(&invocation.tool_name) {
+        ToolParallelism::Shared => {
+            let _guard = execution_lock.read().await;
+            execute_tool_call(ctx, policy, invocation).await
+        }
+        ToolParallelism::Exclusive => {
+            let _guard = execution_lock.write().await;
+            execute_tool_call(ctx, policy, invocation).await
+        }
+    }
 }
 
 async fn execute_tool_call(

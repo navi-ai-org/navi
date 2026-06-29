@@ -8,7 +8,6 @@ const READ_ONLY_TOOLS: &[&str] = &[
     "read_file",
     "fs_browser",
     "grep",
-    "git_ops",
     "read",
     "search",
     "code",
@@ -396,12 +395,11 @@ mod tests {
             ModelMessage::tool_result("call-1", "read_file", "file content here".to_string()),
             ModelMessage::tool_result("call-2", "write_file", "written content".to_string()),
             ModelMessage::tool_result("call-3", "grep", "match results".to_string()),
-            ModelMessage::tool_result("call-4", "git_ops", "git status".to_string()),
             ModelMessage::tool_result("call-5", "bash", "command output".to_string()),
         ];
 
         let cleared = micro_compact(&mut messages, 60);
-        assert_eq!(cleared, 3);
+        assert_eq!(cleared, 2);
         assert!(
             messages[3]
                 .content
@@ -413,12 +411,7 @@ mod tests {
                 .content
                 .contains("[Old tool result content cleared]")
         );
-        assert!(
-            messages[6]
-                .content
-                .contains("[Old tool result content cleared]")
-        );
-        assert_eq!(messages[7].content, "command output");
+        assert_eq!(messages[6].content, "command output");
     }
 
     #[test]

@@ -20,7 +20,6 @@ const STUDY_COMPACTABLE_TOOLS: &[&str] = &[
     "read_file",
     "fs_browser",
     "grep",
-    "git_ops",
     "bash",
     "consultar_materiais",
     "material_lookup",

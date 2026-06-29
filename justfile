@@ -46,6 +46,23 @@ harness-replay:
     cargo run -p navi-cli -- eval run evals/suites/b0
     cargo run -p navi-cli -- eval run evals/suites/beyond
 
+# Run the full agentic benchmark corpus with the baseline benchmark model.
+bench suite="benchmarks/suites" output="benchmarks/runs/benchmark-latest.json" provider="opencode" model="deepseek-v4-flash-free":
+    mkdir -p "$(dirname "{{output}}")"
+    @status=0; cargo run -p navi-cli -- bench run "{{suite}}" --auto-approve --provider "{{provider}}" --model "{{model}}" --output "{{output}}" || status=$?; node benchmarks/site/generate-runs-index.mjs; echo "Wrote {{output}}"; exit $status
+
+# Run only the smoke benchmark suite.
+bench-smoke output="benchmarks/runs/smoke-latest.json" provider="opencode" model="deepseek-v4-flash-free":
+    @just bench benchmarks/suites/smoke "{{output}}" "{{provider}}" "{{model}}"
+
+# Print the local benchmark report path.
+bench-index:
+    node benchmarks/site/generate-runs-index.mjs
+
+# Generate the local benchmark index and print the report path.
+bench-report: bench-index
+    @echo "Open benchmarks/site/index.html"
+
 # Regenerate the TUI golden snapshots in crates/navi-tui/tests/snapshots/.
 # Run this after an intentional rendering change is reviewed by hand.
 snapshot-update:

@@ -353,336 +353,23 @@ fn tool_search_is_visible_in_initial_definitions() {
     assert!(visible.contains(&"tool_search".to_string()), "{visible:?}");
 }
 
-#[tokio::test]
-async fn top_files_is_registered() {
+#[test]
+fn removed_tools_are_not_registered() {
     let tempdir = tempfile::tempdir().expect("tempdir");
     let executor = executor(tempdir.path());
-
-    let definition = executor.definition("top_files").expect("top_files");
-
-    assert_eq!(definition.kind, ToolKind::Read);
-    assert_eq!(definition.input_schema["type"], "object");
-}
-
-#[tokio::test]
-async fn top_files_returns_ranked_relevant_files() {
-    let tempdir = tempfile::tempdir().expect("tempdir");
-    let executor = executor(tempdir.path());
-    std::fs::create_dir_all(tempdir.path().join("src")).expect("mkdir");
-    std::fs::write(
-        tempdir.path().join("src/auth.rs"),
-        "pub fn provider_auth() { let token_source = \"env\"; }\n",
-    )
-    .expect("write auth");
-    std::fs::write(
-        tempdir.path().join("src/render.rs"),
-        "pub fn render_view() {}\n",
-    )
-    .expect("write render");
-
-    let result = executor
-        .invoke(ToolInvocation {
-            id: "top".to_string(),
-            tool_name: "top_files".to_string(),
-            input: json!({ "query": "provider auth", "max_files": 2 }),
-        })
-        .await;
-
-    assert!(result.ok, "{:?}", result.output);
-    let files = result.output["files"].as_array().unwrap();
-    assert_eq!(files[0]["path"], "src/auth.rs");
-    assert!(
-        files[0]["content"]
-            .as_str()
-            .unwrap()
-            .contains("provider_auth")
-    );
-    assert!(
-        files[0]["reasons"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|reason| reason == "query_content_match")
-    );
-}
-
-#[tokio::test]
-async fn top_files_code_overview_prefers_code_structure_over_large_agent_docs() {
-    let tempdir = tempfile::tempdir().expect("tempdir");
-    let executor = executor(tempdir.path());
-    std::fs::create_dir_all(tempdir.path().join("crates/demo/src")).expect("mkdir");
-    std::fs::write(
-        tempdir.path().join("AGENTS.md"),
-        "project overview structure\n".repeat(300),
-    )
-    .expect("write agents");
-    std::fs::write(
-        tempdir.path().join("Cargo.toml"),
-        "[workspace]\nmembers = [\"crates/demo\"]\n",
-    )
-    .expect("write workspace");
-    std::fs::write(
-        tempdir.path().join("crates/demo/Cargo.toml"),
-        "[package]\nname = \"demo\"\n",
-    )
-    .expect("write crate manifest");
-    std::fs::write(
-        tempdir.path().join("crates/demo/src/lib.rs"),
-        "pub mod runtime;\npub fn start_engine_runtime() {}\n",
-    )
-    .expect("write lib");
-    std::fs::write(
-        tempdir.path().join("crates/demo/src/runtime.rs"),
-        "pub struct AgentRuntime;\n",
-    )
-    .expect("write runtime");
-
-    let result = executor
-        .invoke(ToolInvocation {
-            id: "top".to_string(),
-            tool_name: "top_files".to_string(),
-            input: json!({ "query": "project overview structure", "max_files": 3 }),
-        })
-        .await;
-
-    assert!(result.ok, "{:?}", result.output);
-    let paths = result.output["files"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|file| file["path"].as_str().unwrap().to_string())
+    let visible = executor
+        .definitions()
+        .into_iter()
+        .map(|definition| definition.name)
         .collect::<Vec<_>>();
-    assert!(paths.contains(&"Cargo.toml".to_string()), "{paths:?}");
+
+    assert!(executor.definition("top_files").is_none());
+    assert!(executor.definition("tool_workflow").is_none());
+    assert!(!visible.contains(&"top_files".to_string()), "{visible:?}");
     assert!(
-        paths
-            .iter()
-            .any(|path| path == "crates/demo/src/lib.rs" || path == "crates/demo/src/runtime.rs"),
-        "{paths:?}"
+        !visible.contains(&"tool_workflow".to_string()),
+        "{visible:?}"
     );
-    assert_ne!(paths.first().map(String::as_str), Some("AGENTS.md"));
-}
-
-#[tokio::test]
-async fn top_files_docs_query_keeps_agent_docs_on_top() {
-    let tempdir = tempfile::tempdir().expect("tempdir");
-    let executor = executor(tempdir.path());
-    std::fs::create_dir_all(tempdir.path().join("src")).expect("mkdir");
-    std::fs::write(
-        tempdir.path().join("AGENTS.md"),
-        "agent instructions rules guide\n".repeat(50),
-    )
-    .expect("write agents");
-    std::fs::write(
-        tempdir.path().join("src/main.rs"),
-        "fn main() { println!(\"agent instructions\"); }\n",
-    )
-    .expect("write main");
-
-    let result = executor
-        .invoke(ToolInvocation {
-            id: "top".to_string(),
-            tool_name: "top_files".to_string(),
-            input: json!({ "query": "agent instructions", "max_files": 2 }),
-        })
-        .await;
-
-    assert!(result.ok, "{:?}", result.output);
-    let files = result.output["files"].as_array().unwrap();
-    assert_eq!(files[0]["path"], "AGENTS.md");
-    assert!(
-        files[0]["reasons"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|reason| reason == "docs_overview_boost")
-    );
-}
-
-#[tokio::test]
-async fn top_files_truncates_long_files_to_default_limit() {
-    let tempdir = tempfile::tempdir().expect("tempdir");
-    let executor = executor(tempdir.path());
-    std::fs::create_dir_all(tempdir.path().join("src")).expect("mkdir");
-    let content = (1..=600)
-        .map(|line| format!("pub fn long_unique_{line}() {{}}"))
-        .collect::<Vec<_>>()
-        .join("\n");
-    std::fs::write(tempdir.path().join("src/long.rs"), format!("{content}\n")).expect("write long");
-
-    let result = executor
-        .invoke(ToolInvocation {
-            id: "top".to_string(),
-            tool_name: "top_files".to_string(),
-            input: json!({ "query": "long_unique" }),
-        })
-        .await;
-
-    assert!(result.ok, "{:?}", result.output);
-    let file = &result.output["files"].as_array().unwrap()[0];
-    assert_eq!(file["path"], "src/long.rs");
-    assert_eq!(file["end_line"], 400);
-    assert_eq!(file["total_lines"], 600);
-    assert!(file["truncated"].as_bool().unwrap());
-    assert!(
-        !file["content"]
-            .as_str()
-            .unwrap()
-            .contains("long_unique_500")
-    );
-}
-
-#[tokio::test]
-async fn top_files_respects_max_files() {
-    let tempdir = tempfile::tempdir().expect("tempdir");
-    let executor = executor(tempdir.path());
-    std::fs::create_dir_all(tempdir.path().join("src")).expect("mkdir");
-    for index in 0..5 {
-        std::fs::write(
-            tempdir.path().join(format!("src/file_{index}.rs")),
-            format!("pub fn needle_{index}() {{}}\n"),
-        )
-        .expect("write file");
-    }
-
-    let result = executor
-        .invoke(ToolInvocation {
-            id: "top".to_string(),
-            tool_name: "top_files".to_string(),
-            input: json!({ "query": "needle", "max_files": 2 }),
-        })
-        .await;
-
-    assert!(result.ok, "{:?}", result.output);
-    assert_eq!(result.output["files"].as_array().unwrap().len(), 2);
-    assert!(result.output["truncated"].as_bool().unwrap());
-}
-
-#[tokio::test]
-async fn top_files_skips_denied_paths() {
-    let tempdir = tempfile::tempdir().expect("tempdir");
-    let executor = executor(tempdir.path());
-    std::fs::create_dir_all(tempdir.path().join("src")).expect("mkdir src");
-    std::fs::create_dir_all(tempdir.path().join("node_modules/pkg")).expect("mkdir node_modules");
-    std::fs::write(
-        tempdir.path().join("src/open.rs"),
-        "pub fn needle_visible() {}\n",
-    )
-    .expect("write open");
-    std::fs::write(
-        tempdir.path().join("node_modules/pkg/hidden.rs"),
-        "pub fn needle_hidden() {}\n",
-    )
-    .expect("write hidden");
-
-    let result = executor
-        .invoke(ToolInvocation {
-            id: "top".to_string(),
-            tool_name: "top_files".to_string(),
-            input: json!({ "query": "needle", "max_files": 10 }),
-        })
-        .await;
-
-    assert!(result.ok, "{:?}", result.output);
-    let paths = result.output["files"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|file| file["path"].as_str().unwrap().to_string())
-        .collect::<Vec<_>>();
-    assert_eq!(paths, vec!["src/open.rs"]);
-}
-
-#[tokio::test]
-async fn top_files_skips_binary_files() {
-    let tempdir = tempfile::tempdir().expect("tempdir");
-    let executor = executor(tempdir.path());
-    std::fs::create_dir_all(tempdir.path().join("src")).expect("mkdir");
-    std::fs::write(
-        tempdir.path().join("src/text.rs"),
-        "pub fn binary_needle_text() {}\n",
-    )
-    .expect("write text");
-    std::fs::write(
-        tempdir.path().join("src/binary.rs"),
-        b"binary_needle\0not text",
-    )
-    .expect("write binary");
-
-    let result = executor
-        .invoke(ToolInvocation {
-            id: "top".to_string(),
-            tool_name: "top_files".to_string(),
-            input: json!({ "query": "binary_needle", "max_files": 10 }),
-        })
-        .await;
-
-    assert!(result.ok, "{:?}", result.output);
-    let paths = result.output["files"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|file| file["path"].as_str().unwrap().to_string())
-        .collect::<Vec<_>>();
-    assert_eq!(paths, vec!["src/text.rs"]);
-}
-
-#[tokio::test]
-async fn top_files_caps_total_output_bytes() {
-    let tempdir = tempfile::tempdir().expect("tempdir");
-    let executor = executor(tempdir.path());
-    std::fs::create_dir_all(tempdir.path().join("src")).expect("mkdir");
-    std::fs::write(
-        tempdir.path().join("src/large.rs"),
-        format!("pub fn cap_marker() {{}}\n{}\n", "x".repeat(1_000)),
-    )
-    .expect("write large");
-
-    let result = executor
-        .invoke(ToolInvocation {
-            id: "top".to_string(),
-            tool_name: "top_files".to_string(),
-            input: json!({ "query": "cap_marker", "max_total_bytes": 80 }),
-        })
-        .await;
-
-    assert!(result.ok, "{:?}", result.output);
-    let file = &result.output["files"].as_array().unwrap()[0];
-    assert!(file["truncated_by_total_limit"].as_bool().unwrap());
-    assert!(file["content"].as_str().unwrap().contains("<truncated>"));
-    assert!(result.output["truncated"].as_bool().unwrap());
-}
-
-#[tokio::test]
-async fn tool_workflow_batches_read_only_tools() {
-    let tempdir = tempfile::tempdir().expect("tempdir");
-    let executor = executor(tempdir.path());
-    std::fs::create_dir_all(tempdir.path().join("src")).expect("mkdir");
-    std::fs::write(tempdir.path().join("src/a.rs"), "fn alpha() {}\n").expect("write a");
-    std::fs::write(tempdir.path().join("src/b.rs"), "fn beta() { alpha(); }\n").expect("write b");
-
-    let result = executor
-        .invoke(ToolInvocation {
-            id: "workflow".to_string(),
-            tool_name: "tool_workflow".to_string(),
-            input: json!({
-                "script": r#"
-def workflow():
-    files = tool("fs_browser", {"action": "find", "path": "src", "pattern": ".rs"})["files"]
-    matches = []
-    for file in files:
-        read = tool("read_file", {"path": file})
-        if "alpha" in read["content"]:
-            matches.append(file)
-    return {"count": len(matches), "matches": matches}
-workflow()
-"#
-            }),
-        })
-        .await;
-
-    assert!(result.ok, "{:?}", result.output);
-    assert_eq!(result.output["result"]["count"], 2);
-    assert_eq!(result.output["tool_calls"], 3);
 }
 
 #[tokio::test]
@@ -812,60 +499,6 @@ async fn code_exec_rejects_untyped_operation_shape() {
             .as_str()
             .unwrap()
             .contains("invalid code_exec request")
-    );
-}
-
-#[tokio::test]
-async fn tool_workflow_rejects_non_read_only_nested_tools() {
-    let tempdir = tempfile::tempdir().expect("tempdir");
-    let executor = executor(tempdir.path());
-
-    let result = executor
-        .invoke(ToolInvocation {
-            id: "workflow".to_string(),
-            tool_name: "tool_workflow".to_string(),
-            input: json!({
-                "script": r#"tool("write_file", {"path": "x.txt", "content": "nope"})"#
-            }),
-        })
-        .await;
-
-    assert!(!result.ok);
-    assert!(
-        result.output["error"]
-            .as_str()
-            .unwrap()
-            .contains("only allows read_file, read, grep, search, fs_browser, read-only git_ops, symbols_overview, find_symbol, find_references, and code_diagnostics")
-    );
-}
-
-#[tokio::test]
-async fn tool_workflow_enforces_tool_call_limit() {
-    let tempdir = tempfile::tempdir().expect("tempdir");
-    let executor = executor(tempdir.path());
-    std::fs::write(tempdir.path().join("a.txt"), "a\n").expect("write a");
-    std::fs::write(tempdir.path().join("b.txt"), "b\n").expect("write b");
-
-    let result = executor
-        .invoke(ToolInvocation {
-            id: "workflow".to_string(),
-            tool_name: "tool_workflow".to_string(),
-            input: json!({
-                "max_tool_calls": 1,
-                "script": r#"
-tool("read_file", {"path": "a.txt"})
-tool("read_file", {"path": "b.txt"})
-"#
-            }),
-        })
-        .await;
-
-    assert!(!result.ok);
-    assert!(
-        result.output["error"]
-            .as_str()
-            .unwrap()
-            .contains("exceeded max_tool_calls")
     );
 }
 
@@ -1086,13 +719,6 @@ fn model_definitions_use_simplified_tool_schemas() {
         .find(|definition| definition.name == "grep")
         .expect("grep definition");
     assert_eq!(grep.input_schema["required"], json!(["pattern"]));
-
-    let git_ops = executor
-        .definitions()
-        .into_iter()
-        .find(|definition| definition.name == "git_ops")
-        .expect("git_ops definition");
-    assert_eq!(git_ops.input_schema["properties"]["args"]["type"], "array");
 }
 
 fn schema_contains_composition_keyword(value: &serde_json::Value) -> bool {
@@ -1885,21 +1511,6 @@ async fn fs_browser_list_skips_hidden_and_build_dirs() {
 
 // ── test_runner regression tests ─────────────────────────────────────────────
 
-// ── git_ops regression tests ─────────────────────────────────────────────────
-
-#[test]
-fn git_ops_definition_has_expected_schema() {
-    let tempdir = tempfile::tempdir().expect("tempdir");
-    let executor = executor(tempdir.path());
-
-    let def = executor.definition("git_ops").expect("git_ops");
-    assert_eq!(def.name, "git_ops");
-    assert_eq!(def.input_schema["type"], "object");
-    let required = def.input_schema["required"].as_array().unwrap();
-    assert!(required.contains(&json!("command")));
-    assert!(def.input_schema["properties"]["args"]["oneOf"].is_array());
-}
-
 // ── package_manager regression tests ─────────────────────────────────────────
 
 #[test]
@@ -1957,7 +1568,6 @@ fn all_specialized_tools_registered_in_definitions() {
     assert!(names.contains(&"grep".to_string()));
     assert!(names.contains(&"fs_browser".to_string()));
     assert!(names.contains(&"search".to_string()));
-    assert!(names.contains(&"git_ops".to_string()));
     assert!(names.contains(&"package_manager".to_string()));
 }
 
@@ -1966,7 +1576,7 @@ fn all_specialized_tools_have_valid_schemas() {
     let tempdir = tempfile::tempdir().expect("tempdir");
     let executor = executor(tempdir.path());
 
-    for name in ["search", "git_ops", "package_manager"] {
+    for name in ["search", "package_manager"] {
         let def = executor.definition(name).expect(name);
         assert_eq!(def.input_schema["type"], "object");
         assert!(

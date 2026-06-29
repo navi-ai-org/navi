@@ -105,15 +105,8 @@ impl BenchSuite {
         }
 
         let mut files = Vec::new();
-        for entry in std::fs::read_dir(path)
-            .with_context(|| format!("failed to read benchmark suite {}", path.display()))?
-        {
-            let entry = entry?;
-            let entry_path = entry.path();
-            if is_bench_case_file(&entry_path) {
-                files.push(entry_path);
-            }
-        }
+        collect_bench_case_files(path, &mut files)
+            .with_context(|| format!("failed to read benchmark suite {}", path.display()))?;
         files.sort();
 
         let mut cases = Vec::new();
@@ -145,6 +138,10 @@ pub struct BenchRun {
     pub version: u32,
     pub run_id: String,
     pub suite_name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
     pub started_at: u64,
     pub ended_at: u64,
     pub project_root: PathBuf,
@@ -436,6 +433,19 @@ fn is_bench_case_file(path: &Path) -> bool {
         )
 }
 
+fn collect_bench_case_files(path: &Path, files: &mut Vec<PathBuf>) -> Result<()> {
+    for entry in std::fs::read_dir(path)? {
+        let entry = entry?;
+        let entry_path = entry.path();
+        if entry_path.is_dir() {
+            collect_bench_case_files(&entry_path, files)?;
+        } else if is_bench_case_file(&entry_path) {
+            files.push(entry_path);
+        }
+    }
+    Ok(())
+}
+
 fn ratio(numerator: usize, denominator: usize) -> f64 {
     if denominator == 0 {
         0.0
@@ -534,6 +544,35 @@ required = true
     }
 
     #[test]
+    fn loads_benchmark_suite_recursively() {
+        let dir = tempfile::tempdir().unwrap();
+        let nested = dir.path().join("agentic");
+        std::fs::create_dir_all(&nested).unwrap();
+        std::fs::write(
+            nested.join("case.toml"),
+            r#"
+version = 1
+id = "nested-case"
+title = "Nested case"
+category = "repo"
+fixture = "benchmarks/fixtures/example"
+task = "Fix the repo."
+
+[[verifiers]]
+verifier_type = "command"
+command = "true"
+required = true
+"#,
+        )
+        .unwrap();
+
+        let suite = BenchSuite::load(dir.path()).unwrap();
+
+        assert_eq!(suite.cases.len(), 1);
+        assert_eq!(suite.cases[0].id, "nested-case");
+    }
+
+    #[test]
     fn aggregates_metrics_for_success_rates_and_efficiency() {
         let metrics =
             aggregate_bench_metrics(&[result("a", true, 100, 3), result("b", false, 50, 2)], 250);
@@ -552,6 +591,8 @@ required = true
             version: 1,
             run_id: "base".to_string(),
             suite_name: "suite".to_string(),
+            provider: None,
+            model: None,
             started_at: 1,
             ended_at: 2,
             project_root: PathBuf::from("."),
@@ -562,6 +603,8 @@ required = true
             version: 1,
             run_id: "candidate".to_string(),
             suite_name: "suite".to_string(),
+            provider: None,
+            model: None,
             started_at: 1,
             ended_at: 2,
             project_root: PathBuf::from("."),

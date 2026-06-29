@@ -290,22 +290,6 @@ static LOOKUP: LazyLock<std::collections::HashMap<&'static str, ToolMetadata>> =
         );
         insert(
             &mut map,
-            "git_ops",
-            ToolMetadata {
-                namespace: "git".to_string(),
-                risk: crate::tool::ToolRisk::Medium,
-                is_read_only: false,
-                is_concurrency_safe: false,
-                capabilities: vec!["repo.git".to_string()],
-                tags: vec!["git", "vcs"]
-                    .into_iter()
-                    .map(|s| s.to_string())
-                    .collect(),
-                ..ToolMetadata::default()
-            },
-        );
-        insert(
-            &mut map,
             "question",
             ToolMetadata {
                 namespace: "interactive".to_string(),
@@ -402,11 +386,6 @@ static LOOKUP: LazyLock<std::collections::HashMap<&'static str, ToolMetadata>> =
             &mut map,
             "inspect_image",
             ToolMetadata::reader("file", &["image", "inspect"]),
-        );
-        insert(
-            &mut map,
-            "top_files",
-            ToolMetadata::reader("repo", &["files", "overview"]),
         );
         insert(
             &mut map,
@@ -587,7 +566,6 @@ mod tests {
             "test_discovery",
             "ownership_churn_query",
             "branch_race_start",
-            "git_ops",
             "question",
             "plan",
             "init_session",
@@ -599,7 +577,6 @@ mod tests {
             "new_context_window",
             "view_image",
             "inspect_image",
-            "top_files",
             "append_note",
             "history_ops",
             "package_manager",

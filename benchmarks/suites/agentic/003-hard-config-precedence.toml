@@ -1,0 +1,22 @@
+version = 1
+id = "hard-config-precedence"
+title = "fix layered config precedence"
+category = "runtime_config"
+fixture = "benchmarks/fixtures/rust-config-precedence"
+task = "Fix layered configuration resolution. Defaults should be overridden by global config, then project config, then environment variables. Preserve existing types and run the tests."
+timeout_ms = 600000
+tags = ["hard", "rust", "config", "precedence"]
+
+[metadata]
+difficulty = "hard"
+focus = "layering semantics, regression tests, careful precedence reasoning"
+
+[agent]
+mode = "parity"
+profile = "medium"
+
+[[verifiers]]
+verifier_type = "command"
+command = "cargo test --quiet"
+timeout_ms = 120000
+required = true

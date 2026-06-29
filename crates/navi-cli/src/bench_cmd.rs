@@ -1,12 +1,14 @@
 use anyhow::{Context, Result};
 use navi_core::{
     ApprovalDecision, BenchCase, BenchCaseMetrics, BenchCaseResult, BenchCompareConfig, BenchRun,
-    BenchSuite, HarnessProfile, LoadedConfig, RuntimeEvent, RuntimeEventKind, VerifierResult,
-    VerifierRunner, aggregate_bench_metrics, compare_bench_runs,
+    BenchSuite, HarnessProfile, LoadedConfig, RuntimeEvent, RuntimeEventKind, ToolResult,
+    VerifierResult, VerifierRunner, aggregate_bench_metrics, compare_bench_runs,
 };
 use navi_sdk::{NaviEngineBuilder, NaviSessionRequest, NaviTurnRequest};
+use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tempfile::TempDir;
@@ -24,6 +26,8 @@ pub async fn handle_bench_command(
             output,
             project,
             json,
+            provider,
+            model,
             auto_approve,
             keep_workspaces,
         } => {
@@ -33,6 +37,8 @@ pub async fn handle_bench_command(
                 loaded_config,
                 output,
                 json,
+                provider,
+                model,
                 auto_approve,
                 keep_workspaces,
             )
@@ -66,12 +72,20 @@ async fn run_benchmark(
     loaded_config: LoadedConfig,
     output: Option<PathBuf>,
     json: bool,
+    provider: Option<String>,
+    model: Option<String>,
     auto_approve: bool,
     keep_workspaces: bool,
 ) -> Result<()> {
     let suite = BenchSuite::load(&path)?;
     let started_at = current_unix_millis();
     let started = Instant::now();
+    let run_provider = provider
+        .clone()
+        .unwrap_or_else(|| loaded_config.config.model.provider.clone());
+    let run_model = model
+        .clone()
+        .unwrap_or_else(|| loaded_config.config.model.name.clone());
     let mut results = Vec::new();
 
     for case in suite.cases {
@@ -80,6 +94,8 @@ async fn run_benchmark(
                 case,
                 &project_root,
                 loaded_config.clone(),
+                provider.as_deref(),
+                model.as_deref(),
                 auto_approve,
                 keep_workspaces,
             )
@@ -93,6 +109,8 @@ async fn run_benchmark(
         version: BenchRun::CURRENT_VERSION,
         run_id: format!("bench-{started_at}"),
         suite_name: suite.name,
+        provider: Some(run_provider),
+        model: Some(run_model),
         started_at,
         ended_at,
         project_root,
@@ -123,6 +141,8 @@ async fn run_case(
     case: BenchCase,
     project_root: &Path,
     loaded_config: LoadedConfig,
+    provider_override: Option<&str>,
+    model_override: Option<&str>,
     auto_approve: bool,
     keep_workspace: bool,
 ) -> BenchCaseResult {
@@ -168,6 +188,8 @@ async fn run_case(
             &case,
             &workspace_path,
             loaded_config,
+            provider_override,
+            model_override,
             auto_approve,
             &mut events,
         )
@@ -223,10 +245,12 @@ async fn run_agent_turn(
     case: &BenchCase,
     workspace: &Path,
     loaded_config: LoadedConfig,
+    provider_override: Option<&str>,
+    model_override: Option<&str>,
     auto_approve: bool,
     events_out: &mut Vec<RuntimeEvent>,
 ) -> Result<String> {
-    let loaded_config = apply_agent_config(loaded_config, case)?;
+    let loaded_config = apply_agent_config(loaded_config, case, provider_override, model_override)?;
     let engine = Arc::new(
         NaviEngineBuilder::from_project(workspace.to_path_buf())
             .loaded_config(loaded_config)
@@ -350,7 +374,18 @@ impl BenchLimitState {
     }
 }
 
-fn apply_agent_config(mut loaded_config: LoadedConfig, case: &BenchCase) -> Result<LoadedConfig> {
+fn apply_agent_config(
+    mut loaded_config: LoadedConfig,
+    case: &BenchCase,
+    provider_override: Option<&str>,
+    model_override: Option<&str>,
+) -> Result<LoadedConfig> {
+    if let Some(provider) = provider_override {
+        loaded_config.config.model.provider = provider.to_string();
+    }
+    if let Some(model) = model_override {
+        loaded_config.config.model.name = model.to_string();
+    }
     if let Some(provider) = &case.agent.provider {
         loaded_config.config.model.provider = provider.clone();
     }
@@ -393,7 +428,9 @@ fn metrics_from_events(events: &[RuntimeEvent]) -> BenchCaseMetrics {
             RuntimeEventKind::ToolRequested(_) => {
                 metrics.tool_calls += 1;
             }
-            RuntimeEventKind::ToolCompleted(result) if !result.ok => {
+            RuntimeEventKind::ToolCompleted(result)
+                if !result.ok && counts_as_failed_tool_call(result) =>
+            {
                 metrics.failed_tool_calls += 1;
             }
             RuntimeEventKind::TokensUpdated {
@@ -411,6 +448,19 @@ fn metrics_from_events(events: &[RuntimeEvent]) -> BenchCaseMetrics {
         }
     }
     metrics
+}
+
+fn counts_as_failed_tool_call(result: &ToolResult) -> bool {
+    !is_diagnostic_process_exit(result)
+}
+
+fn is_diagnostic_process_exit(result: &ToolResult) -> bool {
+    result
+        .output
+        .get("status")
+        .and_then(Value::as_i64)
+        .is_some()
+        && (result.output.get("stdout").is_some() || result.output.get("stderr").is_some())
 }
 
 fn required_verifiers_passed(
@@ -440,6 +490,7 @@ fn prepare_workspace(
         .prefix(&format!("navi-bench-{}-", sanitize_path_part(&case.id)))
         .tempdir()?;
     copy_dir_recursive(&fixture, tempdir.path())?;
+    initialize_git_workspace(tempdir.path())?;
     if keep_workspace {
         let path = tempdir.keep();
         Ok(PreparedWorkspace::Persisted(path))
@@ -500,6 +551,21 @@ fn copy_dir_recursive(source: &Path, destination: &Path) -> Result<()> {
                 )
             })?;
         }
+    }
+    Ok(())
+}
+
+fn initialize_git_workspace(workspace: &Path) -> Result<()> {
+    let status = Command::new("git")
+        .args(["init", "-q"])
+        .current_dir(workspace)
+        .status()
+        .context("failed to start git init for benchmark workspace")?;
+    if !status.success() {
+        anyhow::bail!(
+            "git init failed for benchmark workspace {}",
+            workspace.display()
+        );
     }
     Ok(())
 }
@@ -703,6 +769,7 @@ mod tests {
         let workspace = prepare_workspace(&case, dir.path(), false).unwrap();
 
         assert!(workspace.path().join("file.txt").exists());
+        assert!(workspace.path().join(".git").exists());
         assert_ne!(workspace.path(), fixture);
     }
 
@@ -727,6 +794,33 @@ mod tests {
             RuntimeEvent::new(RuntimeEventKind::TurnStarted {
                 turn_id: "t1".to_string(),
             }),
+            RuntimeEvent::new(RuntimeEventKind::ToolRequested(navi_core::ToolInvocation {
+                id: "one".to_string(),
+                tool_name: "bash".to_string(),
+                input: serde_json::json!({"command": "cargo test"}),
+            })),
+            RuntimeEvent::new(RuntimeEventKind::ToolCompleted(navi_core::ToolResult {
+                invocation_id: "one".to_string(),
+                ok: false,
+                output: serde_json::json!({
+                    "status": 101,
+                    "stdout": "test failed",
+                    "stderr": "",
+                }),
+            })),
+            RuntimeEvent::new(RuntimeEventKind::ToolRequested(navi_core::ToolInvocation {
+                id: "two".to_string(),
+                tool_name: "apply_patch".to_string(),
+                input: serde_json::json!({"patch": "*** Begin Patch\n*** End Patch"}),
+            })),
+            RuntimeEvent::new(RuntimeEventKind::ToolCompleted(navi_core::ToolResult {
+                invocation_id: "two".to_string(),
+                ok: false,
+                output: serde_json::json!({
+                    "error_code": "verification_failed",
+                    "error": "patch failed",
+                }),
+            })),
             RuntimeEvent::new(RuntimeEventKind::TokensUpdated {
                 input_tokens: 10,
                 output_tokens: 5,
@@ -738,6 +832,8 @@ mod tests {
         let metrics = metrics_from_events(&events);
 
         assert_eq!(metrics.turn_count, 1);
+        assert_eq!(metrics.tool_calls, 2);
+        assert_eq!(metrics.failed_tool_calls, 1);
         assert_eq!(metrics.input_tokens, 10);
         assert_eq!(metrics.output_tokens, 5);
         assert_eq!(metrics.total_tokens, 15);
@@ -796,5 +892,38 @@ mod tests {
             .unwrap_err();
 
         assert!(tool_error.to_string().contains("max_tool_calls"));
+    }
+
+    #[test]
+    fn benchmark_provider_model_overrides_are_used_unless_case_overrides() {
+        let mut loaded = LoadedConfig::default();
+        loaded.config.model.provider = "current-provider".to_string();
+        loaded.config.model.name = "current-model".to_string();
+
+        let case = BenchCase::default();
+        let resolved = apply_agent_config(
+            loaded.clone(),
+            &case,
+            Some("opencode"),
+            Some("deepseek-v4-flash-free"),
+        )
+        .unwrap();
+
+        assert_eq!(resolved.config.model.provider, "opencode");
+        assert_eq!(resolved.config.model.name, "deepseek-v4-flash-free");
+
+        let mut case = BenchCase::default();
+        case.agent.provider = Some("anthropic".to_string());
+        case.agent.model = Some("claude-sonnet-4-20250514".to_string());
+        let resolved = apply_agent_config(
+            loaded,
+            &case,
+            Some("opencode"),
+            Some("deepseek-v4-flash-free"),
+        )
+        .unwrap();
+
+        assert_eq!(resolved.config.model.provider, "anthropic");
+        assert_eq!(resolved.config.model.name, "claude-sonnet-4-20250514");
     }
 }

@@ -1024,13 +1024,6 @@ fn format_tool_activity(invocation: &ToolInvocation) -> String {
             .and_then(|value| value.as_str())
             .map(|command| format!("Run {}", one_line(command)))
             .unwrap_or_else(|| "Run command".to_string()),
-        "git_ops" => invocation
-            .input
-            .get("operation")
-            .or_else(|| invocation.input.get("action"))
-            .and_then(|value| value.as_str())
-            .map(|operation| format!("Git {operation}"))
-            .unwrap_or_else(|| "Git operation".to_string()),
         "apply_patch" => "Apply patch".to_string(),
         "subagent" => invocation
             .input
