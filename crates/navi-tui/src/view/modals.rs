@@ -1,5 +1,5 @@
-use navi_sdk::{ToolInvocation, model_can_run_publicly};
 use navi_sdk::NaviUsageReport;
+use navi_sdk::{ToolInvocation, model_can_run_publicly};
 use ratatui::layout::{Constraint, Direction, Layout, Margin, Rect};
 use ratatui::prelude::{Frame, Line, Span};
 use ratatui::style::{Color, Modifier, Style};
@@ -1353,10 +1353,7 @@ fn render_usage_report(lines: &mut Vec<Line<'_>>, report: &NaviUsageReport) {
             format!("{} ", report.provider_label),
             Style::default().fg(text()).add_modifier(Modifier::BOLD),
         ),
-        Span::styled(
-            format!("({plan_label})"),
-            Style::default().fg(muted()),
-        ),
+        Span::styled(format!("({plan_label})"), Style::default().fg(muted())),
     ]));
 
     if let Some(ref kind) = report.limit_reached_kind {
@@ -1410,7 +1407,11 @@ fn render_window_line(lines: &mut Vec<Line<'_>>, label: &str, window: &navi_sdk:
     let bar_width: u16 = 20;
     let filled = (used as u32 * bar_width as u32 / 100) as u16;
     let empty = bar_width.saturating_sub(filled);
-    let bar = format!("{}{}", "█".repeat(filled as usize), "░".repeat(empty as usize));
+    let bar = format!(
+        "{}{}",
+        "█".repeat(filled as usize),
+        "░".repeat(empty as usize)
+    );
 
     let bar_color = if used >= 90 {
         red()
@@ -1425,21 +1426,12 @@ fn render_window_line(lines: &mut Vec<Line<'_>>, label: &str, window: &navi_sdk:
     lines.push(Line::from(vec![
         Span::styled(format!("  {label:8} "), Style::default().fg(muted())),
         Span::styled(bar, Style::default().fg(bar_color)),
-        Span::styled(
-            format!(" {remaining}% left"),
-            Style::default().fg(text()),
-        ),
+        Span::styled(format!(" {remaining}% left"), Style::default().fg(text())),
     ]));
     if !reset_text.is_empty() {
         lines.push(Line::from(vec![
-            Span::styled(
-                format!("  {:8} ", ""),
-                Style::default().fg(muted()),
-            ),
-            Span::styled(
-                format!("resets {reset_text}"),
-                Style::default().fg(muted()),
-            ),
+            Span::styled(format!("  {:8} ", ""), Style::default().fg(muted())),
+            Span::styled(format!("resets {reset_text}"), Style::default().fg(muted())),
         ]));
     }
 }

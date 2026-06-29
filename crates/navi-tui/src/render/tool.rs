@@ -29,6 +29,8 @@ pub(crate) fn tool_compact_text(invocation: &ToolInvocation, result: &ToolResult
         {
             apply_patch_summary(invocation)
         }
+        // Direct write (path + content)
+        "write" => write_file_summary(invocation, result),
         "bash" => bash_summary(invocation, result),
         "grep" => grep_summary(invocation, result),
         "fs_browser" => fs_browser_summary(invocation, result),
@@ -167,13 +169,6 @@ fn formatted_tool_output(invocation: &ToolInvocation, result: &ToolResult) -> Op
             }
             content.push_str("```\n");
         }
-    } else if invocation.tool_name == "write_file" {
-        let path = obj.get("path").and_then(|v| v.as_str())?;
-        let (added, removed) = write_file_line_counts(invocation, result);
-        content.push_str(&format!(
-            "Edited {} (+{added} -{removed} lines)\n",
-            display_path(path)
-        ));
     } else if invocation.tool_name == "apply_patch"
         || (invocation.tool_name == "write"
             && (invocation.input.get("patch").is_some()
@@ -211,6 +206,13 @@ fn formatted_tool_output(invocation: &ToolInvocation, result: &ToolResult) -> Op
             }
             content.push_str("```\n");
         }
+    } else if invocation.tool_name == "write_file" || invocation.tool_name == "write" {
+        let path = obj.get("path").and_then(|v| v.as_str())?;
+        let (added, removed) = write_file_line_counts(invocation, result);
+        content.push_str(&format!(
+            "Edited {} (+{added} -{removed} lines)\n",
+            display_path(path)
+        ));
     } else if invocation.tool_name == "bash" {
         let status = obj.get("status").and_then(|v| v.as_i64());
         if let Some(status_code) = status {
