@@ -1,0 +1,142 @@
+# Release workflow — builds binaries and creates a GitHub Release.
+#
+# Trigger: push a tag matching v* (e.g., v0.2.0)
+#   git tag v0.2.0
+#   git push origin v0.2.0
+#
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+env:
+  CARGO_TERM_COLOR: always
+
+permissions:
+  contents: write
+
+jobs:
+  # ── Build binaries for all platforms ──────────────────────────────────────
+
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            archive: navi-linux-x64
+            npm_package: "@navi-agent/navi-linux-x64"
+            npm_platform: linux-x64
+
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-latest
+            archive: navi-linux-arm64
+            npm_package: "@navi-agent/navi-linux-arm64"
+            npm_platform: linux-arm64
+            use_cross: true
+
+          - target: x86_64-apple-darwin
+            os: macos-13
+            archive: navi-darwin-x64
+            npm_package: "@navi-agent/navi-darwin-x64"
+            npm_platform: darwin-x64
+
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            archive: navi-darwin-arm64
+            npm_package: "@navi-agent/navi-darwin-arm64"
+            npm_platform: darwin-arm64
+
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            archive: navi-win32-x64
+            npm_package: "@navi-agent/navi-win32-x64"
+            npm_platform: win32-x64
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install cross (Linux arm64)
+        if: matrix.use_cross
+        run: cargo install cross --locked
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      - name: Build (cross)
+        if: matrix.use_cross
+        run: cross build -p navi-cli --release --target ${{ matrix.target }}
+
+      - name: Build (cargo)
+        if: ${{ !matrix.use_cross }}
+        run: cargo build -p navi-cli --release --target ${{ matrix.target }}
+
+      # ── Package archive ────────────────────────────────────────────────────
+
+      - name: Package (unix)
+        if: runner.os != 'Windows'
+        run: |
+          cd target/${{ matrix.target }}/release
+          tar -czf ../../../${{ matrix.archive }}.tar.gz navi
+
+      - name: Package (windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Compress-Archive -Path "target/${{ matrix.target }}/release/navi.exe" -DestinationPath "${{ matrix.archive }}.zip"
+
+      - name: Upload archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.archive }}
+          path: ${{ matrix.archive }}.*
+
+      # ── Prepare npm platform package ───────────────────────────────────────
+
+      - name: Stage npm binary (unix)
+        if: runner.os != 'Windows'
+        run: |
+          cp target/${{ matrix.target }}/release/navi npm/navi/npm/${{ matrix.npm_platform }}/navi
+
+      - name: Stage npm binary (windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Copy-Item "target/${{ matrix.target }}/release/navi.exe" "npm/navi/npm/${{ matrix.npm_platform }}/navi.exe"
+
+      - name: Upload npm package
+        uses: actions/upload-artifact@v4
+        with:
+          name: npm-${{ matrix.npm_platform }}
+          path: npm/navi/npm/${{ matrix.npm_platform }}/
+
+  # ── Create GitHub Release ─────────────────────────────────────────────────
+
+  release:
+    name: GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all archives
+        uses: actions/download-artifact@v4
+        with:
+          pattern: navi-*
+          path: artifacts/
+          merge-multiple: true
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: artifacts/**/*
