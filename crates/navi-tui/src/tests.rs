@@ -575,6 +575,7 @@ fn loading_saved_session_restores_snapshot_session_id() {
             content_parts: vec![],
         }],
         memory: None,
+        goal: None,
     };
 
     crate::persistence::load_session(&mut app, &snapshot);

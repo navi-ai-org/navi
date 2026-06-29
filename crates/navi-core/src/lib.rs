@@ -12,6 +12,7 @@ pub mod eval;
 pub mod event;
 pub mod file_lock;
 mod fs_util;
+pub mod goal;
 pub mod harness;
 pub mod logging;
 pub mod mcp_firewall;
@@ -79,6 +80,10 @@ pub use event::{
     SubagentTranscriptKind,
 };
 pub use file_lock::{FileLockInfo, FileLockManager, LockGuard};
+pub use goal::{
+    CreateGoalTool, GetGoalTool, GoalExtension, GoalId, GoalRuntimeHandle, GoalService, GoalStatus,
+    SessionGoal, UpdateGoalTool, goal_tool_definitions,
+};
 pub use harness::{
     AgentRunState, HarnessPolicy, build_system_prompt, build_system_prompt_with_memory,
     compact_tool_observation, record_tool_call, select_harness_policy, tool_error_result,

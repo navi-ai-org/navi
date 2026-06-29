@@ -1,0 +1,360 @@
+#[cfg(test)]
+mod tests {
+    use crate::goal::types::{GoalId, GoalStatus, SessionGoal};
+    use crate::goal::{GoalExtension, GoalRuntimeHandle, GoalService};
+    use crate::tool::Tool;
+    use std::sync::Arc;
+
+    // ── types ──────────────────────────────────────────────────
+
+    #[test]
+    fn goal_id_is_unique() {
+        let a = GoalId::new();
+        let b = GoalId::new();
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn goal_id_roundtrip_string() {
+        let id = GoalId::new();
+        let s = id.to_string();
+        let id2 = GoalId::from_string(&s);
+        assert_eq!(id, id2);
+    }
+
+    #[test]
+    fn goal_status_terminal() {
+        assert!(GoalStatus::Complete.is_terminal());
+        assert!(GoalStatus::BudgetLimited.is_terminal());
+        assert!(!GoalStatus::Active.is_terminal());
+        assert!(!GoalStatus::Paused.is_terminal());
+        assert!(!GoalStatus::Blocked.is_terminal());
+        assert!(!GoalStatus::UsageLimited.is_terminal());
+    }
+
+    #[test]
+    fn goal_status_auto_continue() {
+        assert!(GoalStatus::Active.should_auto_continue());
+        assert!(GoalStatus::UsageLimited.should_auto_continue());
+        assert!(!GoalStatus::Complete.should_auto_continue());
+        assert!(!GoalStatus::BudgetLimited.should_auto_continue());
+        assert!(!GoalStatus::Paused.should_auto_continue());
+        assert!(!GoalStatus::Blocked.should_auto_continue());
+    }
+
+    #[test]
+    fn session_goal_new_is_active() {
+        let goal = SessionGoal::new("s1".into(), "test objective".into(), None);
+        assert_eq!(goal.status, GoalStatus::Active);
+        assert_eq!(goal.tokens_used, 0);
+        assert_eq!(goal.time_used_seconds, 0);
+    }
+
+    #[test]
+    fn session_goal_record_tokens() {
+        let mut goal = SessionGoal::new("s1".into(), "test".into(), Some(100));
+        assert!(!goal.record_tokens(50));
+        assert_eq!(goal.tokens_used, 50);
+        assert_eq!(goal.status, GoalStatus::Active);
+        assert!(goal.record_tokens(60)); // 50+60=110 > 100 budget
+        assert_eq!(goal.tokens_used, 110);
+        assert_eq!(goal.status, GoalStatus::BudgetLimited);
+    }
+
+    #[test]
+    fn session_goal_no_budget_never_exceeded() {
+        let mut goal = SessionGoal::new("s1".into(), "test".into(), None);
+        assert!(!goal.record_tokens(1_000_000));
+        assert_eq!(goal.status, GoalStatus::Active);
+    }
+
+    #[test]
+    fn session_goal_blocked_after_three_same_reason() {
+        let mut goal = SessionGoal::new("s1".into(), "test".into(), None);
+        assert!(!goal.record_blocked_turn("api down"));
+        assert_eq!(goal.consecutive_blocked_turns, 1);
+        assert!(!goal.record_blocked_turn("api down"));
+        assert_eq!(goal.consecutive_blocked_turns, 2);
+        assert!(goal.record_blocked_turn("api down"));
+        assert_eq!(goal.status, GoalStatus::Blocked);
+        assert_eq!(goal.consecutive_blocked_turns, 3);
+    }
+
+    #[test]
+    fn session_goal_different_reasons_resets_counter() {
+        let mut goal = SessionGoal::new("s1".into(), "test".into(), None);
+        goal.record_blocked_turn("api down");
+        goal.record_blocked_turn("api down");
+        assert_eq!(goal.consecutive_blocked_turns, 2);
+        assert!(!goal.record_blocked_turn("network error"));
+        assert_eq!(goal.consecutive_blocked_turns, 1); // reset
+    }
+
+    #[test]
+    fn session_goal_remaining_budget() {
+        let goal = SessionGoal::new("s1".into(), "test".into(), Some(200));
+        assert_eq!(goal.remaining_budget(), Some(200));
+    }
+
+    #[test]
+    fn session_goal_transition_to() {
+        let mut goal = SessionGoal::new("s1".into(), "test".into(), None);
+        goal.transition_to(GoalStatus::Paused);
+        assert_eq!(goal.status, GoalStatus::Paused);
+    }
+
+    // ── runtime ────────────────────────────────────────────────
+
+    #[test]
+    fn runtime_get_goal_none_by_default() {
+        let runtime = GoalRuntimeHandle::new(None);
+        assert!(runtime.get_goal().is_none());
+    }
+
+    #[test]
+    fn runtime_set_and_get_objective() {
+        let runtime = GoalRuntimeHandle::new(None);
+        let goal = runtime.set_objective("new objective".into(), Some(500));
+        assert_eq!(goal.objective, "new objective");
+        assert_eq!(goal.token_budget, Some(500));
+        assert_eq!(goal.status, GoalStatus::Active);
+
+        let got = runtime.get_goal().unwrap();
+        assert_eq!(got.objective, "new objective");
+    }
+
+    #[test]
+    fn runtime_clear_goal() {
+        let runtime = GoalRuntimeHandle::new(None);
+        runtime.set_objective("test".into(), None);
+        assert!(runtime.get_goal().is_some());
+        runtime.clear_goal();
+        assert!(runtime.get_goal().is_none());
+    }
+
+    #[test]
+    fn runtime_continue_if_idle_returns_prompt() {
+        let runtime = GoalRuntimeHandle::new(None);
+        runtime.set_objective("do work".into(), None);
+        let prompt = runtime.continue_if_idle();
+        assert!(prompt.is_some());
+        assert!(prompt.unwrap().contains("do work"));
+    }
+
+    #[test]
+    fn runtime_continue_if_idle_returns_none_when_empty() {
+        let runtime = GoalRuntimeHandle::new(None);
+        assert!(runtime.continue_if_idle().is_none());
+    }
+
+    #[test]
+    fn runtime_continue_if_idle_disabled() {
+        let runtime = GoalRuntimeHandle::new(None);
+        runtime.set_objective("do work".into(), None);
+        runtime.set_auto_continue(false);
+        assert!(runtime.continue_if_idle().is_none());
+    }
+
+    #[test]
+    fn runtime_record_tokens_and_budget_limit() {
+        let runtime = GoalRuntimeHandle::new(None);
+        runtime.set_objective("test".into(), Some(100));
+        runtime.start_turn();
+        assert!(!runtime.record_tokens(80));
+        assert!(runtime.record_tokens(30)); // exceeds 100
+        let prompt = runtime.budget_limit_prompt();
+        assert!(prompt.is_some());
+        assert!(prompt.unwrap().contains("Budget Limit Reached"));
+    }
+
+    #[test]
+    fn runtime_record_blocked_turn() {
+        let runtime = GoalRuntimeHandle::new(None);
+        runtime.set_objective("test".into(), None);
+        assert!(!runtime.record_blocked_turn("a"));
+        assert!(!runtime.record_blocked_turn("a"));
+        assert!(runtime.record_blocked_turn("a")); // 3rd
+        let goal = runtime.get_goal().unwrap();
+        assert_eq!(goal.status, GoalStatus::Blocked);
+    }
+
+    #[test]
+    fn runtime_mark_usage_limited() {
+        let runtime = GoalRuntimeHandle::new(None);
+        runtime.set_objective("test".into(), None);
+        runtime.start_turn();
+        runtime.mark_usage_limited();
+        let goal = runtime.get_goal().unwrap();
+        assert_eq!(goal.status, GoalStatus::UsageLimited);
+    }
+
+    // ── accounting ─────────────────────────────────────────────
+
+    #[test]
+    fn accounting_basic_flow() {
+        let goal = SessionGoal::new("s1".into(), "test".into(), Some(200));
+        let acct = crate::goal::GoalAccountingState::new(goal);
+        assert!(acct.is_active());
+
+        acct.start_turn();
+        assert!(!acct.record_token_usage(100));
+        assert!(acct.record_token_usage(150)); // exceeds 200
+
+        let snap = acct.snapshot().unwrap();
+        assert_eq!(snap.status, GoalStatus::BudgetLimited);
+        assert!(snap.tokens_used >= 200);
+    }
+
+    // ── service ────────────────────────────────────────────────
+
+    #[test]
+    fn service_set_get_clear_goal() {
+        let svc = GoalService::new();
+        let goal = svc.set_goal("s1".into(), "obj".into(), Some(500));
+        assert_eq!(goal.objective, "obj");
+
+        let got = svc.get_goal("s1");
+        assert!(got.is_none()); // runtime not registered
+
+        svc.clear_goal("s1");
+    }
+
+    #[test]
+    fn service_register_and_use_runtime() {
+        let svc = GoalService::new();
+        let rt = Arc::new(GoalRuntimeHandle::new(None));
+
+        svc.register_runtime("s1".into(), rt.clone());
+        let goal = svc.set_goal("s1".into(), "through_runtime".into(), None);
+        assert_eq!(goal.objective, "through_runtime");
+
+        let got = svc.get_goal("s1").unwrap();
+        assert_eq!(got.objective, "through_runtime");
+
+        svc.clear_goal("s1");
+        assert!(svc.get_goal("s1").is_none());
+    }
+
+    // ── steering ───────────────────────────────────────────────
+
+    #[test]
+    fn steering_continuation_has_objective() {
+        let goal = SessionGoal::new("x".into(), "build feature Y".into(), Some(1000));
+        let prompt = crate::goal::steering::build_continuation_prompt(&goal);
+        assert!(prompt.contains("build feature Y"));
+        assert!(prompt.contains("Active Thread Goal"));
+        assert!(prompt.contains("Completion Audit"));
+        assert!(prompt.contains("Blocked Audit"));
+    }
+
+    #[test]
+    fn steering_budget_limit() {
+        let mut goal = SessionGoal::new("x".into(), "task".into(), Some(10));
+        goal.record_tokens(15);
+        let prompt = crate::goal::steering::build_budget_limit_prompt(&goal);
+        assert!(prompt.contains("Budget Limit Reached"));
+        assert!(prompt.contains("task"));
+    }
+
+    #[test]
+    fn steering_objective_updated() {
+        let goal = SessionGoal::new("x".into(), "new task".into(), None);
+        let prompt = crate::goal::steering::build_objective_updated_prompt(&goal);
+        assert!(prompt.contains("Objective Updated"));
+        assert!(prompt.contains("new task"));
+    }
+
+    // ── tools definitions ──────────────────────────────────────
+
+    #[test]
+    fn goal_tool_definitions_exist() {
+        let defs = crate::goal::goal_tool_definitions();
+        assert_eq!(defs.len(), 3);
+        let names: Vec<&str> = defs.iter().map(|d| d.name.as_str()).collect();
+        assert!(names.contains(&"get_goal"));
+        assert!(names.contains(&"create_goal"));
+        assert!(names.contains(&"update_goal"));
+    }
+
+    #[test]
+    fn get_goal_tool_returns_none_when_no_goal() {
+        let rt = Arc::new(GoalRuntimeHandle::new(None));
+        let tool = crate::goal::GetGoalTool::new(rt);
+        let def = tool.definition();
+        assert_eq!(def.name, "get_goal");
+    }
+
+    #[test]
+    fn create_goal_tool_definition() {
+        let rt = Arc::new(GoalRuntimeHandle::new(None));
+        let tool = crate::goal::CreateGoalTool::new(rt);
+        let def = tool.definition();
+        assert_eq!(def.name, "create_goal");
+        assert_eq!(def.kind, crate::tool::ToolKind::Write);
+    }
+
+    #[test]
+    fn update_goal_tool_definition() {
+        let rt = Arc::new(GoalRuntimeHandle::new(None));
+        let tool = crate::goal::UpdateGoalTool::new(rt);
+        let def = tool.definition();
+        assert_eq!(def.name, "update_goal");
+        assert_eq!(def.kind, crate::tool::ToolKind::Write);
+    }
+
+    // ── events ─────────────────────────────────────────────────
+
+    #[test]
+    fn runtime_event_goal_updated_converts_to_agent_event() {
+        use crate::event::{AgentEvent, RuntimeEvent, RuntimeEventKind};
+        let event = RuntimeEvent::new(RuntimeEventKind::GoalUpdated {
+            session_id: "s1".into(),
+            goal_id: "g1".into(),
+            objective: "obj".into(),
+            status: GoalStatus::Active,
+            tokens_used: 42,
+            token_budget: Some(100),
+        });
+        let agent = event.into_agent_event();
+        assert!(matches!(agent, Some(AgentEvent::GoalUpdated { .. })));
+    }
+
+    #[test]
+    fn session_snapshot_has_goal_field() {
+        use crate::session::{SessionId, SessionSnapshot};
+        let snap = SessionSnapshot {
+            version: SessionSnapshot::CURRENT_VERSION,
+            id: SessionId::new("test".into()),
+            title: None,
+            project: std::path::PathBuf::from("/tmp"),
+            created_at: 1,
+            updated_at: 2,
+            events: vec![],
+            memory: None,
+            goal: Some(SessionGoal::new("s1".into(), "obj".into(), None)),
+        };
+        assert!(snap.goal.is_some());
+        let goal = snap.goal.as_ref().unwrap();
+        assert_eq!(goal.objective, "obj");
+
+        let json = serde_json::to_string(&snap).unwrap();
+        let loaded: SessionSnapshot = serde_json::from_str(&json).unwrap();
+        assert!(loaded.goal.is_some());
+    }
+
+    // ── extension ──────────────────────────────────────────────
+
+    #[test]
+    fn extension_hooks_basic_flow() {
+        let svc = Arc::new(GoalService::new());
+        let rt = Arc::new(GoalRuntimeHandle::new(None));
+        let ext = GoalExtension::new(svc.clone(), rt.clone());
+
+        ext.on_session_start("sess-1");
+        rt.set_objective("work".into(), None);
+        ext.on_turn_start("sess-1", "task");
+        assert!(!ext.on_token_usage(50, 30));
+        ext.on_turn_end("sess-1");
+        ext.on_session_end("sess-1");
+    }
+}

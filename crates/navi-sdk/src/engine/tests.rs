@@ -163,6 +163,8 @@ fn write_session_file(tempdir: &tempfile::TempDir, session_id: &str) {
         }],
 
         memory: None,
+
+        goal: None,
     };
 
     let content = serde_json::to_string(&snapshot).expect("serialize session");
