@@ -2,12 +2,13 @@ use crate::types::NaviError;
 use anyhow::Context;
 type Result<T> = std::result::Result<T, NaviError>;
 use navi_core::{
-    AgentRuntime, AgentRuntimeOptions, ApprovalDecision, CredentialStore, LoadedConfig,
-    ModelOption, ProviderConfig, QuestionResponse, RuntimeComponents, RuntimeEvent, SessionId,
-    SessionSnapshot, SessionStore, SkillManifest, available_model_options, canonical_provider_id,
-    config::effective_context_window, discover_configured_skills, model_can_run_publicly,
-    provider_catalog, registry::RegistryStore, resolve_provider_api_key, resolve_provider_config,
-    resolve_provider_credential_status, save_global_config, save_project_config,
+    AgentRuntime, AgentRuntimeOptions, ApprovalDecision, CredentialStore,
+    LoadedConfig, ModelOption, ProviderConfig, QuestionResponse, RuntimeComponents, RuntimeEvent,
+    SessionGoal, SessionId, SessionSnapshot, SessionStore, SkillManifest, available_model_options,
+    canonical_provider_id, config::effective_context_window, discover_configured_skills,
+    model_can_run_publicly, provider_catalog, registry::RegistryStore, resolve_provider_api_key,
+    resolve_provider_config, resolve_provider_credential_status, save_global_config,
+    save_project_config,
 };
 use navi_mcp::{LoadedMcpServers, McpServerInfo, load_configured_mcp_servers};
 use navi_plugin_host::LoadedPlugin;
@@ -310,17 +311,21 @@ impl NaviEngine {
             executor
         });
 
+        let runtime_tool_executor = tool_executor.tool_executor;
+        let tui_components = tool_executor.tui_components;
+        let plugins = tool_executor._plugins;
         let mut runtime = AgentRuntime::new(AgentRuntimeOptions {
             loaded_config: loaded_config.clone(),
             model_provider: provider,
             project_dir: project_dir.clone(),
-            tool_executor: Some(tool_executor.tool_executor.clone()),
+            tool_executor: Some(runtime_tool_executor),
             context_packets: request.context_packets,
             active_skills: request.active_skills,
             initial_messages: request.initial_messages,
             initial_events: request.initial_events,
             initial_created_at: request.initial_created_at,
             initial_updated_at: request.initial_updated_at,
+            initial_goal: request.initial_goal,
             session_id: request.session_id.map(SessionId::new),
             event_tx: None,
             runtime_components: Some(runtime_components),
@@ -352,9 +357,9 @@ impl NaviEngine {
                     approval_resolver,
                     question_resolver,
                     turn_canceller,
-                    tui_components: tool_executor.tui_components,
+                    tui_components,
                     mcp,
-                    _plugins: tool_executor._plugins,
+                    _plugins: plugins,
                 }),
             );
         Ok(info)
@@ -373,13 +378,56 @@ impl NaviEngine {
         let response = runtime
             .send_turn_with_parts(request.message, request.content_parts, request.thinking)
             .await?;
-        Ok(NaviTurnResponse {
-            session_id: request.session_id,
-            text: response.text,
-        })
+        // Check for goal auto-continue after turn completes.
+        let continuation = runtime.goal_idle_prompt();
+        if let Some(prompt) = continuation {
+            drop(runtime);
+            // Auto-continue: start a new turn with the steering prompt as input.
+            let mut runtime = session.runtime.lock().await;
+            let auto_response = runtime
+                .send_turn_with_parts(prompt, Vec::new(), None)
+                .await?;
+            Ok(NaviTurnResponse {
+                session_id: request.session_id,
+                text: auto_response.text,
+            })
+        } else {
+            Ok(NaviTurnResponse {
+                session_id: request.session_id,
+                text: response.text,
+            })
+        }
     }
 
     /// Cancels the currently active turn for the given session.
+
+    /// Returns the current goal for a session.
+    pub async fn get_goal(&self, session_id: &str) -> Result<Option<SessionGoal>> {
+        let session = self.session(session_id)?;
+        let runtime = session.runtime.lock().await;
+        Ok(runtime.get_goal())
+    }
+
+    /// Sets a goal for a session. The goal will guide the agent across turns.
+    pub async fn set_goal(
+        &self,
+        session_id: &str,
+        objective: impl Into<String>,
+        token_budget: Option<i64>,
+    ) -> Result<SessionGoal> {
+        let session = self.session(session_id)?;
+        let runtime = session.runtime.lock().await;
+        Ok(runtime.set_goal(objective.into(), token_budget))
+    }
+
+    /// Clears the goal for a session.
+    pub async fn clear_goal(&self, session_id: &str) -> Result<()> {
+        let session = self.session(session_id)?;
+        let runtime = session.runtime.lock().await;
+        runtime.clear_goal();
+        Ok(())
+    }
+
     pub async fn cancel_turn(&self, session_id: &str) -> Result<()> {
         let session = self.session(session_id)?;
         session.turn_canceller.cancel();

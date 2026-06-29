@@ -30,6 +30,8 @@ pub struct NaviSessionRequest {
     pub initial_created_at: Option<u64>,
     #[serde(default)]
     pub initial_updated_at: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub initial_goal: Option<navi_core::SessionGoal>,
 }
 
 /// Summary returned after a session is started.

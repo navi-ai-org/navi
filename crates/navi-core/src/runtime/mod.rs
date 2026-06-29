@@ -196,6 +196,8 @@ pub struct AgentRuntimeOptions {
     pub initial_created_at: Option<u64>,
     /// Original update timestamp for restored sessions.
     pub initial_updated_at: Option<u64>,
+    /// Goal restored from a persisted session snapshot.
+    pub initial_goal: Option<crate::goal::types::SessionGoal>,
     /// Session id for restoring an existing session.
     pub session_id: Option<SessionId>,
     /// Optional channel for forwarding agent events outside the runtime.
@@ -257,7 +259,7 @@ impl AgentRuntime {
         let prompt_cache = Arc::new(crate::prompt::PromptCache::new());
         let runtime_components = options.runtime_components.unwrap_or_default();
         let goal_service = Arc::new(GoalService::new());
-        let goal_runtime = Arc::new(GoalRuntimeHandle::new(None));
+        let goal_runtime = Arc::new(GoalRuntimeHandle::new(options.initial_goal.clone()));
         let goal_extension = GoalExtension::new(goal_service.clone(), goal_runtime.clone());
 
         Self {
@@ -290,6 +292,31 @@ impl AgentRuntime {
             goal_runtime,
             goal_extension,
         }
+    }
+
+    /// Returns all agent events recorded so far.
+    /// Returns the current session goal, if any.
+    pub fn get_goal(&self) -> Option<crate::goal::types::SessionGoal> {
+        self.goal_runtime.get_goal()
+    }
+
+    /// Sets or updates the session goal.
+    pub fn set_goal(
+        &self,
+        objective: String,
+        token_budget: Option<i64>,
+    ) -> crate::goal::types::SessionGoal {
+        self.goal_runtime.set_objective(objective, token_budget)
+    }
+
+    /// Clears the current session goal.
+    pub fn clear_goal(&self) {
+        self.goal_runtime.clear_goal();
+    }
+
+    /// Returns a continuation steering prompt if the goal is active and should auto-continue.
+    pub fn goal_idle_prompt(&self) -> Option<String> {
+        self.goal_extension.on_idle()
     }
 
     /// Returns all agent events recorded so far.
@@ -444,6 +471,8 @@ impl AgentRuntime {
     /// Returns the session id.
     pub fn start_session(&mut self) -> Result<SessionId> {
         if self.session.started() {
+            self.goal_extension
+                .on_session_end(self.session.id().as_str());
             self.runtime_components
                 .hooks
                 .on_session_end(self.session.id().as_str());
@@ -611,9 +640,12 @@ impl AgentRuntime {
     pub fn snapshot_session(&mut self) -> Result<SessionSnapshot> {
         self.session.set_updated_at(current_unix_timestamp());
         self.session.update_title_from_events();
-        let snapshot =
-            self.session
-                .snapshot(&self.project_dir, &self.session_store, &self.event_bus)?;
+        let snapshot = self.session.snapshot(
+            &self.project_dir,
+            &self.session_store,
+            &self.event_bus,
+            self.goal_runtime.get_goal(),
+        )?;
         self.save_trace_snapshot(snapshot.id.as_str());
         Ok(snapshot)
     }
@@ -624,7 +656,12 @@ impl AgentRuntime {
         self.session.update_title_from_events();
         let snapshot = self
             .session
-            .snapshot_async(&self.project_dir, &self.session_store, &self.event_bus)
+            .snapshot_async(
+                &self.project_dir,
+                &self.session_store,
+                &self.event_bus,
+                self.goal_runtime.get_goal(),
+            )
             .await?;
         self.save_trace_snapshot(snapshot.id.as_str());
         Ok(snapshot)
@@ -785,6 +822,47 @@ impl AgentRuntime {
     }
 
     fn record_event(&mut self, event: AgentEvent) {
+        // ── Goal accounting driven by agent events ────────────────
+        match &event {
+            AgentEvent::ToolCompleted(_result) => {
+                let budget_prompt = self.goal_extension.on_tool_complete();
+                if budget_prompt.is_some() {
+                    if let Some(goal) = self.goal_runtime.get_goal() {
+                        self.event_bus.publish(RuntimeEventKind::GoalUpdated {
+                            session_id: goal.session_id.clone(),
+                            goal_id: goal.goal_id.as_str().to_string(),
+                            objective: goal.objective.clone(),
+                            status: goal.status,
+                            tokens_used: goal.tokens_used,
+                            token_budget: goal.token_budget,
+                        });
+                    }
+                }
+            }
+            AgentEvent::UsageReported {
+                input_tokens,
+                output_tokens,
+                ..
+            } => {
+                let exceeded = self
+                    .goal_extension
+                    .on_token_usage(*input_tokens, *output_tokens);
+                if exceeded {
+                    if let Some(goal) = self.goal_runtime.get_goal() {
+                        self.event_bus.publish(RuntimeEventKind::GoalUpdated {
+                            session_id: goal.session_id.clone(),
+                            goal_id: goal.goal_id.as_str().to_string(),
+                            objective: goal.objective.clone(),
+                            status: goal.status,
+                            tokens_used: goal.tokens_used,
+                            token_budget: goal.token_budget,
+                        });
+                    }
+                }
+            }
+            _ => {}
+        }
+
         if let Some(tx) = &self.event_tx {
             let _ = tx.send(event.clone());
         }

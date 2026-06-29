@@ -35,24 +35,27 @@ impl GoalExtension {
 
     /// Called when a session starts. Registers the runtime with the service.
     pub fn on_session_start(&self, session_id: &str) {
+        self.runtime.set_session_id(session_id);
         self.service
             .register_runtime(session_id.to_string(), Arc::clone(&self.runtime));
     }
 
     /// Called when a session is resumed from persistence.
-    /// Loads the persisted goal for this session into the runtime.
+    /// Accepts a pre-loaded goal (typically from a `SessionSnapshot`) and
+    /// restores it into the runtime.
     pub fn on_session_resume(
         &self,
         session_id: &str,
-        session_store: &SessionStore,
+        goal: Option<SessionGoal>,
     ) -> Option<SessionGoal> {
-        if let Some(goal) = self.service.load_goal(session_id, session_store) {
-            // Restore the loaded goal into the runtime.
-            if goal.status.should_auto_continue() {
+        self.runtime.set_session_id(session_id);
+        if let Some(goal) = goal {
+            let should_auto_continue = goal.status.should_auto_continue();
+            self.runtime.update_goal(goal);
+            if should_auto_continue {
                 self.runtime.set_auto_continue(true);
             }
-            self.runtime.update_goal(goal.clone());
-            return Some(goal);
+            return self.runtime.get_goal();
         }
         None
     }
@@ -94,6 +97,7 @@ impl GoalExtension {
         } else if lower.contains("fatal") || lower.contains("blocked") {
             self.runtime.record_blocked_turn(error_message);
         }
+        self.runtime.finish_turn();
     }
 
     // ── Tool lifecycle ─────────────────────────────────────────
@@ -113,7 +117,7 @@ impl GoalExtension {
 
     // ── Persistence ────────────────────────────────────────────
 
-    /// Persists the current goal alongside the session snapshot.
+    /// Persists the current goal for direct `GoalService` callers.
     pub fn persist_goal(
         &self,
         session_id: &str,

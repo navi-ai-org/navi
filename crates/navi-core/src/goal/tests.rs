@@ -2,7 +2,8 @@
 mod tests {
     use crate::goal::types::{GoalId, GoalStatus, SessionGoal};
     use crate::goal::{GoalExtension, GoalRuntimeHandle, GoalService};
-    use crate::tool::Tool;
+    use crate::tool::{Tool, ToolInvocation};
+    use serde_json::json;
     use std::sync::Arc;
 
     // ── types ──────────────────────────────────────────────────
@@ -35,7 +36,7 @@ mod tests {
     #[test]
     fn goal_status_auto_continue() {
         assert!(GoalStatus::Active.should_auto_continue());
-        assert!(GoalStatus::UsageLimited.should_auto_continue());
+        assert!(!GoalStatus::UsageLimited.should_auto_continue());
         assert!(!GoalStatus::Complete.should_auto_continue());
         assert!(!GoalStatus::BudgetLimited.should_auto_continue());
         assert!(!GoalStatus::Paused.should_auto_continue());
@@ -114,8 +115,10 @@ mod tests {
     #[test]
     fn runtime_set_and_get_objective() {
         let runtime = GoalRuntimeHandle::new(None);
+        runtime.set_session_id("sess-1");
         let goal = runtime.set_objective("new objective".into(), Some(500));
         assert_eq!(goal.objective, "new objective");
+        assert_eq!(goal.session_id, "sess-1");
         assert_eq!(goal.token_budget, Some(500));
         assert_eq!(goal.status, GoalStatus::Active);
 
@@ -176,6 +179,86 @@ mod tests {
         assert!(runtime.record_blocked_turn("a")); // 3rd
         let goal = runtime.get_goal().unwrap();
         assert_eq!(goal.status, GoalStatus::Blocked);
+    }
+
+    #[tokio::test]
+    async fn runtime_status_update_survives_turn_finish() {
+        let runtime = Arc::new(GoalRuntimeHandle::new(None));
+        runtime.set_session_id("sess-1");
+        runtime.set_objective("test".into(), None);
+        runtime.start_turn();
+
+        let tool = crate::goal::UpdateGoalTool::new(runtime.clone());
+        let result = tool
+            .invoke(ToolInvocation {
+                id: "goal-update-1".to_string(),
+                tool_name: "update_goal".to_string(),
+                input: json!({ "action": "complete" }),
+            })
+            .await
+            .expect("update goal");
+        assert!(result.ok);
+
+        runtime.finish_turn();
+        let goal = runtime.get_goal().unwrap();
+        assert_eq!(goal.status, GoalStatus::Complete);
+    }
+
+    #[tokio::test]
+    async fn update_goal_blocked_preserves_consecutive_count() {
+        let runtime = Arc::new(GoalRuntimeHandle::new(None));
+        runtime.set_session_id("sess-1");
+        runtime.set_objective("test".into(), None);
+        let tool = crate::goal::UpdateGoalTool::new(runtime.clone());
+
+        for expected_count in 1..=3 {
+            let result = tool
+                .invoke(ToolInvocation {
+                    id: format!("goal-blocked-{expected_count}"),
+                    tool_name: "update_goal".to_string(),
+                    input: json!({
+                        "action": "blocked",
+                        "reason": "same blocker"
+                    }),
+                })
+                .await
+                .expect("update goal");
+            assert!(result.ok);
+            assert_eq!(
+                result.output["consecutive_blocked_turns"].as_u64(),
+                Some(expected_count)
+            );
+        }
+
+        let goal = runtime.get_goal().unwrap();
+        assert_eq!(goal.status, GoalStatus::Blocked);
+        assert_eq!(goal.consecutive_blocked_turns, 3);
+        assert_eq!(goal.block_reason.as_deref(), Some("same blocker"));
+    }
+
+    #[tokio::test]
+    async fn update_goal_cannot_resume_terminal_goal() {
+        let runtime = Arc::new(GoalRuntimeHandle::new(None));
+        runtime.set_session_id("sess-1");
+        let mut goal = runtime.set_objective("test".into(), Some(10));
+        goal.transition_to(GoalStatus::BudgetLimited);
+        runtime.update_goal(goal);
+
+        let tool = crate::goal::UpdateGoalTool::new(runtime.clone());
+        let result = tool
+            .invoke(ToolInvocation {
+                id: "goal-resume-terminal".to_string(),
+                tool_name: "update_goal".to_string(),
+                input: json!({ "action": "resume" }),
+            })
+            .await
+            .expect("update goal");
+
+        assert!(!result.ok);
+        assert_eq!(
+            runtime.get_goal().unwrap().status,
+            GoalStatus::BudgetLimited
+        );
     }
 
     #[test]

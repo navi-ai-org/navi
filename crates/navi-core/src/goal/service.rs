@@ -9,7 +9,7 @@ use super::runtime::GoalRuntimeHandle;
 /// Public API for managing goals across sessions.
 ///
 /// Maintains a registry of all active goal runtimes keyed by session id.
-/// Goals are persisted alongside session snapshots.
+/// Goal persistence is handled via `SessionSnapshot.goal`.
 pub struct GoalService {
     /// Active goal runtimes, keyed by session id.
     runtimes: RwLock<HashMap<String, Arc<GoalRuntimeHandle>>>,
@@ -76,7 +76,6 @@ impl GoalService {
     /// Registers a runtime handle for a session.
     pub fn register_runtime(&self, session_id: String, runtime: Arc<GoalRuntimeHandle>) {
         let mut runtimes = self.runtimes.write().unwrap_or_else(|e| e.into_inner());
-        // If a runtime already exists, the new one replaces it (fresh start).
         runtimes.insert(session_id, runtime);
     }
 
@@ -86,7 +85,11 @@ impl GoalService {
         runtimes.remove(session_id);
     }
 
-    /// Persists the goal for a session alongside its session snapshot directory.
+    /// Persists the goal for a session.
+    ///
+    /// The main runtime persists goals in `SessionSnapshot.goal`; this legacy
+    /// helper keeps the standalone `goal.json` path available for callers that
+    /// still use `GoalService` directly.
     pub fn persist_goal(
         &self,
         session_id: &str,
@@ -104,9 +107,17 @@ impl GoalService {
     }
 
     /// Loads a persisted goal for a session.
+    ///
+    /// Prefer the current session snapshot field, then fall back to the older
+    /// `<sessions>/<session_id>/goal.json` layout.
     pub fn load_goal(&self, session_id: &str, session_store: &SessionStore) -> Option<SessionGoal> {
-        let dir = session_store.root().join(session_id);
-        let path = dir.join("goal.json");
+        if let Ok(snapshot) = session_store.load(session_id)
+            && snapshot.goal.is_some()
+        {
+            return snapshot.goal;
+        }
+
+        let path = session_store.root().join(session_id).join("goal.json");
         if path.exists() {
             let json = std::fs::read_to_string(&path).ok()?;
             serde_json::from_str(&json).ok()
