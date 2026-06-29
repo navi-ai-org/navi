@@ -186,6 +186,7 @@ impl SessionState {
         project_dir: &std::path::Path,
         session_store: &SessionStore,
         event_bus: &crate::runtime::EventBus,
+        goal: Option<crate::goal::types::SessionGoal>,
     ) -> Result<crate::session::SessionSnapshot> {
         // SessionStore I/O is intentionally blocking, but callers invoke this
         // from the Tokio runtime. Use `block_in_place` so the runtime can
@@ -202,7 +203,7 @@ impl SessionState {
                 updated_at: current_unix_timestamp(),
                 events: self.events.clone(),
                 memory,
-                goal: None,
+                goal,
             };
             session_store.save(&snap)?;
             Ok::<_, anyhow::Error>(snap)
@@ -218,6 +219,7 @@ impl SessionState {
         project_dir: &std::path::Path,
         session_store: &SessionStore,
         event_bus: &crate::runtime::EventBus,
+        goal: Option<crate::goal::types::SessionGoal>,
     ) -> Result<crate::session::SessionSnapshot> {
         let memory = session_store
             .load_memory_async(project_dir.to_path_buf())
@@ -231,7 +233,7 @@ impl SessionState {
             updated_at: current_unix_timestamp(),
             events: self.events.clone(),
             memory,
-            goal: None,
+            goal,
         };
         session_store.save_async(snapshot.clone()).await?;
         event_bus.publish(crate::event::RuntimeEventKind::SessionSaved {

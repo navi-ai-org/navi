@@ -8,6 +8,8 @@ use super::steering;
 ///
 /// Drives auto-continuation, status transitions, and steering prompt injection.
 pub struct GoalRuntimeHandle {
+    /// The currently bound session id.
+    session_id: RwLock<Option<String>>,
     /// The goal state protected by a mutex.
     goal: RwLock<Option<SessionGoal>>,
     /// Accounting state for the current turn.
@@ -23,7 +25,11 @@ impl GoalRuntimeHandle {
         let accounting = initial_goal
             .as_ref()
             .map(|g| GoalAccountingState::new(g.clone()));
+        let session_id = initial_goal
+            .as_ref()
+            .and_then(|goal| (!goal.session_id.is_empty()).then(|| goal.session_id.clone()));
         Self {
+            session_id: RwLock::new(session_id),
             goal: RwLock::new(initial_goal),
             accounting: RwLock::new(accounting),
             auto_continue: RwLock::new(true),
@@ -37,6 +43,16 @@ impl GoalRuntimeHandle {
         self.goal.read().unwrap_or_else(|e| e.into_inner()).clone()
     }
 
+    /// Binds this runtime to a session id and rewrites any loaded goal to match.
+    pub fn set_session_id(&self, session_id: impl Into<String>) {
+        let session_id = session_id.into();
+        *self.session_id.write().unwrap_or_else(|e| e.into_inner()) = Some(session_id.clone());
+        if let Some(ref mut goal) = *self.goal.write().unwrap_or_else(|e| e.into_inner()) {
+            goal.session_id = session_id;
+            goal.updated_at = crate::session::current_unix_timestamp();
+        }
+    }
+
     /// Sets or replaces the goal.
     pub fn set_objective(&self, objective: String, token_budget: Option<i64>) -> SessionGoal {
         let mut goal_guard = self.goal.write().unwrap_or_else(|e| e.into_inner());
@@ -44,6 +60,8 @@ impl GoalRuntimeHandle {
             goal.objective = objective;
             goal.token_budget = token_budget;
             goal.status = crate::goal::types::GoalStatus::Active;
+            goal.consecutive_blocked_turns = 0;
+            goal.block_reason = None;
             goal.updated_at = crate::session::current_unix_timestamp();
             let new_goal = goal.clone();
             drop(goal_guard);
@@ -51,7 +69,12 @@ impl GoalRuntimeHandle {
                 Some(GoalAccountingState::new(new_goal.clone()));
             new_goal
         } else {
-            let session_id = String::new();
+            let session_id = self
+                .session_id
+                .read()
+                .unwrap_or_else(|e| e.into_inner())
+                .clone()
+                .unwrap_or_default();
             let new_goal = SessionGoal::new(session_id, objective, token_budget);
             let cloned = new_goal.clone();
             *goal_guard = Some(new_goal);
@@ -63,14 +86,26 @@ impl GoalRuntimeHandle {
     }
 
     /// Updates the stored goal (used after status transitions).
-    pub fn update_goal(&self, goal: SessionGoal) {
-        *self.goal.write().unwrap_or_else(|e| e.into_inner()) = Some(goal);
+    pub fn update_goal(&self, mut goal: SessionGoal) {
+        if let Some(session_id) = self
+            .session_id
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+        {
+            goal.session_id = session_id;
+        }
+        *self.goal.write().unwrap_or_else(|e| e.into_inner()) = Some(goal.clone());
+        if let Some(ref acct) = *self.accounting.read().unwrap_or_else(|e| e.into_inner()) {
+            acct.replace_goal(goal);
+        }
     }
 
     /// Clears the current goal.
     pub fn clear_goal(&self) {
         *self.goal.write().unwrap_or_else(|e| e.into_inner()) = None;
         *self.accounting.write().unwrap_or_else(|e| e.into_inner()) = None;
+        *self.session_id.write().unwrap_or_else(|e| e.into_inner()) = None;
     }
 
     // ── Accounting ─────────────────────────────────────────────
@@ -111,7 +146,7 @@ impl GoalRuntimeHandle {
             .unwrap_or_else(|e| e.into_inner())
             .as_ref()
         {
-            if let Some(goal) = acct.snapshot() {
+            if let Some(goal) = acct.finish_turn() {
                 self.update_goal(goal);
             }
         }
@@ -124,7 +159,13 @@ impl GoalRuntimeHandle {
     pub fn record_blocked_turn(&self, reason: &str) -> bool {
         let mut goal_guard = self.goal.write().unwrap_or_else(|e| e.into_inner());
         if let Some(ref mut goal) = *goal_guard {
-            goal.record_blocked_turn(reason)
+            let became_blocked = goal.record_blocked_turn(reason);
+            let updated = goal.clone();
+            drop(goal_guard);
+            if let Some(ref acct) = *self.accounting.read().unwrap_or_else(|e| e.into_inner()) {
+                acct.replace_goal(updated);
+            }
+            became_blocked
         } else {
             false
         }
@@ -137,6 +178,9 @@ impl GoalRuntimeHandle {
                 goal.transition_to(crate::goal::types::GoalStatus::UsageLimited);
                 self.update_goal(goal);
             }
+        } else if let Some(mut goal) = self.get_goal() {
+            goal.transition_to(crate::goal::types::GoalStatus::UsageLimited);
+            self.update_goal(goal);
         }
     }
 

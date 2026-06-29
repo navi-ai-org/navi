@@ -58,6 +58,11 @@ impl GoalAccountingState {
         Some(goal.clone())
     }
 
+    /// Replaces the tracked goal while preserving the current turn timer.
+    pub fn replace_goal(&self, goal: SessionGoal) {
+        *self.goal.lock().unwrap_or_else(|e| e.into_inner()) = goal;
+    }
+
     /// Returns `true` if the goal is active (not terminal, not paused).
     pub fn is_active(&self) -> bool {
         let goal = self.goal.lock().unwrap_or_else(|e| e.into_inner());

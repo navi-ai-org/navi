@@ -222,7 +222,7 @@ pub(crate) fn handle_async_event(app: &mut TuiApp, event: AsyncEvent) {
             app.scroll_offset = 0;
         }
         AsyncEvent::BackgroundCommandsUpdated(commands) => {
-            app.background_commands = commands;
+            crate::background::replace_background_commands(app, commands);
         }
     }
 }
@@ -258,6 +258,12 @@ fn handle_agent_event(app: &mut TuiApp, event: AgentEvent) {
                 let is_background_running = invocation.tool_name == "bash"
                     && result.output.get("background").and_then(|v| v.as_bool()) == Some(true)
                     && result.output.get("status").and_then(|v| v.as_str()) == Some("running");
+                if invocation.tool_name == "bash"
+                    && result.output.get("background").and_then(|v| v.as_bool()) == Some(true)
+                    && let Some(snapshot) = BackgroundCommandSnapshot::from_json(&result.output)
+                {
+                    crate::background::upsert_background_command(app, snapshot);
+                }
 
                 remove_active_tool_placeholder(app);
                 app.messages.push(ChatMessage {
