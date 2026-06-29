@@ -202,6 +202,7 @@ impl SessionState {
                 updated_at: current_unix_timestamp(),
                 events: self.events.clone(),
                 memory,
+                goal: None,
             };
             session_store.save(&snap)?;
             Ok::<_, anyhow::Error>(snap)
@@ -230,6 +231,7 @@ impl SessionState {
             updated_at: current_unix_timestamp(),
             events: self.events.clone(),
             memory,
+            goal: None,
         };
         session_store.save_async(snapshot.clone()).await?;
         event_bus.publish(crate::event::RuntimeEventKind::SessionSaved {
