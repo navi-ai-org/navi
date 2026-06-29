@@ -17,6 +17,7 @@ pub(crate) async fn run_prompt_task(
         message: prompt,
         content_parts: Vec::new(),
         context_packets: Vec::new(),
+        thinking: None,
     });
     tokio::pin!(turn);
 

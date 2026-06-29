@@ -370,13 +370,9 @@ impl NaviEngine {
         for packet in request.context_packets {
             runtime.add_context_packet(packet);
         }
-        let response = if request.content_parts.is_empty() {
-            runtime.send_turn(request.message).await?
-        } else {
-            runtime
-                .send_turn_with_parts(request.message, request.content_parts)
-                .await?
-        };
+        let response = runtime
+            .send_turn_with_parts(request.message, request.content_parts, request.thinking)
+            .await?;
         Ok(NaviTurnResponse {
             session_id: request.session_id,
             text: response.text,

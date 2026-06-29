@@ -24,6 +24,10 @@ use crate::skills::{SkillManifest, active_skills, discover_configured_skills};
 use crate::tool::builtin::{RepoExploreTool, SubagentTool};
 use crate::tool::{Tool, ToolExecutor};
 use crate::trace::{TraceStore, turn_traces_from_events};
+use crate::goal::{
+    CreateGoalTool, GetGoalTool, GoalExtension, GoalRuntimeHandle, GoalService,
+    UpdateGoalTool,
+};
 use crate::{
     ModelOption, SessionSnapshot, available_model_options, canonical_provider_id,
     provider_request_model_name,
@@ -224,6 +228,12 @@ pub struct AgentRuntime {
     pending_questions: PendingQuestions,
     event_bus: EventBus,
     session: SessionState,
+    /// Goal service for managing goals across sessions.
+    goal_service: Arc<GoalService>,
+    /// Goal runtime handle for the current session.
+    goal_runtime: Arc<GoalRuntimeHandle>,
+    /// Goal extension providing lifecycle hooks.
+    goal_extension: GoalExtension,
 }
 
 impl AgentRuntime {
@@ -249,6 +259,9 @@ impl AgentRuntime {
         let shared_config = Arc::new(RwLock::new(options.loaded_config.config.clone()));
         let prompt_cache = Arc::new(crate::prompt::PromptCache::new());
         let runtime_components = options.runtime_components.unwrap_or_default();
+        let goal_service = Arc::new(GoalService::new());
+        let goal_runtime = Arc::new(GoalRuntimeHandle::new(None));
+        let goal_extension = GoalExtension::new(goal_service.clone(), goal_runtime.clone());
 
         Self {
             loaded_config: options.loaded_config,
@@ -277,6 +290,9 @@ impl AgentRuntime {
                 options.initial_created_at,
                 options.initial_updated_at,
             ),
+            goal_service,
+            goal_runtime,
+            goal_extension,
         }
     }
 
@@ -448,10 +464,15 @@ impl AgentRuntime {
         self.session.set_runtime(session_runtime, event_rx);
 
         let id = self.session.id().clone();
+        // Goal lifecycle: session start + register runtime
+        self.goal_extension.on_session_start(id.as_str());
         self.runtime_components.hooks.on_session_start(id.as_str());
         self.event_bus.publish(RuntimeEventKind::SessionStarted {
             session_id: id.as_str().to_string(),
         });
+
+        // Register goal tools in the tool executor
+        self.register_goal_tools();
 
         Ok(id)
     }
@@ -466,9 +487,29 @@ impl AgentRuntime {
         &mut self,
         task: String,
         content_parts: Vec<crate::model::ContentPart>,
+        thinking_override: Option<crate::model::ThinkingConfig>,
     ) -> Result<ModelResponse> {
         if !self.session.started() || self.session.runtime().is_none() {
             self.start_session()?;
+        }
+
+        // Apply per-turn thinking override before the turn runs so
+        // build_model_request picks it up from the shared config.
+        if let Some(thinking) = thinking_override {
+            let level_str = match thinking {
+                crate::model::ThinkingConfig::Adaptive => "adaptive",
+                crate::model::ThinkingConfig::Max => "max",
+                crate::model::ThinkingConfig::High => "high",
+                crate::model::ThinkingConfig::Medium => "medium",
+                crate::model::ThinkingConfig::Low => "low",
+                crate::model::ThinkingConfig::Off => "off",
+            };
+            self.loaded_config.config.tui.thinking_level = level_str.to_string();
+            self.shared_config
+                .write()
+                .unwrap_or_else(|e| e.into_inner())
+                .tui
+                .thinking_level = level_str.to_string();
         }
 
         let submission_tx = self
@@ -492,9 +533,11 @@ impl AgentRuntime {
             model = %self.loaded_config.config.model.name,
             "agent task submitted"
         );
+        let session_id = self.session.id().as_str().to_string();
         self.runtime_components
             .hooks
-            .on_turn_start(self.session.id().as_str(), &task);
+            .on_turn_start(&session_id, &task);
+        self.goal_extension.on_turn_start(&session_id, &task);
         self.record_event(AgentEvent::UserTaskSubmitted {
             text: task.clone(),
             content_parts: content_parts.clone(),
@@ -537,6 +580,7 @@ impl AgentRuntime {
 
         match &result {
             Ok(text) => {
+                self.goal_extension.on_turn_end(&session_id);
                 self.runtime_components
                     .hooks
                     .on_turn_end(self.session.id().as_str(), text);
@@ -546,6 +590,7 @@ impl AgentRuntime {
                 });
             }
             Err(err) => {
+                self.goal_extension.on_turn_error(&err.to_string());
                 self.record_event(AgentEvent::Error {
                     message: err.to_string(),
                 });
@@ -559,12 +604,12 @@ impl AgentRuntime {
     }
 
     pub async fn submit_task(&mut self, task: String) -> Result<ModelResponse> {
-        self.send_turn_with_parts(task, Vec::new()).await
+        self.send_turn_with_parts(task, Vec::new(), None).await
     }
 
     /// Sends a plain text user turn (no images).
     pub async fn send_turn(&mut self, task: String) -> Result<ModelResponse> {
-        self.send_turn_with_parts(task, Vec::new()).await
+        self.send_turn_with_parts(task, Vec::new(), None).await
     }
 
     /// Creates a [`SessionSnapshot`] of the current session state for persistence.
@@ -867,5 +912,6 @@ fn runtime_event_kind_from_agent_event(event: &AgentEvent) -> Option<RuntimeEven
         AgentEvent::UserTaskSubmitted { .. } | AgentEvent::ModelOutput { .. } => None,
         AgentEvent::RepeatedToolCallWarning { .. } => None,
         AgentEvent::RepetitionDetected { .. } => None,
+        AgentEvent::GoalUpdated { .. } => None,
     }
 }

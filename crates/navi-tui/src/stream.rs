@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
 
-use navi_sdk::{EngineDriver, ModelMessage, NaviSessionRequest, NaviTurnRequest};
+use navi_sdk::{ContentPart, EngineDriver, ModelMessage, NaviSessionRequest, NaviTurnRequest};
 use tokio::sync::mpsc;
 
 use crate::app::TuiApp;
@@ -10,7 +10,7 @@ use crate::dispatch::AsyncEvent;
 use crate::notifications::push_diagnostic;
 use crate::providers::selected_provider_label;
 use crate::runtime::forward_runtime_event_to_tui_for_session;
-use crate::state::{ChatMessage, ChatRole};
+use crate::state::{ChatMessage, ChatRole, ThinkingLevel};
 
 pub(crate) fn start_streaming_request(app: &mut TuiApp) {
     if !app.provider_configured {
@@ -60,6 +60,7 @@ pub(crate) fn start_streaming_request(app: &mut TuiApp) {
     let project_dir = app.project_dir.clone();
     let session_id = app.session_id.as_str().to_string();
     let active_skills = app.active_skills.clone();
+    let thinking_level = app.thinking_level;
 
     app.set_stream_task(tokio::spawn(async move {
         let result = run_sdk_turn(
@@ -71,13 +72,12 @@ pub(crate) fn start_streaming_request(app: &mut TuiApp) {
             content_parts,
             tx.clone(),
             active_skills,
+            thinking_level,
         )
         .await;
         let _ = tx.send(AsyncEvent::TurnCompletedForSession { session_id, result });
     }));
 }
-
-use navi_sdk::ContentPart;
 
 #[allow(clippy::too_many_arguments)]
 async fn run_sdk_turn(
@@ -89,6 +89,7 @@ async fn run_sdk_turn(
     content_parts: Vec<ContentPart>,
     tx: mpsc::UnboundedSender<AsyncEvent>,
     active_skills: Vec<String>,
+    thinking_level: ThinkingLevel,
 ) -> std::result::Result<String, String> {
     engine
         .start_session(NaviSessionRequest {
@@ -110,6 +111,7 @@ async fn run_sdk_turn(
         message: user_prompt,
         content_parts,
         context_packets: Vec::new(),
+        thinking: Some(navi_sdk::ThinkingConfig::from(thinking_level)),
     });
     tokio::pin!(turn);
 

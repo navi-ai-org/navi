@@ -22,6 +22,7 @@ impl ProviderId {
     pub const MIMO_ANTHROPIC_SGP: &'static str = "mimo-anthropic-sgp";
     pub const MIMO_ANTHROPIC_AMS: &'static str = "mimo-anthropic-ams";
     pub const CLAUDINIO: &'static str = "claudinio";
+    pub const NVIDIA: &'static str = "nvidia";
 
     // ── Constructors ─────────────────────────────────────────────────────────
 
@@ -51,6 +52,7 @@ impl ProviderId {
                 Self::MIMO_ANTHROPIC_SGP,
                 Self::MIMO_ANTHROPIC_AMS,
                 Self::CLAUDINIO,
+                Self::NVIDIA,
             ]
             .contains(&constant),
             "not a known provider constant: {constant}"
@@ -121,6 +123,7 @@ mod tests {
             ProviderId::MIMO_ANTHROPIC_SGP,
             ProviderId::MIMO_ANTHROPIC_AMS,
             ProviderId::CLAUDINIO,
+            ProviderId::NVIDIA,
         ];
         for c in constants {
             let id = ProviderId::known(c);
