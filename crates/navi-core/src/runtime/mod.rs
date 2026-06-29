@@ -497,7 +497,9 @@ impl AgentRuntime {
                 crate::model::ThinkingConfig::Low => "low",
                 crate::model::ThinkingConfig::Off => "off",
             };
-            self.loaded_config.config.tui.thinking_level = level_str.to_string();
+            // NOTE: we only update shared_config, NOT loaded_config. Mutating
+            // loaded_config would permanently corrupt the original config and
+            // leak the last override into future turns that pass thinking: None.
             self.shared_config
                 .write()
                 .unwrap_or_else(|e| e.into_inner())
