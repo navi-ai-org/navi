@@ -203,6 +203,7 @@ pub struct NaviSession {
     approval_resolver: navi_core::ApprovalResolver,
     question_resolver: navi_core::QuestionResolver,
     turn_canceller: navi_core::TurnCanceller,
+    tui_components: Vec<String>,
     mcp: LoadedMcpServers,
     _plugins: Vec<LoadedPlugin>,
 }
@@ -351,6 +352,7 @@ impl NaviEngine {
                     approval_resolver,
                     question_resolver,
                     turn_canceller,
+                    tui_components: tool_executor.tui_components,
                     mcp,
                     _plugins: tool_executor._plugins,
                 }),
@@ -610,6 +612,15 @@ impl NaviEngine {
     pub fn subscribe_events(&self, session_id: &str) -> Result<broadcast::Receiver<RuntimeEvent>> {
         let session = self.session(session_id)?;
         Ok(session.events.resubscribe())
+    }
+
+    /// Lists TUI component declarations registered by native plugins for this session.
+    ///
+    /// The SDK preserves these names as frontend-scoped declarations. `navi-tui`
+    /// decides whether a known component name maps to an actual ratatui widget.
+    pub fn list_tui_components(&self, session_id: &str) -> Result<Vec<String>> {
+        let session = self.session(session_id)?;
+        Ok(session.tui_components.clone())
     }
 
     /// Syncs the provider registry into the local SQLite cache.

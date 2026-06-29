@@ -184,13 +184,7 @@ pub fn load_configured_plugins_with_options(
                             report.tools.push(name);
                         }
                         report.agent_policies.extend(registry.agent_policies);
-                        for component in registry.tui_components {
-                            report.warnings.push(format!(
-                                "plugin {} registered TUI component `{component}`, but TUI component plugin wiring is not implemented yet",
-                                metadata.name
-                            ));
-                            report.tui_components.push(component);
-                        }
+                        report.tui_components.extend(registry.tui_components);
                         report.loaded.push(metadata);
                         report.loaded_plugins.push(plugin);
                     }
@@ -349,6 +343,8 @@ mod tests {
         let mut registry = DefaultPluginRegistry::default();
 
         TestPlugin.register(&mut registry).expect("register");
+        assert_eq!(registry.agent_policies, vec!["test-policy"]);
+        assert_eq!(registry.tui_components, vec!["test-component"]);
         for plugin_tool in registry.tools {
             let adapted: Arc<dyn navi_core::Tool> = Arc::new(PluginToolAdapter::new(plugin_tool));
             executor.register_tool(adapted);

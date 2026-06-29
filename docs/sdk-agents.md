@@ -277,9 +277,10 @@ stream object whose `next()` method resolves to the next serialized
 maps structured TypeScript options onto the Rust learning harness, tutor prompt
 builder, and study compaction strategy. The NAPI engine also exposes runtime
 control methods for `cancelTurn`, `resolveApproval`, `addContextPacket`,
-`listModels`, and `setModel`. Lifecycle hook callbacks are fire-and-forget:
-the runtime emits JSON payloads through Node's event loop and does not block
-the agent turn waiting for asynchronous analytics or persistence work.
+`listModels`, `listTuiComponents`, and `setModel`. Lifecycle hook callbacks
+are fire-and-forget: the runtime emits JSON payloads through Node's event loop
+and does not block the agent turn waiting for asynchronous analytics or
+persistence work.
 
 ## Native Plugin Policies
 
@@ -293,8 +294,9 @@ policy names before constructing the session runtime:
 
 Unknown policy names are reported as plugin warnings and do not replace the
 host-configured runtime components. `register_tui_component(...)` remains a
-TUI-scoped declaration; `navi-core` and `navi-sdk` do not instantiate terminal
-widgets.
+TUI-scoped declaration. The SDK preserves declared component names per session
+through `list_tui_components(...)` / `listTuiComponents(...)`; `navi-tui`
+decides whether a name maps to an actual terminal widget.
 
 ## Runtime Customization
 

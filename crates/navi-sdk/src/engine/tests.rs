@@ -810,6 +810,22 @@ async fn subscribe_events_returns_receiver() {
     // Should not panic; receiver is valid
 }
 
+#[tokio::test]
+async fn list_tui_components_returns_session_plugin_declarations() {
+    let (engine, _tempdir) = test_engine_with_key();
+
+    let session = engine
+        .start_session(NaviSessionRequest::default())
+        .await
+        .expect("start session");
+
+    let components = engine
+        .list_tui_components(&session.id)
+        .expect("tui components");
+
+    assert!(components.is_empty());
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn snapshot_session_returns_snapshot() {
     let (engine, _tempdir) = test_engine_with_key();

@@ -335,6 +335,13 @@ impl NaviNapiEngine {
     }
 
     #[napi]
+    pub fn list_tui_components(&self, session_id: String) -> Result<Vec<String>> {
+        self.inner
+            .list_tui_components(&session_id)
+            .map_err(to_napi_error)
+    }
+
+    #[napi]
     pub async fn set_model(&self, session_id: String, provider: String, model: String) -> Result<()> {
         self.inner
             .set_model(&session_id, &provider, &model)
