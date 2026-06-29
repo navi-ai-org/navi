@@ -35,8 +35,9 @@ use crate::ui::text_input::{
 use crate::view::build_chat_lines;
 use crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use navi_sdk::{
-    AgentEvent, LoadedConfig, ModelMessage, ModelOption, SessionId, SessionSnapshot,
-    SubagentTranscriptItem, SubagentTranscriptKind, ToolInvocation, ToolResult,
+    AgentEvent, BackgroundCommandSnapshot, BackgroundTaskStatus, LoadedConfig, ModelMessage,
+    ModelOption, SessionId, SessionSnapshot, SubagentTranscriptItem, SubagentTranscriptKind,
+    ToolInvocation, ToolResult,
 };
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
@@ -63,6 +64,23 @@ pub(crate) fn test_app(input: &str) -> TuiApp {
     app.input_cursor = app.input.len();
     app.mode = Mode::Normal;
     app
+}
+
+fn sample_background_command(task_id: &str) -> BackgroundCommandSnapshot {
+    BackgroundCommandSnapshot {
+        task_id: task_id.to_string(),
+        command: "cargo test".to_string(),
+        description: Some("tests".to_string()),
+        status: BackgroundTaskStatus::Running,
+        elapsed_ms: 1200,
+        timeout_ms: 60000,
+        exit_code: None,
+        stdout: "running tests\nstill running".to_string(),
+        stderr: String::new(),
+        stdout_truncated: false,
+        stderr_truncated: false,
+        error: None,
+    }
 }
 
 fn app_with_missing_provider_key() -> TuiApp {
@@ -1233,6 +1251,73 @@ fn ctrl_t_opens_background_tasks_and_ctrl_b_opens_background_agents() {
     app.mode = Mode::Normal;
     handle_key(&mut app, KeyCode::Char('b'), KeyModifiers::CONTROL);
     assert_eq!(app.mode, Mode::BackgroundModels);
+}
+
+#[test]
+fn background_bash_result_is_listed_immediately() {
+    let mut app = test_app("");
+    let invocation = ToolInvocation {
+        id: "call-bg".to_string(),
+        tool_name: "bash".to_string(),
+        input: serde_json::json!({
+            "command": "cargo test",
+            "background": true,
+        }),
+    };
+    handle_async_event(
+        &mut app,
+        AsyncEvent::Agent(AgentEvent::ToolRequested(invocation)),
+    );
+    handle_async_event(
+        &mut app,
+        AsyncEvent::Agent(AgentEvent::ToolCompleted(ToolResult {
+            invocation_id: "call-bg".to_string(),
+            ok: true,
+            output: serde_json::json!({
+                "task_id": "bg_1",
+                "command": "cargo test",
+                "background": true,
+                "status": "running",
+                "elapsed_ms": 250,
+                "timeout_ms": 60000,
+                "stdout": "running tests",
+                "stderr": "",
+            }),
+        })),
+    );
+
+    assert_eq!(app.background_commands.len(), 1);
+    assert_eq!(app.background_commands[0].task_id, "bg_1");
+    assert_eq!(app.background_commands[0].stdout, "running tests");
+}
+
+#[test]
+fn background_task_enter_and_click_open_output_modal() {
+    let mut app = test_app("");
+    app.mode = Mode::BackgroundCommands;
+    app.background_commands = vec![sample_background_command("bg_1")];
+
+    handle_key(&mut app, KeyCode::Enter, KeyModifiers::NONE);
+    assert_eq!(app.mode, Mode::BackgroundCommandOutput);
+    assert!(app.bg_command_output_follow);
+
+    app.mode = Mode::BackgroundCommands;
+    app.register_hit(
+        Rect::new(2, 2, 20, 1),
+        20,
+        "background task bg_1",
+        HitAction::BackgroundCommand(0),
+    );
+    handle_mouse(
+        &mut app,
+        MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 3,
+            row: 2,
+            modifiers: KeyModifiers::NONE,
+        },
+    );
+    assert_eq!(app.mode, Mode::BackgroundCommandOutput);
 }
 
 #[test]

@@ -98,17 +98,7 @@ pub(super) fn route_global_key(
                 super::replace_modal(app, ModalKind::BackgroundCommands);
                 app.bg_command_selected = 0;
                 app.bg_command_scroll = 0;
-                // Refresh the list when opening
-                let engine = app.engine();
-                let session_id = app.session_id.as_str().to_string();
-                let tx = app.async_sender();
-                crate::runtime::spawn_runtime_task(async move {
-                    if let Ok(commands) = engine.list_background_commands(&session_id).await {
-                        let _ = tx.send(crate::dispatch::AsyncEvent::BackgroundCommandsUpdated(
-                            commands,
-                        ));
-                    }
-                });
+                crate::background::refresh_background_commands(app);
                 return KeyOutcome::Handled;
             }
             KeyCode::Char('b') => {

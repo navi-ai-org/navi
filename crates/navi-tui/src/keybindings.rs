@@ -162,6 +162,9 @@ fn route_mode_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyModifiers) -> K
         Mode::Mcp => self::modals::handle_mcp_key(app, code, modifiers),
         Mode::OAuth => self::modals::handle_oauth_key(app, code, modifiers),
         Mode::BackgroundCommands => self::modals::handle_background_commands_key(app, code),
+        Mode::BackgroundCommandOutput => {
+            self::modals::handle_background_command_output_key(app, code)
+        }
         Mode::BackgroundModels => self::modals::handle_background_models_key(app, code),
         Mode::BgModelPicker => self::modals::handle_bg_model_picker_key(app, code),
         Mode::Setup => self::input_modes::handle_normal_key(app, code, modifiers),

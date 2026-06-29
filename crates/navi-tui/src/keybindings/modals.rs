@@ -1000,15 +1000,20 @@ pub(crate) fn handle_background_commands_key(app: &mut TuiApp, code: KeyCode) ->
     let len = app.background_commands.len();
     match code {
         KeyCode::Esc => super::close_active_modal(app),
+        KeyCode::Enter => {
+            crate::background::open_background_command_output(app, app.bg_command_selected)
+        }
         KeyCode::Up | KeyCode::Char('k') => {
             if app.bg_command_selected > 0 {
                 app.bg_command_selected -= 1;
             }
+            crate::background::clamp_background_selection(app);
         }
         KeyCode::Down | KeyCode::Char('j') => {
             if app.bg_command_selected + 1 < len {
                 app.bg_command_selected += 1;
             }
+            crate::background::clamp_background_selection(app);
         }
         KeyCode::Char('c') => {
             // Cancel selected background command
@@ -1026,17 +1031,52 @@ pub(crate) fn handle_background_commands_key(app: &mut TuiApp, code: KeyCode) ->
             }
         }
         KeyCode::Char('r') => {
-            // Refresh background commands
-            let engine = app.engine();
-            let session_id = app.session_id.as_str().to_string();
-            let tx = app.async_sender();
-            spawn_runtime_task(async move {
-                if let Ok(commands) = engine.list_background_commands(&session_id).await {
-                    let _ = tx.send(crate::dispatch::AsyncEvent::BackgroundCommandsUpdated(
-                        commands,
-                    ));
+            crate::background::refresh_background_commands(app);
+        }
+        _ => {}
+    }
+    false
+}
+
+pub(crate) fn handle_background_command_output_key(app: &mut TuiApp, code: KeyCode) -> bool {
+    match code {
+        KeyCode::Esc | KeyCode::Left | KeyCode::Char('h') => {
+            super::replace_modal(app, ModalKind::BackgroundCommands);
+        }
+        KeyCode::Char('r') => crate::background::refresh_background_commands(app),
+        KeyCode::Char('c') => {
+            if let Some(cmd) = app.background_commands.get(app.bg_command_selected) {
+                if cmd.is_running() {
+                    let task_id = cmd.task_id.clone();
+                    let engine = app.engine();
+                    let session_id = app.session_id.as_str().to_string();
+                    spawn_runtime_task(async move {
+                        let _ = engine
+                            .cancel_background_command(&session_id, &task_id)
+                            .await;
+                    });
                 }
-            });
+            }
+        }
+        KeyCode::Up | KeyCode::Char('k') => {
+            app.bg_command_output_follow = false;
+            app.bg_command_output_scroll = app.bg_command_output_scroll.saturating_sub(1);
+        }
+        KeyCode::Down | KeyCode::Char('j') => {
+            app.bg_command_output_follow = false;
+            app.bg_command_output_scroll = app.bg_command_output_scroll.saturating_add(1);
+        }
+        KeyCode::PageUp => {
+            app.bg_command_output_follow = false;
+            app.bg_command_output_scroll = app.bg_command_output_scroll.saturating_sub(10);
+        }
+        KeyCode::PageDown => {
+            app.bg_command_output_follow = false;
+            app.bg_command_output_scroll = app.bg_command_output_scroll.saturating_add(10);
+        }
+        KeyCode::End | KeyCode::Char('f') => {
+            app.bg_command_output_follow = true;
+            app.bg_command_output_scroll = 0;
         }
         _ => {}
     }

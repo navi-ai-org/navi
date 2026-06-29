@@ -39,8 +39,8 @@ pub use navi_core::session::{
 pub use navi_core::{
     AgentEvent, AgentRunState, Capability, CapabilityDecision, CapabilityGrant, CapabilityLedger,
     CapabilityLedgerEntry, CapabilityScope, ModelMessage, ModelRole, QuestionOption,
-    QuestionRequest, QuestionResponse, RuntimeEvent, RuntimeEventKind, SessionId, SessionSnapshot,
-    SubagentTranscriptItem, SubagentTranscriptKind,
+    QuestionRequest, QuestionResponse, RuntimeEvent, RuntimeEventKind, SessionGoal, SessionId,
+    SessionSnapshot, SubagentTranscriptItem, SubagentTranscriptKind,
 };
 // Event auxiliary types
 pub use navi_core::event::RepetitionWarningKind;

@@ -1,0 +1,10 @@
+{
+  "name": "@navi-agent/napi-linux-arm64",
+  "version": "0.1.0",
+  "description": "Linux arm64 prebuilt binary for @navi-agent/napi.",
+  "license": "Apache-2.0",
+  "os": ["linux"],
+  "cpu": ["arm64"],
+  "main": "navi.linux-arm64.node",
+  "files": ["navi.linux-arm64.node"]
+}

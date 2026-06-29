@@ -163,6 +163,8 @@ pub struct TuiApp {
     pub(crate) background_commands: Vec<BackgroundCommandSnapshot>,
     pub(crate) bg_command_selected: usize,
     pub(crate) bg_command_scroll: usize,
+    pub(crate) bg_command_output_scroll: usize,
+    pub(crate) bg_command_output_follow: bool,
     pub(crate) bg_poll_task: Option<JoinHandle<()>>,
 
     // session naming
@@ -331,6 +333,8 @@ impl TuiApp {
             background_commands: Vec::new(),
             bg_command_selected: 0,
             bg_command_scroll: 0,
+            bg_command_output_scroll: 0,
+            bg_command_output_follow: true,
             bg_poll_task: None,
             session_title: None,
             bg_models_running: 0,

@@ -117,6 +117,9 @@ fn render_inner(frame: &mut Frame<'_>, app: &mut TuiApp) {
         Mode::BackgroundCommands => {
             background_commands::render(frame, app, modal_rect(area, 80, 20))
         }
+        Mode::BackgroundCommandOutput => {
+            background_commands::render_output(frame, app, modal_rect(area, 110, 30))
+        }
         Mode::BackgroundModels => {
             modals::render_background_models(frame, app, modal_rect(area, 70, 14))
         }

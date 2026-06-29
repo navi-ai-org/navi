@@ -249,6 +249,7 @@ pub enum Mode {
     Mcp,
     OAuth,
     BackgroundCommands,
+    BackgroundCommandOutput,
     BackgroundModels,
     BgModelPicker,
     Setup,
@@ -274,6 +275,7 @@ pub(crate) enum ModalKind {
     Mcp,
     OAuth,
     BackgroundCommands,
+    BackgroundCommandOutput,
     BackgroundModels,
     BgModelPicker,
 }
@@ -299,6 +301,7 @@ impl ModalKind {
             Self::Mcp => Mode::Mcp,
             Self::OAuth => Mode::OAuth,
             Self::BackgroundCommands => Mode::BackgroundCommands,
+            Self::BackgroundCommandOutput => Mode::BackgroundCommandOutput,
             Self::BackgroundModels => Mode::BackgroundModels,
             Self::BgModelPicker => Mode::BgModelPicker,
         }
