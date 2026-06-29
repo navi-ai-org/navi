@@ -3,9 +3,9 @@
 # NAVI installer — downloads the latest prebuilt binary for your platform.
 #
 # Usage:
-#   curl -fsSL https://raw.githubusercontent.com/navi-ai-org/navi/main/install.sh | sh
-#   curl -fsSL https://raw.githubusercontent.com/navi-ai-org/navi/main/install.sh | sh -s -- --version 0.2.0
-#   curl -fsSL https://raw.githubusercontent.com/navi-ai-org/navi/main/install.sh | sh -s -- --to /usr/local/bin
+#   curl -fsSL https://raw.githubusercontent.com/navi-ai-org/navi/main/scripts/install.sh | sh
+#   curl -fsSL https://raw.githubusercontent.com/navi-ai-org/navi/main/scripts/install.sh | sh -s -- --version 0.2.0
+#   curl -fsSL https://raw.githubusercontent.com/navi-ai-org/navi/main/scripts/install.sh | sh -s -- --to /usr/local/bin
 #
 # Environment variables:
 #   NAVI_VERSION   — install a specific version (default: latest)
@@ -90,6 +90,9 @@ download() {
     curl -fsSL --progress-bar -o "$dest" "$url"
   elif command -v wget >/dev/null 2>&1; then
     wget -q --show-progress -O "$dest" "$url"
+  else
+    error "Neither curl nor wget found. Please install one and try again."
+    exit 1
   fi
 }
 
@@ -149,8 +152,10 @@ main() {
     archive_name="navi-${os}-${arch}.zip"
     binary_name="navi.exe"
     ext="zip"
+    require_cmd unzip
   else
     archive_name="navi-${os}-${arch}.tar.gz"
+    require_cmd tar
   fi
 
   local base_url="https://github.com/navi-ai-org/navi/releases/download/v${version}"

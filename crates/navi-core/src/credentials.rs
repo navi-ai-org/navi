@@ -41,6 +41,8 @@ struct CredentialAccount {
     commandcode: Option<CommandCodeCredentialMetadata>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     authenticated_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    oauth_api_kind: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -76,6 +78,12 @@ impl ProviderCredentials {
         self.default_account_id()
             .and_then(|account_id| self.account_api_key(&account_id))
             .or_else(|| (!self.api_key.is_empty()).then(|| self.api_key.clone()))
+    }
+
+    fn default_oauth_api_kind(&self) -> Option<String> {
+        self.default_account_id()
+            .and_then(|account_id| self.accounts.get(&account_id))
+            .and_then(|account| account.oauth_api_kind.clone())
     }
 
     fn account_api_key(&self, account_id: &str) -> Option<String> {
@@ -166,6 +174,15 @@ impl CredentialStore {
             .and_then(ProviderCredentials::default_api_key)
     }
 
+    /// Returns oauth_api_kind metadata for a stored OAuth token, or `None`.
+    pub fn get_oauth_api_kind(&self, provider_id: &str) -> Option<String> {
+        let content = fs::read_to_string(&self.path).ok()?;
+        let file: CredentialsFile = toml::from_str(&content).ok()?;
+        file.providers
+            .get(provider_id)
+            .and_then(ProviderCredentials::default_oauth_api_kind)
+    }
+
     pub fn get_api_key_for_account(&self, provider_id: &str, account_id: &str) -> Option<String> {
         let content = fs::read_to_string(&self.path).ok()?;
         let file: CredentialsFile = toml::from_str(&content).ok()?;
@@ -234,6 +251,7 @@ impl CredentialStore {
                         .commandcode
                         .as_ref()
                         .map(|metadata| metadata.authenticated_at.clone()),
+                    oauth_api_kind: None,
                 },
             );
         }
@@ -302,6 +320,44 @@ impl CredentialStore {
                         label: Some("Default".to_string()),
                         commandcode: None,
                         authenticated_at: None,
+                        oauth_api_kind: None,
+                    },
+                )]),
+                default_account: Some(DEFAULT_ACCOUNT_ID.to_string()),
+            },
+        );
+
+        let content = toml::to_string_pretty(&file).context("failed to serialize credentials")?;
+        self.write_content(&content)?;
+
+        Ok(())
+    }
+    /// Stores an API key with oauth_api_kind metadata (e.g. "chat-completions"
+    /// for OAuth tokens that only work with Chat Completions API).
+    pub fn set_oauth_credential(
+        &self,
+        provider_id: &str,
+        api_key: &str,
+        oauth_api_kind: &str,
+    ) -> Result<()> {
+        ensure_private_parent_dir(&self.path)?;
+
+        let mut file = self.load_file()?;
+        file.ignored_providers.retain(|p| p != provider_id);
+
+        file.providers.insert(
+            provider_id.to_string(),
+            ProviderCredentials {
+                api_key: api_key.to_string(),
+                commandcode: None,
+                accounts: BTreeMap::from([(
+                    DEFAULT_ACCOUNT_ID.to_string(),
+                    CredentialAccount {
+                        api_key: api_key.to_string(),
+                        label: Some("Default".to_string()),
+                        commandcode: None,
+                        authenticated_at: None,
+                        oauth_api_kind: Some(oauth_api_kind.to_string()),
                     },
                 )]),
                 default_account: Some(DEFAULT_ACCOUNT_ID.to_string()),
@@ -334,6 +390,7 @@ impl CredentialStore {
                 label: Some(commandcode_account_label(&metadata)),
                 authenticated_at: Some(metadata.authenticated_at.clone()),
                 commandcode: Some(metadata),
+                oauth_api_kind: None,
             },
         );
         if credentials.default_account.is_none() && credentials.api_key.is_empty() {

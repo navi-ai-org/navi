@@ -1,0 +1,16 @@
+{
+  "name": "@navi-agent/navi-win32-x64",
+  "version": "0.1.0",
+  "description": "Windows x64 prebuilt binary for @navi-agent/navi.",
+  "license": "Apache-2.0",
+  "os": ["win32"],
+  "cpu": ["x64"],
+  "files": ["navi.exe"],
+  "bin": {
+    "navi": "navi.exe"
+  },
+  "scripts": {
+    "prepack": "node -e \"require('node:fs').accessSync('navi.exe')\"",
+    "prepublishOnly": "node -e \"require('node:fs').accessSync('navi.exe')\""
+  }
+}

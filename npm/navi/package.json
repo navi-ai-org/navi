@@ -1,0 +1,59 @@
+{
+  "name": "@navi-agent/navi",
+  "version": "0.1.0",
+  "description": "The coding agent engine that lives in your terminal. Install the navi CLI binary.",
+  "license": "Apache-2.0",
+  "author": "NAVI Contributors",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/navi-ai-org/navi.git"
+  },
+  "homepage": "https://github.com/navi-ai-org/navi",
+  "bugs": {
+    "url": "https://github.com/navi-ai-org/navi/issues"
+  },
+  "keywords": [
+    "navi",
+    "agent",
+    "cli",
+    "llm",
+    "ai",
+    "coding",
+    "terminal",
+    "rust"
+  ],
+  "bin": {
+    "navi": "bin/navi.js"
+  },
+  "files": [
+    "bin/",
+    "README.md"
+  ],
+  "scripts": {
+    "postinstall": "node bin/install.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "os": [
+    "linux",
+    "darwin",
+    "win32"
+  ],
+  "cpu": [
+    "x64",
+    "arm64"
+  ],
+  "optionalDependencies": {
+    "@navi-agent/navi-linux-x64": "0.1.0",
+    "@navi-agent/navi-linux-arm64": "0.1.0",
+    "@navi-agent/navi-darwin-x64": "0.1.0",
+    "@navi-agent/navi-darwin-arm64": "0.1.0",
+    "@navi-agent/navi-win32-x64": "0.1.0"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
+  "sideEffects": false
+}

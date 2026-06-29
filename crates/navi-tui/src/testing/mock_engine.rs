@@ -323,7 +323,11 @@ impl EngineDriver for MockEngine {
     }
 
     async fn usage_report(&self) -> Result<NaviUsageReport> {
-        self.state.lock().unwrap().calls.push(EngineCall::UsageReport);
+        self.state
+            .lock()
+            .unwrap()
+            .calls
+            .push(EngineCall::UsageReport);
         Ok(self.state.lock().unwrap().usage_report.clone())
     }
 

@@ -1,8 +1,11 @@
 [package]
 name = "navi-openai"
-version.workspace = true
+version = "0.1.1"
 edition.workspace = true
 license.workspace = true
+description.workspace = true
+repository.workspace = true
+homepage.workspace = true
 
 [dependencies]
 anyhow.workspace = true
@@ -12,6 +15,7 @@ futures-util.workspace = true
 reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+sha2.workspace = true
 tracing.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
