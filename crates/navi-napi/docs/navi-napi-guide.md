@@ -37,22 +37,38 @@
 
 ## Installation
 
-The package is not published to npm. It is a local path dependency built from the NAVI workspace.
+The recommended way to install is from the npm registry:
 
 ```bash
-# From the workspace root (where Cargo.toml lives)
-cd crates/navi-napi
-npm install   # installs no external deps; native binary is built separately
-npm run build # compiles the Rust native addon
+# Recommended — install from npm (prebuilt binary, no Rust required)
+npm install @navi-agent/napi
 ```
 
-The build step runs `cargo build -p navi-napi` and copies the resulting native library into the package directory with a platform-specific filename (e.g. `navi.linux-x64.node`).
+This installs the main package **and** the prebuilt native binary for your
+platform automatically via an optional dependency. No Rust toolchain is needed.
+
+The package is published at:
+**<https://www.npmjs.com/package/@navi-agent/napi>**
+
+### From source (contributors / unsupported platforms)
+
+If no prebuilt binary is available for your platform, or you are working
+inside the NAVI repository, you can build from source:
+
+```bash
+# Inside the NAVI workspace
+cd crates/navi-napi
+npm install
+npm run build          # debug build
+npm run build:release  # release build
+```
+
+This requires a Rust toolchain (see [rustup.rs](https://rustup.rs)).
 
 **Requirements:**
 
 - Node.js ≥ 18
-- Rust toolchain with the `navi-napi` crate buildable
-- The full NAVI workspace (it depends on `navi-core` and `navi-sdk`)
+- Rust toolchain *(only when building from source)*
 
 ---
 
@@ -557,21 +573,31 @@ JsonValue             // null | boolean | number | string | JsonValue[] | { [key
 
 ## Platform Notes
 
-The native addon is a platform-specific shared library:
+The native addon is a platform-specific shared library. When you install
+`@navi-agent/napi` from npm, the correct binary for your OS and architecture
+is pulled in automatically through a platform-specific optional dependency:
 
-| Platform | Library name |
+| Platform | npm package |
 |----------|-------------|
-| Linux x64 | `navi.linux-x64.node` |
-| macOS (arm64/x64) | `navi.darwin-arm64.node` / `navi.darwin-x64.node` |
-| Windows | `navi.win32-x64.node` |
+| Linux x64 | [`@navi-agent/napi-linux-x64`](https://www.npmjs.com/package/@navi-agent/napi-linux-x64) |
+| Linux arm64 | [`@navi-agent/napi-linux-arm64`](https://www.npmjs.com/package/@navi-agent/napi-linux-arm64) |
+| macOS x64 (Intel) | [`@navi-agent/napi-darwin-x64`](https://www.npmjs.com/package/@navi-agent/napi-darwin-x64) |
+| macOS arm64 (Apple Silicon) | [`@navi-agent/napi-darwin-arm64`](https://www.npmjs.com/package/@navi-agent/napi-darwin-arm64) |
+| Windows x64 | [`@navi-agent/napi-win32-x64`](https://www.npmjs.com/package/@navi-agent/napi-win32-x64) |
 
-The loader (`index.js`) checks these locations in order:
+> **Note:** npm only installs the optional dependency that matches the current
+> platform. The other platform packages are skipped automatically.
 
-1. `NAVI_NAPI_BINARY` environment variable (absolute path)
-2. `navi.<platform>-<arch>.node` in the package directory
-3. `navi.node` in the package directory
-4. `target/release/libnavi_napi.so` (or `.dylib`/`.dll`) in the workspace
-5. `target/debug/libnavi_napi.so` (or `.dylib`/`.dll`) in the workspace
+### Binary resolution order
+
+The loader (`index.js`) resolves the native binary in this order:
+
+1. **`NAVI_NAPI_BINARY`** environment variable — absolute path to a custom `.node` file.
+2. **Platform optional dependency** — `@navi-agent/napi-<platform>-<arch>` installed by npm (the default for registry installs).
+3. **Local prebuilt binary** — `navi.<platform>-<arch>.node` next to `index.js`.
+4. **Generic local binary** — `navi.node` next to `index.js`.
+5. **Workspace `target/`** — debug and release builds in the NAVI repository (for contributors).
+6. **Build from source** — if cargo is available and no binary was found, the loader attempts `cargo build -p navi-napi --release` automatically.
 
 Set `NAVI_NAPI_BINARY` to use a custom-built binary:
 
@@ -583,6 +609,10 @@ NAVI_NAPI_BINARY=/opt/navi-custom/libnavi_napi.so node my-app.mjs
 
 ## Building from Source
 
+> Most users should install from npm — see [Installation](#installation).
+> Building from source is only needed for contributors or platforms without a
+> prebuilt binary.
+
 ```bash
 # Debug build (faster compile, slower runtime)
 cd crates/navi-napi
@@ -592,9 +622,29 @@ npm run build
 npm run build -- --release
 # or
 NODE_ENV=production npm run build
+
+# Cross-compile for a specific target
+npm run build -- --release --target aarch64-apple-darwin
 ```
 
 The build script runs `cargo build -p navi-napi` and copies the output to the package directory.
+
+**Publishing prebuilt binaries** (for maintainers):
+
+```bash
+# Build for each target triple
+node scripts/build-native.mjs --release --target x86_64-unknown-linux-gnu --strip
+node scripts/build-native.mjs --release --target aarch64-unknown-linux-gnu --strip
+node scripts/build-native.mjs --release --target x86_64-apple-darwin --strip
+node scripts/build-native.mjs --release --target aarch64-apple-darwin --strip
+node scripts/build-native.mjs --release --target x86_64-pc-windows-msvc --strip
+
+# Publish platform packages first, then the main package
+cd npm/linux-x64   && npm publish --access public && cd ../..
+cd npm/linux-arm64 && npm publish --access public && cd ../..
+# ... repeat for each platform ...
+npm publish --access public
+```
 
 **Running tests:**
 
