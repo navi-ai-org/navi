@@ -310,8 +310,10 @@ fn commandcode_messages(messages: &[navi_core::ModelMessage]) -> (String, Vec<Va
                             }
                             ContentPart::Image { media_type, data } => {
                                 json!({
-                                    "type": "image",
-                                    "image": format!("data:{media_type};base64,{data}")
+                                    "type": "image_url",
+                                    "image_url": {
+                                        "url": format!("data:{media_type};base64,{data}")
+                                    }
                                 })
                             }
                         })
@@ -1267,9 +1269,11 @@ mod tests {
 
         assert_eq!(content[0]["type"], "text");
         assert_eq!(content[0]["text"], "describe this image");
-        assert_eq!(content[1]["type"], "image");
-        assert_eq!(content[1]["image"], "data:image/png;base64,abc123");
-        assert!(content[1].get("image_url").is_none());
+        assert_eq!(content[1]["type"], "image_url");
+        assert_eq!(
+            content[1]["image_url"]["url"],
+            "data:image/png;base64,abc123"
+        );
     }
 
     #[test]
