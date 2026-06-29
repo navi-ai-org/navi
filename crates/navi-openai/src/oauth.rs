@@ -216,7 +216,7 @@ where
     let tokens =
         exchange_openai_code_for_tokens(&issuer, &client_id, &redirect_uri, &pkce, &code).await?;
     credential_store
-        .set_api_key(provider_id, &tokens.access_token)
+        .set_oauth_credential(provider_id, &tokens.access_token, "chat-completions")
         .map_err(|err| err.to_string())?;
     Ok(())
 }
@@ -623,7 +623,7 @@ fn openai_authorize_url(
         ("redirect_uri", redirect_uri),
         (
             "scope",
-            "openid profile email offline_access api.responses.write api.connectors.read api.connectors.invoke",
+            "openid profile email offline_access api.connectors.read api.connectors.invoke",
         ),
         ("code_challenge", &pkce.code_challenge),
         ("code_challenge_method", "S256"),
@@ -1214,11 +1214,17 @@ mod tests {
         assert_eq!(report.limits[0].limit_id.as_deref(), Some("codex"));
         assert!(report.limits[0].limit_reached);
         assert_eq!(
-            report.limits[0].primary.as_ref().map(|window| window.limit_window_seconds),
+            report.limits[0]
+                .primary
+                .as_ref()
+                .map(|window| window.limit_window_seconds),
             Some(18_000)
         );
         assert_eq!(
-            report.limits[0].secondary.as_ref().map(|window| window.limit_window_seconds),
+            report.limits[0]
+                .secondary
+                .as_ref()
+                .map(|window| window.limit_window_seconds),
             Some(604_800)
         );
         assert_eq!(

@@ -3245,7 +3245,7 @@ dependencies = [
 
 [[package]]
 name = "navi-core"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3302,7 +3302,7 @@ dependencies = [
 
 [[package]]
 name = "navi-openai"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -3312,6 +3312,7 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
+ "sha2",
  "thiserror 2.0.18",
  "tokio",
  "tracing",
@@ -3414,7 +3415,7 @@ dependencies = [
 
 [[package]]
 name = "navi-providers"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "navi-core",
  "navi-openai",

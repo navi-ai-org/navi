@@ -6,12 +6,12 @@
   "author": "NAVI Contributors",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/enrell/navi.git",
+    "url": "git+https://github.com/navi-ai-org/navi.git",
     "directory": "crates/navi-napi"
   },
-  "homepage": "https://github.com/enrell/navi/tree/main/crates/navi-napi#readme",
+  "homepage": "https://github.com/navi-ai-org/navi/tree/main/crates/navi-napi#readme",
   "bugs": {
-    "url": "https://github.com/enrell/navi/issues"
+    "url": "https://github.com/navi-ai-org/navi/issues"
   },
   "keywords": [
     "navi",

@@ -22,6 +22,10 @@ resolver = "3"
 version = "0.1.0"
 edition = "2024"
 license = "Apache-2.0"
+description = "Local agentic engine and terminal-first coding agent."
+repository = "https://github.com/navi-ai-org/navi"
+homepage = "https://github.com/navi-ai-org/navi"
+readme = "README.md"
 
 [workspace.dependencies]
 anyhow = "1"
@@ -79,19 +83,19 @@ tree-sitter-rust = "0.24.2"
 tree-sitter-typescript = "0.23.2"
 tempfile = "3"
 wiremock = "0.6"
-navi-core = { path = "crates/navi-core" }
-navi-mcp = { path = "crates/navi-mcp" }
+navi-core = { version = "0.1.1", path = "crates/navi-core" }
+navi-mcp = { version = "0.1.0", path = "crates/navi-mcp" }
 napi = { version = "3.9.4", features = ["async", "serde-json"] }
 napi-build = "2.3.2"
 napi-derive = "3.5.7"
-navi-openai = { path = "crates/navi-openai" }
-navi-plugin-api = { path = "crates/navi-plugin-api" }
-navi-plugin-broker = { path = "crates/navi-plugin-broker" }
-navi-providers = { path = "crates/navi-providers" }
-navi-plugin-host = { path = "crates/navi-plugin-host" }
-navi-plugin-manifest = { path = "crates/navi-plugin-manifest" }
-navi-plugin-orchestrator = { path = "crates/navi-plugin-orchestrator" }
-navi-plugin-runtime = { path = "crates/navi-plugin-runtime" }
-navi-sdk = { path = "crates/navi-sdk" }
-navi-tui = { path = "crates/navi-tui" }
-navi-vfs = { path = "crates/navi-vfs" }
+navi-openai = { version = "0.1.1", path = "crates/navi-openai" }
+navi-plugin-api = { version = "0.1.0", path = "crates/navi-plugin-api" }
+navi-plugin-broker = { version = "0.1.0", path = "crates/navi-plugin-broker" }
+navi-providers = { version = "0.1.1", path = "crates/navi-providers" }
+navi-plugin-host = { version = "0.1.0", path = "crates/navi-plugin-host" }
+navi-plugin-manifest = { version = "0.1.0", path = "crates/navi-plugin-manifest" }
+navi-plugin-orchestrator = { version = "0.1.0", path = "crates/navi-plugin-orchestrator" }
+navi-plugin-runtime = { version = "0.1.0", path = "crates/navi-plugin-runtime" }
+navi-sdk = { version = "0.1.0", path = "crates/navi-sdk" }
+navi-tui = { version = "0.1.0", path = "crates/navi-tui" }
+navi-vfs = { version = "0.1.0", path = "crates/navi-vfs" }

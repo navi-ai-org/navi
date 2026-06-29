@@ -1,0 +1,16 @@
+{
+  "name": "@navi-agent/navi-darwin-arm64",
+  "version": "0.1.0",
+  "description": "macOS arm64 prebuilt binary for @navi-agent/navi.",
+  "license": "Apache-2.0",
+  "os": ["darwin"],
+  "cpu": ["arm64"],
+  "files": ["navi"],
+  "bin": {
+    "navi": "navi"
+  },
+  "scripts": {
+    "prepack": "node -e \"require('node:fs').accessSync('navi')\"",
+    "prepublishOnly": "node -e \"require('node:fs').accessSync('navi')\""
+  }
+}

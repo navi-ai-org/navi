@@ -249,10 +249,20 @@ fn build_provider_for_config_inner(
             credential_store_path: credential_store.path().to_path_buf(),
         })?;
 
-    Ok(Arc::new(OpenAiProvider::from_provider_config_with_key(
-        &provider_config,
-        api_key,
-    )?))
+    let mut provider = OpenAiProvider::from_provider_config_with_key(&provider_config, api_key)?;
+
+    // OAuth tokens from the Codex CLI client only work with Chat Completions API,
+    // not the Responses API. When the credential was obtained via OAuth, the
+    // credential store records oauth_api_kind = "chat-completions".
+    if credential_store
+        .get_oauth_api_kind(&provider_config.id)
+        .as_deref()
+        == Some("chat-completions")
+    {
+        provider = provider.with_api_kind(navi_providers::OpenAiApiKind::ChatCompletions);
+    }
+
+    Ok(Arc::new(provider))
 }
 
 pub(crate) async fn list_models_for_provider(

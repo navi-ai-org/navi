@@ -1,0 +1,16 @@
+{
+  "name": "@navi-agent/navi-linux-x64",
+  "version": "0.1.0",
+  "description": "Linux x64 prebuilt binary for @navi-agent/navi.",
+  "license": "Apache-2.0",
+  "os": ["linux"],
+  "cpu": ["x64"],
+  "files": ["navi"],
+  "bin": {
+    "navi": "navi"
+  },
+  "scripts": {
+    "prepack": "node -e \"require('node:fs').accessSync('navi')\"",
+    "prepublishOnly": "node -e \"require('node:fs').accessSync('navi')\""
+  }
+}
