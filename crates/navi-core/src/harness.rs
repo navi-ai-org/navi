@@ -261,12 +261,11 @@ fn build_system_prompt_inner(
             "5. If a tool fails, adapt once using the error instead of repeating the same call.\n",
             "\n",
             "Tool rules:\n",
-            "- Prefer top_files for first-pass exploration of unfamiliar code areas before issuing many read_file calls.\n",
-            "- Prefer read_file, fs_browser, and grep for focused follow-up inspection.\n",
+            "- Prefer ast_search, symbol_goto, code(action='overview'), read_file, fs_browser, and grep for focused inspection.\n",
+            "- Batch independent read-only inspection calls in the same assistant response when the provider supports native tool calling.\n",
             "- Prefer apply_patch for targeted text edits; write_file is for whole-file replacement.\n",
             "- apply_patch accepts exactly one of {{patch: string}} or {{patches: string[]}}; never pass path/content/old_string/new_string to apply_patch.\n",
             "- There is no `edit` tool. For multiple known edits, use one apply_patch call with `patches`.\n",
-            "- Prefer git_ops over bash for git operations — structured status, diff, log, and branch output.\n",
             "- Prefer package_manager over bash for dependency management — structured install, add, remove, update.\n",
             "- Use bash for genuinely ad-hoc commands that don't fit specialized tools.\n",
             "- For long-running commands, call bash with background=true, wait_ms, and timeout_ms; poll or cancel the returned task_id instead of waiting indefinitely.\n",
@@ -294,35 +293,13 @@ fn build_system_prompt_inner(
             "  max_results for grep/fs_browser.\n",
             "- Avoid dumping large outputs into context. Prefer targeted queries (specific grep\n",
             "  patterns, narrow file ranges) over broad sweeps.\n",
-            "- For large file explorations, use top_files first, then read_file with line ranges.\n"
+            "- For large file explorations, use ast_search/code overview first, then read_file with line ranges.\n"
         ),
         profile = profile,
         cwd = cwd.display(),
         tool_calling_rule = tool_calling_rule,
     );
     if tools_enabled {
-        prompt.push_str(
-        "tool_workflow guidance:\n\
-         - Use tool_workflow to batch many read-only operations into a single tool call.\n\
-         - tool_workflow runs a sandboxed Starlark script. Allowed nested tools: read_file, grep, fs_browser, git_ops (read-only).\n\
-         - Prefer tool_workflow over many individual read_file/grep calls when exploring 3+ files.\n\
-         - Example: find all .rs files, read each, collect files containing 'TODO'.\n\
-         - Call tool_workflow with this shape:\n\
-           tool_workflow({\n\
-             script: \"\\n\
-         def workflow():\\n\
-             files = find(pattern='*.rs')['files']\\n\
-             result = []\\n\
-             for f in files:\\n\
-                 content = read_file(f)['content']\\n\
-                 if 'TODO' in content:\\n\
-                     result.append(f)\\n\
-             return result\\n\
-         workflow()\\n\
-         \"\n\
-           })\n\
-         - Available helpers inside script: tool(name, input), read_file(path), grep(pattern, path), find(path, pattern), stat(path), emit(value), fail(message).\n",
-        );
         prompt.push_str(
         "Code tools:\n\
          - symbols_overview: compact symbol tree for a file or directory. Use before broad read_file calls when navigating or refactoring.\n\
@@ -994,22 +971,14 @@ mod tests {
     }
 
     #[test]
-    fn system_prompt_includes_tool_workflow_guidance() {
+    fn system_prompt_omits_removed_tool_guidance() {
         let config = NaviConfig::default();
         let prompt = build_system_prompt(&config, std::path::Path::new("/tmp"));
 
-        assert!(
-            prompt.contains("tool_workflow"),
-            "system prompt must mention tool_workflow"
-        );
-        assert!(
-            prompt.contains("def workflow()"),
-            "system prompt must include a concrete tool_workflow example"
-        );
-        assert!(
-            prompt.contains("read_file"),
-            "tool_workflow example must show allowed tools"
-        );
+        assert!(!prompt.contains("tool_workflow"));
+        assert!(!prompt.contains("top_files"));
+        assert!(prompt.contains("ast_search"));
+        assert!(prompt.contains("code(action='overview')"));
     }
 
     #[test]

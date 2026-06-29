@@ -440,7 +440,7 @@ impl TaskComplexity {
         let has_read_only = tool_names.iter().any(|t| {
             matches!(
                 t.as_str(),
-                "read_file" | "grep" | "fs_browser" | "git_ops" | "read" | "search" | "code"
+                "read_file" | "grep" | "fs_browser" | "read" | "search" | "code"
             )
         });
 

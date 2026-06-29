@@ -403,65 +403,6 @@ mod tests {
     }
 
     #[test]
-    fn git_ops_text_log_renders_readable_log_without_json_escapes() {
-        let invocation = ToolInvocation {
-            id: "call-1".to_string(),
-            tool_name: "git_ops".to_string(),
-            input: serde_json::json!({
-                "command": "log",
-                "args": "--oneline --graph --all",
-                "format": "text"
-            }),
-        };
-        let result = ToolResult {
-            invocation_id: "call-1".to_string(),
-            ok: true,
-            output: serde_json::json!({
-                "schema_version": 1,
-                "log": "* abc1234 initial commit\n* def5678 second commit\n"
-            }),
-        };
-
-        let compact = tool_compact_text(&invocation, &result);
-        let content = tool_full_content(&invocation, &result);
-
-        assert_eq!(compact, "Git log --oneline --graph --all (2 lines)");
-        assert!(content.contains("Log\n```\n* abc1234 initial commit"));
-        assert!(content.contains("* def5678 second commit"));
-        assert!(!content.contains("\"log\""));
-        assert!(!content.contains("\\n"));
-        assert!(!content.contains("```json"));
-    }
-
-    #[test]
-    fn git_ops_structured_log_renders_commit_rows() {
-        let invocation = ToolInvocation {
-            id: "call-1".to_string(),
-            tool_name: "git_ops".to_string(),
-            input: serde_json::json!({ "command": "log" }),
-        };
-        let result = ToolResult {
-            invocation_id: "call-1".to_string(),
-            ok: true,
-            output: serde_json::json!({
-                "schema_version": 1,
-                "commits": [{
-                    "hash": "abcdef123456",
-                    "author": "NAVI",
-                    "date": "2026-06-17 10:00:00 +0000",
-                    "message": "fix: readable git output"
-                }]
-            }),
-        };
-
-        let content = tool_full_content(&invocation, &result);
-
-        assert!(content.contains("Git log (1 commit)"));
-        assert!(content.contains("Commits\nabcdef12  fix: readable git output"));
-        assert!(!content.contains("```json"));
-    }
-
-    #[test]
     fn mask_key_hides_middle_characters() {
         let short = "sk-abc";
         assert_eq!(mask_key_segment(short), "sk-abc");

@@ -13,16 +13,41 @@ This is separate from `evals/`:
 Run a suite:
 
 ```bash
-cargo run -p navi-cli -- bench run benchmarks/suites/smoke --auto-approve
+just bench
 ```
 
-Write a comparable JSON run:
+By default, `just bench` runs the full corpus under `benchmarks/suites` with
+`opencode` + `deepseek-v4-flash-free`, so it is a real token-consuming agentic
+benchmark. Pass a custom suite, output path, provider, and model when needed:
 
 ```bash
-cargo run -p navi-cli -- bench run benchmarks/suites/smoke \
-  --auto-approve \
-  --output benchmarks/runs/candidate.json
+just bench benchmarks/suites benchmarks/runs/candidate.json opencode deepseek-v4-flash-free
 ```
+
+For a cheap smoke-only check:
+
+```bash
+just bench-smoke
+```
+
+Open the local visual report and load one or more run JSON files:
+
+```bash
+just bench-report
+```
+
+`just bench` and `just bench-report` generate `benchmarks/runs/index.js`, so the
+report automatically loads all JSON checkpoints currently in `benchmarks/runs/`.
+The in-page JSON button is only for adding ad hoc files.
+
+Initial corpus:
+
+| Case | Difficulty | Focus |
+|---|---:|---|
+| `smoke-fix-rust-test` | easy | end-to-end runner smoke test |
+| `medium-slug-routing` | medium | multi-file debugging and string normalization |
+| `medium-high-symbol-ranking` | medium-high | search relevance, ranking, alternatives, deterministic ordering |
+| `hard-config-precedence` | hard | layered runtime config precedence and careful semantics |
 
 Compare against a baseline:
 

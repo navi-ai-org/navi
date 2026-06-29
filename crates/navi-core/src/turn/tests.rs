@@ -1,12 +1,14 @@
 use super::*;
 use crate::model::ModelResponse;
-use crate::tool::{Tool, ToolDefinition, ToolKind};
+use crate::tool::{Tool, ToolDefinition, ToolKind, ToolMetadata};
 use crate::{ModelStream, SecurityConfig, SecurityPolicy, ToolInvocation, ToolResult};
 use async_trait::async_trait;
 use futures_util::stream;
 use serde_json::json;
 use std::path::PathBuf;
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::Duration;
 
 struct MockTool;
 #[async_trait]
@@ -25,6 +27,88 @@ impl Tool for MockTool {
             invocation_id: invocation.id,
             ok: true,
             output: json!({ "result": "mock ok" }),
+        })
+    }
+}
+
+#[derive(Clone, Default)]
+struct ParallelProbe {
+    active: Arc<AtomicUsize>,
+    max_active: Arc<AtomicUsize>,
+}
+
+impl ParallelProbe {
+    fn enter(&self) {
+        let active = self.active.fetch_add(1, Ordering::SeqCst) + 1;
+        loop {
+            let current = self.max_active.load(Ordering::SeqCst);
+            if active <= current
+                || self
+                    .max_active
+                    .compare_exchange(current, active, Ordering::SeqCst, Ordering::SeqCst)
+                    .is_ok()
+            {
+                break;
+            }
+        }
+    }
+
+    fn exit(&self) {
+        self.active.fetch_sub(1, Ordering::SeqCst);
+    }
+
+    fn max_active(&self) -> usize {
+        self.max_active.load(Ordering::SeqCst)
+    }
+}
+
+struct SleepingTool {
+    name: String,
+    metadata: ToolMetadata,
+    probe: ParallelProbe,
+}
+
+impl SleepingTool {
+    fn shared(name: &str, probe: ParallelProbe) -> Self {
+        Self {
+            name: name.to_string(),
+            metadata: ToolMetadata::reader("test", &["parallel", "read"]),
+            probe,
+        }
+    }
+
+    fn exclusive(name: &str, probe: ParallelProbe) -> Self {
+        let mut metadata = ToolMetadata::reader("test", &["exclusive"]);
+        metadata.is_read_only = false;
+        metadata.is_concurrency_safe = false;
+        Self {
+            name: name.to_string(),
+            metadata,
+            probe,
+        }
+    }
+}
+
+#[async_trait]
+impl Tool for SleepingTool {
+    fn definition(&self) -> ToolDefinition {
+        ToolDefinition {
+            name: self.name.clone(),
+            description: "sleeping probe tool".to_string(),
+            kind: ToolKind::Read,
+            input_schema: json!({}),
+            metadata: self.metadata.clone(),
+        }
+    }
+
+    async fn invoke(&self, invocation: ToolInvocation) -> Result<ToolResult> {
+        self.probe.enter();
+        tokio::time::sleep(Duration::from_millis(30)).await;
+        self.probe.exit();
+        Ok(ToolResult {
+            invocation_id: invocation.id,
+            ok: true,
+            output: json!({ "result": "ok" }),
         })
     }
 }
@@ -178,6 +262,102 @@ async fn test_turn_loop_with_parallel_tools() {
         .filter(|m| m.role == ModelRole::Tool)
         .collect();
     assert_eq!(tool_results.len(), 2);
+}
+
+#[tokio::test]
+async fn shared_tool_calls_overlap_within_one_model_batch() {
+    let tempdir = tempfile::tempdir().unwrap();
+    let mut ctx = build_test_ctx(tempdir.path().to_path_buf());
+    let probe = ParallelProbe::default();
+    Arc::get_mut(&mut ctx.tool_executor)
+        .unwrap()
+        .register_tool(Arc::new(SleepingTool::shared(
+            "shared_probe",
+            probe.clone(),
+        )));
+    let mut messages = Vec::new();
+    let mut run_state = AgentRunState::default();
+    let policy = crate::harness::policy_for_profile(
+        &crate::config::HarnessConfig::default(),
+        crate::config::HarnessProfile::Small,
+    );
+
+    let output = ModelTurnOutput {
+        text: String::new(),
+        thinking: String::new(),
+        tool_calls: vec![
+            ToolInvocation {
+                id: "call-1".to_string(),
+                tool_name: "shared_probe".to_string(),
+                input: json!({}),
+            },
+            ToolInvocation {
+                id: "call-2".to_string(),
+                tool_name: "shared_probe".to_string(),
+                input: json!({}),
+            },
+        ],
+        harness_stop: None,
+    };
+
+    assert!(
+        handle_tool_calls(&ctx, &mut messages, &mut run_state, policy, output)
+            .await
+            .is_none()
+    );
+    assert_eq!(probe.max_active(), 2);
+}
+
+#[tokio::test]
+async fn exclusive_tool_call_serializes_a_model_batch() {
+    let tempdir = tempfile::tempdir().unwrap();
+    let mut ctx = build_test_ctx(tempdir.path().to_path_buf());
+    let probe = ParallelProbe::default();
+    let executor = Arc::get_mut(&mut ctx.tool_executor).unwrap();
+    executor.register_tool(Arc::new(SleepingTool::shared(
+        "shared_probe",
+        probe.clone(),
+    )));
+    executor.register_tool(Arc::new(SleepingTool::exclusive(
+        "exclusive_probe",
+        probe.clone(),
+    )));
+    let mut messages = Vec::new();
+    let mut run_state = AgentRunState::default();
+    let policy = crate::harness::policy_for_profile(
+        &crate::config::HarnessConfig::default(),
+        crate::config::HarnessProfile::Small,
+    );
+
+    let output = ModelTurnOutput {
+        text: String::new(),
+        thinking: String::new(),
+        tool_calls: vec![
+            ToolInvocation {
+                id: "call-1".to_string(),
+                tool_name: "shared_probe".to_string(),
+                input: json!({}),
+            },
+            ToolInvocation {
+                id: "call-2".to_string(),
+                tool_name: "exclusive_probe".to_string(),
+                input: json!({}),
+            },
+            ToolInvocation {
+                id: "call-3".to_string(),
+                tool_name: "shared_probe".to_string(),
+                input: json!({}),
+            },
+        ],
+        harness_stop: None,
+    };
+
+    assert!(
+        handle_tool_calls(&ctx, &mut messages, &mut run_state, policy, output)
+            .await
+            .is_none()
+    );
+    assert_eq!(probe.max_active(), 1);
 }
 
 #[tokio::test]

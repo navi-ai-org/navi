@@ -1,7 +1,8 @@
 use anyhow::{Context, Result, bail};
 use async_trait::async_trait;
 use navi_vfs::code::{
-    InsertPosition, SourceEdit, insert_around_symbol, rename_identifier, replace_symbol_definition,
+    CodeSymbol, InsertPosition, SourceEdit, insert_around_symbol, rename_identifier,
+    replace_symbol_definition, symbols_for_source,
 };
 use navi_vfs::lang::detect_language;
 use serde_json::{Value, json};
@@ -85,35 +86,29 @@ fn run_code_edit(policy: &SecurityPolicy, input: &Value) -> Result<Value> {
 }
 
 fn run_replace(policy: &SecurityPolicy, input: &Value) -> Result<Value> {
-    let path = helpers::required_string(input, "path")?.to_string();
     let symbol = helpers::required_string(input, "symbol")?.to_string();
     let content = helpers::optional_string(input, "content")
         .or_else(|| helpers::optional_string(input, "replacement"))
         .context("replace action requires `content` or `replacement` string")?;
     let expected_hash = helpers::optional_string(input, "expected_hash");
 
-    let resolved = resolve_scan_root(policy, &path, true)?;
-    if !resolved.is_file() {
-        bail!("replace path must be a source file: {}", resolved.display());
-    }
-    let source = fs::read_to_string(&resolved)
-        .with_context(|| format!("failed to read {}", resolved.display()))?;
+    let target = resolve_symbol_target(policy, helpers::optional_string(input, "path"), &symbol)?;
 
     let edit = replace_symbol_definition(
-        &resolved,
-        &source,
+        &target.path,
+        &target.source,
         &symbol,
         &content,
         expected_hash.as_deref(),
     )?;
 
-    fs::write(&resolved, &edit.content)
-        .with_context(|| format!("failed to write {}", resolved.display()))?;
+    fs::write(&target.path, &edit.content)
+        .with_context(|| format!("failed to write {}", target.path.display()))?;
 
     Ok(json!({
         "schema_version": helpers::SPECIALIZED_SCHEMA_VERSION,
         "action": "replace",
-        "path": relative_path(policy, &resolved),
+        "path": relative_path(policy, &target.path),
         "edits": edit.edits,
         "start_line": edit.start_line,
         "end_line": edit.end_line,
@@ -121,29 +116,23 @@ fn run_replace(policy: &SecurityPolicy, input: &Value) -> Result<Value> {
 }
 
 fn run_insert(policy: &SecurityPolicy, input: &Value, position: InsertPosition) -> Result<Value> {
-    let path = helpers::required_string(input, "path")?.to_string();
     let symbol = helpers::required_string(input, "symbol")?.to_string();
     let content = helpers::required_string(input, "content")?.to_string();
     let expected_hash = helpers::optional_string(input, "expected_hash");
 
-    let resolved = resolve_scan_root(policy, &path, true)?;
-    if !resolved.is_file() {
-        bail!("insert path must be a source file: {}", resolved.display());
-    }
-    let source = fs::read_to_string(&resolved)
-        .with_context(|| format!("failed to read {}", resolved.display()))?;
+    let target = resolve_symbol_target(policy, helpers::optional_string(input, "path"), &symbol)?;
 
     let edit = insert_around_symbol(
-        &resolved,
-        &source,
+        &target.path,
+        &target.source,
         &symbol,
         &content,
         position,
         expected_hash.as_deref(),
     )?;
 
-    fs::write(&resolved, &edit.content)
-        .with_context(|| format!("failed to write {}", resolved.display()))?;
+    fs::write(&target.path, &edit.content)
+        .with_context(|| format!("failed to write {}", target.path.display()))?;
 
     let action_label = match position {
         InsertPosition::Before => "insert-before",
@@ -153,11 +142,85 @@ fn run_insert(policy: &SecurityPolicy, input: &Value, position: InsertPosition) 
     Ok(json!({
         "schema_version": helpers::SPECIALIZED_SCHEMA_VERSION,
         "action": action_label,
-        "path": relative_path(policy, &resolved),
+        "path": relative_path(policy, &target.path),
         "edits": edit.edits,
         "start_line": edit.start_line,
         "end_line": edit.end_line,
     }))
+}
+
+struct SymbolTarget {
+    path: PathBuf,
+    source: String,
+}
+
+fn resolve_symbol_target(
+    policy: &SecurityPolicy,
+    path: Option<String>,
+    selector: &str,
+) -> Result<SymbolTarget> {
+    if let Some(path) = path.filter(|path| !path.is_empty()) {
+        let resolved = resolve_scan_root(policy, &path, true)?;
+        if !resolved.is_file() {
+            bail!(
+                "code_edit path must be a source file: {}",
+                resolved.display()
+            );
+        }
+        let source = fs::read_to_string(&resolved)
+            .with_context(|| format!("failed to read {}", resolved.display()))?;
+        return Ok(SymbolTarget {
+            path: resolved,
+            source,
+        });
+    }
+
+    resolve_unique_symbol_target(policy, selector)
+}
+
+fn resolve_unique_symbol_target(policy: &SecurityPolicy, selector: &str) -> Result<SymbolTarget> {
+    let root = policy.project_root().to_path_buf();
+    let mut files = source_files(policy, &root, DEFAULT_MAX_FILES, true)?;
+    files.sort();
+
+    let mut matches = Vec::new();
+    for file in files {
+        let Some(source) = read_source_file(&file)? else {
+            continue;
+        };
+        let symbols = match symbols_for_source(&file, &source) {
+            Ok(symbols) => symbols,
+            Err(_) => continue,
+        };
+        for symbol in symbols {
+            if symbol_matches_selector(&symbol, selector) {
+                matches.push((file.clone(), source.clone(), symbol));
+            }
+        }
+    }
+
+    match matches.len() {
+        0 => bail!("symbol `{selector}` not found in project; pass `path` to code_edit"),
+        1 => {
+            let (path, source, _) = matches.pop().expect("one match");
+            Ok(SymbolTarget { path, source })
+        }
+        _ => {
+            let labels = matches
+                .iter()
+                .take(8)
+                .map(|(path, _, symbol)| format!("{}:{}", relative_path(policy, path), symbol.name))
+                .collect::<Vec<_>>()
+                .join(", ");
+            bail!(
+                "symbol `{selector}` is ambiguous across project; pass `path` to code_edit. matches: {labels}"
+            )
+        }
+    }
+}
+
+fn symbol_matches_selector(symbol: &CodeSymbol, selector: &str) -> bool {
+    symbol.id == selector || symbol.name == selector
 }
 
 fn run_rename(policy: &SecurityPolicy, input: &Value) -> Result<Value> {
@@ -591,22 +654,47 @@ mod tests {
     }
 
     #[test]
-    fn missing_path_for_replace_returns_error() {
-        let policy = SecurityPolicy::new(
-            PathBuf::from("/tmp"),
-            PathBuf::from("/tmp/.navi-data"),
-            SecurityConfig::default(),
-        )
-        .unwrap();
+    fn replace_resolves_unique_symbol_without_path() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let path = tempdir.path().join("lib.rs");
+        fs::write(&path, "pub fn target() -> i32 { 1 }\n").unwrap();
+
         let input = json!({
             "action": "replace",
-            "symbol": "foo",
-            "content": "bar",
+            "symbol": "target",
+            "content": "pub fn target() -> i32 { 2 }",
         });
-        let err = run_code_edit(&policy, &input).unwrap_err();
+
+        let output = run_code_edit(&policy(tempdir.path()), &input).unwrap();
+        assert_eq!(output["path"], "lib.rs");
+        let result = fs::read_to_string(path).unwrap();
+        assert!(result.contains("{ 2 }"));
+    }
+
+    #[test]
+    fn replace_without_path_reports_ambiguous_symbol() {
+        let tempdir = tempfile::tempdir().unwrap();
+        fs::write(
+            tempdir.path().join("a.rs"),
+            "pub fn target() -> i32 { 1 }\n",
+        )
+        .unwrap();
+        fs::write(
+            tempdir.path().join("b.rs"),
+            "pub fn target() -> i32 { 2 }\n",
+        )
+        .unwrap();
+
+        let input = json!({
+            "action": "replace",
+            "symbol": "target",
+            "content": "pub fn target() -> i32 { 3 }",
+        });
+
+        let err = run_code_edit(&policy(tempdir.path()), &input).unwrap_err();
         assert!(
-            err.to_string().contains("missing required string"),
-            "expected missing path error, got: {err}"
+            err.to_string().contains("ambiguous across project"),
+            "expected ambiguous symbol error, got: {err}"
         );
     }
 }

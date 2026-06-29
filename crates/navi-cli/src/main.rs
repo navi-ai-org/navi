@@ -96,6 +96,12 @@ pub enum BenchAction {
         /// Print the full BenchRun JSON
         #[arg(long)]
         json: bool,
+        /// Provider override for every benchmark case unless the case sets its own provider
+        #[arg(long)]
+        provider: Option<String>,
+        /// Model override for every benchmark case unless the case sets its own model
+        #[arg(long)]
+        model: Option<String>,
         /// Automatically approve tool approval requests during the benchmark run
         #[arg(long)]
         auto_approve: bool,

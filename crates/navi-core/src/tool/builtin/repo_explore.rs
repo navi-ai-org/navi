@@ -1,7 +1,8 @@
 //! Repository exploration tool — read-only subagent for scanning repos.
 //!
 //! Uses a cheap model to find relevant code locations. Issues parallel
-//! read-only tool calls (read_file, fs_browser, grep, git_ops) and returns
+//! read-only tool calls (read_file, fs_browser, grep) and returns
+//! read-only tool calls (read_file, fs_browser, grep) and returns
 //! compact file paths with line ranges as focused context.
 
 use std::sync::{Arc, RwLock, Weak};
@@ -23,7 +24,7 @@ use crate::turn::TurnContext;
 
 const SYSTEM_PROMPT: &str = "You are a repository exploration agent. Your job is to find \
 relevant code locations for the user's query. You have READ-ONLY access to the repository \
-(read_file, fs_browser, grep, git_ops tools).
+(read_file, fs_browser, grep tools).
 
 Rules:
 - Issue multiple parallel tool calls when possible to explore the repo quickly
