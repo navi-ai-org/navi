@@ -588,6 +588,43 @@ fn loading_saved_session_restores_snapshot_session_id() {
 }
 
 #[test]
+fn filtered_sessions_prioritizes_current_project_sessions() {
+    fn snapshot(id: &str, title: &str, project: &str, updated_at: u64) -> SessionSnapshot {
+        SessionSnapshot {
+            version: SessionSnapshot::CURRENT_VERSION,
+            id: SessionId::new(id.to_string()),
+            title: Some(title.to_string()),
+            project: PathBuf::from(project),
+            created_at: updated_at.saturating_sub(10),
+            updated_at,
+            events: vec![],
+            memory: None,
+            goal: None,
+        }
+    }
+
+    let mut app = test_app("");
+    app.project_dir = PathBuf::from("/tmp/test-project");
+    app.saved_sessions = vec![
+        snapshot("external-new", "External New", "/tmp/other-project", 400),
+        snapshot("current-old", "Current Old", "/tmp/test-project", 100),
+        snapshot("current-new", "Current New", "/tmp/test-project/.", 300),
+        snapshot("external-old", "External Old", "/tmp/another-project", 200),
+    ];
+
+    let sessions = app.filtered_sessions();
+    let ids = sessions
+        .iter()
+        .map(|snapshot| snapshot.id.as_str())
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        ids,
+        vec!["current-new", "current-old", "external-new", "external-old"]
+    );
+}
+
+#[test]
 fn model_delta_after_tool_result_creates_visible_response() {
     let mut app = test_app("");
     let invocation = ToolInvocation {
