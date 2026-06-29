@@ -15,6 +15,9 @@ use crate::context::ContextPacket;
 use crate::event::{
     AgentEvent, ApprovalDecision, QuestionResponse, RuntimeEvent, RuntimeEventKind,
 };
+use crate::goal::{
+    CreateGoalTool, GetGoalTool, GoalExtension, GoalRuntimeHandle, GoalService, UpdateGoalTool,
+};
 use crate::harness::select_harness_policy;
 use crate::model::{ModelMessage, ModelProvider, ModelResponse};
 use crate::runtime_components::RuntimeComponents;
@@ -24,10 +27,6 @@ use crate::skills::{SkillManifest, active_skills, discover_configured_skills};
 use crate::tool::builtin::{RepoExploreTool, SubagentTool};
 use crate::tool::{Tool, ToolExecutor};
 use crate::trace::{TraceStore, turn_traces_from_events};
-use crate::goal::{
-    CreateGoalTool, GetGoalTool, GoalExtension, GoalRuntimeHandle, GoalService,
-    UpdateGoalTool,
-};
 use crate::{
     ModelOption, SessionSnapshot, available_model_options, canonical_provider_id,
     provider_request_model_name,
@@ -228,8 +227,6 @@ pub struct AgentRuntime {
     pending_questions: PendingQuestions,
     event_bus: EventBus,
     session: SessionState,
-    /// Goal service for managing goals across sessions.
-    goal_service: Arc<GoalService>,
     /// Goal runtime handle for the current session.
     goal_runtime: Arc<GoalRuntimeHandle>,
     /// Goal extension providing lifecycle hooks.
@@ -290,7 +287,6 @@ impl AgentRuntime {
                 options.initial_created_at,
                 options.initial_updated_at,
             ),
-            goal_service,
             goal_runtime,
             goal_extension,
         }
@@ -470,9 +466,6 @@ impl AgentRuntime {
         self.event_bus.publish(RuntimeEventKind::SessionStarted {
             session_id: id.as_str().to_string(),
         });
-
-        // Register goal tools in the tool executor
-        self.register_goal_tools();
 
         Ok(id)
     }
@@ -657,8 +650,11 @@ impl AgentRuntime {
     }
 
     fn ensure_tool_executor(&mut self) -> Result<Arc<ToolExecutor>> {
-        if let Some(executor) = self.tool_executor.clone() {
-            return Ok(executor);
+        if let Some(executor) = self.tool_executor.as_mut() {
+            if let Some(executor) = Arc::get_mut(executor) {
+                Self::register_goal_tools_on_executor(executor, self.goal_runtime.clone());
+            }
+            return Ok(executor.clone());
         }
 
         let security_policy = SecurityPolicy::new(
@@ -673,6 +669,7 @@ impl AgentRuntime {
             self.runtime_components.security.clone(),
         );
         executor.set_harness_profile(profile_name);
+        Self::register_goal_tools_on_executor(&mut executor, self.goal_runtime.clone());
 
         let executor = Arc::new_cyclic(|executor_weak| {
             let subagent = SubagentTool::new(
@@ -703,6 +700,15 @@ impl AgentRuntime {
         });
         self.tool_executor = Some(executor.clone());
         Ok(executor)
+    }
+
+    fn register_goal_tools_on_executor(
+        executor: &mut ToolExecutor,
+        goal_runtime: Arc<GoalRuntimeHandle>,
+    ) {
+        executor.register_tool(Arc::new(GetGoalTool::new(goal_runtime.clone())));
+        executor.register_tool(Arc::new(CreateGoalTool::new(goal_runtime.clone())));
+        executor.register_tool(Arc::new(UpdateGoalTool::new(goal_runtime)));
     }
 
     /// Returns the configured tool executor, if any.
