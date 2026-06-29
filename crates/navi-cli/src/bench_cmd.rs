@@ -270,6 +270,7 @@ async fn run_agent_turn(
         message: case.task.clone(),
         content_parts: Vec::new(),
         context_packets: Vec::new(),
+        thinking: None,
     };
     let send_engine = Arc::clone(&engine);
     let mut send_task = tokio::spawn(async move { send_engine.send_turn(request).await });
