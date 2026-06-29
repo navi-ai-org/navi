@@ -23,6 +23,12 @@ pub(crate) fn tool_compact_text(invocation: &ToolInvocation, result: &ToolResult
         "read_file" | "view_file" => read_file_summary(invocation, result),
         "write_file" => write_file_summary(invocation, result),
         "apply_patch" => apply_patch_summary(invocation),
+        "write"
+            if invocation.input.get("patch").is_some()
+                || invocation.input.get("patches").is_some() =>
+        {
+            apply_patch_summary(invocation)
+        }
         "bash" => bash_summary(invocation, result),
         "grep" => grep_summary(invocation, result),
         "fs_browser" => fs_browser_summary(invocation, result),
@@ -168,7 +174,11 @@ fn formatted_tool_output(invocation: &ToolInvocation, result: &ToolResult) -> Op
             "Edited {} (+{added} -{removed} lines)\n",
             display_path(path)
         ));
-    } else if invocation.tool_name == "apply_patch" {
+    } else if invocation.tool_name == "apply_patch"
+        || (invocation.tool_name == "write"
+            && (invocation.input.get("patch").is_some()
+                || invocation.input.get("patches").is_some()))
+    {
         if let Some(patch) = invocation.input.get("patch").and_then(|v| v.as_str()) {
             let summaries = patch_edit_summaries(patch);
             if summaries.is_empty() {
@@ -182,6 +192,7 @@ fn formatted_tool_output(invocation: &ToolInvocation, result: &ToolResult) -> Op
         } else {
             content.push_str("Applied patch successfully\n");
         }
+        append_patch_bodies(invocation, &mut content);
         let stdout = obj.get("stdout").and_then(|v| v.as_str()).unwrap_or("");
         let stderr = obj.get("stderr").and_then(|v| v.as_str()).unwrap_or("");
         if !stdout.is_empty() {
@@ -370,13 +381,72 @@ fn write_file_line_counts(invocation: &ToolInvocation, result: &ToolResult) -> (
 }
 
 fn apply_patch_summary(invocation: &ToolInvocation) -> String {
-    let Some(patch) = invocation.input.get("patch").and_then(|v| v.as_str()) else {
-        return "Apply patch".to_string();
+    let Some(patch) = first_patch_input(invocation) else {
+        return if invocation.tool_name == "write" {
+            "Write patch".to_string()
+        } else {
+            "Apply patch".to_string()
+        };
     };
     patch_edit_summaries(patch)
         .into_iter()
         .next()
         .unwrap_or_else(|| "Apply patch".to_string())
+}
+
+fn first_patch_input(invocation: &ToolInvocation) -> Option<&str> {
+    invocation
+        .input
+        .get("patch")
+        .and_then(|v| v.as_str())
+        .or_else(|| {
+            invocation
+                .input
+                .get("patches")
+                .and_then(|v| v.as_array())
+                .and_then(|patches| patches.first())
+                .and_then(|v| v.as_str())
+        })
+}
+
+fn append_patch_bodies(invocation: &ToolInvocation, content: &mut String) {
+    let patches = patch_inputs(invocation);
+    if patches.is_empty() {
+        return;
+    }
+
+    for (index, patch) in patches.iter().enumerate() {
+        if patches.len() == 1 {
+            content.push_str("\nPatch:\n");
+        } else {
+            content.push_str(&format!("\nPatch {}:\n", index + 1));
+        }
+        content.push_str("```diff\n");
+        let truncated_patch = truncate_to_lines(patch, MAX_TOOL_RENDER_LINES);
+        content.push_str(truncated_patch);
+        if !truncated_patch.ends_with('\n') {
+            content.push('\n');
+        }
+        if truncated_patch.len() < patch.len() {
+            content.push_str(&format!(
+                "... (truncated, {} lines total)\n",
+                patch.lines().count()
+            ));
+        }
+        content.push_str("```\n");
+    }
+}
+
+fn patch_inputs(invocation: &ToolInvocation) -> Vec<&str> {
+    if let Some(patch) = invocation.input.get("patch").and_then(|v| v.as_str()) {
+        return vec![patch];
+    }
+    invocation
+        .input
+        .get("patches")
+        .and_then(|v| v.as_array())
+        .map(|patches| patches.iter().filter_map(|v| v.as_str()).collect())
+        .unwrap_or_default()
 }
 
 fn bash_summary(invocation: &ToolInvocation, result: &ToolResult) -> String {
@@ -1734,5 +1804,69 @@ fn render_tree_entries(entries: &[serde_json::Value], content: &mut String, inde
             let size = entry.get("size").and_then(|v| v.as_u64()).unwrap_or(0);
             content.push_str(&format!("{prefix}{name} ({size} bytes)\n"));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn invocation(tool_name: &str, input: serde_json::Value) -> ToolInvocation {
+        ToolInvocation {
+            id: "tool-1".to_string(),
+            tool_name: tool_name.to_string(),
+            input,
+        }
+    }
+
+    fn ok_result(output: serde_json::Value) -> ToolResult {
+        ToolResult {
+            invocation_id: "tool-1".to_string(),
+            ok: true,
+            output,
+        }
+    }
+
+    #[test]
+    fn full_apply_patch_output_includes_patch_body() {
+        let patch = "*** Begin Patch\n*** Update File: src/lib.rs\n@@\n-old\n+new\n*** End Patch";
+        let content = tool_full_content(
+            &invocation("apply_patch", json!({ "patch": patch })),
+            &ok_result(json!({
+                "method": "structured",
+                "patches_applied": 1,
+                "files_patched": 1
+            })),
+        );
+
+        assert!(content.contains("Patch:\n```diff\n"));
+        assert!(content.contains("-old\n+new"));
+        assert!(content.contains("```"));
+    }
+
+    #[test]
+    fn full_write_patch_output_includes_multiple_patch_bodies() {
+        let content = tool_full_content(
+            &invocation(
+                "write",
+                json!({
+                    "patches": [
+                        "*** Begin Patch\n*** Add File: one.txt\n+one\n*** End Patch",
+                        "*** Begin Patch\n*** Add File: two.txt\n+two\n*** End Patch"
+                    ]
+                }),
+            ),
+            &ok_result(json!({
+                "method": "structured",
+                "patches_applied": 2,
+                "files_patched": 2
+            })),
+        );
+
+        assert!(content.contains("Patch 1:\n```diff\n"));
+        assert!(content.contains("Patch 2:\n```diff\n"));
+        assert!(content.contains("*** Add File: one.txt"));
+        assert!(content.contains("*** Add File: two.txt"));
     }
 }

@@ -123,7 +123,7 @@ pub(super) fn composer_hint_height(app: &TuiApp) -> u16 {
 
 pub(super) fn composer_activity_height(app: &TuiApp) -> u16 {
     if composer_activity_line(app, 1).is_some() {
-        1
+        3
     } else {
         0
     }
@@ -133,9 +133,15 @@ pub(super) fn render_input_activity(frame: &mut Frame<'_>, app: &TuiApp, area: R
     if area.height == 0 {
         return;
     }
+    frame.render_widget(Block::new().style(Style::default().bg(bg())), area);
+    let line_y = if area.height >= 3 {
+        area.y.saturating_add(1)
+    } else {
+        area.y
+    };
     let activity_area = Rect::new(
         area.x.saturating_add(3),
-        area.y,
+        line_y,
         area.width.saturating_sub(4),
         1,
     );
