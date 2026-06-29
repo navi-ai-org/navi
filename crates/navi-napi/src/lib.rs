@@ -265,6 +265,7 @@ impl NaviNapiEngine {
                 message,
                 content_parts: Vec::new(),
                 context_packets: Vec::new(),
+                thinking: None,
             })
             .await
             .map_err(to_napi_error)?;

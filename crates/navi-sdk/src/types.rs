@@ -61,6 +61,11 @@ pub struct NaviTurnRequest {
     pub content_parts: Vec<ContentPart>,
     #[serde(default)]
     pub context_packets: Vec<ContextPacket>,
+    /// Optional thinking/reasoning configuration for this turn.
+    /// When set, overrides the session-level thinking setting.
+    /// When `None`, the session-level (frozen) config is used.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thinking: Option<navi_core::ThinkingConfig>,
 }
 
 /// The assistant's reply after a turn completes.

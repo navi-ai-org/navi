@@ -491,6 +491,7 @@ async fn run_headless(
             message: task,
             content_parts: Vec::new(),
             context_packets: Vec::new(),
+            thinking: None,
         })
         .await?;
     println!("{}", response.text);
