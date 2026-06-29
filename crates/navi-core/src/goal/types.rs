@@ -78,7 +78,7 @@ impl GoalStatus {
 
     /// Returns `true` if the goal should be auto-continued.
     pub fn should_auto_continue(&self) -> bool {
-        matches!(self, Self::Active | Self::UsageLimited)
+        matches!(self, Self::Active)
     }
 
     /// Returns a short slug for the status.

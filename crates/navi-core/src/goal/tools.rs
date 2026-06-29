@@ -264,6 +264,20 @@ impl Tool for UpdateGoalTool {
         };
 
         use super::types::GoalStatus;
+        if goal.status.is_terminal() && matches!(action, "blocked" | "pause" | "resume") {
+            return Ok(make_result(
+                &invocation.id,
+                false,
+                json!({
+                    "error": format!(
+                        "Goal is terminal with status `{}` and cannot be changed with `{}`.",
+                        goal.status.as_str(),
+                        action
+                    )
+                }),
+            ));
+        }
+
         let result = match action {
             "complete" => {
                 self.runtime
@@ -284,14 +298,10 @@ impl Tool for UpdateGoalTool {
                     .and_then(|v| v.as_str())
                     .unwrap_or("unknown");
                 let became_blocked = self.runtime.record_blocked_turn(reason);
-                let mut new_goal = goal_with_status(
-                    &goal,
-                    if became_blocked {
-                        GoalStatus::Blocked
-                    } else {
-                        goal.status
-                    },
-                );
+                let mut new_goal = self.runtime.get_goal().unwrap_or_else(|| goal.clone());
+                if became_blocked {
+                    new_goal.status = GoalStatus::Blocked;
+                }
                 new_goal.block_reason = Some(reason.to_string());
                 self.runtime.update_goal(new_goal.clone());
                 make_result(
