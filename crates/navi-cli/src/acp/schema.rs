@@ -35,7 +35,7 @@ pub(crate) fn acp_tool_kind(tool_name: &str) -> ToolKind {
         "read_file" | "fs_browser" => ToolKind::Read,
         "write_file" | "apply_patch" => ToolKind::Edit,
         "grep" => ToolKind::Search,
-        "bash" | "git_ops" => ToolKind::Execute,
+        "bash" => ToolKind::Execute,
         "package_manager" => ToolKind::Edit,
         _ => ToolKind::Other,
     }

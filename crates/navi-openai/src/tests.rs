@@ -973,6 +973,67 @@ async fn chat_completions_omits_prompt_cache_fields_by_default() {
 }
 
 #[tokio::test]
+async fn opencode_zen_chat_completions_enables_parallel_tool_calls() {
+    use wiremock::matchers::{body_json, method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .and(body_json(json!({
+            "model": "deepseek-v4-flash-free",
+            "messages": [{"role": "user", "content": "Inspect files"}],
+            "tools": [{
+                "type": "function",
+                "function": {
+                    "name": "read_file",
+                    "description": "Read a file",
+                    "parameters": {"type": "object"}
+                }
+            }],
+            "tool_choice": "auto",
+            "parallel_tool_calls": true,
+            "stream": true,
+            "stream_options": {"include_usage": true}
+        })))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string("data: {\"choices\":[{\"delta\":{\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
+                .insert_header("content-type", "text/event-stream"),
+        )
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let config = navi_core::ProviderConfig {
+        id: "opencode-zen".to_string(),
+        kind: navi_core::ProviderKind::OpenAiChatCompletions,
+        base_url: Some(mock_server.uri()),
+        ..navi_core::ProviderConfig::default()
+    };
+    let provider = OpenAiProvider::from_provider_config_with_key(&config, "test_key".to_string())
+        .expect("provider");
+    let request = navi_core::ModelRequest {
+        model: "deepseek-v4-flash-free".to_string(),
+        messages: vec![ModelMessage::user("Inspect files".to_string())],
+        thinking: navi_core::ThinkingConfig::Off,
+        tools: vec![navi_core::ToolDefinition {
+            name: "read_file".to_string(),
+            description: "Read a file".to_string(),
+            kind: navi_core::ToolKind::Read,
+            input_schema: json!({"type": "object"}),
+            metadata: navi_core::ToolMetadata::default(),
+        }],
+    };
+
+    let mut stream = provider.stream(request);
+    while let Some(event) = stream.next().await {
+        event.unwrap();
+    }
+}
+
+#[tokio::test]
 async fn chat_completions_includes_configured_openai_prompt_cache_fields() {
     use wiremock::matchers::{body_json, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};

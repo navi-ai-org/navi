@@ -1,0 +1,22 @@
+version = 1
+id = "medium-high-symbol-ranking"
+title = "fix symbol search ranking"
+category = "search_relevance"
+fixture = "benchmarks/fixtures/rust-symbol-ranking"
+task = "Improve the symbol search ranking so identifier matches beat documentation-only matches, query alternatives separated by `|` work, and natural language still finds documentation matches. Keep the implementation deterministic and run the tests."
+timeout_ms = 600000
+tags = ["medium-high", "rust", "ranking", "search"]
+
+[metadata]
+difficulty = "medium-high"
+focus = "ranking quality, alternatives, deterministic ordering, docs recall"
+
+[agent]
+mode = "parity"
+profile = "medium"
+
+[[verifiers]]
+verifier_type = "command"
+command = "cargo test --quiet"
+timeout_ms = 120000
+required = true

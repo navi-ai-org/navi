@@ -25,11 +25,11 @@ mod tests;
 use builtin::BranchRaceTool;
 use builtin::{
     AppendNoteTool, BashTool, CodeEditTool, CodeExecTool, CodeReadTool, ContextRemainingTool,
-    CurrentTimeTool, GitOpsTool, HistoryOpsTool, InitSessionTool, MarkFeatureDoneTool,
-    NewContextWindowTool, PackageManagerTool, PlanTool, ProcessTool, QuestionTool, ReadTool,
-    RepoIntelligenceAction, RepoIntelligenceTool, RequestUserInputTool, RuntimeInfoTool,
-    SandboxTool, SearchTool, SleepTool, ToolSearchTool, ToolWorkflowTool, TopFilesTool,
-    VerifierTool, ViewImageTool, WaitTool, WriteTool, builtin_metadata, truncate_tool_result,
+    CurrentTimeTool, HistoryOpsTool, InitSessionTool, MarkFeatureDoneTool, NewContextWindowTool,
+    PackageManagerTool, PlanTool, ProcessTool, QuestionTool, ReadTool, RepoIntelligenceAction,
+    RepoIntelligenceTool, RequestUserInputTool, RuntimeInfoTool, SandboxTool, SearchTool,
+    SleepTool, ToolSearchTool, VerifierTool, ViewImageTool, WaitTool, WriteTool, builtin_metadata,
+    truncate_tool_result,
 };
 
 pub use builtin::{AgentProfile, ApprovalMode, ProviderBuilderFn, RepoExploreTool, SubagentTool};
@@ -123,6 +123,14 @@ pub enum ToolKind {
     Custom,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ToolParallelism {
+    /// The tool can run concurrently with other shared tool calls.
+    Shared,
+    /// The tool needs exclusive execution within a model-emitted tool batch.
+    Exclusive,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ToolInvocation {
     pub id: String,
@@ -171,6 +179,7 @@ pub enum ToolCallInvalid {
 }
 
 const WRITE_TOOL_NAMES: &[&str] = &["write", "write_file"];
+const EXCLUSIVE_BATCH_TOOL_NAMES: &[&str] = &["branch_race_start", "plan", "question"];
 
 impl ToolExecutor {
     pub fn new(policy: SecurityPolicy) -> Self {
@@ -244,27 +253,6 @@ impl ToolExecutor {
         ));
     }
 
-    pub(crate) fn new_workflow_host(policy: SecurityPolicy) -> Self {
-        let pr = policy.project_root().to_path_buf();
-        let mut executor = Self {
-            tools: HashMap::new(),
-            validators: HashMap::new(),
-            invalid_schemas: HashMap::new(),
-            policy,
-            security: Arc::new(DefaultToolSecurityPolicy),
-            harness_profile: "medium".to_string(),
-            lock_manager: None,
-            registry: ToolRegistry::new(),
-        };
-        executor.register(ReadTool::new(pr.clone()));
-        executor.register(ReadTool::alias(pr.clone(), "read_file"));
-        executor.register(SearchTool::new(pr.clone()));
-        executor.register(SearchTool::grep(pr.clone()));
-        executor.register(SearchTool::fs_browser(pr.clone()));
-        executor.register(GitOpsTool::new(pr));
-        executor
-    }
-
     pub(crate) fn new_code_exec_host(policy: SecurityPolicy) -> Self {
         let pr = policy.project_root().to_path_buf();
         let mut executor = Self {
@@ -282,7 +270,6 @@ impl ToolExecutor {
         executor.register(SearchTool::new(pr.clone()));
         executor.register(SearchTool::grep(pr.clone()));
         executor.register(SearchTool::fs_browser(pr.clone()));
-        executor.register(GitOpsTool::new(pr.clone()));
         executor.register(WriteTool::apply_patch(pr.clone()));
         executor.register(VerifierTool::new(pr));
         executor.register(RepoIntelligenceTool::new(
@@ -338,6 +325,22 @@ impl ToolExecutor {
         self.tools
             .get(name)
             .map(|tool| self.enriched_definition(tool.as_ref()))
+    }
+
+    pub fn parallelism_for(&self, tool_name: &str) -> ToolParallelism {
+        if EXCLUSIVE_BATCH_TOOL_NAMES.contains(&tool_name) {
+            return ToolParallelism::Exclusive;
+        }
+
+        let Some(definition) = self.definition(tool_name) else {
+            return ToolParallelism::Shared;
+        };
+
+        if definition.metadata.is_read_only && definition.metadata.is_concurrency_safe {
+            ToolParallelism::Shared
+        } else {
+            ToolParallelism::Exclusive
+        }
     }
 
     pub fn register_tool(&mut self, tool: Arc<dyn Tool>) -> Option<Arc<dyn Tool>> {
@@ -580,11 +583,7 @@ impl ToolExecutor {
         if result.ok {
             let should_check = match tool_kind {
                 Some(crate::tool::ToolKind::Write) => true,
-                Some(crate::tool::ToolKind::Command) => {
-                    // Only check command tools that actually touched files.
-                    // Safe command tools (git_ops reads, bash poll/list) are skipped.
-                    true
-                }
+                Some(crate::tool::ToolKind::Command) => true,
                 _ => false,
             };
 
@@ -890,7 +889,6 @@ impl ToolExecutor {
 
     fn register_builtin_tools(&mut self) {
         let pr = self.policy.project_root().to_path_buf();
-        self.register(TopFilesTool::new(self.policy.clone()));
         self.register(ReadTool::new(pr.clone()));
         self.register(ReadTool::alias(pr.clone(), "read_file"));
         self.register(SearchTool::new(pr.clone()));
@@ -903,11 +901,9 @@ impl ToolExecutor {
         self.register(WriteTool::apply_patch(pr.clone()));
         self.register(BashTool::new(pr.clone()));
         self.register(ProcessTool::new(pr.clone()));
-        self.register(GitOpsTool::new(pr.clone()));
         self.register(QuestionTool);
         self.register(PlanTool::new(self.policy.clone()));
         self.register(PackageManagerTool::new(pr.clone()));
-        self.register(ToolWorkflowTool::new(self.policy.clone()));
         self.register(RuntimeInfoTool::new(
             self.policy.clone(),
             self.harness_profile.clone(),

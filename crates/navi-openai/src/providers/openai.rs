@@ -36,6 +36,9 @@ impl crate::provider::OpenAiProvider {
         if !request.tools.is_empty() {
             body["tools"] = json!(request.tools.iter().map(responses_tool_to_json).collect::<Vec<_>>());
             body["tool_choice"] = json!("auto");
+            if behavior.supports_parallel_tool_calls(crate::providers::behavior::Endpoint::Responses) {
+                body["parallel_tool_calls"] = json!(true);
+            }
         }
         apply_thinking_to_body(
             &mut body,
@@ -115,6 +118,9 @@ impl crate::provider::OpenAiProvider {
         if !request.tools.is_empty() {
             body["tools"] = json!(request.tools.iter().map(chat_tool_to_json).collect::<Vec<_>>());
             body["tool_choice"] = json!("auto");
+            if behavior.supports_parallel_tool_calls(crate::providers::behavior::Endpoint::ChatCompletions) {
+                body["parallel_tool_calls"] = json!(true);
+            }
         }
         apply_thinking_to_body(
             &mut body,

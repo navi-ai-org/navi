@@ -224,12 +224,6 @@ impl SecurityPolicy {
                     return SecurityDecision::Deny(format!("command cwd is denied: {reason}"));
                 }
 
-                // git_ops uses `command` for a git subcommand, not a shell program.
-                if definition.name == "git_ops"
-                    && let Some(cmd) = invocation.input.get("command").and_then(Value::as_str)
-                {
-                    return self.validate_git_command(cmd);
-                }
                 // bash poll/list operations are safe
                 if definition.name == "bash"
                     && (invocation.input.get("task_id").is_some()
@@ -259,16 +253,6 @@ impl SecurityPolicy {
             .or_else(|| invocation.input.get("file"))
             .and_then(Value::as_str)
             .map(|path| self.resolve_project_path(Path::new(path)))
-    }
-
-    /// Git commands that always require explicit user approval (guarded even in YOLO).
-    fn validate_git_command(&self, cmd: &str) -> SecurityDecision {
-        match cmd {
-            "push" | "push-force" | "push_delete" => {
-                SecurityDecision::NeedsApproval(SecurityRisk::GuardedCommand)
-            }
-            _ => SecurityDecision::Allow,
-        }
     }
 
     fn validate_apply_patch_invocation(&self, invocation: &ToolInvocation) -> SecurityDecision {
@@ -1584,53 +1568,6 @@ mod tests {
         let items = redacted["items"].as_array().unwrap();
         assert!(items[0]["key"].as_str().unwrap().contains("<redacted>"));
         assert_eq!(items[1]["key"].as_str().unwrap(), "normal value");
-    }
-
-    #[test]
-    fn regression_git_ops_read_only_commands_bypass_approval() {
-        let tempdir = tempfile::tempdir().expect("tempdir");
-        let project = tempdir.path().join("project");
-        let data = tempdir.path().join("data");
-        std::fs::create_dir_all(&project).expect("project");
-        std::fs::create_dir_all(&data).expect("data");
-        let policy = policy(project, data);
-
-        let git_def = crate::tool::ToolDefinition {
-            name: "git_ops".to_string(),
-            description: "git".to_string(),
-            kind: crate::tool::ToolKind::Command,
-            input_schema: serde_json::json!({}),
-            ..Default::default()
-        };
-
-        for cmd in &[
-            "status", "diff", "log", "branch", "add", "commit", "stash", "remote",
-        ] {
-            let inv = crate::tool::ToolInvocation {
-                id: "test".to_string(),
-                tool_name: "git_ops".to_string(),
-                input: serde_json::json!({"command": cmd}),
-            };
-            let decision = policy.validate_tool_invocation(&git_def, &inv);
-            assert!(
-                matches!(decision, SecurityDecision::Allow),
-                "git_ops {cmd} should be allowed"
-            );
-        }
-
-        let inv = crate::tool::ToolInvocation {
-            id: "test".to_string(),
-            tool_name: "git_ops".to_string(),
-            input: serde_json::json!({"command": "push"}),
-        };
-        let decision = policy.validate_tool_invocation(&git_def, &inv);
-        assert!(
-            matches!(
-                decision,
-                SecurityDecision::NeedsApproval(SecurityRisk::GuardedCommand)
-            ),
-            "git_ops push should require guarded approval, got: {decision:?}"
-        );
     }
 
     #[test]

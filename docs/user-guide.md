@@ -191,10 +191,8 @@ Built-in tools are registered by `ToolExecutor` in `navi-core`:
 | `test_runner` | Command | Run project tests with structured output (cargo/jest/vitest/bun/pytest/go) |
 | `build_runner` | Command | Build/compile with caching and structured warnings/errors |
 | `fs_browser` | Read | Browse filesystem: `list`, `tree`, `find`, `stat` |
-| `git_ops` | Command | Git operations: `status`, `diff`, `log`, `branch`, `stash`, `remote` |
 | `package_manager` | Write | Manage deps: `install`, `add`, `remove`, `update`, `check` (npm/bun/cargo/go) |
 
-`git_ops` read-only commands (`status`, `diff`, `log`, `branch`) bypass approval automatically. Destructive commands (`stash`, `remote`) require approval.
 
 All tools execute with the project root as working directory. Relative paths are resolved against the project root, not the process CWD.
 

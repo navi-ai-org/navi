@@ -551,7 +551,7 @@ fn tool_line_prefix(result: &ToolResult) -> &'static str {
 
 fn tool_color(tool_name: &str) -> Color {
     match tool_name {
-        "read_file" | "view_file" | "grep" | "fs_browser" | "git_ops" => code_type(),
+        "read_file" | "view_file" | "grep" | "fs_browser" => code_type(),
         "write_file" | "apply_patch" => code_const(),
         "bash" => code_operator(),
         _ => accent(),

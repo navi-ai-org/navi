@@ -5,6 +5,10 @@ mutants.out.old/
 /coverage/
 /quality/metricsSummary.json
 /quality/qualityReport.json
+/benchmarks/runs/*.json
+/benchmarks/runs/index.js
+/benchmarks/fixtures/**/Cargo.lock
+/benchmarks/fixtures/**/target/
 # Scratch files
 /expanded.rs
 /libtest.rlib

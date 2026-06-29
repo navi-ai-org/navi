@@ -159,7 +159,6 @@ Built-in tools:
 | `test_runner` | Command | Run project tests with structured output. Auto-detects cargo/jest/vitest/bun/pytest/go |
 | `build_runner` | Command | Build/compile with caching. Returns structured warnings/errors. Skips rebuild if no source changed |
 | `fs_browser` | Read | Browse filesystem: `list`, `tree`, `find`, `stat`. Replaces `list_files` |
-| `git_ops` | Command | Git operations: `status`, `diff`, `log`, `branch`, `stash`, `remote`. Read-only commands bypass approval |
 | `package_manager` | Write | Manage deps: `install`, `add`, `remove`, `update`, `check`. Auto-detects npm/bun/cargo/go |
 
 `ToolExecutor` validates invocations through `SecurityPolicy` before execution. Reads are allowed by default, writes and commands require approval by default, blocked commands are denied, paths are restricted to the project by default, NAVI private storage is denied, and writes to `.git` are denied.
@@ -332,7 +331,7 @@ NAVI implements a three-level conversation compaction system:
 
 ### Micro-Compact
 
-`micro_compact(messages, gap_threshold_minutes)` clears the `content` of tool result messages whose `tool_name` is in the read-only set (`read_file`, `fs_browser`, `grep`, `bash`, `git_ops`). Write tools are never cleared. Cleared content is replaced with `[Old tool result content cleared]`.
+`micro_compact(messages, gap_threshold_minutes)` clears the `content` of tool result messages whose `tool_name` is in the read-only set (`read_file`, `fs_browser`, `grep`, `bash`). Write tools are never cleared. Cleared content is replaced with `[Old tool result content cleared]`.
 
 ### Auto-Compact
 
