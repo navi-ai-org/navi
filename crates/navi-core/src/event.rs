@@ -1,4 +1,5 @@
 use crate::capability::CapabilityLedgerEntry;
+use crate::goal::types::GoalStatus;
 use crate::patch::PatchProposal;
 use crate::tool::{ToolInvocation, ToolResult};
 use serde::{Deserialize, Serialize};
@@ -173,6 +174,20 @@ pub enum RuntimeEventKind {
         /// Human-readable reason for the failure.
         reason: String,
     },
+    GoalUpdated {
+        /// The session this goal belongs to.
+        session_id: String,
+        /// Unique identifier for the goal.
+        goal_id: String,
+        /// The objective text.
+        objective: String,
+        /// Current goal status.
+        status: GoalStatus,
+        /// Tokens consumed so far.
+        tokens_used: i64,
+        /// Optional token budget.
+        token_budget: Option<i64>,
+    },
     /// An error occurred during agent execution.
     Error {
         /// Human-readable error message.
@@ -258,6 +273,21 @@ impl RuntimeEventKind {
                 Some(AgentEvent::AutoCompactFailed { reason })
             }
             RuntimeEventKind::Error { message } => Some(AgentEvent::Error { message }),
+            RuntimeEventKind::GoalUpdated {
+                session_id,
+                goal_id,
+                objective,
+                status,
+                tokens_used,
+                token_budget,
+            } => Some(AgentEvent::GoalUpdated {
+                session_id,
+                goal_id,
+                objective,
+                status,
+                tokens_used,
+                token_budget,
+            }),
             _ => None,
         }
     }
@@ -369,6 +399,21 @@ pub enum AgentEvent {
         cache_creation_tokens: u64,
         /// Number of tokens read from the prompt cache (Anthropic).
         cache_read_tokens: u64,
+    },
+    /// The session goal was updated (created, status change, budget exceeded).
+    GoalUpdated {
+        /// The session this goal belongs to.
+        session_id: String,
+        /// Unique identifier for the goal.
+        goal_id: String,
+        /// The objective text.
+        objective: String,
+        /// Current goal status.
+        status: GoalStatus,
+        /// Tokens consumed so far.
+        tokens_used: i64,
+        /// Optional token budget.
+        token_budget: Option<i64>,
     },
     /// Micro-compaction cleared stale tool results from history.
     MicroCompactApplied {
