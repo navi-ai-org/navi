@@ -1,4 +1,5 @@
 use navi_sdk::{ToolInvocation, model_can_run_publicly};
+use navi_sdk::NaviUsageReport;
 use ratatui::layout::{Constraint, Direction, Layout, Margin, Rect};
 use ratatui::prelude::{Frame, Line, Span};
 use ratatui::style::{Color, Modifier, Style};
@@ -1279,5 +1280,192 @@ fn bg_model_has_override(bg: &navi_sdk::BackgroundModelsConfig, task: &str) -> b
         "subagent_research" => bg.subagent_research.is_some(),
         "simple_code_edit" => bg.simple_code_edit.is_some(),
         _ => bg.default.is_some(),
+    }
+}
+
+pub(super) fn render_usage(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
+    clear_modal_area(frame, area);
+    frame.render_widget(modal_block("Usage"), area);
+
+    let inner = area.inner(Margin {
+        horizontal: 2,
+        vertical: 1,
+    });
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(12), Constraint::Length(1)])
+        .split(inner);
+
+    let mut lines: Vec<Line<'_>> = Vec::new();
+
+    if app.usage_state.loading {
+        lines.push(Line::from(Span::styled(
+            "Loading usage data...",
+            Style::default().fg(signal()),
+        )));
+    } else if let Some(ref error) = app.usage_state.error {
+        lines.push(Line::from(Span::styled(
+            format!("Error: {error}"),
+            Style::default().fg(red()),
+        )));
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            "Usage windows are only available for OpenAI OAuth accounts.",
+            Style::default().fg(muted()),
+        )));
+        lines.push(Line::from(Span::styled(
+            "API key auth does not support this endpoint.",
+            Style::default().fg(muted()),
+        )));
+    } else if let Some(ref report) = app.usage_state.report {
+        render_usage_report(&mut lines, report);
+    } else {
+        lines.push(Line::from(Span::styled(
+            "No usage data available.",
+            Style::default().fg(muted()),
+        )));
+    }
+
+    frame.render_widget(
+        Paragraph::new(lines)
+            .style(Style::default().fg(text()).bg(modal_bg()))
+            .wrap(Wrap { trim: false }),
+        rows[0],
+    );
+
+    let hints = Line::from(vec![
+        Span::styled("[r]", Style::default().fg(signal())),
+        Span::styled(" refresh  ", Style::default().fg(muted())),
+        Span::styled("[esc]", Style::default().fg(signal())),
+        Span::styled(" close", Style::default().fg(muted())),
+    ]);
+    frame.render_widget(
+        Paragraph::new(hints).style(Style::default().bg(modal_bg())),
+        rows[1],
+    );
+}
+
+fn render_usage_report(lines: &mut Vec<Line<'_>>, report: &NaviUsageReport) {
+    // Header: provider + plan
+    let plan_label = report.plan_type.as_deref().unwrap_or("unknown");
+    lines.push(Line::from(vec![
+        Span::styled(
+            format!("{} ", report.provider_label),
+            Style::default().fg(text()).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            format!("({plan_label})"),
+            Style::default().fg(muted()),
+        ),
+    ]));
+
+    if let Some(ref kind) = report.limit_reached_kind {
+        lines.push(Line::from(Span::styled(
+            format!("⚠ Limit reached: {kind}"),
+            Style::default().fg(red()),
+        )));
+    }
+
+    lines.push(Line::from(""));
+
+    // Render each limit snapshot
+    for (i, limit) in report.limits.iter().enumerate() {
+        let name = limit
+            .limit_name
+            .as_deref()
+            .or(limit.metered_feature.as_deref())
+            .unwrap_or("Limit");
+
+        let status_icon = if limit.limit_reached { "●" } else { "○" };
+        let status_color = if limit.limit_reached { red() } else { signal() };
+        lines.push(Line::from(vec![
+            Span::styled(format!("{status_icon} "), Style::default().fg(status_color)),
+            Span::styled(
+                name.to_string(),
+                Style::default().fg(text()).add_modifier(Modifier::BOLD),
+            ),
+        ]));
+
+        // Primary window (5h)
+        if let Some(ref primary) = limit.primary {
+            render_window_line(lines, "5h limit", primary);
+        }
+        // Secondary window (weekly)
+        if let Some(ref secondary) = limit.secondary {
+            render_window_line(lines, "Weekly", secondary);
+        }
+
+        // Spacing between limits
+        if i < report.limits.len() - 1 {
+            lines.push(Line::from(""));
+        }
+    }
+}
+
+fn render_window_line(lines: &mut Vec<Line<'_>>, label: &str, window: &navi_sdk::NaviUsageWindow) {
+    let used = window.used_percent.clamp(0, 100) as u16;
+    let remaining = 100u16.saturating_sub(used);
+
+    // Build progress bar: 20 chars wide
+    let bar_width: u16 = 20;
+    let filled = (used as u32 * bar_width as u32 / 100) as u16;
+    let empty = bar_width.saturating_sub(filled);
+    let bar = format!("{}{}", "█".repeat(filled as usize), "░".repeat(empty as usize));
+
+    let bar_color = if used >= 90 {
+        red()
+    } else if used >= 70 {
+        Color::Yellow
+    } else {
+        signal()
+    };
+
+    let reset_text = format_reset(window.reset_after_seconds);
+
+    lines.push(Line::from(vec![
+        Span::styled(format!("  {label:8} "), Style::default().fg(muted())),
+        Span::styled(bar, Style::default().fg(bar_color)),
+        Span::styled(
+            format!(" {remaining}% left"),
+            Style::default().fg(text()),
+        ),
+    ]));
+    if !reset_text.is_empty() {
+        lines.push(Line::from(vec![
+            Span::styled(
+                format!("  {:8} ", ""),
+                Style::default().fg(muted()),
+            ),
+            Span::styled(
+                format!("resets {reset_text}"),
+                Style::default().fg(muted()),
+            ),
+        ]));
+    }
+}
+
+/// Format reset_after_seconds into a human-friendly string.
+fn format_reset(seconds: i32) -> String {
+    if seconds <= 0 {
+        return String::new();
+    }
+    let hours = seconds / 3600;
+    let minutes = (seconds % 3600) / 60;
+    if hours >= 24 {
+        let days = hours / 24;
+        let rem_hours = hours % 24;
+        if rem_hours > 0 {
+            format!("in {days}d {rem_hours}h")
+        } else {
+            format!("in {days}d")
+        }
+    } else if hours > 0 {
+        if minutes > 0 {
+            format!("in {hours}h {minutes}m")
+        } else {
+            format!("in {hours}h")
+        }
+    } else {
+        format!("in {minutes}m")
     }
 }

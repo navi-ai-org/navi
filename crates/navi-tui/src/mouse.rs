@@ -526,7 +526,8 @@ fn active_scroll_target(app: &TuiApp) -> Option<ScrollTarget> {
         | Mode::Help
         | Mode::Debug
         | Mode::MessageActions
-        | Mode::OAuth => None,
+        | Mode::OAuth
+        | Mode::Usage => None,
         Mode::Normal
         | Mode::ApiKeyEntry
         | Mode::Mcp

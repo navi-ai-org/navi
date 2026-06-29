@@ -18,7 +18,7 @@ use crate::{
     ApprovalDecision, BackgroundCommandSnapshot, LoadedConfig, NaviConfigSaveTarget,
     NaviModelSelectionRequest, NaviModelSelectionResult, NaviProviderCredentialStatus,
     NaviProviderSyncReport, NaviSessionInfo, NaviSessionRequest, NaviSkillInfo, NaviTurnRequest,
-    NaviTurnResponse, QuestionResponse, RuntimeEvent, SessionSnapshot,
+    NaviTurnResponse, NaviUsageReport, QuestionResponse, RuntimeEvent, SessionSnapshot,
 };
 use navi_mcp::McpServerInfo;
 
@@ -83,6 +83,9 @@ pub trait EngineDriver: Send + Sync {
 
     /// Current in-memory configuration snapshot.
     fn loaded_config(&self) -> LoadedConfig;
+
+    /// Fetch current provider usage and rate-limit windows.
+    async fn usage_report(&self) -> Result<NaviUsageReport>;
 
     // ── Credentials ────────────────────────────────────────────────────
 
@@ -191,6 +194,10 @@ impl EngineDriver for crate::NaviEngine {
 
     fn loaded_config(&self) -> LoadedConfig {
         crate::NaviEngine::loaded_config(self)
+    }
+
+    async fn usage_report(&self) -> Result<NaviUsageReport> {
+        crate::NaviEngine::usage_report(self).await
     }
 
     fn credential_status(&self, provider_id: &str) -> Result<NaviProviderCredentialStatus> {

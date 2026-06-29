@@ -14,7 +14,7 @@ use navi_sdk::{
     ApprovalDecision, EngineDriver, LoadedConfig, McpServerInfo, NaviConfig, NaviConfigSaveTarget,
     NaviError, NaviModelSelectionRequest, NaviModelSelectionResult, NaviProviderCredentialStatus,
     NaviProviderSyncReport, NaviSessionInfo, NaviSessionRequest, NaviSkillInfo, NaviTurnRequest,
-    NaviTurnResponse, QuestionResponse, RuntimeEvent, SessionSnapshot,
+    NaviTurnResponse, NaviUsageReport, QuestionResponse, RuntimeEvent, SessionSnapshot,
 };
 
 /// A recorded call to a method on the engine.
@@ -41,6 +41,7 @@ pub enum EngineCall {
     },
     SelectModel(NaviModelSelectionRequest),
     LoadedConfig,
+    UsageReport,
     CredentialStatus(String),
     SetProviderApiKey {
         provider_id: String,
@@ -68,6 +69,7 @@ struct MockState {
     calls: Vec<EngineCall>,
     loaded_config: LoadedConfig,
     skills: Vec<NaviSkillInfo>,
+    usage_report: NaviUsageReport,
 }
 
 impl MockEngine {
@@ -89,6 +91,7 @@ impl MockEngine {
                 calls: Vec::new(),
                 loaded_config,
                 skills: Vec::new(),
+                usage_report: NaviUsageReport::default(),
             }),
             events_tx,
             turn_done: Notify::new(),
@@ -134,6 +137,11 @@ impl MockEngine {
     /// Replace the canned skills returned by `list_skills`.
     pub fn set_skills(&self, skills: Vec<NaviSkillInfo>) {
         self.state.lock().unwrap().skills = skills;
+    }
+
+    /// Replace the canned usage report returned by `usage_report`.
+    pub fn set_usage_report(&self, report: NaviUsageReport) {
+        self.state.lock().unwrap().usage_report = report;
     }
 }
 
@@ -312,6 +320,11 @@ impl EngineDriver for MockEngine {
             .calls
             .push(EngineCall::LoadedConfig);
         self.state.lock().unwrap().loaded_config.clone()
+    }
+
+    async fn usage_report(&self) -> Result<NaviUsageReport> {
+        self.state.lock().unwrap().calls.push(EngineCall::UsageReport);
+        Ok(self.state.lock().unwrap().usage_report.clone())
     }
 
     fn credential_status(&self, provider_id: &str) -> Result<NaviProviderCredentialStatus> {

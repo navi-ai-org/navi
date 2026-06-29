@@ -98,6 +98,9 @@ pub(crate) fn run_selected_command(app: &mut TuiApp) -> bool {
         CommandAction::Providers => {
             super::open_provider_settings(app);
         }
+        CommandAction::Usage => {
+            crate::usage::open_usage_modal(app);
+        }
         CommandAction::Skills => {
             super::open_skills_picker(app);
         }

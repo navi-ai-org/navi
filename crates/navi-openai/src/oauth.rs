@@ -1,6 +1,8 @@
 use navi_core::{CommandCodeCredentialMetadata, CredentialStore};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use sha2::{Digest, Sha256};
+use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::time::Duration;
@@ -14,6 +16,9 @@ pub struct DeviceOAuthStarted {
 const COMMANDCODE_DEFAULT_API_BASE: &str = "https://api.commandcode.ai";
 const COMMANDCODE_DEFAULT_STUDIO_BASE: &str = "https://commandcode.ai";
 const COMMANDCODE_CLI_VERSION: &str = "0.38.2";
+const OPENAI_DEFAULT_ISSUER: &str = "https://auth.openai.com";
+const OPENAI_DEFAULT_CLIENT_ID: &str = "app_EMoamEEZ73f0CkXaXp7hrann";
+const OPENAI_CALLBACK_PATH: &str = "/auth/callback";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -23,6 +28,33 @@ pub struct CommandCodeUsageData {
     pub subscription: Option<Value>,
     pub usage_summary: Option<Value>,
     pub models: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenAiUsageReport {
+    pub plan_type: Option<String>,
+    pub limit_reached_kind: Option<String>,
+    pub limits: Vec<OpenAiUsageLimitSnapshot>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenAiUsageLimitSnapshot {
+    pub limit_id: Option<String>,
+    pub limit_name: Option<String>,
+    pub metered_feature: Option<String>,
+    pub limit_reached: bool,
+    pub primary: Option<OpenAiUsageWindow>,
+    pub secondary: Option<OpenAiUsageWindow>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct OpenAiUsageWindow {
+    pub used_percent: i32,
+    pub limit_window_seconds: i32,
+    pub reset_after_seconds: i32,
+    pub reset_at: i32,
 }
 
 pub async fn github_copilot_device_oauth<F>(
@@ -127,6 +159,209 @@ where
     }
 
     Err("device authorization timed out".to_string())
+}
+
+pub async fn openai_usage_report(
+    access_token: &str,
+) -> std::result::Result<OpenAiUsageReport, String> {
+    let response = reqwest::Client::new()
+        .get(openai_usage_url())
+        .header("Authorization", format!("Bearer {access_token}"))
+        .header("Accept", "application/json")
+        .header("User-Agent", "navi/0.1.0")
+        .send()
+        .await
+        .map_err(|err| err.to_string())?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        return Err(format!("OpenAI usage request failed: {status}: {body}"));
+    }
+
+    let payload = response
+        .json::<OpenAiUsagePayload>()
+        .await
+        .map_err(|err| err.to_string())?;
+    Ok(payload.into_report())
+}
+
+pub async fn openai_browser_oauth<F>(
+    credential_store: CredentialStore,
+    provider_id: &str,
+    mut on_started: F,
+) -> std::result::Result<(), String>
+where
+    F: FnMut(DeviceOAuthStarted) + Send,
+{
+    let (port, listener) = openai_auth_listener()?;
+    let redirect_uri = format!("http://localhost:{port}{OPENAI_CALLBACK_PATH}");
+    let state = generate_oauth_token();
+    let pkce = PkceCodes::generate();
+    let issuer = openai_issuer();
+    let client_id = openai_client_id();
+    let auth_url = openai_authorize_url(&issuer, &client_id, &redirect_uri, &pkce, &state);
+
+    on_started(DeviceOAuthStarted {
+        verification_uri: auth_url,
+        user_code: String::new(),
+    });
+
+    let code = tokio::task::spawn_blocking(move || {
+        wait_for_openai_callback(listener, &state, Duration::from_secs(300))
+    })
+    .await
+    .map_err(|err| err.to_string())??;
+
+    let tokens =
+        exchange_openai_code_for_tokens(&issuer, &client_id, &redirect_uri, &pkce, &code).await?;
+    credential_store
+        .set_api_key(provider_id, &tokens.access_token)
+        .map_err(|err| err.to_string())?;
+    Ok(())
+}
+
+#[derive(Debug, Deserialize)]
+struct OpenAiUsagePayload {
+    plan_type: Option<String>,
+    rate_limit: Option<OpenAiRateLimitDetails>,
+    additional_rate_limits: Option<Vec<OpenAiAdditionalRateLimitDetails>>,
+    rate_limit_reached_type: Option<OpenAiRateLimitReachedType>,
+}
+
+impl OpenAiUsagePayload {
+    fn into_report(self) -> OpenAiUsageReport {
+        let mut limits = Vec::new();
+        if let Some(rate_limit) = self.rate_limit {
+            limits.push(rate_limit.into_snapshot(
+                Some("codex".to_string()),
+                Some("Codex".to_string()),
+                Some("codex".to_string()),
+            ));
+        }
+        limits.extend(
+            self.additional_rate_limits
+                .unwrap_or_default()
+                .into_iter()
+                .map(OpenAiAdditionalRateLimitDetails::into_snapshot),
+        );
+
+        OpenAiUsageReport {
+            plan_type: self.plan_type,
+            limit_reached_kind: self.rate_limit_reached_type.map(|value| value.kind),
+            limits,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct OpenAiRateLimitDetails {
+    #[serde(default)]
+    limit_reached: bool,
+    primary_window: Option<OpenAiUsageWindow>,
+    secondary_window: Option<OpenAiUsageWindow>,
+}
+
+impl OpenAiRateLimitDetails {
+    fn into_snapshot(
+        self,
+        limit_id: Option<String>,
+        limit_name: Option<String>,
+        metered_feature: Option<String>,
+    ) -> OpenAiUsageLimitSnapshot {
+        OpenAiUsageLimitSnapshot {
+            limit_id,
+            limit_name,
+            metered_feature,
+            limit_reached: self.limit_reached,
+            primary: self.primary_window,
+            secondary: self.secondary_window,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct OpenAiAdditionalRateLimitDetails {
+    limit_name: Option<String>,
+    metered_feature: Option<String>,
+    rate_limit: Option<OpenAiRateLimitDetails>,
+}
+
+impl OpenAiAdditionalRateLimitDetails {
+    fn into_snapshot(self) -> OpenAiUsageLimitSnapshot {
+        let limit_id = self.metered_feature.clone();
+        self.rate_limit
+            .unwrap_or(OpenAiRateLimitDetails {
+                limit_reached: false,
+                primary_window: None,
+                secondary_window: None,
+            })
+            .into_snapshot(limit_id, self.limit_name, self.metered_feature)
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct OpenAiRateLimitReachedType {
+    kind: String,
+}
+
+#[derive(Debug, Clone)]
+struct PkceCodes {
+    code_verifier: String,
+    code_challenge: String,
+}
+
+impl PkceCodes {
+    fn generate() -> Self {
+        let code_verifier = generate_oauth_token();
+        let digest = Sha256::digest(code_verifier.as_bytes());
+        let code_challenge = base64_url_no_pad(&digest);
+        Self {
+            code_verifier,
+            code_challenge,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct OpenAiTokenResponse {
+    access_token: String,
+}
+
+async fn exchange_openai_code_for_tokens(
+    issuer: &str,
+    client_id: &str,
+    redirect_uri: &str,
+    pkce: &PkceCodes,
+    code: &str,
+) -> std::result::Result<OpenAiTokenResponse, String> {
+    let body = [
+        ("grant_type", "authorization_code"),
+        ("code", code),
+        ("redirect_uri", redirect_uri),
+        ("client_id", client_id),
+        ("code_verifier", &pkce.code_verifier),
+    ]
+    .into_iter()
+    .map(|(key, value)| format!("{key}={}", url_encode_component(value)))
+    .collect::<Vec<_>>()
+    .join("&");
+
+    let response = reqwest::Client::new()
+        .post(format!("{}/oauth/token", issuer.trim_end_matches('/')))
+        .header("Content-Type", "application/x-www-form-urlencoded")
+        .body(body)
+        .send()
+        .await
+        .map_err(|err| err.to_string())?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        return Err(format!("OpenAI token exchange failed: {status}: {body}"));
+    }
+
+    response.json().await.map_err(|err| err.to_string())
 }
 
 #[derive(Debug, Deserialize)]
@@ -337,6 +572,73 @@ fn commandcode_auth_url(port: u16, state: &str) -> String {
     )
 }
 
+fn openai_issuer() -> String {
+    std::env::var("NAVI_OPENAI_OAUTH_ISSUER")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| OPENAI_DEFAULT_ISSUER.to_string())
+        .trim_end_matches('/')
+        .to_string()
+}
+
+fn openai_client_id() -> String {
+    std::env::var("NAVI_OPENAI_OAUTH_CLIENT_ID")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| OPENAI_DEFAULT_CLIENT_ID.to_string())
+}
+
+fn openai_usage_url() -> String {
+    std::env::var("NAVI_OPENAI_USAGE_URL")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| "https://chatgpt.com/backend-api/wham/usage".to_string())
+}
+
+fn openai_auth_listener() -> std::result::Result<(u16, TcpListener), String> {
+    for port in [1455, 1457].into_iter().chain(5969..5989) {
+        match TcpListener::bind(("127.0.0.1", port)) {
+            Ok(listener) => {
+                listener
+                    .set_nonblocking(true)
+                    .map_err(|err| err.to_string())?;
+                return Ok((port, listener));
+            }
+            Err(_) => continue,
+        }
+    }
+    Err("no available local callback port for OpenAI OAuth".to_string())
+}
+
+fn openai_authorize_url(
+    issuer: &str,
+    client_id: &str,
+    redirect_uri: &str,
+    pkce: &PkceCodes,
+    state: &str,
+) -> String {
+    let query = [
+        ("response_type", "code"),
+        ("client_id", client_id),
+        ("redirect_uri", redirect_uri),
+        (
+            "scope",
+            "openid profile email offline_access api.responses.write api.connectors.read api.connectors.invoke",
+        ),
+        ("code_challenge", &pkce.code_challenge),
+        ("code_challenge_method", "S256"),
+        ("id_token_add_organizations", "true"),
+        ("codex_cli_simplified_flow", "true"),
+        ("state", state),
+        ("originator", "navi"),
+    ]
+    .into_iter()
+    .map(|(key, value)| format!("{key}={}", url_encode_component(value)))
+    .collect::<Vec<_>>()
+    .join("&");
+    format!("{}/oauth/authorize?{query}", issuer.trim_end_matches('/'))
+}
+
 fn current_unix_timestamp() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -357,21 +659,38 @@ fn url_encode_component(value: &str) -> String {
     encoded
 }
 
+fn generate_oauth_token() -> String {
+    let mut bytes = [0u8; 64];
+    fill_random_bytes(&mut bytes);
+    base64_url_no_pad(&bytes)
+}
+
 fn generate_commandcode_state() -> String {
     let mut bytes = [0u8; 32];
-    if std::fs::File::open("/dev/urandom")
-        .and_then(|mut file| file.read_exact(&mut bytes))
-        .is_err()
-    {
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_nanos();
-        let pid = std::process::id() as u128;
-        bytes[..16].copy_from_slice(&now.to_le_bytes());
-        bytes[16..].copy_from_slice(&(now ^ pid).to_le_bytes());
-    }
+    fill_random_bytes(&mut bytes);
     base64_url_no_pad(&bytes)
+}
+
+fn fill_random_bytes(bytes: &mut [u8]) {
+    if std::fs::File::open("/dev/urandom")
+        .and_then(|mut file| file.read_exact(bytes))
+        .is_ok()
+    {
+        return;
+    }
+
+    let mut seed = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos()
+        ^ ((std::process::id() as u128) << 64);
+    for chunk in bytes.chunks_mut(16) {
+        seed = seed
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
+        let seed_bytes = seed.to_le_bytes();
+        chunk.copy_from_slice(&seed_bytes[..chunk.len()]);
+    }
 }
 
 fn base64_url_no_pad(bytes: &[u8]) -> String {
@@ -413,6 +732,69 @@ fn wait_for_commandcode_callback(
         }
     }
     Err("Command Code OAuth timed out waiting for browser callback".to_string())
+}
+
+fn wait_for_openai_callback(
+    listener: TcpListener,
+    state: &str,
+    timeout: Duration,
+) -> std::result::Result<String, String> {
+    let deadline = std::time::Instant::now() + timeout;
+    while std::time::Instant::now() < deadline {
+        match listener.accept() {
+            Ok((mut stream, _)) => {
+                if let Some(code) = handle_openai_callback_stream(&mut stream, state)? {
+                    return Ok(code);
+                }
+            }
+            Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            Err(err) => return Err(err.to_string()),
+        }
+    }
+    Err("OpenAI OAuth timed out waiting for browser callback".to_string())
+}
+
+fn handle_openai_callback_stream(
+    stream: &mut TcpStream,
+    state: &str,
+) -> std::result::Result<Option<String>, String> {
+    let request = read_http_request(stream)?;
+    let Some((request_line, _)) = request.split_once("\r\n") else {
+        write_html_response(stream, 400, "Invalid request")?;
+        return Ok(None);
+    };
+
+    if !request_line.starts_with(&format!("GET {OPENAI_CALLBACK_PATH}?")) {
+        write_html_response(stream, 404, "Not found")?;
+        return Ok(None);
+    }
+
+    let params = parse_get_query_params(request_line)?;
+    if params.get("state").map(String::as_str) != Some(state) {
+        write_html_response(stream, 400, "State mismatch")?;
+        return Ok(None);
+    }
+    if let Some(error) = params.get("error") {
+        let description = params
+            .get("error_description")
+            .map(String::as_str)
+            .unwrap_or(error);
+        write_html_response(stream, 400, "OpenAI login failed")?;
+        return Err(description.to_string());
+    }
+    let Some(code) = params.get("code").filter(|code| !code.trim().is_empty()) else {
+        write_html_response(stream, 400, "Missing authorization code")?;
+        return Ok(None);
+    };
+
+    write_html_response(
+        stream,
+        200,
+        "OpenAI login received. You can return to NAVI.",
+    )?;
+    Ok(Some(code.clone()))
 }
 
 fn handle_commandcode_callback_stream(
@@ -574,6 +956,78 @@ fn write_json_response(
         .map_err(|err| err.to_string())
 }
 
+fn parse_get_query_params(
+    request_line: &str,
+) -> std::result::Result<HashMap<String, String>, String> {
+    let target = request_line
+        .split_whitespace()
+        .nth(1)
+        .ok_or_else(|| "missing request target".to_string())?;
+    let query = target
+        .split_once('?')
+        .map(|(_, query)| query)
+        .unwrap_or_default();
+    query
+        .split('&')
+        .filter(|pair| !pair.is_empty())
+        .map(|pair| {
+            let (key, value) = pair.split_once('=').unwrap_or((pair, ""));
+            Ok((url_decode_component(key)?, url_decode_component(value)?))
+        })
+        .collect()
+}
+
+fn url_decode_component(value: &str) -> std::result::Result<String, String> {
+    let mut bytes = Vec::with_capacity(value.len());
+    let mut iter = value.as_bytes().iter().copied();
+    while let Some(byte) = iter.next() {
+        match byte {
+            b'+' => bytes.push(b' '),
+            b'%' => {
+                let hi = iter
+                    .next()
+                    .ok_or_else(|| "invalid percent encoding".to_string())?;
+                let lo = iter
+                    .next()
+                    .ok_or_else(|| "invalid percent encoding".to_string())?;
+                bytes.push((hex_value(hi)? << 4) | hex_value(lo)?);
+            }
+            _ => bytes.push(byte),
+        }
+    }
+    String::from_utf8(bytes).map_err(|err| err.to_string())
+}
+
+fn hex_value(byte: u8) -> std::result::Result<u8, String> {
+    match byte {
+        b'0'..=b'9' => Ok(byte - b'0'),
+        b'a'..=b'f' => Ok(byte - b'a' + 10),
+        b'A'..=b'F' => Ok(byte - b'A' + 10),
+        _ => Err("invalid percent encoding".to_string()),
+    }
+}
+
+fn write_html_response(
+    stream: &mut TcpStream,
+    status: u16,
+    body: &str,
+) -> std::result::Result<(), String> {
+    let reason = match status {
+        200 => "OK",
+        400 => "Bad Request",
+        404 => "Not Found",
+        _ => "OK",
+    };
+    let body = format!("<!doctype html><title>NAVI OAuth</title><p>{body}</p>");
+    let response = format!(
+        "HTTP/1.1 {status} {reason}\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        body.len()
+    );
+    stream
+        .write_all(response.as_bytes())
+        .map_err(|err| err.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -657,5 +1111,119 @@ mod tests {
     #[test]
     fn base64_url_no_pad_encodes_without_padding() {
         assert_eq!(base64_url_no_pad(b"hello"), "aGVsbG8");
+    }
+
+    #[test]
+    fn openai_authorize_url_uses_pkce_and_local_callback() {
+        let pkce = PkceCodes {
+            code_verifier: "verifier".to_string(),
+            code_challenge: "challenge".to_string(),
+        };
+        let url = openai_authorize_url(
+            "https://auth.openai.com/",
+            "client-id",
+            "http://localhost:1455/auth/callback",
+            &pkce,
+            "state token",
+        );
+
+        assert!(url.starts_with("https://auth.openai.com/oauth/authorize?"));
+        assert!(url.contains("client_id=client-id"));
+        assert!(url.contains("redirect_uri=http%3A%2F%2Flocalhost%3A1455%2Fauth%2Fcallback"));
+        assert!(url.contains("code_challenge=challenge"));
+        assert!(url.contains("code_challenge_method=S256"));
+        assert!(url.contains("state=state%20token"));
+        assert!(url.contains("originator=navi"));
+    }
+
+    #[test]
+    fn pkce_generation_uses_base64url_without_padding() {
+        let pkce = PkceCodes::generate();
+
+        assert!(pkce.code_verifier.len() >= 43);
+        assert!(pkce.code_challenge.len() >= 43);
+        assert!(
+            pkce.code_verifier
+                .chars()
+                .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_')
+        );
+        assert!(
+            pkce.code_challenge
+                .chars()
+                .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_')
+        );
+        assert!(!pkce.code_verifier.contains('='));
+        assert!(!pkce.code_challenge.contains('='));
+    }
+
+    #[test]
+    fn parses_openai_callback_query() {
+        let params =
+            parse_get_query_params("GET /auth/callback?code=abc%2B123&state=state+token HTTP/1.1")
+                .expect("query params");
+
+        assert_eq!(params.get("code").map(String::as_str), Some("abc+123"));
+        assert_eq!(params.get("state").map(String::as_str), Some("state token"));
+    }
+
+    #[test]
+    fn openai_usage_payload_maps_primary_secondary_and_additional_limits() {
+        let payload = serde_json::from_str::<OpenAiUsagePayload>(
+            r#"{
+                "plan_type": "plus",
+                "rate_limit": {
+                    "limit_reached": true,
+                    "primary_window": {
+                        "used_percent": 100,
+                        "limit_window_seconds": 18000,
+                        "reset_after_seconds": 3600,
+                        "reset_at": 1700003600
+                    },
+                    "secondary_window": {
+                        "used_percent": 80,
+                        "limit_window_seconds": 604800,
+                        "reset_after_seconds": 86400,
+                        "reset_at": 1700086400
+                    }
+                },
+                "additional_rate_limits": [
+                    {
+                        "limit_name": "Long context",
+                        "metered_feature": "long_context",
+                        "rate_limit": {
+                            "limit_reached": false,
+                            "primary_window": {
+                                "used_percent": 10,
+                                "limit_window_seconds": 18000,
+                                "reset_after_seconds": 1800,
+                                "reset_at": 1700001800
+                            }
+                        }
+                    }
+                ],
+                "rate_limit_reached_type": { "kind": "primary" }
+            }"#,
+        )
+        .expect("usage payload");
+
+        let report = payload.into_report();
+
+        assert_eq!(report.plan_type.as_deref(), Some("plus"));
+        assert_eq!(report.limit_reached_kind.as_deref(), Some("primary"));
+        assert_eq!(report.limits.len(), 2);
+        assert_eq!(report.limits[0].limit_id.as_deref(), Some("codex"));
+        assert!(report.limits[0].limit_reached);
+        assert_eq!(
+            report.limits[0].primary.as_ref().map(|window| window.limit_window_seconds),
+            Some(18_000)
+        );
+        assert_eq!(
+            report.limits[0].secondary.as_ref().map(|window| window.limit_window_seconds),
+            Some(604_800)
+        );
+        assert_eq!(
+            report.limits[1].metered_feature.as_deref(),
+            Some("long_context")
+        );
     }
 }

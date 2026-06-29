@@ -25,7 +25,7 @@ use crate::session::load_saved_sessions;
 use crate::state::{
     ChatMessage, ChatRenderCache, ChatRole, ChatView, McpUiState, ModalKind, Mode, Notification,
     OAuthUiState, PluginApprovalRequest, QuestionUiState, SelectionState, SubagentTranscript,
-    ThinkingLevel,
+    ThinkingLevel, UsageUiState,
 };
 use crate::theme::{ThemeId, ThemePalette};
 use crate::ui::interaction::{HitAction, HitRegion, InteractionRegistry};
@@ -118,6 +118,7 @@ pub struct TuiApp {
     pub(crate) provider_settings_scroll: usize,
     pub(crate) provider_filter: String,
     pub(crate) oauth_state: Option<OAuthUiState>,
+    pub(crate) usage_state: UsageUiState,
     notification: Option<Notification>,
     diagnostics: Vec<String>,
     log_path: PathBuf,
@@ -303,6 +304,7 @@ impl TuiApp {
             provider_settings_scroll: 0,
             provider_filter: String::new(),
             oauth_state: None,
+            usage_state: UsageUiState::default(),
             notification: None,
             diagnostics: Vec::new(),
             log_path,
