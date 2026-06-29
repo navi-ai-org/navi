@@ -249,6 +249,9 @@ pub struct SessionSnapshot {
     /// Optional project memory snapshot co-persisted with the session.
     #[serde(default)]
     pub memory: Option<ProjectMemory>,
+    /// Optional session goal co-persisted with the session.
+    #[serde(default)]
+    pub goal: Option<SessionGoal>,
 }
 
 /// Lightweight metadata for listing saved sessions without loading event history.
@@ -348,6 +351,7 @@ impl SessionStore {
                 project: snapshot.project.clone(),
                 created_at: snapshot.created_at,
                 updated_at: snapshot.updated_at,
+                goal: snapshot.goal.clone(),
                 events: redact_snapshot_events(&snapshot.events),
                 memory: snapshot.memory.as_ref().map(redact_memory),
             }
@@ -585,6 +589,7 @@ fn current_unix_millis() -> u128 {
         .unwrap_or_default()
 }
 
+use crate::goal::types::SessionGoal;
 use crate::model::ContentPart;
 
 /// A user task submission sent to the session background loop.
@@ -656,6 +661,7 @@ mod tests {
             updated_at: 2,
             events: Vec::new(),
             memory: None,
+            goal: None,
         };
 
         let path = store.save(&snapshot).expect("save session");
@@ -680,6 +686,7 @@ mod tests {
             updated_at: 2,
             events: Vec::new(),
             memory: None,
+            goal: None,
         };
 
         let path = store.save(&snapshot).expect("save session");
@@ -714,6 +721,7 @@ mod tests {
                 content_parts: vec![],
             }],
             memory: None,
+            goal: None,
         };
 
         let path = store.save(&snapshot).expect("save session");
@@ -743,6 +751,7 @@ mod tests {
                     session_id: "session-x".to_string(),
                 }],
             }),
+            goal: None,
         };
 
         let path = store.save(&snapshot).expect("save session");
@@ -768,6 +777,7 @@ mod tests {
                 content_parts: vec![],
             }],
             memory: None,
+            goal: None,
         };
 
         let path = store.save(&snapshot).expect("save session");
@@ -953,6 +963,7 @@ mod tests {
             updated_at,
             events: Vec::new(),
             memory: None,
+            goal: None,
         }
     }
 
@@ -1045,6 +1056,7 @@ mod tests {
                 },
             ],
             memory: None,
+            goal: None,
         };
         let json = serde_json::to_string(&snapshot).expect("serialize");
         let loaded: SessionSnapshot = serde_json::from_str(&json).expect("deserialize");
@@ -1124,6 +1136,7 @@ mod tests {
                 }),
             ],
             memory: None,
+            goal: None,
         };
         store.save(&snapshot).expect("save");
         let loaded = store.load("events-session").expect("load");

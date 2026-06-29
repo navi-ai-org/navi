@@ -19,12 +19,61 @@ fn truncate_to_lines(text: &str, max_lines: usize) -> &str {
 
 pub(crate) fn tool_compact_text(invocation: &ToolInvocation, result: &ToolResult) -> String {
     let mut text = match invocation.tool_name.as_str() {
+        // ── Existing (kept) ──────────────────────────────────────────────
         "read_file" | "view_file" => read_file_summary(invocation, result),
         "write_file" => write_file_summary(invocation, result),
         "apply_patch" => apply_patch_summary(invocation),
         "bash" => bash_summary(invocation, result),
         "grep" => grep_summary(invocation, result),
         "fs_browser" => fs_browser_summary(invocation, result),
+
+        // ── Process & Command ─────────────────────────────────────────────
+        "process" => process_summary(invocation, result),
+        "test_runner" => test_runner_summary(invocation, result),
+        "build_runner" => build_runner_summary(invocation, result),
+
+        // ── Code Intelligence ─────────────────────────────────────────────
+        "code" => code_summary(invocation, result),
+        "code_edit" => code_edit_summary(invocation, result),
+        "code_exec" => code_exec_summary(invocation, result),
+        "ast_search" => ast_search_summary(invocation, result),
+        "symbol_goto" => symbol_goto_summary(invocation, result),
+        "symbol_references" => symbol_references_summary(invocation, result),
+        "dependency_graph_query" => dependency_graph_summary(result),
+        "test_discovery" => test_discovery_summary(result),
+        "ownership_churn_query" => churn_summary(result),
+
+        // ── Repo Search Aliases ───────────────────────────────────────────
+        "search" | "list_dir" | "glob" => search_tool_summary(invocation, result),
+
+        // ── Repo Explore & Subagent ───────────────────────────────────────
+        "repo_explore" => repo_explore_summary(invocation, result),
+        "subagent" => subagent_summary(invocation, result),
+
+        // ── Planning & Session ────────────────────────────────────────────
+        "plan" => plan_summary(invocation, result),
+        "init_session" => init_session_summary(result),
+        "mark_feature_done" => mark_feature_done_summary(result),
+
+        // ── Interaction ──────────────────────────────────────────────────
+        "question" => question_summary(invocation),
+        "request_user_input" => request_user_input_summary(invocation),
+        "append_note" => append_note_summary(result),
+
+        // ── Utility ──────────────────────────────────────────────────────
+        "current_time" => current_time_summary(result),
+        "sleep" => sleep_summary(result),
+        "get_context_remaining" => context_remaining_summary(result),
+        "view_image" | "inspect_image" => view_image_summary(invocation, result),
+        "new_context_window" => new_context_window_summary(result),
+        "tool_search" => tool_search_summary(invocation, result),
+        "verifier" => verifier_summary(invocation, result),
+        "runtime_info" => runtime_info_summary(result),
+        "branch_race_start" => branch_race_summary(result),
+        "history_ops" => history_ops_summary(invocation, result),
+        "sandbox" => sandbox_summary(invocation, result),
+        "package_manager" => package_manager_summary(invocation, result),
+
         name => humanize_tool_name(name),
     };
 
@@ -234,6 +283,10 @@ fn generic_tool_summary(invocation: &ToolInvocation, result: &ToolResult) -> Str
     }
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+//  Existing summaries (unchanged)
+// ═══════════════════════════════════════════════════════════════════════════
+
 fn read_file_summary(invocation: &ToolInvocation, result: &ToolResult) -> String {
     let path = result
         .output
@@ -440,6 +493,1107 @@ fn fs_browser_summary(invocation: &ToolInvocation, result: &ToolResult) -> Strin
         format!("{action} {}", display_path(path))
     }
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  New: Process & Command tools
+// ═══════════════════════════════════════════════════════════════════════════
+
+fn process_summary(invocation: &ToolInvocation, result: &ToolResult) -> String {
+    let action = invocation
+        .input
+        .get("action")
+        .and_then(|v| v.as_str())
+        .unwrap_or("exec");
+
+    match action {
+        "list" => {
+            let count = result
+                .output
+                .get("processes")
+                .and_then(|v| v.as_array())
+                .map(|a| a.len())
+                .unwrap_or(0);
+            format!("List processes ({count} running)")
+        }
+        "cancel" => {
+            let pid = invocation
+                .input
+                .get("process_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("?");
+            format!("Cancel process {pid}")
+        }
+        "wait" => {
+            let pid = invocation
+                .input
+                .get("process_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("?");
+            if let Some(exit_code) = result.output.get("exit_code").and_then(|v| v.as_i64()) {
+                format!("Wait process {pid} (exit {exit_code})")
+            } else {
+                format!("Wait process {pid}")
+            }
+        }
+        "stdin" => {
+            let pid = invocation
+                .input
+                .get("process_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("?");
+            let bytes = result
+                .output
+                .get("bytes_written")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0);
+            format!("Write stdin to {pid} ({bytes} bytes)")
+        }
+        _ => {
+            // "exec" action (default)
+            let command = invocation
+                .input
+                .get("command")
+                .and_then(|v| v.as_str())
+                .unwrap_or("command");
+            let is_background =
+                invocation.input.get("background").and_then(|v| v.as_bool()) == Some(true);
+            if is_background {
+                let pid = result
+                    .output
+                    .get("process_id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("?");
+                let elapsed = result
+                    .output
+                    .get("elapsed_ms")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0);
+                format!(
+                    "Run {} (bg pid={} · {})",
+                    one_line(command),
+                    pid,
+                    crate::background::format_duration_ms(elapsed)
+                )
+            } else if let Some(exit_code) = result.output.get("exit_code").and_then(|v| v.as_i64())
+            {
+                format!("Run {} (exit {exit_code})", one_line(command))
+            } else {
+                format!("Run {}", one_line(command))
+            }
+        }
+    }
+}
+
+fn test_runner_summary(_invocation: &ToolInvocation, result: &ToolResult) -> String {
+    let framework = result
+        .output
+        .get("framework")
+        .and_then(|v| v.as_str())
+        .unwrap_or("test");
+    let passed = result
+        .output
+        .get("passed")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    let failed = result
+        .output
+        .get("failed")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    let skipped = result
+        .output
+        .get("skipped")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    let duration = result
+        .output
+        .get("duration_ms")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    format!(
+        "Test ({framework}) — passed {passed}, failed {failed}, skipped {skipped} · {}",
+        crate::background::format_duration_ms(duration)
+    )
+}
+
+fn build_runner_summary(_invocation: &ToolInvocation, result: &ToolResult) -> String {
+    let status = result
+        .output
+        .get("status")
+        .and_then(|v| v.as_str())
+        .unwrap_or("unknown");
+    let cached = result.output.get("cached").and_then(|v| v.as_bool()) == Some(true);
+    let warnings = result
+        .output
+        .get("warnings")
+        .and_then(|v| v.as_array())
+        .map(|a| a.len())
+        .unwrap_or(0);
+    let errors = result
+        .output
+        .get("errors")
+        .and_then(|v| v.as_array())
+        .map(|a| a.len())
+        .unwrap_or(0);
+    let duration = result
+        .output
+        .get("duration_ms")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+
+    if cached {
+        format!("Build (cached, {status})")
+    } else if errors > 0 {
+        format!(
+            "Build (failed) — {errors} errors, {warnings} warnings · {}",
+            crate::background::format_duration_ms(duration)
+        )
+    } else if warnings > 0 {
+        format!(
+            "Build ({status}) — {warnings} warnings · {}",
+            crate::background::format_duration_ms(duration)
+        )
+    } else {
+        format!(
+            "Build ({status}) · {}",
+            crate::background::format_duration_ms(duration)
+        )
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  New: Code Intelligence tools
+// ═══════════════════════════════════════════════════════════════════════════
+
+fn code_summary(invocation: &ToolInvocation, result: &ToolResult) -> String {
+    let action = invocation
+        .input
+        .get("action")
+        .and_then(|v| v.as_str())
+        .unwrap_or("?");
+
+    match action {
+        "overview" => {
+            let path = result
+                .output
+                .get("path")
+                .and_then(|v| v.as_str())
+                .unwrap_or(".");
+            let symbols = result
+                .output
+                .get("symbols")
+                .and_then(|v| v.as_array())
+                .map(|a| a.len())
+                .unwrap_or(0);
+            let files = result
+                .output
+                .get("files_scanned")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0);
+            format!(
+                "Code overview {} ({symbols} symbols in {files} files)",
+                display_path(path)
+            )
+        }
+        "find" => {
+            let query = result
+                .output
+                .get("query")
+                .and_then(|v| v.as_str())
+                .unwrap_or("?");
+            let matches = result
+                .output
+                .get("matches")
+                .and_then(|v| v.as_array())
+                .map(|a| a.len())
+                .unwrap_or(0);
+            format!("Code find \"{query}\" ({matches} symbols)")
+        }
+        "references" => {
+            let name = invocation
+                .input
+                .get("name")
+                .and_then(|v| v.as_str())
+                .unwrap_or("?");
+            let refs = result
+                .output
+                .get("references")
+                .and_then(|v| v.as_array())
+                .map(|a| a.len())
+                .unwrap_or(0);
+            format!("Code references to \"{name}\" ({refs} refs)")
+        }
+        "diagnostics" => {
+            let path = result
+                .output
+                .get("path")
+                .and_then(|v| v.as_str())
+                .unwrap_or(".");
+            let issues = result
+                .output
+                .get("diagnostics")
+                .and_then(|v| v.as_array())
+                .map(|a| a.len())
+                .unwrap_or(0);
+            format!("Code diagnostics {} ({issues} issues)", display_path(path))
+        }
+        _ => "Code".to_string(),
+    }
+}
+
+fn code_edit_summary(_invocation: &ToolInvocation, result: &ToolResult) -> String {
+    let action = result
+        .output
+        .get("action")
+        .and_then(|v| v.as_str())
+        .unwrap_or("edit");
+    let path = result
+        .output
+        .get("path")
+        .and_then(|v| v.as_str())
+        .unwrap_or("file");
+    let edits = result
+        .output
+        .get("edits")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    let start = result.output.get("start_line").and_then(|v| v.as_u64());
+    let end = result.output.get("end_line").and_then(|v| v.as_u64());
+
+    match (start, end) {
+        (Some(s), Some(e)) => {
+            format!(
+                "Code edit {action} {} ({} edits, lines {s}-{e})",
+                display_path(path),
+                edits
+            )
+        }
+        _ => {
+            format!(
+                "Code edit {action} {} ({} edits)",
+                display_path(path),
+                edits
+            )
+        }
+    }
+}
+
+fn code_exec_summary(_invocation: &ToolInvocation, result: &ToolResult) -> String {
+    let status = result
+        .output
+        .get("status")
+        .and_then(|v| v.as_str())
+        .unwrap_or("?");
+    let ops = result
+        .output
+        .get("ops_executed")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    if let Some(failed_op) = result.output.get("failed_op").and_then(|v| v.as_u64()) {
+        format!("Code exec (failed at op {failed_op}/{ops})")
+    } else {
+        format!("Code exec ({status}, {ops} ops)")
+    }
+}
+
+fn ast_search_summary(invocation: &ToolInvocation, result: &ToolResult) -> String {
+    let query = invocation
+        .input
+        .get("query")
+        .and_then(|v| v.as_str())
+        .unwrap_or("?");
+    let matches = result
+        .output
+        .get("matches")
+        .and_then(|v| v.as_array())
+        .map(|a| a.len())
+        .unwrap_or(0);
+    format!("AST search \"{query}\" ({matches} matches)")
+}
+
+fn symbol_goto_summary(_invocation: &ToolInvocation, result: &ToolResult) -> String {
+    let name = result
+        .output
+        .get("name")
+        .and_then(|v| v.as_str())
+        .unwrap_or("?");
+    if let Some(symbol) = result.output.get("symbol").and_then(|v| v.as_object()) {
+        let path = symbol.get("path").and_then(|v| v.as_str()).unwrap_or("?");
+        let line = symbol.get("line").and_then(|v| v.as_u64()).unwrap_or(0);
+        format!("Goto {name} → {}:{line}", display_path(path))
+    } else {
+        format!("Goto {name} (not found)")
+    }
+}
+
+fn symbol_references_summary(invocation: &ToolInvocation, result: &ToolResult) -> String {
+    let name = invocation
+        .input
+        .get("name")
+        .and_then(|v| v.as_str())
+        .unwrap_or("?");
+    let refs = result
+        .output
+        .get("references")
+        .and_then(|v| v.as_array())
+        .map(|a| a.len())
+        .unwrap_or(0);
+    format!("References to \"{name}\" ({refs} refs)")
+}
+
+fn dependency_graph_summary(result: &ToolResult) -> String {
+    let edges = result
+        .output
+        .get("edges")
+        .and_then(|v| v.as_array())
+        .map(|a| a.len())
+        .unwrap_or(0);
+    let files = result
+        .output
+        .get("files_indexed")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    format!("Dependency graph ({edges} edges in {files} files)")
+}
+
+fn test_discovery_summary(result: &ToolResult) -> String {
+    let tests = result
+        .output
+        .get("tests")
+        .and_then(|v| v.as_array())
+        .map(|a| a.len())
+        .unwrap_or(0);
+    if tests == 0 {
+        "Test discovery (no tests found)".to_string()
+    } else if let Some(tests_arr) = result.output.get("tests").and_then(|v| v.as_array()) {
+        if let Some(cmd) = tests_arr
+            .first()
+            .and_then(|v| v.get("command"))
+            .or_else(|| tests_arr.first().and_then(|v| v.get("suggestion")))
+            .and_then(|v| v.as_str())
+        {
+            format!("Test discovery → {cmd}")
+        } else {
+            format!("Test discovery ({tests} suggestions)")
+        }
+    } else {
+        format!("Test discovery ({tests} suggestions)")
+    }
+}
+
+fn churn_summary(result: &ToolResult) -> String {
+    let files = result
+        .output
+        .get("churn")
+        .and_then(|v| v.as_array())
+        .map(|a| a.len())
+        .unwrap_or(0);
+    format!("Churn query ({files} files)")
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  New: Repo Search Aliases
+// ═══════════════════════════════════════════════════════════════════════════
+
+fn search_tool_summary(invocation: &ToolInvocation, result: &ToolResult) -> String {
+    // search, list_dir, glob are aliases of SearchTool.
+    // For search the action is explicit; for list_dir it's always "list";
+    // for glob it's always "find".
+    let action = invocation
+        .input
+        .get("action")
+        .and_then(|v| v.as_str())
+        .unwrap_or_else(|| match invocation.tool_name.as_str() {
+            "list_dir" => "list",
+            "glob" => "find",
+            _ => "grep",
+        });
+
+    match action {
+        "grep" => grep_summary(invocation, result),
+        "list" => {
+            let path = result
+                .output
+                .get("path")
+                .or_else(|| invocation.input.get("path"))
+                .and_then(|v| v.as_str())
+                .unwrap_or(".");
+            let count = result
+                .output
+                .get("files")
+                .and_then(|v| v.as_array())
+                .map(|a| a.len())
+                .unwrap_or(0);
+            format!("List {} ({count} items)", display_path(path))
+        }
+        "tree" => {
+            let path = result
+                .output
+                .get("path")
+                .or_else(|| invocation.input.get("path"))
+                .and_then(|v| v.as_str())
+                .unwrap_or(".");
+            let count = result
+                .output
+                .get("entries")
+                .and_then(|v| v.as_array())
+                .map(|entries| count_tree_entries(entries))
+                .unwrap_or(0);
+            format!("Tree {} ({count} items)", display_path(path))
+        }
+        "find" => {
+            let pattern = invocation
+                .input
+                .get("pattern")
+                .and_then(|v| v.as_str())
+                .unwrap_or("*");
+            let count = result
+                .output
+                .get("files")
+                .and_then(|v| v.as_array())
+                .map(|a| a.len())
+                .unwrap_or(0);
+            format!("Find \"{pattern}\" ({count} files)")
+        }
+        "stat" => {
+            let path = result
+                .output
+                .get("path")
+                .or_else(|| invocation.input.get("path"))
+                .and_then(|v| v.as_str())
+                .unwrap_or(".");
+            if let Some(size) = result.output.get("size").and_then(|v| v.as_u64()) {
+                format!("Stat {} ({size} bytes)", display_path(path))
+            } else {
+                format!("Stat {}", display_path(path))
+            }
+        }
+        _ => "Search".to_string(),
+    }
+}
+
+fn count_tree_entries(entries: &[serde_json::Value]) -> usize {
+    let mut count = 0;
+    for entry in entries {
+        count += 1;
+        if let Some(children) = entry.get("entries").and_then(|v| v.as_array()) {
+            count += count_tree_entries(children);
+        }
+    }
+    count
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  New: Repo Explore & Subagent
+// ═══════════════════════════════════════════════════════════════════════════
+
+fn repo_explore_summary(invocation: &ToolInvocation, result: &ToolResult) -> String {
+    let query = invocation
+        .input
+        .get("query")
+        .and_then(|v| v.as_str())
+        .unwrap_or("?");
+    let elapsed = result
+        .output
+        .get("elapsed_ms")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    format!(
+        "Repo explore \"{}\" · {}",
+        one_line(query),
+        crate::background::format_duration_ms(elapsed)
+    )
+}
+
+fn subagent_summary(invocation: &ToolInvocation, result: &ToolResult) -> String {
+    let action = invocation.input.get("action").and_then(|v| v.as_str());
+
+    if action == Some("list") {
+        let count = result
+            .output
+            .get("tasks")
+            .and_then(|v| v.as_array())
+            .map(|a| a.len())
+            .unwrap_or(0);
+        return format!("Subagent list ({count} tasks)");
+    }
+
+    if let Some(task_id) = invocation.input.get("task_id").and_then(|v| v.as_str()) {
+        return if action == Some("cancel") {
+            format!("Cancel subagent {task_id}")
+        } else {
+            // poll
+            let status = result
+                .output
+                .get("status")
+                .and_then(|v| v.as_str())
+                .unwrap_or("?");
+            let elapsed = result
+                .output
+                .get("elapsed_ms")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0);
+            format!(
+                "Poll subagent {task_id} ({status} · {})",
+                crate::background::format_duration_ms(elapsed)
+            )
+        };
+    }
+
+    // New subagent run
+    let prompt = invocation
+        .input
+        .get("prompt")
+        .and_then(|v| v.as_str())
+        .unwrap_or("task");
+    let is_background = invocation.input.get("background").and_then(|v| v.as_bool()) == Some(true);
+    let elapsed = result
+        .output
+        .get("elapsed_ms")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+
+    if is_background {
+        let task_id = result
+            .output
+            .get("task_id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("?");
+        format!(
+            "Subagent \"{}\" (bg {})",
+            truncate_for_summary(prompt, 40),
+            task_id
+        )
+    } else {
+        format!(
+            "Subagent \"{}\" · {}",
+            truncate_for_summary(prompt, 40),
+            crate::background::format_duration_ms(elapsed)
+        )
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  New: Planning & Session
+// ═══════════════════════════════════════════════════════════════════════════
+
+fn plan_summary(invocation: &ToolInvocation, result: &ToolResult) -> String {
+    let action = invocation
+        .input
+        .get("action")
+        .and_then(|v| v.as_str())
+        .unwrap_or("?");
+
+    match action {
+        "create" => {
+            let title = result
+                .output
+                .get("title")
+                .and_then(|v| v.as_str())
+                .unwrap_or("plan");
+            let steps = result
+                .output
+                .get("steps_count")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0);
+            format!("Plan create \"{title}\" ({steps} steps)")
+        }
+        "update" => {
+            let plan_id = result
+                .output
+                .get("plan_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("?");
+            let status = result
+                .output
+                .get("status")
+                .and_then(|v| v.as_str())
+                .unwrap_or("updated");
+            format!("Plan update {plan_id} ({status})")
+        }
+        "complete_step" => {
+            let plan_id = result
+                .output
+                .get("plan_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("?");
+            let step = result
+                .output
+                .get("step_index")
+                .and_then(|v| v.as_u64())
+                .map(|i| format!("#{i}"))
+                .unwrap_or_else(|| "done".to_string());
+            format!("Plan {plan_id} step {step} completed")
+        }
+        "get" => {
+            if let Some(plan) = result.output.get("plan").and_then(|v| v.as_object()) {
+                let title = plan.get("title").and_then(|v| v.as_str()).unwrap_or("?");
+                format!("Plan get \"{title}\"")
+            } else {
+                "Plan get".to_string()
+            }
+        }
+        "list" => {
+            let count = result
+                .output
+                .get("count")
+                .and_then(|v| v.as_u64())
+                .or_else(|| {
+                    result
+                        .output
+                        .get("plans")
+                        .and_then(|v| v.as_array())
+                        .map(|a| a.len() as u64)
+                })
+                .unwrap_or(0);
+            format!("Plan list ({count} plans)")
+        }
+        "active" => {
+            if let Some(plan) = result.output.get("plan").and_then(|v| v.as_object()) {
+                let title = plan.get("title").and_then(|v| v.as_str()).unwrap_or("?");
+                format!("Plan active \"{title}\"")
+            } else {
+                "Plan active (none)".to_string()
+            }
+        }
+        _ => "Plan".to_string(),
+    }
+}
+
+fn init_session_summary(result: &ToolResult) -> String {
+    let status = result
+        .output
+        .get("status")
+        .and_then(|v| v.as_str())
+        .unwrap_or("?");
+    if status == "initialized" {
+        let total = result
+            .output
+            .get("features_total")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
+        format!("Init session ({total} features)")
+    } else {
+        format!("Init session ({status})")
+    }
+}
+
+fn mark_feature_done_summary(result: &ToolResult) -> String {
+    let status = result
+        .output
+        .get("status")
+        .and_then(|v| v.as_str())
+        .unwrap_or("?");
+    let fid = result
+        .output
+        .get("feature_id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("?");
+    let passes = result
+        .output
+        .get("passes")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    if passes {
+        format!("Mark done {fid} (all checks passed)")
+    } else {
+        format!("Mark done {fid} ({status})")
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  New: Interaction tools
+// ═══════════════════════════════════════════════════════════════════════════
+
+fn question_summary(invocation: &ToolInvocation) -> String {
+    let question = invocation
+        .input
+        .get("question")
+        .and_then(|v| v.as_str())
+        .unwrap_or("?");
+    format!("Question \"{}\"", truncate_for_summary(question, 50))
+}
+
+fn request_user_input_summary(invocation: &ToolInvocation) -> String {
+    let title = invocation
+        .input
+        .get("title")
+        .and_then(|v| v.as_str())
+        .unwrap_or("?");
+    format!("Request input \"{title}\"")
+}
+
+fn append_note_summary(result: &ToolResult) -> String {
+    let path = result
+        .output
+        .get("path")
+        .and_then(|v| v.as_str())
+        .unwrap_or("notes.md");
+    format!("Append note to {}", display_path(path))
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  New: Utility tools
+// ═══════════════════════════════════════════════════════════════════════════
+
+fn current_time_summary(result: &ToolResult) -> String {
+    let iso = result
+        .output
+        .get("utc_iso")
+        .and_then(|v| v.as_str())
+        .unwrap_or("?");
+    format!("Current time: {iso}")
+}
+
+fn sleep_summary(result: &ToolResult) -> String {
+    let secs = result
+        .output
+        .get("slept_seconds")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    format!("Sleep ({secs}s)")
+}
+
+fn context_remaining_summary(result: &ToolResult) -> String {
+    let remaining = result
+        .output
+        .get("remaining_tokens")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    let window = result
+        .output
+        .get("context_window")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    let pct = result
+        .output
+        .get("usage_percent")
+        .and_then(|v| v.as_str())
+        .unwrap_or("?%");
+    format!("Context: {remaining} / {window} ({pct})")
+}
+
+fn view_image_summary(invocation: &ToolInvocation, result: &ToolResult) -> String {
+    let path = result
+        .output
+        .get("path")
+        .or_else(|| invocation.input.get("path"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("image");
+    let format = result
+        .output
+        .get("format")
+        .and_then(|v| v.as_str())
+        .unwrap_or("?");
+    let size = result
+        .output
+        .get("size_bytes")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    format!(
+        "View image {} ({format}, {} bytes)",
+        display_path(path),
+        size
+    )
+}
+
+fn new_context_window_summary(result: &ToolResult) -> String {
+    let requested = result
+        .output
+        .get("new_context_requested")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    if requested {
+        "New context window requested".to_string()
+    } else {
+        "New context window".to_string()
+    }
+}
+
+fn tool_search_summary(invocation: &ToolInvocation, result: &ToolResult) -> String {
+    let query = invocation
+        .input
+        .get("query")
+        .and_then(|v| v.as_str())
+        .unwrap_or("?");
+    let count = result
+        .output
+        .get("count")
+        .and_then(|v| v.as_u64())
+        .or_else(|| {
+            result
+                .output
+                .get("results")
+                .and_then(|v| v.as_array())
+                .map(|a| a.len() as u64)
+        })
+        .unwrap_or(0);
+    format!("Tool search \"{query}\" ({count} results)")
+}
+
+fn verifier_summary(invocation: &ToolInvocation, result: &ToolResult) -> String {
+    let action = invocation
+        .input
+        .get("action")
+        .and_then(|v| v.as_str())
+        .unwrap_or("run");
+
+    match action {
+        "list" => {
+            let total = result
+                .output
+                .get("total")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0);
+            format!("Verifier list ({total} results)")
+        }
+        "status" => {
+            let key = invocation
+                .input
+                .get("key")
+                .and_then(|v| v.as_str())
+                .unwrap_or("?");
+            let status = result
+                .output
+                .get("status")
+                .and_then(|v| v.as_str())
+                .unwrap_or("?");
+            format!("Verifier status {key} ({status})")
+        }
+        _ => {
+            // run
+            let summary = result
+                .output
+                .get("summary")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            if !summary.is_empty() {
+                format!("Verify {}", one_line(summary))
+            } else {
+                let status = result
+                    .output
+                    .get("status")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("?");
+                let cmd = result
+                    .output
+                    .get("command")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("?");
+                format!("Verify {} ({status})", one_line(cmd))
+            }
+        }
+    }
+}
+
+fn runtime_info_summary(result: &ToolResult) -> String {
+    let profile = result
+        .output
+        .get("harness_profile")
+        .and_then(|v| v.as_str())
+        .unwrap_or("?");
+    format!("Runtime info: {profile} profile")
+}
+
+fn branch_race_summary(result: &ToolResult) -> String {
+    let task = result
+        .output
+        .get("task")
+        .and_then(|v| v.as_str())
+        .unwrap_or("?");
+    let hypotheses = result
+        .output
+        .get("hypotheses")
+        .and_then(|v| v.as_array())
+        .map(|a| a.len())
+        .unwrap_or(0);
+    format!(
+        "Branch race \"{}\" ({hypotheses} hypotheses)",
+        truncate_for_summary(task, 40)
+    )
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  New: History, Sandbox, Package Manager
+// ═══════════════════════════════════════════════════════════════════════════
+
+fn history_ops_summary(invocation: &ToolInvocation, result: &ToolResult) -> String {
+    let action = invocation
+        .input
+        .get("action")
+        .and_then(|v| v.as_str())
+        .unwrap_or("?");
+
+    match action {
+        "search" => {
+            let query = invocation
+                .input
+                .get("query")
+                .and_then(|v| v.as_str())
+                .unwrap_or("?");
+            let count = result
+                .output
+                .get("results")
+                .and_then(|v| v.as_array())
+                .map(|a| a.len())
+                .unwrap_or(0);
+            format!("History search \"{query}\" ({count} results)")
+        }
+        "recent" => {
+            let count = result
+                .output
+                .get("results")
+                .and_then(|v| v.as_array())
+                .map(|a| a.len())
+                .unwrap_or(0);
+            format!("History recent ({count} events)")
+        }
+        "get" => format!("History get"),
+        "summaries" => {
+            let count = result
+                .output
+                .get("sessions")
+                .and_then(|v| v.as_array())
+                .map(|a| a.len())
+                .unwrap_or(0);
+            format!("History summaries ({count} sessions)")
+        }
+        _ => "History".to_string(),
+    }
+}
+
+fn sandbox_summary(invocation: &ToolInvocation, result: &ToolResult) -> String {
+    let action = invocation
+        .input
+        .get("action")
+        .and_then(|v| v.as_str())
+        .unwrap_or("?");
+
+    match action {
+        "snapshot" => {
+            let files = result
+                .output
+                .get("files_snapshotted")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0);
+            format!("Sandbox snapshot ({files} files)")
+        }
+        "rollback" => {
+            let restored = result
+                .output
+                .get("files_restored")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0);
+            let created = result
+                .output
+                .get("files_created_and_removed")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0);
+            format!("Sandbox rollback ({restored} restored, {created} removed)")
+        }
+        "status" => {
+            let has_changes = result
+                .output
+                .get("has_changes")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            if has_changes {
+                "Sandbox status (changes detected)".to_string()
+            } else {
+                "Sandbox status (clean)".to_string()
+            }
+        }
+        "reset" => "Sandbox reset".to_string(),
+        _ => "Sandbox".to_string(),
+    }
+}
+
+fn package_manager_summary(invocation: &ToolInvocation, result: &ToolResult) -> String {
+    let action = invocation
+        .input
+        .get("action")
+        .and_then(|v| v.as_str())
+        .unwrap_or("?");
+    let manager = result
+        .output
+        .get("manager")
+        .and_then(|v| v.as_str())
+        .unwrap_or("?");
+
+    match action {
+        "install" => format!("Package install ({manager})"),
+        "add" => {
+            let packages = invocation
+                .input
+                .get("packages")
+                .and_then(|v| v.as_array())
+                .map(|a| a.len())
+                .unwrap_or(0);
+            let pkgs = invocation
+                .input
+                .get("packages")
+                .and_then(|v| v.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_str())
+                        .take(3)
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                })
+                .unwrap_or_default();
+            if packages == 1 {
+                format!("Package add {pkgs} ({manager})")
+            } else {
+                format!("Package add ({packages} packages, {manager})")
+            }
+        }
+        "remove" => {
+            let packages = invocation
+                .input
+                .get("packages")
+                .and_then(|v| v.as_array())
+                .map(|a| a.len())
+                .unwrap_or(0);
+            let pkgs = invocation
+                .input
+                .get("packages")
+                .and_then(|v| v.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_str())
+                        .take(3)
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                })
+                .unwrap_or_default();
+            if packages == 1 {
+                format!("Package remove {pkgs} ({manager})")
+            } else {
+                format!("Package remove ({packages} packages, {manager})")
+            }
+        }
+        "update" => {
+            let packages = invocation
+                .input
+                .get("packages")
+                .and_then(|v| v.as_array())
+                .map(|a| a.len())
+                .unwrap_or(0);
+            if packages == 0 {
+                format!("Package update all ({manager})")
+            } else {
+                format!("Package update ({packages} packages, {manager})")
+            }
+        }
+        "check" => format!("Package check ({manager})"),
+        _ => "Package manager".to_string(),
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  Shared helpers
+// ═══════════════════════════════════════════════════════════════════════════
+
 fn humanize_tool_name(name: &str) -> String {
     let mut chars = name.replace('_', " ").chars().collect::<Vec<_>>();
     if let Some(first) = chars.first_mut() {
@@ -461,6 +1615,15 @@ fn display_path(path: &str) -> String {
         return stripped.to_string_lossy().to_string();
     }
     path.to_string()
+}
+
+fn truncate_for_summary(value: &str, max_chars: usize) -> String {
+    if value.chars().count() <= max_chars {
+        value.to_string()
+    } else {
+        let truncated: String = value.chars().take(max_chars).collect();
+        format!("{truncated}…")
+    }
 }
 
 fn project_dir() -> Option<&'static PathBuf> {

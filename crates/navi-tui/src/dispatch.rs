@@ -470,6 +470,7 @@ fn handle_agent_event(app: &mut TuiApp, event: AgentEvent) {
             show_notification(app, title.to_string(), &message);
             push_diagnostic(app, message);
         }
+        AgentEvent::GoalUpdated { .. } => {}
     }
 }
 

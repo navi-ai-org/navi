@@ -27,6 +27,7 @@ pub(crate) fn snapshot_current_session(app: &TuiApp) {
         updated_at: now,
         events: app.events.clone(),
         memory: None,
+        goal: None,
     };
     if let Err(err) = tokio::task::block_in_place(|| app.session_store.save(&snapshot)) {
         tracing::warn!(error = %err, "failed to save session");
