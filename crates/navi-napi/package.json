@@ -1,0 +1,29 @@
+{
+  "name": "@navi/napi",
+  "version": "0.1.0",
+  "description": "Node.js bindings for the NAVI runtime SDK.",
+  "license": "MIT",
+  "main": "index.js",
+  "types": "index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "require": "./index.js",
+      "default": "./index.js"
+    }
+  },
+  "files": [
+    "index.js",
+    "index.d.ts",
+    "README.md",
+    "scripts/build-native.mjs"
+  ],
+  "scripts": {
+    "build": "node scripts/build-native.mjs",
+    "test": "npm run build && node --test test/*.test.mjs",
+    "test:types": "npm exec --yes --package typescript -- tsc --noEmit --target ES2022 --module NodeNext --moduleResolution NodeNext test/types-smoke.ts"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
