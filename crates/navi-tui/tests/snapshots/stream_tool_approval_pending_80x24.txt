@@ -1,7 +1,7 @@
   main  /tmp/navi-test-project
 
-
         read the file
+
 
 
     ╭ Tool Approval ───────────────────────────────────────────────────────╮

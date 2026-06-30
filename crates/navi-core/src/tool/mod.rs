@@ -29,7 +29,7 @@ use builtin::{
     PackageManagerTool, PlanTool, ProcessTool, QuestionTool, ReadTool, RepoIntelligenceAction,
     RepoIntelligenceTool, RequestUserInputTool, RuntimeInfoTool, SandboxTool, SearchTool,
     SleepTool, ToolSearchTool, VerifierTool, ViewImageTool, WaitTool, WriteTool, builtin_metadata,
-    truncate_tool_result,
+    truncate_tool_result, SetGoalTool,
 };
 
 pub use builtin::{AgentProfile, ApprovalMode, ProviderBuilderFn, RepoExploreTool, SubagentTool};
@@ -942,6 +942,7 @@ impl ToolExecutor {
         self.register(HistoryOpsTool::new(pr.clone()));
         self.register(CurrentTimeTool::new());
         self.register(SleepTool::new());
+        self.register(SetGoalTool);
         self.register(ContextRemainingTool::new(pr.clone()));
         self.register(RequestUserInputTool::new());
         self.register(SandboxTool::new(pr.clone()));

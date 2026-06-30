@@ -22,6 +22,9 @@ mod subagent;
 mod verifier_tool;
 mod wait;
 mod write_tool;
+mod goal;
+
+pub(super) use goal::SetGoalTool;
 
 pub(super) use memory::{AppendNoteTool, HistoryOpsTool};
 

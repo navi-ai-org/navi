@@ -248,7 +248,11 @@ fn render_user_message_lines(text: &str, chat_width: usize) -> Vec<Line<'static>
     let width = chat_width.max(8);
     let accent_width = 1usize;
     let text_padding = 4usize;
-    let min_height = 3usize;
+    let min_height = if text.trim().is_empty() {
+        3usize
+    } else {
+        1usize
+    };
     let content_width = width.saturating_sub(accent_width + text_padding + 1);
     let wrapped = wrap_text(text, content_width);
     let top_padding = min_height.saturating_sub(wrapped.len()) / 2;

@@ -179,6 +179,9 @@ pub struct TuiApp {
     pub(crate) bg_model_picker_active: bool,
     pub(crate) bg_model_picker_task: Option<String>,
     pub(crate) bg_model_picker_selected: usize,
+
+    // goals
+    pub(crate) goal_state: Option<crate::state::GoalUiState>,
 }
 
 impl TuiApp {
@@ -278,6 +281,7 @@ impl TuiApp {
             pending_provider_setup: None,
             compact_state: CompactState::new(context_window),
             pending_images: Vec::new(),
+            goal_state: None,
             #[cfg(not(test))]
             image_picker: terminal_picker,
             #[cfg(test)]

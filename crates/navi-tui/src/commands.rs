@@ -27,6 +27,7 @@ pub(crate) enum CommandAction {
     BackgroundCommands,
     BackgroundModels,
     ReSetup,
+    ClearGoal,
 }
 
 pub(crate) const COMMANDS: &[CommandItem] = &[
@@ -129,6 +130,11 @@ pub(crate) const COMMANDS: &[CommandItem] = &[
         label: "Setup Wizard",
         shortcut: None,
         action: CommandAction::ReSetup,
+    },
+    CommandItem {
+        label: "Clear Goal",
+        shortcut: None,
+        action: CommandAction::ClearGoal,
     },
 ];
 

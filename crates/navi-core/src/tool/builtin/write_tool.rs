@@ -192,11 +192,19 @@ impl Tool for WriteTool {
             .and_then(Value::as_array)
             .map(|a| a.iter().any(|v| v.as_str().is_some_and(|s| !s.is_empty())))
             .unwrap_or(false);
+        let has_edits = input
+            .get("edits")
+            .and_then(Value::as_array)
+            .map(|a| !a.is_empty())
+            .unwrap_or(false);
 
         match self.mode {
             WriteToolMode::Unified => {
                 if has_direct {
                     return self.invoke_direct_write(invocation).await;
+                }
+                if has_edits {
+                    return self.invoke_edits(&invocation).await;
                 }
                 if has_patch || has_patches {
                     return self.invoke_patch(invocation).await;
@@ -208,6 +216,9 @@ impl Tool for WriteTool {
                 }
             }
             WriteToolMode::Patch => {
+                if has_edits {
+                    return self.invoke_edits(&invocation).await;
+                }
                 if has_patch || has_patches {
                     return self.invoke_patch(invocation).await;
                 }
@@ -220,9 +231,9 @@ impl Tool for WriteTool {
             output: json!({
             "error_code": "invalid_arguments",
             "error": match self.mode {
-                WriteToolMode::Unified => "Must provide either `path`+`content` (direct write) or `patch`/`patches` (patch mode).",
+                WriteToolMode::Unified => "Must provide either `path`+`content` (direct write), `patch`/`patches` (patch mode), or `edits` (search/replace).",
                 WriteToolMode::Direct => "Must provide `path` and `content`.",
-                WriteToolMode::Patch => "Must provide `patch` or `patches`.",
+                WriteToolMode::Patch => "Must provide `patch`, `patches`, or `edits`.",
             }
             }),
         });
@@ -322,6 +333,181 @@ fn count_lines(content: &str) -> usize {
 // ═══════════════════════════════════════════════════════════════════════════
 
 impl WriteTool {
+    async fn invoke_edits(&self, invocation: &ToolInvocation) -> Result<ToolResult> {
+        let Some(edits) = invocation.input.get("edits").and_then(Value::as_array) else {
+            return Ok(ToolResult {
+                invocation_id: invocation.id.clone(),
+                ok: false,
+                output: json!({
+                    "error_code": "invalid_arguments",
+                    "error": "`edits` must be a non-empty array of {path, search, replace} objects."
+                }),
+            });
+        };
+
+        if edits.is_empty() {
+            return Ok(ToolResult {
+                invocation_id: invocation.id.clone(),
+                ok: false,
+                output: json!({
+                    "error_code": "invalid_arguments",
+                    "error": "`edits` array must contain at least one edit."
+                }),
+            });
+        }
+
+        let mut parsed_edits = Vec::with_capacity(edits.len());
+        for (idx, edit) in edits.iter().enumerate() {
+            let path = edit
+                .get("path")
+                .and_then(Value::as_str)
+                .filter(|s| !s.is_empty())
+                .ok_or_else(|| anyhow::anyhow!("edit {idx}: missing `path`"))?;
+            let search = edit
+                .get("search")
+                .and_then(Value::as_str)
+                .ok_or_else(|| anyhow::anyhow!("edit {idx}: missing `search`"))?;
+            let replace = edit
+                .get("replace")
+                .and_then(Value::as_str)
+                .ok_or_else(|| anyhow::anyhow!("edit {idx}: missing `replace`"))?;
+            parsed_edits.push((path.to_string(), search.to_string(), replace.to_string()));
+        }
+
+        // Acquire file locks if configured.
+        let mut _lock_guards: Vec<LockGuard> = Vec::new();
+        if let Some(lock_manager) = &self.lock_manager {
+            for (path, _, _) in &parsed_edits {
+                match lock_manager.try_lock(Path::new(path)) {
+                    Ok(Some(guard)) => _lock_guards.push(guard),
+                    Ok(None) => {
+                        return Ok(ToolResult {
+                            invocation_id: invocation.id.clone(),
+                            ok: false,
+                            output: json!({
+                                "error": format!(
+                                    "File `{path}` is locked by another NAVI instance. \
+                                     Use the `wait` tool with `file_path=\"{path}\"` to wait."
+                                ),
+                                "error_code": "file_locked",
+                                "file_path": path,
+                            }),
+                        });
+                    }
+                    Err(err) => {
+                        tracing::warn!(path = %path, error = %err, "failed to acquire edit file lock");
+                    }
+                }
+            }
+        }
+
+        let mut files_changed = Vec::new();
+        let mut errors = Vec::new();
+
+        for (path, search, replace) in &parsed_edits {
+            let full = checked_project_path(&self.project_root, path)?;
+            let content = match fs::read_to_string(&full) {
+                Ok(c) => c,
+                Err(e) => {
+                    errors.push(format!("{path}: failed to read file: {e}"));
+                    continue;
+                }
+            };
+            let new_content = match apply_search_replace(&content, search, replace) {
+                Some(c) => c,
+                None => {
+                    errors.push(format!(
+                        "{path}: search block not found. Consider using `read_file` to refresh the exact content."
+                    ));
+                    continue;
+                }
+            };
+            if new_content != content {
+                if let Some(parent) = full.parent() {
+                    let _ = fs::create_dir_all(parent);
+                }
+                if let Err(e) = fs::write(&full, &new_content) {
+                    errors.push(format!("{path}: failed to write file: {e}"));
+                    continue;
+                }
+                files_changed.push(path.clone());
+            }
+        }
+
+        if !errors.is_empty() && files_changed.is_empty() {
+            return Ok(ToolResult {
+                invocation_id: invocation.id.clone(),
+                ok: false,
+                output: json!({
+                    "error_code": "edit_failed",
+                    "error": errors.join("\n"),
+                    "recoverable": true,
+                    "hint": "Ensure each `search` block matches the file content exactly, including whitespace and newlines. Use `read_file` if the file may have changed."
+                }),
+            });
+        }
+
+        let mut output = json!({
+            "method": "search_replace",
+            "status": 0,
+            "files_changed": files_changed,
+            "edits_applied": files_changed.len(),
+        });
+        if !errors.is_empty() {
+            if let Value::Object(ref mut obj) = output {
+                obj.insert(
+                    "warnings".to_string(),
+                    Value::Array(errors.into_iter().map(Value::String).collect()),
+                );
+            }
+        }
+        Ok(helpers::ok(invocation.id.clone(), output))
+    }
+}
+
+/// Apply a single search/replace to a file content. Returns `None` if the search block
+/// is not found. Performs exact substring match first, then falls back to a normalized
+/// match that ignores trailing newline differences.
+fn apply_search_replace(content: &str, search: &str, replace: &str) -> Option<String> {
+    if let Some(pos) = content.find(search) {
+        let mut result = String::with_capacity(content.len() - search.len() + replace.len());
+        result.push_str(&content[..pos]);
+        result.push_str(replace);
+        result.push_str(&content[pos + search.len()..]);
+        return Some(result);
+    }
+    // Fallback: ignore trailing newline differences in the search block.
+    let search_normalized = search.strip_suffix('\n').unwrap_or(search);
+    let replace_normalized = if replace.ends_with('\n') || search.ends_with('\n') {
+        replace.to_string()
+    } else {
+        replace.to_string()
+    };
+    let mut cursor = 0usize;
+    while let Some(pos) = content[cursor..].find(search_normalized) {
+        let absolute = cursor + pos;
+        let after = absolute + search_normalized.len();
+        if after == content.len() || content.as_bytes()[after] == b'\n' {
+            let mut result = String::with_capacity(
+                content.len() - search_normalized.len() + replace_normalized.len() + 1,
+            );
+            result.push_str(&content[..absolute]);
+            result.push_str(&replace_normalized);
+            if after < content.len() {
+                result.push_str(&content[after..]);
+            }
+            return Some(result);
+        }
+        cursor = after;
+    }
+    None
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Mode 2: Patch mode
+// ═══════════════════════════════════════════════════════════════════════════
+
+impl WriteTool {
     async fn invoke_patch(&self, invocation: ToolInvocation) -> Result<ToolResult> {
         let input = &invocation.input;
         let raw_patches = if let Some(single) = input.get("patch").and_then(Value::as_str) {
@@ -355,7 +541,7 @@ impl WriteTool {
         }
 
         // Lenient heredoc stripping (Codex feature): if a patch body is wrapped in
-        // <<'EOF'...EOF, strip the heredoc markers.
+        // <<[EOF|'EOF'|"EOF"]...EOF, strip the markers.
         let patches: Vec<String> = raw_patches
             .iter()
             .map(|p| {
@@ -499,6 +685,24 @@ impl WriteTool {
         }
 
         let git_stderr = String::from_utf8_lossy(&git_result.stderr).to_string();
+
+        // Try again with relaxed whitespace rules if the first git apply failed.
+        let relaxed_git_result = run_git_apply_relaxed(&self.project_root, &patch).await?;
+        if relaxed_git_result.status.success() {
+            return Ok(ToolResult {
+                invocation_id: invocation.id,
+                ok: true,
+                output: json!({
+                    "method": "git_apply_relaxed",
+                    "status": relaxed_git_result.status.code(),
+                    "patches_applied": patches.len(),
+                    "stdout": String::from_utf8_lossy(&relaxed_git_result.stdout),
+                    "stderr": String::from_utf8_lossy(&relaxed_git_result.stderr),
+                    "files_patched": affected.len(),
+                    "affected_paths": affected,
+                }),
+            });
+        }
 
         let patch_result = run_patch_command(&self.project_root, &patch).await?;
         if patch_result.status.success() {
@@ -899,25 +1103,42 @@ fn write_json_schema() -> serde_json::Value {
             },
             "patch": {
                 "type": "string",
-                "description": "A single complete patch string (structured format: *** Begin Patch, hunks, *** End Patch; or unified diff)."
+                "description": "A single complete patch string (structured format: *** Begin Patch, hunks, *** End Patch; or unified diff; or JSON search/replace array)."
             },
             "patches": {
                 "type": "array",
-                "description": "Multiple patch strings to apply in one call. Each element is a complete patch string.",
+                "description": "Multiple patch strings to apply in one call. Each element is a complete patch string (structured, unified diff, or JSON search/replace array).",
                 "items": { "type": "string" },
+                "minItems": 1
+            },
+            "edits": {
+                "type": "array",
+                "description": "Simple search/replace edits. Each object must include `path`, `search` and `replace`. This is the easiest format for surgical edits when the exact file content is known. `search` must match a contiguous block in the file exactly; use `replace` with the desired content.",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "path": { "type": "string", "description": "Project-relative file path to edit." },
+                        "search": { "type": "string", "description": "Exact contiguous text to search for in the file." },
+                        "replace": { "type": "string", "description": "Text to replace the matched block with." }
+                    },
+                    "required": ["path", "search", "replace"],
+                    "additionalProperties": false
+                },
                 "minItems": 1
             }
         },
         "anyOf": [
             { "required": ["path", "content"] },
             { "required": ["patch"] },
-            { "required": ["patches"] }
+            { "required": ["patches"] },
+            { "required": ["edits"] }
         ],
         "maxProperties": 2,
         "additionalProperties": false,
         "examples": [
             { "path": "src/main.rs", "content": "fn main() { println!(\"hello\"); }" },
-            { "patch": "*** Begin Patch\n*** Update File: src/lib.rs\n@@\n-old\n+new\n*** End Patch" }
+            { "patch": "*** Begin Patch\n*** Update File: src/lib.rs\n@@\n-old\n+new\n*** End Patch" },
+            { "edits": [{ "path": "src/lib.rs", "search": "old\n", "replace": "new\n" }] }
         ]
     })
 }
@@ -949,22 +1170,39 @@ fn patch_write_json_schema() -> serde_json::Value {
         "properties": {
             "patch": {
                 "type": "string",
-                "description": "A single complete patch string (structured format: *** Begin Patch, hunks, *** End Patch; or unified diff)."
+                "description": "A single complete patch string (structured format: *** Begin Patch, hunks, *** End Patch; or unified diff; or JSON search/replace array)."
             },
             "patches": {
                 "type": "array",
-                "description": "Multiple patch strings to apply in one call. Each element is a complete patch string.",
+                "description": "Multiple patch strings to apply in one call. Each element is a complete patch string (structured, unified diff, or JSON search/replace array).",
                 "items": { "type": "string" },
+                "minItems": 1
+            },
+            "edits": {
+                "type": "array",
+                "description": "Simple search/replace edits. Each object must include `path`, `search` and `replace`. This is the easiest format for surgical edits when the exact file content is known. `search` must match a contiguous block in the file exactly; use `replace` with the desired content.",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "path": { "type": "string", "description": "Project-relative file path to edit." },
+                        "search": { "type": "string", "description": "Exact contiguous text to search for in the file." },
+                        "replace": { "type": "string", "description": "Text to replace the matched block with." }
+                    },
+                    "required": ["path", "search", "replace"],
+                    "additionalProperties": false
+                },
                 "minItems": 1
             }
         },
         "anyOf": [
             { "required": ["patch"] },
-            { "required": ["patches"] }
+            { "required": ["patches"] },
+            { "required": ["edits"] }
         ],
         "additionalProperties": false,
         "examples": [
-            { "patch": "*** Begin Patch\n*** Update File: src/lib.rs\n@@\n-old\n+new\n*** End Patch" }
+            { "patch": "*** Begin Patch\n*** Update File: src/lib.rs\n@@\n-old\n+new\n*** End Patch" },
+            { "edits": [{ "path": "src/lib.rs", "search": "old\n", "replace": "new\n" }] }
         ]
     })
 }
@@ -1269,10 +1507,11 @@ fn apply_hunks(old_lines: &[String], hunks: &[Vec<HunkLine>]) -> Result<Vec<Stri
         for line in hunk {
             match line {
                 HunkLine::Context(content) => {
-                    // Prefer exact match; fall back to fuzzy.
-                    if old_lines.get(cursor) != Some(content)
-                        && normalise_line(old_lines.get(cursor).map(|s| s.as_str()).unwrap_or(""))
-                            != normalise_line(content)
+                    // Prefer exact match; fall back to trimmed-end and fuzzy.
+                    let actual = old_lines.get(cursor).map(|s| s.as_str()).unwrap_or("");
+                    if actual != content
+                        && actual.trim_end() != content.trim_end()
+                        && normalise_line(actual) != normalise_line(content)
                     {
                         bail!("context mismatch at line {}", cursor + 1);
                     }
@@ -1280,9 +1519,10 @@ fn apply_hunks(old_lines: &[String], hunks: &[Vec<HunkLine>]) -> Result<Vec<Stri
                     cursor += 1;
                 }
                 HunkLine::Remove(content) => {
-                    if old_lines.get(cursor) != Some(content)
-                        && normalise_line(old_lines.get(cursor).map(|s| s.as_str()).unwrap_or(""))
-                            != normalise_line(content)
+                    let actual = old_lines.get(cursor).map(|s| s.as_str()).unwrap_or("");
+                    if actual != content
+                        && actual.trim_end() != content.trim_end()
+                        && normalise_line(actual) != normalise_line(content)
                     {
                         bail!("remove mismatch at line {}", cursor + 1);
                     }
@@ -1317,7 +1557,19 @@ fn find_hunk_position(old_lines: &[String], start: usize, hunk: &[HunkLine]) -> 
     if exact.is_some() {
         return exact;
     }
-    // Fall back to normalised (fuzzy) match.
+    // Fall back to whitespace-insensitive match.
+    let trimmed_old: Vec<String> = old_lines.iter().map(|l| l.trim_end().to_string()).collect();
+    let trimmed_expected: Vec<String> = expected.iter().map(|l| l.trim_end().to_string()).collect();
+    let trimmed = (start..=trimmed_old.len().saturating_sub(trimmed_expected.len())).find(|&pos| {
+        trimmed_expected
+            .iter()
+            .enumerate()
+            .all(|(offset, line)| trimmed_old.get(pos + offset) == Some(line))
+    });
+    if trimmed.is_some() {
+        return trimmed;
+    }
+    // Fall back to normalised (fuzzy unicode) match.
     let normalised_old: Vec<String> = old_lines.iter().map(|l| normalise_line(l)).collect();
     let normalised_expected: Vec<String> = expected.iter().map(|l| normalise_line(l)).collect();
     (start
@@ -1450,6 +1702,34 @@ fn write_lines(path: &Path, lines: &[String], trailing_newline: bool) -> Result<
 async fn run_git_apply(project_root: &Path, patch: &str) -> Result<std::process::Output> {
     let mut child = Command::new("git")
         .args(["apply", "--whitespace=fix", "-"])
+        .current_dir(project_root)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .context("failed to spawn git apply")?;
+    child
+        .stdin
+        .as_mut()
+        .context("failed to open git apply stdin")?
+        .write_all(patch.as_bytes())
+        .await
+        .context("failed to send patch to git apply")?;
+    child
+        .wait_with_output()
+        .await
+        .context("failed to wait for git apply")
+}
+
+async fn run_git_apply_relaxed(project_root: &Path, patch: &str) -> Result<std::process::Output> {
+    let mut child = Command::new("git")
+        .args([
+            "apply",
+            "--whitespace=fix",
+            "--ignore-space-change",
+            "--ignore-whitespace",
+            "-",
+        ])
         .current_dir(project_root)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
@@ -1800,6 +2080,134 @@ mod tests {
         assert_eq!(fs::read_to_string(&path).unwrap(), "new content");
         // Should report lines removed.
         assert!(result.output["lines_removed"].as_u64().unwrap_or(0) > 0);
+    }
+
+    // ── Search/replace edits (simple surgical edits) ─────────────────────
+
+    #[tokio::test]
+    async fn test_search_replace_edits() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("lib.rs");
+        fs::write(&path, "fn old() -> i32 {\n    1\n}\n").unwrap();
+
+        let tool = WriteTool::new(dir.path().to_path_buf());
+        let result = tool
+            .invoke(ToolInvocation {
+                id: "test-edits".into(),
+                tool_name: "write".into(),
+                input: json!({
+                    "edits": [
+                        { "path": "lib.rs", "search": "fn old() -> i32 {\n    1\n}", "replace": "fn new() -> i32 {\n    2\n}" }
+                    ]
+                }),
+            })
+            .await
+            .unwrap();
+        assert!(result.ok, "edits failed: {:?}", result.output);
+        assert_eq!(
+            fs::read_to_string(&path).unwrap(),
+            "fn new() -> i32 {\n    2\n}\n"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_search_replace_edits_multiple() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("lib.rs");
+        fs::write(&path, "fn a() {}\nfn b() {}\n").unwrap();
+
+        let tool = WriteTool::new(dir.path().to_path_buf());
+        let result = tool
+            .invoke(ToolInvocation {
+                id: "test-edits-multi".into(),
+                tool_name: "write".into(),
+                input: json!({
+                    "edits": [
+                        { "path": "lib.rs", "search": "fn a() {}", "replace": "fn a_new() {}" },
+                        { "path": "lib.rs", "search": "fn b() {}", "replace": "fn b_new() {}" }
+                    ]
+                }),
+            })
+            .await
+            .unwrap();
+        assert!(result.ok, "edits failed: {:?}", result.output);
+        assert_eq!(
+            fs::read_to_string(&path).unwrap(),
+            "fn a_new() {}\nfn b_new() {}\n"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_search_replace_edits_missing_block_fails() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("lib.rs");
+        fs::write(&path, "fn a() {}\n").unwrap();
+
+        let tool = WriteTool::new(dir.path().to_path_buf());
+        let result = tool
+            .invoke(ToolInvocation {
+                id: "test-edits-missing".into(),
+                tool_name: "write".into(),
+                input: json!({
+                    "edits": [
+                        { "path": "lib.rs", "search": "fn missing() {}", "replace": "fn x() {}" }
+                    ]
+                }),
+            })
+            .await
+            .unwrap();
+        assert!(!result.ok);
+        assert_eq!(result.output["error_code"], "edit_failed");
+    }
+
+    #[tokio::test]
+    async fn test_search_replace_edits_ignores_trailing_newline_difference() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("lib.rs");
+        fs::write(&path, "fn a() {}\n").unwrap();
+
+        let tool = WriteTool::new(dir.path().to_path_buf());
+        let result = tool
+            .invoke(ToolInvocation {
+                id: "test-edits-nl".into(),
+                tool_name: "write".into(),
+                input: json!({
+                    "edits": [
+                        { "path": "lib.rs", "search": "fn a() {}", "replace": "fn b() {}" }
+                    ]
+                }),
+            })
+            .await
+            .unwrap();
+        assert!(result.ok, "edits failed: {:?}", result.output);
+        assert_eq!(fs::read_to_string(&path).unwrap(), "fn b() {}\n");
+    }
+
+    #[tokio::test]
+    async fn test_apply_patch_alias_accepts_edits() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("lib.rs");
+        fs::write(&path, "const X: i32 = 1;\n").unwrap();
+
+        let tool = WriteTool::apply_patch(dir.path().to_path_buf());
+        let result = tool
+            .invoke(ToolInvocation {
+                id: "test-alias-edits".into(),
+                tool_name: "apply_patch".into(),
+                input: json!({
+                    "edits": [
+                        { "path": "lib.rs", "search": "const X: i32 = 1;", "replace": "const X: i32 = 2;" }
+                    ]
+                }),
+            })
+            .await
+            .unwrap();
+        assert!(
+            result.ok,
+            "apply_patch alias edits failed: {:?}",
+            result.output
+        );
+        assert_eq!(fs::read_to_string(&path).unwrap(), "const X: i32 = 2;\n");
     }
 
     // ── Structured patch tests ─────────────────────────────────────────

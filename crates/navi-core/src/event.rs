@@ -174,6 +174,13 @@ pub enum RuntimeEventKind {
         /// Human-readable reason for the failure.
         reason: String,
     },
+    /// The agent requested to set a goal via natural language.
+    SetGoalRequested {
+        /// The objective text.
+        objective: String,
+        /// Optional token budget.
+        token_budget: Option<i64>,
+    },
     GoalUpdated {
         /// The session this goal belongs to.
         session_id: String,
@@ -273,6 +280,13 @@ impl RuntimeEventKind {
                 Some(AgentEvent::AutoCompactFailed { reason })
             }
             RuntimeEventKind::Error { message } => Some(AgentEvent::Error { message }),
+            RuntimeEventKind::SetGoalRequested {
+                objective,
+                token_budget,
+            } => Some(AgentEvent::SetGoalRequested {
+                objective,
+                token_budget,
+            }),
             RuntimeEventKind::GoalUpdated {
                 session_id,
                 goal_id,
@@ -399,6 +413,13 @@ pub enum AgentEvent {
         cache_creation_tokens: u64,
         /// Number of tokens read from the prompt cache (Anthropic).
         cache_read_tokens: u64,
+    },
+    /// The agent requested to set a goal via natural language.
+    SetGoalRequested {
+        /// The objective text.
+        objective: String,
+        /// Optional token budget.
+        token_budget: Option<i64>,
     },
     /// The session goal was updated (created, status change, budget exceeded).
     GoalUpdated {

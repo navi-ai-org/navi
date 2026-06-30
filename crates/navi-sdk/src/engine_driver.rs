@@ -60,6 +60,9 @@ pub trait EngineDriver: Send + Sync {
     /// Close an active in-memory session. Returns `true` when a session was removed.
     async fn close_session(&self, session_id: &str) -> Result<bool>;
 
+    /// Clears the active goal for a session.
+    async fn clear_goal(&self, session_id: &str) -> Result<()>;
+
     /// Reload WASM plugin tools across all active sessions.
     async fn reload_wasm_plugins(&self) -> Result<Vec<String>>;
 
@@ -166,6 +169,10 @@ impl EngineDriver for crate::NaviEngine {
 
     async fn close_session(&self, session_id: &str) -> Result<bool> {
         crate::NaviEngine::close_session(self, session_id).await
+    }
+
+    async fn clear_goal(&self, session_id: &str) -> Result<()> {
+        crate::NaviEngine::clear_goal(self, session_id).await
     }
 
     async fn reload_wasm_plugins(&self) -> Result<Vec<String>> {
