@@ -380,24 +380,26 @@ impl NaviEngine {
             .send_turn_with_parts(request.message, request.content_parts, request.thinking)
             .await?;
         // Check for goal auto-continue after turn completes.
-        let continuation = runtime.goal_idle_prompt();
-        if let Some(prompt) = continuation {
-            drop(runtime);
-            // Auto-continue: start a new turn with the steering prompt as input.
-            let mut runtime = session.runtime.lock().await;
-            let auto_response = runtime
-                .send_turn_with_parts(prompt, Vec::new(), None)
-                .await?;
-            Ok(NaviTurnResponse {
-                session_id: request.session_id,
-                text: auto_response.text,
-            })
-        } else {
-            Ok(NaviTurnResponse {
-                session_id: request.session_id,
-                text: response.text,
-            })
+        let mut response_text = response.text;
+        loop {
+            let continuation = runtime.goal_idle_prompt();
+            if let Some(prompt) = continuation {
+                drop(runtime);
+                // Auto-continue: start a new turn with the steering prompt as input.
+                let mut new_runtime = session.runtime.lock().await;
+                let auto_response = new_runtime
+                    .send_turn_with_parts(prompt, Vec::new(), None)
+                    .await?;
+                response_text = auto_response.text;
+                runtime = new_runtime;
+            } else {
+                break;
+            }
         }
+        Ok(NaviTurnResponse {
+            session_id: request.session_id,
+            text: response_text,
+        })
     }
 
     /// Cancels the currently active turn for the given session.

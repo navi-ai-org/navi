@@ -264,8 +264,9 @@ fn build_system_prompt_inner(
             "- Prefer ast_search, symbol_goto, code(action='overview'), read_file, fs_browser, and grep for focused inspection.\n",
             "- Batch independent read-only inspection calls in the same assistant response when the provider supports native tool calling.\n",
             "- Prefer apply_patch for targeted text edits; write_file is for whole-file replacement.\n",
-            "- apply_patch accepts exactly one of {{patch: string}} or {{patches: string[]}}; never pass path/content/old_string/new_string to apply_patch.\n",
-            "- There is no `edit` tool. For multiple known edits, use one apply_patch call with `patches`.\n",
+            "- apply_patch accepts `patch` (string), `patches` (array of strings), or `edits` (array of {{path, search, replace}}).\n",
+            "- For simple surgical edits, use `edits`: each object provides `path`, `search`, and `replace`; the tool replaces the first exact occurrence of `search`.\n",
+            "- For multiple known edits, use one apply_patch call with `patches` or `edits`.\n",
             "- Prefer package_manager over bash for dependency management — structured install, add, remove, update.\n",
             "- Use bash for genuinely ad-hoc commands that don't fit specialized tools.\n",
             "- For long-running commands, call bash with background=true, wait_ms, and timeout_ms; poll or cancel the returned task_id instead of waiting indefinitely.\n",
@@ -986,8 +987,8 @@ mod tests {
         let config = NaviConfig::default();
         let prompt = build_system_prompt(&config, std::path::Path::new("/tmp"));
 
-        assert!(prompt.contains("There is no `edit` tool"));
-        assert!(prompt.contains("{patches: string[]}"));
-        assert!(prompt.contains("never pass path/content/old_string/new_string"));
+        assert!(prompt.contains("`edits`"));
+        assert!(prompt.contains("{path, search, replace}"));
+        assert!(prompt.contains("first exact occurrence"));
     }
 }

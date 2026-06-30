@@ -600,3 +600,27 @@ pub(crate) enum PluginApprovalKind {
     Install,
     Update,
 }
+
+#[derive(Debug, Clone)]
+pub(crate) struct GoalUiState {
+    pub active: bool,
+    pub id: String,
+    pub objective: String,
+    pub status: navi_sdk::GoalStatus,
+    pub tokens_used: i64,
+    pub token_budget: Option<i64>,
+}
+
+impl Default for GoalUiState {
+    fn default() -> Self {
+        Self {
+            active: false,
+            id: String::new(),
+            objective: String::new(),
+            status: navi_sdk::GoalStatus::Active,
+            tokens_used: 0,
+            token_budget: None,
+        }
+    }
+}
+

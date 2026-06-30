@@ -494,7 +494,30 @@ fn handle_agent_event(app: &mut TuiApp, event: AgentEvent) {
             show_notification(app, title.to_string(), &message);
             push_diagnostic(app, message);
         }
-        AgentEvent::GoalUpdated { .. } => {}
+        AgentEvent::GoalUpdated {
+            session_id: _,
+            goal_id,
+            objective,
+            status,
+            tokens_used,
+            token_budget,
+        } => {
+            use navi_sdk::GoalStatus;
+            app.goal_state = Some(crate::state::GoalUiState {
+                active: status == GoalStatus::Active,
+                id: goal_id,
+                objective: objective.clone(),
+                status,
+                tokens_used,
+                token_budget,
+            });
+            if status == GoalStatus::Complete {
+                show_notification(app, "Goal Completed", &objective);
+            } else if status == GoalStatus::Blocked {
+                show_notification(app, "Goal Blocked", &objective);
+            }
+        }
+        AgentEvent::SetGoalRequested { .. } => {}
     }
 }
 

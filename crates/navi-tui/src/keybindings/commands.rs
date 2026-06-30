@@ -146,6 +146,16 @@ pub(crate) fn run_selected_command(app: &mut TuiApp) -> bool {
             ));
             // onboarding_completed field removed
         }
+        CommandAction::ClearGoal => {
+            app.goal_state = None;
+            let session_id = app.session_id.as_str().to_string();
+            let engine = app.engine();
+            tokio::spawn(async move {
+                let _ = engine.clear_goal(&session_id).await;
+            });
+            super::close_all_modals(app);
+            show_notification(app, "Goal", "Goal cleared.");
+        }
         _ => super::close_all_modals(app),
     }
 

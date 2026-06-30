@@ -686,10 +686,10 @@ fn chat_render_signature(app: &TuiApp) -> u64 {
     }
     for msg in &app.messages {
         msg.role.hash(&mut hasher);
-        msg.content.len().hash(&mut hasher);
+        msg.content.hash(&mut hasher);
         msg.images.len().hash(&mut hasher);
         msg.image_labels.hash(&mut hasher);
-        msg.thinking_content.len().hash(&mut hasher);
+        msg.thinking_content.hash(&mut hasher);
         msg.status.hash(&mut hasher);
         msg.usage_label.hash(&mut hasher);
         msg.elapsed_ms.hash(&mut hasher);
@@ -746,7 +746,16 @@ fn build_chat_render(
 
 #[cfg(test)]
 mod tests {
-    use super::anchored_scroll_offset;
+    use crate::state::{ChatMessage, ChatRole};
+
+    use super::{anchored_scroll_offset, ensure_chat_cache};
+
+    fn line_text(line: &ratatui::prelude::Line<'_>) -> String {
+        line.spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect::<String>()
+    }
 
     #[test]
     fn anchored_scroll_tracks_added_lines_when_scrolled_up() {
@@ -761,5 +770,43 @@ mod tests {
     #[test]
     fn anchored_scroll_keeps_tail_at_zero() {
         assert_eq!(anchored_scroll_offset(0, 100, 120), 0);
+    }
+
+    #[test]
+    fn user_text_message_last_rendered_line_contains_text() {
+        let mut app = crate::tests::test_app("");
+        app.messages.push(ChatMessage::new(
+            ChatRole::User,
+            "ykdl tui ja esta funcional.".to_string(),
+        ));
+
+        ensure_chat_cache(&mut app, 80);
+        let cache = app.chat_render_cache.borrow();
+        let last = cache.lines.last().map(line_text).unwrap_or_default();
+
+        assert!(last.contains("ykdl tui ja esta funcional."));
+    }
+
+    #[test]
+    fn chat_cache_invalidates_when_same_length_message_content_changes() {
+        let mut app = crate::tests::test_app("");
+        app.messages
+            .push(ChatMessage::new(ChatRole::User, "abc".to_string()));
+
+        ensure_chat_cache(&mut app, 80);
+        app.messages[0].content = "xyz".to_string();
+        ensure_chat_cache(&mut app, 80);
+
+        let rendered = app
+            .chat_render_cache
+            .borrow()
+            .lines
+            .iter()
+            .map(line_text)
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(rendered.contains("xyz"));
+        assert!(!rendered.contains("abc"));
     }
 }

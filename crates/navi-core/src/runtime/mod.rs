@@ -860,6 +860,20 @@ impl AgentRuntime {
                     }
                 }
             }
+            AgentEvent::SetGoalRequested {
+                objective,
+                token_budget,
+            } => {
+                let goal = self.set_goal(objective.clone(), *token_budget);
+                self.event_bus.publish(RuntimeEventKind::GoalUpdated {
+                    session_id: goal.session_id.clone(),
+                    goal_id: goal.goal_id.as_str().to_string(),
+                    objective: goal.objective.clone(),
+                    status: goal.status,
+                    tokens_used: goal.tokens_used,
+                    token_budget: goal.token_budget,
+                });
+            }
             _ => {}
         }
 
@@ -999,5 +1013,12 @@ fn runtime_event_kind_from_agent_event(event: &AgentEvent) -> Option<RuntimeEven
         AgentEvent::RepeatedToolCallWarning { .. } => None,
         AgentEvent::RepetitionDetected { .. } => None,
         AgentEvent::GoalUpdated { .. } => None,
+        AgentEvent::SetGoalRequested {
+            objective,
+            token_budget,
+        } => Some(RuntimeEventKind::SetGoalRequested {
+            objective: objective.clone(),
+            token_budget: *token_budget,
+        }),
     }
 }

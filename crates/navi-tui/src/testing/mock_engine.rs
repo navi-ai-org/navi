@@ -198,6 +198,10 @@ impl EngineDriver for MockEngine {
         })
     }
 
+    async fn clear_goal(&self, _session_id: &str) -> Result<()> {
+        Ok(())
+    }
+
     async fn cancel_turn(&self, session_id: &str) -> Result<()> {
         self.state
             .lock()
