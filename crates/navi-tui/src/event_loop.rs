@@ -122,14 +122,15 @@ fn reset_terminal_input_modes(w: &mut impl io::Write) -> io::Result<()> {
     w.flush()
 }
 
-/// Enable mouse clicks/scroll with SGR coordinates, but without motion/drag
-/// tracking. The TUI only needs click/scroll events for interactions.
+/// Enable mouse clicks/scroll/drag with SGR coordinates, but without free
+/// hover-motion tracking. Drag events are needed for live text selection.
 fn enable_mouse_capture(w: &mut impl io::Write) -> io::Result<()> {
     // Normal tracking: report button press/release (?1000h)
+    // Button-event tracking: report drag while a button is held (?1002h)
     // SGR extended coordinates: supports >223 columns/rows (?1006h)
-    // Intentionally omitting ?1002h/?1003h because the TUI does not need
+    // Intentionally omitting ?1003h because the TUI does not need free
     // mouse-motion events.
-    write!(w, "\x1B[?1000h\x1B[?1006h")?;
+    write!(w, "\x1B[?1000h\x1B[?1002h\x1B[?1006h")?;
     w.flush()
 }
 
@@ -207,15 +208,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn mouse_capture_does_not_enable_motion_tracking() {
+    fn mouse_capture_enables_drag_without_free_motion_tracking() {
         let mut out = Vec::new();
 
         enable_mouse_capture(&mut out).expect("enable mouse capture");
         let text = String::from_utf8(out).expect("utf8 escape sequences");
 
         assert!(text.contains("\x1B[?1000h"));
+        assert!(text.contains("\x1B[?1002h"));
         assert!(text.contains("\x1B[?1006h"));
-        assert!(!text.contains("\x1B[?1002h"));
         assert!(!text.contains("\x1B[?1003h"));
     }
 
@@ -330,9 +331,7 @@ fn handle_paste(app: &mut TuiApp, content: &str) {
     match app.mode {
         Mode::Normal => {
             if !app.is_loading {
-                if let Some(image) =
-                    crate::clipboard::try_read_image_from_path(app.image_picker.as_ref(), content)
-                {
+                if let Some(image) = crate::clipboard::try_read_image_from_path(content) {
                     let label = image.label();
                     app.pending_images.push(image);
                     show_notification(
@@ -343,7 +342,7 @@ fn handle_paste(app: &mut TuiApp, content: &str) {
                     return;
                 }
 
-                if let Some(image) = try_read_clipboard_image(app.image_picker.as_ref()) {
+                if let Some(image) = try_read_clipboard_image() {
                     let label = image.label();
                     app.pending_images.push(image);
                     show_notification(app, "Image", format!("{} attached via paste", label));

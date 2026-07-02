@@ -730,13 +730,25 @@ fn contains_component(path: &Path, needle: &str) -> bool {
     })
 }
 
-fn extract_shell_write_targets(command: &str) -> Vec<String> {
+pub(crate) fn extract_shell_write_targets(command: &str) -> Vec<String> {
     let tokens = shell_tokens(command);
     let mut targets = Vec::new();
     let mut index = 0;
 
     while index < tokens.len() {
         let token = &tokens[index];
+        let command_name = command_token_name(token);
+
+        if command_name == "sed" {
+            index = collect_sed_in_place_targets(&tokens, index + 1, &mut targets);
+            continue;
+        }
+
+        if command_name == "perl" {
+            index = collect_perl_in_place_targets(&tokens, index + 1, &mut targets);
+            continue;
+        }
+
         if is_output_redirection_operator(token) {
             if let Some(target) = tokens
                 .get(index + 1)
@@ -776,6 +788,113 @@ fn extract_shell_write_targets(command: &str) -> Vec<String> {
     }
 
     targets
+}
+
+fn collect_sed_in_place_targets(
+    tokens: &[String],
+    mut index: usize,
+    targets: &mut Vec<String>,
+) -> usize {
+    let mut in_place = false;
+    let mut script_seen = false;
+
+    while index < tokens.len() && !is_shell_command_separator(&tokens[index]) {
+        let token = &tokens[index];
+
+        if token == "--" {
+            index += 1;
+            break;
+        }
+
+        if token == "-i" || token.starts_with("-i") {
+            in_place = true;
+            index += 1;
+            continue;
+        }
+
+        if token == "-e" || token == "-f" {
+            script_seen = true;
+            index = index.saturating_add(2);
+            continue;
+        }
+
+        if token.starts_with("-e") || token.starts_with("-f") {
+            script_seen = true;
+            index += 1;
+            continue;
+        }
+
+        if token.starts_with('-') {
+            index += 1;
+            continue;
+        }
+
+        if in_place
+            && script_seen
+            && let Some(target) = clean_shell_target(token)
+        {
+            push_unique_string(targets, &target);
+        }
+        script_seen = true;
+        index += 1;
+    }
+
+    while in_place && index < tokens.len() && !is_shell_command_separator(&tokens[index]) {
+        if let Some(target) = clean_shell_target(&tokens[index]) {
+            push_unique_string(targets, &target);
+        }
+        index += 1;
+    }
+
+    index
+}
+
+fn collect_perl_in_place_targets(
+    tokens: &[String],
+    mut index: usize,
+    targets: &mut Vec<String>,
+) -> usize {
+    let mut in_place = false;
+
+    while index < tokens.len() && !is_shell_command_separator(&tokens[index]) {
+        let token = &tokens[index];
+
+        if token == "--" {
+            index += 1;
+            break;
+        }
+
+        if token.starts_with('-') {
+            if token == "-e" {
+                index = index.saturating_add(2);
+                continue;
+            }
+            if token.starts_with("-e") {
+                index += 1;
+                continue;
+            }
+            if token == "-i" || token.starts_with("-i") || token.chars().skip(1).any(|ch| ch == 'i')
+            {
+                in_place = true;
+            }
+            index += 1;
+            continue;
+        }
+
+        if in_place && let Some(target) = clean_shell_target(token) {
+            push_unique_string(targets, &target);
+        }
+        index += 1;
+    }
+
+    while in_place && index < tokens.len() && !is_shell_command_separator(&tokens[index]) {
+        if let Some(target) = clean_shell_target(&tokens[index]) {
+            push_unique_string(targets, &target);
+        }
+        index += 1;
+    }
+
+    index
 }
 
 fn extract_shell_path_mentions(command: &str) -> Vec<String> {
@@ -1265,6 +1384,20 @@ mod tests {
             decision,
             SecurityDecision::NeedsApproval(SecurityRisk::Command)
         );
+    }
+
+    #[test]
+    fn extracts_sed_in_place_write_targets() {
+        let targets = extract_shell_write_targets("sed -i 's/old/new/' src/lib.rs");
+
+        assert_eq!(targets, vec!["src/lib.rs"]);
+    }
+
+    #[test]
+    fn extracts_perl_in_place_write_targets() {
+        let targets = extract_shell_write_targets("perl -pi -e 's/old/new/' src/lib.rs");
+
+        assert_eq!(targets, vec!["src/lib.rs"]);
     }
 
     #[test]

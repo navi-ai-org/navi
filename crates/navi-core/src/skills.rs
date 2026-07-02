@@ -120,6 +120,37 @@ pub fn render_active_skills(skills: &[SkillManifest]) -> Option<String> {
     Some(output)
 }
 
+/// Renders a catalog of available skills without exposing their instruction text.
+/// Returns `None` if there are no available skills.
+pub fn render_available_skills(skills: &[SkillManifest]) -> Option<String> {
+    if skills.is_empty() {
+        return None;
+    }
+
+    let mut output = String::from(
+        "=== Available Skills ===\nThese skills are available. Use the `load_skill` tool with a skill id when you decide a skill is relevant. The instruction text is not included here.\n",
+    );
+    for skill in skills {
+        output.push_str(&format!("- id: {}; name: {}\n", skill.id, skill.name));
+        if let Some(description) = &skill.description {
+            output.push_str(&format!("  description: {}\n", description.trim()));
+        }
+        if let Some(version) = &skill.version {
+            output.push_str(&format!("  version: {}\n", version));
+        }
+        if let Some(author) = &skill.author {
+            output.push_str(&format!("  author: {}\n", author));
+        }
+        if !skill.tags.is_empty() {
+            output.push_str(&format!("  tags: {}\n", skill.tags.join(", ")));
+        }
+        if !skill.requires.is_empty() {
+            output.push_str(&format!("  requires: {}\n", skill.requires.join(", ")));
+        }
+    }
+    Some(output)
+}
+
 fn skill_dirs(config: &SkillsConfig, project_dir: &Path, data_dir: &Path) -> Vec<PathBuf> {
     if !config.dirs.is_empty() {
         return config
@@ -515,5 +546,27 @@ mod tests {
         assert!(rendered.contains("Test Skill"));
         assert!(rendered.contains("A test skill"));
         assert!(rendered.contains("Do something."));
+    }
+
+    #[test]
+    fn render_available_skills_excludes_instructions() {
+        let skills = vec![SkillManifest {
+            id: "test".to_string(),
+            name: "Test Skill".to_string(),
+            description: Some("A test skill".to_string()),
+            version: None,
+            author: None,
+            tags: vec!["demo".to_string()],
+            requires: Vec::new(),
+            path: PathBuf::from("/test"),
+            instructions: "Do something secret until loaded.".to_string(),
+        }];
+
+        let rendered = render_available_skills(&skills).expect("rendered");
+        assert!(rendered.contains("load_skill"));
+        assert!(rendered.contains("Test Skill"));
+        assert!(rendered.contains("A test skill"));
+        assert!(rendered.contains("demo"));
+        assert!(!rendered.contains("Do something secret until loaded."));
     }
 }

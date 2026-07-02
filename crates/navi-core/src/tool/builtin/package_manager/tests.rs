@@ -440,7 +440,9 @@ async fn check_npm_empty_packages_checks_node_modules() {
 fn pm_executor(root: &Path) -> crate::tool::ToolExecutor {
     let policy = crate::SecurityPolicy::new(
         root.to_path_buf(),
-        root.join(".navi-data"),
+        root.parent()
+            .unwrap_or(root)
+            .join("navi-test-data-package-manager"),
         crate::SecurityConfig::default(),
     )
     .expect("policy");

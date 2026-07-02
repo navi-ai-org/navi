@@ -20,7 +20,6 @@ serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 hex.workspace = true
-starlark.workspace = true
 tokio.workspace = true
 toml.workspace = true
 # Pinned in the workspace to avoid the E0119 conflict between `time >= 0.3.48` and

@@ -177,6 +177,7 @@ impl Tool for RepoExploreTool {
             harness_config: explore_harness.clone(),
             include_tool_prompt_manifest: include_tool_prompt,
             context_packets: Arc::new(std::sync::Mutex::new(Vec::new())),
+            available_skills: Arc::new(std::sync::Mutex::new(Vec::new())),
             active_skills: Arc::new(std::sync::Mutex::new(Vec::new())),
             prompt_cache: self.prompt_cache.clone(),
             components: self.components.clone(),

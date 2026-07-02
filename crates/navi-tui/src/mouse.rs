@@ -17,16 +17,35 @@ use crate::ui::interaction::{HitAction, HitRegion, ScrollTarget};
 use crate::ui::list::SelectListState;
 
 fn map_mouse_to_text(app: &TuiApp, col: u16, row: u16) -> Option<(usize, usize)> {
+    map_mouse_to_text_with_clamp(app, col, row, false)
+}
+
+fn map_mouse_to_text_clamped(app: &TuiApp, col: u16, row: u16) -> Option<(usize, usize)> {
+    map_mouse_to_text_with_clamp(app, col, row, true)
+}
+
+fn map_mouse_to_text_with_clamp(
+    app: &TuiApp,
+    col: u16,
+    row: u16,
+    clamp_to_chat: bool,
+) -> Option<(usize, usize)> {
     let cache = app.chat_render_cache.borrow();
     let inner = cache.chat_rect?;
-    if col < inner.x
-        || col >= inner.x + inner.width
-        || row < inner.y
-        || row >= inner.y + inner.height
+    if inner.width == 0 || inner.height == 0 {
+        return None;
+    }
+    if !clamp_to_chat
+        && (col < inner.x
+            || col >= inner.x + inner.width
+            || row < inner.y
+            || row >= inner.y + inner.height)
     {
         return None;
     }
-    let visible_y = (row - inner.y) as usize;
+    let clamped_col = col.clamp(inner.x, inner.x + inner.width.saturating_sub(1));
+    let clamped_row = row.clamp(inner.y, inner.y + inner.height.saturating_sub(1));
+    let visible_y = (clamped_row - inner.y) as usize;
 
     let total_lines = cache.lines.len();
     let visible_height = inner.height as usize;
@@ -41,7 +60,7 @@ fn map_mouse_to_text(app: &TuiApp, col: u16, row: u16) -> Option<(usize, usize)>
         return None;
     }
 
-    let char_index = (col - inner.x) as usize;
+    let char_index = (clamped_col - inner.x) as usize;
     Some((line_index, char_index))
 }
 
@@ -72,11 +91,7 @@ pub(crate) fn selected_text(app: &TuiApp) -> Option<String> {
                 display_width(&line_text)
             };
 
-            let substr: String = line_text
-                .chars()
-                .skip(start_char)
-                .take(end_char.saturating_sub(start_char))
-                .collect();
+            let substr = slice_display_columns(&line_text, start_char, end_char);
             selected_text.push_str(&substr);
 
             if line_idx != end.0 {
@@ -163,23 +178,36 @@ pub(crate) fn handle_mouse(app: &mut TuiApp, mouse: MouseEvent) {
                 app.selection = None;
                 return;
             }
-            if let Some(pos) = map_mouse_to_text(app, mouse.column, mouse.row)
+            if app.selection.as_ref().map(|s| s.active).unwrap_or(false)
+                && let Some(inner) = app.chat_render_cache.borrow().chat_rect
+            {
+                if mouse.row <= inner.y {
+                    app.scroll_offset = app.scroll_offset.saturating_add(1);
+                } else if mouse.row >= inner.y + inner.height.saturating_sub(1) {
+                    app.scroll_offset = app.scroll_offset.saturating_sub(1);
+                }
+            }
+            if let Some(pos) = map_mouse_to_text_clamped(app, mouse.column, mouse.row)
                 && let Some(selection) = &mut app.selection
                 && selection.active
             {
                 selection.end = pos;
             }
-            if app.selection.as_ref().map(|s| s.active).unwrap_or(false)
-                && let Some(inner) = app.chat_render_cache.borrow().chat_rect
-            {
-                if mouse.row <= inner.y + 1 {
-                    app.scroll_offset = app.scroll_offset.saturating_add(1);
-                } else if mouse.row >= inner.y + inner.height.saturating_sub(2) {
-                    app.scroll_offset = app.scroll_offset.saturating_sub(1);
-                }
-            }
         }
         MouseEventKind::Up(MouseButton::Left) => {
+            if app
+                .selection
+                .as_ref()
+                .is_some_and(|selection| selection.active)
+            {
+                let pos = map_mouse_to_text_clamped(app, mouse.column, mouse.row);
+                if finish_selection(app, pos)
+                    && let Some(text) = selected_text(app)
+                {
+                    copy_text_to_clipboard(app, &text);
+                }
+                return;
+            }
             if app.hit_test(mouse.column, mouse.row).is_some() {
                 app.selection = None;
                 return;
@@ -201,6 +229,26 @@ pub(crate) fn handle_mouse(app: &mut TuiApp, mouse: MouseEvent) {
         }
         _ => {}
     }
+}
+
+fn slice_display_columns(text: &str, start_col: usize, end_col: usize) -> String {
+    if start_col >= end_col {
+        return String::new();
+    }
+    let mut out = String::new();
+    let mut col = 0usize;
+    for ch in text.chars() {
+        let width = display_width(&ch.to_string()).max(1);
+        let next_col = col.saturating_add(width);
+        if next_col > start_col && col < end_col {
+            out.push(ch);
+        }
+        if col >= end_col {
+            break;
+        }
+        col = next_col;
+    }
+    out
 }
 
 fn apply_hover(app: &mut TuiApp, hit: &HitRegion) {
@@ -779,6 +827,7 @@ mod tests {
     use crossterm::event::{KeyModifiers, MouseEvent};
     use navi_sdk::{AgentEvent, QuestionOption, QuestionRequest, QuestionResponse};
     use ratatui::layout::Rect;
+    use ratatui::prelude::Line;
 
     use super::*;
     use crate::dispatch::{AsyncEvent, handle_async_event};
@@ -823,6 +872,24 @@ mod tests {
         }
     }
 
+    fn mouse_drag(col: u16, row: u16) -> MouseEvent {
+        MouseEvent {
+            kind: MouseEventKind::Drag(MouseButton::Left),
+            column: col,
+            row,
+            modifiers: KeyModifiers::NONE,
+        }
+    }
+
+    fn mouse_up(col: u16, row: u16) -> MouseEvent {
+        MouseEvent {
+            kind: MouseEventKind::Up(MouseButton::Left),
+            column: col,
+            row,
+            modifiers: KeyModifiers::NONE,
+        }
+    }
+
     fn mouse_scroll_down(col: u16, row: u16) -> MouseEvent {
         MouseEvent {
             kind: MouseEventKind::ScrollDown,
@@ -830,6 +897,15 @@ mod tests {
             row,
             modifiers: KeyModifiers::NONE,
         }
+    }
+
+    fn seed_chat_cache(app: &mut TuiApp, lines: &[&str], rect: Rect) {
+        let mut cache = app.chat_render_cache.borrow_mut();
+        cache.lines = lines
+            .iter()
+            .map(|line| Line::from((*line).to_string()))
+            .collect();
+        cache.chat_rect = Some(rect);
     }
 
     fn open_question(app: &mut TuiApp, request: QuestionRequest) {
@@ -899,6 +975,78 @@ mod tests {
         assert!(app.selected_command > 0);
         assert!(app.command_scroll > 0);
         assert_eq!(app.scroll_offset, 12);
+    }
+
+    #[test]
+    fn mouse_drag_updates_active_selection_before_mouse_up() {
+        let mut app = test_app("");
+        seed_chat_cache(&mut app, &["hello world"], Rect::new(0, 0, 20, 1));
+
+        handle_mouse(&mut app, mouse_down(0, 0));
+        handle_mouse(&mut app, mouse_drag(5, 0));
+
+        let selection = app.selection.as_ref().expect("selection");
+        assert!(selection.active);
+        assert_eq!(selection.start, (0, 0));
+        assert_eq!(selection.end, (0, 5));
+        assert_eq!(selected_text(&app).as_deref(), Some("hello"));
+    }
+
+    #[test]
+    fn mouse_drag_near_top_scrolls_and_maps_endpoint_after_scroll() {
+        let mut app = test_app("");
+        seed_chat_cache(
+            &mut app,
+            &["line 0", "line 1", "line 2", "line 3", "line 4"],
+            Rect::new(0, 0, 20, 3),
+        );
+
+        handle_mouse(&mut app, mouse_down(0, 1));
+        handle_mouse(&mut app, mouse_drag(4, 0));
+
+        let selection = app.selection.as_ref().expect("selection");
+        assert_eq!(app.scroll_offset, 1);
+        assert_eq!(selection.start, (3, 0));
+        assert_eq!(selection.end, (1, 4));
+    }
+
+    #[test]
+    fn mouse_drag_near_bottom_scrolls_and_maps_endpoint_after_scroll() {
+        let mut app = test_app("");
+        seed_chat_cache(
+            &mut app,
+            &["line 0", "line 1", "line 2", "line 3", "line 4"],
+            Rect::new(0, 0, 20, 3),
+        );
+        app.scroll_offset = 2;
+
+        handle_mouse(&mut app, mouse_down(0, 1));
+        handle_mouse(&mut app, mouse_drag(4, 2));
+
+        let selection = app.selection.as_ref().expect("selection");
+        assert_eq!(app.scroll_offset, 1);
+        assert_eq!(selection.start, (1, 0));
+        assert_eq!(selection.end, (3, 4));
+    }
+
+    #[test]
+    fn mouse_up_on_hit_region_finishes_active_selection() {
+        let mut app = test_app("");
+        seed_chat_cache(&mut app, &["hello world"], Rect::new(0, 0, 20, 1));
+        app.register_hit(
+            Rect::new(4, 0, 8, 1),
+            5,
+            "chat hit",
+            HitAction::ChatMessage(0),
+        );
+
+        handle_mouse(&mut app, mouse_down(0, 0));
+        handle_mouse(&mut app, mouse_drag(5, 0));
+        handle_mouse(&mut app, mouse_up(5, 0));
+
+        assert_eq!(selected_text(&app).as_deref(), Some("hello"));
+        assert!(!app.selection.as_ref().expect("selection").active);
+        assert_eq!(app.mode, Mode::Normal);
     }
 
     #[test]

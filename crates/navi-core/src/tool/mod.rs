@@ -3,7 +3,6 @@ use crate::capability::{
 };
 use crate::effect::PostDecision;
 use crate::event::AgentEvent;
-use crate::file_lock::FileLockManager;
 use crate::runtime_components::{DefaultToolSecurityPolicy, ToolSecurityPolicy};
 use crate::security::{SecurityDecision, SecurityPolicy};
 use anyhow::Result;
@@ -28,7 +27,7 @@ use builtin::{
     CurrentTimeTool, HistoryOpsTool, InitSessionTool, MarkFeatureDoneTool, NewContextWindowTool,
     PackageManagerTool, PlanTool, ProcessTool, QuestionTool, ReadTool, RepoIntelligenceAction,
     RepoIntelligenceTool, RequestUserInputTool, RuntimeInfoTool, SandboxTool, SearchTool,
-    SleepTool, ToolSearchTool, VerifierTool, ViewImageTool, WaitTool, WriteTool, builtin_metadata,
+    SleepTool, ToolSearchTool, VerifierTool, ViewImageTool, WriteTool, builtin_metadata,
     truncate_tool_result, SetGoalTool,
 };
 
@@ -152,7 +151,6 @@ pub struct ToolExecutor {
     policy: SecurityPolicy,
     security: Arc<dyn ToolSecurityPolicy>,
     harness_profile: String,
-    lock_manager: Option<Arc<FileLockManager>>,
     registry: ToolRegistry,
 }
 
@@ -178,7 +176,6 @@ pub enum ToolCallInvalid {
     },
 }
 
-const WRITE_TOOL_NAMES: &[&str] = &["write", "write_file"];
 const EXCLUSIVE_BATCH_TOOL_NAMES: &[&str] = &["branch_race_start", "plan", "question"];
 
 impl ToolExecutor {
@@ -197,39 +194,10 @@ impl ToolExecutor {
             policy,
             security,
             harness_profile: "medium".to_string(),
-            lock_manager: None,
             registry: ToolRegistry::new(),
         };
         executor.register_builtin_tools();
         executor
-    }
-
-    /// Sets the file lock manager for cross-instance file locking.
-    /// Re-registers write tools with lock awareness and registers the WaitTool.
-    pub fn set_lock_manager(&mut self, lock_manager: Arc<FileLockManager>) {
-        self.lock_manager = Some(lock_manager.clone());
-        let pr = self.policy.project_root().to_path_buf();
-        self.register(WriteTool::with_lock_manager(pr, lock_manager.clone()));
-        self.register(WriteTool::write_file_with_lock_manager(
-            self.policy.project_root().to_path_buf(),
-            lock_manager.clone(),
-        ));
-        self.register(WriteTool::apply_patch_with_lock_manager(
-            self.policy.project_root().to_path_buf(),
-            lock_manager.clone(),
-        ));
-        self.register(WaitTool::new(lock_manager));
-    }
-
-    /// Sets the session ID on the lock manager (for lock metadata).
-    pub fn set_session_id_on_locks(&self, session_id: &str) {
-        if let Some(ref lm) = self.lock_manager {
-            lm.set_session_id(session_id);
-        }
-    }
-
-    pub fn lock_manager(&self) -> Option<&Arc<FileLockManager>> {
-        self.lock_manager.as_ref()
     }
 
     pub fn registry(&self) -> &ToolRegistry {
@@ -253,6 +221,25 @@ impl ToolExecutor {
         ));
     }
 
+    pub fn register_skill_loader(
+        &mut self,
+        project_dir: std::path::PathBuf,
+        data_dir: std::path::PathBuf,
+        config: std::sync::Arc<std::sync::RwLock<crate::config::NaviConfig>>,
+    ) {
+        let loader = crate::tool::builtin::SkillTool::new(project_dir, data_dir, config);
+        let def = loader.definition();
+        let name = def.name.clone();
+        self.registry.register(def);
+        self.tools.entry(name).or_insert_with(|| {
+            std::sync::Arc::new(crate::tool::builtin::SkillTool::new(
+                self.policy.project_root().to_path_buf(),
+                self.policy.data_dir().to_path_buf(),
+                std::sync::Arc::new(std::sync::RwLock::new(crate::config::NaviConfig::default())),
+            ))
+        });
+    }
+
     pub(crate) fn new_code_exec_host(policy: SecurityPolicy) -> Self {
         let pr = policy.project_root().to_path_buf();
         let mut executor = Self {
@@ -262,7 +249,6 @@ impl ToolExecutor {
             policy: policy.clone(),
             security: Arc::new(DefaultToolSecurityPolicy),
             harness_profile: "medium".to_string(),
-            lock_manager: None,
             registry: ToolRegistry::new(),
         };
         executor.register(ReadTool::new(pr.clone()));
@@ -449,38 +435,6 @@ impl ToolExecutor {
         }
     }
 
-    fn check_file_lock(&self, inv: &ToolInvocation) -> Option<ToolResult> {
-        let Some(ref lm) = self.lock_manager else {
-            return None;
-        };
-        if !WRITE_TOOL_NAMES.contains(&inv.tool_name.as_str()) {
-            return None;
-        }
-        let path_str = inv.input.get("path").and_then(Value::as_str)?;
-        let path = Path::new(path_str);
-        let info = match lm.is_locked(path) {
-            Ok(Some(i)) => i,
-            Ok(None) => return None,
-            Err(e) => {
-                return Some(ToolResult {
-                    invocation_id: inv.id.clone(),
-                    ok: false,
-                    output: json!({"error": format!("lock check failed: {e}"), "error_code": "lock_check_failed"}),
-                });
-            }
-        };
-        Some(ToolResult {
-            invocation_id: inv.id.clone(),
-            ok: false,
-            output: json!({
-                "error": format!("O arquivo `{}` está bloqueado por outra instância ({}). Use `wait` com `file_path=\"{}\"`.", info.path.display(), info.instance_id, info.path.display()),
-                "error_code": "file_locked", "file_path": info.path.to_string_lossy(),
-                "locked_by_instance": info.instance_id, "locked_by_session": info.session_id,
-                "hint": "Use `wait` tool with `file_path` to await unlock.",
-            }),
-        })
-    }
-
     pub fn validate(&self, inv: &ToolInvocation) -> SecurityDecision {
         if let Err(e) = self.validate_arguments(inv) {
             return SecurityDecision::Deny(tool_call_advice_message(&e));
@@ -537,9 +491,6 @@ impl ToolExecutor {
                 ok: false,
                 output: json!({"error": r}),
             };
-        }
-        if let Some(r) = self.check_file_lock(&invocation) {
-            return r;
         }
         let Some(tool) = self.tools.get(&invocation.tool_name).cloned() else {
             return ToolResult {

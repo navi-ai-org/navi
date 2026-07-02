@@ -482,6 +482,7 @@ impl SubagentTool {
             harness_config: self.harness_config.clone(),
             include_tool_prompt_manifest: include_tool_prompt,
             context_packets: Arc::new(std::sync::Mutex::new(Vec::new())),
+            available_skills: Arc::new(std::sync::Mutex::new(Vec::new())),
             active_skills: Arc::new(std::sync::Mutex::new(Vec::new())),
             prompt_cache: self.prompt_cache.clone(),
             components: self.components.clone(),
@@ -622,6 +623,7 @@ impl SubagentTool {
                     &config_snapshot,
                 ),
                 context_packets: Arc::new(std::sync::Mutex::new(Vec::new())),
+                available_skills: Arc::new(std::sync::Mutex::new(Vec::new())),
                 active_skills: Arc::new(std::sync::Mutex::new(Vec::new())),
                 prompt_cache,
                 components,
@@ -1252,7 +1254,10 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let policy = crate::security::SecurityPolicy::new(
             temp.path().to_path_buf(),
-            temp.path().join(".navi-data"),
+            temp.path()
+                .parent()
+                .unwrap_or(temp.path())
+                .join("navi-test-data-subagent"),
             crate::config::SecurityConfig::default(),
         )
         .unwrap();
@@ -1282,7 +1287,10 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let policy = crate::security::SecurityPolicy::new(
             temp.path().to_path_buf(),
-            temp.path().join(".navi-data"),
+            temp.path()
+                .parent()
+                .unwrap_or(temp.path())
+                .join("navi-test-data-subagent"),
             crate::config::SecurityConfig::default(),
         )
         .unwrap();

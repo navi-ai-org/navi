@@ -18,7 +18,11 @@ tracing = { workspace = true }
 navi-core = { workspace = true }
 navi-plugin-manifest = { workspace = true }
 navi-plugin-broker = { workspace = true }
-navi-plugin-runtime = { workspace = true }
+navi-plugin-runtime = { workspace = true, optional = true }
+
+[features]
+default = []
+wasm-runtime = ["dep:navi-plugin-runtime"]
 
 [dev-dependencies]
 tempfile = { workspace = true }

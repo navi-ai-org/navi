@@ -137,10 +137,7 @@ pub(crate) fn load_session(app: &mut TuiApp, snapshot: &SessionSnapshot) {
                             .unwrap_or(media_type)
                             .to_uppercase();
                         msg.image_labels.push(mime_short.clone());
-                        msg.images.push(ChatImage {
-                            label: mime_short,
-                            protocol: None,
-                        });
+                        msg.images.push(ChatImage { label: mime_short });
                     }
                 }
                 app.messages.push(msg);

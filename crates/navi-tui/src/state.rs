@@ -18,23 +18,16 @@ pub struct PendingImage {
     pub width: Option<u32>,
     /// Image height in pixels, if known.
     pub height: Option<u32>,
-    /// Rendered image protocol for terminal display (thumbnail and maximized).
-    pub protocol: Option<ratatui_image::protocol::StatefulProtocol>,
 }
 
 pub struct ChatImage {
     pub label: String,
-    pub protocol: Option<ratatui_image::protocol::StatefulProtocol>,
 }
 
 impl std::fmt::Debug for ChatImage {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ChatImage")
             .field("label", &self.label)
-            .field(
-                "protocol",
-                &self.protocol.as_ref().map(|_| "StatefulProtocol"),
-            )
             .finish()
     }
 }
@@ -43,7 +36,6 @@ impl Clone for ChatImage {
     fn clone(&self) -> Self {
         Self {
             label: self.label.clone(),
-            protocol: None,
         }
     }
 }
@@ -54,16 +46,12 @@ impl std::fmt::Debug for PendingImage {
             .field("media_type", &self.media_type)
             .field("width", &self.width)
             .field("height", &self.height)
-            .field(
-                "protocol",
-                &self.protocol.as_ref().map(|_| "StatefulProtocol"),
-            )
             .finish()
     }
 }
 
 impl PendingImage {
-    /// Returns a human-readable label like `"PNG 1200×800"`.
+    /// Returns a human-readable label like `"image PNG 1200x800"`.
     pub fn label(&self) -> String {
         let mime_short = self
             .media_type
@@ -71,14 +59,16 @@ impl PendingImage {
             .unwrap_or(&self.media_type)
             .to_uppercase();
         match (self.width, self.height) {
-            (Some(w), Some(h)) => format!("{mime_short} {w}×{h}"),
-            _ => mime_short,
+            (Some(w), Some(h)) => format!("image {mime_short} {w}x{h}"),
+            _ => format!("image {mime_short}"),
         }
     }
 
-    /// Returns a numbered label like `"[1] PNG 1200×800"`.
+    /// Returns a numbered label like `"image 1 PNG 1200x800"`.
     pub fn numbered_label(&self, index: usize) -> String {
-        format!("[{}] {}", index + 1, self.label())
+        let label = self.label();
+        let details = label.strip_prefix("image ").unwrap_or(&label);
+        format!("image {} {}", index + 1, details)
     }
 
     /// Estimated base64 size in bytes (for size-cap enforcement).
@@ -623,4 +613,3 @@ impl Default for GoalUiState {
         }
     }
 }
-

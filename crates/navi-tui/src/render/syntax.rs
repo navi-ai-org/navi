@@ -1,110 +1,145 @@
 use ratatui::prelude::{Span, Style};
-use ratatui::style::Color;
-use std::sync::OnceLock;
-use syntect::easy::HighlightLines;
-use syntect::highlighting::{Style as SyntectStyle, Theme, ThemeSet};
-use syntect::parsing::SyntaxSet;
 
 use crate::theme::*;
 
 pub(crate) struct CodeHighlighter {
-    highlighter: HighlightLines<'static>,
+    language: String,
 }
 
 impl CodeHighlighter {
     pub(crate) fn new(language: &str) -> Self {
-        let syntax_set = syntax_set();
-        let syntax = syntax_set
-            .find_syntax_by_token(language)
-            .or_else(|| syntax_set.find_syntax_by_extension(language))
-            .unwrap_or_else(|| syntax_set.find_syntax_plain_text());
         Self {
-            highlighter: HighlightLines::new(syntax, syntax_theme()),
+            language: language.trim().to_ascii_lowercase(),
         }
     }
 
     pub(crate) fn highlight_line(&mut self, raw_line: &str) -> Vec<Span<'static>> {
-        let syntax_set = syntax_set();
-        match self.highlighter.highlight_line(raw_line, syntax_set) {
-            Ok(ranges) => ranges
-                .into_iter()
-                .map(|(style, text)| Span::styled(text.to_string(), syntect_style(style)))
-                .collect(),
-            Err(_) => vec![Span::styled(
-                raw_line.to_string(),
-                Style::default().fg(text()),
-            )],
-        }
+        highlight_code_line(raw_line, &self.language)
     }
 }
 
 pub(crate) fn highlight_code_line(raw_line: &str, language: &str) -> Vec<Span<'static>> {
-    let mut highlighter = CodeHighlighter::new(language);
-    highlighter.highlight_line(raw_line)
+    if raw_line.is_empty() {
+        return vec![Span::styled(String::new(), code_style(text()))];
+    }
+
+    let comment_marker = comment_marker(language);
+    if let Some(index) = raw_line.find(comment_marker) {
+        let mut spans = highlight_code_without_comments(&raw_line[..index]);
+        spans.push(Span::styled(
+            raw_line[index..].to_string(),
+            code_style(code_comment()),
+        ));
+        return spans;
+    }
+
+    highlight_code_without_comments(raw_line)
 }
 
-fn syntect_style(style: SyntectStyle) -> Style {
-    Style::default()
-        .fg(lain_code_color(style))
-        .bg(code_block_bg())
+fn highlight_code_without_comments(raw_line: &str) -> Vec<Span<'static>> {
+    let mut spans = Vec::new();
+    let mut token = String::new();
+    let mut chars = raw_line.chars().peekable();
+
+    while let Some(ch) = chars.next() {
+        if ch == '"' || ch == '\'' || ch == '`' {
+            flush_token(&mut spans, &mut token);
+            let quote = ch;
+            let mut string = String::from(ch);
+            let mut escaped = false;
+            for next in chars.by_ref() {
+                string.push(next);
+                if escaped {
+                    escaped = false;
+                    continue;
+                }
+                if next == '\\' {
+                    escaped = true;
+                    continue;
+                }
+                if next == quote {
+                    break;
+                }
+            }
+            spans.push(Span::styled(string, code_style(code_string())));
+        } else if ch.is_ascii_alphanumeric() || ch == '_' {
+            token.push(ch);
+        } else {
+            flush_token(&mut spans, &mut token);
+            let color = if ch.is_ascii_punctuation() {
+                code_punct()
+            } else {
+                text()
+            };
+            spans.push(Span::styled(ch.to_string(), code_style(color)));
+        }
+    }
+
+    flush_token(&mut spans, &mut token);
+    spans
 }
 
-fn lain_code_color(style: SyntectStyle) -> Color {
-    let color = style.foreground;
-    if style
-        .font_style
-        .contains(syntect::highlighting::FontStyle::ITALIC)
-        || (color.r < 118 && color.g < 118 && color.b < 118)
-    {
-        code_comment()
-    } else if style
-        .font_style
-        .contains(syntect::highlighting::FontStyle::BOLD)
-    {
-        code_func()
-    } else if color.r > 190 && color.b > 165 && color.g < 170 {
+fn flush_token(spans: &mut Vec<Span<'static>>, token: &mut String) {
+    if token.is_empty() {
+        return;
+    }
+
+    let color = if is_keyword(token) {
         code_keyword()
-    } else if color.g > color.r.saturating_add(25) && color.g > color.b.saturating_add(5) {
-        code_string()
-    } else if color.b > color.r.saturating_add(25) && color.g > color.r.saturating_add(10) {
-        code_type()
-    } else if color.b > color.r.saturating_add(25) {
+    } else if token.chars().all(|ch| ch.is_ascii_digit()) {
         code_number()
-    } else if color.r > 175 && color.g > 145 && color.b < 145 {
-        code_const()
-    } else if color.r > 180 && color.b > 95 && color.g < 135 {
-        code_operator()
-    } else if color.r < 175 && color.g < 175 && color.b < 175 {
-        code_punct()
-    } else if color.r > 200 && color.g > 200 && color.b > 200 {
-        text()
+    } else if token
+        .chars()
+        .next()
+        .is_some_and(|ch| ch.is_ascii_uppercase())
+    {
+        code_type()
     } else {
-        Color::Rgb(
-            boost_code_channel(color.r),
-            boost_code_channel(color.g),
-            boost_code_channel(color.b),
-        )
+        text()
+    };
+    spans.push(Span::styled(std::mem::take(token), code_style(color)));
+}
+
+fn code_style(color: ratatui::style::Color) -> Style {
+    Style::default().fg(color).bg(code_block_bg())
+}
+
+fn comment_marker(language: &str) -> &'static str {
+    match language {
+        "bash" | "sh" | "shell" | "python" | "py" | "toml" | "yaml" | "yml" => "#",
+        _ => "//",
     }
 }
 
-fn boost_code_channel(value: u8) -> u8 {
-    value.max(118).saturating_add(34)
-}
-
-fn syntax_set() -> &'static SyntaxSet {
-    static SYNTAX_SET: OnceLock<SyntaxSet> = OnceLock::new();
-    SYNTAX_SET.get_or_init(SyntaxSet::load_defaults_newlines)
-}
-
-fn syntax_theme() -> &'static Theme {
-    static THEME: OnceLock<Theme> = OnceLock::new();
-    THEME.get_or_init(|| {
-        let themes = ThemeSet::load_defaults();
-        themes
-            .themes
-            .get("base16-ocean.dark")
-            .or_else(|| themes.themes.values().next())
-            .cloned()
-            .unwrap_or_default()
-    })
+fn is_keyword(token: &str) -> bool {
+    matches!(
+        token,
+        "as" | "async"
+            | "await"
+            | "break"
+            | "const"
+            | "continue"
+            | "else"
+            | "enum"
+            | "false"
+            | "fn"
+            | "for"
+            | "if"
+            | "impl"
+            | "in"
+            | "let"
+            | "loop"
+            | "match"
+            | "mod"
+            | "mut"
+            | "pub"
+            | "return"
+            | "self"
+            | "static"
+            | "struct"
+            | "true"
+            | "type"
+            | "use"
+            | "while"
+    )
 }

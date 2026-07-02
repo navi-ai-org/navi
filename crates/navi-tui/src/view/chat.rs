@@ -84,52 +84,18 @@ pub(super) fn render_chat_area(frame: &mut Frame<'_>, app: &mut TuiApp, area: Re
         for (idx, line) in visible_lines.iter_mut().enumerate() {
             let global_idx = start + idx;
             if global_idx >= sel_start.0 && global_idx <= sel_end.0 {
-                let start_char = if global_idx == sel_start.0 {
+                let start_col = if global_idx == sel_start.0 {
                     sel_start.1
                 } else {
                     0
                 };
-                let end_char = if global_idx == sel_end.0 {
+                let end_col = if global_idx == sel_end.0 {
                     sel_end.1
                 } else {
                     usize::MAX
                 };
 
-                let mut new_spans = Vec::new();
-                let mut current_char = 0;
-                for span in line.spans.iter() {
-                    let span_len = display_width(&span.content);
-                    let span_end = current_char + span_len;
-
-                    if span_end <= start_char || current_char >= end_char {
-                        new_spans.push(span.clone());
-                    } else if current_char >= start_char && span_end <= end_char {
-                        new_spans.push(Span::styled(
-                            span.content.clone(),
-                            span.style.bg(Color::DarkGray),
-                        ));
-                    } else {
-                        let c1 = start_char.saturating_sub(current_char).min(span_len);
-                        let c2 = end_char.saturating_sub(current_char).min(span_len);
-
-                        let s: String = span.content.chars().collect();
-
-                        if c1 > 0 {
-                            let p1: String = s.chars().take(c1).collect();
-                            new_spans.push(Span::styled(p1, span.style));
-                        }
-                        if c2 > c1 {
-                            let p2: String = s.chars().skip(c1).take(c2 - c1).collect();
-                            new_spans.push(Span::styled(p2, span.style.bg(Color::DarkGray)));
-                        }
-                        if span_len > c2 {
-                            let p3: String = s.chars().skip(c2).collect();
-                            new_spans.push(Span::styled(p3, span.style));
-                        }
-                    }
-                    current_char = span_end;
-                }
-                *line = Line::from(new_spans);
+                *line = highlight_selection_columns(line, start_col, end_col);
             }
         }
     }
@@ -171,6 +137,43 @@ pub(super) fn render_chat_area(frame: &mut Frame<'_>, app: &mut TuiApp, area: Re
             }
         }
     }
+}
+
+fn highlight_selection_columns(
+    line: &Line<'static>,
+    start_col: usize,
+    end_col: usize,
+) -> Line<'static> {
+    if start_col >= end_col {
+        return line.clone();
+    }
+    let mut spans = Vec::new();
+    let mut current_col = 0usize;
+    for span in &line.spans {
+        for ch in span.content.chars() {
+            let width = display_width(&ch.to_string()).max(1);
+            let next_col = current_col.saturating_add(width);
+            let selected = next_col > start_col && current_col < end_col;
+            let style = if selected {
+                span.style.bg(Color::DarkGray)
+            } else {
+                span.style
+            };
+            push_char_span(&mut spans, ch, style);
+            current_col = next_col;
+        }
+    }
+    Line::from(spans)
+}
+
+fn push_char_span(spans: &mut Vec<Span<'static>>, ch: char, style: Style) {
+    if let Some(last) = spans.last_mut()
+        && last.style == style
+    {
+        last.content.to_mut().push(ch);
+        return;
+    }
+    spans.push(Span::styled(ch.to_string(), style));
 }
 
 fn render_subagent_chat_area(
@@ -413,7 +416,7 @@ fn render_image_row(
     start_index: usize,
     count: usize,
 ) {
-    let Some(message) = app.messages.get_mut(message_index) else {
+    let Some(message) = app.messages.get(message_index) else {
         return;
     };
     if count == 0 || row_area.width <= 6 || row_area.height == 0 {
@@ -436,7 +439,7 @@ fn render_image_row(
 
     for local_index in 0..count {
         let image_index = start_index + local_index;
-        let Some(image) = message.images.get_mut(image_index) else {
+        let Some(image) = message.images.get(image_index) else {
             continue;
         };
         let image_area = Rect::new(
@@ -446,16 +449,12 @@ fn render_image_row(
             thumb_height,
         );
         frame.render_widget(Block::new().style(Style::default().bg(panel())), image_area);
-        if let Some(protocol) = image.protocol.as_mut() {
-            frame.render_stateful_widget(ratatui_image::StatefulImage::new(), image_area, protocol);
-        } else {
-            frame.render_widget(
-                Paragraph::new(image.label.clone())
-                    .style(Style::default().fg(muted()).bg(panel()))
-                    .wrap(Wrap { trim: true }),
-                image_area,
-            );
-        }
+        frame.render_widget(
+            Paragraph::new(format!("image {} {}", image_index + 1, image.label))
+                .style(Style::default().fg(muted()).bg(panel()))
+                .wrap(Wrap { trim: true }),
+            image_area,
+        );
     }
 }
 
@@ -479,7 +478,9 @@ fn style_interactive_lines(
         {
             continue;
         }
-        let bg = if hovered || selected {
+        let bg = if selected {
+            interactive_bg()
+        } else if hovered {
             interactive_hover_bg()
         } else {
             interactive_bg()
@@ -773,7 +774,7 @@ mod tests {
     }
 
     #[test]
-    fn user_text_message_last_rendered_line_contains_text() {
+    fn user_text_message_rendered_block_contains_text() {
         let mut app = crate::tests::test_app("");
         app.messages.push(ChatMessage::new(
             ChatRole::User,
@@ -782,9 +783,15 @@ mod tests {
 
         ensure_chat_cache(&mut app, 80);
         let cache = app.chat_render_cache.borrow();
-        let last = cache.lines.last().map(line_text).unwrap_or_default();
+        let rendered = cache
+            .lines
+            .iter()
+            .map(line_text)
+            .collect::<Vec<_>>()
+            .join("\n");
 
-        assert!(last.contains("ykdl tui ja esta funcional."));
+        assert!(rendered.contains("ykdl tui ja esta funcional."));
+        assert_eq!(cache.lines.len(), 3);
     }
 
     #[test]

@@ -2055,8 +2055,8 @@ fn full_tool_render_generates_sanitized_metadata_view() {
     assert!(text.contains("error: denied"));
     assert!(text.contains("denied"));
     assert!(!text.contains("Input"));
-    assert!(!text.contains("Output"));
-    assert!(!text.contains("```json"));
+    assert!(text.contains("Output"));
+    assert!(text.contains("\"error\": \"denied\""));
 }
 
 #[test]

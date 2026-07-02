@@ -9,7 +9,6 @@
 //! Features inherited from NAVI:
 //! - Structured patch parser with full backup/rollback on failure
 //! - Unified diff via `git apply --whitespace=fix` with `patch -p1` fallback
-//! - File locking via `FileLockManager` (cross-instance safety)
 //! - Context windows (20 lines ±) on patch failure
 //! - `git_apply_error_hint` categorised error messages
 //!
@@ -21,7 +20,6 @@
 //!   are normalised to ASCII before context matching
 //! - **Environment ID preamble**: `*** Environment ID: <id>` line is parsed and echoed
 
-use crate::file_lock::{FileLockManager, LockGuard};
 use anyhow::{Context, Result, bail};
 use async_trait::async_trait;
 use navi_vfs::code::{replace_symbol_definition, symbols_for_source};
@@ -39,7 +37,6 @@ const MAX_PATCH_CONTEXT_WINDOWS: usize = 6;
 
 pub(crate) struct WriteTool {
     project_root: PathBuf,
-    lock_manager: Option<std::sync::Arc<FileLockManager>>,
     name: &'static str,
     mode: WriteToolMode,
 }
@@ -55,19 +52,6 @@ impl WriteTool {
     pub(crate) fn new(project_root: PathBuf) -> Self {
         Self {
             project_root,
-            lock_manager: None,
-            name: "write",
-            mode: WriteToolMode::Unified,
-        }
-    }
-
-    pub(crate) fn with_lock_manager(
-        project_root: PathBuf,
-        lock_manager: std::sync::Arc<FileLockManager>,
-    ) -> Self {
-        Self {
-            project_root,
-            lock_manager: Some(lock_manager),
             name: "write",
             mode: WriteToolMode::Unified,
         }
@@ -76,21 +60,6 @@ impl WriteTool {
     fn alias(project_root: PathBuf, name: &'static str, mode: WriteToolMode) -> Self {
         Self {
             project_root,
-            lock_manager: None,
-            name,
-            mode,
-        }
-    }
-
-    fn alias_with_lock_manager(
-        project_root: PathBuf,
-        name: &'static str,
-        mode: WriteToolMode,
-        lock_manager: std::sync::Arc<FileLockManager>,
-    ) -> Self {
-        Self {
-            project_root,
-            lock_manager: Some(lock_manager),
             name,
             mode,
         }
@@ -100,32 +69,8 @@ impl WriteTool {
         Self::alias(project_root, "write_file", WriteToolMode::Direct)
     }
 
-    pub(crate) fn write_file_with_lock_manager(
-        project_root: PathBuf,
-        lock_manager: std::sync::Arc<FileLockManager>,
-    ) -> Self {
-        Self::alias_with_lock_manager(
-            project_root,
-            "write_file",
-            WriteToolMode::Direct,
-            lock_manager,
-        )
-    }
-
     pub(crate) fn apply_patch(project_root: PathBuf) -> Self {
         Self::alias(project_root, "apply_patch", WriteToolMode::Patch)
-    }
-
-    pub(crate) fn apply_patch_with_lock_manager(
-        project_root: PathBuf,
-        lock_manager: std::sync::Arc<FileLockManager>,
-    ) -> Self {
-        Self::alias_with_lock_manager(
-            project_root,
-            "apply_patch",
-            WriteToolMode::Patch,
-            lock_manager,
-        )
     }
 }
 
@@ -256,35 +201,6 @@ impl WriteTool {
         let full_path_str = full_path.to_string_lossy().to_string();
         let content = helpers::required_string(&invocation.input, "content")?.to_string();
 
-        // Acquire file lock if configured.
-        let _guard = if let Some(ref lm) = self.lock_manager {
-            let lock_path = Path::new(&full_path_str);
-            match lm.try_lock(lock_path) {
-                Ok(Some(guard)) => Some(guard),
-                Ok(None) => {
-                    return Ok(ToolResult {
-                        invocation_id: invocation.id,
-                        ok: false,
-                        output: json!({
-                            "error": format!(
-                                "File `{}` is locked by another NAVI instance. \
-                                 Use the `wait` tool with `file_path=\"{}\"` to wait.",
-                                path.display(), path.display()
-                            ),
-                            "error_code": "file_locked",
-                            "file_path": raw_path,
-                        }),
-                    });
-                }
-                Err(e) => {
-                    tracing::warn!(path = %full_path_str, error = %e, "failed to acquire file lock");
-                    None
-                }
-            }
-        } else {
-            None
-        };
-
         let _path_clone = raw_path.clone();
         let full_path_clone = full_path_str.clone();
         let content_clone = content.clone();
@@ -372,33 +288,6 @@ impl WriteTool {
                 .and_then(Value::as_str)
                 .ok_or_else(|| anyhow::anyhow!("edit {idx}: missing `replace`"))?;
             parsed_edits.push((path.to_string(), search.to_string(), replace.to_string()));
-        }
-
-        // Acquire file locks if configured.
-        let mut _lock_guards: Vec<LockGuard> = Vec::new();
-        if let Some(lock_manager) = &self.lock_manager {
-            for (path, _, _) in &parsed_edits {
-                match lock_manager.try_lock(Path::new(path)) {
-                    Ok(Some(guard)) => _lock_guards.push(guard),
-                    Ok(None) => {
-                        return Ok(ToolResult {
-                            invocation_id: invocation.id.clone(),
-                            ok: false,
-                            output: json!({
-                                "error": format!(
-                                    "File `{path}` is locked by another NAVI instance. \
-                                     Use the `wait` tool with `file_path=\"{path}\"` to wait."
-                                ),
-                                "error_code": "file_locked",
-                                "file_path": path,
-                            }),
-                        });
-                    }
-                    Err(err) => {
-                        tracing::warn!(path = %path, error = %err, "failed to acquire edit file lock");
-                    }
-                }
-            }
         }
 
         let mut files_changed = Vec::new();
@@ -551,33 +440,6 @@ impl WriteTool {
             .collect();
 
         let affected = patch_affected_files(&patches)?;
-
-        // Acquire file locks if configured.
-        let mut _lock_guards: Vec<LockGuard> = Vec::new();
-        if let Some(lock_manager) = &self.lock_manager {
-            for file in &affected {
-                match lock_manager.try_lock(Path::new(file)) {
-                    Ok(Some(guard)) => _lock_guards.push(guard),
-                    Ok(None) => {
-                        return Ok(ToolResult {
-                            invocation_id: invocation.id,
-                            ok: false,
-                            output: json!({
-                                "error": format!(
-                                    "File `{file}` is locked by another NAVI instance. \
-                                     Use the `wait` tool with `file_path=\"{file}\"` to wait."
-                                ),
-                                "error_code": "file_locked",
-                                "file_path": file,
-                            }),
-                        });
-                    }
-                    Err(err) => {
-                        tracing::warn!(path = %file, error = %err, "failed to acquire patch file lock");
-                    }
-                }
-            }
-        }
 
         // Phase 1: Parse and verify (Codex verification phase).
         // For structured patches, read target files and attempt context match BEFORE applying.

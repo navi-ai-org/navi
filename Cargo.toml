@@ -17,6 +17,22 @@ members = [
     "crates/navi-vfs",
 ]
 resolver = "3"
+default-members = [
+    "crates/navi-cli",
+    "crates/navi-core",
+    "crates/navi-mcp",
+    "crates/navi-napi",
+    "crates/navi-openai",
+    "crates/navi-plugin-api",
+    "crates/navi-plugin-broker",
+    "crates/navi-plugin-host",
+    "crates/navi-plugin-manifest",
+    "crates/navi-plugin-orchestrator",
+    "crates/navi-providers",
+    "crates/navi-sdk",
+    "crates/navi-tui",
+    "crates/navi-vfs",
+]
 
 [workspace.package]
 version = "0.1.0"
@@ -36,18 +52,13 @@ crossterm = "0.29"
 directories = "6"
 libloading = "0.9"
 ratatui = { version = "0.30", default-features = false, features = ["crossterm", "layout-cache", "macros", "underline-color"] }
-ratatui-image = { version = "11", default-features = false, features = ["crossterm", "image-defaults"] }
-image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 reqwest = { version = "0.13", default-features = false, features = ["json", "rustls", "stream"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
 hex = "0.4"
 jsonschema = { version = "0.46.5", default-features = false }
-starlark = "0.14.2"
-syntect = { version = "5", default-features = false, features = ["default-fancy"] }
 async-stream = "0.3"
-agent-client-protocol = "0.12.1"
 futures-util = "0.3"
 thiserror = "2"
 tokio = { version = "1", features = ["io-util", "macros", "process", "rt-multi-thread", "sync", "time"] }
@@ -94,7 +105,7 @@ navi-plugin-broker = { version = "0.1.0", path = "crates/navi-plugin-broker" }
 navi-providers = { version = "0.1.1", path = "crates/navi-providers" }
 navi-plugin-host = { version = "0.1.0", path = "crates/navi-plugin-host" }
 navi-plugin-manifest = { version = "0.1.0", path = "crates/navi-plugin-manifest" }
-navi-plugin-orchestrator = { version = "0.1.0", path = "crates/navi-plugin-orchestrator" }
+navi-plugin-orchestrator = { version = "0.1.0", path = "crates/navi-plugin-orchestrator", default-features = false }
 navi-plugin-runtime = { version = "0.1.0", path = "crates/navi-plugin-runtime" }
 navi-sdk = { version = "0.1.0", path = "crates/navi-sdk" }
 navi-tui = { version = "0.1.0", path = "crates/navi-tui" }

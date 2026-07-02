@@ -216,7 +216,7 @@ where
     let tokens =
         exchange_openai_code_for_tokens(&issuer, &client_id, &redirect_uri, &pkce, &code).await?;
     credential_store
-        .set_oauth_credential(provider_id, &tokens.access_token, "chat-completions")
+        .set_oauth_credential(provider_id, &tokens.access_token, "chatgpt-codex")
         .map_err(|err| err.to_string())?;
     Ok(())
 }

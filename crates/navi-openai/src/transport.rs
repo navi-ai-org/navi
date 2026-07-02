@@ -84,6 +84,8 @@ fn is_usage_limit_error(body: &str) -> bool {
     body.contains("freeusagelimiterror")
         || body.contains("free usage limit")
         || body.contains("usage limit exceeded")
+        || body.contains("insufficient_quota")
+        || body.contains("exceeded your current quota")
 }
 
 fn get_jitter() -> f64 {

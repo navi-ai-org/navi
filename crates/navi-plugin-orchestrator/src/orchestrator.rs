@@ -1,21 +1,29 @@
 use anyhow::{Context, Result};
-use navi_core::{Tool, ToolExecutor};
-use navi_plugin_manifest::{self, Lockfile, PluginManifest, SecurityDefaults, TrustLevel};
+#[cfg(feature = "wasm-runtime")]
+use navi_core::Tool;
+use navi_core::ToolExecutor;
+#[cfg(feature = "wasm-runtime")]
+use navi_plugin_manifest::PluginManifest;
+use navi_plugin_manifest::{self, Lockfile, SecurityDefaults, TrustLevel};
 use std::path::{Path, PathBuf};
+#[cfg(feature = "wasm-runtime")]
 use std::sync::Arc;
 
+#[cfg(feature = "wasm-runtime")]
 use crate::tool_adapter::WasmPluginTool;
 
 /// Plugin orchestrator that manages the full plugin lifecycle:
 /// discovery → manifest parsing → validation → risk classification → tool registration.
 pub struct PluginOrchestrator {
     /// Project root directory.
+    #[cfg(feature = "wasm-runtime")]
     project_root: PathBuf,
     /// Plugin directory (where .wasm files and plugin.toml live).
     plugin_dir: PathBuf,
     /// Lockfile path.
     lockfile_path: PathBuf,
     /// Security defaults.
+    #[cfg(feature = "wasm-runtime")]
     defaults: SecurityDefaults,
     /// Loaded lockfile.
     lockfile: Lockfile,
@@ -50,11 +58,15 @@ impl PluginOrchestrator {
     ) -> Self {
         let _ = navi_plugin_manifest::migrate_legacy_per_plugin_lockfiles(&plugin_dir);
         let lockfile = Lockfile::load(&lockfile_path).unwrap_or_default();
+        #[cfg(not(feature = "wasm-runtime"))]
+        let _ = (&project_root, &defaults);
 
         Self {
+            #[cfg(feature = "wasm-runtime")]
             project_root,
             plugin_dir,
             lockfile_path,
+            #[cfg(feature = "wasm-runtime")]
             defaults,
             lockfile,
             warnings: Vec::new(),
@@ -139,12 +151,15 @@ impl PluginOrchestrator {
         .map_err(|reason| anyhow::anyhow!("signature verification failed: {reason}"))?;
 
         // 3a. Detect WASM component kind
-        let component_kind = navi_plugin_runtime::detect_component_kind(&wasm_bytes);
-        tracing::debug!(
-            plugin = manifest.plugin.id,
-            kind = ?component_kind,
-            "detected WASM component kind"
-        );
+        #[cfg(feature = "wasm-runtime")]
+        {
+            let component_kind = navi_plugin_runtime::detect_component_kind(&wasm_bytes);
+            tracing::debug!(
+                plugin = manifest.plugin.id,
+                kind = ?component_kind,
+                "detected WASM component kind"
+            );
+        }
 
         // 4. Verify WASM hash
         let expected_hash = &manifest.plugin.wasm_hash;
@@ -167,48 +182,59 @@ impl PluginOrchestrator {
         navi_plugin_manifest::verify_approved_capabilities(&manifest, lock_entry)
             .map_err(|reason| anyhow::anyhow!("{reason}"))?;
 
-        // 6. Create and register tools
-        let mut tool_count = 0;
-        let mut risk_labels = Vec::new();
-
-        for (i, _tool_def) in manifest.tools.iter().enumerate() {
-            let wasm_tool = WasmPluginTool::new(
-                &manifest,
-                i,
-                wasm_bytes.clone(),
-                self.project_root.clone(),
-                self.defaults.clone(),
-            )?;
-
-            risk_labels.push(format!("{:?}", wasm_tool.risk_level()));
-            let tool_name = wasm_tool.definition().name.clone();
-            executor.register_tool(Arc::new(wasm_tool));
-            tool_count += 1;
-
-            tracing::info!(
-                plugin = plugin_id,
-                tool = tool_name,
-                "registered WASM plugin tool"
-            );
+        #[cfg(not(feature = "wasm-runtime"))]
+        {
+            let _ = executor;
+            return Err(anyhow::anyhow!(
+                "WASM plugin runtime is disabled in this build; rebuild with feature `wasm-runtime`"
+            ));
         }
 
-        // 7. Refresh lockfile metadata without expanding approved capabilities
-        let mut entry = lock_entry.clone();
-        entry.version = manifest.plugin.version.clone();
-        entry.publisher = manifest.plugin.publisher.clone();
-        entry.wasm_hash = manifest.plugin.wasm_hash.clone();
-        entry.capabilities_hash = compute_capabilities_hash(&manifest);
-        entry.tools_hash = compute_tools_hash(&manifest);
-        self.lockfile.upsert(entry);
+        #[cfg(feature = "wasm-runtime")]
+        {
+            // 6. Create and register tools
+            let mut tool_count = 0;
+            let mut risk_labels = Vec::new();
 
-        let risk_level = risk_labels.join(", ");
+            for (i, _tool_def) in manifest.tools.iter().enumerate() {
+                let wasm_tool = WasmPluginTool::new(
+                    &manifest,
+                    i,
+                    wasm_bytes.clone(),
+                    self.project_root.clone(),
+                    self.defaults.clone(),
+                )?;
 
-        Ok(LoadedPluginInfo {
-            plugin_id: plugin_id.clone(),
-            version: manifest.plugin.version.clone(),
-            tool_count,
-            risk_level,
-        })
+                risk_labels.push(format!("{:?}", wasm_tool.risk_level()));
+                let tool_name = wasm_tool.definition().name.clone();
+                executor.register_tool(Arc::new(wasm_tool));
+                tool_count += 1;
+
+                tracing::info!(
+                    plugin = plugin_id,
+                    tool = tool_name,
+                    "registered WASM plugin tool"
+                );
+            }
+
+            // 7. Refresh lockfile metadata without expanding approved capabilities
+            let mut entry = lock_entry.clone();
+            entry.version = manifest.plugin.version.clone();
+            entry.publisher = manifest.plugin.publisher.clone();
+            entry.wasm_hash = manifest.plugin.wasm_hash.clone();
+            entry.capabilities_hash = compute_capabilities_hash(&manifest);
+            entry.tools_hash = compute_tools_hash(&manifest);
+            self.lockfile.upsert(entry);
+
+            let risk_level = risk_labels.join(", ");
+
+            Ok(LoadedPluginInfo {
+                plugin_id: plugin_id.clone(),
+                version: manifest.plugin.version.clone(),
+                tool_count,
+                risk_level,
+            })
+        }
     }
 
     /// Discover plugin directories in the plugin directory.
@@ -242,6 +268,7 @@ impl PluginOrchestrator {
 }
 
 /// Compute a hash of the capabilities section.
+#[cfg(feature = "wasm-runtime")]
 fn compute_capabilities_hash(manifest: &PluginManifest) -> String {
     let caps: Vec<&str> = manifest.capabilities.iter().map(|c| c.id()).collect();
     let content = caps.join(",");
@@ -249,6 +276,7 @@ fn compute_capabilities_hash(manifest: &PluginManifest) -> String {
 }
 
 /// Compute a hash of the tools section.
+#[cfg(feature = "wasm-runtime")]
 fn compute_tools_hash(manifest: &PluginManifest) -> String {
     let tools: Vec<String> = manifest
         .tools

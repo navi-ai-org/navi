@@ -49,6 +49,9 @@ fn format_api_error(
         (404, _) => "The API endpoint was not found. This usually means the provider base URL is misconfigured.".to_string(),
         (408 | 504, _) => "The request timed out. The provider may be experiencing high load. Try again in a moment.".to_string(),
         (422, _) => "The request contained invalid parameters. This may be a model compatibility issue.".to_string(),
+        (429, Some("insufficient_quota")) => {
+            "Quota exhausted for the credential actually used by this provider. Check the selected provider/model and make sure the stored credential belongs to an OpenAI Platform project with API billing/quota; ChatGPT/OAuth connector access is not the same as Platform API quota.".to_string()
+        }
         (429, Some("rate_limit_error")) | (429, _) => {
             if let Some(delay) = requested_delay {
                 format!("Rate limited. The provider asks to wait {} before retrying.", format_delay(delay))

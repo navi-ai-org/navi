@@ -10,7 +10,6 @@ pub mod dataset;
 pub mod effect;
 pub mod eval;
 pub mod event;
-pub mod file_lock;
 mod fs_util;
 pub mod goal;
 pub mod harness;
@@ -79,7 +78,6 @@ pub use event::{
     QuestionResponse, RuntimeEvent, RuntimeEventKind, SubagentTranscriptItem,
     SubagentTranscriptKind,
 };
-pub use file_lock::{FileLockInfo, FileLockManager, LockGuard};
 pub use goal::{
     CreateGoalTool, GetGoalTool, GoalExtension, GoalId, GoalRuntimeHandle, GoalService, GoalStatus,
     SessionGoal, UpdateGoalTool, goal_tool_definitions,

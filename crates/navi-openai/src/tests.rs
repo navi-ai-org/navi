@@ -851,6 +851,14 @@ async fn test_should_retry_error() {
         std::time::Duration::from_secs(60)
     );
 
+    let insufficient_quota_err = ProviderError::Api {
+        status: StatusCode::TOO_MANY_REQUESTS,
+        body: r#"{"error":{"message":"You exceeded your current quota, please check your plan and billing details.","code":"insufficient_quota"}}"#.to_string(),
+        requested_delay: None,
+        body_read_error: None,
+    };
+    assert!(!should_retry_error(&insufficient_quota_err, true));
+
     let client_err = ProviderError::Api {
         status: StatusCode::BAD_REQUEST,
         body: "Bad request".to_string(),

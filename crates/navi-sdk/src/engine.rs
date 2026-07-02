@@ -226,12 +226,17 @@ impl NaviEngine {
 
         // If a session with this ID already exists, return it without recreating.
         if let Some(session_id) = &request.session_id {
-            let sessions = self
-                .inner
-                .sessions
-                .read()
-                .unwrap_or_else(|e| e.into_inner());
-            if sessions.contains_key(session_id) {
+            let existing_session = {
+                let sessions = self
+                    .inner
+                    .sessions
+                    .read()
+                    .unwrap_or_else(|e| e.into_inner());
+                sessions.get(session_id).cloned()
+            };
+            if let Some(session) = existing_session {
+                let mut runtime = session.runtime.lock().await;
+                runtime.set_active_skills(request.active_skills.clone());
                 let loaded_config = self.loaded_config();
                 return Ok(NaviSessionInfo {
                     id: session_id.clone(),
@@ -285,6 +290,11 @@ impl NaviEngine {
         ));
         let shared_config = Arc::new(std::sync::RwLock::new(loaded_config.config.clone()));
         let prompt_cache = Arc::new(navi_core::PromptCache::new());
+        executor.register_skill_loader(
+            project_dir.clone(),
+            loaded_config.data_dir.clone(),
+            shared_config.clone(),
+        );
         tool_executor.tool_executor = Arc::new_cyclic(|weak_exec| {
             let subagent = navi_core::SubagentTool::new(
                 weak_exec.clone(),
@@ -333,10 +343,6 @@ impl NaviEngine {
         });
         let events = runtime.stream_events();
         let session_id = runtime.start_session()?;
-        // Propagate session ID to the file lock manager for cross-instance coordination.
-        if let Some(executor) = runtime.tool_executor() {
-            executor.set_session_id_on_locks(session_id.as_str());
-        }
         let approval_resolver = runtime.approval_resolver();
         let question_resolver = runtime.question_resolver();
         let turn_canceller = runtime.turn_canceller();
@@ -864,6 +870,7 @@ impl NaviEngine {
     /// Reloads WASM plugin tools on every active in-memory session without restarting NAVI.
     ///
     /// Installed plugins are read from `{data_dir}/plugins/` plus configured `wasm_plugins` scan roots.
+    #[cfg(feature = "wasm-plugins")]
     pub async fn reload_wasm_plugins(&self) -> Result<Vec<String>> {
         let loaded_config = self.loaded_config();
         let project_dir = self.inner.project_dir.clone();
@@ -892,6 +899,15 @@ impl NaviEngine {
             warnings.extend(fresh.warnings);
         }
         Ok(warnings)
+    }
+
+    /// Reports that this build does not include the WASM plugin runtime.
+    #[cfg(not(feature = "wasm-plugins"))]
+    pub async fn reload_wasm_plugins(&self) -> Result<Vec<String>> {
+        Ok(vec![
+            "WASM plugin runtime is disabled in this build; rebuild `navi-sdk` with feature `wasm-plugins`"
+                .to_string(),
+        ])
     }
 
     /// Returns the IDs of all active (in-memory) sessions.
