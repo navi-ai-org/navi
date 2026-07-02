@@ -1,6 +1,8 @@
 //! Local SQLite cache for the provider registry.
 
-use crate::config::types::{ModelTaskSize, ProviderConfig, ProviderKind, ProviderModelConfig};
+use crate::config::types::{
+    ModelTaskSize, ProviderConfig, ProviderKind, ProviderModelConfig, ToolCallingMode,
+};
 use anyhow::{Context, Result};
 use rusqlite::{Connection, params};
 use std::path::Path;
@@ -20,6 +22,10 @@ pub struct RegistryStore {
 
 impl RegistryStore {
     /// Opens (or creates) the registry database at `<data_dir>/registry.db`.
+    ///
+    /// On first run (empty database), seeds the cache from the embedded registry
+    /// snapshot so the provider catalog is immediately available without a
+    /// network fetch.
     pub fn open(data_dir: &Path) -> Result<Self> {
         std::fs::create_dir_all(data_dir)
             .with_context(|| format!("failed to create data dir {}", data_dir.display()))?;
@@ -35,6 +41,21 @@ impl RegistryStore {
             conn: Mutex::new(conn),
         };
         store.init_schema()?;
+
+        // Seed from the embedded snapshot if the cache is empty.
+        if store.is_empty()? {
+            if let Ok(providers) = super::embedded::embedded_providers() {
+                tracing::info!(
+                    providers = providers.len(),
+                    "seeding registry cache from embedded snapshot"
+                );
+                store.replace_all(&providers)?;
+            }
+            if let Ok(manifest) = super::embedded::embedded_manifest() {
+                let _ = store.save_manifest_meta(&manifest);
+            }
+        }
+
         Ok(store)
     }
 
@@ -66,6 +87,7 @@ impl RegistryStore {
                 kind            TEXT NOT NULL,
                 api_key_env     TEXT NOT NULL,
                 base_url        TEXT,
+                tool_calling_mode TEXT,
                 request_options TEXT NOT NULL DEFAULT '{}',
                 updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
             );
@@ -121,6 +143,7 @@ impl RegistryStore {
         )?;
         ensure_provider_request_options_column(&conn)?;
         ensure_model_output_columns(&conn)?;
+        ensure_provider_tool_calling_mode_column(&conn)?;
         Ok(())
     }
 
@@ -180,8 +203,8 @@ impl RegistryStore {
         let tx = conn.unchecked_transaction()?;
 
         tx.execute(
-            "INSERT OR REPLACE INTO providers (id, label, description, kind, api_key_env, base_url, request_options, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, datetime('now'))",
+            "INSERT OR REPLACE INTO providers (id, label, description, kind, api_key_env, base_url, tool_calling_mode, request_options, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, datetime('now'))",
             params![
                 provider.id,
                 provider.label,
@@ -189,6 +212,7 @@ impl RegistryStore {
                 provider.kind,
                 provider.api_key_env,
                 provider.base_url,
+                provider.tool_calling_mode,
                 serde_json::to_string(&provider.request_options)?,
             ],
         )?;
@@ -229,7 +253,7 @@ impl RegistryStore {
         let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
 
         let mut stmt = conn.prepare(
-            "SELECT id, label, description, kind, api_key_env, base_url, request_options FROM providers ORDER BY id",
+            "SELECT id, label, description, kind, api_key_env, base_url, tool_calling_mode, request_options FROM providers ORDER BY id",
         )?;
 
         let provider_rows = stmt.query_map([], |row| {
@@ -240,17 +264,29 @@ impl RegistryStore {
                 row.get::<_, String>(3)?,
                 row.get::<_, String>(4)?,
                 row.get::<_, Option<String>>(5)?,
-                row.get::<_, String>(6)?,
+                row.get::<_, Option<String>>(6)?,
+                row.get::<_, String>(7)?,
             ))
         })?;
 
         let mut providers = Vec::new();
 
         for row in provider_rows {
-            let (id, label, description, kind_str, api_key_env, base_url, request_options_json) =
-                row?;
+            let (
+                id,
+                label,
+                description,
+                kind_str,
+                api_key_env,
+                base_url,
+                tool_calling_mode_str,
+                request_options_json,
+            ) = row?;
             let kind = parse_provider_kind(&kind_str);
             let request_options = serde_json::from_str(&request_options_json).ok();
+            let tool_calling_mode = tool_calling_mode_str
+                .as_deref()
+                .map(parse_tool_calling_mode);
 
             let mut model_stmt = conn.prepare(
                 "SELECT name, task_size, context_window_tokens, max_output_tokens, recommended_temperature, supports_thinking, tool_prompt_manifest
@@ -291,6 +327,7 @@ impl RegistryStore {
                 base_url,
                 models,
                 request_options,
+                tool_calling_mode,
                 ..Default::default()
             });
         }
@@ -588,6 +625,59 @@ fn parse_provider_kind(s: &str) -> ProviderKind {
     }
 }
 
+fn parse_tool_calling_mode(s: &str) -> ToolCallingMode {
+    match s {
+        "native" => ToolCallingMode::Native,
+        "text-extracted" => ToolCallingMode::TextExtracted,
+        "manifest-only" => ToolCallingMode::ManifestOnly,
+        "disabled" => ToolCallingMode::Disabled,
+        _ => ToolCallingMode::Native,
+    }
+}
+
+/// Converts a [`RegistryProvider`] into a [`ProviderConfig`].
+///
+/// This is the single conversion path used by both the SQLite cache loader and
+/// the embedded snapshot fallback, ensuring consistent field mapping.
+pub fn registry_provider_to_config(rp: RegistryProvider) -> ProviderConfig {
+    let kind = parse_provider_kind(&rp.kind);
+    let tool_calling_mode = rp.tool_calling_mode.as_deref().map(parse_tool_calling_mode);
+
+    let models = rp
+        .models
+        .into_iter()
+        .map(|m| ProviderModelConfig {
+            name: m.name,
+            task_size: match m.task_size.as_str() {
+                "small" => ModelTaskSize::Small,
+                _ => ModelTaskSize::Large,
+            },
+            context_window_tokens: m.context_window_tokens,
+            max_output_tokens: m.max_output_tokens,
+            recommended_temperature: m.recommended_temperature,
+            supports_thinking: m.supports_thinking,
+            tool_prompt_manifest: None,
+        })
+        .collect();
+
+    ProviderConfig {
+        id: rp.id,
+        label: rp.label,
+        description: rp.description,
+        kind,
+        api_key_env: rp.api_key_env,
+        base_url: rp.base_url,
+        models,
+        tool_calling_mode,
+        request_options: if rp.request_options.is_empty() {
+            None
+        } else {
+            Some(rp.request_options)
+        },
+        ..Default::default()
+    }
+}
+
 fn ensure_provider_request_options_column(conn: &Connection) -> Result<()> {
     let mut stmt = conn.prepare("PRAGMA table_info(providers)")?;
     let has_column = stmt
@@ -633,6 +723,22 @@ fn ensure_model_output_columns(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
+fn ensure_provider_tool_calling_mode_column(conn: &Connection) -> Result<()> {
+    let mut stmt = conn.prepare("PRAGMA table_info(providers)")?;
+    let has_column = stmt
+        .query_map([], |row| row.get::<_, String>(1))?
+        .any(|name| matches!(name, Ok(name) if name == "tool_calling_mode"));
+
+    if !has_column {
+        conn.execute(
+            "ALTER TABLE providers ADD COLUMN tool_calling_mode TEXT",
+            [],
+        )?;
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use crate::config::types::ProviderRequestOptions;
@@ -648,6 +754,7 @@ mod tests {
             kind: "openai-chat-completions".to_string(),
             api_key_env: "TEST_API_KEY".to_string(),
             base_url: Some("https://api.test.com/v1".to_string()),
+            tool_calling_mode: None,
             request_options: Default::default(),
             models: vec![
                 RegistryModel {
@@ -674,6 +781,18 @@ mod tests {
     fn open_and_init_schema() {
         let store = RegistryStore::open_memory().expect("open");
         assert!(store.is_empty().unwrap());
+    }
+
+    #[test]
+    fn tool_calling_mode_roundtrips_through_store() {
+        let store = RegistryStore::open_memory().expect("open");
+        let mut provider = sample_provider();
+        provider.tool_calling_mode = Some("native".to_string());
+        store.upsert_provider(&provider).expect("upsert");
+
+        let loaded = store.load_all_providers().expect("load");
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].tool_calling_mode, Some(ToolCallingMode::Native));
     }
 
     #[test]
@@ -741,6 +860,7 @@ mod tests {
             kind: "anthropic-messages".to_string(),
             api_key_env: "OTHER_KEY".to_string(),
             base_url: None,
+            tool_calling_mode: None,
             request_options: Default::default(),
             models: vec![],
         }];
@@ -776,6 +896,7 @@ mod tests {
             kind: "openai-chat-completions".to_string(),
             api_key_env: "K".to_string(),
             base_url: None,
+            tool_calling_mode: None,
             request_options: Default::default(),
             models: vec![RegistryModel {
                 name: "m".to_string(),
@@ -910,6 +1031,7 @@ mod tests {
             kind: "openai-chat-completions".to_string(),
             api_key_env: "TINY_KEY".to_string(),
             base_url: None,
+            tool_calling_mode: None,
             request_options: Default::default(),
             models: vec![RegistryModel {
                 name: "tiny-model".to_string(),

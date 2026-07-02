@@ -1,8 +1,8 @@
 use anyhow::Result;
 use navi_core::{
-    CredentialStore, LoadedConfig, ModelProvider, ProviderConfig, ProviderKind,
-    RuntimeComponents, SecurityPolicy, ToolExecutor, model_can_run_publicly,
-    resolve_provider_api_key, resolve_provider_api_key_for_project, resolve_provider_config,
+    CredentialStore, LoadedConfig, ModelProvider, ProviderConfig, ProviderKind, RuntimeComponents,
+    SecurityPolicy, ToolExecutor, model_can_run_publicly, resolve_provider_api_key,
+    resolve_provider_api_key_for_project, resolve_provider_config,
 };
 use navi_plugin_host::{LoadOptions, load_configured_plugins_with_options};
 #[cfg(feature = "wasm-plugins")]
@@ -308,7 +308,10 @@ fn provider_config_for_api_key(
     inferred_provider_config_for_api_key(provider_config, api_key)
 }
 
-fn inferred_provider_config_for_api_key(provider_config: &ProviderConfig, api_key: &str) -> ProviderConfig {
+fn inferred_provider_config_for_api_key(
+    provider_config: &ProviderConfig,
+    api_key: &str,
+) -> ProviderConfig {
     if provider_config.id == "openai" && is_probably_chatgpt_oauth_token(api_key) {
         return openai_chatgpt_codex_config(provider_config);
     }

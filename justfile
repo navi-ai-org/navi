@@ -142,6 +142,16 @@ analyze profile=quality_profile *args:
 clippy:
     cargo clippy --workspace --all-targets -- -D warnings
 
+# ─── Registry ────────────────────────────────────────────────────────────────
+
+# Sync the embedded registry snapshot from the remote navi-registry database repo.
+# After running this, rebuild navi to embed the updated snapshot.
+sync-registry-snapshot:
+    @echo "Fetching latest registry from navi-ai-org/navi-registry..."
+    git archive --remote=https://github.com/navi-ai-org/navi-registry.git main manifest.json providers | tar -x -C crates/navi-core/registry-snapshot/
+    @echo "Registry snapshot updated. Rebuild navi to embed it."
+    @echo "  cargo check -p navi-core"
+
 # ─── Aggregates ────────────────────────────────────────────────────────────────
 
 # Fast local gate: format, compile, unit tests

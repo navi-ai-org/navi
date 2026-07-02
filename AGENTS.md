@@ -158,6 +158,44 @@ Provider keys are resolved in this order:
 2. Provider-specific external auth sources
 3. Credential store under NAVI's data directory
 
+### Provider Registry Database
+
+Provider and model definitions live in a standalone repository: **[navi-ai-org/navi-registry](https://github.com/navi-ai-org/navi-registry)**. This is the single source of truth for provider configs — no hardcoded provider list exists in the NAVI binary.
+
+How it works:
+
+1. **Build-time embedding**: `crates/navi-core/registry-snapshot/` contains a vendored copy of the DB repo's `manifest.json` + `providers/*.json`. `build.rs` embeds these into the binary via `include_str!`. The embedded snapshot is the offline fallback and first-run seed.
+2. **SQLite cache**: On first run, `RegistryStore::open()` seeds `<data_dir>/registry.db` from the embedded snapshot. Subsequent startups load from the cache.
+3. **Remote pull**: If the cache is stale (> 24h) or the remote manifest version is newer, NAVI fetches the latest manifest and provider JSONs from `raw.githubusercontent.com/navi-ai-org/navi-registry/main`, verifies SHA-256 hashes, and updates the cache. This lets users on old NAVI versions get new providers without upgrading.
+4. **Fallback chain**: SQLite cache → embedded snapshot → minimal hardcoded fallback (OpenAI only).
+
+Key files:
+
+| File | Role |
+|---|---|
+| `crates/navi-core/build.rs` | Embeds `registry-snapshot/` into the binary at build time |
+| `crates/navi-core/src/registry/embedded.rs` | Parses the embedded snapshot into `RegistryProvider` values |
+| `crates/navi-core/src/registry/fetcher.rs` | HTTP fetcher + SHA-256 integrity check |
+| `crates/navi-core/src/registry/store.rs` | SQLite cache + `registry_provider_to_config()` conversion |
+| `crates/navi-core/registry-snapshot/` | Vendored snapshot (updated by `just sync-registry-snapshot`) |
+
+CLI commands:
+
+```bash
+navi registry sync   # Force-sync from the remote DB repo
+navi registry list   # List providers and model counts from the cache
+navi --print-providers  # Print full provider catalog as JSON
+```
+
+Update the embedded snapshot:
+
+```bash
+just sync-registry-snapshot
+cargo check -p navi-core
+```
+
+To add a new provider, submit a PR to `navi-ai-org/navi-registry` with a `providers/<id>.json` file. Run `python scripts/validate.py` in the DB repo to validate and regenerate the manifest.
+
 ## Tools And Security
 
 Built-in tools:
@@ -436,6 +474,7 @@ First time on a machine: `just setup-tools` (installs rustquty collectors; see `
 | Quick quality (fmt + clippy) | `just quality-fast` |
 | Coverage LCOV | `just coverage` |
 | Coverage HTML | `just coverage-html` |
+| Sync registry snapshot | `just sync-registry-snapshot` |
 
 **Exceptions** (no `just` recipe yet — `cargo` is OK):
 
@@ -444,6 +483,8 @@ cargo run -p navi-cli -- TASK
 cargo run -p navi-cli -- --no-tui TASK
 cargo run -p navi-cli -- --print-config
 cargo run -p navi-cli -- --print-providers
+cargo run -p navi-cli -- registry sync
+cargo run -p navi-cli -- registry list
 ```
 
 Headless mode requires a task argument.

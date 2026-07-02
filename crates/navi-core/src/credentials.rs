@@ -746,9 +746,10 @@ fn stored_model_api_key_for_account_or_openai_oauth(
     credential_store
         .get_model_api_key_for_account(provider_id, account_id)
         .or_else(|| {
-            (provider_id == ProviderId::OPENAI && credential_store.has_oauth_credential(provider_id))
-                .then(|| credential_store.get_api_key_for_account(provider_id, account_id))
-                .flatten()
+            (provider_id == ProviderId::OPENAI
+                && credential_store.has_oauth_credential(provider_id))
+            .then(|| credential_store.get_api_key_for_account(provider_id, account_id))
+            .flatten()
         })
 }
 

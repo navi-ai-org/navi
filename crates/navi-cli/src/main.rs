@@ -10,6 +10,7 @@ mod eval_cmd;
 mod mcp_cmd;
 mod memory_cmd;
 mod plugin_cmd;
+mod registry_cmd;
 
 #[derive(Debug, Parser)]
 #[command(name = "navi")]
@@ -75,6 +76,11 @@ enum Commands {
     },
     /// Run interactive setup wizard (provider login, agent-configured interview)
     Setup,
+    /// Sync and list providers from the registry database
+    Registry {
+        #[command(subcommand)]
+        action: RegistryAction,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -226,6 +232,14 @@ enum McpAction {
 }
 
 #[derive(Debug, Subcommand)]
+enum RegistryAction {
+    /// Force-sync the provider registry from the remote database
+    Sync,
+    /// List all providers and model counts from the local cache
+    List,
+}
+
+#[derive(Debug, Subcommand)]
 enum PluginAction {
     /// Install a plugin from a local directory (developer workflow)
     Install {
@@ -327,6 +341,11 @@ async fn main() -> Result<()> {
         tracing::info!("starting interactive setup wizard");
         navi_tui::run(TuiApp::setup_mode(loaded_config, cwd)?)?;
         return Ok(());
+    }
+
+    // Handle registry subcommand early
+    if let Some(Commands::Registry { action }) = cli.command {
+        return registry_cmd::handle_registry_command(action, &loaded_config, &cwd).await;
     }
 
     if cli.print_log_path {

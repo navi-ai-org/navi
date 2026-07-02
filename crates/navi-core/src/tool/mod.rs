@@ -27,8 +27,8 @@ use builtin::{
     CurrentTimeTool, HistoryOpsTool, InitSessionTool, MarkFeatureDoneTool, NewContextWindowTool,
     PackageManagerTool, PlanTool, ProcessTool, QuestionTool, ReadTool, RepoIntelligenceAction,
     RepoIntelligenceTool, RequestUserInputTool, RuntimeInfoTool, SandboxTool, SearchTool,
-    SleepTool, ToolSearchTool, VerifierTool, ViewImageTool, WriteTool, builtin_metadata,
-    truncate_tool_result, SetGoalTool,
+    SetGoalTool, SleepTool, ToolSearchTool, VerifierTool, ViewImageTool, WriteTool,
+    builtin_metadata, truncate_tool_result,
 };
 
 pub use builtin::{AgentProfile, ApprovalMode, ProviderBuilderFn, RepoExploreTool, SubagentTool};

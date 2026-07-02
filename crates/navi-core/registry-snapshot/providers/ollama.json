@@ -1,0 +1,29 @@
+{
+  "id": "ollama",
+  "label": "Ollama",
+  "description": "Local + cloud inference",
+  "kind": "openai-chat-completions",
+  "api_key_env": "OLLAMA_API_KEY",
+  "base_url": "http://localhost:11434/v1",
+  "models": [
+    { "name": "llama3.1", "task_size": "large", "context_window_tokens": 128000 },
+    { "name": "llama3.2", "task_size": "small", "context_window_tokens": 128000 },
+    { "name": "llama3.3", "task_size": "large", "context_window_tokens": 128000 },
+    { "name": "deepseek-r1", "task_size": "large", "context_window_tokens": 1000000 },
+    { "name": "qwen3", "task_size": "large", "context_window_tokens": 128000 },
+    { "name": "qwen2.5-coder", "task_size": "large", "context_window_tokens": 128000 },
+    { "name": "qwen2.5-coder:32b", "task_size": "large", "context_window_tokens": 128000 },
+    { "name": "qwen2.5-coder:14b", "task_size": "small", "context_window_tokens": 32000 },
+    { "name": "qwen2.5-coder:7b", "task_size": "small", "context_window_tokens": 32000 },
+    { "name": "codellama", "task_size": "large", "context_window_tokens": 16000 },
+    { "name": "starcoder2", "task_size": "small", "context_window_tokens": 16000 },
+    { "name": "granite-code", "task_size": "small", "context_window_tokens": 128000 },
+    { "name": "gemma3", "task_size": "small", "context_window_tokens": 128000 },
+    { "name": "gemma3:27b", "task_size": "large", "context_window_tokens": 128000 },
+    { "name": "gemma3:12b", "task_size": "small", "context_window_tokens": 128000 },
+    { "name": "mistral", "task_size": "small", "context_window_tokens": 32000 },
+    { "name": "devstral", "task_size": "small", "context_window_tokens": 32000 },
+    { "name": "phi4", "task_size": "small", "context_window_tokens": 16000 },
+    { "name": "phi4-mini", "task_size": "small", "context_window_tokens": 16000 }
+  ]
+}
