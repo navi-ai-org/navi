@@ -10,6 +10,10 @@
 </p>
 
 <p align="center">
+  <strong>⚠️ Alpha — under active development. APIs, config formats, and behavior may change.</strong>
+</p>
+
+<p align="center">
   <a href="#install">Install</a> · <a href="#quick-start">Quick Start</a> · <a href="docs/user-guide.md">User Guide</a> · <a href="docs/sdk-agents.md">SDK Docs</a> · <a href="AGENTS.md">Architecture</a>
 </p>
 
@@ -22,7 +26,7 @@
 - **Real tools, not toy wrappers** — file R/W, apply-patch, grep, bash, test runner, build runner, package manager, sub-agents. All sandboxed, all auditable.
 - **Multi-provider** — OpenAI, Anthropic, Google Gemini, OpenRouter, GitHub Copilot, xAI, or any OpenAI-compatible API. Swap in config, no recompile.
 - **Session-aware** — conversation compaction, session memory, secret redaction. Survives long repo sessions without losing context.
-- **Embeddable** — the same engine powers the TUI, headless CLI, ACP editor integration, and your Rust or Node.js app via `navi-sdk` / `@navi-agent/napi`.
+- **Embeddable** — the same engine powers the TUI, headless CLI, and your Rust or Node.js app via `navi-sdk` / `@navi-agent/napi`.
 - **Extensible** — WASM plugins, MCP servers, native host tools. Install without forking.
 - **Secure by default** — path scoping, command blocklist, write/command approvals, plugin sandbox, session secret redaction. All in TOML, all auditable.
 
@@ -94,9 +98,6 @@ navi --no-tui "find the main entrypoint and suggest a refactor"
 
 # Pipe-friendly — reads from stdin
 cat error.log | navi --no-tui "explain this error"
-
-# ACP server for editors
-navi --acp
 
 # See available providers and their credential status
 navi --print-providers
@@ -191,7 +192,7 @@ navi-napi       →  Node.js bindings (@navi-agent/napi)
 navi-plugin-*   →  plugin API, host loader, broker, orchestrator, runtime
 ```
 
-NAVI follows one rule: **the engine is not the UI.** The TUI is a powerful frontend. The SDK is the same engine for apps. ACP is the same engine for editors. No coupling, no leaking abstractions.
+NAVI follows one rule: **the engine is not the UI.** The TUI is a powerful frontend. The SDK is the same engine for apps. No coupling, no leaking abstractions.
 
 ---
 
