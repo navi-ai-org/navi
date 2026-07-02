@@ -173,25 +173,35 @@ fn render_header(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
     ];
 
     if let Some(goal) = &app.goal_state {
-        spans.push(Span::styled("  │  Goal: ", Style::default().fg(ghost()).bg(bg())));
+        spans.push(Span::styled(
+            "  │  Goal: ",
+            Style::default().fg(ghost()).bg(bg()),
+        ));
         let status_color = if goal.active {
             crate::theme::accent()
-        } else if goal.status == navi_sdk::GoalStatus::Blocked || goal.status == navi_sdk::GoalStatus::BudgetLimited {
+        } else if goal.status == navi_sdk::GoalStatus::Blocked
+            || goal.status == navi_sdk::GoalStatus::BudgetLimited
+        {
             crate::theme::red()
         } else {
             muted()
         };
-        spans.push(Span::styled(goal.objective.clone(), Style::default().fg(status_color).bg(bg())));
-        
+        spans.push(Span::styled(
+            goal.objective.clone(),
+            Style::default().fg(status_color).bg(bg()),
+        ));
+
         if let Some(budget) = goal.token_budget {
             let percent = (goal.tokens_used as f64 / budget as f64 * 100.0).round() as i32;
-            spans.push(Span::styled(format!(" ({}%)", percent), Style::default().fg(muted()).bg(bg())));
+            spans.push(Span::styled(
+                format!(" ({}%)", percent),
+                Style::default().fg(muted()).bg(bg()),
+            ));
         }
     }
 
     frame.render_widget(
-        Paragraph::new(Line::from(spans))
-        .style(Style::default().bg(bg())),
+        Paragraph::new(Line::from(spans)).style(Style::default().bg(bg())),
         area,
     );
 }

@@ -74,7 +74,7 @@ Do not make WebSocket/daemon the primary interface unless explicitly requested. 
 
 ### Agent Test Scope Rule
 
-When validating agent-made changes, prefer the smallest focused test/build command that covers the touched crate and behavior. For example, TUI-only changes should usually run `just test-crate navi-tui` rather than compiling or testing the full product.
+When validating agent-made changes, prefer the smallest focused test/build command that covers the touched crate and behavior. For example, TUI-only changes should usually run `cargo test -p navi-tui -- --test-threads=4` rather than compiling or testing the full product.
 
 Only run full-product gates such as `just verify`, `just ci`, or feature-heavy checks when the change touches shared runtime, CLI, SDK, plugins, MCP, ACP, provider wiring, or when the user explicitly asks for a broader gate.
 
@@ -119,6 +119,19 @@ Project config (`.navi/config.toml`) can override `model`, `harness`, `approvals
 - `plugins`: native plugin library paths.
 
 API keys are read from env vars first, provider-specific external auth sources next, then the credential store. The TUI must not ask for API keys on startup; it prompts from the model picker when selecting a provider without a resolved key.
+
+### No Workspace Metadata
+
+NAVI must not create agent metadata, lock files, caches, session state, progress files, generated registries, plugin state, or other internal bookkeeping inside the project/worktree. Do not create `.navi/` or any other hidden project directory for agent-owned state as a side effect of running tools.
+
+Use platform/user locations instead:
+
+- Durable app state: `{data_dir}` (Linux default: `~/.local/share/navi`)
+- User configuration: `~/.config/navi`
+- Ephemeral coordination and temporary files: `/tmp` or another OS temp directory
+- Cacheable data: the platform cache directory
+
+Project-local `.navi/config.toml` is allowed only as explicit user-authored project configuration. Other project-local `.navi` assets may be read only when explicitly supplied by the user or configuration; NAVI must never create `.navi/` automatically for internal state.
 
 ## Providers
 
@@ -389,9 +402,22 @@ NAVI uses `tracing` through `navi-core::logging`. File logs default to `<data_di
 
 ## Commands
 
-### Just (required for agents)
+### Cargo For Agents
 
-Use the root [`justfile`](justfile) for build, format, check, test, clippy, coverage, and quality scans. **Do not** call `cargo fmt`, `cargo check`, `cargo test`, `cargo clippy`, `rustquty`, or `cargo llvm-cov` directly when a `just` recipe exists — recipes already set `CARGO_TEST_THREADS=4` and workspace flags.
+Agents should use direct `cargo` commands for focused validation. Prefer package-scoped commands that match the touched crate and behavior:
+
+```bash
+cargo fmt --all -- --check
+cargo check -p navi-tui
+cargo test -p navi-tui -- --test-threads=4
+cargo clippy -p navi-tui --all-targets
+```
+
+When testing, keep `--test-threads=4` unless debugging a single test. Use broader workspace checks only when the change touches shared runtime, CLI, SDK, plugins, MCP, ACP, provider wiring, or when explicitly requested.
+
+### Just For Humans And Broad Gates
+
+The root [`justfile`](justfile) provides convenient human-facing recipes and full-product gates.
 
 First time on a machine: `just setup-tools` (installs rustquty collectors; see `just quality-doctor`).
 
@@ -427,29 +453,29 @@ Headless mode requires a task argument.
 Use focused tests while iterating and broader checks before handoff:
 
 ```bash
-just fmt-check
-just check
-just test
+cargo fmt --all -- --check
+cargo check -p navi-tui
+cargo test -p navi-tui -- --test-threads=4
 ```
 
-Before handoff, prefer `just verify`; for a fuller gate use `just ci`.
+For human checkups or intentional full-product gates, `just test`, `just verify`, and `just ci` are still appropriate.
 
 For targeted changes:
 
-- TUI/key/rendering: `just test-crate navi-tui`
-- provider/request/stream parsing: `just test-crate navi-openai`
-- tools/security/session/config: `just test-crate navi-core`
+- TUI/key/rendering: `cargo test -p navi-tui -- --test-threads=4`
+- provider/request/stream parsing: `cargo test -p navi-openai -- --test-threads=4`
+- tools/security/session/config: `cargo test -p navi-core -- --test-threads=4`
 
 ### Resource Limits
 
 Tests MUST respect resource constraints to avoid starving the host machine:
 
-- **CPU**: Maximum 4 test threads — enforced by `just test` / `just test-crate` (do not bypass with raw `cargo test` unless debugging a single test).
+- **CPU**: Maximum 4 test threads. With `cargo test`, pass `-- --test-threads=4` unless debugging a single test.
 - **Memory**: Maximum 500MB per test process. Use `ulimit -v 512000` (virtual memory) before running tests, or wrap commands with `systemd-run --scope -p MemoryMax=500M` if available.
 
 ```bash
-just test
-just test-crate navi-core
+cargo test -p navi-core -- --test-threads=4
+cargo test -p navi-tui mouse::tests::mouse_drag -- --test-threads=4
 ```
 
 If a single test exceeds 500MB or hangs for more than 60 seconds, it is a bug and must be fixed.

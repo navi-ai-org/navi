@@ -18,9 +18,6 @@ navi
 
 # Run a task headlessly
 navi --no-tui "explain this codebase"
-
-# ACP server for editors
-navi --acp
 ```
 
 ## How it works

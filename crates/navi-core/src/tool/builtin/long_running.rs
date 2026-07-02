@@ -3,6 +3,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::fs;
+use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -62,7 +63,7 @@ impl Tool for InitSessionTool {
     fn definition(&self) -> ToolDefinition {
         helpers::definition(
             "init_session",
-            "Initialize a long-running NAVI sprint. Creates `.navi/feature_list.json` and `.navi/navi-progress.txt` with machine-readable feature status. Use before long-running implementation work.",
+            "Initialize a long-running NAVI sprint. Persists machine-readable feature status under NAVI's data directory, scoped by project. Use before long-running implementation work.",
             ToolKind::Write,
             json!({
                 "type": "object",
@@ -116,9 +117,9 @@ impl Tool for InitSessionTool {
             bail!("features must not be empty");
         }
 
-        let navi_dir = navi_dir(self.policy.project_root());
-        let feature_path = navi_dir.join(FEATURE_LIST);
-        let progress_path = navi_dir.join(PROGRESS_FILE);
+        let state_dir = sprint_state_dir(self.policy.project_root(), self.policy.data_dir());
+        let feature_path = state_dir.join(FEATURE_LIST);
+        let progress_path = state_dir.join(PROGRESS_FILE);
         if feature_path.exists() && !overwrite {
             return Ok(helpers::ok(
                 invocation.id,
@@ -127,14 +128,14 @@ impl Tool for InitSessionTool {
                     "Long-running sprint artifacts already exist. Pass overwrite=true to replace them.",
                     true,
                     Some(
-                        "Read `.navi/feature_list.json` and continue the next feature, or call init_session with overwrite=true.",
+                        "Read the persisted sprint feature list and continue the next feature, or call init_session with overwrite=true.",
                     ),
                     None,
                 ),
             ));
         }
 
-        fs::create_dir_all(&navi_dir).context("create .navi directory")?;
+        fs::create_dir_all(&state_dir).context("create sprint state directory")?;
         let now = now_secs();
         let mut features = Vec::with_capacity(feature_values.len());
         for (index, value) in feature_values.iter().enumerate() {
@@ -194,8 +195,8 @@ impl Tool for InitSessionTool {
             invocation.id,
             helpers::versioned(json!({
                 "status": "initialized",
-                "feature_list": project_relative(self.policy.project_root(), &feature_path),
-                "progress": project_relative(self.policy.project_root(), &progress_path),
+                "feature_list": feature_path.to_string_lossy(),
+                "progress": progress_path.to_string_lossy(),
                 "features_total": list.features.len(),
                 "next_feature": list.features.first().map(|feature| feature.id.clone()),
             })),
@@ -218,14 +219,14 @@ impl Tool for MarkFeatureDoneTool {
     fn definition(&self) -> ToolDefinition {
         helpers::definition(
             "mark_feature_done",
-            "Run a feature's declared verification commands and mark it passes=true only if every command succeeds. The verification_steps input must exactly match the feature entry in `.navi/feature_list.json`.",
+            "Run a feature's declared verification commands and mark it passes=true only if every command succeeds. The verification_steps input must exactly match the persisted feature entry.",
             ToolKind::Command,
             json!({
                 "type": "object",
                 "properties": {
                     "feature_id": {
                         "type": "string",
-                        "description": "Feature id from `.navi/feature_list.json`."
+                        "description": "Feature id from the persisted sprint feature list."
                     },
                     "verification_steps": {
                         "type": "array",
@@ -258,9 +259,9 @@ impl Tool for MarkFeatureDoneTool {
             .collect::<Vec<_>>();
         let notes = helpers::optional_string(&invocation.input, "notes");
 
-        let navi_dir = navi_dir(self.policy.project_root());
-        let feature_path = navi_dir.join(FEATURE_LIST);
-        let progress_path = navi_dir.join(PROGRESS_FILE);
+        let state_dir = sprint_state_dir(self.policy.project_root(), self.policy.data_dir());
+        let feature_path = state_dir.join(FEATURE_LIST);
+        let progress_path = state_dir.join(PROGRESS_FILE);
         let mut list = read_feature_list(&feature_path)?;
         let Some(index) = list
             .features
@@ -271,10 +272,10 @@ impl Tool for MarkFeatureDoneTool {
                 invocation.id,
                 helpers::tool_error(
                     "feature_not_found",
-                    format!("No feature with id `{feature_id}` exists in .navi/feature_list.json"),
+                    format!("No feature with id `{feature_id}` exists in persisted sprint state"),
                     true,
                     Some(
-                        "Call init_session first, or list the feature ids from `.navi/feature_list.json`.",
+                        "Call init_session first, or list the feature ids from the persisted sprint state.",
                     ),
                     None,
                 ),
@@ -288,7 +289,7 @@ impl Tool for MarkFeatureDoneTool {
                     "verification_steps must exactly match the stored feature contract",
                     true,
                     Some(
-                        "Copy the exact verification_steps array from `.navi/feature_list.json` into mark_feature_done.",
+                        "Copy the exact verification_steps array from the persisted feature list into mark_feature_done.",
                     ),
                     None,
                 ),
@@ -339,14 +340,14 @@ impl Tool for MarkFeatureDoneTool {
     }
 }
 
-fn navi_dir(project_root: &Path) -> PathBuf {
-    project_root.join(".navi")
+fn sprint_state_dir(project_root: &Path, data_dir: &Path) -> PathBuf {
+    data_dir.join("sprints").join(project_hash(project_root))
 }
 
 fn read_feature_list(path: &Path) -> Result<FeatureList> {
     let content = fs::read_to_string(path)
         .with_context(|| format!("read feature list at {}", path.display()))?;
-    serde_json::from_str(&content).context("parse .navi/feature_list.json")
+    serde_json::from_str(&content).context("parse sprint feature list")
 }
 
 fn write_json(path: &Path, value: &FeatureList) -> Result<()> {
@@ -425,11 +426,10 @@ fn sanitize_feature_id(value: &str) -> String {
     out.trim_matches('-').to_string()
 }
 
-fn project_relative(root: &Path, path: &Path) -> String {
-    path.strip_prefix(root)
-        .unwrap_or(path)
-        .to_string_lossy()
-        .to_string()
+fn project_hash(project_dir: &Path) -> String {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    project_dir.to_string_lossy().hash(&mut hasher);
+    format!("{:016x}", hasher.finish())
 }
 
 #[cfg(test)]

@@ -828,6 +828,7 @@ mod tests {
             harness_config: crate::config::HarnessConfig::default(),
             include_tool_prompt_manifest: false,
             context_packets: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
+            available_skills: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
             active_skills: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
             prompt_cache: std::sync::Arc::new(crate::prompt::PromptCache::new()),
             components: crate::RuntimeComponents::default(),

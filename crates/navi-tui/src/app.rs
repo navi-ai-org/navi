@@ -17,8 +17,6 @@ use navi_sdk::{
     effective_context_window, log_path, provider_catalog, select_harness_policy,
 };
 
-use ratatui_image::picker::Picker;
-
 use crate::dispatch::AsyncEvent;
 use crate::runtime::{build_engine, selected_model_runtime_available};
 use crate::session::load_saved_sessions;
@@ -94,8 +92,6 @@ pub struct TuiApp {
     // clipboard images
     /// Images captured from the clipboard, waiting to be attached to the next message.
     pub(crate) pending_images: Vec<crate::state::PendingImage>,
-    /// Image protocol picker for terminal rendering.
-    pub(crate) image_picker: Option<Picker>,
 
     // persistence
     pub(crate) session_store: SessionStore,
@@ -229,9 +225,6 @@ impl TuiApp {
         let thinking_level = ThinkingLevel::from_config(&loaded_config.config.tui.thinking_level);
         let git_branch = detect_git_branch(&project_dir);
 
-        #[cfg(not(test))]
-        let terminal_picker = terminal_image_picker();
-
         let mut app = Self {
             loaded_config,
             input: String::new(),
@@ -282,10 +275,6 @@ impl TuiApp {
             compact_state: CompactState::new(context_window),
             pending_images: Vec::new(),
             goal_state: None,
-            #[cfg(not(test))]
-            image_picker: terminal_picker,
-            #[cfg(test)]
-            image_picker: None,
             session_store,
             events: Vec::new(),
             session_id,
@@ -826,58 +815,6 @@ fn normalize_session_path(path: &std::path::Path) -> std::path::PathBuf {
     normalized
 }
 
-#[cfg(not(test))]
-fn terminal_image_picker() -> Option<Picker> {
-    if let Some(reason) = terminal_image_detection_skip_reason() {
-        tracing::debug!(reason, "skipping terminal image support detection");
-        return None;
-    }
-
-    match Picker::from_query_stdio() {
-        Ok(picker) => {
-            tracing::info!("terminal image protocol detected");
-            Some(picker)
-        }
-        Err(e) => {
-            tracing::debug!(error = %e, "no terminal image protocol detected");
-            None
-        }
-    }
-}
-
-#[cfg(not(test))]
-fn terminal_image_detection_skip_reason() -> Option<&'static str> {
-    terminal_image_detection_skip_reason_from_env(|key| {
-        std::env::var_os(key).map(|value| value.to_string_lossy().into_owned())
-    })
-}
-
-fn terminal_image_detection_skip_reason_from_env(
-    mut env: impl FnMut(&str) -> Option<String>,
-) -> Option<&'static str> {
-    if env("NAVI_SMOKE_TEST").is_some() {
-        return Some("NAVI_SMOKE_TEST");
-    }
-    if env("NAVI_DISABLE_TERMINAL_IMAGES").is_some() {
-        return Some("NAVI_DISABLE_TERMINAL_IMAGES");
-    }
-    if is_termux_environment(&mut env) {
-        return Some("termux");
-    }
-    None
-}
-
-fn is_termux_environment(env: &mut impl FnMut(&str) -> Option<String>) -> bool {
-    if env("TERMUX_VERSION").is_some() {
-        return true;
-    }
-
-    ["PREFIX", "HOME", "TMPDIR"]
-        .into_iter()
-        .filter_map(env)
-        .any(|value| value.contains("/com.termux/") || value.contains("/data/data/com.termux"))
-}
-
 fn detect_git_branch(project_dir: &Path) -> Option<String> {
     let head = std::fs::read_to_string(project_dir.join(".git").join("HEAD")).ok()?;
     let head = head.trim();
@@ -888,57 +825,4 @@ fn detect_git_branch(project_dir: &Path) -> Option<String> {
         return Some(head.chars().take(7).collect());
     }
     None
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn skip_reason(vars: &[(&str, &str)]) -> Option<&'static str> {
-        terminal_image_detection_skip_reason_from_env(|key| {
-            vars.iter()
-                .find(|(candidate, _)| *candidate == key)
-                .map(|(_, value)| (*value).to_string())
-        })
-    }
-
-    #[test]
-    fn terminal_image_detection_skips_termux_version() {
-        assert_eq!(
-            skip_reason(&[("TERMUX_VERSION", "0.118.1")]),
-            Some("termux")
-        );
-    }
-
-    #[test]
-    fn terminal_image_detection_skips_termux_paths() {
-        assert_eq!(
-            skip_reason(&[("PREFIX", "/data/data/com.termux/files/usr")]),
-            Some("termux")
-        );
-        assert_eq!(
-            skip_reason(&[("HOME", "/data/data/com.termux/files/home")]),
-            Some("termux")
-        );
-    }
-
-    #[test]
-    fn terminal_image_detection_respects_explicit_disable() {
-        assert_eq!(
-            skip_reason(&[("NAVI_DISABLE_TERMINAL_IMAGES", "1")]),
-            Some("NAVI_DISABLE_TERMINAL_IMAGES")
-        );
-    }
-
-    #[test]
-    fn terminal_image_detection_runs_for_normal_terminals() {
-        assert_eq!(
-            skip_reason(&[
-                ("TERM", "xterm-256color"),
-                ("HOME", "/home/enrell"),
-                ("PREFIX", "/usr")
-            ]),
-            None
-        );
-    }
 }

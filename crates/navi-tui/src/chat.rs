@@ -40,10 +40,7 @@ pub(crate) fn submit_message(app: &mut TuiApp) {
             .map(|img| {
                 let label = img.label();
                 chat_msg.image_labels.push(label.clone());
-                chat_msg.images.push(ChatImage {
-                    label,
-                    protocol: img.protocol,
-                });
+                chat_msg.images.push(ChatImage { label });
                 ContentPart::Image {
                     media_type: img.media_type,
                     data: img.data,

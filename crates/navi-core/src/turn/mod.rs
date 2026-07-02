@@ -45,6 +45,7 @@ pub struct TurnContext {
     pub harness_config: crate::config::HarnessConfig,
     pub include_tool_prompt_manifest: bool,
     pub context_packets: Arc<std::sync::Mutex<Vec<ContextPacket>>>,
+    pub available_skills: Arc<std::sync::Mutex<Vec<SkillManifest>>>,
     pub active_skills: Arc<std::sync::Mutex<Vec<SkillManifest>>>,
     pub prompt_cache: Arc<PromptCache>,
     pub components: RuntimeComponents,
@@ -166,6 +167,11 @@ async fn ensure_system_prompt(ctx: &TurnContext, messages: &mut Vec<ModelMessage
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .clone();
+    let available_skills = ctx
+        .available_skills
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone();
     let memory_injection = combined_memory_injection(ctx).await;
     let input = SystemPromptInput {
         config: ctx.active_config(),
@@ -177,6 +183,7 @@ async fn ensure_system_prompt(ctx: &TurnContext, messages: &mut Vec<ModelMessage
         ),
         include_tool_prompt_manifest: ctx.include_tool_prompt_manifest,
         context_packets,
+        available_skills,
         active_skills,
     };
     let prompt = ctx.components.prompt.clone();

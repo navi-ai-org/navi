@@ -315,11 +315,11 @@ fn build_system_prompt_inner(
     if policy.profile == HarnessProfile::LongRunning {
         prompt.push_str(
             "\nLong-running sprint contract:\n\
-             - Start by calling `init_session` if `.navi/feature_list.json` is missing.\n\
-             - Work on exactly one feature at a time from `feature_list.json`.\n\
+             - Start by calling `init_session` if no sprint state exists for this project.\n\
+             - Work on exactly one feature at a time from the persisted sprint feature list.\n\
              - Do not mark a feature done manually; call `mark_feature_done` with the exact verification_steps from the feature.\n\
              - `mark_feature_done` runs every verification command and only sets `passes=true` after all commands succeed.\n\
-             - Keep `.navi/navi-progress.txt` as the human handoff for the next coding agent.\n",
+             - Keep the persisted sprint progress as the human handoff for the next coding agent.\n",
         );
     }
     if let Some(memory) = memory_injection {

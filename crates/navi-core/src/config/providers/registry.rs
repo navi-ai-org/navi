@@ -77,7 +77,7 @@ pub(super) fn built_in_providers() -> Vec<ProviderConfig> {
         ProviderConfig {
             id: "openai".to_string(),
             label: "OpenAI".to_string(),
-            description: "ChatGPT Plus/Pro or API key".to_string(),
+            description: "ChatGPT Plus/Pro or OpenAI Platform API key".to_string(),
             kind: ProviderKind::OpenAiResponses,
             api_key_env: "OPENAI_API_KEY".to_string(),
             base_url: Some("https://api.openai.com/v1".to_string()),

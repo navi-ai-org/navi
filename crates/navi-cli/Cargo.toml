@@ -12,7 +12,6 @@ name = "navi"
 path = "src/main.rs"
 
 [dependencies]
-agent-client-protocol.workspace = true
 anyhow.workspace = true
 clap.workspace = true
 serde_json.workspace = true
@@ -24,7 +23,6 @@ navi-core.workspace = true
 navi-mcp.workspace = true
 navi-plugin-broker.workspace = true
 navi-plugin-manifest.workspace = true
-navi-plugin-orchestrator.workspace = true
 navi-sdk.workspace = true
 navi-tui.workspace = true
 

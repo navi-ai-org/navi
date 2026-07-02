@@ -67,7 +67,7 @@ pub(super) fn route_global_key(
             }
             KeyCode::Char('i') | KeyCode::Char('v') => {
                 if app.mode == crate::state::Mode::Normal && !app.is_loading {
-                    match try_read_clipboard_image(app.image_picker.as_ref()) {
+                    match try_read_clipboard_image() {
                         Some(image) => {
                             let label = image.label();
                             app.pending_images.push(image);

@@ -1,7 +1,7 @@
 use crate::NaviConfig;
 use crate::context::{ContextPacket, render_context_packets};
 use crate::harness::{build_system_prompt_with_manifest_text, tool_prompt_manifest};
-use crate::skills::{SkillManifest, render_active_skills};
+use crate::skills::{SkillManifest, render_active_skills, render_available_skills};
 use crate::tool::ToolDefinition;
 use anyhow::{Context, Result};
 use std::collections::HashMap;
@@ -128,6 +128,10 @@ impl SystemPromptRenderer {
             system_content.push_str("\n\n");
             system_content.push_str(&context);
         }
+        if let Some(skills) = render_available_skills(&input.available_skills) {
+            system_content.push_str("\n\n");
+            system_content.push_str(&skills);
+        }
         if let Some(skills) = render_active_skills(&input.active_skills) {
             system_content.push_str("\n\n");
             system_content.push_str(&skills);
@@ -143,6 +147,7 @@ pub struct SystemPromptInput {
     pub tools: Vec<ToolDefinition>,
     pub include_tool_prompt_manifest: bool,
     pub context_packets: Vec<ContextPacket>,
+    pub available_skills: Vec<SkillManifest>,
     pub active_skills: Vec<SkillManifest>,
 }
 
@@ -216,6 +221,7 @@ mod tests {
             }],
             include_tool_prompt_manifest: true,
             context_packets: Vec::new(),
+            available_skills: Vec::new(),
             active_skills: Vec::new(),
         };
 

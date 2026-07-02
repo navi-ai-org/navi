@@ -454,7 +454,9 @@ mod tests {
     fn policy(root: &Path) -> SecurityPolicy {
         SecurityPolicy::new(
             root.to_path_buf(),
-            root.join(".navi-data"),
+            root.parent()
+                .unwrap_or(root)
+                .join("navi-test-data-code-edit"),
             SecurityConfig::default(),
         )
         .unwrap()
@@ -464,7 +466,7 @@ mod tests {
     fn definition_has_correct_name() {
         let policy = SecurityPolicy::new(
             PathBuf::from("/tmp"),
-            PathBuf::from("/tmp/.navi-data"),
+            PathBuf::from("/tmp/navi-test-data-code-edit"),
             SecurityConfig::default(),
         )
         .unwrap();
@@ -478,7 +480,7 @@ mod tests {
     fn definition_has_action_property() {
         let policy = SecurityPolicy::new(
             PathBuf::from("/tmp"),
-            PathBuf::from("/tmp/.navi-data"),
+            PathBuf::from("/tmp/navi-test-data-code-edit"),
             SecurityConfig::default(),
         )
         .unwrap();
@@ -641,7 +643,7 @@ mod tests {
     fn unknown_action_returns_error() {
         let policy = SecurityPolicy::new(
             PathBuf::from("/tmp"),
-            PathBuf::from("/tmp/.navi-data"),
+            PathBuf::from("/tmp/navi-test-data-code-edit"),
             SecurityConfig::default(),
         )
         .unwrap();

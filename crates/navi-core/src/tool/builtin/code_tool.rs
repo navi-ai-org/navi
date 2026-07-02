@@ -498,7 +498,9 @@ mod tests {
     fn policy(root: &Path) -> SecurityPolicy {
         SecurityPolicy::new(
             root.to_path_buf(),
-            root.join(".navi-data"),
+            root.parent()
+                .unwrap_or(root)
+                .join("navi-test-data-code-tool"),
             crate::SecurityConfig::default(),
         )
         .unwrap()

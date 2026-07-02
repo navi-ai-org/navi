@@ -5,7 +5,6 @@ use navi_sdk::{NaviConfigSaveTarget, NaviEngineBuilder, NaviSessionRequest, Navi
 use navi_tui::TuiApp;
 use std::path::PathBuf;
 
-mod acp;
 mod bench_cmd;
 mod eval_cmd;
 mod mcp_cmd;
@@ -42,9 +41,6 @@ struct Cli {
 
     #[arg(long)]
     no_tui: bool,
-
-    #[arg(long)]
-    acp: bool,
 
     #[arg(value_name = "TASK")]
     task: Vec<String>,
@@ -354,28 +350,6 @@ async fn main() -> Result<()> {
     if cli.sync_models {
         tracing::info!("starting model sync");
         sync_models(loaded_config, &cwd).await?;
-        return Ok(());
-    }
-
-    if cli.acp {
-        if cli.no_tui {
-            anyhow::bail!("--acp cannot be combined with --no-tui");
-        }
-        if !cli.task.is_empty() {
-            anyhow::bail!("--acp runs as a stdio server and does not accept a task argument");
-        }
-        let _logging_guard = init_logging(
-            &loaded_config.config.logging,
-            &loaded_config.data_dir,
-            LoggingRuntimeConfig {
-                stdout_enabled: false,
-                file_enabled: !cli.no_log_file,
-                level: cli.log_level.clone(),
-                include_payloads: cli.debug_payloads,
-            },
-        )?;
-        tracing::info!(project = %cwd.display(), "starting ACP stdio server");
-        acp::run_acp_server(loaded_config, cwd).await?;
         return Ok(());
     }
 

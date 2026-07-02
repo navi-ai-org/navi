@@ -17,9 +17,13 @@ tracing.workspace = true
 navi-core.workspace = true
 navi-mcp.workspace = true
 navi-plugin-manifest.workspace = true
-navi-plugin-orchestrator.workspace = true
+navi-plugin-orchestrator = { workspace = true, optional = true, features = ["wasm-runtime"] }
 navi-providers.workspace = true
 navi-plugin-host.workspace = true
+
+[features]
+default = []
+wasm-plugins = ["dep:navi-plugin-orchestrator"]
 
 [dev-dependencies]
 tempfile.workspace = true

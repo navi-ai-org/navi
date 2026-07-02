@@ -1,4 +1,5 @@
 use navi_sdk::{ToolInvocation, ToolResult};
+use serde_json::Value;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
@@ -20,15 +21,10 @@ fn truncate_to_lines(text: &str, max_lines: usize) -> &str {
 pub(crate) fn tool_compact_text(invocation: &ToolInvocation, result: &ToolResult) -> String {
     let mut text = match invocation.tool_name.as_str() {
         // ── Existing (kept) ──────────────────────────────────────────────
-        "read_file" | "view_file" => read_file_summary(invocation, result),
+        "read" | "read_file" | "view_file" => read_file_summary(invocation, result),
         "write_file" => write_file_summary(invocation, result),
         "apply_patch" => apply_patch_summary(invocation),
-        "write"
-            if invocation.input.get("patch").is_some()
-                || invocation.input.get("patches").is_some() =>
-        {
-            apply_patch_summary(invocation)
-        }
+        "write" if has_patch_input(invocation) => apply_patch_summary(invocation),
         // Direct write (path + content)
         "write" => write_file_summary(invocation, result),
         "bash" => bash_summary(invocation, result),
@@ -71,6 +67,8 @@ pub(crate) fn tool_compact_text(invocation: &ToolInvocation, result: &ToolResult
         // ── Utility ──────────────────────────────────────────────────────
         "current_time" => current_time_summary(result),
         "sleep" => sleep_summary(result),
+        "set_goal" => set_goal_summary(invocation, result),
+        "wait" => wait_summary(invocation, result),
         "get_context_remaining" => context_remaining_summary(result),
         "view_image" | "inspect_image" => view_image_summary(invocation, result),
         "new_context_window" => new_context_window_summary(result),
@@ -120,25 +118,10 @@ fn formatted_tool_output(invocation: &ToolInvocation, result: &ToolResult) -> Op
         if invocation.tool_name == "bash" {
             let stdout = obj.get("stdout").and_then(|v| v.as_str()).unwrap_or("");
             let stderr = obj.get("stderr").and_then(|v| v.as_str()).unwrap_or("");
-            if !stdout.is_empty() {
-                content.push_str("\nStdout:\n```\n");
-                let truncated_stdout = truncate_to_lines(stdout, MAX_TOOL_RENDER_LINES);
-                content.push_str(truncated_stdout);
-                if !truncated_stdout.ends_with('\n') {
-                    content.push('\n');
-                }
-                content.push_str("```\n");
-            }
-            if !stderr.is_empty() {
-                content.push_str("\nStderr:\n```\n");
-                let truncated_stderr = truncate_to_lines(stderr, MAX_TOOL_RENDER_LINES);
-                content.push_str(truncated_stderr);
-                if !truncated_stderr.ends_with('\n') {
-                    content.push('\n');
-                }
-                content.push_str("```\n");
-            }
+            append_text_block(&mut content, "Stdout", stdout, "");
+            append_text_block(&mut content, "Stderr", stderr, "");
         }
+        append_json_section(&mut content, "Output", &result.output);
         return Some(content);
     }
 
@@ -146,7 +129,10 @@ fn formatted_tool_output(invocation: &ToolInvocation, result: &ToolResult) -> Op
         return None;
     }
 
-    if invocation.tool_name == "read_file" || invocation.tool_name == "view_file" {
+    if matches!(
+        invocation.tool_name.as_str(),
+        "read" | "read_file" | "view_file"
+    ) {
         let path = obj.get("path").and_then(|v| v.as_str())?;
         content.push_str(&format!("View {}", display_path(path)));
         if let Some(details) = read_file_line_details(result) {
@@ -169,25 +155,21 @@ fn formatted_tool_output(invocation: &ToolInvocation, result: &ToolResult) -> Op
             }
             content.push_str("```\n");
         }
-    } else if invocation.tool_name == "apply_patch"
-        || (invocation.tool_name == "write"
-            && (invocation.input.get("patch").is_some()
-                || invocation.input.get("patches").is_some()))
-    {
-        if let Some(patch) = invocation.input.get("patch").and_then(|v| v.as_str()) {
-            let summaries = patch_edit_summaries(patch);
-            if summaries.is_empty() {
-                content.push_str("Applied patch\n");
-            } else {
-                for summary in summaries {
-                    content.push_str(&summary);
-                    content.push('\n');
-                }
-            }
-        } else {
+    } else if is_patch_invocation(invocation) {
+        let patches = patch_inputs(invocation);
+        let summaries: Vec<String> = patches
+            .iter()
+            .flat_map(|patch| patch_edit_summaries(patch))
+            .collect();
+        if summaries.is_empty() {
             content.push_str("Applied patch successfully\n");
+        } else {
+            for summary in summaries {
+                content.push_str(&summary);
+                content.push('\n');
+            }
         }
-        append_patch_bodies(invocation, &mut content);
+        append_patch_bodies(&patches, &mut content);
         let stdout = obj.get("stdout").and_then(|v| v.as_str()).unwrap_or("");
         let stderr = obj.get("stderr").and_then(|v| v.as_str()).unwrap_or("");
         if !stdout.is_empty() {
@@ -222,36 +204,8 @@ fn formatted_tool_output(invocation: &ToolInvocation, result: &ToolResult) -> Op
         }
         let stdout = obj.get("stdout").and_then(|v| v.as_str()).unwrap_or("");
         let stderr = obj.get("stderr").and_then(|v| v.as_str()).unwrap_or("");
-        if !stdout.is_empty() {
-            content.push_str("\nStdout:\n```\n");
-            let truncated_stdout = truncate_to_lines(stdout, MAX_TOOL_RENDER_LINES);
-            content.push_str(truncated_stdout);
-            if !truncated_stdout.ends_with('\n') {
-                content.push('\n');
-            }
-            if truncated_stdout.len() < stdout.len() {
-                content.push_str(&format!(
-                    "... (truncated, {} lines total)\n",
-                    stdout.lines().count()
-                ));
-            }
-            content.push_str("```\n");
-        }
-        if !stderr.is_empty() {
-            content.push_str("\nStderr:\n```\n");
-            let truncated_stderr = truncate_to_lines(stderr, MAX_TOOL_RENDER_LINES);
-            content.push_str(truncated_stderr);
-            if !truncated_stderr.ends_with('\n') {
-                content.push('\n');
-            }
-            if truncated_stderr.len() < stderr.len() {
-                content.push_str(&format!(
-                    "... (truncated, {} lines total)\n",
-                    stderr.lines().count()
-                ));
-            }
-            content.push_str("```\n");
-        }
+        append_text_block(&mut content, "Stdout", stdout, "");
+        append_text_block(&mut content, "Stderr", stderr, "");
     } else if invocation.tool_name == "grep" {
         content.push_str("Found matches:\n\n");
         if let Some(matches) = obj.get("matches").and_then(|v| v.as_array()) {
@@ -276,6 +230,57 @@ fn formatted_tool_output(invocation: &ToolInvocation, result: &ToolResult) -> Op
         if let Some(entries) = obj.get("entries").and_then(|v| v.as_array()) {
             render_tree_entries(entries, &mut content, 0);
         }
+    } else if matches!(
+        invocation.tool_name.as_str(),
+        "search" | "list_dir" | "glob"
+    ) {
+        render_search_output(invocation, result, &mut content);
+    } else if invocation.tool_name == "process" {
+        render_process_output(result, &mut content);
+    } else if invocation.tool_name == "test_runner" {
+        render_test_runner_output(result, &mut content);
+    } else if invocation.tool_name == "build_runner" {
+        render_build_runner_output(result, &mut content);
+    } else if matches!(
+        invocation.tool_name.as_str(),
+        "code"
+            | "code_edit"
+            | "code_exec"
+            | "ast_search"
+            | "symbol_goto"
+            | "symbol_references"
+            | "dependency_graph_query"
+            | "test_discovery"
+            | "ownership_churn_query"
+    ) {
+        render_named_structured_output("Code output", result, &mut content);
+    } else if matches!(
+        invocation.tool_name.as_str(),
+        "repo_explore"
+            | "subagent"
+            | "plan"
+            | "init_session"
+            | "mark_feature_done"
+            | "question"
+            | "request_user_input"
+            | "append_note"
+            | "current_time"
+            | "sleep"
+            | "set_goal"
+            | "wait"
+            | "get_context_remaining"
+            | "view_image"
+            | "inspect_image"
+            | "new_context_window"
+            | "tool_search"
+            | "verifier"
+            | "runtime_info"
+            | "branch_race_start"
+            | "history_ops"
+            | "sandbox"
+            | "package_manager"
+    ) {
+        render_named_structured_output("Output", result, &mut content);
     } else {
         return None;
     }
@@ -287,13 +292,279 @@ fn formatted_tool_output(invocation: &ToolInvocation, result: &ToolResult) -> Op
 }
 
 fn generic_tool_summary(invocation: &ToolInvocation, result: &ToolResult) -> String {
+    let mut content = String::new();
     if result.ok {
-        format!("{} completed successfully\n", invocation.tool_name)
+        content.push_str(&format!(
+            "{} completed successfully\n",
+            invocation.tool_name
+        ));
     } else if let Some(error) = result.output.get("error").and_then(|v| v.as_str()) {
-        format!("Error: {error}\n")
+        content.push_str(&format!("Error: {error}\n"));
     } else {
-        format!("{} failed\n", invocation.tool_name)
+        content.push_str(&format!("{} failed\n", invocation.tool_name));
     }
+    append_json_section(&mut content, "Input", &invocation.input);
+    append_json_section(&mut content, "Output", &result.output);
+    content
+}
+
+fn render_search_output(invocation: &ToolInvocation, result: &ToolResult, content: &mut String) {
+    let action = invocation
+        .input
+        .get("action")
+        .and_then(|v| v.as_str())
+        .unwrap_or_else(|| match invocation.tool_name.as_str() {
+            "list_dir" => "list",
+            "glob" => "find",
+            _ => "grep",
+        });
+
+    match action {
+        "grep" => {
+            content.push_str("Found matches:\n\n");
+            render_matches(result.output.get("matches"), content);
+        }
+        "tree" => {
+            content.push_str("Directory tree:\n\n");
+            if let Some(entries) = result.output.get("entries").and_then(|v| v.as_array()) {
+                render_tree_entries(entries, content, 0);
+            }
+        }
+        "list" | "find" => {
+            let title = if action == "find" {
+                "Files found"
+            } else {
+                "Directory entries"
+            };
+            content.push_str(title);
+            content.push_str(":\n\n");
+            render_file_list(result.output.get("files"), content);
+        }
+        "stat" => {
+            content.push_str("File metadata:\n");
+            append_json_section(content, "Output", &result.output);
+        }
+        _ => append_json_section(content, "Output", &result.output),
+    }
+}
+
+fn render_process_output(result: &ToolResult, content: &mut String) {
+    if let Some(processes) = result.output.get("processes").and_then(|v| v.as_array()) {
+        content.push_str("Processes:\n\n");
+        for process in processes {
+            let id = process
+                .get("process_id")
+                .or_else(|| process.get("id"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("?");
+            let status = process
+                .get("status")
+                .and_then(|v| v.as_str())
+                .unwrap_or("?");
+            let command = process
+                .get("command")
+                .and_then(|v| v.as_str())
+                .unwrap_or("process");
+            content.push_str(&format!("- {id} [{status}] {}\n", one_line(command)));
+        }
+    }
+
+    if let Some(process_id) = result.output.get("process_id").and_then(|v| v.as_str()) {
+        content.push_str(&format!("Process: {process_id}\n"));
+    }
+    if let Some(status) = result.output.get("status").and_then(|v| v.as_str()) {
+        content.push_str(&format!("Status: {status}\n"));
+    }
+    if let Some(exit_code) = result.output.get("exit_code").and_then(|v| v.as_i64()) {
+        content.push_str(&format!("Exit code: {exit_code}\n"));
+    }
+    let stdout = result
+        .output
+        .get("stdout")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let stderr = result
+        .output
+        .get("stderr")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    append_text_block(content, "Stdout", stdout, "");
+    append_text_block(content, "Stderr", stderr, "");
+
+    append_json_section(content, "Output", &result.output);
+}
+
+fn render_test_runner_output(result: &ToolResult, content: &mut String) {
+    if let Some(summary) = result.output.get("summary").and_then(|v| v.as_str()) {
+        content.push_str(summary);
+        content.push_str("\n\n");
+    }
+    if let Some(failures) = result.output.get("failures").and_then(|v| v.as_array())
+        && !failures.is_empty()
+    {
+        content.push_str("Failures:\n\n");
+        for failure in failures {
+            let name = failure
+                .get("test_name")
+                .and_then(|v| v.as_str())
+                .unwrap_or("test");
+            let message = failure
+                .get("message")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            content.push_str(&format!("- {name}: {}\n", one_line(message)));
+            if let Some(location) = failure.get("location").and_then(|v| v.as_str()) {
+                content.push_str(&format!("  at {location}\n"));
+            }
+        }
+        content.push('\n');
+    }
+    if let Some(raw) = result.output.get("raw_output").and_then(|v| v.as_str()) {
+        append_text_block(content, "Raw output", raw, "");
+    }
+    append_json_section(content, "Output", &result.output);
+}
+
+fn render_build_runner_output(result: &ToolResult, content: &mut String) {
+    if let Some(summary) = result.output.get("summary").and_then(|v| v.as_str()) {
+        content.push_str(summary);
+        content.push_str("\n\n");
+    }
+    render_diagnostic_list("Errors", result.output.get("errors"), content);
+    render_diagnostic_list("Warnings", result.output.get("warnings"), content);
+    append_json_section(content, "Output", &result.output);
+}
+
+fn render_named_structured_output(title: &str, result: &ToolResult, content: &mut String) {
+    if let Some(message) = result.output.get("message").and_then(|v| v.as_str()) {
+        content.push_str(message);
+        content.push_str("\n\n");
+    } else if let Some(summary) = result.output.get("summary").and_then(|v| v.as_str()) {
+        content.push_str(summary);
+        content.push_str("\n\n");
+    }
+    append_json_section(content, title, &result.output);
+}
+
+fn render_matches(matches: Option<&Value>, content: &mut String) {
+    let Some(matches) = matches.and_then(|v| v.as_array()) else {
+        return;
+    };
+    for m in matches {
+        if let Some(m_obj) = m.as_object() {
+            let path = m_obj.get("path").and_then(|v| v.as_str()).unwrap_or("");
+            let line = m_obj
+                .get("line")
+                .or_else(|| m_obj.get("line_number"))
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0);
+            let text = m_obj
+                .get("text")
+                .or_else(|| m_obj.get("line_text"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            content.push_str(&format!("{path}:{line}: {text}\n"));
+        } else if let Some(text) = m.as_str() {
+            content.push_str(text);
+            content.push('\n');
+        }
+    }
+}
+
+fn render_file_list(files: Option<&Value>, content: &mut String) {
+    let Some(files) = files.and_then(|v| v.as_array()) else {
+        return;
+    };
+    for (index, file) in files.iter().enumerate() {
+        if let Some(file) = file.as_str() {
+            content.push_str(&format!("{:>4}  {}\n", index + 1, file));
+        } else if let Some(path) = file.get("path").and_then(|v| v.as_str()) {
+            content.push_str(&format!("{:>4}  {}\n", index + 1, path));
+        } else {
+            content.push_str(&format!("{:>4}  {}\n", index + 1, compact_json(file)));
+        }
+    }
+}
+
+fn render_diagnostic_list(title: &str, value: Option<&Value>, content: &mut String) {
+    let Some(items) = value.and_then(|v| v.as_array()) else {
+        return;
+    };
+    if items.is_empty() {
+        return;
+    }
+    content.push_str(title);
+    content.push_str(":\n\n");
+    for item in items {
+        let message = item
+            .get("message")
+            .or_else(|| item.get("text"))
+            .and_then(|v| v.as_str())
+            .unwrap_or_else(|| item.as_str().unwrap_or(""));
+        let path = item.get("path").and_then(|v| v.as_str());
+        let line = item.get("line").and_then(|v| v.as_u64());
+        match (path, line) {
+            (Some(path), Some(line)) => content.push_str(&format!(
+                "- {}:{line}: {}\n",
+                display_path(path),
+                one_line(message)
+            )),
+            (Some(path), None) => content.push_str(&format!(
+                "- {}: {}\n",
+                display_path(path),
+                one_line(message)
+            )),
+            _ => content.push_str(&format!("- {}\n", one_line(message))),
+        }
+    }
+    content.push('\n');
+}
+
+fn append_json_section(content: &mut String, title: &str, value: &Value) {
+    if value.is_null() {
+        return;
+    }
+    content.push_str(&format!("\n{title}:\n```json\n"));
+    let rendered = pretty_json(value);
+    let truncated = truncate_to_lines(&rendered, MAX_TOOL_RENDER_LINES);
+    content.push_str(truncated);
+    if !truncated.ends_with('\n') {
+        content.push('\n');
+    }
+    if truncated.len() < rendered.len() {
+        content.push_str(&format!(
+            "... (truncated, {} lines total)\n",
+            rendered.lines().count()
+        ));
+    }
+    content.push_str("```\n");
+}
+
+fn append_text_block(content: &mut String, title: &str, text: &str, language: &str) {
+    if text.is_empty() {
+        return;
+    }
+    content.push_str(&format!("\n{title}:\n```{language}\n"));
+    let truncated = truncate_to_lines(text, MAX_TOOL_RENDER_LINES);
+    content.push_str(truncated);
+    if !truncated.ends_with('\n') {
+        content.push('\n');
+    }
+    if truncated.len() < text.len() {
+        content.push_str(&format!(
+            "... (truncated, {} lines total)\n",
+            text.lines().count()
+        ));
+    }
+    content.push_str("```\n");
+}
+
+fn pretty_json(value: &Value) -> String {
+    serde_json::to_string_pretty(value).unwrap_or_else(|_| value.to_string())
+}
+
+fn compact_json(value: &Value) -> String {
+    serde_json::to_string(value).unwrap_or_else(|_| value.to_string())
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -382,6 +653,17 @@ fn write_file_line_counts(invocation: &ToolInvocation, result: &ToolResult) -> (
     (added, removed)
 }
 
+fn has_patch_input(invocation: &ToolInvocation) -> bool {
+    invocation.input.get("patch").is_some()
+        || invocation.input.get("patches").is_some()
+        || invocation.input.get("edits").is_some()
+}
+
+fn is_patch_invocation(invocation: &ToolInvocation) -> bool {
+    invocation.tool_name == "apply_patch"
+        || (invocation.tool_name == "write" && has_patch_input(invocation))
+}
+
 fn apply_patch_summary(invocation: &ToolInvocation) -> String {
     let Some(patch) = first_patch_input(invocation) else {
         return if invocation.tool_name == "write" {
@@ -390,29 +672,17 @@ fn apply_patch_summary(invocation: &ToolInvocation) -> String {
             "Apply patch".to_string()
         };
     };
-    patch_edit_summaries(patch)
+    patch_edit_summaries(&patch)
         .into_iter()
         .next()
         .unwrap_or_else(|| "Apply patch".to_string())
 }
 
-fn first_patch_input(invocation: &ToolInvocation) -> Option<&str> {
-    invocation
-        .input
-        .get("patch")
-        .and_then(|v| v.as_str())
-        .or_else(|| {
-            invocation
-                .input
-                .get("patches")
-                .and_then(|v| v.as_array())
-                .and_then(|patches| patches.first())
-                .and_then(|v| v.as_str())
-        })
+fn first_patch_input(invocation: &ToolInvocation) -> Option<String> {
+    patch_inputs(invocation).into_iter().next()
 }
 
-fn append_patch_bodies(invocation: &ToolInvocation, content: &mut String) {
-    let patches = patch_inputs(invocation);
+fn append_patch_bodies(patches: &[String], content: &mut String) {
     if patches.is_empty() {
         return;
     }
@@ -439,16 +709,46 @@ fn append_patch_bodies(invocation: &ToolInvocation, content: &mut String) {
     }
 }
 
-fn patch_inputs(invocation: &ToolInvocation) -> Vec<&str> {
+fn patch_inputs(invocation: &ToolInvocation) -> Vec<String> {
     if let Some(patch) = invocation.input.get("patch").and_then(|v| v.as_str()) {
-        return vec![patch];
+        return vec![patch.to_string()];
+    }
+    if let Some(patches) = invocation.input.get("patches").and_then(|v| v.as_array()) {
+        let patches = patches
+            .iter()
+            .filter_map(|v| v.as_str())
+            .filter(|patch| !patch.is_empty())
+            .map(str::to_string)
+            .collect::<Vec<_>>();
+        if !patches.is_empty() {
+            return patches;
+        }
     }
     invocation
         .input
-        .get("patches")
+        .get("edits")
         .and_then(|v| v.as_array())
-        .map(|patches| patches.iter().filter_map(|v| v.as_str()).collect())
+        .map(|edits| edits.iter().filter_map(edit_to_patch_body).collect())
         .unwrap_or_default()
+}
+
+fn edit_to_patch_body(edit: &Value) -> Option<String> {
+    let path = edit.get("path").and_then(Value::as_str)?;
+    let search = edit.get("search").and_then(Value::as_str)?;
+    let replace = edit.get("replace").and_then(Value::as_str)?;
+    let mut patch = format!("*** Begin Patch\n*** Update File: {path}\n@@\n");
+    append_prefixed_lines(&mut patch, '-', search);
+    append_prefixed_lines(&mut patch, '+', replace);
+    patch.push_str("*** End Patch");
+    Some(patch)
+}
+
+fn append_prefixed_lines(output: &mut String, prefix: char, text: &str) {
+    for line in text.lines() {
+        output.push(prefix);
+        output.push_str(line);
+        output.push('\n');
+    }
 }
 
 fn bash_summary(invocation: &ToolInvocation, result: &ToolResult) -> String {
@@ -1326,6 +1626,54 @@ fn sleep_summary(result: &ToolResult) -> String {
     format!("Sleep ({secs}s)")
 }
 
+fn set_goal_summary(invocation: &ToolInvocation, result: &ToolResult) -> String {
+    let objective = invocation
+        .input
+        .get("objective")
+        .and_then(|v| v.as_str())
+        .or_else(|| result.output.get("objective").and_then(|v| v.as_str()))
+        .unwrap_or("goal");
+    let budget = invocation
+        .input
+        .get("token_budget")
+        .and_then(|v| v.as_i64())
+        .or_else(|| result.output.get("token_budget").and_then(|v| v.as_i64()));
+    if let Some(budget) = budget {
+        format!(
+            "Set goal \"{}\" ({budget} tokens)",
+            truncate_for_summary(objective, 48)
+        )
+    } else {
+        format!("Set goal \"{}\"", truncate_for_summary(objective, 48))
+    }
+}
+
+fn wait_summary(invocation: &ToolInvocation, result: &ToolResult) -> String {
+    let file = invocation
+        .input
+        .get("file_path")
+        .and_then(|v| v.as_str())
+        .or_else(|| result.output.get("file_path").and_then(|v| v.as_str()));
+    let timeout = invocation
+        .input
+        .get("timeout_seconds")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(120);
+    let status = result
+        .output
+        .get("status")
+        .and_then(|v| v.as_str())
+        .or_else(|| result.output.get("message").and_then(|v| v.as_str()));
+    match (file, status) {
+        (Some(file), Some(status)) => {
+            format!("Wait {} ({})", display_path(file), one_line(status))
+        }
+        (Some(file), None) => format!("Wait {} (up to {timeout}s)", display_path(file)),
+        (None, Some(status)) => format!("Wait ({})", one_line(status)),
+        (None, None) => format!("Wait ({timeout}s)"),
+    }
+}
+
 fn context_remaining_summary(result: &ToolResult) -> String {
     let remaining = result
         .output
@@ -1828,6 +2176,275 @@ mod tests {
             ok: true,
             output,
         }
+    }
+
+    fn err_result(output: serde_json::Value) -> ToolResult {
+        ToolResult {
+            invocation_id: "tool-1".to_string(),
+            ok: false,
+            output,
+        }
+    }
+
+    fn broad_input(tool_name: &str) -> serde_json::Value {
+        match tool_name {
+            "read" | "read_file" | "view_file" => json!({ "path": "src/lib.rs" }),
+            "write" | "write_file" => json!({ "path": "src/lib.rs", "content": "fn main() {}\n" }),
+            "apply_patch" => {
+                json!({ "patch": "*** Begin Patch\n*** Update File: src/lib.rs\n@@\n-old\n+new\n*** End Patch" })
+            }
+            "bash" | "process" => json!({ "command": "echo hi" }),
+            "grep" => json!({ "pattern": "needle", "path": "src" }),
+            "search" | "fs_browser" => json!({ "action": "list", "path": "src" }),
+            "list_dir" => json!({ "directory": "src" }),
+            "glob" => json!({ "pattern": "*.rs" }),
+            "question" => json!({ "question": "Continue?", "options": ["yes", "no"] }),
+            "plan" => json!({ "action": "list" }),
+            "package_manager" => json!({ "action": "install" }),
+            "code" => json!({ "action": "overview", "path": "src" }),
+            "code_exec" => json!({ "ops": [{ "op": "trace-note", "note": "done" }] }),
+            "ast_search" | "tool_search" => json!({ "query": "Renderer" }),
+            "symbol_goto" | "symbol_references" => json!({ "name": "Renderer" }),
+            "test_discovery" => json!({ "paths": ["src/lib.rs"] }),
+            "subagent" => json!({ "prompt": "inspect renderer" }),
+            "request_user_input" => json!({ "title": "Need info", "description": "Provide info" }),
+            "set_goal" => json!({ "objective": "fix renderers", "token_budget": 10000 }),
+            "wait" => json!({ "file_path": "src/lib.rs", "timeout_seconds": 30 }),
+            "view_image" | "inspect_image" => json!({ "path": "image.png" }),
+            "verifier" => json!({ "action": "run", "command": "cargo test" }),
+            "history_ops" => json!({ "action": "recent" }),
+            "sandbox" => json!({ "action": "status" }),
+            _ => json!({}),
+        }
+    }
+
+    fn broad_output() -> serde_json::Value {
+        let mut output = serde_json::Map::new();
+        output.insert("path".to_string(), json!("src/lib.rs"));
+        output.insert("content".to_string(), json!("fn main() {}\n"));
+        output.insert("start_line".to_string(), json!(1));
+        output.insert("end_line".to_string(), json!(1));
+        output.insert("total_lines".to_string(), json!(1));
+        output.insert("files".to_string(), json!(["src/lib.rs"]));
+        output.insert(
+            "entries".to_string(),
+            json!([{ "name": "lib.rs", "type": "file", "size": 12 }]),
+        );
+        output.insert(
+            "matches".to_string(),
+            json!([{ "path": "src/lib.rs", "line": 1, "text": "needle" }]),
+        );
+        output.insert("stdout".to_string(), json!("hi\n"));
+        output.insert("stderr".to_string(), json!(""));
+        output.insert("exit_code".to_string(), json!(0));
+        output.insert("status".to_string(), json!("success"));
+        output.insert("summary".to_string(), json!("completed"));
+        output.insert("framework".to_string(), json!("cargo"));
+        output.insert("passed".to_string(), json!(1));
+        output.insert("failed".to_string(), json!(0));
+        output.insert("skipped".to_string(), json!(0));
+        output.insert("duration_ms".to_string(), json!(10));
+        output.insert("warnings".to_string(), json!([]));
+        output.insert("errors".to_string(), json!([]));
+        output.insert("symbols".to_string(), json!([]));
+        output.insert("files_scanned".to_string(), json!(1));
+        output.insert("references".to_string(), json!([]));
+        output.insert("edges".to_string(), json!([]));
+        output.insert("files_indexed".to_string(), json!(1));
+        output.insert("tests".to_string(), json!([]));
+        output.insert("churn".to_string(), json!([]));
+        output.insert("tasks".to_string(), json!([]));
+        output.insert("plans".to_string(), json!([]));
+        output.insert("features_total".to_string(), json!(1));
+        output.insert("feature_id".to_string(), json!("feature-1"));
+        output.insert("passes".to_string(), json!(true));
+        output.insert("utc_iso".to_string(), json!("2026-06-30T00:00:00Z"));
+        output.insert("slept_seconds".to_string(), json!(1));
+        output.insert("remaining_tokens".to_string(), json!(1000));
+        output.insert("context_window".to_string(), json!(2000));
+        output.insert("usage_percent".to_string(), json!("50%"));
+        output.insert("format".to_string(), json!("png"));
+        output.insert("size_bytes".to_string(), json!(12));
+        output.insert("new_context_requested".to_string(), json!(true));
+        output.insert("count".to_string(), json!(1));
+        output.insert("total".to_string(), json!(1));
+        output.insert("harness_profile".to_string(), json!("medium"));
+        output.insert("task".to_string(), json!("fix renderers"));
+        output.insert("hypotheses".to_string(), json!([]));
+        output.insert("results".to_string(), json!([]));
+        output.insert("has_changes".to_string(), json!(false));
+        output.insert("manager".to_string(), json!("cargo"));
+        output.insert("message".to_string(), json!("Goal set"));
+        output.insert("file_path".to_string(), json!("src/lib.rs"));
+        serde_json::Value::Object(output)
+    }
+
+    #[test]
+    fn known_builtin_tools_have_explicit_full_rendering() {
+        let builtin_names = [
+            "read",
+            "read_file",
+            "search",
+            "grep",
+            "fs_browser",
+            "list_dir",
+            "glob",
+            "write",
+            "write_file",
+            "apply_patch",
+            "bash",
+            "process",
+            "question",
+            "plan",
+            "package_manager",
+            "test_runner",
+            "build_runner",
+            "runtime_info",
+            "code",
+            "code_edit",
+            "code_exec",
+            "ast_search",
+            "symbol_goto",
+            "symbol_references",
+            "dependency_graph_query",
+            "test_discovery",
+            "ownership_churn_query",
+            "branch_race_start",
+            "init_session",
+            "mark_feature_done",
+            "append_note",
+            "history_ops",
+            "current_time",
+            "sleep",
+            "set_goal",
+            "get_context_remaining",
+            "request_user_input",
+            "sandbox",
+            "view_image",
+            "inspect_image",
+            "new_context_window",
+            "tool_search",
+            "verifier",
+            "wait",
+            "subagent",
+            "repo_explore",
+        ];
+
+        for name in builtin_names {
+            let content = tool_full_content(
+                &invocation(name, broad_input(name)),
+                &ok_result(broad_output()),
+            );
+            assert!(
+                !content.contains(&format!("{name} completed successfully")),
+                "{name} fell back to generic success renderer:\n{content}"
+            );
+        }
+    }
+
+    #[test]
+    fn read_alias_uses_file_renderer() {
+        let content = tool_full_content(
+            &invocation("read", json!({ "path": "src/lib.rs" })),
+            &ok_result(json!({
+                "path": "src/lib.rs",
+                "content": "fn main() {}\n",
+                "start_line": 1,
+                "end_line": 1,
+                "total_lines": 1
+            })),
+        );
+
+        assert!(content.contains("Read src/lib.rs"));
+        assert!(content.contains("```rust\nfn main() {}\n```"));
+        assert!(!content.contains("read completed successfully"));
+    }
+
+    #[test]
+    fn compact_renderer_covers_goal_and_wait() {
+        let goal = tool_compact_text(
+            &invocation(
+                "set_goal",
+                json!({ "objective": "fix every tool renderer", "token_budget": 10000 }),
+            ),
+            &ok_result(json!({ "message": "Goal set" })),
+        );
+        let wait = tool_compact_text(
+            &invocation(
+                "wait",
+                json!({ "file_path": "src/lib.rs", "timeout_seconds": 30 }),
+            ),
+            &ok_result(json!({ "status": "released", "file_path": "src/lib.rs" })),
+        );
+
+        assert_eq!(goal, "Set goal \"fix every tool renderer\" (10000 tokens)");
+        assert_eq!(wait, "Wait src/lib.rs (released)");
+    }
+
+    #[test]
+    fn search_alias_full_view_renders_files() {
+        let content = tool_full_content(
+            &invocation("list_dir", json!({ "directory": "src" })),
+            &ok_result(json!({
+                "path": "src",
+                "files": ["src/lib.rs", "src/main.rs"]
+            })),
+        );
+
+        assert!(content.contains("Directory entries:"));
+        assert!(content.contains("1  src/lib.rs"));
+        assert!(content.contains("2  src/main.rs"));
+        assert!(!content.contains("list_dir completed successfully"));
+    }
+
+    #[test]
+    fn process_full_view_renders_stdout_and_structured_output() {
+        let content = tool_full_content(
+            &invocation("process", json!({ "command": "printf hi" })),
+            &ok_result(json!({
+                "exit_code": 0,
+                "stdout": "hi\n",
+                "stderr": "",
+                "elapsed_ms": 12
+            })),
+        );
+
+        assert!(content.contains("Exit code: 0"));
+        assert!(content.contains("Stdout:\n```\nhi\n```"));
+        assert!(content.contains("Output:\n```json"));
+    }
+
+    #[test]
+    fn unknown_tool_full_view_includes_input_and_output_json() {
+        let content = tool_full_content(
+            &invocation("plugin__demo__lookup", json!({ "query": "abc" })),
+            &ok_result(json!({
+                "items": [{ "title": "Result" }],
+                "count": 1
+            })),
+        );
+
+        assert!(content.contains("plugin__demo__lookup completed successfully"));
+        assert!(content.contains("Input:\n```json"));
+        assert!(content.contains("\"query\": \"abc\""));
+        assert!(content.contains("Output:\n```json"));
+        assert!(content.contains("\"count\": 1"));
+    }
+
+    #[test]
+    fn non_bash_error_preserves_structured_output() {
+        let content = tool_full_content(
+            &invocation("test_runner", json!({ "test_path": "bad" })),
+            &err_result(json!({
+                "error": "test command failed",
+                "framework": "cargo",
+                "stdout": "running 1 test"
+            })),
+        );
+
+        assert!(content.contains("Error: test command failed"));
+        assert!(content.contains("Output:\n```json"));
+        assert!(content.contains("\"framework\": \"cargo\""));
     }
 
     #[test]

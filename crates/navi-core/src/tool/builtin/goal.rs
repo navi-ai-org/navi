@@ -4,7 +4,9 @@ use serde_json::json;
 
 use super::helpers;
 use crate::event::AgentEvent;
-use crate::tool::{Tool, ToolDefinition, ToolInvocation, ToolInvocationContext, ToolKind, ToolResult};
+use crate::tool::{
+    Tool, ToolDefinition, ToolInvocation, ToolInvocationContext, ToolKind, ToolResult,
+};
 
 pub(crate) struct SetGoalTool;
 

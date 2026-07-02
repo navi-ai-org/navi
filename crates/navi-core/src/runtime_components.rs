@@ -8,7 +8,7 @@ use crate::harness::{
 use crate::model::{ModelMessage, ModelProvider, ModelRole};
 use crate::prompt::{PromptCache, SystemPromptInput, SystemPromptRenderer};
 use crate::security::{SecurityDecision, SecurityPolicy};
-use crate::skills::render_active_skills;
+use crate::skills::{render_active_skills, render_available_skills};
 use crate::tool::{ToolDefinition, ToolInvocation, ToolResult};
 use anyhow::Result;
 use async_trait::async_trait;
@@ -381,6 +381,10 @@ impl PromptBuilder for TutorPromptBuilder {
             prompt.push_str("\n\n");
             prompt.push_str(&context);
         }
+        if let Some(skills) = render_available_skills(&input.available_skills) {
+            prompt.push_str("\n\n");
+            prompt.push_str(&skills);
+        }
         if let Some(skills) = render_active_skills(&input.active_skills) {
             prompt.push_str("\n\n");
             prompt.push_str(&skills);
@@ -596,6 +600,7 @@ mod tests {
             tools: Vec::new(),
             include_tool_prompt_manifest: false,
             context_packets: Vec::new(),
+            available_skills: Vec::new(),
             active_skills: Vec::new(),
         };
 

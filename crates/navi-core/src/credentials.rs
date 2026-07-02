@@ -95,6 +95,39 @@ impl ProviderCredentials {
             .map(|account| account.api_key.clone())
     }
 
+    fn default_model_api_key(&self) -> Option<String> {
+        self.default_account_id()
+            .and_then(|account_id| self.account_model_api_key(&account_id))
+            .or_else(|| {
+                if !self.api_key.is_empty() && self.default_oauth_api_kind().is_none() {
+                    Some(self.api_key.clone())
+                } else {
+                    None
+                }
+            })
+    }
+
+    fn account_model_api_key(&self, account_id: &str) -> Option<String> {
+        if account_id == DEFAULT_ACCOUNT_ID
+            && !self.api_key.is_empty()
+            && self.default_oauth_api_kind().is_none()
+        {
+            return Some(self.api_key.clone());
+        }
+        self.accounts
+            .get(account_id)
+            .filter(|account| account.oauth_api_kind.is_none())
+            .map(|account| account.api_key.clone())
+    }
+
+    fn has_oauth_credential(&self) -> bool {
+        self.default_oauth_api_kind().is_some()
+            || self
+                .accounts
+                .values()
+                .any(|account| account.oauth_api_kind.is_some())
+    }
+
     fn default_commandcode_metadata(&self) -> Option<CommandCodeCredentialMetadata> {
         self.default_account_id()
             .and_then(|account_id| {
@@ -174,6 +207,18 @@ impl CredentialStore {
             .and_then(ProviderCredentials::default_api_key)
     }
 
+    /// Reads a stored credential usable for model API calls.
+    ///
+    /// OAuth credentials obtained through OpenAI browser login are excluded:
+    /// they are account/connector tokens, not OpenAI Platform API keys.
+    pub fn get_model_api_key(&self, provider_id: &str) -> Option<String> {
+        let content = fs::read_to_string(&self.path).ok()?;
+        let file: CredentialsFile = toml::from_str(&content).ok()?;
+        file.providers
+            .get(provider_id)
+            .and_then(ProviderCredentials::default_model_api_key)
+    }
+
     /// Returns oauth_api_kind metadata for a stored OAuth token, or `None`.
     pub fn get_oauth_api_kind(&self, provider_id: &str) -> Option<String> {
         let content = fs::read_to_string(&self.path).ok()?;
@@ -188,6 +233,31 @@ impl CredentialStore {
         let file: CredentialsFile = toml::from_str(&content).ok()?;
         let credentials = file.providers.get(provider_id)?;
         credentials.account_api_key(account_id)
+    }
+
+    pub fn get_model_api_key_for_account(
+        &self,
+        provider_id: &str,
+        account_id: &str,
+    ) -> Option<String> {
+        let content = fs::read_to_string(&self.path).ok()?;
+        let file: CredentialsFile = toml::from_str(&content).ok()?;
+        let credentials = file.providers.get(provider_id)?;
+        credentials.account_model_api_key(account_id)
+    }
+
+    pub fn has_oauth_credential(&self, provider_id: &str) -> bool {
+        let content = match fs::read_to_string(&self.path) {
+            Ok(content) => content,
+            Err(_) => return false,
+        };
+        let file: CredentialsFile = match toml::from_str(&content) {
+            Ok(file) => file,
+            Err(_) => return false,
+        };
+        file.providers
+            .get(provider_id)
+            .is_some_and(ProviderCredentials::has_oauth_credential)
     }
 
     pub fn get_project_account(&self, project_dir: &Path, provider_id: &str) -> Option<String> {
@@ -511,10 +581,10 @@ pub fn resolve_provider_api_key(
 
     provider_env_api_key_for_config(provider_config)
         .or_else(|| opencode_auth_json_api_key(credential_store, &provider_config.id))
-        .or_else(|| credential_store.get_api_key(&provider_config.id))
+        .or_else(|| stored_model_api_key_or_openai_oauth(credential_store, &provider_config.id))
         .or_else(|| {
             if requested_provider_id != provider_config.id {
-                credential_store.get_api_key(requested_provider_id)
+                stored_model_api_key_or_openai_oauth(credential_store, requested_provider_id)
             } else {
                 None
             }
@@ -534,14 +604,22 @@ pub fn resolve_provider_api_key_for_project(
     credential_store
         .get_project_account(project_dir, &provider_config.id)
         .and_then(|account_id| {
-            credential_store.get_api_key_for_account(&provider_config.id, &account_id)
+            stored_model_api_key_for_account_or_openai_oauth(
+                credential_store,
+                &provider_config.id,
+                &account_id,
+            )
         })
         .or_else(|| {
             if requested_provider_id != provider_config.id {
                 credential_store
                     .get_project_account(project_dir, requested_provider_id)
                     .and_then(|account_id| {
-                        credential_store.get_api_key_for_account(requested_provider_id, &account_id)
+                        stored_model_api_key_for_account_or_openai_oauth(
+                            credential_store,
+                            requested_provider_id,
+                            &account_id,
+                        )
                     })
             } else {
                 None
@@ -589,10 +667,12 @@ pub fn resolve_provider_credential_status(
         };
     }
 
-    if credential_store.get_api_key(&provider_config.id).is_some()
+    if credential_store
+        .get_model_api_key(&provider_config.id)
+        .is_some()
         || (requested_provider_id != provider_config.id
             && credential_store
-                .get_api_key(requested_provider_id)
+                .get_model_api_key(requested_provider_id)
                 .is_some())
     {
         return CredentialStatus {
@@ -600,6 +680,30 @@ pub fn resolve_provider_credential_status(
             source: Some(CredentialSource::Stored),
             label: "stored".to_string(),
             detail: Some("stored credential".to_string()),
+        };
+    }
+
+    if credential_store.has_oauth_credential(&provider_config.id)
+        || (requested_provider_id != provider_config.id
+            && credential_store.has_oauth_credential(requested_provider_id))
+    {
+        if provider_config.id == ProviderId::OPENAI || requested_provider_id == ProviderId::OPENAI {
+            return CredentialStatus {
+                configured: true,
+                source: Some(CredentialSource::Stored),
+                label: "oauth".to_string(),
+                detail: Some("stored ChatGPT OAuth credential".to_string()),
+            };
+        }
+
+        return CredentialStatus {
+            configured: false,
+            source: None,
+            label: "oauth-only".to_string(),
+            detail: Some(
+                "stored OAuth credential is not usable for model API calls; configure an API key"
+                    .to_string(),
+            ),
         };
     }
 
@@ -621,6 +725,31 @@ pub fn resolve_provider_credential_status(
         label: "missing".to_string(),
         detail: None,
     }
+}
+
+fn stored_model_api_key_or_openai_oauth(
+    credential_store: &CredentialStore,
+    provider_id: &str,
+) -> Option<String> {
+    credential_store.get_model_api_key(provider_id).or_else(|| {
+        (provider_id == ProviderId::OPENAI && credential_store.has_oauth_credential(provider_id))
+            .then(|| credential_store.get_api_key(provider_id))
+            .flatten()
+    })
+}
+
+fn stored_model_api_key_for_account_or_openai_oauth(
+    credential_store: &CredentialStore,
+    provider_id: &str,
+    account_id: &str,
+) -> Option<String> {
+    credential_store
+        .get_model_api_key_for_account(provider_id, account_id)
+        .or_else(|| {
+            (provider_id == ProviderId::OPENAI && credential_store.has_oauth_credential(provider_id))
+                .then(|| credential_store.get_api_key_for_account(provider_id, account_id))
+                .flatten()
+        })
 }
 
 fn provider_env_api_key_for_config(provider_config: &ProviderConfig) -> Option<String> {
@@ -941,6 +1070,36 @@ mod tests {
         assert!(stored.configured);
         assert_eq!(stored.source, Some(CredentialSource::Stored));
         assert_eq!(stored.label, "stored");
+    }
+
+    #[test]
+    fn openai_oauth_credential_does_not_resolve_as_model_api_key() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let store = CredentialStore::new(tempdir.path().to_path_buf());
+        let provider = ProviderConfig {
+            id: "openai".to_string(),
+            label: "OpenAI".to_string(),
+            description: String::new(),
+            kind: ProviderKind::OpenAiResponses,
+            api_key_env: "NAVI_NONEXISTENT_ENV_VAR_98771".to_string(),
+            base_url: Some("https://api.openai.com/v1".to_string()),
+            ..Default::default()
+        };
+
+        store
+            .set_oauth_credential("openai", "oauth-access-token", "chat-completions")
+            .expect("save oauth");
+
+        assert_eq!(
+            store.get_api_key("openai").as_deref(),
+            Some("oauth-access-token")
+        );
+        assert!(store.get_model_api_key("openai").is_none());
+        assert!(resolve_provider_api_key(&store, &provider, "openai").is_none());
+
+        let status = resolve_provider_credential_status(&store, &provider, "openai", None);
+        assert!(!status.configured);
+        assert_eq!(status.label, "oauth-only");
     }
 
     #[test]

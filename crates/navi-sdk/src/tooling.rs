@@ -1,13 +1,16 @@
 use anyhow::Result;
 use navi_core::{
-    CredentialStore, FileLockManager, LoadedConfig, ModelProvider, RuntimeComponents,
-    SecurityPolicy, ToolExecutor, model_can_run_publicly, resolve_provider_api_key,
-    resolve_provider_api_key_for_project, resolve_provider_config,
+    CredentialStore, LoadedConfig, ModelProvider, ProviderConfig, ProviderKind,
+    RuntimeComponents, SecurityPolicy, ToolExecutor, model_can_run_publicly,
+    resolve_provider_api_key, resolve_provider_api_key_for_project, resolve_provider_config,
 };
 use navi_plugin_host::{LoadOptions, load_configured_plugins_with_options};
+#[cfg(feature = "wasm-plugins")]
 use navi_plugin_manifest::{SecurityDefaults, aggregate_lockfile_path, installed_plugins_dir};
+#[cfg(feature = "wasm-plugins")]
 use navi_plugin_orchestrator::PluginOrchestrator;
 use navi_providers::OpenAiProvider;
+#[cfg(feature = "wasm-plugins")]
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -29,23 +32,6 @@ pub(crate) fn build_local_tooling(
         runtime_components.security.clone(),
     );
 
-    // Initialize cross-instance file lock manager.
-    {
-        let hostname = gethostname();
-        let pid = std::process::id();
-        let instance_id = format!("{hostname}-{pid}");
-        match FileLockManager::new(&project_dir, instance_id) {
-            Ok(lm) => {
-                tool_executor.set_lock_manager(Arc::new(lm));
-            }
-            Err(e) => {
-                tracing::warn!(error = %e, "failed to init file lock manager");
-            }
-        }
-    }
-
-    // Dual plugin runtime: native .so (global config) + WASM store (data_dir/plugins + wasm_plugins).
-    // See docs/plugin-system.md Appendix A.1.
     // Load native .so plugins (optional Landlock sandbox on Linux when enabled).
     let mut sandbox_paths = vec![project_dir.clone(), loaded_config.data_dir.clone()];
     for plugin in loaded_config.config.plugins.iter().filter(|p| p.enabled) {
@@ -69,17 +55,30 @@ pub(crate) fn build_local_tooling(
     let tui_components = plugin_report.tui_components;
 
     // Load WASM plugins from the data-dir store and any configured scan roots.
-    let security_defaults = SecurityDefaults::default();
-    for plugin_dir in
-        wasm_plugin_scan_roots(&loaded_config.data_dir, &loaded_config.config.wasm_plugins)
+    #[cfg(feature = "wasm-plugins")]
     {
-        load_wasm_plugins_from_root(
-            &plugin_dir,
-            &project_dir,
-            &security_defaults,
-            &mut tool_executor,
-            &mut warnings,
-        );
+        let security_defaults = SecurityDefaults::default();
+        for plugin_dir in
+            wasm_plugin_scan_roots(&loaded_config.data_dir, &loaded_config.config.wasm_plugins)
+        {
+            load_wasm_plugins_from_root(
+                &plugin_dir,
+                &project_dir,
+                &security_defaults,
+                &mut tool_executor,
+                &mut warnings,
+            );
+        }
+    }
+
+    #[cfg(not(feature = "wasm-plugins"))]
+    if loaded_config
+        .config
+        .wasm_plugins
+        .iter()
+        .any(|plugin| plugin.enabled)
+    {
+        warnings.push(wasm_plugins_disabled_warning());
     }
 
     Ok(NaviRuntimeTooling {
@@ -92,18 +91,8 @@ pub(crate) fn build_local_tooling(
 }
 
 /// Directories to scan for installed WASM plugin subfolders.
-fn gethostname() -> String {
-    std::env::var("HOSTNAME")
-        .or_else(|_| std::env::var("HOST"))
-        .ok()
-        .or_else(|| {
-            std::fs::read_to_string("/etc/hostname")
-                .ok()
-                .map(|s| s.trim().to_string())
-        })
-        .unwrap_or_else(|| "unknown".to_string())
-}
 
+#[cfg(feature = "wasm-plugins")]
 fn wasm_plugin_scan_roots(
     data_dir: &Path,
     configured: &[navi_core::WasmPluginConfig],
@@ -129,6 +118,7 @@ fn wasm_plugin_scan_roots(
 }
 
 /// Reload WASM plugins into an existing executor (unregisters prior `plugin__*` tools first).
+#[cfg(feature = "wasm-plugins")]
 pub fn reload_wasm_plugins_on_executor(
     executor: &mut ToolExecutor,
     data_dir: &Path,
@@ -150,6 +140,19 @@ pub fn reload_wasm_plugins_on_executor(
     warnings
 }
 
+/// Reload WASM plugins into an existing executor.
+#[cfg(not(feature = "wasm-plugins"))]
+pub fn reload_wasm_plugins_on_executor(
+    executor: &mut ToolExecutor,
+    _data_dir: &Path,
+    _project_dir: &Path,
+    _wasm_plugins: &[navi_core::WasmPluginConfig],
+) -> Vec<String> {
+    executor.unregister_plugin_tools();
+    vec![wasm_plugins_disabled_warning()]
+}
+
+#[cfg(feature = "wasm-plugins")]
 fn load_wasm_plugins_from_root(
     plugin_dir: &Path,
     project_dir: &Path,
@@ -193,6 +196,12 @@ fn load_wasm_plugins_from_root(
             ));
         }
     }
+}
+
+#[cfg(not(feature = "wasm-plugins"))]
+fn wasm_plugins_disabled_warning() -> String {
+    "WASM plugin runtime is disabled in this build; rebuild `navi-sdk` with feature `wasm-plugins`"
+        .to_string()
 }
 
 /// Builds a `ModelProvider` for the given loaded configuration.
@@ -249,20 +258,17 @@ fn build_provider_for_config_inner(
             credential_store_path: credential_store.path().to_path_buf(),
         })?;
 
-    let mut provider = OpenAiProvider::from_provider_config_with_key(&provider_config, api_key)?;
+    let provider_config = provider_config_for_api_key(
+        &provider_config,
+        &credential_store,
+        &loaded_config.config.model.provider,
+        &api_key,
+    );
 
-    // OAuth tokens from the Codex CLI client only work with Chat Completions API,
-    // not the Responses API. When the credential was obtained via OAuth, the
-    // credential store records oauth_api_kind = "chat-completions".
-    if credential_store
-        .get_oauth_api_kind(&provider_config.id)
-        .as_deref()
-        == Some("chat-completions")
-    {
-        provider = provider.with_api_kind(navi_providers::OpenAiApiKind::ChatCompletions);
-    }
-
-    Ok(Arc::new(provider))
+    Ok(Arc::new(OpenAiProvider::from_provider_config_with_key(
+        &provider_config,
+        api_key,
+    )?))
 }
 
 pub(crate) async fn list_models_for_provider(
@@ -277,10 +283,60 @@ pub(crate) fn model_provider_for_config(
     provider_config: &navi_core::ProviderConfig,
     api_key: String,
 ) -> Result<Arc<dyn ModelProvider>> {
+    let provider_config = inferred_provider_config_for_api_key(provider_config, &api_key);
     Ok(Arc::new(OpenAiProvider::from_provider_config_with_key(
-        provider_config,
+        &provider_config,
         api_key,
     )?))
+}
+
+const CHATGPT_CODEX_BASE_URL: &str = "https://chatgpt.com/backend-api/codex";
+
+fn provider_config_for_api_key(
+    provider_config: &ProviderConfig,
+    credential_store: &CredentialStore,
+    requested_provider_id: &str,
+    api_key: &str,
+) -> ProviderConfig {
+    if uses_stored_openai_oauth(credential_store, &provider_config.id, api_key)
+        || (requested_provider_id != provider_config.id
+            && uses_stored_openai_oauth(credential_store, requested_provider_id, api_key))
+    {
+        return openai_chatgpt_codex_config(provider_config);
+    }
+
+    inferred_provider_config_for_api_key(provider_config, api_key)
+}
+
+fn inferred_provider_config_for_api_key(provider_config: &ProviderConfig, api_key: &str) -> ProviderConfig {
+    if provider_config.id == "openai" && is_probably_chatgpt_oauth_token(api_key) {
+        return openai_chatgpt_codex_config(provider_config);
+    }
+
+    provider_config.clone()
+}
+
+fn uses_stored_openai_oauth(
+    credential_store: &CredentialStore,
+    provider_id: &str,
+    api_key: &str,
+) -> bool {
+    provider_id == "openai"
+        && credential_store.get_oauth_api_kind(provider_id).is_some()
+        && credential_store
+            .get_api_key(provider_id)
+            .is_some_and(|stored| stored == api_key)
+}
+
+fn is_probably_chatgpt_oauth_token(api_key: &str) -> bool {
+    !api_key.is_empty() && !api_key.starts_with("sk-") && api_key != "public"
+}
+
+fn openai_chatgpt_codex_config(provider_config: &ProviderConfig) -> ProviderConfig {
+    let mut config = provider_config.clone();
+    config.kind = ProviderKind::OpenAiResponses;
+    config.base_url = Some(CHATGPT_CODEX_BASE_URL.to_string());
+    config
 }
 
 #[cfg(test)]

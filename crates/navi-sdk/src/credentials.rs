@@ -17,7 +17,7 @@ pub use navi_providers::DeviceOAuthStarted;
 pub fn provider_supports_device_oauth(provider_id: &str) -> bool {
     matches!(
         canonical_provider_id(provider_id),
-        "commandcode" | "github-copilot" | ProviderId::OPENAI
+        "openai" | "commandcode" | "github-copilot"
     )
 }
 
@@ -33,12 +33,14 @@ where
     F: FnMut(DeviceOAuthStarted) + Send,
 {
     match canonical_provider_id(provider_id) {
-        ProviderId::OPENAI => {
-            navi_providers::openai_browser_oauth(credential_store.clone(), provider_id, on_started)
-                .await
-                .map(|_| None)
-                .map_err(|err| anyhow::anyhow!(err))
-        }
+        "openai" => navi_providers::openai_browser_oauth(
+            credential_store.clone(),
+            provider_id,
+            on_started,
+        )
+        .await
+        .map(|_| None)
+        .map_err(|err| anyhow::anyhow!(err)),
         "commandcode" => navi_providers::commandcode_browser_oauth(
             credential_store.clone(),
             provider_id,

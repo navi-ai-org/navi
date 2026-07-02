@@ -219,6 +219,7 @@ pub struct AgentRuntime {
     context_packets: Vec<ContextPacket>,
     shared_context_packets: Arc<std::sync::Mutex<Vec<ContextPacket>>>,
     active_skills: Vec<String>,
+    shared_available_skills: Arc<std::sync::Mutex<Vec<crate::skills::SkillManifest>>>,
     shared_active_skills: Arc<std::sync::Mutex<Vec<crate::skills::SkillManifest>>>,
     prompt_cache: Arc<crate::prompt::PromptCache>,
     runtime_components: RuntimeComponents,
@@ -249,6 +250,7 @@ impl AgentRuntime {
 
         let shared_context_packets =
             Arc::new(std::sync::Mutex::new(options.context_packets.clone()));
+        let shared_available_skills = Arc::new(std::sync::Mutex::new(Vec::new()));
         let shared_active_skills = Arc::new(std::sync::Mutex::new(Vec::new()));
         let shared_model_provider = Arc::new(RwLock::new(options.model_provider.clone()));
         let shared_model_name = Arc::new(RwLock::new(provider_request_model_name(
@@ -274,6 +276,7 @@ impl AgentRuntime {
             context_packets: options.context_packets,
             shared_context_packets,
             active_skills: options.active_skills,
+            shared_available_skills,
             shared_active_skills,
             prompt_cache,
             runtime_components,
@@ -692,6 +695,11 @@ impl AgentRuntime {
         if let Some(executor) = self.tool_executor.as_mut() {
             if let Some(executor) = Arc::get_mut(executor) {
                 Self::register_goal_tools_on_executor(executor, self.goal_runtime.clone());
+                executor.register_skill_loader(
+                    self.project_dir.clone(),
+                    self.loaded_config.data_dir.clone(),
+                    self.shared_config.clone(),
+                );
             }
             return Ok(executor.clone());
         }
@@ -709,6 +717,11 @@ impl AgentRuntime {
         );
         executor.set_harness_profile(profile_name);
         Self::register_goal_tools_on_executor(&mut executor, self.goal_runtime.clone());
+        executor.register_skill_loader(
+            self.project_dir.clone(),
+            self.loaded_config.data_dir.clone(),
+            self.shared_config.clone(),
+        );
 
         let executor = Arc::new_cyclic(|executor_weak| {
             let subagent = SubagentTool::new(
@@ -775,7 +788,11 @@ impl AgentRuntime {
                     memory.format_injection(self.loaded_config.config.memory.max_memory_entries)
                 });
 
-        // Initialize shared_active_skills with current loaded skills
+        // Initialize skill snapshots for prompt rendering.
+        *self
+            .shared_available_skills
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = self.load_available_skills();
         *self
             .shared_active_skills
             .lock()
@@ -798,6 +815,7 @@ impl AgentRuntime {
                 &self.loaded_config.config,
             ),
             context_packets: self.shared_context_packets.clone(),
+            available_skills: self.shared_available_skills.clone(),
             active_skills: self.shared_active_skills.clone(),
             prompt_cache: self.prompt_cache.clone(),
             components: self.runtime_components.clone(),
@@ -911,11 +929,7 @@ impl AgentRuntime {
     }
 
     fn load_active_skills(&self) -> Vec<SkillManifest> {
-        match discover_configured_skills(
-            &self.loaded_config.config.skills,
-            &self.project_dir,
-            &self.loaded_config.data_dir,
-        ) {
+        match self.discover_available_skills() {
             Ok(skills) => active_skills(
                 &skills,
                 &self.loaded_config.config.skills.active,
@@ -926,6 +940,24 @@ impl AgentRuntime {
                 Vec::new()
             }
         }
+    }
+
+    fn load_available_skills(&self) -> Vec<SkillManifest> {
+        match self.discover_available_skills() {
+            Ok(skills) => skills,
+            Err(err) => {
+                tracing::warn!(error = %err, "failed to discover configured skills");
+                Vec::new()
+            }
+        }
+    }
+
+    fn discover_available_skills(&self) -> Result<Vec<SkillManifest>> {
+        discover_configured_skills(
+            &self.loaded_config.config.skills,
+            &self.project_dir,
+            &self.loaded_config.data_dir,
+        )
     }
 }
 
