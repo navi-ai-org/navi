@@ -48,14 +48,6 @@ cargo install navi-cli
 
 Requires [Rust](https://rustup.rs). Builds the `navi` binary with full TUI and headless support.
 
-### npm (prebuilt binary)
-
-```bash
-npm install -g @navi-agent/navi
-```
-
-Installs the prebuilt `navi` binary for your platform. No Rust toolchain needed. Works on Linux (x64/arm64), macOS (x64/arm64), and Windows (x64).
-
 ### Shell installer (curl — macOS / Linux)
 
 ```bash
