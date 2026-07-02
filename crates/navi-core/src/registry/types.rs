@@ -91,6 +91,8 @@ pub struct RegistryProvider {
     pub kind: String,
     pub api_key_env: String,
     pub base_url: Option<String>,
+    #[serde(default)]
+    pub tool_calling_mode: Option<String>,
     #[serde(default, skip_serializing_if = "ProviderRequestOptions::is_empty")]
     pub request_options: ProviderRequestOptions,
     #[serde(default)]

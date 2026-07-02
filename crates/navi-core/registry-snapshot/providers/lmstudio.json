@@ -1,0 +1,19 @@
+{
+  "id": "lmstudio",
+  "label": "LMStudio",
+  "description": "Local inference server",
+  "kind": "openai-chat-completions",
+  "api_key_env": "LMSTUDIO_API_KEY",
+  "base_url": "http://localhost:1234/v1",
+  "models": [
+    { "name": "local-model", "task_size": "large", "context_window_tokens": 128000 },
+    { "name": "qwen2.5-coder-14b", "task_size": "small", "context_window_tokens": 32000 },
+    { "name": "qwen2.5-coder-7b", "task_size": "small", "context_window_tokens": 32000 },
+    { "name": "qwen2.5-coder-32b", "task_size": "large", "context_window_tokens": 128000 },
+    { "name": "deepseek-r1-distill-qwen-32b", "task_size": "large", "context_window_tokens": 128000 },
+    { "name": "deepseek-r1-distill-llama-8b", "task_size": "small", "context_window_tokens": 32000 },
+    { "name": "mistral-small-instruct", "task_size": "small", "context_window_tokens": 32000 },
+    { "name": "gemma-3-27b-it", "task_size": "large", "context_window_tokens": 128000 },
+    { "name": "llama-3.2-3b-instruct", "task_size": "small", "context_window_tokens": 128000 }
+  ]
+}

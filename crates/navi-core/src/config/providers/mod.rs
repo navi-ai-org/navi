@@ -5,7 +5,8 @@ use std::cell::RefCell;
 use std::sync::Arc;
 
 use crate::config::types::{
-    ModelOption, NaviConfig, ProviderConfig, ProviderKind, ProviderModelConfig, ToolCallingMode,
+    ModelOption, ModelTaskSize, NaviConfig, ProviderConfig, ProviderKind, ProviderModelConfig,
+    ToolCallingMode,
 };
 use crate::registry::RegistryStore;
 
@@ -44,20 +45,59 @@ fn base_provider_catalog() -> Vec<ProviderConfig> {
             .and_then(|store| match store.load_all_providers() {
                 Ok(providers) if !providers.is_empty() => Some(providers),
                 Ok(_) => {
-                    tracing::debug!("registry cache is empty, falling back to built-in providers");
+                    tracing::debug!("registry cache is empty, falling back to embedded snapshot");
                     None
                 }
                 Err(err) => {
                     tracing::warn!(
                         error = %err,
-                        "failed to load from registry cache, falling back to built-in"
+                        "failed to load from registry cache, falling back to embedded snapshot"
                     );
                     None
                 }
             })
     });
 
-    registry_providers.unwrap_or_else(registry::built_in_providers)
+    registry_providers.unwrap_or_else(|| {
+        // Last-resort fallback: parse the embedded registry snapshot.
+        match crate::registry::embedded_providers() {
+            Ok(providers) => providers
+                .into_iter()
+                .map(crate::registry::registry_provider_to_config)
+                .collect(),
+            Err(err) => {
+                tracing::error!(
+                    error = %err,
+                    "failed to parse embedded registry snapshot, using minimal fallback"
+                );
+                minimal_fallback_providers()
+            }
+        }
+    })
+}
+
+/// Minimal hardcoded fallback used only if the embedded snapshot itself fails
+/// to parse (should never happen in practice).
+fn minimal_fallback_providers() -> Vec<ProviderConfig> {
+    vec![ProviderConfig {
+        id: "openai".to_string(),
+        label: "OpenAI".to_string(),
+        description: "OpenAI API key required".to_string(),
+        kind: ProviderKind::OpenAiResponses,
+        api_key_env: "OPENAI_API_KEY".to_string(),
+        base_url: Some("https://api.openai.com/v1".to_string()),
+        models: vec![ProviderModelConfig {
+            name: "gpt-5.1".to_string(),
+            task_size: ModelTaskSize::Large,
+            context_window_tokens: Some(1_000_000),
+            max_output_tokens: None,
+            recommended_temperature: None,
+            supports_thinking: None,
+            tool_prompt_manifest: None,
+        }],
+        request_options: default_request_options_for("openai"),
+        ..Default::default()
+    }]
 }
 
 /// Maps provider aliases to their canonical form (e.g. `"opencode-zen"` to `"opencode"`).
@@ -340,9 +380,6 @@ fn apply_default_request_options(providers: &mut [ProviderConfig]) {
             && let Some(defaults) = default_request_options_for(id)
         {
             provider.request_options = Some(defaults);
-        }
-        if provider.tool_calling_mode.is_none() && id == "commandcode" {
-            provider.tool_calling_mode = Some(ToolCallingMode::Native);
         }
     }
 }

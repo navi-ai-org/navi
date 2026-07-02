@@ -33,14 +33,12 @@ where
     F: FnMut(DeviceOAuthStarted) + Send,
 {
     match canonical_provider_id(provider_id) {
-        "openai" => navi_providers::openai_browser_oauth(
-            credential_store.clone(),
-            provider_id,
-            on_started,
-        )
-        .await
-        .map(|_| None)
-        .map_err(|err| anyhow::anyhow!(err)),
+        "openai" => {
+            navi_providers::openai_browser_oauth(credential_store.clone(), provider_id, on_started)
+                .await
+                .map(|_| None)
+                .map_err(|err| anyhow::anyhow!(err))
+        }
         "commandcode" => navi_providers::commandcode_browser_oauth(
             credential_store.clone(),
             provider_id,

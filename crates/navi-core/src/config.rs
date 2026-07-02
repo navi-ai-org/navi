@@ -174,8 +174,8 @@ timeout_ms = 1000
             .expect("opencode provider");
         assert_eq!(opencode.api_key_env, "OPENCODE_API_KEY");
         assert!(
-            opencode.models.is_empty(),
-            "opencode models come from registry JSON, not hardcoded"
+            !opencode.models.is_empty(),
+            "opencode models should come from the embedded registry snapshot"
         );
         let commandcode = providers
             .iter()

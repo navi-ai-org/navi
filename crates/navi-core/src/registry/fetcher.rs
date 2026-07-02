@@ -1,13 +1,18 @@
-//! HTTP fetcher for the remote registry files hosted in the NAVI repo.
+//! HTTP fetcher for the remote registry files hosted in the NAVI registry DB repo.
+//!
+//! The registry database lives at <https://github.com/navi-ai-org/navi-registry>.
+//! This fetcher pulls the manifest and per-provider JSON files from GitHub raw
+//! content, verifying SHA-256 integrity hashes against the manifest.
 
 use anyhow::{Context, Result};
+use sha2::{Digest, Sha256};
 use std::path::Path;
 
 use super::types::{RegistryManifest, RegistryProvider};
 
-/// Base URL for the NAVI registry on GitHub. Uses `raw.githubusercontent.com`
+/// Base URL for the NAVI registry database on GitHub. Uses `raw.githubusercontent.com`
 /// for direct file access without the GitHub API rate limits.
-const REGISTRY_BASE_URL: &str = "https://raw.githubusercontent.com/enrell/navi/main/registry";
+const REGISTRY_BASE_URL: &str = "https://raw.githubusercontent.com/navi-ai-org/navi-registry/main";
 
 /// Timeout for individual HTTP requests.
 const FETCH_TIMEOUT_SECS: u64 = 15;
@@ -70,11 +75,15 @@ impl RegistryFetcher {
             .await
             .context("failed to read provider response body")?;
 
-        // TODO: SHA-256 integrity check against `entry.sha256`.
-        // Skipped for now — the registry lives in NAVI's own GitHub repo,
-        // so the TLS transport provides sufficient integrity.  When a crypto
-        // crate (e.g. `sha2`) is added, verify the hash here.
-        let _ = &entry.sha256;
+        // SHA-256 integrity check against the manifest hash.
+        let hash = hex::encode(Sha256::digest(text.as_bytes()));
+        if hash != entry.sha256 {
+            anyhow::bail!(
+                "provider '{provider_id}' integrity check failed: expected {}, got {}",
+                entry.sha256,
+                hash
+            );
+        }
 
         serde_json::from_str::<RegistryProvider>(&text)
             .with_context(|| format!("failed to parse provider '{provider_id}' JSON"))
