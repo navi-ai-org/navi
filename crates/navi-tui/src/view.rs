@@ -57,17 +57,34 @@ fn render_inner(frame: &mut Frame<'_>, app: &mut TuiApp) {
         image_preview::IMAGE_PREVIEW_HEIGHT
     };
     let input_activity_height = input::composer_activity_height(app);
-    let chat_min_height = if compact_viewport { 1 } else { 6 };
-    let vertical = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
+    let layout_constraints = if compact_viewport {
+        // compact: keep fixed-size input from overlapping chat by capping chat to remainder
+        let fixed_height = 1u16
+            .saturating_add(image_preview_height)
+            .saturating_add(input_activity_height)
+            .saturating_add(input_height)
+            .saturating_add(input_hint_height);
+        [
             Constraint::Length(1),
-            Constraint::Min(chat_min_height),
+            Constraint::Length(content_area.height.saturating_sub(fixed_height).max(1)),
             Constraint::Length(image_preview_height),
             Constraint::Length(input_activity_height),
             Constraint::Length(input_height),
             Constraint::Length(input_hint_height),
-        ])
+        ]
+    } else {
+        [
+            Constraint::Length(1),
+            Constraint::Fill(1),
+            Constraint::Length(image_preview_height),
+            Constraint::Length(input_activity_height),
+            Constraint::Length(input_height),
+            Constraint::Length(input_hint_height),
+        ]
+    };
+    let vertical = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints(layout_constraints)
         .split(content_area);
 
     render_header(frame, app, vertical[0]);
