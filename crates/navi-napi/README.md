@@ -35,6 +35,34 @@ console.log(response.text);
 await engine.closeSession(session.id);
 ```
 
+## API Surface
+
+The binding exposes the full `NaviEngine` SDK surface:
+
+| Category | Methods |
+|----------|---------|
+| Sessions | `startSession`, `closeSession`, `snapshotSession`, `sessionIds` |
+| Turns | `sendTurn` (with multimodal content, context packets, thinking), `cancelTurn` |
+| Events | `subscribeEvents` → `stream.next()` |
+| Goals | `getGoal`, `setGoal`, `clearGoal` |
+| Questions | `resolveQuestion` |
+| Approvals | `resolveApproval` |
+| Background tasks | `listBackgroundCommands`, `pollBackgroundCommand`, `cancelBackgroundCommand` |
+| Models | `listModels`, `setModel`, `selectModel` |
+| Providers & credentials | `listProviderAccounts`, `credentialStatus`, `setProviderApiKey`, `deleteProviderApiKey` |
+| Provider sync | `syncProviderModels`, `syncModels` |
+| Usage | `usageReport` |
+| Skills | `listSkills`, `setSessionSkills` |
+| MCP | `listMcpServers`, `listMcpTools` |
+| Saved sessions | `listSavedSessions`, `loadSavedSession`, `deleteSavedSession` |
+| Registry & plugins | `syncRegistry`, `reloadWasmPlugins` |
+| Config | `loadedConfig` |
+| Host tools | `builder.hostTool(definition, handler)` |
+| Lifecycle hooks | `onSessionStart`, `onTurnStart`, `onToolCall`, `onToolResult`, `onTurnEnd`, `onSessionEnd` |
+
+A panic hook is installed on module load to prevent agent runtime panics
+from crashing the host Node.js/Electron process.
+
 ## Development
 
 To build the native addon from source (requires [Rust](https://rustup.rs)):

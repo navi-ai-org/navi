@@ -16,12 +16,24 @@
   - [Closing a Session](#closing-a-session)
   - [Snapshotting a Session](#snapshotting-a-session)
 - [Sending Turns](#sending-turns)
+  - [Turn Options](#turn-options)
 - [Cancelling a Turn](#cancelling-a-turn)
 - [Event Streaming](#event-streaming)
   - [Event Types](#event-types)
 - [Context Packets](#context-packets)
   - [Context Sources](#context-sources)
 - [Model Management](#model-management)
+- [Goals](#goals)
+- [Background Tasks](#background-tasks)
+- [Provider Accounts & Credentials](#provider-accounts--credentials)
+- [Provider Model Sync](#provider-model-sync)
+- [Usage Reports](#usage-reports)
+- [Skills](#skills)
+- [MCP Servers](#mcp-servers)
+- [Saved Sessions](#saved-sessions)
+- [Registry & Plugins](#registry--plugins)
+- [Session Management](#session-management)
+- [Questions](#questions)
 - [Tool Approvals](#tool-approvals)
 - [Host Tools](#host-tools)
   - [Defining a Host Tool](#defining-a-host-tool)
@@ -204,6 +216,25 @@ const response = await engine.sendTurn(session.id, 'What does the justfile do?')
 console.log(response.text);
 ```
 
+### Turn Options
+
+`sendTurn` accepts an optional third argument for multimodal content, inline context packets, and per-turn thinking configuration:
+
+```ts
+const response = await engine.sendTurn(session.id, 'Analyze this image.', {
+  contentParts: [
+    { type: 'text', text: 'What is in this image?' },
+    { type: 'image', media_type: 'image/png', data: base64String },
+  ],
+  contextPackets: [
+    { source: 'File', title: 'config.toml', content: '...' },
+  ],
+  thinking: 'high',
+});
+```
+
+The `thinking` field accepts `'max' | 'high' | 'medium' | 'low' | 'off' | 'adaptive'` and overrides the session-level thinking setting for this turn only.
+
 `sendTurn` is **async and blocking** — it waits for the full turn to complete (including all tool-call iterations) before returning. For streaming updates during the turn, use [Event Streaming](#event-streaming).
 
 ---
@@ -338,8 +369,183 @@ The `source` field identifies where the context came from:
 const models = engine.listModels();
 // models => JsonValue (array of provider/model entries)
 
-// Change the model for an active session
+// Change the model for an active session (session-level, not persisted)
 await engine.setModel(session.id, 'anthropic', 'claude-sonnet-4-20250514');
+
+// Select a model globally (persists to config)
+const result = engine.selectModel('openai', 'gpt-5.5', 'global');
+// result => { providerId, model, contextWindowTokens?, providerConfigured, savedTo? }
+```
+
+The `saveTarget` parameter for `selectModel` accepts `'auto' | 'project' | 'global' | 'none'` (default: `'auto'`).
+
+---
+
+## Goals
+
+Goals give the agent a long-running objective with an optional token budget:
+
+```ts
+// Set a goal
+const goal = await engine.setGoal(session.id, 'Refactor the auth module', 50_000);
+// goal => { sessionId, goalId, objective, status, tokenBudget, tokensUsed, ... }
+
+// Get the current goal
+const currentGoal = await engine.getGoal(session.id);
+// currentGoal => goal object or null
+
+// Clear the goal
+await engine.clearGoal(session.id);
+```
+
+---
+
+## Background Tasks
+
+Background shell commands spawned by the `bash` tool can be inspected and managed:
+
+```ts
+// List all background commands for a session
+const commands = await engine.listBackgroundCommands(session.id);
+
+// Poll a specific background task
+const snapshot = await engine.pollBackgroundCommand(session.id, taskId);
+// snapshot => { taskId, command, status, elapsedMs, stdout, stderr, exitCode?, ... }
+
+// Cancel a background task
+const cancelled = await engine.cancelBackgroundCommand(session.id, taskId);
+```
+
+---
+
+## Provider Accounts & Credentials
+
+```ts
+// List all configured providers with their credential status
+const accounts = engine.listProviderAccounts();
+// accounts => [{ providerId, providerLabel, envVar, hasStoredKey, status: { configured, source, ... } }]
+
+// Check credential status for a specific provider
+const status = engine.credentialStatus('anthropic');
+// status => { providerId, configured, source?, label, envVar, credentialStorePath }
+
+// Store an API key in the credential store
+engine.setProviderApiKey('anthropic', 'sk-ant-...');
+
+// Delete a stored API key
+const deleted = engine.deleteProviderApiKey('anthropic');
+// deleted => boolean
+```
+
+---
+
+## Provider Model Sync
+
+Fetches and persists the latest model lists from provider APIs:
+
+```ts
+// Sync models for a single provider
+const report = await engine.syncProviderModels('openai', 'global');
+// report => { savedTo?, updated: [], failed: [], skipped: [] }
+
+// Sync models for all configured providers
+const report = await engine.syncModels('global');
+```
+
+---
+
+## Usage Reports
+
+```ts
+// Get usage/rate-limit info for the active provider (OpenAI only currently)
+const usage = await engine.usageReport();
+// usage => { providerId, providerLabel, planType?, limits: [{ ... }] }
+```
+
+---
+
+## Skills
+
+```ts
+// List discovered skills (SKILL.md folders)
+const skills = engine.listSkills();
+// skills => [{ id, name, description?, version?, tags, requires }]
+
+// Activate skills for a session
+await engine.setSessionSkills(session.id, ['crush-config', 'jq']);
+```
+
+---
+
+## MCP Servers
+
+```ts
+// List MCP servers configured for a session
+const servers = engine.listMcpServers(session.id);
+// servers => [{ id, tools: ['tool1', 'tool2'] }]
+
+// List all MCP tool names across servers
+const tools = engine.listMcpTools(session.id);
+// tools => ['tool1', 'tool2', ...]
+```
+
+---
+
+## Saved Sessions
+
+```ts
+// List all saved sessions
+const sessions = await engine.listSavedSessions();
+// sessions => [{ id, title?, project, createdAt, updatedAt }]
+
+// Load a saved session into a new active session
+const snapshot = await engine.loadSavedSession('saved-session-id');
+// The session is started automatically and ready for turns
+
+// Delete a saved session
+const deleted = await engine.deleteSavedSession('saved-session-id');
+```
+
+---
+
+## Registry & Plugins
+
+```ts
+// Force-sync the provider registry from the remote DB repo
+const updated = await engine.syncRegistry(true);
+// updated => boolean (true if the registry was refreshed)
+
+// Reload WASM plugins for all active sessions
+const warnings = await engine.reloadWasmPlugins();
+// warnings => string[] (load failure messages, if any)
+```
+
+---
+
+## Session Management
+
+```ts
+// List all active session IDs
+const ids = engine.sessionIds();
+// ids => ['session-1', 'session-2', ...]
+
+// Get the loaded engine configuration
+const config = engine.loadedConfig();
+// config => { model: { provider, name }, globalConfigPath?, projectConfigPath?, dataDir }
+```
+
+---
+
+## Questions
+
+When the agent emits a `QuestionRequired` event, resolve it programmatically:
+
+```ts
+await engine.resolveQuestion(session.id, {
+  kind: 'answered',
+  id: 'question-id',
+  answers: ['option-1'],
+});
 ```
 
 ---
@@ -547,9 +753,14 @@ NaviNapiEventStream   // Async iterator for runtime events
 // Data types
 SessionInfo           // { id, projectDir, model, provider }
 TurnResponse          // { sessionId, text }
+TurnOptions           // { contentParts?, contextPackets?, thinking? }
 RuntimeEvent          // { version: number, kind: JsonValue }
 ContextPacket         // { id?, source, title?, content, priority?, metadata? }
 ContextSource         // 'File' | 'Project' | ... | { Other: string }
+SaveTarget            // 'auto' | 'project' | 'global' | 'none'
+ModelSelectionResult  // { providerId, model, contextWindowTokens?, providerConfigured, savedTo? }
+ProviderSyncReport    // { savedTo?, updated, failed, skipped }
+EngineConfig          // { model: { provider, name }, globalConfigPath?, projectConfigPath?, dataDir }
 
 // Host tool types
 HostToolDefinition    // { name, description, kind?, inputSchema? }

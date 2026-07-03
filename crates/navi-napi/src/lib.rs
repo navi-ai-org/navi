@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -6,14 +7,30 @@ use napi::threadsafe_function::{
     ThreadsafeFunction, ThreadsafeFunctionCallMode, UnknownReturnValue,
 };
 use napi_derive::napi;
+
+/// Installs a panic hook that logs panics instead of aborting the Node.js process.
+/// This provides a layer of crash isolation when running in-process via N-API:
+/// panics in the agent runtime are logged and the error is returned to JS,
+/// rather than taking down the entire Electron application.
+///
+/// Called automatically on module load via `#[napi_derive::module_init]`.
+#[napi_derive::module_init]
+fn install_panic_guard() {
+    let default_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        eprintln!("[navi-napi] panic in agent runtime: {info}");
+        default_hook(info);
+    }));
+}
 use navi_core::{
-    ContextPacket, LearningHarness, LearningHarnessConfig, RuntimeComponents,
-    StudyCompactionConfig, StudyCompactionStrategy, ToolInvocation, ToolKind, ToolResult,
-    TutorPromptBuilder, TutorPromptOptions,
+    AgentEvent, ContentPart, ContextPacket, LearningHarness, LearningHarnessConfig, ModelMessage,
+    RuntimeComponents, StudyCompactionConfig, StudyCompactionStrategy, ThinkingConfig,
+    ToolInvocation, ToolKind, ToolResult, TutorPromptBuilder, TutorPromptOptions,
 };
 use navi_sdk::{
-    ApprovalDecision, HostToolDefinition, HostToolHandler, HostToolInvocation, NaviEngineBuilder,
-    NaviSessionRequest, NaviTurnRequest, RuntimeEvent, SdkHostTool, SdkHostToolResult,
+    ApprovalDecision, HostToolDefinition, HostToolHandler, HostToolInvocation,
+    NaviConfigSaveTarget, NaviEngineBuilder, NaviModelSelectionRequest, NaviSessionRequest,
+    NaviTurnRequest, QuestionResponse, RuntimeEvent, SdkHostTool, SdkHostToolResult,
 };
 use serde_json::{Value as JsonValue, json};
 use tokio::sync::{Mutex as AsyncMutex, broadcast};
@@ -54,6 +71,14 @@ pub struct JsLearningRuntimeConfig {
     pub language: Option<String>,
     pub keep_all_assessments: Option<bool>,
     pub exempt_tool_names: Option<Vec<String>>,
+}
+
+#[derive(Clone, Default)]
+#[napi(object)]
+pub struct JsTurnOptions {
+    pub content_parts: Option<Vec<JsonValue>>,
+    pub context_packets: Option<Vec<JsonValue>>,
+    pub thinking: Option<String>,
 }
 
 #[napi]
@@ -257,15 +282,43 @@ impl NaviNapiEngine {
     }
 
     #[napi]
-    pub async fn send_turn(&self, session_id: String, message: String) -> Result<JsTurnResponse> {
+    pub async fn send_turn(
+        &self,
+        session_id: String,
+        message: String,
+        options: Option<JsTurnOptions>,
+    ) -> Result<JsTurnResponse> {
+        let (content_parts, context_packets, thinking) = match options {
+            Some(opts) => {
+                let cp = opts
+                    .content_parts
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|v| serde_json::from_value::<ContentPart>(v).map_err(to_napi_error))
+                    .collect::<Result<Vec<_>>>()?;
+                let ctx = opts
+                    .context_packets
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|v| serde_json::from_value::<ContextPacket>(v).map_err(to_napi_error))
+                    .collect::<Result<Vec<_>>>()?;
+                let th = opts
+                    .thinking
+                    .as_deref()
+                    .map(parse_thinking_config)
+                    .transpose()?;
+                (cp, ctx, th)
+            }
+            None => (Vec::new(), Vec::new(), None),
+        };
         let response = self
             .inner
             .send_turn(NaviTurnRequest {
                 session_id,
                 message,
-                content_parts: Vec::new(),
-                context_packets: Vec::new(),
-                thinking: None,
+                content_parts,
+                context_packets,
+                thinking,
             })
             .await
             .map_err(to_napi_error)?;
@@ -361,6 +414,308 @@ impl NaviNapiEngine {
         Ok(NaviNapiEventStream {
             receiver: AsyncMutex::new(receiver),
         })
+    }
+
+    // ── Goals ──────────────────────────────────────────────────────────
+
+    #[napi]
+    pub async fn get_goal(&self, session_id: String) -> Result<JsonValue> {
+        let goal = self
+            .inner
+            .get_goal(&session_id)
+            .await
+            .map_err(to_napi_error)?;
+        serde_json::to_value(goal).map_err(to_napi_error)
+    }
+
+    #[napi]
+    pub async fn set_goal(
+        &self,
+        session_id: String,
+        objective: String,
+        token_budget: Option<i64>,
+    ) -> Result<JsonValue> {
+        let goal = self
+            .inner
+            .set_goal(&session_id, objective, token_budget)
+            .await
+            .map_err(to_napi_error)?;
+        serde_json::to_value(goal).map_err(to_napi_error)
+    }
+
+    #[napi]
+    pub async fn clear_goal(&self, session_id: String) -> Result<()> {
+        self.inner
+            .clear_goal(&session_id)
+            .await
+            .map_err(to_napi_error)
+    }
+
+    // ── Questions ──────────────────────────────────────────────────────
+
+    #[napi]
+    pub async fn resolve_question(&self, session_id: String, response: JsonValue) -> Result<bool> {
+        let qr: QuestionResponse = serde_json::from_value(response).map_err(to_napi_error)?;
+        self.inner
+            .resolve_question(&session_id, qr)
+            .await
+            .map_err(to_napi_error)
+    }
+
+    // ── Background Tasks ───────────────────────────────────────────────
+
+    #[napi]
+    pub async fn list_background_commands(&self, session_id: String) -> Result<JsonValue> {
+        let commands = self
+            .inner
+            .list_background_commands(&session_id)
+            .await
+            .map_err(to_napi_error)?;
+        serde_json::to_value(commands).map_err(to_napi_error)
+    }
+
+    #[napi]
+    pub async fn poll_background_command(
+        &self,
+        session_id: String,
+        task_id: String,
+    ) -> Result<JsonValue> {
+        let snapshot = self
+            .inner
+            .poll_background_command(&session_id, &task_id)
+            .await
+            .map_err(to_napi_error)?;
+        serde_json::to_value(snapshot).map_err(to_napi_error)
+    }
+
+    #[napi]
+    pub async fn cancel_background_command(
+        &self,
+        session_id: String,
+        task_id: String,
+    ) -> Result<JsonValue> {
+        let snapshot = self
+            .inner
+            .cancel_background_command(&session_id, &task_id)
+            .await
+            .map_err(to_napi_error)?;
+        serde_json::to_value(snapshot).map_err(to_napi_error)
+    }
+
+    // ── Provider Accounts & Credentials ────────────────────────────────
+
+    #[napi]
+    pub fn list_provider_accounts(&self) -> Result<JsonValue> {
+        let accounts = self.inner.list_provider_accounts().map_err(to_napi_error)?;
+        serde_json::to_value(accounts).map_err(to_napi_error)
+    }
+
+    #[napi]
+    pub fn credential_status(&self, provider_id: String) -> Result<JsonValue> {
+        let status = self
+            .inner
+            .credential_status(&provider_id)
+            .map_err(to_napi_error)?;
+        serde_json::to_value(status).map_err(to_napi_error)
+    }
+
+    #[napi]
+    pub fn set_provider_api_key(&self, provider_id: String, api_key: String) -> Result<()> {
+        self.inner
+            .set_provider_api_key(&provider_id, &api_key)
+            .map_err(to_napi_error)
+    }
+
+    #[napi]
+    pub fn delete_provider_api_key(&self, provider_id: String) -> Result<bool> {
+        self.inner
+            .delete_provider_api_key(&provider_id)
+            .map_err(to_napi_error)
+    }
+
+    // ── Usage ──────────────────────────────────────────────────────────
+
+    #[napi]
+    pub async fn usage_report(&self) -> Result<JsonValue> {
+        let report = self.inner.usage_report().await.map_err(to_napi_error)?;
+        serde_json::to_value(report).map_err(to_napi_error)
+    }
+
+    // ── Skills ─────────────────────────────────────────────────────────
+
+    #[napi]
+    pub fn list_skills(&self) -> Result<JsonValue> {
+        let skills = self.inner.list_skills().map_err(to_napi_error)?;
+        serde_json::to_value(skills).map_err(to_napi_error)
+    }
+
+    #[napi]
+    pub async fn set_session_skills(&self, session_id: String, skills: Vec<String>) -> Result<()> {
+        self.inner
+            .set_session_skills(&session_id, skills)
+            .await
+            .map_err(to_napi_error)
+    }
+
+    // ── MCP ────────────────────────────────────────────────────────────
+
+    #[napi]
+    pub fn list_mcp_servers(&self, session_id: String) -> Result<JsonValue> {
+        let servers = self
+            .inner
+            .list_mcp_servers(&session_id)
+            .map_err(to_napi_error)?;
+        serde_json::to_value(servers).map_err(to_napi_error)
+    }
+
+    #[napi]
+    pub fn list_mcp_tools(&self, session_id: String) -> Result<Vec<String>> {
+        self.inner
+            .list_mcp_tools(&session_id)
+            .map_err(to_napi_error)
+    }
+
+    // ── Model Selection ────────────────────────────────────────────────
+
+    #[napi]
+    pub fn select_model(
+        &self,
+        provider_id: String,
+        model: String,
+        save_target: Option<String>,
+    ) -> Result<JsonValue> {
+        let request = NaviModelSelectionRequest {
+            provider_id,
+            model,
+            save_target: parse_save_target(save_target.as_deref()),
+        };
+        let result = self.inner.select_model(request).map_err(to_napi_error)?;
+        Ok(json!({
+            "provider_id": result.provider_id,
+            "model": result.model,
+            "context_window_tokens": result.context_window_tokens,
+            "provider_configured": result.provider_configured,
+            "saved_to": result.saved_to,
+        }))
+    }
+
+    // ── Provider Model Sync ────────────────────────────────────────────
+
+    #[napi]
+    pub async fn sync_provider_models(
+        &self,
+        provider_id: String,
+        save_target: Option<String>,
+    ) -> Result<JsonValue> {
+        let report = self
+            .inner
+            .sync_provider_models(&provider_id, parse_save_target(save_target.as_deref()))
+            .await
+            .map_err(to_napi_error)?;
+        Ok(json!({
+            "saved_to": report.saved_to,
+            "updated": report.updated,
+            "failed": report.failed,
+            "skipped": report.skipped,
+        }))
+    }
+
+    #[napi]
+    pub async fn sync_models(&self, save_target: Option<String>) -> Result<JsonValue> {
+        let report = self
+            .inner
+            .sync_models(parse_save_target(save_target.as_deref()))
+            .await
+            .map_err(to_napi_error)?;
+        Ok(json!({
+            "saved_to": report.saved_to,
+            "updated": report.updated,
+            "failed": report.failed,
+            "skipped": report.skipped,
+        }))
+    }
+
+    // ── Registry ───────────────────────────────────────────────────────
+
+    #[napi]
+    pub async fn sync_registry(&self, force: Option<bool>) -> Result<bool> {
+        self.inner
+            .sync_registry(force.unwrap_or(false))
+            .await
+            .map_err(to_napi_error)
+    }
+
+    // ── Wasm Plugins ───────────────────────────────────────────────────
+
+    #[napi]
+    pub async fn reload_wasm_plugins(&self) -> Result<Vec<String>> {
+        self.inner
+            .reload_wasm_plugins()
+            .await
+            .map_err(to_napi_error)
+    }
+
+    // ── Saved Sessions ─────────────────────────────────────────────────
+
+    #[napi]
+    pub async fn list_saved_sessions(&self) -> Result<JsonValue> {
+        let sessions = self
+            .inner
+            .list_saved_sessions_async()
+            .await
+            .map_err(to_napi_error)?;
+        serde_json::to_value(sessions).map_err(to_napi_error)
+    }
+
+    #[napi]
+    pub async fn load_saved_session(&self, session_id: String) -> Result<JsonValue> {
+        let snapshot = self
+            .inner
+            .load_saved_session_async(&session_id)
+            .await
+            .map_err(to_napi_error)?;
+        self.inner
+            .start_session(NaviSessionRequest {
+                project_dir: Some(snapshot.project.clone()),
+                session_id: Some(session_id),
+                initial_messages: initial_messages_from_events(&snapshot.events),
+                initial_events: snapshot.events.clone(),
+                initial_created_at: Some(snapshot.created_at),
+                initial_updated_at: Some(snapshot.updated_at),
+                ..NaviSessionRequest::default()
+            })
+            .await
+            .map_err(to_napi_error)?;
+        serde_json::to_value(&snapshot).map_err(to_napi_error)
+    }
+
+    #[napi]
+    pub async fn delete_saved_session(&self, session_id: String) -> Result<bool> {
+        self.inner
+            .delete_saved_session_async(&session_id)
+            .await
+            .map_err(to_napi_error)
+    }
+
+    // ── Session Management ─────────────────────────────────────────────
+
+    #[napi]
+    pub fn session_ids(&self) -> Vec<String> {
+        self.inner.session_ids()
+    }
+
+    #[napi]
+    pub fn loaded_config(&self) -> Result<JsonValue> {
+        let config = self.inner.loaded_config();
+        Ok(json!({
+            "model": {
+                "provider": config.config.model.provider,
+                "name": config.config.model.name,
+            },
+            "global_config_path": config.global_config_path,
+            "project_config_path": config.project_config_path,
+            "data_dir": config.data_dir,
+        }))
     }
 }
 
@@ -480,6 +835,81 @@ fn runtime_event_to_json(event: RuntimeEvent) -> Result<JsonValue> {
 
 fn parse_context_packet(value: JsonValue) -> Result<ContextPacket> {
     serde_json::from_value(value).map_err(to_napi_error)
+}
+
+fn parse_save_target(value: Option<&str>) -> NaviConfigSaveTarget {
+    match value {
+        Some("project") => NaviConfigSaveTarget::Project,
+        Some("global") => NaviConfigSaveTarget::Global,
+        Some("none") => NaviConfigSaveTarget::None,
+        _ => NaviConfigSaveTarget::Auto,
+    }
+}
+
+fn parse_thinking_config(value: &str) -> Result<ThinkingConfig> {
+    match value {
+        "max" => Ok(ThinkingConfig::Max),
+        "high" => Ok(ThinkingConfig::High),
+        "medium" => Ok(ThinkingConfig::Medium),
+        "low" => Ok(ThinkingConfig::Low),
+        "off" => Ok(ThinkingConfig::Off),
+        "adaptive" => Ok(ThinkingConfig::Adaptive),
+        other => Err(Error::from_reason(format!(
+            "unsupported thinking config '{other}', expected max, high, medium, low, off, or adaptive"
+        ))),
+    }
+}
+
+fn initial_messages_from_events(events: &[AgentEvent]) -> Vec<ModelMessage> {
+    let mut messages = Vec::new();
+    let mut tool_names = HashMap::new();
+
+    for event in events {
+        match event {
+            AgentEvent::UserTaskSubmitted {
+                text,
+                content_parts,
+            } => {
+                if content_parts.is_empty() {
+                    messages.push(ModelMessage::user(text.clone()));
+                } else {
+                    messages.push(ModelMessage::user_multimodal(
+                        text.clone(),
+                        content_parts.clone(),
+                    ));
+                }
+            }
+            AgentEvent::ModelOutput { text, thinking } => {
+                messages.push(ModelMessage::assistant_with_thinking(
+                    text.clone(),
+                    thinking.clone(),
+                ));
+            }
+            AgentEvent::ToolRequested(invocation) => {
+                tool_names.insert(invocation.id.clone(), invocation.tool_name.clone());
+                messages.push(ModelMessage::assistant_tool_call(invocation.clone()));
+            }
+            AgentEvent::ToolCompleted(result) => {
+                let tool_name = tool_names
+                    .get(&result.invocation_id)
+                    .cloned()
+                    .unwrap_or_else(|| "tool".to_string());
+                let output = result
+                    .output
+                    .as_str()
+                    .map(ToString::to_string)
+                    .unwrap_or_else(|| result.output.to_string());
+                messages.push(ModelMessage::tool_result(
+                    result.invocation_id.clone(),
+                    tool_name,
+                    output,
+                ));
+            }
+            _ => {}
+        }
+    }
+
+    messages
 }
 
 fn build_hook_callback(handler: Function<JsonValue, UnknownReturnValue>) -> Result<JsHookCallback> {
@@ -630,5 +1060,66 @@ mod tests {
     #[test]
     fn hook_callbacks_default_to_empty() {
         assert!(JsHookCallbacks::default().is_empty());
+    }
+
+    #[test]
+    fn parse_save_target_auto_default() {
+        assert!(matches!(
+            parse_save_target(None),
+            NaviConfigSaveTarget::Auto
+        ));
+    }
+
+    #[test]
+    fn parse_save_target_project() {
+        assert!(matches!(
+            parse_save_target(Some("project")),
+            NaviConfigSaveTarget::Project
+        ));
+    }
+
+    #[test]
+    fn parse_save_target_global() {
+        assert!(matches!(
+            parse_save_target(Some("global")),
+            NaviConfigSaveTarget::Global
+        ));
+    }
+
+    #[test]
+    fn parse_save_target_none() {
+        assert!(matches!(
+            parse_save_target(Some("none")),
+            NaviConfigSaveTarget::None
+        ));
+    }
+
+    #[test]
+    fn parse_save_target_auto_unknown() {
+        assert!(matches!(
+            parse_save_target(Some("unknown")),
+            NaviConfigSaveTarget::Auto
+        ));
+    }
+
+    #[test]
+    fn parse_thinking_config_parses_all_levels() {
+        assert_eq!(parse_thinking_config("max").unwrap(), ThinkingConfig::Max);
+        assert_eq!(parse_thinking_config("high").unwrap(), ThinkingConfig::High);
+        assert_eq!(
+            parse_thinking_config("medium").unwrap(),
+            ThinkingConfig::Medium
+        );
+        assert_eq!(parse_thinking_config("low").unwrap(), ThinkingConfig::Low);
+        assert_eq!(parse_thinking_config("off").unwrap(), ThinkingConfig::Off);
+        assert_eq!(
+            parse_thinking_config("adaptive").unwrap(),
+            ThinkingConfig::Adaptive
+        );
+    }
+
+    #[test]
+    fn parse_thinking_config_rejects_invalid() {
+        assert!(parse_thinking_config("turbo").is_err());
     }
 }

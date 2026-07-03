@@ -38,42 +38,34 @@ pub fn provider_catalog(config: &NaviConfig) -> Vec<ProviderConfig> {
 }
 
 fn base_provider_catalog() -> Vec<ProviderConfig> {
-    // Try loading from the SQLite registry cache first.
-    let registry_providers = REGISTRY_STORE.with(|cell| {
-        cell.borrow()
-            .as_ref()
-            .and_then(|store| match store.load_all_providers() {
-                Ok(providers) if !providers.is_empty() => Some(providers),
-                Ok(_) => {
-                    tracing::debug!("registry cache is empty, falling back to embedded snapshot");
-                    None
+    REGISTRY_STORE.with(|cell| {
+        cell.borrow().as_ref().map_or_else(
+            || {
+                tracing::debug!("registry store not set, falling back to embedded snapshot");
+                load_embedded_or_minimal_fallback()
+            },
+            |store| {
+                match crate::registry::load_registry(store) {
+                    loaded if !loaded.providers.is_empty() => loaded.providers,
+                    _ => {
+                        tracing::debug!("loaded registry is empty, falling back to embedded snapshot");
+                        load_embedded_or_minimal_fallback()
+                    }
                 }
-                Err(err) => {
-                    tracing::warn!(
-                        error = %err,
-                        "failed to load from registry cache, falling back to embedded snapshot"
-                    );
-                    None
-                }
-            })
-    });
-
-    registry_providers.unwrap_or_else(|| {
-        // Last-resort fallback: parse the embedded registry snapshot.
-        match crate::registry::embedded_providers() {
-            Ok(providers) => providers
-                .into_iter()
-                .map(crate::registry::registry_provider_to_config)
-                .collect(),
-            Err(err) => {
-                tracing::error!(
-                    error = %err,
-                    "failed to parse embedded registry snapshot, using minimal fallback"
-                );
-                minimal_fallback_providers()
-            }
-        }
+            },
+        )
     })
+}
+
+fn load_embedded_or_minimal_fallback() -> Vec<ProviderConfig> {
+    match crate::registry::load_embedded_registry() {
+        Some(loaded) if !loaded.providers.is_empty() => loaded.providers,
+        Some(_) => minimal_fallback_providers(),
+        None => {
+            tracing::error!("failed to parse embedded registry snapshot, using minimal fallback");
+            minimal_fallback_providers()
+        }
+    }
 }
 
 /// Minimal hardcoded fallback used only if the embedded snapshot itself fails

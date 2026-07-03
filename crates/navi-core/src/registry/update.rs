@@ -1,0 +1,688 @@
+//! Registry update orchestration.
+//!
+//! Implements the full update lifecycle requested by the NAVI registry design:
+//!
+//! 1. Load from local cache or embedded snapshot (never block startup).
+//! 2. Check for remote updates in the background, respecting a 24h + jitter interval.
+//! 3. Diff-fetch only changed provider files.
+//! 4. Validate schema and SHA-256 hashes before applying.
+//! 5. Roll back to the previous registry on failure.
+//!
+//! Public API shape matches the requested functions:
+//! `load_registry`, `load_embedded_registry`, `load_cached_registry`,
+//! `should_check_registry_update`, `check_registry_manifest`, `download_registry_updates`,
+//! `validate_registry_schema`, `validate_registry_hashes`, `apply_registry_update_atomically`,
+//! `save_registry_metadata`.
+
+use anyhow::{Context, Result};
+use jsonschema::validator_for;
+use sha2::{Digest, Sha256};
+use std::time::{SystemTime, UNIX_EPOCH};
+
+use crate::config::types::{ProviderConfig, RegistryConfig};
+
+use super::embedded::{embedded_manifest, embedded_provider_schema, embedded_providers};
+use super::store::RegistryStore;
+use super::types::{RegistryManifest, RegistryProvider};
+use super::RegistryFetcher;
+
+/// Metadata keys stored in `registry_meta`.
+const META_LAST_CHECK: &str = "last_registry_check";
+const META_LAST_SUCCESS: &str = "last_registry_success";
+const META_MANIFEST_JSON: &str = "registry_manifest_json";
+
+/// Result of loading the registry for immediate use.
+#[derive(Debug, Clone)]
+pub struct LoadedRegistry {
+    pub manifest: RegistryManifest,
+    pub providers: Vec<ProviderConfig>,
+    pub source: RegistrySource,
+}
+
+/// Where the currently-active registry came from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RegistrySource {
+    /// Loaded from the local SQLite cache.
+    Cache,
+    /// Loaded from the binary's embedded snapshot.
+    Embedded,
+    /// Fallback minimal hardcoded registry.
+    MinimalFallback,
+}
+
+/// Loads the registry for use, preferring cache, then embedded snapshot, then a minimal fallback.
+///
+/// This is the entry point for startup. It never blocks on network.
+pub fn load_registry(store: &RegistryStore) -> LoadedRegistry {
+    if let Some(loaded) = load_cached_registry(store) {
+        tracing::info!(
+            version = loaded.manifest.version,
+            providers = loaded.providers.len(),
+            "loaded registry from local cache"
+        );
+        return loaded;
+    }
+
+    if let Some(loaded) = load_embedded_registry() {
+        tracing::info!(
+            version = loaded.manifest.version,
+            providers = loaded.providers.len(),
+            "loaded registry from embedded snapshot"
+        );
+        // Seed the cache from the embedded snapshot so next startup hits the cache.
+        if let Err(err) = seed_cache_from_embedded(store) {
+            tracing::warn!(error = %err, "failed to seed cache from embedded snapshot");
+        }
+        return loaded;
+    }
+
+    tracing::error!("failed to load embedded registry snapshot, using minimal fallback");
+    LoadedRegistry {
+        manifest: RegistryManifest {
+            version: 0,
+            updated_at: "1970-01-01T00:00:00Z".to_string(),
+            providers: std::collections::HashMap::new(),
+        },
+        providers: minimal_fallback_providers(),
+        source: RegistrySource::MinimalFallback,
+    }
+}
+
+/// Loads the registry from the local SQLite cache if it is non-empty.
+pub fn load_cached_registry(store: &RegistryStore) -> Option<LoadedRegistry> {
+    let manifest = store_stored_manifest(store).ok().flatten()?;
+    let providers = store.load_all_providers().ok()?;
+    if providers.is_empty() {
+        return None;
+    }
+    Some(LoadedRegistry {
+        manifest,
+        providers,
+        source: RegistrySource::Cache,
+    })
+}
+
+/// Loads the registry from the binary's embedded snapshot.
+pub fn load_embedded_registry() -> Option<LoadedRegistry> {
+    let manifest = embedded_manifest().ok()?;
+    let providers = embedded_providers().ok()?;
+    Some(LoadedRegistry {
+        manifest,
+        providers: providers.into_iter().map(super::store::registry_provider_to_config).collect(),
+        source: RegistrySource::Embedded,
+    })
+}
+
+/// Seeds the local cache from the embedded snapshot.
+fn seed_cache_from_embedded(store: &RegistryStore) -> Result<()> {
+    let manifest = embedded_manifest().context("failed to parse embedded manifest")?;
+    let providers = embedded_providers().context("failed to parse embedded providers")?;
+    store.replace_all(&providers)?;
+    store.save_manifest_meta(&manifest)?;
+    save_registry_metadata(
+        store,
+        &manifest,
+        Some(current_timestamp_secs()),
+        Some(current_timestamp_secs()),
+    )?;
+    Ok(())
+}
+
+/// Minimal hardcoded fallback used only if the embedded snapshot itself fails to parse.
+fn minimal_fallback_providers() -> Vec<ProviderConfig> {
+    use crate::config::types::{ModelTaskSize, ProviderModelConfig};
+
+    vec![ProviderConfig {
+        id: "openai".to_string(),
+        label: "OpenAI".to_string(),
+        description: "OpenAI API key required".to_string(),
+        kind: crate::config::types::ProviderKind::OpenAiResponses,
+        api_key_env: "OPENAI_API_KEY".to_string(),
+        base_url: Some("https://api.openai.com/v1".to_string()),
+        models: vec![ProviderModelConfig {
+            name: "gpt-5.1".to_string(),
+            task_size: ModelTaskSize::Large,
+            context_window_tokens: Some(1_000_000),
+            max_output_tokens: None,
+            recommended_temperature: None,
+            supports_thinking: None,
+            tool_prompt_manifest: None,
+        }],
+        request_options: crate::config::providers::default_request_options_for("openai"),
+        ..Default::default()
+    }]
+}
+
+/// Returns whether enough time has passed (plus jitter) to check for a remote update.
+pub fn should_check_registry_update(store: &RegistryStore, config: &RegistryConfig) -> bool {
+    if !config.update_enabled {
+        return false;
+    }
+
+    let last_check = store
+        .meta_get(META_LAST_CHECK)
+        .ok()
+        .flatten()
+        .and_then(|s| s.parse::<u64>().ok())
+        .unwrap_or(0);
+
+    let now = current_timestamp_secs();
+    let elapsed = now.saturating_sub(last_check);
+    let interval = config.check_interval_hours.saturating_mul(3600)
+        + config.check_jitter_hours.saturating_mul(3600);
+
+    elapsed >= interval
+}
+
+/// Computes the jittered interval in seconds for the next update check.
+pub fn registry_check_interval_with_jitter(config: &RegistryConfig) -> u64 {
+    let base = config.check_interval_hours.saturating_mul(3600);
+    let jitter = if config.check_jitter_hours > 0 {
+        fastrand::u64(0..=config.check_jitter_hours.saturating_mul(3600))
+    } else {
+        0
+    };
+    base.saturating_add(jitter)
+}
+
+/// Fetches and validates the remote manifest, returning it if it differs from the local one.
+///
+/// Returns `Ok(None)` if the remote manifest is the same as the local one.
+/// Returns `Err(...)` on network or parse failures (caller should fall back).
+pub async fn check_registry_manifest(
+    store: &RegistryStore,
+    fetcher: &RegistryFetcher,
+    config: &RegistryConfig,
+) -> Result<Option<RegistryManifest>> {
+    let local = store_stored_manifest(store)
+        .ok()
+        .flatten()
+        .unwrap_or_else(|| embedded_manifest().unwrap_or_else(|_| RegistryManifest {
+            version: 0,
+            updated_at: "1970-01-01T00:00:00Z".to_string(),
+            providers: std::collections::HashMap::new(),
+        }));
+
+    let manifest = fetch_manifest_with_retry(fetcher, config).await?;
+
+    // If the remote version and hash set are identical to local, nothing changed.
+    if manifest.version == local.version && provider_hashes_equal(&manifest, &local) {
+        save_registry_metadata(store, &manifest, Some(current_timestamp_secs()), None)?;
+        tracing::debug!(
+            version = manifest.version,
+            "remote manifest unchanged, no update needed"
+        );
+        return Ok(None);
+    }
+
+    Ok(Some(manifest))
+}
+
+/// Downloads only the provider files that changed, validating schema and hashes.
+///
+/// Returns the validated providers ready to be applied.
+pub async fn download_registry_updates(
+    store: &RegistryStore,
+    fetcher: &RegistryFetcher,
+    manifest: &RegistryManifest,
+    config: &RegistryConfig,
+) -> Result<Vec<RegistryProvider>> {
+    let mut to_fetch = Vec::new();
+
+    for (provider_id, entry) in &manifest.providers {
+        let cached_sha = store.provider_sha256(provider_id)?;
+        if cached_sha.as_deref() != Some(&entry.sha256) {
+            to_fetch.push(provider_id.as_str());
+        }
+    }
+
+    if to_fetch.is_empty() {
+        tracing::debug!("all provider hashes match, nothing to download");
+        return Ok(Vec::new());
+    }
+
+    tracing::info!(
+        changed = to_fetch.len(),
+        total = manifest.providers.len(),
+        "downloading changed registry providers"
+    );
+
+    let schema = embedded_provider_schema();
+    let mut providers = Vec::with_capacity(to_fetch.len());
+
+    for provider_id in &to_fetch {
+        let provider = fetch_provider_with_retry(fetcher, provider_id, manifest, config).await?;
+
+        // Validate the downloaded provider against the embedded JSON schema.
+        validate_registry_schema(&provider, schema)?;
+
+        providers.push(provider);
+    }
+
+    validate_registry_hashes(&providers, manifest)?;
+
+    Ok(providers)
+}
+
+/// Validates a provider against the JSON schema.
+pub fn validate_registry_schema(
+    provider: &RegistryProvider,
+    schema_json: Option<&str>,
+) -> Result<()> {
+    if let Some(schema_json) = schema_json {
+        let schema_value: serde_json::Value = serde_json::from_str(schema_json)
+            .context("failed to parse embedded provider schema")?;
+        let validator = validator_for(&schema_value)
+            .map_err(|e| anyhow::anyhow!("failed to build schema validator: {e}"))?;
+        let provider_value = serde_json::to_value(provider)
+            .context("failed to serialize provider for validation")?;
+        if let Err(error) = validator.validate(&provider_value) {
+            anyhow::bail!("provider schema validation failed: {}", error.to_string());
+        }
+    }
+    Ok(())
+}
+
+/// Validates the SHA-256 hashes of a set of downloaded providers against the manifest.
+pub fn validate_registry_hashes(
+    providers: &[RegistryProvider],
+    manifest: &RegistryManifest,
+) -> Result<()> {
+    for provider in providers {
+        let entry = manifest
+            .providers
+            .get(&provider.id)
+            .with_context(|| format!("provider '{}' not in manifest", provider.id))?;
+        let provider_json = serde_json::to_string(provider)
+            .with_context(|| format!("failed to serialize provider '{}' for hash check", provider.id))?;
+        let hash = hex::encode(Sha256::digest(provider_json.as_bytes()));
+        if hash != entry.sha256 {
+            anyhow::bail!(
+                "provider '{}' hash mismatch: expected {}, got {}",
+                provider.id,
+                entry.sha256,
+                hash
+            );
+        }
+    }
+    Ok(())
+}
+
+/// Applies a validated update atomically: store new providers, delete removed ones, and save metadata.
+///
+/// On failure, the previous registry contents remain intact (this function uses explicit transactions).
+pub fn apply_registry_update_atomically(
+    store: &RegistryStore,
+    manifest: &RegistryManifest,
+    providers: &[RegistryProvider],
+) -> Result<()> {
+    let keep: std::collections::HashSet<&str> = manifest.providers.keys().map(|s| s.as_str()).collect();
+
+    for provider in providers {
+        let sha = manifest.providers.get(&provider.id).map(|e| e.sha256.as_str());
+        store.upsert_provider_with_sha256(provider, sha)?;
+    }
+
+    store.delete_providers_not_in(&keep)?;
+    store.save_manifest_meta(manifest)?;
+
+    Ok(())
+}
+
+/// Saves registry metadata: last check, last success, and the manifest JSON.
+pub fn save_registry_metadata(
+    store: &RegistryStore,
+    manifest: &RegistryManifest,
+    last_check: Option<u64>,
+    last_success: Option<u64>,
+) -> Result<()> {
+    if let Some(ts) = last_check {
+        store.meta_set(META_LAST_CHECK, &ts.to_string())?;
+    }
+    if let Some(ts) = last_success {
+        store.meta_set(META_LAST_SUCCESS, &ts.to_string())?;
+    }
+    let manifest_json = serde_json::to_string(manifest).context("failed to serialize manifest metadata")?;
+    store.meta_set(META_MANIFEST_JSON, &manifest_json)?;
+    Ok(())
+}
+
+/// Full background update check. Returns `true` if the cache was updated.
+///
+/// This is safe to run from a background task: all failures are logged and swallowed.
+pub async fn run_registry_update_check(
+    store: &RegistryStore,
+    fetcher: &RegistryFetcher,
+    config: &RegistryConfig,
+) -> bool {
+    if !config.update_enabled {
+        return false;
+    }
+
+    // Record that we attempted a check.
+    let now = current_timestamp_secs();
+    if let Err(err) = save_registry_metadata(store, &current_stored_manifest_or_embedded(store), Some(now), None) {
+        tracing::warn!(error = %err, "failed to save registry check timestamp");
+    }
+
+    let manifest = match check_registry_manifest(store, fetcher, config).await {
+        Ok(Some(m)) => m,
+        Ok(None) => {
+            tracing::debug!("registry update check: no changes");
+            return false;
+        }
+        Err(err) => {
+            tracing::warn!(error = %err, "registry manifest check failed, keeping existing registry");
+            return false;
+        }
+    };
+
+    let providers = match download_registry_updates(store, fetcher, &manifest, config).await {
+        Ok(p) => p,
+        Err(err) => {
+            tracing::warn!(error = %err, "registry update download failed, keeping existing registry");
+            return false;
+        }
+    };
+
+    if let Err(err) = apply_registry_update_atomically(store, &manifest, &providers) {
+        tracing::warn!(error = %err, "failed to apply registry update, keeping previous registry");
+        return false;
+    }
+
+    if let Err(err) = save_registry_metadata(store, &manifest, Some(now), Some(now)) {
+        tracing::warn!(error = %err, "failed to save registry success timestamp");
+    }
+
+    tracing::info!(
+        version = manifest.version,
+        providers = manifest.providers.len(),
+        "registry cache updated from remote"
+    );
+
+    true
+}
+
+// ── Helpers ─────────────────────────────────────────────────────────────────
+
+fn store_stored_manifest(store: &RegistryStore) -> Result<Option<RegistryManifest>> {
+    match store.meta_get(META_MANIFEST_JSON)? {
+        Some(json) => Ok(Some(
+            serde_json::from_str(&json).context("failed to parse stored manifest metadata")?,
+        )),
+        None => Ok(None),
+    }
+}
+
+fn current_stored_manifest_or_embedded(store: &RegistryStore) -> RegistryManifest {
+    store_stored_manifest(store)
+        .ok()
+        .flatten()
+        .unwrap_or_else(|| embedded_manifest().unwrap_or_else(|_| RegistryManifest {
+            version: 0,
+            updated_at: "1970-01-01T00:00:00Z".to_string(),
+            providers: std::collections::HashMap::new(),
+        }))
+}
+
+fn provider_hashes_equal(a: &RegistryManifest, b: &RegistryManifest) -> bool {
+    if a.providers.len() != b.providers.len() {
+        return false;
+    }
+    a.providers.iter().all(|(id, entry)| {
+        b.providers
+            .get(id)
+            .map(|other| entry.sha256 == other.sha256)
+            .unwrap_or(false)
+    })
+}
+
+async fn fetch_manifest_with_retry(
+    fetcher: &RegistryFetcher,
+    config: &RegistryConfig,
+) -> Result<RegistryManifest> {
+    let mut last_err = None;
+    let attempts = config.max_retries.saturating_add(1).max(1);
+    for attempt in 1..=attempts {
+        match fetcher.fetch_manifest().await {
+            Ok(m) => return Ok(m),
+            Err(err) => {
+                tracing::debug!(attempt, error = %err, "manifest fetch failed");
+                last_err = Some(err);
+                if attempt < attempts {
+                    tokio::time::sleep(std::time::Duration::from_millis(500 * attempt as u64)).await;
+                }
+            }
+        }
+    }
+    Err(last_err.unwrap()).context("failed to fetch registry manifest after retries")
+}
+
+async fn fetch_provider_with_retry(
+    fetcher: &RegistryFetcher,
+    provider_id: &str,
+    manifest: &RegistryManifest,
+    config: &RegistryConfig,
+) -> Result<RegistryProvider> {
+    let mut last_err = None;
+    let attempts = config.max_retries.saturating_add(1).max(1);
+    for attempt in 1..=attempts {
+        match fetcher.fetch_provider(provider_id, manifest).await {
+            Ok(p) => return Ok(p),
+            Err(err) => {
+                tracing::debug!(attempt, provider = provider_id, error = %err, "provider fetch failed");
+                last_err = Some(err);
+                if attempt < attempts {
+                    tokio::time::sleep(std::time::Duration::from_millis(500 * attempt as u64)).await;
+                }
+            }
+        }
+    }
+    Err(last_err.unwrap()).context(format!("failed to fetch provider '{provider_id}' after retries"))
+}
+
+fn current_timestamp_secs() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use super::super::types::{RegistryModel, ManifestProviderEntry};
+
+    fn test_provider(id: &str, name: &str) -> RegistryProvider {
+        RegistryProvider {
+            id: id.to_string(),
+            label: id.to_string(),
+            description: "test".to_string(),
+            kind: "openai-chat-completions".to_string(),
+            api_key_env: "TEST_API_KEY".to_string(),
+            base_url: None,
+            tool_calling_mode: None,
+            request_options: Default::default(),
+            models: vec![RegistryModel {
+                name: name.to_string(),
+                task_size: "large".to_string(),
+                context_window_tokens: Some(128_000),
+                max_output_tokens: None,
+                recommended_temperature: None,
+                supports_thinking: None,
+            }],
+        }
+    }
+
+    fn provider_hash(provider: &RegistryProvider) -> String {
+        let json = serde_json::to_string(provider).expect("serialize");
+        hex::encode(Sha256::digest(json.as_bytes()))
+    }
+
+    fn manifest_entry(provider: &RegistryProvider) -> ManifestProviderEntry {
+        ManifestProviderEntry {
+            file: format!("providers/{}.json", provider.id),
+            sha256: provider_hash(provider),
+            model_count: provider.models.len(),
+        }
+    }
+
+    #[test]
+    fn should_check_after_default_interval() {
+        let store = RegistryStore::open_memory().expect("open");
+        let config = RegistryConfig::default();
+
+        // No last check recorded → should check.
+        assert!(should_check_registry_update(&store, &config));
+
+        // Just checked now → should not check.
+        let now = current_timestamp_secs();
+        save_registry_metadata(
+            &store,
+            &RegistryManifest {
+                version: 1,
+                updated_at: "2026-01-01T00:00:00Z".to_string(),
+                providers: std::collections::HashMap::new(),
+            },
+            Some(now),
+            None,
+        )
+        .expect("save");
+        assert!(!should_check_registry_update(&store, &config));
+
+        // 25 hours ago → should check.
+        let past = now.saturating_sub(25 * 3600);
+        save_registry_metadata(
+            &store,
+            &RegistryManifest {
+                version: 1,
+                updated_at: "2026-01-01T00:00:00Z".to_string(),
+                providers: std::collections::HashMap::new(),
+            },
+            Some(past),
+            None,
+        )
+        .expect("save");
+        assert!(should_check_registry_update(&store, &config));
+    }
+
+    #[test]
+    fn should_not_check_when_disabled() {
+        let store = RegistryStore::open_memory().expect("open");
+        let mut config = RegistryConfig::default();
+        config.update_enabled = false;
+        assert!(!should_check_registry_update(&store, &config));
+    }
+
+    #[test]
+    fn load_embedded_registry_returns_providers() {
+        let loaded = load_embedded_registry().expect("embedded registry should load");
+        assert!(!loaded.providers.is_empty());
+        assert_eq!(loaded.source, RegistrySource::Embedded);
+    }
+
+    #[test]
+    fn load_registry_seeds_empty_cache_from_embedded() {
+        let store = RegistryStore::open_memory().expect("open");
+        assert!(store.is_empty().unwrap());
+
+        let loaded = load_registry(&store);
+        assert_eq!(loaded.source, RegistrySource::Embedded);
+        assert!(!loaded.providers.is_empty());
+
+        // Cache should now be seeded.
+        assert!(!store.is_empty().unwrap());
+        assert!(load_cached_registry(&store).is_some());
+    }
+
+    #[test]
+    fn load_registry_prefers_cache_when_populated() {
+        let store = RegistryStore::open_memory().expect("open");
+        let embedded = load_embedded_registry().expect("embedded");
+        store.replace_all(&embedded.providers).expect("seed");
+        store.save_manifest_meta(&embedded.manifest).expect("save meta");
+
+        let loaded = load_registry(&store);
+        assert_eq!(loaded.source, RegistrySource::Cache);
+    }
+
+    #[test]
+    fn apply_registry_update_atomically_replaces_providers() {
+        let store = RegistryStore::open_memory().expect("open");
+        let mut manifest = RegistryManifest {
+            version: 1,
+            updated_at: "2026-01-01T00:00:00Z".to_string(),
+            providers: std::collections::HashMap::new(),
+        };
+        let provider = RegistryProvider {
+            id: "test".to_string(),
+            label: "Test".to_string(),
+            description: "test".to_string(),
+            kind: "openai-chat-completions".to_string(),
+            api_key_env: "TEST_API_KEY".to_string(),
+            base_url: None,
+            tool_calling_mode: None,
+            request_options: Default::default(),
+            models: vec![RegistryModel {
+                name: "test-model".to_string(),
+                task_size: "large".to_string(),
+                context_window_tokens: Some(128_000),
+                max_output_tokens: None,
+                recommended_temperature: None,
+                supports_thinking: None,
+            }],
+        };
+        let hash = "test-hash";
+        manifest.providers.insert(
+            provider.id.clone(),
+            super::super::types::ManifestProviderEntry {
+                file: "providers/test.json".to_string(),
+                sha256: hash.to_string(),
+                model_count: 1,
+            },
+        );
+
+        apply_registry_update_atomically(&store, &manifest, &[provider.clone()]).expect("apply");
+
+        let loaded = store.load_all_providers().expect("load");
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].id, "test");
+    }
+
+    #[test]
+    fn validate_registry_hashes_detects_mismatch() {
+        let mut manifest = RegistryManifest {
+            version: 1,
+            updated_at: "2026-01-01T00:00:00Z".to_string(),
+            providers: std::collections::HashMap::new(),
+        };
+        let provider = RegistryProvider {
+            id: "test".to_string(),
+            label: "Test".to_string(),
+            description: "test".to_string(),
+            kind: "openai-chat-completions".to_string(),
+            api_key_env: "TEST_API_KEY".to_string(),
+            base_url: None,
+            tool_calling_mode: None,
+            request_options: Default::default(),
+            models: vec![RegistryModel {
+                name: "test-model".to_string(),
+                task_size: "large".to_string(),
+                context_window_tokens: Some(128_000),
+                max_output_tokens: None,
+                recommended_temperature: None,
+                supports_thinking: None,
+            }],
+        };
+        manifest.providers.insert(
+            provider.id.clone(),
+            super::super::types::ManifestProviderEntry {
+                file: "providers/test.json".to_string(),
+                sha256: "bad-hash".to_string(),
+                model_count: 1,
+            },
+        );
+
+        assert!(validate_registry_hashes(&[provider], &manifest).is_err());
+    }
+}

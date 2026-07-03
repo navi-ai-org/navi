@@ -44,6 +44,7 @@ Core agent behavior belongs in engine crates, primarily `navi-core`, not in `nav
 | `navi-cli` | Entry binary. Parses CLI, loads config, starts TUI or headless runtime. |
 | `navi-core` | Harness policy, config, provider catalog, model/tool/session abstractions, security policy, runtime. |
 | `navi-mcp` | MCP stdio client integration that registers remote MCP tools with the engine. |
+| `navi-napi` | N-API binding for Node.js/Electron. Wraps `navi-sdk` and exposes the full engine surface (sessions, turns, goals, credentials, skills, MCP, saved sessions, registry, plugins, events) as native TypeScript classes. Includes a panic hook for crash isolation. |
 | `navi-openai` | `ModelProvider` implementation for OpenAI-compatible APIs and provider adapters. Implementation crate behind `navi-providers` facade. |
 | `navi-plugin-api` | Plugin trait and `NAVI_PLUGIN_API_VERSION = 1`. |
 | `navi-plugin-host` | Dynamic `.so`/`.dylib` loading via `libloading`. |
@@ -69,6 +70,7 @@ Core agent behavior belongs in engine crates, primarily `navi-core`, not in `nav
 1. CLI/TUI for humans operating the agent directly in a terminal.
 2. Runtime SDK / Rust API for NAVI Tutor/Tauri and other local apps embedding NAVI.
 3. ACP stdio server for editors and external agent clients.
+4. N-API binding (`navi-napi` / `@navi-agent/napi`) for Node.js and Electron apps. Exposes the full `NaviEngine` surface as native TypeScript classes with push-based event streaming and a panic hook for crash isolation.
 
 Do not make WebSocket/daemon the primary interface unless explicitly requested. External process mode should prefer a stable stdio/headless runtime protocol first.
 
@@ -506,6 +508,7 @@ For targeted changes:
 - TUI/key/rendering: `cargo test -p navi-tui -- --test-threads=4`
 - provider/request/stream parsing: `cargo test -p navi-openai -- --test-threads=4`
 - tools/security/session/config: `cargo test -p navi-core -- --test-threads=4`
+- N-API binding: `cargo test -p navi-napi -- --test-threads=4`
 
 ### Resource Limits
 

@@ -36,6 +36,9 @@ pub struct NaviConfig {
     /// Plugin marketplace registry (catalog repository).
     #[serde(default)]
     pub plugin_marketplace: PluginMarketplaceConfig,
+    /// Provider registry update settings.
+    #[serde(default)]
+    pub registry: RegistryConfig,
     /// Terminal UI preferences.
     #[serde(default)]
     pub tui: TuiConfig,
@@ -90,6 +93,37 @@ impl Default for TuiConfig {
 pub struct PluginMarketplaceConfig {
     /// URL to `catalog.json` in the registry repository (`https://` or `file://`).
     pub registry_url: Option<String>,
+}
+
+/// Provider registry update settings.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct RegistryConfig {
+    /// Whether remote registry update checks are enabled.
+    pub update_enabled: bool,
+    /// Minimum interval between registry update checks, in hours.
+    pub check_interval_hours: u64,
+    /// Random jitter added to the interval, in hours.
+    pub check_jitter_hours: u64,
+    /// HTTP request timeout for registry update checks, in seconds.
+    pub request_timeout_seconds: u64,
+    /// Max retries for failed registry update requests.
+    pub max_retries: u32,
+    /// Update mode: `background` or `foreground`.
+    pub update_mode: String,
+}
+
+impl Default for RegistryConfig {
+    fn default() -> Self {
+        Self {
+            update_enabled: true,
+            check_interval_hours: 24,
+            check_jitter_hours: 6,
+            request_timeout_seconds: 5,
+            max_retries: 1,
+            update_mode: "background".to_string(),
+        }
+    }
 }
 
 /// Selected model configuration: provider id and model name.

@@ -27,6 +27,14 @@ pub fn embedded_providers() -> Result<Vec<RegistryProvider>> {
     Ok(providers)
 }
 
+/// Returns the embedded provider schema JSON, if present.
+pub fn embedded_provider_schema() -> Option<&'static str> {
+    Some(include_str!(concat!(
+        env!("OUT_DIR"),
+        "/embedded_registry/schemas/provider.schema.json"
+    )))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

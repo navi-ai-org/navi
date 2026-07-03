@@ -6,7 +6,7 @@ use navi_core::{
     ModelOption, ProviderConfig, QuestionResponse, RuntimeComponents, RuntimeEvent, SessionGoal,
     SessionId, SessionSnapshot, SessionStore, SkillManifest, available_model_options,
     canonical_provider_id, config::effective_context_window, discover_configured_skills,
-    model_can_run_publicly, provider_catalog, registry::RegistryStore, resolve_provider_api_key,
+    model_can_run_publicly, provider_catalog, registry, registry::RegistryStore, resolve_provider_api_key,
     resolve_provider_config, resolve_provider_credential_status, save_global_config,
     save_project_config,
 };
@@ -128,11 +128,12 @@ impl NaviEngineBuilder {
             None => navi_core::NaviConfig::load(&self.project_dir)?,
         };
 
-        // Initialize the registry store and set it as the catalog source
-        // so provider_catalog() uses the SQLite cache when available.
+        // Initialize the registry store, load the active registry, and set it as the
+        // catalog source so provider_catalog() uses the cache or embedded snapshot.
         let registry_store = match RegistryStore::open(&loaded_config.data_dir) {
             Ok(store) => {
                 let store = Arc::new(store);
+                registry::load_registry(&store);
                 navi_core::set_registry_store(store.clone());
                 Some(store)
             }
@@ -141,6 +142,20 @@ impl NaviEngineBuilder {
                 None
             }
         };
+
+        // Spawn a background update check if enabled.
+        if let Some(ref store) = registry_store {
+            let config = loaded_config.config.registry.clone();
+            if config.update_enabled {
+                let store = store.clone();
+                tokio::spawn(async move {
+                    if registry::should_check_registry_update(&store, &config) {
+                        let fetcher = registry::RegistryFetcher::new();
+                        registry::run_registry_update_check(&store, &fetcher, &config).await;
+                    }
+                });
+            }
+        }
 
         Ok(NaviEngine {
             inner: Arc::new(NaviEngineInner {
