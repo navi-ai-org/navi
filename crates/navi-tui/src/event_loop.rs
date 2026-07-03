@@ -1,7 +1,7 @@
 use std::io;
 use std::panic;
-use std::sync::{Mutex, Once, OnceLock};
-use std::time::{Duration, Instant};
+use std::sync::Once;
+use std::time::Duration;
 
 use anyhow::Result;
 use crossterm::event::{
@@ -42,7 +42,6 @@ pub struct CrosstermInput;
 
 impl InputSource for CrosstermInput {
     fn poll(&mut self, timeout: Duration) -> io::Result<bool> {
-        maybe_refresh_terminal_input_modes();
         event::poll(timeout)
     }
 
@@ -182,27 +181,6 @@ fn install_terminal_restore_panic_hook() {
     });
 }
 
-const TERMINAL_MODE_REFRESH_INTERVAL: Duration = Duration::from_secs(2);
-static LAST_TERMINAL_MODE_REFRESH: OnceLock<Mutex<Instant>> = OnceLock::new();
-
-fn maybe_refresh_terminal_input_modes() {
-    let now = Instant::now();
-    let last = LAST_TERMINAL_MODE_REFRESH.get_or_init(|| Mutex::new(now));
-    let Ok(mut last) = last.try_lock() else {
-        return;
-    };
-    if now.duration_since(*last) < TERMINAL_MODE_REFRESH_INTERVAL {
-        return;
-    }
-
-    let mut stdout = io::stdout();
-    let _ = enable_raw_mode();
-    let _ = reset_terminal_input_modes(&mut stdout);
-    let _ = execute!(stdout, EnableBracketedPaste);
-    let _ = enable_mouse_capture(&mut stdout);
-    *last = now;
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -246,6 +224,37 @@ mod tests {
         assert!(text.contains("\x1B[>4;0m"));
         assert!(text.contains("\x1B[<u"));
     }
+
+    #[test]
+    fn leaked_terminal_sequence_filter_drops_sgr_mouse_reports() {
+        let mut filter = LeakedTerminalSequenceFilter::default();
+
+        for ch in "\u{1b}[<0;49;31M".chars() {
+            assert!(filter.should_drop(&crossterm::event::KeyCode::Char(ch)));
+        }
+
+        assert!(!filter.should_drop(&crossterm::event::KeyCode::Char('a')));
+    }
+
+    #[test]
+    fn leaked_terminal_sequence_filter_drops_rxvt_mouse_reports() {
+        let mut filter = LeakedTerminalSequenceFilter::default();
+
+        for ch in "\u{1b}[32;45;31M".chars() {
+            assert!(filter.should_drop(&crossterm::event::KeyCode::Char(ch)));
+        }
+
+        assert!(!filter.should_drop(&crossterm::event::KeyCode::Char('a')));
+    }
+
+    #[test]
+    fn leaked_terminal_sequence_filter_ignores_normal_input() {
+        let mut filter = LeakedTerminalSequenceFilter::default();
+
+        assert!(!filter.should_drop(&crossterm::event::KeyCode::Char('[')));
+        assert!(!filter.should_drop(&crossterm::event::KeyCode::Char('<')));
+        assert!(!filter.should_drop(&crossterm::event::KeyCode::Char('M')));
+    }
 }
 
 /// The TUI's main loop, factored out so it can be tested with a `TestBackend`
@@ -266,6 +275,7 @@ where
     }
 
     let mut needs_draw = true;
+    let mut leaked_terminal_sequence_filter = LeakedTerminalSequenceFilter::default();
     loop {
         if needs_draw {
             terminal.draw(|frame| render(frame, app))?;
@@ -297,6 +307,9 @@ where
                     if matches!(key.kind, KeyEventKind::Press | KeyEventKind::Repeat) =>
                 {
                     needs_draw = true;
+                    if leaked_terminal_sequence_filter.should_drop(&key.code) {
+                        continue;
+                    }
                     if handle_key(app, key.code, key.modifiers) {
                         break;
                     }
@@ -320,6 +333,67 @@ where
     save_preferences(app);
 
     Ok(())
+}
+
+#[derive(Default)]
+struct LeakedTerminalSequenceFilter {
+    state: LeakedTerminalSequenceState,
+    bytes_seen: usize,
+}
+
+#[derive(Default)]
+enum LeakedTerminalSequenceState {
+    #[default]
+    Idle,
+    Escape,
+    Csi,
+}
+
+impl LeakedTerminalSequenceFilter {
+    fn should_drop(&mut self, code: &crossterm::event::KeyCode) -> bool {
+        let crossterm::event::KeyCode::Char(ch) = code else {
+            self.reset();
+            return false;
+        };
+
+        match self.state {
+            LeakedTerminalSequenceState::Idle => {
+                // Terminal protocol bytes should arrive as structured events, but
+                // under some terminals they can leak as key chars. Keep them out
+                // of text fields.
+                if *ch == '\u{1b}' {
+                    self.state = LeakedTerminalSequenceState::Escape;
+                    self.bytes_seen = 1;
+                    return true;
+                }
+                false
+            }
+            LeakedTerminalSequenceState::Escape => {
+                self.bytes_seen += 1;
+                if *ch == '[' {
+                    self.state = LeakedTerminalSequenceState::Csi;
+                    true
+                } else {
+                    self.reset();
+                    false
+                }
+            }
+            LeakedTerminalSequenceState::Csi => {
+                self.bytes_seen += 1;
+                let finished = ('@'..='~').contains(ch);
+                let overlong = self.bytes_seen > 64;
+                if finished || overlong {
+                    self.reset();
+                }
+                true
+            }
+        }
+    }
+
+    fn reset(&mut self) {
+        self.state = LeakedTerminalSequenceState::Idle;
+        self.bytes_seen = 0;
+    }
 }
 
 /// Handle a bracketed paste event. In normal mode, tries to read an image
