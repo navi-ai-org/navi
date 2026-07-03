@@ -89,6 +89,7 @@ impl RegistryStore {
                 base_url        TEXT,
                 tool_calling_mode TEXT,
                 request_options TEXT NOT NULL DEFAULT '{}',
+                sha256          TEXT,
                 updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
             );
 
@@ -144,6 +145,7 @@ impl RegistryStore {
         ensure_provider_request_options_column(&conn)?;
         ensure_model_output_columns(&conn)?;
         ensure_provider_tool_calling_mode_column(&conn)?;
+        ensure_provider_sha256_column(&conn)?;
         Ok(())
     }
 
@@ -195,16 +197,72 @@ impl RegistryStore {
         Ok(count as usize)
     }
 
+    /// Returns the stored SHA-256 hash for a provider, or `None`.
+    pub fn provider_sha256(&self, provider_id: &str) -> Result<Option<String>> {
+        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let mut stmt = conn.prepare("SELECT sha256 FROM providers WHERE id = ?1")?;
+        let mut rows =
+            stmt.query_map(params![provider_id], |row| row.get::<_, Option<String>>(0))?;
+        match rows.next() {
+            Some(Ok(v)) => Ok(v),
+            _ => Ok(None),
+        }
+    }
+
+    /// Returns the set of provider ids currently in the cache.
+    pub fn provider_ids(&self) -> Result<std::collections::HashSet<String>> {
+        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let mut stmt = conn.prepare("SELECT id FROM providers")?;
+        let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
+        let mut ids = std::collections::HashSet::new();
+        for row in rows {
+            ids.insert(row?);
+        }
+        Ok(ids)
+    }
+
+    /// Deletes providers that are not in the given set of ids.
+    /// Used during sync to remove providers that were deleted from the remote registry.
+    pub fn delete_providers_not_in(&self, keep: &std::collections::HashSet<&str>) -> Result<()> {
+        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let mut stmt = conn.prepare("SELECT id FROM providers")?;
+        let to_delete: Vec<String> = stmt
+            .query_map([], |row| row.get::<_, String>(0))?
+            .filter_map(|r| r.ok())
+            .filter(|id| !keep.contains(id.as_str()))
+            .collect();
+        drop(stmt);
+        for id in &to_delete {
+            conn.execute("DELETE FROM providers WHERE id = ?1", params![id])?;
+        }
+        if !to_delete.is_empty() {
+            tracing::info!(
+                removed = to_delete.len(),
+                "removed stale providers from cache"
+            );
+        }
+        Ok(())
+    }
+
     /// Upserts a provider and its models from a [`RegistryProvider`].
     pub fn upsert_provider(&self, provider: &RegistryProvider) -> Result<()> {
+        self.upsert_provider_with_sha256(provider, None)
+    }
+
+    /// Upserts a provider with its SHA-256 hash for diff-based sync.
+    pub fn upsert_provider_with_sha256(
+        &self,
+        provider: &RegistryProvider,
+        sha256: Option<&str>,
+    ) -> Result<()> {
         let kind = parse_provider_kind(&provider.kind);
 
         let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
         let tx = conn.unchecked_transaction()?;
 
         tx.execute(
-            "INSERT OR REPLACE INTO providers (id, label, description, kind, api_key_env, base_url, tool_calling_mode, request_options, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, datetime('now'))",
+            "INSERT OR REPLACE INTO providers (id, label, description, kind, api_key_env, base_url, tool_calling_mode, request_options, sha256, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, datetime('now'))",
             params![
                 provider.id,
                 provider.label,
@@ -214,6 +272,7 @@ impl RegistryStore {
                 provider.base_url,
                 provider.tool_calling_mode,
                 serde_json::to_string(&provider.request_options)?,
+                sha256,
             ],
         )?;
 
@@ -734,6 +793,19 @@ fn ensure_provider_tool_calling_mode_column(conn: &Connection) -> Result<()> {
             "ALTER TABLE providers ADD COLUMN tool_calling_mode TEXT",
             [],
         )?;
+    }
+
+    Ok(())
+}
+
+fn ensure_provider_sha256_column(conn: &Connection) -> Result<()> {
+    let mut stmt = conn.prepare("PRAGMA table_info(providers)")?;
+    let has_column = stmt
+        .query_map([], |row| row.get::<_, String>(1))?
+        .any(|name| matches!(name, Ok(name) if name == "sha256"));
+
+    if !has_column {
+        conn.execute("ALTER TABLE providers ADD COLUMN sha256 TEXT", [])?;
     }
 
     Ok(())
