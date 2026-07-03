@@ -163,7 +163,8 @@ pub fn sync_local_registry(
 
 /// Syncs the remote registry into the local SQLite store.
 ///
-/// Returns `true` if the store was updated.
+/// Fetches only providers whose SHA-256 hash differs from the cached version
+/// (diff-based sync). Returns `true` if the store was updated.
 pub async fn sync_registry(
     store: &super::store::RegistryStore,
     fetcher: &RegistryFetcher,
@@ -198,20 +199,48 @@ pub async fn sync_registry(
         }
     }
 
+    // Diff: figure out which providers actually changed.
+    let mut to_fetch = Vec::new();
+    let mut keep_ids: std::collections::HashSet<&str> = std::collections::HashSet::new();
+
+    for (provider_id, entry) in &manifest.providers {
+        keep_ids.insert(provider_id.as_str());
+        let cached_sha = store.provider_sha256(provider_id)?;
+        if force || cached_sha.as_deref() != Some(&entry.sha256) {
+            to_fetch.push(provider_id.as_str());
+        }
+    }
+
+    if to_fetch.is_empty() {
+        // All hashes match — just update manifest meta and clean up stale providers.
+        store.delete_providers_not_in(&keep_ids)?;
+        store.save_manifest_meta(&manifest)?;
+        tracing::debug!("all providers up-to-date, no fetch needed");
+        return Ok(false);
+    }
+
     tracing::info!(
         version = manifest.version,
         providers = manifest.providers.len(),
-        "fetching all provider definitions"
+        changed = to_fetch.len(),
+        "fetching changed provider definitions"
     );
 
-    let providers = fetcher.fetch_all_providers(&manifest).await?;
+    let mut updated = 0;
+    for provider_id in &to_fetch {
+        let provider = fetcher.fetch_provider(provider_id, &manifest).await?;
+        let sha = &manifest.providers[*provider_id].sha256;
+        store.upsert_provider_with_sha256(&provider, Some(sha))?;
+        updated += 1;
+    }
 
-    store.replace_all(&providers)?;
+    // Remove providers that were deleted from the remote registry.
+    store.delete_providers_not_in(&keep_ids)?;
     store.save_manifest_meta(&manifest)?;
 
     tracing::info!(
-        providers = providers.len(),
-        models = providers.iter().map(|p| p.models.len()).sum::<usize>(),
+        updated = updated,
+        total = manifest.providers.len(),
         "registry cache updated"
     );
 
