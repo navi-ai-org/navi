@@ -108,6 +108,22 @@
           "type": "boolean",
           "description": "Whether the model supports file/image attachments (optional)"
         },
+        "supports_images": {
+          "type": "boolean",
+          "description": "Whether the model supports image attachments (optional)"
+        },
+        "supports_audio": {
+          "type": "boolean",
+          "description": "Whether the model supports audio attachments (optional)"
+        },
+        "supports_video": {
+          "type": "boolean",
+          "description": "Whether the model supports video attachments (optional)"
+        },
+        "supports_documents": {
+          "type": "boolean",
+          "description": "Whether the model supports document attachments (optional)"
+        },
         "reasoning_levels": {
           "type": "array",
           "items": { "type": "string" },

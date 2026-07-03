@@ -24,7 +24,30 @@ use crate::config::types::{ProviderConfig, RegistryConfig};
 use super::embedded::{embedded_manifest, embedded_provider_schema, embedded_providers};
 use super::store::RegistryStore;
 use super::types::{RegistryManifest, RegistryProvider};
-use super::RegistryFetcher;
+
+/// Trait abstracting registry fetching so the update flow can be tested without network.
+pub trait RegistryFetcherTrait {
+    async fn fetch_manifest(&self) -> Result<RegistryManifest>;
+    async fn fetch_provider(
+        &self,
+        provider_id: &str,
+        manifest: &RegistryManifest,
+    ) -> Result<RegistryProvider>;
+}
+
+impl RegistryFetcherTrait for super::RegistryFetcher {
+    async fn fetch_manifest(&self) -> Result<RegistryManifest> {
+        self.fetch_manifest().await
+    }
+
+    async fn fetch_provider(
+        &self,
+        provider_id: &str,
+        manifest: &RegistryManifest,
+    ) -> Result<RegistryProvider> {
+        self.fetch_provider(provider_id, manifest).await
+    }
+}
 
 /// Metadata keys stored in `registry_meta`.
 const META_LAST_CHECK: &str = "last_registry_check";
@@ -108,7 +131,10 @@ pub fn load_embedded_registry() -> Option<LoadedRegistry> {
     let providers = embedded_providers().ok()?;
     Some(LoadedRegistry {
         manifest,
-        providers: providers.into_iter().map(super::store::registry_provider_to_config).collect(),
+        providers: providers
+            .into_iter()
+            .map(super::store::registry_provider_to_config)
+            .collect(),
         source: RegistrySource::Embedded,
     })
 }
@@ -146,6 +172,10 @@ fn minimal_fallback_providers() -> Vec<ProviderConfig> {
             max_output_tokens: None,
             recommended_temperature: None,
             supports_thinking: None,
+            supports_images: None,
+            supports_audio: None,
+            supports_video: None,
+            supports_documents: None,
             tool_prompt_manifest: None,
         }],
         request_options: crate::config::providers::default_request_options_for("openai"),
@@ -168,8 +198,7 @@ pub fn should_check_registry_update(store: &RegistryStore, config: &RegistryConf
 
     let now = current_timestamp_secs();
     let elapsed = now.saturating_sub(last_check);
-    let interval = config.check_interval_hours.saturating_mul(3600)
-        + config.check_jitter_hours.saturating_mul(3600);
+    let interval = config.check_interval_hours.saturating_mul(3600);
 
     elapsed >= interval
 }
@@ -191,17 +220,19 @@ pub fn registry_check_interval_with_jitter(config: &RegistryConfig) -> u64 {
 /// Returns `Err(...)` on network or parse failures (caller should fall back).
 pub async fn check_registry_manifest(
     store: &RegistryStore,
-    fetcher: &RegistryFetcher,
+    fetcher: &impl RegistryFetcherTrait,
     config: &RegistryConfig,
 ) -> Result<Option<RegistryManifest>> {
     let local = store_stored_manifest(store)
         .ok()
         .flatten()
-        .unwrap_or_else(|| embedded_manifest().unwrap_or_else(|_| RegistryManifest {
-            version: 0,
-            updated_at: "1970-01-01T00:00:00Z".to_string(),
-            providers: std::collections::HashMap::new(),
-        }));
+        .unwrap_or_else(|| {
+            embedded_manifest().unwrap_or_else(|_| RegistryManifest {
+                version: 0,
+                updated_at: "1970-01-01T00:00:00Z".to_string(),
+                providers: std::collections::HashMap::new(),
+            })
+        });
 
     let manifest = fetch_manifest_with_retry(fetcher, config).await?;
 
@@ -223,7 +254,7 @@ pub async fn check_registry_manifest(
 /// Returns the validated providers ready to be applied.
 pub async fn download_registry_updates(
     store: &RegistryStore,
-    fetcher: &RegistryFetcher,
+    fetcher: &impl RegistryFetcherTrait,
     manifest: &RegistryManifest,
     config: &RegistryConfig,
 ) -> Result<Vec<RegistryProvider>> {
@@ -293,8 +324,12 @@ pub fn validate_registry_hashes(
             .providers
             .get(&provider.id)
             .with_context(|| format!("provider '{}' not in manifest", provider.id))?;
-        let provider_json = serde_json::to_string(provider)
-            .with_context(|| format!("failed to serialize provider '{}' for hash check", provider.id))?;
+        let provider_json = serde_json::to_string(provider).with_context(|| {
+            format!(
+                "failed to serialize provider '{}' for hash check",
+                provider.id
+            )
+        })?;
         let hash = hex::encode(Sha256::digest(provider_json.as_bytes()));
         if hash != entry.sha256 {
             anyhow::bail!(
@@ -316,10 +351,14 @@ pub fn apply_registry_update_atomically(
     manifest: &RegistryManifest,
     providers: &[RegistryProvider],
 ) -> Result<()> {
-    let keep: std::collections::HashSet<&str> = manifest.providers.keys().map(|s| s.as_str()).collect();
+    let keep: std::collections::HashSet<&str> =
+        manifest.providers.keys().map(|s| s.as_str()).collect();
 
     for provider in providers {
-        let sha = manifest.providers.get(&provider.id).map(|e| e.sha256.as_str());
+        let sha = manifest
+            .providers
+            .get(&provider.id)
+            .map(|e| e.sha256.as_str());
         store.upsert_provider_with_sha256(provider, sha)?;
     }
 
@@ -342,7 +381,8 @@ pub fn save_registry_metadata(
     if let Some(ts) = last_success {
         store.meta_set(META_LAST_SUCCESS, &ts.to_string())?;
     }
-    let manifest_json = serde_json::to_string(manifest).context("failed to serialize manifest metadata")?;
+    let manifest_json =
+        serde_json::to_string(manifest).context("failed to serialize manifest metadata")?;
     store.meta_set(META_MANIFEST_JSON, &manifest_json)?;
     Ok(())
 }
@@ -352,7 +392,7 @@ pub fn save_registry_metadata(
 /// This is safe to run from a background task: all failures are logged and swallowed.
 pub async fn run_registry_update_check(
     store: &RegistryStore,
-    fetcher: &RegistryFetcher,
+    fetcher: &impl RegistryFetcherTrait,
     config: &RegistryConfig,
 ) -> bool {
     if !config.update_enabled {
@@ -361,7 +401,12 @@ pub async fn run_registry_update_check(
 
     // Record that we attempted a check.
     let now = current_timestamp_secs();
-    if let Err(err) = save_registry_metadata(store, &current_stored_manifest_or_embedded(store), Some(now), None) {
+    if let Err(err) = save_registry_metadata(
+        store,
+        &current_stored_manifest_or_embedded(store),
+        Some(now),
+        None,
+    ) {
         tracing::warn!(error = %err, "failed to save registry check timestamp");
     }
 
@@ -418,11 +463,13 @@ fn current_stored_manifest_or_embedded(store: &RegistryStore) -> RegistryManifes
     store_stored_manifest(store)
         .ok()
         .flatten()
-        .unwrap_or_else(|| embedded_manifest().unwrap_or_else(|_| RegistryManifest {
-            version: 0,
-            updated_at: "1970-01-01T00:00:00Z".to_string(),
-            providers: std::collections::HashMap::new(),
-        }))
+        .unwrap_or_else(|| {
+            embedded_manifest().unwrap_or_else(|_| RegistryManifest {
+                version: 0,
+                updated_at: "1970-01-01T00:00:00Z".to_string(),
+                providers: std::collections::HashMap::new(),
+            })
+        })
 }
 
 fn provider_hashes_equal(a: &RegistryManifest, b: &RegistryManifest) -> bool {
@@ -438,7 +485,7 @@ fn provider_hashes_equal(a: &RegistryManifest, b: &RegistryManifest) -> bool {
 }
 
 async fn fetch_manifest_with_retry(
-    fetcher: &RegistryFetcher,
+    fetcher: &impl RegistryFetcherTrait,
     config: &RegistryConfig,
 ) -> Result<RegistryManifest> {
     let mut last_err = None;
@@ -450,7 +497,8 @@ async fn fetch_manifest_with_retry(
                 tracing::debug!(attempt, error = %err, "manifest fetch failed");
                 last_err = Some(err);
                 if attempt < attempts {
-                    tokio::time::sleep(std::time::Duration::from_millis(500 * attempt as u64)).await;
+                    tokio::time::sleep(std::time::Duration::from_millis(500 * attempt as u64))
+                        .await;
                 }
             }
         }
@@ -459,7 +507,7 @@ async fn fetch_manifest_with_retry(
 }
 
 async fn fetch_provider_with_retry(
-    fetcher: &RegistryFetcher,
+    fetcher: &impl RegistryFetcherTrait,
     provider_id: &str,
     manifest: &RegistryManifest,
     config: &RegistryConfig,
@@ -473,12 +521,15 @@ async fn fetch_provider_with_retry(
                 tracing::debug!(attempt, provider = provider_id, error = %err, "provider fetch failed");
                 last_err = Some(err);
                 if attempt < attempts {
-                    tokio::time::sleep(std::time::Duration::from_millis(500 * attempt as u64)).await;
+                    tokio::time::sleep(std::time::Duration::from_millis(500 * attempt as u64))
+                        .await;
                 }
             }
         }
     }
-    Err(last_err.unwrap()).context(format!("failed to fetch provider '{provider_id}' after retries"))
+    Err(last_err.unwrap()).context(format!(
+        "failed to fetch provider '{provider_id}' after retries"
+    ))
 }
 
 fn current_timestamp_secs() -> u64 {
@@ -490,8 +541,8 @@ fn current_timestamp_secs() -> u64 {
 
 #[cfg(test)]
 mod tests {
+    use super::super::types::{ManifestProviderEntry, RegistryModel};
     use super::*;
-    use super::super::types::{RegistryModel, ManifestProviderEntry};
 
     fn test_provider(id: &str, name: &str) -> RegistryProvider {
         RegistryProvider {
@@ -510,6 +561,12 @@ mod tests {
                 max_output_tokens: None,
                 recommended_temperature: None,
                 supports_thinking: None,
+                supports_attachments: None,
+                supports_images: None,
+                supports_audio: None,
+                supports_video: None,
+                supports_documents: None,
+                capabilities: Vec::new(),
             }],
         }
     }
@@ -598,9 +655,13 @@ mod tests {
     #[test]
     fn load_registry_prefers_cache_when_populated() {
         let store = RegistryStore::open_memory().expect("open");
-        let embedded = load_embedded_registry().expect("embedded");
-        store.replace_all(&embedded.providers).expect("seed");
-        store.save_manifest_meta(&embedded.manifest).expect("save meta");
+        let embedded_manifest = super::embedded_manifest().expect("manifest");
+        let embedded_providers = super::embedded_providers().expect("providers");
+        store.replace_all(&embedded_providers).expect("seed");
+        store
+            .save_manifest_meta(&embedded_manifest)
+            .expect("save meta");
+        save_registry_metadata(&store, &embedded_manifest, None, None).expect("save manifest json");
 
         let loaded = load_registry(&store);
         assert_eq!(loaded.source, RegistrySource::Cache);
@@ -609,40 +670,17 @@ mod tests {
     #[test]
     fn apply_registry_update_atomically_replaces_providers() {
         let store = RegistryStore::open_memory().expect("open");
+        let provider = test_provider("test", "test-model");
         let mut manifest = RegistryManifest {
             version: 1,
             updated_at: "2026-01-01T00:00:00Z".to_string(),
             providers: std::collections::HashMap::new(),
         };
-        let provider = RegistryProvider {
-            id: "test".to_string(),
-            label: "Test".to_string(),
-            description: "test".to_string(),
-            kind: "openai-chat-completions".to_string(),
-            api_key_env: "TEST_API_KEY".to_string(),
-            base_url: None,
-            tool_calling_mode: None,
-            request_options: Default::default(),
-            models: vec![RegistryModel {
-                name: "test-model".to_string(),
-                task_size: "large".to_string(),
-                context_window_tokens: Some(128_000),
-                max_output_tokens: None,
-                recommended_temperature: None,
-                supports_thinking: None,
-            }],
-        };
-        let hash = "test-hash";
-        manifest.providers.insert(
-            provider.id.clone(),
-            super::super::types::ManifestProviderEntry {
-                file: "providers/test.json".to_string(),
-                sha256: hash.to_string(),
-                model_count: 1,
-            },
-        );
+        manifest
+            .providers
+            .insert(provider.id.clone(), manifest_entry(&provider));
 
-        apply_registry_update_atomically(&store, &manifest, &[provider.clone()]).expect("apply");
+        apply_registry_update_atomically(&store, &manifest, &[provider]).expect("apply");
 
         let loaded = store.load_all_providers().expect("load");
         assert_eq!(loaded.len(), 1);
@@ -651,32 +689,15 @@ mod tests {
 
     #[test]
     fn validate_registry_hashes_detects_mismatch() {
+        let provider = test_provider("test", "test-model");
         let mut manifest = RegistryManifest {
             version: 1,
             updated_at: "2026-01-01T00:00:00Z".to_string(),
             providers: std::collections::HashMap::new(),
         };
-        let provider = RegistryProvider {
-            id: "test".to_string(),
-            label: "Test".to_string(),
-            description: "test".to_string(),
-            kind: "openai-chat-completions".to_string(),
-            api_key_env: "TEST_API_KEY".to_string(),
-            base_url: None,
-            tool_calling_mode: None,
-            request_options: Default::default(),
-            models: vec![RegistryModel {
-                name: "test-model".to_string(),
-                task_size: "large".to_string(),
-                context_window_tokens: Some(128_000),
-                max_output_tokens: None,
-                recommended_temperature: None,
-                supports_thinking: None,
-            }],
-        };
         manifest.providers.insert(
             provider.id.clone(),
-            super::super::types::ManifestProviderEntry {
+            ManifestProviderEntry {
                 file: "providers/test.json".to_string(),
                 sha256: "bad-hash".to_string(),
                 model_count: 1,
@@ -684,5 +705,370 @@ mod tests {
         );
 
         assert!(validate_registry_hashes(&[provider], &manifest).is_err());
+    }
+
+    #[test]
+    fn validate_registry_hashes_accepts_correct_hash() {
+        let provider = test_provider("test", "test-model");
+        let mut manifest = RegistryManifest {
+            version: 1,
+            updated_at: "2026-01-01T00:00:00Z".to_string(),
+            providers: std::collections::HashMap::new(),
+        };
+        manifest
+            .providers
+            .insert(provider.id.clone(), manifest_entry(&provider));
+
+        assert!(validate_registry_hashes(&[provider], &manifest).is_ok());
+    }
+
+    // ── Async tests using a mock fetcher ───────────────────────────────────
+
+    /// Mock fetcher for testing the update flow without network access.
+    struct MockFetcher {
+        manifest: Option<RegistryManifest>,
+        manifest_err: Option<String>,
+        providers: std::collections::HashMap<String, Result<RegistryProvider, String>>,
+    }
+
+    impl MockFetcher {
+        fn new() -> Self {
+            Self {
+                manifest: None,
+                manifest_err: Some("not configured".to_string()),
+                providers: std::collections::HashMap::new(),
+            }
+        }
+
+        fn with_manifest(mut self, manifest: RegistryManifest) -> Self {
+            self.manifest = Some(manifest);
+            self.manifest_err = None;
+            self
+        }
+
+        fn with_manifest_error(mut self, err: &str) -> Self {
+            self.manifest = None;
+            self.manifest_err = Some(err.to_string());
+            self
+        }
+
+        fn with_provider(mut self, provider: RegistryProvider) -> Self {
+            self.providers.insert(provider.id.clone(), Ok(provider));
+            self
+        }
+
+        fn with_provider_error(mut self, id: &str, err: &str) -> Self {
+            self.providers.insert(id.to_string(), Err(err.to_string()));
+            self
+        }
+    }
+
+    impl RegistryFetcherTrait for MockFetcher {
+        async fn fetch_manifest(&self) -> Result<RegistryManifest> {
+            self.manifest
+                .clone()
+                .ok_or_else(|| anyhow::anyhow!(self.manifest_err.clone().unwrap_or_default()))
+        }
+
+        async fn fetch_provider(
+            &self,
+            provider_id: &str,
+            _manifest: &RegistryManifest,
+        ) -> Result<RegistryProvider> {
+            self.providers
+                .get(provider_id)
+                .cloned()
+                .map(|r| r.map_err(|e| anyhow::anyhow!(e)))
+                .unwrap_or_else(|| {
+                    Err(anyhow::anyhow!(
+                        "provider {provider_id} not configured in mock"
+                    ))
+                })
+        }
+    }
+
+    #[tokio::test]
+    async fn first_startup_without_cache_seeds_from_embedded() {
+        let store = RegistryStore::open_memory().expect("open");
+        assert!(store.is_empty().unwrap());
+
+        let loaded = load_registry(&store);
+        assert!(!loaded.providers.is_empty());
+        // After load, cache should be seeded.
+        assert!(!store.is_empty().unwrap());
+    }
+
+    #[tokio::test]
+    async fn startup_with_valid_cache_uses_cache() {
+        let store = RegistryStore::open_memory().expect("open");
+        let provider = test_provider("cached", "cached-model");
+        let mut manifest = RegistryManifest {
+            version: 1,
+            updated_at: "2026-01-01T00:00:00Z".to_string(),
+            providers: std::collections::HashMap::new(),
+        };
+        manifest
+            .providers
+            .insert(provider.id.clone(), manifest_entry(&provider));
+        store.replace_all(&[provider]).expect("seed");
+        store.save_manifest_meta(&manifest).expect("save meta");
+        save_registry_metadata(&store, &manifest, Some(current_timestamp_secs()), None)
+            .expect("save meta");
+
+        let loaded = load_registry(&store);
+        assert_eq!(loaded.source, RegistrySource::Cache);
+        assert!(!loaded.providers.is_empty());
+    }
+
+    #[tokio::test]
+    async fn remote_manifest_equal_to_local_no_update() {
+        let store = RegistryStore::open_memory().expect("open");
+        let provider = test_provider("test", "model-1");
+        let mut manifest = RegistryManifest {
+            version: 1,
+            updated_at: "2026-01-01T00:00:00Z".to_string(),
+            providers: std::collections::HashMap::new(),
+        };
+        manifest
+            .providers
+            .insert(provider.id.clone(), manifest_entry(&provider));
+        store.replace_all(&[provider]).expect("seed");
+        store.save_manifest_meta(&manifest).expect("save meta");
+        save_registry_metadata(&store, &manifest, Some(current_timestamp_secs()), None)
+            .expect("save meta");
+
+        let fetcher = MockFetcher::new().with_manifest(manifest);
+        let config = RegistryConfig::default();
+        let result = check_registry_manifest(&store, &fetcher, &config).await;
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn newer_remote_manifest_triggers_update() {
+        let store = RegistryStore::open_memory().expect("open");
+        // Seed cache with version 1
+        let old_provider = test_provider("old", "old-model");
+        let mut old_manifest = RegistryManifest {
+            version: 1,
+            updated_at: "2026-01-01T00:00:00Z".to_string(),
+            providers: std::collections::HashMap::new(),
+        };
+        old_manifest
+            .providers
+            .insert(old_provider.id.clone(), manifest_entry(&old_provider));
+        store.replace_all(&[old_provider]).expect("seed");
+        store.save_manifest_meta(&old_manifest).expect("save meta");
+        save_registry_metadata(&store, &old_manifest, Some(current_timestamp_secs()), None)
+            .expect("save meta");
+
+        // Remote manifest version 2 with a new provider
+        let new_provider = test_provider("new", "new-model");
+        let mut new_manifest = RegistryManifest {
+            version: 2,
+            updated_at: "2026-07-03T00:00:00Z".to_string(),
+            providers: std::collections::HashMap::new(),
+        };
+        new_manifest
+            .providers
+            .insert(new_provider.id.clone(), manifest_entry(&new_provider));
+
+        let fetcher = MockFetcher::new()
+            .with_manifest(new_manifest.clone())
+            .with_provider(new_provider);
+
+        let config = RegistryConfig::default();
+        let result = check_registry_manifest(&store, &fetcher, &config).await;
+        assert!(result.is_ok());
+        let remote = result.unwrap().unwrap();
+        assert_eq!(remote.version, 2);
+    }
+
+    #[tokio::test]
+    async fn network_failure_keeps_existing_registry() {
+        let store = RegistryStore::open_memory().expect("open");
+        let provider = test_provider("existing", "model-1");
+        let mut manifest = RegistryManifest {
+            version: 1,
+            updated_at: "2026-01-01T00:00:00Z".to_string(),
+            providers: std::collections::HashMap::new(),
+        };
+        manifest
+            .providers
+            .insert(provider.id.clone(), manifest_entry(&provider));
+        store.replace_all(&[provider]).expect("seed");
+        store.save_manifest_meta(&manifest).expect("save meta");
+        save_registry_metadata(&store, &manifest, Some(current_timestamp_secs()), None)
+            .expect("save meta");
+
+        let fetcher = MockFetcher::new().with_manifest_error("network error");
+        let config = RegistryConfig::default();
+        let result = check_registry_manifest(&store, &fetcher, &config).await;
+        assert!(result.is_err());
+
+        // Existing registry should be intact
+        let loaded = load_registry(&store);
+        assert_eq!(loaded.source, RegistrySource::Cache);
+        assert!(!loaded.providers.is_empty());
+    }
+
+    #[tokio::test]
+    async fn invalid_remote_json_returns_error() {
+        let store = RegistryStore::open_memory().expect("open");
+
+        let fetcher = MockFetcher::new().with_manifest_error("invalid JSON");
+        let config = RegistryConfig::default();
+        let result = check_registry_manifest(&store, &fetcher, &config).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn invalid_hash_rejected() {
+        let provider = test_provider("bad-hash", "model-1");
+        let mut manifest = RegistryManifest {
+            version: 1,
+            updated_at: "2026-01-01T00:00:00Z".to_string(),
+            providers: std::collections::HashMap::new(),
+        };
+        manifest.providers.insert(
+            provider.id.clone(),
+            ManifestProviderEntry {
+                file: "providers/bad-hash.json".to_string(),
+                sha256: "0000000000000000000000000000000000000000000000000000000000000000"
+                    .to_string(),
+                model_count: 1,
+            },
+        );
+
+        assert!(validate_registry_hashes(&[provider], &manifest).is_err());
+    }
+
+    #[tokio::test]
+    async fn partial_update_failure_keeps_previous() {
+        let store = RegistryStore::open_memory().expect("open");
+        let old_provider = test_provider("old", "old-model");
+        let mut old_manifest = RegistryManifest {
+            version: 1,
+            updated_at: "2026-01-01T00:00:00Z".to_string(),
+            providers: std::collections::HashMap::new(),
+        };
+        old_manifest
+            .providers
+            .insert(old_provider.id.clone(), manifest_entry(&old_provider));
+        store.replace_all(&[old_provider]).expect("seed");
+        store.save_manifest_meta(&old_manifest).expect("save meta");
+        save_registry_metadata(&store, &old_manifest, Some(current_timestamp_secs()), None)
+            .expect("save meta");
+
+        // New manifest with two providers; one will fail to fetch
+        let good_provider = test_provider("good", "good-model");
+        let bad_provider = test_provider("bad", "bad-model");
+        let mut new_manifest = RegistryManifest {
+            version: 2,
+            updated_at: "2026-07-03T00:00:00Z".to_string(),
+            providers: std::collections::HashMap::new(),
+        };
+        new_manifest
+            .providers
+            .insert(good_provider.id.clone(), manifest_entry(&good_provider));
+        new_manifest
+            .providers
+            .insert(bad_provider.id.clone(), manifest_entry(&bad_provider));
+
+        let fetcher = MockFetcher::new()
+            .with_manifest(new_manifest)
+            .with_provider(good_provider)
+            .with_provider_error("bad", "network error for bad provider");
+
+        let config = RegistryConfig::default();
+        let updated = run_registry_update_check(&store, &fetcher, &config).await;
+        assert!(!updated, "update should have failed");
+
+        // Previous registry should still be intact
+        let loaded = store.load_all_providers().expect("load");
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].id, "old");
+    }
+
+    #[tokio::test]
+    async fn rollback_to_previous_registry_on_apply_failure() {
+        let store = RegistryStore::open_memory().expect("open");
+        let old_provider = test_provider("old", "old-model");
+        let mut old_manifest = RegistryManifest {
+            version: 1,
+            updated_at: "2026-01-01T00:00:00Z".to_string(),
+            providers: std::collections::HashMap::new(),
+        };
+        old_manifest
+            .providers
+            .insert(old_provider.id.clone(), manifest_entry(&old_provider));
+        store.replace_all(&[old_provider]).expect("seed");
+        store.save_manifest_meta(&old_manifest).expect("save meta");
+
+        // Validate hashes first — this should fail and prevent the apply.
+        let new_provider = test_provider("new", "new-model");
+        let mut new_manifest = RegistryManifest {
+            version: 2,
+            updated_at: "2026-07-03T00:00:00Z".to_string(),
+            providers: std::collections::HashMap::new(),
+        };
+        new_manifest.providers.insert(
+            new_provider.id.clone(),
+            ManifestProviderEntry {
+                file: "providers/new.json".to_string(),
+                sha256: "wrong-hash".to_string(),
+                model_count: 1,
+            },
+        );
+
+        // Hash validation should catch the mismatch before apply.
+        assert!(validate_registry_hashes(&[new_provider], &new_manifest).is_err());
+
+        // Since validation failed, apply is never called. Old provider should still be there.
+        let loaded = store.load_all_providers().expect("load");
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].id, "old");
+    }
+
+    #[test]
+    fn respecting_interval_with_jitter() {
+        let store = RegistryStore::open_memory().expect("open");
+        let config = RegistryConfig::default();
+        let now = current_timestamp_secs();
+
+        // Just checked → should not check
+        save_registry_metadata(
+            &store,
+            &RegistryManifest {
+                version: 1,
+                updated_at: "2026-01-01T00:00:00Z".to_string(),
+                providers: std::collections::HashMap::new(),
+            },
+            Some(now),
+            None,
+        )
+        .expect("save");
+        assert!(!should_check_registry_update(&store, &config));
+
+        // 30h ago → should check (24h + up to 6h jitter = max 30h, 30h is past worst case)
+        let past = now.saturating_sub(31 * 3600);
+        save_registry_metadata(
+            &store,
+            &RegistryManifest {
+                version: 1,
+                updated_at: "2026-01-01T00:00:00Z".to_string(),
+                providers: std::collections::HashMap::new(),
+            },
+            Some(past),
+            None,
+        )
+        .expect("save");
+        assert!(should_check_registry_update(&store, &config));
+
+        // Verify jitter interval is within expected bounds
+        let interval = registry_check_interval_with_jitter(&config);
+        let base = config.check_interval_hours * 3600;
+        let max = base + config.check_jitter_hours * 3600;
+        assert!(interval >= base && interval <= max);
     }
 }

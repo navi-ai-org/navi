@@ -19,6 +19,24 @@ fn content_parts_to_chat_json(parts: &[ContentPart]) -> Vec<Value> {
                     "url": format!("data:{media_type};base64,{data}")
                 }
             }),
+            ContentPart::Audio {
+                media_type, name, ..
+            } => json!({
+                "type": "text",
+                "text": attachment_placeholder("audio", media_type, name.as_deref())
+            }),
+            ContentPart::Video {
+                media_type, name, ..
+            } => json!({
+                "type": "text",
+                "text": attachment_placeholder("video", media_type, name.as_deref())
+            }),
+            ContentPart::Document {
+                media_type, name, ..
+            } => json!({
+                "type": "text",
+                "text": attachment_placeholder("document", media_type, name.as_deref())
+            }),
         })
         .collect()
 }
@@ -36,8 +54,35 @@ fn content_parts_to_responses_json(parts: &[ContentPart]) -> Vec<Value> {
                 "type": "input_image",
                 "image_url": format!("data:{media_type};base64,{data}")
             }),
+            ContentPart::Audio {
+                media_type, name, ..
+            } => json!({
+                "type": "input_text",
+                "text": attachment_placeholder("audio", media_type, name.as_deref())
+            }),
+            ContentPart::Video {
+                media_type, name, ..
+            } => json!({
+                "type": "input_text",
+                "text": attachment_placeholder("video", media_type, name.as_deref())
+            }),
+            ContentPart::Document {
+                media_type, name, ..
+            } => json!({
+                "type": "input_text",
+                "text": attachment_placeholder("document", media_type, name.as_deref())
+            }),
         })
         .collect()
+}
+
+fn attachment_placeholder(kind: &str, media_type: &str, name: Option<&str>) -> String {
+    match name {
+        Some(name) if !name.is_empty() => {
+            format!("[{kind} attachment omitted from this provider request: {name} ({media_type})]")
+        }
+        _ => format!("[{kind} attachment omitted from this provider request: {media_type}]"),
+    }
 }
 
 pub(crate) fn message_to_json(message: &ModelMessage) -> Value {

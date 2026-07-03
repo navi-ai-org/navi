@@ -101,6 +101,10 @@ impl RegistryStore {
                 max_output_tokens   INTEGER,
                 recommended_temperature REAL,
                 supports_thinking   INTEGER,
+                supports_images     INTEGER,
+                supports_audio      INTEGER,
+                supports_video      INTEGER,
+                supports_documents  INTEGER,
                 tool_prompt_manifest INTEGER,
                 PRIMARY KEY (provider_id, name),
                 FOREIGN KEY (provider_id) REFERENCES providers(id) ON DELETE CASCADE
@@ -284,8 +288,8 @@ impl RegistryStore {
 
         {
             let mut stmt = tx.prepare(
-                "INSERT INTO models (provider_id, name, task_size, context_window_tokens, max_output_tokens, recommended_temperature, supports_thinking, tool_prompt_manifest)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, NULL)",
+                "INSERT INTO models (provider_id, name, task_size, context_window_tokens, max_output_tokens, recommended_temperature, supports_thinking, supports_images, supports_audio, supports_video, supports_documents, tool_prompt_manifest)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, NULL)",
             )?;
 
             for model in &provider.models {
@@ -297,6 +301,10 @@ impl RegistryStore {
                     model.max_output_tokens.map(|v| v as i64),
                     model.recommended_temperature,
                     model.supports_thinking.map(|v| v as i64),
+                    registry_model_supports_images(model).map(|v| v as i64),
+                    registry_model_supports_audio(model).map(|v| v as i64),
+                    registry_model_supports_video(model).map(|v| v as i64),
+                    registry_model_supports_documents(model).map(|v| v as i64),
                 ])?;
             }
         }
@@ -348,7 +356,7 @@ impl RegistryStore {
                 .map(parse_tool_calling_mode);
 
             let mut model_stmt = conn.prepare(
-                "SELECT name, task_size, context_window_tokens, max_output_tokens, recommended_temperature, supports_thinking, tool_prompt_manifest
+                "SELECT name, task_size, context_window_tokens, max_output_tokens, recommended_temperature, supports_thinking, supports_images, supports_audio, supports_video, supports_documents, tool_prompt_manifest
                  FROM models WHERE provider_id = ?1 ORDER BY rowid",
             )?;
 
@@ -360,7 +368,11 @@ impl RegistryStore {
                     let max_out: Option<i64> = row.get(3)?;
                     let temp: Option<f64> = row.get(4)?;
                     let thinking: Option<i64> = row.get(5)?;
-                    let tpm: Option<i64> = row.get(6)?;
+                    let images: Option<i64> = row.get(6)?;
+                    let audio: Option<i64> = row.get(7)?;
+                    let video: Option<i64> = row.get(8)?;
+                    let documents: Option<i64> = row.get(9)?;
+                    let tpm: Option<i64> = row.get(10)?;
 
                     Ok(ProviderModelConfig {
                         name,
@@ -372,6 +384,10 @@ impl RegistryStore {
                         max_output_tokens: max_out.map(|v| v as u64),
                         recommended_temperature: temp,
                         supports_thinking: thinking.map(|v| v != 0),
+                        supports_images: images.map(|v| v != 0),
+                        supports_audio: audio.map(|v| v != 0),
+                        supports_video: video.map(|v| v != 0),
+                        supports_documents: documents.map(|v| v != 0),
                         tool_prompt_manifest: tpm.map(|v| v != 0),
                     })
                 })?
@@ -705,17 +721,27 @@ pub fn registry_provider_to_config(rp: RegistryProvider) -> ProviderConfig {
     let models = rp
         .models
         .into_iter()
-        .map(|m| ProviderModelConfig {
-            name: m.name,
-            task_size: match m.task_size.as_str() {
-                "small" => ModelTaskSize::Small,
-                _ => ModelTaskSize::Large,
-            },
-            context_window_tokens: m.context_window_tokens,
-            max_output_tokens: m.max_output_tokens,
-            recommended_temperature: m.recommended_temperature,
-            supports_thinking: m.supports_thinking,
-            tool_prompt_manifest: None,
+        .map(|m| {
+            let supports_images = registry_model_supports_images(&m);
+            let supports_audio = registry_model_supports_audio(&m);
+            let supports_video = registry_model_supports_video(&m);
+            let supports_documents = registry_model_supports_documents(&m);
+            ProviderModelConfig {
+                name: m.name,
+                task_size: match m.task_size.as_str() {
+                    "small" => ModelTaskSize::Small,
+                    _ => ModelTaskSize::Large,
+                },
+                context_window_tokens: m.context_window_tokens,
+                max_output_tokens: m.max_output_tokens,
+                recommended_temperature: m.recommended_temperature,
+                supports_thinking: m.supports_thinking,
+                supports_images,
+                supports_audio,
+                supports_video,
+                supports_documents,
+                tool_prompt_manifest: None,
+            }
         })
         .collect();
 
@@ -735,6 +761,44 @@ pub fn registry_provider_to_config(rp: RegistryProvider) -> ProviderConfig {
         },
         ..Default::default()
     }
+}
+
+fn registry_model_has_capability(model: &super::types::RegistryModel, names: &[&str]) -> bool {
+    model.capabilities.iter().any(|capability| {
+        let normalized = capability.trim().to_ascii_lowercase();
+        names.iter().any(|name| normalized == *name)
+    })
+}
+
+fn registry_model_supports_images(model: &super::types::RegistryModel) -> Option<bool> {
+    model.supports_images.or_else(|| {
+        (model.supports_attachments == Some(true)
+            || registry_model_has_capability(model, &["image", "images", "vision"]))
+        .then_some(true)
+    })
+}
+
+fn registry_model_supports_audio(model: &super::types::RegistryModel) -> Option<bool> {
+    model.supports_audio.or_else(|| {
+        registry_model_has_capability(model, &["audio", "sound", "speech"]).then_some(true)
+    })
+}
+
+fn registry_model_supports_video(model: &super::types::RegistryModel) -> Option<bool> {
+    model
+        .supports_video
+        .or_else(|| registry_model_has_capability(model, &["video"]).then_some(true))
+}
+
+fn registry_model_supports_documents(model: &super::types::RegistryModel) -> Option<bool> {
+    model.supports_documents.or_else(|| {
+        (model.supports_attachments == Some(true)
+            || registry_model_has_capability(
+                model,
+                &["document", "documents", "pdf", "file", "files"],
+            ))
+        .then_some(true)
+    })
 }
 
 fn ensure_provider_request_options_column(conn: &Connection) -> Result<()> {
@@ -775,6 +839,21 @@ fn ensure_model_output_columns(conn: &Connection) -> Result<()> {
     if !columns.contains(&"supports_thinking".to_string()) {
         conn.execute(
             "ALTER TABLE models ADD COLUMN supports_thinking INTEGER",
+            [],
+        )?;
+    }
+    if !columns.contains(&"supports_images".to_string()) {
+        conn.execute("ALTER TABLE models ADD COLUMN supports_images INTEGER", [])?;
+    }
+    if !columns.contains(&"supports_audio".to_string()) {
+        conn.execute("ALTER TABLE models ADD COLUMN supports_audio INTEGER", [])?;
+    }
+    if !columns.contains(&"supports_video".to_string()) {
+        conn.execute("ALTER TABLE models ADD COLUMN supports_video INTEGER", [])?;
+    }
+    if !columns.contains(&"supports_documents".to_string()) {
+        conn.execute(
+            "ALTER TABLE models ADD COLUMN supports_documents INTEGER",
             [],
         )?;
     }
@@ -836,6 +915,12 @@ mod tests {
                     max_output_tokens: Some(8_192),
                     recommended_temperature: Some(0.7),
                     supports_thinking: None,
+                    supports_attachments: None,
+                    supports_images: None,
+                    supports_audio: None,
+                    supports_video: None,
+                    supports_documents: None,
+                    capabilities: Vec::new(),
                 },
                 RegistryModel {
                     name: "test-model-small".to_string(),
@@ -844,6 +929,12 @@ mod tests {
                     max_output_tokens: Some(4_096),
                     recommended_temperature: Some(0.5),
                     supports_thinking: None,
+                    supports_attachments: None,
+                    supports_images: None,
+                    supports_audio: None,
+                    supports_video: None,
+                    supports_documents: None,
+                    capabilities: Vec::new(),
                 },
             ],
         }
@@ -908,6 +999,12 @@ mod tests {
             max_output_tokens: Some(16_384),
             recommended_temperature: Some(0.8),
             supports_thinking: None,
+            supports_attachments: None,
+            supports_images: None,
+            supports_audio: None,
+            supports_video: None,
+            supports_documents: None,
+            capabilities: Vec::new(),
         }];
         store.upsert_provider(&provider).expect("upsert again");
 
@@ -977,6 +1074,12 @@ mod tests {
                 max_output_tokens: None,
                 recommended_temperature: None,
                 supports_thinking: None,
+                supports_attachments: None,
+                supports_images: None,
+                supports_audio: None,
+                supports_video: None,
+                supports_documents: None,
+                capabilities: Vec::new(),
             }],
         };
         store.upsert_provider(&provider).expect("upsert");
@@ -1112,6 +1215,12 @@ mod tests {
                 max_output_tokens: None,
                 recommended_temperature: None,
                 supports_thinking: None,
+                supports_attachments: None,
+                supports_images: None,
+                supports_audio: None,
+                supports_video: None,
+                supports_documents: None,
+                capabilities: Vec::new(),
             }],
         };
         store.upsert_provider(&provider).expect("upsert");

@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 /// A single part of a multimodal message content.
 ///
 /// Models like GPT-4o, Claude, and Gemini accept messages with mixed
-/// text and image parts. When a [`ModelMessage`] contains non-empty
+/// text and attachment parts. When a [`ModelMessage`] contains non-empty
 /// [`ModelMessage::content_parts`], providers serialize each part
 /// according to their native wire format instead of using the plain
 /// [`ModelMessage::content`] string.
@@ -27,6 +27,36 @@ pub enum ContentPart {
         /// Base64-encoded image data (no data-URL prefix, raw base64 only).
         data: String,
     },
+    /// An inline audio attachment (base64-encoded).
+    Audio {
+        /// MIME type of the audio (e.g. `"audio/mpeg"`, `"audio/wav"`).
+        media_type: String,
+        /// Base64-encoded audio data (no data-URL prefix, raw base64 only).
+        data: String,
+        /// Optional filename or user-facing label.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        name: Option<String>,
+    },
+    /// An inline video attachment (base64-encoded).
+    Video {
+        /// MIME type of the video (e.g. `"video/mp4"`).
+        media_type: String,
+        /// Base64-encoded video data (no data-URL prefix, raw base64 only).
+        data: String,
+        /// Optional filename or user-facing label.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        name: Option<String>,
+    },
+    /// An inline document attachment (base64-encoded).
+    Document {
+        /// MIME type of the document (e.g. `"application/pdf"`, `"text/plain"`).
+        media_type: String,
+        /// Base64-encoded document data (no data-URL prefix, raw base64 only).
+        data: String,
+        /// Optional filename or user-facing label.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        name: Option<String>,
+    },
 }
 
 impl ContentPart {
@@ -38,6 +68,54 @@ impl ContentPart {
     /// Returns `true` if this is an image part.
     pub fn is_image(&self) -> bool {
         matches!(self, Self::Image { .. })
+    }
+
+    /// Returns `true` if this is an audio part.
+    pub fn is_audio(&self) -> bool {
+        matches!(self, Self::Audio { .. })
+    }
+
+    /// Returns `true` if this is a video part.
+    pub fn is_video(&self) -> bool {
+        matches!(self, Self::Video { .. })
+    }
+
+    /// Returns `true` if this is a document part.
+    pub fn is_document(&self) -> bool {
+        matches!(self, Self::Document { .. })
+    }
+
+    /// Returns the attachment kind, if this part is an attachment.
+    pub fn attachment_kind(&self) -> Option<AttachmentKind> {
+        match self {
+            Self::Text { .. } => None,
+            Self::Image { .. } => Some(AttachmentKind::Image),
+            Self::Audio { .. } => Some(AttachmentKind::Audio),
+            Self::Video { .. } => Some(AttachmentKind::Video),
+            Self::Document { .. } => Some(AttachmentKind::Document),
+        }
+    }
+
+    /// Returns the MIME type for attachment parts.
+    pub fn media_type(&self) -> Option<&str> {
+        match self {
+            Self::Text { .. } => None,
+            Self::Image { media_type, .. }
+            | Self::Audio { media_type, .. }
+            | Self::Video { media_type, .. }
+            | Self::Document { media_type, .. } => Some(media_type),
+        }
+    }
+
+    /// Returns base64 data for attachment parts.
+    pub fn data(&self) -> Option<&str> {
+        match self {
+            Self::Text { .. } => None,
+            Self::Image { data, .. }
+            | Self::Audio { data, .. }
+            | Self::Video { data, .. }
+            | Self::Document { data, .. } => Some(data),
+        }
     }
 
     /// Extracts the text content if this is a text part.
@@ -55,6 +133,27 @@ impl ContentPart {
             .filter_map(|p| p.as_text())
             .collect::<Vec<_>>()
             .join("")
+    }
+}
+
+/// Attachment modalities NAVI can route to specialized models.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AttachmentKind {
+    Image,
+    Audio,
+    Video,
+    Document,
+}
+
+impl AttachmentKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Image => "image",
+            Self::Audio => "audio",
+            Self::Video => "video",
+            Self::Document => "document",
+        }
     }
 }
 

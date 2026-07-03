@@ -79,6 +79,24 @@ pub struct RegistryModel {
     /// Whether the model supports extended thinking / reasoning mode.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub supports_thinking: Option<bool>,
+    /// Legacy coarse flag for models that support file/image attachments.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub supports_attachments: Option<bool>,
+    /// Whether the model can consume image attachments directly.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub supports_images: Option<bool>,
+    /// Whether the model can consume audio attachments directly.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub supports_audio: Option<bool>,
+    /// Whether the model can consume video attachments directly.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub supports_video: Option<bool>,
+    /// Whether the model can consume document attachments directly.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub supports_documents: Option<bool>,
+    /// Free-form capability tags such as `vision`, `audio`, `video`, `documents`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub capabilities: Vec<String>,
 }
 
 /// A full provider entry as stored in `registry/providers/<id>.json`.

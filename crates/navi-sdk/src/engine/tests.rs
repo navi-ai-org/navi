@@ -61,6 +61,14 @@ fn test_config() -> NaviConfig {
 
             supports_thinking: None,
 
+            supports_images: None,
+
+            supports_audio: None,
+
+            supports_video: None,
+
+            supports_documents: None,
+
             tool_prompt_manifest: None,
         }],
 

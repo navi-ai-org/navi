@@ -101,6 +101,10 @@ fn app_with_missing_provider_key() -> TuiApp {
             max_output_tokens: None,
             recommended_temperature: None,
             supports_thinking: None,
+            supports_images: None,
+            supports_audio: None,
+            supports_video: None,
+            supports_documents: None,
             tool_prompt_manifest: None,
         }],
         ..Default::default()
