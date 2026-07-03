@@ -7,7 +7,8 @@ use crate::harness::{
     tool_error_result, trace_request_summary,
 };
 use crate::model::{
-    ModelMessage, ModelProvider, ModelRequest, ModelRole, ModelStreamEvent, ThinkingConfig,
+    AttachmentKind, ContentPart, ModelMessage, ModelProvider, ModelRequest, ModelRole,
+    ModelStreamEvent, ThinkingConfig,
 };
 use crate::prompt::{PromptCache, SystemPromptInput};
 use crate::runtime_components::RuntimeComponents;
@@ -291,7 +292,7 @@ fn build_model_request(ctx: &TurnContext, messages: &[ModelMessage]) -> ModelReq
 
     ModelRequest {
         model: ctx.active_model_name(),
-        messages: messages.to_vec(),
+        messages: rewrite_unsupported_attachments(ctx, messages),
         thinking,
         tools: match crate::config::effective_tool_calling_mode(&config) {
             crate::config::ToolCallingMode::Native => {
@@ -305,6 +306,62 @@ fn build_model_request(ctx: &TurnContext, messages: &[ModelMessage]) -> ModelReq
             | crate::config::ToolCallingMode::Disabled => Vec::new(),
         },
     }
+}
+
+fn rewrite_unsupported_attachments(
+    ctx: &TurnContext,
+    messages: &[ModelMessage],
+) -> Vec<ModelMessage> {
+    let config = ctx.active_config();
+    let provider_id = config.model.provider.clone();
+    let model_name = config.model.name.clone();
+
+    messages
+        .iter()
+        .cloned()
+        .map(|mut message| {
+            if message.role != ModelRole::User || message.content_parts.is_empty() {
+                return message;
+            }
+
+            let mut rewritten = Vec::with_capacity(message.content_parts.len());
+            for part in message.content_parts {
+                let Some(kind) = part.attachment_kind() else {
+                    rewritten.push(part);
+                    continue;
+                };
+
+                if crate::config::model_supports_attachment(
+                    &config,
+                    &provider_id,
+                    &model_name,
+                    kind,
+                ) {
+                    rewritten.push(part);
+                } else {
+                    rewritten.push(ContentPart::Text {
+                        text: unsupported_attachment_tool_instruction(kind, &part),
+                    });
+                }
+            }
+            message.content_parts = rewritten;
+            message
+        })
+        .collect()
+}
+
+fn unsupported_attachment_tool_instruction(kind: AttachmentKind, part: &ContentPart) -> String {
+    let media_type = part.media_type().unwrap_or("application/octet-stream");
+    let data = part.data().unwrap_or("");
+    serde_json::json!({
+        "navi_attachment_requires_tool": true,
+        "tool": "analyze_attachment",
+        "instruction": "Call analyze_attachment with this payload and a task-specific prompt before answering.",
+        "kind": kind.as_str(),
+        "media_type": media_type,
+        "data": data,
+    })
+    .to_string()
 }
 
 fn emit_request_trace(ctx: &TurnContext, request: &ModelRequest, policy: HarnessPolicy) {

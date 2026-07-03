@@ -6,9 +6,9 @@ use navi_core::{
     ModelOption, ProviderConfig, QuestionResponse, RuntimeComponents, RuntimeEvent, SessionGoal,
     SessionId, SessionSnapshot, SessionStore, SkillManifest, available_model_options,
     canonical_provider_id, config::effective_context_window, discover_configured_skills,
-    model_can_run_publicly, provider_catalog, registry, registry::RegistryStore, resolve_provider_api_key,
-    resolve_provider_config, resolve_provider_credential_status, save_global_config,
-    save_project_config,
+    model_can_run_publicly, provider_catalog, registry, registry::RegistryStore,
+    resolve_provider_api_key, resolve_provider_config, resolve_provider_credential_status,
+    save_global_config, save_project_config,
 };
 use navi_mcp::{LoadedMcpServers, McpServerInfo, load_configured_mcp_servers};
 use navi_plugin_host::LoadedPlugin;

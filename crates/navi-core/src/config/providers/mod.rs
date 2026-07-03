@@ -8,6 +8,7 @@ use crate::config::types::{
     ModelOption, ModelTaskSize, NaviConfig, ProviderConfig, ProviderKind, ProviderModelConfig,
     ToolCallingMode,
 };
+use crate::model::AttachmentKind;
 use crate::registry::RegistryStore;
 
 pub use opencode::{is_free_model_name, model_can_run_publicly, provider_request_model_name};
@@ -44,13 +45,11 @@ fn base_provider_catalog() -> Vec<ProviderConfig> {
                 tracing::debug!("registry store not set, falling back to embedded snapshot");
                 load_embedded_or_minimal_fallback()
             },
-            |store| {
-                match crate::registry::load_registry(store) {
-                    loaded if !loaded.providers.is_empty() => loaded.providers,
-                    _ => {
-                        tracing::debug!("loaded registry is empty, falling back to embedded snapshot");
-                        load_embedded_or_minimal_fallback()
-                    }
+            |store| match crate::registry::load_registry(store) {
+                loaded if !loaded.providers.is_empty() => loaded.providers,
+                _ => {
+                    tracing::debug!("loaded registry is empty, falling back to embedded snapshot");
+                    load_embedded_or_minimal_fallback()
                 }
             },
         )
@@ -85,6 +84,10 @@ fn minimal_fallback_providers() -> Vec<ProviderConfig> {
             max_output_tokens: None,
             recommended_temperature: None,
             supports_thinking: None,
+            supports_images: None,
+            supports_audio: None,
+            supports_video: None,
+            supports_documents: None,
             tool_prompt_manifest: None,
         }],
         request_options: default_request_options_for("openai"),
@@ -188,6 +191,33 @@ pub fn effective_tool_calling_mode(config: &NaviConfig) -> ToolCallingMode {
         .unwrap_or(ToolCallingMode::Native)
 }
 
+/// Returns whether a configured model can consume the given attachment kind
+/// directly. Unknown metadata is treated as unsupported so callers can route
+/// through a specialized attachment analysis model.
+pub fn model_supports_attachment(
+    config: &NaviConfig,
+    provider_id: &str,
+    model_name: &str,
+    kind: AttachmentKind,
+) -> bool {
+    provider_catalog(config)
+        .into_iter()
+        .find(|provider| canonical_provider_id(&provider.id) == canonical_provider_id(provider_id))
+        .and_then(|provider| {
+            provider
+                .models
+                .into_iter()
+                .find(|model| model.name == model_name)
+        })
+        .and_then(|model| match kind {
+            AttachmentKind::Image => model.supports_images,
+            AttachmentKind::Audio => model.supports_audio,
+            AttachmentKind::Video => model.supports_video,
+            AttachmentKind::Document => model.supports_documents,
+        })
+        .unwrap_or(false)
+}
+
 impl NaviConfig {
     /// Updates the model list for a provider, merging with existing model metadata
     /// from the registry or built-in catalog.
@@ -232,6 +262,10 @@ impl NaviConfig {
                     max_output_tokens: None,
                     recommended_temperature: None,
                     supports_thinking: None,
+                    supports_images: None,
+                    supports_audio: None,
+                    supports_video: None,
+                    supports_documents: None,
                     tool_prompt_manifest: None,
                 });
             }
@@ -302,6 +336,18 @@ pub(crate) fn merge_provider_configs(
                         supports_thinking: override_model
                             .supports_thinking
                             .or(registry_model.supports_thinking),
+                        supports_images: override_model
+                            .supports_images
+                            .or(registry_model.supports_images),
+                        supports_audio: override_model
+                            .supports_audio
+                            .or(registry_model.supports_audio),
+                        supports_video: override_model
+                            .supports_video
+                            .or(registry_model.supports_video),
+                        supports_documents: override_model
+                            .supports_documents
+                            .or(registry_model.supports_documents),
                         tool_prompt_manifest: override_model
                             .tool_prompt_manifest
                             .or(registry_model.tool_prompt_manifest),
@@ -395,6 +441,10 @@ mod tests {
                 max_output_tokens: None,
                 recommended_temperature: None,
                 supports_thinking: None,
+                supports_images: None,
+                supports_audio: None,
+                supports_video: None,
+                supports_documents: None,
                 tool_prompt_manifest: None,
             }],
             ..Default::default()

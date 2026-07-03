@@ -12,16 +12,17 @@
 mod embedded;
 mod fetcher;
 mod store;
-mod update;
 pub mod types;
+mod update;
 
 pub use embedded::{embedded_manifest, embedded_provider_schema, embedded_providers};
 pub use fetcher::{RegistryFetcher, sync_local_registry, sync_registry};
 pub use store::{RegistryStore, registry_provider_to_config};
-pub use update::{
-    apply_registry_update_atomically, check_registry_manifest, download_registry_updates,
-    load_cached_registry, load_embedded_registry, load_registry, registry_check_interval_with_jitter,
-    run_registry_update_check, save_registry_metadata, should_check_registry_update,
-    validate_registry_hashes, validate_registry_schema, LoadedRegistry, RegistrySource,
-};
 pub use types::{ModelCapability, ModelPricing, ModelProfileEntry, Profile, RankedModel};
+pub use update::{
+    LoadedRegistry, RegistryFetcherTrait, RegistrySource, apply_registry_update_atomically,
+    check_registry_manifest, download_registry_updates, load_cached_registry,
+    load_embedded_registry, load_registry, registry_check_interval_with_jitter,
+    run_registry_update_check, save_registry_metadata, should_check_registry_update,
+    validate_registry_hashes, validate_registry_schema,
+};

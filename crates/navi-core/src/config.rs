@@ -20,6 +20,7 @@ mod tests {
                 provider: "openai".to_string(),
                 name: "gpt-5.5".to_string(),
             },
+            attachment_models: AttachmentModelsConfig::default(),
             harness: HarnessConfig::default(),
             approvals: ApprovalConfig {
                 allow_reads: true,
@@ -38,6 +39,7 @@ mod tests {
             mcp: McpConfig::default(),
             wasm_plugins: Vec::new(),
             plugin_marketplace: PluginMarketplaceConfig::default(),
+            registry: RegistryConfig::default(),
             tui: TuiConfig::default(),
             background_models: BackgroundModelsConfig::default(),
         };
@@ -47,6 +49,7 @@ mod tests {
                 provider: "openai".to_string(),
                 name: "gpt-5.4".to_string(),
             },
+            attachment_models: AttachmentModelsConfig::default(),
             harness: HarnessConfig::default(),
             approvals: ApprovalConfig {
                 allow_reads: true,
@@ -81,6 +84,7 @@ mod tests {
             },
             wasm_plugins: Vec::new(),
             plugin_marketplace: PluginMarketplaceConfig::default(),
+            registry: RegistryConfig::default(),
             tui: TuiConfig::default(),
             background_models: BackgroundModelsConfig::default(),
         };
@@ -253,6 +257,10 @@ timeout_ms = 1000
                 max_output_tokens: None,
                 recommended_temperature: None,
                 supports_thinking: None,
+                supports_images: None,
+                supports_audio: None,
+                supports_video: None,
+                supports_documents: None,
                 tool_prompt_manifest: Some(true),
             }],
             ..Default::default()
@@ -277,6 +285,10 @@ timeout_ms = 1000
                 max_output_tokens: None,
                 recommended_temperature: None,
                 supports_thinking: None,
+                supports_images: None,
+                supports_audio: None,
+                supports_video: None,
+                supports_documents: None,
                 tool_prompt_manifest: None,
             }],
             ..Default::default()
@@ -349,6 +361,10 @@ timeout_ms = 1000
                 max_output_tokens: None,
                 recommended_temperature: None,
                 supports_thinking: None,
+                supports_images: None,
+                supports_audio: None,
+                supports_video: None,
+                supports_documents: None,
                 tool_prompt_manifest: None,
             }],
             ..Default::default()
@@ -387,6 +403,10 @@ timeout_ms = 1000
                 max_output_tokens: None,
                 recommended_temperature: None,
                 supports_thinking: None,
+                supports_images: None,
+                supports_audio: None,
+                supports_video: None,
+                supports_documents: None,
                 tool_prompt_manifest: None,
             }],
             request_options: Some(ProviderRequestOptions::default()), // explicit opt-out
@@ -419,6 +439,10 @@ timeout_ms = 1000
                 max_output_tokens: None,
                 recommended_temperature: None,
                 supports_thinking: None,
+                supports_images: None,
+                supports_audio: None,
+                supports_video: None,
+                supports_documents: None,
                 tool_prompt_manifest: None,
             }],
             ..Default::default()

@@ -158,7 +158,16 @@ pub(crate) fn gemini_contents(messages: &[ModelMessage]) -> (String, Vec<Value>)
                         .iter()
                         .map(|part| match part {
                             ContentPart::Text { text } => json!({ "text": text }),
-                            ContentPart::Image { media_type, data } => json!({
+                            ContentPart::Image { media_type, data }
+                            | ContentPart::Audio {
+                                media_type, data, ..
+                            }
+                            | ContentPart::Video {
+                                media_type, data, ..
+                            }
+                            | ContentPart::Document {
+                                media_type, data, ..
+                            } => json!({
                                 "inlineData": {
                                     "mimeType": media_type,
                                     "data": data,

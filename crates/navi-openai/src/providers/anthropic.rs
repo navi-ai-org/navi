@@ -352,6 +352,35 @@ pub(crate) fn anthropic_messages_with_cache_control(
                                     }
                                 })
                             }
+                            ContentPart::Audio { media_type, name, .. } => json!({
+                                "type": "text",
+                                "text": attachment_placeholder("audio", media_type, name.as_deref())
+                            }),
+                            ContentPart::Video { media_type, name, .. } => json!({
+                                "type": "text",
+                                "text": attachment_placeholder("video", media_type, name.as_deref())
+                            }),
+                            ContentPart::Document {
+                                media_type,
+                                data,
+                                name,
+                            } => {
+                                if *media_type == "application/pdf" {
+                                    json!({
+                                        "type": "document",
+                                        "source": {
+                                            "type": "base64",
+                                            "media_type": media_type,
+                                            "data": data,
+                                        }
+                                    })
+                                } else {
+                                    json!({
+                                        "type": "text",
+                                        "text": attachment_placeholder("document", media_type, name.as_deref())
+                                    })
+                                }
+                            }
                         })
                         .collect();
                     // Cache last stable user message.
@@ -464,6 +493,15 @@ fn anthropic_tool_to_json(
         value["cache_control"] = cache_control.clone();
     }
     value
+}
+
+fn attachment_placeholder(kind: &str, media_type: &str, name: Option<&str>) -> String {
+    match name {
+        Some(name) if !name.is_empty() => {
+            format!("[{kind} attachment omitted from this provider request: {name} ({media_type})]")
+        }
+        _ => format!("[{kind} attachment omitted from this provider request: {media_type}]"),
+    }
 }
 
 #[cfg(test)]

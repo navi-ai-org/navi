@@ -316,6 +316,18 @@ fn commandcode_messages(messages: &[navi_core::ModelMessage]) -> (String, Vec<Va
                                     }
                                 })
                             }
+                            ContentPart::Audio { media_type, name, .. } => json!({
+                                "type": "text",
+                                "text": attachment_placeholder("audio", media_type, name.as_deref())
+                            }),
+                            ContentPart::Video { media_type, name, .. } => json!({
+                                "type": "text",
+                                "text": attachment_placeholder("video", media_type, name.as_deref())
+                            }),
+                            ContentPart::Document { media_type, name, .. } => json!({
+                                "type": "text",
+                                "text": attachment_placeholder("document", media_type, name.as_deref())
+                            }),
                         })
                         .collect();
                     converted.push(json!({ "role": "user", "content": content }));
@@ -361,6 +373,15 @@ fn commandcode_messages(messages: &[navi_core::ModelMessage]) -> (String, Vec<Va
     }
 
     (system_parts.join("\n\n"), converted)
+}
+
+fn attachment_placeholder(kind: &str, media_type: &str, name: Option<&str>) -> String {
+    match name {
+        Some(name) if !name.is_empty() => {
+            format!("[{kind} attachment omitted from this provider request: {name} ({media_type})]")
+        }
+        _ => format!("[{kind} attachment omitted from this provider request: {media_type}]"),
+    }
 }
 
 fn detect_git_context() -> (bool, String, String, String, Vec<String>) {

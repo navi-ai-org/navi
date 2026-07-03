@@ -13,6 +13,9 @@ fn default_true() -> bool {
 pub struct NaviConfig {
     /// Selected model provider and name.
     pub model: ModelConfig,
+    /// Specialized fallback models for attachment analysis.
+    #[serde(default)]
+    pub attachment_models: AttachmentModelsConfig,
     /// Harness profile and tool-loop limits.
     pub harness: HarnessConfig,
     /// Tool approval behavior.
@@ -134,6 +137,25 @@ pub struct ModelConfig {
     pub provider: String,
     /// Model name (e.g. `"gpt-5.5"`, `"claude-sonnet-4-20250514"`).
     pub name: String,
+}
+
+/// Default models used to analyze attachments the active chat model cannot
+/// consume directly.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AttachmentModelsConfig {
+    /// Model used for image analysis fallback.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub image: Option<ModelConfig>,
+    /// Model used for audio analysis fallback.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub audio: Option<ModelConfig>,
+    /// Model used for video analysis fallback.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub video: Option<ModelConfig>,
+    /// Model used for document analysis fallback.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub document: Option<ModelConfig>,
 }
 
 /// Harness profile, observation limits, and autocompact thresholds.
@@ -463,6 +485,18 @@ pub struct ProviderModelConfig {
     /// Whether the model supports extended thinking / reasoning mode.
     #[serde(default)]
     pub supports_thinking: Option<bool>,
+    /// Whether the model can consume image attachments directly.
+    #[serde(default)]
+    pub supports_images: Option<bool>,
+    /// Whether the model can consume audio attachments directly.
+    #[serde(default)]
+    pub supports_audio: Option<bool>,
+    /// Whether the model can consume video attachments directly.
+    #[serde(default)]
+    pub supports_video: Option<bool>,
+    /// Whether the model can consume document attachments directly.
+    #[serde(default)]
+    pub supports_documents: Option<bool>,
     /// Whether to force-include the tool prompt manifest for this model.
     #[serde(default)]
     pub tool_prompt_manifest: Option<bool>,
