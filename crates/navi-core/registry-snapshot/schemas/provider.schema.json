@@ -1,0 +1,140 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://navi.ai/registry/schemas/provider.schema.json",
+  "title": "NAVI Provider Definition",
+  "description": "Schema for a provider entry in the NAVI registry database",
+  "type": "object",
+  "required": ["id", "label", "kind", "api_key_env", "models"],
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]*$",
+      "description": "Unique provider identifier (lowercase, hyphen-separated)"
+    },
+    "label": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Human-readable provider name"
+    },
+    "description": {
+      "type": "string",
+      "default": "",
+      "description": "Short description shown in the model picker"
+    },
+    "kind": {
+      "type": "string",
+      "enum": [
+        "openai-responses",
+        "openai-chat-completions",
+        "anthropic-messages",
+        "gemini-generate-content"
+      ],
+      "description": "Protocol kind for this provider"
+    },
+    "api_key_env": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Environment variable name for the API key"
+    },
+    "base_url": {
+      "type": ["string", "null"],
+      "description": "API base URL, or null for providers resolved at runtime"
+    },
+    "tool_calling_mode": {
+      "type": "string",
+      "enum": ["native", "text-extracted", "manifest-only", "disabled"],
+      "description": "How NAVI should expose tools to this provider (optional)"
+    },
+    "default_large_model": {
+      "type": "string",
+      "description": "Default large task-size model for this provider (optional)"
+    },
+    "default_small_model": {
+      "type": "string",
+      "description": "Default small task-size model for this provider (optional)"
+    },
+    "request_options": {
+      "type": "object",
+      "description": "Provider-specific request options (prompt caching, headers, etc.)"
+    },
+    "models": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/model" }
+    }
+  },
+  "$defs": {
+    "model": {
+      "type": "object",
+      "required": ["name", "task_size"],
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Model identifier sent to the API"
+        },
+        "label": {
+          "type": "string",
+          "description": "Human-readable model name (optional)"
+        },
+        "task_size": {
+          "type": "string",
+          "enum": ["small", "large"],
+          "description": "Harness routing size"
+        },
+        "context_window_tokens": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Total context window in tokens (optional but recommended)"
+        },
+        "max_output_tokens": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Maximum output tokens (optional)"
+        },
+        "recommended_temperature": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 2,
+          "description": "Recommended sampling temperature (optional)"
+        },
+        "supports_thinking": {
+          "type": "boolean",
+          "description": "Whether the model supports extended thinking / reasoning (optional)"
+        },
+        "supports_attachments": {
+          "type": "boolean",
+          "description": "Whether the model supports file/image attachments (optional)"
+        },
+        "reasoning_levels": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Supported reasoning effort levels (optional)"
+        },
+        "default_reasoning_effort": {
+          "type": "string",
+          "description": "Default reasoning effort (optional)"
+        },
+        "pricing": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "input_per_1m": { "type": "number", "minimum": 0 },
+            "output_per_1m": { "type": "number", "minimum": 0 },
+            "cached_input_per_1m": { "type": "number", "minimum": 0 },
+            "cached_output_per_1m": { "type": "number", "minimum": 0 },
+            "currency": { "type": "string", "default": "USD" }
+          },
+          "description": "Token pricing per 1M tokens (optional)"
+        },
+        "capabilities": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Capability tags: tool_calling, vision, reasoning, etc. (optional)"
+        }
+      }
+    }
+  }
+}

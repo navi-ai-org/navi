@@ -11,6 +11,7 @@ homepage.workspace = true
 anyhow.workspace = true
 async-trait.workspace = true
 directories.workspace = true
+fastrand.workspace = true
 futures-util.workspace = true
 jsonschema.workspace = true
 navi-vfs.workspace = true

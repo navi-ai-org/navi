@@ -100,20 +100,90 @@ export class NaviNapiEngineBuilder {
   build(): NaviNapiEngine;
 }
 
+export interface TurnOptions {
+  contentParts?: JsonValue[];
+  contextPackets?: JsonValue[];
+  thinking?: 'max' | 'high' | 'medium' | 'low' | 'off' | 'adaptive';
+}
+
+export type SaveTarget = 'auto' | 'project' | 'global' | 'none';
+
+export interface ModelSelectionResult {
+  providerId: string;
+  model: string;
+  contextWindowTokens?: number;
+  providerConfigured: boolean;
+  savedTo?: string;
+}
+
+export interface ProviderSyncReport {
+  savedTo?: string;
+  updated: JsonValue[];
+  failed: JsonValue[];
+  skipped: JsonValue[];
+}
+
+export interface EngineConfig {
+  model: { provider: string; name: string };
+  globalConfigPath?: string;
+  projectConfigPath?: string;
+  dataDir: string;
+}
+
+export interface ActiveSessions {
+  sessionIds: string[];
+  activeSessionId?: string | null;
+}
+
 export class NaviNapiEngine {
   constructor(projectDir: string, learningTutor?: boolean | null);
   static learningTutor(projectDir: string): NaviNapiEngine;
   startSession(sessionId?: string | null): Promise<SessionInfo>;
-  sendTurn(sessionId: string, message: string): Promise<TurnResponse>;
+  sendTurn(sessionId: string, message: string, options?: TurnOptions): Promise<TurnResponse>;
   snapshotSession(sessionId: string): Promise<string>;
   closeSession(sessionId: string): Promise<boolean>;
   cancelTurn(sessionId: string): Promise<void>;
   resolveApproval(sessionId: string, approvalId: string, approved: boolean): Promise<boolean>;
+  resolveQuestion(sessionId: string, response: JsonValue): Promise<boolean>;
   addContextPacket(sessionId: string, packet: ContextPacket): Promise<void>;
   listModels(): JsonValue;
   listTuiComponents(sessionId: string): string[];
   setModel(sessionId: string, provider: string, model: string): Promise<void>;
+  selectModel(providerId: string, model: string, saveTarget?: SaveTarget): ModelSelectionResult;
   subscribeEvents(sessionId: string): NaviNapiEventStream;
+  // Goals
+  getGoal(sessionId: string): Promise<JsonValue>;
+  setGoal(sessionId: string, objective: string, tokenBudget?: number | null): Promise<JsonValue>;
+  clearGoal(sessionId: string): Promise<void>;
+  // Background tasks
+  listBackgroundCommands(sessionId: string): Promise<JsonValue>;
+  pollBackgroundCommand(sessionId: string, taskId: string): Promise<JsonValue>;
+  cancelBackgroundCommand(sessionId: string, taskId: string): Promise<JsonValue>;
+  // Providers & credentials
+  listProviderAccounts(): JsonValue;
+  credentialStatus(providerId: string): JsonValue;
+  setProviderApiKey(providerId: string, apiKey: string): void;
+  deleteProviderApiKey(providerId: string): boolean;
+  syncProviderModels(providerId: string, saveTarget?: SaveTarget): Promise<ProviderSyncReport>;
+  syncModels(saveTarget?: SaveTarget): Promise<ProviderSyncReport>;
+  // Usage
+  usageReport(): Promise<JsonValue>;
+  // Skills
+  listSkills(): JsonValue;
+  setSessionSkills(sessionId: string, skills: string[]): Promise<void>;
+  // MCP
+  listMcpServers(sessionId: string): JsonValue;
+  listMcpTools(sessionId: string): string[];
+  // Registry & plugins
+  syncRegistry(force?: boolean): Promise<boolean>;
+  reloadWasmPlugins(): Promise<string[]>;
+  // Saved sessions
+  listSavedSessions(): Promise<JsonValue>;
+  loadSavedSession(sessionId: string): Promise<JsonValue>;
+  deleteSavedSession(sessionId: string): Promise<boolean>;
+  // Session management
+  sessionIds(): string[];
+  loadedConfig(): EngineConfig;
 }
 
 export class NaviNapiEventStream {
