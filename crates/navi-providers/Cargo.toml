@@ -6,6 +6,7 @@ license.workspace = true
 description = "Provider facade for NAVI — re-exports the provider implementation crate."
 repository.workspace = true
 homepage.workspace = true
+readme = "README.md"
 
 [dependencies]
 navi-core.workspace = true
