@@ -7,7 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-07-04
+
 ### Added
+
+- Added multimodal `ContentPart` support for images, audio, video, and documents across the engine and SDK-facing APIs.
+- Added per-modality attachment fallback model configuration for image, audio, video, and document analysis.
+- Added the `analyze_attachment` SDK host tool so the chat model can delegate unsupported attachments to configured specialist models.
+- Added N-API typings/config support for structured content parts and attachment fallback models.
+- Added registry attachment metadata with provider-level `defaults.attachments` and per-model `attachments` overrides.
+
+### Changed
+
+- The turn builder now rewrites unsupported attachments into model-readable tool instructions instead of sending unsupported media directly.
+- Gemini requests now serialize image, audio, video, and document content as native inline data parts.
+- Anthropic requests now support native image and PDF document parts where available.
+- TUI root layout now clips the footer/composer stack inside small terminal viewports to avoid overlap with chat content.
+
+### Fixed
+
+- Restored compact image indicators when rendering user messages with image content.
+- Avoided spawning registry background tasks without an active Tokio runtime.
+
+## [0.1.0] - 2025-XX-XX
+
+### Added
+
 - Initial open-source release
 - Interactive TUI with chat, command palette, model picker, thinking controls
 - Multi-provider support (OpenAI, Anthropic, Gemini, OpenRouter, Groq, xAI, GitHub Copilot, Gitlawb)
@@ -23,27 +48,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - SDK for embedding NAVI in other applications
 - Comprehensive documentation
 
-### Changed
-- N/A (initial release)
-
-### Deprecated
-- N/A (initial release)
-
-### Removed
-- N/A (initial release)
-
-### Fixed
-- N/A (initial release)
-
 ### Security
+
 - Implemented secret redaction in session persistence
 - Added path restrictions and command blocking
 - Protected .git metadata from writes
 
-## [0.1.0] - 2025-XX-XX
-
-### Added
-- Initial release
-
-[Unreleased]: https://github.com/your-username/navi/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/your-username/navi/releases/tag/v0.1.0
+[Unreleased]: https://github.com/navi-ai-org/navi/compare/v0.1.2...HEAD
+[0.1.2]: https://github.com/navi-ai-org/navi/compare/v0.1.0...v0.1.2
+[0.1.0]: https://github.com/navi-ai-org/navi/releases/tag/v0.1.0

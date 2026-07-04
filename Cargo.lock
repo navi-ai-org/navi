@@ -2044,7 +2044,7 @@ dependencies = [
 
 [[package]]
 name = "navi-cli"
-version = "0.1.0"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "clap",
@@ -2065,7 +2065,7 @@ dependencies = [
 
 [[package]]
 name = "navi-core"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2091,7 +2091,7 @@ dependencies = [
 
 [[package]]
 name = "navi-mcp"
-version = "0.1.0"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2107,7 +2107,7 @@ dependencies = [
 
 [[package]]
 name = "navi-napi"
-version = "0.1.0"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2122,7 +2122,7 @@ dependencies = [
 
 [[package]]
 name = "navi-openai"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -2141,7 +2141,7 @@ dependencies = [
 
 [[package]]
 name = "navi-plugin-api"
-version = "0.1.0"
+version = "0.1.2"
 dependencies = [
  "serde",
  "serde_json",
@@ -2149,7 +2149,7 @@ dependencies = [
 
 [[package]]
 name = "navi-plugin-broker"
-version = "0.1.0"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "directories",
@@ -2168,7 +2168,7 @@ dependencies = [
 
 [[package]]
 name = "navi-plugin-host"
-version = "0.1.0"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2184,7 +2184,7 @@ dependencies = [
 
 [[package]]
 name = "navi-plugin-manifest"
-version = "0.1.0"
+version = "0.1.2"
 dependencies = [
  "base64",
  "ed25519-dalek",
@@ -2203,7 +2203,7 @@ dependencies = [
 
 [[package]]
 name = "navi-plugin-orchestrator"
-version = "0.1.0"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2222,7 +2222,7 @@ dependencies = [
 
 [[package]]
 name = "navi-plugin-runtime"
-version = "0.1.0"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "serde",
@@ -2235,7 +2235,7 @@ dependencies = [
 
 [[package]]
 name = "navi-providers"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "navi-core",
  "navi-openai",
@@ -2243,7 +2243,7 @@ dependencies = [
 
 [[package]]
 name = "navi-sdk"
-version = "0.1.0"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2263,7 +2263,7 @@ dependencies = [
 
 [[package]]
 name = "navi-tui"
-version = "0.1.0"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2284,7 +2284,7 @@ dependencies = [
 
 [[package]]
 name = "navi-vfs"
-version = "0.1.0"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "cc",
