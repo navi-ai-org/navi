@@ -148,12 +148,14 @@ impl NaviEngineBuilder {
             let config = loaded_config.config.registry.clone();
             if config.update_enabled {
                 let store = store.clone();
-                tokio::spawn(async move {
-                    if registry::should_check_registry_update(&store, &config) {
-                        let fetcher = registry::RegistryFetcher::new();
-                        registry::run_registry_update_check(&store, &fetcher, &config).await;
-                    }
-                });
+                if let Ok(handle) = tokio::runtime::Handle::try_current() {
+                    handle.spawn(async move {
+                        if registry::should_check_registry_update(&store, &config) {
+                            let fetcher = registry::RegistryFetcher::new();
+                            registry::run_registry_update_check(&store, &fetcher, &config).await;
+                        }
+                    });
+                }
             }
         }
 
@@ -290,6 +292,19 @@ impl NaviEngine {
                 NaviError::Config("cannot register MCP tool after tool executor is shared".into())
             })?;
             executor.register_tool(tool.clone());
+        }
+        {
+            let executor = Arc::get_mut(&mut tool_executor.tool_executor).ok_or_else(|| {
+                NaviError::Config(
+                    "cannot register attachment analysis tool after tool executor is shared".into(),
+                )
+            })?;
+            executor.register_tool(Arc::new(
+                crate::attachment_tool::AttachmentAnalysisTool::new(
+                    loaded_config.clone(),
+                    project_dir.clone(),
+                ),
+            ));
         }
         for warning in &tool_executor.warnings {
             tracing::warn!(warning = %warning, "plugin load warning");

@@ -33,31 +33,81 @@ pub(crate) fn submit_message(app: &mut TuiApp) {
     let mut chat_msg = ChatMessage::new(ChatRole::User, text.clone());
 
     // Collect pending images into ContentParts and labels.
-    let content_parts: Vec<ContentPart> = if has_images {
-        let parts: Vec<ContentPart> = app
-            .pending_images
-            .drain(..)
-            .map(|img| {
-                let label = img.label();
-                chat_msg.image_labels.push(label.clone());
-                chat_msg.images.push(ChatImage { label });
-                ContentPart::Image {
-                    media_type: img.media_type,
-                    data: img.data,
+    let mut content_parts: Vec<ContentPart> = Vec::new();
+    if has_images {
+        // Parse `text` to find `[Image N]` tags and map them to the corresponding pending images.
+        let mut referenced_indices = std::collections::HashSet::new();
+        let mut last_idx = 0;
+        let bytes = text.as_bytes();
+
+        while last_idx < text.len() {
+            let rest = &text[last_idx..];
+            if rest.starts_with("[Image ") {
+                let mut check_idx = 7;
+                let mut has_digits = false;
+                while check_idx < rest.len() && bytes[last_idx + check_idx].is_ascii_digit() {
+                    has_digits = true;
+                    check_idx += 1;
                 }
-            })
-            .collect();
-        // Only include a text part when there is actual text; some providers
-        // reject empty multimodal text blocks for image-only messages.
-        let mut all_parts = Vec::new();
-        if !text.trim().is_empty() {
-            all_parts.push(ContentPart::Text { text: text.clone() });
+                if has_digits && check_idx < rest.len() && bytes[last_idx + check_idx] == b']' {
+                    let num_str = &rest[7..check_idx];
+                    if let Ok(num) = num_str.parse::<usize>() {
+                        let img_idx = num.saturating_sub(1);
+                        if img_idx < app.pending_images.len() {
+                            referenced_indices.insert(img_idx);
+                            let img = &app.pending_images[img_idx];
+
+                            content_parts.push(ContentPart::Image {
+                                media_type: img.media_type.clone(),
+                                data: img.data.clone(),
+                            });
+
+                            let label = img.label();
+                            chat_msg.image_labels.push(label.clone());
+                            chat_msg.images.push(ChatImage { label });
+
+                            last_idx += check_idx + 1;
+                            continue;
+                        }
+                    }
+                }
+            }
+
+            let search_start = rest
+                .chars()
+                .next()
+                .map(char::len_utf8)
+                .unwrap_or(rest.len());
+            let next_image_pos = rest[search_start..]
+                .find("[Image ")
+                .map(|pos| pos + search_start)
+                .unwrap_or(rest.len());
+            let text_chunk = &rest[..next_image_pos];
+            content_parts.push(ContentPart::Text {
+                text: text_chunk.to_string(),
+            });
+            last_idx += text_chunk.len();
         }
-        all_parts.extend(parts);
-        all_parts
-    } else {
-        Vec::new()
-    };
+
+        // Consume all pending images since they are processed/cleared now.
+        app.pending_images.clear();
+
+        // Merge adjacent Text parts
+        let mut merged_parts = Vec::new();
+        for part in content_parts {
+            match part {
+                ContentPart::Text { text } => {
+                    if let Some(ContentPart::Text { text: last_text }) = merged_parts.last_mut() {
+                        last_text.push_str(&text);
+                    } else {
+                        merged_parts.push(ContentPart::Text { text });
+                    }
+                }
+                other => merged_parts.push(other),
+            }
+        }
+        content_parts = merged_parts;
+    }
 
     app.messages.push(chat_msg);
 

@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use async_trait::async_trait;
 use napi::bindgen_prelude::*;
@@ -7,6 +7,15 @@ use napi::threadsafe_function::{
     ThreadsafeFunction, ThreadsafeFunctionCallMode, UnknownReturnValue,
 };
 use napi_derive::napi;
+
+/// Global Tokio runtime used by synchronous N-API constructors so that
+/// `tokio::spawn` calls inside `NaviEngineBuilder::build()` find a reactor.
+fn runtime() -> &'static tokio::runtime::Runtime {
+    static RT: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
+    RT.get_or_init(|| {
+        tokio::runtime::Runtime::new().expect("failed to create Tokio runtime for navi-napi")
+    })
+}
 
 /// Installs a panic hook that logs panics instead of aborting the Node.js process.
 /// This provides a layer of crash isolation when running in-process via N-API:
@@ -237,7 +246,9 @@ impl NaviNapiEngineBuilder {
         for tool in self.host_tools.drain(..) {
             builder = builder.host_tool(tool);
         }
-        let inner = builder.build().map_err(to_napi_error)?;
+        let inner = runtime()
+            .block_on(async { builder.build() })
+            .map_err(to_napi_error)?;
         Ok(NaviNapiEngine { inner })
     }
 }
@@ -250,25 +261,35 @@ impl NaviNapiEngine {
         if learning_tutor.unwrap_or(false) {
             builder = builder.learning_tutor();
         }
-        let inner = builder.build().map_err(to_napi_error)?;
+        let inner = runtime()
+            .block_on(async { builder.build() })
+            .map_err(to_napi_error)?;
         Ok(Self { inner })
     }
 
     #[napi(factory)]
     pub fn learning_tutor(project_dir: String) -> Result<Self> {
-        let inner = NaviEngineBuilder::from_project(project_dir)
-            .learning_tutor()
-            .build()
+        let inner = runtime()
+            .block_on(async {
+                NaviEngineBuilder::from_project(project_dir)
+                    .learning_tutor()
+                    .build()
+            })
             .map_err(to_napi_error)?;
         Ok(Self { inner })
     }
 
     #[napi]
-    pub async fn start_session(&self, session_id: Option<String>) -> Result<JsSessionInfo> {
+    pub async fn start_session(
+        &self,
+        session_id: Option<String>,
+        project_dir: Option<String>,
+    ) -> Result<JsSessionInfo> {
         let info = self
             .inner
             .start_session(NaviSessionRequest {
                 session_id,
+                project_dir: project_dir.map(std::path::PathBuf::from),
                 ..NaviSessionRequest::default()
             })
             .await
@@ -707,14 +728,36 @@ impl NaviNapiEngine {
     #[napi]
     pub fn loaded_config(&self) -> Result<JsonValue> {
         let config = self.inner.loaded_config();
+        let mcp_servers: Vec<JsonValue> = config
+            .config
+            .mcp
+            .servers
+            .iter()
+            .map(|s| {
+                json!({
+                    "id": s.id,
+                    "enabled": s.enabled,
+                    "command": s.command,
+                    "url": s.url,
+                    "args": s.args,
+                })
+            })
+            .collect();
         Ok(json!({
             "model": {
                 "provider": config.config.model.provider,
                 "name": config.config.model.name,
             },
+            "attachmentModels": {
+                "image": config.config.attachment_models.image,
+                "audio": config.config.attachment_models.audio,
+                "video": config.config.attachment_models.video,
+                "document": config.config.attachment_models.document,
+            },
             "global_config_path": config.global_config_path,
             "project_config_path": config.project_config_path,
             "data_dir": config.data_dir,
+            "mcp_servers": mcp_servers,
         }))
     }
 }

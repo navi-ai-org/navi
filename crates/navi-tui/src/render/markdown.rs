@@ -11,8 +11,6 @@ use super::syntax::{CodeHighlighter, highlight_code_line};
 use super::text::{display_width, wrap_inline_spans_to_width, wrap_spans_to_width, wrap_text};
 use super::tool::{tool_compact_text, tool_full_content};
 
-pub(crate) const USER_IMAGE_ROW_HEIGHT: usize = 8;
-pub(crate) const USER_IMAGES_PER_ROW: usize = 2;
 const USER_MESSAGE_VERTICAL_PADDING: usize = 1;
 
 #[derive(Debug, Clone)]
@@ -74,27 +72,13 @@ pub(crate) fn build_chat_render_for_messages(
 
         match msg.role {
             ChatRole::User => {
-                if !msg.images.is_empty() {
-                    for row_start in (0..msg.images.len()).step_by(USER_IMAGES_PER_ROW) {
-                        let count = (msg.images.len() - row_start).min(USER_IMAGES_PER_ROW);
-                        for _ in 0..USER_IMAGE_ROW_HEIGHT {
-                            rendered_lines.push(user_card_blank_line(chat_width));
-                            line_sources.push(ChatLineSource::ImageRow {
-                                message_index: index,
-                                start_index: row_start,
-                                count,
-                            });
-                        }
-                    }
-                } else if !msg.image_labels.is_empty() {
-                    for (i, label) in msg.image_labels.iter().enumerate() {
-                        rendered_lines.push(user_image_fallback_line(i, label));
-                        line_sources.push(ChatLineSource::Message(index));
-                    }
-                }
                 let lines = render_user_message_lines(&msg.content, chat_width);
                 for line in lines {
                     rendered_lines.push(line);
+                    line_sources.push(ChatLineSource::Message(index));
+                }
+                for (image_index, label) in user_image_labels(msg).iter().enumerate() {
+                    rendered_lines.push(user_image_fallback_line(image_index, label));
                     line_sources.push(ChatLineSource::Message(index));
                 }
             }
@@ -203,16 +187,6 @@ pub(crate) fn build_chat_render_for_messages(
     }
 }
 
-fn user_card_blank_line(chat_width: usize) -> Line<'static> {
-    Line::from(vec![
-        Span::styled(" ", Style::default().fg(user_accent()).bg(user_accent())),
-        Span::styled(
-            " ".repeat(chat_width.saturating_sub(1)),
-            Style::default().fg(text()).bg(panel()),
-        ),
-    ])
-}
-
 fn user_image_fallback_line(index: usize, label: &str) -> Line<'static> {
     Line::from(vec![
         Span::styled(" ", Style::default().fg(user_accent()).bg(user_accent())),
@@ -224,6 +198,13 @@ fn user_image_fallback_line(index: usize, label: &str) -> Line<'static> {
                 .add_modifier(Modifier::ITALIC),
         ),
     ])
+}
+
+fn user_image_labels(msg: &ChatMessage) -> Vec<String> {
+    if !msg.image_labels.is_empty() {
+        return msg.image_labels.clone();
+    }
+    msg.images.iter().map(|image| image.label.clone()).collect()
 }
 
 fn push_block_gap(lines: &mut Vec<Line<'static>>, sources: &mut Vec<ChatLineSource>) {
@@ -272,7 +253,9 @@ fn render_user_message_lines(text: &str, chat_width: usize) -> Vec<Line<'static>
             inline_text_spans(&line, text_color_for_user())
                 .into_iter()
                 .map(|mut span| {
-                    span.style = span.style.bg(panel());
+                    if span.style.bg.is_none() {
+                        span.style = span.style.bg(panel());
+                    }
                     span
                 }),
         );
@@ -1121,6 +1104,27 @@ fn inline_text_spans(text: &str, fallback: Color) -> Vec<Span<'static>> {
     while index < text.len() {
         let rest = &text[index..];
 
+        if rest.starts_with("[Image ") {
+            let bytes = rest.as_bytes();
+            let mut check_idx = 7;
+            let mut has_digits = false;
+            while check_idx < rest.len() && bytes[check_idx].is_ascii_digit() {
+                has_digits = true;
+                check_idx += 1;
+            }
+            if has_digits && check_idx < rest.len() && bytes[check_idx] == b']' {
+                let tag_end = check_idx + 1;
+                let tag_text = &rest[..tag_end];
+                push_plain_span(&mut spans, &mut plain, fallback);
+                spans.push(Span::styled(
+                    tag_text.to_string(),
+                    Style::default().bg(code_const()).fg(Color::Black),
+                ));
+                index += tag_end;
+                continue;
+            }
+        }
+
         if let Some((marker_len, content, modifier, color, recursive)) = inline_delimited(rest) {
             push_plain_span(&mut spans, &mut plain, fallback);
             if recursive && contains_inline_markup(content) {
@@ -1548,7 +1552,7 @@ mod tests {
     use crate::state::{ChatImage, ChatMessage, ChatRole};
 
     #[test]
-    fn user_images_reserve_thumbnail_rows() {
+    fn user_images_render_compact_indicators() {
         let mut message = ChatMessage::new(ChatRole::User, "describe".to_string());
         message.image_labels.push("PNG".to_string());
         message.images.push(ChatImage {
@@ -1568,14 +1572,7 @@ mod tests {
             None,
         );
 
-        let image_rows = output
-            .sources
-            .iter()
-            .filter(|source| matches!(source, ChatLineSource::ImageRow { .. }))
-            .count();
-
-        assert_eq!(image_rows, USER_IMAGE_ROW_HEIGHT);
-        assert!(!output.lines.iter().any(|line| {
+        assert!(output.lines.iter().any(|line| {
             line.spans
                 .iter()
                 .any(|span| span.content.contains("[1] PNG"))

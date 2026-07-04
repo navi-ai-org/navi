@@ -12,7 +12,8 @@
       "context_window_tokens": 1000000,
       "max_output_tokens": 131072,
       "recommended_temperature": 1.0,
-      "supports_thinking": true
+      "supports_thinking": true,
+      "supports_images": true
     },
     {
       "name": "grok-4",
@@ -20,7 +21,8 @@
       "context_window_tokens": 1000000,
       "max_output_tokens": 131072,
       "recommended_temperature": 1.0,
-      "supports_thinking": true
+      "supports_thinking": true,
+      "supports_images": true
     },
     {
       "name": "grok-4-fast",
@@ -28,7 +30,8 @@
       "context_window_tokens": 1000000,
       "max_output_tokens": 131072,
       "recommended_temperature": 1.0,
-      "supports_thinking": true
+      "supports_thinking": true,
+      "supports_images": true
     },
     {
       "name": "grok-4-fast-reasoning",
@@ -36,7 +39,8 @@
       "context_window_tokens": 1000000,
       "max_output_tokens": 131072,
       "recommended_temperature": 1.0,
-      "supports_thinking": true
+      "supports_thinking": true,
+      "supports_images": true
     },
     {
       "name": "grok-4-fast-non-reasoning",
@@ -44,7 +48,8 @@
       "context_window_tokens": 1000000,
       "max_output_tokens": 131072,
       "recommended_temperature": 1.0,
-      "supports_thinking": false
+      "supports_thinking": false,
+      "supports_images": true
     },
     {
       "name": "grok-3",
@@ -52,7 +57,8 @@
       "context_window_tokens": 1000000,
       "max_output_tokens": 131072,
       "recommended_temperature": 1.0,
-      "supports_thinking": true
+      "supports_thinking": true,
+      "supports_images": true
     },
     {
       "name": "grok-3-fast",
@@ -60,7 +66,8 @@
       "context_window_tokens": 1000000,
       "max_output_tokens": 131072,
       "recommended_temperature": 1.0,
-      "supports_thinking": false
+      "supports_thinking": false,
+      "supports_images": true
     },
     {
       "name": "grok-3-mini",
@@ -68,7 +75,8 @@
       "context_window_tokens": 131072,
       "max_output_tokens": 16384,
       "recommended_temperature": 1.0,
-      "supports_thinking": true
+      "supports_thinking": true,
+      "supports_images": true
     },
     {
       "name": "grok-3-mini-fast",
@@ -76,7 +84,8 @@
       "context_window_tokens": 131072,
       "max_output_tokens": 16384,
       "recommended_temperature": 1.0,
-      "supports_thinking": false
+      "supports_thinking": false,
+      "supports_images": true
     },
     {
       "name": "grok-2-1212",
@@ -92,7 +101,8 @@
       "context_window_tokens": 131072,
       "max_output_tokens": 16384,
       "recommended_temperature": 1.0,
-      "supports_thinking": false
+      "supports_thinking": false,
+      "supports_images": true
     },
     {
       "name": "grok-build-0.1",

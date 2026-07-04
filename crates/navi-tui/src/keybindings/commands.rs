@@ -156,6 +156,10 @@ pub(crate) fn run_selected_command(app: &mut TuiApp) -> bool {
             super::close_all_modals(app);
             show_notification(app, "Goal", "Goal cleared.");
         }
+        CommandAction::AttachmentModels => {
+            super::replace_modal(app, ModalKind::AttachmentModels);
+            app.selected_attachment_model = 0;
+        }
         _ => super::close_all_modals(app),
     }
 

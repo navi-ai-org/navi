@@ -5,14 +5,12 @@ use ratatui::layout::{Margin, Rect};
 use ratatui::prelude::{Frame, Line, Span};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::Text;
-use ratatui::widgets::{Block, Paragraph, Wrap};
+use ratatui::widgets::{Paragraph, Wrap};
 
 use navi_sdk::SubagentTranscriptKind;
 
 use crate::TuiApp;
-use crate::render::markdown::{
-    USER_IMAGE_ROW_HEIGHT, USER_IMAGES_PER_ROW, build_chat_render_for_messages,
-};
+use crate::render::markdown::build_chat_render_for_messages;
 use crate::render::text::display_width;
 use crate::state::{ChatLineSource, ChatRole, ChatView, Mode};
 use crate::theme::*;
@@ -107,19 +105,14 @@ pub(super) fn render_chat_area(frame: &mut Frame<'_>, app: &mut TuiApp, area: Re
         inner,
     );
 
-    render_chat_images(frame, app, inner, &visible_sources);
-
     if app.mode == Mode::Normal {
         for (offset, source) in visible_sources.into_iter().enumerate() {
             let action = match source {
                 ChatLineSource::Message(index)
-                | ChatLineSource::ImageRow {
-                    message_index: index,
-                    ..
-                } if app
-                    .messages
-                    .get(index)
-                    .is_some_and(|message| message.role == ChatRole::User) =>
+                    if app
+                        .messages
+                        .get(index)
+                        .is_some_and(|message| message.role == ChatRole::User) =>
                 {
                     Some(HitAction::ChatMessage(index))
                 }
@@ -366,98 +359,6 @@ fn truncate_display(value: &str, max_width: usize) -> String {
     out
 }
 
-fn render_chat_images(
-    frame: &mut Frame<'_>,
-    app: &mut TuiApp,
-    inner: Rect,
-    visible_sources: &[ChatLineSource],
-) {
-    let mut rendered_rows = Vec::new();
-    for (offset, source) in visible_sources.iter().enumerate() {
-        let ChatLineSource::ImageRow {
-            message_index,
-            start_index,
-            count,
-        } = *source
-        else {
-            continue;
-        };
-        let key = (message_index, start_index, count);
-        if rendered_rows.contains(&key) {
-            continue;
-        }
-        rendered_rows.push(key);
-
-        let visible_height = visible_sources
-            .iter()
-            .skip(offset)
-            .take(USER_IMAGE_ROW_HEIGHT)
-            .take_while(|row_source| **row_source == *source)
-            .count() as u16;
-        if visible_height == 0 {
-            continue;
-        }
-
-        let row_area = Rect::new(
-            inner.x,
-            inner.y.saturating_add(offset as u16),
-            inner.width,
-            visible_height,
-        );
-        render_image_row(frame, app, row_area, message_index, start_index, count);
-    }
-}
-
-fn render_image_row(
-    frame: &mut Frame<'_>,
-    app: &mut TuiApp,
-    row_area: Rect,
-    message_index: usize,
-    start_index: usize,
-    count: usize,
-) {
-    let Some(message) = app.messages.get(message_index) else {
-        return;
-    };
-    if count == 0 || row_area.width <= 6 || row_area.height == 0 {
-        return;
-    }
-
-    let count = count.min(USER_IMAGES_PER_ROW);
-    let gap = 1;
-    let available = row_area.width.saturating_sub(8);
-    let thumb_width =
-        18.min(available.saturating_sub((count.saturating_sub(1) as u16) * gap) / count as u16);
-    let thumb_height = row_area.height.min(7);
-    let total_width = thumb_width * count as u16 + gap * count.saturating_sub(1) as u16;
-    let start_x = row_area.x.saturating_add(5).min(
-        row_area
-            .x
-            .saturating_add(row_area.width.saturating_sub(total_width)),
-    );
-    let y = row_area.y + row_area.height.saturating_sub(thumb_height) / 2;
-
-    for local_index in 0..count {
-        let image_index = start_index + local_index;
-        let Some(image) = message.images.get(image_index) else {
-            continue;
-        };
-        let image_area = Rect::new(
-            start_x + local_index as u16 * (thumb_width + gap),
-            y,
-            thumb_width,
-            thumb_height,
-        );
-        frame.render_widget(Block::new().style(Style::default().bg(panel())), image_area);
-        frame.render_widget(
-            Paragraph::new(format!("image {} {}", image_index + 1, image.label))
-                .style(Style::default().fg(muted()).bg(panel()))
-                .wrap(Wrap { trim: true }),
-            image_area,
-        );
-    }
-}
-
 fn style_interactive_lines(
     lines: &mut [Line<'static>],
     sources: &[ChatLineSource],
@@ -491,11 +392,7 @@ fn style_interactive_lines(
 
 fn interactive_state(app: &TuiApp, source: &ChatLineSource) -> Option<(bool, bool)> {
     let selected = match source {
-        ChatLineSource::Message(index)
-        | ChatLineSource::ImageRow {
-            message_index: index,
-            ..
-        } => {
+        ChatLineSource::Message(index) => {
             if !app
                 .messages
                 .get(*index)
@@ -528,30 +425,6 @@ fn interactive_state(app: &TuiApp, source: &ChatLineSource) -> Option<(bool, boo
 fn chat_sources_match(a: &ChatLineSource, b: &ChatLineSource) -> bool {
     match (a, b) {
         (ChatLineSource::Message(left), ChatLineSource::Message(right)) => left == right,
-        (
-            ChatLineSource::ImageRow {
-                message_index: left,
-                ..
-            },
-            ChatLineSource::ImageRow {
-                message_index: right,
-                ..
-            },
-        ) => left == right,
-        (
-            ChatLineSource::Message(left),
-            ChatLineSource::ImageRow {
-                message_index: right,
-                ..
-            },
-        )
-        | (
-            ChatLineSource::ImageRow {
-                message_index: left,
-                ..
-            },
-            ChatLineSource::Message(right),
-        ) => left == right,
         (ChatLineSource::ToolResult(left), ChatLineSource::ToolResult(right)) => left == right,
         (ChatLineSource::ToolGroup(left), ChatLineSource::ToolGroup(right)) => left == right,
         (ChatLineSource::Subagent(left), ChatLineSource::Subagent(right)) => left == right,

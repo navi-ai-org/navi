@@ -42,6 +42,7 @@ pub(crate) enum HitAction {
         target: ScrollTarget,
         offset: usize,
     },
+    #[allow(dead_code)]
     RemoveImage(usize),
 }
 

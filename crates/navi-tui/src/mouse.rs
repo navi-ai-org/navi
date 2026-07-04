@@ -580,7 +580,8 @@ fn active_scroll_target(app: &TuiApp) -> Option<ScrollTarget> {
         | Mode::ApiKeyEntry
         | Mode::Mcp
         | Mode::BackgroundModels
-        | Mode::BgModelPicker => None,
+        | Mode::BgModelPicker
+        | Mode::AttachmentModels => None,
         Mode::Setup => None,
     }
 }

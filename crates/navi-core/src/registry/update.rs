@@ -26,6 +26,7 @@ use super::store::RegistryStore;
 use super::types::{RegistryManifest, RegistryProvider};
 
 /// Trait abstracting registry fetching so the update flow can be tested without network.
+#[allow(async_fn_in_trait)]
 pub trait RegistryFetcherTrait {
     async fn fetch_manifest(&self) -> Result<RegistryManifest>;
     async fn fetch_provider(
@@ -553,6 +554,7 @@ mod tests {
             api_key_env: "TEST_API_KEY".to_string(),
             base_url: None,
             tool_calling_mode: None,
+            defaults: Default::default(),
             request_options: Default::default(),
             models: vec![RegistryModel {
                 name: name.to_string(),
@@ -566,6 +568,7 @@ mod tests {
                 supports_audio: None,
                 supports_video: None,
                 supports_documents: None,
+                attachments: Default::default(),
                 capabilities: Vec::new(),
             }],
         }

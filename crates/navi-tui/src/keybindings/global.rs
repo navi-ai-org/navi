@@ -69,9 +69,10 @@ pub(super) fn route_global_key(
                 if app.mode == crate::state::Mode::Normal && !app.is_loading {
                     match try_read_clipboard_image() {
                         Some(image) => {
-                            let label = image.label();
                             app.pending_images.push(image);
-                            show_notification(app, "Image", format!("{} attached", label));
+                            let tag = format!("[Image {}]", app.pending_images.len());
+                            crate::input::insert_input_text(app, &tag);
+                            show_notification(app, "Image", format!("Attached as {}", tag));
                         }
                         None => {
                             show_notification(app, "Image", "No image found in clipboard.");

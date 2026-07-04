@@ -338,14 +338,52 @@ fn input_lines(app: &TuiApp, width: usize) -> (Vec<Line<'static>>, usize, usize)
             cursor_line = line_index;
             cursor_column = app.input[start..cursor].chars().count();
         }
+        let line_text = &app.input[start..end];
         let mut spans = Vec::new();
-        for (offset, ch) in app.input[start..end].char_indices() {
-            let byte = start + offset;
-            let mut style = text_style;
-            if selected.is_some_and(|(sel_start, sel_end)| byte >= sel_start && byte < sel_end) {
-                style = style.fg(selection_fg()).bg(selection_bg());
+        let mut current_idx = 0;
+
+        while current_idx < line_text.len() {
+            let rest = &line_text[current_idx..];
+            let rest_bytes = rest.as_bytes();
+            if rest_bytes.starts_with(b"[Image ") {
+                let mut check_idx = 7;
+                let mut has_digits = false;
+                while check_idx < rest_bytes.len() && rest_bytes[check_idx].is_ascii_digit() {
+                    has_digits = true;
+                    check_idx += 1;
+                }
+                if has_digits && check_idx < rest_bytes.len() && rest_bytes[check_idx] == b']' {
+                    let tag_end = current_idx + check_idx + 1;
+                    let tag_text = &line_text[current_idx..tag_end];
+                    let mut style = Style::default()
+                        .bg(code_const())
+                        .fg(ratatui::style::Color::Black);
+                    if let Some((sel_start, sel_end)) = selected {
+                        let tag_start_byte = start + current_idx;
+                        let tag_end_byte = start + tag_end;
+                        if tag_start_byte >= sel_start && tag_end_byte <= sel_end {
+                            style = Style::default().fg(selection_fg()).bg(selection_bg());
+                        }
+                    }
+                    spans.push(Span::styled(tag_text.to_string(), style));
+                    current_idx = tag_end;
+                    continue;
+                }
             }
-            spans.push(Span::styled(ch.to_string(), style));
+
+            if let Some(ch) = rest.chars().next() {
+                let byte_idx = start + current_idx;
+                let mut style = text_style;
+                if selected
+                    .is_some_and(|(sel_start, sel_end)| byte_idx >= sel_start && byte_idx < sel_end)
+                {
+                    style = style.fg(selection_fg()).bg(selection_bg());
+                }
+                spans.push(Span::styled(ch.to_string(), style));
+                current_idx += ch.len_utf8();
+            } else {
+                break;
+            }
         }
         lines.push(Line::from(spans));
     }
@@ -514,6 +552,33 @@ mod tests {
         assert_eq!(cursor_column, 0);
         assert!(text.contains("abc"));
         assert!(line_text(visible.last().unwrap()).is_empty());
+    }
+
+    #[test]
+    fn input_lines_handles_utf8_near_image_tag_probe_width() {
+        let mut app = crate::tests::test_app("ainda nã");
+        app.input_cursor = app.input.len();
+
+        let (lines, _, cursor_column) = input_lines(&app, 20);
+
+        assert_eq!(line_text(&lines[0]), "ainda nã");
+        assert_eq!(cursor_column, 8);
+    }
+
+    #[test]
+    fn input_lines_styles_image_tags_after_utf8_text() {
+        let mut app = crate::tests::test_app("ação [Image 1]");
+        app.input_cursor = app.input.len();
+
+        let (lines, _, _) = input_lines(&app, 40);
+
+        assert_eq!(line_text(&lines[0]), "ação [Image 1]");
+        assert!(
+            lines[0]
+                .spans
+                .iter()
+                .any(|span| span.content.as_ref() == "[Image 1]")
+        );
     }
 
     #[test]

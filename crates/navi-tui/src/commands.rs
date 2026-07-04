@@ -28,6 +28,7 @@ pub(crate) enum CommandAction {
     BackgroundModels,
     ReSetup,
     ClearGoal,
+    AttachmentModels,
 }
 
 pub(crate) const COMMANDS: &[CommandItem] = &[
@@ -135,6 +136,11 @@ pub(crate) const COMMANDS: &[CommandItem] = &[
         label: "Clear Goal",
         shortcut: None,
         action: CommandAction::ClearGoal,
+    },
+    CommandItem {
+        label: "Attachment Models",
+        shortcut: None,
+        action: CommandAction::AttachmentModels,
     },
 ];
 

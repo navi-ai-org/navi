@@ -452,4 +452,56 @@ timeout_ms = 1000
         // No default exists for unknown provider ids, so options stay None.
         assert!(provider.request_options.is_none());
     }
+
+    #[test]
+    fn model_supports_attachment_uses_per_modality_metadata() {
+        let mut config = NaviConfig::default();
+        config.providers.push(ProviderConfig {
+            id: "media".to_string(),
+            label: "Media".to_string(),
+            description: String::new(),
+            kind: ProviderKind::OpenAiChatCompletions,
+            api_key_env: "MEDIA_KEY".to_string(),
+            base_url: Some("https://example.test/v1".to_string()),
+            models: vec![ProviderModelConfig {
+                name: "vision-only".to_string(),
+                task_size: ModelTaskSize::Large,
+                context_window_tokens: None,
+                max_output_tokens: None,
+                recommended_temperature: None,
+                supports_thinking: None,
+                supports_images: Some(true),
+                supports_audio: Some(false),
+                supports_video: None,
+                supports_documents: Some(true),
+                tool_prompt_manifest: None,
+            }],
+            ..Default::default()
+        });
+
+        assert!(model_supports_attachment(
+            &config,
+            "media",
+            "vision-only",
+            crate::AttachmentKind::Image
+        ));
+        assert!(!model_supports_attachment(
+            &config,
+            "media",
+            "vision-only",
+            crate::AttachmentKind::Audio
+        ));
+        assert!(!model_supports_attachment(
+            &config,
+            "media",
+            "vision-only",
+            crate::AttachmentKind::Video
+        ));
+        assert!(model_supports_attachment(
+            &config,
+            "media",
+            "vision-only",
+            crate::AttachmentKind::Document
+        ));
+    }
 }

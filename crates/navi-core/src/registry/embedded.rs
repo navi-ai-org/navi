@@ -70,4 +70,47 @@ mod tests {
             "manifest provider count != embedded provider file count"
         );
     }
+
+    #[test]
+    fn embedded_multimodal_models_are_flagged_by_modality() {
+        fn provider<'a>(providers: &'a [RegistryProvider], id: &str) -> &'a RegistryProvider {
+            providers
+                .iter()
+                .find(|provider| provider.id == id)
+                .unwrap_or_else(|| panic!("missing provider {id}"))
+        }
+
+        fn model<'a>(
+            provider: &'a RegistryProvider,
+            name: &str,
+        ) -> &'a super::super::types::RegistryModel {
+            provider
+                .models
+                .iter()
+                .find(|model| model.name == name)
+                .unwrap_or_else(|| panic!("missing model {}:{}", provider.id, name))
+        }
+
+        let providers = embedded_providers().expect("providers");
+
+        let gemini = model(provider(&providers, "google-gemini"), "gemini-2.5-flash");
+        assert_eq!(gemini.supports_images, Some(true));
+        assert_eq!(gemini.supports_audio, Some(true));
+        assert_eq!(gemini.supports_video, Some(true));
+        assert_eq!(gemini.supports_documents, Some(true));
+
+        let claude = model(provider(&providers, "anthropic"), "claude-sonnet-4");
+        assert_eq!(claude.supports_images, Some(true));
+        assert_eq!(claude.supports_documents, Some(true));
+        assert_eq!(claude.supports_audio, None);
+        assert_eq!(claude.supports_video, None);
+
+        let gpt_4o = model(provider(&providers, "openai"), "gpt-4o");
+        assert_eq!(gpt_4o.supports_images, Some(true));
+        assert_eq!(gpt_4o.supports_audio, None);
+        assert_eq!(gpt_4o.supports_video, None);
+
+        let grok_vision = model(provider(&providers, "xai"), "grok-2-vision-1212");
+        assert_eq!(grok_vision.supports_images, Some(true));
+    }
 }

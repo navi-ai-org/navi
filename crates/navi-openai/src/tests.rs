@@ -50,7 +50,7 @@ use crate::transport::{
 };
 use crate::types::OpenAiApiKind;
 use futures_util::StreamExt;
-use navi_core::{ModelMessage, ModelProvider, ModelStreamEvent, ToolInvocation};
+use navi_core::{ContentPart, ModelMessage, ModelProvider, ModelStreamEvent, ToolInvocation};
 use serde_json::json;
 
 #[test]
@@ -2185,4 +2185,40 @@ fn gemini_contents_with_system_instruction() {
     assert_eq!(system, "You are a Rust expert.");
     assert_eq!(contents.len(), 1);
     assert_eq!(contents[0]["role"], "user");
+}
+
+#[test]
+fn gemini_contents_serializes_audio_video_and_documents_inline() {
+    let messages = vec![ModelMessage::user_multimodal(
+        "Analyze media",
+        vec![
+            ContentPart::Text {
+                text: "Analyze media".to_string(),
+            },
+            ContentPart::Audio {
+                media_type: "audio/mpeg".to_string(),
+                data: "audio-base64".to_string(),
+                name: Some("clip.mp3".to_string()),
+            },
+            ContentPart::Video {
+                media_type: "video/mp4".to_string(),
+                data: "video-base64".to_string(),
+                name: Some("clip.mp4".to_string()),
+            },
+            ContentPart::Document {
+                media_type: "application/pdf".to_string(),
+                data: "pdf-base64".to_string(),
+                name: Some("paper.pdf".to_string()),
+            },
+        ],
+    )];
+
+    let (_, contents) = crate::providers::gemini::gemini_contents(&messages);
+    let parts = contents[0]["parts"].as_array().expect("parts");
+    assert_eq!(parts[1]["inlineData"]["mimeType"], "audio/mpeg");
+    assert_eq!(parts[1]["inlineData"]["data"], "audio-base64");
+    assert_eq!(parts[2]["inlineData"]["mimeType"], "video/mp4");
+    assert_eq!(parts[2]["inlineData"]["data"], "video-base64");
+    assert_eq!(parts[3]["inlineData"]["mimeType"], "application/pdf");
+    assert_eq!(parts[3]["inlineData"]["data"], "pdf-base64");
 }
