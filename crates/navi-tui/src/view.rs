@@ -13,7 +13,7 @@ mod sessions;
 mod skills;
 mod welcome;
 
-use ratatui::layout::{Constraint, Direction, Layout, Rect};
+use ratatui::layout::Rect;
 use ratatui::prelude::Frame;
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
@@ -23,7 +23,7 @@ use crate::TuiApp;
 use crate::render::{fill_modal_scrim, modal_rect, opaque_fill};
 use crate::state::Mode;
 use crate::theme::{self, bg, ghost, muted, text};
-use crate::ui::layout::viewport_rect;
+use crate::ui::layout::{RootLayoutHeights, root_layout, viewport_rect};
 
 /// Setup-specific rendering: welcome text or interview chat.
 mod setup;
@@ -51,45 +51,26 @@ fn render_inner(frame: &mut Frame<'_>, app: &mut TuiApp) {
     };
     let image_preview_height = 0;
     let input_activity_height = input::composer_activity_height(app);
-    let layout_constraints = if compact_viewport {
-        // compact: keep fixed-size input from overlapping chat by capping chat to remainder
-        let fixed_height = 1u16
-            .saturating_add(image_preview_height)
-            .saturating_add(input_activity_height)
-            .saturating_add(input_height)
-            .saturating_add(input_hint_height);
-        [
-            Constraint::Length(1),
-            Constraint::Length(content_area.height.saturating_sub(fixed_height).max(1)),
-            Constraint::Length(image_preview_height),
-            Constraint::Length(input_activity_height),
-            Constraint::Length(input_height),
-            Constraint::Length(input_hint_height),
-        ]
-    } else {
-        [
-            Constraint::Length(1),
-            Constraint::Fill(1),
-            Constraint::Length(image_preview_height),
-            Constraint::Length(input_activity_height),
-            Constraint::Length(input_height),
-            Constraint::Length(input_hint_height),
-        ]
-    };
-    let vertical = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints(layout_constraints)
-        .split(content_area);
+    let layout = root_layout(
+        content_area,
+        RootLayoutHeights {
+            header: 1,
+            image_preview: image_preview_height,
+            input_activity: input_activity_height,
+            input: input_height,
+            input_hint: input_hint_height,
+        },
+    );
 
-    render_header(frame, app, vertical[0]);
-    chat::render_chat_area(frame, app, vertical[1]);
+    render_header(frame, app, layout.header);
+    chat::render_chat_area(frame, app, layout.chat);
 
     // Render image previews above input
-    let input_area = vertical[4];
+    let input_area = layout.input;
 
-    input::render_input_activity(frame, app, vertical[3]);
+    input::render_input_activity(frame, app, layout.input_activity);
     input::render_input(frame, app, input_area);
-    input::render_input_hint(frame, app, vertical[5]);
+    input::render_input_hint(frame, app, layout.input_hint);
 
     if modal_backdrop_active(app) {
         fill_modal_scrim(frame, content_area);
