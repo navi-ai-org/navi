@@ -255,10 +255,40 @@ pub struct ApprovalConfig {
     pub require_for_commands: bool,
 }
 
+/// High-level tool permission mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum PermissionMode {
+    /// Every tool execution requires approval unless a per-tool allow rule matches.
+    Restricted,
+    /// Reads and edits are allowed; commands and custom tools still require approval.
+    AcceptEdits,
+    /// Reads, edits, and commands are allowed unless blocked by safety checks/rules.
+    Yolo,
+}
+
 /// Security constraints for tool execution.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct SecurityConfig {
+    /// High-level permission mode for tool execution.
+    pub permission_mode: PermissionMode,
+    /// Tool names that are always allowed after safety validation.
+    #[serde(alias = "accepted_tools")]
+    pub allow_tools: Vec<String>,
+    /// Regex patterns for tool names that are always allowed after safety validation.
+    #[serde(alias = "accepted_tool_regex")]
+    pub allow_tool_regex: Vec<String>,
+    /// Tool names that always require approval after safety validation.
+    pub ask_tools: Vec<String>,
+    /// Regex patterns for tool names that always require approval after safety validation.
+    pub ask_tool_regex: Vec<String>,
+    /// Tool names that are always denied.
+    #[serde(alias = "rejected_tools")]
+    pub deny_tools: Vec<String>,
+    /// Regex patterns for tool names that are always denied.
+    #[serde(alias = "rejected_tool_regex")]
+    pub deny_tool_regex: Vec<String>,
     /// Restrict file tool paths to the project directory.
     pub restrict_paths_to_project: bool,
     /// Deny writes to `.git` and other version-control metadata.
@@ -287,6 +317,29 @@ impl SecurityConfig {
             return true;
         }
         self.allowed_mcp_servers.iter().any(|id| id == server_id)
+    }
+}
+
+impl NaviConfig {
+    /// Returns the security config used by the runtime after applying legacy
+    /// approval settings and TUI YOLO preferences.
+    pub fn effective_security_config(&self) -> SecurityConfig {
+        let mut security = self.security.clone();
+
+        if self.tui.yolo_mode {
+            security.permission_mode = PermissionMode::Yolo;
+            return security;
+        }
+
+        if !self.approvals.require_for_writes && !self.approvals.require_for_commands {
+            security.permission_mode = PermissionMode::Yolo;
+        } else if !self.approvals.require_for_writes && self.approvals.require_for_commands {
+            security.permission_mode = PermissionMode::AcceptEdits;
+        } else if !self.approvals.allow_reads {
+            security.permission_mode = PermissionMode::Restricted;
+        }
+
+        security
     }
 }
 

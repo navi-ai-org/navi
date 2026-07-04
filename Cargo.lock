@@ -2075,6 +2075,7 @@ dependencies = [
  "hex",
  "jsonschema",
  "navi-vfs",
+ "regex",
  "reqwest",
  "rusqlite",
  "serde",

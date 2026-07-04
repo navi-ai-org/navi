@@ -40,6 +40,13 @@ impl Tool for RuntimeInfoTool {
             json!({
                 "project_root": project_root,
                 "harness_profile": self.harness_profile,
+                "permission_mode": security.permission_mode,
+                "allow_tools": security.allow_tools,
+                "allow_tool_regex": security.allow_tool_regex,
+                "ask_tools": security.ask_tools,
+                "ask_tool_regex": security.ask_tool_regex,
+                "deny_tools": security.deny_tools,
+                "deny_tool_regex": security.deny_tool_regex,
                 "restrict_paths_to_project": security.restrict_paths_to_project,
                 "protect_git_metadata": security.protect_git_metadata,
                 "redact_secrets_in_sessions": security.redact_secrets_in_sessions,

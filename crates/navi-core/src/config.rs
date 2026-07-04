@@ -130,6 +130,56 @@ timeout_ms = 1000
     }
 
     #[test]
+    fn parses_permission_mode_and_tool_rules() {
+        let config: NaviConfig = toml::from_str(
+            r#"
+[security]
+permission_mode = "accept-edits"
+allow_tools = ["read_file"]
+allow_tool_regex = ["^repo_"]
+ask_tools = ["bash"]
+ask_tool_regex = ["^plugin__"]
+deny_tools = ["package_manager"]
+deny_tool_regex = ["^danger_"]
+"#,
+        )
+        .expect("config parses");
+
+        assert_eq!(config.security.permission_mode, PermissionMode::AcceptEdits);
+        assert_eq!(config.security.allow_tools, vec!["read_file"]);
+        assert_eq!(config.security.allow_tool_regex, vec!["^repo_"]);
+        assert_eq!(config.security.ask_tools, vec!["bash"]);
+        assert_eq!(config.security.ask_tool_regex, vec!["^plugin__"]);
+        assert_eq!(config.security.deny_tools, vec!["package_manager"]);
+        assert_eq!(config.security.deny_tool_regex, vec!["^danger_"]);
+    }
+
+    #[test]
+    fn effective_security_config_honors_legacy_approval_modes() {
+        let mut config = NaviConfig::default();
+        config.approvals.require_for_writes = false;
+        config.approvals.require_for_commands = true;
+        assert_eq!(
+            config.effective_security_config().permission_mode,
+            PermissionMode::AcceptEdits
+        );
+
+        config.approvals.require_for_commands = false;
+        assert_eq!(
+            config.effective_security_config().permission_mode,
+            PermissionMode::Yolo
+        );
+
+        config.approvals.require_for_writes = true;
+        config.approvals.require_for_commands = true;
+        config.approvals.allow_reads = false;
+        assert_eq!(
+            config.effective_security_config().permission_mode,
+            PermissionMode::Restricted
+        );
+    }
+
+    #[test]
     fn logging_defaults_are_compact_and_file_backed() {
         let config = NaviConfig::default();
 

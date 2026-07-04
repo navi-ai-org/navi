@@ -406,7 +406,7 @@ impl AgentRuntime {
             let security_policy = SecurityPolicy::new(
                 self.project_dir.clone(),
                 self.loaded_config.data_dir.clone(),
-                self.loaded_config.config.security.clone(),
+                self.loaded_config.config.effective_security_config(),
             )?;
             self.tool_executor = Some(Arc::new(ToolExecutor::with_security_policy(
                 security_policy,
@@ -707,7 +707,7 @@ impl AgentRuntime {
         let security_policy = SecurityPolicy::new(
             self.project_dir.clone(),
             self.loaded_config.data_dir.clone(),
-            self.loaded_config.config.security.clone(),
+            self.loaded_config.config.effective_security_config(),
         )?;
         let harness_policy = crate::harness::select_harness_policy(&self.loaded_config.config);
         let profile_name = format!("{:?}", harness_policy.profile).to_lowercase();

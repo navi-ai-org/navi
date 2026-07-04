@@ -35,6 +35,7 @@ use crate::ui::text_input::{
 };
 use crate::view::build_chat_lines;
 use crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+use navi_core::PermissionMode;
 use navi_sdk::{
     AgentEvent, BackgroundCommandSnapshot, BackgroundTaskStatus, ContentPart, LoadedConfig,
     ModelMessage, ModelOption, SessionId, SessionSnapshot, SubagentTranscriptItem,
@@ -169,6 +170,26 @@ fn root_render_keeps_header_inside_viewport_margin() {
 
     let buffer = terminal.backend().buffer();
     assert_eq!(buffer.cell((39, 0)).expect("cell").symbol(), " ");
+}
+
+#[test]
+fn root_render_shows_permission_mode_in_header() {
+    let mut app = test_app("");
+    app.loaded_config.config.security.permission_mode = PermissionMode::AcceptEdits;
+
+    let mut terminal = Terminal::new(TestBackend::new(96, 24)).expect("terminal");
+    terminal
+        .draw(|frame| crate::view::render(frame, &mut app))
+        .expect("draw");
+    let screen = terminal_buffer_text(&terminal);
+
+    assert!(
+        screen
+            .lines()
+            .next()
+            .unwrap_or_default()
+            .contains("mode accept-edits")
+    );
 }
 
 #[test]
@@ -549,6 +570,30 @@ fn command_palette_new_session_uses_full_session_reset() {
     assert!(app.session_title.is_none());
     assert!(app.running_tools.is_empty());
     assert!(app.tool_invocations.is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn command_palette_compact_submits_immediate_summary_request() {
+    let mut app = test_app("");
+    app.mode = Mode::Commands;
+    app.command_filter = "compact".to_string();
+    app.selected_command = 0;
+    app.compact_state.context_window = 200_000;
+    app.compact_state.last_input_tokens = Some(10_000);
+
+    assert!(!run_selected_command(&mut app));
+
+    assert!(app.is_loading);
+    assert_eq!(app.mode, Mode::Normal);
+    assert!(app.input.is_empty());
+    assert_eq!(app.compact_state.last_input_tokens, Some(10_000));
+    let user_message = app
+        .messages
+        .iter()
+        .find(|message| message.role == ChatRole::User)
+        .expect("compact prompt user message");
+    assert!(user_message.content.contains("new_context_window"));
+    assert!(user_message.content.contains("Do not wait"));
 }
 
 #[test]
@@ -950,6 +995,54 @@ fn model_picker_filters_by_model_and_provider_text() {
             ListRow::Header { .. } => false,
         }
     }));
+}
+
+#[test]
+fn model_picker_clips_long_rows_inside_modal_border() {
+    let mut app = test_app("");
+    app.models.clear();
+    app.authenticated_providers
+        .insert("verbose-provider".to_string());
+    app.models.push(ModelOption {
+        name: "provider-family/this-is-an-intentionally-overlong-model-name-with-many-segments"
+            .to_string(),
+        provider_id: "verbose-provider".to_string(),
+        provider_label:
+            "Extremely Verbose Provider Label That Should Never Spill Past The Modal Border"
+                .to_string(),
+        provider_description: "provider used for clipping tests".to_string(),
+        task_size: navi_sdk::ModelTaskSize::Large,
+        context_window_tokens: None,
+    });
+    app.loaded_config.config.model.provider = "verbose-provider".to_string();
+    app.loaded_config.config.model.name = app.models[0].name.clone();
+    app.loaded_config.config.tui.recent_model_ids =
+        vec![format!("verbose-provider:{}", app.models[0].name)];
+    open_model_picker(&mut app);
+
+    let backend = TestBackend::new(80, 24);
+    let mut terminal = Terminal::new(backend).expect("terminal");
+    terminal
+        .draw(|frame| crate::view::render(frame, &mut app))
+        .expect("draw");
+
+    let modal = crate::render::modal_rect(Rect::new(0, 0, 80, 24), 72, 22);
+    let right_x = modal.right().saturating_sub(1);
+    let buffer = terminal.backend().buffer();
+    for y in modal.top()..modal.bottom() {
+        let symbol = buffer[(right_x, y)].symbol();
+        assert!(
+            matches!(symbol, "│" | "╮" | "╯"),
+            "modal right border was overwritten at y={y}: {symbol:?}\n{}",
+            terminal_buffer_text(&terminal)
+        );
+    }
+
+    let screen = terminal_buffer_text(&terminal);
+    assert!(
+        !screen.contains("Should Never Spill Past"),
+        "long provider label was not clipped:\n{screen}"
+    );
 }
 
 #[test]
@@ -1694,10 +1787,40 @@ fn yolo_toggle_uses_notification_not_chat() {
     handle_key(&mut app, KeyCode::Char('g'), KeyModifiers::CONTROL);
 
     assert!(app.yolo_mode);
+    assert_eq!(
+        app.loaded_config.config.security.permission_mode,
+        PermissionMode::Yolo
+    );
     assert_eq!(app.messages.len(), message_count);
     let notification = app.notification().expect("notification");
-    assert_eq!(notification.title, "Tools");
-    assert!(notification.message.contains("YOLO mode enabled"));
+    assert_eq!(notification.title, "Permissions");
+    assert!(notification.message.contains("yolo"));
+}
+
+#[test]
+fn shift_tab_cycles_permission_modes() {
+    let mut app = test_app("");
+
+    handle_key(&mut app, KeyCode::BackTab, KeyModifiers::SHIFT);
+    assert!(!app.yolo_mode);
+    assert_eq!(
+        app.loaded_config.config.security.permission_mode,
+        PermissionMode::AcceptEdits
+    );
+
+    handle_key(&mut app, KeyCode::BackTab, KeyModifiers::SHIFT);
+    assert!(app.yolo_mode);
+    assert_eq!(
+        app.loaded_config.config.security.permission_mode,
+        PermissionMode::Yolo
+    );
+
+    handle_key(&mut app, KeyCode::BackTab, KeyModifiers::SHIFT);
+    assert!(!app.yolo_mode);
+    assert_eq!(
+        app.loaded_config.config.security.permission_mode,
+        PermissionMode::Restricted
+    );
 }
 
 #[test]

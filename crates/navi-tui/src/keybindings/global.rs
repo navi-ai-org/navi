@@ -8,6 +8,7 @@ use crate::state::ModalKind;
 use crate::ui::effect::UiEffect;
 use crate::ui::keymap::KeyOutcome;
 use crossterm::event::{KeyCode, KeyModifiers};
+use navi_core::PermissionMode;
 
 pub(super) fn route_global_key(
     app: &mut TuiApp,
@@ -33,17 +34,12 @@ pub(super) fn route_global_key(
                 return outcome;
             }
             KeyCode::Char('g') => {
-                app.yolo_mode = !app.yolo_mode;
-                tracing::info!(enabled = app.yolo_mode, "yolo mode toggled");
-                show_notification(
-                    app,
-                    "Tools",
-                    format!(
-                        "YOLO mode {}.",
-                        if app.yolo_mode { "enabled" } else { "disabled" }
-                    ),
-                );
-                save_preferences(app);
+                let mode = if app.yolo_mode {
+                    PermissionMode::Restricted
+                } else {
+                    PermissionMode::Yolo
+                };
+                set_permission_mode(app, mode);
                 return KeyOutcome::Handled;
             }
             KeyCode::Char('p') => {
@@ -141,6 +137,11 @@ pub(super) fn route_system_global_key(
     code: KeyCode,
     modifiers: KeyModifiers,
 ) -> KeyOutcome {
+    if is_permission_mode_cycle_key(code, modifiers) {
+        cycle_permission_mode(app);
+        return KeyOutcome::Handled;
+    }
+
     if !modifiers.contains(KeyModifiers::CONTROL) {
         return KeyOutcome::Ignored;
     }
@@ -163,4 +164,49 @@ pub(super) fn is_copy_selection_key(code: KeyCode, modifiers: KeyModifiers) -> b
     // lowercase 'c' plus an explicit SHIFT modifier. Plain Ctrl+C must quit.
     matches!(code, KeyCode::Char('C'))
         || (matches!(code, KeyCode::Char('c')) && modifiers.contains(KeyModifiers::SHIFT))
+}
+
+fn is_permission_mode_cycle_key(code: KeyCode, modifiers: KeyModifiers) -> bool {
+    matches!(code, KeyCode::BackTab)
+        || (matches!(code, KeyCode::Tab) && modifiers.contains(KeyModifiers::SHIFT))
+}
+
+fn cycle_permission_mode(app: &mut TuiApp) {
+    let next = match current_permission_mode(app) {
+        PermissionMode::Restricted => PermissionMode::AcceptEdits,
+        PermissionMode::AcceptEdits => PermissionMode::Yolo,
+        PermissionMode::Yolo => PermissionMode::Restricted,
+    };
+    set_permission_mode(app, next);
+}
+
+fn current_permission_mode(app: &TuiApp) -> PermissionMode {
+    if app.yolo_mode {
+        PermissionMode::Yolo
+    } else {
+        app.loaded_config.config.security.permission_mode
+    }
+}
+
+fn set_permission_mode(app: &mut TuiApp, mode: PermissionMode) {
+    app.loaded_config.config.security.permission_mode = mode;
+    app.yolo_mode = matches!(mode, PermissionMode::Yolo);
+    tracing::info!(
+        mode = permission_mode_label(mode),
+        "permission mode changed"
+    );
+    show_notification(
+        app,
+        "Permissions",
+        format!("Mode: {}.", permission_mode_label(mode)),
+    );
+    save_preferences(app);
+}
+
+fn permission_mode_label(mode: PermissionMode) -> &'static str {
+    match mode {
+        PermissionMode::Restricted => "restricted",
+        PermissionMode::AcceptEdits => "accept-edits",
+        PermissionMode::Yolo => "yolo",
+    }
 }

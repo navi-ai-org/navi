@@ -296,6 +296,41 @@ impl CompactState {
             }
         }
     }
+
+    pub fn apply_manual_summary(
+        &mut self,
+        messages: &mut Vec<ModelMessage>,
+        summary: String,
+    ) -> u64 {
+        let system_msgs: Vec<ModelMessage> = messages
+            .iter()
+            .filter(|m| m.role == ModelRole::System)
+            .cloned()
+            .collect();
+        let estimated_previous_tokens = self.last_input_tokens.unwrap_or_else(|| {
+            messages
+                .iter()
+                .map(|message| message.content.len() as u64)
+                .sum::<u64>()
+                .saturating_add(3)
+                / 4
+        });
+
+        messages.clear();
+        messages.extend(system_msgs);
+        messages.push(ModelMessage::user(format!(
+            "Here is a summary of the conversation so far:\n\n{}",
+            summary
+        )));
+
+        self.summary = Some(summary);
+        self.summary_message_count = messages.len();
+        self.consecutive_failures = 0;
+        self.last_input_tokens = None;
+        self.clear_unsent_bytes();
+
+        estimated_previous_tokens
+    }
 }
 
 fn build_conversation_text(messages: &[ModelMessage]) -> String {
@@ -500,6 +535,35 @@ mod tests {
             ..Default::default()
         };
         assert!(state.should_autocompact(AUTOCOMPACT_BUFFER_TOKENS));
+    }
+
+    #[test]
+    fn compact_state_manual_summary_compacts_below_threshold() {
+        let mut state = CompactState {
+            last_input_tokens: Some(10_000),
+            context_window: 200_000,
+            consecutive_failures: 2,
+            estimated_unsent_bytes: 4096,
+            ..Default::default()
+        };
+        assert!(!state.should_autocompact(AUTOCOMPACT_BUFFER_TOKENS));
+        let mut messages = vec![
+            ModelMessage::system("system"),
+            ModelMessage::user("task"),
+            ModelMessage::assistant("response"),
+        ];
+
+        let tokens_saved = state.apply_manual_summary(&mut messages, "Manual summary".to_string());
+
+        assert_eq!(tokens_saved, 10_000);
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0].role, ModelRole::System);
+        assert!(messages[1].content.contains("Manual summary"));
+        assert_eq!(state.summary.as_deref(), Some("Manual summary"));
+        assert_eq!(state.summary_message_count, 2);
+        assert_eq!(state.consecutive_failures, 0);
+        assert_eq!(state.estimated_unsent_bytes, 0);
+        assert!(state.last_input_tokens.is_none());
     }
 
     #[test]

@@ -9,6 +9,7 @@ use tokio::task::JoinHandle;
 
 use std::sync::Arc;
 
+use navi_core::PermissionMode;
 use navi_sdk::{
     AgentEvent, AgentRunState, ApprovalRequest, BackgroundCommandSnapshot, CompactState,
     CredentialStore, EngineDriver, HarnessPolicy, LoadedConfig, ModelMessage, ModelOption,
@@ -224,7 +225,13 @@ impl TuiApp {
             .tui
             .compact_tool_visible_limit
             .clamp(1, 20);
-        let yolo_mode = loaded_config.config.tui.yolo_mode;
+        let yolo_mode = matches!(
+            loaded_config
+                .config
+                .effective_security_config()
+                .permission_mode,
+            PermissionMode::Yolo
+        );
         let theme_id = ThemeId::from_config(&loaded_config.config.tui.theme);
         let thinking_level = ThinkingLevel::from_config(&loaded_config.config.tui.thinking_level);
         let git_branch = detect_git_branch(&project_dir);

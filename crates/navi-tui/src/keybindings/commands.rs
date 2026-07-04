@@ -1,5 +1,5 @@
 use crate::TuiApp;
-use crate::chat::{retry_last_response, start_new_session};
+use crate::chat::{retry_last_response, start_new_session, submit_message};
 use crate::commands::{CommandAction, filtered_commands};
 use crate::mouse::copy_text_to_clipboard;
 use crate::notifications::show_notification;
@@ -71,12 +71,9 @@ pub(crate) fn run_selected_command(app: &mut TuiApp) -> bool {
             if app.is_loading {
                 show_notification(app, "Compact", "Cannot compact while a request is active.");
             } else {
-                show_notification(
-                    app,
-                    "Compact",
-                    "Compaction will trigger on next request if context is full.",
-                );
-                app.compact_state.last_input_tokens = Some(app.compact_state.context_window);
+                app.input = "Summarize the current session state now and call the new_context_window tool with that summary. Do not wait for the context window to fill.".to_string();
+                app.input_cursor = app.input.len();
+                submit_message(app);
             }
             super::close_all_modals(app);
         }

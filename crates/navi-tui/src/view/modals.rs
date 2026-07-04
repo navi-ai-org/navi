@@ -246,10 +246,10 @@ pub(super) fn render_tool_approval(frame: &mut Frame<'_>, app: &TuiApp, area: Re
             ),
             Span::styled(" deny  •  ", Style::default().fg(muted())),
             Span::styled(
-                "ctrl+g",
+                "shift+tab",
                 Style::default().fg(text()).add_modifier(Modifier::BOLD),
             ),
-            Span::styled(" yolo mode", Style::default().fg(muted())),
+            Span::styled(" permission mode", Style::default().fg(muted())),
         ]),
     ]);
     frame.render_widget(
@@ -733,7 +733,7 @@ pub(super) fn render_help_modal(frame: &mut Frame<'_>, app: &TuiApp, area: Rect)
         ("ctrl+s", "memory"),
         ("ctrl+o", "compact/full tool output"),
         ("ctrl+d", "debug"),
-        ("ctrl+g", "toggle YOLO mode"),
+        ("shift+tab", "cycle permission mode"),
         ("ctrl+enter", "send prompt"),
         ("enter", "new line"),
         ("ctrl+j", "new line"),

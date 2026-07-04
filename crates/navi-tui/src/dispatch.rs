@@ -440,16 +440,13 @@ fn handle_agent_event(app: &mut TuiApp, event: AgentEvent) {
                 .push(AgentEvent::MicroCompactApplied { messages_cleared });
         }
         AgentEvent::AutoCompactStarted => {
-            push_diagnostic(
-                app,
-                "Auto-compact: context threshold reached, summarizing...".to_string(),
-            );
+            push_diagnostic(app, "Compact: summarizing session context...".to_string());
             app.events.push(AgentEvent::AutoCompactStarted);
         }
         AgentEvent::AutoCompactCompleted { tokens_saved } => {
             show_notification(
                 app,
-                "Auto-Compact",
+                "Compact",
                 format!("Context compacted ({}k tokens saved)", tokens_saved / 1000),
             );
             app.compact_state.consecutive_failures = 0;

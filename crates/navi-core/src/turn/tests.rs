@@ -1,7 +1,9 @@
 use super::*;
 use crate::model::ModelResponse;
 use crate::tool::{Tool, ToolDefinition, ToolKind, ToolMetadata};
-use crate::{ModelStream, SecurityConfig, SecurityPolicy, ToolInvocation, ToolResult};
+use crate::{
+    ModelStream, PermissionMode, SecurityConfig, SecurityPolicy, ToolInvocation, ToolResult,
+};
 use async_trait::async_trait;
 use futures_util::stream;
 use serde_json::json;
@@ -558,12 +560,12 @@ fn think_tag_splitter_drops_partial_open_tag_on_drain() {
 
 /// Helper to build a TurnContext pointing at a given project directory.
 fn build_test_ctx(project_dir: PathBuf) -> TurnContext {
-    let security_policy = SecurityPolicy::new(
-        project_dir.clone(),
-        project_dir.clone(),
-        SecurityConfig::default(),
-    )
-    .unwrap();
+    let config = SecurityConfig {
+        permission_mode: PermissionMode::Yolo,
+        ..SecurityConfig::default()
+    };
+    let security_policy =
+        SecurityPolicy::new(project_dir.clone(), project_dir.clone(), config).unwrap();
     let mut executor = ToolExecutor::new(security_policy);
     executor.register_tool(Arc::new(MockTool));
 
