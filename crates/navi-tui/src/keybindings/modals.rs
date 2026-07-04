@@ -1152,10 +1152,15 @@ pub(crate) fn handle_bg_model_picker_key(app: &mut TuiApp, code: KeyCode) -> boo
 
     match code {
         KeyCode::Esc => {
-            // Go back to the background models list.
+            let target_modal = if app.attachment_model_picker_active {
+                ModalKind::AttachmentModels
+            } else {
+                ModalKind::BackgroundModels
+            };
+            app.attachment_model_picker_active = false;
             app.bg_model_picker_active = false;
             app.bg_model_picker_task = None;
-            super::replace_modal(app, ModalKind::BackgroundModels);
+            super::replace_modal(app, target_modal);
         }
         KeyCode::Up | KeyCode::Char('k') => {
             if let Some(current) = rows.iter().position(|row| match row {
@@ -1196,21 +1201,36 @@ pub(crate) fn handle_bg_model_picker_key(app: &mut TuiApp, code: KeyCode) -> boo
             );
         }
         KeyCode::Enter => {
-            // Apply the selected model to the background task.
             if let Some(model) = app.models.get(app.bg_model_picker_selected) {
                 let provider_id = model.provider_id.clone();
                 let model_name = model.name.clone();
-                set_bg_model_override(app, &task_id, &provider_id, &model_name);
-                save_preferences(app);
-                show_notification(
-                    app,
-                    "Background Agents",
-                    format!("{} → {}:{}", task_id, provider_id, model_name),
-                );
+                if app.attachment_model_picker_active {
+                    set_attachment_model_override(app, &task_id, &provider_id, &model_name);
+                    save_preferences(app);
+                    show_notification(
+                        app,
+                        "Attachment Models",
+                        format!("{} fallback → {}:{}", task_id, provider_id, model_name),
+                    );
+                } else {
+                    set_bg_model_override(app, &task_id, &provider_id, &model_name);
+                    save_preferences(app);
+                    show_notification(
+                        app,
+                        "Background Agents",
+                        format!("{} → {}:{}", task_id, provider_id, model_name),
+                    );
+                }
             }
+            let target_modal = if app.attachment_model_picker_active {
+                ModalKind::AttachmentModels
+            } else {
+                ModalKind::BackgroundModels
+            };
+            app.attachment_model_picker_active = false;
             app.bg_model_picker_active = false;
             app.bg_model_picker_task = None;
-            super::replace_modal(app, ModalKind::BackgroundModels);
+            super::replace_modal(app, target_modal);
         }
         KeyCode::Backspace => {
             app.model_filter.pop();
@@ -1264,5 +1284,107 @@ fn clear_bg_model_override(app: &mut TuiApp, task: &str) {
         "subagent_research" => bg.subagent_research = None,
         "simple_code_edit" => bg.simple_code_edit = None,
         _ => bg.default = None,
+    }
+}
+
+pub(crate) fn handle_attachment_models_key(app: &mut TuiApp, code: KeyCode) -> bool {
+    const ATTACHMENT_MODALITIES: &[(&str, &str)] = &[
+        ("image", "Image analysis fallback"),
+        ("audio", "Audio analysis fallback"),
+        ("video", "Video analysis fallback"),
+        ("document", "Document analysis fallback"),
+    ];
+    let count = ATTACHMENT_MODALITIES.len();
+    let mut list_state = SelectListState::new(app.selected_attachment_model, 0);
+
+    match code {
+        KeyCode::Esc => super::close_active_modal(app),
+        KeyCode::Down | KeyCode::Char('j') => {
+            list_state.select_next(count);
+        }
+        KeyCode::Up | KeyCode::Char('k') => {
+            list_state.select_previous();
+        }
+        KeyCode::Enter => {
+            if let Some((modality, _)) = ATTACHMENT_MODALITIES.get(app.selected_attachment_model) {
+                app.attachment_model_picker_active = true;
+                app.bg_model_picker_active = false;
+                app.bg_model_picker_task = Some(modality.to_string());
+                app.bg_model_picker_selected = 0;
+                app.model_scroll = 0;
+                app.model_filter.clear();
+                super::replace_modal(app, ModalKind::BgModelPicker);
+                app.refresh_authenticated_providers();
+            }
+        }
+        KeyCode::Char('d') => {
+            if let Some((modality, _)) = ATTACHMENT_MODALITIES.get(app.selected_attachment_model) {
+                clear_attachment_model_override(app, modality);
+                save_preferences(app);
+                show_notification(
+                    app,
+                    "Attachment Models",
+                    format!("{} fallback reset to default.", modality),
+                );
+            }
+        }
+        _ => {}
+    }
+    app.selected_attachment_model = list_state.selected();
+    false
+}
+
+pub(crate) fn resolve_attachment_model_label(app: &TuiApp, modality: &str) -> String {
+    let config = &app.loaded_config.config.attachment_models;
+    let entry = match modality {
+        "image" => config.image.as_ref(),
+        "audio" => config.audio.as_ref(),
+        "video" => config.video.as_ref(),
+        "document" => config.document.as_ref(),
+        _ => None,
+    };
+    if let Some(entry) = entry {
+        return format!("{}:{}", entry.provider, entry.name);
+    }
+    "None (No Fallback)".to_string()
+}
+
+pub(crate) fn attachment_model_has_override(
+    config: &navi_core::config::types::AttachmentModelsConfig,
+    modality: &str,
+) -> bool {
+    match modality {
+        "image" => config.image.is_some(),
+        "audio" => config.audio.is_some(),
+        "video" => config.video.is_some(),
+        "document" => config.document.is_some(),
+        _ => false,
+    }
+}
+
+fn set_attachment_model_override(app: &mut TuiApp, modality: &str, provider: &str, model: &str) {
+    use navi_core::config::types::ModelConfig;
+    let entry = ModelConfig {
+        provider: provider.to_string(),
+        name: model.to_string(),
+    };
+    let config = &mut app.loaded_config.config.attachment_models;
+    match modality {
+        "image" => config.image = Some(entry),
+        "audio" => config.audio = Some(entry),
+        "video" => config.video = Some(entry),
+        "document" => config.document = Some(entry),
+        _ => {}
+    }
+}
+
+fn clear_attachment_model_override(app: &mut TuiApp, modality: &str) {
+    let config = &mut app.loaded_config.config.attachment_models;
+    match modality {
+        "image" => config.image = None,
+        "audio" => config.audio = None,
+        "video" => config.video = None,
+        "document" => config.document = None,
+        _ => {}
     }
 }

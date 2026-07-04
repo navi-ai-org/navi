@@ -1,8 +1,9 @@
 use anyhow::{Context, Result, anyhow};
 use async_trait::async_trait;
+use navi_core::config::types::ModelConfig;
 use navi_core::{
-    AttachmentKind, ContentPart, LoadedConfig, ModelConfig, ModelMessage, ModelRequest,
-    ThinkingConfig, Tool, ToolDefinition, ToolInvocation, ToolKind, ToolResult,
+    AttachmentKind, ContentPart, LoadedConfig, ModelMessage, ModelRequest, ThinkingConfig, Tool,
+    ToolDefinition, ToolInvocation, ToolKind, ToolResult,
 };
 use serde::Deserialize;
 use serde_json::json;
@@ -82,8 +83,8 @@ impl Tool for AttachmentAnalysisTool {
     }
 
     async fn invoke(&self, invocation: ToolInvocation) -> Result<ToolResult> {
-        let input: AttachmentAnalysisInput =
-            serde_json::from_value(invocation.input).context("invalid attachment analysis input")?;
+        let input: AttachmentAnalysisInput = serde_json::from_value(invocation.input)
+            .context("invalid attachment analysis input")?;
         let Some(model) = self.model_for_kind(input.kind) else {
             return Ok(ToolResult {
                 invocation_id: invocation.id,
@@ -132,9 +133,12 @@ impl Tool for AttachmentAnalysisTool {
                 ModelMessage::system("Analyze the attachment and return concise text only."),
                 ModelMessage::user_multimodal(
                     input.prompt,
-                    vec![ContentPart::Text {
-                        text: "Analyze this attachment.".to_string(),
-                    }, attachment],
+                    vec![
+                        ContentPart::Text {
+                            text: "Analyze this attachment.".to_string(),
+                        },
+                        attachment,
+                    ],
                 ),
             ],
             thinking: ThinkingConfig::Off,
@@ -152,5 +156,42 @@ impl Tool for AttachmentAnalysisTool {
                 "analysis": response.text,
             }),
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use navi_core::NaviConfig;
+
+    #[tokio::test]
+    async fn invoke_without_configured_model_returns_structured_error() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let tool = AttachmentAnalysisTool::new(
+            LoadedConfig {
+                config: NaviConfig::default(),
+                global_config_path: None,
+                project_config_path: None,
+                data_dir: tempdir.path().to_path_buf(),
+            },
+            tempdir.path().to_path_buf(),
+        );
+
+        let result = tool
+            .invoke(ToolInvocation {
+                id: "call-1".to_string(),
+                tool_name: "analyze_attachment".to_string(),
+                input: json!({
+                    "kind": "audio",
+                    "media_type": "audio/mpeg",
+                    "data": "abc123",
+                    "prompt": "transcribe",
+                }),
+            })
+            .await
+            .expect("tool result");
+
+        assert!(!result.ok);
+        assert_eq!(result.output["config"], "attachment_models.audio");
     }
 }

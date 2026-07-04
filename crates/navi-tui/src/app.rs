@@ -176,6 +176,10 @@ pub struct TuiApp {
     pub(crate) bg_model_picker_task: Option<String>,
     pub(crate) bg_model_picker_selected: usize,
 
+    // attachment models config
+    pub(crate) selected_attachment_model: usize,
+    pub(crate) attachment_model_picker_active: bool,
+
     // goals
     pub(crate) goal_state: Option<crate::state::GoalUiState>,
 }
@@ -338,6 +342,8 @@ impl TuiApp {
             bg_model_picker_active: false,
             bg_model_picker_task: None,
             bg_model_picker_selected: 0,
+            selected_attachment_model: 0,
+            attachment_model_picker_active: false,
             setup_phase: None,
         };
 

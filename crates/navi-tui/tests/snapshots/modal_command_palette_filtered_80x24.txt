@@ -8,7 +8,7 @@
     ██│ Models                                              ctrl+m       │
     ╚═│ Thinking Mode                                                    │
       │ Sync Models                                                      │
-      │                                                                  │h
+      │ Attachment Models                                                │h
       │                                                                  │
       │                                                                  │
       │                                                                  │

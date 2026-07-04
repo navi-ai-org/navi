@@ -406,20 +406,19 @@ fn handle_paste(app: &mut TuiApp, content: &str) {
         Mode::Normal => {
             if !app.is_loading {
                 if let Some(image) = crate::clipboard::try_read_image_from_path(content) {
-                    let label = image.label();
                     app.pending_images.push(image);
-                    show_notification(
-                        app,
-                        "Image",
-                        format!("{} attached via drag and drop", label),
-                    );
+                    let tag = format!("[Image {}]", app.pending_images.len());
+                    insert_input_text(app, &tag);
+                    show_notification(app, "Image", format!("Attached as {}", tag));
                     return;
                 }
 
                 if let Some(image) = try_read_clipboard_image() {
-                    let label = image.label();
                     app.pending_images.push(image);
-                    show_notification(app, "Image", format!("{} attached via paste", label));
+                    let tag = format!("[Image {}]", app.pending_images.len());
+                    insert_input_text(app, &tag);
+                    show_notification(app, "Image", format!("Attached as {}", tag));
+                    return;
                 }
             }
             if !content.is_empty() {

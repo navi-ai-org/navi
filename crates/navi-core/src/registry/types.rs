@@ -64,6 +64,53 @@ pub struct RankedModel {
     pub context_window_tokens: Option<u64>,
 }
 
+/// Attachment modalities a provider or model accepts directly.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct RegistryAttachments {
+    /// Whether image attachments can be sent directly to the model.
+    #[serde(
+        default,
+        alias = "image",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub images: Option<bool>,
+    /// Whether audio attachments can be sent directly to the model.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub audio: Option<bool>,
+    /// Whether video attachments can be sent directly to the model.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub video: Option<bool>,
+    /// Whether document attachments can be sent directly to the model.
+    #[serde(
+        default,
+        alias = "document",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub documents: Option<bool>,
+}
+
+impl RegistryAttachments {
+    pub fn is_empty(&self) -> bool {
+        self.images.is_none()
+            && self.audio.is_none()
+            && self.video.is_none()
+            && self.documents.is_none()
+    }
+}
+
+/// Provider-level defaults inherited by every model unless overridden.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct RegistryProviderDefaults {
+    #[serde(default, skip_serializing_if = "RegistryAttachments::is_empty")]
+    pub attachments: RegistryAttachments,
+}
+
+impl RegistryProviderDefaults {
+    pub fn is_empty(&self) -> bool {
+        self.attachments.is_empty()
+    }
+}
+
 /// A single model entry in the remote registry JSON.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RegistryModel {
@@ -94,6 +141,9 @@ pub struct RegistryModel {
     /// Whether the model can consume document attachments directly.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub supports_documents: Option<bool>,
+    /// Preferred public registry shape for direct attachment support.
+    #[serde(default, skip_serializing_if = "RegistryAttachments::is_empty")]
+    pub attachments: RegistryAttachments,
     /// Free-form capability tags such as `vision`, `audio`, `video`, `documents`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub capabilities: Vec<String>,
@@ -111,6 +161,9 @@ pub struct RegistryProvider {
     pub base_url: Option<String>,
     #[serde(default)]
     pub tool_calling_mode: Option<String>,
+    /// Defaults applied to all models, overridden by per-model fields.
+    #[serde(default, skip_serializing_if = "RegistryProviderDefaults::is_empty")]
+    pub defaults: RegistryProviderDefaults,
     #[serde(default, skip_serializing_if = "ProviderRequestOptions::is_empty")]
     pub request_options: ProviderRequestOptions,
     #[serde(default)]

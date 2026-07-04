@@ -100,6 +100,7 @@ fn plugin_policy_alias_enables_learning_components() {
             tools: Vec::new(),
             include_tool_prompt_manifest: false,
             context_packets: Vec::new(),
+            available_skills: Vec::new(),
             active_skills: Vec::new(),
         },
         Arc::new(navi_core::prompt::PromptCache::new()),

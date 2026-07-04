@@ -174,11 +174,6 @@ pub(crate) enum ChatLineSource {
     #[default]
     None,
     Message(usize),
-    ImageRow {
-        message_index: usize,
-        start_index: usize,
-        count: usize,
-    },
     ToolResult(String),
     ToolGroup(Vec<String>),
     Subagent(String),
@@ -245,6 +240,7 @@ pub enum Mode {
     BackgroundModels,
     BgModelPicker,
     Setup,
+    AttachmentModels,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -271,6 +267,7 @@ pub(crate) enum ModalKind {
     BackgroundCommandOutput,
     BackgroundModels,
     BgModelPicker,
+    AttachmentModels,
 }
 
 impl ModalKind {
@@ -298,6 +295,7 @@ impl ModalKind {
             Self::BackgroundCommandOutput => Mode::BackgroundCommandOutput,
             Self::BackgroundModels => Mode::BackgroundModels,
             Self::BgModelPicker => Mode::BgModelPicker,
+            Self::AttachmentModels => Mode::AttachmentModels,
         }
     }
 }

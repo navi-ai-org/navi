@@ -1,3 +1,4 @@
+mod attachment_tool;
 mod credentials;
 mod engine;
 mod engine_driver;
@@ -30,8 +31,8 @@ pub use types::{
 };
 
 // Re-export engine types so TUI/clients can import from navi_sdk instead of navi_core.
-pub use navi_core::ContentPart;
 pub use navi_core::ProviderId;
+pub use navi_core::{AttachmentKind, ContentPart};
 // Session utilities
 pub use navi_core::session::{
     clean_session_title, current_unix_timestamp, session_title_from_events,
@@ -52,10 +53,10 @@ pub use navi_core::{
 };
 // Config/provider types
 pub use navi_core::{
-    BackgroundModelEntry, BackgroundModelsConfig, CompactState, CompactThreshold, CredentialStore,
-    HarnessPolicy, HarnessProfile, LoadedConfig, ModelOption, ModelTaskSize, NaviConfig,
-    ProviderConfig, ProviderKind, ProviderModelConfig, SessionStore, ThinkingConfig,
-    select_harness_policy,
+    AttachmentModelsConfig, BackgroundModelEntry, BackgroundModelsConfig, CompactState,
+    CompactThreshold, CredentialStore, HarnessPolicy, HarnessProfile, LoadedConfig, ModelOption,
+    ModelTaskSize, NaviConfig, ProviderConfig, ProviderKind, ProviderModelConfig, SessionStore,
+    ThinkingConfig, select_harness_policy,
 };
 // Utility functions
 pub use navi_core::{

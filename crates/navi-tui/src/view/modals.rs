@@ -1461,3 +1461,77 @@ fn format_reset(seconds: i32) -> String {
         format!("in {minutes}m")
     }
 }
+
+pub(super) fn render_attachment_models(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
+    clear_modal_area(frame, area);
+    let block = modal_block("Attachment Fallbacks");
+    frame.render_widget(block, area);
+
+    let inner = area.inner(Margin {
+        horizontal: 2,
+        vertical: 1,
+    });
+
+    let modalities: &[(&str, &str)] = &[
+        ("image", "Image analysis fallback"),
+        ("audio", "Audio analysis fallback"),
+        ("video", "Video analysis fallback"),
+        ("document", "Document analysis fallback"),
+    ];
+
+    let mut rows: Vec<Line> = Vec::new();
+    let config = &app.loaded_config.config.attachment_models;
+
+    for (i, (modality, description)) in modalities.iter().enumerate() {
+        let selected = i == app.selected_attachment_model;
+        let resolved_label =
+            crate::keybindings::modals::resolve_attachment_model_label(app, modality);
+        let has_override =
+            crate::keybindings::modals::attachment_model_has_override(config, modality);
+
+        let task_style = if selected {
+            Style::default().fg(signal()).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(text())
+        };
+        let model_style = if selected {
+            Style::default().fg(accent()).add_modifier(Modifier::BOLD)
+        } else if has_override {
+            Style::default().fg(accent())
+        } else {
+            Style::default().fg(muted())
+        };
+        let desc_style = Style::default().fg(ghost());
+
+        rows.push(Line::from(vec![
+            Span::styled(format!("{:>20}", modality), task_style),
+            Span::styled("  →  ", desc_style),
+            Span::styled(resolved_label, model_style),
+        ]));
+        rows.push(Line::from(vec![Span::styled(
+            format!("  {:>20}  ", description),
+            desc_style,
+        )]));
+    }
+
+    let list = Paragraph::new(rows).style(Style::default().bg(modal_bg()));
+    frame.render_widget(list, inner);
+
+    // Footer hints.
+    let footer_y = inner.y + inner.height.saturating_sub(1);
+    if footer_y > inner.y {
+        let footer_rect = Rect::new(inner.x, footer_y, inner.width, 1);
+        let hints = Line::from(vec![
+            Span::styled("  [enter]", Style::default().fg(signal())),
+            Span::styled(" pick model  ", Style::default().fg(muted())),
+            Span::styled("[d]", Style::default().fg(signal())),
+            Span::styled(" reset  ", Style::default().fg(muted())),
+            Span::styled("[esc]", Style::default().fg(signal())),
+            Span::styled(" close", Style::default().fg(muted())),
+        ]);
+        frame.render_widget(
+            Paragraph::new(hints).style(Style::default().bg(modal_bg())),
+            footer_rect,
+        );
+    }
+}

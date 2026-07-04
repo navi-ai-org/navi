@@ -83,6 +83,13 @@ export type RuntimeEvent = {
   kind: JsonValue;
 };
 
+export type ContentPart =
+  | { type: 'text'; text: string }
+  | { type: 'image'; media_type: string; data: string }
+  | { type: 'audio'; media_type: string; data: string; name?: string | null }
+  | { type: 'video'; media_type: string; data: string; name?: string | null }
+  | { type: 'document'; media_type: string; data: string; name?: string | null };
+
 export type HostToolHandler = (invocation: HostToolInvocation) => Promise<HostToolResult | JsonValue>;
 export type HookHandler = (payload: HookPayload) => void;
 
@@ -101,7 +108,7 @@ export class NaviNapiEngineBuilder {
 }
 
 export interface TurnOptions {
-  contentParts?: JsonValue[];
+  contentParts?: ContentPart[] | JsonValue[];
   contextPackets?: JsonValue[];
   thinking?: 'max' | 'high' | 'medium' | 'low' | 'off' | 'adaptive';
 }
@@ -125,6 +132,12 @@ export interface ProviderSyncReport {
 
 export interface EngineConfig {
   model: { provider: string; name: string };
+  attachmentModels?: {
+    image?: { provider: string; name: string } | null;
+    audio?: { provider: string; name: string } | null;
+    video?: { provider: string; name: string } | null;
+    document?: { provider: string; name: string } | null;
+  };
   globalConfigPath?: string;
   projectConfigPath?: string;
   dataDir: string;
@@ -138,7 +151,7 @@ export interface ActiveSessions {
 export class NaviNapiEngine {
   constructor(projectDir: string, learningTutor?: boolean | null);
   static learningTutor(projectDir: string): NaviNapiEngine;
-  startSession(sessionId?: string | null): Promise<SessionInfo>;
+  startSession(sessionId?: string | null, projectDir?: string | null): Promise<SessionInfo>;
   sendTurn(sessionId: string, message: string, options?: TurnOptions): Promise<TurnResponse>;
   snapshotSession(sessionId: string): Promise<string>;
   closeSession(sessionId: string): Promise<boolean>;

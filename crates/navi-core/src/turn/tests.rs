@@ -767,3 +767,63 @@ fn test_cancellation_token_reflects_cancel() {
     token.cancel();
     assert!(token.is_requested());
 }
+
+#[test]
+fn rewrite_unsupported_attachments_keeps_supported_images_and_routes_audio() {
+    let tempdir = tempfile::tempdir().unwrap();
+    let ctx = build_test_ctx(tempdir.path().to_path_buf());
+    let mut config = crate::config::NaviConfig::default();
+    config.model.provider = "test-provider".to_string();
+    config.model.name = "chat-model".to_string();
+    config.providers = vec![crate::config::ProviderConfig {
+        id: "test-provider".to_string(),
+        label: "Test".to_string(),
+        description: String::new(),
+        kind: crate::config::ProviderKind::OpenAiResponses,
+        api_key_env: "TEST_KEY".to_string(),
+        base_url: Some("https://example.test/v1".to_string()),
+        models: vec![crate::config::ProviderModelConfig {
+            name: "chat-model".to_string(),
+            task_size: crate::config::ModelTaskSize::Large,
+            context_window_tokens: None,
+            max_output_tokens: None,
+            recommended_temperature: None,
+            supports_thinking: None,
+            supports_images: Some(true),
+            supports_audio: Some(false),
+            supports_video: None,
+            supports_documents: None,
+            tool_prompt_manifest: None,
+        }],
+        ..Default::default()
+    }];
+    *ctx.config.write().unwrap() = config;
+
+    let messages = vec![ModelMessage::user_multimodal(
+        "inspect",
+        vec![
+            ContentPart::Text {
+                text: "inspect".to_string(),
+            },
+            ContentPart::Image {
+                media_type: "image/png".to_string(),
+                data: "image-data".to_string(),
+            },
+            ContentPart::Audio {
+                media_type: "audio/mpeg".to_string(),
+                data: "audio-data".to_string(),
+                name: Some("clip.mp3".to_string()),
+            },
+        ],
+    )];
+
+    let rewritten = rewrite_unsupported_attachments(&ctx, &messages);
+    assert!(matches!(
+        rewritten[0].content_parts[1],
+        ContentPart::Image { .. }
+    ));
+    let routed = rewritten[0].content_parts[2].as_text().unwrap();
+    assert!(routed.contains("\"tool\":\"analyze_attachment\""));
+    assert!(routed.contains("\"kind\":\"audio\""));
+    assert!(routed.contains("\"data\":\"audio-data\""));
+}

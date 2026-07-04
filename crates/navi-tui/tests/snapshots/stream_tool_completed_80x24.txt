@@ -1,10 +1,10 @@
   main  /tmp/navi-test-project
 
+
         read the file
 
+
    ✓ Read src/main.rs
-
-
 
 
 

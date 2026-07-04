@@ -292,6 +292,7 @@ impl RegistryStore {
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, NULL)",
             )?;
 
+            let attachment_defaults = &provider.defaults.attachments;
             for model in &provider.models {
                 stmt.execute(params![
                     provider.id,
@@ -301,10 +302,10 @@ impl RegistryStore {
                     model.max_output_tokens.map(|v| v as i64),
                     model.recommended_temperature,
                     model.supports_thinking.map(|v| v as i64),
-                    registry_model_supports_images(model).map(|v| v as i64),
-                    registry_model_supports_audio(model).map(|v| v as i64),
-                    registry_model_supports_video(model).map(|v| v as i64),
-                    registry_model_supports_documents(model).map(|v| v as i64),
+                    registry_model_supports_images(model, attachment_defaults).map(|v| v as i64),
+                    registry_model_supports_audio(model, attachment_defaults).map(|v| v as i64),
+                    registry_model_supports_video(model, attachment_defaults).map(|v| v as i64),
+                    registry_model_supports_documents(model, attachment_defaults).map(|v| v as i64),
                 ])?;
             }
         }
@@ -717,15 +718,16 @@ fn parse_tool_calling_mode(s: &str) -> ToolCallingMode {
 pub fn registry_provider_to_config(rp: RegistryProvider) -> ProviderConfig {
     let kind = parse_provider_kind(&rp.kind);
     let tool_calling_mode = rp.tool_calling_mode.as_deref().map(parse_tool_calling_mode);
+    let attachment_defaults = rp.defaults.attachments;
 
     let models = rp
         .models
         .into_iter()
         .map(|m| {
-            let supports_images = registry_model_supports_images(&m);
-            let supports_audio = registry_model_supports_audio(&m);
-            let supports_video = registry_model_supports_video(&m);
-            let supports_documents = registry_model_supports_documents(&m);
+            let supports_images = registry_model_supports_images(&m, &attachment_defaults);
+            let supports_audio = registry_model_supports_audio(&m, &attachment_defaults);
+            let supports_video = registry_model_supports_video(&m, &attachment_defaults);
+            let supports_documents = registry_model_supports_documents(&m, &attachment_defaults);
             ProviderModelConfig {
                 name: m.name,
                 task_size: match m.task_size.as_str() {
@@ -770,35 +772,65 @@ fn registry_model_has_capability(model: &super::types::RegistryModel, names: &[&
     })
 }
 
-fn registry_model_supports_images(model: &super::types::RegistryModel) -> Option<bool> {
-    model.supports_images.or_else(|| {
-        (model.supports_attachments == Some(true)
-            || registry_model_has_capability(model, &["image", "images", "vision"]))
-        .then_some(true)
-    })
-}
-
-fn registry_model_supports_audio(model: &super::types::RegistryModel) -> Option<bool> {
-    model.supports_audio.or_else(|| {
-        registry_model_has_capability(model, &["audio", "sound", "speech"]).then_some(true)
-    })
-}
-
-fn registry_model_supports_video(model: &super::types::RegistryModel) -> Option<bool> {
+fn registry_model_supports_images(
+    model: &super::types::RegistryModel,
+    defaults: &super::types::RegistryAttachments,
+) -> Option<bool> {
     model
-        .supports_video
-        .or_else(|| registry_model_has_capability(model, &["video"]).then_some(true))
+        .attachments
+        .images
+        .or(model.supports_images)
+        .or_else(|| {
+            (model.supports_attachments == Some(true)
+                || registry_model_has_capability(model, &["image", "images", "vision"]))
+            .then_some(true)
+        })
+        .or(defaults.images)
 }
 
-fn registry_model_supports_documents(model: &super::types::RegistryModel) -> Option<bool> {
-    model.supports_documents.or_else(|| {
-        (model.supports_attachments == Some(true)
-            || registry_model_has_capability(
-                model,
-                &["document", "documents", "pdf", "file", "files"],
-            ))
-        .then_some(true)
-    })
+fn registry_model_supports_audio(
+    model: &super::types::RegistryModel,
+    defaults: &super::types::RegistryAttachments,
+) -> Option<bool> {
+    model
+        .attachments
+        .audio
+        .or(model.supports_audio)
+        .or_else(|| {
+            registry_model_has_capability(model, &["audio", "sound", "speech"]).then_some(true)
+        })
+        .or(defaults.audio)
+}
+
+fn registry_model_supports_video(
+    model: &super::types::RegistryModel,
+    defaults: &super::types::RegistryAttachments,
+) -> Option<bool> {
+    model
+        .attachments
+        .video
+        .or(model.supports_video)
+        .or_else(|| registry_model_has_capability(model, &["video"]).then_some(true))
+        .or(defaults.video)
+}
+
+fn registry_model_supports_documents(
+    model: &super::types::RegistryModel,
+    defaults: &super::types::RegistryAttachments,
+) -> Option<bool> {
+    model
+        .attachments
+        .documents
+        .or(model.supports_documents)
+        .or_else(|| {
+            (model.supports_attachments == Some(true)
+                || registry_model_has_capability(
+                    model,
+                    &["document", "documents", "pdf", "file", "files"],
+                ))
+            .then_some(true)
+        })
+        .or(defaults.documents)
 }
 
 fn ensure_provider_request_options_column(conn: &Connection) -> Result<()> {
@@ -906,6 +938,7 @@ mod tests {
             api_key_env: "TEST_API_KEY".to_string(),
             base_url: Some("https://api.test.com/v1".to_string()),
             tool_calling_mode: None,
+            defaults: Default::default(),
             request_options: Default::default(),
             models: vec![
                 RegistryModel {
@@ -920,6 +953,7 @@ mod tests {
                     supports_audio: None,
                     supports_video: None,
                     supports_documents: None,
+                    attachments: Default::default(),
                     capabilities: Vec::new(),
                 },
                 RegistryModel {
@@ -934,6 +968,7 @@ mod tests {
                     supports_audio: None,
                     supports_video: None,
                     supports_documents: None,
+                    attachments: Default::default(),
                     capabilities: Vec::new(),
                 },
             ],
@@ -1004,6 +1039,7 @@ mod tests {
             supports_audio: None,
             supports_video: None,
             supports_documents: None,
+            attachments: Default::default(),
             capabilities: Vec::new(),
         }];
         store.upsert_provider(&provider).expect("upsert again");
@@ -1030,6 +1066,7 @@ mod tests {
             api_key_env: "OTHER_KEY".to_string(),
             base_url: None,
             tool_calling_mode: None,
+            defaults: Default::default(),
             request_options: Default::default(),
             models: vec![],
         }];
@@ -1066,6 +1103,7 @@ mod tests {
             api_key_env: "K".to_string(),
             base_url: None,
             tool_calling_mode: None,
+            defaults: Default::default(),
             request_options: Default::default(),
             models: vec![RegistryModel {
                 name: "m".to_string(),
@@ -1079,6 +1117,7 @@ mod tests {
                 supports_audio: None,
                 supports_video: None,
                 supports_documents: None,
+                attachments: Default::default(),
                 capabilities: Vec::new(),
             }],
         };
@@ -1207,6 +1246,7 @@ mod tests {
             api_key_env: "TINY_KEY".to_string(),
             base_url: None,
             tool_calling_mode: None,
+            defaults: Default::default(),
             request_options: Default::default(),
             models: vec![RegistryModel {
                 name: "tiny-model".to_string(),
@@ -1220,6 +1260,7 @@ mod tests {
                 supports_audio: None,
                 supports_video: None,
                 supports_documents: None,
+                attachments: Default::default(),
                 capabilities: Vec::new(),
             }],
         };

@@ -49,13 +49,7 @@ fn render_inner(frame: &mut Frame<'_>, app: &mut TuiApp) {
     } else {
         input::composer_hint_height(app)
     };
-    let image_preview_height = if app.pending_images.is_empty() {
-        0
-    } else if compact_viewport {
-        4
-    } else {
-        image_preview::IMAGE_PREVIEW_HEIGHT
-    };
+    let image_preview_height = 0;
     let input_activity_height = input::composer_activity_height(app);
     let layout_constraints = if compact_viewport {
         // compact: keep fixed-size input from overlapping chat by capping chat to remainder
@@ -91,12 +85,7 @@ fn render_inner(frame: &mut Frame<'_>, app: &mut TuiApp) {
     chat::render_chat_area(frame, app, vertical[1]);
 
     // Render image previews above input
-    let input_area = if !app.pending_images.is_empty() {
-        image_preview::render_image_previews(frame, app, vertical[2]);
-        vertical[4]
-    } else {
-        vertical[4]
-    };
+    let input_area = vertical[4];
 
     input::render_input_activity(frame, app, vertical[3]);
     input::render_input(frame, app, input_area);
@@ -142,6 +131,9 @@ fn render_inner(frame: &mut Frame<'_>, app: &mut TuiApp) {
             modals::render_background_models(frame, app, modal_rect(area, 70, 14))
         }
         Mode::BgModelPicker => model_picker::render(frame, app, modal_rect(area, 72, 22)),
+        Mode::AttachmentModels => {
+            modals::render_attachment_models(frame, app, modal_rect(area, 70, 12))
+        }
         Mode::Normal => {}
         Mode::Setup => setup::render_setup(frame, app, content_area),
     }

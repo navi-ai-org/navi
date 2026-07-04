@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 use ratatui::layout::Rect;
 use ratatui::prelude::{Frame, Line, Span};
 use ratatui::style::Style;

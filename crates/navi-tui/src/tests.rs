@@ -23,7 +23,8 @@ use crate::render::command_scroll_offset;
 use crate::render::markdown::is_empty_tool_placeholder;
 use crate::render::tool::tool_full_content;
 use crate::state::{
-    ChatLineSource, ChatMessage, ChatRole, ModalKind, Mode, Notification, SelectionState,
+    ChatLineSource, ChatMessage, ChatRole, ModalKind, Mode, Notification, PendingImage,
+    SelectionState,
 };
 use crate::theme::NOTIFICATION_TTL;
 use crate::tools::record_tool_requested;
@@ -35,9 +36,9 @@ use crate::ui::text_input::{
 use crate::view::build_chat_lines;
 use crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use navi_sdk::{
-    AgentEvent, BackgroundCommandSnapshot, BackgroundTaskStatus, LoadedConfig, ModelMessage,
-    ModelOption, SessionId, SessionSnapshot, SubagentTranscriptItem, SubagentTranscriptKind,
-    ToolInvocation, ToolResult,
+    AgentEvent, BackgroundCommandSnapshot, BackgroundTaskStatus, ContentPart, LoadedConfig,
+    ModelMessage, ModelOption, SessionId, SessionSnapshot, SubagentTranscriptItem,
+    SubagentTranscriptKind, ToolInvocation, ToolResult,
 };
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
@@ -1615,10 +1616,11 @@ fn command_palette_scroll_offset_keeps_selection_visible() {
     let mut app = test_app("");
     app.mode = Mode::Commands;
     app.selected_command = 0;
-    for _ in 0..20 {
+    let cmd_count = filtered_commands(&app).len();
+    for _ in 0..cmd_count {
         handle_command_key(&mut app, KeyCode::Down);
     }
-    assert_eq!(app.selected_command, filtered_commands(&app).len() - 1);
+    assert_eq!(app.selected_command, cmd_count - 1);
 
     handle_command_key(&mut app, KeyCode::PageUp);
     assert_eq!(
@@ -1650,6 +1652,37 @@ fn submit_sends_raw_input_text() {
         app.messages
             .iter()
             .any(|message| message.content == "/literal inspect first")
+    );
+}
+
+#[test]
+fn submit_with_pending_image_handles_utf8_before_tag() {
+    let mut app = test_app("");
+    app.provider_configured = false;
+    app.input = "ação [Image 1]".to_string();
+    app.input_cursor = app.input.len();
+    app.pending_images.push(PendingImage {
+        media_type: "image/png".to_string(),
+        data: "abc123".to_string(),
+        width: Some(10),
+        height: Some(20),
+    });
+
+    submit_message(&mut app);
+
+    let message = app.conversation_history.last().unwrap();
+    assert_eq!(message.content, "ação [Image 1]");
+    assert_eq!(
+        message.content_parts,
+        vec![
+            ContentPart::Text {
+                text: "ação ".to_string()
+            },
+            ContentPart::Image {
+                media_type: "image/png".to_string(),
+                data: "abc123".to_string()
+            },
+        ]
     );
 }
 
