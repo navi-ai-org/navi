@@ -581,10 +581,10 @@ pub fn resolve_provider_api_key(
 
     provider_env_api_key_for_config(provider_config)
         .or_else(|| opencode_auth_json_api_key(credential_store, &provider_config.id))
-        .or_else(|| stored_model_api_key_or_openai_oauth(credential_store, &provider_config.id))
+        .or_else(|| credential_store.get_model_api_key(&provider_config.id))
         .or_else(|| {
             if requested_provider_id != provider_config.id {
-                stored_model_api_key_or_openai_oauth(credential_store, requested_provider_id)
+                credential_store.get_model_api_key(requested_provider_id)
             } else {
                 None
             }
@@ -604,22 +604,15 @@ pub fn resolve_provider_api_key_for_project(
     credential_store
         .get_project_account(project_dir, &provider_config.id)
         .and_then(|account_id| {
-            stored_model_api_key_for_account_or_openai_oauth(
-                credential_store,
-                &provider_config.id,
-                &account_id,
-            )
+            credential_store.get_model_api_key_for_account(&provider_config.id, &account_id)
         })
         .or_else(|| {
             if requested_provider_id != provider_config.id {
                 credential_store
                     .get_project_account(project_dir, requested_provider_id)
                     .and_then(|account_id| {
-                        stored_model_api_key_for_account_or_openai_oauth(
-                            credential_store,
-                            requested_provider_id,
-                            &account_id,
-                        )
+                        credential_store
+                            .get_model_api_key_for_account(requested_provider_id, &account_id)
                     })
             } else {
                 None
@@ -687,15 +680,6 @@ pub fn resolve_provider_credential_status(
         || (requested_provider_id != provider_config.id
             && credential_store.has_oauth_credential(requested_provider_id))
     {
-        if provider_config.id == ProviderId::OPENAI || requested_provider_id == ProviderId::OPENAI {
-            return CredentialStatus {
-                configured: true,
-                source: Some(CredentialSource::Stored),
-                label: "oauth".to_string(),
-                detail: Some("stored ChatGPT OAuth credential".to_string()),
-            };
-        }
-
         return CredentialStatus {
             configured: false,
             source: None,
@@ -725,32 +709,6 @@ pub fn resolve_provider_credential_status(
         label: "missing".to_string(),
         detail: None,
     }
-}
-
-fn stored_model_api_key_or_openai_oauth(
-    credential_store: &CredentialStore,
-    provider_id: &str,
-) -> Option<String> {
-    credential_store.get_model_api_key(provider_id).or_else(|| {
-        (provider_id == ProviderId::OPENAI && credential_store.has_oauth_credential(provider_id))
-            .then(|| credential_store.get_api_key(provider_id))
-            .flatten()
-    })
-}
-
-fn stored_model_api_key_for_account_or_openai_oauth(
-    credential_store: &CredentialStore,
-    provider_id: &str,
-    account_id: &str,
-) -> Option<String> {
-    credential_store
-        .get_model_api_key_for_account(provider_id, account_id)
-        .or_else(|| {
-            (provider_id == ProviderId::OPENAI
-                && credential_store.has_oauth_credential(provider_id))
-            .then(|| credential_store.get_api_key_for_account(provider_id, account_id))
-            .flatten()
-        })
 }
 
 fn provider_env_api_key_for_config(provider_config: &ProviderConfig) -> Option<String> {

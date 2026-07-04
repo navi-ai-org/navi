@@ -1,16 +1,27 @@
 use super::*;
-use crate::{PermissiveSecurityPolicy, SecurityConfig, SecurityDecision, SecurityPolicy};
-use std::path::Path;
+use crate::{
+    PermissionMode, PermissiveSecurityPolicy, SecurityConfig, SecurityDecision, SecurityPolicy,
+};
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 fn executor(root: &Path) -> ToolExecutor {
-    let policy = SecurityPolicy::new(
-        root.to_path_buf(),
-        root.join(".navi-data"),
-        SecurityConfig::default(),
-    )
-    .expect("policy");
+    let config = SecurityConfig {
+        permission_mode: PermissionMode::Yolo,
+        ..SecurityConfig::default()
+    };
+    let policy =
+        SecurityPolicy::new(root.to_path_buf(), root.join(".navi-data"), config).expect("policy");
     ToolExecutor::new(policy)
+}
+
+fn test_feature_list_path(root: &Path) -> PathBuf {
+    std::fs::read_dir(root.join(".navi-data").join("sprints"))
+        .expect("sprint dir")
+        .filter_map(|entry| entry.ok())
+        .map(|entry| entry.path().join("feature_list.json"))
+        .find(|path| path.exists())
+        .expect("feature list")
 }
 
 #[test]
@@ -855,8 +866,12 @@ async fn init_session_creates_feature_contract_files() {
 
     assert!(result.ok);
     assert_eq!(result.output["status"], "initialized");
-    let feature_list = tempdir.path().join(".navi/feature_list.json");
-    let progress = tempdir.path().join(".navi/navi-progress.txt");
+    let feature_list = Path::new(
+        result.output["feature_list"]
+            .as_str()
+            .expect("feature list"),
+    );
+    let progress = Path::new(result.output["progress"].as_str().expect("progress"));
     assert!(feature_list.exists());
     assert!(progress.exists());
     let content = std::fs::read_to_string(feature_list).expect("feature list");
@@ -898,8 +913,8 @@ async fn mark_feature_done_runs_verification_before_passing() {
     assert!(result.ok);
     assert_eq!(result.output["status"], "feature_completed");
     assert_eq!(result.output["passes"], true);
-    let content = std::fs::read_to_string(tempdir.path().join(".navi/feature_list.json"))
-        .expect("feature list");
+    let feature_list = test_feature_list_path(tempdir.path());
+    let content = std::fs::read_to_string(feature_list).expect("feature list");
     assert!(content.contains(r#""passes": true"#));
     assert!(content.contains("verified"));
 }
@@ -940,8 +955,8 @@ async fn mark_feature_done_rejects_verification_contract_mismatch() {
         result.output["error_code"],
         "verification_contract_mismatch"
     );
-    let content = std::fs::read_to_string(tempdir.path().join(".navi/feature_list.json"))
-        .expect("feature list");
+    let content =
+        std::fs::read_to_string(test_feature_list_path(tempdir.path())).expect("feature list");
     assert!(content.contains(r#""passes": false"#));
 }
 

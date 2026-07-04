@@ -7,6 +7,7 @@ use ratatui::widgets::{List, ListItem, ListState, Paragraph};
 
 use crate::TuiApp;
 use crate::providers::{ListRow, build_model_rows, selected_model_in_rows};
+use crate::render::text::display_width;
 use crate::render::{clear_modal_area, modal_block, modal_list_highlight_style};
 use crate::theme::*;
 use crate::ui::interaction::{HitAction, line_rect};
@@ -36,12 +37,13 @@ pub(super) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
         ])
         .split(inner);
 
-    let left = format!("  {title}");
-    let right = "esc";
-    let gap = rows[0]
-        .width
-        .saturating_sub((left.chars().count() + right.chars().count()) as u16)
-        .max(1) as usize;
+    let title_width = rows[0].width as usize;
+    let right = fit_display_width("esc", title_width);
+    let left_width = title_width.saturating_sub(display_width(&right) + 1);
+    let left = fit_display_width(&format!("  {title}"), left_width);
+    let gap = title_width
+        .saturating_sub(display_width(&left) + display_width(&right))
+        .max(1);
     let title_line = Line::from(vec![
         Span::styled(left, Style::default().fg(text()).bg(modal_bg())),
         Span::styled(" ".repeat(gap), Style::default().bg(modal_bg())),
@@ -72,7 +74,16 @@ pub(super) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
 
     let list_rows = build_model_rows(app);
     let list_area = rows[2];
-    let row_width = list_area.width as usize;
+    let has_scrollbar = list_rows.len() > list_area.height as usize;
+    let list_content_area = if has_scrollbar && list_area.width > 1 {
+        Rect {
+            width: list_area.width - 1,
+            ..list_area
+        }
+    } else {
+        list_area
+    };
+    let row_width = list_content_area.width as usize;
 
     if list_rows.is_empty() {
         // No authenticated providers — show instructional empty state.
@@ -132,8 +143,11 @@ pub(super) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
             ListRow::Header { label, .. } => {
                 let header_style = Style::default().fg(signal()).bg(modal_bg());
                 let label = clean_section_label(label);
-                ListItem::new(Line::from(Span::styled(format!("  {label}"), header_style)))
-                    .style(header_style)
+                ListItem::new(Line::from(Span::styled(
+                    fit_display_width(&format!("  {label}"), row_width),
+                    header_style,
+                )))
+                .style(header_style)
             }
             ListRow::Model { index } => {
                 let model = &app.models[*index];
@@ -163,7 +177,7 @@ pub(super) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
         List::new(items)
             .style(Style::default().bg(modal_bg()))
             .highlight_style(modal_list_highlight_style()),
-        list_area,
+        list_content_area,
         &mut list_state,
     );
     render_scrollbar(
@@ -180,7 +194,10 @@ pub(super) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
         .skip(app.model_scroll)
         .take(list_area.height as usize)
     {
-        let rect = line_rect(list_area, row_offset.saturating_sub(app.model_scroll));
+        let rect = line_rect(
+            list_content_area,
+            row_offset.saturating_sub(app.model_scroll),
+        );
         match row {
             ListRow::Header {
                 provider_id, label, ..
@@ -203,8 +220,11 @@ pub(super) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
         }
     }
     frame.render_widget(
-        Paragraph::new("  Connect provider  ctrl+e   Favorite  ctrl+f")
-            .style(Style::default().fg(text()).bg(modal_bg())),
+        Paragraph::new(fit_display_width(
+            "  Connect provider  ctrl+e   Favorite  ctrl+f",
+            rows[3].width as usize,
+        ))
+        .style(Style::default().fg(text()).bg(modal_bg())),
         rows[3],
     );
 }
@@ -251,10 +271,10 @@ fn model_row_line(
     } else {
         String::new()
     };
-    let reserved = right.chars().count().saturating_add(1);
+    let reserved = display_width(&right).saturating_add(1);
     let left_width = width.saturating_sub(reserved).max(1);
-    let left = fit_chars(&left, left_width);
-    let used = left.chars().count() + right.chars().count();
+    let left = fit_display_width(&left, left_width);
+    let used = display_width(&left) + display_width(&right);
     let gap = width.saturating_sub(used).max(1);
     Line::from(vec![
         Span::styled(left, style),
@@ -268,17 +288,26 @@ fn model_row_line(
     ])
 }
 
-fn fit_chars(value: &str, max_chars: usize) -> String {
-    if max_chars == 0 {
-        return String::new();
-    }
-    if value.chars().count() <= max_chars {
+fn fit_display_width(value: &str, width: usize) -> String {
+    if display_width(value) <= width {
         return value.to_string();
     }
-    if max_chars == 1 {
+    if width == 0 {
+        return String::new();
+    }
+    if width == 1 {
         return "…".to_string();
     }
-    let mut result = value.chars().take(max_chars - 1).collect::<String>();
+    let mut result = String::new();
+    let mut used = 0usize;
+    for ch in value.chars() {
+        let char_width = display_width(&ch.to_string());
+        if used + char_width >= width {
+            break;
+        }
+        result.push(ch);
+        used += char_width;
+    }
     result.push('…');
     result
 }

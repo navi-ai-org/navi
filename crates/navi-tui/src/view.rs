@@ -24,6 +24,7 @@ use crate::render::{fill_modal_scrim, modal_rect, opaque_fill};
 use crate::state::Mode;
 use crate::theme::{self, bg, ghost, muted, text};
 use crate::ui::layout::{RootLayoutHeights, root_layout, viewport_rect};
+use navi_core::PermissionMode;
 
 /// Setup-specific rendering: welcome text or interview chat.
 mod setup;
@@ -194,6 +195,52 @@ fn render_header(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
         Paragraph::new(Line::from(spans)).style(Style::default().bg(bg())),
         area,
     );
+
+    render_permission_mode(frame, app, area);
+}
+
+fn render_permission_mode(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
+    if area.width < 72 {
+        return;
+    }
+
+    let mode = current_permission_mode(app);
+    let label = permission_mode_label(mode);
+    let right_width = (label.len() + 7) as u16;
+    if right_width >= area.width {
+        return;
+    }
+    let rect = Rect {
+        x: area.x + area.width - right_width,
+        y: area.y,
+        width: right_width,
+        height: 1,
+    };
+    frame.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::styled("mode ", Style::default().fg(muted()).bg(bg())),
+            Span::styled(label, Style::default().fg(crate::theme::signal()).bg(bg())),
+            Span::styled(" ", Style::default().fg(ghost()).bg(bg())),
+        ]))
+        .style(Style::default().bg(bg())),
+        rect,
+    );
+}
+
+fn current_permission_mode(app: &TuiApp) -> PermissionMode {
+    if app.yolo_mode {
+        PermissionMode::Yolo
+    } else {
+        app.loaded_config.config.security.permission_mode
+    }
+}
+
+fn permission_mode_label(mode: PermissionMode) -> &'static str {
+    match mode {
+        PermissionMode::Restricted => "restricted",
+        PermissionMode::AcceptEdits => "accept-edits",
+        PermissionMode::Yolo => "yolo",
+    }
 }
 
 fn project_path_label(app: &TuiApp) -> String {

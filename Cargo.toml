@@ -53,6 +53,7 @@ directories = "6"
 libloading = "0.9"
 ratatui = { version = "0.30", default-features = false, features = ["crossterm", "layout-cache", "macros", "underline-color"] }
 reqwest = { version = "0.13", default-features = false, features = ["json", "rustls", "stream"] }
+regex = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"

@@ -4,7 +4,7 @@ use crate::compact::{
 };
 use crate::config::types::{
     ApprovalConfig, HarnessConfig, HarnessProfile, HistoryConfig, LoggingConfig, MemoryConfig,
-    ModelConfig, SecurityConfig, ToolPromptManifest,
+    ModelConfig, PermissionMode, SecurityConfig, ToolPromptManifest,
 };
 
 impl Default for ModelConfig {
@@ -60,6 +60,13 @@ impl Default for ApprovalConfig {
 impl Default for SecurityConfig {
     fn default() -> Self {
         Self {
+            permission_mode: PermissionMode::Restricted,
+            allow_tools: Vec::new(),
+            allow_tool_regex: Vec::new(),
+            ask_tools: Vec::new(),
+            ask_tool_regex: Vec::new(),
+            deny_tools: Vec::new(),
+            deny_tool_regex: Vec::new(),
             restrict_paths_to_project: false,
             protect_git_metadata: true,
             redact_secrets_in_sessions: true,

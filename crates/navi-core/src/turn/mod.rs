@@ -678,6 +678,19 @@ async fn handle_tool_calls(
             invocation.tool_name,
             observation,
         ));
+        if let Some(summary) = manual_context_summary(&result) {
+            if let Some(ref tx) = ctx.event_tx {
+                let _ = tx.send(AgentEvent::AutoCompactStarted);
+            }
+            let tokens_saved = {
+                let mut state = ctx.compact_state.lock().await;
+                state.apply_manual_summary(messages, summary)
+            };
+            if let Some(ref tx) = ctx.event_tx {
+                let _ = tx.send(AgentEvent::AutoCompactCompleted { tokens_saved });
+            }
+            return Some("Context compacted.".to_string());
+        }
         if let Some(stop) = stop {
             let text = finalize_harness_stop(ctx, messages, stop);
             return Some(text);
@@ -685,6 +698,14 @@ async fn handle_tool_calls(
     }
 
     None
+}
+
+fn manual_context_summary(result: &crate::tool::ToolResult) -> Option<String> {
+    if !result.ok || result.output.get("new_context_requested")?.as_bool()? != true {
+        return None;
+    }
+    let summary = result.output.get("summary")?.as_str()?.trim();
+    (!summary.is_empty()).then(|| summary.to_string())
 }
 
 async fn execute_tool_call_with_parallelism(
@@ -925,6 +946,7 @@ async fn approve_and_invoke_tool(
     };
 
     let approval_risk = match risk {
+        crate::security::SecurityRisk::Tool => crate::event::ApprovalRisk::Tool,
         crate::security::SecurityRisk::Write => crate::event::ApprovalRisk::Write,
         crate::security::SecurityRisk::Command => crate::event::ApprovalRisk::Command,
         crate::security::SecurityRisk::GuardedCommand => crate::event::ApprovalRisk::Guarded,

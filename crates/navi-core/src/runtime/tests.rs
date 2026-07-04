@@ -1,5 +1,5 @@
 use super::*;
-use crate::config::{ApprovalConfig, HarnessConfig};
+use crate::config::{ApprovalConfig, HarnessConfig, PermissionMode};
 use crate::{
     ModelRequest, ModelStream, ModelStreamEvent, NaviConfig, SecurityConfig, ToolInvocation,
 };
@@ -116,7 +116,10 @@ async fn headless_runtime_executes_read_tools_and_continues() {
         config: NaviConfig {
             harness: HarnessConfig::default(),
             approvals: ApprovalConfig::default(),
-            security: SecurityConfig::default(),
+            security: SecurityConfig {
+                permission_mode: PermissionMode::AcceptEdits,
+                ..SecurityConfig::default()
+            },
             ..NaviConfig::default()
         },
         global_config_path: None,

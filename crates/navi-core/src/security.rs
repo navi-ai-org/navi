@@ -1,4 +1,4 @@
-use crate::config::SecurityConfig;
+use crate::config::{PermissionMode, SecurityConfig};
 use crate::effect::{BlastRadius, EffectAnalyzer, PostDecision};
 use crate::event::{AgentEvent, ApprovalRequest, SubagentTranscriptItem};
 use crate::patch::PatchProposal;
@@ -31,6 +31,8 @@ pub enum SecurityDecision {
 /// The kind of risk identified by a security check.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SecurityRisk {
+    /// Any tool execution in restricted mode.
+    Tool,
     /// A write operation that modifies the filesystem.
     Write,
     /// A shell command execution.
@@ -203,18 +205,113 @@ impl SecurityPolicy {
         definition: &ToolDefinition,
         invocation: &ToolInvocation,
     ) -> SecurityDecision {
-        match definition.kind {
+        if let Some(decision) = self.tool_rule_decision(definition, invocation) {
+            return decision;
+        }
+
+        let base_decision = match definition.kind {
             ToolKind::Read => self
                 .path_from_invocation(invocation)
                 .map(|path| self.validate_path(&path, false))
                 .unwrap_or(SecurityDecision::Allow),
             ToolKind::Write => {
                 if definition.name == "apply_patch" || definition.name == "write" {
-                    return self.validate_apply_patch_invocation(invocation);
+                    self.validate_apply_patch_invocation(invocation)
+                } else {
+                    self.path_from_invocation(invocation)
+                        .map(|path| self.validate_path(&path, true))
+                        .unwrap_or(SecurityDecision::NeedsApproval(SecurityRisk::Write))
                 }
-                self.path_from_invocation(invocation)
-                    .map(|path| self.validate_path(&path, true))
-                    .unwrap_or(SecurityDecision::NeedsApproval(SecurityRisk::Write))
+            }
+            ToolKind::Command => {
+                if let Some(cwd) = invocation.input.get("cwd").and_then(Value::as_str)
+                    && let SecurityDecision::Deny(reason) =
+                        self.validate_path(Path::new(cwd), false)
+                {
+                    SecurityDecision::Deny(format!("command cwd is denied: {reason}"))
+                } else if definition.name == "bash"
+                    && (invocation.input.get("task_id").is_some()
+                        || invocation.input.get("action").and_then(Value::as_str) == Some("list"))
+                {
+                    SecurityDecision::Allow
+                } else if definition.name == "mark_feature_done" {
+                    self.validate_verification_steps(invocation)
+                } else {
+                    invocation
+                        .input
+                        .get("program")
+                        .or_else(|| invocation.input.get("command"))
+                        .and_then(Value::as_str)
+                        .map(|program| self.validate_command(program))
+                        .unwrap_or(SecurityDecision::NeedsApproval(SecurityRisk::Command))
+                }
+            }
+            ToolKind::Custom => SecurityDecision::NeedsApproval(SecurityRisk::ExternalPlugin),
+        };
+
+        self.apply_permission_mode(definition, base_decision)
+    }
+
+    fn tool_rule_decision(
+        &self,
+        definition: &ToolDefinition,
+        invocation: &ToolInvocation,
+    ) -> Option<SecurityDecision> {
+        let name = invocation.tool_name.as_str();
+        if matches_tool_rule(name, &self.config.deny_tools, &self.config.deny_tool_regex) {
+            return Some(SecurityDecision::Deny(format!(
+                "tool `{}` is denied by security.tool policy",
+                name
+            )));
+        }
+        if let Some(err) = first_invalid_regex(&self.config.deny_tool_regex)
+            .or_else(|| first_invalid_regex(&self.config.allow_tool_regex))
+            .or_else(|| first_invalid_regex(&self.config.ask_tool_regex))
+        {
+            return Some(err);
+        }
+
+        if matches_tool_rule(
+            name,
+            &self.config.allow_tools,
+            &self.config.allow_tool_regex,
+        ) {
+            return Some(self.safety_only_decision(definition, invocation, true));
+        }
+
+        if matches_tool_rule(name, &self.config.ask_tools, &self.config.ask_tool_regex) {
+            return Some(
+                match self.safety_only_decision(definition, invocation, false) {
+                    SecurityDecision::Deny(reason) => SecurityDecision::Deny(reason),
+                    SecurityDecision::Allow | SecurityDecision::NeedsApproval(_) => {
+                        SecurityDecision::NeedsApproval(risk_for_tool_kind(definition.kind))
+                    }
+                },
+            );
+        }
+
+        None
+    }
+
+    fn safety_only_decision(
+        &self,
+        definition: &ToolDefinition,
+        invocation: &ToolInvocation,
+        allow_after_safety: bool,
+    ) -> SecurityDecision {
+        let decision = match definition.kind {
+            ToolKind::Read => self
+                .path_from_invocation(invocation)
+                .map(|path| self.validate_path(&path, false))
+                .unwrap_or(SecurityDecision::Allow),
+            ToolKind::Write => {
+                if definition.name == "apply_patch" || definition.name == "write" {
+                    self.validate_apply_patch_invocation(invocation)
+                } else {
+                    self.path_from_invocation(invocation)
+                        .map(|path| self.validate_path(&path, true))
+                        .unwrap_or(SecurityDecision::NeedsApproval(SecurityRisk::Write))
+                }
             }
             ToolKind::Command => {
                 if let Some(cwd) = invocation.input.get("cwd").and_then(Value::as_str)
@@ -223,26 +320,60 @@ impl SecurityPolicy {
                 {
                     return SecurityDecision::Deny(format!("command cwd is denied: {reason}"));
                 }
-
-                // bash poll/list operations are safe
                 if definition.name == "bash"
                     && (invocation.input.get("task_id").is_some()
                         || invocation.input.get("action").and_then(Value::as_str) == Some("list"))
                 {
-                    return SecurityDecision::Allow;
+                    SecurityDecision::Allow
+                } else if definition.name == "mark_feature_done" {
+                    self.validate_verification_steps(invocation)
+                } else {
+                    invocation
+                        .input
+                        .get("program")
+                        .or_else(|| invocation.input.get("command"))
+                        .and_then(Value::as_str)
+                        .map(|program| self.validate_command(program))
+                        .unwrap_or(SecurityDecision::NeedsApproval(SecurityRisk::Command))
                 }
-                if definition.name == "mark_feature_done" {
-                    return self.validate_verification_steps(invocation);
-                }
-                invocation
-                    .input
-                    .get("program")
-                    .or_else(|| invocation.input.get("command"))
-                    .and_then(Value::as_str)
-                    .map(|program| self.validate_command(program))
-                    .unwrap_or(SecurityDecision::NeedsApproval(SecurityRisk::Command))
             }
             ToolKind::Custom => SecurityDecision::NeedsApproval(SecurityRisk::ExternalPlugin),
+        };
+
+        match decision {
+            SecurityDecision::Deny(reason) => SecurityDecision::Deny(reason),
+            SecurityDecision::Allow | SecurityDecision::NeedsApproval(_) if allow_after_safety => {
+                SecurityDecision::Allow
+            }
+            other => other,
+        }
+    }
+
+    fn apply_permission_mode(
+        &self,
+        definition: &ToolDefinition,
+        decision: SecurityDecision,
+    ) -> SecurityDecision {
+        match decision {
+            SecurityDecision::Deny(reason) => SecurityDecision::Deny(reason),
+            SecurityDecision::NeedsApproval(SecurityRisk::GuardedCommand) => {
+                SecurityDecision::NeedsApproval(SecurityRisk::GuardedCommand)
+            }
+            SecurityDecision::Allow | SecurityDecision::NeedsApproval(_) => {
+                match self.config.permission_mode {
+                    PermissionMode::Restricted => {
+                        SecurityDecision::NeedsApproval(risk_for_tool_kind(definition.kind))
+                    }
+                    PermissionMode::AcceptEdits => match definition.kind {
+                        ToolKind::Read | ToolKind::Write => SecurityDecision::Allow,
+                        ToolKind::Command => SecurityDecision::NeedsApproval(SecurityRisk::Command),
+                        ToolKind::Custom => {
+                            SecurityDecision::NeedsApproval(SecurityRisk::ExternalPlugin)
+                        }
+                    },
+                    PermissionMode::Yolo => SecurityDecision::Allow,
+                }
+            }
         }
     }
 
@@ -1135,6 +1266,34 @@ fn push_unique_string(paths: &mut Vec<String>, path: &str) {
     }
 }
 
+fn risk_for_tool_kind(kind: ToolKind) -> SecurityRisk {
+    match kind {
+        ToolKind::Read => SecurityRisk::Tool,
+        ToolKind::Write => SecurityRisk::Write,
+        ToolKind::Command => SecurityRisk::Command,
+        ToolKind::Custom => SecurityRisk::ExternalPlugin,
+    }
+}
+
+fn matches_tool_rule(name: &str, names: &[String], patterns: &[String]) -> bool {
+    names.iter().any(|candidate| candidate == name)
+        || patterns
+            .iter()
+            .filter_map(|pattern| regex::Regex::new(pattern).ok())
+            .any(|regex| regex.is_match(name))
+}
+
+fn first_invalid_regex(patterns: &[String]) -> Option<SecurityDecision> {
+    patterns
+        .iter()
+        .find_map(|pattern| match regex::Regex::new(pattern) {
+            Ok(_) => None,
+            Err(err) => Some(SecurityDecision::Deny(format!(
+                "invalid tool permission regex `{pattern}`: {err}"
+            ))),
+        })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1143,6 +1302,32 @@ mod tests {
 
     fn policy(project_root: PathBuf, data_dir: PathBuf) -> SecurityPolicy {
         SecurityPolicy::new(project_root, data_dir, SecurityConfig::default()).expect("policy")
+    }
+
+    fn policy_with_config(
+        project_root: PathBuf,
+        data_dir: PathBuf,
+        config: SecurityConfig,
+    ) -> SecurityPolicy {
+        SecurityPolicy::new(project_root, data_dir, config).expect("policy")
+    }
+
+    fn tool_def(name: &str, kind: ToolKind) -> ToolDefinition {
+        ToolDefinition {
+            name: name.to_string(),
+            description: String::new(),
+            kind,
+            input_schema: serde_json::json!({}),
+            ..Default::default()
+        }
+    }
+
+    fn tool_invocation(name: &str, input: Value) -> ToolInvocation {
+        ToolInvocation {
+            id: format!("{name}-1"),
+            tool_name: name.to_string(),
+            input,
+        }
     }
 
     #[test]
@@ -1173,6 +1358,167 @@ mod tests {
         assert_eq!(
             decision,
             SecurityDecision::NeedsApproval(SecurityRisk::Write)
+        );
+    }
+
+    #[test]
+    fn restricted_mode_requires_approval_for_read_tools() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let project = tempdir.path().join("project");
+        let data = tempdir.path().join("data");
+        std::fs::create_dir_all(project.join("src")).expect("project");
+        std::fs::write(project.join("src/lib.rs"), "").expect("file");
+        std::fs::create_dir_all(&data).expect("data");
+        let policy = policy(project, data);
+
+        let decision = policy.validate_tool_invocation(
+            &tool_def("read_file", ToolKind::Read),
+            &tool_invocation("read_file", serde_json::json!({ "path": "src/lib.rs" })),
+        );
+
+        assert_eq!(
+            decision,
+            SecurityDecision::NeedsApproval(SecurityRisk::Tool)
+        );
+    }
+
+    #[test]
+    fn accept_edits_allows_writes_but_asks_for_commands() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let project = tempdir.path().join("project");
+        let data = tempdir.path().join("data");
+        std::fs::create_dir_all(project.join("src")).expect("project");
+        std::fs::create_dir_all(&data).expect("data");
+        let config = SecurityConfig {
+            permission_mode: PermissionMode::AcceptEdits,
+            ..SecurityConfig::default()
+        };
+        let policy = policy_with_config(project, data, config);
+
+        let write_decision = policy.validate_tool_invocation(
+            &tool_def("write_file", ToolKind::Write),
+            &tool_invocation("write_file", serde_json::json!({ "path": "src/lib.rs" })),
+        );
+        let command_decision = policy.validate_tool_invocation(
+            &tool_def("bash", ToolKind::Command),
+            &tool_invocation("bash", serde_json::json!({ "command": "cargo test" })),
+        );
+
+        assert_eq!(write_decision, SecurityDecision::Allow);
+        assert_eq!(
+            command_decision,
+            SecurityDecision::NeedsApproval(SecurityRisk::Command)
+        );
+    }
+
+    #[test]
+    fn yolo_mode_allows_commands_after_safety_checks() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let project = tempdir.path().join("project");
+        let data = tempdir.path().join("data");
+        std::fs::create_dir_all(&project).expect("project");
+        std::fs::create_dir_all(&data).expect("data");
+        let config = SecurityConfig {
+            permission_mode: PermissionMode::Yolo,
+            ..SecurityConfig::default()
+        };
+        let policy = policy_with_config(project, data, config);
+
+        let decision = policy.validate_tool_invocation(
+            &tool_def("bash", ToolKind::Command),
+            &tool_invocation("bash", serde_json::json!({ "command": "cargo test" })),
+        );
+
+        assert_eq!(decision, SecurityDecision::Allow);
+    }
+
+    #[test]
+    fn yolo_mode_still_denies_blocked_commands() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let project = tempdir.path().join("project");
+        let data = tempdir.path().join("data");
+        std::fs::create_dir_all(&project).expect("project");
+        std::fs::create_dir_all(&data).expect("data");
+        let config = SecurityConfig {
+            permission_mode: PermissionMode::Yolo,
+            ..SecurityConfig::default()
+        };
+        let policy = policy_with_config(project, data, config);
+
+        let decision = policy.validate_tool_invocation(
+            &tool_def("bash", ToolKind::Command),
+            &tool_invocation("bash", serde_json::json!({ "command": "sudo true" })),
+        );
+
+        assert!(matches!(decision, SecurityDecision::Deny(_)));
+    }
+
+    #[test]
+    fn tool_deny_rule_wins_over_yolo_mode() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let project = tempdir.path().join("project");
+        let data = tempdir.path().join("data");
+        std::fs::create_dir_all(&project).expect("project");
+        std::fs::create_dir_all(&data).expect("data");
+        let config = SecurityConfig {
+            permission_mode: PermissionMode::Yolo,
+            deny_tools: vec!["bash".to_string()],
+            ..SecurityConfig::default()
+        };
+        let policy = policy_with_config(project, data, config);
+
+        let decision = policy.validate_tool_invocation(
+            &tool_def("bash", ToolKind::Command),
+            &tool_invocation("bash", serde_json::json!({ "command": "cargo test" })),
+        );
+
+        assert!(matches!(decision, SecurityDecision::Deny(_)));
+    }
+
+    #[test]
+    fn tool_allow_rule_can_accept_named_tool_in_restricted_mode() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let project = tempdir.path().join("project");
+        let data = tempdir.path().join("data");
+        std::fs::create_dir_all(project.join("src")).expect("project");
+        std::fs::write(project.join("src/lib.rs"), "").expect("file");
+        std::fs::create_dir_all(&data).expect("data");
+        let config = SecurityConfig {
+            allow_tools: vec!["read_file".to_string()],
+            ..SecurityConfig::default()
+        };
+        let policy = policy_with_config(project, data, config);
+
+        let decision = policy.validate_tool_invocation(
+            &tool_def("read_file", ToolKind::Read),
+            &tool_invocation("read_file", serde_json::json!({ "path": "src/lib.rs" })),
+        );
+
+        assert_eq!(decision, SecurityDecision::Allow);
+    }
+
+    #[test]
+    fn regex_tool_rules_can_force_approval_in_yolo_mode() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let project = tempdir.path().join("project");
+        let data = tempdir.path().join("data");
+        std::fs::create_dir_all(&project).expect("project");
+        std::fs::create_dir_all(&data).expect("data");
+        let config = SecurityConfig {
+            permission_mode: PermissionMode::Yolo,
+            ask_tool_regex: vec!["^plugin__".to_string()],
+            ..SecurityConfig::default()
+        };
+        let policy = policy_with_config(project, data, config);
+
+        let decision = policy.validate_tool_invocation(
+            &tool_def("plugin__deploy", ToolKind::Custom),
+            &tool_invocation("plugin__deploy", serde_json::json!({})),
+        );
+
+        assert_eq!(
+            decision,
+            SecurityDecision::NeedsApproval(SecurityRisk::ExternalPlugin)
         );
     }
 

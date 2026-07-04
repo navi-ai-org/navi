@@ -545,6 +545,8 @@ impl QuestionResponse {
 /// The security risk category associated with an approval request.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ApprovalRisk {
+    /// Any tool execution in restricted mode.
+    Tool,
     /// A file write operation.
     Write,
     /// A shell command execution.
