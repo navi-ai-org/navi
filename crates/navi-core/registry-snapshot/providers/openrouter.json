@@ -13,7 +13,9 @@
       "max_output_tokens": 32000,
       "recommended_temperature": 1.0,
       "supports_thinking": true,
-      "supports_images": true
+      "attachments": {
+        "images": true
+      }
     },
     {
       "name": "anthropic/claude-sonnet-4",
@@ -22,7 +24,9 @@
       "max_output_tokens": 64000,
       "recommended_temperature": 1.0,
       "supports_thinking": true,
-      "supports_images": true
+      "attachments": {
+        "images": true
+      }
     },
     {
       "name": "openai/gpt-5.5",
@@ -31,7 +35,9 @@
       "max_output_tokens": 128000,
       "recommended_temperature": 1.0,
       "supports_thinking": true,
-      "supports_images": true
+      "attachments": {
+        "images": true
+      }
     },
     {
       "name": "openai/gpt-5.4",
@@ -40,7 +46,9 @@
       "max_output_tokens": 128000,
       "recommended_temperature": 1.0,
       "supports_thinking": true,
-      "supports_images": true
+      "attachments": {
+        "images": true
+      }
     },
     {
       "name": "openai/gpt-4.1",
@@ -49,7 +57,9 @@
       "max_output_tokens": 32768,
       "recommended_temperature": 1.0,
       "supports_thinking": true,
-      "supports_images": true
+      "attachments": {
+        "images": true
+      }
     },
     {
       "name": "google/gemini-2.5-pro",
@@ -58,7 +68,9 @@
       "max_output_tokens": 65536,
       "recommended_temperature": 1.0,
       "supports_thinking": true,
-      "supports_images": true
+      "attachments": {
+        "images": true
+      }
     },
     {
       "name": "google/gemini-2.5-flash",
@@ -67,7 +79,9 @@
       "max_output_tokens": 65535,
       "recommended_temperature": 1.0,
       "supports_thinking": true,
-      "supports_images": true
+      "attachments": {
+        "images": true
+      }
     },
     {
       "name": "deepseek/deepseek-v4-pro",
@@ -92,7 +106,9 @@
       "max_output_tokens": 32768,
       "recommended_temperature": 1.0,
       "supports_thinking": true,
-      "supports_images": true
+      "attachments": {
+        "images": true
+      }
     },
     {
       "name": "x-ai/grok-3",
@@ -101,7 +117,9 @@
       "max_output_tokens": 32768,
       "recommended_temperature": 1.0,
       "supports_thinking": true,
-      "supports_images": true
+      "attachments": {
+        "images": true
+      }
     },
     {
       "name": "meta-llama/llama-3.3-70b",
@@ -118,7 +136,9 @@
       "max_output_tokens": 16384,
       "recommended_temperature": 0.7,
       "supports_thinking": false,
-      "supports_images": true
+      "attachments": {
+        "images": true
+      }
     },
     {
       "name": "meta-llama/llama-4-scout",
@@ -127,7 +147,9 @@
       "max_output_tokens": 16384,
       "recommended_temperature": 0.7,
       "supports_thinking": false,
-      "supports_images": true
+      "attachments": {
+        "images": true
+      }
     },
     {
       "name": "mistralai/mistral-large",
@@ -185,5 +207,13 @@
       "recommended_temperature": 1.0,
       "supports_thinking": false
     }
-  ]
+  ],
+  "defaults": {
+    "attachments": {
+      "images": false,
+      "audio": false,
+      "video": false,
+      "documents": false
+    }
+  }
 }

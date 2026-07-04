@@ -68,11 +68,7 @@ pub struct RankedModel {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct RegistryAttachments {
     /// Whether image attachments can be sent directly to the model.
-    #[serde(
-        default,
-        alias = "image",
-        skip_serializing_if = "Option::is_none"
-    )]
+    #[serde(default, alias = "image", skip_serializing_if = "Option::is_none")]
     pub images: Option<bool>,
     /// Whether audio attachments can be sent directly to the model.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -81,11 +77,7 @@ pub struct RegistryAttachments {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub video: Option<bool>,
     /// Whether document attachments can be sent directly to the model.
-    #[serde(
-        default,
-        alias = "document",
-        skip_serializing_if = "Option::is_none"
-    )]
+    #[serde(default, alias = "document", skip_serializing_if = "Option::is_none")]
     pub documents: Option<bool>,
 }
 

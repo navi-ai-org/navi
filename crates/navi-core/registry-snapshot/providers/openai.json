@@ -16,8 +16,7 @@
       "context_window_tokens": 1050000,
       "max_output_tokens": 128000,
       "recommended_temperature": 1.0,
-      "supports_thinking": true,
-      "supports_images": true
+      "supports_thinking": true
     },
     {
       "name": "gpt-5.4",
@@ -25,8 +24,7 @@
       "context_window_tokens": 1050000,
       "max_output_tokens": 128000,
       "recommended_temperature": 1.0,
-      "supports_thinking": true,
-      "supports_images": true
+      "supports_thinking": true
     },
     {
       "name": "gpt-5.4-mini",
@@ -34,8 +32,7 @@
       "context_window_tokens": 400000,
       "max_output_tokens": 128000,
       "recommended_temperature": 1.0,
-      "supports_thinking": true,
-      "supports_images": true
+      "supports_thinking": true
     },
     {
       "name": "gpt-5.4-nano",
@@ -43,8 +40,7 @@
       "context_window_tokens": 400000,
       "max_output_tokens": 128000,
       "recommended_temperature": 1.0,
-      "supports_thinking": true,
-      "supports_images": true
+      "supports_thinking": true
     },
     {
       "name": "gpt-5.3-codex",
@@ -52,8 +48,7 @@
       "context_window_tokens": 400000,
       "max_output_tokens": 128000,
       "recommended_temperature": 1.0,
-      "supports_thinking": true,
-      "supports_images": true
+      "supports_thinking": true
     },
     {
       "name": "gpt-5.2",
@@ -61,8 +56,7 @@
       "context_window_tokens": 400000,
       "max_output_tokens": 128000,
       "recommended_temperature": 1.0,
-      "supports_thinking": true,
-      "supports_images": true
+      "supports_thinking": true
     },
     {
       "name": "gpt-5.1",
@@ -70,8 +64,7 @@
       "context_window_tokens": 400000,
       "max_output_tokens": 128000,
       "recommended_temperature": 1.0,
-      "supports_thinking": true,
-      "supports_images": true
+      "supports_thinking": true
     },
     {
       "name": "gpt-5.1-codex",
@@ -79,8 +72,7 @@
       "context_window_tokens": 400000,
       "max_output_tokens": 128000,
       "recommended_temperature": 1.0,
-      "supports_thinking": true,
-      "supports_images": true
+      "supports_thinking": true
     },
     {
       "name": "gpt-5.1-codex-mini",
@@ -88,8 +80,7 @@
       "context_window_tokens": 400000,
       "max_output_tokens": 128000,
       "recommended_temperature": 1.0,
-      "supports_thinking": true,
-      "supports_images": true
+      "supports_thinking": true
     },
     {
       "name": "gpt-5",
@@ -97,8 +88,7 @@
       "context_window_tokens": 400000,
       "max_output_tokens": 128000,
       "recommended_temperature": 1.0,
-      "supports_thinking": true,
-      "supports_images": true
+      "supports_thinking": true
     },
     {
       "name": "gpt-5-mini",
@@ -106,8 +96,7 @@
       "context_window_tokens": 400000,
       "max_output_tokens": 128000,
       "recommended_temperature": 1.0,
-      "supports_thinking": true,
-      "supports_images": true
+      "supports_thinking": true
     },
     {
       "name": "gpt-5-nano",
@@ -115,8 +104,7 @@
       "context_window_tokens": 400000,
       "max_output_tokens": 128000,
       "recommended_temperature": 1.0,
-      "supports_thinking": true,
-      "supports_images": true
+      "supports_thinking": true
     },
     {
       "name": "gpt-4.1",
@@ -124,8 +112,7 @@
       "context_window_tokens": 1047576,
       "max_output_tokens": 32768,
       "recommended_temperature": 1.0,
-      "supports_thinking": false,
-      "supports_images": true
+      "supports_thinking": false
     },
     {
       "name": "gpt-4.1-mini",
@@ -133,8 +120,7 @@
       "context_window_tokens": 1047576,
       "max_output_tokens": 32768,
       "recommended_temperature": 1.0,
-      "supports_thinking": false,
-      "supports_images": true
+      "supports_thinking": false
     },
     {
       "name": "gpt-4.1-nano",
@@ -142,8 +128,7 @@
       "context_window_tokens": 1047576,
       "max_output_tokens": 32768,
       "recommended_temperature": 1.0,
-      "supports_thinking": false,
-      "supports_images": true
+      "supports_thinking": false
     },
     {
       "name": "gpt-4o",
@@ -151,8 +136,7 @@
       "context_window_tokens": 128000,
       "max_output_tokens": 16384,
       "recommended_temperature": 1.0,
-      "supports_thinking": false,
-      "supports_images": true
+      "supports_thinking": false
     },
     {
       "name": "gpt-4o-mini",
@@ -160,8 +144,7 @@
       "context_window_tokens": 128000,
       "max_output_tokens": 16384,
       "recommended_temperature": 1.0,
-      "supports_thinking": false,
-      "supports_images": true
+      "supports_thinking": false
     },
     {
       "name": "chatgpt-4o-latest",
@@ -169,8 +152,7 @@
       "context_window_tokens": 128000,
       "max_output_tokens": 16384,
       "recommended_temperature": 1.0,
-      "supports_thinking": false,
-      "supports_images": true
+      "supports_thinking": false
     },
     {
       "name": "gpt-4.5-preview",
@@ -178,8 +160,7 @@
       "context_window_tokens": 128000,
       "max_output_tokens": 16384,
       "recommended_temperature": 1.0,
-      "supports_thinking": false,
-      "supports_images": true
+      "supports_thinking": false
     },
     {
       "name": "o3",
@@ -187,8 +168,7 @@
       "context_window_tokens": 200000,
       "max_output_tokens": 100000,
       "recommended_temperature": 1.0,
-      "supports_thinking": true,
-      "supports_images": true
+      "supports_thinking": true
     },
     {
       "name": "o3-pro",
@@ -196,8 +176,7 @@
       "context_window_tokens": 200000,
       "max_output_tokens": 100000,
       "recommended_temperature": 1.0,
-      "supports_thinking": true,
-      "supports_images": true
+      "supports_thinking": true
     },
     {
       "name": "o3-mini",
@@ -205,7 +184,10 @@
       "context_window_tokens": 200000,
       "max_output_tokens": 100000,
       "recommended_temperature": 1.0,
-      "supports_thinking": true
+      "supports_thinking": true,
+      "attachments": {
+        "images": false
+      }
     },
     {
       "name": "o4-mini",
@@ -213,8 +195,7 @@
       "context_window_tokens": 200000,
       "max_output_tokens": 100000,
       "recommended_temperature": 1.0,
-      "supports_thinking": true,
-      "supports_images": true
+      "supports_thinking": true
     },
     {
       "name": "o1",
@@ -222,7 +203,10 @@
       "context_window_tokens": 200000,
       "max_output_tokens": 100000,
       "recommended_temperature": 1.0,
-      "supports_thinking": true
+      "supports_thinking": true,
+      "attachments": {
+        "images": false
+      }
     },
     {
       "name": "o1-pro",
@@ -230,7 +214,10 @@
       "context_window_tokens": 200000,
       "max_output_tokens": 100000,
       "recommended_temperature": 1.0,
-      "supports_thinking": true
+      "supports_thinking": true,
+      "attachments": {
+        "images": false
+      }
     },
     {
       "name": "o1-mini",
@@ -238,7 +225,10 @@
       "context_window_tokens": 200000,
       "max_output_tokens": 100000,
       "recommended_temperature": 1.0,
-      "supports_thinking": true
+      "supports_thinking": true,
+      "attachments": {
+        "images": false
+      }
     },
     {
       "name": "gpt-oss-120b",
@@ -246,7 +236,10 @@
       "context_window_tokens": 131072,
       "max_output_tokens": 131072,
       "recommended_temperature": 1.0,
-      "supports_thinking": false
+      "supports_thinking": false,
+      "attachments": {
+        "images": false
+      }
     },
     {
       "name": "gpt-oss-20b",
@@ -254,7 +247,18 @@
       "context_window_tokens": 131072,
       "max_output_tokens": 131072,
       "recommended_temperature": 1.0,
-      "supports_thinking": false
+      "supports_thinking": false,
+      "attachments": {
+        "images": false
+      }
     }
-  ]
+  ],
+  "defaults": {
+    "attachments": {
+      "images": true,
+      "audio": false,
+      "video": false,
+      "documents": false
+    }
+  }
 }
