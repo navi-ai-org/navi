@@ -6,6 +6,96 @@ pub(crate) fn viewport_rect(area: Rect) -> Rect {
     inset_rect(area, VIEWPORT_HORIZONTAL_MARGIN, 0)
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct RootLayoutHeights {
+    pub(crate) header: u16,
+    pub(crate) image_preview: u16,
+    pub(crate) input_activity: u16,
+    pub(crate) input: u16,
+    pub(crate) input_hint: u16,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct RootLayout {
+    pub(crate) header: Rect,
+    pub(crate) chat: Rect,
+    pub(crate) image_preview: Rect,
+    pub(crate) input_activity: Rect,
+    pub(crate) input: Rect,
+    pub(crate) input_hint: Rect,
+}
+
+pub(crate) fn root_layout(area: Rect, heights: RootLayoutHeights) -> RootLayout {
+    let header_height = heights.header.min(area.height);
+    let bottom_requested = heights
+        .image_preview
+        .saturating_add(heights.input_activity)
+        .saturating_add(heights.input)
+        .saturating_add(heights.input_hint);
+    let remaining_after_header = area.height.saturating_sub(header_height);
+    let bottom_height = bottom_requested.min(remaining_after_header);
+    let chat_height = remaining_after_header.saturating_sub(bottom_height);
+
+    let mut y = area.y;
+    let header = Rect::new(area.x, y, area.width, header_height);
+    y = y.saturating_add(header_height);
+    let chat = Rect::new(area.x, y, area.width, chat_height);
+    y = y.saturating_add(chat_height);
+
+    let mut remaining_bottom = bottom_height;
+    let image_preview = take_vertical(
+        area.x,
+        area.width,
+        &mut y,
+        &mut remaining_bottom,
+        heights.image_preview,
+    );
+    let input_activity = take_vertical(
+        area.x,
+        area.width,
+        &mut y,
+        &mut remaining_bottom,
+        heights.input_activity,
+    );
+    let input = take_vertical(
+        area.x,
+        area.width,
+        &mut y,
+        &mut remaining_bottom,
+        heights.input,
+    );
+    let input_hint = take_vertical(
+        area.x,
+        area.width,
+        &mut y,
+        &mut remaining_bottom,
+        heights.input_hint,
+    );
+
+    RootLayout {
+        header,
+        chat,
+        image_preview,
+        input_activity,
+        input,
+        input_hint,
+    }
+}
+
+fn take_vertical(
+    x: u16,
+    width: u16,
+    y: &mut u16,
+    remaining: &mut u16,
+    requested_height: u16,
+) -> Rect {
+    let height = requested_height.min(*remaining);
+    let rect = Rect::new(x, *y, width, height);
+    *y = y.saturating_add(height);
+    *remaining = remaining.saturating_sub(height);
+    rect
+}
+
 fn inset_rect(area: Rect, horizontal: u16, vertical: u16) -> Rect {
     let horizontal = horizontal.min(area.width / 2);
     let vertical = vertical.min(area.height / 2);
@@ -111,5 +201,57 @@ mod tests {
         assert_eq!(rect.width, 98);
         assert_eq!(rect.y, 0);
         assert_eq!(rect.height, 20);
+    }
+
+    #[test]
+    fn root_layout_never_overlaps_chat_and_composer() {
+        let area = Rect::new(1, 0, 98, 12);
+        let layout = root_layout(
+            area,
+            RootLayoutHeights {
+                header: 1,
+                image_preview: 0,
+                input_activity: 3,
+                input: 5,
+                input_hint: 1,
+            },
+        );
+
+        assert_eq!(layout.header.y, 0);
+        assert_eq!(layout.header.height, 1);
+        assert_eq!(layout.chat.y, 1);
+        assert_eq!(layout.chat.height, 2);
+        assert_eq!(layout.input_activity.y, 3);
+        assert_eq!(layout.input.y, 6);
+        assert_eq!(layout.input_hint.y, 11);
+        assert_eq!(
+            layout.input_hint.y + layout.input_hint.height,
+            area.y + area.height
+        );
+    }
+
+    #[test]
+    fn root_layout_clips_footer_stack_inside_tiny_viewport() {
+        let area = Rect::new(0, 0, 80, 4);
+        let layout = root_layout(
+            area,
+            RootLayoutHeights {
+                header: 1,
+                image_preview: 0,
+                input_activity: 3,
+                input: 5,
+                input_hint: 1,
+            },
+        );
+
+        assert_eq!(layout.header.height, 1);
+        assert_eq!(layout.chat.height, 0);
+        assert_eq!(layout.input_activity.height, 3);
+        assert_eq!(layout.input.height, 0);
+        assert_eq!(layout.input_hint.height, 0);
+        assert_eq!(
+            layout.input_activity.y + layout.input_activity.height,
+            area.y + area.height
+        );
     }
 }
