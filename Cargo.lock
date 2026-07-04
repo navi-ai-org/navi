@@ -2091,6 +2091,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "navi-dart"
+version = "0.1.2"
+dependencies = [
+ "anyhow",
+ "navi-core",
+ "navi-sdk",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "navi-mcp"
 version = "0.1.2"
 dependencies = [

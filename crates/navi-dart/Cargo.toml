@@ -1,22 +1,24 @@
 [package]
-name = "navi-vfs"
+name = "navi-dart"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description.workspace = true
+description = "Dart FFI bindings for the NAVI agent runtime SDK"
 repository.workspace = true
 homepage.workspace = true
 readme = "README.md"
 
+[lib]
+crate-type = ["cdylib", "rlib"]
+
 [dependencies]
 anyhow.workspace = true
-libloading.workspace = true
+navi-core.workspace = true
+navi-sdk.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
 tracing.workspace = true
-tree-sitter.workspace = true
-tree-sitter-language = "0.1.7"
-
-[build-dependencies]
-cc = "1"
 
 [dev-dependencies]
 tempfile.workspace = true

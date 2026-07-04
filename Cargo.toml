@@ -2,6 +2,7 @@
 members = [
     "crates/navi-cli",
     "crates/navi-core",
+    "crates/navi-dart",
     "crates/navi-mcp",
     "crates/navi-napi",
     "crates/navi-openai",
@@ -20,6 +21,7 @@ resolver = "3"
 default-members = [
     "crates/navi-cli",
     "crates/navi-core",
+    "crates/navi-dart",
     "crates/navi-mcp",
     "crates/navi-napi",
     "crates/navi-openai",
@@ -97,6 +99,7 @@ tree-sitter-typescript = "0.23.2"
 tempfile = "3"
 wiremock = "0.6"
 navi-core = { version = "0.1.2", path = "crates/navi-core" }
+navi-dart = { version = "0.1.2", path = "crates/navi-dart" }
 navi-mcp = { version = "0.1.2", path = "crates/navi-mcp" }
 napi = { version = "3.9.4", features = ["async", "serde-json"] }
 napi-build = "2.3.2"
