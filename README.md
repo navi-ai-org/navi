@@ -19,6 +19,19 @@
 
 ---
 
+## Latest Release
+
+### 0.1.2 - 2026-07-04
+
+- Added multimodal attachment support for images, audio, video, and documents across the engine and SDK-facing APIs.
+- Added per-modality fallback model routing and the `analyze_attachment` host tool for unsupported attachment analysis.
+- Added registry attachment metadata with provider-level `defaults.attachments` and per-model `attachments` overrides.
+- Fixed compact user image indicators and small-terminal TUI layout clipping.
+
+See [CHANGELOG.md](CHANGELOG.md) for the full release notes.
+
+---
+
 ## Why NAVI?
 
 **NAVI is not another chat wrapper.** It's a coding agent engine with a first-class terminal UI — designed for developers who live in the terminal and want an agent that can actually read, write, test, build, and ship code.
