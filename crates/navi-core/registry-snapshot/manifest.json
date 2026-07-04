@@ -4,7 +4,7 @@
   "providers": {
     "anthropic": {
       "file": "providers/anthropic.json",
-      "sha256": "30f1d9cd2f0feb2c958c51dfcc01815411ea84af11543991ebc6534cacb3da06",
+      "sha256": "bebb60108e3409709702e57793ad7ebb4db5a93f43ec20fe00b178bdbcc271ed",
       "model_count": 16
     },
     "charm-hyper": {
@@ -34,7 +34,7 @@
     },
     "google-gemini": {
       "file": "providers/google-gemini.json",
-      "sha256": "84220093c1182edce5df4056cb20968edc3d4d0296d3ed444a33b601005b39f9",
+      "sha256": "cd8aa9a788591fb2f661fe09088be8bb2647769870780289bcf7a1a9231e3dfa",
       "model_count": 13
     },
     "groq": {
@@ -94,7 +94,7 @@
     },
     "openai": {
       "file": "providers/openai.json",
-      "sha256": "389ba56863007811813de53f3f0b7138450f7991deb53b66b278cc3ce361ccdd",
+      "sha256": "d17094b6a6f152bfe0af67592806e369c3a9dfeb8cc9099b61450f32ddc72a9a",
       "model_count": 28
     },
     "opencode": {
@@ -109,7 +109,7 @@
     },
     "openrouter": {
       "file": "providers/openrouter.json",
-      "sha256": "1f45c42858d8b05d40f0699bf758d5eef5d479d66a56106a85f81dc8caae4dd0",
+      "sha256": "148cb28eb1b7e70c524405898e2b2b57510f1516bea01c3f0629694650c02a3e",
       "model_count": 21
     },
     "stepfun": {
@@ -119,7 +119,7 @@
     },
     "xai": {
       "file": "providers/xai.json",
-      "sha256": "90c1ec7e78dde1573b32ac3a22ca196f0c2a3556225e6928804477e688992d21",
+      "sha256": "bc944d5c1bb8d259eb7a6553028acbafea2670165702e70ddea4593cc2a182dd",
       "model_count": 12
     },
     "xiaomi": {
