@@ -12,7 +12,12 @@
       "context_window_tokens": 131072,
       "max_output_tokens": 32768,
       "recommended_temperature": 0.7,
-      "supports_thinking": false
+      "supports_thinking": false,
+      "pricing": {
+        "input_per_1m": 0.59,
+        "output_per_1m": 0.79,
+        "currency": "USD"
+      }
     },
     {
       "name": "llama-3.1-8b-instant",
@@ -20,7 +25,12 @@
       "context_window_tokens": 131072,
       "max_output_tokens": 8192,
       "recommended_temperature": 0.7,
-      "supports_thinking": false
+      "supports_thinking": false,
+      "pricing": {
+        "input_per_1m": 0.05,
+        "output_per_1m": 0.08,
+        "currency": "USD"
+      }
     },
     {
       "name": "openai/gpt-oss-120b",
@@ -28,7 +38,12 @@
       "context_window_tokens": 131072,
       "max_output_tokens": 32768,
       "recommended_temperature": 0.7,
-      "supports_thinking": true
+      "supports_thinking": true,
+      "pricing": {
+        "input_per_1m": 0.03,
+        "output_per_1m": 0.15,
+        "currency": "USD"
+      }
     },
     {
       "name": "openai/gpt-oss-20b",
@@ -36,7 +51,12 @@
       "context_window_tokens": 131072,
       "max_output_tokens": 32768,
       "recommended_temperature": 0.7,
-      "supports_thinking": true
+      "supports_thinking": true,
+      "pricing": {
+        "input_per_1m": 0.029,
+        "output_per_1m": 0.14,
+        "currency": "USD"
+      }
     },
     {
       "name": "qwen/qwen3-32b",
@@ -44,7 +64,12 @@
       "context_window_tokens": 131072,
       "max_output_tokens": 16384,
       "recommended_temperature": 0.6,
-      "supports_thinking": true
+      "supports_thinking": true,
+      "pricing": {
+        "input_per_1m": 0.29,
+        "output_per_1m": 0.59,
+        "currency": "USD"
+      }
     },
     {
       "name": "deepseek-r1-distill-llama-70b",
@@ -52,7 +77,12 @@
       "context_window_tokens": 131072,
       "max_output_tokens": 16384,
       "recommended_temperature": 0.6,
-      "supports_thinking": true
+      "supports_thinking": true,
+      "pricing": {
+        "input_per_1m": 0.8,
+        "output_per_1m": 0.8,
+        "currency": "USD"
+      }
     },
     {
       "name": "moonshotai/kimi-k2-instruct",
@@ -60,7 +90,12 @@
       "context_window_tokens": 131072,
       "max_output_tokens": 16384,
       "recommended_temperature": 0.7,
-      "supports_thinking": false
+      "supports_thinking": false,
+      "pricing": {
+        "input_per_1m": 0.57,
+        "output_per_1m": 2.3,
+        "currency": "USD"
+      }
     },
     {
       "name": "meta-llama/llama-4-maverick-17b-128e-instruct",
@@ -68,7 +103,12 @@
       "context_window_tokens": 131072,
       "max_output_tokens": 16384,
       "recommended_temperature": 0.7,
-      "supports_thinking": false
+      "supports_thinking": false,
+      "pricing": {
+        "input_per_1m": 0.15,
+        "output_per_1m": 0.6,
+        "currency": "USD"
+      }
     },
     {
       "name": "meta-llama/llama-4-scout-17b-16e-instruct",
@@ -76,7 +116,12 @@
       "context_window_tokens": 131072,
       "max_output_tokens": 16384,
       "recommended_temperature": 0.7,
-      "supports_thinking": false
+      "supports_thinking": false,
+      "pricing": {
+        "input_per_1m": 0.1,
+        "output_per_1m": 0.3,
+        "currency": "USD"
+      }
     },
     {
       "name": "meta-llama/llama-guard-4-12b",
