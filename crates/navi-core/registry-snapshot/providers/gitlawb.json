@@ -12,7 +12,12 @@
       "context_window_tokens": 1048576,
       "max_output_tokens": 131072,
       "recommended_temperature": 1.0,
-      "supports_thinking": true
+      "supports_thinking": true,
+      "pricing": {
+        "input_per_1m": 0.435,
+        "output_per_1m": 0.87,
+        "currency": "USD"
+      }
     },
     {
       "name": "mimo-v2.5",
@@ -20,7 +25,12 @@
       "context_window_tokens": 1048576,
       "max_output_tokens": 131072,
       "recommended_temperature": 1.0,
-      "supports_thinking": false
+      "supports_thinking": false,
+      "pricing": {
+        "input_per_1m": 0.105,
+        "output_per_1m": 0.28,
+        "currency": "USD"
+      }
     },
     {
       "name": "google/gemini-3.1-flash-lite-preview",
@@ -28,7 +38,12 @@
       "context_window_tokens": 1000000,
       "max_output_tokens": 65536,
       "recommended_temperature": 1.0,
-      "supports_thinking": true
+      "supports_thinking": true,
+      "pricing": {
+        "input_per_1m": 0.25,
+        "output_per_1m": 1.5,
+        "currency": "USD"
+      }
     }
   ]
 }

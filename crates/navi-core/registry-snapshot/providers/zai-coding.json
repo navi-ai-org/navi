@@ -12,7 +12,12 @@
       "context_window_tokens": 200000,
       "max_output_tokens": 128000,
       "recommended_temperature": 1.0,
-      "supports_thinking": true
+      "supports_thinking": true,
+      "pricing": {
+        "input_per_1m": 0.6,
+        "output_per_1m": 2.2,
+        "currency": "USD"
+      }
     },
     {
       "name": "glm-5",
@@ -20,7 +25,12 @@
       "context_window_tokens": 200000,
       "max_output_tokens": 128000,
       "recommended_temperature": 1.0,
-      "supports_thinking": false
+      "supports_thinking": false,
+      "pricing": {
+        "input_per_1m": 0.6,
+        "output_per_1m": 2.2,
+        "currency": "USD"
+      }
     },
     {
       "name": "glm-5-turbo",
@@ -28,7 +38,12 @@
       "context_window_tokens": 200000,
       "max_output_tokens": 128000,
       "recommended_temperature": 1.0,
-      "supports_thinking": false
+      "supports_thinking": false,
+      "pricing": {
+        "input_per_1m": 0.3,
+        "output_per_1m": 1.0,
+        "currency": "USD"
+      }
     }
   ]
 }

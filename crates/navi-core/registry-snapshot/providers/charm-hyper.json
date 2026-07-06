@@ -12,7 +12,12 @@
       "context_window_tokens": 256000,
       "max_output_tokens": 16384,
       "recommended_temperature": 1.0,
-      "supports_thinking": true
+      "supports_thinking": true,
+      "pricing": {
+        "input_per_1m": 0.57,
+        "output_per_1m": 2.3,
+        "currency": "USD"
+      }
     },
     {
       "name": "Kimi K2.5",
@@ -20,7 +25,12 @@
       "context_window_tokens": 256000,
       "max_output_tokens": 16384,
       "recommended_temperature": 1.0,
-      "supports_thinking": true
+      "supports_thinking": true,
+      "pricing": {
+        "input_per_1m": 0.57,
+        "output_per_1m": 2.3,
+        "currency": "USD"
+      }
     },
     {
       "name": "DeepSeek V4 Pro",
@@ -28,7 +38,12 @@
       "context_window_tokens": 1000000,
       "max_output_tokens": 16384,
       "recommended_temperature": 1.0,
-      "supports_thinking": true
+      "supports_thinking": true,
+      "pricing": {
+        "input_per_1m": 0.435,
+        "output_per_1m": 0.87,
+        "currency": "USD"
+      }
     },
     {
       "name": "DeepSeek V4 Flash",
@@ -36,7 +51,12 @@
       "context_window_tokens": 1000000,
       "max_output_tokens": 16384,
       "recommended_temperature": 1.0,
-      "supports_thinking": true
+      "supports_thinking": true,
+      "pricing": {
+        "input_per_1m": 0.09,
+        "output_per_1m": 0.18,
+        "currency": "USD"
+      }
     },
     {
       "name": "Gemma 4 26B A4B",
@@ -44,7 +64,12 @@
       "context_window_tokens": 262144,
       "max_output_tokens": 8192,
       "recommended_temperature": 1.0,
-      "supports_thinking": true
+      "supports_thinking": true,
+      "pricing": {
+        "input_per_1m": 0.1,
+        "output_per_1m": 0.2,
+        "currency": "USD"
+      }
     },
     {
       "name": "GLM-5.1",
@@ -52,7 +77,12 @@
       "context_window_tokens": 200000,
       "max_output_tokens": 16384,
       "recommended_temperature": 1.0,
-      "supports_thinking": true
+      "supports_thinking": true,
+      "pricing": {
+        "input_per_1m": 0.6,
+        "output_per_1m": 2.2,
+        "currency": "USD"
+      }
     },
     {
       "name": "GLM-5",
@@ -60,7 +90,12 @@
       "context_window_tokens": 200000,
       "max_output_tokens": 16384,
       "recommended_temperature": 1.0,
-      "supports_thinking": true
+      "supports_thinking": true,
+      "pricing": {
+        "input_per_1m": 0.6,
+        "output_per_1m": 2.2,
+        "currency": "USD"
+      }
     },
     {
       "name": "Qwen 3 32B",
@@ -68,7 +103,12 @@
       "context_window_tokens": 128000,
       "max_output_tokens": 8192,
       "recommended_temperature": 1.0,
-      "supports_thinking": true
+      "supports_thinking": true,
+      "pricing": {
+        "input_per_1m": 0.08,
+        "output_per_1m": 0.28,
+        "currency": "USD"
+      }
     },
     {
       "name": "MiniMax M2.1",
@@ -76,7 +116,12 @@
       "context_window_tokens": 204800,
       "max_output_tokens": 8192,
       "recommended_temperature": 1.0,
-      "supports_thinking": true
+      "supports_thinking": true,
+      "pricing": {
+        "input_per_1m": 0.3,
+        "output_per_1m": 1.2,
+        "currency": "USD"
+      }
     },
     {
       "name": "gpt-oss-120b",
@@ -84,7 +129,12 @@
       "context_window_tokens": 128000,
       "max_output_tokens": 16384,
       "recommended_temperature": 1.0,
-      "supports_thinking": false
+      "supports_thinking": false,
+      "pricing": {
+        "input_per_1m": 0.03,
+        "output_per_1m": 0.15,
+        "currency": "USD"
+      }
     },
     {
       "name": "gpt-oss-20b",
@@ -92,7 +142,12 @@
       "context_window_tokens": 128000,
       "max_output_tokens": 8192,
       "recommended_temperature": 1.0,
-      "supports_thinking": false
+      "supports_thinking": false,
+      "pricing": {
+        "input_per_1m": 0.029,
+        "output_per_1m": 0.14,
+        "currency": "USD"
+      }
     }
   ]
 }

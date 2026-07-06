@@ -12,7 +12,12 @@
       "context_window_tokens": 400000,
       "max_output_tokens": 16384,
       "recommended_temperature": 1.0,
-      "supports_thinking": true
+      "supports_thinking": true,
+      "pricing": {
+        "input_per_1m": 2.5,
+        "output_per_1m": 15.0,
+        "currency": "USD"
+      }
     },
     {
       "name": "gpt-5.1-codex",
@@ -20,7 +25,12 @@
       "context_window_tokens": 400000,
       "max_output_tokens": 16384,
       "recommended_temperature": 1.0,
-      "supports_thinking": true
+      "supports_thinking": true,
+      "pricing": {
+        "input_per_1m": 2.5,
+        "output_per_1m": 15.0,
+        "currency": "USD"
+      }
     },
     {
       "name": "claude-opus-4.5",
@@ -28,7 +38,12 @@
       "context_window_tokens": 200000,
       "max_output_tokens": 16384,
       "recommended_temperature": 1.0,
-      "supports_thinking": true
+      "supports_thinking": true,
+      "pricing": {
+        "input_per_1m": 5.0,
+        "output_per_1m": 25.0,
+        "currency": "USD"
+      }
     },
     {
       "name": "claude-sonnet-4.5",
@@ -36,7 +51,12 @@
       "context_window_tokens": 200000,
       "max_output_tokens": 16384,
       "recommended_temperature": 1.0,
-      "supports_thinking": true
+      "supports_thinking": true,
+      "pricing": {
+        "input_per_1m": 3.0,
+        "output_per_1m": 15.0,
+        "currency": "USD"
+      }
     },
     {
       "name": "minimax-m2.1",
@@ -44,7 +64,12 @@
       "context_window_tokens": 204800,
       "max_output_tokens": 8192,
       "recommended_temperature": 1.0,
-      "supports_thinking": true
+      "supports_thinking": true,
+      "pricing": {
+        "input_per_1m": 0.15,
+        "output_per_1m": 0.6,
+        "currency": "USD"
+      }
     },
     {
       "name": "gemini-3-pro",
@@ -52,7 +77,12 @@
       "context_window_tokens": 1000000,
       "max_output_tokens": 65536,
       "recommended_temperature": 1.0,
-      "supports_thinking": true
+      "supports_thinking": true,
+      "pricing": {
+        "input_per_1m": 2.0,
+        "output_per_1m": 12.0,
+        "currency": "USD"
+      }
     },
     {
       "name": "big-pickle",
@@ -60,7 +90,12 @@
       "context_window_tokens": 200000,
       "max_output_tokens": 16384,
       "recommended_temperature": 1.0,
-      "supports_thinking": true
+      "supports_thinking": true,
+      "pricing": {
+        "input_per_1m": 0.1,
+        "output_per_1m": 0.3,
+        "currency": "USD"
+      }
     },
     {
       "name": "deepseek-v4-flash-free",
@@ -68,7 +103,12 @@
       "context_window_tokens": 1000000,
       "max_output_tokens": 16384,
       "recommended_temperature": 1.0,
-      "supports_thinking": true
+      "supports_thinking": true,
+      "pricing": {
+        "input_per_1m": 0.0,
+        "output_per_1m": 0.0,
+        "currency": "USD"
+      }
     },
     {
       "name": "nemotron-3-super-free",
@@ -76,7 +116,12 @@
       "context_window_tokens": 1000000,
       "max_output_tokens": 8192,
       "recommended_temperature": 1.0,
-      "supports_thinking": true
+      "supports_thinking": true,
+      "pricing": {
+        "input_per_1m": 0.0,
+        "output_per_1m": 0.0,
+        "currency": "USD"
+      }
     },
     {
       "name": "qwen3.6-plus",
@@ -84,7 +129,12 @@
       "context_window_tokens": 1000000,
       "max_output_tokens": 16384,
       "recommended_temperature": 1.0,
-      "supports_thinking": true
+      "supports_thinking": true,
+      "pricing": {
+        "input_per_1m": 0.3,
+        "output_per_1m": 1.8,
+        "currency": "USD"
+      }
     },
     {
       "name": "qwen3.5-plus",
@@ -92,7 +142,12 @@
       "context_window_tokens": 1000000,
       "max_output_tokens": 16384,
       "recommended_temperature": 1.0,
-      "supports_thinking": true
+      "supports_thinking": true,
+      "pricing": {
+        "input_per_1m": 0.3,
+        "output_per_1m": 1.8,
+        "currency": "USD"
+      }
     },
     {
       "name": "kimi-k2.6",
@@ -100,7 +155,12 @@
       "context_window_tokens": 262144,
       "max_output_tokens": 16384,
       "recommended_temperature": 1.0,
-      "supports_thinking": true
+      "supports_thinking": true,
+      "pricing": {
+        "input_per_1m": 0.57,
+        "output_per_1m": 2.3,
+        "currency": "USD"
+      }
     },
     {
       "name": "kimi-k2.5",
@@ -108,7 +168,12 @@
       "context_window_tokens": 262144,
       "max_output_tokens": 16384,
       "recommended_temperature": 1.0,
-      "supports_thinking": true
+      "supports_thinking": true,
+      "pricing": {
+        "input_per_1m": 0.57,
+        "output_per_1m": 2.3,
+        "currency": "USD"
+      }
     },
     {
       "name": "glm-5.1",
@@ -116,7 +181,12 @@
       "context_window_tokens": 200000,
       "max_output_tokens": 16384,
       "recommended_temperature": 1.0,
-      "supports_thinking": true
+      "supports_thinking": true,
+      "pricing": {
+        "input_per_1m": 0.6,
+        "output_per_1m": 2.2,
+        "currency": "USD"
+      }
     },
     {
       "name": "glm-5",
@@ -124,7 +194,12 @@
       "context_window_tokens": 200000,
       "max_output_tokens": 16384,
       "recommended_temperature": 1.0,
-      "supports_thinking": true
+      "supports_thinking": true,
+      "pricing": {
+        "input_per_1m": 0.6,
+        "output_per_1m": 2.2,
+        "currency": "USD"
+      }
     },
     {
       "name": "minimax-m2.7",
@@ -132,7 +207,12 @@
       "context_window_tokens": 204800,
       "max_output_tokens": 8192,
       "recommended_temperature": 1.0,
-      "supports_thinking": true
+      "supports_thinking": true,
+      "pricing": {
+        "input_per_1m": 0.2,
+        "output_per_1m": 1.0,
+        "currency": "USD"
+      }
     },
     {
       "name": "minimax-m2.5",
@@ -140,7 +220,12 @@
       "context_window_tokens": 204800,
       "max_output_tokens": 8192,
       "recommended_temperature": 1.0,
-      "supports_thinking": true
+      "supports_thinking": true,
+      "pricing": {
+        "input_per_1m": 0.2,
+        "output_per_1m": 1.0,
+        "currency": "USD"
+      }
     },
     {
       "name": "grok-build-0.1",
@@ -148,7 +233,12 @@
       "context_window_tokens": 256000,
       "max_output_tokens": 8192,
       "recommended_temperature": 1.0,
-      "supports_thinking": false
+      "supports_thinking": false,
+      "pricing": {
+        "input_per_1m": 1.0,
+        "output_per_1m": 2.0,
+        "currency": "USD"
+      }
     }
   ]
 }

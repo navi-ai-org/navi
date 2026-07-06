@@ -17,7 +17,12 @@
       "context_window_tokens": 1048576,
       "max_output_tokens": 131072,
       "recommended_temperature": 1.0,
-      "supports_thinking": true
+      "supports_thinking": true,
+      "pricing": {
+        "input_per_1m": 0.435,
+        "output_per_1m": 0.87,
+        "currency": "USD"
+      }
     },
     {
       "name": "mimo-v2.5",
@@ -25,7 +30,12 @@
       "context_window_tokens": 1048576,
       "max_output_tokens": 131072,
       "recommended_temperature": 1.0,
-      "supports_thinking": false
+      "supports_thinking": false,
+      "pricing": {
+        "input_per_1m": 0.105,
+        "output_per_1m": 0.28,
+        "currency": "USD"
+      }
     },
     {
       "name": "mimo-v2-pro",
@@ -33,7 +43,12 @@
       "context_window_tokens": 1048576,
       "max_output_tokens": 131072,
       "recommended_temperature": 1.0,
-      "supports_thinking": true
+      "supports_thinking": true,
+      "pricing": {
+        "input_per_1m": 0.2,
+        "output_per_1m": 0.5,
+        "currency": "USD"
+      }
     },
     {
       "name": "mimo-v2-omni",
@@ -41,7 +56,12 @@
       "context_window_tokens": 262144,
       "max_output_tokens": 131072,
       "recommended_temperature": 1.0,
-      "supports_thinking": false
+      "supports_thinking": false,
+      "pricing": {
+        "input_per_1m": 0.15,
+        "output_per_1m": 0.4,
+        "currency": "USD"
+      }
     },
     {
       "name": "mimo-v2-flash",
@@ -49,7 +69,12 @@
       "context_window_tokens": 262144,
       "max_output_tokens": 16384,
       "recommended_temperature": 0.7,
-      "supports_thinking": true
+      "supports_thinking": true,
+      "pricing": {
+        "input_per_1m": 0.05,
+        "output_per_1m": 0.15,
+        "currency": "USD"
+      }
     }
   ]
 }

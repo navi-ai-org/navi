@@ -12,7 +12,12 @@
       "context_window_tokens": 1000000,
       "max_output_tokens": 128000,
       "recommended_temperature": 1.0,
-      "supports_thinking": true
+      "supports_thinking": true,
+      "pricing": {
+        "input_per_1m": 0.3,
+        "output_per_1m": 1.2,
+        "currency": "USD"
+      }
     },
     {
       "name": "MiniMax-M2.7",
@@ -20,7 +25,12 @@
       "context_window_tokens": 204800,
       "max_output_tokens": 128000,
       "recommended_temperature": 1.0,
-      "supports_thinking": true
+      "supports_thinking": true,
+      "pricing": {
+        "input_per_1m": 0.2,
+        "output_per_1m": 1.0,
+        "currency": "USD"
+      }
     },
     {
       "name": "MiniMax-M2.7-highspeed",
@@ -28,7 +38,12 @@
       "context_window_tokens": 204800,
       "max_output_tokens": 128000,
       "recommended_temperature": 1.0,
-      "supports_thinking": true
+      "supports_thinking": true,
+      "pricing": {
+        "input_per_1m": 0.4,
+        "output_per_1m": 2.0,
+        "currency": "USD"
+      }
     },
     {
       "name": "MiniMax-M2.5",
@@ -36,7 +51,12 @@
       "context_window_tokens": 204800,
       "max_output_tokens": 128000,
       "recommended_temperature": 1.0,
-      "supports_thinking": true
+      "supports_thinking": true,
+      "pricing": {
+        "input_per_1m": 0.2,
+        "output_per_1m": 1.0,
+        "currency": "USD"
+      }
     },
     {
       "name": "MiniMax-M2.5-highspeed",
@@ -44,7 +64,12 @@
       "context_window_tokens": 204800,
       "max_output_tokens": 128000,
       "recommended_temperature": 1.0,
-      "supports_thinking": true
+      "supports_thinking": true,
+      "pricing": {
+        "input_per_1m": 0.4,
+        "output_per_1m": 2.0,
+        "currency": "USD"
+      }
     },
     {
       "name": "MiniMax-M2.1",
@@ -52,7 +77,12 @@
       "context_window_tokens": 204800,
       "max_output_tokens": 128000,
       "recommended_temperature": 1.0,
-      "supports_thinking": true
+      "supports_thinking": true,
+      "pricing": {
+        "input_per_1m": 0.15,
+        "output_per_1m": 0.6,
+        "currency": "USD"
+      }
     },
     {
       "name": "MiniMax-M2.1-highspeed",
@@ -60,7 +90,12 @@
       "context_window_tokens": 204800,
       "max_output_tokens": 128000,
       "recommended_temperature": 1.0,
-      "supports_thinking": true
+      "supports_thinking": true,
+      "pricing": {
+        "input_per_1m": 0.3,
+        "output_per_1m": 1.2,
+        "currency": "USD"
+      }
     },
     {
       "name": "MiniMax-M2",
@@ -68,7 +103,12 @@
       "context_window_tokens": 204800,
       "max_output_tokens": 128000,
       "recommended_temperature": 1.0,
-      "supports_thinking": true
+      "supports_thinking": true,
+      "pricing": {
+        "input_per_1m": 0.15,
+        "output_per_1m": 0.6,
+        "currency": "USD"
+      }
     },
     {
       "name": "MiniMax-Text-01",
@@ -76,7 +116,12 @@
       "context_window_tokens": 1000000,
       "max_output_tokens": 128000,
       "recommended_temperature": 1.0,
-      "supports_thinking": false
+      "supports_thinking": false,
+      "pricing": {
+        "input_per_1m": 0.2,
+        "output_per_1m": 0.8,
+        "currency": "USD"
+      }
     },
     {
       "name": "MiniMax-Text-01-456B",
@@ -84,7 +129,12 @@
       "context_window_tokens": 1000000,
       "max_output_tokens": 128000,
       "recommended_temperature": 1.0,
-      "supports_thinking": false
+      "supports_thinking": false,
+      "pricing": {
+        "input_per_1m": 0.3,
+        "output_per_1m": 1.2,
+        "currency": "USD"
+      }
     },
     {
       "name": "abab6.5-chat",
@@ -92,7 +142,12 @@
       "context_window_tokens": 200000,
       "max_output_tokens": 16384,
       "recommended_temperature": 0.7,
-      "supports_thinking": false
+      "supports_thinking": false,
+      "pricing": {
+        "input_per_1m": 0.1,
+        "output_per_1m": 0.3,
+        "currency": "USD"
+      }
     },
     {
       "name": "abab6.5g-chat",
@@ -100,7 +155,12 @@
       "context_window_tokens": 200000,
       "max_output_tokens": 8192,
       "recommended_temperature": 0.7,
-      "supports_thinking": false
+      "supports_thinking": false,
+      "pricing": {
+        "input_per_1m": 0.15,
+        "output_per_1m": 0.5,
+        "currency": "USD"
+      }
     },
     {
       "name": "abab6.5s-chat",
@@ -108,7 +168,12 @@
       "context_window_tokens": 200000,
       "max_output_tokens": 16384,
       "recommended_temperature": 0.7,
-      "supports_thinking": false
+      "supports_thinking": false,
+      "pricing": {
+        "input_per_1m": 0.05,
+        "output_per_1m": 0.15,
+        "currency": "USD"
+      }
     },
     {
       "name": "abab6.5t-chat",
@@ -116,7 +181,12 @@
       "context_window_tokens": 200000,
       "max_output_tokens": 8192,
       "recommended_temperature": 0.7,
-      "supports_thinking": false
+      "supports_thinking": false,
+      "pricing": {
+        "input_per_1m": 0.03,
+        "output_per_1m": 0.1,
+        "currency": "USD"
+      }
     }
   ]
 }

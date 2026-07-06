@@ -12,7 +12,12 @@
       "context_window_tokens": 1000000,
       "max_output_tokens": 384000,
       "recommended_temperature": 1.0,
-      "supports_thinking": false
+      "supports_thinking": false,
+      "pricing": {
+        "input_per_1m": 0.09,
+        "output_per_1m": 0.18,
+        "currency": "USD"
+      }
     },
     {
       "name": "deepseek-v4-pro",
@@ -20,7 +25,12 @@
       "context_window_tokens": 1000000,
       "max_output_tokens": 384000,
       "recommended_temperature": 1.0,
-      "supports_thinking": true
+      "supports_thinking": true,
+      "pricing": {
+        "input_per_1m": 0.435,
+        "output_per_1m": 0.87,
+        "currency": "USD"
+      }
     },
     {
       "name": "qwen3.6-plus",
@@ -28,7 +38,12 @@
       "context_window_tokens": 1000000,
       "max_output_tokens": 65536,
       "recommended_temperature": 1.0,
-      "supports_thinking": false
+      "supports_thinking": false,
+      "pricing": {
+        "input_per_1m": 0.3,
+        "output_per_1m": 1.8,
+        "currency": "USD"
+      }
     },
     {
       "name": "glm-5",
@@ -36,7 +51,12 @@
       "context_window_tokens": 202752,
       "max_output_tokens": 32768,
       "recommended_temperature": 1.0,
-      "supports_thinking": false
+      "supports_thinking": false,
+      "pricing": {
+        "input_per_1m": 0.6,
+        "output_per_1m": 2.2,
+        "currency": "USD"
+      }
     },
     {
       "name": "kimi-k2.5",
@@ -44,7 +64,12 @@
       "context_window_tokens": 262144,
       "max_output_tokens": 65536,
       "recommended_temperature": 1.0,
-      "supports_thinking": false
+      "supports_thinking": false,
+      "pricing": {
+        "input_per_1m": 0.57,
+        "output_per_1m": 2.3,
+        "currency": "USD"
+      }
     },
     {
       "name": "minimax-m2.5",
@@ -52,7 +77,12 @@
       "context_window_tokens": 204800,
       "max_output_tokens": 131072,
       "recommended_temperature": 1.0,
-      "supports_thinking": false
+      "supports_thinking": false,
+      "pricing": {
+        "input_per_1m": 0.2,
+        "output_per_1m": 1.0,
+        "currency": "USD"
+      }
     }
   ]
 }
