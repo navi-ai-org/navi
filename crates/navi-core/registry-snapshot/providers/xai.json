@@ -12,7 +12,12 @@
       "context_window_tokens": 1000000,
       "max_output_tokens": 131072,
       "recommended_temperature": 1.0,
-      "supports_thinking": true
+      "supports_thinking": true,
+      "pricing": {
+        "input_per_1m": 1.25,
+        "output_per_1m": 2.5,
+        "currency": "USD"
+      }
     },
     {
       "name": "grok-4",
@@ -20,7 +25,12 @@
       "context_window_tokens": 1000000,
       "max_output_tokens": 131072,
       "recommended_temperature": 1.0,
-      "supports_thinking": true
+      "supports_thinking": true,
+      "pricing": {
+        "input_per_1m": 1.25,
+        "output_per_1m": 2.5,
+        "currency": "USD"
+      }
     },
     {
       "name": "grok-4-fast",
@@ -52,7 +62,12 @@
       "context_window_tokens": 1000000,
       "max_output_tokens": 131072,
       "recommended_temperature": 1.0,
-      "supports_thinking": true
+      "supports_thinking": true,
+      "pricing": {
+        "input_per_1m": 1.25,
+        "output_per_1m": 2.5,
+        "currency": "USD"
+      }
     },
     {
       "name": "grok-3-fast",
@@ -68,7 +83,12 @@
       "context_window_tokens": 131072,
       "max_output_tokens": 16384,
       "recommended_temperature": 1.0,
-      "supports_thinking": true
+      "supports_thinking": true,
+      "pricing": {
+        "input_per_1m": 0.3,
+        "output_per_1m": 1.0,
+        "currency": "USD"
+      }
     },
     {
       "name": "grok-3-mini-fast",

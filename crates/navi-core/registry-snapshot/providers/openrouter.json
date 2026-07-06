@@ -15,6 +15,11 @@
       "supports_thinking": true,
       "attachments": {
         "images": true
+      },
+      "pricing": {
+        "input_per_1m": 15.0,
+        "output_per_1m": 75.0,
+        "currency": "USD"
       }
     },
     {
@@ -26,6 +31,11 @@
       "supports_thinking": true,
       "attachments": {
         "images": true
+      },
+      "pricing": {
+        "input_per_1m": 3.0,
+        "output_per_1m": 15.0,
+        "currency": "USD"
       }
     },
     {
@@ -37,6 +47,11 @@
       "supports_thinking": true,
       "attachments": {
         "images": true
+      },
+      "pricing": {
+        "input_per_1m": 5.0,
+        "output_per_1m": 30.0,
+        "currency": "USD"
       }
     },
     {
@@ -48,6 +63,11 @@
       "supports_thinking": true,
       "attachments": {
         "images": true
+      },
+      "pricing": {
+        "input_per_1m": 2.5,
+        "output_per_1m": 15.0,
+        "currency": "USD"
       }
     },
     {
@@ -59,6 +79,11 @@
       "supports_thinking": true,
       "attachments": {
         "images": true
+      },
+      "pricing": {
+        "input_per_1m": 2.0,
+        "output_per_1m": 8.0,
+        "currency": "USD"
       }
     },
     {
@@ -70,6 +95,11 @@
       "supports_thinking": true,
       "attachments": {
         "images": true
+      },
+      "pricing": {
+        "input_per_1m": 1.25,
+        "output_per_1m": 10.0,
+        "currency": "USD"
       }
     },
     {
@@ -81,6 +111,11 @@
       "supports_thinking": true,
       "attachments": {
         "images": true
+      },
+      "pricing": {
+        "input_per_1m": 0.3,
+        "output_per_1m": 2.5,
+        "currency": "USD"
       }
     },
     {
@@ -89,7 +124,12 @@
       "context_window_tokens": 1048576,
       "max_output_tokens": 384000,
       "recommended_temperature": 1.0,
-      "supports_thinking": true
+      "supports_thinking": true,
+      "pricing": {
+        "input_per_1m": 0.435,
+        "output_per_1m": 0.87,
+        "currency": "USD"
+      }
     },
     {
       "name": "deepseek/deepseek-chat",
@@ -97,7 +137,12 @@
       "context_window_tokens": 131072,
       "max_output_tokens": 16000,
       "recommended_temperature": 1.0,
-      "supports_thinking": false
+      "supports_thinking": false,
+      "pricing": {
+        "input_per_1m": 0.2002,
+        "output_per_1m": 0.8001,
+        "currency": "USD"
+      }
     },
     {
       "name": "x-ai/grok-4",
@@ -108,6 +153,11 @@
       "supports_thinking": true,
       "attachments": {
         "images": true
+      },
+      "pricing": {
+        "input_per_1m": 1.25,
+        "output_per_1m": 2.5,
+        "currency": "USD"
       }
     },
     {
@@ -119,6 +169,11 @@
       "supports_thinking": true,
       "attachments": {
         "images": true
+      },
+      "pricing": {
+        "input_per_1m": 1.25,
+        "output_per_1m": 2.5,
+        "currency": "USD"
       }
     },
     {
@@ -127,7 +182,12 @@
       "context_window_tokens": 131072,
       "max_output_tokens": 16384,
       "recommended_temperature": 0.7,
-      "supports_thinking": false
+      "supports_thinking": false,
+      "pricing": {
+        "input_per_1m": 0.59,
+        "output_per_1m": 0.79,
+        "currency": "USD"
+      }
     },
     {
       "name": "meta-llama/llama-4-maverick",
@@ -138,6 +198,11 @@
       "supports_thinking": false,
       "attachments": {
         "images": true
+      },
+      "pricing": {
+        "input_per_1m": 0.15,
+        "output_per_1m": 0.6,
+        "currency": "USD"
       }
     },
     {
@@ -149,6 +214,11 @@
       "supports_thinking": false,
       "attachments": {
         "images": true
+      },
+      "pricing": {
+        "input_per_1m": 0.1,
+        "output_per_1m": 0.3,
+        "currency": "USD"
       }
     },
     {
@@ -157,7 +227,12 @@
       "context_window_tokens": 128000,
       "max_output_tokens": 32768,
       "recommended_temperature": 1.0,
-      "supports_thinking": false
+      "supports_thinking": false,
+      "pricing": {
+        "input_per_1m": 2.0,
+        "output_per_1m": 6.0,
+        "currency": "USD"
+      }
     },
     {
       "name": "mistralai/codestral",
@@ -165,7 +240,12 @@
       "context_window_tokens": 256000,
       "max_output_tokens": 32768,
       "recommended_temperature": 1.0,
-      "supports_thinking": false
+      "supports_thinking": false,
+      "pricing": {
+        "input_per_1m": 0.2,
+        "output_per_1m": 0.6,
+        "currency": "USD"
+      }
     },
     {
       "name": "qwen/qwen3-coder",
@@ -173,7 +253,12 @@
       "context_window_tokens": 1048576,
       "max_output_tokens": 65536,
       "recommended_temperature": 1.0,
-      "supports_thinking": true
+      "supports_thinking": true,
+      "pricing": {
+        "input_per_1m": 0.22,
+        "output_per_1m": 1.8,
+        "currency": "USD"
+      }
     },
     {
       "name": "qwen/qwen3-235b-a22b",
@@ -181,7 +266,12 @@
       "context_window_tokens": 131072,
       "max_output_tokens": 8192,
       "recommended_temperature": 0.7,
-      "supports_thinking": true
+      "supports_thinking": true,
+      "pricing": {
+        "input_per_1m": 0.455,
+        "output_per_1m": 1.82,
+        "currency": "USD"
+      }
     },
     {
       "name": "qwen/qwen3-32b",
@@ -189,7 +279,12 @@
       "context_window_tokens": 131072,
       "max_output_tokens": 16384,
       "recommended_temperature": 0.7,
-      "supports_thinking": true
+      "supports_thinking": true,
+      "pricing": {
+        "input_per_1m": 0.29,
+        "output_per_1m": 0.59,
+        "currency": "USD"
+      }
     },
     {
       "name": "z-ai/glm-4.5",
@@ -197,7 +292,12 @@
       "context_window_tokens": 131072,
       "max_output_tokens": 98304,
       "recommended_temperature": 1.0,
-      "supports_thinking": true
+      "supports_thinking": true,
+      "pricing": {
+        "input_per_1m": 0.6,
+        "output_per_1m": 2.2,
+        "currency": "USD"
+      }
     },
     {
       "name": "moonshotai/kimi-k2",
@@ -205,7 +305,12 @@
       "context_window_tokens": 131072,
       "max_output_tokens": 32768,
       "recommended_temperature": 1.0,
-      "supports_thinking": false
+      "supports_thinking": false,
+      "pricing": {
+        "input_per_1m": 0.57,
+        "output_per_1m": 2.3,
+        "currency": "USD"
+      }
     }
   ],
   "defaults": {

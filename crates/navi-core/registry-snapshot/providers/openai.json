@@ -136,7 +136,12 @@
       "context_window_tokens": 128000,
       "max_output_tokens": 16384,
       "recommended_temperature": 1.0,
-      "supports_thinking": false
+      "supports_thinking": false,
+      "pricing": {
+        "input_per_1m": 2.5,
+        "output_per_1m": 10.0,
+        "currency": "USD"
+      }
     },
     {
       "name": "gpt-4o-mini",
@@ -144,7 +149,12 @@
       "context_window_tokens": 128000,
       "max_output_tokens": 16384,
       "recommended_temperature": 1.0,
-      "supports_thinking": false
+      "supports_thinking": false,
+      "pricing": {
+        "input_per_1m": 0.15,
+        "output_per_1m": 0.6,
+        "currency": "USD"
+      }
     },
     {
       "name": "chatgpt-4o-latest",
@@ -168,7 +178,12 @@
       "context_window_tokens": 200000,
       "max_output_tokens": 100000,
       "recommended_temperature": 1.0,
-      "supports_thinking": true
+      "supports_thinking": true,
+      "pricing": {
+        "input_per_1m": 2.0,
+        "output_per_1m": 8.0,
+        "currency": "USD"
+      }
     },
     {
       "name": "o3-pro",
@@ -187,6 +202,11 @@
       "supports_thinking": true,
       "attachments": {
         "images": false
+      },
+      "pricing": {
+        "input_per_1m": 1.1,
+        "output_per_1m": 4.4,
+        "currency": "USD"
       }
     },
     {
@@ -195,7 +215,12 @@
       "context_window_tokens": 200000,
       "max_output_tokens": 100000,
       "recommended_temperature": 1.0,
-      "supports_thinking": true
+      "supports_thinking": true,
+      "pricing": {
+        "input_per_1m": 1.1,
+        "output_per_1m": 4.4,
+        "currency": "USD"
+      }
     },
     {
       "name": "o1",
@@ -206,6 +231,11 @@
       "supports_thinking": true,
       "attachments": {
         "images": false
+      },
+      "pricing": {
+        "input_per_1m": 15.0,
+        "output_per_1m": 60.0,
+        "currency": "USD"
       }
     },
     {
