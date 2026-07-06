@@ -1,7 +1,7 @@
 {
   "id": "moonshot",
   "label": "Moonshot AI",
-  "description": "Kimi models via Moonshot AI — multimodal, long-context, and reasoning models",
+  "description": "Kimi models via Moonshot AI \u2014 multimodal, long-context, and reasoning models",
   "kind": "openai-chat-completions",
   "api_key_env": "MOONSHOT_API_KEY",
   "base_url": "https://api.moonshot.cn/v1",
@@ -12,7 +12,12 @@
       "context_window_tokens": 262144,
       "max_output_tokens": 65536,
       "recommended_temperature": 1.0,
-      "supports_thinking": true
+      "supports_thinking": true,
+      "pricing": {
+        "input_per_1m": 0.57,
+        "output_per_1m": 2.3,
+        "currency": "USD"
+      }
     },
     {
       "name": "kimi-k2.5",
@@ -20,7 +25,12 @@
       "context_window_tokens": 262144,
       "max_output_tokens": 65536,
       "recommended_temperature": 1.0,
-      "supports_thinking": true
+      "supports_thinking": true,
+      "pricing": {
+        "input_per_1m": 0.57,
+        "output_per_1m": 2.3,
+        "currency": "USD"
+      }
     },
     {
       "name": "kimi-k2-thinking",
@@ -28,7 +38,12 @@
       "context_window_tokens": 256000,
       "max_output_tokens": 65536,
       "recommended_temperature": 1.0,
-      "supports_thinking": true
+      "supports_thinking": true,
+      "pricing": {
+        "input_per_1m": 0.57,
+        "output_per_1m": 2.3,
+        "currency": "USD"
+      }
     },
     {
       "name": "kimi-k2",
@@ -36,7 +51,12 @@
       "context_window_tokens": 128000,
       "max_output_tokens": 65536,
       "recommended_temperature": 1.0,
-      "supports_thinking": false
+      "supports_thinking": false,
+      "pricing": {
+        "input_per_1m": 0.57,
+        "output_per_1m": 2.3,
+        "currency": "USD"
+      }
     },
     {
       "name": "kimi-k2-0711-preview",
@@ -44,7 +64,12 @@
       "context_window_tokens": 262144,
       "max_output_tokens": 65536,
       "recommended_temperature": 1.0,
-      "supports_thinking": false
+      "supports_thinking": false,
+      "pricing": {
+        "input_per_1m": 0.57,
+        "output_per_1m": 2.3,
+        "currency": "USD"
+      }
     },
     {
       "name": "kimi-latest",
@@ -52,7 +77,12 @@
       "context_window_tokens": 128000,
       "max_output_tokens": 65536,
       "recommended_temperature": 1.0,
-      "supports_thinking": false
+      "supports_thinking": false,
+      "pricing": {
+        "input_per_1m": 0.66,
+        "output_per_1m": 3.41,
+        "currency": "USD"
+      }
     },
     {
       "name": "kimi-thinking-preview",
@@ -60,7 +90,12 @@
       "context_window_tokens": 128000,
       "max_output_tokens": 65536,
       "recommended_temperature": 1.0,
-      "supports_thinking": true
+      "supports_thinking": true,
+      "pricing": {
+        "input_per_1m": 0.57,
+        "output_per_1m": 2.3,
+        "currency": "USD"
+      }
     },
     {
       "name": "moonshot-v1-128k",
@@ -68,7 +103,12 @@
       "context_window_tokens": 131072,
       "max_output_tokens": 65536,
       "recommended_temperature": 1.0,
-      "supports_thinking": false
+      "supports_thinking": false,
+      "pricing": {
+        "input_per_1m": 0.3,
+        "output_per_1m": 1.2,
+        "currency": "USD"
+      }
     },
     {
       "name": "moonshot-v1-32k",
@@ -76,7 +116,12 @@
       "context_window_tokens": 32768,
       "max_output_tokens": 16384,
       "recommended_temperature": 1.0,
-      "supports_thinking": false
+      "supports_thinking": false,
+      "pricing": {
+        "input_per_1m": 0.15,
+        "output_per_1m": 0.6,
+        "currency": "USD"
+      }
     },
     {
       "name": "moonshot-v1-8k",
@@ -84,7 +129,12 @@
       "context_window_tokens": 8192,
       "max_output_tokens": 4096,
       "recommended_temperature": 1.0,
-      "supports_thinking": false
+      "supports_thinking": false,
+      "pricing": {
+        "input_per_1m": 0.05,
+        "output_per_1m": 0.2,
+        "currency": "USD"
+      }
     },
     {
       "name": "moonshot-v1-auto",
@@ -92,7 +142,12 @@
       "context_window_tokens": 131072,
       "max_output_tokens": 65536,
       "recommended_temperature": 1.0,
-      "supports_thinking": false
+      "supports_thinking": false,
+      "pricing": {
+        "input_per_1m": 0.3,
+        "output_per_1m": 1.2,
+        "currency": "USD"
+      }
     }
   ]
 }

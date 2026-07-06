@@ -1,7 +1,7 @@
 {
   "id": "zai",
   "label": "Z.AI",
-  "description": "GLM models by Zhipu AI — flagship, turbo, and cost-optimized language models",
+  "description": "GLM models by Zhipu AI \u2014 flagship, turbo, and cost-optimized language models",
   "kind": "openai-chat-completions",
   "api_key_env": "ZAI_API_KEY",
   "base_url": "https://api.z.ai/api/paas/v4/",
@@ -12,7 +12,12 @@
       "context_window_tokens": 200000,
       "max_output_tokens": 131072,
       "recommended_temperature": 1.0,
-      "supports_thinking": true
+      "supports_thinking": true,
+      "pricing": {
+        "input_per_1m": 0.6,
+        "output_per_1m": 2.2,
+        "currency": "USD"
+      }
     },
     {
       "name": "glm-5",
@@ -20,7 +25,12 @@
       "context_window_tokens": 200000,
       "max_output_tokens": 131072,
       "recommended_temperature": 1.0,
-      "supports_thinking": true
+      "supports_thinking": true,
+      "pricing": {
+        "input_per_1m": 0.6,
+        "output_per_1m": 2.2,
+        "currency": "USD"
+      }
     },
     {
       "name": "glm-5-turbo",
@@ -28,7 +38,12 @@
       "context_window_tokens": 200000,
       "max_output_tokens": 131072,
       "recommended_temperature": 1.0,
-      "supports_thinking": true
+      "supports_thinking": true,
+      "pricing": {
+        "input_per_1m": 0.3,
+        "output_per_1m": 1.0,
+        "currency": "USD"
+      }
     },
     {
       "name": "glm-4.7",
@@ -36,7 +51,12 @@
       "context_window_tokens": 200000,
       "max_output_tokens": 131072,
       "recommended_temperature": 1.0,
-      "supports_thinking": true
+      "supports_thinking": true,
+      "pricing": {
+        "input_per_1m": 0.5,
+        "output_per_1m": 1.5,
+        "currency": "USD"
+      }
     },
     {
       "name": "glm-4.6",
@@ -44,7 +64,12 @@
       "context_window_tokens": 200000,
       "max_output_tokens": 131072,
       "recommended_temperature": 1.0,
-      "supports_thinking": true
+      "supports_thinking": true,
+      "pricing": {
+        "input_per_1m": 0.4,
+        "output_per_1m": 1.2,
+        "currency": "USD"
+      }
     },
     {
       "name": "glm-4.5",
@@ -52,7 +77,12 @@
       "context_window_tokens": 128000,
       "max_output_tokens": 98304,
       "recommended_temperature": 1.0,
-      "supports_thinking": true
+      "supports_thinking": true,
+      "pricing": {
+        "input_per_1m": 0.6,
+        "output_per_1m": 2.2,
+        "currency": "USD"
+      }
     },
     {
       "name": "glm-4.5-air",
@@ -60,7 +90,12 @@
       "context_window_tokens": 128000,
       "max_output_tokens": 98304,
       "recommended_temperature": 1.0,
-      "supports_thinking": true
+      "supports_thinking": true,
+      "pricing": {
+        "input_per_1m": 0.3,
+        "output_per_1m": 1.0,
+        "currency": "USD"
+      }
     },
     {
       "name": "glm-4.5-x",
@@ -68,7 +103,12 @@
       "context_window_tokens": 128000,
       "max_output_tokens": 98304,
       "recommended_temperature": 1.0,
-      "supports_thinking": true
+      "supports_thinking": true,
+      "pricing": {
+        "input_per_1m": 0.8,
+        "output_per_1m": 3.0,
+        "currency": "USD"
+      }
     },
     {
       "name": "glm-4.5-flash",
@@ -76,7 +116,12 @@
       "context_window_tokens": 128000,
       "max_output_tokens": 98304,
       "recommended_temperature": 1.0,
-      "supports_thinking": true
+      "supports_thinking": true,
+      "pricing": {
+        "input_per_1m": 0.15,
+        "output_per_1m": 0.6,
+        "currency": "USD"
+      }
     },
     {
       "name": "glm-4-plus",
@@ -84,7 +129,12 @@
       "context_window_tokens": 128000,
       "max_output_tokens": 4096,
       "recommended_temperature": 0.9,
-      "supports_thinking": false
+      "supports_thinking": false,
+      "pricing": {
+        "input_per_1m": 0.5,
+        "output_per_1m": 1.5,
+        "currency": "USD"
+      }
     },
     {
       "name": "glm-4-flash",
@@ -92,7 +142,12 @@
       "context_window_tokens": 128000,
       "max_output_tokens": 4096,
       "recommended_temperature": 0.9,
-      "supports_thinking": false
+      "supports_thinking": false,
+      "pricing": {
+        "input_per_1m": 0.1,
+        "output_per_1m": 0.4,
+        "currency": "USD"
+      }
     },
     {
       "name": "glm-4-long",
@@ -100,7 +155,12 @@
       "context_window_tokens": 1000000,
       "max_output_tokens": 4096,
       "recommended_temperature": 0.9,
-      "supports_thinking": false
+      "supports_thinking": false,
+      "pricing": {
+        "input_per_1m": 0.3,
+        "output_per_1m": 1.0,
+        "currency": "USD"
+      }
     },
     {
       "name": "glm-4-air",
@@ -108,7 +168,12 @@
       "context_window_tokens": 128000,
       "max_output_tokens": 4096,
       "recommended_temperature": 0.9,
-      "supports_thinking": false
+      "supports_thinking": false,
+      "pricing": {
+        "input_per_1m": 0.2,
+        "output_per_1m": 0.8,
+        "currency": "USD"
+      }
     },
     {
       "name": "glm-4-airx",
@@ -116,7 +181,12 @@
       "context_window_tokens": 128000,
       "max_output_tokens": 4096,
       "recommended_temperature": 0.9,
-      "supports_thinking": false
+      "supports_thinking": false,
+      "pricing": {
+        "input_per_1m": 0.3,
+        "output_per_1m": 1.0,
+        "currency": "USD"
+      }
     },
     {
       "name": "glm-4-0520",
@@ -124,7 +194,12 @@
       "context_window_tokens": 128000,
       "max_output_tokens": 4096,
       "recommended_temperature": 0.9,
-      "supports_thinking": false
+      "supports_thinking": false,
+      "pricing": {
+        "input_per_1m": 0.4,
+        "output_per_1m": 1.2,
+        "currency": "USD"
+      }
     }
   ]
 }

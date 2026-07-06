@@ -7,35 +7,305 @@
   "base_url": "https://api.commandcode.ai",
   "tool_calling_mode": "native",
   "models": [
-    { "name": "claude-sonnet-4-6", "task_size": "large", "context_window_tokens": 1000000 },
-    { "name": "claude-fable-5", "task_size": "large", "context_window_tokens": 1000000 },
-    { "name": "claude-opus-4-8", "task_size": "large", "context_window_tokens": 1000000 },
-    { "name": "claude-opus-4-7", "task_size": "large", "context_window_tokens": 1000000 },
-    { "name": "claude-haiku-4-5-20251001", "task_size": "small", "context_window_tokens": 200000 },
-    { "name": "gpt-5.5", "task_size": "large", "context_window_tokens": 200000 },
-    { "name": "gpt-5.4", "task_size": "large", "context_window_tokens": 400000 },
-    { "name": "gpt-5.3-codex", "task_size": "large", "context_window_tokens": 400000 },
-    { "name": "gpt-5.4-mini", "task_size": "small", "context_window_tokens": 400000 },
-    { "name": "MiniMaxAI/MiniMax-M3", "task_size": "large", "context_window_tokens": 1000000 },
-    { "name": "deepseek/deepseek-v4-pro", "task_size": "large", "context_window_tokens": 1000000 },
-    { "name": "deepseek/deepseek-v4-flash", "task_size": "small", "context_window_tokens": 1000000 },
-    { "name": "moonshotai/Kimi-K2.7-Code", "task_size": "large", "context_window_tokens": 256000 },
-    { "name": "moonshotai/Kimi-K2.6", "task_size": "large", "context_window_tokens": 256000 },
-    { "name": "moonshotai/Kimi-K2.5", "task_size": "large", "context_window_tokens": 256000 },
-    { "name": "zai-org/GLM-5.1", "task_size": "large", "context_window_tokens": 200000 },
-    { "name": "zai-org/GLM-5", "task_size": "large", "context_window_tokens": 200000 },
-    { "name": "MiniMaxAI/MiniMax-M2.7", "task_size": "small", "context_window_tokens": 200000 },
-    { "name": "MiniMaxAI/MiniMax-M2.5", "task_size": "small", "context_window_tokens": 200000 },
-    { "name": "xiaomi/mimo-v2.5-pro", "task_size": "large", "context_window_tokens": 1000000 },
-    { "name": "xiaomi/mimo-v2.5", "task_size": "small", "context_window_tokens": 1000000 },
-    { "name": "Qwen/Qwen3.6-Max-Preview", "task_size": "large", "context_window_tokens": 200000 },
-    { "name": "Qwen/Qwen3.6-Plus", "task_size": "large", "context_window_tokens": 200000 },
-    { "name": "Qwen/Qwen3.7-Max", "task_size": "large", "context_window_tokens": 1000000 },
-    { "name": "Qwen/Qwen3.7-Plus", "task_size": "large", "context_window_tokens": 1000000 },
-    { "name": "stepfun/Step-3.7-Flash", "task_size": "small", "context_window_tokens": 256000 },
-    { "name": "stepfun/Step-3.5-Flash", "task_size": "small", "context_window_tokens": 1000000 },
-    { "name": "google/gemini-3.5-flash", "task_size": "small", "context_window_tokens": 1000000 },
-    { "name": "google/gemini-3.1-flash-lite", "task_size": "small", "context_window_tokens": 1000000 },
-    { "name": "nvidia/nemotron-3-ultra-550b-a55b", "task_size": "large", "context_window_tokens": 1000000 }
+    {
+      "name": "claude-sonnet-4-6",
+      "task_size": "large",
+      "context_window_tokens": 1000000,
+      "pricing": {
+        "input_per_1m": 3.0,
+        "output_per_1m": 15.0,
+        "currency": "USD"
+      }
+    },
+    {
+      "name": "claude-fable-5",
+      "task_size": "large",
+      "context_window_tokens": 1000000,
+      "pricing": {
+        "input_per_1m": 10.0,
+        "output_per_1m": 50.0,
+        "currency": "USD"
+      }
+    },
+    {
+      "name": "claude-opus-4-8",
+      "task_size": "large",
+      "context_window_tokens": 1000000,
+      "pricing": {
+        "input_per_1m": 5.0,
+        "output_per_1m": 25.0,
+        "currency": "USD"
+      }
+    },
+    {
+      "name": "claude-opus-4-7",
+      "task_size": "large",
+      "context_window_tokens": 1000000,
+      "pricing": {
+        "input_per_1m": 30.0,
+        "output_per_1m": 150.0,
+        "currency": "USD"
+      }
+    },
+    {
+      "name": "claude-haiku-4-5-20251001",
+      "task_size": "small",
+      "context_window_tokens": 200000,
+      "pricing": {
+        "input_per_1m": 1.0,
+        "output_per_1m": 5.0,
+        "currency": "USD"
+      }
+    },
+    {
+      "name": "gpt-5.5",
+      "task_size": "large",
+      "context_window_tokens": 200000,
+      "pricing": {
+        "input_per_1m": 5.0,
+        "output_per_1m": 30.0,
+        "currency": "USD"
+      }
+    },
+    {
+      "name": "gpt-5.4",
+      "task_size": "large",
+      "context_window_tokens": 400000,
+      "pricing": {
+        "input_per_1m": 2.5,
+        "output_per_1m": 15.0,
+        "currency": "USD"
+      }
+    },
+    {
+      "name": "gpt-5.3-codex",
+      "task_size": "large",
+      "context_window_tokens": 400000,
+      "pricing": {
+        "input_per_1m": 2.5,
+        "output_per_1m": 15.0,
+        "currency": "USD"
+      }
+    },
+    {
+      "name": "gpt-5.4-mini",
+      "task_size": "small",
+      "context_window_tokens": 400000,
+      "pricing": {
+        "input_per_1m": 0.5,
+        "output_per_1m": 2.0,
+        "currency": "USD"
+      }
+    },
+    {
+      "name": "MiniMaxAI/MiniMax-M3",
+      "task_size": "large",
+      "context_window_tokens": 1000000,
+      "pricing": {
+        "input_per_1m": 0.3,
+        "output_per_1m": 1.2,
+        "currency": "USD"
+      }
+    },
+    {
+      "name": "deepseek/deepseek-v4-pro",
+      "task_size": "large",
+      "context_window_tokens": 1000000,
+      "pricing": {
+        "input_per_1m": 0.435,
+        "output_per_1m": 0.87,
+        "currency": "USD"
+      }
+    },
+    {
+      "name": "deepseek/deepseek-v4-flash",
+      "task_size": "small",
+      "context_window_tokens": 1000000,
+      "pricing": {
+        "input_per_1m": 0.09,
+        "output_per_1m": 0.18,
+        "currency": "USD"
+      }
+    },
+    {
+      "name": "moonshotai/Kimi-K2.7-Code",
+      "task_size": "large",
+      "context_window_tokens": 256000,
+      "pricing": {
+        "input_per_1m": 0.74,
+        "output_per_1m": 3.5,
+        "currency": "USD"
+      }
+    },
+    {
+      "name": "moonshotai/Kimi-K2.6",
+      "task_size": "large",
+      "context_window_tokens": 256000,
+      "pricing": {
+        "input_per_1m": 0.57,
+        "output_per_1m": 2.3,
+        "currency": "USD"
+      }
+    },
+    {
+      "name": "moonshotai/Kimi-K2.5",
+      "task_size": "large",
+      "context_window_tokens": 256000,
+      "pricing": {
+        "input_per_1m": 0.57,
+        "output_per_1m": 2.3,
+        "currency": "USD"
+      }
+    },
+    {
+      "name": "zai-org/GLM-5.1",
+      "task_size": "large",
+      "context_window_tokens": 200000,
+      "pricing": {
+        "input_per_1m": 0.6,
+        "output_per_1m": 2.2,
+        "currency": "USD"
+      }
+    },
+    {
+      "name": "zai-org/GLM-5",
+      "task_size": "large",
+      "context_window_tokens": 200000,
+      "pricing": {
+        "input_per_1m": 0.6,
+        "output_per_1m": 2.2,
+        "currency": "USD"
+      }
+    },
+    {
+      "name": "MiniMaxAI/MiniMax-M2.7",
+      "task_size": "small",
+      "context_window_tokens": 200000,
+      "pricing": {
+        "input_per_1m": 0.3,
+        "output_per_1m": 1.2,
+        "currency": "USD"
+      }
+    },
+    {
+      "name": "MiniMaxAI/MiniMax-M2.5",
+      "task_size": "small",
+      "context_window_tokens": 200000,
+      "pricing": {
+        "input_per_1m": 0.3,
+        "output_per_1m": 1.2,
+        "currency": "USD"
+      }
+    },
+    {
+      "name": "xiaomi/mimo-v2.5-pro",
+      "task_size": "large",
+      "context_window_tokens": 1000000,
+      "pricing": {
+        "input_per_1m": 0.435,
+        "output_per_1m": 0.87,
+        "currency": "USD"
+      }
+    },
+    {
+      "name": "xiaomi/mimo-v2.5",
+      "task_size": "small",
+      "context_window_tokens": 1000000,
+      "pricing": {
+        "input_per_1m": 0.105,
+        "output_per_1m": 0.28,
+        "currency": "USD"
+      }
+    },
+    {
+      "name": "Qwen/Qwen3.6-Max-Preview",
+      "task_size": "large",
+      "context_window_tokens": 200000,
+      "pricing": {
+        "input_per_1m": 1.04,
+        "output_per_1m": 6.24,
+        "currency": "USD"
+      }
+    },
+    {
+      "name": "Qwen/Qwen3.6-Plus",
+      "task_size": "large",
+      "context_window_tokens": 200000,
+      "pricing": {
+        "input_per_1m": 0.3,
+        "output_per_1m": 1.8,
+        "currency": "USD"
+      }
+    },
+    {
+      "name": "Qwen/Qwen3.7-Max",
+      "task_size": "large",
+      "context_window_tokens": 1000000,
+      "pricing": {
+        "input_per_1m": 1.25,
+        "output_per_1m": 3.75,
+        "currency": "USD"
+      }
+    },
+    {
+      "name": "Qwen/Qwen3.7-Plus",
+      "task_size": "large",
+      "context_window_tokens": 1000000,
+      "pricing": {
+        "input_per_1m": 0.32,
+        "output_per_1m": 1.28,
+        "currency": "USD"
+      }
+    },
+    {
+      "name": "stepfun/Step-3.7-Flash",
+      "task_size": "small",
+      "context_window_tokens": 256000,
+      "pricing": {
+        "input_per_1m": 0.2,
+        "output_per_1m": 1.15,
+        "currency": "USD"
+      }
+    },
+    {
+      "name": "stepfun/Step-3.5-Flash",
+      "task_size": "small",
+      "context_window_tokens": 1000000,
+      "pricing": {
+        "input_per_1m": 0.2,
+        "output_per_1m": 1.15,
+        "currency": "USD"
+      }
+    },
+    {
+      "name": "google/gemini-3.5-flash",
+      "task_size": "small",
+      "context_window_tokens": 1000000,
+      "pricing": {
+        "input_per_1m": 1.5,
+        "output_per_1m": 9.0,
+        "currency": "USD"
+      }
+    },
+    {
+      "name": "google/gemini-3.1-flash-lite",
+      "task_size": "small",
+      "context_window_tokens": 1000000,
+      "pricing": {
+        "input_per_1m": 0.25,
+        "output_per_1m": 1.5,
+        "currency": "USD"
+      }
+    },
+    {
+      "name": "nvidia/nemotron-3-ultra-550b-a55b",
+      "task_size": "large",
+      "context_window_tokens": 1000000,
+      "pricing": {
+        "input_per_1m": 0.5,
+        "output_per_1m": 2.2,
+        "currency": "USD"
+      }
+    }
   ]
 }

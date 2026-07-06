@@ -12,7 +12,12 @@
       "context_window_tokens": 200000,
       "max_output_tokens": 32768,
       "recommended_temperature": 0.0,
-      "supports_thinking": true
+      "supports_thinking": true,
+      "pricing": {
+        "input_per_1m": 2.5,
+        "output_per_1m": 15.0,
+        "currency": "USD"
+      }
     },
     {
       "name": "gpt-5.1",
@@ -20,7 +25,12 @@
       "context_window_tokens": 200000,
       "max_output_tokens": 32768,
       "recommended_temperature": 0.7,
-      "supports_thinking": true
+      "supports_thinking": true,
+      "pricing": {
+        "input_per_1m": 2.5,
+        "output_per_1m": 15.0,
+        "currency": "USD"
+      }
     },
     {
       "name": "gpt-5-mini",
@@ -28,7 +38,12 @@
       "context_window_tokens": 200000,
       "max_output_tokens": 16384,
       "recommended_temperature": 0.7,
-      "supports_thinking": true
+      "supports_thinking": true,
+      "pricing": {
+        "input_per_1m": 0.5,
+        "output_per_1m": 2.0,
+        "currency": "USD"
+      }
     },
     {
       "name": "claude-sonnet-4.5",
@@ -36,7 +51,12 @@
       "context_window_tokens": 200000,
       "max_output_tokens": 16384,
       "recommended_temperature": 1.0,
-      "supports_thinking": false
+      "supports_thinking": false,
+      "pricing": {
+        "input_per_1m": 3.0,
+        "output_per_1m": 15.0,
+        "currency": "USD"
+      }
     },
     {
       "name": "claude-haiku-4.5",
@@ -44,7 +64,12 @@
       "context_window_tokens": 200000,
       "max_output_tokens": 8192,
       "recommended_temperature": 1.0,
-      "supports_thinking": false
+      "supports_thinking": false,
+      "pricing": {
+        "input_per_1m": 1.0,
+        "output_per_1m": 5.0,
+        "currency": "USD"
+      }
     }
   ]
 }
