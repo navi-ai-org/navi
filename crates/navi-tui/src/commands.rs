@@ -29,6 +29,8 @@ pub(crate) enum CommandAction {
     ReSetup,
     ClearGoal,
     AttachmentModels,
+    Memory,
+    Dream,
 }
 
 pub(crate) const COMMANDS: &[CommandItem] = &[
@@ -141,6 +143,16 @@ pub(crate) const COMMANDS: &[CommandItem] = &[
         label: "Attachment Models",
         shortcut: None,
         action: CommandAction::AttachmentModels,
+    },
+    CommandItem {
+        label: "Memory",
+        shortcut: None,
+        action: CommandAction::Memory,
+    },
+    CommandItem {
+        label: "Run Dream",
+        shortcut: None,
+        action: CommandAction::Dream,
     },
 ];
 

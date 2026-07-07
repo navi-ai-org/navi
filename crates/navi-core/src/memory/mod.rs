@@ -2,6 +2,7 @@ pub mod auto_dream;
 pub mod auto_memory;
 pub mod checkpoint_writer;
 pub mod embedding;
+pub mod extract;
 pub mod history_store;
 pub mod maintenance;
 pub mod memory_store;
