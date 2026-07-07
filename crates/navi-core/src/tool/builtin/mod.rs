@@ -26,7 +26,7 @@ mod write_tool;
 
 pub(super) use goal::SetGoalTool;
 
-pub(super) use memory::{AppendNoteTool, HistoryOpsTool};
+pub(super) use memory::{AppendNoteTool, HistoryOpsTool, MemoryTool};
 
 pub(super) use extra_tools::{
     ContextRemainingTool, CurrentTimeTool, NewContextWindowTool, RequestUserInputTool, SleepTool,

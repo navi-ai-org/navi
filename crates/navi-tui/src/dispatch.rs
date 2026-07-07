@@ -7,8 +7,8 @@ use navi_sdk::{
 
 use crate::app::TuiApp;
 use crate::chat::{
-    ensure_tail_model_response, finalize_active_assistant, remove_active_tool_placeholder,
-    update_active_assistant_status,
+    drain_next_queued_message, ensure_tail_model_response, finalize_active_assistant,
+    remove_active_tool_placeholder, update_active_assistant_status,
 };
 use crate::errors::handle_model_error;
 use crate::notifications::{push_diagnostic, show_notification};
@@ -440,7 +440,10 @@ fn handle_agent_event(app: &mut TuiApp, event: AgentEvent) {
                 .push(AgentEvent::MicroCompactApplied { messages_cleared });
         }
         AgentEvent::AutoCompactStarted => {
-            push_diagnostic(app, "Compact: summarizing session context...".to_string());
+            push_diagnostic(
+                app,
+                "Auto-compact: summarizing session context...".to_string(),
+            );
             app.events.push(AgentEvent::AutoCompactStarted);
         }
         AgentEvent::AutoCompactCompleted { tokens_saved } => {
@@ -493,18 +496,17 @@ fn handle_agent_event(app: &mut TuiApp, event: AgentEvent) {
         }
         AgentEvent::GoalUpdated {
             session_id: _,
-            goal_id,
+            goal_id: _,
             objective,
+            short_description,
             status,
             tokens_used,
             token_budget,
         } => {
             use navi_sdk::GoalStatus;
             app.goal_state = Some(crate::state::GoalUiState {
-                active: status == GoalStatus::Active,
-                id: goal_id,
                 objective: objective.clone(),
-                status,
+                short_description,
                 tokens_used,
                 token_budget,
             });
@@ -515,6 +517,23 @@ fn handle_agent_event(app: &mut TuiApp, event: AgentEvent) {
             }
         }
         AgentEvent::SetGoalRequested { .. } => {}
+        AgentEvent::AutoDreamStarted { hours_since_last, sessions_reviewed } => {
+            tracing::info!(
+                "auto-dream started: {}h since last, {} sessions",
+                hours_since_last,
+                sessions_reviewed
+            );
+        }
+        AgentEvent::AutoDreamCompleted { marked_stale, duplicates_merged, active_count } => {
+            show_notification(
+                app,
+                "Dream Completed",
+                &format!("{} stale, {} duplicates merged, {} active", marked_stale, duplicates_merged, active_count),
+            );
+        }
+        AgentEvent::AutoDreamFailed { reason } => {
+            tracing::warn!("auto-dream failed: {}", reason);
+        }
     }
 }
 
@@ -539,6 +558,7 @@ fn handle_turn_completed(app: &mut TuiApp, res: std::result::Result<String, Stri
         .loading_start
         .map(|start| start.elapsed().as_millis() as u64)
         .unwrap_or(0);
+    let completed_ok = res.is_ok();
     match res {
         Ok(text) => {
             finalize_active_assistant(app, elapsed_ms, &text);
@@ -569,6 +589,9 @@ fn handle_turn_completed(app: &mut TuiApp, res: std::result::Result<String, Stri
     app.pending_questions.clear();
     if app.mode == Mode::Question {
         crate::keybindings::close_active_modal(app);
+    }
+    if completed_ok {
+        drain_next_queued_message(app);
     }
 }
 
@@ -933,6 +956,86 @@ mod tests {
             |e| matches!(e, AgentEvent::Error { message } if message.contains("model not found")),
         );
         assert!(has_error_event, "should push an error event");
+    }
+
+    #[test]
+    fn turn_completed_ok_drains_one_queued_message_after_cleanup() {
+        let mut app = test_app("");
+        app.provider_configured = false;
+        app.is_loading = true;
+        app.input = "queued follow-up".to_string();
+        app.input_cursor = app.input.len();
+        crate::chat::submit_message(&mut app);
+
+        handle_async_event(
+            &mut app,
+            AsyncEvent::TurnCompleted(Ok("first done".to_string())),
+        );
+
+        assert!(app.queued_user_messages.is_empty());
+        assert!(!app.is_loading);
+        assert!(
+            app.messages
+                .iter()
+                .any(|message| message.role == ChatRole::User
+                    && message.content == "queued follow-up")
+        );
+        assert!(app.conversation_history.iter().any(|message| matches!(
+            message.role,
+            ModelRole::User
+        ) && message.content
+            == "queued follow-up"));
+    }
+
+    #[test]
+    fn turn_completed_err_keeps_queued_message_pending() {
+        let mut app = test_app("");
+        app.is_loading = true;
+        app.input = "do this next".to_string();
+        app.input_cursor = app.input.len();
+        crate::chat::submit_message(&mut app);
+
+        handle_async_event(
+            &mut app,
+            AsyncEvent::TurnCompleted(Err("provider failed".to_string())),
+        );
+
+        assert_eq!(app.queued_user_messages.len(), 1);
+        assert_eq!(app.queued_user_messages[0].text, "do this next");
+        assert!(app.conversation_history.iter().all(|message| !(matches!(
+            message.role,
+            ModelRole::User
+        ) && message.content
+            == "do this next")));
+    }
+
+    #[test]
+    fn tool_completed_does_not_drain_queued_message() {
+        let mut app = test_app("");
+        let invocation = sample_invocation("tool-1");
+        app.is_loading = true;
+        app.tool_invocations
+            .insert(invocation.id.clone(), invocation.clone());
+        app.running_tools.insert(invocation.id.clone(), invocation);
+        app.input = "wait until full turn is done".to_string();
+        app.input_cursor = app.input.len();
+        crate::chat::submit_message(&mut app);
+
+        handle_async_event(
+            &mut app,
+            AsyncEvent::Agent(AgentEvent::ToolCompleted(sample_result("tool-1", true))),
+        );
+
+        assert_eq!(app.queued_user_messages.len(), 1);
+        assert_eq!(
+            app.queued_user_messages[0].text,
+            "wait until full turn is done"
+        );
+        assert!(app.conversation_history.iter().all(|message| !(matches!(
+            message.role,
+            ModelRole::User
+        ) && message.content
+            == "wait until full turn is done")));
     }
 
     // ── Cleanup deduplication regression ──────────────────────────────

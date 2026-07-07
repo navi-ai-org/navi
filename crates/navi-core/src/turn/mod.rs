@@ -972,7 +972,7 @@ async fn approve_and_invoke_tool(
             let is_approved = matches!(decision, crate::event::ApprovalDecision::Approved { .. });
             if is_approved {
                 ctx.tool_executor
-                    .invoke_with_event_tx(invocation.clone(), ctx.event_tx.clone())
+                    .invoke_approved_with_event_tx(invocation.clone(), ctx.event_tx.clone())
                     .await
             } else {
                 tool_error_result(invocation, "user denied tool execution")
@@ -1050,15 +1050,59 @@ async fn combined_memory_injection(ctx: &TurnContext) -> Option<String> {
         state.rebuild_context.clone()
     };
 
-    match (ctx.memory_injection.clone(), rebuild_context) {
-        (Some(session_memory), Some(rebuild_context)) => Some(format!(
-            "{session_memory}\n\nRebuilt session context:\n\n{rebuild_context}"
-        )),
-        (Some(session_memory), None) => Some(session_memory),
-        (None, Some(rebuild_context)) => {
-            Some(format!("Rebuilt session context:\n\n{rebuild_context}"))
+    let auto_memory_index = load_auto_memory_index(ctx);
+
+    let parts: Vec<String> = Vec::new();
+    let mut parts = parts;
+
+    if let Some(ref idx) = auto_memory_index {
+        if !idx.trim().is_empty() {
+            parts.push(format!("=== AUTO-MEMORY INDEX ===\n{}", idx));
         }
-        (None, None) => None,
+    }
+
+    match (ctx.memory_injection.clone(), rebuild_context) {
+        (Some(session_memory), Some(rebuild_context)) => {
+            parts.push(session_memory);
+            parts.push(format!("Rebuilt session context:\n\n{rebuild_context}"));
+        }
+        (Some(session_memory), None) => {
+            parts.push(session_memory);
+        }
+        (None, Some(rebuild_context)) => {
+            parts.push(format!("Rebuilt session context:\n\n{rebuild_context}"));
+        }
+        (None, None) => {}
+    }
+
+    if parts.is_empty() {
+        None
+    } else {
+        Some(parts.join("\n\n"))
+    }
+}
+
+/// Loads the auto-memory index for system prompt injection.
+fn load_auto_memory_index(ctx: &TurnContext) -> Option<String> {
+    let memory_config = ctx.active_config().memory;
+    if !memory_config.enabled {
+        return None;
+    }
+
+    let manager = crate::memory::MemoryManager::new(
+        ctx.project_dir.clone(),
+        ctx.data_dir.clone(),
+        &memory_config,
+    )
+    .ok()?;
+
+    let db_path = manager.store.memory_root.join("memories.db");
+    let store = crate::memory::AutoMemoryStore::open(&db_path).ok()?;
+    let index = store.build_prompt_context(2000);
+    if index.trim().is_empty() {
+        None
+    } else {
+        Some(index)
     }
 }
 

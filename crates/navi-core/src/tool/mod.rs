@@ -24,7 +24,8 @@ mod tests;
 use builtin::BranchRaceTool;
 use builtin::{
     AppendNoteTool, BashTool, CodeEditTool, CodeExecTool, CodeReadTool, ContextRemainingTool,
-    CurrentTimeTool, HistoryOpsTool, InitSessionTool, MarkFeatureDoneTool, NewContextWindowTool,
+    CurrentTimeTool, HistoryOpsTool, InitSessionTool, MarkFeatureDoneTool, MemoryTool,
+    NewContextWindowTool,
     PackageManagerTool, PlanTool, ProcessTool, QuestionTool, ReadTool, RepoIntelligenceAction,
     RepoIntelligenceTool, RequestUserInputTool, RuntimeInfoTool, SandboxTool, SearchTool,
     SetGoalTool, SleepTool, ToolSearchTool, VerifierTool, ViewImageTool, WriteTool,
@@ -454,6 +455,23 @@ impl ToolExecutor {
         invocation: ToolInvocation,
         event_tx: Option<mpsc::UnboundedSender<AgentEvent>>,
     ) -> ToolResult {
+        self.invoke_inner(invocation, event_tx, false).await
+    }
+
+    pub async fn invoke_approved_with_event_tx(
+        &self,
+        invocation: ToolInvocation,
+        event_tx: Option<mpsc::UnboundedSender<AgentEvent>>,
+    ) -> ToolResult {
+        self.invoke_inner(invocation, event_tx, true).await
+    }
+
+    async fn invoke_inner(
+        &self,
+        invocation: ToolInvocation,
+        event_tx: Option<mpsc::UnboundedSender<AgentEvent>>,
+        approval_granted: bool,
+    ) -> ToolResult {
         let inv_id = invocation.id.clone();
         let tool_name = invocation.tool_name.clone();
         let started = std::time::Instant::now();
@@ -478,19 +496,43 @@ impl ToolExecutor {
         if let Err(e) = self.validate_arguments(&invocation) {
             return self.invalid_tool_result(&invocation, e);
         }
-        if let SecurityDecision::Deny(r) = self.validate(&invocation) {
-            emit_capability_events(
-                capability_event_tx.as_ref(),
-                &invocation,
-                tool_def.as_ref(),
-                CapabilityDecision::Denied,
-                &r,
-            );
-            return ToolResult {
-                invocation_id: inv_id,
-                ok: false,
-                output: json!({"error": r}),
-            };
+        match self.validate(&invocation) {
+            SecurityDecision::Allow => {}
+            SecurityDecision::NeedsApproval(risk) if approval_granted => {
+                tracing::debug!(tool = %invocation.tool_name, ?risk, "tool approval already granted");
+            }
+            SecurityDecision::NeedsApproval(risk) => {
+                let message = format!(
+                    "approval required for tool `{}`: {:?}",
+                    invocation.tool_name, risk
+                );
+                emit_capability_events(
+                    capability_event_tx.as_ref(),
+                    &invocation,
+                    tool_def.as_ref(),
+                    CapabilityDecision::Denied,
+                    &message,
+                );
+                return ToolResult {
+                    invocation_id: inv_id,
+                    ok: false,
+                    output: json!({"error": message}),
+                };
+            }
+            SecurityDecision::Deny(r) => {
+                emit_capability_events(
+                    capability_event_tx.as_ref(),
+                    &invocation,
+                    tool_def.as_ref(),
+                    CapabilityDecision::Denied,
+                    &r,
+                );
+                return ToolResult {
+                    invocation_id: inv_id,
+                    ok: false,
+                    output: json!({"error": r}),
+                };
+            }
         }
         let Some(tool) = self.tools.get(&invocation.tool_name).cloned() else {
             return ToolResult {
@@ -890,6 +932,7 @@ impl ToolExecutor {
         self.register(InitSessionTool::new(self.policy.clone()));
         self.register(MarkFeatureDoneTool::new(self.policy.clone()));
         self.register(AppendNoteTool::new(pr.clone()));
+        self.register(MemoryTool::new(pr.clone()));
         self.register(HistoryOpsTool::new(pr.clone()));
         self.register(CurrentTimeTool::new());
         self.register(SleepTool::new());

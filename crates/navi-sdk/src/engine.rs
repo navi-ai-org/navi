@@ -744,6 +744,97 @@ impl NaviEngine {
         Ok(session.tui_components.clone())
     }
 
+    // ── Auto-memory API ─────────────────────────────────────────────────
+
+    /// Opens the auto-memory SQLite store for this project.
+    fn memory_store(&self) -> Result<navi_core::memory::AutoMemoryStore> {
+        let loaded_config = self.loaded_config();
+        let manager = navi_core::memory::MemoryManager::new(
+            self.inner.project_dir.clone(),
+            loaded_config.data_dir.clone(),
+            &loaded_config.config.memory,
+        )?;
+        let db_path = manager.store.memory_root.join("memories.db");
+        Ok(navi_core::memory::AutoMemoryStore::open(&db_path)?)
+    }
+
+    /// Saves a persistent memory entry.
+    pub fn memory_write(
+        &self,
+        id: &str,
+        memory_type: navi_core::memory::MemoryType,
+        name: &str,
+        description: &str,
+        body: &str,
+    ) -> Result<()> {
+        let store = self.memory_store()?;
+        let entry = navi_core::memory::new_entry(id, memory_type, name, description, body);
+        store.upsert(&entry)?;
+        Ok(())
+    }
+
+    /// Reads a memory by id.
+    pub fn memory_read(&self, id: &str) -> Result<Option<navi_core::memory::MemoryEntry>> {
+        let store = self.memory_store()?;
+        Ok(store.get(id)?)
+    }
+
+    /// Lists all memories, optionally filtered by status.
+    pub fn memory_list(
+        &self,
+        status: Option<navi_core::memory::MemoryStatus>,
+    ) -> Result<Vec<navi_core::memory::MemorySummary>> {
+        let store = self.memory_store()?;
+        Ok(store.list(status)?)
+    }
+
+    /// Searches memories by text query.
+    pub fn memory_search(&self, query: &str, limit: usize) -> Result<Vec<navi_core::memory::MemorySummary>> {
+        let store = self.memory_store()?;
+        Ok(store.search_text(query, limit)?)
+    }
+
+    /// Updates a memory's fields and/or status.
+    pub fn memory_update(
+        &self,
+        id: &str,
+        name: Option<&str>,
+        description: Option<&str>,
+        body: Option<&str>,
+        status: Option<navi_core::memory::MemoryStatus>,
+    ) -> Result<()> {
+        let store = self.memory_store()?;
+        if let Some(s) = status {
+            store.set_status(id, s)?;
+        }
+        store.update(id, name, description, body)?;
+        Ok(())
+    }
+
+    /// Deletes a memory permanently.
+    pub fn memory_delete(&self, id: &str) -> Result<()> {
+        let store = self.memory_store()?;
+        store.delete(id)?;
+        Ok(())
+    }
+
+    /// Returns the count of active memories.
+    pub fn memory_count(&self) -> Result<usize> {
+        let store = self.memory_store()?;
+        Ok(store.count_active()?)
+    }
+
+    /// Returns a compact markdown index of all active memories for prompt injection.
+    pub fn memory_index(&self) -> String {
+        let store = match self.memory_store() {
+            Ok(s) => s,
+            Err(_) => return String::new(),
+        };
+        store.build_prompt_context(2000)
+    }
+
+    // ── End auto-memory API ─────────────────────────────────────────────
+
     /// Syncs the provider registry into the local SQLite cache.
     ///
     /// Prefers a project-local `registry/` directory when present, otherwise

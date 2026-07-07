@@ -74,6 +74,18 @@ Core agent behavior belongs in engine crates, primarily `navi-core`, not in `nav
 
 Do not make WebSocket/daemon the primary interface unless explicitly requested. External process mode should prefer a stable stdio/headless runtime protocol first.
 
+### Keep All Surfaces In Sync
+
+When adding or modifying any engine capability (new tool, new API method, new config field, new event type, new memory feature), you **must** update all affected surfaces in the same change:
+
+1. **`navi-core`** — implement the feature (tool, runtime, config, types).
+2. **`navi-sdk`** — expose it as a method on `NaviEngine` or re-export the relevant types from `navi-core`.
+3. **`navi-napi`** — add a `#[napi]` binding so Node.js/Electron clients (NAVI Tutor) can call it.
+4. **`navi-cli`** — add a CLI subcommand if the feature is user-facing (e.g. `navi memory init`).
+5. **`navi-tui`** — wire any UI-facing behavior (shortcuts, modals, display state).
+
+Do not leave a feature half-wired. If a new `NaviEngine` method exists in `navi-core` but is not exposed in `navi-sdk`, not bound in `navi-napi`, and not reachable from the CLI or TUI, the change is incomplete. Every public engine surface should be able to use the feature.
+
 ### Agent Test Scope Rule
 
 When validating agent-made changes, prefer the smallest focused test/build command that covers the touched crate and behavior. For example, TUI-only changes should usually run `cargo test -p navi-tui -- --test-threads=4` rather than compiling or testing the full product.

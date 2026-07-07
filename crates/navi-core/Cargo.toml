@@ -34,3 +34,27 @@ tracing-subscriber.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
+
+[features]
+default = []
+embeddings = ["dep:candle-core", "dep:candle-transformers", "dep:candle-nn", "dep:tokenizers", "dep:hf-hub"]
+
+[dependencies.candle-core]
+version = "0.11"
+optional = true
+
+[dependencies.candle-transformers]
+version = "0.11"
+optional = true
+
+[dependencies.candle-nn]
+version = "0.11"
+optional = true
+
+[dependencies.tokenizers]
+version = "0.22"
+optional = true
+
+[dependencies.hf-hub]
+version = "0.4"
+optional = true

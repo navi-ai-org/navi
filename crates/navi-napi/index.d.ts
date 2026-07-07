@@ -194,6 +194,15 @@ export class NaviNapiEngine {
   listSavedSessions(): Promise<JsonValue>;
   loadSavedSession(sessionId: string): Promise<JsonValue>;
   deleteSavedSession(sessionId: string): Promise<boolean>;
+  // Auto-memory
+  memoryWrite(id: string, memoryType: string, name: string, description: string, body: string): void;
+  memoryRead(id: string): JsonValue;
+  memoryList(status?: string): JsonValue;
+  memorySearch(query: string, limit?: number): JsonValue;
+  memoryUpdate(id: string, name?: string, description?: string, body?: string, status?: string): void;
+  memoryDelete(id: string): void;
+  memoryCount(): number;
+  memoryIndex(): string;
   // Session management
   sessionIds(): string[];
   loadedConfig(): EngineConfig;

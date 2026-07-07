@@ -479,6 +479,10 @@ impl AgentRuntime {
             self.runtime_components
                 .hooks
                 .on_session_end(self.session.id().as_str());
+
+            // Light auto-memory consolidation on session end (stale + dedup, no model needed)
+            let _ = self.consolidate_auto_memory();
+
             self.event_bus.publish(RuntimeEventKind::SessionFinished {
                 session_id: self.session.id().as_str().to_string(),
             });
@@ -615,6 +619,9 @@ impl AgentRuntime {
                     turn_id,
                     text: text.clone(),
                 });
+
+                // Auto-dream: fire-and-forget check after each turn
+                self.try_auto_dream();
             }
             Err(err) => {
                 self.goal_extension.on_turn_error(&err.to_string());
@@ -773,6 +780,123 @@ impl AgentRuntime {
         self.tool_executor = Some(executor);
     }
 
+    /// Runs a lightweight auto-memory consolidation (stale detection + dedup).
+    /// Called on session end. Does not require a model provider.
+    fn consolidate_auto_memory(&self) -> Result<()> {
+        let memory_config = &self.loaded_config.config.memory;
+        if !memory_config.enabled {
+            return Ok(());
+        }
+
+        let manager = crate::memory::MemoryManager::new(
+            self.project_dir.clone(),
+            self.loaded_config.data_dir.clone(),
+            memory_config,
+        )?;
+
+        let db_path = manager.store.memory_root.join("memories.db");
+        if !db_path.exists() {
+            return Ok(());
+        }
+
+        let store = crate::memory::AutoMemoryStore::open(&db_path)?;
+        let report = store.consolidate(30)?;
+
+        if report.marked_stale > 0 || report.duplicates_merged > 0 {
+            tracing::info!(
+                "auto-memory consolidation on session end: {} stale, {} duplicates, {} active",
+                report.marked_stale,
+                report.duplicates_merged,
+                report.remaining_active
+            );
+        }
+
+        Ok(())
+    }
+
+    /// Auto-dream: checks 3 gates after each turn and spawns consolidation if all pass.
+    /// Fire-and-forget — does not block the agent loop.
+    fn try_auto_dream(&self) {
+        let memory_config = &self.loaded_config.config.memory;
+        if !memory_config.enabled {
+            return;
+        }
+
+        let manager = match crate::memory::MemoryManager::new(
+            self.project_dir.clone(),
+            self.loaded_config.data_dir.clone(),
+            memory_config,
+        ) {
+            Ok(m) => m,
+            Err(e) => {
+                tracing::debug!("auto-dream: failed to init memory manager: {}", e);
+                return;
+            }
+        };
+
+        let interval_hours = memory_config.dream_interval_days * 24;
+        let state = crate::memory::auto_dream::AutoDreamState::new(manager.store.memory_root.clone())
+            .with_interval(interval_hours.max(1));
+
+        let history = match crate::memory::HistoryStore::new(&manager.history.db_path) {
+            Ok(h) => h,
+            Err(e) => {
+                tracing::debug!("auto-dream: failed to open history: {}", e);
+                return;
+            }
+        };
+
+        let last_dream = state.read_last_dream_at();
+        if !state.should_dream(&history) {
+            return;
+        }
+
+        let db_path = manager.store.memory_root.join("memories.db");
+        let hours_since = if last_dream > 0 {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+            (now.saturating_sub(last_dream)) / 3600
+        } else {
+            0
+        };
+        let sessions_count = history.list_sessions().map(|s| s.len()).unwrap_or(0);
+
+        tracing::info!(
+            "auto-dream triggered: {}h since last, {} sessions",
+            hours_since,
+            sessions_count
+        );
+
+        self.event_bus.publish(RuntimeEventKind::AutoDreamStarted {
+            hours_since_last: hours_since,
+            sessions_reviewed: sessions_count,
+        });
+
+        let memory_root = manager.store.memory_root.clone();
+        tokio::spawn(async move {
+            let result = run_auto_dream_consolidation(&db_path).await;
+
+            let dream_state = crate::memory::auto_dream::AutoDreamState::new(memory_root);
+            match result {
+                Ok(report) => {
+                    tracing::info!(
+                        "auto-dream completed: {} stale, {} duplicates, {} active",
+                        report.marked_stale,
+                        report.duplicates_merged,
+                        report.remaining_active
+                    );
+                    dream_state.mark_completed();
+                }
+                Err(e) => {
+                    tracing::warn!("auto-dream failed: {}", e);
+                    dream_state.release();
+                }
+            }
+        });
+    }
+
     fn build_session_runtime(
         &mut self,
     ) -> Result<(
@@ -850,6 +974,7 @@ impl AgentRuntime {
                             session_id: goal.session_id.clone(),
                             goal_id: goal.goal_id.as_str().to_string(),
                             objective: goal.objective.clone(),
+                            short_description: goal.short_description.clone(),
                             status: goal.status,
                             tokens_used: goal.tokens_used,
                             token_budget: goal.token_budget,
@@ -871,6 +996,7 @@ impl AgentRuntime {
                             session_id: goal.session_id.clone(),
                             goal_id: goal.goal_id.as_str().to_string(),
                             objective: goal.objective.clone(),
+                            short_description: goal.short_description.clone(),
                             status: goal.status,
                             tokens_used: goal.tokens_used,
                             token_budget: goal.token_budget,
@@ -880,13 +1006,19 @@ impl AgentRuntime {
             }
             AgentEvent::SetGoalRequested {
                 objective,
+                short_description,
                 token_budget,
             } => {
-                let goal = self.set_goal(objective.clone(), *token_budget);
+                let goal = self.goal_runtime.set_objective_with_short_description(
+                    objective.clone(),
+                    short_description.clone(),
+                    *token_budget,
+                );
                 self.event_bus.publish(RuntimeEventKind::GoalUpdated {
                     session_id: goal.session_id.clone(),
                     goal_id: goal.goal_id.as_str().to_string(),
                     objective: goal.objective.clone(),
+                    short_description: goal.short_description.clone(),
                     status: goal.status,
                     tokens_used: goal.tokens_used,
                     token_budget: goal.token_budget,
@@ -1047,10 +1179,37 @@ fn runtime_event_kind_from_agent_event(event: &AgentEvent) -> Option<RuntimeEven
         AgentEvent::GoalUpdated { .. } => None,
         AgentEvent::SetGoalRequested {
             objective,
+            short_description,
             token_budget,
         } => Some(RuntimeEventKind::SetGoalRequested {
             objective: objective.clone(),
+            short_description: short_description.clone(),
             token_budget: *token_budget,
         }),
+        AgentEvent::AutoDreamStarted { hours_since_last, sessions_reviewed } => {
+            Some(RuntimeEventKind::AutoDreamStarted {
+                hours_since_last: *hours_since_last,
+                sessions_reviewed: *sessions_reviewed,
+            })
+        }
+        AgentEvent::AutoDreamCompleted { marked_stale, duplicates_merged, active_count } => {
+            Some(RuntimeEventKind::AutoDreamCompleted {
+                marked_stale: *marked_stale,
+                duplicates_merged: *duplicates_merged,
+                active_count: *active_count,
+            })
+        }
+        AgentEvent::AutoDreamFailed { reason } => Some(RuntimeEventKind::AutoDreamFailed {
+            reason: reason.clone(),
+        }),
     }
+}
+
+/// Runs the auto-dream consolidation pass (stale + dedup) on the auto-memory SQLite store.
+/// Called from a tokio::spawn background task — must not access AgentRuntime state.
+async fn run_auto_dream_consolidation(
+    db_path: &std::path::Path,
+) -> anyhow::Result<crate::memory::ConsolidationReport> {
+    let store = crate::memory::AutoMemoryStore::open(db_path)?;
+    store.consolidate(30)
 }

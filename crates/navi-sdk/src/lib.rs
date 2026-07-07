@@ -70,6 +70,11 @@ pub use navi_core::{
 pub use navi_core::registry::{RegistryFetcher, RegistryStore};
 pub use navi_mcp::McpServerInfo;
 
+// Auto-memory
+pub use navi_core::memory::{
+    AutoMemoryStore, MemoryEntry, MemoryStatus, MemorySummary, MemoryType,
+};
+
 #[cfg(test)]
 mod tests {
     use super::*;

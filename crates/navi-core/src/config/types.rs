@@ -736,6 +736,15 @@ pub struct MemoryConfig {
     /// Interval in days for the distill/SOPS maintenance job.
     #[serde(default = "default_distill_interval_days")]
     pub distill_interval_days: u64,
+    /// Path to the embedding model GGUF file for semantic memory search.
+    /// When empty, the default path under `{data_dir}/memory/{project_hash}/models/` is used.
+    /// Download with `navi memory init --embeddings`.
+    #[serde(default)]
+    pub embedding_model_path: String,
+    /// Path to the tokenizer.json file for the embedding model.
+    /// When empty, the default path under the models directory is used.
+    #[serde(default)]
+    pub embedding_tokenizer_path: String,
     /// History database configuration.
     #[serde(default)]
     pub history: HistoryConfig,
