@@ -16,7 +16,7 @@ pub mod tests;
 pub use auto_dream::AutoDreamState;
 pub use auto_memory::{
     AutoMemoryStore, ConsolidationReport, MemoryEntry, MemoryStatus, MemorySummary, MemoryType,
-    cosine_similarity, new_entry, sanitize_id,
+    configure_connection, cosine_similarity, new_entry, sanitize_id,
 };
 pub use embedding::{
     Embedder, EmbeddingConfig, NoEmbedder, DEFAULT_MODEL_FILE, DEFAULT_MODEL_REPO,

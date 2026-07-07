@@ -30,6 +30,7 @@ impl HistoryStore {
 
         let conn = Connection::open(db_path)
             .with_context(|| format!("Failed to open database at {:?}", db_path))?;
+        crate::memory::auto_memory::configure_connection(&conn)?;
 
         let store = Self {
             conn: Arc::new(Mutex::new(conn)),
