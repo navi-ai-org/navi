@@ -78,9 +78,7 @@ pub async fn extract_memories(
     let request = ModelRequest {
         model: model_name.to_string(),
         messages: vec![
-            ModelMessage::system(
-                "You are a memory extraction bot. Return only a JSON array.",
-            ),
+            ModelMessage::system("You are a memory extraction bot. Return only a JSON array."),
             ModelMessage::user(prompt),
         ],
         thinking: ThinkingConfig::Off,
@@ -137,7 +135,7 @@ pub async fn extract_memories(
 mod tests {
     use super::*;
     use crate::memory::AutoMemoryStore;
-    use crate::memory::auto_memory::{new_entry, MemoryType};
+    use crate::memory::auto_memory::{MemoryType, new_entry};
     use crate::model::{ModelMessage, ModelResponse, ModelStreamEvent, ThinkingConfig};
 
     #[test]
@@ -156,7 +154,8 @@ mod tests {
 
     #[test]
     fn test_extracted_memory_with_invalid_type() {
-        let json = r#"[{"id":"bad","type":"invalid_type","name":"Bad","description":"Bad","body":"Bad"}]"#;
+        let json =
+            r#"[{"id":"bad","type":"invalid_type","name":"Bad","description":"Bad","body":"Bad"}]"#;
         let memories: Vec<ExtractedMemory> = serde_json::from_str(json).unwrap();
         assert_eq!(memories.len(), 1);
         // from_str on memory_type will return None, so it should be skipped
@@ -176,10 +175,7 @@ mod tests {
     }
 
     impl crate::model::ModelProvider for MockProvider {
-        fn stream(
-            &self,
-            _request: ModelRequest,
-        ) -> crate::model::ModelStream {
+        fn stream(&self, _request: ModelRequest) -> crate::model::ModelStream {
             let text = self.response.clone();
             Box::pin(futures_util::stream::iter(vec![
                 Ok(crate::model::ModelStreamEvent::TextDelta { text }),
@@ -223,7 +219,13 @@ mod tests {
         let store = AutoMemoryStore::open(&db_path).unwrap();
 
         // Pre-populate with an existing memory
-        let entry = new_entry("redis_tests", MemoryType::Feedback, "Existing", "Old", "Old body");
+        let entry = new_entry(
+            "redis_tests",
+            MemoryType::Feedback,
+            "Existing",
+            "Old",
+            "Old body",
+        );
         store.upsert(&entry).unwrap();
 
         // Mock provider returns the same id
@@ -231,7 +233,9 @@ mod tests {
             response: r#"[{"id":"redis_tests","type":"feedback","name":"New","description":"New","body":"New body"}]"#.to_string(),
         };
 
-        let result = extract_memories("test", &provider, "model", &store).await.unwrap();
+        let result = extract_memories("test", &provider, "model", &store)
+            .await
+            .unwrap();
 
         // Should skip because it already exists
         assert_eq!(result, 0);

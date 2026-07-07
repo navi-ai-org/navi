@@ -217,7 +217,8 @@ pub async fn run_dream_maintenance_with_options(
         global_memory.write_from_markdown(updated_gm.trim())?;
 
         // Model-based SQLite memory consolidation
-        if let Err(e) = run_model_based_consolidation(auto_memory, model_provider, model_name).await {
+        if let Err(e) = run_model_based_consolidation(auto_memory, model_provider, model_name).await
+        {
             tracing::warn!("model-based memory consolidation failed: {}", e);
         }
     }
@@ -243,17 +244,17 @@ pub async fn run_dream_maintenance_with_options(
                     let model_path = models_dir.join(crate::memory::DEFAULT_MODEL_FILE);
                     let tokenizer_path = models_dir.join(crate::memory::DEFAULT_TOKENIZER_FILE);
 
-                    if let Some(embedder) = crate::memory::embedding::get_cached_embedder(&model_path, &tokenizer_path) {
-                        let missing = auto_memory.list_without_embeddings()
-                            .unwrap_or_default();
+                    if let Some(embedder) =
+                        crate::memory::embedding::get_cached_embedder(&model_path, &tokenizer_path)
+                    {
+                        let missing = auto_memory.list_without_embeddings().unwrap_or_default();
 
                         if !missing.is_empty() {
-                            tracing::info!(
-                                "backfilling embeddings for {} memories",
-                                missing.len()
-                            );
+                            tracing::info!("backfilling embeddings for {} memories", missing.len());
                             for m in &missing {
-                                if let Some(text) = auto_memory.get_memory_text(&m.id).unwrap_or(None) {
+                                if let Some(text) =
+                                    auto_memory.get_memory_text(&m.id).unwrap_or(None)
+                                {
                                     match embedder.embed(&text) {
                                         Ok(emb) => {
                                             let _ = auto_memory.set_embedding(&m.id, &emb);
@@ -261,7 +262,8 @@ pub async fn run_dream_maintenance_with_options(
                                         Err(e) => {
                                             tracing::debug!(
                                                 "embedding backfill failed for {}: {}",
-                                                m.id, e
+                                                m.id,
+                                                e
                                             );
                                         }
                                     }
@@ -306,16 +308,19 @@ async fn run_model_based_consolidation(
     }
 
     let memories_json = serde_json::to_string_pretty(
-        &entries.iter().map(|e| {
-            serde_json::json!({
-                "id": e.id,
-                "type": e.memory_type.as_str(),
-                "name": e.name,
-                "description": e.description,
-                "body": e.body,
-                "confidence": e.confidence,
+        &entries
+            .iter()
+            .map(|e| {
+                serde_json::json!({
+                    "id": e.id,
+                    "type": e.memory_type.as_str(),
+                    "name": e.name,
+                    "description": e.description,
+                    "body": e.body,
+                    "confidence": e.confidence,
+                })
             })
-        }).collect::<Vec<_>>(),
+            .collect::<Vec<_>>(),
     )?;
 
     let prompt = MEMORY_CONSOLIDATION_PROMPT.replace("{memories_json}", &memories_json);
@@ -358,9 +363,7 @@ async fn run_model_based_consolidation(
                     Ok(())
                 }
             }
-            "update" => {
-                auto_memory.update_consolidated(&action.id, None, action.confidence)
-            }
+            "update" => auto_memory.update_consolidated(&action.id, None, action.confidence),
             _ => Ok(()),
         };
         if result.is_ok() {
@@ -413,7 +416,8 @@ pub async fn run_distill_maintenance(
     if let Some(sop_block) = extract_block_with_attr(&text, "<sop_artifact", "</sop_artifact>") {
         let (filename, content) = sop_block;
         if !content.trim().is_empty() {
-            let sops_dir = auto_memory.db_path
+            let sops_dir = auto_memory
+                .db_path
                 .parent()
                 .unwrap_or(std::path::Path::new("."))
                 .join("sops");

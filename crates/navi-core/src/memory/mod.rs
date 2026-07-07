@@ -18,12 +18,11 @@ pub use auto_memory::{
     AutoMemoryStore, ConsolidationReport, MemoryEntry, MemoryStatus, MemorySummary, MemoryType,
     configure_connection, cosine_similarity, new_entry, sanitize_id,
 };
-pub use embedding::{
-    Embedder, EmbeddingConfig, NoEmbedder, DEFAULT_MODEL_FILE, DEFAULT_MODEL_REPO,
-    DEFAULT_TOKENIZER_FILE, DEFAULT_TOKENIZER_REPO, EMBED_DIM,
-    create_embedder, embeddings_available,
-};
 pub use checkpoint_writer::run_checkpoint_writer;
+pub use embedding::{
+    DEFAULT_MODEL_FILE, DEFAULT_MODEL_REPO, DEFAULT_TOKENIZER_FILE, DEFAULT_TOKENIZER_REPO,
+    EMBED_DIM, Embedder, EmbeddingConfig, NoEmbedder, create_embedder, embeddings_available,
+};
 pub use global_memory::GlobalMemoryStore;
 pub use history_store::{HistoryEvent, HistoryStore, SessionSummary};
 pub use maintenance::{
@@ -53,11 +52,7 @@ impl MemoryManager {
         data_dir: PathBuf,
         config: &crate::config::MemoryConfig,
     ) -> Result<Self> {
-        let store = MemoryStore::new(
-            project_dir,
-            data_dir.clone(),
-            &config.root,
-        );
+        let store = MemoryStore::new(project_dir, data_dir.clone(), &config.root);
         store.ensure_initialized()?;
 
         let resolved_sqlite_path =
@@ -70,6 +65,11 @@ impl MemoryManager {
         let global_memory_db = data_dir.join("memory").join("global-memory.db");
         let global_memory = GlobalMemoryStore::open(&global_memory_db)?;
 
-        Ok(Self { store, history, auto_memory, global_memory })
+        Ok(Self {
+            store,
+            history,
+            auto_memory,
+            global_memory,
+        })
     }
 }
