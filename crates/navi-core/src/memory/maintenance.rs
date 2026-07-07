@@ -2,6 +2,7 @@ use crate::memory::history_store::HistoryStore;
 use crate::memory::{AutoMemoryStore, GlobalMemoryStore};
 use crate::model::{ModelMessage, ModelProvider, ModelRequest, ThinkingConfig};
 use anyhow::{Context, Result};
+use serde::Deserialize;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -52,6 +53,37 @@ Identify any repeated successful patterns, workflows, checklists, or setups.
 Generate a reusable process artifact (Standard Operating Procedure - SOP) in Markdown.
 Output your generated SOP inside a `<sop_artifact filename="name.md">...</sop_artifact>` block.
 "#;
+
+pub const MEMORY_CONSOLIDATION_PROMPT: &str = r#"You are a memory consolidation subagent for NAVI.
+Your task is to review the current SQLite-stored memories and produce consolidation actions.
+
+Current memories (JSON array):
+{memories_json}
+
+INSTRUCTIONS:
+Review each memory and decide:
+1. Which memories are obsolete (contradicted, no longer relevant, or superseded)?
+2. Which memories are duplicates and should be merged? For merges, specify the surviving id and the new combined body.
+3. Which memories should have their confidence adjusted (raised if confirmed by recent evidence, lowered if uncertain)?
+
+Return a JSON array of consolidation actions. Each action has:
+  - action: "obsolete" | "merge" | "update"
+  - id: the memory id to act on
+  - merged_body: (for "merge") the new combined body text
+  - confidence: (for "update") the new confidence value (0.0–1.0)
+
+If no actions are needed, return an empty array [].
+
+Output ONLY the JSON array, no markdown fences or explanation."#;
+
+/// A consolidation action from the model.
+#[derive(Debug, Clone, Deserialize)]
+struct ConsolidationAction {
+    action: String,
+    id: String,
+    merged_body: Option<String>,
+    confidence: Option<f64>,
+}
 
 fn sanitize_input(text: &str) -> String {
     text.replace("<updated_project_memory>", "[updated_project_memory]")
@@ -183,9 +215,14 @@ pub async fn run_dream_maintenance_with_options(
 
     if options.apply {
         global_memory.write_from_markdown(updated_gm.trim())?;
+
+        // Model-based SQLite memory consolidation
+        if let Err(e) = run_model_based_consolidation(auto_memory, model_provider, model_name).await {
+            tracing::warn!("model-based memory consolidation failed: {}", e);
+        }
     }
 
-    // Consolidate auto-memory SQLite store (mark stale, deduplicate, backfill embeddings)
+    // Consolidate auto-memory SQLite store (mechanical: mark stale, deduplicate, backfill embeddings)
     let auto_memory_report = {
         match auto_memory.consolidate(30) {
             Ok(report) => {
@@ -251,6 +288,91 @@ pub async fn run_dream_maintenance_with_options(
         applied: options.apply,
         auto_memory_report,
     })
+}
+
+/// Runs model-based consolidation on the SQLite auto-memory store.
+///
+/// Sends all active memories (with full body text) to the model, which returns
+/// consolidation actions: mark obsolete, merge duplicates, update confidence.
+/// Actions are applied directly to the SQLite store.
+async fn run_model_based_consolidation(
+    auto_memory: &AutoMemoryStore,
+    model_provider: &dyn ModelProvider,
+    model_name: &str,
+) -> Result<()> {
+    let entries = auto_memory.list_full_entries()?;
+    if entries.is_empty() {
+        return Ok(());
+    }
+
+    let memories_json = serde_json::to_string_pretty(
+        &entries.iter().map(|e| {
+            serde_json::json!({
+                "id": e.id,
+                "type": e.memory_type.as_str(),
+                "name": e.name,
+                "description": e.description,
+                "body": e.body,
+                "confidence": e.confidence,
+            })
+        }).collect::<Vec<_>>(),
+    )?;
+
+    let prompt = MEMORY_CONSOLIDATION_PROMPT.replace("{memories_json}", &memories_json);
+
+    let request = ModelRequest {
+        model: model_name.to_string(),
+        messages: vec![
+            ModelMessage::system(
+                "You are a memory consolidation bot. Return only a JSON array of actions.",
+            ),
+            ModelMessage::user(prompt),
+        ],
+        thinking: ThinkingConfig::Off,
+        tools: vec![],
+    };
+
+    let response = model_provider.complete(request).await?;
+    let text = response.text.trim();
+
+    let actions: Vec<ConsolidationAction> = if text.starts_with('[') {
+        serde_json::from_str(text).unwrap_or_default()
+    } else if let Some(start) = text.find('[') {
+        if let Some(end) = text.rfind(']') {
+            serde_json::from_str(&text[start..=end]).unwrap_or_default()
+        } else {
+            Vec::new()
+        }
+    } else {
+        Vec::new()
+    };
+
+    let mut applied = 0;
+    for action in &actions {
+        let result = match action.action.as_str() {
+            "obsolete" => auto_memory.mark_obsolete(&action.id),
+            "merge" => {
+                if let Some(ref body) = action.merged_body {
+                    auto_memory.update_consolidated(&action.id, Some(body), None)
+                } else {
+                    Ok(())
+                }
+            }
+            "update" => {
+                auto_memory.update_consolidated(&action.id, None, action.confidence)
+            }
+            _ => Ok(()),
+        };
+        if result.is_ok() {
+            applied += 1;
+        }
+    }
+
+    if applied > 0 {
+        tracing::info!("model-based consolidation: applied {} actions", applied);
+    }
+
+    Ok(())
 }
 
 pub async fn run_distill_maintenance(

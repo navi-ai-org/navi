@@ -655,6 +655,59 @@ impl AutoMemoryStore {
         }
     }
 
+    // ── Full entries listing (for model-based dream consolidation) ─────
+
+    /// Lists all active memories with full body text, for model-based consolidation.
+    pub fn list_full_entries(&self) -> Result<Vec<MemoryEntry>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, type, name, description, body, confidence, status,
+                    evidence, created_at, updated_at, last_seen, expires_at
+             FROM memories WHERE status = 'active'
+             ORDER BY type, name",
+        )?;
+        let rows = stmt
+            .query_map([], |row| row_to_entry(row))?
+            .filter_map(|r| r.ok())
+            .collect();
+        Ok(rows)
+    }
+
+    /// Applies a consolidation action from the model: mark a memory obsolete.
+    pub fn mark_obsolete(&self, id: &str) -> Result<()> {
+        let now = now_iso();
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE memories SET status = 'obsolete', updated_at = ?1 WHERE id = ?2",
+            params![now, id],
+        )?;
+        Ok(())
+    }
+
+    /// Updates a memory's confidence and body (used by model-based consolidation).
+    pub fn update_consolidated(
+        &self,
+        id: &str,
+        body: Option<&str>,
+        confidence: Option<f64>,
+    ) -> Result<()> {
+        let now = now_iso();
+        let conn = self.conn.lock().unwrap();
+        if let Some(b) = body {
+            conn.execute(
+                "UPDATE memories SET body = ?1, updated_at = ?2 WHERE id = ?3",
+                params![b, now, id],
+            )?;
+        }
+        if let Some(c) = confidence {
+            conn.execute(
+                "UPDATE memories SET confidence = ?1, updated_at = ?2 WHERE id = ?3",
+                params![c, now, id],
+            )?;
+        }
+        Ok(())
+    }
+
     // ── Session checkpoint (replaces checkpoint.md) ─────────────────────
 
     /// Reads the current session checkpoint text. Returns empty string if none.
