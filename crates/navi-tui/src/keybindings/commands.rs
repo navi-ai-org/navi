@@ -1,6 +1,7 @@
 use crate::TuiApp;
 use crate::chat::{retry_last_response, start_new_session, submit_message};
 use crate::commands::{CommandAction, filtered_commands};
+use crate::input::{command_filter_ref, handle_text_input_key};
 use crate::mouse::copy_text_to_clipboard;
 use crate::notifications::show_notification;
 use crate::render::command_scroll_offset;
@@ -9,22 +10,14 @@ use crate::state::Mode;
 use crate::state::{ChatMessage, ChatRole};
 use crate::state::{ModalKind, SetupPhase};
 use crate::ui::list::SelectListState;
-use crossterm::event::KeyCode;
+use crossterm::event::{KeyCode, KeyModifiers};
 use navi_sdk::{AgentEvent, session_title_from_events};
 
-pub(crate) fn handle_command_key(app: &mut TuiApp, code: KeyCode) -> bool {
+pub(crate) fn handle_command_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyModifiers) -> bool {
     const VISIBLE_ROWS: usize = 10;
     let mut list_state = SelectListState::new(app.selected_command, app.command_scroll);
     match code {
         KeyCode::Esc => super::close_active_modal(app),
-        KeyCode::Char(ch) => {
-            app.command_filter.push(ch);
-            list_state.reset();
-        }
-        KeyCode::Backspace => {
-            app.command_filter.pop();
-            list_state.clamp(filtered_commands(app).len());
-        }
         KeyCode::Down | KeyCode::Tab => {
             list_state.select_next(filtered_commands(app).len());
         }
@@ -38,7 +31,15 @@ pub(crate) fn handle_command_key(app: &mut TuiApp, code: KeyCode) -> bool {
             list_state.page_previous(8);
         }
         KeyCode::Enter => return run_selected_command(app),
-        _ => {}
+        _ => {
+            let before = app.command_filter.clone();
+            if handle_text_input_key(command_filter_ref(app), code, modifiers, false) {
+                if app.command_filter != before {
+                    list_state.reset();
+                    list_state.clamp(filtered_commands(app).len());
+                }
+            }
+        }
     }
     app.selected_command = list_state.selected();
     app.command_scroll = command_scroll_offset(app.selected_command, VISIBLE_ROWS);
@@ -135,6 +136,7 @@ pub(crate) fn run_selected_command(app: &mut TuiApp) -> bool {
             super::close_all_modals(app);
             app.modal_stack.open(ModalKind::Models);
             app.model_filter.clear();
+            app.model_filter_cursor = 0;
             app.model_scroll = 0;
             app.refresh_authenticated_providers();
             app.messages.push(ChatMessage::new(
@@ -156,6 +158,12 @@ pub(crate) fn run_selected_command(app: &mut TuiApp) -> bool {
         CommandAction::AttachmentModels => {
             super::replace_modal(app, ModalKind::AttachmentModels);
             app.selected_attachment_model = 0;
+        }
+        CommandAction::Memory => {
+            show_notification(app, "Memory", "Use the `memory` tool to manage memories. Run `navi memory init` to set up.");
+        }
+        CommandAction::Dream => {
+            show_notification(app, "Dream", "Run `navi memory dream --apply` in a terminal to consolidate memories.");
         }
         _ => super::close_all_modals(app),
     }

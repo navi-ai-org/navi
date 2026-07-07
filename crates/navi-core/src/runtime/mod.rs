@@ -234,6 +234,9 @@ pub struct AgentRuntime {
     goal_runtime: Arc<GoalRuntimeHandle>,
     /// Goal extension providing lifecycle hooks.
     goal_extension: GoalExtension,
+    /// Whether the model used the `memory` tool with `write` action during the current turn.
+    /// Used for mutual exclusion with background extractMemories.
+    turn_used_memory_write: bool,
 }
 
 impl AgentRuntime {
@@ -294,6 +297,7 @@ impl AgentRuntime {
             ),
             goal_runtime,
             goal_extension,
+            turn_used_memory_write: false,
         }
     }
 
@@ -620,8 +624,22 @@ impl AgentRuntime {
                     text: text.clone(),
                 });
 
+                // extractMemories: background extraction per turn (fire-and-forget)
+                // Skip if the model already wrote memories during this turn
+                let model_wrote_memory = self.turn_used_memory_write;
+
+                if !model_wrote_memory {
+                    self.try_extract_memories(&session_id, &text);
+                }
+
+                // Reset per-turn flag
+                self.turn_used_memory_write = false;
+
                 // Auto-dream: fire-and-forget check after each turn
                 self.try_auto_dream();
+
+                // Auto-distill: fire-and-forget check after each turn
+                self.try_auto_distill();
             }
             Err(err) => {
                 self.goal_extension.on_turn_error(&err.to_string());
@@ -814,6 +832,71 @@ impl AgentRuntime {
         Ok(())
     }
 
+    /// extractMemories: background per-turn memory extraction.
+    /// Spawns a tokio task that calls the model to extract durable memories
+    /// from the completed turn. Fire-and-forget — does not block the agent loop.
+    fn try_extract_memories(&self, _session_id: &str, assistant_text: &str) {
+        let memory_config = &self.loaded_config.config.memory;
+        if !memory_config.enabled {
+            return;
+        }
+
+        // Build the conversation snippet for extraction
+        // We use the assistant response — the user task is already in the session
+        let conversation = format!("Assistant: {}", assistant_text);
+
+        // Get the model provider and name for the extraction call
+        let provider = self.model_provider.clone();
+        let model_name = self.loaded_config.config.model.name.clone();
+
+        // Open auto-memory store
+        let manager = match crate::memory::MemoryManager::new(
+            self.project_dir.clone(),
+            self.loaded_config.data_dir.clone(),
+            memory_config,
+        ) {
+            Ok(m) => m,
+            Err(e) => {
+                tracing::debug!("extract-memories: failed to init memory manager: {}", e);
+                return;
+            }
+        };
+
+        let db_path = manager.store.memory_root.join("memories.db");
+        if !db_path.exists() {
+            return;
+        }
+
+        let store = match crate::memory::AutoMemoryStore::open(&db_path) {
+            Ok(s) => s,
+            Err(e) => {
+                tracing::debug!("extract-memories: failed to open store: {}", e);
+                return;
+            }
+        };
+
+        // Fire-and-forget
+        tokio::spawn(async move {
+            match crate::memory::extract::extract_memories(
+                &conversation,
+                provider.as_ref(),
+                &model_name,
+                &store,
+            )
+            .await
+            {
+                Ok(n) => {
+                    if n > 0 {
+                        tracing::info!("extract-memories: saved {} memories from turn", n);
+                    }
+                }
+                Err(e) => {
+                    tracing::debug!("extract-memories failed: {}", e);
+                }
+            }
+        });
+    }
+
     /// Auto-dream: checks 3 gates after each turn and spawns consolidation if all pass.
     /// Fire-and-forget — does not block the agent loop.
     fn try_auto_dream(&self) {
@@ -897,6 +980,71 @@ impl AgentRuntime {
         });
     }
 
+    /// Auto-distill: checks time gate after each turn and spawns distill if enough time passed.
+    /// Fire-and-forget — does not block the agent loop.
+    fn try_auto_distill(&self) {
+        let memory_config = &self.loaded_config.config.memory;
+        if !memory_config.enabled || memory_config.distill_interval_days == 0 {
+            return;
+        }
+
+        let manager = match crate::memory::MemoryManager::new(
+            self.project_dir.clone(),
+            self.loaded_config.data_dir.clone(),
+            memory_config,
+        ) {
+            Ok(m) => m,
+            Err(_) => return,
+        };
+
+        let interval_hours = memory_config.distill_interval_days * 24;
+        let state = crate::memory::auto_dream::AutoDreamState::new(
+            manager.store.memory_root.join("distill"),
+        )
+        .with_interval(interval_hours)
+        .with_min_sessions(3);
+
+        let history = match crate::memory::HistoryStore::new(&manager.history.db_path) {
+            Ok(h) => h,
+            Err(_) => return,
+        };
+
+        if !state.should_dream(&history) {
+            return;
+        }
+
+        tracing::info!("auto-distill triggered");
+
+        let memory_root = manager.store.memory_root.clone();
+        tokio::spawn(async move {
+            // Distill only does stale + dedup (no model-based SOP extraction in auto mode)
+            let db_path = memory_root.join("memories.db");
+            match crate::memory::AutoMemoryStore::open(&db_path) {
+                Ok(store) => {
+                    match store.consolidate(60) {
+                        Ok(report) => {
+                            tracing::info!(
+                                "auto-distill completed: {} stale, {} duplicates, {} active",
+                                report.marked_stale,
+                                report.duplicates_merged,
+                                report.remaining_active
+                            );
+                            state.mark_completed();
+                        }
+                        Err(e) => {
+                            tracing::warn!("auto-distill failed: {}", e);
+                            state.release();
+                        }
+                    }
+                }
+                Err(e) => {
+                    tracing::debug!("auto-distill: store not available: {}", e);
+                    state.release();
+                }
+            }
+        });
+    }
+
     fn build_session_runtime(
         &mut self,
     ) -> Result<(
@@ -967,6 +1115,14 @@ impl AgentRuntime {
         // ── Goal accounting driven by agent events ────────────────
         match &event {
             AgentEvent::ToolCompleted(_result) => {
+                // Track if the model used the memory tool with write action during this turn
+                if _result.ok {
+                    if let Some(output) = _result.output.as_object() {
+                        if output.get("tool_name").and_then(|v| v.as_str()) == Some("memory") {
+                            self.turn_used_memory_write = true;
+                        }
+                    }
+                }
                 let budget_prompt = self.goal_extension.on_tool_complete();
                 if budget_prompt.is_some() {
                     if let Some(goal) = self.goal_runtime.get_goal() {
