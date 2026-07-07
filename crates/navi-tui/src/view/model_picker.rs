@@ -15,7 +15,7 @@ use crate::ui::{TextInputRenderSpec, render_text_input_line};
 
 const LIST_RIGHT_PADDING_COLUMNS: u16 = 2;
 
-pub(super) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
+pub(crate) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
     clear_modal_area(frame, area);
     let title: &str = if app.mode == crate::state::Mode::BgModelPicker {
         "Background Model"

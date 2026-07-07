@@ -8,7 +8,7 @@ use crate::notifications::visible_notification;
 use crate::render::clear_modal_area;
 use crate::theme::*;
 
-pub(super) fn render_notification(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
+pub(crate) fn render_notification(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
     let Some(notification) = visible_notification(app) else {
         return;
     };

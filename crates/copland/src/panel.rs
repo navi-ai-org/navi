@@ -12,6 +12,8 @@
 //! This design allows plugins to register custom panels without modifying
 //! the host application's render code.
 
+use std::any::Any;
+
 use ratatui::Frame;
 use ratatui::layout::Rect;
 
@@ -33,9 +35,15 @@ pub enum PanelSize {
 /// This is intentionally trait-based so the host application can provide its
 /// own concrete context type with app-specific state (theme, interaction
 /// registry, etc.) without copland depending on it.
-pub trait PanelContext {
+///
+/// Extends `Any` so panels can downcast to the host's concrete context type
+/// to access app-specific state.
+pub trait PanelContext: Any {
     /// The area available for rendering.
     fn area(&self) -> Rect;
+
+    /// Upcast to `Any` for downcasting.
+    fn as_any(&self) -> &dyn Any;
 }
 
 /// A self-contained UI panel.
@@ -48,7 +56,7 @@ pub trait Panel: Send + Sync {
     fn id(&self) -> &str;
 
     /// Render the panel into the given area.
-    fn render(&self, frame: &mut Frame, area: Rect, ctx: &dyn PanelContext);
+    fn render(&mut self, frame: &mut Frame, area: Rect, ctx: &dyn PanelContext);
 
     /// Handle a key event. Returns `Handled` if the panel consumed the event,
     /// `Ignored` if it should bubble to the next panel, or `Quit` to request
@@ -146,6 +154,7 @@ impl PanelManager {
     }
 
     /// Iterate visible overlays sorted by z-order (highest first).
+    #[cfg(test)]
     fn visible_overlays_sorted(&self) -> Vec<&dyn Panel> {
         let mut visible: Vec<&dyn Panel> = self
             .overlays
@@ -157,18 +166,29 @@ impl PanelManager {
         visible
     }
 
+    /// Sort overlays in-place by z-order (highest first) and return mutable refs.
+    fn visible_overlays_mut(&mut self) -> &mut [Box<dyn Panel>] {
+        self.overlays
+            .sort_by_key(|p| std::cmp::Reverse(p.z_order()));
+        &mut self.overlays
+    }
+
     /// Render all panels: regions first (top-to-bottom), then overlays.
-    pub fn render(&self, frame: &mut Frame, ctx: &dyn PanelContext) {
+    pub fn render(&mut self, frame: &mut Frame, ctx: &dyn PanelContext) {
         let area = ctx.area();
         let region_areas = self.layout_regions(area);
 
-        for (panel, rect) in self.regions.iter().zip(region_areas.iter()) {
+        for (panel, rect) in self.regions.iter_mut().zip(region_areas.iter()) {
             if panel.is_visible() {
                 panel.render(frame, *rect, ctx);
             }
         }
 
-        for overlay in self.visible_overlays_sorted() {
+        for overlay in self
+            .visible_overlays_mut()
+            .iter_mut()
+            .filter(|p| p.is_visible())
+        {
             // Overlays render into the full area — they position themselves.
             overlay.render(frame, area, ctx);
         }
@@ -177,12 +197,16 @@ impl PanelManager {
     /// Route a key event to the top-most visible overlay first, then to
     /// regions in reverse order (bottom-most first).
     pub fn handle_key(
-        &self,
+        &mut self,
         key: &crossterm::event::KeyEvent,
         ctx: &dyn PanelContext,
     ) -> KeyOutcome {
         // Overlays get priority (top-most first).
-        for overlay in self.visible_overlays_sorted() {
+        for overlay in self
+            .visible_overlays_mut()
+            .iter_mut()
+            .filter(|p| p.is_visible())
+        {
             let outcome = overlay.handle_key(key, ctx);
             if outcome.is_handled() {
                 return outcome;
@@ -190,7 +214,7 @@ impl PanelManager {
         }
 
         // Regions get keys in reverse order (last/bottom-most first).
-        for region in self.regions.iter().rev().filter(|p| p.is_visible()) {
+        for region in self.regions.iter_mut().rev().filter(|p| p.is_visible()) {
             let outcome = region.handle_key(key, ctx);
             if outcome.is_handled() {
                 return outcome;
@@ -300,6 +324,9 @@ mod tests {
         fn area(&self) -> Rect {
             self.area
         }
+        fn as_any(&self) -> &dyn Any {
+            self
+        }
     }
 
     struct StubPanel {
@@ -313,7 +340,7 @@ mod tests {
         fn id(&self) -> &str {
             &self.id
         }
-        fn render(&self, _frame: &mut Frame, _area: Rect, _ctx: &dyn PanelContext) {}
+        fn render(&mut self, _frame: &mut Frame, _area: Rect, _ctx: &dyn PanelContext) {}
         fn preferred_size(&self) -> PanelSize {
             self.size
         }
@@ -456,7 +483,7 @@ mod tests {
         fn id(&self) -> &str {
             &self.id
         }
-        fn render(&self, _frame: &mut Frame, _area: Rect, _ctx: &dyn PanelContext) {}
+        fn render(&mut self, _frame: &mut Frame, _area: Rect, _ctx: &dyn PanelContext) {}
         fn handle_key(&self, _key: &KeyEvent, _ctx: &dyn PanelContext) -> KeyOutcome {
             if self.handled {
                 KeyOutcome::Handled

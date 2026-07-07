@@ -13,7 +13,7 @@ use crate::theme::*;
 use crate::ui::interaction::{HitAction, ScrollTarget, line_rect};
 use crate::ui::list::render_scrollbar;
 
-pub(super) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
+pub(crate) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
     clear_modal_area(frame, area);
     frame.render_widget(modal_block("Background Tasks"), area);
 
@@ -126,7 +126,7 @@ pub(super) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
     );
 }
 
-pub(super) fn render_output(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
+pub(crate) fn render_output(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
     clear_modal_area(frame, area);
     frame.render_widget(modal_block("Background Task Output"), area);
 

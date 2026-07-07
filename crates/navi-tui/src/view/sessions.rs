@@ -14,7 +14,7 @@ use crate::ui::interaction::{HitAction, line_rect};
 use crate::ui::list::render_scrollbar;
 use crate::ui::{TextInputRenderSpec, render_text_input_line};
 
-pub(super) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
+pub(crate) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
     clear_modal_area(frame, area);
     let block = modal_block("Memory");
     frame.render_widget(block, area);

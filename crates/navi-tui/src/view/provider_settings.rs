@@ -12,7 +12,7 @@ use ratatui::prelude::{Frame, Span};
 use ratatui::style::{Modifier, Style};
 use ratatui::widgets::{List, ListItem, Paragraph};
 
-pub(super) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
+pub(crate) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
     clear_modal_area(frame, area);
     frame.render_widget(modal_block("Provider Accounts"), area);
 
