@@ -108,9 +108,17 @@ NAVI exposes a small, serializable, UI-agnostic runtime API:
 - `NaviEngine::list_provider_accounts(...)` — lists provider credentials
 - `NaviEngine::set_session_skills(...)` — activates skills
 - `NaviEngine::list_mcp_servers(...)` — lists MCP servers
+- `NaviEngine::memory_write(...)` — saves a persistent memory
+- `NaviEngine::memory_read(...)` — reads a memory by id
+- `NaviEngine::memory_list(...)` — lists memories, optionally filtered by status
+- `NaviEngine::memory_search(...)` — searches memories by text query
+- `NaviEngine::memory_update(...)` — updates memory fields and/or status
+- `NaviEngine::memory_delete(...)` — deletes a memory
+- `NaviEngine::memory_count(...)` — returns count of active memories
+- `NaviEngine::memory_index()` — returns markdown index for prompt injection
 - Host tools through `SdkHostTool` and `HostToolHandler`
 
-Structured events are serializable, versioned, and suitable for both TUI and Tutor: `session.started`, `turn.started`, `assistant.delta`, `assistant.thinking_delta`, `tool.requested`, `approval.required`, `tool.started`, `tool.completed`, `context.updated`, `tokens.updated`, `session.saved`, `turn.completed`, `session.finished`, `error`.
+Structured events are serializable, versioned, and suitable for both TUI and Tutor: `session.started`, `turn.started`, `assistant.delta`, `assistant.thinking_delta`, `tool.requested`, `approval.required`, `tool.started`, `tool.completed`, `context.updated`, `tokens.updated`, `session.saved`, `turn.completed`, `session.finished`, `error`, `auto_dream.started`, `auto_dream.completed`, `auto_dream.failed`.
 
 ## Configuration
 
@@ -225,6 +233,9 @@ Built-in tools:
 | `build_runner` | Command | Build/compile with caching. Returns structured warnings/errors. Skips rebuild if no source changed |
 | `fs_browser` | Read | Browse filesystem: `list`, `tree`, `find`, `stat`. Replaces `list_files` |
 | `package_manager` | Write | Manage deps: `install`, `add`, `remove`, `update`, `check`. Auto-detects npm/bun/cargo/go |
+| `memory` | Write | Persistent auto-memory system with semantic search. Actions: `write`, `read`, `list`, `search`, `update`, `delete`. SQLite-backed with optional embedding model |
+| `append_note` | Write | Append temporary observations to the session notes.md scratchpad |
+| `history_ops` | Read | Query SQLite session history: `search`, `recent`, `get`, `summaries` |
 
 `ToolExecutor` validates invocations through `SecurityPolicy` before execution. Reads are allowed by default, writes and commands require approval by default, blocked commands are denied, paths are restricted to the project by default, NAVI private storage is denied, and writes to `.git` are denied.
 
@@ -419,6 +430,114 @@ After 3 consecutive failures, the circuit breaker opens. No further auto-compact
 ### Session Memory
 
 When `MemoryConfig.session_memory_enabled` is true and a new session starts, the TUI loads the project memory and injects recent entries into the system prompt.
+
+## Auto-Memory
+
+NAVI implements a persistent auto-memory system with SQLite as the source of truth. The model can save, search, and manage memories through the `memory` tool, and a background extraction process automatically captures durable facts after each turn.
+
+### Architecture
+
+| Component | Module | Role |
+|---|---|---|
+| Auto-memory store | `memory/auto_memory.rs` | SQLite database with structured fields: id, type, name, description, body, embedding, confidence, status, evidence, timestamps |
+| Embedding model | `memory/embedding.rs` | Qwen3-Embedding-0.6B via candle 0.11 (feature-flagged). Generates 256-dim Matryoshka-truncated embeddings for semantic search |
+| Auto-dream | `memory/auto_dream.rs` | 3-gate consolidation scheduler triggered after each turn |
+| extractMemories | `memory/extract.rs` | Per-turn background memory extraction via model call |
+| Dream maintenance | `memory/maintenance.rs` | Model-based consolidation + SQLite stale/dedup + embedding backfill |
+| Memory tool | `tool/builtin/memory.rs` | Tool with 6 actions: write, read, list, search, update, delete |
+
+### Memory Types
+
+| Type | Description |
+|---|---|
+| `user` | Preferences, identity, working style |
+| `feedback` | Behaviors to repeat or avoid |
+| `project` | Non-derivable project context (deadlines, decisions) |
+| `reference` | Links to dashboards, external docs |
+
+### Memory Lifecycle
+
+| Status | Meaning |
+|---|---|
+| `active` | Memory is current and injected into sessions |
+| `needs_review` | Stale (last_seen > 30 days) — dream marks these |
+| `obsolete` | Duplicated or contradicted — excluded from injection |
+
+### Semantic Search
+
+When the `embeddings` feature is enabled and the model is present, `memory(action='search')` uses cosine similarity over 256-dim embeddings. Falls back to text matching (SQL LIKE) when the feature is off or the model is missing.
+
+### extractMemories (Per-Turn Extraction)
+
+After each completed turn, a background `tokio::spawn` calls the model to extract durable memories from the conversation. This is fire-and-forget and does not block the agent loop. Mutual exclusion: if the model already used the `memory` tool with `write` during the turn, background extraction is skipped.
+
+### Auto-Dream (Periodic Consolidation)
+
+Triggered after each turn via `try_auto_dream()`. Passes 3 gates before executing:
+
+| Gate | Condition | Default |
+|---|---|---|
+| Time | `>= dream_interval_days * 24h` since last dream | 1 day (24h) |
+| Sessions | `>= 5` sessions since last dream | 5 |
+| Lock | No other process consolidating | File lock with PID + 1h stale detection |
+
+When all gates pass, spawns a background consolidation: marks stale memories (>30 days), deduplicates, and backfills missing embeddings. The model-based dream (`navi memory dream`) additionally uses a model call to consolidate MEMORY.md + global memory.
+
+### Auto-Distill
+
+Same 3-gate pattern with `distill_interval_days` (default 30 days). Runs stale detection at 60 days + dedup. SOP extraction via model is available via `navi memory distill` (manual).
+
+### CLI Commands
+
+```bash
+navi memory init                  # Create SQLite DB + directories
+navi memory init --embeddings     # Download Qwen3-Embedding-0.6B GGUF + tokenizer
+navi memory init --embeddings --force  # Re-download model
+navi memory status                # Show memory system status
+navi memory dream --apply         # Run model-based dream consolidation
+navi memory distill               # Run SOP distillation
+navi memory doctor                # Validate memory system health
+navi memory history <query>       # Search session history
+```
+
+### Config
+
+```toml
+[memory]
+enabled = true
+dream_interval_days = 1           # Auto-dream interval (24h)
+distill_interval_days = 30        # Auto-distill interval
+embedding_model_path = ""         # Override GGUF path (empty = default)
+embedding_tokenizer_path = ""     # Override tokenizer path (empty = default)
+```
+
+### Storage
+
+All auto-memory state lives under `{data_dir}/memory/{project_hash}/`:
+
+```
+memories.db           ← SQLite (source of truth)
+models/
+  qwen3-embedding-0.6b-q8_0.gguf  ← Embedding model (optional)
+  tokenizer.json                   ← Tokenizer (optional)
+last_dream_at         ← Auto-dream timestamp
+dream.lock            ← Cross-process dream lock
+checkpoint.md         ← Session checkpoint (existing)
+notes.md              ← Session scratchpad (existing)
+MEMORY.md             ← Rendered index (existing, legacy)
+```
+
+### SDK API
+
+`NaviEngine` exposes 8 methods: `memory_write`, `memory_read`, `memory_list`, `memory_search`, `memory_update`, `memory_delete`, `memory_count`, `memory_index`. All are also bound in `navi-napi` as `#[napi]` methods for Node.js/Electron clients.
+
+### Events
+
+| Event | When |
+|---|---|
+| `AutoDreamStarted` | 3 gates passed, dream spawned |
+| `AutoDreamCompleted` | Consolidation finished (stale, duplicates, active count) |
+| `AutoDreamFailed` | Consolidation error (lock released for retry) |
 
 ## Sessions
 
