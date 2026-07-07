@@ -9,12 +9,14 @@
 //! If both the fetch and the cache fail, the embedded snapshot is used as a
 //! last-resort fallback.
 
+mod aggregator;
 mod embedded;
 mod fetcher;
 mod store;
 pub mod types;
 mod update;
 
+pub use aggregator::sync_aggregator_models;
 pub use embedded::{embedded_manifest, embedded_provider_schema, embedded_providers};
 pub use fetcher::{RegistryFetcher, sync_local_registry, sync_registry};
 pub use store::{RegistryStore, registry_provider_to_config};

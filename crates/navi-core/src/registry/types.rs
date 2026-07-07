@@ -107,7 +107,10 @@ impl RegistryProviderDefaults {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RegistryModel {
     pub name: String,
-    pub task_size: String,
+    /// Deprecated: task size is no longer part of the registry. Kept as optional
+    /// for backward compatibility with older JSON snapshots — ignored at runtime.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task_size: Option<String>,
     pub context_window_tokens: Option<u64>,
     /// Maximum tokens the model can generate in a single response.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -153,6 +156,11 @@ pub struct RegistryProvider {
     pub base_url: Option<String>,
     #[serde(default)]
     pub tool_calling_mode: Option<String>,
+    /// When `true`, this provider is an aggregator whose model list is fetched
+    /// dynamically from the provider's `/models` API endpoint at sync time
+    /// instead of being hardcoded in the registry JSON.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub aggregator: bool,
     /// Defaults applied to all models, overridden by per-model fields.
     #[serde(default, skip_serializing_if = "RegistryProviderDefaults::is_empty")]
     pub defaults: RegistryProviderDefaults,

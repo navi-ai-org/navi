@@ -196,7 +196,10 @@ pub async fn handle_memory_command(
                 println!("  Auto-memory consolidation:");
                 println!("    Stale memories marked: {}", am_report.marked_stale);
                 println!("    Duplicates merged: {}", am_report.duplicates_merged);
-                println!("    Active memories remaining: {}", am_report.remaining_active);
+                println!(
+                    "    Active memories remaining: {}",
+                    am_report.remaining_active
+                );
             }
         }
         crate::MemoryAction::Distill => {
@@ -246,7 +249,9 @@ pub async fn handle_memory_command(
                 if !navi_core::memory::embeddings_available() {
                     println!("  [WARN] NAVI was not built with the `embeddings` feature flag.");
                     println!("         Semantic search will use text matching (LIKE) instead.");
-                    println!("         To enable: rebuild with `cargo build -p navi-core --features embeddings`");
+                    println!(
+                        "         To enable: rebuild with `cargo build -p navi-core --features embeddings`"
+                    );
                 } else {
                     let model_file = navi_core::memory::DEFAULT_MODEL_FILE;
                     let model_repo = navi_core::memory::DEFAULT_MODEL_REPO;
@@ -256,9 +261,7 @@ pub async fn handle_memory_command(
                     let tokenizer_path = models_dir.join(tokenizer_file);
 
                     if model_path.exists() && !force {
-                        let size = std::fs::metadata(&model_path)
-                            .map(|m| m.len())
-                            .unwrap_or(0);
+                        let size = std::fs::metadata(&model_path).map(|m| m.len()).unwrap_or(0);
                         println!("  [OK] Embedding model already exists: {:?}", model_path);
                         println!("       Size: {:.1} MB", size as f64 / 1_048_576.0);
                         if tokenizer_path.exists() {
@@ -277,7 +280,10 @@ pub async fn handle_memory_command(
                                 std::fs::write(&tokenizer_path, resp.bytes().await?)?;
                                 println!("  [OK] Tokenizer downloaded.");
                             } else {
-                                println!("  [WARN] Tokenizer download failed: HTTP {}", resp.status());
+                                println!(
+                                    "  [WARN] Tokenizer download failed: HTTP {}",
+                                    resp.status()
+                                );
                             }
                         }
                         println!("       (use --force to re-download)");
@@ -318,9 +324,7 @@ pub async fn handle_memory_command(
                         let bytes = response.bytes().await?;
                         std::fs::write(&model_path, &bytes)?;
 
-                        let size = std::fs::metadata(&model_path)
-                            .map(|m| m.len())
-                            .unwrap_or(0);
+                        let size = std::fs::metadata(&model_path).map(|m| m.len()).unwrap_or(0);
                         println!(
                             "  [OK] Model downloaded: {:.1} MB",
                             size as f64 / 1_048_576.0
@@ -337,9 +341,17 @@ pub async fn handle_memory_command(
                             std::fs::write(&tokenizer_path, tok_resp.bytes().await?)?;
                             println!("  [OK] Tokenizer downloaded: {:?}", tokenizer_path);
                         } else {
-                            println!("  [WARN] Tokenizer download failed: HTTP {}", tok_resp.status());
-                            println!("         Semantic search requires the tokenizer. Download manually:");
-                            println!("         huggingface-cli download {} {}", tokenizer_repo, tokenizer_file);
+                            println!(
+                                "  [WARN] Tokenizer download failed: HTTP {}",
+                                tok_resp.status()
+                            );
+                            println!(
+                                "         Semantic search requires the tokenizer. Download manually:"
+                            );
+                            println!(
+                                "         huggingface-cli download {} {}",
+                                tokenizer_repo, tokenizer_file
+                            );
                         }
 
                         println!("       Semantic search is now available.");
@@ -357,7 +369,9 @@ pub async fn handle_memory_command(
         }
         crate::MemoryAction::List { status, limit } => {
             let store = manager.auto_memory.clone();
-            let status_filter = status.as_deref().and_then(navi_core::memory::MemoryStatus::from_str);
+            let status_filter = status
+                .as_deref()
+                .and_then(navi_core::memory::MemoryStatus::from_str);
             let memories = store.list(status_filter)?;
 
             if memories.is_empty() {
@@ -368,7 +382,12 @@ pub async fn handle_memory_command(
                 for m in &limited {
                     println!(
                         "  [{}] {} ({}) — {} (conf: {:.2}, {})",
-                        m.id, m.name, m.memory_type, m.description, m.confidence, m.status.as_str()
+                        m.id,
+                        m.name,
+                        m.memory_type,
+                        m.description,
+                        m.confidence,
+                        m.status.as_str()
                     );
                 }
             }
@@ -428,7 +447,10 @@ pub async fn handle_memory_command(
 
             // Check Project Memory (SQLite)
             let pm_index = manager.auto_memory.render_index();
-            println!("  Project Memory (SQLite): {:?}", manager.auto_memory.db_path);
+            println!(
+                "  Project Memory (SQLite): {:?}",
+                manager.auto_memory.db_path
+            );
             if !pm_index.trim().is_empty() {
                 println!("    [OK] Readable ({} bytes)", pm_index.len());
             } else {
@@ -437,7 +459,10 @@ pub async fn handle_memory_command(
 
             // Check Global Memory (SQLite)
             let gm_index = manager.global_memory.read_index().unwrap_or_default();
-            println!("  Global Memory (SQLite): {:?}", manager.global_memory.db_path);
+            println!(
+                "  Global Memory (SQLite): {:?}",
+                manager.global_memory.db_path
+            );
             if !gm_index.trim().is_empty() {
                 println!("    [OK] Readable ({} bytes)", gm_index.len());
             } else {

@@ -1117,6 +1117,33 @@ impl NaviEngine {
                 continue;
             };
 
+            // Aggregator providers (e.g. OpenRouter) get a rich model sync
+            // that fetches metadata from /models and stores it in the SQLite
+            // registry cache with capability tags (free, nitro, online).
+            if provider.aggregator {
+                if let Some(ref store) = self.inner.registry_store {
+                    match navi_core::registry::sync_aggregator_models(
+                        store,
+                        &provider,
+                        &api_key,
+                    )
+                    .await
+                    {
+                        Ok(count) => {
+                            updated.push(NaviSyncedProvider {
+                                provider_id: provider.id,
+                                model_count: count,
+                            });
+                        }
+                        Err(error) => failed.push(NaviProviderSyncFailure {
+                            provider_id: provider.id,
+                            message: error.to_string(),
+                        }),
+                    }
+                    continue;
+                }
+            }
+
             match list_models_for_provider(&provider, api_key).await {
                 Ok(models) => {
                     let model_count = models.len();

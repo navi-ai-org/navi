@@ -23,23 +23,8 @@ pub fn default_request_options_for(provider_id: &str) -> Option<ProviderRequestO
     }
 }
 
-pub(super) fn determine_task_size(name: &str) -> ModelTaskSize {
-    let name_lower = name.to_lowercase();
-    if name_lower.contains("mini")
-        || name_lower.contains("flash")
-        || name_lower.contains("haiku")
-        || name_lower.contains("nano")
-        || name_lower.contains("instant")
-        || name_lower.contains("lite")
-        || name_lower.contains("scout")
-        || name_lower.contains("small")
-        || name_lower.contains("8b")
-        || name_lower.contains("7b")
-        || name_lower.contains("3b")
-        || name_lower.contains("12b")
-    {
-        ModelTaskSize::Small
-    } else {
-        ModelTaskSize::Large
-    }
+/// Deprecated: task size is no longer inferred from model names. Returns `None`.
+/// Kept for backward compatibility with config file overrides.
+pub(super) fn determine_task_size(_name: &str) -> Option<ModelTaskSize> {
+    None
 }

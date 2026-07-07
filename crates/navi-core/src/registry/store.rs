@@ -53,6 +53,12 @@ impl RegistryStore {
             }
             if let Ok(manifest) = super::embedded::embedded_manifest() {
                 let _ = store.save_manifest_meta(&manifest);
+                // Also persist the full manifest JSON so load_cached_registry
+                // and check_registry_manifest can find it.
+                let manifest_json = serde_json::to_string(&manifest).ok();
+                if let Some(json) = manifest_json {
+                    let _ = store.meta_set("registry_manifest_json", &json);
+                }
             }
         }
 
@@ -90,13 +96,14 @@ impl RegistryStore {
                 tool_calling_mode TEXT,
                 request_options TEXT NOT NULL DEFAULT '{}',
                 sha256          TEXT,
+                aggregator      INTEGER NOT NULL DEFAULT 0,
                 updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
             );
 
             CREATE TABLE IF NOT EXISTS models (
                 provider_id         TEXT NOT NULL,
                 name                TEXT NOT NULL,
-                task_size           TEXT NOT NULL,
+                task_size           TEXT,
                 context_window_tokens INTEGER,
                 max_output_tokens   INTEGER,
                 recommended_temperature REAL,
@@ -150,6 +157,7 @@ impl RegistryStore {
         ensure_model_output_columns(&conn)?;
         ensure_provider_tool_calling_mode_column(&conn)?;
         ensure_provider_sha256_column(&conn)?;
+        ensure_provider_aggregator_column(&conn)?;
         Ok(())
     }
 
@@ -265,8 +273,8 @@ impl RegistryStore {
         let tx = conn.unchecked_transaction()?;
 
         tx.execute(
-            "INSERT OR REPLACE INTO providers (id, label, description, kind, api_key_env, base_url, tool_calling_mode, request_options, sha256, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, datetime('now'))",
+            "INSERT OR REPLACE INTO providers (id, label, description, kind, api_key_env, base_url, tool_calling_mode, request_options, sha256, aggregator, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, datetime('now'))",
             params![
                 provider.id,
                 provider.label,
@@ -277,6 +285,7 @@ impl RegistryStore {
                 provider.tool_calling_mode,
                 serde_json::to_string(&provider.request_options)?,
                 sha256,
+                provider.aggregator as i64,
             ],
         )?;
 
@@ -321,7 +330,7 @@ impl RegistryStore {
         let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
 
         let mut stmt = conn.prepare(
-            "SELECT id, label, description, kind, api_key_env, base_url, tool_calling_mode, request_options FROM providers ORDER BY id",
+            "SELECT id, label, description, kind, api_key_env, base_url, tool_calling_mode, request_options, aggregator FROM providers ORDER BY id",
         )?;
 
         let provider_rows = stmt.query_map([], |row| {
@@ -334,6 +343,7 @@ impl RegistryStore {
                 row.get::<_, Option<String>>(5)?,
                 row.get::<_, Option<String>>(6)?,
                 row.get::<_, String>(7)?,
+                row.get::<_, Option<i64>>(8)?,
             ))
         })?;
 
@@ -349,12 +359,14 @@ impl RegistryStore {
                 base_url,
                 tool_calling_mode_str,
                 request_options_json,
+                aggregator_val,
             ) = row?;
             let kind = parse_provider_kind(&kind_str);
             let request_options = serde_json::from_str(&request_options_json).ok();
             let tool_calling_mode = tool_calling_mode_str
                 .as_deref()
                 .map(parse_tool_calling_mode);
+            let aggregator = aggregator_val.unwrap_or(0) != 0;
 
             let mut model_stmt = conn.prepare(
                 "SELECT name, task_size, context_window_tokens, max_output_tokens, recommended_temperature, supports_thinking, supports_images, supports_audio, supports_video, supports_documents, tool_prompt_manifest
@@ -364,7 +376,7 @@ impl RegistryStore {
             let models = model_stmt
                 .query_map(params![id], |row| {
                     let name: String = row.get(0)?;
-                    let task_size_str: String = row.get(1)?;
+                    let task_size_str: Option<String> = row.get(1)?;
                     let ctx: Option<i64> = row.get(2)?;
                     let max_out: Option<i64> = row.get(3)?;
                     let temp: Option<f64> = row.get(4)?;
@@ -377,10 +389,11 @@ impl RegistryStore {
 
                     Ok(ProviderModelConfig {
                         name,
-                        task_size: match task_size_str.as_str() {
-                            "small" => ModelTaskSize::Small,
-                            _ => ModelTaskSize::Large,
-                        },
+                        task_size: task_size_str.as_deref().and_then(|s| match s {
+                            "small" => Some(ModelTaskSize::Small),
+                            "large" => Some(ModelTaskSize::Large),
+                            _ => None,
+                        }),
                         context_window_tokens: ctx.map(|v| v as u64),
                         max_output_tokens: max_out.map(|v| v as u64),
                         recommended_temperature: temp,
@@ -404,6 +417,7 @@ impl RegistryStore {
                 models,
                 request_options,
                 tool_calling_mode,
+                aggregator,
                 ..Default::default()
             });
         }
@@ -730,10 +744,11 @@ pub fn registry_provider_to_config(rp: RegistryProvider) -> ProviderConfig {
             let supports_documents = registry_model_supports_documents(&m, &attachment_defaults);
             ProviderModelConfig {
                 name: m.name,
-                task_size: match m.task_size.as_str() {
-                    "small" => ModelTaskSize::Small,
-                    _ => ModelTaskSize::Large,
-                },
+                task_size: m.task_size.as_deref().and_then(|s| match s {
+                    "small" => Some(ModelTaskSize::Small),
+                    "large" => Some(ModelTaskSize::Large),
+                    _ => None,
+                }),
                 context_window_tokens: m.context_window_tokens,
                 max_output_tokens: m.max_output_tokens,
                 recommended_temperature: m.recommended_temperature,
@@ -761,6 +776,7 @@ pub fn registry_provider_to_config(rp: RegistryProvider) -> ProviderConfig {
         } else {
             Some(rp.request_options)
         },
+        aggregator: rp.aggregator,
         ..Default::default()
     }
 }
@@ -922,6 +938,22 @@ fn ensure_provider_sha256_column(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
+fn ensure_provider_aggregator_column(conn: &Connection) -> Result<()> {
+    let mut stmt = conn.prepare("PRAGMA table_info(providers)")?;
+    let has_column = stmt
+        .query_map([], |row| row.get::<_, String>(1))?
+        .any(|name| matches!(name, Ok(name) if name == "aggregator"));
+
+    if !has_column {
+        conn.execute(
+            "ALTER TABLE providers ADD COLUMN aggregator INTEGER NOT NULL DEFAULT 0",
+            [],
+        )?;
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use crate::config::types::ProviderRequestOptions;
@@ -938,12 +970,13 @@ mod tests {
             api_key_env: "TEST_API_KEY".to_string(),
             base_url: Some("https://api.test.com/v1".to_string()),
             tool_calling_mode: None,
+            aggregator: false,
             defaults: Default::default(),
             request_options: Default::default(),
             models: vec![
                 RegistryModel {
                     name: "test-model-large".to_string(),
-                    task_size: "large".to_string(),
+                    task_size: Some("large".to_string()),
                     context_window_tokens: Some(200_000),
                     max_output_tokens: Some(8_192),
                     recommended_temperature: Some(0.7),
@@ -958,7 +991,7 @@ mod tests {
                 },
                 RegistryModel {
                     name: "test-model-small".to_string(),
-                    task_size: "small".to_string(),
+                    task_size: Some("small".to_string()),
                     context_window_tokens: Some(128_000),
                     max_output_tokens: Some(4_096),
                     recommended_temperature: Some(0.5),
@@ -1010,8 +1043,8 @@ mod tests {
         assert_eq!(loaded[0].models[0].context_window_tokens, Some(200_000));
         assert_eq!(loaded[0].models[0].max_output_tokens, Some(8_192));
         assert_eq!(loaded[0].models[0].recommended_temperature, Some(0.7));
-        assert_eq!(loaded[0].models[0].task_size, ModelTaskSize::Large);
-        assert_eq!(loaded[0].models[1].task_size, ModelTaskSize::Small);
+        assert_eq!(loaded[0].models[0].task_size, Some(ModelTaskSize::Large));
+        assert_eq!(loaded[0].models[1].task_size, Some(ModelTaskSize::Small));
         assert_eq!(loaded[0].kind, ProviderKind::OpenAiChatCompletions);
         assert_eq!(
             loaded[0].base_url,
@@ -1029,7 +1062,7 @@ mod tests {
         // Update with fewer models.
         provider.models = vec![RegistryModel {
             name: "new-model".to_string(),
-            task_size: "large".to_string(),
+            task_size: Some("large".to_string()),
             context_window_tokens: Some(500_000),
             max_output_tokens: Some(16_384),
             recommended_temperature: Some(0.8),
@@ -1066,6 +1099,7 @@ mod tests {
             api_key_env: "OTHER_KEY".to_string(),
             base_url: None,
             tool_calling_mode: None,
+            aggregator: false,
             defaults: Default::default(),
             request_options: Default::default(),
             models: vec![],
@@ -1103,11 +1137,12 @@ mod tests {
             api_key_env: "K".to_string(),
             base_url: None,
             tool_calling_mode: None,
+            aggregator: false,
             defaults: Default::default(),
             request_options: Default::default(),
             models: vec![RegistryModel {
                 name: "m".to_string(),
-                task_size: "small".to_string(),
+                task_size: Some("small".to_string()),
                 context_window_tokens: None,
                 max_output_tokens: None,
                 recommended_temperature: None,
@@ -1246,11 +1281,12 @@ mod tests {
             api_key_env: "TINY_KEY".to_string(),
             base_url: None,
             tool_calling_mode: None,
+            aggregator: false,
             defaults: Default::default(),
             request_options: Default::default(),
             models: vec![RegistryModel {
                 name: "tiny-model".to_string(),
-                task_size: "small".to_string(),
+                task_size: Some("small".to_string()),
                 context_window_tokens: Some(4_000),
                 max_output_tokens: None,
                 recommended_temperature: None,
