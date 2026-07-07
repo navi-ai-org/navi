@@ -104,6 +104,25 @@ pub fn build_rebuild_context(
         truncate_to_tokens(&project_mem, budgets.project_memory)
     ));
 
+    // 4b. Auto-memory SQLite index (new system)
+    let auto_mem_index = {
+        let db_path = memory_store.memory_root.join("memories.db");
+        if db_path.exists() {
+            match crate::memory::AutoMemoryStore::open(&db_path) {
+                Ok(store) => store.build_prompt_context(2000),
+                Err(_) => String::new(),
+            }
+        } else {
+            String::new()
+        }
+    };
+    if !auto_mem_index.trim().is_empty() {
+        parts.push(format!(
+            "=== AUTO-MEMORY INDEX ===\n{}",
+            truncate_to_tokens(&auto_mem_index, budgets.project_memory)
+        ));
+    }
+
     // 5. Global memory
     let global_mem = memory_store.read_global_memory().unwrap_or_default();
     parts.push(format!(
