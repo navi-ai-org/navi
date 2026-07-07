@@ -765,7 +765,7 @@ impl NaviEngine {
             loaded_config.data_dir.clone(),
             &loaded_config.config.memory,
         )?;
-        let db_path = manager.store.memory_root.join("memories.db");
+        let db_path = manager.auto_memory.db_path.clone();
         Ok(navi_core::memory::AutoMemoryStore::open(&db_path)?)
     }
 
