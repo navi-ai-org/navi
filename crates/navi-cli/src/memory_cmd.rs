@@ -234,17 +234,10 @@ pub async fn handle_memory_command(
                 println!("  [OK] Models directory exists: {:?}", models_dir);
             }
 
-            let db_path = memory_root.join("memories.db");
-            match navi_core::memory::AutoMemoryStore::open(&db_path) {
-                Ok(store) => {
-                    let count = store.count_active().unwrap_or(0);
-                    println!("  [OK] Auto-memory database: {:?}", db_path);
-                    println!("  [OK] Active memories: {}", count);
-                }
-                Err(e) => {
-                    println!("  [ERROR] Failed to open auto-memory database: {}", e);
-                }
-            }
+            let db_path = manager.auto_memory.db_path.clone();
+            let count = manager.auto_memory.count_active().unwrap_or(0);
+            println!("  [OK] Auto-memory database: {:?}", db_path);
+            println!("  [OK] Active memories: {}", count);
 
             if embeddings {
                 println!();
@@ -363,8 +356,7 @@ pub async fn handle_memory_command(
             println!("Auto-memory initialization complete.");
         }
         crate::MemoryAction::List { status, limit } => {
-            let db_path = manager.store.memory_root.join("memories.db");
-            let store = navi_core::memory::AutoMemoryStore::open(&db_path)?;
+            let store = manager.auto_memory.clone();
             let status_filter = status.as_deref().and_then(navi_core::memory::MemoryStatus::from_str);
             let memories = store.list(status_filter)?;
 
@@ -382,8 +374,7 @@ pub async fn handle_memory_command(
             }
         }
         crate::MemoryAction::Search { query, limit } => {
-            let db_path = manager.store.memory_root.join("memories.db");
-            let store = navi_core::memory::AutoMemoryStore::open(&db_path)?;
+            let store = manager.auto_memory.clone();
             let results = store.search_text(&query, limit)?;
 
             if results.is_empty() {

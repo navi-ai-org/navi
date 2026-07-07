@@ -110,7 +110,7 @@ pub struct ConsolidationReport {
 ///
 /// Source of truth for all auto-memories. Embeddings are stored as BLOB
 /// (256×f32 = 1KB per entry) for optional semantic search via cosine similarity.
-/// The MEMORY.md index is rendered on demand from this database.
+/// The project memory index is rendered on demand from this database.
 #[derive(Clone)]
 pub struct AutoMemoryStore {
     conn: Arc<Mutex<Connection>>,

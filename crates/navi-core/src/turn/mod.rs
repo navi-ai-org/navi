@@ -1096,8 +1096,7 @@ fn load_auto_memory_index(ctx: &TurnContext) -> Option<String> {
     )
     .ok()?;
 
-    let db_path = manager.store.memory_root.join("memories.db");
-    let store = crate::memory::AutoMemoryStore::open(&db_path).ok()?;
+    let store = manager.auto_memory.clone();
     let index = store.build_prompt_context(2000);
     if index.trim().is_empty() {
         None

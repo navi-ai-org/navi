@@ -823,7 +823,7 @@ impl AgentRuntime {
             memory_config,
         )?;
 
-        let db_path = manager.store.memory_root.join("memories.db");
+        let db_path = manager.auto_memory.db_path.clone();
         if !db_path.exists() {
             return Ok(());
         }
@@ -870,7 +870,7 @@ impl AgentRuntime {
             }
         };
 
-        let db_path = manager.store.memory_root.join("memories.db");
+        let db_path = manager.auto_memory.db_path.clone();
         if !db_path.exists() {
             return;
         }
@@ -942,7 +942,7 @@ impl AgentRuntime {
             return;
         }
 
-        let db_path = manager.store.memory_root.join("memories.db");
+        let db_path = manager.auto_memory.db_path.clone();
         let hours_since = if last_dream > 0 {
             let now = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
