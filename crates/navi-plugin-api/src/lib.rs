@@ -18,6 +18,56 @@ pub trait PluginRegistry {
     fn register_tui_component(&mut self, name: &str);
 }
 
+/// A TUI component that a plugin can register to render custom UI regions.
+///
+/// This trait is only available when the `tui` feature is enabled, which
+/// brings in the `copland` framework dependency. Plugins that only need
+/// tools can ignore this trait entirely.
+#[cfg(feature = "tui")]
+pub trait TuiComponent: Send + Sync {
+    /// Unique identifier for this component.
+    fn id(&self) -> &str;
+
+    /// Render the component into the given area.
+    fn render(
+        &mut self,
+        frame: &mut copland::ratatui::Frame,
+        area: copland::ratatui::layout::Rect,
+        ctx: &dyn copland::panel::PanelContext,
+    );
+
+    /// Handle a key event.
+    fn handle_key(
+        &mut self,
+        key: &copland::crossterm::event::KeyEvent,
+        ctx: &dyn copland::panel::PanelContext,
+    ) -> copland::keymap::KeyOutcome {
+        let _ = (key, ctx);
+        copland::keymap::KeyOutcome::Ignored
+    }
+
+    /// Preferred size for layout.
+    fn preferred_size(&self) -> copland::panel::PanelSize {
+        copland::panel::PanelSize::Flex
+    }
+
+    /// Whether this component should be visible.
+    fn is_visible(&self) -> bool {
+        true
+    }
+
+    /// Z-order for overlapping components.
+    fn z_order(&self) -> i16 {
+        0
+    }
+}
+
+/// Extension trait for PluginRegistry to register TUI components.
+#[cfg(feature = "tui")]
+pub trait PluginRegistryTui {
+    fn register_tui_panel(&mut self, component: Box<dyn TuiComponent>);
+}
+
 /// Self-contained tool trait for plugins. Does not depend on navi-core types.
 /// Plugin authors implement this trait; the host adapts it to `navi_core::Tool`.
 pub trait PluginTool: Send + Sync {

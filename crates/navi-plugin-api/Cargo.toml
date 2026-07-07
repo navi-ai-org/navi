@@ -11,3 +11,8 @@ readme = "README.md"
 [dependencies]
 serde.workspace = true
 serde_json.workspace = true
+copland = { workspace = true, optional = true }
+
+[features]
+default = []
+tui = ["dep:copland"]
