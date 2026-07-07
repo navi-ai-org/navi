@@ -136,9 +136,166 @@ pub async fn extract_memories(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::memory::AutoMemoryStore;
+    use crate::memory::auto_memory::{new_entry, MemoryType};
+    use crate::model::{ModelMessage, ModelResponse, ModelStreamEvent, ThinkingConfig};
 
     #[test]
     fn test_extract_prompt_has_placeholder() {
         assert!(EXTRACT_PROMPT.contains("{conversation}"));
+    }
+
+    #[test]
+    fn test_extracted_memory_deserialization() {
+        let json = r#"[{"id":"test_mem","type":"feedback","name":"Test","description":"A test memory","body":"This is a test"}]"#;
+        let memories: Vec<ExtractedMemory> = serde_json::from_str(json).unwrap();
+        assert_eq!(memories.len(), 1);
+        assert_eq!(memories[0].id, "test_mem");
+        assert_eq!(memories[0].memory_type, "feedback");
+    }
+
+    #[test]
+    fn test_extracted_memory_with_invalid_type() {
+        let json = r#"[{"id":"bad","type":"invalid_type","name":"Bad","description":"Bad","body":"Bad"}]"#;
+        let memories: Vec<ExtractedMemory> = serde_json::from_str(json).unwrap();
+        assert_eq!(memories.len(), 1);
+        // from_str on memory_type will return None, so it should be skipped
+        assert!(MemoryType::from_str(&memories[0].memory_type).is_none());
+    }
+
+    #[test]
+    fn test_extracted_memory_empty_array() {
+        let json = "[]";
+        let memories: Vec<ExtractedMemory> = serde_json::from_str(json).unwrap();
+        assert!(memories.is_empty());
+    }
+
+    /// Mock model provider for testing extract_memories without a real API.
+    struct MockProvider {
+        response: String,
+    }
+
+    impl crate::model::ModelProvider for MockProvider {
+        fn stream(
+            &self,
+            _request: ModelRequest,
+        ) -> crate::model::ModelStream {
+            let text = self.response.clone();
+            Box::pin(futures_util::stream::iter(vec![
+                Ok(crate::model::ModelStreamEvent::TextDelta { text }),
+                Ok(crate::model::ModelStreamEvent::Done),
+            ]))
+        }
+    }
+
+    #[tokio::test]
+    async fn test_extract_memories_with_mock_provider() {
+        let tmp = tempfile::tempdir().unwrap();
+        let db_path = tmp.path().join("memories.db");
+        let store = AutoMemoryStore::open(&db_path).unwrap();
+
+        // Mock provider returns one memory
+        let provider = MockProvider {
+            response: r#"[{"id":"redis_tests","type":"feedback","name":"Redis for Tests","description":"Need Redis running","body":"Start Redis before running tests"}]"#.to_string(),
+        };
+
+        let result = extract_memories(
+            "User: fix the tests\n\nAssistant: I found that Redis needs to be running",
+            &provider,
+            "test-model",
+            &store,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result, 1);
+
+        // Verify the memory was saved
+        let entry = store.get("redis_tests").unwrap().unwrap();
+        assert_eq!(entry.name, "Redis for Tests");
+        assert_eq!(entry.memory_type, MemoryType::Feedback);
+    }
+
+    #[tokio::test]
+    async fn test_extract_memories_skips_existing() {
+        let tmp = tempfile::tempdir().unwrap();
+        let db_path = tmp.path().join("memories.db");
+        let store = AutoMemoryStore::open(&db_path).unwrap();
+
+        // Pre-populate with an existing memory
+        let entry = new_entry("redis_tests", MemoryType::Feedback, "Existing", "Old", "Old body");
+        store.upsert(&entry).unwrap();
+
+        // Mock provider returns the same id
+        let provider = MockProvider {
+            response: r#"[{"id":"redis_tests","type":"feedback","name":"New","description":"New","body":"New body"}]"#.to_string(),
+        };
+
+        let result = extract_memories("test", &provider, "model", &store).await.unwrap();
+
+        // Should skip because it already exists
+        assert_eq!(result, 0);
+
+        // Verify the existing memory was NOT overwritten
+        let existing = store.get("redis_tests").unwrap().unwrap();
+        assert_eq!(existing.name, "Existing");
+    }
+
+    #[tokio::test]
+    async fn test_extract_memories_empty_response() {
+        let tmp = tempfile::tempdir().unwrap();
+        let db_path = tmp.path().join("memories.db");
+        let store = AutoMemoryStore::open(&db_path).unwrap();
+
+        let provider = MockProvider {
+            response: "[]".to_string(),
+        };
+
+        let result = extract_memories("nothing useful", &provider, "model", &store)
+            .await
+            .unwrap();
+
+        assert_eq!(result, 0);
+    }
+
+    #[tokio::test]
+    async fn test_extract_memories_garbage_response() {
+        let tmp = tempfile::tempdir().unwrap();
+        let db_path = tmp.path().join("memories.db");
+        let store = AutoMemoryStore::open(&db_path).unwrap();
+
+        let provider = MockProvider {
+            response: "This is not JSON at all".to_string(),
+        };
+
+        let result = extract_memories("test", &provider, "model", &store)
+            .await
+            .unwrap();
+
+        assert_eq!(result, 0);
+    }
+
+    #[tokio::test]
+    async fn test_extract_memories_json_in_markdown() {
+        let tmp = tempfile::tempdir().unwrap();
+        let db_path = tmp.path().join("memories.db");
+        let store = AutoMemoryStore::open(&db_path).unwrap();
+
+        let provider = MockProvider {
+            response: r#"Here are the memories:
+```json
+[{"id":"pref_dark","type":"user","name":"Dark Mode","description":"User prefers dark mode","body":"The user prefers dark mode themes"}]
+```
+"#.to_string(),
+        };
+
+        let result = extract_memories("User: I like dark mode", &provider, "model", &store)
+            .await
+            .unwrap();
+
+        assert_eq!(result, 1);
+        let entry = store.get("pref_dark").unwrap().unwrap();
+        assert_eq!(entry.name, "Dark Mode");
+        assert_eq!(entry.memory_type, MemoryType::User);
     }
 }
