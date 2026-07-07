@@ -302,7 +302,7 @@ deny_tool_regex = ["^danger_"]
             base_url: Some("https://example.com".to_string()),
             models: vec![ProviderModelConfig {
                 name: "compat-model".to_string(),
-                task_size: ModelTaskSize::Small,
+                task_size: Some(ModelTaskSize::Small),
                 context_window_tokens: None,
                 max_output_tokens: None,
                 recommended_temperature: None,
@@ -330,7 +330,7 @@ deny_tool_regex = ["^danger_"]
             base_url: Some("https://example.test/v1".to_string()),
             models: vec![ProviderModelConfig {
                 name: "Custom Model".to_string(),
-                task_size: ModelTaskSize::Large,
+                task_size: Some(ModelTaskSize::Large),
                 context_window_tokens: None,
                 max_output_tokens: None,
                 recommended_temperature: None,
@@ -406,7 +406,7 @@ deny_tool_regex = ["^danger_"]
             base_url: Some("https://proxy.example/v1".to_string()),
             models: vec![ProviderModelConfig {
                 name: "gpt-5".to_string(),
-                task_size: ModelTaskSize::Large,
+                task_size: Some(ModelTaskSize::Large),
                 context_window_tokens: None,
                 max_output_tokens: None,
                 recommended_temperature: None,
@@ -448,7 +448,7 @@ deny_tool_regex = ["^danger_"]
             base_url: Some("https://api.openai.com/v1".to_string()),
             models: vec![ProviderModelConfig {
                 name: "gpt-5".to_string(),
-                task_size: ModelTaskSize::Large,
+                task_size: Some(ModelTaskSize::Large),
                 context_window_tokens: None,
                 max_output_tokens: None,
                 recommended_temperature: None,
@@ -484,7 +484,7 @@ deny_tool_regex = ["^danger_"]
             base_url: Some("https://proxy.test/v1".to_string()),
             models: vec![ProviderModelConfig {
                 name: "some-model".to_string(),
-                task_size: ModelTaskSize::Small,
+                task_size: Some(ModelTaskSize::Small),
                 context_window_tokens: None,
                 max_output_tokens: None,
                 recommended_temperature: None,
@@ -515,7 +515,7 @@ deny_tool_regex = ["^danger_"]
             base_url: Some("https://example.test/v1".to_string()),
             models: vec![ProviderModelConfig {
                 name: "vision-only".to_string(),
-                task_size: ModelTaskSize::Large,
+                task_size: Some(ModelTaskSize::Large),
                 context_window_tokens: None,
                 max_output_tokens: None,
                 recommended_temperature: None,

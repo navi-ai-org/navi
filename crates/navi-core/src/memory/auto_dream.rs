@@ -15,9 +15,10 @@
 //! (tokio task) so the TUI/agent is not blocked.
 
 use anyhow::{Context, Result};
+use std::collections::HashSet;
 use std::fs;
-use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Minimum hours between automatic dream runs.
@@ -32,8 +33,30 @@ const LAST_DREAM_FILE: &str = "last_dream_at";
 /// File name for the dream lock (prevents concurrent dreams).
 const DREAM_LOCK_FILE: &str = "dream.lock";
 
-/// Global in-process flag to prevent overlapping dreams within the same NAVI process.
-static DREAM_IN_PROCESS: AtomicBool = AtomicBool::new(false);
+/// In-process locks held by path, preventing overlapping dream/distill runs
+/// within the same NAVI process. Keyed by the lock file's parent directory
+/// so that dream and distill (which use different directories) can run
+/// concurrently.
+static HELD_LOCKS: Mutex<Option<HashSet<PathBuf>>> = Mutex::new(None);
+
+fn is_lock_held(lock_path: &Path) -> bool {
+    let mut guard = HELD_LOCKS.lock().unwrap();
+    let set = guard.get_or_insert_with(HashSet::new);
+    set.contains(lock_path)
+}
+
+fn mark_lock_held(lock_path: PathBuf) {
+    let mut guard = HELD_LOCKS.lock().unwrap();
+    let set = guard.get_or_insert_with(HashSet::new);
+    set.insert(lock_path);
+}
+
+fn mark_lock_released(lock_path: &Path) {
+    let mut guard = HELD_LOCKS.lock().unwrap();
+    if let Some(set) = guard.as_mut() {
+        set.remove(lock_path);
+    }
+}
 
 /// State for the auto-dream gate check.
 #[derive(Debug, Clone)]
@@ -121,16 +144,17 @@ impl AutoDreamState {
     /// Attempts to acquire the dream lock (file-based, cross-process).
     /// Returns true if the lock was acquired.
     fn try_acquire_lock(&self) -> bool {
-        // Check in-process flag first
-        if DREAM_IN_PROCESS.load(Ordering::Relaxed) {
+        let lock_path = self.lock_path();
+
+        // Check in-process flag first (keyed by path)
+        if is_lock_held(&lock_path) {
             return false;
         }
 
         // Try to create the lock file exclusively
-        let lock_path = self.lock_path();
         match fs::OpenOptions::new().write(true).create_new(true).open(&lock_path) {
             Ok(_) => {
-                DREAM_IN_PROCESS.store(true, Ordering::Relaxed);
+                mark_lock_held(lock_path.clone());
                 // Write a marker with the current time
                 let now = SystemTime::now()
                     .duration_since(UNIX_EPOCH)
@@ -156,7 +180,7 @@ impl AutoDreamState {
                                 .open(&lock_path)
                                 .is_ok()
                             {
-                                DREAM_IN_PROCESS.store(true, Ordering::Relaxed);
+                                mark_lock_held(lock_path.clone());
                                 let _ = fs::write(&lock_path, now.to_string());
                                 return true;
                             }
@@ -170,8 +194,9 @@ impl AutoDreamState {
 
     /// Releases the dream lock.
     fn release_lock(&self) {
-        DREAM_IN_PROCESS.store(false, Ordering::Relaxed);
-        let _ = fs::remove_file(self.lock_path());
+        let lock_path = self.lock_path();
+        mark_lock_released(&lock_path);
+        let _ = fs::remove_file(&lock_path);
     }
 
     /// Runs the 3-gate check and returns true if a dream should be triggered.
