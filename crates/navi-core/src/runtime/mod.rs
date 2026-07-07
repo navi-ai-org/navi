@@ -237,6 +237,8 @@ pub struct AgentRuntime {
     /// Whether the model used the `memory` tool with `write` action during the current turn.
     /// Used for mutual exclusion with background extractMemories.
     turn_used_memory_write: bool,
+    /// Last user task text — used for extractMemories context.
+    last_user_task: String,
 }
 
 impl AgentRuntime {
@@ -298,6 +300,7 @@ impl AgentRuntime {
             goal_runtime,
             goal_extension,
             turn_used_memory_write: false,
+            last_user_task: String::new(),
         }
     }
 
@@ -577,6 +580,7 @@ impl AgentRuntime {
             text: task.clone(),
             content_parts: content_parts.clone(),
         });
+        self.last_user_task = task.clone();
         self.event_bus.publish(RuntimeEventKind::TurnStarted {
             turn_id: turn_id.clone(),
         });
@@ -629,7 +633,14 @@ impl AgentRuntime {
                 let model_wrote_memory = self.turn_used_memory_write;
 
                 if !model_wrote_memory {
-                    self.try_extract_memories(&session_id, &text);
+                    // Build conversation snippet from user task + assistant response
+                    let user_task = self.last_user_task.clone();
+                    let conversation = if user_task.is_empty() {
+                        format!("Assistant: {}", text)
+                    } else {
+                        format!("User: {}\n\nAssistant: {}", user_task, text)
+                    };
+                    self.try_extract_memories(&session_id, &conversation);
                 }
 
                 // Reset per-turn flag
@@ -835,19 +846,16 @@ impl AgentRuntime {
     /// extractMemories: background per-turn memory extraction.
     /// Spawns a tokio task that calls the model to extract durable memories
     /// from the completed turn. Fire-and-forget — does not block the agent loop.
-    fn try_extract_memories(&self, _session_id: &str, assistant_text: &str) {
+    fn try_extract_memories(&self, _session_id: &str, conversation: &str) {
         let memory_config = &self.loaded_config.config.memory;
         if !memory_config.enabled {
             return;
         }
 
-        // Build the conversation snippet for extraction
-        // We use the assistant response — the user task is already in the session
-        let conversation = format!("Assistant: {}", assistant_text);
-
         // Get the model provider and name for the extraction call
         let provider = self.model_provider.clone();
         let model_name = self.loaded_config.config.model.name.clone();
+        let conversation = conversation.to_string();
 
         // Open auto-memory store
         let manager = match crate::memory::MemoryManager::new(
@@ -958,6 +966,7 @@ impl AgentRuntime {
         });
 
         let memory_root = manager.store.memory_root.clone();
+        let event_sender = self.event_bus.sender();
         tokio::spawn(async move {
             let result = run_auto_dream_consolidation(&db_path).await;
 
@@ -971,10 +980,18 @@ impl AgentRuntime {
                         report.remaining_active
                     );
                     dream_state.mark_completed();
+                    let _ = event_sender.send(RuntimeEvent::new(RuntimeEventKind::AutoDreamCompleted {
+                        marked_stale: report.marked_stale,
+                        duplicates_merged: report.duplicates_merged,
+                        active_count: report.remaining_active,
+                    }));
                 }
                 Err(e) => {
                     tracing::warn!("auto-dream failed: {}", e);
                     dream_state.release();
+                    let _ = event_sender.send(RuntimeEvent::new(RuntimeEventKind::AutoDreamFailed {
+                        reason: e.to_string(),
+                    }));
                 }
             }
         });

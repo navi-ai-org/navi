@@ -9,7 +9,7 @@ use crate::memory::MemoryManager;
 use crate::memory::MemoryStatus;
 use crate::memory::MemoryType;
 use crate::memory::auto_memory::{new_entry, sanitize_id};
-use crate::memory::embedding::{EmbeddingConfig, create_embedder, embeddings_available};
+use crate::memory::embedding::{get_cached_embedder, embeddings_available};
 use crate::tool::builtin::helpers;
 use crate::tool::{Tool, ToolDefinition, ToolInvocation, ToolKind, ToolResult};
 
@@ -221,17 +221,9 @@ impl MemoryTool {
         }
 
         let (model_path, tokenizer_path) = self.resolve_model_paths();
-        if !model_path.exists() || !tokenizer_path.exists() {
-            return None;
-        }
 
-        let config = EmbeddingConfig {
-            model_path,
-            tokenizer_path,
-            ..Default::default()
-        };
+        let embedder = get_cached_embedder(&model_path, &tokenizer_path)?;
 
-        let embedder = create_embedder(config);
         match embedder.embed(text) {
             Ok(emb) => Some(emb),
             Err(e) => {
@@ -248,7 +240,7 @@ impl Tool for MemoryTool {
         helpers::definition(
             "memory",
             "Persistent auto-memory system with search. Save, retrieve, search, update, and delete memories that survive across sessions. Use `search` when you need to find relevant memories, `write` to save new learnings, `list` to see everything stored.",
-            ToolKind::Write,
+            ToolKind::Read,
             json!({
                 "type": "object",
                 "properties": {

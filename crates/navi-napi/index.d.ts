@@ -203,6 +203,9 @@ export class NaviNapiEngine {
   memoryDelete(id: string): void;
   memoryCount(): number;
   memoryIndex(): string;
+  // Permission mode
+  getPermissionMode(): string;
+  setPermissionMode(mode: string): void;
   // Session management
   sessionIds(): string[];
   loadedConfig(): EngineConfig;

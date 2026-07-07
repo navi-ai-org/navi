@@ -9,6 +9,7 @@
 
 use anyhow::Result;
 use std::path::PathBuf;
+use std::sync::{Arc, OnceLock};
 
 /// Target embedding dimension after Matryoshka truncation.
 /// 256 dims × 4 bytes = 1KB per memory — negligible storage overhead.
@@ -22,6 +23,39 @@ pub const DEFAULT_MODEL_REPO: &str = "Qwen/Qwen3-Embedding-0.6B-GGUF";
 pub const DEFAULT_MODEL_FILE: &str = "qwen3-embedding-0.6b-q8_0.gguf";
 pub const DEFAULT_TOKENIZER_REPO: &str = "Qwen/Qwen3-Embedding-0.6B";
 pub const DEFAULT_TOKENIZER_FILE: &str = "tokenizer.json";
+
+/// Global cache for the embedding model — loaded once, reused across calls.
+static EMBEDDER_CACHE: OnceLock<std::sync::Mutex<Option<Arc<dyn Embedder>>>> = OnceLock::new();
+
+/// Returns the cached embedder, or loads it if not yet loaded.
+/// Returns None if embeddings are not available or the model is missing.
+pub fn get_cached_embedder(model_path: &PathBuf, tokenizer_path: &PathBuf) -> Option<Arc<dyn Embedder>> {
+    let cache = EMBEDDER_CACHE.get_or_init(|| std::sync::Mutex::new(None));
+    let mut guard = cache.lock().ok()?;
+
+    if let Some(ref embedder) = *guard {
+        return Some(embedder.clone());
+    }
+
+    // Load the embedder
+    let config = EmbeddingConfig {
+        model_path: model_path.clone(),
+        tokenizer_path: tokenizer_path.clone(),
+        ..Default::default()
+    };
+    let embedder = create_embedder(config);
+    let embedder_arc: Arc<dyn Embedder> = Arc::from(embedder);
+
+    // Check if it's a NoEmbedder (feature off or model missing)
+    // We can't downcast Box to check, so we test with a simple embed call
+    match embedder_arc.embed("test") {
+        Ok(_) => {
+            *guard = Some(embedder_arc.clone());
+            Some(embedder_arc)
+        }
+        Err(_) => None,
+    }
+}
 
 /// Trait for embedding generation — allows mocking in tests.
 pub trait Embedder: Send + Sync {

@@ -532,6 +532,17 @@ impl NaviEngine {
         Ok(())
     }
 
+    /// Returns the current permission mode for tool execution.
+    pub fn get_permission_mode(&self) -> navi_core::PermissionMode {
+        self.loaded_config().config.security.permission_mode
+    }
+
+    /// Sets the permission mode for tool execution. Applies to all sessions.
+    pub fn set_permission_mode(&self, mode: navi_core::PermissionMode) {
+        let mut config = self.inner.loaded_config.write().unwrap_or_else(|e| e.into_inner());
+        config.config.security.permission_mode = mode;
+    }
+
     /// Closes an active in-memory session. Returns `true` when a session was removed.
     ///
     /// This does not delete persisted session history. Any active turn is asked to

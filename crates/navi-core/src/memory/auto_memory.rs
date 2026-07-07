@@ -707,11 +707,10 @@ pub fn now_iso() -> String {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0);
-    format!("1970-01-01T00:00:{:02}Z", secs % 60)
+    iso_from_unix(secs)
 }
 
 /// Returns a cutoff timestamp string for memories older than `days`.
-/// Uses a simple subtraction from the current unix timestamp.
 pub fn stale_iso_cutoff(days: u32) -> String {
     use std::time::{SystemTime, UNIX_EPOCH};
     let now_secs = SystemTime::now()
@@ -719,7 +718,31 @@ pub fn stale_iso_cutoff(days: u32) -> String {
         .map(|d| d.as_secs())
         .unwrap_or(0);
     let cutoff_secs = now_secs.saturating_sub((days as u64) * 86400);
-    format!("1970-01-01T00:00:{:02}Z", cutoff_secs % 60)
+    iso_from_unix(cutoff_secs)
+}
+
+/// Converts a Unix timestamp (seconds since epoch) to an ISO 8601 string.
+/// Uses a simple civil-from-days algorithm (Howard Hinnant) — no external crate needed.
+fn iso_from_unix(secs: u64) -> String {
+    let days = (secs / 86400) as i64;
+    let remainder = secs % 86400;
+    let hour = (remainder / 3600) as u32;
+    let min = ((remainder % 3600) / 60) as u32;
+    let sec = (remainder % 60) as u32;
+
+    // Civil from days (epoch 1970-01-01 = day 0)
+    let z = days + 719468;
+    let era = if z >= 0 { z } else { z - 146096 } / 146097;
+    let doe = (z - era * 146097) as u64;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let y = yoe as i64 + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = (doy - (153 * mp + 2) / 5 + 1) as u32;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 } as u32;
+    let year = if m <= 2 { y + 1 } else { y };
+
+    format!("{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z", year, m, d, hour, min, sec)
 }
 
 fn row_to_entry(row: &rusqlite::Row) -> rusqlite::Result<MemoryEntry> {
@@ -958,5 +981,30 @@ mod tests {
         assert_eq!(sanitize_id("my memory"), "my_memory");
         assert_eq!(sanitize_id("test-123"), "test-123");
         assert_eq!(sanitize_id("../evil"), ".._evil");
+    }
+
+    #[test]
+    fn test_now_iso_is_real_date() {
+        let ts = now_iso();
+        // Should start with 20 (year 2000s) not 1970
+        assert!(ts.starts_with("20"), "now_iso returned: {}", ts);
+        // Should have format YYYY-MM-DDTHH:MM:SSZ (20 chars)
+        assert_eq!(ts.len(), 20, "now_iso length: {} for {}", ts.len(), ts);
+    }
+
+    #[test]
+    fn test_iso_from_unix_epoch() {
+        // Unix epoch = 1970-01-01T00:00:00Z
+        assert_eq!(iso_from_unix(0), "1970-01-01T00:00:00Z");
+        // 2026-01-01 00:00:00 UTC = 1767225600
+        assert_eq!(iso_from_unix(1767225600), "2026-01-01T00:00:00Z");
+    }
+
+    #[test]
+    fn test_stale_iso_cutoff() {
+        let cutoff = stale_iso_cutoff(30);
+        // Should be a valid ISO date starting with 20
+        assert!(cutoff.starts_with("20"), "stale cutoff: {}", cutoff);
+        assert_eq!(cutoff.len(), 20);
     }
 }

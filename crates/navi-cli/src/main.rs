@@ -43,6 +43,18 @@ struct Cli {
     #[arg(long)]
     no_tui: bool,
 
+    /// Auto-approve all tool calls (YOLO mode)
+    #[arg(long)]
+    yolo: bool,
+
+    /// Auto-approve reads and edits, prompt for commands
+    #[arg(long)]
+    accept_edits: bool,
+
+    /// Require approval for every tool call
+    #[arg(long)]
+    restricted: bool,
+
     #[arg(value_name = "TASK")]
     task: Vec<String>,
 }
@@ -308,6 +320,15 @@ async fn main() -> Result<()> {
     let mut loaded_config = navi_core::NaviConfig::load(&cwd)?;
     if cli.debug_payloads {
         loaded_config.config.logging.include_payloads = true;
+    }
+
+    // Apply permission mode CLI flags
+    if cli.yolo {
+        loaded_config.config.security.permission_mode = navi_core::PermissionMode::Yolo;
+    } else if cli.accept_edits {
+        loaded_config.config.security.permission_mode = navi_core::PermissionMode::AcceptEdits;
+    } else if cli.restricted {
+        loaded_config.config.security.permission_mode = navi_core::PermissionMode::Restricted;
     }
 
     // Handle plugin subcommand early

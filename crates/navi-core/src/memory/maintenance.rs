@@ -207,14 +207,7 @@ pub async fn run_dream_maintenance_with_options(
                             let model_path = models_dir.join(crate::memory::DEFAULT_MODEL_FILE);
                             let tokenizer_path = models_dir.join(crate::memory::DEFAULT_TOKENIZER_FILE);
 
-                            if model_path.exists() && tokenizer_path.exists() {
-                                let embed_config = crate::memory::EmbeddingConfig {
-                                    model_path,
-                                    tokenizer_path,
-                                    ..Default::default()
-                                };
-                                let embedder = crate::memory::create_embedder(embed_config);
-
+                            if let Some(embedder) = crate::memory::embedding::get_cached_embedder(&model_path, &tokenizer_path) {
                                 let missing = store.list_without_embeddings()
                                     .unwrap_or_default();
 
