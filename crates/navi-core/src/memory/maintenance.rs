@@ -420,7 +420,17 @@ pub async fn run_distill_maintenance(
             if !sops_dir.exists() {
                 std::fs::create_dir_all(&sops_dir)?;
             }
-            let sop_path = sops_dir.join(filename);
+            // Append timestamp to filename to avoid concurrent write collisions
+            let timestamp = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+            let safe_name = if let Some(stem) = filename.rsplit_once('.') {
+                format!("{}_{}.{}", stem.0, timestamp, stem.1)
+            } else {
+                format!("{}_{}", filename, timestamp)
+            };
+            let sop_path = sops_dir.join(safe_name);
             crate::memory::memory_store::write_atomic(&sop_path, &content)?;
         }
     }

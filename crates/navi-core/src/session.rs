@@ -544,16 +544,46 @@ impl SessionStore {
         session_id: &SessionId,
         summary: String,
     ) -> Result<PathBuf> {
-        let mut memory = self.load_memory(project_dir).unwrap_or(ProjectMemory {
-            project_hash: project_hash(project_dir),
-            entries: Vec::new(),
-        });
-        memory.entries.push(MemoryEntry {
-            created_at: current_unix_timestamp(),
-            summary,
-            session_id: session_id.as_str().to_string(),
-        });
-        self.save_memory(project_dir, &memory)
+        let hash = project_hash(project_dir);
+        let path = self.data_dir.join("memory").join(format!("{hash}.json"));
+
+        // Retry loop to handle concurrent writes from other NAVI instances.
+        // If the file changes between load and save (detected via mtime), we
+        // reload and retry instead of overwriting and losing entries.
+        for _attempt in 0..3 {
+            let mtime_before = fs::metadata(&path).ok().and_then(|m| m.modified().ok());
+            let mut memory = self.load_memory(project_dir).unwrap_or(ProjectMemory {
+                project_hash: project_hash(project_dir),
+                entries: Vec::new(),
+            });
+            memory.entries.push(crate::session::MemoryEntry {
+                created_at: current_unix_timestamp(),
+                summary: summary.clone(),
+                session_id: session_id.as_str().to_string(),
+            });
+            let data = serde_json::to_vec_pretty(&memory)?;
+
+            // Check if the file changed while we were preparing
+            let mtime_after = fs::metadata(&path).ok().and_then(|m| m.modified().ok());
+            if mtime_before != mtime_after && mtime_before.is_some() {
+                // File was modified by another process — retry
+                std::thread::sleep(std::time::Duration::from_millis(50));
+                continue;
+            }
+
+            // Atomic write via temp file + rename
+            if let Some(parent) = path.parent() {
+                if !parent.exists() {
+                    fs::create_dir_all(parent)?;
+                }
+            }
+            let tmp = path.with_extension("json.tmp");
+            fs::write(&tmp, data)?;
+            fs::rename(&tmp, &path)?;
+            crate::fs_util::set_private_file_permissions(&path)?;
+            return Ok(path);
+        }
+        anyhow::bail!("failed to add memory entry after 3 retries (concurrent write conflict)");
     }
 
     /// Async wrapper around [`Self::add_memory_entry`] that runs the blocking

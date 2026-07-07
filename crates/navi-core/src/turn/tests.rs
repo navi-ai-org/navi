@@ -786,7 +786,7 @@ fn rewrite_unsupported_attachments_keeps_supported_images_and_routes_audio() {
         base_url: Some("https://example.test/v1".to_string()),
         models: vec![crate::config::ProviderModelConfig {
             name: "chat-model".to_string(),
-            task_size: crate::config::ModelTaskSize::Large,
+            task_size: Some(crate::config::ModelTaskSize::Large),
             context_window_tokens: None,
             max_output_tokens: None,
             recommended_temperature: None,
