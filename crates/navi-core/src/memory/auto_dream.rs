@@ -115,8 +115,12 @@ impl AutoDreamState {
                 fs::create_dir_all(parent)?;
             }
         }
-        fs::write(self.last_dream_path(), now.to_string())
-            .with_context(|| format!("Failed to write last_dream_at to {:?}", self.last_dream_path()))?;
+        fs::write(self.last_dream_path(), now.to_string()).with_context(|| {
+            format!(
+                "Failed to write last_dream_at to {:?}",
+                self.last_dream_path()
+            )
+        })?;
         Ok(())
     }
 
@@ -135,8 +139,7 @@ impl AutoDreamState {
             .iter()
             .filter(|s| {
                 // ISO 8601 strings sort lexicographically
-                s.started_at.as_str() > last_dream_iso.as_str()
-                    || s.started_at.is_empty()
+                s.started_at.as_str() > last_dream_iso.as_str() || s.started_at.is_empty()
             })
             .count()
     }
@@ -152,7 +155,11 @@ impl AutoDreamState {
         }
 
         // Try to create the lock file exclusively
-        match fs::OpenOptions::new().write(true).create_new(true).open(&lock_path) {
+        match fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&lock_path)
+        {
             Ok(_) => {
                 mark_lock_held(lock_path.clone());
                 // Write a marker with the current time

@@ -111,11 +111,7 @@ fn test_memory_store_atomic_writes_and_backups() {
 
     let memory_root = "memory/projects";
 
-    let store = memory_store::MemoryStore::new(
-        project_dir.clone(),
-        data_dir.clone(),
-        memory_root,
-    );
+    let store = memory_store::MemoryStore::new(project_dir.clone(), data_dir.clone(), memory_root);
 
     store.ensure_initialized().unwrap();
 
@@ -125,10 +121,8 @@ fn test_memory_store_atomic_writes_and_backups() {
     assert!(store.memory_root.exists());
 
     // Test SQLite-backed notes via AutoMemoryStore
-    let auto_memory = crate::memory::AutoMemoryStore::open(
-        &store.memory_root.join("memories.db"),
-    )
-    .unwrap();
+    let auto_memory =
+        crate::memory::AutoMemoryStore::open(&store.memory_root.join("memories.db")).unwrap();
     auto_memory.append_note("New observation").unwrap();
     let notes = auto_memory.read_notes().unwrap();
     assert!(notes.contains("New observation"));
@@ -228,19 +222,14 @@ fn test_rebuild_context_budget_scaling() {
     let data_dir = temp_dir.path().join("data");
     fs::create_dir_all(&project_dir).unwrap();
 
-    let store = memory_store::MemoryStore::new(
-        project_dir,
-        data_dir.clone(),
-        "memory/projects",
-    );
+    let store = memory_store::MemoryStore::new(project_dir, data_dir.clone(), "memory/projects");
     store.ensure_initialized().unwrap();
 
-    let auto_memory = crate::memory::AutoMemoryStore::open(
-        &store.memory_root.join("memories.db"),
-    ).unwrap();
-    let global_memory = crate::memory::GlobalMemoryStore::open(
-        &data_dir.join("memory").join("global-memory.db"),
-    ).unwrap();
+    let auto_memory =
+        crate::memory::AutoMemoryStore::open(&store.memory_root.join("memories.db")).unwrap();
+    let global_memory =
+        crate::memory::GlobalMemoryStore::open(&data_dir.join("memory").join("global-memory.db"))
+            .unwrap();
 
     let messages = vec![
         ModelMessage {
@@ -266,12 +255,24 @@ fn test_rebuild_context_budget_scaling() {
     ];
 
     // Standard budget (65k) with large context window (128k) -> no scaling down
-    let boot_context = rebuild_context::build_rebuild_context(&messages, &auto_memory, &global_memory, 128_000, 65_000);
+    let boot_context = rebuild_context::build_rebuild_context(
+        &messages,
+        &auto_memory,
+        &global_memory,
+        128_000,
+        65_000,
+    );
     assert!(boot_context.contains("Write a Rust program to count words"));
     assert!(boot_context.contains("You are continuing an existing logical coding session"));
 
     // Tiny context window (500 tokens) -> budgets scale down proportionally
-    let scaled_context = rebuild_context::build_rebuild_context(&messages, &auto_memory, &global_memory, 500, 65_000);
+    let scaled_context = rebuild_context::build_rebuild_context(
+        &messages,
+        &auto_memory,
+        &global_memory,
+        500,
+        65_000,
+    );
     assert!(!scaled_context.is_empty());
 }
 
@@ -398,9 +399,15 @@ Merged a focused testing preference.
         .to_string(),
     };
 
-    let result = run_dream_maintenance(&manager.auto_memory, &manager.global_memory, &manager.history, &provider, "test-model")
-        .await
-        .unwrap();
+    let result = run_dream_maintenance(
+        &manager.auto_memory,
+        &manager.global_memory,
+        &manager.history,
+        &provider,
+        "test-model",
+    )
+    .await
+    .unwrap();
 
     assert!(!result.applied);
     assert!(result.output_dir.exists());
@@ -484,20 +491,26 @@ async fn test_dream_apply_runs_model_based_memory_consolidation() {
         MemoryManager::new(project_dir, data_dir, &MemoryConfig::default()).expect("manager");
 
     // Insert two memories — one that should be marked obsolete, one updated
-    manager.auto_memory.upsert(&crate::memory::auto_memory::new_entry(
-        "stale_pref",
-        crate::memory::MemoryType::User,
-        "Old Preference",
-        "Likes light mode",
-        "User preferred light mode in the past",
-    )).unwrap();
-    manager.auto_memory.upsert(&crate::memory::auto_memory::new_entry(
-        "confirmed_pref",
-        crate::memory::MemoryType::User,
-        "Dark Mode",
-        "Prefers dark mode",
-        "User consistently prefers dark mode across sessions",
-    )).unwrap();
+    manager
+        .auto_memory
+        .upsert(&crate::memory::auto_memory::new_entry(
+            "stale_pref",
+            crate::memory::MemoryType::User,
+            "Old Preference",
+            "Likes light mode",
+            "User preferred light mode in the past",
+        ))
+        .unwrap();
+    manager
+        .auto_memory
+        .upsert(&crate::memory::auto_memory::new_entry(
+            "confirmed_pref",
+            crate::memory::MemoryType::User,
+            "Dark Mode",
+            "Prefers dark mode",
+            "User consistently prefers dark mode across sessions",
+        ))
+        .unwrap();
 
     // Provider returns dream XML + consolidation actions.
     // The TestMemoryProvider returns the same text for every complete() call,
@@ -547,33 +560,39 @@ Consolidated preferences.
 #[tokio::test]
 async fn test_model_based_consolidation_marks_obsolete() {
     let temp_dir = tempdir().unwrap();
-    let store = crate::memory::AutoMemoryStore::open(
-        &temp_dir.path().join("memories.db"),
-    ).unwrap();
+    let store = crate::memory::AutoMemoryStore::open(&temp_dir.path().join("memories.db")).unwrap();
 
-    store.upsert(&crate::memory::auto_memory::new_entry(
-        "stale_one",
-        crate::memory::MemoryType::Feedback,
-        "Old Feedback",
-        "Use var instead of let",
-        "Old advice to use var instead of let",
-    )).unwrap();
-    store.upsert(&crate::memory::auto_memory::new_entry(
-        "good_one",
-        crate::memory::MemoryType::Feedback,
-        "Good Feedback",
-        "Test before commit",
-        "Always run tests before committing",
-    )).unwrap();
+    store
+        .upsert(&crate::memory::auto_memory::new_entry(
+            "stale_one",
+            crate::memory::MemoryType::Feedback,
+            "Old Feedback",
+            "Use var instead of let",
+            "Old advice to use var instead of let",
+        ))
+        .unwrap();
+    store
+        .upsert(&crate::memory::auto_memory::new_entry(
+            "good_one",
+            crate::memory::MemoryType::Feedback,
+            "Good Feedback",
+            "Test before commit",
+            "Always run tests before committing",
+        ))
+        .unwrap();
 
     // Mark stale_one as obsolete directly
     store.mark_obsolete("stale_one").unwrap();
 
-    let active = store.list(Some(crate::memory::MemoryStatus::Active)).unwrap();
+    let active = store
+        .list(Some(crate::memory::MemoryStatus::Active))
+        .unwrap();
     assert_eq!(active.len(), 1);
     assert_eq!(active[0].id, "good_one");
 
-    let obsolete = store.list(Some(crate::memory::MemoryStatus::Obsolete)).unwrap();
+    let obsolete = store
+        .list(Some(crate::memory::MemoryStatus::Obsolete))
+        .unwrap();
     assert_eq!(obsolete.len(), 1);
     assert_eq!(obsolete[0].id, "stale_one");
 }
@@ -581,19 +600,21 @@ async fn test_model_based_consolidation_marks_obsolete() {
 #[tokio::test]
 async fn test_model_based_consolidation_updates_confidence() {
     let temp_dir = tempdir().unwrap();
-    let store = crate::memory::AutoMemoryStore::open(
-        &temp_dir.path().join("memories.db"),
-    ).unwrap();
+    let store = crate::memory::AutoMemoryStore::open(&temp_dir.path().join("memories.db")).unwrap();
 
-    store.upsert(&crate::memory::auto_memory::new_entry(
-        "test_mem",
-        crate::memory::MemoryType::Project,
-        "Test Memory",
-        "Some fact",
-        "Some body text",
-    )).unwrap();
+    store
+        .upsert(&crate::memory::auto_memory::new_entry(
+            "test_mem",
+            crate::memory::MemoryType::Project,
+            "Test Memory",
+            "Some fact",
+            "Some body text",
+        ))
+        .unwrap();
 
-    store.update_consolidated("test_mem", Some("Updated body"), Some(0.8)).unwrap();
+    store
+        .update_consolidated("test_mem", Some("Updated body"), Some(0.8))
+        .unwrap();
 
     let entry = store.get("test_mem").unwrap().unwrap();
     assert_eq!(entry.body, "Updated body");
@@ -603,17 +624,17 @@ async fn test_model_based_consolidation_updates_confidence() {
 #[tokio::test]
 async fn test_list_full_entries_includes_body() {
     let temp_dir = tempdir().unwrap();
-    let store = crate::memory::AutoMemoryStore::open(
-        &temp_dir.path().join("memories.db"),
-    ).unwrap();
+    let store = crate::memory::AutoMemoryStore::open(&temp_dir.path().join("memories.db")).unwrap();
 
-    store.upsert(&crate::memory::auto_memory::new_entry(
-        "mem1",
-        crate::memory::MemoryType::User,
-        "Test",
-        "Description",
-        "This is the full body text",
-    )).unwrap();
+    store
+        .upsert(&crate::memory::auto_memory::new_entry(
+            "mem1",
+            crate::memory::MemoryType::User,
+            "Test",
+            "Description",
+            "This is the full body text",
+        ))
+        .unwrap();
 
     let entries = store.list_full_entries().unwrap();
     assert_eq!(entries.len(), 1);
@@ -871,7 +892,10 @@ None.
     // The promoted facts are stored as a memory entry with type=project
     let memories = manager.auto_memory.list(None).unwrap();
     let promoted = memories.iter().find(|m| m.name == "Promoted Facts");
-    assert!(promoted.is_some(), "Promoted facts memory entry should exist");
+    assert!(
+        promoted.is_some(),
+        "Promoted facts memory entry should exist"
+    );
     let promoted_id = promoted.unwrap().id.clone();
     let entry = manager.auto_memory.get(&promoted_id).unwrap().unwrap();
     assert!(entry.body.contains("Rebuild is deterministic."));

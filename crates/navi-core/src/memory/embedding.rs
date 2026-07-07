@@ -29,7 +29,10 @@ static EMBEDDER_CACHE: OnceLock<std::sync::Mutex<Option<Arc<dyn Embedder>>>> = O
 
 /// Returns the cached embedder, or loads it if not yet loaded.
 /// Returns None if embeddings are not available or the model is missing.
-pub fn get_cached_embedder(model_path: &PathBuf, tokenizer_path: &PathBuf) -> Option<Arc<dyn Embedder>> {
+pub fn get_cached_embedder(
+    model_path: &PathBuf,
+    tokenizer_path: &PathBuf,
+) -> Option<Arc<dyn Embedder>> {
     let cache = EMBEDDER_CACHE.get_or_init(|| std::sync::Mutex::new(None));
     let mut guard = cache.lock().ok()?;
 
@@ -99,11 +102,11 @@ impl Default for EmbeddingConfig {
 mod candle_embedder {
     use super::*;
     use anyhow::{Context, Result as AnyResult};
-    use candle_core::{DType, Device, Tensor};
     use candle_core::quantized::gguf_file;
+    use candle_core::{DType, Device, Tensor};
     use candle_transformers::models::quantized_qwen2::ModelWeights;
-    use std::io::BufReader;
     use std::fs::File;
+    use std::io::BufReader;
     use tokenizers::Tokenizer;
 
     /// Local embedding model using candle (pure Rust, no C++ dependency).
@@ -126,16 +129,21 @@ mod candle_embedder {
             let mut reader = BufReader::new(file);
 
             // Read GGUF content
-            let ct = gguf_file::Content::read(&mut reader)
-                .context("Failed to read GGUF content")?;
+            let ct =
+                gguf_file::Content::read(&mut reader).context("Failed to read GGUF content")?;
 
             // Build quantized model weights from GGUF
             let model = ModelWeights::from_gguf(ct, &mut reader, &device)
                 .context("Failed to build quantized Qwen2 model from GGUF")?;
 
             // Load tokenizer
-            let tokenizer = Tokenizer::from_file(&config.tokenizer_path)
-                .map_err(|e| anyhow::anyhow!("Failed to load tokenizer from {:?}: {}", config.tokenizer_path, e))?;
+            let tokenizer = Tokenizer::from_file(&config.tokenizer_path).map_err(|e| {
+                anyhow::anyhow!(
+                    "Failed to load tokenizer from {:?}: {}",
+                    config.tokenizer_path,
+                    e
+                )
+            })?;
 
             Ok(Self {
                 model: std::sync::Mutex::new(model),
@@ -146,10 +154,12 @@ mod candle_embedder {
         }
 
         /// Mean pooling over token embeddings, then optional L2 normalization.
-        fn mean_pool(&self, token_embeddings: &Tensor, attention_mask: &Tensor) -> AnyResult<Tensor> {
-            let mask = attention_mask
-                .to_dtype(DType::F32)?
-                .unsqueeze(2)?; // [1, seq_len, 1]
+        fn mean_pool(
+            &self,
+            token_embeddings: &Tensor,
+            attention_mask: &Tensor,
+        ) -> AnyResult<Tensor> {
+            let mask = attention_mask.to_dtype(DType::F32)?.unsqueeze(2)?; // [1, seq_len, 1]
 
             let masked = token_embeddings.broadcast_mul(&mask)?;
             let sum = masked.sum(1)?; // [1, hidden_size]
@@ -179,20 +189,31 @@ mod candle_embedder {
 
             // Create input_ids tensor [1, seq_len] as u32
             let input_ids_tensor = Tensor::from_slice(
-                input_ids.iter().map(|&v| v as u32).collect::<Vec<_>>().as_slice(),
+                input_ids
+                    .iter()
+                    .map(|&v| v as u32)
+                    .collect::<Vec<_>>()
+                    .as_slice(),
                 (1, input_ids.len()),
                 &self.device,
             )?;
 
             // Create attention mask tensor [1, seq_len] as u32
             let attention_mask_tensor = Tensor::from_slice(
-                attention_mask.iter().map(|&v| v as u32).collect::<Vec<_>>().as_slice(),
+                attention_mask
+                    .iter()
+                    .map(|&v| v as u32)
+                    .collect::<Vec<_>>()
+                    .as_slice(),
                 (1, attention_mask.len()),
                 &self.device,
             )?;
 
             // Forward pass — quantized model returns hidden states
-            let mut model = self.model.lock().map_err(|e| anyhow::anyhow!("model lock poisoned: {}", e))?;
+            let mut model = self
+                .model
+                .lock()
+                .map_err(|e| anyhow::anyhow!("model lock poisoned: {}", e))?;
             let embedded = model.forward(&input_ids_tensor, 0)?;
             // embedded: [1, seq_len, hidden_size]
 
@@ -201,13 +222,14 @@ mod candle_embedder {
             // pooled: [1, hidden_size]
 
             // Extract to vec
-            let full_embedding = pooled.to_vec2::<f32>()?.into_iter().next().unwrap_or_default();
+            let full_embedding = pooled
+                .to_vec2::<f32>()?
+                .into_iter()
+                .next()
+                .unwrap_or_default();
 
             // Matryoshka truncation: take first EMBED_DIM dimensions
-            let truncated: Vec<f32> = full_embedding
-                .into_iter()
-                .take(EMBED_DIM)
-                .collect();
+            let truncated: Vec<f32> = full_embedding.into_iter().take(EMBED_DIM).collect();
 
             // Re-normalize after truncation
             if self.config.normalize && !truncated.is_empty() {
@@ -236,7 +258,10 @@ pub fn create_embedder(_config: EmbeddingConfig) -> Box<dyn Embedder> {
                     return Box::new(embedder);
                 }
                 Err(e) => {
-                    tracing::warn!("Failed to load embedding model: {}, falling back to text search", e);
+                    tracing::warn!(
+                        "Failed to load embedding model: {}, falling back to text search",
+                        e
+                    );
                 }
             }
         } else {

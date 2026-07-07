@@ -104,10 +104,7 @@ pub fn build_rebuild_context(
     // 4. Auto-memory index (from SQLite memories table)
     let auto_mem_index = auto_memory.build_prompt_context(budgets.auto_memory);
     if !auto_mem_index.trim().is_empty() {
-        parts.push(format!(
-            "=== AUTO-MEMORY INDEX ===\n{}",
-            auto_mem_index
-        ));
+        parts.push(format!("=== AUTO-MEMORY INDEX ===\n{}", auto_mem_index));
     }
 
     // 5. Global memory (from SQLite global_memories table)

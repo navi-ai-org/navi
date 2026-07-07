@@ -140,11 +140,7 @@ pub struct MemoryStore {
 }
 
 impl MemoryStore {
-    pub fn new(
-        project_dir: PathBuf,
-        data_dir: PathBuf,
-        root_config: &str,
-    ) -> Self {
+    pub fn new(project_dir: PathBuf, data_dir: PathBuf, root_config: &str) -> Self {
         let memory_root =
             resolve_memory_path(root_config, &data_dir).join(project_hash(&project_dir));
         Self {

@@ -128,14 +128,7 @@ impl GlobalMemoryStore {
                                     (id, type, name, description, body, confidence, status,
                                      created_at, updated_at, last_seen)
                                  VALUES (?1, ?2, ?3, ?4, ?5, 1.0, 'active', ?6, ?6, ?6)",
-                                params![
-                                    id,
-                                    mem_type,
-                                    name,
-                                    description,
-                                    description,
-                                    now,
-                                ],
+                                params![id, mem_type, name, description, description, now,],
                             )?;
                         }
                     }
