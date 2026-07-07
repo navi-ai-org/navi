@@ -797,6 +797,30 @@ impl NaviNapiEngine {
         self.inner.memory_index()
     }
 
+    // ── Permission Mode ──────────────────────────────────────────────────
+
+    #[napi]
+    pub fn get_permission_mode(&self) -> String {
+        let mode = self.inner.get_permission_mode();
+        match mode {
+            navi_sdk::PermissionMode::Restricted => "restricted".to_string(),
+            navi_sdk::PermissionMode::AcceptEdits => "accept-edits".to_string(),
+            navi_sdk::PermissionMode::Yolo => "yolo".to_string(),
+        }
+    }
+
+    #[napi]
+    pub fn set_permission_mode(&self, mode: String) -> Result<()> {
+        let pm = match mode.as_str() {
+            "restricted" => navi_sdk::PermissionMode::Restricted,
+            "accept-edits" => navi_sdk::PermissionMode::AcceptEdits,
+            "yolo" => navi_sdk::PermissionMode::Yolo,
+            _ => return Err(to_napi_error(anyhow::anyhow!("invalid permission mode: {}", mode))),
+        };
+        self.inner.set_permission_mode(pm);
+        Ok(())
+    }
+
     // ── Session Management ─────────────────────────────────────────────
 
     #[napi]

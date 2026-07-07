@@ -55,8 +55,8 @@ pub use navi_core::{
 pub use navi_core::{
     AttachmentModelsConfig, BackgroundModelEntry, BackgroundModelsConfig, CompactState,
     CompactThreshold, CredentialStore, HarnessPolicy, HarnessProfile, LoadedConfig, ModelOption,
-    ModelTaskSize, NaviConfig, ProviderConfig, ProviderKind, ProviderModelConfig, SessionStore,
-    ThinkingConfig, select_harness_policy,
+    ModelTaskSize, NaviConfig, PermissionMode, ProviderConfig, ProviderKind, ProviderModelConfig,
+    SessionStore, ThinkingConfig, select_harness_policy,
 };
 // Utility functions
 pub use navi_core::{

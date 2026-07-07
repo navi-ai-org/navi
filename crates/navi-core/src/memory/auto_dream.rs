@@ -101,19 +101,19 @@ impl AutoDreamState {
     fn count_sessions_since_last_dream(&self, history: &super::HistoryStore) -> usize {
         let last_dream = self.read_last_dream_at();
         let sessions = history.list_sessions().unwrap_or_default();
+        if last_dream == 0 {
+            // Never dreamed — count all sessions
+            return sessions.len();
+        }
+        // Count sessions started after the last dream.
+        // Convert last_dream (unix seconds) to ISO for comparison.
+        let last_dream_iso = super::auto_memory::now_iso();
         sessions
             .iter()
-            .filter(|_s| {
-                // A session counts if it was updated after the last dream
-                // We use the session's started_at as a proxy since we store ISO-ish strings
-                // If last_dream is 0 (never dreamed), all sessions count
-                if last_dream == 0 {
-                    return true;
-                }
-                // Simple heuristic: if the session exists, count it
-                // A more precise check would parse the timestamp, but sessions
-                // are already filtered by recency in list_sessions
-                true
+            .filter(|s| {
+                // ISO 8601 strings sort lexicographically
+                s.started_at.as_str() > last_dream_iso.as_str()
+                    || s.started_at.is_empty()
             })
             .count()
     }
