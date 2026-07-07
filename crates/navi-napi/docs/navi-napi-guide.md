@@ -635,6 +635,52 @@ You can also return a plain `JsonValue` directly — it will be treated as `{ ok
 
 ---
 
+## Auto-Memory
+
+The NAPI binding exposes the auto-memory system for Node.js/Electron clients:
+
+```typescript
+// Save a memory
+engine.memoryWrite("redis_tests", "feedback", "Redis for Tests", "Need Redis", "Start Redis before tests");
+
+// Read by id
+const entry = engine.memoryRead("redis_tests");
+// → { id, name, description, type, body, confidence, memory_status, created_at, updated_at }
+
+// List all memories (optionally filtered by status)
+const memories = engine.memoryList("active");
+// → { count, returned, memories: [...] }
+
+// Search (semantic if embeddings available, text fallback)
+const results = engine.memorySearch("redis", 20);
+// → { query, count, results: [...] }
+
+// Update fields and/or status
+engine.memoryUpdate("redis_tests", { name: "New Name", status: "obsolete" });
+
+// Delete
+engine.memoryDelete("redis_tests");
+
+// Count active memories
+const count = engine.memoryCount();
+
+// Markdown index for prompt injection
+const index = engine.memoryIndex();
+```
+
+### Memory Types
+
+- `user` — preferences, identity, working style
+- `feedback` — behaviors to repeat or avoid
+- `project` — non-derivable project context
+- `reference` — external links
+
+### Setup
+
+Run `navi memory init --embeddings` to download the embedding model for semantic search. See [Auto-Memory](../../../docs/auto-memory.md) for full documentation.
+
+---
+
 ## Lifecycle Hooks
 
 Hooks let your application observe the session lifecycle without blocking the engine. They fire asynchronously and receive a payload object.
