@@ -72,6 +72,7 @@ impl Default for SecurityConfig {
             redact_secrets_in_sessions: true,
             allow_external_plugins: false,
             blocked_commands: default_blocked_commands(),
+            guarded_commands: vec!["git".to_string()],
             deny_paths: Vec::new(),
             allowed_mcp_servers: Vec::new(),
         }

@@ -119,7 +119,8 @@ impl SecurityPolicy {
         SecurityDecision::NeedsApproval(SecurityRisk::Write)
     }
 
-    /// Validates a command against the blocked-commands list and approval config.
+    /// Validates a command against the blocked-commands list, guarded-commands
+    /// list, and approval config.
     pub fn validate_command(&self, program: &str) -> SecurityDecision {
         let command = command_name(program);
         if self
@@ -129,6 +130,15 @@ impl SecurityPolicy {
             .any(|blocked| blocked == command)
         {
             return SecurityDecision::Deny(format!("command `{command}` is blocked"));
+        }
+
+        if self
+            .config
+            .guarded_commands
+            .iter()
+            .any(|guarded| guarded == command)
+        {
+            return SecurityDecision::NeedsApproval(SecurityRisk::GuardedCommand);
         }
 
         for target in extract_shell_path_mentions(program) {
@@ -357,7 +367,10 @@ impl SecurityPolicy {
         match decision {
             SecurityDecision::Deny(reason) => SecurityDecision::Deny(reason),
             SecurityDecision::NeedsApproval(SecurityRisk::GuardedCommand) => {
-                SecurityDecision::NeedsApproval(SecurityRisk::GuardedCommand)
+                match self.config.permission_mode {
+                    PermissionMode::Yolo => SecurityDecision::Allow,
+                    _ => SecurityDecision::NeedsApproval(SecurityRisk::GuardedCommand),
+                }
             }
             SecurityDecision::Allow | SecurityDecision::NeedsApproval(_) => {
                 match self.config.permission_mode {
@@ -371,6 +384,7 @@ impl SecurityPolicy {
                             SecurityDecision::NeedsApproval(SecurityRisk::ExternalPlugin)
                         }
                     },
+                    PermissionMode::Auto => SecurityDecision::Allow,
                     PermissionMode::Yolo => SecurityDecision::Allow,
                 }
             }
@@ -1383,6 +1397,57 @@ mod tests {
     }
 
     #[test]
+    fn restricted_mode_requires_approval_for_apply_patch() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let project = tempdir.path().join("project");
+        let data = tempdir.path().join("data");
+        std::fs::create_dir_all(&project).expect("project");
+        std::fs::write(project.join("README.md"), "Less then ideal\n").expect("file");
+        std::fs::create_dir_all(&data).expect("data");
+        let policy = policy(project, data);
+
+        let decision = policy.validate_tool_invocation(
+            &tool_def("apply_patch", ToolKind::Write),
+            &tool_invocation(
+                "apply_patch",
+                serde_json::json!({
+                    "patch": "*** Begin Patch\n*** Update File: README.md\n@@\n-Less then ideal\n+Less than ideal\n*** End Patch\n"
+                }),
+            ),
+        );
+
+        assert_eq!(
+            decision,
+            SecurityDecision::NeedsApproval(SecurityRisk::Write)
+        );
+    }
+
+    #[test]
+    fn restricted_mode_requires_approval_for_process_actions() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let project = tempdir.path().join("project");
+        let data = tempdir.path().join("data");
+        std::fs::create_dir_all(&project).expect("project");
+        std::fs::create_dir_all(&data).expect("data");
+        let policy = policy(project, data);
+        let def = tool_def("process", ToolKind::Command);
+
+        for input in [
+            serde_json::json!({"action": "exec", "command": "python3 -i -q", "background": true}),
+            serde_json::json!({"action": "stdin", "process_id": "proc_1", "stdin_data": "print(1)\n"}),
+            serde_json::json!({"action": "wait", "process_id": "proc_1"}),
+            serde_json::json!({"action": "cancel", "process_id": "proc_1"}),
+        ] {
+            let decision =
+                policy.validate_tool_invocation(&def, &tool_invocation("process", input));
+            assert_eq!(
+                decision,
+                SecurityDecision::NeedsApproval(SecurityRisk::Command)
+            );
+        }
+    }
+
+    #[test]
     fn accept_edits_allows_writes_but_asks_for_commands() {
         let tempdir = tempfile::tempdir().expect("tempdir");
         let project = tempdir.path().join("project");
@@ -1441,6 +1506,118 @@ mod tests {
         std::fs::create_dir_all(&data).expect("data");
         let config = SecurityConfig {
             permission_mode: PermissionMode::Yolo,
+            ..SecurityConfig::default()
+        };
+        let policy = policy_with_config(project, data, config);
+
+        let decision = policy.validate_tool_invocation(
+            &tool_def("bash", ToolKind::Command),
+            &tool_invocation("bash", serde_json::json!({ "command": "sudo true" })),
+        );
+
+        assert!(matches!(decision, SecurityDecision::Deny(_)));
+    }
+
+    #[test]
+    fn auto_mode_allows_non_guarded_commands() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let project = tempdir.path().join("project");
+        let data = tempdir.path().join("data");
+        std::fs::create_dir_all(&project).expect("project");
+        std::fs::create_dir_all(&data).expect("data");
+        let config = SecurityConfig {
+            permission_mode: PermissionMode::Auto,
+            ..SecurityConfig::default()
+        };
+        let policy = policy_with_config(project, data, config);
+
+        let decision = policy.validate_tool_invocation(
+            &tool_def("bash", ToolKind::Command),
+            &tool_invocation("bash", serde_json::json!({ "command": "cargo test" })),
+        );
+
+        assert_eq!(decision, SecurityDecision::Allow);
+    }
+
+    #[test]
+    fn auto_mode_requires_approval_for_guarded_commands() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let project = tempdir.path().join("project");
+        let data = tempdir.path().join("data");
+        std::fs::create_dir_all(&project).expect("project");
+        std::fs::create_dir_all(&data).expect("data");
+        let config = SecurityConfig {
+            permission_mode: PermissionMode::Auto,
+            ..SecurityConfig::default()
+        };
+        let policy = policy_with_config(project, data, config);
+
+        let decision = policy.validate_tool_invocation(
+            &tool_def("bash", ToolKind::Command),
+            &tool_invocation("bash", serde_json::json!({ "command": "git commit -m test" })),
+        );
+
+        assert_eq!(
+            decision,
+            SecurityDecision::NeedsApproval(SecurityRisk::GuardedCommand)
+        );
+    }
+
+    #[test]
+    fn auto_mode_allows_writes() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let project = tempdir.path().join("project");
+        let data = tempdir.path().join("data");
+        std::fs::create_dir_all(&project).expect("project");
+        std::fs::create_dir_all(&data).expect("data");
+        let config = SecurityConfig {
+            permission_mode: PermissionMode::Auto,
+            restrict_paths_to_project: true,
+            ..SecurityConfig::default()
+        };
+        let policy = policy_with_config(project, data, config);
+
+        let decision = policy.validate_tool_invocation(
+            &tool_def("write_file", ToolKind::Write),
+            &tool_invocation(
+                "write_file",
+                serde_json::json!({ "path": "src/main.rs", "content": "fn main() {}" }),
+            ),
+        );
+
+        assert_eq!(decision, SecurityDecision::Allow);
+    }
+
+    #[test]
+    fn yolo_mode_allows_guarded_commands() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let project = tempdir.path().join("project");
+        let data = tempdir.path().join("data");
+        std::fs::create_dir_all(&project).expect("project");
+        std::fs::create_dir_all(&data).expect("data");
+        let config = SecurityConfig {
+            permission_mode: PermissionMode::Yolo,
+            ..SecurityConfig::default()
+        };
+        let policy = policy_with_config(project, data, config);
+
+        let decision = policy.validate_tool_invocation(
+            &tool_def("bash", ToolKind::Command),
+            &tool_invocation("bash", serde_json::json!({ "command": "git commit -m test" })),
+        );
+
+        assert_eq!(decision, SecurityDecision::Allow);
+    }
+
+    #[test]
+    fn auto_mode_still_denies_blocked_commands() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let project = tempdir.path().join("project");
+        let data = tempdir.path().join("data");
+        std::fs::create_dir_all(&project).expect("project");
+        std::fs::create_dir_all(&data).expect("data");
+        let config = SecurityConfig {
+            permission_mode: PermissionMode::Auto,
             ..SecurityConfig::default()
         };
         let policy = policy_with_config(project, data, config);

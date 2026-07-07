@@ -616,6 +616,7 @@ fn permission_mode_label(mode: PermissionMode) -> &'static str {
     match mode {
         PermissionMode::Restricted => "restricted",
         PermissionMode::AcceptEdits => "accept-edits",
+        PermissionMode::Auto => "auto",
         PermissionMode::Yolo => "yolo",
     }
 }

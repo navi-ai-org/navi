@@ -270,6 +270,14 @@ Approval flow:
 - the TUI handles approval prompts unless YOLO/autonomous mode is enabled
 - headless mode is approval-gated by default
 
+Permission modes:
+- `Restricted` — every tool call requires approval
+- `AcceptEdits` — reads and writes auto-approved; commands require approval
+- `Auto` — reads, writes, and commands auto-approved; `guarded_commands` (default: `git`) still require approval
+- `Yolo` — everything auto-approved, no exceptions (most permissive)
+
+`guarded_commands` (default: `["git"]`) — commands that always require approval in `Restricted`, `AcceptEdits`, and `Auto` modes. In `Yolo` mode, guarded commands are allowed like everything else.
+
 Secret redaction:
 - session persistence redacts likely secrets when `redact_secrets_in_sessions = true`
 - catches secret-like assignments, long secret-like tokens, common key/token naming patterns
