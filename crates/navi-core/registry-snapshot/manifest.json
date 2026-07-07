@@ -9,8 +9,8 @@
     },
     "charm-hyper": {
       "file": "providers/charm-hyper.json",
-      "sha256": "038790d5dae6d981b3cf0473a2a5f506d896da02b3dc5c28f44f543f631994b5",
-      "model_count": 11
+      "sha256": "7b0030dbe6a858392e8a5ca6befa129185018f9a634f8bba5387448f819a133b",
+      "model_count": 12
     },
     "commandcode": {
       "file": "providers/commandcode.json",

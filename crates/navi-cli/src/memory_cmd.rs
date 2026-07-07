@@ -246,19 +246,12 @@ pub async fn handle_memory_command(
                 println!();
                 println!("Embedding model setup:");
 
-                if !navi_core::memory::embeddings_available() {
-                    println!("  [WARN] NAVI was not built with the `embeddings` feature flag.");
-                    println!("         Semantic search will use text matching (LIKE) instead.");
-                    println!(
-                        "         To enable: rebuild with `cargo build -p navi-core --features embeddings`"
-                    );
-                } else {
-                    let model_file = navi_core::memory::DEFAULT_MODEL_FILE;
-                    let model_repo = navi_core::memory::DEFAULT_MODEL_REPO;
-                    let tokenizer_file = navi_core::memory::DEFAULT_TOKENIZER_FILE;
-                    let tokenizer_repo = navi_core::memory::DEFAULT_TOKENIZER_REPO;
-                    let model_path = models_dir.join(model_file);
-                    let tokenizer_path = models_dir.join(tokenizer_file);
+                let model_file = navi_core::memory::DEFAULT_MODEL_FILE;
+                let model_repo = navi_core::memory::DEFAULT_MODEL_REPO;
+                let tokenizer_file = navi_core::memory::DEFAULT_TOKENIZER_FILE;
+                let tokenizer_repo = navi_core::memory::DEFAULT_TOKENIZER_REPO;
+                let model_path = models_dir.join(model_file);
+                let tokenizer_path = models_dir.join(tokenizer_file);
 
                     if model_path.exists() && !force {
                         let size = std::fs::metadata(&model_path).map(|m| m.len()).unwrap_or(0);
@@ -356,7 +349,6 @@ pub async fn handle_memory_command(
 
                         println!("       Semantic search is now available.");
                     }
-                }
             } else {
                 println!();
                 println!("  [INFO] Embedding model not requested ( --embeddings ).");

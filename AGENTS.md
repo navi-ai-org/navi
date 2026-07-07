@@ -448,7 +448,7 @@ NAVI implements a persistent auto-memory system with SQLite as the source of tru
 | Component | Module | Role |
 |---|---|---|
 | Auto-memory store | `memory/auto_memory.rs` | SQLite database with structured fields: id, type, name, description, body, embedding, confidence, status, evidence, timestamps |
-| Embedding model | `memory/embedding.rs` | Qwen3-Embedding-0.6B via candle 0.11 (feature-flagged). Generates 256-dim Matryoshka-truncated embeddings for semantic search |
+| Embedding model | `memory/embedding.rs` | Qwen3-Embedding-0.6B via candle 0.11 (compiled by default). Generates 256-dim Matryoshka-truncated embeddings for semantic search |
 | Auto-dream | `memory/auto_dream.rs` | 3-gate consolidation scheduler triggered after each turn |
 | extractMemories | `memory/extract.rs` | Per-turn background memory extraction via model call |
 | Dream maintenance | `memory/maintenance.rs` | Model-based consolidation + SQLite stale/dedup + embedding backfill |
@@ -473,7 +473,7 @@ NAVI implements a persistent auto-memory system with SQLite as the source of tru
 
 ### Semantic Search
 
-When the `embeddings` feature is enabled and the model is present, `memory(action='search')` uses cosine similarity over 256-dim embeddings. Falls back to text matching (SQL LIKE) when the feature is off or the model is missing.
+When the embedding model is present on disk, `memory(action='search')` uses cosine similarity over 256-dim embeddings. Falls back to text matching (SQL LIKE) when the model file is missing.
 
 ### extractMemories (Per-Turn Extraction)
 

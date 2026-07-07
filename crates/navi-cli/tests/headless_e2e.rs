@@ -1,4 +1,4 @@
-use std::process::Command;
+use std::process::Stdio;
 use tempfile::TempDir;
 use wiremock::matchers::{body_string_contains, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -95,7 +95,7 @@ task_size = "small"
         .mount(&mock_server)
         .await;
 
-    let output = Command::new(env!("CARGO_BIN_EXE_navi"))
+    let child = tokio::process::Command::new(env!("CARGO_BIN_EXE_navi"))
         .arg("--no-tui")
         .arg("--no-log-file")
         .arg("--log-level")
@@ -104,8 +104,23 @@ task_size = "small"
         .current_dir(project.path())
         .env("XDG_CONFIG_HOME", config_home.path())
         .env("XDG_DATA_HOME", data_home.path())
-        .output()
-        .expect("run navi");
+        .env("NAVI_NO_REGISTRY_UPDATE", "1")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .expect("spawn navi");
+
+    let output = match tokio::time::timeout(
+        std::time::Duration::from_secs(30),
+        child.wait_with_output(),
+    )
+    .await
+    {
+        Ok(Ok(o)) => o,
+        Ok(Err(e)) => panic!("failed to wait for navi: {e}"),
+        Err(_) => panic!("navi headless test timed out after 30s"),
+    };
 
     assert!(
         output.status.success(),

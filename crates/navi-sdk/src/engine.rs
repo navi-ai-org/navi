@@ -146,7 +146,7 @@ impl NaviEngineBuilder {
         // Spawn a background update check if enabled.
         if let Some(ref store) = registry_store {
             let config = loaded_config.config.registry.clone();
-            if config.update_enabled {
+            if config.update_enabled && std::env::var("NAVI_NO_REGISTRY_UPDATE").is_err() {
                 let store = store.clone();
                 if let Ok(handle) = tokio::runtime::Handle::try_current() {
                     handle.spawn(async move {
