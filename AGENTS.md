@@ -234,7 +234,7 @@ Built-in tools:
 | `fs_browser` | Read | Browse filesystem: `list`, `tree`, `find`, `stat`. Replaces `list_files` |
 | `package_manager` | Write | Manage deps: `install`, `add`, `remove`, `update`, `check`. Auto-detects npm/bun/cargo/go |
 | `memory` | Write | Persistent auto-memory system with semantic search. Actions: `write`, `read`, `list`, `search`, `update`, `delete`. SQLite-backed with optional embedding model |
-| `append_note` | Write | Append temporary observations to the session notes.md scratchpad |
+| `append_note` | Write | Append temporary observations to the session notes scratchpad (SQLite) |
 | `history_ops` | Read | Query SQLite session history: `search`, `recent`, `get`, `summaries` |
 
 `ToolExecutor` validates invocations through `SecurityPolicy` before execution. Reads are allowed by default, writes and commands require approval by default, blocked commands are denied, paths are restricted to the project by default, NAVI private storage is denied, and writes to `.git` are denied.
@@ -481,7 +481,7 @@ Triggered after each turn via `try_auto_dream()`. Passes 3 gates before executin
 | Sessions | `>= 5` sessions since last dream | 5 |
 | Lock | No other process consolidating | File lock with PID + 1h stale detection |
 
-When all gates pass, spawns a background consolidation: marks stale memories (>30 days), deduplicates, and backfills missing embeddings. The model-based dream (`navi memory dream`) additionally uses a model call to consolidate MEMORY.md + global memory.
+When all gates pass, spawns a background consolidation: marks stale memories (>30 days), deduplicates, and backfills missing embeddings. The model-based dream (`navi memory dream`) additionally uses a model call to consolidate the SQLite auto-memory index + global memory.
 
 ### Auto-Distill
 
@@ -516,16 +516,15 @@ embedding_tokenizer_path = ""     # Override tokenizer path (empty = default)
 All auto-memory state lives under `{data_dir}/memory/{project_hash}/`:
 
 ```
-memories.db           ← SQLite (source of truth)
+memories.db           ← SQLite (source of truth: memories, session_checkpoint, session_notes tables)
 models/
   qwen3-embedding-0.6b-q8_0.gguf  ← Embedding model (optional)
   tokenizer.json                   ← Tokenizer (optional)
 last_dream_at         ← Auto-dream timestamp
 dream.lock            ← Cross-process dream lock
-checkpoint.md         ← Session checkpoint (existing)
-notes.md              ← Session scratchpad (existing)
-MEMORY.md             ← Rendered index (existing, legacy)
 ```
+
+Global (cross-project) memory lives at `{data_dir}/memory/global-memory.db` (SQLite).
 
 ### SDK API
 

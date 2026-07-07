@@ -1,16 +1,16 @@
-use crate::memory::memory_store::MemoryStore;
+use crate::memory::AutoMemoryStore;
 use crate::model::{ModelMessage, ModelProvider, ModelRequest, ThinkingConfig};
 use anyhow::Result;
 
 pub const CHECKPOINT_WRITER_PROMPT: &str = r#"You are a checkpoint-writer subagent for a code agent named NAVI.
 Your job is to extract the current operational state of the coding session and summarize it into a structured session checkpoint.
-You also identify stable, verified, and architectural project-level facts that should be promoted to the project-level MEMORY.md.
+You also identify stable, verified, and architectural project-level facts that should be promoted to the project memory.
 
 INPUTS:
-1. Current notes.md:
+1. Current notes:
 {notes_content}
 
-2. Existing MEMORY.md:
+2. Existing project memory index:
 {project_memory}
 
 3. Previous Checkpoint:
@@ -22,7 +22,7 @@ INPUTS:
 INSTRUCTIONS:
 Analyze the inputs and generate:
 1. An updated session checkpoint matching the layout below. Be precise and capture filenames, commands run, test status, next action, intent, constraints, decisions, and errors.
-2. Any new stable, durable, architectural facts or rules verified in this session to promote to MEMORY.md. Do NOT promote temporary debugging details, one-off task facts, or secrets.
+2. Any new stable, durable, architectural facts or rules verified in this session to promote to project memory. Do NOT promote temporary debugging details, one-off task facts, or secrets.
 
 You MUST format your output exactly as follows:
 
@@ -64,7 +64,7 @@ You MUST format your output exactly as follows:
 </checkpoint_markdown>
 
 <promote_facts>
-[Markdown list of new stable facts to add to MEMORY.md, if any. Otherwise leave empty.]
+[Markdown list of new stable facts to add to project memory, if any. Otherwise leave empty.]
 </promote_facts>
 "#;
 
@@ -76,16 +76,21 @@ pub(crate) fn sanitize_input(text: &str) -> String {
 }
 
 /// Runs the checkpoint writer subagent.
+///
+/// All reads and writes go through the SQLite-backed `AutoMemoryStore`:
+/// - Checkpoint is stored in the `session_checkpoint` table.
+/// - Notes are read from and archived in the `session_notes` table.
+/// - Promoted facts are upserted as `project`-type memories.
 pub async fn run_checkpoint_writer(
     _session_id: &str,
     messages: &[ModelMessage],
-    memory_store: &MemoryStore,
+    auto_memory: &AutoMemoryStore,
     model_provider: &dyn ModelProvider,
     model_name: &str,
 ) -> Result<()> {
-    let prev_checkpoint_raw = sanitize_input(&memory_store.read_checkpoint().unwrap_or_default());
-    let notes_content = sanitize_input(&memory_store.read_notes().unwrap_or_default());
-    let project_memory = sanitize_input(&memory_store.read_project_memory().unwrap_or_default());
+    let prev_checkpoint_raw = sanitize_input(&auto_memory.read_checkpoint().unwrap_or_default());
+    let notes_content = sanitize_input(&auto_memory.read_notes().unwrap_or_default());
+    let project_memory = sanitize_input(&auto_memory.render_index());
 
     let conversation_history = sanitize_input(&format_conversation_history(messages));
 
@@ -119,34 +124,19 @@ pub async fn run_checkpoint_writer(
     .unwrap_or_else(|| response_text.clone());
     let promote_facts = extract_block(&response_text, "<promote_facts>", "</promote_facts>");
 
-    // Save checkpoint
+    // Save checkpoint to SQLite
     if !checkpoint_text.trim().is_empty() {
-        memory_store.write_checkpoint(&checkpoint_text)?;
+        auto_memory.write_checkpoint(&checkpoint_text)?;
     }
 
-    // Save promoted facts
+    // Save promoted facts to SQLite memories table
     if let Some(facts) = promote_facts {
-        let trimmed_facts = facts.trim();
-        if !trimmed_facts.is_empty() {
-            let mut current_memory = project_memory;
-            if !current_memory.ends_with('\n') {
-                current_memory.push('\n');
-            }
-            let format_desc = time::format_description::parse("[year]-[month]-[day]").unwrap();
-            let timestamp = time::OffsetDateTime::now_utc()
-                .format(&format_desc)
-                .unwrap_or_else(|_| "1970-01-01".to_string());
-            current_memory.push_str(&format!(
-                "\n## Promoted Facts ({})\n\n{}\n",
-                timestamp, trimmed_facts
-            ));
-            memory_store.write_project_memory(&current_memory)?;
-        }
+        auto_memory.promote_facts(&facts)?;
     }
 
-    // Clear/archive notes if notes were processed
+    // Archive notes if notes were processed
     if !notes_content.trim().is_empty() {
-        memory_store.archive_notes(&notes_content)?;
+        auto_memory.archive_notes()?;
     }
 
     Ok(())

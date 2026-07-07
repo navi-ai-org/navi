@@ -1598,9 +1598,9 @@ fn request_user_input_summary(invocation: &ToolInvocation) -> String {
 fn append_note_summary(result: &ToolResult) -> String {
     let path = result
         .output
-        .get("path")
+        .get("db_path")
         .and_then(|v| v.as_str())
-        .unwrap_or("notes.md");
+        .unwrap_or("session notes");
     format!("Append note to {}", display_path(path))
 }
 

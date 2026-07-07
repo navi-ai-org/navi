@@ -172,6 +172,18 @@ impl AutoMemoryStore {
 
             CREATE INDEX IF NOT EXISTS idx_memories_last_seen
                 ON memories(last_seen);
+
+            CREATE TABLE IF NOT EXISTS session_checkpoint (
+                key         TEXT PRIMARY KEY,
+                value       TEXT NOT NULL,
+                updated_at  TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS session_notes (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                content     TEXT NOT NULL,
+                created_at  TEXT NOT NULL
+            );
             ",
         )?;
         Ok(())
@@ -641,6 +653,90 @@ impl AutoMemoryStore {
             }
             format!("{}... [truncated]", &index[..idx])
         }
+    }
+
+    // ── Session checkpoint (replaces checkpoint.md) ─────────────────────
+
+    /// Reads the current session checkpoint text. Returns empty string if none.
+    pub fn read_checkpoint(&self) -> Result<String> {
+        let conn = self.conn.lock().unwrap();
+        let result = conn.query_row(
+            "SELECT value FROM session_checkpoint WHERE key = 'current'",
+            [],
+            |row| row.get(0),
+        );
+        match result {
+            Ok(text) => Ok(text),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(String::new()),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    /// Writes the session checkpoint text, replacing any previous content.
+    pub fn write_checkpoint(&self, content: &str) -> Result<()> {
+        let now = now_iso();
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT OR REPLACE INTO session_checkpoint (key, value, updated_at)
+             VALUES ('current', ?1, ?2)",
+            params![content, now],
+        )?;
+        Ok(())
+    }
+
+    // ── Session notes (replaces notes.md) ───────────────────────────────
+
+    /// Appends a note to the session notes table.
+    pub fn append_note(&self, content: &str) -> Result<()> {
+        let now = now_iso();
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO session_notes (content, created_at) VALUES (?1, ?2)",
+            params![content.trim(), now],
+        )?;
+        Ok(())
+    }
+
+    /// Reads all session notes, oldest first.
+    pub fn read_notes(&self) -> Result<String> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt =
+            conn.prepare("SELECT content FROM session_notes ORDER BY id ASC")?;
+        let rows: Vec<String> = stmt
+            .query_map([], |row| row.get(0))?
+            .filter_map(|r| r.ok())
+            .collect();
+        Ok(rows.join("\n"))
+    }
+
+    /// Clears all session notes.
+    pub fn clear_notes(&self) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute("DELETE FROM session_notes", [])?;
+        Ok(())
+    }
+
+    /// Archives current notes by returning them and then clearing the table.
+    pub fn archive_notes(&self) -> Result<String> {
+        let notes = self.read_notes()?;
+        if !notes.trim().is_empty() {
+            self.clear_notes()?;
+        }
+        Ok(notes)
+    }
+
+    // ── Promoted facts (replaces MEMORY.md promote_facts) ───────────────
+
+    /// Appends promoted facts to the project memory index by upserting
+    /// a memory entry of type `project` with the given facts.
+    pub fn promote_facts(&self, facts: &str) -> Result<()> {
+        let trimmed = facts.trim();
+        if trimmed.is_empty() {
+            return Ok(());
+        }
+        let id = format!("promoted_{}", now_iso().replace(':', "-"));
+        let entry = new_entry(&id, MemoryType::Project, "Promoted Facts", "Facts promoted from checkpoint", trimmed);
+        self.upsert(&entry)
     }
 }
 

@@ -99,7 +99,6 @@ impl Default for MemoryConfig {
             max_memory_entries: 3,
             enabled: true,
             root: "memory/projects".to_string(),
-            global_memory_path: "~/.code-agent/global-memory.md".to_string(),
             checkpoint_thresholds: vec![0.20, 0.45, 0.70],
             rebuild_threshold: 0.85,
             injected_context_token_budget: 65000,

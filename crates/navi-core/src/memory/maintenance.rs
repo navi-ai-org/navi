@@ -1,5 +1,5 @@
 use crate::memory::history_store::HistoryStore;
-use crate::memory::memory_store::MemoryStore;
+use crate::memory::{AutoMemoryStore, GlobalMemoryStore};
 use crate::model::{ModelMessage, ModelProvider, ModelRequest, ThinkingConfig};
 use anyhow::{Context, Result};
 use std::path::PathBuf;
@@ -16,16 +16,16 @@ This is an offline synthesis pass:
 - Preserve stable project architecture, commands, conventions, user preferences, and reusable lessons.
 - Surface new durable insights that should help future sessions.
 
-Existing MEMORY.md:
+Existing project memory index:
 {project_memory}
 
-Existing global-memory.md:
+Existing global memory index:
 {global_memory}
 
-Current checkpoint.md:
+Current checkpoint:
 {checkpoint}
 
-Current notes.md:
+Current notes:
 {notes}
 
 Recent sessions:
@@ -66,11 +66,8 @@ fn sanitize_input(text: &str) -> String {
 
 #[derive(Debug, Clone)]
 pub struct DreamOptions {
-    /// Number of recent sessions to mine. Claude dreams accept up to 100 sessions.
     pub session_limit: usize,
-    /// High-level synthesis guidance.
     pub instructions: Option<String>,
-    /// Replace active memory files with the dream output after writing it.
     pub apply: bool,
 }
 
@@ -95,13 +92,15 @@ pub struct DreamResult {
 }
 
 pub async fn run_dream_maintenance(
-    memory_store: &MemoryStore,
+    auto_memory: &AutoMemoryStore,
+    global_memory: &GlobalMemoryStore,
     history_store: &HistoryStore,
     model_provider: &dyn ModelProvider,
     model_name: &str,
 ) -> Result<DreamResult> {
     run_dream_maintenance_with_options(
-        memory_store,
+        auto_memory,
+        global_memory,
         history_store,
         model_provider,
         model_name,
@@ -111,16 +110,17 @@ pub async fn run_dream_maintenance(
 }
 
 pub async fn run_dream_maintenance_with_options(
-    memory_store: &MemoryStore,
+    auto_memory: &AutoMemoryStore,
+    global_memory: &GlobalMemoryStore,
     history_store: &HistoryStore,
     model_provider: &dyn ModelProvider,
     model_name: &str,
     options: DreamOptions,
 ) -> Result<DreamResult> {
-    let project_memory = sanitize_input(&memory_store.read_project_memory().unwrap_or_default());
-    let global_memory = sanitize_input(&memory_store.read_global_memory().unwrap_or_default());
-    let checkpoint = sanitize_input(&memory_store.read_checkpoint().unwrap_or_default());
-    let notes = sanitize_input(&memory_store.read_notes().unwrap_or_default());
+    let project_memory = sanitize_input(&auto_memory.render_index());
+    let global_memory_text = sanitize_input(&global_memory.read_index().unwrap_or_default());
+    let checkpoint = sanitize_input(&auto_memory.read_checkpoint().unwrap_or_default());
+    let notes = sanitize_input(&auto_memory.read_notes().unwrap_or_default());
     let recent_sessions = sanitize_input(&format_recent_sessions(
         history_store,
         options.session_limit.clamp(1, 100),
@@ -131,7 +131,7 @@ pub async fn run_dream_maintenance_with_options(
 
     let prompt = DREAM_PROMPT
         .replace("{project_memory}", &project_memory)
-        .replace("{global_memory}", &global_memory)
+        .replace("{global_memory}", &global_memory_text)
         .replace("{checkpoint}", &checkpoint)
         .replace("{notes}", &notes)
         .replace("{recent_sessions}", &recent_sessions)
@@ -170,11 +170,11 @@ pub async fn run_dream_maintenance_with_options(
         anyhow::bail!("dream response produced empty global memory");
     }
 
-    let output_dir = dream_output_dir(memory_store)?;
+    let output_dir = dream_output_dir(auto_memory)?;
     std::fs::create_dir_all(&output_dir)
         .with_context(|| format!("failed to create {}", output_dir.display()))?;
 
-    let project_memory_path = output_dir.join("MEMORY.md");
+    let project_memory_path = output_dir.join("project-memory.md");
     let global_memory_path = output_dir.join("global-memory.md");
     let report_path = output_dir.join("dream-report.md");
     crate::memory::memory_store::write_atomic(&project_memory_path, updated_pm.trim())?;
@@ -182,69 +182,62 @@ pub async fn run_dream_maintenance_with_options(
     crate::memory::memory_store::write_atomic(&report_path, dream_report.trim())?;
 
     if options.apply {
-        memory_store.write_project_memory(updated_pm.trim())?;
-        memory_store.write_global_memory(updated_gm.trim())?;
+        global_memory.write_from_markdown(updated_gm.trim())?;
     }
 
     // Consolidate auto-memory SQLite store (mark stale, deduplicate, backfill embeddings)
     let auto_memory_report = {
-        let db_path = memory_store.memory_root.join("memories.db");
-        match crate::memory::AutoMemoryStore::open(&db_path) {
-            Ok(store) => {
-                // Consolidation pass (stale + dedup)
-                match store.consolidate(30) {
-                    Ok(report) => {
-                        tracing::info!(
-                            "auto-memory consolidation: {} stale, {} duplicates, {} active",
-                            report.marked_stale,
-                            report.duplicates_merged,
-                            report.remaining_active
-                        );
+        match auto_memory.consolidate(30) {
+            Ok(report) => {
+                tracing::info!(
+                    "auto-memory consolidation: {} stale, {} duplicates, {} active",
+                    report.marked_stale,
+                    report.duplicates_merged,
+                    report.remaining_active
+                );
 
-                        // Backfill embeddings for memories without them
-                        if crate::memory::embeddings_available() {
-                            let models_dir = memory_store.memory_root.join("models");
-                            let model_path = models_dir.join(crate::memory::DEFAULT_MODEL_FILE);
-                            let tokenizer_path = models_dir.join(crate::memory::DEFAULT_TOKENIZER_FILE);
+                // Backfill embeddings for memories without them
+                if crate::memory::embeddings_available() {
+                    let db_path = &auto_memory.db_path;
+                    let models_dir = db_path
+                        .parent()
+                        .unwrap_or(std::path::Path::new("."))
+                        .join("models");
+                    let model_path = models_dir.join(crate::memory::DEFAULT_MODEL_FILE);
+                    let tokenizer_path = models_dir.join(crate::memory::DEFAULT_TOKENIZER_FILE);
 
-                            if let Some(embedder) = crate::memory::embedding::get_cached_embedder(&model_path, &tokenizer_path) {
-                                let missing = store.list_without_embeddings()
-                                    .unwrap_or_default();
+                    if let Some(embedder) = crate::memory::embedding::get_cached_embedder(&model_path, &tokenizer_path) {
+                        let missing = auto_memory.list_without_embeddings()
+                            .unwrap_or_default();
 
-                                if !missing.is_empty() {
-                                    tracing::info!(
-                                        "backfilling embeddings for {} memories",
-                                        missing.len()
-                                    );
-                                    for m in &missing {
-                                        if let Some(text) = store.get_memory_text(&m.id).unwrap_or(None) {
-                                            match embedder.embed(&text) {
-                                                Ok(emb) => {
-                                                    let _ = store.set_embedding(&m.id, &emb);
-                                                }
-                                                Err(e) => {
-                                                    tracing::debug!(
-                                                        "embedding backfill failed for {}: {}",
-                                                        m.id, e
-                                                    );
-                                                }
-                                            }
+                        if !missing.is_empty() {
+                            tracing::info!(
+                                "backfilling embeddings for {} memories",
+                                missing.len()
+                            );
+                            for m in &missing {
+                                if let Some(text) = auto_memory.get_memory_text(&m.id).unwrap_or(None) {
+                                    match embedder.embed(&text) {
+                                        Ok(emb) => {
+                                            let _ = auto_memory.set_embedding(&m.id, &emb);
+                                        }
+                                        Err(e) => {
+                                            tracing::debug!(
+                                                "embedding backfill failed for {}: {}",
+                                                m.id, e
+                                            );
                                         }
                                     }
                                 }
                             }
                         }
-
-                        Some(report)
-                    }
-                    Err(e) => {
-                        tracing::warn!("auto-memory consolidation failed: {}", e);
-                        None
                     }
                 }
+
+                Some(report)
             }
             Err(e) => {
-                tracing::debug!("auto-memory store not available for consolidation: {}", e);
+                tracing::warn!("auto-memory consolidation failed: {}", e);
                 None
             }
         }
@@ -261,12 +254,11 @@ pub async fn run_dream_maintenance_with_options(
 }
 
 pub async fn run_distill_maintenance(
-    memory_store: &MemoryStore,
+    auto_memory: &AutoMemoryStore,
     history_store: &HistoryStore,
     model_provider: &dyn ModelProvider,
     model_name: &str,
 ) -> Result<()> {
-    // Retrieve recent events for context
     let sessions = history_store.list_sessions()?;
     let mut history_text = String::new();
     for session in sessions.iter().take(3) {
@@ -299,7 +291,10 @@ pub async fn run_distill_maintenance(
     if let Some(sop_block) = extract_block_with_attr(&text, "<sop_artifact", "</sop_artifact>") {
         let (filename, content) = sop_block;
         if !content.trim().is_empty() {
-            let sops_dir = memory_store.memory_root.join("sops");
+            let sops_dir = auto_memory.db_path
+                .parent()
+                .unwrap_or(std::path::Path::new("."))
+                .join("sops");
             if !sops_dir.exists() {
                 std::fs::create_dir_all(&sops_dir)?;
             }
@@ -321,12 +316,17 @@ fn extract_block(text: &str, start_tag: &str, end_tag: &str) -> Option<String> {
     }
 }
 
-fn dream_output_dir(memory_store: &MemoryStore) -> Result<PathBuf> {
+fn dream_output_dir(auto_memory: &AutoMemoryStore) -> Result<PathBuf> {
     let timestamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_secs())
         .unwrap_or_default();
-    let dreams_dir = memory_store.memory_root.join("dreams");
+    let memory_root = auto_memory
+        .db_path
+        .parent()
+        .unwrap_or(std::path::Path::new("."))
+        .to_path_buf();
+    let dreams_dir = memory_root.join("dreams");
     let mut candidate = dreams_dir.join(format!("dream-{timestamp}"));
     let mut suffix = 1;
     while candidate.exists() {
@@ -394,16 +394,15 @@ fn extract_block_with_attr(
     let start_tag_full_len = end_tag_start + 1;
     let start_tag_content = &text[start_idx..start_idx + start_tag_full_len];
 
-    // Extract filename attribute: filename="some_name.md"
     let filename = if let Some(fn_start) = start_tag_content.find("filename=\"") {
         let fn_sub = &start_tag_content[fn_start + "filename=\"".len()..];
         if let Some(fn_end) = fn_sub.find('"') {
             fn_sub[..fn_end].to_string()
         } else {
-            "distilled_sop.md".to_string()
+            "sop.md".to_string()
         }
     } else {
-        "distilled_sop.md".to_string()
+        "sop.md".to_string()
     };
 
     let content_start = start_idx + start_tag_full_len;

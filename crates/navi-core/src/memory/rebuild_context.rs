@@ -1,4 +1,4 @@
-use crate::memory::memory_store::MemoryStore;
+use crate::memory::{AutoMemoryStore, GlobalMemoryStore};
 use crate::model::ModelMessage;
 
 #[derive(Debug, Clone)]
@@ -7,16 +7,14 @@ pub struct RebuildBudgets {
     pub task_list: usize,
     pub checkpoint: usize,
     pub recent_user_messages: usize,
-    pub project_memory: usize,
+    pub auto_memory: usize,
     pub global_memory: usize,
     pub notes: usize,
-    pub memory_index: usize,
     pub tail_reminder: usize,
 }
 
 impl RebuildBudgets {
     pub fn new(total_budget: usize, context_window: u64) -> Self {
-        // Scale down if the context window is smaller than total_budget
         let scale = if context_window < total_budget as u64 {
             context_window as f64 / total_budget as f64
         } else {
@@ -31,10 +29,9 @@ impl RebuildBudgets {
             task_list: scale_budget(4000),
             checkpoint: scale_budget(16000),
             recent_user_messages: scale_budget(8000),
-            project_memory: scale_budget(16000),
+            auto_memory: scale_budget(16000),
             global_memory: scale_budget(4000),
             notes: scale_budget(4000),
-            memory_index: scale_budget(4000),
             tail_reminder: scale_budget(1000),
         }
     }
@@ -54,9 +51,16 @@ pub fn truncate_to_tokens(text: &str, token_budget: usize) -> String {
 }
 
 /// Assembles the boot context for a rebuilt context window.
+///
+/// All memory sources are now SQLite-backed:
+/// - Session checkpoint → `AutoMemoryStore.session_checkpoint` table
+/// - Project memory → `AutoMemoryStore.memories` table (rendered index)
+/// - Global memory → `GlobalMemoryStore.global_memories` table
+/// - Session notes → `AutoMemoryStore.session_notes` table
 pub fn build_rebuild_context(
     messages: &[ModelMessage],
-    memory_store: &MemoryStore,
+    auto_memory: &AutoMemoryStore,
+    global_memory: &GlobalMemoryStore,
     context_window: u64,
     total_budget: usize,
 ) -> String {
@@ -76,8 +80,8 @@ pub fn build_rebuild_context(
         truncate_to_tokens(&initial_task, budgets.task_list)
     ));
 
-    // 2. Session checkpoint
-    let checkpoint = memory_store.read_checkpoint().unwrap_or_default();
+    // 2. Session checkpoint (from SQLite)
+    let checkpoint = auto_memory.read_checkpoint().unwrap_or_default();
     parts.push(format!(
         "=== SESSION CHECKPOINT ===\n{}",
         truncate_to_tokens(&checkpoint, budgets.checkpoint)
@@ -97,41 +101,24 @@ pub fn build_rebuild_context(
         truncate_to_tokens(&recent_user, budgets.recent_user_messages)
     ));
 
-    // 4. Project memory
-    let project_mem = memory_store.read_project_memory().unwrap_or_default();
-    parts.push(format!(
-        "=== PROJECT MEMORY ===\n{}",
-        truncate_to_tokens(&project_mem, budgets.project_memory)
-    ));
-
-    // 4b. Auto-memory SQLite index (new system)
-    let auto_mem_index = {
-        let db_path = memory_store.memory_root.join("memories.db");
-        if db_path.exists() {
-            match crate::memory::AutoMemoryStore::open(&db_path) {
-                Ok(store) => store.build_prompt_context(2000),
-                Err(_) => String::new(),
-            }
-        } else {
-            String::new()
-        }
-    };
+    // 4. Auto-memory index (from SQLite memories table)
+    let auto_mem_index = auto_memory.build_prompt_context(budgets.auto_memory);
     if !auto_mem_index.trim().is_empty() {
         parts.push(format!(
             "=== AUTO-MEMORY INDEX ===\n{}",
-            truncate_to_tokens(&auto_mem_index, budgets.project_memory)
+            auto_mem_index
         ));
     }
 
-    // 5. Global memory
-    let global_mem = memory_store.read_global_memory().unwrap_or_default();
+    // 5. Global memory (from SQLite global_memories table)
+    let global_mem = global_memory.read_index().unwrap_or_default();
     parts.push(format!(
         "=== GLOBAL MEMORY ===\n{}",
         truncate_to_tokens(&global_mem, budgets.global_memory)
     ));
 
-    // 6. Current notes
-    let notes = memory_store.read_notes().unwrap_or_default();
+    // 6. Current notes (from SQLite session_notes table)
+    let notes = auto_memory.read_notes().unwrap_or_default();
     if !notes.trim().is_empty() {
         parts.push(format!(
             "=== CURRENT NOTES ===\n{}",
@@ -139,30 +126,7 @@ pub fn build_rebuild_context(
         ));
     }
 
-    // 7. Memory file index
-    let mut index_str = String::new();
-    index_str.push_str(&format!(
-        "- checkpoint.md: {}\n",
-        memory_store.checkpoint_path().display()
-    ));
-    index_str.push_str(&format!(
-        "- notes.md: {}\n",
-        memory_store.notes_path().display()
-    ));
-    index_str.push_str(&format!(
-        "- MEMORY.md: {}\n",
-        memory_store.project_memory_path().display()
-    ));
-    index_str.push_str(&format!(
-        "- global-memory.md: {}\n",
-        memory_store.global_memory_path().display()
-    ));
-    parts.push(format!(
-        "=== MEMORY INDEX ===\n{}",
-        truncate_to_tokens(&index_str, budgets.memory_index)
-    ));
-
-    // 8. Tail reminder / instructions
+    // 7. Tail reminder / instructions
     let tail_reminder = r#"=== SYSTEM INSTRUCTIONS FOR CONTINUATION ===
 You are continuing an existing logical coding session after a context rebuild.
 Do not ask the user to restate the goal.

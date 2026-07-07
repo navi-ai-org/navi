@@ -662,9 +662,6 @@ fn default_memory_enabled() -> bool {
 fn default_memory_root() -> String {
     "memory/projects".to_string()
 }
-fn default_global_memory_path() -> String {
-    "~/.code-agent/global-memory.md".to_string()
-}
 fn default_checkpoint_thresholds() -> Vec<f64> {
     vec![0.20, 0.45, 0.70]
 }
@@ -718,9 +715,6 @@ pub struct MemoryConfig {
     /// Root directory for memory files.
     #[serde(default = "default_memory_root")]
     pub root: String,
-    /// Path to the user-level global memory file.
-    #[serde(default = "default_global_memory_path")]
-    pub global_memory_path: String,
     /// Context utilization thresholds that trigger checkpoints.
     #[serde(default = "default_checkpoint_thresholds")]
     pub checkpoint_thresholds: Vec<f64>,

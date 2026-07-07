@@ -137,7 +137,6 @@ pub fn write_atomic(path: &Path, content: &str) -> Result<()> {
 pub struct MemoryStore {
     pub project_dir: PathBuf,
     pub memory_root: PathBuf,
-    pub global_memory_path: PathBuf,
 }
 
 impl MemoryStore {
@@ -145,163 +144,19 @@ impl MemoryStore {
         project_dir: PathBuf,
         data_dir: PathBuf,
         root_config: &str,
-        global_config_path: &str,
     ) -> Self {
         let memory_root =
             resolve_memory_path(root_config, &data_dir).join(project_hash(&project_dir));
-        let global_memory_path = resolve_memory_path(global_config_path, &data_dir);
         Self {
             project_dir,
             memory_root,
-            global_memory_path,
         }
     }
 
-    pub fn checkpoint_path(&self) -> PathBuf {
-        self.memory_root.join("checkpoint.md")
-    }
-
-    pub fn notes_path(&self) -> PathBuf {
-        self.memory_root.join("notes.md")
-    }
-
-    pub fn project_memory_path(&self) -> PathBuf {
-        self.memory_root.join("MEMORY.md")
-    }
-
-    pub fn global_memory_path(&self) -> PathBuf {
-        self.global_memory_path.clone()
-    }
-
-    pub fn read_checkpoint(&self) -> Result<String> {
-        let path = self.checkpoint_path();
-        if path.exists() {
-            fs::read_to_string(&path)
-                .with_context(|| format!("Failed to read checkpoint: {:?}", path))
-        } else {
-            Ok(String::new())
-        }
-    }
-
-    pub fn write_checkpoint(&self, content: &str) -> Result<()> {
-        write_atomic_safe(&self.checkpoint_path(), &self.memory_root, content)
-    }
-
-    pub fn read_notes(&self) -> Result<String> {
-        let path = self.notes_path();
-        if path.exists() {
-            fs::read_to_string(&path).with_context(|| format!("Failed to read notes: {:?}", path))
-        } else {
-            Ok(String::new())
-        }
-    }
-
-    pub fn append_note(&self, content: &str) -> Result<()> {
-        let path = self.notes_path();
-        validate_write_path(&path, &self.memory_root)?;
-        if let Some(parent) = path.parent() {
-            if !parent.exists() {
-                fs::create_dir_all(parent)?;
-            }
-        }
-        let mut file = fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&path)
-            .with_context(|| format!("Failed to open notes for append: {:?}", path))?;
-
-        writeln!(file, "\n{}", content.trim())
-            .with_context(|| format!("Failed to write to notes: {:?}", path))?;
-        file.sync_all()?;
-        Ok(())
-    }
-
-    pub fn clear_notes(&self) -> Result<()> {
-        let path = self.notes_path();
-        if path.exists() {
-            write_atomic_safe(&path, &self.memory_root, "")?;
-        }
-        Ok(())
-    }
-
-    pub fn archive_notes(&self, notes_content: &str) -> Result<()> {
-        if notes_content.trim().is_empty() {
-            return Ok(());
-        }
-        let archive_dir = self.memory_root.join("archive");
-        if !archive_dir.exists() {
-            fs::create_dir_all(&archive_dir)?;
-        }
-        let timestamp = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0);
-        let archive_path = archive_dir.join(format!("notes-{}.md", timestamp));
-        write_atomic_safe(&archive_path, &self.memory_root, notes_content)?;
-        self.clear_notes()?;
-        Ok(())
-    }
-
-    pub fn read_project_memory(&self) -> Result<String> {
-        let path = self.project_memory_path();
-        if path.exists() {
-            fs::read_to_string(&path)
-                .with_context(|| format!("Failed to read project memory: {:?}", path))
-        } else {
-            Ok(String::new())
-        }
-    }
-
-    pub fn write_project_memory(&self, content: &str) -> Result<()> {
-        write_atomic_safe(&self.project_memory_path(), &self.memory_root, content)
-    }
-
-    pub fn read_global_memory(&self) -> Result<String> {
-        let path = self.global_memory_path();
-        if path.exists() {
-            fs::read_to_string(&path)
-                .with_context(|| format!("Failed to read global memory: {:?}", path))
-        } else {
-            Ok(String::new())
-        }
-    }
-
-    pub fn write_global_memory(&self, content: &str) -> Result<()> {
-        let path = self.global_memory_path();
-        if let Some(parent) = path.parent() {
-            write_atomic_safe(&path, parent, content)
-        } else {
-            write_atomic(&path, content)
-        }
-    }
-
-    /// Initializes default files if they do not exist
+    /// Initializes the memory root directory if it does not exist.
     pub fn ensure_initialized(&self) -> Result<()> {
         if !self.memory_root.exists() {
             fs::create_dir_all(&self.memory_root)?;
-        }
-        let notes_p = self.notes_path();
-        if !notes_p.exists() {
-            write_atomic_safe(&notes_p, &self.memory_root, "")?;
-        }
-        let check_p = self.checkpoint_path();
-        if !check_p.exists() {
-            write_atomic_safe(&check_p, &self.memory_root, "# Session Checkpoint\n")?;
-        }
-        let pm_p = self.project_memory_path();
-        if !pm_p.exists() {
-            write_atomic_safe(&pm_p, &self.memory_root, "# Project Memory\n")?;
-        }
-        let gm_p = self.global_memory_path();
-        if !gm_p.exists() {
-            if let Some(parent) = gm_p.parent() {
-                if !parent.exists() {
-                    fs::create_dir_all(parent)?;
-                }
-                write_atomic_safe(&gm_p, parent, "# Global Memory\n")?;
-            } else {
-                write_atomic(&gm_p, "# Global Memory\n")?;
-            }
         }
         Ok(())
     }

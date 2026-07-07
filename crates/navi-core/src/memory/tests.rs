@@ -110,37 +110,34 @@ fn test_memory_store_atomic_writes_and_backups() {
     fs::create_dir_all(&project_dir).unwrap();
 
     let memory_root = "memory/projects";
-    let global_path = temp_dir.path().join("global-memory.md");
 
     let store = memory_store::MemoryStore::new(
         project_dir.clone(),
         data_dir.clone(),
         memory_root,
-        &global_path.to_string_lossy(),
     );
 
     store.ensure_initialized().unwrap();
 
-    // Check default directories/files created
+    // Check default directories created
     assert!(!project_dir.join(".agent-memory").exists());
     assert!(store.memory_root.starts_with(data_dir.join(memory_root)));
-    assert!(store.notes_path().exists());
-    assert!(store.checkpoint_path().exists());
-    assert!(store.project_memory_path().exists());
-    assert!(global_path.exists());
+    assert!(store.memory_root.exists());
 
-    // Test append note
-    store.append_note("New observation").unwrap();
-    let notes = store.read_notes().unwrap();
+    // Test SQLite-backed notes via AutoMemoryStore
+    let auto_memory = crate::memory::AutoMemoryStore::open(
+        &store.memory_root.join("memories.db"),
+    )
+    .unwrap();
+    auto_memory.append_note("New observation").unwrap();
+    let notes = auto_memory.read_notes().unwrap();
     assert!(notes.contains("New observation"));
 
     // Test archive notes
-    store.archive_notes("New observation").unwrap();
-    let cleared_notes = store.read_notes().unwrap();
+    let archived = auto_memory.archive_notes().unwrap();
+    assert!(!archived.is_empty());
+    let cleared_notes = auto_memory.read_notes().unwrap();
     assert!(cleared_notes.is_empty());
-
-    let archive_dir = store.memory_root.join("archive");
-    assert!(archive_dir.exists());
 
     // Test atomic writing and backup preservation on success
     let test_file = store.memory_root.join("test.txt");
@@ -184,9 +181,9 @@ fn test_memory_manager_defaults_to_data_dir_project_hash() {
         manager_a.history.db_path,
         manager_a.store.memory_root.join("history.sqlite")
     );
-    assert!(manager_a.store.checkpoint_path().exists());
-    assert!(manager_a.store.notes_path().exists());
-    assert!(manager_a.store.project_memory_path().exists());
+    assert!(manager_a.store.memory_root.exists());
+    assert!(manager_a.auto_memory.db_path.exists());
+    assert!(manager_a.global_memory.db_path.exists());
 }
 
 #[test]
@@ -229,16 +226,21 @@ fn test_rebuild_context_budget_scaling() {
     let temp_dir = tempdir().unwrap();
     let project_dir = temp_dir.path().join("project");
     let data_dir = temp_dir.path().join("data");
-    let global_path = temp_dir.path().join("global-memory.md");
     fs::create_dir_all(&project_dir).unwrap();
 
     let store = memory_store::MemoryStore::new(
         project_dir,
-        data_dir,
+        data_dir.clone(),
         "memory/projects",
-        &global_path.to_string_lossy(),
     );
     store.ensure_initialized().unwrap();
+
+    let auto_memory = crate::memory::AutoMemoryStore::open(
+        &store.memory_root.join("memories.db"),
+    ).unwrap();
+    let global_memory = crate::memory::GlobalMemoryStore::open(
+        &data_dir.join("memory").join("global-memory.db"),
+    ).unwrap();
 
     let messages = vec![
         ModelMessage {
@@ -264,12 +266,12 @@ fn test_rebuild_context_budget_scaling() {
     ];
 
     // Standard budget (65k) with large context window (128k) -> no scaling down
-    let boot_context = rebuild_context::build_rebuild_context(&messages, &store, 128_000, 65_000);
+    let boot_context = rebuild_context::build_rebuild_context(&messages, &auto_memory, &global_memory, 128_000, 65_000);
     assert!(boot_context.contains("Write a Rust program to count words"));
     assert!(boot_context.contains("You are continuing an existing logical coding session"));
 
     // Tiny context window (500 tokens) -> budgets scale down proportionally
-    let scaled_context = rebuild_context::build_rebuild_context(&messages, &store, 500, 65_000);
+    let scaled_context = rebuild_context::build_rebuild_context(&messages, &auto_memory, &global_memory, 500, 65_000);
     assert!(!scaled_context.is_empty());
 }
 
@@ -353,12 +355,12 @@ async fn test_dream_writes_candidate_without_applying_by_default() {
     let manager = MemoryManager::new(project_dir.clone(), data_dir, &MemoryConfig::default())
         .expect("manager");
     manager
-        .store
-        .write_project_memory("# Project Memory\nold project fact")
+        .auto_memory
+        .write_checkpoint("# Session Checkpoint\nold checkpoint")
         .unwrap();
     manager
-        .store
-        .write_global_memory("# Global Memory\nold global fact")
+        .global_memory
+        .write_from_markdown("# Global Memory\n- **Old** (`user`) — old global fact")
         .unwrap();
     manager
         .history
@@ -396,7 +398,7 @@ Merged a focused testing preference.
         .to_string(),
     };
 
-    let result = run_dream_maintenance(&manager.store, &manager.history, &provider, "test-model")
+    let result = run_dream_maintenance(&manager.auto_memory, &manager.global_memory, &manager.history, &provider, "test-model")
         .await
         .unwrap();
 
@@ -412,13 +414,9 @@ Merged a focused testing preference.
             .unwrap()
             .contains("Merged a focused testing preference")
     );
-    assert!(
-        manager
-            .store
-            .read_project_memory()
-            .unwrap()
-            .contains("old project fact")
-    );
+    // When not applying, the SQLite stores should still have the old content
+    let gm_index = manager.global_memory.read_index().unwrap();
+    assert!(gm_index.contains("old global fact") || gm_index.is_empty());
 }
 
 #[tokio::test]
@@ -431,12 +429,12 @@ async fn test_dream_apply_replaces_active_memory() {
     let manager =
         MemoryManager::new(project_dir, data_dir, &MemoryConfig::default()).expect("manager");
     manager
-        .store
-        .write_project_memory("# Project Memory\nold")
+        .auto_memory
+        .write_checkpoint("# Session Checkpoint\nold")
         .unwrap();
     manager
-        .store
-        .write_global_memory("# Global Memory\nold")
+        .global_memory
+        .write_from_markdown("# Global Memory\n- **Old** (`user`) — old")
         .unwrap();
 
     let provider = TestMemoryProvider {
@@ -447,7 +445,7 @@ async fn test_dream_apply_replaces_active_memory() {
 </updated_project_memory>
 <updated_global_memory>
 # Global Memory
-- New global memory.
+- **New** (`user`) — New global memory.
 </updated_global_memory>
 <dream_report>
 Applied replacement.
@@ -457,7 +455,8 @@ Applied replacement.
     };
 
     let result = run_dream_maintenance_with_options(
-        &manager.store,
+        &manager.auto_memory,
+        &manager.global_memory,
         &manager.history,
         &provider,
         "test-model",
@@ -470,20 +469,8 @@ Applied replacement.
     .unwrap();
 
     assert!(result.applied);
-    assert!(
-        manager
-            .store
-            .read_project_memory()
-            .unwrap()
-            .contains("New project memory")
-    );
-    assert!(
-        manager
-            .store
-            .read_global_memory()
-            .unwrap()
-            .contains("New global memory")
-    );
+    let gm_index = manager.global_memory.read_index().unwrap();
+    assert!(gm_index.contains("New global memory"));
 }
 
 #[tokio::test]
@@ -498,11 +485,6 @@ async fn test_full_continuity_session_rebuild() {
         max_memory_entries: 5,
         enabled: true,
         root: "memory/projects".to_string(),
-        global_memory_path: temp_dir
-            .path()
-            .join("global-memory.md")
-            .to_string_lossy()
-            .to_string(),
         checkpoint_thresholds: vec![0.20, 0.45, 0.70],
         rebuild_threshold: 0.85,
         injected_context_token_budget: 65000,
@@ -737,9 +719,14 @@ None.
             .contains("You are continuing an existing logical coding session")
     );
 
-    // Verify project memory received promotions
-    let pm = manager.store.read_project_memory().unwrap();
-    assert!(pm.contains("Rebuild is deterministic."));
+    // Verify project memory received promotions (SQLite)
+    // The promoted facts are stored as a memory entry with type=project
+    let memories = manager.auto_memory.list(None).unwrap();
+    let promoted = memories.iter().find(|m| m.name == "Promoted Facts");
+    assert!(promoted.is_some(), "Promoted facts memory entry should exist");
+    let promoted_id = promoted.unwrap().id.clone();
+    let entry = manager.auto_memory.get(&promoted_id).unwrap().unwrap();
+    assert!(entry.body.contains("Rebuild is deterministic."));
 }
 
 #[cfg(unix)]

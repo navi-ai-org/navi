@@ -126,15 +126,13 @@ NAVI's checkpoint memory is stored outside the project tree. By default, each pr
 
 The directory contains:
 
-- `checkpoint.md`
-- `notes.md`
-- `MEMORY.md`
+- `memories.db` (SQLite: memories, session_checkpoint, session_notes tables)
 - `history.sqlite`
 - optional archive/maintenance subdirectories, including dream review copies
 
 ## Dream Maintenance
 
-Dream maintenance is an offline memory synthesis pass inspired by Claude's managed-agent Dreams. It reads the existing project memory, global memory, checkpoint, notes, and recent session history, then asks the selected model to produce a separate reviewed memory store.
+Dream maintenance is an offline memory synthesis pass inspired by Claude's managed-agent Dreams. It reads the existing SQLite auto-memory index, global memory, checkpoint, notes, and recent session history, then asks the selected model to produce a separate reviewed memory store.
 
 By default, dreams do not modify active memory. NAVI writes each dream result under:
 
@@ -144,8 +142,8 @@ By default, dreams do not modify active memory. NAVI writes each dream result un
 
 Each dream directory contains:
 
-- `MEMORY.md`
-- `global-memory.md`
+- `project-memory.md` (candidate output)
+- `global-memory.md` (candidate output)
 - `dream-report.md`
 
 Use the CLI to run a review-only dream:

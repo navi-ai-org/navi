@@ -89,7 +89,7 @@ When all gates pass, spawns a background consolidation:
 navi memory dream --apply
 ```
 
-Runs the full model-based dream: reads session history, consolidates MEMORY.md + global memory via model call, then runs SQLite consolidation + embedding backfill.
+Runs the full model-based dream: reads session history, consolidates the SQLite auto-memory index + global memory via model call, then runs SQLite consolidation + embedding backfill.
 
 ## Auto-Distill
 
@@ -130,16 +130,15 @@ embedding_tokenizer_path = ""     # Override tokenizer path (empty = default)
 All auto-memory state lives under `{data_dir}/memory/{project_hash}/`:
 
 ```
-memories.db                        ← SQLite (source of truth)
+memories.db                        ← SQLite (source of truth: memories, session_checkpoint, session_notes tables)
 models/
   qwen3-embedding-0.6b-q8_0.gguf   ← Embedding model (optional)
   tokenizer.json                    ← Tokenizer (optional)
 last_dream_at                      ← Auto-dream timestamp
 dream.lock                         ← Cross-process dream lock
-checkpoint.md                      ← Session checkpoint (existing)
-notes.md                           ← Session scratchpad (existing)
-MEMORY.md                          ← Rendered index (existing, legacy)
 ```
+
+Global (cross-project) memory lives at `{data_dir}/memory/global-memory.db` (SQLite).
 
 ## SDK API
 
