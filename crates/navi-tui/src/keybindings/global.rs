@@ -5,8 +5,8 @@ use crate::mouse::{copy_text_to_clipboard, selected_text};
 use crate::notifications::show_notification;
 use crate::persistence::save_preferences;
 use crate::state::ModalKind;
-use crate::ui::effect::UiEffect;
-use crate::ui::keymap::KeyOutcome;
+use crate::ui::KeyOutcome;
+use crate::ui::UiEffect;
 use crossterm::event::{KeyCode, KeyModifiers};
 use navi_core::PermissionMode;
 

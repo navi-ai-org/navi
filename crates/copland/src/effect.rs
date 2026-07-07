@@ -1,5 +1,5 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum UiEffect<M> {
+pub enum UiEffect<M> {
     Quit,
     OpenModal(M),
     ReplaceModal(M),

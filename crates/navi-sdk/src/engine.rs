@@ -539,7 +539,11 @@ impl NaviEngine {
 
     /// Sets the permission mode for tool execution. Applies to all sessions.
     pub fn set_permission_mode(&self, mode: navi_core::PermissionMode) {
-        let mut config = self.inner.loaded_config.write().unwrap_or_else(|e| e.into_inner());
+        let mut config = self
+            .inner
+            .loaded_config
+            .write()
+            .unwrap_or_else(|e| e.into_inner());
         config.config.security.permission_mode = mode;
     }
 
@@ -800,7 +804,11 @@ impl NaviEngine {
     }
 
     /// Searches memories by text query.
-    pub fn memory_search(&self, query: &str, limit: usize) -> Result<Vec<navi_core::memory::MemorySummary>> {
+    pub fn memory_search(
+        &self,
+        query: &str,
+        limit: usize,
+    ) -> Result<Vec<navi_core::memory::MemorySummary>> {
         let store = self.memory_store()?;
         Ok(store.search_text(query, limit)?)
     }
@@ -1122,12 +1130,8 @@ impl NaviEngine {
             // registry cache with capability tags (free, nitro, online).
             if provider.aggregator {
                 if let Some(ref store) = self.inner.registry_store {
-                    match navi_core::registry::sync_aggregator_models(
-                        store,
-                        &provider,
-                        &api_key,
-                    )
-                    .await
+                    match navi_core::registry::sync_aggregator_models(store, &provider, &api_key)
+                        .await
                     {
                         Ok(count) => {
                             updated.push(NaviSyncedProvider {

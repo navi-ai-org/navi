@@ -15,8 +15,8 @@ use crate::providers::{
 use crate::session::load_saved_sessions;
 use crate::state::{MessageAction, ModalKind, ThinkingLevel};
 use crate::theme::filtered_theme_options;
-use crate::ui::effect::UiEffect;
-use crate::ui::list::SelectListState;
+use crate::ui::SelectListState;
+use crate::ui::UiEffect;
 use crossterm::event::{KeyCode, KeyModifiers};
 use navi_sdk::QuestionResponse;
 

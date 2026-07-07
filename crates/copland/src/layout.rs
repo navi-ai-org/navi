@@ -1,31 +1,31 @@
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 
-pub(crate) const VIEWPORT_HORIZONTAL_MARGIN: u16 = 1;
+pub const VIEWPORT_HORIZONTAL_MARGIN: u16 = 1;
 
-pub(crate) fn viewport_rect(area: Rect) -> Rect {
+pub fn viewport_rect(area: Rect) -> Rect {
     inset_rect(area, VIEWPORT_HORIZONTAL_MARGIN, 0)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct RootLayoutHeights {
-    pub(crate) header: u16,
-    pub(crate) image_preview: u16,
-    pub(crate) input_activity: u16,
-    pub(crate) input: u16,
-    pub(crate) input_hint: u16,
+pub struct RootLayoutHeights {
+    pub header: u16,
+    pub image_preview: u16,
+    pub input_activity: u16,
+    pub input: u16,
+    pub input_hint: u16,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct RootLayout {
-    pub(crate) header: Rect,
-    pub(crate) chat: Rect,
-    pub(crate) image_preview: Rect,
-    pub(crate) input_activity: Rect,
-    pub(crate) input: Rect,
-    pub(crate) input_hint: Rect,
+pub struct RootLayout {
+    pub header: Rect,
+    pub chat: Rect,
+    pub image_preview: Rect,
+    pub input_activity: Rect,
+    pub input: Rect,
+    pub input_hint: Rect,
 }
 
-pub(crate) fn root_layout(area: Rect, heights: RootLayoutHeights) -> RootLayout {
+pub fn root_layout(area: Rect, heights: RootLayoutHeights) -> RootLayout {
     let header_height = heights.header.min(area.height);
     let bottom_requested = heights
         .image_preview
@@ -108,17 +108,17 @@ fn inset_rect(area: Rect, horizontal: u16, vertical: u16) -> Rect {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct ModalSpec {
-    pub(crate) max_width: u16,
-    pub(crate) height: u16,
-    pub(crate) min_width: u16,
-    pub(crate) min_height: u16,
-    pub(crate) horizontal_margin: u16,
-    pub(crate) vertical_margin: u16,
+pub struct ModalSpec {
+    pub max_width: u16,
+    pub height: u16,
+    pub min_width: u16,
+    pub min_height: u16,
+    pub horizontal_margin: u16,
+    pub vertical_margin: u16,
 }
 
 impl ModalSpec {
-    pub(crate) fn fixed(max_width: u16, height: u16) -> Self {
+    pub fn fixed(max_width: u16, height: u16) -> Self {
         Self {
             max_width,
             height,
@@ -129,7 +129,7 @@ impl ModalSpec {
         }
     }
 
-    pub(crate) fn rect(self, area: Rect) -> Rect {
+    pub fn rect(self, area: Rect) -> Rect {
         let width = area
             .width
             .saturating_sub(self.horizontal_margin)
@@ -144,7 +144,7 @@ impl ModalSpec {
     }
 }
 
-pub(crate) fn centered_rect(area: Rect, width: u16, height: u16) -> Rect {
+pub fn centered_rect(area: Rect, width: u16, height: u16) -> Rect {
     let width = width.min(area.width);
     let height = height.min(area.height);
     let vertical = Layout::default()

@@ -5,17 +5,17 @@ use ratatui::style::Style;
 use ratatui::widgets::Paragraph;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
-pub(crate) struct TextInputRef<'a> {
+pub struct TextInputRef<'a> {
     text: &'a mut String,
     cursor: &'a mut usize,
 }
 
 impl<'a> TextInputRef<'a> {
-    pub(crate) fn new(text: &'a mut String, cursor: &'a mut usize) -> Self {
+    pub fn new(text: &'a mut String, cursor: &'a mut usize) -> Self {
         Self { text, cursor }
     }
 
-    pub(crate) fn insert_char(&mut self, ch: char) {
+    pub fn insert_char(&mut self, ch: char) {
         self.clamp_cursor();
         self.text.insert(*self.cursor, ch);
         *self.cursor += ch.len_utf8();
@@ -24,7 +24,7 @@ impl<'a> TextInputRef<'a> {
     /// Insert a multi-character string at the cursor position, filtering out
     /// control characters (except `\n` and `\t`). `\r\n` is normalized to
     /// `\n`; standalone `\r` is also converted to `\n`.
-    pub(crate) fn insert_text(&mut self, text: &str) {
+    pub fn insert_text(&mut self, text: &str) {
         self.clamp_cursor();
         let mut chars = text.chars().peekable();
         while let Some(ch) = chars.next() {
@@ -50,7 +50,7 @@ impl<'a> TextInputRef<'a> {
         }
     }
 
-    pub(crate) fn delete_previous_char(&mut self) {
+    pub fn delete_previous_char(&mut self) {
         self.clamp_cursor();
         let prefix = &self.text[..*self.cursor];
         if prefix.ends_with(']') {
@@ -73,7 +73,7 @@ impl<'a> TextInputRef<'a> {
         *self.cursor = previous;
     }
 
-    pub(crate) fn delete_next_char(&mut self) {
+    pub fn delete_next_char(&mut self) {
         self.clamp_cursor();
         let suffix = &self.text[*self.cursor..];
         if suffix.starts_with("[Image ") {
@@ -93,80 +93,80 @@ impl<'a> TextInputRef<'a> {
         self.text.drain(*self.cursor..next);
     }
 
-    pub(crate) fn move_previous_char(&mut self) {
+    pub fn move_previous_char(&mut self) {
         self.clamp_cursor();
         if let Some(previous) = previous_char_boundary(self.text, *self.cursor) {
             *self.cursor = previous;
         }
     }
 
-    pub(crate) fn move_next_char(&mut self) {
+    pub fn move_next_char(&mut self) {
         self.clamp_cursor();
         if let Some(next) = next_char_boundary(self.text, *self.cursor) {
             *self.cursor = next;
         }
     }
 
-    pub(crate) fn move_previous_hump(&mut self) {
+    pub fn move_previous_hump(&mut self) {
         self.clamp_cursor();
         *self.cursor = previous_hump_boundary(self.text, *self.cursor);
     }
 
-    pub(crate) fn move_next_hump(&mut self) {
+    pub fn move_next_hump(&mut self) {
         self.clamp_cursor();
         *self.cursor = next_hump_boundary(self.text, *self.cursor);
     }
 
-    pub(crate) fn move_previous_control_stop(&mut self) {
+    pub fn move_previous_control_stop(&mut self) {
         self.clamp_cursor();
         *self.cursor = previous_control_boundary(self.text, *self.cursor);
     }
 
-    pub(crate) fn move_next_control_stop(&mut self) {
+    pub fn move_next_control_stop(&mut self) {
         self.clamp_cursor();
         *self.cursor = next_control_boundary(self.text, *self.cursor);
     }
 
-    pub(crate) fn delete_next_hump(&mut self) {
+    pub fn delete_next_hump(&mut self) {
         self.clamp_cursor();
         let end = next_hump_boundary(self.text, *self.cursor);
         self.text.drain(*self.cursor..end);
     }
 
-    pub(crate) fn delete_previous_hump(&mut self) {
+    pub fn delete_previous_hump(&mut self) {
         self.clamp_cursor();
         let start = previous_hump_boundary(self.text, *self.cursor);
         self.text.drain(start..*self.cursor);
         *self.cursor = start;
     }
 
-    pub(crate) fn delete_previous_space_word(&mut self) {
+    pub fn delete_previous_space_word(&mut self) {
         self.clamp_cursor();
         let start = previous_space_word_boundary(self.text, *self.cursor);
         self.text.drain(start..*self.cursor);
         *self.cursor = start;
     }
 
-    pub(crate) fn move_to_start(&mut self) {
+    pub fn move_to_start(&mut self) {
         *self.cursor = 0;
     }
 
-    pub(crate) fn move_to_end(&mut self) {
+    pub fn move_to_end(&mut self) {
         *self.cursor = self.text.len();
     }
 
-    pub(crate) fn delete_to_start(&mut self) {
+    pub fn delete_to_start(&mut self) {
         self.clamp_cursor();
         self.text.drain(..*self.cursor);
         *self.cursor = 0;
     }
 
-    pub(crate) fn delete_to_end(&mut self) {
+    pub fn delete_to_end(&mut self) {
         self.clamp_cursor();
         self.text.truncate(*self.cursor);
     }
 
-    pub(crate) fn clear(&mut self) {
+    pub fn clear(&mut self) {
         self.text.clear();
         *self.cursor = 0;
     }
@@ -177,7 +177,7 @@ impl<'a> TextInputRef<'a> {
     }
 }
 
-pub(crate) fn floor_char_boundary(value: &str, mut cursor: usize) -> usize {
+pub fn floor_char_boundary(value: &str, mut cursor: usize) -> usize {
     cursor = cursor.min(value.len());
     while !value.is_char_boundary(cursor) {
         cursor = cursor.saturating_sub(1);
@@ -186,24 +186,20 @@ pub(crate) fn floor_char_boundary(value: &str, mut cursor: usize) -> usize {
 }
 
 #[derive(Clone, Copy)]
-pub(crate) struct TextInputRenderSpec<'a> {
-    pub(crate) value: &'a str,
-    pub(crate) cursor: usize,
-    pub(crate) placeholder: &'a str,
-    pub(crate) prefix: &'a str,
-    pub(crate) focused: bool,
-    pub(crate) text_style: Style,
-    pub(crate) placeholder_style: Style,
-    pub(crate) prefix_style: Style,
-    pub(crate) cursor_style: Style,
-    pub(crate) background_style: Style,
+pub struct TextInputRenderSpec<'a> {
+    pub value: &'a str,
+    pub cursor: usize,
+    pub placeholder: &'a str,
+    pub prefix: &'a str,
+    pub focused: bool,
+    pub text_style: Style,
+    pub placeholder_style: Style,
+    pub prefix_style: Style,
+    pub cursor_style: Style,
+    pub background_style: Style,
 }
 
-pub(crate) fn render_text_input_line(
-    frame: &mut Frame<'_>,
-    area: Rect,
-    spec: TextInputRenderSpec<'_>,
-) {
+pub fn render_text_input_line(frame: &mut Frame<'_>, area: Rect, spec: TextInputRenderSpec<'_>) {
     let prefix_width = UnicodeWidthStr::width(spec.prefix);
     let content_width = area.width as usize;
     let value_width = content_width.saturating_sub(prefix_width).max(1);
@@ -325,14 +321,14 @@ fn fit_display_width(value: &str, width: usize) -> String {
     result
 }
 
-pub(crate) fn previous_char_boundary(value: &str, cursor: usize) -> Option<usize> {
+pub fn previous_char_boundary(value: &str, cursor: usize) -> Option<usize> {
     value[..cursor]
         .char_indices()
         .last()
         .map(|(index, _)| index)
 }
 
-pub(crate) fn next_char_boundary(value: &str, cursor: usize) -> Option<usize> {
+pub fn next_char_boundary(value: &str, cursor: usize) -> Option<usize> {
     value[cursor..]
         .char_indices()
         .nth(1)
@@ -340,7 +336,7 @@ pub(crate) fn next_char_boundary(value: &str, cursor: usize) -> Option<usize> {
         .or_else(|| (cursor < value.len()).then_some(value.len()))
 }
 
-pub(crate) fn previous_hump_boundary(value: &str, cursor: usize) -> usize {
+pub fn previous_hump_boundary(value: &str, cursor: usize) -> usize {
     let chars = indexed_chars(value);
     let mut index = char_slot_at_byte(&chars, cursor);
     if index == 0 {
@@ -358,7 +354,7 @@ pub(crate) fn previous_hump_boundary(value: &str, cursor: usize) -> usize {
     chars.get(index).map(|(byte, _)| *byte).unwrap_or(0)
 }
 
-pub(crate) fn next_hump_boundary(value: &str, cursor: usize) -> usize {
+pub fn next_hump_boundary(value: &str, cursor: usize) -> usize {
     let chars = indexed_chars(value);
     let mut index = char_slot_at_byte(&chars, cursor);
     if index >= chars.len() {
@@ -381,7 +377,7 @@ pub(crate) fn next_hump_boundary(value: &str, cursor: usize) -> usize {
         .unwrap_or(value.len())
 }
 
-pub(crate) fn previous_control_boundary(value: &str, cursor: usize) -> usize {
+pub fn previous_control_boundary(value: &str, cursor: usize) -> usize {
     let chars = indexed_chars(value);
     let mut index = char_slot_at_byte(&chars, cursor);
     if index == 0 {
@@ -400,7 +396,7 @@ pub(crate) fn previous_control_boundary(value: &str, cursor: usize) -> usize {
     chars.get(index).map(|(byte, _)| *byte).unwrap_or(0)
 }
 
-pub(crate) fn next_control_boundary(value: &str, cursor: usize) -> usize {
+pub fn next_control_boundary(value: &str, cursor: usize) -> usize {
     let chars = indexed_chars(value);
     let mut index = char_slot_at_byte(&chars, cursor);
     if index >= chars.len() {
@@ -422,7 +418,7 @@ pub(crate) fn next_control_boundary(value: &str, cursor: usize) -> usize {
         .unwrap_or(value.len())
 }
 
-pub(crate) fn previous_space_word_boundary(value: &str, cursor: usize) -> usize {
+pub fn previous_space_word_boundary(value: &str, cursor: usize) -> usize {
     let chars = indexed_chars(value);
     let mut index = char_slot_at_byte(&chars, cursor);
     if index == 0 {

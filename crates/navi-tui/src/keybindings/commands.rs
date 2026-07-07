@@ -9,7 +9,7 @@ use crate::session::session_created_at;
 use crate::state::Mode;
 use crate::state::{ChatMessage, ChatRole};
 use crate::state::{ModalKind, SetupPhase};
-use crate::ui::list::SelectListState;
+use crate::ui::SelectListState;
 use crossterm::event::{KeyCode, KeyModifiers};
 use navi_sdk::{AgentEvent, session_title_from_events};
 
@@ -160,13 +160,21 @@ pub(crate) fn run_selected_command(app: &mut TuiApp) -> bool {
             app.selected_attachment_model = 0;
         }
         CommandAction::Memory => {
-            show_notification(app, "Memory", "Use the `memory` tool to search and manage memories. CLI: `navi memory list` or `navi memory search <query>`.");
+            show_notification(
+                app,
+                "Memory",
+                "Use the `memory` tool to search and manage memories. CLI: `navi memory list` or `navi memory search <query>`.",
+            );
         }
         CommandAction::Dream => {
             if app.dreaming {
                 show_notification(app, "Dream", "Dream is already running in the background.");
             } else {
-                show_notification(app, "Dream", "Auto-dream runs every 24h. Manual: `navi memory dream --apply` in a terminal.");
+                show_notification(
+                    app,
+                    "Dream",
+                    "Auto-dream runs every 24h. Manual: `navi memory dream --apply` in a terminal.",
+                );
             }
         }
         _ => super::close_all_modals(app),

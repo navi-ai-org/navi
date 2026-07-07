@@ -10,7 +10,7 @@ use crate::chat::refresh_system_context;
 use crate::dispatch::AsyncEvent;
 use crate::keybindings::{close_active_modal, close_all_modals};
 use crate::runtime::{build_engine, provider_supports_oauth, selected_model_runtime_available};
-use crate::ui::list::SelectListState;
+use crate::ui::SelectListState;
 use crate::{
     TuiApp,
     notifications::{push_diagnostic, show_notification},

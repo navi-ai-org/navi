@@ -517,7 +517,10 @@ fn handle_agent_event(app: &mut TuiApp, event: AgentEvent) {
             }
         }
         AgentEvent::SetGoalRequested { .. } => {}
-        AgentEvent::AutoDreamStarted { hours_since_last, sessions_reviewed } => {
+        AgentEvent::AutoDreamStarted {
+            hours_since_last,
+            sessions_reviewed,
+        } => {
             app.dreaming = true;
             tracing::info!(
                 "auto-dream started: {}h since last, {} sessions",
@@ -525,12 +528,19 @@ fn handle_agent_event(app: &mut TuiApp, event: AgentEvent) {
                 sessions_reviewed
             );
         }
-        AgentEvent::AutoDreamCompleted { marked_stale, duplicates_merged, active_count } => {
+        AgentEvent::AutoDreamCompleted {
+            marked_stale,
+            duplicates_merged,
+            active_count,
+        } => {
             app.dreaming = false;
             show_notification(
                 app,
                 "Dream Completed",
-                &format!("{} stale, {} duplicates merged, {} active", marked_stale, duplicates_merged, active_count),
+                &format!(
+                    "{} stale, {} duplicates merged, {} active",
+                    marked_stale, duplicates_merged, active_count
+                ),
             );
         }
         AgentEvent::AutoDreamFailed { reason } => {

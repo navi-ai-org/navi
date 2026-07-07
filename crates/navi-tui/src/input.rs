@@ -1,5 +1,5 @@
 use crate::app::TuiApp;
-use crate::ui::text_input::{TextInputRef, floor_char_boundary};
+use crate::ui::{TextInputRef, floor_char_boundary};
 use crossterm::event::{KeyCode, KeyModifiers};
 
 const PROMPT_WIDTH: usize = 0;

@@ -19,7 +19,7 @@ use navi_sdk::{
 };
 
 use crate::dispatch::AsyncEvent;
-use crate::runtime::{build_engine, selected_model_runtime_available};
+use crate::runtime::{build_engine, init_registry_store, selected_model_runtime_available};
 use crate::session::load_saved_sessions;
 use crate::state::{
     ChatMessage, ChatRenderCache, ChatRole, ChatView, McpUiState, ModalKind, Mode, Notification,
@@ -27,8 +27,8 @@ use crate::state::{
     SubagentTranscript, ThinkingLevel, UsageUiState,
 };
 use crate::theme::{ThemeId, ThemePalette};
+use crate::ui::ModalStack;
 use crate::ui::interaction::{HitAction, HitRegion, InteractionRegistry};
-use crate::ui::modal::ModalStack;
 
 // ─── app state ─────────────────────────────────────────────────────────────────
 pub struct TuiApp {
@@ -132,7 +132,7 @@ pub struct TuiApp {
     diagnostics: Vec<String>,
     log_path: PathBuf,
     pub(crate) chat_render_cache: RefCell<ChatRenderCache>,
-    pub(crate) interaction_registry: RefCell<InteractionRegistry>,
+    pub(crate) interaction_registry: RefCell<InteractionRegistry<HitAction>>,
     pub(crate) selection: Option<SelectionState>,
     pub(crate) hover_index: Option<usize>,
     pub(crate) theme_id: ThemeId,
@@ -204,6 +204,11 @@ impl TuiApp {
         project_dir: PathBuf,
         task: Option<String>,
     ) -> Result<Self> {
+        // Initialize the thread-local registry store from the SQLite cache before
+        // calling `available_model_options()`. Without this, `provider_catalog()`
+        // falls back to the embedded snapshot (which may lack registry-synced
+        // models like hy3), because `build_engine()` sets the store later.
+        init_registry_store(&loaded_config);
         let models = available_model_options(&loaded_config.config);
         let selected_provider = canonical_provider_id(&loaded_config.config.model.provider);
         let selected_model = models
@@ -473,7 +478,7 @@ impl TuiApp {
             .register(rect, z, label, action)
     }
 
-    pub(crate) fn hit_test(&self, col: u16, row: u16) -> Option<HitRegion> {
+    pub(crate) fn hit_test(&self, col: u16, row: u16) -> Option<HitRegion<HitAction>> {
         self.interaction_registry.borrow().hit(col, row)
     }
 
