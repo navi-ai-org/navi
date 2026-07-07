@@ -15,6 +15,7 @@ use crate::state::ChatRole;
 use crate::theme::*;
 use crate::ui::interaction::HitAction;
 use crate::ui::text_input::floor_char_boundary;
+use navi_core::PermissionMode;
 
 const INPUT_TOP_PADDING_ROWS: u16 = 1;
 const FOOTER_BOTTOM_PADDING_ROWS: u16 = 1;
@@ -99,6 +100,21 @@ pub(super) fn render_input(frame: &mut Frame<'_>, app: &mut TuiApp, area: Rect) 
         footer_area,
     );
 
+    if !app.queued_user_messages.is_empty() {
+        let queued_width = queued_footer_label(app).len() as u16;
+        app.register_hit(
+            Rect::new(
+                footer_area.x,
+                footer_area.y,
+                queued_width.min(footer_area.width),
+                1,
+            ),
+            4,
+            "open message queue",
+            HitAction::OpenMessageQueue,
+        );
+    }
+
     if !app.pending_questions.is_empty() {
         app.register_hit(
             footer_area,
@@ -118,7 +134,9 @@ pub(super) fn composer_height(app: &TuiApp, input_width: usize) -> u16 {
 }
 
 pub(super) fn composer_hint_height(app: &TuiApp) -> u16 {
-    if show_composer_hint(app) { 1 } else { 0 }
+    let hint = if show_composer_hint(app) { 1 } else { 0 };
+    let goal = if app.goal_state.is_some() { 1 } else { 0 };
+    hint + goal
 }
 
 pub(super) fn composer_activity_height(app: &TuiApp) -> u16 {
@@ -155,22 +173,32 @@ pub(super) fn render_input_activity(frame: &mut Frame<'_>, app: &TuiApp, area: R
 }
 
 pub(super) fn render_input_hint(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
-    if area.height == 0 || !show_composer_hint(app) {
+    if area.height == 0 {
         return;
     }
 
-    let hint_area = Rect::new(
-        area.x,
-        area.y + area.height.saturating_sub(1),
-        area.width,
-        1,
-    );
-    frame.render_widget(
-        Paragraph::new(composer_hint_line(hint_area.width as usize))
-            .alignment(Alignment::Right)
-            .style(Style::default().bg(bg())),
-        hint_area,
-    );
+    if let Some(goal_line) = composer_goal_line(app, area.width as usize) {
+        let goal_area = Rect::new(area.x, area.y, area.width, 1);
+        frame.render_widget(
+            Paragraph::new(goal_line).style(Style::default().bg(bg())),
+            goal_area,
+        );
+    }
+
+    if show_composer_hint(app) {
+        let hint_area = Rect::new(
+            area.x,
+            area.y + area.height.saturating_sub(1),
+            area.width,
+            1,
+        );
+        frame.render_widget(
+            Paragraph::new(composer_hint_line(hint_area.width as usize))
+                .alignment(Alignment::Right)
+                .style(Style::default().bg(bg())),
+            hint_area,
+        );
+    }
 }
 
 fn show_composer_hint(_app: &TuiApp) -> bool {
@@ -187,6 +215,25 @@ fn composer_hint_line(width: usize) -> Line<'static> {
         "ctrl+p commands · ctrl+enter send"
     };
     Line::from(vec![Span::styled(hint, style)])
+}
+
+fn composer_goal_line(app: &TuiApp, width: usize) -> Option<Line<'static>> {
+    let goal = app.goal_state.as_ref()?;
+    let label = goal
+        .short_description
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or(&goal.objective);
+    let mut text_value = format!("goal {}", label.trim());
+    if let Some(budget) = goal.token_budget {
+        let percent = (goal.tokens_used as f64 / budget as f64 * 100.0).round() as i32;
+        text_value.push_str(&format!(" ({percent}%)"));
+    }
+    let available = width.saturating_sub(4).max(1);
+    Some(Line::from(vec![Span::styled(
+        format!("  {}", fit_display_width(&text_value, available)),
+        Style::default().fg(text()).bg(bg()),
+    )]))
 }
 
 pub(crate) fn composer_panel_bg(_app: &TuiApp) -> ratatui::style::Color {
@@ -392,18 +439,33 @@ fn input_lines(app: &TuiApp, width: usize) -> (Vec<Line<'static>>, usize, usize)
 
 fn composer_footer_line(app: &TuiApp, width: usize) -> Line<'static> {
     if !app.pending_questions.is_empty() {
-        return Line::from(vec![
-            Span::styled("Question pending", Style::default().fg(code_const())),
-            Span::styled(" · ", Style::default().fg(ghost())),
-            Span::styled(
-                "ctrl+enter",
-                Style::default().fg(signal()).add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(" reopen", Style::default().fg(muted())),
-        ]);
+        return footer_with_permission(
+            vec![
+                Span::styled("Question pending", Style::default().fg(code_const())),
+                Span::styled(" · ", Style::default().fg(ghost())),
+                Span::styled(
+                    "ctrl+enter",
+                    Style::default().fg(signal()).add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(" reopen", Style::default().fg(muted())),
+            ],
+            app,
+            width,
+        );
     }
 
     let mut spans: Vec<Span<'static>> = Vec::new();
+
+    // Show queued message indicator.
+    if !app.queued_user_messages.is_empty() {
+        spans.push(Span::styled(
+            queued_footer_label(app),
+            Style::default()
+                .fg(code_const())
+                .add_modifier(Modifier::BOLD),
+        ));
+        spans.push(Span::styled(" · ", Style::default().fg(ghost())));
+    }
 
     // Show bg model running indicator
     if app.bg_models_running > 0 {
@@ -431,19 +493,23 @@ fn composer_footer_line(app: &TuiApp, width: usize) -> Line<'static> {
 
     if width < 48 {
         let available_model_width = width.saturating_sub(display_width(&context) + 3).max(1);
-        return Line::from(vec![
-            Span::styled(
-                fit_display_width(&model, available_model_width),
-                Style::default().fg(code_type()),
-            ),
-            Span::styled(" · ", Style::default().fg(ghost())),
-            Span::styled(
-                context,
-                Style::default()
-                    .fg(code_number())
-                    .add_modifier(Modifier::BOLD),
-            ),
-        ]);
+        return footer_with_permission(
+            vec![
+                Span::styled(
+                    fit_display_width(&model, available_model_width),
+                    Style::default().fg(code_type()),
+                ),
+                Span::styled(" · ", Style::default().fg(ghost())),
+                Span::styled(
+                    context,
+                    Style::default()
+                        .fg(code_number())
+                        .add_modifier(Modifier::BOLD),
+                ),
+            ],
+            app,
+            width,
+        );
     }
 
     spans.push(Span::styled(model, Style::default().fg(code_type())));
@@ -467,7 +533,105 @@ fn composer_footer_line(app: &TuiApp, width: usize) -> Line<'static> {
             .add_modifier(Modifier::BOLD),
     ));
 
-    Line::from(spans)
+    footer_with_permission(spans, app, width)
+}
+
+fn queued_footer_label(app: &TuiApp) -> String {
+    format!("{} queued", app.queued_user_messages.len())
+}
+
+fn footer_with_permission(
+    mut left: Vec<Span<'static>>,
+    app: &TuiApp,
+    width: usize,
+) -> Line<'static> {
+    let permission = permission_mode_spans(app);
+    let permission_width = spans_display_width(&permission);
+    let left_width = spans_display_width(&left);
+
+    if permission_width == 0 || width < permission_width + 8 {
+        return Line::from(left);
+    }
+
+    if left_width + permission_width < width {
+        left.push(Span::styled(
+            " ".repeat(width - left_width - permission_width),
+            Style::default().fg(ghost()),
+        ));
+        left.extend(permission);
+        return Line::from(left);
+    }
+
+    let allowed_left_width = width.saturating_sub(permission_width + 1);
+    let left_text = spans_to_text(&left);
+    Line::from(
+        vec![
+            Span::styled(
+                fit_display_width(&left_text, allowed_left_width),
+                Style::default().fg(muted()),
+            ),
+            Span::styled(" ", Style::default().fg(ghost())),
+        ]
+        .into_iter()
+        .chain(permission)
+        .collect::<Vec<_>>(),
+    )
+}
+
+fn permission_mode_spans(app: &TuiApp) -> Vec<Span<'static>> {
+    let mode = current_permission_mode(app);
+    let label = permission_mode_label(mode);
+    let label_color = if mode == PermissionMode::Yolo {
+        red()
+    } else {
+        signal()
+    };
+    let mut spans = vec![Span::styled(
+        label,
+        Style::default()
+            .fg(label_color)
+            .add_modifier(Modifier::BOLD),
+    )];
+
+    if app.dreaming {
+        spans.push(Span::raw("  "));
+        spans.push(Span::styled(
+            "dreaming…",
+            Style::default().fg(signal()).add_modifier(Modifier::ITALIC),
+        ));
+    }
+
+    spans
+}
+
+fn current_permission_mode(app: &TuiApp) -> PermissionMode {
+    if app.yolo_mode {
+        PermissionMode::Yolo
+    } else {
+        app.loaded_config.config.security.permission_mode
+    }
+}
+
+fn permission_mode_label(mode: PermissionMode) -> &'static str {
+    match mode {
+        PermissionMode::Restricted => "restricted",
+        PermissionMode::AcceptEdits => "accept-edits",
+        PermissionMode::Yolo => "yolo",
+    }
+}
+
+fn spans_display_width(spans: &[Span<'_>]) -> usize {
+    spans
+        .iter()
+        .map(|span| display_width(span.content.as_ref()))
+        .sum()
+}
+
+fn spans_to_text(spans: &[Span<'_>]) -> String {
+    spans
+        .iter()
+        .map(|span| span.content.as_ref())
+        .collect::<String>()
 }
 
 fn fit_display_width(value: &str, width: usize) -> String {
@@ -601,6 +765,58 @@ mod tests {
         assert!(!text.contains("OpenAI"));
         assert!(!text.contains("adaptive"));
         assert!(display_width(&text) <= 34);
+    }
+
+    #[test]
+    fn composer_footer_shows_yolo_permission_in_red() {
+        let mut app = crate::tests::test_app("");
+        app.yolo_mode = true;
+
+        let line = composer_footer_line(&app, 96);
+        let yolo = line
+            .spans
+            .iter()
+            .find(|span| span.content.as_ref() == "yolo")
+            .expect("yolo permission label");
+
+        assert_eq!(yolo.style.fg, Some(red()));
+    }
+
+    #[test]
+    fn composer_goal_line_uses_short_description() {
+        let mut app = crate::tests::test_app("");
+        app.goal_state = Some(crate::state::GoalUiState {
+            objective: "Implement a very long detailed objective".to_string(),
+            short_description: Some("Fix modal layout".to_string()),
+            ..Default::default()
+        });
+
+        let line = composer_goal_line(&app, 80).expect("goal line");
+        let text = line_text(&line);
+
+        assert!(text.contains("goal Fix modal layout"));
+        assert!(!text.contains("very long detailed"));
+    }
+
+    #[test]
+    fn queued_footer_label_registers_click_hit() {
+        let mut app = crate::tests::test_app("");
+        app.queued_user_messages
+            .push_back(crate::state::QueuedUserMessage {
+                text: "queued task".to_string(),
+                images: Vec::new(),
+            });
+        let mut terminal = Terminal::new(TestBackend::new(72, 8)).expect("terminal");
+
+        terminal
+            .draw(|frame| render_input(frame, &mut app, Rect::new(0, 0, 72, 6)))
+            .expect("draw");
+
+        let hit = app.hit_test(4, 4).expect("queued label hit");
+        assert!(matches!(
+            hit.action,
+            crate::ui::interaction::HitAction::OpenMessageQueue
+        ));
     }
 
     #[test]

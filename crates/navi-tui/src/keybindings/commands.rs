@@ -160,10 +160,14 @@ pub(crate) fn run_selected_command(app: &mut TuiApp) -> bool {
             app.selected_attachment_model = 0;
         }
         CommandAction::Memory => {
-            show_notification(app, "Memory", "Use the `memory` tool to manage memories. Run `navi memory init` to set up.");
+            show_notification(app, "Memory", "Use the `memory` tool to search and manage memories. CLI: `navi memory list` or `navi memory search <query>`.");
         }
         CommandAction::Dream => {
-            show_notification(app, "Dream", "Run `navi memory dream --apply` in a terminal to consolidate memories.");
+            if app.dreaming {
+                show_notification(app, "Dream", "Dream is already running in the background.");
+            } else {
+                show_notification(app, "Dream", "Auto-dream runs every 24h. Manual: `navi memory dream --apply` in a terminal.");
+            }
         }
         _ => super::close_all_modals(app),
     }
