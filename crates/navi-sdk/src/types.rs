@@ -269,6 +269,7 @@ pub struct NaviRuntimeTooling {
     pub warnings: Vec<String>,
     pub agent_policies: Vec<String>,
     pub tui_components: Vec<String>,
+    pub tui_panels: Vec<Box<dyn navi_plugin_api::TuiComponent>>,
     pub(crate) _plugins: Vec<LoadedPlugin>,
 }
 

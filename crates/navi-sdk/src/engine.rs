@@ -223,6 +223,7 @@ pub struct NaviSession {
     question_resolver: navi_core::QuestionResolver,
     turn_canceller: navi_core::TurnCanceller,
     tui_components: Vec<String>,
+    tui_panels: std::sync::Mutex<Vec<Box<dyn navi_plugin_api::TuiComponent>>>,
     mcp: LoadedMcpServers,
     _plugins: Vec<LoadedPlugin>,
 }
@@ -354,6 +355,7 @@ impl NaviEngine {
 
         let runtime_tool_executor = tool_executor.tool_executor;
         let tui_components = tool_executor.tui_components;
+        let tui_panels = tool_executor.tui_panels;
         let plugins = tool_executor._plugins;
         let mut runtime = AgentRuntime::new(AgentRuntimeOptions {
             loaded_config: loaded_config.clone(),
@@ -395,6 +397,7 @@ impl NaviEngine {
                     question_resolver,
                     turn_canceller,
                     tui_components,
+                    tui_panels: std::sync::Mutex::new(tui_panels),
                     mcp,
                     _plugins: plugins,
                 }),
@@ -757,6 +760,20 @@ impl NaviEngine {
     pub fn list_tui_components(&self, session_id: &str) -> Result<Vec<String>> {
         let session = self.session(session_id)?;
         Ok(session.tui_components.clone())
+    }
+
+    /// Takes ownership of TUI component panels registered by native plugins.
+    ///
+    /// Returns `Box<dyn TuiComponent>` instances that the TUI can register
+    /// with its `PanelManager`. Each component is only available once —
+    /// subsequent calls return an empty vector.
+    pub fn take_tui_panels(
+        &self,
+        session_id: &str,
+    ) -> Result<Vec<Box<dyn navi_plugin_api::TuiComponent>>> {
+        let session = self.session(session_id)?;
+        let mut panels = session.tui_panels.lock().unwrap_or_else(|e| e.into_inner());
+        Ok(panels.drain(..).collect())
     }
 
     // ── Auto-memory API ─────────────────────────────────────────────────

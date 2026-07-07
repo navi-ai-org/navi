@@ -142,6 +142,8 @@ pub struct PluginLoadReport {
     pub tools: Vec<String>,
     pub agent_policies: Vec<String>,
     pub tui_components: Vec<String>,
+    #[cfg(feature = "tui")]
+    pub tui_panels: Vec<Box<dyn navi_plugin_api::TuiComponent>>,
 }
 
 pub fn load_configured_plugins(
@@ -185,6 +187,10 @@ pub fn load_configured_plugins_with_options(
                         }
                         report.agent_policies.extend(registry.agent_policies);
                         report.tui_components.extend(registry.tui_components);
+                        #[cfg(feature = "tui")]
+                        {
+                            report.tui_panels.extend(registry.tui_panels);
+                        }
                         report.loaded.push(metadata);
                         report.loaded_plugins.push(plugin);
                     }

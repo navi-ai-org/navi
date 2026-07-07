@@ -76,6 +76,12 @@ fn render_inner(frame: &mut Frame<'_>, app: &mut TuiApp) {
         fill_modal_scrim(frame, content_area);
     }
 
+    // Load plugin-registered TUI panels once after the session is started.
+    if !app.plugin_panels_loaded && !app.session_id.as_str().is_empty() {
+        crate::panels::load_plugin_panels(app);
+        app.plugin_panels_loaded = true;
+    }
+
     // Render modals via the PanelManager (copland) for all standard modes.
     // Special cases that need &mut TuiApp or extra params are handled below.
     crate::panels::render_overlays(frame, app, area);

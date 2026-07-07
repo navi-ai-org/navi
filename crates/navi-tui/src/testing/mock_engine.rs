@@ -382,6 +382,13 @@ impl EngineDriver for MockEngine {
         Ok(false)
     }
 
+    fn take_tui_panels(
+        &self,
+        _session_id: &str,
+    ) -> Result<Vec<Box<dyn navi_plugin_api::TuiComponent>>> {
+        Ok(Vec::new())
+    }
+
     fn list_mcp_servers(&self, _session_id: &str) -> Result<Vec<McpServerInfo>> {
         Ok(vec![])
     }
