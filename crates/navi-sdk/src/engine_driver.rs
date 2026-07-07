@@ -130,6 +130,15 @@ pub trait EngineDriver: Send + Sync {
 
     /// Delete a saved session. Returns `true` if a session was removed.
     fn delete_saved_session(&self, session_id: &str) -> Result<bool>;
+
+    /// Take ownership of TUI component panels registered by native plugins.
+    ///
+    /// Returns `Box<dyn TuiComponent>` instances that the TUI can register
+    /// with its `PanelManager`. Each component is only available once.
+    fn take_tui_panels(
+        &self,
+        session_id: &str,
+    ) -> Result<Vec<Box<dyn navi_plugin_api::TuiComponent>>>;
 }
 
 // Blanket impl delegating to the inherent methods on `NaviEngine`.
@@ -221,6 +230,13 @@ impl EngineDriver for crate::NaviEngine {
 
     fn delete_saved_session(&self, session_id: &str) -> Result<bool> {
         crate::NaviEngine::delete_saved_session(self, session_id)
+    }
+
+    fn take_tui_panels(
+        &self,
+        session_id: &str,
+    ) -> Result<Vec<Box<dyn navi_plugin_api::TuiComponent>>> {
+        crate::NaviEngine::take_tui_panels(self, session_id)
     }
 
     fn list_mcp_servers(&self, session_id: &str) -> Result<Vec<McpServerInfo>> {

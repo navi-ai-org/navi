@@ -86,6 +86,7 @@ pub(crate) fn build_local_tooling(
         warnings,
         agent_policies,
         tui_components,
+        tui_panels: plugin_report.tui_panels,
         _plugins: plugin_report.loaded_plugins,
     })
 }

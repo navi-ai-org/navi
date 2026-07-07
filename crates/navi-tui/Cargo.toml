@@ -22,6 +22,7 @@ navi-sdk.workspace = true
 navi-core.workspace = true
 navi-plugin-manifest.workspace = true
 navi-plugin-broker.workspace = true
+navi-plugin-api = { workspace = true, features = ["tui"] }
 base64.workspace = true
 toml.workspace = true
 

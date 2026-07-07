@@ -380,3 +380,67 @@ impl Panel for ModalPanel {
         self.z
     }
 }
+
+/// Adapter that wraps a plugin's `TuiComponent` as a copland `Panel`.
+///
+/// This is the bridge between the plugin API's `TuiComponent` trait and
+/// copland's `Panel` trait, allowing plugin-registered components to be
+/// rendered by the `PanelManager`.
+pub struct PluginPanelAdapter {
+    inner: Box<dyn navi_plugin_api::TuiComponent>,
+}
+
+impl PluginPanelAdapter {
+    pub fn new(component: Box<dyn navi_plugin_api::TuiComponent>) -> Self {
+        Self { inner: component }
+    }
+}
+
+impl Panel for PluginPanelAdapter {
+    fn id(&self) -> &str {
+        self.inner.id()
+    }
+
+    fn render(&mut self, frame: &mut Frame, area: Rect, ctx: &dyn PanelContext) {
+        self.inner.render(frame, area, ctx);
+    }
+
+    fn handle_key(&self, key: &KeyEvent, ctx: &dyn PanelContext) -> KeyOutcome {
+        // TuiComponent::handle_key takes &mut self, but Panel::handle_key takes &self.
+        // For now, we ignore key events from plugin panels.
+        // This will be addressed when the key routing system is migrated.
+        let _ = (key, ctx);
+        KeyOutcome::Ignored
+    }
+
+    fn preferred_size(&self) -> PanelSize {
+        self.inner.preferred_size()
+    }
+
+    fn is_visible(&self) -> bool {
+        self.inner.is_visible()
+    }
+
+    fn z_order(&self) -> i16 {
+        self.inner.z_order()
+    }
+}
+
+/// Load TUI component panels from native plugins and register them
+/// with the TUI's `PanelManager`.
+///
+/// This should be called after the session is started. It calls
+/// `NaviEngine::take_tui_panels` to get plugin-registered components
+/// and wraps them in `PluginPanelAdapter` for the `PanelManager`.
+pub fn load_plugin_panels(app: &mut TuiApp) {
+    if app.session_id.as_str().is_empty() {
+        return;
+    }
+    let engine = app.engine();
+    if let Ok(panels) = engine.take_tui_panels(app.session_id.as_str()) {
+        for component in panels {
+            app.panel_manager
+                .add_overlay(Box::new(PluginPanelAdapter::new(component)));
+        }
+    }
+}
