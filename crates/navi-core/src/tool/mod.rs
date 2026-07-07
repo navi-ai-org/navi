@@ -25,11 +25,10 @@ use builtin::BranchRaceTool;
 use builtin::{
     AppendNoteTool, BashTool, CodeEditTool, CodeExecTool, CodeReadTool, ContextRemainingTool,
     CurrentTimeTool, HistoryOpsTool, InitSessionTool, MarkFeatureDoneTool, MemoryTool,
-    NewContextWindowTool,
-    PackageManagerTool, PlanTool, ProcessTool, QuestionTool, ReadTool, RepoIntelligenceAction,
-    RepoIntelligenceTool, RequestUserInputTool, RuntimeInfoTool, SandboxTool, SearchTool,
-    SetGoalTool, SleepTool, ToolSearchTool, VerifierTool, ViewImageTool, WriteTool,
-    builtin_metadata, truncate_tool_result,
+    NewContextWindowTool, PackageManagerTool, PlanTool, ProcessTool, QuestionTool, ReadTool,
+    RepoIntelligenceAction, RepoIntelligenceTool, RequestUserInputTool, RuntimeInfoTool,
+    SandboxTool, SearchTool, SetGoalTool, SleepTool, ToolSearchTool, VerifierTool, ViewImageTool,
+    WriteTool, builtin_metadata, truncate_tool_result,
 };
 
 pub use builtin::{AgentProfile, ApprovalMode, ProviderBuilderFn, RepoExploreTool, SubagentTool};

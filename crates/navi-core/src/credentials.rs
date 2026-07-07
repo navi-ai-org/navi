@@ -1,5 +1,5 @@
 use crate::ProviderId;
-use crate::config::{ProviderConfig, model_can_run_publicly};
+use crate::config::{ProviderConfig, canonical_provider_id, model_can_run_publicly};
 use anyhow::{Context, Result};
 use directories::BaseDirs;
 use serde::{Deserialize, Serialize};
@@ -200,10 +200,11 @@ impl CredentialStore {
 
     /// Reads the stored API key for the given provider, or `None` if not found.
     pub fn get_api_key(&self, provider_id: &str) -> Option<String> {
+        let provider_id = credential_provider_key(provider_id);
         let content = fs::read_to_string(&self.path).ok()?;
         let file: CredentialsFile = toml::from_str(&content).ok()?;
         file.providers
-            .get(provider_id)
+            .get(&provider_id)
             .and_then(ProviderCredentials::default_api_key)
     }
 
@@ -212,26 +213,29 @@ impl CredentialStore {
     /// OAuth credentials obtained through OpenAI browser login are excluded:
     /// they are account/connector tokens, not OpenAI Platform API keys.
     pub fn get_model_api_key(&self, provider_id: &str) -> Option<String> {
+        let provider_id = credential_provider_key(provider_id);
         let content = fs::read_to_string(&self.path).ok()?;
         let file: CredentialsFile = toml::from_str(&content).ok()?;
         file.providers
-            .get(provider_id)
+            .get(&provider_id)
             .and_then(ProviderCredentials::default_model_api_key)
     }
 
     /// Returns oauth_api_kind metadata for a stored OAuth token, or `None`.
     pub fn get_oauth_api_kind(&self, provider_id: &str) -> Option<String> {
+        let provider_id = credential_provider_key(provider_id);
         let content = fs::read_to_string(&self.path).ok()?;
         let file: CredentialsFile = toml::from_str(&content).ok()?;
         file.providers
-            .get(provider_id)
+            .get(&provider_id)
             .and_then(ProviderCredentials::default_oauth_api_kind)
     }
 
     pub fn get_api_key_for_account(&self, provider_id: &str, account_id: &str) -> Option<String> {
+        let provider_id = credential_provider_key(provider_id);
         let content = fs::read_to_string(&self.path).ok()?;
         let file: CredentialsFile = toml::from_str(&content).ok()?;
-        let credentials = file.providers.get(provider_id)?;
+        let credentials = file.providers.get(&provider_id)?;
         credentials.account_api_key(account_id)
     }
 
@@ -240,13 +244,15 @@ impl CredentialStore {
         provider_id: &str,
         account_id: &str,
     ) -> Option<String> {
+        let provider_id = credential_provider_key(provider_id);
         let content = fs::read_to_string(&self.path).ok()?;
         let file: CredentialsFile = toml::from_str(&content).ok()?;
-        let credentials = file.providers.get(provider_id)?;
+        let credentials = file.providers.get(&provider_id)?;
         credentials.account_model_api_key(account_id)
     }
 
     pub fn has_oauth_credential(&self, provider_id: &str) -> bool {
+        let provider_id = credential_provider_key(provider_id);
         let content = match fs::read_to_string(&self.path) {
             Ok(content) => content,
             Err(_) => return false,
@@ -256,16 +262,17 @@ impl CredentialStore {
             Err(_) => return false,
         };
         file.providers
-            .get(provider_id)
+            .get(&provider_id)
             .is_some_and(ProviderCredentials::has_oauth_credential)
     }
 
     pub fn get_project_account(&self, project_dir: &Path, provider_id: &str) -> Option<String> {
+        let provider_id = credential_provider_key(provider_id);
         let content = fs::read_to_string(&self.path).ok()?;
         let file: CredentialsFile = toml::from_str(&content).ok()?;
         file.project_accounts
             .get(&project_account_key(project_dir))
-            .and_then(|providers| providers.get(provider_id))
+            .and_then(|providers| providers.get(&provider_id))
             .cloned()
     }
 
@@ -275,20 +282,24 @@ impl CredentialStore {
         provider_id: &str,
         account_id: &str,
     ) -> Result<()> {
+        let provider_id = credential_provider_key(provider_id);
         ensure_private_parent_dir(&self.path)?;
         let mut file = self.load_file()?;
         let has_account = file
             .providers
-            .get(provider_id)
+            .get(&provider_id)
             .and_then(|credentials| credentials.account_api_key(account_id))
             .is_some();
         if !has_account {
             anyhow::bail!("unknown account '{account_id}' for provider '{provider_id}'");
         }
+        if let Some(credentials) = file.providers.get_mut(&provider_id) {
+            credentials.default_account = Some(account_id.to_string());
+        }
         file.project_accounts
             .entry(project_account_key(project_dir))
             .or_default()
-            .insert(provider_id.to_string(), account_id.to_string());
+            .insert(provider_id, account_id.to_string());
         let content = toml::to_string_pretty(&file).context("failed to serialize credentials")?;
         self.write_content(&content)
     }
@@ -298,17 +309,19 @@ impl CredentialStore {
         provider_id: &str,
         project_dir: Option<&Path>,
     ) -> Result<Vec<CredentialAccountInfo>> {
+        let provider_id = credential_provider_key(provider_id);
         let file = self.load_file()?;
-        let Some(credentials) = file.providers.get(provider_id) else {
+        let Some(credentials) = file.providers.get(&provider_id) else {
             return Ok(Vec::new());
         };
         let default_account = credentials.default_account_id();
         let project_account = project_dir.and_then(|path| {
             file.project_accounts
                 .get(&project_account_key(path))
-                .and_then(|providers| providers.get(provider_id))
+                .and_then(|providers| providers.get(&provider_id))
                 .cloned()
         });
+        let selected_account = project_account.as_deref().or(default_account.as_deref());
         let mut accounts = credentials.accounts.clone();
         if accounts.is_empty() && !credentials.api_key.is_empty() {
             accounts.insert(
@@ -330,7 +343,7 @@ impl CredentialStore {
             .map(|(account_id, account)| CredentialAccountInfo {
                 label: account.label.unwrap_or_else(|| account_id.clone()),
                 is_default: default_account.as_deref() == Some(account_id.as_str()),
-                is_project_selected: project_account.as_deref() == Some(account_id.as_str()),
+                is_project_selected: selected_account == Some(account_id.as_str()),
                 commandcode: account.commandcode,
                 account_id,
             })
@@ -339,6 +352,7 @@ impl CredentialStore {
 
     /// Returns `true` if the user explicitly ignored this provider (e.g. by deleting an env-provided key).
     pub fn is_ignored(&self, provider_id: &str) -> bool {
+        let provider_id = credential_provider_key(provider_id);
         let content = match fs::read_to_string(&self.path) {
             Ok(c) => c,
             Err(_) => return false,
@@ -347,7 +361,7 @@ impl CredentialStore {
             Ok(f) => f,
             Err(_) => return false,
         };
-        file.ignored_providers.contains(&provider_id.to_string())
+        file.ignored_providers.contains(&provider_id)
     }
 
     /// Returns the list of provider ids that have stored API keys.
@@ -373,13 +387,14 @@ impl CredentialStore {
     /// Stores an API key for the given provider, creating the credentials file
     /// if needed.
     pub fn set_api_key(&self, provider_id: &str, api_key: &str) -> Result<()> {
+        let provider_id = credential_provider_key(provider_id);
         ensure_private_parent_dir(&self.path)?;
 
         let mut file = self.load_file()?;
-        file.ignored_providers.retain(|p| p != provider_id);
+        file.ignored_providers.retain(|p| p != &provider_id);
 
         file.providers.insert(
-            provider_id.to_string(),
+            provider_id,
             ProviderCredentials {
                 api_key: api_key.to_string(),
                 commandcode: None,
@@ -410,13 +425,14 @@ impl CredentialStore {
         api_key: &str,
         oauth_api_kind: &str,
     ) -> Result<()> {
+        let provider_id = credential_provider_key(provider_id);
         ensure_private_parent_dir(&self.path)?;
 
         let mut file = self.load_file()?;
-        file.ignored_providers.retain(|p| p != provider_id);
+        file.ignored_providers.retain(|p| p != &provider_id);
 
         file.providers.insert(
-            provider_id.to_string(),
+            provider_id,
             ProviderCredentials {
                 api_key: api_key.to_string(),
                 commandcode: None,
@@ -447,12 +463,13 @@ impl CredentialStore {
         api_key: &str,
         metadata: CommandCodeCredentialMetadata,
     ) -> Result<String> {
+        let provider_id = credential_provider_key(provider_id);
         ensure_private_parent_dir(&self.path)?;
 
         let mut file = self.load_file()?;
-        file.ignored_providers.retain(|p| p != provider_id);
+        file.ignored_providers.retain(|p| p != &provider_id);
         let account_id = commandcode_account_id(&metadata);
-        let credentials = file.providers.entry(provider_id.to_string()).or_default();
+        let credentials = file.providers.entry(provider_id).or_default();
         credentials.accounts.insert(
             account_id.clone(),
             CredentialAccount {
@@ -476,16 +493,18 @@ impl CredentialStore {
         &self,
         provider_id: &str,
     ) -> Option<CommandCodeCredentialMetadata> {
+        let provider_id = credential_provider_key(provider_id);
         let content = fs::read_to_string(&self.path).ok()?;
         let file: CredentialsFile = toml::from_str(&content).ok()?;
         file.providers
-            .get(provider_id)
+            .get(&provider_id)
             .and_then(ProviderCredentials::default_commandcode_metadata)
     }
 
     pub fn delete_credential_account(&self, provider_id: &str, account_id: &str) -> Result<bool> {
+        let provider_id = credential_provider_key(provider_id);
         let mut file = self.load_file().unwrap_or_default();
-        let Some(credentials) = file.providers.get_mut(provider_id) else {
+        let Some(credentials) = file.providers.get_mut(&provider_id) else {
             return Ok(false);
         };
         let removed = credentials.accounts.remove(account_id).is_some();
@@ -497,10 +516,10 @@ impl CredentialStore {
         }
         for providers in file.project_accounts.values_mut() {
             if providers
-                .get(provider_id)
+                .get(&provider_id)
                 .is_some_and(|selected| selected == account_id)
             {
-                providers.remove(provider_id);
+                providers.remove(&provider_id);
             }
         }
         ensure_private_parent_dir(&self.path)?;
@@ -512,14 +531,15 @@ impl CredentialStore {
     /// Deletes a stored API key and adds the provider to the ignored list.
     /// Returns `true` if a stored key was removed.
     pub fn delete_api_key(&self, provider_id: &str) -> Result<bool> {
+        let provider_id = credential_provider_key(provider_id);
         let mut file = self.load_file().unwrap_or_default();
-        let removed = file.providers.remove(provider_id).is_some();
+        let removed = file.providers.remove(&provider_id).is_some();
         for providers in file.project_accounts.values_mut() {
-            providers.remove(provider_id);
+            providers.remove(&provider_id);
         }
         let mut ignored = false;
-        if !file.ignored_providers.contains(&provider_id.to_string()) {
-            file.ignored_providers.push(provider_id.to_string());
+        if !file.ignored_providers.contains(&provider_id) {
+            file.ignored_providers.push(provider_id);
             ignored = true;
         }
 
@@ -770,6 +790,10 @@ fn project_account_key(project_dir: &Path) -> String {
         .unwrap_or_else(|_| project_dir.to_path_buf())
         .to_string_lossy()
         .to_string()
+}
+
+fn credential_provider_key(provider_id: &str) -> String {
+    canonical_provider_id(provider_id).to_string()
 }
 
 fn commandcode_account_id(metadata: &CommandCodeCredentialMetadata) -> String {
@@ -1194,8 +1218,102 @@ mod tests {
             )
             .expect("save commandcode credential");
         let result = resolve_provider_api_key(&store, &provider, ProviderId::COMMANDCODE);
+        let expected = std::env::var("COMMAND_CODE_API_KEY")
+            .ok()
+            .filter(|key| !key.is_empty())
+            .or_else(|| {
+                std::env::var("CMD_API_KEY")
+                    .ok()
+                    .filter(|key| !key.is_empty())
+            })
+            .unwrap_or_else(|| "cmd-stored-key".to_string());
 
-        assert_eq!(result.as_deref(), Some("cmd-stored-key"));
+        assert_eq!(result.as_deref(), Some(expected.as_str()));
+    }
+
+    #[test]
+    fn selected_provider_account_persists_as_project_and_default_account() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let data_dir = tempdir.path().join("data");
+        let project_dir = tempdir.path().join("project");
+        fs::create_dir_all(&project_dir).expect("project dir");
+        let store = CredentialStore::new(data_dir.clone());
+        let provider = ProviderConfig {
+            id: ProviderId::COMMANDCODE.to_string(),
+            label: "Command Code".to_string(),
+            description: String::new(),
+            kind: ProviderKind::OpenAiChatCompletions,
+            api_key_env: "NAVI_NONEXISTENT_ENV_VAR_98772".to_string(),
+            base_url: Some("https://api.commandcode.ai".to_string()),
+            ..Default::default()
+        };
+
+        let first = store
+            .set_commandcode_credential(
+                ProviderId::COMMANDCODE,
+                "cmd-first-key",
+                CommandCodeCredentialMetadata {
+                    user_id: "user-1".to_string(),
+                    user_name: "first-user".to_string(),
+                    key_name: "NAVI".to_string(),
+                    authenticated_at: "123".to_string(),
+                },
+            )
+            .expect("save first commandcode credential");
+        let second = store
+            .set_commandcode_credential(
+                ProviderId::COMMANDCODE,
+                "cmd-second-key",
+                CommandCodeCredentialMetadata {
+                    user_id: "user-2".to_string(),
+                    user_name: "second-user".to_string(),
+                    key_name: "NAVI".to_string(),
+                    authenticated_at: "456".to_string(),
+                },
+            )
+            .expect("save second commandcode credential");
+
+        assert_ne!(first, second);
+        store
+            .set_project_account(&project_dir, ProviderId::COMMANDCODE, &second)
+            .expect("select project account");
+
+        let reopened = CredentialStore::new(data_dir);
+        assert_eq!(
+            reopened.get_project_account(&project_dir, ProviderId::COMMANDCODE),
+            Some(second.clone())
+        );
+        assert_eq!(
+            reopened.get_api_key(ProviderId::COMMANDCODE).as_deref(),
+            Some("cmd-second-key")
+        );
+        assert_eq!(
+            resolve_provider_api_key_for_project(
+                &reopened,
+                &provider,
+                ProviderId::COMMANDCODE,
+                &project_dir
+            )
+            .as_deref(),
+            Some("cmd-second-key")
+        );
+
+        let accounts = reopened
+            .list_credential_accounts(ProviderId::COMMANDCODE, Some(&project_dir))
+            .expect("list accounts");
+        assert!(
+            accounts
+                .iter()
+                .any(|account| account.account_id == second && account.is_project_selected)
+        );
+        let accounts_without_project = reopened
+            .list_credential_accounts(ProviderId::COMMANDCODE, None)
+            .expect("list accounts without project");
+        assert!(
+            accounts_without_project
+                .iter()
+                .any(|account| account.account_id == second && account.is_project_selected)
+        );
     }
 
     #[cfg(unix)]

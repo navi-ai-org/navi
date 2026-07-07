@@ -9,7 +9,7 @@ use crate::memory::MemoryManager;
 use crate::memory::MemoryStatus;
 use crate::memory::MemoryType;
 use crate::memory::auto_memory::{new_entry, sanitize_id};
-use crate::memory::embedding::{get_cached_embedder, embeddings_available};
+use crate::memory::embedding::{embeddings_available, get_cached_embedder};
 use crate::tool::builtin::helpers;
 use crate::tool::{Tool, ToolDefinition, ToolInvocation, ToolKind, ToolResult};
 
@@ -32,7 +32,10 @@ impl Tool for AppendNoteTool {
             "Append a note, temporary observation, or status update to the session notes scratchpad.",
             ToolKind::Write,
             helpers::json_schema(
-                &[("content", "The text content to append to the session notes.")],
+                &[(
+                    "content",
+                    "The text content to append to the session notes.",
+                )],
                 &["content"],
             ),
         )
@@ -240,7 +243,10 @@ impl MemoryTool {
         match embedder.embed(text) {
             Ok(emb) => Some(emb),
             Err(e) => {
-                tracing::debug!("Embedding generation failed: {}, falling back to text search", e);
+                tracing::debug!(
+                    "Embedding generation failed: {}, falling back to text search",
+                    e
+                );
                 None
             }
         }
@@ -340,7 +346,8 @@ impl Tool for MemoryTool {
 
             "read" => {
                 let id = sanitize_id(&helpers::required_string(&invocation.input, "id")?);
-                let entry = store.get(&id)?
+                let entry = store
+                    .get(&id)?
                     .context(format!("Memory '{}' not found", id))?;
 
                 json!({
@@ -358,7 +365,11 @@ impl Tool for MemoryTool {
             }
 
             "list" => {
-                let limit = invocation.input.get("limit").and_then(|v| v.as_i64()).unwrap_or(50) as usize;
+                let limit = invocation
+                    .input
+                    .get("limit")
+                    .and_then(|v| v.as_i64())
+                    .unwrap_or(50) as usize;
                 let status_filter = invocation
                     .input
                     .get("status")
@@ -387,39 +398,70 @@ impl Tool for MemoryTool {
 
             "search" => {
                 let query = helpers::required_string(&invocation.input, "query")?;
-                let limit = invocation.input.get("limit").and_then(|v| v.as_i64()).unwrap_or(20) as usize;
+                let limit = invocation
+                    .input
+                    .get("limit")
+                    .and_then(|v| v.as_i64())
+                    .unwrap_or(20) as usize;
 
                 // Try semantic search first (embeddings), fall back to text matching
-                let search_results: Vec<(String, String, String, crate::memory::MemoryType, f64, String)> =
-                    if let Some(query_emb) = self.try_generate_embedding(&query) {
-                        let semantic = store.search_semantic(&query_emb, 0.3, limit)?;
-                        if !semantic.is_empty() {
-                            semantic
-                                .into_iter()
-                                .map(|(m, score)| {
-                                    (m.id, m.name, m.description, m.memory_type, m.confidence, format!("semantic:{:.3}", score))
-                                })
-                                .collect()
-                        } else {
-                            // Semantic returned nothing — fall back to text
-                            let text_results = store.search_text(&query, limit)?;
-                            text_results
-                                .into_iter()
-                                .map(|m| {
-                                    (m.id, m.name, m.description, m.memory_type, m.confidence, "text_match".to_string())
-                                })
-                                .collect()
-                        }
+                let search_results: Vec<(
+                    String,
+                    String,
+                    String,
+                    crate::memory::MemoryType,
+                    f64,
+                    String,
+                )> = if let Some(query_emb) = self.try_generate_embedding(&query) {
+                    let semantic = store.search_semantic(&query_emb, 0.3, limit)?;
+                    if !semantic.is_empty() {
+                        semantic
+                            .into_iter()
+                            .map(|(m, score)| {
+                                (
+                                    m.id,
+                                    m.name,
+                                    m.description,
+                                    m.memory_type,
+                                    m.confidence,
+                                    format!("semantic:{:.3}", score),
+                                )
+                            })
+                            .collect()
                     } else {
-                        // No embeddings available — text search only
+                        // Semantic returned nothing — fall back to text
                         let text_results = store.search_text(&query, limit)?;
                         text_results
                             .into_iter()
                             .map(|m| {
-                                (m.id, m.name, m.description, m.memory_type, m.confidence, "text_match".to_string())
+                                (
+                                    m.id,
+                                    m.name,
+                                    m.description,
+                                    m.memory_type,
+                                    m.confidence,
+                                    "text_match".to_string(),
+                                )
                             })
                             .collect()
-                    };
+                    }
+                } else {
+                    // No embeddings available — text search only
+                    let text_results = store.search_text(&query, limit)?;
+                    text_results
+                        .into_iter()
+                        .map(|m| {
+                            (
+                                m.id,
+                                m.name,
+                                m.description,
+                                m.memory_type,
+                                m.confidence,
+                                "text_match".to_string(),
+                            )
+                        })
+                        .collect()
+                };
 
                 json!({
                     "status": "success",
@@ -455,10 +497,8 @@ impl Tool for MemoryTool {
                 let content_changed = name.is_some() || description.is_some() || body.is_some();
                 let re_embedded = if content_changed {
                     if let Some(entry) = store.get(&id)? {
-                        let embed_text = format!(
-                            "{}\n{}\n{}",
-                            entry.name, entry.description, entry.body
-                        );
+                        let embed_text =
+                            format!("{}\n{}\n{}", entry.name, entry.description, entry.body);
                         if let Some(emb) = self.try_generate_embedding(&embed_text) {
                             store.set_embedding(&id, &emb).is_ok()
                         } else {

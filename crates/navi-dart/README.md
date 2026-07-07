@@ -1,45 +1,112 @@
 # navi-dart
 
-[![Crates.io](https://img.shields.io/crates/v/navi-dart)](https://crates.io/crates/navi-dart)
-[![License](https://img.shields.io/crates/l/navi-dart)](../LICENSE)
+Dart FFI bindings for the NAVI agent runtime SDK.
 
-Dart FFI bindings for the [NAVI](https://github.com/navi-ai-org/navi) agent runtime SDK.
+## Architecture
 
-`navi-dart` exposes a C-compatible ABI (`extern "C"`) that [`dart:ffi`](https://api.dart.dev/stable/dart-ffi/dart-ffi-library.html) can consume, enabling Dart and Flutter applications to embed the NAVI agent engine.
+`navi-dart` is a Rust crate that compiles to a C-compatible shared library (`.so`/`.dylib`/`.dll`). It wraps `navi-sdk`'s `NaviEngine` and exposes a C ABI surface that Dart can consume via `dart:ffi`.
 
-## Design
-
-- **Opaque pointers** for engine handles — Dart sees `Pointer<Void>`, Rust manages lifetimes
-- **JSON strings** for complex data (sessions, turns, events) — simple FFI boundary
-- **Callback function pointers** for async operations — cross-thread notification from Rust to Dart
-- **Panic isolation** — panics in the agent runtime are caught and reported as errors, not crashes
-
-## Usage from Dart
-
-```dart
-import 'dart:ffi';
-import 'package:navi_dart/navi_dart.dart';
-
-final engine = NaviEngine.create(projectDir: '/path/to/project');
-final session = engine.startSession();
-final response = engine.sendTurn(session.id, 'Explain this codebase');
-print(response.text);
-engine.closeSession(session.id);
 ```
+┌──────────────┐     dart:ffi     ┌──────────────┐     Rust API     ┌──────────────┐
+│  Dart/Flutter│ ───────────────→ │  navi-dart   │ ───────────────→ │  navi-sdk    │
+│  (navi_agent)│ ←─────────────── │  (cdylib)    │ ←─────────────── │  NaviEngine  │
+│              │   C ABI + JSON   │              │                  │              │
+└──────────────┘                  └──────────────┘                  └──────────────┘
+```
+
+## Features
+
+- **Full engine surface**: sessions, turns, events, approvals, goals, background tasks, credentials, skills, MCP, provider sync, registry, plugins, saved sessions, config
+- **Async via callbacks**: async operations use `NativeCallable.listener` for safe cross-thread notification
+- **Event streaming**: subscribe to real-time `RuntimeEvent`s via persistent callbacks
+- **JSON interchange**: complex types are serialized as JSON strings across the FFI boundary
+- **Memory-safe**: opaque pointers for engine handles, explicit `navi_string_free` for allocated strings
 
 ## Building
 
-Requires a Rust toolchain. Build the `cdylib` for your target platform:
-
 ```bash
+# Debug build
+cargo build -p navi-dart
+
+# Release build
 cargo build -p navi-dart --release
 ```
 
-The output is a shared library (`.so`, `.dylib`, or `.dll`) that Dart's FFI can load.
+The output is a shared library at `target/{debug,release}/libnavi_dart.{so,dylib,dll}`.
 
-## Part of the NAVI workspace
+## Testing
 
-This crate depends on [`navi-sdk`](https://crates.io/crates/navi-sdk) and [`navi-core`](https://crates.io/crates/navi-core).
+```bash
+# Rust unit + integration tests
+cargo test -p navi-dart -- --test-threads=1
+```
 
-**Full project:** <https://github.com/navi-ai-org/navi>
-**License:** Apache-2.0
+## C ABI Surface
+
+### Engine lifecycle
+
+| Function | Returns | Description |
+|---|---|---|
+| `navi_engine_new(project_dir)` | `*mut NaviDartEngine` | Create engine |
+| `navi_engine_new_learning_tutor(project_dir)` | `*mut NaviDartEngine` | Create learning tutor engine |
+| `navi_engine_free(engine)` | `void` | Free engine handle |
+
+### Sessions
+
+| Function | Returns | Description |
+|---|---|---|
+| `navi_engine_start_session(engine, request_json, cb, ud)` | async | Start session |
+| `navi_engine_close_session(engine, session_id, cb, ud)` | async | Close session |
+| `navi_engine_session_ids(engine)` | `*mut c_char` (JSON) | List active session IDs |
+
+### Turns
+
+| Function | Returns | Description |
+|---|---|---|
+| `navi_engine_send_turn(engine, request_json, cb, ud)` | async | Send turn |
+| `navi_engine_cancel_turn(engine, session_id, cb, ud)` | async | Cancel turn |
+
+### Events
+
+| Function | Returns | Description |
+|---|---|---|
+| `navi_engine_subscribe_events(engine, session_id, cb, ud)` | `*mut NaviEventSubscription` | Subscribe to events |
+| `navi_event_subscription_free(sub)` | void | Free subscription |
+
+### Models & Config
+
+| Function | Returns | Description |
+|---|---|---|
+| `navi_engine_list_models(engine)` | `*mut c_char` (JSON) | List models |
+| `navi_engine_set_model(engine, sid, provider, model, cb, ud)` | async | Set model |
+| `navi_engine_select_model(engine, pid, model, target, cb, ud)` | async | Select model |
+| `navi_engine_loaded_config(engine)` | `*mut c_char` (JSON) | Get config |
+
+### And more...
+
+Goals, background tasks, credentials, skills, MCP, provider sync, registry, plugins, saved sessions — all covered via the same pattern.
+
+## Dart Package
+
+The companion Dart package `navi_agent` (at `dart/navi_agent/`) provides idiomatic Dart bindings:
+
+```dart
+import 'package:navi_agent/navi_agent.dart';
+
+final engine = await NaviEngine.fromProject('.');
+final session = await engine.startSession();
+final response = await engine.sendTurn(session.id, 'Hello!');
+print(response.text);
+engine.dispose();
+```
+
+## Async Pattern
+
+Async operations use callback function pointers:
+
+1. Dart creates a `NativeCallable.listener` (safely bridges cross-thread calls)
+2. Dart passes the callback pointer to Rust via FFI
+3. Rust spawns a tokio task, calls the callback when done
+4. The callback runs on the Dart isolate's event loop
+
+Event streaming uses the same pattern with a persistent callback per subscription.

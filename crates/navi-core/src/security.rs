@@ -1554,7 +1554,10 @@ mod tests {
 
         let decision = policy.validate_tool_invocation(
             &tool_def("bash", ToolKind::Command),
-            &tool_invocation("bash", serde_json::json!({ "command": "git commit -m test" })),
+            &tool_invocation(
+                "bash",
+                serde_json::json!({ "command": "git commit -m test" }),
+            ),
         );
 
         assert_eq!(
@@ -1603,7 +1606,10 @@ mod tests {
 
         let decision = policy.validate_tool_invocation(
             &tool_def("bash", ToolKind::Command),
-            &tool_invocation("bash", serde_json::json!({ "command": "git commit -m test" })),
+            &tool_invocation(
+                "bash",
+                serde_json::json!({ "command": "git commit -m test" }),
+            ),
         );
 
         assert_eq!(decision, SecurityDecision::Allow);

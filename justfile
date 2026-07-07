@@ -144,6 +144,20 @@ clippy:
 
 # ─── Registry ────────────────────────────────────────────────────────────────
 
+# Build the navi-dart native library (debug).
+dart-build:
+    cargo build -p navi-dart
+
+# Build the navi-dart native library (release).
+dart-build-release:
+    cargo build -p navi-dart --release
+
+# Run navi-dart Rust tests.
+dart-test:
+    cargo test -p navi-dart -- --test-threads=1
+
+# ─── Registry ────────────────────────────────────────────────────────────────
+
 # Sync the embedded registry snapshot from the remote navi-registry database repo.
 # After running this, rebuild navi to embed the updated snapshot.
 sync-registry-snapshot:

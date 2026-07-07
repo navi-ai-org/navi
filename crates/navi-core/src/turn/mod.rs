@@ -1241,11 +1241,7 @@ pub(crate) async fn evaluate_memory_triggers(
             let mut state = ctx.compact_state.lock().await;
             for t in thresholds_to_trigger {
                 state.crossed_thresholds.push(t);
-                let cp_path = manager
-                    .auto_memory
-                    .db_path
-                    .to_string_lossy()
-                    .to_string();
+                let cp_path = manager.auto_memory.db_path.to_string_lossy().to_string();
                 manager.history.record_checkpoint(
                     &ctx.session_id,
                     state.crossed_thresholds.len() as i64,

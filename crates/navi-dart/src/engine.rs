@@ -1,13 +1,12 @@
 // C ABI engine surface for Dart FFI.
 //
 // Every public `extern "C"` function here is callable from Dart via dart:ffi.
-// Opaque `NaviDartEngine` handles are created/freed via `navi_engine_new` / `navi_engine_free`.
 
 use std::ffi::c_void;
 use std::os::raw::c_char;
 use std::ptr;
 
-use navi_core::{ApprovalDecision, ContextPacket, QuestionResponse};
+use navi_core::{ApprovalDecision, ContextPacket, QuestionResponse, RuntimeEvent};
 use navi_sdk::{
     NaviEngine, NaviEngineBuilder, NaviModelSelectionRequest, NaviSessionRequest, NaviTurnRequest,
 };
@@ -17,22 +16,19 @@ use tokio::sync::broadcast;
 
 use crate::event_stream::NaviEventSubscription;
 use crate::types::{
-    call_error, call_success, cstr_to_str, parse_save_target, reply_json, set_last_error,
-    to_json_ptr, NaviAsyncCallback, NaviEventCallback, SendPtr,
+    CallbackCtx, EventCtx, NaviAsyncCallback, NaviEventCallback, cstr_to_str, parse_save_target,
+    set_last_error, to_json_ptr,
 };
 
 // ── Engine Handle ──────────────────────────────────────────────────
 
-/// Opaque engine handle. Create with `navi_engine_new`, free with `navi_engine_free`.
+/// Opaque engine handle.
 pub struct NaviDartEngine {
     pub(crate) runtime: Runtime,
     pub(crate) inner: NaviEngine,
 }
 
 /// Creates a new engine for the given project directory.
-///
-/// Returns an opaque handle or null on error. Call `navi_last_error()` for details.
-/// The handle must be freed with `navi_engine_free`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn navi_engine_new(project_dir: *const c_char) -> *mut NaviDartEngine {
     let dir = match unsafe { cstr_to_str(project_dir) } {
@@ -42,7 +38,6 @@ pub unsafe extern "C" fn navi_engine_new(project_dir: *const c_char) -> *mut Nav
             return ptr::null_mut();
         }
     };
-
     let runtime = match Runtime::new() {
         Ok(rt) => rt,
         Err(e) => {
@@ -50,7 +45,6 @@ pub unsafe extern "C" fn navi_engine_new(project_dir: *const c_char) -> *mut Nav
             return ptr::null_mut();
         }
     };
-
     let inner = match runtime.block_on(async { NaviEngineBuilder::from_project(dir).build() }) {
         Ok(engine) => engine,
         Err(e) => {
@@ -58,14 +52,10 @@ pub unsafe extern "C" fn navi_engine_new(project_dir: *const c_char) -> *mut Nav
             return ptr::null_mut();
         }
     };
-
     Box::into_raw(Box::new(NaviDartEngine { runtime, inner }))
 }
 
 /// Creates a new engine configured as a learning tutor.
-///
-/// Uses permissive tool security, the learning harness, tutor prompt builder,
-/// and study-aware compaction defaults.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn navi_engine_new_learning_tutor(
     project_dir: *const c_char,
@@ -77,7 +67,6 @@ pub unsafe extern "C" fn navi_engine_new_learning_tutor(
             return ptr::null_mut();
         }
     };
-
     let runtime = match Runtime::new() {
         Ok(rt) => rt,
         Err(e) => {
@@ -85,7 +74,6 @@ pub unsafe extern "C" fn navi_engine_new_learning_tutor(
             return ptr::null_mut();
         }
     };
-
     let inner = match runtime.block_on(async {
         NaviEngineBuilder::from_project(dir)
             .learning_tutor()
@@ -97,13 +85,10 @@ pub unsafe extern "C" fn navi_engine_new_learning_tutor(
             return ptr::null_mut();
         }
     };
-
     Box::into_raw(Box::new(NaviDartEngine { runtime, inner }))
 }
 
 /// Frees an engine handle. Passing null is a safe no-op.
-///
-/// After this call the handle must not be used again.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn navi_engine_free(engine: *mut NaviDartEngine) {
     if !engine.is_null() {
@@ -113,9 +98,7 @@ pub unsafe extern "C" fn navi_engine_free(engine: *mut NaviDartEngine) {
 
 // ── Sessions ───────────────────────────────────────────────────────
 
-/// Starts a new session. `request_json` is a JSON `NaviSessionRequest` (may be null/empty).
-///
-/// The callback receives the session info as JSON on success or an error string on failure.
+/// Starts a new session. `request_json` is a JSON `NaviSessionRequest`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn navi_engine_start_session(
     engine: *mut NaviDartEngine,
@@ -127,17 +110,17 @@ pub unsafe extern "C" fn navi_engine_start_session(
     let request: NaviSessionRequest = unsafe { cstr_to_str(request_json) }
         .and_then(|s| serde_json::from_str(s).ok())
         .unwrap_or_default();
-
+    let ctx = CallbackCtx::new(callback, user_data);
     let inner = engine.inner.clone();
     engine.runtime.spawn(async move {
         match inner.start_session(request).await {
-            Ok(info) => unsafe { reply_json(callback, &info, user_data) },
-            Err(e) => unsafe { call_error(callback, &e.to_string(), user_data) },
+            Ok(info) => ctx.success(&info),
+            Err(e) => ctx.error(&e.to_string()),
         }
     });
 }
 
-/// Closes an active session. Callback receives `true` if a session was removed.
+/// Closes an active session.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn navi_engine_close_session(
     engine: *mut NaviDartEngine,
@@ -149,39 +132,32 @@ pub unsafe extern "C" fn navi_engine_close_session(
     let sid = match unsafe { cstr_to_str(session_id) } {
         Some(s) => s.to_string(),
         None => {
-            unsafe { call_error(callback, "session_id is null or invalid UTF-8", user_data) };
+            let ctx = CallbackCtx::new(callback, user_data);
+            ctx.error("session_id is null or invalid UTF-8");
             return;
         }
     };
-
+    let ctx = CallbackCtx::new(callback, user_data);
     let inner = engine.inner.clone();
     engine.runtime.spawn(async move {
         match inner.close_session(&sid).await {
-            Ok(removed) => {
-                let json = serde_json::to_string(&removed).unwrap_or_default();
-                unsafe { call_success(callback, &json, user_data) }
-            }
-            Err(e) => unsafe { call_error(callback, &e.to_string(), user_data) },
+            Ok(removed) => ctx.success(&removed),
+            Err(e) => ctx.error(&e.to_string()),
         }
     });
 }
 
-/// Returns the IDs of all active (in-memory) sessions as a JSON string array.
-///
-/// Returns a `*mut c_char` that must be freed with `navi_string_free`, or null on error.
+/// Returns the IDs of all active sessions as a JSON string array.
+/// Must be freed with `navi_string_free`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn navi_engine_session_ids(engine: *mut NaviDartEngine) -> *mut c_char {
     let engine = unsafe { &*engine };
-    let ids = engine.inner.session_ids();
-    to_json_ptr(&ids)
+    to_json_ptr(&engine.inner.session_ids())
 }
 
 // ── Turns ──────────────────────────────────────────────────────────
 
 /// Sends a user message to an active session.
-///
-/// `request_json` is a JSON `NaviTurnRequest`.
-/// Callback receives the `NaviTurnResponse` as JSON.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn navi_engine_send_turn(
     engine: *mut NaviDartEngine,
@@ -190,32 +166,31 @@ pub unsafe extern "C" fn navi_engine_send_turn(
     user_data: *mut c_void,
 ) {
     let engine = unsafe { &*engine };
+    let ctx = CallbackCtx::new(callback, user_data);
     let request_str = match unsafe { cstr_to_str(request_json) } {
         Some(s) => s,
         None => {
-            unsafe { call_error(callback, "request_json is null or invalid UTF-8", user_data) };
+            ctx.error("request_json is null or invalid UTF-8");
             return;
         }
     };
-
     let request: NaviTurnRequest = match serde_json::from_str(request_str) {
         Ok(r) => r,
         Err(e) => {
-            unsafe { call_error(callback, &format!("invalid turn request: {e}"), user_data) };
+            ctx.error(&format!("invalid turn request: {e}"));
             return;
         }
     };
-
     let inner = engine.inner.clone();
     engine.runtime.spawn(async move {
         match inner.send_turn(request).await {
-            Ok(response) => unsafe { reply_json(callback, &response, user_data) },
-            Err(e) => unsafe { call_error(callback, &e.to_string(), user_data) },
+            Ok(response) => ctx.success(&response),
+            Err(e) => ctx.error(&e.to_string()),
         }
     });
 }
 
-/// Cancels the currently active turn for the given session.
+/// Cancels the currently active turn.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn navi_engine_cancel_turn(
     engine: *mut NaviDartEngine,
@@ -224,26 +199,21 @@ pub unsafe extern "C" fn navi_engine_cancel_turn(
     user_data: *mut c_void,
 ) {
     let engine = unsafe { &*engine };
-    let sid = match unsafe { cstr_to_str(session_id) } {
-        Some(s) => s.to_string(),
-        None => {
-            unsafe { call_error(callback, "session_id is null or invalid UTF-8", user_data) };
-            return;
-        }
+    let sid = match parse_sid(session_id, callback, user_data) {
+        Some(s) => s,
+        None => return,
     };
-
+    let ctx = CallbackCtx::new(callback, user_data);
     let inner = engine.inner.clone();
     engine.runtime.spawn(async move {
         match inner.cancel_turn(&sid).await {
-            Ok(()) => unsafe { call_success(callback, "null", user_data) },
-            Err(e) => unsafe { call_error(callback, &e.to_string(), user_data) },
+            Ok(()) => ctx.success_str("null"),
+            Err(e) => ctx.error(&e.to_string()),
         }
     });
 }
 
-/// Takes a point-in-time snapshot of session state for persistence.
-///
-/// Callback receives the `SessionSnapshot` as JSON.
+/// Takes a point-in-time snapshot of session state.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn navi_engine_snapshot_session(
     engine: *mut NaviDartEngine,
@@ -252,19 +222,16 @@ pub unsafe extern "C" fn navi_engine_snapshot_session(
     user_data: *mut c_void,
 ) {
     let engine = unsafe { &*engine };
-    let sid = match unsafe { cstr_to_str(session_id) } {
-        Some(s) => s.to_string(),
-        None => {
-            unsafe { call_error(callback, "session_id is null or invalid UTF-8", user_data) };
-            return;
-        }
+    let sid = match parse_sid(session_id, callback, user_data) {
+        Some(s) => s,
+        None => return,
     };
-
+    let ctx = CallbackCtx::new(callback, user_data);
     let inner = engine.inner.clone();
     engine.runtime.spawn(async move {
         match inner.snapshot_session(&sid).await {
-            Ok(snapshot) => unsafe { reply_json(callback, &snapshot, user_data) },
-            Err(e) => unsafe { call_error(callback, &e.to_string(), user_data) },
+            Ok(snapshot) => ctx.success(&snapshot),
+            Err(e) => ctx.error(&e.to_string()),
         }
     });
 }
@@ -272,8 +239,6 @@ pub unsafe extern "C" fn navi_engine_snapshot_session(
 // ── Approvals & Questions ──────────────────────────────────────────
 
 /// Resolves a pending tool approval request.
-///
-/// Callback receives `true` if the approval was consumed, `false` otherwise.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn navi_engine_resolve_approval(
     engine: *mut NaviDartEngine,
@@ -284,43 +249,36 @@ pub unsafe extern "C" fn navi_engine_resolve_approval(
     user_data: *mut c_void,
 ) {
     let engine = unsafe { &*engine };
+    let ctx = CallbackCtx::new(callback, user_data);
     let sid = match unsafe { cstr_to_str(session_id) } {
         Some(s) => s.to_string(),
         None => {
-            unsafe { call_error(callback, "session_id is null or invalid UTF-8", user_data) };
+            ctx.error("session_id is null or invalid UTF-8");
             return;
         }
     };
     let aid = match unsafe { cstr_to_str(approval_id) } {
         Some(s) => s.to_string(),
         None => {
-            unsafe { call_error(callback, "approval_id is null or invalid UTF-8", user_data) };
+            ctx.error("approval_id is null or invalid UTF-8");
             return;
         }
     };
-
     let decision = if approved != 0 {
         ApprovalDecision::Approved { id: aid }
     } else {
         ApprovalDecision::Denied { id: aid }
     };
-
     let inner = engine.inner.clone();
     engine.runtime.spawn(async move {
         match inner.resolve_approval(&sid, decision).await {
-            Ok(consumed) => {
-                let json = serde_json::to_string(&consumed).unwrap_or_default();
-                unsafe { call_success(callback, &json, user_data) }
-            }
-            Err(e) => unsafe { call_error(callback, &e.to_string(), user_data) },
+            Ok(consumed) => ctx.success(&consumed),
+            Err(e) => ctx.error(&e.to_string()),
         }
     });
 }
 
 /// Resolves a pending interactive question.
-///
-/// `response_json` is a JSON `QuestionResponse`.
-/// Callback receives `true` if the response was consumed.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn navi_engine_resolve_question(
     engine: *mut NaviDartEngine,
@@ -330,38 +288,34 @@ pub unsafe extern "C" fn navi_engine_resolve_question(
     user_data: *mut c_void,
 ) {
     let engine = unsafe { &*engine };
+    let ctx = CallbackCtx::new(callback, user_data);
     let sid = match unsafe { cstr_to_str(session_id) } {
         Some(s) => s.to_string(),
         None => {
-            unsafe { call_error(callback, "session_id is null or invalid UTF-8", user_data) };
+            ctx.error("session_id is null or invalid UTF-8");
             return;
         }
     };
-    let response: QuestionResponse = match unsafe { cstr_to_str(response_json) }
-        .and_then(|s| serde_json::from_str(s).ok())
-    {
-        Some(r) => r,
-        None => {
-            unsafe { call_error(callback, "invalid response_json", user_data) };
-            return;
-        }
-    };
-
+    let response: QuestionResponse =
+        match unsafe { cstr_to_str(response_json) }.and_then(|s| serde_json::from_str(s).ok()) {
+            Some(r) => r,
+            None => {
+                ctx.error("invalid response_json");
+                return;
+            }
+        };
     let inner = engine.inner.clone();
     engine.runtime.spawn(async move {
         match inner.resolve_question(&sid, response).await {
-            Ok(consumed) => {
-                let json = serde_json::to_string(&consumed).unwrap_or_default();
-                unsafe { call_success(callback, &json, user_data) }
-            }
-            Err(e) => unsafe { call_error(callback, &e.to_string(), user_data) },
+            Ok(consumed) => ctx.success(&consumed),
+            Err(e) => ctx.error(&e.to_string()),
         }
     });
 }
 
 // ── Context ────────────────────────────────────────────────────────
 
-/// Adds a context packet (file, selection, memory, etc.) to an active session.
+/// Adds a context packet to an active session.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn navi_engine_add_context_packet(
     engine: *mut NaviDartEngine,
@@ -371,43 +325,38 @@ pub unsafe extern "C" fn navi_engine_add_context_packet(
     user_data: *mut c_void,
 ) {
     let engine = unsafe { &*engine };
+    let ctx = CallbackCtx::new(callback, user_data);
     let sid = match unsafe { cstr_to_str(session_id) } {
         Some(s) => s.to_string(),
         None => {
-            unsafe { call_error(callback, "session_id is null or invalid UTF-8", user_data) };
+            ctx.error("session_id is null or invalid UTF-8");
             return;
         }
     };
-    let packet: ContextPacket = match unsafe { cstr_to_str(packet_json) }
-        .and_then(|s| serde_json::from_str(s).ok())
-    {
-        Some(p) => p,
-        None => {
-            unsafe { call_error(callback, "invalid packet_json", user_data) };
-            return;
-        }
-    };
-
+    let packet: ContextPacket =
+        match unsafe { cstr_to_str(packet_json) }.and_then(|s| serde_json::from_str(s).ok()) {
+            Some(p) => p,
+            None => {
+                ctx.error("invalid packet_json");
+                return;
+            }
+        };
     let inner = engine.inner.clone();
     engine.runtime.spawn(async move {
         match inner.add_context_packet(&sid, packet).await {
-            Ok(()) => unsafe { call_success(callback, "null", user_data) },
-            Err(e) => unsafe { call_error(callback, &e.to_string(), user_data) },
+            Ok(()) => ctx.success_str("null"),
+            Err(e) => ctx.error(&e.to_string()),
         }
     });
 }
 
 // ── Models ─────────────────────────────────────────────────────────
 
-/// Lists all available models across configured providers.
-///
-/// Returns a `*mut c_char` with JSON array of `NaviModelInfo`, or null on error.
-/// Must be freed with `navi_string_free`.
+/// Lists all available models as a JSON array. Must be freed with `navi_string_free`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn navi_engine_list_models(engine: *mut NaviDartEngine) -> *mut c_char {
     let engine = unsafe { &*engine };
-    let models = engine.inner.list_models();
-    to_json_ptr(&models)
+    to_json_ptr(&engine.inner.list_models())
 }
 
 /// Changes the model used by an active session.
@@ -421,43 +370,38 @@ pub unsafe extern "C" fn navi_engine_set_model(
     user_data: *mut c_void,
 ) {
     let engine = unsafe { &*engine };
+    let ctx = CallbackCtx::new(callback, user_data);
     let sid = match unsafe { cstr_to_str(session_id) } {
         Some(s) => s.to_string(),
         None => {
-            unsafe { call_error(callback, "session_id is null or invalid UTF-8", user_data) };
+            ctx.error("session_id is null or invalid UTF-8");
             return;
         }
     };
     let prov = match unsafe { cstr_to_str(provider) } {
         Some(s) => s.to_string(),
         None => {
-            unsafe { call_error(callback, "provider is null or invalid UTF-8", user_data) };
+            ctx.error("provider is null or invalid UTF-8");
             return;
         }
     };
     let mdl = match unsafe { cstr_to_str(model) } {
         Some(s) => s.to_string(),
         None => {
-            unsafe { call_error(callback, "model is null or invalid UTF-8", user_data) };
+            ctx.error("model is null or invalid UTF-8");
             return;
         }
     };
-
     let inner = engine.inner.clone();
     engine.runtime.spawn(async move {
         match inner.set_model(&sid, &prov, &mdl).await {
-            Ok(()) => unsafe { call_success(callback, "null", user_data) },
-            Err(e) => unsafe { call_error(callback, &e.to_string(), user_data) },
+            Ok(()) => ctx.success_str("null"),
+            Err(e) => ctx.error(&e.to_string()),
         }
     });
 }
 
-/// Selects a model for the engine and optionally persists the config change.
-///
-/// `provider_id` and `model` are required C strings. `save_target` is an optional
-/// C string: "project", "global", "none", or null/"auto".
-///
-/// Returns a JSON `NaviModelSelectionResult` via callback.
+/// Selects a model and optionally persists the config change.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn navi_engine_select_model(
     engine: *mut NaviDartEngine,
@@ -468,28 +412,27 @@ pub unsafe extern "C" fn navi_engine_select_model(
     user_data: *mut c_void,
 ) {
     let engine = unsafe { &*engine };
+    let ctx = CallbackCtx::new(callback, user_data);
     let pid = match unsafe { cstr_to_str(provider_id) } {
         Some(s) => s.to_string(),
         None => {
-            unsafe { call_error(callback, "provider_id is null or invalid UTF-8", user_data) };
+            ctx.error("provider_id is null or invalid UTF-8");
             return;
         }
     };
     let mdl = match unsafe { cstr_to_str(model) } {
         Some(s) => s.to_string(),
         None => {
-            unsafe { call_error(callback, "model is null or invalid UTF-8", user_data) };
+            ctx.error("model is null or invalid UTF-8");
             return;
         }
     };
     let target = parse_save_target(unsafe { cstr_to_str(save_target) });
-
     let request = NaviModelSelectionRequest {
         provider_id: pid,
         model: mdl,
         save_target: target,
     };
-
     let inner = engine.inner.clone();
     engine.runtime.spawn(async move {
         match inner.select_model(request) {
@@ -501,10 +444,9 @@ pub unsafe extern "C" fn navi_engine_select_model(
                     "providerConfigured": result.provider_configured,
                     "savedTo": result.saved_to.map(|p| p.display().to_string()),
                 });
-                let json_str = serde_json::to_string(&json).unwrap_or_default();
-                unsafe { call_success(callback, &json_str, user_data) }
+                ctx.success(&json)
             }
-            Err(e) => unsafe { call_error(callback, &e.to_string(), user_data) },
+            Err(e) => ctx.error(&e.to_string()),
         }
     });
 }
@@ -512,12 +454,8 @@ pub unsafe extern "C" fn navi_engine_select_model(
 // ── Events ─────────────────────────────────────────────────────────
 
 /// Subscribes to the event stream for a session.
-///
-/// The `callback` is invoked for each `RuntimeEvent` (serialized as JSON).
-/// Return 0 from the callback to continue, non-zero to stop.
-///
-/// Returns an opaque subscription handle or null on error.
-/// Free with `navi_event_subscription_free` to stop receiving events.
+/// Return 0 from callback to continue, non-zero to stop.
+/// Free returned handle with `navi_event_subscription_free`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn navi_engine_subscribe_events(
     engine: *mut NaviDartEngine,
@@ -533,7 +471,6 @@ pub unsafe extern "C" fn navi_engine_subscribe_events(
             return ptr::null_mut();
         }
     };
-
     let receiver = match engine.inner.subscribe_events(&sid) {
         Ok(r) => r,
         Err(e) => {
@@ -541,16 +478,14 @@ pub unsafe extern "C" fn navi_engine_subscribe_events(
             return ptr::null_mut();
         }
     };
-
-    let ud = SendPtr(user_data);
-    let task = engine.runtime.spawn(async move {
-        event_loop(receiver, callback, ud).await;
-    });
-
+    let event_ctx = EventCtx::new(callback, user_data);
+    let task = engine
+        .runtime
+        .spawn(async move { event_loop(receiver, event_ctx).await });
     Box::into_raw(Box::new(NaviEventSubscription { _task: task }))
 }
 
-/// Stops an event subscription and frees its handle. Passing null is a safe no-op.
+/// Stops an event subscription and frees its handle.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn navi_event_subscription_free(sub: *mut NaviEventSubscription) {
     if !sub.is_null() {
@@ -561,7 +496,7 @@ pub unsafe extern "C" fn navi_event_subscription_free(sub: *mut NaviEventSubscri
 
 // ── Goals ──────────────────────────────────────────────────────────
 
-/// Returns the current goal for a session as JSON, or null if no goal.
+/// Returns the current goal for a session as JSON.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn navi_engine_get_goal(
     engine: *mut NaviDartEngine,
@@ -570,25 +505,21 @@ pub unsafe extern "C" fn navi_engine_get_goal(
     user_data: *mut c_void,
 ) {
     let engine = unsafe { &*engine };
-    let sid = match unsafe { cstr_to_str(session_id) } {
-        Some(s) => s.to_string(),
-        None => {
-            unsafe { call_error(callback, "session_id is null or invalid UTF-8", user_data) };
-            return;
-        }
+    let sid = match parse_sid(session_id, callback, user_data) {
+        Some(s) => s,
+        None => return,
     };
-
+    let ctx = CallbackCtx::new(callback, user_data);
     let inner = engine.inner.clone();
     engine.runtime.spawn(async move {
         match inner.get_goal(&sid).await {
-            Ok(goal) => unsafe { reply_json(callback, &goal, user_data) },
-            Err(e) => unsafe { call_error(callback, &e.to_string(), user_data) },
+            Ok(goal) => ctx.success(&goal),
+            Err(e) => ctx.error(&e.to_string()),
         }
     });
 }
 
-/// Sets a goal for a session. `objective` is the goal text, `token_budget` is
-/// optional (-1 means null).
+/// Sets a goal for a session. `token_budget < 0` means null.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn navi_engine_set_goal(
     engine: *mut NaviDartEngine,
@@ -599,17 +530,18 @@ pub unsafe extern "C" fn navi_engine_set_goal(
     user_data: *mut c_void,
 ) {
     let engine = unsafe { &*engine };
+    let ctx = CallbackCtx::new(callback, user_data);
     let sid = match unsafe { cstr_to_str(session_id) } {
         Some(s) => s.to_string(),
         None => {
-            unsafe { call_error(callback, "session_id is null or invalid UTF-8", user_data) };
+            ctx.error("session_id is null or invalid UTF-8");
             return;
         }
     };
     let obj = match unsafe { cstr_to_str(objective) } {
         Some(s) => s.to_string(),
         None => {
-            unsafe { call_error(callback, "objective is null or invalid UTF-8", user_data) };
+            ctx.error("objective is null or invalid UTF-8");
             return;
         }
     };
@@ -618,12 +550,11 @@ pub unsafe extern "C" fn navi_engine_set_goal(
     } else {
         Some(token_budget)
     };
-
     let inner = engine.inner.clone();
     engine.runtime.spawn(async move {
         match inner.set_goal(&sid, obj, budget).await {
-            Ok(goal) => unsafe { reply_json(callback, &goal, user_data) },
-            Err(e) => unsafe { call_error(callback, &e.to_string(), user_data) },
+            Ok(goal) => ctx.success(&goal),
+            Err(e) => ctx.error(&e.to_string()),
         }
     });
 }
@@ -637,26 +568,23 @@ pub unsafe extern "C" fn navi_engine_clear_goal(
     user_data: *mut c_void,
 ) {
     let engine = unsafe { &*engine };
-    let sid = match unsafe { cstr_to_str(session_id) } {
-        Some(s) => s.to_string(),
-        None => {
-            unsafe { call_error(callback, "session_id is null or invalid UTF-8", user_data) };
-            return;
-        }
+    let sid = match parse_sid(session_id, callback, user_data) {
+        Some(s) => s,
+        None => return,
     };
-
+    let ctx = CallbackCtx::new(callback, user_data);
     let inner = engine.inner.clone();
     engine.runtime.spawn(async move {
         match inner.clear_goal(&sid).await {
-            Ok(()) => unsafe { call_success(callback, "null", user_data) },
-            Err(e) => unsafe { call_error(callback, &e.to_string(), user_data) },
+            Ok(()) => ctx.success_str("null"),
+            Err(e) => ctx.error(&e.to_string()),
         }
     });
 }
 
 // ── Background Tasks ───────────────────────────────────────────────
 
-/// Lists all active background bash commands for a session.
+/// Lists all active background bash commands.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn navi_engine_list_background_commands(
     engine: *mut NaviDartEngine,
@@ -665,19 +593,16 @@ pub unsafe extern "C" fn navi_engine_list_background_commands(
     user_data: *mut c_void,
 ) {
     let engine = unsafe { &*engine };
-    let sid = match unsafe { cstr_to_str(session_id) } {
-        Some(s) => s.to_string(),
-        None => {
-            unsafe { call_error(callback, "session_id is null or invalid UTF-8", user_data) };
-            return;
-        }
+    let sid = match parse_sid(session_id, callback, user_data) {
+        Some(s) => s,
+        None => return,
     };
-
+    let ctx = CallbackCtx::new(callback, user_data);
     let inner = engine.inner.clone();
     engine.runtime.spawn(async move {
         match inner.list_background_commands(&sid).await {
-            Ok(cmds) => unsafe { reply_json(callback, &cmds, user_data) },
-            Err(e) => unsafe { call_error(callback, &e.to_string(), user_data) },
+            Ok(cmds) => ctx.success(&cmds),
+            Err(e) => ctx.error(&e.to_string()),
         }
     });
 }
@@ -692,26 +617,24 @@ pub unsafe extern "C" fn navi_engine_poll_background_command(
     user_data: *mut c_void,
 ) {
     let engine = unsafe { &*engine };
-    let sid = match unsafe { cstr_to_str(session_id) } {
-        Some(s) => s.to_string(),
+    let sid = match parse_sid(session_id, callback, user_data) {
+        Some(s) => s,
+        None => return,
+    };
+    let tid = match parse_str(task_id, "task_id") {
+        Some(s) => s,
         None => {
-            unsafe { call_error(callback, "session_id is null or invalid UTF-8", user_data) };
+            let ctx = CallbackCtx::new(callback, user_data);
+            ctx.error("task_id is null or invalid UTF-8");
             return;
         }
     };
-    let tid = match unsafe { cstr_to_str(task_id) } {
-        Some(s) => s.to_string(),
-        None => {
-            unsafe { call_error(callback, "task_id is null or invalid UTF-8", user_data) };
-            return;
-        }
-    };
-
+    let ctx = CallbackCtx::new(callback, user_data);
     let inner = engine.inner.clone();
     engine.runtime.spawn(async move {
         match inner.poll_background_command(&sid, &tid).await {
-            Ok(snapshot) => unsafe { reply_json(callback, &snapshot, user_data) },
-            Err(e) => unsafe { call_error(callback, &e.to_string(), user_data) },
+            Ok(snapshot) => ctx.success(&snapshot),
+            Err(e) => ctx.error(&e.to_string()),
         }
     });
 }
@@ -726,36 +649,31 @@ pub unsafe extern "C" fn navi_engine_cancel_background_command(
     user_data: *mut c_void,
 ) {
     let engine = unsafe { &*engine };
-    let sid = match unsafe { cstr_to_str(session_id) } {
-        Some(s) => s.to_string(),
+    let sid = match parse_sid(session_id, callback, user_data) {
+        Some(s) => s,
+        None => return,
+    };
+    let tid = match parse_str(task_id, "task_id") {
+        Some(s) => s,
         None => {
-            unsafe { call_error(callback, "session_id is null or invalid UTF-8", user_data) };
+            let ctx = CallbackCtx::new(callback, user_data);
+            ctx.error("task_id is null or invalid UTF-8");
             return;
         }
     };
-    let tid = match unsafe { cstr_to_str(task_id) } {
-        Some(s) => s.to_string(),
-        None => {
-            unsafe { call_error(callback, "task_id is null or invalid UTF-8", user_data) };
-            return;
-        }
-    };
-
+    let ctx = CallbackCtx::new(callback, user_data);
     let inner = engine.inner.clone();
     engine.runtime.spawn(async move {
         match inner.cancel_background_command(&sid, &tid).await {
-            Ok(snapshot) => unsafe { reply_json(callback, &snapshot, user_data) },
-            Err(e) => unsafe { call_error(callback, &e.to_string(), user_data) },
+            Ok(snapshot) => ctx.success(&snapshot),
+            Err(e) => ctx.error(&e.to_string()),
         }
     });
 }
 
 // ── Providers & Credentials ────────────────────────────────────────
 
-/// Lists all configured providers with their credential status.
-///
-/// Returns a `*mut c_char` with JSON array of `NaviProviderAccountInfo`, or null on error.
-/// Must be freed with `navi_string_free`.
+/// Lists all configured providers with credential status. Returns JSON. Must be freed with `navi_string_free`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn navi_engine_list_provider_accounts(
     engine: *mut NaviDartEngine,
@@ -770,10 +688,7 @@ pub unsafe extern "C" fn navi_engine_list_provider_accounts(
     }
 }
 
-/// Returns credential status for a specific provider.
-///
-/// Returns a `*mut c_char` with JSON `NaviProviderCredentialStatus`, or null on error.
-/// Must be freed with `navi_string_free`.
+/// Returns credential status for a specific provider as JSON. Must be freed with `navi_string_free`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn navi_engine_credential_status(
     engine: *mut NaviDartEngine,
@@ -796,7 +711,7 @@ pub unsafe extern "C" fn navi_engine_credential_status(
     }
 }
 
-/// Stores an API key for the given provider in the credential store.
+/// Stores an API key. Returns 0 on success, -1 on error.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn navi_engine_set_provider_api_key(
     engine: *mut NaviDartEngine,
@@ -827,7 +742,7 @@ pub unsafe extern "C" fn navi_engine_set_provider_api_key(
     }
 }
 
-/// Deletes a stored API key. Returns 1 if a key was removed, 0 if not found, -1 on error.
+/// Deletes a stored API key. Returns 1 if removed, 0 if not found, -1 on error.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn navi_engine_delete_provider_api_key(
     engine: *mut NaviDartEngine,
@@ -842,7 +757,13 @@ pub unsafe extern "C" fn navi_engine_delete_provider_api_key(
         }
     };
     match engine.inner.delete_provider_api_key(pid) {
-        Ok(deleted) => if deleted { 1 } else { 0 },
+        Ok(deleted) => {
+            if deleted {
+                1
+            } else {
+                0
+            }
+        }
         Err(e) => {
             set_last_error(&e.to_string());
             -1
@@ -850,7 +771,7 @@ pub unsafe extern "C" fn navi_engine_delete_provider_api_key(
     }
 }
 
-/// Fetches OpenAI/ChatGPT usage windows for the selected OpenAI account.
+/// Fetches usage windows for the selected OpenAI account.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn navi_engine_usage_report(
     engine: *mut NaviDartEngine,
@@ -858,21 +779,19 @@ pub unsafe extern "C" fn navi_engine_usage_report(
     user_data: *mut c_void,
 ) {
     let engine = unsafe { &*engine };
+    let ctx = CallbackCtx::new(callback, user_data);
     let inner = engine.inner.clone();
     engine.runtime.spawn(async move {
         match inner.usage_report().await {
-            Ok(report) => unsafe { reply_json(callback, &report, user_data) },
-            Err(e) => unsafe { call_error(callback, &e.to_string(), user_data) },
+            Ok(report) => ctx.success(&report),
+            Err(e) => ctx.error(&e.to_string()),
         }
     });
 }
 
 // ── Skills ─────────────────────────────────────────────────────────
 
-/// Lists discovered skills from project and global skill directories.
-///
-/// Returns a `*mut c_char` with JSON array of `NaviSkillInfo`, or null on error.
-/// Must be freed with `navi_string_free`.
+/// Lists discovered skills. Returns JSON. Must be freed with `navi_string_free`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn navi_engine_list_skills(engine: *mut NaviDartEngine) -> *mut c_char {
     let engine = unsafe { &*engine };
@@ -885,9 +804,7 @@ pub unsafe extern "C" fn navi_engine_list_skills(engine: *mut NaviDartEngine) ->
     }
 }
 
-/// Sets the active skills for an existing session.
-///
-/// `skills_json` is a JSON string array of skill IDs.
+/// Sets the active skills for a session. `skills_json` is a JSON string array.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn navi_engine_set_session_skills(
     engine: *mut NaviDartEngine,
@@ -897,37 +814,34 @@ pub unsafe extern "C" fn navi_engine_set_session_skills(
     user_data: *mut c_void,
 ) {
     let engine = unsafe { &*engine };
+    let ctx = CallbackCtx::new(callback, user_data);
     let sid = match unsafe { cstr_to_str(session_id) } {
         Some(s) => s.to_string(),
         None => {
-            unsafe { call_error(callback, "session_id is null or invalid UTF-8", user_data) };
+            ctx.error("session_id is null or invalid UTF-8");
             return;
         }
     };
-    let skills: Vec<String> = match unsafe { cstr_to_str(skills_json) }
-        .and_then(|s| serde_json::from_str(s).ok())
-    {
-        Some(v) => v,
-        None => {
-            unsafe { call_error(callback, "invalid skills_json", user_data) };
-            return;
-        }
-    };
-
+    let skills: Vec<String> =
+        match unsafe { cstr_to_str(skills_json) }.and_then(|s| serde_json::from_str(s).ok()) {
+            Some(v) => v,
+            None => {
+                ctx.error("invalid skills_json");
+                return;
+            }
+        };
     let inner = engine.inner.clone();
     engine.runtime.spawn(async move {
         match inner.set_session_skills(&sid, skills).await {
-            Ok(()) => unsafe { call_success(callback, "null", user_data) },
-            Err(e) => unsafe { call_error(callback, &e.to_string(), user_data) },
+            Ok(()) => ctx.success_str("null"),
+            Err(e) => ctx.error(&e.to_string()),
         }
     });
 }
 
 // ── MCP ────────────────────────────────────────────────────────────
 
-/// Lists MCP servers connected to the given session.
-///
-/// Returns a `*mut c_char` with JSON, or null on error. Must be freed with `navi_string_free`.
+/// Lists MCP servers for a session. Returns JSON. Must be freed with `navi_string_free`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn navi_engine_list_mcp_servers(
     engine: *mut NaviDartEngine,
@@ -950,10 +864,7 @@ pub unsafe extern "C" fn navi_engine_list_mcp_servers(
     }
 }
 
-/// Lists tool names provided by MCP servers in the given session.
-///
-/// Returns a `*mut c_char` with JSON string array, or null on error.
-/// Must be freed with `navi_string_free`.
+/// Lists MCP tool names. Returns JSON string array. Must be freed with `navi_string_free`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn navi_engine_list_mcp_tools(
     engine: *mut NaviDartEngine,
@@ -978,7 +889,7 @@ pub unsafe extern "C" fn navi_engine_list_mcp_tools(
 
 // ── Provider Sync ──────────────────────────────────────────────────
 
-/// Fetches the latest model list from a specific provider and updates config.
+/// Fetches the latest model list from a specific provider.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn navi_engine_sync_provider_models(
     engine: *mut NaviDartEngine,
@@ -988,29 +899,25 @@ pub unsafe extern "C" fn navi_engine_sync_provider_models(
     user_data: *mut c_void,
 ) {
     let engine = unsafe { &*engine };
+    let ctx = CallbackCtx::new(callback, user_data);
     let pid = match unsafe { cstr_to_str(provider_id) } {
         Some(s) => s.to_string(),
         None => {
-            unsafe { call_error(callback, "provider_id is null or invalid UTF-8", user_data) };
+            ctx.error("provider_id is null or invalid UTF-8");
             return;
         }
     };
     let target = parse_save_target(unsafe { cstr_to_str(save_target) });
-
     let inner = engine.inner.clone();
     engine.runtime.spawn(async move {
         match inner.sync_provider_models(&pid, target).await {
-            Ok(report) => {
-                let json = json!({
-                    "savedTo": report.saved_to.map(|p| p.display().to_string()),
-                    "updated": report.updated,
-                    "failed": report.failed,
-                    "skipped": report.skipped,
-                });
-                let json_str = serde_json::to_string(&json).unwrap_or_default();
-                unsafe { call_success(callback, &json_str, user_data) }
-            }
-            Err(e) => unsafe { call_error(callback, &e.to_string(), user_data) },
+            Ok(report) => ctx.success(&json!({
+                "savedTo": report.saved_to.map(|p| p.display().to_string()),
+                "updated": report.updated,
+                "failed": report.failed,
+                "skipped": report.skipped,
+            })),
+            Err(e) => ctx.error(&e.to_string()),
         }
     });
 }
@@ -1025,31 +932,24 @@ pub unsafe extern "C" fn navi_engine_sync_models(
 ) {
     let engine = unsafe { &*engine };
     let target = parse_save_target(unsafe { cstr_to_str(save_target) });
-
+    let ctx = CallbackCtx::new(callback, user_data);
     let inner = engine.inner.clone();
     engine.runtime.spawn(async move {
         match inner.sync_models(target).await {
-            Ok(report) => {
-                let json = json!({
-                    "savedTo": report.saved_to.map(|p| p.display().to_string()),
-                    "updated": report.updated,
-                    "failed": report.failed,
-                    "skipped": report.skipped,
-                });
-                let json_str = serde_json::to_string(&json).unwrap_or_default();
-                unsafe { call_success(callback, &json_str, user_data) }
-            }
-            Err(e) => unsafe { call_error(callback, &e.to_string(), user_data) },
+            Ok(report) => ctx.success(&json!({
+                "savedTo": report.saved_to.map(|p| p.display().to_string()),
+                "updated": report.updated,
+                "failed": report.failed,
+                "skipped": report.skipped,
+            })),
+            Err(e) => ctx.error(&e.to_string()),
         }
     });
 }
 
 // ── Registry ───────────────────────────────────────────────────────
 
-/// Syncs the provider registry into the local SQLite cache.
-///
-/// Pass `force` as non-zero to force a full re-sync.
-/// Callback receives `true` if the cache was updated.
+/// Syncs the provider registry. `force` != 0 forces full re-sync.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn navi_engine_sync_registry(
     engine: *mut NaviDartEngine,
@@ -1058,23 +958,19 @@ pub unsafe extern "C" fn navi_engine_sync_registry(
     user_data: *mut c_void,
 ) {
     let engine = unsafe { &*engine };
+    let ctx = CallbackCtx::new(callback, user_data);
     let inner = engine.inner.clone();
     engine.runtime.spawn(async move {
         match inner.sync_registry(force != 0).await {
-            Ok(updated) => {
-                let json = serde_json::to_string(&updated).unwrap_or_default();
-                unsafe { call_success(callback, &json, user_data) }
-            }
-            Err(e) => unsafe { call_error(callback, &e.to_string(), user_data) },
+            Ok(updated) => ctx.success(&updated),
+            Err(e) => ctx.error(&e.to_string()),
         }
     });
 }
 
 // ── Plugins ────────────────────────────────────────────────────────
 
-/// Reloads WASM plugin tools on every active in-memory session.
-///
-/// Callback receives a JSON string array of warnings.
+/// Reloads WASM plugin tools on every active session.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn navi_engine_reload_wasm_plugins(
     engine: *mut NaviDartEngine,
@@ -1082,18 +978,19 @@ pub unsafe extern "C" fn navi_engine_reload_wasm_plugins(
     user_data: *mut c_void,
 ) {
     let engine = unsafe { &*engine };
+    let ctx = CallbackCtx::new(callback, user_data);
     let inner = engine.inner.clone();
     engine.runtime.spawn(async move {
         match inner.reload_wasm_plugins().await {
-            Ok(warnings) => unsafe { reply_json(callback, &warnings, user_data) },
-            Err(e) => unsafe { call_error(callback, &e.to_string(), user_data) },
+            Ok(warnings) => ctx.success(&warnings),
+            Err(e) => ctx.error(&e.to_string()),
         }
     });
 }
 
 // ── Saved Sessions ─────────────────────────────────────────────────
 
-/// Lists all persisted sessions with their titles and timestamps.
+/// Lists all persisted sessions.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn navi_engine_list_saved_sessions(
     engine: *mut NaviDartEngine,
@@ -1101,18 +998,17 @@ pub unsafe extern "C" fn navi_engine_list_saved_sessions(
     user_data: *mut c_void,
 ) {
     let engine = unsafe { &*engine };
+    let ctx = CallbackCtx::new(callback, user_data);
     let inner = engine.inner.clone();
     engine.runtime.spawn(async move {
         match inner.list_saved_sessions_async().await {
-            Ok(sessions) => unsafe { reply_json(callback, &sessions, user_data) },
-            Err(e) => unsafe { call_error(callback, &e.to_string(), user_data) },
+            Ok(sessions) => ctx.success(&sessions),
+            Err(e) => ctx.error(&e.to_string()),
         }
     });
 }
 
 /// Loads a persisted session by ID and reopens it in memory.
-///
-/// Callback receives the `SessionSnapshot` as JSON.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn navi_engine_load_saved_session(
     engine: *mut NaviDartEngine,
@@ -1121,24 +1017,21 @@ pub unsafe extern "C" fn navi_engine_load_saved_session(
     user_data: *mut c_void,
 ) {
     let engine = unsafe { &*engine };
-    let sid = match unsafe { cstr_to_str(session_id) } {
-        Some(s) => s.to_string(),
-        None => {
-            unsafe { call_error(callback, "session_id is null or invalid UTF-8", user_data) };
-            return;
-        }
+    let sid = match parse_sid(session_id, callback, user_data) {
+        Some(s) => s,
+        None => return,
     };
-
+    let ctx = CallbackCtx::new(callback, user_data);
     let inner = engine.inner.clone();
     engine.runtime.spawn(async move {
         match inner.load_saved_session_async(&sid).await {
-            Ok(snapshot) => unsafe { reply_json(callback, &snapshot, user_data) },
-            Err(e) => unsafe { call_error(callback, &e.to_string(), user_data) },
+            Ok(snapshot) => ctx.success(&snapshot),
+            Err(e) => ctx.error(&e.to_string()),
         }
     });
 }
 
-/// Deletes a persisted session. Callback receives `true` if a session was removed.
+/// Deletes a persisted session.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn navi_engine_delete_saved_session(
     engine: *mut NaviDartEngine,
@@ -1147,36 +1040,28 @@ pub unsafe extern "C" fn navi_engine_delete_saved_session(
     user_data: *mut c_void,
 ) {
     let engine = unsafe { &*engine };
-    let sid = match unsafe { cstr_to_str(session_id) } {
-        Some(s) => s.to_string(),
-        None => {
-            unsafe { call_error(callback, "session_id is null or invalid UTF-8", user_data) };
-            return;
-        }
+    let sid = match parse_sid(session_id, callback, user_data) {
+        Some(s) => s,
+        None => return,
     };
-
+    let ctx = CallbackCtx::new(callback, user_data);
     let inner = engine.inner.clone();
     engine.runtime.spawn(async move {
         match inner.delete_saved_session_async(&sid).await {
-            Ok(deleted) => {
-                let json = serde_json::to_string(&deleted).unwrap_or_default();
-                unsafe { call_success(callback, &json, user_data) }
-            }
-            Err(e) => unsafe { call_error(callback, &e.to_string(), user_data) },
+            Ok(deleted) => ctx.success(&deleted),
+            Err(e) => ctx.error(&e.to_string()),
         }
     });
 }
 
 // ── Config ─────────────────────────────────────────────────────────
 
-/// Returns a snapshot of the current loaded configuration as JSON.
-///
-/// Returns a `*mut c_char` that must be freed with `navi_string_free`, or null on error.
+/// Returns the loaded configuration as JSON. Must be freed with `navi_string_free`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn navi_engine_loaded_config(engine: *mut NaviDartEngine) -> *mut c_char {
     let engine = unsafe { &*engine };
     let config = engine.inner.loaded_config();
-    let json = json!({
+    to_json_ptr(&json!({
         "model": {
             "provider": config.config.model.provider,
             "name": config.config.model.name,
@@ -1190,24 +1075,17 @@ pub unsafe extern "C" fn navi_engine_loaded_config(engine: *mut NaviDartEngine) 
         "globalConfigPath": config.global_config_path,
         "projectConfigPath": config.project_config_path,
         "dataDir": config.data_dir,
-    });
-    to_json_ptr(&json)
+    }))
 }
 
 // ── Internal helpers ───────────────────────────────────────────────
 
-async fn event_loop(
-    mut receiver: broadcast::Receiver<RuntimeEvent>,
-    callback: NaviEventCallback,
-    ud: SendPtr,
-) {
+async fn event_loop(mut receiver: broadcast::Receiver<RuntimeEvent>, ctx: EventCtx) {
     loop {
         match receiver.recv().await {
             Ok(event) => match serde_json::to_string(&event) {
                 Ok(json) => {
-                    let c_json = CString::new(json).unwrap_or_default();
-                    let should_stop = unsafe { callback(c_json.as_ptr(), ud.0) };
-                    if should_stop != 0 {
+                    if ctx.emit(&json) {
                         break;
                     }
                 }
@@ -1215,6 +1093,32 @@ async fn event_loop(
             },
             Err(broadcast::error::RecvError::Lagged(_)) => continue,
             Err(broadcast::error::RecvError::Closed) => break,
+        }
+    }
+}
+
+/// Helper to parse session_id and return a String, or call error and return None.
+fn parse_sid(
+    ptr: *const c_char,
+    callback: NaviAsyncCallback,
+    user_data: *mut c_void,
+) -> Option<String> {
+    match unsafe { cstr_to_str(ptr) } {
+        Some(s) => Some(s.to_string()),
+        None => {
+            CallbackCtx::new(callback, user_data).error("session_id is null or invalid UTF-8");
+            None
+        }
+    }
+}
+
+/// Helper to parse a generic C string parameter.
+fn parse_str(ptr: *const c_char, name: &str) -> Option<String> {
+    match unsafe { cstr_to_str(ptr) } {
+        Some(s) => Some(s.to_string()),
+        None => {
+            set_last_error(&format!("{name} is null or invalid UTF-8"));
+            None
         }
     }
 }

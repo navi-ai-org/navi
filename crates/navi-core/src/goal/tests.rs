@@ -394,6 +394,7 @@ mod tests {
             session_id: "s1".into(),
             goal_id: "g1".into(),
             objective: "obj".into(),
+            short_description: Some("short".into()),
             status: GoalStatus::Active,
             tokens_used: 42,
             token_budget: Some(100),
