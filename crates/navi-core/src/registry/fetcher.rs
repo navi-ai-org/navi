@@ -237,6 +237,14 @@ pub async fn sync_registry(
     // Remove providers that were deleted from the remote registry.
     store.delete_providers_not_in(&keep_ids)?;
     store.save_manifest_meta(&manifest)?;
+    // Persist the full manifest JSON so load_cached_registry and
+    // check_registry_manifest see the correct version and hashes.
+    super::update::save_registry_metadata(
+        store,
+        &manifest,
+        Some(super::update::current_timestamp_secs()),
+        Some(super::update::current_timestamp_secs()),
+    )?;
 
     tracing::info!(
         updated = updated,

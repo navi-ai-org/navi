@@ -423,6 +423,10 @@ pub struct ProviderConfig {
     /// explicit configuration even when the value is empty.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub request_options: Option<ProviderRequestOptions>,
+    /// When `true`, this provider is an aggregator whose model list is fetched
+    /// dynamically from the provider's `/models` API at sync time.
+    #[serde(default)]
+    pub aggregator: bool,
 }
 
 impl Default for ProviderConfig {
@@ -444,6 +448,7 @@ impl Default for ProviderConfig {
             tool_prompt_manifest: None,
             tool_calling_mode: None,
             request_options: None,
+            aggregator: false,
         }
     }
 }
@@ -534,8 +539,11 @@ pub enum ProviderKind {
 pub struct ProviderModelConfig {
     /// Model name (e.g. `"gpt-5.5"`).
     pub name: String,
-    /// Task size classification for harness profile inference.
-    pub task_size: ModelTaskSize,
+    /// Deprecated: task size is no longer part of the registry. Kept as optional
+    /// for backward compatibility with existing config files — ignored at runtime
+    /// in favor of a context-window-based heuristic.
+    #[serde(default)]
+    pub task_size: Option<ModelTaskSize>,
     /// Context window size in tokens, if known.
     #[serde(default)]
     pub context_window_tokens: Option<u64>,
@@ -587,8 +595,9 @@ pub struct ModelOption {
     pub provider_label: String,
     /// Provider description.
     pub provider_description: String,
-    /// Task size classification.
-    pub task_size: ModelTaskSize,
+    /// Deprecated: task size classification. Now optional — the harness profile
+    /// is inferred from context window size instead.
+    pub task_size: Option<ModelTaskSize>,
     /// Context window size in tokens, if known.
     pub context_window_tokens: Option<u64>,
 }

@@ -168,7 +168,7 @@ fn minimal_fallback_providers() -> Vec<ProviderConfig> {
         base_url: Some("https://api.openai.com/v1".to_string()),
         models: vec![ProviderModelConfig {
             name: "gpt-5.1".to_string(),
-            task_size: ModelTaskSize::Large,
+            task_size: Some(ModelTaskSize::Large),
             context_window_tokens: Some(1_000_000),
             max_output_tokens: None,
             recommended_temperature: None,
@@ -533,7 +533,7 @@ async fn fetch_provider_with_retry(
     ))
 }
 
-fn current_timestamp_secs() -> u64 {
+pub fn current_timestamp_secs() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
@@ -554,11 +554,12 @@ mod tests {
             api_key_env: "TEST_API_KEY".to_string(),
             base_url: None,
             tool_calling_mode: None,
+            aggregator: false,
             defaults: Default::default(),
             request_options: Default::default(),
             models: vec![RegistryModel {
                 name: name.to_string(),
-                task_size: "large".to_string(),
+                task_size: Some("large".to_string()),
                 context_window_tokens: Some(128_000),
                 max_output_tokens: None,
                 recommended_temperature: None,

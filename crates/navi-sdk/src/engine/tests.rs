@@ -51,7 +51,7 @@ fn test_config() -> NaviConfig {
         models: vec![navi_core::config::types::ProviderModelConfig {
             name: "test-model".to_string(),
 
-            task_size: navi_core::config::types::ModelTaskSize::Small,
+            task_size: Some(navi_core::config::types::ModelTaskSize::Small),
 
             context_window_tokens: Some(8192),
 

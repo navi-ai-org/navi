@@ -79,7 +79,7 @@ fn minimal_fallback_providers() -> Vec<ProviderConfig> {
         base_url: Some("https://api.openai.com/v1".to_string()),
         models: vec![ProviderModelConfig {
             name: "gpt-5.1".to_string(),
-            task_size: ModelTaskSize::Large,
+            task_size: Some(ModelTaskSize::Large),
             context_window_tokens: Some(1_000_000),
             max_output_tokens: None,
             recommended_temperature: None,
@@ -312,18 +312,20 @@ pub(crate) fn merge_provider_configs(
             // Merge models by name: preserve registry metadata (context_window_tokens,
             // max_output_tokens, recommended_temperature, supports_thinking,
             // tool_prompt_manifest) when the user override doesn't specify them.
-            let existing_models: std::collections::HashMap<String, ProviderModelConfig> = existing
-                .models
-                .drain(..)
-                .map(|m| (m.name.clone(), m))
-                .collect();
+            let mut existing_models: std::collections::HashMap<String, ProviderModelConfig> =
+                existing
+                    .models
+                    .drain(..)
+                    .map(|m| (m.name.clone(), m))
+                    .collect();
 
             let mut merged_models = Vec::new();
             for override_model in override_config.models {
                 if let Some(registry_model) = existing_models.get(&override_model.name) {
+                    let name = override_model.name.clone();
                     merged_models.push(ProviderModelConfig {
                         name: override_model.name,
-                        task_size: override_model.task_size,
+                        task_size: override_model.task_size.or(registry_model.task_size),
                         context_window_tokens: override_model
                             .context_window_tokens
                             .or(registry_model.context_window_tokens),
@@ -352,9 +354,18 @@ pub(crate) fn merge_provider_configs(
                             .tool_prompt_manifest
                             .or(registry_model.tool_prompt_manifest),
                     });
+                    // Mark as consumed so we can preserve unmatched registry models.
+                    existing_models.remove(&name);
                 } else {
                     merged_models.push(override_model);
                 }
+            }
+
+            // Preserve registry models that the user override didn't list so
+            // that newly added registry models appear even when the config
+            // override only specifies a subset of models.
+            for (_, registry_model) in existing_models.into_iter() {
+                merged_models.push(registry_model);
             }
 
             // Override provider-level fields, keep merged models.
@@ -395,6 +406,9 @@ pub(crate) fn merge_provider_configs(
             if override_config.tool_calling_mode.is_some() {
                 existing.tool_calling_mode = override_config.tool_calling_mode;
             }
+            // Preserve aggregator flag from the registry — user overrides
+            // shouldn't disable it since it controls dynamic model sync.
+            existing.aggregator = existing.aggregator || override_config.aggregator;
         } else {
             providers.push(override_config);
         }
@@ -436,7 +450,7 @@ mod tests {
             id: "commandcode".to_string(),
             models: vec![ProviderModelConfig {
                 name: "claude-sonnet-4-6".to_string(),
-                task_size: ModelTaskSize::Large,
+                task_size: Some(ModelTaskSize::Large),
                 context_window_tokens: Some(128_000),
                 max_output_tokens: None,
                 recommended_temperature: None,
@@ -470,5 +484,101 @@ mod tests {
             ToolCallingMode::Native
         );
         assert!(!effective_tool_prompt_manifest(&config));
+    }
+
+    #[test]
+    fn merge_preserves_registry_models_not_in_override() {
+        let registry_provider = ProviderConfig {
+            id: "test-merge".to_string(),
+            models: vec![
+                ProviderModelConfig {
+                    name: "model-a".to_string(),
+                    task_size: Some(ModelTaskSize::Large),
+                    context_window_tokens: Some(128_000),
+                    max_output_tokens: None,
+                    recommended_temperature: None,
+                    supports_thinking: None,
+                    supports_images: None,
+                    supports_audio: None,
+                    supports_video: None,
+                    supports_documents: None,
+                    tool_prompt_manifest: None,
+                },
+                ProviderModelConfig {
+                    name: "model-b".to_string(),
+                    task_size: Some(ModelTaskSize::Small),
+                    context_window_tokens: Some(64_000),
+                    max_output_tokens: None,
+                    recommended_temperature: None,
+                    supports_thinking: None,
+                    supports_images: None,
+                    supports_audio: None,
+                    supports_video: None,
+                    supports_documents: None,
+                    tool_prompt_manifest: None,
+                },
+                ProviderModelConfig {
+                    name: "model-c".to_string(),
+                    task_size: Some(ModelTaskSize::Large),
+                    context_window_tokens: Some(200_000),
+                    max_output_tokens: None,
+                    recommended_temperature: None,
+                    supports_thinking: None,
+                    supports_images: None,
+                    supports_audio: None,
+                    supports_video: None,
+                    supports_documents: None,
+                    tool_prompt_manifest: None,
+                },
+            ],
+            ..Default::default()
+        };
+
+        let override_provider = ProviderConfig {
+            id: "test-merge".to_string(),
+            models: vec![ProviderModelConfig {
+                name: "model-a".to_string(),
+                task_size: Some(ModelTaskSize::Large),
+                context_window_tokens: None,
+                max_output_tokens: None,
+                recommended_temperature: None,
+                supports_thinking: None,
+                supports_images: None,
+                supports_audio: None,
+                supports_video: None,
+                supports_documents: None,
+                tool_prompt_manifest: None,
+            }],
+            ..Default::default()
+        };
+
+        let mut providers = vec![registry_provider];
+        super::merge_provider_configs(&mut providers, vec![override_provider]);
+
+        let merged = &providers[0];
+        let names: Vec<&str> = merged.models.iter().map(|m| m.name.as_str()).collect();
+        assert!(
+            names.contains(&"model-a"),
+            "override model should be present"
+        );
+        assert!(
+            names.contains(&"model-b"),
+            "registry-only model should be preserved"
+        );
+        assert!(
+            names.contains(&"model-c"),
+            "registry-only model should be preserved"
+        );
+
+        let model_a = merged
+            .models
+            .iter()
+            .find(|m| m.name == "model-a")
+            .expect("model-a present");
+        assert_eq!(
+            model_a.context_window_tokens,
+            Some(128_000),
+            "override should inherit registry metadata for matching models"
+        );
     }
 }
