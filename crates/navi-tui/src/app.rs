@@ -1,5 +1,5 @@
 use std::cell::RefCell;
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
@@ -23,8 +23,8 @@ use crate::runtime::{build_engine, selected_model_runtime_available};
 use crate::session::load_saved_sessions;
 use crate::state::{
     ChatMessage, ChatRenderCache, ChatRole, ChatView, McpUiState, ModalKind, Mode, Notification,
-    OAuthUiState, PluginApprovalRequest, QuestionUiState, SelectionState, SubagentTranscript,
-    ThinkingLevel, UsageUiState,
+    OAuthUiState, PluginApprovalRequest, QuestionUiState, QueuedUserMessage, SelectionState,
+    SubagentTranscript, ThinkingLevel, UsageUiState,
 };
 use crate::theme::{ThemeId, ThemePalette};
 use crate::ui::interaction::{HitAction, HitRegion, InteractionRegistry};
@@ -40,12 +40,14 @@ pub struct TuiApp {
     pub(crate) mode: Mode,
     pub(crate) modal_stack: ModalStack<ModalKind>,
     pub(crate) command_filter: String,
+    pub(crate) command_filter_cursor: usize,
     pub(crate) selected_command: usize,
     pub(crate) command_scroll: usize,
     pub(crate) models: Vec<ModelOption>,
     pub(crate) selected_model: usize,
     pub(crate) model_scroll: usize,
     pub(crate) model_filter: String,
+    pub(crate) model_filter_cursor: usize,
     pub(crate) thinking_level: ThinkingLevel,
     pub(crate) selected_thinking: usize,
     tick: u64,
@@ -89,10 +91,17 @@ pub struct TuiApp {
 
     // stats
     pub(crate) compact_state: CompactState,
+    pub(crate) dreaming: bool,
 
     // clipboard images
     /// Images captured from the clipboard, waiting to be attached to the next message.
     pub(crate) pending_images: Vec<crate::state::PendingImage>,
+    pub(crate) queued_user_messages: VecDeque<QueuedUserMessage>,
+    pub(crate) queued_message_selected: usize,
+    pub(crate) queued_message_scroll: usize,
+    pub(crate) queued_edit_index: Option<usize>,
+    pub(crate) queued_edit_text: String,
+    pub(crate) queued_edit_cursor: usize,
 
     // persistence
     pub(crate) session_store: SessionStore,
@@ -104,6 +113,7 @@ pub struct TuiApp {
     pub(crate) selected_session: usize,
     pub(crate) session_scroll: usize,
     pub(crate) session_filter: String,
+    pub(crate) session_filter_cursor: usize,
 
     pub(crate) full_tool_view: bool,
     pub(crate) compact_tool_visible_limit: usize,
@@ -111,9 +121,11 @@ pub struct TuiApp {
     pub(crate) selected_setting: usize,
     pub(crate) selected_theme: usize,
     pub(crate) theme_filter: String,
+    pub(crate) theme_filter_cursor: usize,
     pub(crate) selected_provider_setting: usize,
     pub(crate) provider_settings_scroll: usize,
     pub(crate) provider_filter: String,
+    pub(crate) provider_filter_cursor: usize,
     pub(crate) oauth_state: Option<OAuthUiState>,
     pub(crate) usage_state: UsageUiState,
     notification: Option<Notification>,
@@ -141,6 +153,7 @@ pub struct TuiApp {
     pub(crate) active_skills: Vec<String>,
     pub(crate) selected_skill: usize,
     pub(crate) skill_filter: String,
+    pub(crate) skill_filter_cursor: usize,
     pub(crate) skill_scroll: usize,
 
     // plugins modal (marketplace catalog + installed)
@@ -245,12 +258,14 @@ impl TuiApp {
             mode: Mode::Normal,
             modal_stack: ModalStack::default(),
             command_filter: String::new(),
+            command_filter_cursor: 0,
             selected_command: 0,
             command_scroll: 0,
             models,
             selected_model,
             model_scroll: 0,
             model_filter: String::new(),
+            model_filter_cursor: 0,
             thinking_level,
             selected_thinking: thinking_level.index(),
             tick: 0,
@@ -284,7 +299,14 @@ impl TuiApp {
             pending_model_selection: None,
             pending_provider_setup: None,
             compact_state: CompactState::new(context_window),
+            dreaming: false,
             pending_images: Vec::new(),
+            queued_user_messages: VecDeque::new(),
+            queued_message_selected: 0,
+            queued_message_scroll: 0,
+            queued_edit_index: None,
+            queued_edit_text: String::new(),
+            queued_edit_cursor: 0,
             goal_state: None,
             session_store,
             events: Vec::new(),
@@ -295,6 +317,7 @@ impl TuiApp {
             selected_session: 0,
             session_scroll: 0,
             session_filter: String::new(),
+            session_filter_cursor: 0,
             full_tool_view,
             compact_tool_visible_limit,
             show_thinking,
@@ -304,9 +327,11 @@ impl TuiApp {
                 .position(|id| *id == theme_id)
                 .unwrap_or(0),
             theme_filter: String::new(),
+            theme_filter_cursor: 0,
             selected_provider_setting: 0,
             provider_settings_scroll: 0,
             provider_filter: String::new(),
+            provider_filter_cursor: 0,
             oauth_state: None,
             usage_state: UsageUiState::default(),
             notification: None,
@@ -327,6 +352,7 @@ impl TuiApp {
             active_skills: initial_active_skills,
             selected_skill: 0,
             skill_filter: String::new(),
+            skill_filter_cursor: 0,
             skill_scroll: 0,
             plugin_catalog: Vec::new(),
             plugin_catalog_loading: false,
@@ -389,6 +415,7 @@ impl TuiApp {
         // Open model picker immediately so the user can select a provider.
         app.modal_stack.open(ModalKind::Models);
         app.model_filter.clear();
+        app.model_filter_cursor = 0;
         app.model_scroll = 0;
         app.refresh_authenticated_providers();
         // Pre-populate a welcome message for the setup flow.
