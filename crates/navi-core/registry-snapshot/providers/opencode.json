@@ -8,7 +8,6 @@
   "models": [
     {
       "name": "gpt-5.2",
-      "task_size": "large",
       "context_window_tokens": 400000,
       "max_output_tokens": 16384,
       "recommended_temperature": 1.0,
@@ -21,7 +20,6 @@
     },
     {
       "name": "gpt-5.1-codex",
-      "task_size": "large",
       "context_window_tokens": 400000,
       "max_output_tokens": 16384,
       "recommended_temperature": 1.0,
@@ -34,7 +32,6 @@
     },
     {
       "name": "claude-opus-4.5",
-      "task_size": "large",
       "context_window_tokens": 200000,
       "max_output_tokens": 16384,
       "recommended_temperature": 1.0,
@@ -47,7 +44,6 @@
     },
     {
       "name": "claude-sonnet-4.5",
-      "task_size": "large",
       "context_window_tokens": 200000,
       "max_output_tokens": 16384,
       "recommended_temperature": 1.0,
@@ -60,7 +56,6 @@
     },
     {
       "name": "minimax-m2.1",
-      "task_size": "small",
       "context_window_tokens": 204800,
       "max_output_tokens": 8192,
       "recommended_temperature": 1.0,
@@ -73,7 +68,6 @@
     },
     {
       "name": "gemini-3-pro",
-      "task_size": "large",
       "context_window_tokens": 1000000,
       "max_output_tokens": 65536,
       "recommended_temperature": 1.0,
@@ -86,7 +80,6 @@
     },
     {
       "name": "big-pickle",
-      "task_size": "large",
       "context_window_tokens": 200000,
       "max_output_tokens": 16384,
       "recommended_temperature": 1.0,
@@ -99,7 +92,6 @@
     },
     {
       "name": "deepseek-v4-flash-free",
-      "task_size": "small",
       "context_window_tokens": 1000000,
       "max_output_tokens": 16384,
       "recommended_temperature": 1.0,
@@ -112,7 +104,6 @@
     },
     {
       "name": "nemotron-3-super-free",
-      "task_size": "small",
       "context_window_tokens": 1000000,
       "max_output_tokens": 8192,
       "recommended_temperature": 1.0,
@@ -125,7 +116,6 @@
     },
     {
       "name": "qwen3.6-plus",
-      "task_size": "large",
       "context_window_tokens": 1000000,
       "max_output_tokens": 16384,
       "recommended_temperature": 1.0,
@@ -138,7 +128,6 @@
     },
     {
       "name": "qwen3.5-plus",
-      "task_size": "large",
       "context_window_tokens": 1000000,
       "max_output_tokens": 16384,
       "recommended_temperature": 1.0,
@@ -151,7 +140,6 @@
     },
     {
       "name": "kimi-k2.6",
-      "task_size": "large",
       "context_window_tokens": 262144,
       "max_output_tokens": 16384,
       "recommended_temperature": 1.0,
@@ -164,7 +152,6 @@
     },
     {
       "name": "kimi-k2.5",
-      "task_size": "large",
       "context_window_tokens": 262144,
       "max_output_tokens": 16384,
       "recommended_temperature": 1.0,
@@ -177,7 +164,6 @@
     },
     {
       "name": "glm-5.1",
-      "task_size": "large",
       "context_window_tokens": 200000,
       "max_output_tokens": 16384,
       "recommended_temperature": 1.0,
@@ -190,7 +176,6 @@
     },
     {
       "name": "glm-5",
-      "task_size": "large",
       "context_window_tokens": 200000,
       "max_output_tokens": 16384,
       "recommended_temperature": 1.0,
@@ -203,7 +188,6 @@
     },
     {
       "name": "minimax-m2.7",
-      "task_size": "small",
       "context_window_tokens": 204800,
       "max_output_tokens": 8192,
       "recommended_temperature": 1.0,
@@ -216,7 +200,6 @@
     },
     {
       "name": "minimax-m2.5",
-      "task_size": "small",
       "context_window_tokens": 204800,
       "max_output_tokens": 8192,
       "recommended_temperature": 1.0,
@@ -229,7 +212,6 @@
     },
     {
       "name": "grok-build-0.1",
-      "task_size": "small",
       "context_window_tokens": 256000,
       "max_output_tokens": 8192,
       "recommended_temperature": 1.0,

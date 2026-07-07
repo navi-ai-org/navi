@@ -109,8 +109,8 @@
     },
     "openrouter": {
       "file": "providers/openrouter.json",
-      "sha256": "148cb28eb1b7e70c524405898e2b2b57510f1516bea01c3f0629694650c02a3e",
-      "model_count": 21
+      "sha256": "498a7ae9ad0da5b09f7f4a6d56b8ad0a52e6e224fd10752ea6186d712b15f067",
+      "model_count": 5
     },
     "stepfun": {
       "file": "providers/stepfun.json",

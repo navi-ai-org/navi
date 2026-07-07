@@ -8,7 +8,6 @@
   "models": [
     {
       "name": "MiniMax-M3",
-      "task_size": "large",
       "context_window_tokens": 1000000,
       "max_output_tokens": 128000,
       "recommended_temperature": 1.0,
@@ -21,7 +20,6 @@
     },
     {
       "name": "MiniMax-M2.7",
-      "task_size": "large",
       "context_window_tokens": 204800,
       "max_output_tokens": 128000,
       "recommended_temperature": 1.0,
@@ -34,7 +32,6 @@
     },
     {
       "name": "MiniMax-M2.7-highspeed",
-      "task_size": "large",
       "context_window_tokens": 204800,
       "max_output_tokens": 128000,
       "recommended_temperature": 1.0,
@@ -47,7 +44,6 @@
     },
     {
       "name": "MiniMax-M2.5",
-      "task_size": "large",
       "context_window_tokens": 204800,
       "max_output_tokens": 128000,
       "recommended_temperature": 1.0,
@@ -60,7 +56,6 @@
     },
     {
       "name": "MiniMax-M2.5-highspeed",
-      "task_size": "large",
       "context_window_tokens": 204800,
       "max_output_tokens": 128000,
       "recommended_temperature": 1.0,
@@ -73,7 +68,6 @@
     },
     {
       "name": "MiniMax-M2.1",
-      "task_size": "large",
       "context_window_tokens": 204800,
       "max_output_tokens": 128000,
       "recommended_temperature": 1.0,
@@ -86,7 +80,6 @@
     },
     {
       "name": "MiniMax-M2.1-highspeed",
-      "task_size": "large",
       "context_window_tokens": 204800,
       "max_output_tokens": 128000,
       "recommended_temperature": 1.0,
@@ -99,7 +92,6 @@
     },
     {
       "name": "MiniMax-M2",
-      "task_size": "large",
       "context_window_tokens": 204800,
       "max_output_tokens": 128000,
       "recommended_temperature": 1.0,
@@ -112,7 +104,6 @@
     },
     {
       "name": "MiniMax-Text-01",
-      "task_size": "large",
       "context_window_tokens": 1000000,
       "max_output_tokens": 128000,
       "recommended_temperature": 1.0,
@@ -125,7 +116,6 @@
     },
     {
       "name": "MiniMax-Text-01-456B",
-      "task_size": "large",
       "context_window_tokens": 1000000,
       "max_output_tokens": 128000,
       "recommended_temperature": 1.0,
@@ -138,7 +128,6 @@
     },
     {
       "name": "abab6.5-chat",
-      "task_size": "large",
       "context_window_tokens": 200000,
       "max_output_tokens": 16384,
       "recommended_temperature": 0.7,
@@ -151,7 +140,6 @@
     },
     {
       "name": "abab6.5g-chat",
-      "task_size": "large",
       "context_window_tokens": 200000,
       "max_output_tokens": 8192,
       "recommended_temperature": 0.7,
@@ -164,7 +152,6 @@
     },
     {
       "name": "abab6.5s-chat",
-      "task_size": "small",
       "context_window_tokens": 200000,
       "max_output_tokens": 16384,
       "recommended_temperature": 0.7,
@@ -177,7 +164,6 @@
     },
     {
       "name": "abab6.5t-chat",
-      "task_size": "small",
       "context_window_tokens": 200000,
       "max_output_tokens": 8192,
       "recommended_temperature": 0.7,
