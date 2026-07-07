@@ -2908,6 +2908,7 @@ dependencies = [
 name = "navi-plugin-api"
 version = "0.1.2"
 dependencies = [
+ "copland",
  "serde",
  "serde_json",
 ]
@@ -2937,6 +2938,7 @@ version = "0.1.2"
 dependencies = [
  "anyhow",
  "async-trait",
+ "copland",
  "landlock",
  "libloading",
  "navi-core",

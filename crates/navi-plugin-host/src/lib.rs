@@ -232,6 +232,8 @@ pub struct DefaultPluginRegistry {
     pub tools: Vec<Arc<dyn PluginTool>>,
     pub agent_policies: Vec<String>,
     pub tui_components: Vec<String>,
+    #[cfg(feature = "tui")]
+    pub tui_panels: Vec<Box<dyn navi_plugin_api::TuiComponent>>,
 }
 
 impl PluginRegistry for DefaultPluginRegistry {
@@ -245,6 +247,13 @@ impl PluginRegistry for DefaultPluginRegistry {
 
     fn register_tui_component(&mut self, name: &str) {
         self.tui_components.push(name.to_string());
+    }
+}
+
+#[cfg(feature = "tui")]
+impl navi_plugin_api::PluginRegistryTui for DefaultPluginRegistry {
+    fn register_tui_panel(&mut self, component: Box<dyn navi_plugin_api::TuiComponent>) {
+        self.tui_panels.push(component);
     }
 }
 
