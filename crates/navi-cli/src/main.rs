@@ -242,6 +242,23 @@ pub enum MemoryAction {
         #[arg(long)]
         force: bool,
     },
+    /// List all stored memories
+    List {
+        /// Filter by status: active, needs_review, obsolete
+        #[arg(long)]
+        status: Option<String>,
+        /// Max results
+        #[arg(long, default_value_t = 50)]
+        limit: usize,
+    },
+    /// Search memories by text query
+    Search {
+        /// Search query
+        query: String,
+        /// Max results
+        #[arg(long, default_value_t = 20)]
+        limit: usize,
+    },
     /// Validate files, paths, permissions, SQLite schema, and config
     Doctor,
 }

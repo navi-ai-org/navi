@@ -362,6 +362,42 @@ pub async fn handle_memory_command(
             println!();
             println!("Auto-memory initialization complete.");
         }
+        crate::MemoryAction::List { status, limit } => {
+            let db_path = manager.store.memory_root.join("memories.db");
+            let store = navi_core::memory::AutoMemoryStore::open(&db_path)?;
+            let status_filter = status.as_deref().and_then(navi_core::memory::MemoryStatus::from_str);
+            let memories = store.list(status_filter)?;
+
+            if memories.is_empty() {
+                println!("No memories found.");
+            } else {
+                let limited: Vec<_> = memories.into_iter().take(limit).collect();
+                println!("Memories ({} shown):", limited.len());
+                for m in &limited {
+                    println!(
+                        "  [{}] {} ({}) — {} (conf: {:.2}, {})",
+                        m.id, m.name, m.memory_type, m.description, m.confidence, m.status.as_str()
+                    );
+                }
+            }
+        }
+        crate::MemoryAction::Search { query, limit } => {
+            let db_path = manager.store.memory_root.join("memories.db");
+            let store = navi_core::memory::AutoMemoryStore::open(&db_path)?;
+            let results = store.search_text(&query, limit)?;
+
+            if results.is_empty() {
+                println!("No memories found for '{}'.", query);
+            } else {
+                println!("Search results for '{}' ({}):", query, results.len());
+                for m in &results {
+                    println!(
+                        "  [{}] {} ({}) — {} (conf: {:.2})",
+                        m.id, m.name, m.memory_type, m.description, m.confidence
+                    );
+                }
+            }
+        }
         crate::MemoryAction::Doctor => {
             println!("Memory Doctor diagnostics:");
             // Check Config
