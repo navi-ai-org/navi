@@ -481,7 +481,7 @@ Triggered after each turn via `try_auto_dream()`. Passes 3 gates before executin
 | Sessions | `>= 5` sessions since last dream | 5 |
 | Lock | No other process consolidating | File lock with PID + 1h stale detection |
 
-When all gates pass, spawns a background consolidation: marks stale memories (>30 days), deduplicates, and backfills missing embeddings. The model-based dream (`navi memory dream`) additionally uses a model call to consolidate the SQLite auto-memory index + global memory.
+When all gates pass, spawns a background consolidation: marks stale memories (>30 days), deduplicates, and backfills missing embeddings. The model-based dream (`navi memory dream --apply`) additionally uses a model call to consolidate the SQLite auto-memory index + global memory. When applied, the model receives all active SQLite memories with full body text and returns consolidation actions (mark obsolete, merge duplicates, update confidence) that are applied directly to the SQLite store.
 
 ### Auto-Distill
 
