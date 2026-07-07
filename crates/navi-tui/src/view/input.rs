@@ -21,7 +21,7 @@ const INPUT_TOP_PADDING_ROWS: u16 = 1;
 const FOOTER_BOTTOM_PADDING_ROWS: u16 = 1;
 const INPUT_TEXT_INSET_COLUMNS: u16 = 1;
 
-pub(super) fn render_input(frame: &mut Frame<'_>, app: &mut TuiApp, area: Rect) {
+pub(crate) fn render_input(frame: &mut Frame<'_>, app: &mut TuiApp, area: Rect) {
     let inner = area.inner(Margin {
         horizontal: 1,
         vertical: 0,
@@ -147,7 +147,7 @@ pub(super) fn composer_activity_height(app: &TuiApp) -> u16 {
     }
 }
 
-pub(super) fn render_input_activity(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
+pub(crate) fn render_input_activity(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
     if area.height == 0 {
         return;
     }
@@ -172,7 +172,7 @@ pub(super) fn render_input_activity(frame: &mut Frame<'_>, app: &TuiApp, area: R
     );
 }
 
-pub(super) fn render_input_hint(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
+pub(crate) fn render_input_hint(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
     if area.height == 0 {
         return;
     }

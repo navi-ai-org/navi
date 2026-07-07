@@ -29,10 +29,12 @@ use crate::state::{
 use crate::theme::{ThemeId, ThemePalette};
 use crate::ui::ModalStack;
 use crate::ui::interaction::{HitAction, HitRegion, InteractionRegistry};
+use copland::panel::PanelManager;
 
 // ─── app state ─────────────────────────────────────────────────────────────────
 pub struct TuiApp {
     pub(crate) loaded_config: LoadedConfig,
+    pub(crate) panel_manager: PanelManager,
     pub(crate) input: String,
     pub(crate) input_cursor: usize,
     pub(crate) input_selection: Option<(usize, usize)>,
@@ -344,6 +346,7 @@ impl TuiApp {
             log_path,
             chat_render_cache: RefCell::new(ChatRenderCache::default()),
             interaction_registry: RefCell::new(InteractionRegistry::default()),
+            panel_manager: PanelManager::new(),
             selection: None,
             hover_index: None,
             theme_id,
@@ -407,6 +410,8 @@ impl TuiApp {
                 crate::providers::push_recent_model(&mut app, &provider, &model);
             }
         }
+
+        crate::panels::register_modal_panels(&mut app);
 
         Ok(app)
     }

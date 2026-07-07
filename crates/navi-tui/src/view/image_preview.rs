@@ -13,7 +13,7 @@ use crate::view::input::composer_panel_bg;
 pub(crate) const IMAGE_PREVIEW_HEIGHT: u16 = 3;
 
 /// Render image attachment labels above the input area.
-pub(super) fn render_image_previews(frame: &mut Frame<'_>, app: &mut TuiApp, area: Rect) -> Rect {
+pub(crate) fn render_image_previews(frame: &mut Frame<'_>, app: &mut TuiApp, area: Rect) -> Rect {
     if app.pending_images.is_empty() {
         return area;
     }

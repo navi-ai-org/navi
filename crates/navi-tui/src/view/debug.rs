@@ -9,7 +9,7 @@ use crate::render::{clear_modal_area, modal_block};
 use crate::theme::*;
 use crate::ui::interaction::{HitAction, line_rect};
 
-pub(super) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
+pub(crate) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
     clear_modal_area(frame, area);
     let block = modal_block("Debug");
     frame.render_widget(block, area);

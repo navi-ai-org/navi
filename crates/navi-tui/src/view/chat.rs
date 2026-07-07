@@ -18,7 +18,7 @@ use crate::ui::interaction::{HitAction, line_rect};
 
 use super::welcome::welcome_text;
 
-pub(super) fn render_chat_area(frame: &mut Frame<'_>, app: &mut TuiApp, area: Rect) {
+pub(crate) fn render_chat_area(frame: &mut Frame<'_>, app: &mut TuiApp, area: Rect) {
     let inner = area.inner(Margin {
         horizontal: 2,
         vertical: 1,

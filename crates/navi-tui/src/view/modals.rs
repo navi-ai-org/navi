@@ -18,7 +18,7 @@ use crate::ui::{
     TextInputRenderSpec, floor_char_boundary, next_char_boundary, render_text_input_line,
 };
 
-pub(super) fn render_api_key_entry(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
+pub(crate) fn render_api_key_entry(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
     clear_modal_area(frame, area);
     let block = Block::new()
         .title(Line::from(vec![Span::styled(
@@ -139,7 +139,7 @@ pub(super) fn render_api_key_entry(frame: &mut Frame<'_>, app: &TuiApp, area: Re
     );
 }
 
-pub(super) fn render_oauth(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
+pub(crate) fn render_oauth(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
     clear_modal_area(frame, area);
     frame.render_widget(modal_block("OAuth Login"), area);
 
@@ -210,7 +210,7 @@ pub(super) fn render_oauth(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
     );
 }
 
-pub(super) fn render_message_queue(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
+pub(crate) fn render_message_queue(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
     clear_modal_area(frame, area);
     frame.render_widget(modal_block("Message Queue"), area);
 
@@ -362,7 +362,7 @@ fn fit_inline(value: &str, width: usize) -> String {
     result
 }
 
-pub(super) fn render_queued_message_edit(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
+pub(crate) fn render_queued_message_edit(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
     clear_modal_area(frame, area);
     frame.render_widget(modal_block("Edit Queued Message"), area);
 
@@ -494,7 +494,7 @@ fn render_text_area(frame: &mut Frame<'_>, area: Rect, value: &str, cursor: usiz
     }
 }
 
-pub(super) fn render_confirm_cancel_turn(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
+pub(crate) fn render_confirm_cancel_turn(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
     clear_modal_area(frame, area);
     frame.render_widget(modal_block("Cancel Turn"), area);
     let inner = area.inner(Margin {
@@ -529,7 +529,7 @@ pub(super) fn render_confirm_cancel_turn(frame: &mut Frame<'_>, app: &TuiApp, ar
     );
 }
 
-pub(super) fn render_tool_approval(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
+pub(crate) fn render_tool_approval(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
     let Some(req) = app.pending_approvals.first() else {
         return;
     };
@@ -606,7 +606,7 @@ pub(super) fn render_tool_approval(frame: &mut Frame<'_>, app: &TuiApp, area: Re
     );
 }
 
-pub(super) fn render_thinking_picker(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
+pub(crate) fn render_thinking_picker(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
     clear_modal_area(frame, area);
     let block = modal_block("Thinking Mode");
     frame.render_widget(block, area);
@@ -663,7 +663,7 @@ pub(super) fn render_thinking_picker(frame: &mut Frame<'_>, app: &TuiApp, area: 
     );
 }
 
-pub(super) fn render_question(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
+pub(crate) fn render_question(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
     let Some(question) = app.pending_questions.first() else {
         return;
     };
@@ -950,7 +950,7 @@ fn question_preview_line(question: &crate::state::QuestionUiState) -> Line<'stat
     ])
 }
 
-pub(super) fn render_settings(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
+pub(crate) fn render_settings(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
     clear_modal_area(frame, area);
     let block = modal_block("Settings");
     frame.render_widget(block, area);
@@ -1042,7 +1042,7 @@ pub(super) fn render_settings(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
     );
 }
 
-pub(super) fn render_help_modal(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
+pub(crate) fn render_help_modal(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
     clear_modal_area(frame, area);
     let block = modal_block("Shortcuts");
     frame.render_widget(block, area);
@@ -1103,7 +1103,7 @@ pub(super) fn render_help_modal(frame: &mut Frame<'_>, app: &TuiApp, area: Rect)
     );
 }
 
-pub(super) fn render_message_actions(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
+pub(crate) fn render_message_actions(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
     clear_modal_area(frame, area);
     let block = modal_block("Message Actions");
     frame.render_widget(block, area);
@@ -1192,7 +1192,7 @@ fn masked_cursor_for_key(original: &str, masked: &str, cursor: usize) -> usize {
         .unwrap_or(masked.len())
 }
 
-pub(super) fn render_plugin_approval(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
+pub(crate) fn render_plugin_approval(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
     use crate::state::PluginApprovalKind;
 
     let Some(req) = app.pending_plugin_approvals.first() else {
@@ -1391,7 +1391,7 @@ pub(super) fn render_plugin_approval(frame: &mut Frame<'_>, app: &TuiApp, area: 
     }
 }
 
-pub(super) fn render_theme_picker(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
+pub(crate) fn render_theme_picker(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
     clear_modal_area(frame, area);
     let block = modal_block("Theme");
     frame.render_widget(block, area);
@@ -1502,7 +1502,7 @@ fn wrap_plain(text: &str, width: usize) -> Vec<String> {
     lines
 }
 
-pub(super) fn render_background_models(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
+pub(crate) fn render_background_models(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
     clear_modal_area(frame, area);
     let block = modal_block("Background Agents");
     frame.render_widget(block, area);
@@ -1598,7 +1598,7 @@ fn bg_model_has_override(bg: &navi_sdk::BackgroundModelsConfig, task: &str) -> b
     }
 }
 
-pub(super) fn render_usage(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
+pub(crate) fn render_usage(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
     clear_modal_area(frame, area);
     frame.render_widget(modal_block("Usage"), area);
 
@@ -1777,7 +1777,7 @@ fn format_reset(seconds: i32) -> String {
     }
 }
 
-pub(super) fn render_attachment_models(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
+pub(crate) fn render_attachment_models(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
     clear_modal_area(frame, area);
     let block = modal_block("Attachment Fallbacks");
     frame.render_widget(block, area);

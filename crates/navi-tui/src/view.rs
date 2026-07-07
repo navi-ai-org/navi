@@ -1,17 +1,17 @@
-mod background_commands;
-mod chat;
-mod command_palette;
-mod debug;
-mod image_preview;
-mod input;
-mod modals;
-mod model_picker;
-mod notification;
-mod plugins;
-mod provider_settings;
-mod sessions;
-mod skills;
-mod welcome;
+pub(crate) mod background_commands;
+pub(crate) mod chat;
+pub(crate) mod command_palette;
+pub(crate) mod debug;
+pub(crate) mod image_preview;
+pub(crate) mod input;
+pub(crate) mod modals;
+pub(crate) mod model_picker;
+pub(crate) mod notification;
+pub(crate) mod plugins;
+pub(crate) mod provider_settings;
+pub(crate) mod sessions;
+pub(crate) mod skills;
+pub(crate) mod welcome;
 
 use ratatui::layout::Rect;
 use ratatui::prelude::Frame;
@@ -76,54 +76,18 @@ fn render_inner(frame: &mut Frame<'_>, app: &mut TuiApp) {
         fill_modal_scrim(frame, content_area);
     }
 
+    // Render modals via the PanelManager (copland) for all standard modes.
+    // Special cases that need &mut TuiApp or extra params are handled below.
+    crate::panels::render_overlays(frame, app, area);
+
+    // Special-case modals that don't fit the ModalPanel pattern yet.
     match app.mode {
-        Mode::Commands => command_palette::render(frame, app, modal_rect(area, 68, 15)),
-        Mode::Models => model_picker::render(frame, app, modal_rect(area, 72, 22)),
-        Mode::ApiKeyEntry => modals::render_api_key_entry(frame, app, modal_rect(area, 72, 11)),
-        Mode::Thinking => modals::render_thinking_picker(frame, app, modal_rect(area, 40, 10)),
-        Mode::Sessions => sessions::render(frame, app, modal_rect(area, 72, 16)),
-        Mode::Settings => modals::render_settings(frame, app, modal_rect(area, 52, 12)),
-        Mode::Providers => provider_settings::render(frame, app, modal_rect(area, 110, 26)),
-        Mode::Usage => modals::render_usage(frame, app, modal_rect(area, 78, 18)),
-        Mode::Debug => debug::render(frame, app, modal_rect(area, 76, 18)),
-        Mode::Help => modals::render_help_modal(frame, app, modal_rect(area, 62, 19)),
-        Mode::Skills => skills::render(frame, app, modal_rect(area, 72, 20)),
-        Mode::Plugins => plugins::render(frame, app, modal_rect(area, 76, 22)),
-        Mode::PluginApproval => {
-            modals::render_plugin_approval(frame, app, modal_rect(area, 84, 24))
-        }
-        Mode::Question => modals::render_question(frame, app, modal_rect(area, 78, 22)),
-        Mode::ThemePicker => modals::render_theme_picker(frame, app, modal_rect(area, 40, 12)),
-        Mode::MessageActions => {
-            modals::render_message_actions(frame, app, modal_rect(area, 58, 10))
-        }
         Mode::Mcp => {
             let palette = app.theme_palette();
             crate::ui::mcp::draw_mcp_modal(frame, modal_rect(area, 90, 22), app, &palette)
         }
-        Mode::OAuth => modals::render_oauth(frame, app, modal_rect(area, 78, 12)),
-        Mode::BackgroundCommands => {
-            background_commands::render(frame, app, modal_rect(area, 80, 20))
-        }
-        Mode::BackgroundCommandOutput => {
-            background_commands::render_output(frame, app, modal_rect(area, 110, 30))
-        }
-        Mode::BackgroundModels => {
-            modals::render_background_models(frame, app, modal_rect(area, 70, 14))
-        }
-        Mode::BgModelPicker => model_picker::render(frame, app, modal_rect(area, 72, 22)),
-        Mode::AttachmentModels => {
-            modals::render_attachment_models(frame, app, modal_rect(area, 70, 12))
-        }
-        Mode::MessageQueue => modals::render_message_queue(frame, app, modal_rect(area, 72, 18)),
-        Mode::QueuedMessageEdit => {
-            modals::render_queued_message_edit(frame, app, modal_rect(area, 76, 20))
-        }
-        Mode::ConfirmCancelTurn => {
-            modals::render_confirm_cancel_turn(frame, app, modal_rect(area, 62, 9))
-        }
-        Mode::Normal => {}
         Mode::Setup => setup::render_setup(frame, app, content_area),
+        _ => {}
     }
 
     if !app.pending_approvals.is_empty() {
