@@ -136,6 +136,7 @@ impl AutoMemoryStore {
 
         let conn = Connection::open(db_path)
             .with_context(|| format!("Failed to open auto-memory database at {:?}", db_path))?;
+        configure_connection(&conn)?;
 
         let store = Self {
             conn: Arc::new(Mutex::new(conn)),
@@ -810,6 +811,17 @@ pub fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
     } else {
         0.0
     }
+}
+
+/// Configures a SQLite connection for concurrent access:
+/// - WAL mode: allows multiple readers + 1 writer simultaneously
+/// - busy_timeout: wait up to 5s on lock instead of failing immediately
+/// - foreign_keys: enforce referential integrity
+pub fn configure_connection(conn: &Connection) -> Result<()> {
+    conn.pragma_update(None, "journal_mode", "WAL")?;
+    conn.pragma_update(None, "busy_timeout", 5000)?;
+    conn.pragma_update(None, "synchronous", "NORMAL")?;
+    Ok(())
 }
 
 /// Creates a new MemoryEntry with sensible defaults.
