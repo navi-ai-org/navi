@@ -21,8 +21,6 @@ struct OpenRouterModel {
     #[serde(default)]
     architecture: Option<OpenRouterArchitecture>,
     #[serde(default)]
-    pricing: Option<OpenRouterPricing>,
-    #[serde(default)]
     top_provider: Option<OpenRouterTopProvider>,
     #[serde(default)]
     supported_parameters: Vec<String>,
@@ -33,17 +31,7 @@ struct OpenRouterModel {
 #[derive(Debug, Default, serde::Deserialize)]
 struct OpenRouterArchitecture {
     #[serde(default)]
-    modality: Option<String>,
-    #[serde(default)]
     input_modalities: Vec<String>,
-}
-
-#[derive(Debug, Default, serde::Deserialize)]
-struct OpenRouterPricing {
-    #[serde(default)]
-    prompt: Option<String>,
-    #[serde(default)]
-    completion: Option<String>,
 }
 
 #[derive(Debug, Default, serde::Deserialize)]
@@ -278,7 +266,6 @@ mod tests {
     #[test]
     fn parse_image_and_file_modalities() {
         let arch = OpenRouterArchitecture {
-            modality: Some("text+image+file->text".to_string()),
             input_modalities: vec!["text".into(), "image".into(), "file".into()],
         };
         let attachments = parse_attachments(&arch);
@@ -294,7 +281,6 @@ mod tests {
             id: "tencent/hy3:free".to_string(),
             context_length: Some(262144),
             architecture: None,
-            pricing: None,
             top_provider: None,
             supported_parameters: vec!["tools".into(), "reasoning".into()],
             reasoning: Some(OpenRouterReasoning {

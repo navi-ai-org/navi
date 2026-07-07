@@ -64,21 +64,6 @@ unsafe extern "C" fn test_event_callback(
     0
 }
 
-/// Event callback that stops after first event.
-unsafe extern "C" fn stopping_event_callback(
-    event_json: *const c_char,
-    _user_data: *mut c_void,
-) -> i32 {
-    if !event_json.is_null() {
-        let json = unsafe { CStr::from_ptr(event_json) }
-            .to_str()
-            .unwrap()
-            .to_string();
-        EVENT_RESULTS.lock().unwrap().push(json);
-    }
-    1 // stop
-}
-
 fn c(s: &str) -> *const c_char {
     CString::new(s).unwrap().into_raw() as *const c_char
 }
@@ -93,10 +78,6 @@ fn take_result() -> Option<CallbackResult> {
     CALLBACK_RESULT.lock().unwrap().take()
 }
 
-fn take_events() -> Vec<String> {
-    EVENT_RESULTS.lock().unwrap().drain(..).collect()
-}
-
 // Wait briefly for async callback to complete.
 fn wait_for_callback() {
     for _ in 0..600 {
@@ -109,8 +90,22 @@ fn wait_for_callback() {
 
 // ── Tests ──────────────────────────────────────────────────────────
 
+/// Disables remote registry update checks for the duration of the test
+/// process. This prevents network fetches that cause timeouts and high
+/// resource usage in test environments.
+static REGISTRY_UPDATE_DISABLED: std::sync::Once = std::sync::Once::new();
+
+fn disable_registry_update() {
+    REGISTRY_UPDATE_DISABLED.call_once(|| {
+        // SAFETY: This is set once before any test creates an engine, and no
+        // other code in the test process reads or writes this variable concurrently.
+        unsafe { std::env::set_var("NAVI_NO_REGISTRY_UPDATE", "1"); }
+    });
+}
+
 #[test]
 fn engine_new_and_free_with_temp_dir() {
+    disable_registry_update();
     let tmp = tempfile::tempdir().unwrap();
     let dir = c(tmp.path().to_str().unwrap());
     let engine = unsafe { navi_engine_new(dir) };
@@ -121,6 +116,7 @@ fn engine_new_and_free_with_temp_dir() {
 
 #[test]
 fn engine_new_with_invalid_dir_returns_null() {
+    disable_registry_update();
     let bad = c("/nonexistent/path/that/should/not/exist");
     let engine = unsafe { navi_engine_new(bad) };
     // The engine may still be created (it loads defaults); the key test is no crash.
@@ -132,6 +128,7 @@ fn engine_new_with_invalid_dir_returns_null() {
 
 #[test]
 fn engine_new_null_dir_returns_null() {
+    disable_registry_update();
     let engine = unsafe { navi_engine_new(ptr::null()) };
     assert!(engine.is_null());
     // navi_last_error should be set
@@ -149,6 +146,7 @@ fn engine_free_null_is_noop() {
 
 #[test]
 fn session_ids_returns_empty_initially() {
+    disable_registry_update();
     let tmp = tempfile::tempdir().unwrap();
     let dir = c(tmp.path().to_str().unwrap());
     let engine = unsafe { navi_engine_new(dir) };
@@ -167,6 +165,7 @@ fn session_ids_returns_empty_initially() {
 
 #[test]
 fn list_models_returns_non_empty() {
+    disable_registry_update();
     let tmp = tempfile::tempdir().unwrap();
     let dir = c(tmp.path().to_str().unwrap());
     let engine = unsafe { navi_engine_new(dir) };
@@ -185,6 +184,7 @@ fn list_models_returns_non_empty() {
 
 #[test]
 fn loaded_config_returns_valid_json() {
+    disable_registry_update();
     let tmp = tempfile::tempdir().unwrap();
     let dir = c(tmp.path().to_str().unwrap());
     let engine = unsafe { navi_engine_new(dir) };
@@ -205,6 +205,7 @@ fn loaded_config_returns_valid_json() {
 
 #[test]
 fn list_provider_accounts_returns_json_array() {
+    disable_registry_update();
     let tmp = tempfile::tempdir().unwrap();
     let dir = c(tmp.path().to_str().unwrap());
     let engine = unsafe { navi_engine_new(dir) };
@@ -224,6 +225,7 @@ fn list_provider_accounts_returns_json_array() {
 
 #[test]
 fn credential_status_returns_json() {
+    disable_registry_update();
     let tmp = tempfile::tempdir().unwrap();
     let dir = c(tmp.path().to_str().unwrap());
     let engine = unsafe { navi_engine_new(dir) };
@@ -244,6 +246,7 @@ fn credential_status_returns_json() {
 
 #[test]
 fn credential_status_unknown_provider_returns_error() {
+    disable_registry_update();
     let tmp = tempfile::tempdir().unwrap();
     let dir = c(tmp.path().to_str().unwrap());
     let engine = unsafe { navi_engine_new(dir) };
@@ -263,6 +266,7 @@ fn credential_status_unknown_provider_returns_error() {
 
 #[test]
 fn set_and_delete_provider_api_key_roundtrip() {
+    disable_registry_update();
     let tmp = tempfile::tempdir().unwrap();
     let dir = c(tmp.path().to_str().unwrap());
     let engine = unsafe { navi_engine_new(dir) };
@@ -291,6 +295,7 @@ fn set_and_delete_provider_api_key_roundtrip() {
 
 #[test]
 fn list_skills_returns_json_array() {
+    disable_registry_update();
     let tmp = tempfile::tempdir().unwrap();
     let dir = c(tmp.path().to_str().unwrap());
     let engine = unsafe { navi_engine_new(dir) };
@@ -308,6 +313,7 @@ fn list_skills_returns_json_array() {
 
 #[test]
 fn async_start_session_calls_callback() {
+    disable_registry_update();
     let tmp = tempfile::tempdir().unwrap();
     let dir = c(tmp.path().to_str().unwrap());
     let engine = unsafe { navi_engine_new(dir) };
@@ -342,6 +348,7 @@ fn async_start_session_calls_callback() {
 
 #[test]
 fn async_start_session_with_bad_json_calls_error() {
+    disable_registry_update();
     let tmp = tempfile::tempdir().unwrap();
     let dir = c(tmp.path().to_str().unwrap());
     let engine = unsafe { navi_engine_new(dir) };
@@ -374,6 +381,7 @@ fn async_start_session_with_bad_json_calls_error() {
 
 #[test]
 fn cancel_turn_on_nonexistent_session_calls_error() {
+    disable_registry_update();
     let tmp = tempfile::tempdir().unwrap();
     let dir = c(tmp.path().to_str().unwrap());
     let engine = unsafe { navi_engine_new(dir) };
@@ -401,6 +409,7 @@ fn cancel_turn_on_nonexistent_session_calls_error() {
 
 #[test]
 fn start_session_then_close_session() {
+    disable_registry_update();
     let tmp = tempfile::tempdir().unwrap();
     let dir = c(tmp.path().to_str().unwrap());
     let engine = unsafe { navi_engine_new(dir) };
@@ -449,6 +458,7 @@ fn start_session_then_close_session() {
 
 #[test]
 fn null_session_id_calls_error_callback() {
+    disable_registry_update();
     let tmp = tempfile::tempdir().unwrap();
     let dir = c(tmp.path().to_str().unwrap());
     let engine = unsafe { navi_engine_new(dir) };
@@ -474,6 +484,7 @@ fn null_session_id_calls_error_callback() {
 
 #[test]
 fn navi_last_error_returns_null_when_no_error() {
+    disable_registry_update();
     // navi_last_error should return null if no error has been set on this thread.
     // (It might have been set by a previous test, so just check the mechanism works.)
     let tmp = tempfile::tempdir().unwrap();
@@ -493,6 +504,7 @@ fn navi_string_free_null_is_noop() {
 
 #[test]
 fn learning_tutor_engine_creates() {
+    disable_registry_update();
     let tmp = tempfile::tempdir().unwrap();
     let dir = c(tmp.path().to_str().unwrap());
     let engine = unsafe { navi_engine_new_learning_tutor(dir) };
@@ -511,6 +523,7 @@ fn learning_tutor_engine_creates() {
 
 #[test]
 fn async_get_goal_on_new_session_returns_null() {
+    disable_registry_update();
     let tmp = tempfile::tempdir().unwrap();
     let dir = c(tmp.path().to_str().unwrap());
     let engine = unsafe { navi_engine_new(dir) };
@@ -550,6 +563,7 @@ fn async_get_goal_on_new_session_returns_null() {
 
 #[test]
 fn list_mcp_servers_and_tools_for_nonexistent_session_returns_error() {
+    disable_registry_update();
     let tmp = tempfile::tempdir().unwrap();
     let dir = c(tmp.path().to_str().unwrap());
     let engine = unsafe { navi_engine_new(dir) };
@@ -571,6 +585,7 @@ fn list_mcp_servers_and_tools_for_nonexistent_session_returns_error() {
 
 #[test]
 fn event_subscription_on_nonexistent_session_returns_null() {
+    disable_registry_update();
     let tmp = tempfile::tempdir().unwrap();
     let dir = c(tmp.path().to_str().unwrap());
     let engine = unsafe { navi_engine_new(dir) };

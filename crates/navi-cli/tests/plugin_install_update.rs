@@ -45,6 +45,7 @@ fn navi_cmd_for(data_dir: &std::path::Path) -> Command {
     cmd.env_remove("ANTHROPIC_API_KEY");
     cmd.env("XDG_DATA_HOME", data_dir);
     cmd.env("XDG_CONFIG_HOME", data_dir);
+    cmd.env("NAVI_NO_REGISTRY_UPDATE", "1");
     cmd
 }
 

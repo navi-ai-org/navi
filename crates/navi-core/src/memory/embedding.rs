@@ -20,7 +20,7 @@ pub const FULL_EMBED_DIM: usize = 1024;
 
 /// Default model repo on HuggingFace.
 pub const DEFAULT_MODEL_REPO: &str = "Qwen/Qwen3-Embedding-0.6B-GGUF";
-pub const DEFAULT_MODEL_FILE: &str = "qwen3-embedding-0.6b-q8_0.gguf";
+pub const DEFAULT_MODEL_FILE: &str = "Qwen3-Embedding-0.6B-Q8_0.gguf";
 pub const DEFAULT_TOKENIZER_REPO: &str = "Qwen/Qwen3-Embedding-0.6B";
 pub const DEFAULT_TOKENIZER_FILE: &str = "tokenizer.json";
 
@@ -98,7 +98,6 @@ impl Default for EmbeddingConfig {
     }
 }
 
-#[cfg(feature = "embeddings")]
 mod candle_embedder {
     use super::*;
     use anyhow::{Context, Result as AnyResult};
@@ -244,53 +243,48 @@ mod candle_embedder {
     }
 }
 
-#[cfg(feature = "embeddings")]
 pub use candle_embedder::CandleEmbedder;
 
 /// Creates an embedder based on whether the feature is enabled and the model exists.
 pub fn create_embedder(_config: EmbeddingConfig) -> Box<dyn Embedder> {
-    #[cfg(feature = "embeddings")]
-    {
-        if _config.model_path.exists() && _config.tokenizer_path.exists() {
-            match CandleEmbedder::load(_config) {
-                Ok(embedder) => {
-                    tracing::info!("Local embedding model loaded successfully");
-                    return Box::new(embedder);
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        "Failed to load embedding model: {}, falling back to text search",
-                        e
-                    );
-                }
+    if _config.model_path.exists() && _config.tokenizer_path.exists() {
+        match CandleEmbedder::load(_config) {
+            Ok(embedder) => {
+                tracing::info!("Local embedding model loaded successfully");
+                return Box::new(embedder);
             }
-        } else {
-            if !_config.model_path.exists() {
-                tracing::info!(
-                    "Embedding model not found at {:?}. Download with: huggingface-cli download {} {}",
-                    _config.model_path,
-                    DEFAULT_MODEL_REPO,
-                    DEFAULT_MODEL_FILE
-                );
-            }
-            if !_config.tokenizer_path.exists() {
-                tracing::info!(
-                    "Tokenizer not found at {:?}. Download with: huggingface-cli download {} {}",
-                    _config.tokenizer_path,
-                    DEFAULT_TOKENIZER_REPO,
-                    DEFAULT_TOKENIZER_FILE
+            Err(e) => {
+                tracing::warn!(
+                    "Failed to load embedding model: {}, falling back to text search",
+                    e
                 );
             }
         }
+    } else {
+        if !_config.model_path.exists() {
+            tracing::info!(
+                "Embedding model not found at {:?}. Download with: huggingface-cli download {} {}",
+                _config.model_path,
+                DEFAULT_MODEL_REPO,
+                DEFAULT_MODEL_FILE
+            );
+        }
+        if !_config.tokenizer_path.exists() {
+            tracing::info!(
+                "Tokenizer not found at {:?}. Download with: huggingface-cli download {} {}",
+                _config.tokenizer_path,
+                DEFAULT_TOKENIZER_REPO,
+                DEFAULT_TOKENIZER_FILE
+            );
+        }
     }
 
-    #[allow(unreachable_code)]
     Box::new(NoEmbedder)
 }
 
 /// Convenience: check if embeddings are available at runtime.
 pub fn embeddings_available() -> bool {
-    cfg!(feature = "embeddings")
+    true
 }
 
 #[cfg(test)]
@@ -310,10 +304,10 @@ mod tests {
     }
 
     #[test]
-    fn test_create_embedder_without_feature() {
+    fn test_create_embedder_without_model_file() {
         let config = EmbeddingConfig::default();
         let embedder = create_embedder(config);
-        // Without feature flag, should be NoEmbedder
+        // Without a model file on disk, should be NoEmbedder
         assert!(embedder.embed("test").is_err());
     }
 }

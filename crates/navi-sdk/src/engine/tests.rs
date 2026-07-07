@@ -79,6 +79,9 @@ fn test_config() -> NaviConfig {
 
     config.model.name = "test-model".to_string();
 
+    // Disable remote registry updates in tests to avoid network fetches.
+    config.registry.update_enabled = false;
+
     config
 }
 

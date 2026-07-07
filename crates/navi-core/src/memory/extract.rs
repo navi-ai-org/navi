@@ -134,9 +134,6 @@ pub async fn extract_memories(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::memory::AutoMemoryStore;
-    use crate::memory::auto_memory::{MemoryType, new_entry};
-    use crate::model::{ModelMessage, ModelResponse, ModelStreamEvent, ThinkingConfig};
 
     #[test]
     fn test_extract_prompt_has_placeholder() {

@@ -54,6 +54,7 @@ fn pty_smoke_renders_welcome_then_quits_cleanly() {
     // Use a fresh, isolated data dir so the test doesn't touch user state.
     let tmp = tempfile::tempdir().expect("tempdir");
     cmd.env("XDG_DATA_HOME", tmp.path());
+    cmd.env("NAVI_NO_REGISTRY_UPDATE", "1");
     // Mark this as a smoke test run so the binary could opt out of
     // things like network syncs if it wants to (no flags for that yet,
     // but the env var is documented here for future-proofing).
