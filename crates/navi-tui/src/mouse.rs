@@ -299,6 +299,18 @@ fn dispatch_hit(app: &mut TuiApp, hit: HitRegion) {
         }
         HitAction::CloseModal => close_active_modal(app),
         HitAction::ReopenQuestion => replace_modal(app, crate::state::ModalKind::Question),
+        HitAction::OpenMessageQueue => {
+            replace_modal(app, crate::state::ModalKind::MessageQueue);
+        }
+        HitAction::QueuedMessage(index) => {
+            app.queued_message_selected =
+                index.min(app.queued_user_messages.len().saturating_sub(1));
+            let _ = handle_key(
+                app,
+                crossterm::event::KeyCode::Enter,
+                crossterm::event::KeyModifiers::NONE,
+            );
+        }
         HitAction::QuestionOption(index) => {
             if let Some(question) = app.pending_questions.first_mut() {
                 question.selected_row = index;
@@ -448,6 +460,7 @@ fn dispatch_hit(app: &mut TuiApp, hit: HitRegion) {
         }
         HitAction::ThemePicker => {
             app.theme_filter.clear();
+            app.theme_filter_cursor = 0;
             replace_modal(app, crate::state::ModalKind::ThemePicker);
         }
         HitAction::ThemeSelect(index) => {
@@ -568,6 +581,7 @@ fn active_scroll_target(app: &TuiApp) -> Option<ScrollTarget> {
         Mode::Question => Some(ScrollTarget::QuestionOptions),
         Mode::BackgroundCommands => Some(ScrollTarget::BackgroundCommands),
         Mode::BackgroundCommandOutput => Some(ScrollTarget::BackgroundCommandOutput),
+        Mode::MessageQueue => Some(ScrollTarget::MessageQueue),
         Mode::Settings
         | Mode::ThemePicker
         | Mode::Thinking
@@ -575,7 +589,9 @@ fn active_scroll_target(app: &TuiApp) -> Option<ScrollTarget> {
         | Mode::Debug
         | Mode::MessageActions
         | Mode::OAuth
-        | Mode::Usage => None,
+        | Mode::Usage
+        | Mode::QueuedMessageEdit
+        | Mode::ConfirmCancelTurn => None,
         Mode::Normal
         | Mode::ApiKeyEntry
         | Mode::Mcp
@@ -680,6 +696,18 @@ fn scroll_by(app: &mut TuiApp, target: ScrollTarget, delta: isize) {
                     .saturating_sub(delta.unsigned_abs());
             }
         }
+        ScrollTarget::MessageQueue => {
+            let len = app.queued_user_messages.len();
+            let (selected, scroll) = shifted_select_state(
+                app.queued_message_selected,
+                app.queued_message_scroll,
+                len,
+                delta,
+                10,
+            );
+            app.queued_message_selected = selected;
+            app.queued_message_scroll = scroll;
+        }
     }
 }
 
@@ -730,6 +758,11 @@ fn scroll_to(app: &mut TuiApp, target: ScrollTarget, offset: usize) {
         ScrollTarget::BackgroundCommandOutput => {
             app.bg_command_output_follow = false;
             app.bg_command_output_scroll = offset;
+        }
+        ScrollTarget::MessageQueue => {
+            let len = app.queued_user_messages.len();
+            app.queued_message_selected = offset.min(len.saturating_sub(1));
+            app.queued_message_scroll = app.queued_message_selected;
         }
     }
 }
@@ -816,7 +849,7 @@ fn select_model_near_row(app: &mut TuiApp, rows: &[ListRow], row: usize, prefer_
 fn model_row_index(row: &ListRow) -> Option<usize> {
     match row {
         ListRow::Model { index } => Some(*index),
-        ListRow::Header { .. } => None,
+        ListRow::Header { .. } | ListRow::Spacer => None,
     }
 }
 

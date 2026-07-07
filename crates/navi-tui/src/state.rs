@@ -20,6 +20,12 @@ pub struct PendingImage {
     pub height: Option<u32>,
 }
 
+#[derive(Debug)]
+pub(crate) struct QueuedUserMessage {
+    pub(crate) text: String,
+    pub(crate) images: Vec<PendingImage>,
+}
+
 pub struct ChatImage {
     pub label: String,
 }
@@ -241,6 +247,9 @@ pub enum Mode {
     BgModelPicker,
     Setup,
     AttachmentModels,
+    MessageQueue,
+    QueuedMessageEdit,
+    ConfirmCancelTurn,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -268,6 +277,9 @@ pub(crate) enum ModalKind {
     BackgroundModels,
     BgModelPicker,
     AttachmentModels,
+    MessageQueue,
+    QueuedMessageEdit,
+    ConfirmCancelTurn,
 }
 
 impl ModalKind {
@@ -296,6 +308,9 @@ impl ModalKind {
             Self::BackgroundModels => Mode::BackgroundModels,
             Self::BgModelPicker => Mode::BgModelPicker,
             Self::AttachmentModels => Mode::AttachmentModels,
+            Self::MessageQueue => Mode::MessageQueue,
+            Self::QueuedMessageEdit => Mode::QueuedMessageEdit,
+            Self::ConfirmCancelTurn => Mode::ConfirmCancelTurn,
         }
     }
 }
@@ -591,10 +606,8 @@ pub(crate) enum PluginApprovalKind {
 
 #[derive(Debug, Clone)]
 pub(crate) struct GoalUiState {
-    pub active: bool,
-    pub id: String,
     pub objective: String,
-    pub status: navi_sdk::GoalStatus,
+    pub short_description: Option<String>,
     pub tokens_used: i64,
     pub token_budget: Option<i64>,
 }
@@ -602,10 +615,8 @@ pub(crate) struct GoalUiState {
 impl Default for GoalUiState {
     fn default() -> Self {
         Self {
-            active: false,
-            id: String::new(),
             objective: String::new(),
-            status: navi_sdk::GoalStatus::Active,
+            short_description: None,
             tokens_used: 0,
             token_budget: None,
         }

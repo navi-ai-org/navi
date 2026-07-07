@@ -14,7 +14,9 @@ use crate::state::MessageAction;
 use crate::theme::*;
 use crate::ui::interaction::{HitAction, line_rect};
 use crate::ui::list::render_scrollbar;
-use crate::ui::text_input::next_char_boundary;
+use crate::ui::text_input::{
+    TextInputRenderSpec, floor_char_boundary, next_char_boundary, render_text_input_line,
+};
 
 pub(super) fn render_api_key_entry(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
     clear_modal_area(frame, area);
@@ -81,10 +83,23 @@ pub(super) fn render_api_key_entry(frame: &mut Frame<'_>, app: &TuiApp, area: Re
         rows[3],
     );
 
-    let key_display = api_key_input_line(app, rows[4].width as usize);
-    frame.render_widget(
-        Paragraph::new(key_display).style(Style::default().bg(modal_bg())),
+    let masked_key = mask_key_segment(&app.api_key_input);
+    let masked_cursor = masked_cursor_for_key(&app.api_key_input, &masked_key, app.api_key_cursor);
+    render_text_input_line(
+        frame,
         rows[4],
+        TextInputRenderSpec {
+            value: &masked_key,
+            cursor: masked_cursor,
+            placeholder: "sk-...",
+            prefix: "> ",
+            focused: true,
+            text_style: Style::default().fg(text()).bg(modal_bg()),
+            placeholder_style: Style::default().fg(ghost()).bg(modal_bg()),
+            prefix_style: Style::default().fg(signal()).bg(modal_bg()),
+            cursor_style: Style::default().fg(bg()).bg(signal()),
+            background_style: Style::default().bg(modal_bg()),
+        },
     );
 
     let status = if provider_has_api_key(app, &provider_id) {
@@ -192,6 +207,325 @@ pub(super) fn render_oauth(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
     frame.render_widget(
         Paragraph::new(help).style(Style::default().fg(muted()).bg(modal_bg())),
         rows[4],
+    );
+}
+
+pub(super) fn render_message_queue(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
+    clear_modal_area(frame, area);
+    frame.render_widget(modal_block("Message Queue"), area);
+
+    let inner = area.inner(Margin {
+        horizontal: 2,
+        vertical: 1,
+    });
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(1),
+            Constraint::Min(8),
+            Constraint::Length(1),
+        ])
+        .split(inner);
+
+    let header = if app.queued_user_messages.is_empty() {
+        "No queued messages".to_string()
+    } else {
+        format!("{} queued", app.queued_user_messages.len())
+    };
+    frame.render_widget(
+        Paragraph::new(Line::from(Span::styled(
+            header,
+            Style::default().fg(text()).bg(modal_bg()),
+        )))
+        .style(Style::default().bg(modal_bg())),
+        rows[0],
+    );
+
+    if app.queued_user_messages.is_empty() {
+        frame.render_widget(
+            Paragraph::new("Messages sent while the agent is working will wait here.")
+                .style(Style::default().fg(muted()).bg(modal_bg())),
+            rows[1],
+        );
+    } else {
+        let visible_rows = rows[1].height as usize;
+        let items = app
+            .queued_user_messages
+            .iter()
+            .enumerate()
+            .map(|(index, message)| {
+                let selected = index == app.queued_message_selected;
+                let style = if selected {
+                    active_item_style()
+                } else {
+                    inactive_item_style()
+                };
+                let line = queued_message_line(index, message, rows[1].width as usize, style);
+                ListItem::new(line).style(style)
+            })
+            .collect::<Vec<_>>();
+        let mut state = ListState::default()
+            .with_offset(app.queued_message_scroll)
+            .with_selected(Some(app.queued_message_selected));
+        frame.render_stateful_widget(
+            List::new(items)
+                .style(Style::default().bg(modal_bg()))
+                .highlight_style(modal_list_highlight_style()),
+            rows[1],
+            &mut state,
+        );
+        render_scrollbar(
+            frame,
+            app,
+            rows[1],
+            app.queued_user_messages.len(),
+            app.queued_message_scroll,
+            crate::ui::interaction::ScrollTarget::MessageQueue,
+        );
+        let start = app
+            .queued_message_scroll
+            .min(app.queued_user_messages.len());
+        for index in start..(start + visible_rows).min(app.queued_user_messages.len()) {
+            app.register_hit(
+                line_rect(rows[1], index.saturating_sub(start)),
+                20,
+                format!("queued message {}", index + 1),
+                HitAction::QueuedMessage(index),
+            );
+        }
+    }
+
+    frame.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::styled("enter", Style::default().fg(text()).bg(modal_bg())),
+            Span::styled(" edit  ·  ", Style::default().fg(muted()).bg(modal_bg())),
+            Span::styled("del", Style::default().fg(text()).bg(modal_bg())),
+            Span::styled(" cancel  ·  ", Style::default().fg(muted()).bg(modal_bg())),
+            Span::styled("ctrl+↑/↓", Style::default().fg(text()).bg(modal_bg())),
+            Span::styled(" move  ·  ", Style::default().fg(muted()).bg(modal_bg())),
+            Span::styled("esc", Style::default().fg(text()).bg(modal_bg())),
+            Span::styled(" close", Style::default().fg(muted()).bg(modal_bg())),
+        ]))
+        .style(Style::default().bg(modal_bg())),
+        rows[2],
+    );
+}
+
+fn queued_message_line(
+    index: usize,
+    message: &crate::state::QueuedUserMessage,
+    width: usize,
+    style: Style,
+) -> Line<'static> {
+    let prefix = format!("{:>2}  ", index + 1);
+    let badges = if message.images.is_empty() {
+        String::new()
+    } else {
+        format!("  image{}", if message.images.len() > 1 { "s" } else { "" })
+    };
+    let text_width = width
+        .saturating_sub(prefix.len())
+        .saturating_sub(badges.len())
+        .max(1);
+    let summary = queued_message_summary(&message.text, text_width);
+    Line::from(vec![
+        Span::styled(prefix, style),
+        Span::styled(summary, style),
+        Span::styled(badges, Style::default().fg(code_const()).bg(modal_bg())),
+    ])
+}
+
+fn queued_message_summary(text_value: &str, width: usize) -> String {
+    let compact = text_value.split_whitespace().collect::<Vec<_>>().join(" ");
+    fit_inline(
+        if compact.is_empty() {
+            "(empty message)"
+        } else {
+            &compact
+        },
+        width,
+    )
+}
+
+fn fit_inline(value: &str, width: usize) -> String {
+    if value.chars().count() <= width {
+        return value.to_string();
+    }
+    if width == 0 {
+        return String::new();
+    }
+    if width == 1 {
+        return "…".to_string();
+    }
+    let mut result = value.chars().take(width - 1).collect::<String>();
+    result.push('…');
+    result
+}
+
+pub(super) fn render_queued_message_edit(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
+    clear_modal_area(frame, area);
+    frame.render_widget(modal_block("Edit Queued Message"), area);
+
+    let inner = area.inner(Margin {
+        horizontal: 2,
+        vertical: 1,
+    });
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(1),
+            Constraint::Min(10),
+            Constraint::Length(1),
+        ])
+        .split(inner);
+
+    let index_label = app
+        .queued_edit_index
+        .map(|index| format!("Message {}", index + 1))
+        .unwrap_or_else(|| "Message".to_string());
+    frame.render_widget(
+        Paragraph::new(index_label).style(Style::default().fg(muted()).bg(modal_bg())),
+        rows[0],
+    );
+
+    render_text_area(
+        frame,
+        rows[1],
+        &app.queued_edit_text,
+        app.queued_edit_cursor,
+        app.mode == crate::state::Mode::QueuedMessageEdit,
+    );
+
+    frame.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::styled("ctrl+enter", Style::default().fg(text()).bg(modal_bg())),
+            Span::styled(" save  ·  ", Style::default().fg(muted()).bg(modal_bg())),
+            Span::styled("enter", Style::default().fg(text()).bg(modal_bg())),
+            Span::styled(" newline  ·  ", Style::default().fg(muted()).bg(modal_bg())),
+            Span::styled("esc", Style::default().fg(text()).bg(modal_bg())),
+            Span::styled(" discard", Style::default().fg(muted()).bg(modal_bg())),
+        ]))
+        .style(Style::default().bg(modal_bg())),
+        rows[2],
+    );
+}
+
+fn render_text_area(frame: &mut Frame<'_>, area: Rect, value: &str, cursor: usize, focused: bool) {
+    let block = Block::new()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(accent()))
+        .style(Style::default().fg(text()).bg(modal_bg()));
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    let ranges = crate::input::input_visual_line_ranges(value, inner.width as usize);
+    let cursor = floor_char_boundary(value, cursor.min(value.len()));
+    let cursor_line = ranges
+        .iter()
+        .position(|(start, end)| cursor >= *start && cursor <= *end)
+        .unwrap_or(0);
+    let visible_start = cursor_line
+        .saturating_add(1)
+        .saturating_sub(inner.height as usize);
+    let mut lines = Vec::new();
+    for (line_index, (start, end)) in ranges
+        .iter()
+        .copied()
+        .enumerate()
+        .skip(visible_start)
+        .take(inner.height as usize)
+    {
+        let line_value = value.get(start..end).unwrap_or_default();
+        if focused && line_index == cursor_line {
+            let cursor_in_line = cursor.saturating_sub(start).min(line_value.len());
+            let (before, rest) = line_value.split_at(cursor_in_line);
+            let mut spans = vec![Span::styled(
+                before.to_string(),
+                Style::default().fg(text()).bg(modal_bg()),
+            )];
+            if rest.is_empty() {
+                spans.push(Span::styled(" ", Style::default().fg(bg()).bg(signal())));
+            } else {
+                let next =
+                    next_char_boundary(line_value, cursor_in_line).unwrap_or(line_value.len());
+                let (cursor_text, after) = rest.split_at(next - cursor_in_line);
+                spans.push(Span::styled(
+                    cursor_text.to_string(),
+                    Style::default().fg(bg()).bg(signal()),
+                ));
+                spans.push(Span::styled(
+                    after.to_string(),
+                    Style::default().fg(text()).bg(modal_bg()),
+                ));
+            }
+            lines.push(Line::from(spans));
+        } else {
+            lines.push(Line::from(Span::styled(
+                line_value.to_string(),
+                Style::default().fg(text()).bg(modal_bg()),
+            )));
+        }
+    }
+    while lines.len() < inner.height as usize {
+        lines.push(Line::from(""));
+    }
+    frame.render_widget(
+        Paragraph::new(Text::from(lines)).style(Style::default().bg(modal_bg())),
+        inner,
+    );
+
+    if focused {
+        let (line_start, line_end) = ranges.get(cursor_line).copied().unwrap_or((0, 0));
+        let cursor_column = value
+            .get(line_start..cursor.min(line_end))
+            .map(|slice| slice.chars().count())
+            .unwrap_or(0);
+        frame.set_cursor_position(ratatui::layout::Position::new(
+            inner
+                .x
+                .saturating_add(cursor_column.min(inner.width.saturating_sub(1) as usize) as u16),
+            inner.y.saturating_add(
+                cursor_line
+                    .saturating_sub(visible_start)
+                    .min(inner.height.saturating_sub(1) as usize) as u16,
+            ),
+        ));
+    }
+}
+
+pub(super) fn render_confirm_cancel_turn(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
+    clear_modal_area(frame, area);
+    frame.render_widget(modal_block("Cancel Turn"), area);
+    let inner = area.inner(Margin {
+        horizontal: 2,
+        vertical: 1,
+    });
+    let queued = app.queued_user_messages.len();
+    let message = if queued == 0 {
+        "Cancel the active turn?".to_string()
+    } else {
+        format!("Cancel the active turn and clear {queued} queued message(s)?")
+    };
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(2), Constraint::Length(1)])
+        .split(inner);
+    frame.render_widget(
+        Paragraph::new(message)
+            .wrap(Wrap { trim: true })
+            .style(Style::default().fg(text()).bg(modal_bg())),
+        rows[0],
+    );
+    frame.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::styled("enter", Style::default().fg(red()).bg(modal_bg())),
+            Span::styled(" cancel  ·  ", Style::default().fg(muted()).bg(modal_bg())),
+            Span::styled("esc", Style::default().fg(text()).bg(modal_bg())),
+            Span::styled(" keep working", Style::default().fg(muted()).bg(modal_bg())),
+        ]))
+        .style(Style::default().bg(modal_bg())),
+        rows[1],
     );
 }
 
@@ -848,36 +1182,14 @@ pub(super) fn render_message_actions(frame: &mut Frame<'_>, app: &TuiApp, area: 
     app.register_hit(rows[3], 20, "close message actions", HitAction::CloseModal);
 }
 
-fn api_key_input_line(app: &TuiApp, _max_width: usize) -> Line<'_> {
-    let mut spans = vec![Span::styled("> ", Style::default().fg(signal()))];
-
-    if app.api_key_input.is_empty() {
-        spans.push(Span::styled(" ", Style::default().fg(bg()).bg(signal())));
-        spans.push(Span::styled(" sk-...", Style::default().fg(ghost())));
-        return Line::from(spans);
-    }
-
-    let cursor = app.api_key_cursor.min(app.api_key_input.len());
-    let (before, rest) = app.api_key_input.split_at(cursor);
-
-    let display_before = mask_key_segment(before);
-    spans.push(Span::styled(display_before, Style::default().fg(text())));
-
-    if rest.is_empty() {
-        spans.push(Span::styled(" ", Style::default().fg(bg()).bg(signal())));
-    } else {
-        let next =
-            next_char_boundary(&app.api_key_input, cursor).unwrap_or(app.api_key_input.len());
-        let (cursor_ch, after) = rest.split_at(next - cursor);
-        spans.push(Span::styled(
-            cursor_ch,
-            Style::default().fg(bg()).bg(signal()),
-        ));
-        let display_after = mask_key_segment(after);
-        spans.push(Span::styled(display_after, Style::default().fg(text())));
-    }
-
-    Line::from(spans)
+fn masked_cursor_for_key(original: &str, masked: &str, cursor: usize) -> usize {
+    let cursor = floor_char_boundary(original, cursor.min(original.len()));
+    let char_position = original[..cursor].chars().count();
+    masked
+        .char_indices()
+        .nth(char_position)
+        .map(|(byte, _)| byte)
+        .unwrap_or(masked.len())
 }
 
 pub(super) fn render_plugin_approval(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
@@ -1097,18 +1409,21 @@ pub(super) fn render_theme_picker(frame: &mut Frame<'_>, app: &TuiApp, area: Rec
         ])
         .split(inner);
 
-    let filter = if app.theme_filter.is_empty() {
-        "search"
-    } else {
-        app.theme_filter.as_str()
-    };
-    frame.render_widget(
-        Paragraph::new(Line::from(vec![
-            Span::styled("> ", Style::default().fg(signal())),
-            Span::styled(filter, Style::default().fg(text())),
-        ]))
-        .style(Style::default().bg(modal_bg())),
+    render_text_input_line(
+        frame,
         rows[0],
+        TextInputRenderSpec {
+            value: &app.theme_filter,
+            cursor: app.theme_filter_cursor,
+            placeholder: "search",
+            prefix: "> ",
+            focused: true,
+            text_style: Style::default().fg(text()).bg(modal_bg()),
+            placeholder_style: Style::default().fg(muted()).bg(modal_bg()),
+            prefix_style: Style::default().fg(signal()).bg(modal_bg()),
+            cursor_style: Style::default().fg(bg()).bg(signal()),
+            background_style: Style::default().bg(modal_bg()),
+        },
     );
 
     let filtered = filtered_theme_options(&app.theme_filter);

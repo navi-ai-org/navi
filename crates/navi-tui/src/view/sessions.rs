@@ -12,6 +12,7 @@ use crate::session::format_session_timestamp;
 use crate::theme::*;
 use crate::ui::interaction::{HitAction, line_rect};
 use crate::ui::list::render_scrollbar;
+use crate::ui::text_input::{TextInputRenderSpec, render_text_input_line};
 
 pub(super) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
     clear_modal_area(frame, area);
@@ -31,19 +32,21 @@ pub(super) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
         ])
         .split(inner);
 
-    // Filter input
-    let filter = if app.session_filter.is_empty() {
-        "search"
-    } else {
-        app.session_filter.as_str()
-    };
-    frame.render_widget(
-        Paragraph::new(ratatui::prelude::Line::from(vec![
-            Span::styled("> ", Style::default().fg(signal())),
-            Span::styled(filter, Style::default().fg(text())),
-        ]))
-        .style(Style::default().bg(modal_bg())),
+    render_text_input_line(
+        frame,
         rows[0],
+        TextInputRenderSpec {
+            value: &app.session_filter,
+            cursor: app.session_filter_cursor,
+            placeholder: "search",
+            prefix: "> ",
+            focused: true,
+            text_style: Style::default().fg(text()).bg(modal_bg()),
+            placeholder_style: Style::default().fg(muted()).bg(modal_bg()),
+            prefix_style: Style::default().fg(signal()).bg(modal_bg()),
+            cursor_style: Style::default().fg(bg()).bg(signal()),
+            background_style: Style::default().bg(modal_bg()),
+        },
     );
 
     let sessions = app.filtered_sessions();

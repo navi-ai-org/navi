@@ -9,6 +9,8 @@ pub(crate) enum HitAction {
     },
     CloseModal,
     ReopenQuestion,
+    OpenMessageQueue,
+    QueuedMessage(usize),
     QuestionOption(usize),
     QuestionText,
     QuestionDeny,
@@ -58,6 +60,7 @@ pub(crate) enum ScrollTarget {
     QuestionOptions,
     BackgroundCommands,
     BackgroundCommandOutput,
+    MessageQueue,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

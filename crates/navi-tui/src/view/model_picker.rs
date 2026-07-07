@@ -2,7 +2,6 @@ use navi_sdk::{canonical_provider_id, model_can_run_publicly};
 use ratatui::layout::{Constraint, Direction, Layout, Margin, Rect};
 use ratatui::prelude::{Frame, Line, Span};
 use ratatui::style::Style;
-use ratatui::text::Text;
 use ratatui::widgets::{List, ListItem, ListState, Paragraph};
 
 use crate::TuiApp;
@@ -12,13 +11,16 @@ use crate::render::{clear_modal_area, modal_block, modal_list_highlight_style};
 use crate::theme::*;
 use crate::ui::interaction::{HitAction, line_rect};
 use crate::ui::list::render_scrollbar;
+use crate::ui::text_input::{TextInputRenderSpec, render_text_input_line};
+
+const LIST_RIGHT_PADDING_COLUMNS: u16 = 2;
 
 pub(super) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
     clear_modal_area(frame, area);
     let title: &str = if app.mode == crate::state::Mode::BgModelPicker {
         "Background Model"
     } else {
-        "Select model"
+        ""
     };
     let block = modal_block("");
     frame.render_widget(block, area);
@@ -31,7 +33,7 @@ pub(super) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(1),
-            Constraint::Length(1),
+            Constraint::Length(2),
             Constraint::Min(8),
             Constraint::Length(1),
         ])
@@ -54,35 +56,27 @@ pub(super) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
         rows[0],
     );
 
-    let filter_text = if app.model_filter.is_empty() {
-        "Search"
-    } else {
-        app.model_filter.as_str()
-    };
-    frame.render_widget(
-        Paragraph::new(Text::from(vec![Line::from(Span::styled(
-            format!("  {filter_text}"),
-            Style::default().fg(if app.model_filter.is_empty() {
-                muted()
-            } else {
-                text()
-            }),
-        ))]))
-        .style(Style::default().bg(modal_bg())),
-        rows[1],
+    render_text_input_line(
+        frame,
+        Rect::new(rows[1].x, rows[1].y, rows[1].width, 1),
+        TextInputRenderSpec {
+            value: &app.model_filter,
+            cursor: app.model_filter_cursor,
+            placeholder: "Choose a model or provider",
+            prefix: "> ",
+            focused: true,
+            text_style: Style::default().fg(text()).bg(modal_bg()),
+            placeholder_style: Style::default().fg(muted()).bg(modal_bg()),
+            prefix_style: Style::default().fg(signal()).bg(modal_bg()),
+            cursor_style: Style::default().fg(bg()).bg(signal()),
+            background_style: Style::default().bg(modal_bg()),
+        },
     );
 
     let list_rows = build_model_rows(app);
     let list_area = rows[2];
     let has_scrollbar = list_rows.len() > list_area.height as usize;
-    let list_content_area = if has_scrollbar && list_area.width > 1 {
-        Rect {
-            width: list_area.width - 1,
-            ..list_area
-        }
-    } else {
-        list_area
-    };
+    let list_content_area = model_list_content_area(list_area, has_scrollbar);
     let row_width = list_content_area.width as usize;
 
     if list_rows.is_empty() {
@@ -117,7 +111,7 @@ pub(super) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
             list_area,
         );
         frame.render_widget(
-            Paragraph::new("  Connect provider  ctrl+e")
+            Paragraph::new(model_picker_footer_line(rows[3].width as usize))
                 .style(Style::default().fg(text()).bg(modal_bg())),
             rows[3],
         );
@@ -143,12 +137,9 @@ pub(super) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
             ListRow::Header { label, .. } => {
                 let header_style = Style::default().fg(signal()).bg(modal_bg());
                 let label = clean_section_label(label);
-                ListItem::new(Line::from(Span::styled(
-                    fit_display_width(&format!("  {label}"), row_width),
-                    header_style,
-                )))
-                .style(header_style)
+                ListItem::new(provider_header_line(&label, row_width)).style(header_style)
             }
+            ListRow::Spacer => ListItem::new(Line::from("")).style(Style::default().bg(modal_bg())),
             ListRow::Model { index } => {
                 let model = &app.models[*index];
                 let selected = *index == selected_model;
@@ -209,6 +200,7 @@ pub(super) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
                     HitAction::ModelProviderRefresh(provider_id.clone()),
                 );
             }
+            ListRow::Spacer => {}
             ListRow::Model { index } => {
                 let label = app
                     .models
@@ -220,13 +212,74 @@ pub(super) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
         }
     }
     frame.render_widget(
-        Paragraph::new(fit_display_width(
-            "  Connect provider  ctrl+e   Favorite  ctrl+f",
-            rows[3].width as usize,
-        ))
-        .style(Style::default().fg(text()).bg(modal_bg())),
+        Paragraph::new(model_picker_footer_line(rows[3].width as usize))
+            .style(Style::default().fg(text()).bg(modal_bg())),
         rows[3],
     );
+}
+
+fn provider_header_line(label: &str, width: usize) -> Line<'static> {
+    let label = fit_display_width(label, width.saturating_sub(4).max(1));
+    let left = format!("  {label} ");
+    let separator_width = width.saturating_sub(display_width(&left));
+    Line::from(vec![
+        Span::styled(left, Style::default().fg(muted()).bg(modal_bg())),
+        Span::styled(
+            "─".repeat(separator_width),
+            Style::default().fg(ghost()).bg(modal_bg()),
+        ),
+    ])
+}
+
+fn model_picker_footer_line(width: usize) -> Line<'static> {
+    let full_value = "↑/↓ choose  ·  tab refresh  ·  connect provider ctrl+e  ·  favorite ctrl+f";
+    if display_width(full_value) <= width {
+        return Line::from(vec![
+            Span::styled("↑/↓", Style::default().fg(text()).bg(modal_bg())),
+            Span::styled(" choose", Style::default().fg(muted()).bg(modal_bg())),
+            Span::styled("  ·  ", Style::default().fg(ghost()).bg(modal_bg())),
+            Span::styled("tab", Style::default().fg(text()).bg(modal_bg())),
+            Span::styled(" refresh", Style::default().fg(muted()).bg(modal_bg())),
+            Span::styled("  ·  ", Style::default().fg(ghost()).bg(modal_bg())),
+            Span::styled(
+                "connect provider",
+                Style::default().fg(muted()).bg(modal_bg()),
+            ),
+            Span::styled(" ctrl+e", Style::default().fg(text()).bg(modal_bg())),
+            Span::styled("  ·  ", Style::default().fg(ghost()).bg(modal_bg())),
+            Span::styled("favorite", Style::default().fg(muted()).bg(modal_bg())),
+            Span::styled(" ctrl+f", Style::default().fg(text()).bg(modal_bg())),
+        ]);
+    }
+
+    let compact_value = "↑/↓ choose  ·  connect provider ctrl+e  ·  favorite ctrl+f";
+    if display_width(compact_value) > width {
+        return Line::from(Span::styled(
+            fit_display_width(compact_value, width),
+            Style::default().fg(muted()).bg(modal_bg()),
+        ));
+    }
+    Line::from(vec![
+        Span::styled("↑/↓", Style::default().fg(text()).bg(modal_bg())),
+        Span::styled(" choose", Style::default().fg(muted()).bg(modal_bg())),
+        Span::styled("  ·  ", Style::default().fg(ghost()).bg(modal_bg())),
+        Span::styled(
+            "connect provider",
+            Style::default().fg(muted()).bg(modal_bg()),
+        ),
+        Span::styled(" ctrl+e", Style::default().fg(text()).bg(modal_bg())),
+        Span::styled("  ·  ", Style::default().fg(ghost()).bg(modal_bg())),
+        Span::styled("favorite", Style::default().fg(muted()).bg(modal_bg())),
+        Span::styled(" ctrl+f", Style::default().fg(text()).bg(modal_bg())),
+    ])
+}
+
+fn model_list_content_area(list_area: Rect, has_scrollbar: bool) -> Rect {
+    let reserved = LIST_RIGHT_PADDING_COLUMNS + u16::from(has_scrollbar);
+    Rect {
+        width: list_area.width.saturating_sub(reserved).max(1),
+        ..list_area
+    }
 }
 
 fn clean_section_label(label: &str) -> String {

@@ -1,5 +1,6 @@
 use crate::app::TuiApp;
 use crate::ui::text_input::{TextInputRef, floor_char_boundary};
+use crossterm::event::{KeyCode, KeyModifiers};
 
 const PROMPT_WIDTH: usize = 0;
 pub(crate) const COMPOSER_MAX_VISIBLE_LINES: usize = 6;
@@ -19,7 +20,83 @@ pub(crate) fn api_key_input_ref(app: &mut TuiApp) -> TextInputRef<'_> {
     TextInputRef::new(&mut app.api_key_input, &mut app.api_key_cursor)
 }
 
+pub(crate) fn command_filter_ref(app: &mut TuiApp) -> TextInputRef<'_> {
+    TextInputRef::new(&mut app.command_filter, &mut app.command_filter_cursor)
+}
+
+pub(crate) fn model_filter_ref(app: &mut TuiApp) -> TextInputRef<'_> {
+    TextInputRef::new(&mut app.model_filter, &mut app.model_filter_cursor)
+}
+
+pub(crate) fn provider_filter_ref(app: &mut TuiApp) -> TextInputRef<'_> {
+    TextInputRef::new(&mut app.provider_filter, &mut app.provider_filter_cursor)
+}
+
+pub(crate) fn session_filter_ref(app: &mut TuiApp) -> TextInputRef<'_> {
+    TextInputRef::new(&mut app.session_filter, &mut app.session_filter_cursor)
+}
+
+pub(crate) fn skill_filter_ref(app: &mut TuiApp) -> TextInputRef<'_> {
+    TextInputRef::new(&mut app.skill_filter, &mut app.skill_filter_cursor)
+}
+
+pub(crate) fn theme_filter_ref(app: &mut TuiApp) -> TextInputRef<'_> {
+    TextInputRef::new(&mut app.theme_filter, &mut app.theme_filter_cursor)
+}
+
+pub(crate) fn queued_edit_input_ref(app: &mut TuiApp) -> TextInputRef<'_> {
+    TextInputRef::new(&mut app.queued_edit_text, &mut app.queued_edit_cursor)
+}
+
+pub(crate) fn handle_text_input_key(
+    mut input: TextInputRef<'_>,
+    code: KeyCode,
+    modifiers: KeyModifiers,
+    multiline: bool,
+) -> bool {
+    if modifiers.contains(KeyModifiers::CONTROL) {
+        match code {
+            KeyCode::Char('a') => input.move_to_start(),
+            KeyCode::Char('e') => input.move_to_end(),
+            KeyCode::Char('u') => input.delete_to_start(),
+            KeyCode::Char('k') => input.delete_to_end(),
+            KeyCode::Left => input.move_previous_hump(),
+            KeyCode::Right => input.move_next_hump(),
+            KeyCode::Backspace => input.delete_previous_hump(),
+            KeyCode::Delete => input.delete_next_hump(),
+            _ => return false,
+        }
+        return true;
+    }
+
+    if modifiers.contains(KeyModifiers::ALT) {
+        match code {
+            KeyCode::Backspace => input.delete_previous_space_word(),
+            KeyCode::Left => input.move_previous_control_stop(),
+            KeyCode::Right => input.move_next_control_stop(),
+            _ => return false,
+        }
+        return true;
+    }
+
+    match code {
+        KeyCode::Char(ch) => input.insert_char(ch),
+        KeyCode::Backspace => input.delete_previous_char(),
+        KeyCode::Delete => input.delete_next_char(),
+        KeyCode::Left => input.move_previous_char(),
+        KeyCode::Right => input.move_next_char(),
+        KeyCode::Home => input.move_to_start(),
+        KeyCode::End => input.move_to_end(),
+        KeyCode::Enter if multiline => input.insert_char('\n'),
+        _ => return false,
+    }
+    true
+}
+
 pub(crate) fn insert_input_char(app: &mut TuiApp, ch: char) {
+    if ch.is_control() && !matches!(ch, '\n' | '\t') {
+        return;
+    }
     replace_input_selection(app);
     chat_input_ref(app).insert_char(ch);
 }
@@ -40,21 +117,59 @@ pub(crate) fn insert_api_key_text(app: &mut TuiApp, text: &str) {
     }
 }
 
+pub(crate) fn insert_queued_edit_text(app: &mut TuiApp, text: &str) {
+    let sanitized = strip_terminal_control_sequences(text);
+    if !sanitized.is_empty() {
+        queued_edit_input_ref(app).insert_text(&sanitized);
+    }
+}
+
 fn strip_terminal_control_sequences(text: &str) -> String {
     let mut cleaned = String::with_capacity(text.len());
     let mut chars = text.chars().peekable();
 
     while let Some(ch) = chars.next() {
         if ch == '\u{1b}' {
-            if chars.peek() == Some(&'[') {
-                chars.next();
-                for next in chars.by_ref() {
-                    if ('@'..='~').contains(&next) {
-                        break;
+            match chars.peek() {
+                Some(&'[') => {
+                    chars.next();
+                    for next in chars.by_ref() {
+                        if ('@'..='~').contains(&next) {
+                            break;
+                        }
                     }
                 }
-            } else {
-                chars.next();
+                Some(&']') => {
+                    chars.next();
+                    for next in chars.by_ref() {
+                        if next == '\u{07}' {
+                            break;
+                        }
+                        if next == '\u{1b}' {
+                            chars.next();
+                            break;
+                        }
+                    }
+                }
+                Some(&'O') => {
+                    chars.next();
+                    chars.next();
+                }
+                Some(&'P') => {
+                    chars.next();
+                    for next in chars.by_ref() {
+                        if next == '\u{07}' {
+                            break;
+                        }
+                        if next == '\u{1b}' {
+                            chars.next();
+                            break;
+                        }
+                    }
+                }
+                _ => {
+                    chars.next();
+                }
             }
             continue;
         }

@@ -5,6 +5,7 @@ use crate::runtime::provider_supports_oauth;
 use crate::theme::*;
 use crate::ui::interaction::{HitAction, line_rect};
 use crate::ui::list::render_scrollbar;
+use crate::ui::text_input::{TextInputRenderSpec, render_text_input_line};
 use navi_sdk::provider_catalog;
 use ratatui::layout::{Constraint, Direction, Layout, Margin, Rect};
 use ratatui::prelude::{Frame, Span};
@@ -29,15 +30,21 @@ pub(super) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
         ])
         .split(inner);
 
-    let header_text = if app.provider_filter.is_empty() {
-        "Type to filter providers...".to_string()
-    } else {
-        format!("Filter: {}_", app.provider_filter)
-    };
-
-    frame.render_widget(
-        Paragraph::new(header_text).style(Style::default().fg(muted()).bg(modal_bg())),
+    render_text_input_line(
+        frame,
         rows[0],
+        TextInputRenderSpec {
+            value: &app.provider_filter,
+            cursor: app.provider_filter_cursor,
+            placeholder: "Type to filter providers...",
+            prefix: "> ",
+            focused: true,
+            text_style: Style::default().fg(text()).bg(modal_bg()),
+            placeholder_style: Style::default().fg(muted()).bg(modal_bg()),
+            prefix_style: Style::default().fg(signal()).bg(modal_bg()),
+            cursor_style: Style::default().fg(bg()).bg(signal()),
+            background_style: Style::default().bg(modal_bg()),
+        },
     );
 
     let list_rows = app.filtered_providers();

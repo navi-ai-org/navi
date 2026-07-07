@@ -16,6 +16,7 @@ use crate::TuiApp;
 
 // Re-exports for the public test surface.
 pub use crate::dispatch::AsyncEvent;
+pub use crate::event_loop::LeakedTerminalSequenceFilter;
 pub use crate::state::{ChatMessage, ChatRole, Mode};
 pub use navi_sdk::{
     AgentEvent, AgentRunState, ApprovalDecision, ApprovalRequest, EngineDriver, LoadedConfig,
@@ -362,6 +363,35 @@ impl Harness {
             ),
         ));
         let _ = crate::event_loop::run_loop(&mut self.terminal, &mut self.app, &mut input);
+        self
+    }
+
+    /// Resize the test terminal to the given dimensions. This simulates a
+    /// terminal window resize event (e.g. user resizes the window, or
+    /// returns from a minimized/maximized state).
+    pub fn resize_terminal(&mut self, width: u16, height: u16) -> &mut Self {
+        self.terminal.backend_mut().resize(width, height);
+        self
+    }
+
+    /// Get a mutable reference to the underlying terminal. Needed for
+    /// tests that drive `run_loop` directly.
+    pub fn terminal_mut(&mut self) -> &mut ratatui::Terminal<ratatui::backend::TestBackend> {
+        &mut self.terminal
+    }
+
+    /// Get a mutable reference to the underlying app. Needed for tests
+    /// that drive `run_loop` directly.
+    pub fn app_mut(&mut self) -> &mut TuiApp {
+        &mut self.app
+    }
+
+    /// Drive the TUI event loop with a `VecInput` that has already been
+    /// populated with events. Unlike `drive_loop`, this does NOT append
+    /// a Ctrl+C quit event — the input source's `stop_when_empty` setting
+    /// controls when the loop exits.
+    pub fn drive_loop_with_input(&mut self, input: &mut VecInput) -> &mut Self {
+        let _ = crate::event_loop::run_loop(&mut self.terminal, &mut self.app, input);
         self
     }
 }

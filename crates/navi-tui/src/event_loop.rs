@@ -108,17 +108,41 @@ pub fn run(app: TuiApp) -> Result<()> {
 fn enter_terminal_modes(w: &mut impl io::Write) -> io::Result<()> {
     reset_terminal_input_modes(w)?;
     execute!(w, EnterAlternateScreen, EnableBracketedPaste)?;
+    disable_extended_keyboard_protocols(w)?;
+    enable_focus_tracking(w)?;
     enable_mouse_capture(w)
+}
+
+/// Aggressively disable all extended keyboard protocols that can corrupt
+/// input parsing. Terminals like Kitty, WezTerm, and Ghostty enable enhanced
+/// keyboard protocols by default or inherit them from the parent shell. When
+/// these protocols are active, key events are encoded as CSI sequences
+/// (e.g. `CSI 99;133u` for the 'c' key) that crossterm cannot parse, causing
+/// raw protocol bytes to leak into the TUI as garbage characters.
+///
+/// This function sends every known disable sequence:
+/// - `\x1B[>0u`  — set Kitty keyboard flags to 0 (full disable)
+/// - `\x1B[<u`   — pop Kitty keyboard flags (belt-and-suspenders)
+/// - `\x1B[>4;0m` — disable xterm modifyOtherKeys
+/// - `\x1B[?2004h` is NOT sent (we enable bracketed paste separately)
+fn disable_extended_keyboard_protocols(w: &mut impl io::Write) -> io::Result<()> {
+    write!(w, "\x1B[>4;0m\x1B[>0u\x1B[<u")?;
+    w.flush()
+}
+
+/// Enable terminal focus tracking (DEC 1004). When the user returns to the
+/// NAVI window, the terminal sends `FocusGained` (`\x1B[I`), which we use
+/// to re-disable extended keyboard protocols that the terminal may have
+/// re-activated while we were away.
+fn enable_focus_tracking(w: &mut impl io::Write) -> io::Result<()> {
+    write!(w, "\x1B[?1004h")?;
+    w.flush()
 }
 
 fn reset_terminal_input_modes(w: &mut impl io::Write) -> io::Result<()> {
     disable_mouse_capture(w)?;
     execute!(w, DisableBracketedPaste, PopKeyboardEnhancementFlags)?;
-    // Reset xterm modifyOtherKeys and Kitty keyboard protocol as well; a
-    // previous run or child process may have left the terminal encoding normal
-    // control keys as escape sequences instead of key events.
-    write!(w, "\x1B[>4;0m\x1B[<u")?;
-    w.flush()
+    disable_extended_keyboard_protocols(w)
 }
 
 /// Enable mouse clicks/scroll/drag with SGR coordinates, but without free
@@ -137,6 +161,7 @@ fn enable_mouse_capture(w: &mut impl io::Write) -> io::Result<()> {
 fn disable_mouse_capture(w: &mut impl io::Write) -> io::Result<()> {
     // Disable every common mouse mode defensively in case a previous session
     // or a child process left the terminal in motion/focus tracking.
+    // Also disable focus tracking (?1004) here since it's a defensive reset.
     write!(
         w,
         "\x1B[?9l\x1B[?1000l\x1B[?1001l\x1B[?1002l\x1B[?1003l\x1B[?1004l\x1B[?1005l\x1B[?1006l\x1B[?1015l"
@@ -255,6 +280,95 @@ mod tests {
         assert!(!filter.should_drop(&crossterm::event::KeyCode::Char('<')));
         assert!(!filter.should_drop(&crossterm::event::KeyCode::Char('M')));
     }
+
+    #[test]
+    fn leaked_terminal_sequence_filter_drops_osc_with_st_terminator() {
+        let mut filter = LeakedTerminalSequenceFilter::default();
+
+        // OSC 11 response terminated with ST (ESC \)
+        for ch in "\u{1b}]11;rgb:1a1a/1b1b/2626\u{1b}\\".chars() {
+            assert!(
+                filter.should_drop(&crossterm::event::KeyCode::Char(ch)),
+                "OSC char '{}' should be dropped",
+                ch
+            );
+        }
+
+        assert!(!filter.should_drop(&crossterm::event::KeyCode::Char('a')));
+    }
+
+    #[test]
+    fn leaked_terminal_sequence_filter_drops_osc_with_bel_terminator() {
+        let mut filter = LeakedTerminalSequenceFilter::default();
+
+        // OSC title set terminated with BEL
+        for ch in "\u{1b}]0;title\u{07}".chars() {
+            assert!(
+                filter.should_drop(&crossterm::event::KeyCode::Char(ch)),
+                "OSC char '{}' should be dropped",
+                ch
+            );
+        }
+
+        assert!(!filter.should_drop(&crossterm::event::KeyCode::Char('a')));
+    }
+
+    #[test]
+    fn leaked_terminal_sequence_filter_drops_ss3_sequences() {
+        let mut filter = LeakedTerminalSequenceFilter::default();
+
+        for ch in "\u{1b}OA".chars() {
+            assert!(
+                filter.should_drop(&crossterm::event::KeyCode::Char(ch)),
+                "SS3 char '{}' should be dropped",
+                ch
+            );
+        }
+
+        assert!(!filter.should_drop(&crossterm::event::KeyCode::Char('a')));
+    }
+
+    #[test]
+    fn terminal_input_reset_fully_disables_kitty_keyboard() {
+        let mut out = Vec::new();
+
+        reset_terminal_input_modes(&mut out).expect("reset terminal input modes");
+        let text = String::from_utf8(out).expect("utf8 escape sequences");
+
+        // \x1B[>0u sets Kitty flags to 0 (full disable)
+        assert!(text.contains("\x1B[>0u"));
+        // \x1B[<u pops one level (belt-and-suspenders)
+        assert!(text.contains("\x1B[<u"));
+    }
+
+    #[test]
+    fn enter_terminal_modes_disables_kitty_keyboard_on_entry() {
+        let mut out = Vec::new();
+
+        enter_terminal_modes(&mut out).expect("enter terminal modes");
+        let text = String::from_utf8(out).expect("utf8 escape sequences");
+
+        // Kitty keyboard protocol must be disabled when entering the TUI,
+        // not just on exit. Otherwise crossterm cannot parse key events
+        // encoded as CSI 99;133u and raw bytes leak into the input field.
+        assert!(
+            text.contains("\x1B[>0u"),
+            "enter_terminal_modes must disable Kitty keyboard protocol on entry"
+        );
+    }
+
+    #[test]
+    fn leaked_filter_does_not_swallow_bare_escape_key() {
+        let mut filter = LeakedTerminalSequenceFilter::default();
+
+        // KeyCode::Esc means the user pressed Escape — it must NOT be
+        // swallowed by the filter, otherwise the next keypress would be
+        // consumed as part of a "leaked sequence".
+        assert!(
+            !filter.should_drop(&crossterm::event::KeyCode::Esc),
+            "KeyCode::Esc is a real Escape press, not a leaked sequence"
+        );
+    }
 }
 
 /// The TUI's main loop, factored out so it can be tested with a `TestBackend`
@@ -322,6 +436,22 @@ where
                     needs_draw = true;
                     handle_paste(app, &content);
                 }
+                Event::Resize(_, _) => {
+                    needs_draw = true;
+                }
+                Event::FocusGained => {
+                    // The user returned to the NAVI window. Force a full
+                    // redraw to recover from any terminal state corruption
+                    // that happened while we were away (alternate screen
+                    // may have been partially overwritten, cursor position
+                    // may be wrong, etc).
+                    leaked_terminal_sequence_filter.reset();
+                    terminal.clear()?;
+                    needs_draw = true;
+                }
+                Event::FocusLost => {
+                    leaked_terminal_sequence_filter.reset();
+                }
                 _ => {}
             }
         } else if app.is_loading || app.messages.is_empty() || visible_notification(app).is_some() {
@@ -336,32 +466,52 @@ where
 }
 
 #[derive(Default)]
-struct LeakedTerminalSequenceFilter {
+pub struct LeakedTerminalSequenceFilter {
     state: LeakedTerminalSequenceState,
     bytes_seen: usize,
 }
 
-#[derive(Default)]
+#[derive(Default, PartialEq)]
 enum LeakedTerminalSequenceState {
     #[default]
     Idle,
     Escape,
     Csi,
+    Osc,
+    OscEsc,
+    Ss3,
 }
 
 impl LeakedTerminalSequenceFilter {
-    fn should_drop(&mut self, code: &crossterm::event::KeyCode) -> bool {
-        let crossterm::event::KeyCode::Char(ch) = code else {
-            self.reset();
-            return false;
+    pub fn should_drop(&mut self, code: &crossterm::event::KeyCode) -> bool {
+        // Only KeyCode::Char can carry leaked protocol bytes. KeyCode::Esc
+        // is a structured event from crossterm — it means the user actually
+        // pressed Escape, not that a sequence leaked. Treating Esc as the
+        // start of a leaked sequence would swallow legitimate Escape presses
+        // and then consume the next real keypress as "part of the sequence".
+        let ch: char = match code {
+            crossterm::event::KeyCode::Char(c) => *c,
+            _ => {
+                // If we're in the middle of consuming a leaked sequence,
+                // drop any non-char event too — crossterm may have partially
+                // parsed a corrupted sequence into a structured key (e.g.
+                // Home, Left). Letting these through causes cursor jumping.
+                if self.state != LeakedTerminalSequenceState::Idle {
+                    self.bytes_seen += 1;
+                    let overlong = self.bytes_seen > 256;
+                    if overlong {
+                        self.reset();
+                    }
+                    return true;
+                }
+                self.reset();
+                return false;
+            }
         };
 
         match self.state {
             LeakedTerminalSequenceState::Idle => {
-                // Terminal protocol bytes should arrive as structured events, but
-                // under some terminals they can leak as key chars. Keep them out
-                // of text fields.
-                if *ch == '\u{1b}' {
+                if ch == '\u{1b}' {
                     self.state = LeakedTerminalSequenceState::Escape;
                     self.bytes_seen = 1;
                     return true;
@@ -370,8 +520,18 @@ impl LeakedTerminalSequenceFilter {
             }
             LeakedTerminalSequenceState::Escape => {
                 self.bytes_seen += 1;
-                if *ch == '[' {
+                if ch == '[' {
                     self.state = LeakedTerminalSequenceState::Csi;
+                    true
+                } else if ch == ']' {
+                    self.state = LeakedTerminalSequenceState::Osc;
+                    true
+                } else if ch == 'O' {
+                    self.state = LeakedTerminalSequenceState::Ss3;
+                    true
+                } else if ch == 'P' {
+                    // DCS (Device Control String) — consume until ST or BEL
+                    self.state = LeakedTerminalSequenceState::Osc;
                     true
                 } else {
                     self.reset();
@@ -380,11 +540,39 @@ impl LeakedTerminalSequenceFilter {
             }
             LeakedTerminalSequenceState::Csi => {
                 self.bytes_seen += 1;
-                let finished = ('@'..='~').contains(ch);
+                let finished = ('@'..='~').contains(&ch);
                 let overlong = self.bytes_seen > 64;
                 if finished || overlong {
                     self.reset();
                 }
+                true
+            }
+            LeakedTerminalSequenceState::Osc => {
+                self.bytes_seen += 1;
+                // OSC terminates with BEL (\x07) or ST (ESC \)
+                let overlong = self.bytes_seen > 256;
+                if ch == '\u{07}' {
+                    self.reset();
+                } else if ch == '\u{1b}' {
+                    self.state = LeakedTerminalSequenceState::OscEsc;
+                } else if overlong {
+                    self.reset();
+                }
+                true
+            }
+            LeakedTerminalSequenceState::OscEsc => {
+                self.bytes_seen += 1;
+                // We saw ESC inside an OSC. The next char should be '\'
+                // (completing ST = ESC \). Regardless of what it is, the
+                // OSC is now done — either it was the ST terminator or a
+                // broken sequence. Reset and drop.
+                self.reset();
+                true
+            }
+            LeakedTerminalSequenceState::Ss3 => {
+                self.bytes_seen += 1;
+                // SS3 sequences are exactly one char after 'O' (e.g. \x1bOA)
+                self.reset();
                 true
             }
         }
@@ -426,6 +614,7 @@ fn handle_paste(app: &mut TuiApp, content: &str) {
             }
         }
         Mode::ApiKeyEntry => insert_api_key_text(app, content),
+        Mode::QueuedMessageEdit => crate::input::insert_queued_edit_text(app, content),
         _ => {}
     }
 }

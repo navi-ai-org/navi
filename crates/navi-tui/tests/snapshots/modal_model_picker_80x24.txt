@@ -1,8 +1,9 @@
   main  /tmp/navi-test-project
 
     ╭  ────────────────────────────────────────────────────────────────────╮
-    │   Select model                                                   esc │
-    │   Search                                                             │
+    │                                                                  esc │
+    │ > Choose a model or provider                                         │
+    │                                                                      │
     │                                                                      │
     │   No models available.                                               │
     │                                                                      │
@@ -15,10 +16,9 @@
     │                                                                      │
     │                                                                      │
     │                                                                      │
-    │                                                                      │
   ▌ │                                                                      │
   ▌ │                                                                      │
-  ▌ │   Connect provider  ctrl+e                                           │
-  ▌ ╰──────────────────────────────────────────────────────────────────────╯
+  ▌ │ ↑/↓ choose  ·  connect provider ctrl+e  ·  favorite ctrl+f           │
+  ▌ ╰──────────────────────────────────────────────────────────────────────╯d
   ▌
                ctrl+p commands · ctrl+m models · ctrl+enter send · ctrl+v image

@@ -1,5 +1,5 @@
 use ratatui::layout::{Constraint, Direction, Layout, Margin, Rect};
-use ratatui::prelude::{Frame, Line, Span};
+use ratatui::prelude::{Frame, Span};
 use ratatui::style::Style;
 use ratatui::widgets::{List, ListItem, ListState, Paragraph};
 
@@ -11,6 +11,7 @@ use crate::render::{
 use crate::theme::*;
 use crate::ui::interaction::{HitAction, line_rect};
 use crate::ui::list::render_scrollbar;
+use crate::ui::text_input::{TextInputRenderSpec, render_text_input_line};
 
 pub(super) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
     clear_modal_area(frame, area);
@@ -34,18 +35,21 @@ pub(super) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
         fill_modal_surface(frame, *row);
     }
 
-    let filter = if app.command_filter.is_empty() {
-        "type to search"
-    } else {
-        app.command_filter.as_str()
-    };
-    frame.render_widget(
-        Paragraph::new(Line::from(vec![
-            Span::styled("> ", Style::default().fg(signal())),
-            Span::styled(filter, Style::default().fg(text())),
-        ]))
-        .style(Style::default().bg(modal_bg())),
+    render_text_input_line(
+        frame,
         rows[0],
+        TextInputRenderSpec {
+            value: &app.command_filter,
+            cursor: app.command_filter_cursor,
+            placeholder: "type to search",
+            prefix: "> ",
+            focused: true,
+            text_style: Style::default().fg(text()).bg(modal_bg()),
+            placeholder_style: Style::default().fg(muted()).bg(modal_bg()),
+            prefix_style: Style::default().fg(signal()).bg(modal_bg()),
+            cursor_style: Style::default().fg(bg()).bg(signal()),
+            background_style: Style::default().bg(modal_bg()),
+        },
     );
 
     let commands = filtered_commands(app);
