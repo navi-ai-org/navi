@@ -3,6 +3,7 @@ pub mod auto_memory;
 pub mod checkpoint_writer;
 pub mod embedding;
 pub mod extract;
+pub mod global_memory;
 pub mod history_store;
 pub mod maintenance;
 pub mod memory_store;
@@ -23,6 +24,7 @@ pub use embedding::{
     create_embedder, embeddings_available,
 };
 pub use checkpoint_writer::run_checkpoint_writer;
+pub use global_memory::GlobalMemoryStore;
 pub use history_store::{HistoryEvent, HistoryStore, SessionSummary};
 pub use maintenance::{
     DreamOptions, DreamResult, run_distill_maintenance, run_dream_maintenance,
@@ -35,11 +37,13 @@ pub use schemas::SessionCheckpoint;
 use anyhow::Result;
 use std::path::PathBuf;
 
-/// Orchestrates the memory system components (files + SQLite history).
+/// Orchestrates the memory system components (SQLite stores + history).
 #[derive(Debug, Clone)]
 pub struct MemoryManager {
     pub store: MemoryStore,
     pub history: HistoryStore,
+    pub auto_memory: AutoMemoryStore,
+    pub global_memory: GlobalMemoryStore,
 }
 
 impl MemoryManager {
@@ -53,7 +57,6 @@ impl MemoryManager {
             project_dir,
             data_dir.clone(),
             &config.root,
-            &config.global_memory_path,
         );
         store.ensure_initialized()?;
 
@@ -61,6 +64,12 @@ impl MemoryManager {
             memory_store::resolve_memory_path(&config.history.sqlite_path, &store.memory_root);
         let history = HistoryStore::new(&resolved_sqlite_path)?;
 
-        Ok(Self { store, history })
+        let auto_memory_db = store.memory_root.join("memories.db");
+        let auto_memory = AutoMemoryStore::open(&auto_memory_db)?;
+
+        let global_memory_db = data_dir.join("memory").join("global-memory.db");
+        let global_memory = GlobalMemoryStore::open(&global_memory_db)?;
+
+        Ok(Self { store, history, auto_memory, global_memory })
     }
 }

@@ -1231,7 +1231,7 @@ pub(crate) async fn evaluate_memory_triggers(
         crate::memory::run_checkpoint_writer(
             &ctx.session_id,
             messages,
-            &manager.store,
+            &manager.auto_memory,
             provider.as_ref(),
             &model_name,
         )
@@ -1243,8 +1243,8 @@ pub(crate) async fn evaluate_memory_triggers(
             for t in thresholds_to_trigger {
                 state.crossed_thresholds.push(t);
                 let cp_path = manager
-                    .store
-                    .checkpoint_path()
+                    .auto_memory
+                    .db_path
                     .to_string_lossy()
                     .to_string();
                 manager.history.record_checkpoint(
@@ -1278,7 +1278,8 @@ pub(crate) async fn evaluate_memory_triggers(
         // Rebuild context!
         let boot_context = crate::memory::build_rebuild_context(
             messages,
-            &manager.store,
+            &manager.auto_memory,
+            &manager.global_memory,
             context_window,
             memory_config.injected_context_token_budget,
         );

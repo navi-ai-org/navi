@@ -13,7 +13,7 @@ use crate::memory::embedding::{get_cached_embedder, embeddings_available};
 use crate::tool::builtin::helpers;
 use crate::tool::{Tool, ToolDefinition, ToolInvocation, ToolKind, ToolResult};
 
-/// Tool to append observations to notes.md safely.
+/// Tool to append observations to the session notes scratchpad (SQLite).
 pub(crate) struct AppendNoteTool {
     project_root: PathBuf,
 }
@@ -29,10 +29,10 @@ impl Tool for AppendNoteTool {
     fn definition(&self) -> ToolDefinition {
         helpers::definition(
             "append_note",
-            "Append a note, temporary observation, or status update to the notes.md scratchpad.",
+            "Append a note, temporary observation, or status update to the session notes scratchpad.",
             ToolKind::Write,
             helpers::json_schema(
-                &[("content", "The text content to append to notes.md.")],
+                &[("content", "The text content to append to the session notes.")],
                 &["content"],
             ),
         )
@@ -48,12 +48,12 @@ impl Tool for AppendNoteTool {
             &loaded_config.config.memory,
         )?;
 
-        manager.store.append_note(content)?;
+        manager.auto_memory.append_note(content)?;
 
         let output = json!({
             "status": "success",
-            "message": "Note successfully appended to notes.md",
-            "path": manager.store.notes_path().to_string_lossy().to_string()
+            "message": "Note successfully appended to session notes",
+            "db_path": manager.auto_memory.db_path.to_string_lossy().to_string()
         });
 
         Ok(helpers::ok(invocation.id, output))

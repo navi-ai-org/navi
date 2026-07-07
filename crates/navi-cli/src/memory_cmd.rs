@@ -23,10 +23,8 @@ pub async fn handle_memory_command(
         crate::MemoryAction::Status => {
             println!("Memory System Status:");
             println!("  Memory Root: {:?}", manager.store.memory_root);
-            println!(
-                "  Global Memory Path: {:?}",
-                manager.store.global_memory_path
-            );
+            println!("  Auto-Memory DB: {:?}", manager.auto_memory.db_path);
+            println!("  Global Memory DB: {:?}", manager.global_memory.db_path);
             println!("  History DB Path: {:?}", manager.history.db_path);
 
             let sessions = manager.history.list_sessions()?;
@@ -93,7 +91,7 @@ pub async fn handle_memory_command(
             run_checkpoint_writer(
                 &session_id,
                 &messages,
-                &manager.store,
+                &manager.auto_memory,
                 provider.as_ref(),
                 model_name,
             )
@@ -116,7 +114,8 @@ pub async fn handle_memory_command(
 
             let boot_context = build_rebuild_context(
                 &messages,
-                &manager.store,
+                &manager.auto_memory,
+                &manager.global_memory,
                 context_window,
                 memory_config.injected_context_token_budget,
             );
@@ -168,7 +167,8 @@ pub async fn handle_memory_command(
                 model_name
             );
             let result = run_dream_maintenance_with_options(
-                &manager.store,
+                &manager.auto_memory,
+                &manager.global_memory,
                 &manager.history,
                 provider.as_ref(),
                 model_name,
@@ -207,7 +207,7 @@ pub async fn handle_memory_command(
                 model_name
             );
             run_distill_maintenance(
-                &manager.store,
+                &manager.auto_memory,
                 &manager.history,
                 provider.as_ref(),
                 model_name,
@@ -417,52 +417,40 @@ pub async fn handle_memory_command(
                 );
             }
 
-            // Check Checkpoint file
-            let cp_path = manager.store.checkpoint_path();
-            println!("  Checkpoint File: {:?}", cp_path);
-            if cp_path.exists() {
-                match std::fs::read_to_string(&cp_path) {
-                    Ok(content) => println!("    [OK] Readable ({} bytes)", content.len()),
-                    Err(e) => println!("    [ERROR] Failed to read checkpoint: {}", e),
-                }
+            // Check Checkpoint (SQLite)
+            let cp_content = manager.auto_memory.read_checkpoint().unwrap_or_default();
+            println!("  Checkpoint (SQLite): {:?}", manager.auto_memory.db_path);
+            if !cp_content.is_empty() {
+                println!("    [OK] Readable ({} bytes)", cp_content.len());
             } else {
-                println!("    [WARN] Does not exist yet.");
+                println!("    [WARN] No checkpoint stored yet.");
             }
 
-            // Check Notes file
-            let notes_path = manager.store.notes_path();
-            println!("  Notes File: {:?}", notes_path);
-            if notes_path.exists() {
-                match std::fs::read_to_string(&notes_path) {
-                    Ok(content) => println!("    [OK] Readable ({} bytes)", content.len()),
-                    Err(e) => println!("    [ERROR] Failed to read notes: {}", e),
-                }
+            // Check Notes (SQLite)
+            let notes_content = manager.auto_memory.read_notes().unwrap_or_default();
+            println!("  Notes (SQLite): {:?}", manager.auto_memory.db_path);
+            if !notes_content.is_empty() {
+                println!("    [OK] Readable ({} bytes)", notes_content.len());
             } else {
-                println!("    [WARN] Does not exist yet.");
+                println!("    [WARN] No notes stored yet.");
             }
 
-            // Check Project Memory file
-            let pm_path = manager.store.project_memory_path();
-            println!("  Project Memory File: {:?}", pm_path);
-            if pm_path.exists() {
-                match std::fs::read_to_string(&pm_path) {
-                    Ok(content) => println!("    [OK] Readable ({} bytes)", content.len()),
-                    Err(e) => println!("    [ERROR] Failed to read project memory: {}", e),
-                }
+            // Check Project Memory (SQLite)
+            let pm_index = manager.auto_memory.render_index();
+            println!("  Project Memory (SQLite): {:?}", manager.auto_memory.db_path);
+            if !pm_index.trim().is_empty() {
+                println!("    [OK] Readable ({} bytes)", pm_index.len());
             } else {
-                println!("    [WARN] Does not exist yet.");
+                println!("    [WARN] No project memories yet.");
             }
 
-            // Check Global Memory file
-            let gm_path = manager.store.global_memory_path;
-            println!("  Global Memory File: {:?}", gm_path);
-            if gm_path.exists() {
-                match std::fs::read_to_string(&gm_path) {
-                    Ok(content) => println!("    [OK] Readable ({} bytes)", content.len()),
-                    Err(e) => println!("    [ERROR] Failed to read global memory: {}", e),
-                }
+            // Check Global Memory (SQLite)
+            let gm_index = manager.global_memory.read_index().unwrap_or_default();
+            println!("  Global Memory (SQLite): {:?}", manager.global_memory.db_path);
+            if !gm_index.trim().is_empty() {
+                println!("    [OK] Readable ({} bytes)", gm_index.len());
             } else {
-                println!("    [WARN] Does not exist yet.");
+                println!("    [WARN] No global memories yet.");
             }
 
             // Check DB and tables
