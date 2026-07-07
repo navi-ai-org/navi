@@ -55,9 +55,20 @@ impl GoalRuntimeHandle {
 
     /// Sets or replaces the goal.
     pub fn set_objective(&self, objective: String, token_budget: Option<i64>) -> SessionGoal {
+        self.set_objective_with_short_description(objective, None, token_budget)
+    }
+
+    /// Sets or replaces the goal with an optional compact UI label.
+    pub fn set_objective_with_short_description(
+        &self,
+        objective: String,
+        short_description: Option<String>,
+        token_budget: Option<i64>,
+    ) -> SessionGoal {
         let mut goal_guard = self.goal.write().unwrap_or_else(|e| e.into_inner());
         if let Some(ref mut goal) = *goal_guard {
             goal.objective = objective;
+            goal.short_description = short_description;
             goal.token_budget = token_budget;
             goal.status = crate::goal::types::GoalStatus::Active;
             goal.consecutive_blocked_turns = 0;
@@ -75,7 +86,8 @@ impl GoalRuntimeHandle {
                 .unwrap_or_else(|e| e.into_inner())
                 .clone()
                 .unwrap_or_default();
-            let new_goal = SessionGoal::new(session_id, objective, token_budget);
+            let mut new_goal = SessionGoal::new(session_id, objective, token_budget);
+            new_goal.short_description = short_description;
             let cloned = new_goal.clone();
             *goal_guard = Some(new_goal);
             drop(goal_guard);

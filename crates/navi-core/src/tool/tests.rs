@@ -57,6 +57,42 @@ fn injected_security_policy_can_allow_write_without_approval() {
 }
 
 #[tokio::test]
+async fn direct_invoke_does_not_bypass_restricted_approval() {
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let policy = SecurityPolicy::new(
+        tempdir.path().to_path_buf(),
+        tempdir.path().join(".navi-data"),
+        SecurityConfig {
+            permission_mode: PermissionMode::Restricted,
+            ..SecurityConfig::default()
+        },
+    )
+    .expect("policy");
+    let executor = ToolExecutor::new(policy);
+    let target = tempdir.path().join("blocked.txt");
+
+    let result = executor
+        .invoke(ToolInvocation {
+            id: "write".to_string(),
+            tool_name: "write_file".to_string(),
+            input: json!({
+                "path": target.display().to_string(),
+                "content": "should not be written\n"
+            }),
+        })
+        .await;
+
+    assert!(!result.ok);
+    assert!(
+        result.output["error"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("approval required")
+    );
+    assert!(!target.exists());
+}
+
+#[tokio::test]
 async fn builtins_read_write_and_grep_files() {
     let tempdir = tempfile::tempdir().expect("tempdir");
     let executor = executor(tempdir.path());

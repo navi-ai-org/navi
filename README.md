@@ -6,7 +6,7 @@
 
 <p align="center">
   <strong>The coding agent engine that lives in your terminal.</strong><br/>
-  Built in Rust. Fast. Secure. Embeddable. Yours. Less then ~35mb of memory usage per instance.
+  Built in Rust. Fast. Secure. Embeddable. Yours. Less than ~35MB of memory usage per instance.
 </p>
 
 <p align="center">

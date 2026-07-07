@@ -24,6 +24,10 @@ fn goal_with_status(goal: &SessionGoal, status: super::types::GoalStatus) -> Ses
     new_goal
 }
 
+fn limit_short_description(value: &str) -> String {
+    value.trim().chars().take(40).collect()
+}
+
 // ── get_goal ─────────────────────────────────────────────────
 
 pub struct GetGoalTool {
@@ -72,6 +76,7 @@ impl Tool for GetGoalTool {
                 json!({
                     "goal_id": goal.goal_id.as_str(),
                     "objective": goal.objective,
+                    "short_description": goal.short_description,
                     "status": goal.status.as_str(),
                     "tokens_used": goal.tokens_used,
                     "token_budget": goal.token_budget,
@@ -131,6 +136,11 @@ impl CreateGoalTool {
                         "type": "string",
                         "description": "The textual objective of the goal."
                     },
+                    "short_description": {
+                        "type": "string",
+                        "maxLength": 40,
+                        "description": "Short TUI label for this goal. Summarize the goal in a few words; maximum 40 characters."
+                    },
                     "token_budget": {
                         "type": "integer",
                         "description": "Optional maximum number of tokens to spend on this goal."
@@ -171,7 +181,15 @@ impl Tool for CreateGoalTool {
         }
 
         let token_budget = args.get("token_budget").and_then(|v| v.as_i64());
-        let goal = self.runtime.set_objective(objective, token_budget);
+        let short_description = args
+            .get("short_description")
+            .and_then(|v| v.as_str())
+            .map(limit_short_description);
+        let goal = self.runtime.set_objective_with_short_description(
+            objective,
+            short_description,
+            token_budget,
+        );
 
         Ok(make_result(
             &invocation.id,
@@ -180,6 +198,7 @@ impl Tool for CreateGoalTool {
                 "created": true,
                 "goal_id": goal.goal_id.as_str(),
                 "objective": goal.objective,
+                "short_description": goal.short_description,
                 "status": goal.status.as_str(),
                 "token_budget": goal.token_budget,
                 "message": "Goal created successfully. The agent will auto-continue working toward this goal."

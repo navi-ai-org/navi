@@ -112,6 +112,9 @@ pub struct SessionGoal {
     pub goal_id: GoalId,
     /// The textual objective.
     pub objective: String,
+    /// Short label used by compact UIs.
+    #[serde(default)]
+    pub short_description: Option<String>,
     /// Current status in the state machine.
     pub status: GoalStatus,
     /// Optional token budget. When exceeded, transitions to `BudgetLimited`.
@@ -138,6 +141,7 @@ impl SessionGoal {
             session_id,
             goal_id: GoalId::new(),
             objective,
+            short_description: None,
             status: GoalStatus::Active,
             token_budget,
             tokens_used: 0,
@@ -210,6 +214,7 @@ impl SessionGoal {
         GoalProgress {
             goal_id: self.goal_id.clone(),
             objective: self.objective.clone(),
+            short_description: self.short_description.clone(),
             status: self.status,
             tokens_used: self.tokens_used,
             token_budget: self.token_budget,
@@ -227,6 +232,8 @@ impl SessionGoal {
 pub struct GoalProgress {
     pub goal_id: GoalId,
     pub objective: String,
+    #[serde(default)]
+    pub short_description: Option<String>,
     pub status: GoalStatus,
     pub tokens_used: i64,
     pub token_budget: Option<i64>,

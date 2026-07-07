@@ -14,6 +14,7 @@ members = [
     "crates/navi-plugin-runtime",
     "crates/navi-providers",
     "crates/navi-sdk",
+    "crates/navi-server",
     "crates/navi-tui",
     "crates/navi-vfs",
 ]
@@ -32,6 +33,7 @@ default-members = [
     "crates/navi-plugin-orchestrator",
     "crates/navi-providers",
     "crates/navi-sdk",
+    "crates/navi-server",
     "crates/navi-tui",
     "crates/navi-vfs",
 ]
@@ -80,6 +82,7 @@ tracing = "0.1"
 tracing-appender = "0.2"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 unicode-width = "0.2"
+warp = "0.3"
 tree-sitter = "0.25"
 tree-sitter-bash = "0.25.1"
 tree-sitter-c = "0.24.2"
@@ -113,5 +116,6 @@ navi-plugin-manifest = { version = "0.1.2", path = "crates/navi-plugin-manifest"
 navi-plugin-orchestrator = { version = "0.1.2", path = "crates/navi-plugin-orchestrator", default-features = false }
 navi-plugin-runtime = { version = "0.1.2", path = "crates/navi-plugin-runtime" }
 navi-sdk = { version = "0.1.2", path = "crates/navi-sdk" }
+navi-server = { version = "0.1.2", path = "crates/navi-server" }
 navi-tui = { version = "0.1.2", path = "crates/navi-tui" }
 navi-vfs = { version = "0.1.2", path = "crates/navi-vfs" }

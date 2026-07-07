@@ -458,10 +458,10 @@ async fn invoke_install_dispatches_to_cargo() {
     let result = executor
         .invoke_approved_with_event_tx(
             crate::tool::ToolInvocation {
-            id: "pm".to_string(),
-            tool_name: "package_manager".to_string(),
-            input: json!({ "action": "install", "manager": "cargo" }),
-        },
+                id: "pm".to_string(),
+                tool_name: "package_manager".to_string(),
+                input: json!({ "action": "install", "manager": "cargo" }),
+            },
             None,
         )
         .await;
@@ -501,10 +501,10 @@ async fn invoke_remove_dispatches_to_cargo() {
     let result = executor
         .invoke_approved_with_event_tx(
             crate::tool::ToolInvocation {
-            id: "pm".to_string(),
-            tool_name: "package_manager".to_string(),
-            input: json!({ "action": "remove", "manager": "cargo", "packages": ["serde"] }),
-        },
+                id: "pm".to_string(),
+                tool_name: "package_manager".to_string(),
+                input: json!({ "action": "remove", "manager": "cargo", "packages": ["serde"] }),
+            },
             None,
         )
         .await;
@@ -523,10 +523,10 @@ async fn invoke_update_dispatches_to_cargo() {
     let result = executor
         .invoke_approved_with_event_tx(
             crate::tool::ToolInvocation {
-            id: "pm".to_string(),
-            tool_name: "package_manager".to_string(),
-            input: json!({ "action": "update", "manager": "cargo" }),
-        },
+                id: "pm".to_string(),
+                tool_name: "package_manager".to_string(),
+                input: json!({ "action": "update", "manager": "cargo" }),
+            },
             None,
         )
         .await;
@@ -549,10 +549,10 @@ async fn invoke_check_dispatches_to_cargo() {
     let result = executor
         .invoke_approved_with_event_tx(
             crate::tool::ToolInvocation {
-            id: "pm".to_string(),
-            tool_name: "package_manager".to_string(),
-            input: json!({ "action": "check", "manager": "cargo", "packages": ["serde"] }),
-        },
+                id: "pm".to_string(),
+                tool_name: "package_manager".to_string(),
+                input: json!({ "action": "check", "manager": "cargo", "packages": ["serde"] }),
+            },
             None,
         )
         .await;
@@ -569,10 +569,10 @@ async fn invoke_install_dispatches_to_npm() {
     let result = executor
         .invoke_approved_with_event_tx(
             crate::tool::ToolInvocation {
-            id: "pm".to_string(),
-            tool_name: "package_manager".to_string(),
-            input: json!({ "action": "install", "manager": "npm" }),
-        },
+                id: "pm".to_string(),
+                tool_name: "package_manager".to_string(),
+                input: json!({ "action": "install", "manager": "npm" }),
+            },
             None,
         )
         .await;
@@ -592,10 +592,10 @@ async fn invoke_install_dispatches_to_go() {
     let result = executor
         .invoke_approved_with_event_tx(
             crate::tool::ToolInvocation {
-            id: "pm".to_string(),
-            tool_name: "package_manager".to_string(),
-            input: json!({ "action": "install", "manager": "go" }),
-        },
+                id: "pm".to_string(),
+                tool_name: "package_manager".to_string(),
+                input: json!({ "action": "install", "manager": "go" }),
+            },
             None,
         )
         .await;
@@ -615,10 +615,10 @@ async fn invoke_add_dispatches_to_npm() {
     let result = executor
         .invoke_approved_with_event_tx(
             crate::tool::ToolInvocation {
-            id: "pm".to_string(),
-            tool_name: "package_manager".to_string(),
-            input: json!({ "action": "add", "manager": "npm", "packages": ["express"] }),
-        },
+                id: "pm".to_string(),
+                tool_name: "package_manager".to_string(),
+                input: json!({ "action": "add", "manager": "npm", "packages": ["express"] }),
+            },
             None,
         )
         .await;
@@ -661,10 +661,10 @@ async fn invoke_remove_dispatches_to_npm() {
     let result = executor
         .invoke_approved_with_event_tx(
             crate::tool::ToolInvocation {
-            id: "pm".to_string(),
-            tool_name: "package_manager".to_string(),
-            input: json!({ "action": "remove", "manager": "npm", "packages": ["express"] }),
-        },
+                id: "pm".to_string(),
+                tool_name: "package_manager".to_string(),
+                input: json!({ "action": "remove", "manager": "npm", "packages": ["express"] }),
+            },
             None,
         )
         .await;
@@ -707,10 +707,10 @@ async fn invoke_update_dispatches_to_npm() {
     let result = executor
         .invoke_approved_with_event_tx(
             crate::tool::ToolInvocation {
-            id: "pm".to_string(),
-            tool_name: "package_manager".to_string(),
-            input: json!({ "action": "update", "manager": "npm" }),
-        },
+                id: "pm".to_string(),
+                tool_name: "package_manager".to_string(),
+                input: json!({ "action": "update", "manager": "npm" }),
+            },
             None,
         )
         .await;
@@ -730,10 +730,10 @@ async fn invoke_update_dispatches_to_go() {
     let result = executor
         .invoke_approved_with_event_tx(
             crate::tool::ToolInvocation {
-            id: "pm".to_string(),
-            tool_name: "package_manager".to_string(),
-            input: json!({ "action": "update", "manager": "go" }),
-        },
+                id: "pm".to_string(),
+                tool_name: "package_manager".to_string(),
+                input: json!({ "action": "update", "manager": "go" }),
+            },
             None,
         )
         .await;
@@ -772,10 +772,10 @@ async fn invoke_auto_detects_cargo() {
     let result = executor
         .invoke_approved_with_event_tx(
             crate::tool::ToolInvocation {
-            id: "pm".to_string(),
-            tool_name: "package_manager".to_string(),
-            input: json!({ "action": "install", "manager": "auto" }),
-        },
+                id: "pm".to_string(),
+                tool_name: "package_manager".to_string(),
+                input: json!({ "action": "install", "manager": "auto" }),
+            },
             None,
         )
         .await;
@@ -797,10 +797,10 @@ async fn invoke_install_dispatches_to_bun() {
     let result = executor
         .invoke_approved_with_event_tx(
             crate::tool::ToolInvocation {
-            id: "pm".to_string(),
-            tool_name: "package_manager".to_string(),
-            input: json!({ "action": "install", "manager": "bun" }),
-        },
+                id: "pm".to_string(),
+                tool_name: "package_manager".to_string(),
+                input: json!({ "action": "install", "manager": "bun" }),
+            },
             None,
         )
         .await;
@@ -820,10 +820,10 @@ async fn invoke_add_dispatches_to_bun() {
     let result = executor
         .invoke_approved_with_event_tx(
             crate::tool::ToolInvocation {
-            id: "pm".to_string(),
-            tool_name: "package_manager".to_string(),
-            input: json!({ "action": "add", "manager": "bun", "packages": ["express"] }),
-        },
+                id: "pm".to_string(),
+                tool_name: "package_manager".to_string(),
+                input: json!({ "action": "add", "manager": "bun", "packages": ["express"] }),
+            },
             None,
         )
         .await;
@@ -843,10 +843,10 @@ async fn invoke_remove_dispatches_to_bun() {
     let result = executor
         .invoke_approved_with_event_tx(
             crate::tool::ToolInvocation {
-            id: "pm".to_string(),
-            tool_name: "package_manager".to_string(),
-            input: json!({ "action": "remove", "manager": "bun", "packages": ["express"] }),
-        },
+                id: "pm".to_string(),
+                tool_name: "package_manager".to_string(),
+                input: json!({ "action": "remove", "manager": "bun", "packages": ["express"] }),
+            },
             None,
         )
         .await;
@@ -866,10 +866,10 @@ async fn invoke_update_dispatches_to_bun_empty() {
     let result = executor
         .invoke_approved_with_event_tx(
             crate::tool::ToolInvocation {
-            id: "pm".to_string(),
-            tool_name: "package_manager".to_string(),
-            input: json!({ "action": "update", "manager": "bun" }),
-        },
+                id: "pm".to_string(),
+                tool_name: "package_manager".to_string(),
+                input: json!({ "action": "update", "manager": "bun" }),
+            },
             None,
         )
         .await;
@@ -889,10 +889,10 @@ async fn invoke_update_dispatches_to_bun_with_packages() {
     let result = executor
         .invoke_approved_with_event_tx(
             crate::tool::ToolInvocation {
-            id: "pm".to_string(),
-            tool_name: "package_manager".to_string(),
-            input: json!({ "action": "update", "manager": "bun", "packages": ["express"] }),
-        },
+                id: "pm".to_string(),
+                tool_name: "package_manager".to_string(),
+                input: json!({ "action": "update", "manager": "bun", "packages": ["express"] }),
+            },
             None,
         )
         .await;
@@ -914,10 +914,10 @@ async fn invoke_update_dispatches_to_npm_with_packages() {
     let result = executor
         .invoke_approved_with_event_tx(
             crate::tool::ToolInvocation {
-            id: "pm".to_string(),
-            tool_name: "package_manager".to_string(),
-            input: json!({ "action": "update", "manager": "npm", "packages": ["express"] }),
-        },
+                id: "pm".to_string(),
+                tool_name: "package_manager".to_string(),
+                input: json!({ "action": "update", "manager": "npm", "packages": ["express"] }),
+            },
             None,
         )
         .await;
@@ -937,10 +937,10 @@ async fn invoke_update_dispatches_to_cargo_with_packages() {
     let result = executor
         .invoke_approved_with_event_tx(
             crate::tool::ToolInvocation {
-            id: "pm".to_string(),
-            tool_name: "package_manager".to_string(),
-            input: json!({ "action": "update", "manager": "cargo", "packages": ["serde"] }),
-        },
+                id: "pm".to_string(),
+                tool_name: "package_manager".to_string(),
+                input: json!({ "action": "update", "manager": "cargo", "packages": ["serde"] }),
+            },
             None,
         )
         .await;
@@ -987,10 +987,10 @@ async fn invoke_check_dispatches_to_npm() {
     let result = executor
         .invoke_approved_with_event_tx(
             crate::tool::ToolInvocation {
-            id: "pm".to_string(),
-            tool_name: "package_manager".to_string(),
-            input: json!({ "action": "check", "manager": "npm", "packages": ["express"] }),
-        },
+                id: "pm".to_string(),
+                tool_name: "package_manager".to_string(),
+                input: json!({ "action": "check", "manager": "npm", "packages": ["express"] }),
+            },
             None,
         )
         .await;
@@ -1009,10 +1009,10 @@ async fn invoke_check_dispatches_to_bun() {
     let result = executor
         .invoke_approved_with_event_tx(
             crate::tool::ToolInvocation {
-            id: "pm".to_string(),
-            tool_name: "package_manager".to_string(),
-            input: json!({ "action": "check", "manager": "bun", "packages": ["express"] }),
-        },
+                id: "pm".to_string(),
+                tool_name: "package_manager".to_string(),
+                input: json!({ "action": "check", "manager": "bun", "packages": ["express"] }),
+            },
             None,
         )
         .await;

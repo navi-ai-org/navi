@@ -926,8 +926,9 @@ impl AgentRuntime {
         };
 
         let interval_hours = memory_config.dream_interval_days * 24;
-        let state = crate::memory::auto_dream::AutoDreamState::new(manager.store.memory_root.clone())
-            .with_interval(interval_hours.max(1));
+        let state =
+            crate::memory::auto_dream::AutoDreamState::new(manager.store.memory_root.clone())
+                .with_interval(interval_hours.max(1));
 
         let history = match crate::memory::HistoryStore::new(&manager.history.db_path) {
             Ok(h) => h,
@@ -980,18 +981,21 @@ impl AgentRuntime {
                         report.remaining_active
                     );
                     dream_state.mark_completed();
-                    let _ = event_sender.send(RuntimeEvent::new(RuntimeEventKind::AutoDreamCompleted {
-                        marked_stale: report.marked_stale,
-                        duplicates_merged: report.duplicates_merged,
-                        active_count: report.remaining_active,
-                    }));
+                    let _ = event_sender.send(RuntimeEvent::new(
+                        RuntimeEventKind::AutoDreamCompleted {
+                            marked_stale: report.marked_stale,
+                            duplicates_merged: report.duplicates_merged,
+                            active_count: report.remaining_active,
+                        },
+                    ));
                 }
                 Err(e) => {
                     tracing::warn!("auto-dream failed: {}", e);
                     dream_state.release();
-                    let _ = event_sender.send(RuntimeEvent::new(RuntimeEventKind::AutoDreamFailed {
-                        reason: e.to_string(),
-                    }));
+                    let _ =
+                        event_sender.send(RuntimeEvent::new(RuntimeEventKind::AutoDreamFailed {
+                            reason: e.to_string(),
+                        }));
                 }
             }
         });
@@ -1037,23 +1041,21 @@ impl AgentRuntime {
             // Distill only does stale + dedup (no model-based SOP extraction in auto mode)
             let db_path = memory_root.join("memories.db");
             match crate::memory::AutoMemoryStore::open(&db_path) {
-                Ok(store) => {
-                    match store.consolidate(60) {
-                        Ok(report) => {
-                            tracing::info!(
-                                "auto-distill completed: {} stale, {} duplicates, {} active",
-                                report.marked_stale,
-                                report.duplicates_merged,
-                                report.remaining_active
-                            );
-                            state.mark_completed();
-                        }
-                        Err(e) => {
-                            tracing::warn!("auto-distill failed: {}", e);
-                            state.release();
-                        }
+                Ok(store) => match store.consolidate(60) {
+                    Ok(report) => {
+                        tracing::info!(
+                            "auto-distill completed: {} stale, {} duplicates, {} active",
+                            report.marked_stale,
+                            report.duplicates_merged,
+                            report.remaining_active
+                        );
+                        state.mark_completed();
                     }
-                }
+                    Err(e) => {
+                        tracing::warn!("auto-distill failed: {}", e);
+                        state.release();
+                    }
+                },
                 Err(e) => {
                     tracing::debug!("auto-distill: store not available: {}", e);
                     state.release();
@@ -1359,19 +1361,22 @@ fn runtime_event_kind_from_agent_event(event: &AgentEvent) -> Option<RuntimeEven
             short_description: short_description.clone(),
             token_budget: *token_budget,
         }),
-        AgentEvent::AutoDreamStarted { hours_since_last, sessions_reviewed } => {
-            Some(RuntimeEventKind::AutoDreamStarted {
-                hours_since_last: *hours_since_last,
-                sessions_reviewed: *sessions_reviewed,
-            })
-        }
-        AgentEvent::AutoDreamCompleted { marked_stale, duplicates_merged, active_count } => {
-            Some(RuntimeEventKind::AutoDreamCompleted {
-                marked_stale: *marked_stale,
-                duplicates_merged: *duplicates_merged,
-                active_count: *active_count,
-            })
-        }
+        AgentEvent::AutoDreamStarted {
+            hours_since_last,
+            sessions_reviewed,
+        } => Some(RuntimeEventKind::AutoDreamStarted {
+            hours_since_last: *hours_since_last,
+            sessions_reviewed: *sessions_reviewed,
+        }),
+        AgentEvent::AutoDreamCompleted {
+            marked_stale,
+            duplicates_merged,
+            active_count,
+        } => Some(RuntimeEventKind::AutoDreamCompleted {
+            marked_stale: *marked_stale,
+            duplicates_merged: *duplicates_merged,
+            active_count: *active_count,
+        }),
         AgentEvent::AutoDreamFailed { reason } => Some(RuntimeEventKind::AutoDreamFailed {
             reason: reason.clone(),
         }),
