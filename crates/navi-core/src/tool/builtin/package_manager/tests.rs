@@ -456,11 +456,14 @@ async fn invoke_install_dispatches_to_cargo() {
     let _guard = ChangeDirGuard::new(tempdir.path());
     let executor = pm_executor(tempdir.path());
     let result = executor
-        .invoke(crate::tool::ToolInvocation {
+        .invoke_approved_with_event_tx(
+            crate::tool::ToolInvocation {
             id: "pm".to_string(),
             tool_name: "package_manager".to_string(),
             input: json!({ "action": "install", "manager": "cargo" }),
-        })
+        },
+            None,
+        )
         .await;
     assert!(
         result.output["manager"] == "cargo"
@@ -475,11 +478,14 @@ async fn invoke_add_dispatches_to_cargo() {
     let _guard = ChangeDirGuard::new(tempdir.path());
     let executor = pm_executor(tempdir.path());
     let result = executor
-        .invoke(crate::tool::ToolInvocation {
-            id: "pm".to_string(),
-            tool_name: "package_manager".to_string(),
-            input: json!({ "action": "add", "manager": "cargo", "packages": ["serde"] }),
-        })
+        .invoke_approved_with_event_tx(
+            crate::tool::ToolInvocation {
+                id: "pm".to_string(),
+                tool_name: "package_manager".to_string(),
+                input: json!({ "action": "add", "manager": "cargo", "packages": ["serde"] }),
+            },
+            None,
+        )
         .await;
     assert!(
         result.output["manager"] == "cargo" || result.output["error_code"] == "package_add_failed"
@@ -493,11 +499,14 @@ async fn invoke_remove_dispatches_to_cargo() {
     let _guard = ChangeDirGuard::new(tempdir.path());
     let executor = pm_executor(tempdir.path());
     let result = executor
-        .invoke(crate::tool::ToolInvocation {
+        .invoke_approved_with_event_tx(
+            crate::tool::ToolInvocation {
             id: "pm".to_string(),
             tool_name: "package_manager".to_string(),
             input: json!({ "action": "remove", "manager": "cargo", "packages": ["serde"] }),
-        })
+        },
+            None,
+        )
         .await;
     assert!(
         result.output["manager"] == "cargo"
@@ -512,11 +521,14 @@ async fn invoke_update_dispatches_to_cargo() {
     let _guard = ChangeDirGuard::new(tempdir.path());
     let executor = pm_executor(tempdir.path());
     let result = executor
-        .invoke(crate::tool::ToolInvocation {
+        .invoke_approved_with_event_tx(
+            crate::tool::ToolInvocation {
             id: "pm".to_string(),
             tool_name: "package_manager".to_string(),
             input: json!({ "action": "update", "manager": "cargo" }),
-        })
+        },
+            None,
+        )
         .await;
     assert!(
         result.output["manager"] == "cargo"
@@ -535,11 +547,14 @@ async fn invoke_check_dispatches_to_cargo() {
     let _guard = ChangeDirGuard::new(tempdir.path());
     let executor = pm_executor(tempdir.path());
     let result = executor
-        .invoke(crate::tool::ToolInvocation {
+        .invoke_approved_with_event_tx(
+            crate::tool::ToolInvocation {
             id: "pm".to_string(),
             tool_name: "package_manager".to_string(),
             input: json!({ "action": "check", "manager": "cargo", "packages": ["serde"] }),
-        })
+        },
+            None,
+        )
         .await;
     assert!(result.ok);
     assert_eq!(result.output["manager"], "cargo");
@@ -552,11 +567,14 @@ async fn invoke_install_dispatches_to_npm() {
     let _guard = ChangeDirGuard::new(tempdir.path());
     let executor = pm_executor(tempdir.path());
     let result = executor
-        .invoke(crate::tool::ToolInvocation {
+        .invoke_approved_with_event_tx(
+            crate::tool::ToolInvocation {
             id: "pm".to_string(),
             tool_name: "package_manager".to_string(),
             input: json!({ "action": "install", "manager": "npm" }),
-        })
+        },
+            None,
+        )
         .await;
     let manager = result.output["manager"]
         .as_str()
@@ -572,11 +590,14 @@ async fn invoke_install_dispatches_to_go() {
     let _guard = ChangeDirGuard::new(tempdir.path());
     let executor = pm_executor(tempdir.path());
     let result = executor
-        .invoke(crate::tool::ToolInvocation {
+        .invoke_approved_with_event_tx(
+            crate::tool::ToolInvocation {
             id: "pm".to_string(),
             tool_name: "package_manager".to_string(),
             input: json!({ "action": "install", "manager": "go" }),
-        })
+        },
+            None,
+        )
         .await;
     let manager = result.output["manager"]
         .as_str()
@@ -592,11 +613,14 @@ async fn invoke_add_dispatches_to_npm() {
     let _guard = ChangeDirGuard::new(tempdir.path());
     let executor = pm_executor(tempdir.path());
     let result = executor
-        .invoke(crate::tool::ToolInvocation {
+        .invoke_approved_with_event_tx(
+            crate::tool::ToolInvocation {
             id: "pm".to_string(),
             tool_name: "package_manager".to_string(),
             input: json!({ "action": "add", "manager": "npm", "packages": ["express"] }),
-        })
+        },
+            None,
+        )
         .await;
     let manager = result.output["manager"]
         .as_str()
@@ -612,11 +636,14 @@ async fn invoke_add_dispatches_to_go() {
     let _guard = ChangeDirGuard::new(tempdir.path());
     let executor = pm_executor(tempdir.path());
     let result = executor
-        .invoke(crate::tool::ToolInvocation {
+        .invoke_approved_with_event_tx(
+            crate::tool::ToolInvocation {
             id: "pm".to_string(),
             tool_name: "package_manager".to_string(),
             input: json!({ "action": "add", "manager": "go", "packages": ["github.com/acme/pkg"] }),
-        })
+        },
+            None,
+        )
         .await;
     let manager = result.output["manager"]
         .as_str()
@@ -632,11 +659,14 @@ async fn invoke_remove_dispatches_to_npm() {
     let _guard = ChangeDirGuard::new(tempdir.path());
     let executor = pm_executor(tempdir.path());
     let result = executor
-        .invoke(crate::tool::ToolInvocation {
+        .invoke_approved_with_event_tx(
+            crate::tool::ToolInvocation {
             id: "pm".to_string(),
             tool_name: "package_manager".to_string(),
             input: json!({ "action": "remove", "manager": "npm", "packages": ["express"] }),
-        })
+        },
+            None,
+        )
         .await;
     let manager = result.output["manager"]
         .as_str()
@@ -652,11 +682,14 @@ async fn invoke_remove_dispatches_to_go() {
     let _guard = ChangeDirGuard::new(tempdir.path());
     let executor = pm_executor(tempdir.path());
     let result = executor
-        .invoke(crate::tool::ToolInvocation {
+        .invoke_approved_with_event_tx(
+            crate::tool::ToolInvocation {
             id: "pm".to_string(),
             tool_name: "package_manager".to_string(),
             input: json!({ "action": "remove", "manager": "go", "packages": ["github.com/acme/pkg"] }),
-        })
+        },
+            None,
+        )
         .await;
     let manager = result.output["manager"]
         .as_str()
@@ -672,11 +705,14 @@ async fn invoke_update_dispatches_to_npm() {
     let _guard = ChangeDirGuard::new(tempdir.path());
     let executor = pm_executor(tempdir.path());
     let result = executor
-        .invoke(crate::tool::ToolInvocation {
+        .invoke_approved_with_event_tx(
+            crate::tool::ToolInvocation {
             id: "pm".to_string(),
             tool_name: "package_manager".to_string(),
             input: json!({ "action": "update", "manager": "npm" }),
-        })
+        },
+            None,
+        )
         .await;
     let manager = result.output["manager"]
         .as_str()
@@ -692,11 +728,14 @@ async fn invoke_update_dispatches_to_go() {
     let _guard = ChangeDirGuard::new(tempdir.path());
     let executor = pm_executor(tempdir.path());
     let result = executor
-        .invoke(crate::tool::ToolInvocation {
+        .invoke_approved_with_event_tx(
+            crate::tool::ToolInvocation {
             id: "pm".to_string(),
             tool_name: "package_manager".to_string(),
             input: json!({ "action": "update", "manager": "go" }),
-        })
+        },
+            None,
+        )
         .await;
     let manager = result.output["manager"]
         .as_str()
@@ -731,11 +770,14 @@ async fn invoke_auto_detects_cargo() {
     let _guard = ChangeDirGuard::new(tempdir.path());
     let executor = pm_executor(tempdir.path());
     let result = executor
-        .invoke(crate::tool::ToolInvocation {
+        .invoke_approved_with_event_tx(
+            crate::tool::ToolInvocation {
             id: "pm".to_string(),
             tool_name: "package_manager".to_string(),
             input: json!({ "action": "install", "manager": "auto" }),
-        })
+        },
+            None,
+        )
         .await;
     let manager = result.output["manager"]
         .as_str()
@@ -753,11 +795,14 @@ async fn invoke_install_dispatches_to_bun() {
     let _guard = ChangeDirGuard::new(tempdir.path());
     let executor = pm_executor(tempdir.path());
     let result = executor
-        .invoke(crate::tool::ToolInvocation {
+        .invoke_approved_with_event_tx(
+            crate::tool::ToolInvocation {
             id: "pm".to_string(),
             tool_name: "package_manager".to_string(),
             input: json!({ "action": "install", "manager": "bun" }),
-        })
+        },
+            None,
+        )
         .await;
     let manager = result.output["manager"]
         .as_str()
@@ -773,11 +818,14 @@ async fn invoke_add_dispatches_to_bun() {
     let _guard = ChangeDirGuard::new(tempdir.path());
     let executor = pm_executor(tempdir.path());
     let result = executor
-        .invoke(crate::tool::ToolInvocation {
+        .invoke_approved_with_event_tx(
+            crate::tool::ToolInvocation {
             id: "pm".to_string(),
             tool_name: "package_manager".to_string(),
             input: json!({ "action": "add", "manager": "bun", "packages": ["express"] }),
-        })
+        },
+            None,
+        )
         .await;
     let manager = result.output["manager"]
         .as_str()
@@ -793,11 +841,14 @@ async fn invoke_remove_dispatches_to_bun() {
     let _guard = ChangeDirGuard::new(tempdir.path());
     let executor = pm_executor(tempdir.path());
     let result = executor
-        .invoke(crate::tool::ToolInvocation {
+        .invoke_approved_with_event_tx(
+            crate::tool::ToolInvocation {
             id: "pm".to_string(),
             tool_name: "package_manager".to_string(),
             input: json!({ "action": "remove", "manager": "bun", "packages": ["express"] }),
-        })
+        },
+            None,
+        )
         .await;
     let manager = result.output["manager"]
         .as_str()
@@ -813,11 +864,14 @@ async fn invoke_update_dispatches_to_bun_empty() {
     let _guard = ChangeDirGuard::new(tempdir.path());
     let executor = pm_executor(tempdir.path());
     let result = executor
-        .invoke(crate::tool::ToolInvocation {
+        .invoke_approved_with_event_tx(
+            crate::tool::ToolInvocation {
             id: "pm".to_string(),
             tool_name: "package_manager".to_string(),
             input: json!({ "action": "update", "manager": "bun" }),
-        })
+        },
+            None,
+        )
         .await;
     let manager = result.output["manager"]
         .as_str()
@@ -833,11 +887,14 @@ async fn invoke_update_dispatches_to_bun_with_packages() {
     let _guard = ChangeDirGuard::new(tempdir.path());
     let executor = pm_executor(tempdir.path());
     let result = executor
-        .invoke(crate::tool::ToolInvocation {
+        .invoke_approved_with_event_tx(
+            crate::tool::ToolInvocation {
             id: "pm".to_string(),
             tool_name: "package_manager".to_string(),
             input: json!({ "action": "update", "manager": "bun", "packages": ["express"] }),
-        })
+        },
+            None,
+        )
         .await;
     let manager = result.output["manager"]
         .as_str()
@@ -855,11 +912,14 @@ async fn invoke_update_dispatches_to_npm_with_packages() {
     let _guard = ChangeDirGuard::new(tempdir.path());
     let executor = pm_executor(tempdir.path());
     let result = executor
-        .invoke(crate::tool::ToolInvocation {
+        .invoke_approved_with_event_tx(
+            crate::tool::ToolInvocation {
             id: "pm".to_string(),
             tool_name: "package_manager".to_string(),
             input: json!({ "action": "update", "manager": "npm", "packages": ["express"] }),
-        })
+        },
+            None,
+        )
         .await;
     let manager = result.output["manager"]
         .as_str()
@@ -875,11 +935,14 @@ async fn invoke_update_dispatches_to_cargo_with_packages() {
     let _guard = ChangeDirGuard::new(tempdir.path());
     let executor = pm_executor(tempdir.path());
     let result = executor
-        .invoke(crate::tool::ToolInvocation {
+        .invoke_approved_with_event_tx(
+            crate::tool::ToolInvocation {
             id: "pm".to_string(),
             tool_name: "package_manager".to_string(),
             input: json!({ "action": "update", "manager": "cargo", "packages": ["serde"] }),
-        })
+        },
+            None,
+        )
         .await;
     let manager = result.output["manager"]
         .as_str()
@@ -895,11 +958,14 @@ async fn invoke_update_dispatches_to_go_with_packages() {
     let _guard = ChangeDirGuard::new(tempdir.path());
     let executor = pm_executor(tempdir.path());
     let result = executor
-        .invoke(crate::tool::ToolInvocation {
+        .invoke_approved_with_event_tx(
+            crate::tool::ToolInvocation {
             id: "pm".to_string(),
             tool_name: "package_manager".to_string(),
             input: json!({ "action": "update", "manager": "go", "packages": ["github.com/acme/pkg"] }),
-        })
+        },
+            None,
+        )
         .await;
     let manager = result.output["manager"]
         .as_str()
@@ -919,11 +985,14 @@ async fn invoke_check_dispatches_to_npm() {
     let _guard = ChangeDirGuard::new(tempdir.path());
     let executor = pm_executor(tempdir.path());
     let result = executor
-        .invoke(crate::tool::ToolInvocation {
+        .invoke_approved_with_event_tx(
+            crate::tool::ToolInvocation {
             id: "pm".to_string(),
             tool_name: "package_manager".to_string(),
             input: json!({ "action": "check", "manager": "npm", "packages": ["express"] }),
-        })
+        },
+            None,
+        )
         .await;
     assert!(result.ok);
     assert_eq!(result.output["manager"], "npm");
@@ -938,11 +1007,14 @@ async fn invoke_check_dispatches_to_bun() {
     let _guard = ChangeDirGuard::new(tempdir.path());
     let executor = pm_executor(tempdir.path());
     let result = executor
-        .invoke(crate::tool::ToolInvocation {
+        .invoke_approved_with_event_tx(
+            crate::tool::ToolInvocation {
             id: "pm".to_string(),
             tool_name: "package_manager".to_string(),
             input: json!({ "action": "check", "manager": "bun", "packages": ["express"] }),
-        })
+        },
+            None,
+        )
         .await;
     assert!(result.ok);
     assert_eq!(result.output["manager"], "bun");
@@ -959,11 +1031,14 @@ async fn invoke_check_dispatches_to_go() {
     let _guard = ChangeDirGuard::new(tempdir.path());
     let executor = pm_executor(tempdir.path());
     let result = executor
-        .invoke(crate::tool::ToolInvocation {
+        .invoke_approved_with_event_tx(
+            crate::tool::ToolInvocation {
             id: "pm".to_string(),
             tool_name: "package_manager".to_string(),
             input: json!({ "action": "check", "manager": "go", "packages": ["github.com/acme/pkg"] }),
-        })
+        },
+            None,
+        )
         .await;
     assert!(result.ok);
     assert_eq!(result.output["manager"], "go");
