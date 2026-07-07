@@ -47,6 +47,10 @@ struct Cli {
     #[arg(long)]
     yolo: bool,
 
+    /// Auto-approve reads, edits, and commands except guarded commands (e.g. git)
+    #[arg(long)]
+    auto: bool,
+
     /// Auto-approve reads and edits, prompt for commands
     #[arg(long)]
     accept_edits: bool,
@@ -342,6 +346,8 @@ async fn main() -> Result<()> {
     // Apply permission mode CLI flags
     if cli.yolo {
         loaded_config.config.security.permission_mode = navi_core::PermissionMode::Yolo;
+    } else if cli.auto {
+        loaded_config.config.security.permission_mode = navi_core::PermissionMode::Auto;
     } else if cli.accept_edits {
         loaded_config.config.security.permission_mode = navi_core::PermissionMode::AcceptEdits;
     } else if cli.restricted {
@@ -406,6 +412,7 @@ async fn main() -> Result<()> {
     }
 
     if cli.print_providers {
+        init_registry_store(&loaded_config);
         println!(
             "{}",
             serde_json::to_string_pretty(&navi_core::provider_catalog(&loaded_config.config))?
@@ -544,4 +551,16 @@ fn normalize_task(parts: Vec<String>) -> Option<String> {
     let task = parts.join(" ");
     let task = task.trim();
     (!task.is_empty()).then(|| task.to_string())
+}
+
+/// Initializes the thread-local registry store from the SQLite cache so that
+/// `provider_catalog()` reads from the live database instead of falling back to
+/// the embedded snapshot. Needed for CLI paths that don't construct a full
+/// `NaviEngine` (e.g. `--print-providers`).
+fn init_registry_store(loaded_config: &LoadedConfig) {
+    if let Ok(store) = navi_core::registry::RegistryStore::open(&loaded_config.data_dir) {
+        let store = std::sync::Arc::new(store);
+        navi_core::registry::load_registry(&store);
+        navi_core::set_registry_store(store);
+    }
 }

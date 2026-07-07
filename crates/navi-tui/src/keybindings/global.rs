@@ -46,9 +46,16 @@ pub(super) fn route_global_key(
                 let outcome =
                     super::apply_ui_effect(app, UiEffect::ReplaceModal(ModalKind::Commands));
                 app.command_filter.clear();
+                app.command_filter_cursor = 0;
                 app.selected_command = 0;
                 app.command_scroll = 0;
                 return outcome;
+            }
+            KeyCode::Char('q') => {
+                return super::apply_ui_effect(
+                    app,
+                    UiEffect::ReplaceModal(ModalKind::MessageQueue),
+                );
             }
             KeyCode::Char('.') => {
                 return super::apply_ui_effect(app, UiEffect::ReplaceModal(ModalKind::Help));
@@ -113,9 +120,7 @@ pub(super) fn route_global_key(
                         UiEffect::ReplaceModal(ModalKind::Question),
                     );
                 }
-                if (!app.input.trim().is_empty() || !app.pending_images.is_empty())
-                    && !app.is_loading
-                {
+                if !app.input.trim().is_empty() || !app.pending_images.is_empty() {
                     crate::chat::submit_message(app);
                 }
                 return KeyOutcome::Handled;
@@ -174,7 +179,8 @@ fn is_permission_mode_cycle_key(code: KeyCode, modifiers: KeyModifiers) -> bool 
 fn cycle_permission_mode(app: &mut TuiApp) {
     let next = match current_permission_mode(app) {
         PermissionMode::Restricted => PermissionMode::AcceptEdits,
-        PermissionMode::AcceptEdits => PermissionMode::Yolo,
+        PermissionMode::AcceptEdits => PermissionMode::Auto,
+        PermissionMode::Auto => PermissionMode::Yolo,
         PermissionMode::Yolo => PermissionMode::Restricted,
     };
     set_permission_mode(app, next);
@@ -201,12 +207,16 @@ fn set_permission_mode(app: &mut TuiApp, mode: PermissionMode) {
         format!("Mode: {}.", permission_mode_label(mode)),
     );
     save_preferences(app);
+    if !app.is_loading {
+        crate::providers::rebuild_provider(app);
+    }
 }
 
 fn permission_mode_label(mode: PermissionMode) -> &'static str {
     match mode {
         PermissionMode::Restricted => "restricted",
         PermissionMode::AcceptEdits => "accept-edits",
+        PermissionMode::Auto => "auto",
         PermissionMode::Yolo => "yolo",
     }
 }

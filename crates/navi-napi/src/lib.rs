@@ -805,6 +805,7 @@ impl NaviNapiEngine {
         match mode {
             navi_sdk::PermissionMode::Restricted => "restricted".to_string(),
             navi_sdk::PermissionMode::AcceptEdits => "accept-edits".to_string(),
+            navi_sdk::PermissionMode::Auto => "auto".to_string(),
             navi_sdk::PermissionMode::Yolo => "yolo".to_string(),
         }
     }
@@ -814,6 +815,7 @@ impl NaviNapiEngine {
         let pm = match mode.as_str() {
             "restricted" => navi_sdk::PermissionMode::Restricted,
             "accept-edits" => navi_sdk::PermissionMode::AcceptEdits,
+            "auto" => navi_sdk::PermissionMode::Auto,
             "yolo" => navi_sdk::PermissionMode::Yolo,
             _ => return Err(to_napi_error(anyhow::anyhow!("invalid permission mode: {}", mode))),
         };

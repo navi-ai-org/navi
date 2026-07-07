@@ -43,7 +43,7 @@ use navi_sdk::{
 };
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
-use ratatui::layout::Rect;
+use ratatui::layout::{Constraint, Direction, Layout, Margin, Rect};
 use ratatui::prelude::Line;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -173,7 +173,7 @@ fn root_render_keeps_header_inside_viewport_margin() {
 }
 
 #[test]
-fn root_render_shows_permission_mode_in_header() {
+fn root_render_shows_permission_mode_in_composer_footer() {
     let mut app = test_app("");
     app.loaded_config.config.security.permission_mode = PermissionMode::AcceptEdits;
 
@@ -183,12 +183,10 @@ fn root_render_shows_permission_mode_in_header() {
         .expect("draw");
     let screen = terminal_buffer_text(&terminal);
 
+    assert!(!screen.lines().next().unwrap_or_default().contains("mode "));
     assert!(
-        screen
-            .lines()
-            .next()
-            .unwrap_or_default()
-            .contains("mode accept-edits")
+        screen.contains("accept-edits"),
+        "permission mode should render in composer footer:\n{screen}"
     );
 }
 
@@ -975,11 +973,11 @@ fn model_picker_filters_by_model_and_provider_text() {
     if !app.authenticated_providers.contains("google-gemini") {
         assert!(!rows.iter().any(|row| match row {
             ListRow::Header { label, .. } => label.contains("Gemini"),
-            ListRow::Model { .. } => false,
+            ListRow::Spacer | ListRow::Model { .. } => false,
         }));
         assert!(!rows.iter().any(|row| match row {
             ListRow::Model { index } => app.models[*index].provider_id.contains("google-gemini"),
-            ListRow::Header { .. } => false,
+            ListRow::Header { .. } | ListRow::Spacer => false,
         }));
     }
 
@@ -992,7 +990,7 @@ fn model_picker_filters_by_model_and_provider_text() {
                 .name
                 .to_ascii_lowercase()
                 .contains("free"),
-            ListRow::Header { .. } => false,
+            ListRow::Header { .. } | ListRow::Spacer => false,
         }
     }));
 }
@@ -1037,11 +1035,83 @@ fn model_picker_clips_long_rows_inside_modal_border() {
             terminal_buffer_text(&terminal)
         );
     }
+    let inner = modal.inner(Margin {
+        horizontal: 2,
+        vertical: 1,
+    });
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(1),
+            Constraint::Length(2),
+            Constraint::Min(8),
+            Constraint::Length(1),
+        ])
+        .split(inner);
+    let list_area = rows[2];
+    let scrollbar_x = list_area.right().saturating_sub(1);
+    for y in list_area.top()..list_area.bottom() {
+        for x in scrollbar_x.saturating_sub(2)..scrollbar_x {
+            let symbol = buffer[(x, y)].symbol();
+            assert_eq!(
+                symbol,
+                " ",
+                "model list right padding was not preserved at x={x}, y={y}: {symbol:?}\n{}",
+                terminal_buffer_text(&terminal)
+            );
+        }
+    }
 
     let screen = terminal_buffer_text(&terminal);
     assert!(
         !screen.contains("Should Never Spill Past"),
         "long provider label was not clipped:\n{screen}"
+    );
+}
+
+#[test]
+fn model_picker_renders_search_separators_and_footer_hints() {
+    let mut app = test_app("");
+    app.models.clear();
+    app.loaded_config.config.tui.recent_model_ids.clear();
+    app.models.push(ModelOption {
+        name: "kimi-k2.6".to_string(),
+        provider_id: "charm-hyper".to_string(),
+        provider_label: "Charm Hyper".to_string(),
+        provider_description: "provider used for model picker layout tests".to_string(),
+        task_size: navi_sdk::ModelTaskSize::Large,
+        context_window_tokens: None,
+    });
+    open_model_picker(&mut app);
+    app.authenticated_providers
+        .insert("charm-hyper".to_string());
+
+    let backend = TestBackend::new(92, 24);
+    let mut terminal = Terminal::new(backend).expect("terminal");
+    terminal
+        .draw(|frame| crate::view::render(frame, &mut app))
+        .expect("draw");
+
+    let screen = terminal_buffer_text(&terminal);
+    assert!(
+        screen.contains("> Choose a model or provider"),
+        "search prompt did not render with the expected visual:\n{screen}"
+    );
+    assert!(
+        screen.contains("Charm Hyper ─"),
+        "provider separator did not render:\n{screen}"
+    );
+    assert!(
+        screen.contains("↑/↓ choose"),
+        "footer choose hint did not render:\n{screen}"
+    );
+    assert!(
+        screen.contains("connect provider ctrl+e"),
+        "footer connect provider hint did not render:\n{screen}"
+    );
+    assert!(
+        screen.contains("favorite ctrl+f"),
+        "footer favorite hint did not render:\n{screen}"
     );
 }
 
@@ -1711,11 +1781,11 @@ fn command_palette_scroll_offset_keeps_selection_visible() {
     app.selected_command = 0;
     let cmd_count = filtered_commands(&app).len();
     for _ in 0..cmd_count {
-        handle_command_key(&mut app, KeyCode::Down);
+        handle_command_key(&mut app, KeyCode::Down, KeyModifiers::NONE);
     }
     assert_eq!(app.selected_command, cmd_count - 1);
 
-    handle_command_key(&mut app, KeyCode::PageUp);
+    handle_command_key(&mut app, KeyCode::PageUp, KeyModifiers::NONE);
     assert_eq!(
         app.selected_command,
         filtered_commands(&app).len().saturating_sub(9)
@@ -1746,6 +1816,127 @@ fn submit_sends_raw_input_text() {
             .iter()
             .any(|message| message.content == "/literal inspect first")
     );
+}
+
+#[test]
+fn submit_queues_input_while_turn_is_active() {
+    let mut app = test_app("");
+    app.is_loading = true;
+    app.input = "second task".to_string();
+    app.input_cursor = app.input.len();
+
+    submit_message(&mut app);
+
+    assert_eq!(app.queued_user_messages.len(), 1);
+    assert_eq!(app.queued_user_messages[0].text, "second task");
+    assert!(app.input.is_empty());
+    assert_eq!(app.input_cursor, 0);
+    assert!(
+        app.messages
+            .iter()
+            .all(|message| message.content != "second task")
+    );
+    assert!(
+        app.conversation_history
+            .iter()
+            .all(|message| message.content != "second task")
+    );
+}
+
+#[test]
+fn queued_input_preserves_pending_images() {
+    let mut app = test_app("");
+    app.is_loading = true;
+    app.input = "look [Image 1]".to_string();
+    app.input_cursor = app.input.len();
+    app.pending_images.push(PendingImage {
+        media_type: "image/png".to_string(),
+        data: "abc123".to_string(),
+        width: Some(10),
+        height: Some(20),
+    });
+
+    submit_message(&mut app);
+
+    assert!(app.pending_images.is_empty());
+    assert_eq!(app.queued_user_messages.len(), 1);
+    assert_eq!(app.queued_user_messages[0].text, "look [Image 1]");
+    assert_eq!(app.queued_user_messages[0].images.len(), 1);
+}
+
+#[test]
+fn ctrl_q_opens_message_queue_modal() {
+    let mut app = test_app("");
+    handle_key(&mut app, KeyCode::Char('q'), KeyModifiers::CONTROL);
+
+    assert_eq!(app.mode, Mode::MessageQueue);
+}
+
+#[test]
+fn queued_message_modal_edits_and_removes_items() {
+    let mut app = test_app("");
+    app.queued_user_messages
+        .push_back(crate::state::QueuedUserMessage {
+            text: "first queued task".to_string(),
+            images: Vec::new(),
+        });
+    app.queued_user_messages
+        .push_back(crate::state::QueuedUserMessage {
+            text: "second queued task".to_string(),
+            images: Vec::new(),
+        });
+    app.mode = Mode::MessageQueue;
+    app.modal_stack.open(ModalKind::MessageQueue);
+
+    handle_key(&mut app, KeyCode::Enter, KeyModifiers::NONE);
+    assert_eq!(app.mode, Mode::QueuedMessageEdit);
+    assert_eq!(app.queued_edit_text, "first queued task");
+
+    handle_key(&mut app, KeyCode::Char('!'), KeyModifiers::NONE);
+    handle_key(&mut app, KeyCode::Enter, KeyModifiers::CONTROL);
+    assert_eq!(app.mode, Mode::MessageQueue);
+    assert_eq!(app.queued_user_messages[0].text, "first queued task!");
+
+    handle_key(&mut app, KeyCode::Delete, KeyModifiers::NONE);
+    assert_eq!(app.queued_user_messages.len(), 1);
+    assert_eq!(app.queued_user_messages[0].text, "second queued task");
+}
+
+#[test]
+fn queued_message_editor_saves_terminal_newline_enter_variant() {
+    let mut app = test_app("");
+    app.queued_user_messages
+        .push_back(crate::state::QueuedUserMessage {
+            text: "queued task".to_string(),
+            images: Vec::new(),
+        });
+    app.mode = Mode::MessageQueue;
+    app.modal_stack.open(ModalKind::MessageQueue);
+
+    handle_key(&mut app, KeyCode::Enter, KeyModifiers::NONE);
+    assert_eq!(app.mode, Mode::QueuedMessageEdit);
+
+    handle_key(&mut app, KeyCode::Char('!'), KeyModifiers::NONE);
+    handle_key(&mut app, KeyCode::Char('\n'), KeyModifiers::NONE);
+
+    assert_eq!(app.mode, Mode::MessageQueue);
+    assert_eq!(app.queued_user_messages[0].text, "queued task!");
+}
+
+#[test]
+fn esc_while_loading_opens_cancel_confirmation() {
+    let mut app = test_app("");
+    app.is_loading = true;
+    app.queued_user_messages
+        .push_back(crate::state::QueuedUserMessage {
+            text: "queued".to_string(),
+            images: Vec::new(),
+        });
+
+    handle_key(&mut app, KeyCode::Esc, KeyModifiers::NONE);
+
+    assert_eq!(app.mode, Mode::ConfirmCancelTurn);
+    assert_eq!(app.queued_user_messages.len(), 1);
 }
 
 #[test]
@@ -1801,6 +1992,7 @@ fn yolo_toggle_uses_notification_not_chat() {
 fn shift_tab_cycles_permission_modes() {
     let mut app = test_app("");
 
+    // Restricted -> AcceptEdits
     handle_key(&mut app, KeyCode::BackTab, KeyModifiers::SHIFT);
     assert!(!app.yolo_mode);
     assert_eq!(
@@ -1808,6 +2000,15 @@ fn shift_tab_cycles_permission_modes() {
         PermissionMode::AcceptEdits
     );
 
+    // AcceptEdits -> Auto
+    handle_key(&mut app, KeyCode::BackTab, KeyModifiers::SHIFT);
+    assert!(!app.yolo_mode);
+    assert_eq!(
+        app.loaded_config.config.security.permission_mode,
+        PermissionMode::Auto
+    );
+
+    // Auto -> Yolo
     handle_key(&mut app, KeyCode::BackTab, KeyModifiers::SHIFT);
     assert!(app.yolo_mode);
     assert_eq!(
@@ -1815,6 +2016,7 @@ fn shift_tab_cycles_permission_modes() {
         PermissionMode::Yolo
     );
 
+    // Yolo -> Restricted
     handle_key(&mut app, KeyCode::BackTab, KeyModifiers::SHIFT);
     assert!(!app.yolo_mode);
     assert_eq!(
@@ -2714,7 +2916,7 @@ fn opencode_free_models_can_use_public_access_without_key() {
 }
 
 #[test]
-fn escape_double_press_cancels_active_tool_task_state() {
+fn escape_confirm_modal_cancels_active_tool_task_state() {
     let mut app = test_app("");
     app.is_loading = true;
     app.skip_next_model_done = true;
@@ -2723,14 +2925,14 @@ fn escape_double_press_cancels_active_tool_task_state() {
         ..ChatMessage::new(ChatRole::Assistant, String::new())
     });
 
-    // First Esc shows a confirmation notification but keeps the operation running.
+    // Esc opens a confirmation modal and keeps the operation running.
     let should_quit = handle_key(&mut app, KeyCode::Esc, KeyModifiers::NONE);
     assert!(!should_quit);
     assert!(app.is_loading);
-    assert!(app.cancel_esc_pressed);
+    assert_eq!(app.mode, Mode::ConfirmCancelTurn);
 
-    // Second Esc actually cancels the operation.
-    let should_quit = handle_key(&mut app, KeyCode::Esc, KeyModifiers::NONE);
+    // Enter confirms cancellation.
+    let should_quit = handle_key(&mut app, KeyCode::Enter, KeyModifiers::NONE);
     assert!(!should_quit);
     assert!(!app.is_loading);
     assert!(!app.skip_next_model_done);
@@ -2984,7 +3186,7 @@ fn build_model_rows_prepends_recent_section() {
         .iter()
         .find_map(|r| match r {
             ListRow::Model { index } => Some(*index),
-            ListRow::Header { .. } => None,
+            ListRow::Header { .. } | ListRow::Spacer => None,
         })
         .expect("at least one model row");
     assert_eq!(first_model, recent_index);

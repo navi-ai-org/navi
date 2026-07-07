@@ -255,6 +255,10 @@ pub struct ApprovalConfig {
     pub require_for_commands: bool,
 }
 
+fn default_guarded_commands() -> Vec<String> {
+    vec!["git".to_string()]
+}
+
 /// High-level tool permission mode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -263,6 +267,9 @@ pub enum PermissionMode {
     Restricted,
     /// Reads and edits are allowed; commands and custom tools still require approval.
     AcceptEdits,
+    /// Reads, edits, and commands are allowed. Commands in `guarded_commands`
+    /// (e.g. `git`) still require approval.
+    Auto,
     /// Reads, edits, and commands are allowed unless blocked by safety checks/rules.
     Yolo,
 }
@@ -299,6 +306,9 @@ pub struct SecurityConfig {
     pub allow_external_plugins: bool,
     /// Commands that are always denied (e.g. `"rm -rf /"`).
     pub blocked_commands: Vec<String>,
+    /// Commands that always require approval even in Auto/YOLO mode (e.g. `"git"`).
+    #[serde(default = "default_guarded_commands")]
+    pub guarded_commands: Vec<String>,
     /// Paths that are always denied for reads. Supports glob patterns and
     /// directory prefixes. Lines referencing denied paths in grep/fs_browser
     /// output are filtered before entering context.
