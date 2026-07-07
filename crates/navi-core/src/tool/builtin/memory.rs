@@ -168,22 +168,35 @@ impl Tool for HistoryOpsTool {
 /// - `reference` — links to dashboards, external docs
 pub(crate) struct MemoryTool {
     project_root: PathBuf,
+    /// Cached db_path — computed once on first use.
+    db_path_cache: std::sync::OnceLock<PathBuf>,
 }
 
 impl MemoryTool {
     pub(crate) fn new(project_root: PathBuf) -> Self {
-        Self { project_root }
+        Self {
+            project_root,
+            db_path_cache: std::sync::OnceLock::new(),
+        }
+    }
+
+    fn db_path(&self) -> &PathBuf {
+        self.db_path_cache.get_or_init(|| {
+            let config = NaviConfig::load(&self.project_root).unwrap_or_default();
+            let manager = MemoryManager::new(
+                self.project_root.clone(),
+                config.data_dir.clone(),
+                &config.config.memory,
+            );
+            match manager {
+                Ok(m) => m.store.memory_root.join("memories.db"),
+                Err(_) => config.data_dir.join("memory").join("memories.db"),
+            }
+        })
     }
 
     fn open_store(&self) -> Result<AutoMemoryStore> {
-        let config = NaviConfig::load(&self.project_root).unwrap_or_default();
-        let manager = MemoryManager::new(
-            self.project_root.clone(),
-            config.data_dir.clone(),
-            &config.config.memory,
-        )?;
-        let db_path = manager.store.memory_root.join("memories.db");
-        AutoMemoryStore::open(&db_path)
+        AutoMemoryStore::open(self.db_path())
     }
 
     fn resolve_model_paths(&self) -> (PathBuf, PathBuf) {
