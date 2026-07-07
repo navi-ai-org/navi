@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    "crates/copland",
     "crates/navi-cli",
     "crates/navi-core",
     "crates/navi-dart",
@@ -20,6 +21,7 @@ members = [
 ]
 resolver = "3"
 default-members = [
+    "crates/copland",
     "crates/navi-cli",
     "crates/navi-core",
     "crates/navi-dart",
@@ -31,6 +33,7 @@ default-members = [
     "crates/navi-plugin-host",
     "crates/navi-plugin-manifest",
     "crates/navi-plugin-orchestrator",
+    "crates/navi-plugin-runtime",
     "crates/navi-providers",
     "crates/navi-sdk",
     "crates/navi-server",
@@ -48,6 +51,7 @@ homepage = "https://github.com/navi-ai-org/navi"
 readme = "README.md"
 
 [workspace.dependencies]
+copland = { path = "crates/copland" }
 anyhow = "1"
 async-trait = "0.1"
 base64 = "0.22.1"

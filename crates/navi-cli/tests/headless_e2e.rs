@@ -111,16 +111,14 @@ task_size = "small"
         .spawn()
         .expect("spawn navi");
 
-    let output = match tokio::time::timeout(
-        std::time::Duration::from_secs(30),
-        child.wait_with_output(),
-    )
-    .await
-    {
-        Ok(Ok(o)) => o,
-        Ok(Err(e)) => panic!("failed to wait for navi: {e}"),
-        Err(_) => panic!("navi headless test timed out after 30s"),
-    };
+    let output =
+        match tokio::time::timeout(std::time::Duration::from_secs(30), child.wait_with_output())
+            .await
+        {
+            Ok(Ok(o)) => o,
+            Ok(Err(e)) => panic!("failed to wait for navi: {e}"),
+            Err(_) => panic!("navi headless test timed out after 30s"),
+        };
 
     assert!(
         output.status.success(),

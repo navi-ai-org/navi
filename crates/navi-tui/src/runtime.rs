@@ -1,13 +1,14 @@
 use std::future::Future;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use anyhow::Result;
 use tokio::sync::mpsc;
 
 use navi_sdk::{
-    CredentialStore, LoadedConfig, NaviEngine, NaviEngineBuilder, RuntimeEvent,
-    provider_supports_device_oauth, resolve_provider_api_key_for_project, resolve_provider_config,
-    resolve_provider_credential_status,
+    CredentialStore, LoadedConfig, NaviEngine, NaviEngineBuilder, RegistryStore, RuntimeEvent,
+    load_registry, provider_supports_device_oauth, resolve_provider_api_key_for_project,
+    resolve_provider_config, resolve_provider_credential_status, set_registry_store,
 };
 
 use crate::dispatch::AsyncEvent;
@@ -61,6 +62,19 @@ pub(crate) fn build_engine(
     Ok(NaviEngineBuilder::from_project(project_dir)
         .loaded_config(loaded_config.clone())
         .build()?)
+}
+
+/// Initializes the thread-local registry store from the SQLite cache so that
+/// `available_model_options()` / `provider_catalog()` reads from the live
+/// database instead of falling back to the embedded snapshot. This must be
+/// called before the first `available_model_options()` call in `TuiApp::new()`,
+/// because `build_engine()` (which also sets the store) runs later.
+pub(crate) fn init_registry_store(loaded_config: &LoadedConfig) {
+    if let Ok(store) = RegistryStore::open(&loaded_config.data_dir) {
+        let store = Arc::new(store);
+        load_registry(&store);
+        set_registry_store(store);
+    }
 }
 
 pub(crate) fn selected_model_runtime_available(

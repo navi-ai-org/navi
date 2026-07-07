@@ -5,7 +5,7 @@ use crate::runtime::provider_supports_oauth;
 use crate::theme::*;
 use crate::ui::interaction::{HitAction, line_rect};
 use crate::ui::list::render_scrollbar;
-use crate::ui::text_input::{TextInputRenderSpec, render_text_input_line};
+use crate::ui::{TextInputRenderSpec, render_text_input_line};
 use navi_sdk::provider_catalog;
 use ratatui::layout::{Constraint, Direction, Layout, Margin, Rect};
 use ratatui::prelude::{Frame, Span};

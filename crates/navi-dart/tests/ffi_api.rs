@@ -99,7 +99,9 @@ fn disable_registry_update() {
     REGISTRY_UPDATE_DISABLED.call_once(|| {
         // SAFETY: This is set once before any test creates an engine, and no
         // other code in the test process reads or writes this variable concurrently.
-        unsafe { std::env::set_var("NAVI_NO_REGISTRY_UPDATE", "1"); }
+        unsafe {
+            std::env::set_var("NAVI_NO_REGISTRY_UPDATE", "1");
+        }
     });
 }
 

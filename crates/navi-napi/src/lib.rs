@@ -731,14 +731,14 @@ impl NaviNapiEngine {
     ) -> Result<()> {
         let mt = navi_sdk::MemoryType::from_str(&memory_type)
             .ok_or_else(|| to_napi_error(anyhow::anyhow!("invalid memory_type: {memory_type}")))?;
-        self.inner.memory_write(&id, mt, &name, &description, &body)
+        self.inner
+            .memory_write(&id, mt, &name, &description, &body)
             .map_err(to_napi_error)
     }
 
     #[napi]
     pub fn memory_read(&self, id: String) -> Result<JsonValue> {
-        let entry = self.inner.memory_read(&id)
-            .map_err(to_napi_error)?;
+        let entry = self.inner.memory_read(&id).map_err(to_napi_error)?;
         match entry {
             Some(e) => serde_json::to_value(e).map_err(to_napi_error),
             None => Ok(json!(null)),
@@ -755,7 +755,10 @@ impl NaviNapiEngine {
     #[napi]
     pub fn memory_search(&self, query: String, limit: Option<i32>) -> Result<JsonValue> {
         let lim = limit.map(|l| l as usize).unwrap_or(20);
-        let results = self.inner.memory_search(&query, lim).map_err(to_napi_error)?;
+        let results = self
+            .inner
+            .memory_search(&query, lim)
+            .map_err(to_napi_error)?;
         serde_json::to_value(results).map_err(to_napi_error)
     }
 
@@ -787,7 +790,8 @@ impl NaviNapiEngine {
 
     #[napi]
     pub fn memory_count(&self) -> Result<i32> {
-        self.inner.memory_count()
+        self.inner
+            .memory_count()
             .map(|c| c as i32)
             .map_err(to_napi_error)
     }
@@ -817,7 +821,12 @@ impl NaviNapiEngine {
             "accept-edits" => navi_sdk::PermissionMode::AcceptEdits,
             "auto" => navi_sdk::PermissionMode::Auto,
             "yolo" => navi_sdk::PermissionMode::Yolo,
-            _ => return Err(to_napi_error(anyhow::anyhow!("invalid permission mode: {}", mode))),
+            _ => {
+                return Err(to_napi_error(anyhow::anyhow!(
+                    "invalid permission mode: {}",
+                    mode
+                )));
+            }
         };
         self.inner.set_permission_mode(pm);
         Ok(())

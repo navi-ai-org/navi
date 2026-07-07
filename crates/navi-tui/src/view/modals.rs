@@ -14,7 +14,7 @@ use crate::state::MessageAction;
 use crate::theme::*;
 use crate::ui::interaction::{HitAction, line_rect};
 use crate::ui::list::render_scrollbar;
-use crate::ui::text_input::{
+use crate::ui::{
     TextInputRenderSpec, floor_char_boundary, next_char_boundary, render_text_input_line,
 };
 

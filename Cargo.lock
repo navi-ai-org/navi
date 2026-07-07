@@ -591,6 +591,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "copland"
+version = "0.1.2"
+dependencies = [
+ "crossterm",
+ "ratatui",
+ "unicode-width",
+]
+
+[[package]]
 name = "core-foundation"
 version = "0.9.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3042,6 +3051,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "base64 0.22.1",
+ "copland",
  "crossterm",
  "navi-core",
  "navi-plugin-broker",

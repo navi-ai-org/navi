@@ -29,7 +29,7 @@ use crate::state::{
 use crate::theme::NOTIFICATION_TTL;
 use crate::tools::record_tool_requested;
 use crate::ui::interaction::HitAction;
-use crate::ui::text_input::{
+use crate::ui::{
     floor_char_boundary, next_char_boundary, next_hump_boundary, previous_char_boundary,
     previous_hump_boundary,
 };

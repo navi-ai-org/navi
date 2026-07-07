@@ -9,8 +9,8 @@ use crate::TuiApp;
 use crate::providers::{build_model_rows, first_model_index};
 use crate::session::load_saved_sessions;
 use crate::state::{ModalKind, Mode};
-use crate::ui::effect::UiEffect;
-use crate::ui::keymap::KeyOutcome;
+use crate::ui::KeyOutcome;
+use crate::ui::UiEffect;
 use crossterm::event::{KeyCode, KeyModifiers};
 
 // ─── shared helpers ──────────────────────────────────────────────────────────────

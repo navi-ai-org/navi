@@ -1,6 +1,6 @@
 use crate::TuiApp;
 use crate::tools::{approve_pending_tool, deny_pending_tool};
-use crate::ui::keymap::KeyOutcome;
+use crate::ui::KeyOutcome;
 use crossterm::event::{KeyCode, KeyModifiers};
 
 use super::global::{route_global_key, route_system_global_key};

@@ -67,7 +67,7 @@ pub use navi_core::{
     set_registry_store,
 };
 // Registry
-pub use navi_core::registry::{RegistryFetcher, RegistryStore};
+pub use navi_core::registry::{RegistryFetcher, RegistryStore, load_registry};
 pub use navi_mcp::McpServerInfo;
 
 // Auto-memory

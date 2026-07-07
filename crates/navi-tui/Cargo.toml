@@ -11,6 +11,7 @@ readme = "README.md"
 [dependencies]
 anyhow.workspace = true
 async-trait.workspace = true
+copland.workspace = true
 crossterm.workspace = true
 ratatui.workspace = true
 serde_json.workspace = true

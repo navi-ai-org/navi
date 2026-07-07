@@ -11,7 +11,7 @@ use crate::render::{clear_modal_area, modal_block, modal_list_highlight_style};
 use crate::theme::*;
 use crate::ui::interaction::{HitAction, line_rect};
 use crate::ui::list::render_scrollbar;
-use crate::ui::text_input::{TextInputRenderSpec, render_text_input_line};
+use crate::ui::{TextInputRenderSpec, render_text_input_line};
 
 const LIST_RIGHT_PADDING_COLUMNS: u16 = 2;
 

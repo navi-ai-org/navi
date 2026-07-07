@@ -3,8 +3,8 @@ use ratatui::prelude::{Frame, Line, Modifier, Span, Style};
 use ratatui::widgets::{Block, BorderType, Borders};
 
 use crate::theme::*;
-use crate::ui::layout::ModalSpec;
-use crate::ui::list::SelectListState;
+use crate::ui::ModalSpec;
+use crate::ui::SelectListState;
 
 pub(crate) fn command_scroll_offset(selected: usize, visible_rows: usize) -> usize {
     SelectListState::scroll_offset_for_selected(selected, visible_rows)

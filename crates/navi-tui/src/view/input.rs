@@ -13,8 +13,8 @@ use crate::providers::selected_provider_label;
 use crate::render::text::display_width;
 use crate::state::ChatRole;
 use crate::theme::*;
+use crate::ui::floor_char_boundary;
 use crate::ui::interaction::HitAction;
-use crate::ui::text_input::floor_char_boundary;
 use navi_core::PermissionMode;
 
 const INPUT_TOP_PADDING_ROWS: u16 = 1;

@@ -13,8 +13,8 @@ use crate::providers::{
 use crate::render::text::display_width;
 use crate::runtime::provider_supports_oauth;
 use crate::state::{Mode, SelectionState};
+use crate::ui::SelectListState;
 use crate::ui::interaction::{HitAction, HitRegion, ScrollTarget};
-use crate::ui::list::SelectListState;
 
 fn map_mouse_to_text(app: &TuiApp, col: u16, row: u16) -> Option<(usize, usize)> {
     map_mouse_to_text_with_clamp(app, col, row, false)
@@ -251,7 +251,7 @@ fn slice_display_columns(text: &str, start_col: usize, end_col: usize) -> String
     out
 }
 
-fn apply_hover(app: &mut TuiApp, hit: &HitRegion) {
+fn apply_hover(app: &mut TuiApp, hit: &HitRegion<HitAction>) {
     app.hovered_chat_source = chat_source_for_action(&hit.action);
     match &hit.action {
         HitAction::QuestionOption(index) => {
@@ -292,7 +292,7 @@ fn chat_source_for_action(action: &HitAction) -> Option<crate::state::ChatLineSo
     }
 }
 
-fn dispatch_hit(app: &mut TuiApp, hit: HitRegion) {
+fn dispatch_hit(app: &mut TuiApp, hit: HitRegion<HitAction>) {
     match hit.action {
         HitAction::Key { code, modifiers } => {
             let _ = handle_key(app, code, modifiers);

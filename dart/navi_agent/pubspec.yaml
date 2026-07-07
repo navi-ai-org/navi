@@ -1,0 +1,17 @@
+name: navi_agent
+description: >-
+  Dart FFI bindings for the NAVI agent runtime SDK.
+  Provides sessions, turns, events, approvals, goals, tools, and more.
+version: 0.1.0
+homepage: https://github.com/navi-ai-org/navi/tree/main/dart/navi_agent
+repository: https://github.com/navi-ai-org/navi
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+
+dependencies:
+  ffi: ^2.1.0
+
+dev_dependencies:
+  test: ^1.24.0
+  lints: ^4.0.0

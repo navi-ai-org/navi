@@ -11,7 +11,7 @@ use crate::render::{
 use crate::theme::*;
 use crate::ui::interaction::{HitAction, line_rect};
 use crate::ui::list::render_scrollbar;
-use crate::ui::text_input::{TextInputRenderSpec, render_text_input_line};
+use crate::ui::{TextInputRenderSpec, render_text_input_line};
 
 pub(super) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
     clear_modal_area(frame, area);

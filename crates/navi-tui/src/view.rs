@@ -23,7 +23,7 @@ use crate::TuiApp;
 use crate::render::{fill_modal_scrim, modal_rect, opaque_fill};
 use crate::state::Mode;
 use crate::theme::{self, bg, ghost, muted, text};
-use crate::ui::layout::{RootLayoutHeights, root_layout, viewport_rect};
+use crate::ui::{RootLayoutHeights, root_layout, viewport_rect};
 
 /// Setup-specific rendering: welcome text or interview chat.
 mod setup;

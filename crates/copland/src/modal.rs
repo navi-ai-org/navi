@@ -1,5 +1,5 @@
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct ModalStack<M> {
+pub struct ModalStack<M> {
     stack: Vec<M>,
 }
 
@@ -10,32 +10,32 @@ impl<M> Default for ModalStack<M> {
 }
 
 impl<M: Copy + PartialEq> ModalStack<M> {
-    pub(crate) fn open(&mut self, modal: M) {
+    pub fn open(&mut self, modal: M) {
         if self.top() != Some(modal) {
             self.stack.push(modal);
         }
     }
 
-    pub(crate) fn replace(&mut self, modal: Option<M>) {
+    pub fn replace(&mut self, modal: Option<M>) {
         self.stack.clear();
         if let Some(modal) = modal {
             self.stack.push(modal);
         }
     }
 
-    pub(crate) fn close(&mut self) -> Option<M> {
+    pub fn close(&mut self) -> Option<M> {
         self.stack.pop()
     }
 
-    pub(crate) fn clear(&mut self) {
+    pub fn clear(&mut self) {
         self.stack.clear();
     }
 
-    pub(crate) fn top(&self) -> Option<M> {
+    pub fn top(&self) -> Option<M> {
         self.stack.last().copied()
     }
 
-    pub(crate) fn is_active(&self) -> bool {
+    pub fn is_active(&self) -> bool {
         !self.stack.is_empty()
     }
 }
