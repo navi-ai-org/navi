@@ -288,6 +288,7 @@ pub(crate) enum ListRow {
         description: String,
         provider_id: String,
     },
+    Spacer,
     Model {
         index: usize,
     },
@@ -346,6 +347,7 @@ pub(crate) fn build_model_rows(app: &TuiApp) -> Vec<ListRow> {
                         description: String::new(),
                         provider_id: String::new(),
                     });
+                    rows.push(ListRow::Spacer);
                 }
                 rows.push(ListRow::Model { index });
             }
@@ -377,6 +379,7 @@ pub(crate) fn build_model_rows(app: &TuiApp) -> Vec<ListRow> {
                 description: model.provider_description.clone(),
                 provider_id: model.provider_id.clone(),
             });
+            rows.push(ListRow::Spacer);
         }
         rows.push(ListRow::Model { index });
     }
@@ -387,14 +390,14 @@ pub(crate) fn build_model_rows(app: &TuiApp) -> Vec<ListRow> {
 pub(crate) fn first_model_index(rows: &[ListRow]) -> Option<usize> {
     rows.iter().find_map(|row| match row {
         ListRow::Model { index } => Some(*index),
-        ListRow::Header { .. } => None,
+        ListRow::Header { .. } | ListRow::Spacer => None,
     })
 }
 
 pub(crate) fn selected_model_in_rows(rows: &[ListRow], selected_model: usize) -> Option<usize> {
     rows.iter().position(|row| match row {
         ListRow::Model { index } => *index == selected_model,
-        ListRow::Header { .. } => false,
+        ListRow::Header { .. } | ListRow::Spacer => false,
     })
 }
 
@@ -404,7 +407,7 @@ pub(crate) fn next_model_index(app: &TuiApp, rows: &[ListRow]) -> usize {
             .iter()
             .find_map(|row| match row {
                 ListRow::Model { index } => Some(*index),
-                _ => None,
+                ListRow::Header { .. } | ListRow::Spacer => None,
             })
             .unwrap_or(app.selected_model);
     };
@@ -413,7 +416,7 @@ pub(crate) fn next_model_index(app: &TuiApp, rows: &[ListRow]) -> usize {
         .skip(current + 1)
         .find_map(|row| match row {
             ListRow::Model { index } => Some(*index),
-            _ => None,
+            ListRow::Header { .. } | ListRow::Spacer => None,
         })
         .unwrap_or(app.selected_model)
 }
@@ -424,7 +427,7 @@ pub(crate) fn previous_model_index(app: &TuiApp, rows: &[ListRow]) -> usize {
             .iter()
             .find_map(|row| match row {
                 ListRow::Model { index } => Some(*index),
-                _ => None,
+                ListRow::Header { .. } | ListRow::Spacer => None,
             })
             .unwrap_or(app.selected_model);
     };
@@ -434,7 +437,7 @@ pub(crate) fn previous_model_index(app: &TuiApp, rows: &[ListRow]) -> usize {
         .rev()
         .find_map(|row| match row {
             ListRow::Model { index } => Some(*index),
-            _ => None,
+            ListRow::Header { .. } | ListRow::Spacer => None,
         })
         .unwrap_or(app.selected_model)
 }

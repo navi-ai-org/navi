@@ -5,7 +5,7 @@ use navi_sdk::{
 
 use crate::TuiApp;
 use crate::providers::selected_provider_label;
-use crate::state::{ChatImage, ChatMessage, ChatRole};
+use crate::state::{ChatImage, ChatMessage, ChatRole, QueuedUserMessage};
 use crate::stream::start_streaming_request;
 use crate::tools::cancel_stream;
 
@@ -21,6 +21,45 @@ pub(crate) fn submit_message(app: &mut TuiApp) {
     if app.input.trim().is_empty() && !has_images {
         return;
     }
+
+    if app.is_loading {
+        queue_current_message(app);
+        return;
+    }
+
+    submit_current_message_now(app);
+}
+
+fn queue_current_message(app: &mut TuiApp) {
+    let text = std::mem::take(&mut app.input);
+    let images = std::mem::take(&mut app.pending_images);
+    app.queued_user_messages
+        .push_back(QueuedUserMessage { text, images });
+    app.input_cursor = 0;
+    app.input_selection = None;
+    app.scroll_offset = 0;
+    tracing::info!(
+        queued = app.queued_user_messages.len(),
+        "TUI prompt queued behind active turn"
+    );
+}
+
+pub(crate) fn drain_next_queued_message(app: &mut TuiApp) {
+    if app.is_loading {
+        return;
+    }
+    let Some(next) = app.queued_user_messages.pop_front() else {
+        return;
+    };
+    app.input = next.text;
+    app.input_cursor = app.input.len();
+    app.input_selection = None;
+    app.pending_images = next.images;
+    submit_current_message_now(app);
+}
+
+fn submit_current_message_now(app: &mut TuiApp) {
+    let has_images = !app.pending_images.is_empty();
     let text = app.input.clone();
     tracing::info!(
         model = %app.loaded_config.config.model.name,
@@ -405,6 +444,12 @@ pub(crate) fn start_new_session(app: &mut TuiApp) {
     app.input_cursor = 0;
     app.input_selection = None;
     app.pending_images.clear();
+    app.queued_user_messages.clear();
+    app.queued_message_selected = 0;
+    app.queued_message_scroll = 0;
+    app.queued_edit_index = None;
+    app.queued_edit_text.clear();
+    app.queued_edit_cursor = 0;
     app.scroll_offset = 0;
     app.is_loading = false;
     app.loading_start = None;

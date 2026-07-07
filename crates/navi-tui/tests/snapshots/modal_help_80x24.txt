@@ -12,13 +12,13 @@
          │ ctrl+s      memory                                         │
          │ ctrl+o      compact/full tool output                       │
          │ ctrl+d      debug                                          │
-         │ ctrl+g      toggle YOLO mode                               │
+         │ shift+tab   cycle permission mode                          │
          │ ctrl+enter  send prompt                                    │
          │ enter       new line                                       │
          │ ctrl+j      new line                                       │
   ▌      │ /           commands when input is empty                   │
   ▌      │                                                            │
   ▌      ╰────────────────────────────────────────────────────────────╯
-  ▌ gpt-5.5 OpenAI · adaptive · 0 / 200k (0%)
+  ▌ gpt-5.5 OpenAI · adaptive · 0 / 200k (0%)                      restricted
   ▌
                ctrl+p commands · ctrl+m models · ctrl+enter send · ctrl+v image

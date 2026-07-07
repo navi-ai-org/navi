@@ -1,5 +1,8 @@
 use crate::TuiApp;
-use crate::input::api_key_input_ref;
+use crate::input::{
+    api_key_input_ref, handle_text_input_key, model_filter_ref, provider_filter_ref,
+    queued_edit_input_ref, session_filter_ref, skill_filter_ref, theme_filter_ref,
+};
 use crate::mouse::copy_text_to_clipboard;
 use crate::notifications::show_notification;
 use crate::persistence::{load_session, save_current_session, save_preferences};
@@ -366,6 +369,7 @@ pub(crate) fn handle_settings_key(app: &mut TuiApp, code: KeyCode) -> bool {
             }
             3 => {
                 app.theme_filter.clear();
+                app.theme_filter_cursor = 0;
                 super::replace_modal(app, ModalKind::ThemePicker);
             }
             _ => {}
@@ -446,6 +450,7 @@ pub(crate) fn handle_providers_key(
     match code {
         KeyCode::Esc => {
             app.provider_filter.clear();
+            app.provider_filter_cursor = 0;
             super::close_active_modal(app);
         }
         KeyCode::Down => {
@@ -462,13 +467,25 @@ pub(crate) fn handle_providers_key(
             if let Some(account_id) = selected_account(current_row_pos) {
                 let provider = provider_at_row(&list_rows, &catalog, current_row_pos);
                 if let Some(provider) = provider {
-                    let _ = app.credential_store().set_project_account(
+                    let result = app.credential_store().set_project_account(
                         &app.project_dir,
                         &provider.id,
                         &account_id,
                     );
-                    rebuild_provider(app);
-                    super::close_active_modal(app);
+                    match result {
+                        Ok(()) => {
+                            rebuild_provider(app);
+                            super::close_active_modal(app);
+                            show_notification(app, "Account", format!("Using {}.", provider.label));
+                        }
+                        Err(err) => {
+                            show_notification(
+                                app,
+                                "Account",
+                                format!("Failed to select account: {err:#}"),
+                            );
+                        }
+                    }
                 }
             } else if let Some(provider) =
                 provider_at_row(&list_rows, &catalog, current_row_pos).cloned()
@@ -518,15 +535,14 @@ pub(crate) fn handle_providers_key(
                 rebuild_provider(app);
             }
         }
-        KeyCode::Char(ch) => {
-            app.provider_filter.push(ch);
-            reset_to_first = true;
+        _ => {
+            let before = app.provider_filter.clone();
+            if handle_text_input_key(provider_filter_ref(app), code, modifiers, false)
+                && app.provider_filter != before
+            {
+                reset_to_first = true;
+            }
         }
-        KeyCode::Backspace => {
-            app.provider_filter.pop();
-            reset_to_first = true;
-        }
-        _ => {}
     }
 
     if reset_to_first {
@@ -574,12 +590,17 @@ pub(crate) fn handle_oauth_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyMo
     false
 }
 
-pub(crate) fn handle_sessions_key(app: &mut TuiApp, code: KeyCode) -> bool {
+pub(crate) fn handle_sessions_key(
+    app: &mut TuiApp,
+    code: KeyCode,
+    modifiers: KeyModifiers,
+) -> bool {
     let sessions = app.filtered_sessions();
     let mut list_state = SelectListState::new(app.selected_session, app.session_scroll);
     match code {
         KeyCode::Esc => {
             app.session_filter.clear();
+            app.session_filter_cursor = 0;
             super::close_active_modal(app);
         }
         KeyCode::Down => {
@@ -598,6 +619,7 @@ pub(crate) fn handle_sessions_key(app: &mut TuiApp, code: KeyCode) -> bool {
                 load_session(app, &snapshot);
             }
             app.session_filter.clear();
+            app.session_filter_cursor = 0;
             super::close_all_modals(app);
         }
         KeyCode::Delete => {
@@ -611,17 +633,16 @@ pub(crate) fn handle_sessions_key(app: &mut TuiApp, code: KeyCode) -> bool {
             list_state.clamp(sessions.len());
             list_state.sync_scroll(10);
         }
-        KeyCode::Char(ch) => {
-            app.session_filter.push(ch);
-            app.session_scroll = 0;
-            app.selected_session = 0;
+        _ => {
+            let before = app.session_filter.clone();
+            if handle_text_input_key(session_filter_ref(app), code, modifiers, false)
+                && app.session_filter != before
+            {
+                app.session_scroll = 0;
+                app.selected_session = 0;
+                list_state.reset();
+            }
         }
-        KeyCode::Backspace => {
-            app.session_filter.pop();
-            app.session_scroll = 0;
-            app.selected_session = 0;
-        }
-        _ => {}
     }
     app.selected_session = list_state.selected();
     app.session_scroll = list_state.scroll();
@@ -630,24 +651,6 @@ pub(crate) fn handle_sessions_key(app: &mut TuiApp, code: KeyCode) -> bool {
 }
 
 pub(crate) fn handle_api_key_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyModifiers) -> bool {
-    if modifiers.contains(KeyModifiers::CONTROL) {
-        match code {
-            KeyCode::Char('a') => {
-                api_key_input_ref(app).move_to_start();
-                return false;
-            }
-            KeyCode::Char('e') => {
-                api_key_input_ref(app).move_to_end();
-                return false;
-            }
-            KeyCode::Char('u') => {
-                api_key_input_ref(app).delete_to_start();
-                return false;
-            }
-            _ => return false,
-        }
-    }
-
     match code {
         KeyCode::Esc => {
             api_key_input_ref(app).clear();
@@ -662,31 +665,148 @@ pub(crate) fn handle_api_key_key(app: &mut TuiApp, code: KeyCode, modifiers: Key
         KeyCode::Enter => {
             save_api_key_and_rebuild(app);
         }
-        KeyCode::Char(ch) => {
-            api_key_input_ref(app).insert_char(ch);
+        _ => {
+            let _ = handle_text_input_key(api_key_input_ref(app), code, modifiers, false);
         }
-        KeyCode::Backspace => {
-            api_key_input_ref(app).delete_previous_char();
-        }
-        KeyCode::Left => {
-            api_key_input_ref(app).move_previous_char();
-        }
-        KeyCode::Right => {
-            api_key_input_ref(app).move_next_char();
-        }
-        KeyCode::Home => {
-            api_key_input_ref(app).move_to_start();
-        }
-        KeyCode::End => {
-            api_key_input_ref(app).move_to_end();
-        }
-        _ => {}
     }
 
     false
 }
 
-pub(crate) fn handle_skills_key(app: &mut TuiApp, code: KeyCode) -> bool {
+pub(crate) fn handle_message_queue_key(
+    app: &mut TuiApp,
+    code: KeyCode,
+    modifiers: KeyModifiers,
+) -> bool {
+    let len = app.queued_user_messages.len();
+    if len == 0 {
+        if matches!(code, KeyCode::Esc | KeyCode::Enter) {
+            super::close_active_modal(app);
+        }
+        return false;
+    }
+
+    app.queued_message_selected = app.queued_message_selected.min(len.saturating_sub(1));
+    match code {
+        KeyCode::Esc => super::close_active_modal(app),
+        KeyCode::Up if modifiers.contains(KeyModifiers::CONTROL) => {
+            let index = app.queued_message_selected;
+            if index > 0 {
+                app.queued_user_messages.swap(index, index - 1);
+                app.queued_message_selected = index - 1;
+            }
+        }
+        KeyCode::Down if modifiers.contains(KeyModifiers::CONTROL) => {
+            let index = app.queued_message_selected;
+            if index + 1 < len {
+                app.queued_user_messages.swap(index, index + 1);
+                app.queued_message_selected = index + 1;
+            }
+        }
+        KeyCode::Down | KeyCode::Tab => {
+            app.queued_message_selected = (app.queued_message_selected + 1).min(len - 1);
+        }
+        KeyCode::Up => {
+            app.queued_message_selected = app.queued_message_selected.saturating_sub(1);
+        }
+        KeyCode::Delete | KeyCode::Backspace => {
+            let index = app.queued_message_selected;
+            if index < app.queued_user_messages.len() {
+                app.queued_user_messages.remove(index);
+            }
+            app.queued_message_selected = app
+                .queued_message_selected
+                .min(app.queued_user_messages.len().saturating_sub(1));
+            if app.queued_user_messages.is_empty() {
+                super::close_active_modal(app);
+            }
+        }
+        KeyCode::Enter => open_queued_message_edit(app),
+        _ => {}
+    }
+
+    let visible_rows = 10usize;
+    let mut state = SelectListState::new(app.queued_message_selected, app.queued_message_scroll);
+    state.sync_scroll(visible_rows);
+    state.clamp_scroll(app.queued_user_messages.len(), visible_rows);
+    app.queued_message_selected = state.selected();
+    app.queued_message_scroll = state.scroll();
+    false
+}
+
+fn open_queued_message_edit(app: &mut TuiApp) {
+    let index = app
+        .queued_message_selected
+        .min(app.queued_user_messages.len().saturating_sub(1));
+    let Some(message) = app.queued_user_messages.get(index) else {
+        return;
+    };
+    app.queued_edit_index = Some(index);
+    app.queued_edit_text = message.text.clone();
+    app.queued_edit_cursor = app.queued_edit_text.len();
+    super::apply_ui_effect(app, UiEffect::OpenModal(ModalKind::QueuedMessageEdit));
+}
+
+pub(crate) fn handle_queued_message_edit_key(
+    app: &mut TuiApp,
+    code: KeyCode,
+    modifiers: KeyModifiers,
+) -> bool {
+    match code {
+        KeyCode::Esc => {
+            app.queued_edit_index = None;
+            app.queued_edit_text.clear();
+            app.queued_edit_cursor = 0;
+            super::close_active_modal(app);
+        }
+        code if is_queued_edit_save_key(code, modifiers) => {
+            save_queued_message_edit(app);
+        }
+        KeyCode::Enter if modifiers.contains(KeyModifiers::SHIFT) => {
+            let _ =
+                handle_text_input_key(queued_edit_input_ref(app), code, KeyModifiers::NONE, true);
+        }
+        _ => {
+            let _ = handle_text_input_key(queued_edit_input_ref(app), code, modifiers, true);
+        }
+    }
+    false
+}
+
+fn is_queued_edit_save_key(code: KeyCode, modifiers: KeyModifiers) -> bool {
+    matches!(code, KeyCode::Enter) && modifiers.contains(KeyModifiers::CONTROL)
+        || matches!(code, KeyCode::Char('\n') | KeyCode::Char('\r'))
+}
+
+fn save_queued_message_edit(app: &mut TuiApp) {
+    let Some(index) = app.queued_edit_index else {
+        super::close_active_modal(app);
+        return;
+    };
+    if let Some(message) = app.queued_user_messages.get_mut(index) {
+        message.text = app.queued_edit_text.clone();
+    }
+    app.queued_edit_index = None;
+    app.queued_edit_text.clear();
+    app.queued_edit_cursor = 0;
+    super::close_active_modal(app);
+}
+
+pub(crate) fn handle_confirm_cancel_turn_key(app: &mut TuiApp, code: KeyCode) -> bool {
+    match code {
+        KeyCode::Enter | KeyCode::Char('y') | KeyCode::Char('Y') => {
+            crate::tools::cancel_stream(app);
+            super::close_active_modal(app);
+        }
+        KeyCode::Esc | KeyCode::Char('n') | KeyCode::Char('N') => {
+            super::close_active_modal(app);
+        }
+        _ => {}
+    }
+    false
+}
+
+pub(crate) fn handle_skills_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyModifiers) -> bool {
     let skills = app.filtered_skills();
     let mut list_state = SelectListState::new(app.selected_skill, app.skill_scroll);
     match code {
@@ -716,17 +836,16 @@ pub(crate) fn handle_skills_key(app: &mut TuiApp, code: KeyCode) -> bool {
                 );
             }
         }
-        KeyCode::Char(ch) => {
-            app.skill_filter.push(ch);
-            app.skill_scroll = 0;
-            app.selected_skill = 0;
+        _ => {
+            let before = app.skill_filter.clone();
+            if handle_text_input_key(skill_filter_ref(app), code, modifiers, false)
+                && app.skill_filter != before
+            {
+                app.skill_scroll = 0;
+                app.selected_skill = 0;
+                list_state.reset();
+            }
         }
-        KeyCode::Backspace => {
-            app.skill_filter.pop();
-            app.skill_scroll = 0;
-            app.selected_skill = 0;
-        }
-        _ => {}
     }
     app.selected_skill = list_state.selected();
     app.skill_scroll = list_state.scroll();
@@ -762,16 +881,21 @@ pub(crate) fn handle_model_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyMo
             super::close_all_modals(app);
         }
         KeyCode::Char(ch) => {
-            app.model_filter.push(ch);
+            let _ =
+                handle_text_input_key(model_filter_ref(app), KeyCode::Char(ch), modifiers, false);
             app.model_scroll = 0;
             app.selected_model =
                 first_model_index(&build_model_rows(app)).unwrap_or(app.selected_model);
         }
         KeyCode::Backspace => {
-            app.model_filter.pop();
-            app.model_scroll = 0;
-            app.selected_model =
-                first_model_index(&build_model_rows(app)).unwrap_or(app.selected_model);
+            let before = app.model_filter.clone();
+            if handle_text_input_key(model_filter_ref(app), code, modifiers, false)
+                && app.model_filter != before
+            {
+                app.model_scroll = 0;
+                app.selected_model =
+                    first_model_index(&build_model_rows(app)).unwrap_or(app.selected_model);
+            }
         }
         KeyCode::Down => {
             app.selected_model = next_model_index(app, &rows);
@@ -798,7 +922,9 @@ pub(crate) fn handle_model_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyMo
                 app.api_key_cursor = 0;
             }
         }
-        _ => {}
+        _ => {
+            let _ = handle_text_input_key(model_filter_ref(app), code, modifiers, false);
+        }
     }
 
     false
@@ -910,7 +1036,11 @@ pub(crate) fn handle_plugin_approval_key(
     false
 }
 
-pub(crate) fn handle_theme_picker_key(app: &mut TuiApp, code: KeyCode) -> bool {
+pub(crate) fn handle_theme_picker_key(
+    app: &mut TuiApp,
+    code: KeyCode,
+    modifiers: KeyModifiers,
+) -> bool {
     let mut filtered = filtered_theme_options(&app.theme_filter);
     let selected_visible = filtered
         .iter()
@@ -920,17 +1050,8 @@ pub(crate) fn handle_theme_picker_key(app: &mut TuiApp, code: KeyCode) -> bool {
     match code {
         KeyCode::Esc => {
             app.theme_filter.clear();
+            app.theme_filter_cursor = 0;
             super::close_active_modal(app);
-        }
-        KeyCode::Char(ch) => {
-            app.theme_filter.push(ch);
-            filtered = filtered_theme_options(&app.theme_filter);
-            list_state.reset();
-        }
-        KeyCode::Backspace => {
-            app.theme_filter.pop();
-            filtered = filtered_theme_options(&app.theme_filter);
-            list_state.clamp(filtered.len());
         }
         KeyCode::Down => {
             list_state.select_next(filtered.len());
@@ -943,7 +1064,16 @@ pub(crate) fn handle_theme_picker_key(app: &mut TuiApp, code: KeyCode) -> bool {
                 app.set_theme(*theme);
             }
         }
-        _ => {}
+        _ => {
+            let before = app.theme_filter.clone();
+            if handle_text_input_key(theme_filter_ref(app), code, modifiers, false)
+                && app.theme_filter != before
+            {
+                filtered = filtered_theme_options(&app.theme_filter);
+                list_state.reset();
+                list_state.clamp(filtered.len());
+            }
+        }
     }
     if let Some((orig_index, _)) = filtered.get(list_state.selected()) {
         app.selected_theme = *orig_index;
@@ -1124,6 +1254,7 @@ pub(crate) fn handle_background_models_key(app: &mut TuiApp, code: KeyCode) -> b
                 app.bg_model_picker_selected = 0;
                 app.model_scroll = 0;
                 app.model_filter.clear();
+                app.model_filter_cursor = 0;
                 super::replace_modal(app, ModalKind::BgModelPicker);
                 app.refresh_authenticated_providers();
             }
@@ -1145,7 +1276,11 @@ pub(crate) fn handle_background_models_key(app: &mut TuiApp, code: KeyCode) -> b
     false
 }
 
-pub(crate) fn handle_bg_model_picker_key(app: &mut TuiApp, code: KeyCode) -> bool {
+pub(crate) fn handle_bg_model_picker_key(
+    app: &mut TuiApp,
+    code: KeyCode,
+    modifiers: KeyModifiers,
+) -> bool {
     let rows = build_model_rows(app);
     let task_id = app.bg_model_picker_task.clone().unwrap_or_default();
     const VISIBLE_ROWS: u16 = 14;
@@ -1233,19 +1368,24 @@ pub(crate) fn handle_bg_model_picker_key(app: &mut TuiApp, code: KeyCode) -> boo
             super::replace_modal(app, target_modal);
         }
         KeyCode::Backspace => {
-            app.model_filter.pop();
-            app.model_scroll = 0;
-            let rows = build_model_rows(app);
-            app.bg_model_picker_selected =
-                first_model_index(&rows).unwrap_or(app.bg_model_picker_selected);
+            let before = app.model_filter.clone();
+            if handle_text_input_key(model_filter_ref(app), code, modifiers, false)
+                && app.model_filter != before
+            {
+                app.model_scroll = 0;
+                let rows = build_model_rows(app);
+                app.bg_model_picker_selected =
+                    first_model_index(&rows).unwrap_or(app.bg_model_picker_selected);
+            }
         }
         KeyCode::Char('/') | KeyCode::Char('f') => {
             // Focus the filter input — handled by input routing.
         }
         _ => {
-            // Forward printable chars to the model filter.
-            if let KeyCode::Char(c) = code {
-                app.model_filter.push(c);
+            let before = app.model_filter.clone();
+            if handle_text_input_key(model_filter_ref(app), code, modifiers, false)
+                && app.model_filter != before
+            {
                 app.model_scroll = 0;
                 let rows = build_model_rows(app);
                 app.bg_model_picker_selected =
@@ -1313,6 +1453,7 @@ pub(crate) fn handle_attachment_models_key(app: &mut TuiApp, code: KeyCode) -> b
                 app.bg_model_picker_selected = 0;
                 app.model_scroll = 0;
                 app.model_filter.clear();
+                app.model_filter_cursor = 0;
                 super::replace_modal(app, ModalKind::BgModelPicker);
                 app.refresh_authenticated_providers();
             }

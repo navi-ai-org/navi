@@ -9,7 +9,7 @@
     │                                                                      │
     │ {  "summary": "read src/main.rs"}                                    │
     │                                                                      │
-    │ y approve  •  n deny  •  ctrl+g yolo mode                            │
+    │ y approve  •  n deny  •  shift+tab permission mode                   │
     │                                                                      │
     │                                                                      │
     │                                                                      │
@@ -19,6 +19,6 @@
   ▌
   ▌
   ▌
-  ▌ gpt-5.5 OpenAI · adaptive · 18 / 200k (0%)
+  ▌ gpt-5.5 OpenAI · adaptive · 18 / 200k (0%)                     restricted
   ▌
                ctrl+p commands · ctrl+m models · ctrl+enter send · ctrl+v image

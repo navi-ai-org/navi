@@ -35,6 +35,6 @@
   ▌
   ▌
   ▌
-  ▌ gpt-5.5 OpenAI · adaptive · 0 / 200k (0%)
+  ▌ gpt-5.5 OpenAI · adaptive · 0 / 200k (0%)                                                              restricted
   ▌
                               ctrl+p commands · ctrl+t background tasks · ctrl+b background agents · ctrl+v paste image

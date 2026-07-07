@@ -1,3 +1,10 @@
+use ratatui::Frame;
+use ratatui::layout::{Position, Rect};
+use ratatui::prelude::{Line, Span};
+use ratatui::style::Style;
+use ratatui::widgets::Paragraph;
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
+
 pub(crate) struct TextInputRef<'a> {
     text: &'a mut String,
     cursor: &'a mut usize,
@@ -176,6 +183,146 @@ pub(crate) fn floor_char_boundary(value: &str, mut cursor: usize) -> usize {
         cursor = cursor.saturating_sub(1);
     }
     cursor
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct TextInputRenderSpec<'a> {
+    pub(crate) value: &'a str,
+    pub(crate) cursor: usize,
+    pub(crate) placeholder: &'a str,
+    pub(crate) prefix: &'a str,
+    pub(crate) focused: bool,
+    pub(crate) text_style: Style,
+    pub(crate) placeholder_style: Style,
+    pub(crate) prefix_style: Style,
+    pub(crate) cursor_style: Style,
+    pub(crate) background_style: Style,
+}
+
+pub(crate) fn render_text_input_line(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    spec: TextInputRenderSpec<'_>,
+) {
+    let prefix_width = UnicodeWidthStr::width(spec.prefix);
+    let content_width = area.width as usize;
+    let value_width = content_width.saturating_sub(prefix_width).max(1);
+    let cursor = floor_char_boundary(spec.value, spec.cursor.min(spec.value.len()));
+    let window = input_window(spec.value, cursor, value_width);
+    let visible_value = &spec.value[window.start..window.end];
+    let cursor_offset = cursor.saturating_sub(window.start);
+
+    let mut spans = vec![Span::styled(spec.prefix.to_string(), spec.prefix_style)];
+    if spec.value.is_empty() {
+        let placeholder = fit_display_width(spec.placeholder, value_width);
+        if spec.focused {
+            if placeholder.is_empty() {
+                spans.push(Span::styled(" ", spec.cursor_style));
+            } else {
+                let next = next_char_boundary(&placeholder, 0).unwrap_or(placeholder.len());
+                let (cursor_text, after) = placeholder.split_at(next);
+                spans.push(Span::styled(cursor_text.to_string(), spec.cursor_style));
+                spans.push(Span::styled(after.to_string(), spec.placeholder_style));
+            }
+        } else {
+            spans.push(Span::styled(placeholder, spec.placeholder_style));
+        }
+    } else {
+        let (before, rest) = visible_value.split_at(cursor_offset.min(visible_value.len()));
+        spans.push(Span::styled(before.to_string(), spec.text_style));
+        if spec.focused {
+            if rest.is_empty() {
+                spans.push(Span::styled(" ", spec.cursor_style));
+            } else {
+                let next =
+                    next_char_boundary(visible_value, cursor_offset).unwrap_or(visible_value.len());
+                let (cursor_text, after) = rest.split_at(next - cursor_offset);
+                spans.push(Span::styled(cursor_text.to_string(), spec.cursor_style));
+                spans.push(Span::styled(after.to_string(), spec.text_style));
+            }
+        } else {
+            spans.push(Span::styled(rest.to_string(), spec.text_style));
+        }
+    }
+
+    frame.render_widget(
+        Paragraph::new(Line::from(spans)).style(spec.background_style),
+        area,
+    );
+
+    if spec.focused {
+        let before_cursor = if spec.value.is_empty() {
+            ""
+        } else {
+            &spec.value[window.start..cursor]
+        };
+        let cursor_x = area.x.saturating_add(
+            (prefix_width + UnicodeWidthStr::width(before_cursor))
+                .min(area.width.saturating_sub(1) as usize) as u16,
+        );
+        frame.set_cursor_position(Position::new(cursor_x, area.y));
+    }
+}
+
+#[derive(Clone, Copy)]
+struct InputWindow {
+    start: usize,
+    end: usize,
+}
+
+fn input_window(value: &str, cursor: usize, width: usize) -> InputWindow {
+    if value.is_empty() {
+        return InputWindow { start: 0, end: 0 };
+    }
+    let width = width.max(1);
+    let cursor = floor_char_boundary(value, cursor);
+    let mut start = 0;
+    while UnicodeWidthStr::width(&value[start..cursor]) >= width {
+        let Some(next) = next_char_boundary(value, start) else {
+            break;
+        };
+        start = next;
+    }
+
+    let mut end = cursor;
+    while end < value.len() {
+        let Some(next) = next_char_boundary(value, end) else {
+            break;
+        };
+        if UnicodeWidthStr::width(&value[start..next]) > width {
+            break;
+        }
+        end = next;
+    }
+    if end == cursor && cursor < value.len() {
+        end = next_char_boundary(value, cursor).unwrap_or(value.len());
+    }
+
+    InputWindow { start, end }
+}
+
+fn fit_display_width(value: &str, width: usize) -> String {
+    if UnicodeWidthStr::width(value) <= width {
+        return value.to_string();
+    }
+    if width == 0 {
+        return String::new();
+    }
+    if width == 1 {
+        return "…".to_string();
+    }
+    let mut result = String::new();
+    let mut used = 0usize;
+    for ch in value.chars() {
+        let char_width = ch.width().unwrap_or(0);
+        if used + char_width >= width {
+            break;
+        }
+        result.push(ch);
+        used += char_width;
+    }
+    result.push('…');
+    result
 }
 
 pub(crate) fn previous_char_boundary(value: &str, cursor: usize) -> Option<usize> {

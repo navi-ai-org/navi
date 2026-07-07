@@ -24,7 +24,6 @@ use crate::render::{fill_modal_scrim, modal_rect, opaque_fill};
 use crate::state::Mode;
 use crate::theme::{self, bg, ghost, muted, text};
 use crate::ui::layout::{RootLayoutHeights, root_layout, viewport_rect};
-use navi_core::PermissionMode;
 
 /// Setup-specific rendering: welcome text or interview chat.
 mod setup;
@@ -116,6 +115,13 @@ fn render_inner(frame: &mut Frame<'_>, app: &mut TuiApp) {
         Mode::AttachmentModels => {
             modals::render_attachment_models(frame, app, modal_rect(area, 70, 12))
         }
+        Mode::MessageQueue => modals::render_message_queue(frame, app, modal_rect(area, 72, 18)),
+        Mode::QueuedMessageEdit => {
+            modals::render_queued_message_edit(frame, app, modal_rect(area, 76, 20))
+        }
+        Mode::ConfirmCancelTurn => {
+            modals::render_confirm_cancel_turn(frame, app, modal_rect(area, 62, 9))
+        }
         Mode::Normal => {}
         Mode::Setup => setup::render_setup(frame, app, content_area),
     }
@@ -153,7 +159,7 @@ fn render_header(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
     }
 
     let branch = app.git_branch.as_deref().unwrap_or("project");
-    let mut spans = vec![
+    let spans = vec![
         Span::styled(" ", Style::default().fg(ghost()).bg(bg())),
         Span::styled(branch.to_string(), Style::default().fg(text()).bg(bg())),
         Span::styled("  ", Style::default().fg(ghost()).bg(bg())),
@@ -163,84 +169,10 @@ fn render_header(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
         ),
     ];
 
-    if let Some(goal) = &app.goal_state {
-        spans.push(Span::styled(
-            "  │  Goal: ",
-            Style::default().fg(ghost()).bg(bg()),
-        ));
-        let status_color = if goal.active {
-            crate::theme::accent()
-        } else if goal.status == navi_sdk::GoalStatus::Blocked
-            || goal.status == navi_sdk::GoalStatus::BudgetLimited
-        {
-            crate::theme::red()
-        } else {
-            muted()
-        };
-        spans.push(Span::styled(
-            goal.objective.clone(),
-            Style::default().fg(status_color).bg(bg()),
-        ));
-
-        if let Some(budget) = goal.token_budget {
-            let percent = (goal.tokens_used as f64 / budget as f64 * 100.0).round() as i32;
-            spans.push(Span::styled(
-                format!(" ({}%)", percent),
-                Style::default().fg(muted()).bg(bg()),
-            ));
-        }
-    }
-
     frame.render_widget(
         Paragraph::new(Line::from(spans)).style(Style::default().bg(bg())),
         area,
     );
-
-    render_permission_mode(frame, app, area);
-}
-
-fn render_permission_mode(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
-    if area.width < 72 {
-        return;
-    }
-
-    let mode = current_permission_mode(app);
-    let label = permission_mode_label(mode);
-    let right_width = (label.len() + 7) as u16;
-    if right_width >= area.width {
-        return;
-    }
-    let rect = Rect {
-        x: area.x + area.width - right_width,
-        y: area.y,
-        width: right_width,
-        height: 1,
-    };
-    frame.render_widget(
-        Paragraph::new(Line::from(vec![
-            Span::styled("mode ", Style::default().fg(muted()).bg(bg())),
-            Span::styled(label, Style::default().fg(crate::theme::signal()).bg(bg())),
-            Span::styled(" ", Style::default().fg(ghost()).bg(bg())),
-        ]))
-        .style(Style::default().bg(bg())),
-        rect,
-    );
-}
-
-fn current_permission_mode(app: &TuiApp) -> PermissionMode {
-    if app.yolo_mode {
-        PermissionMode::Yolo
-    } else {
-        app.loaded_config.config.security.permission_mode
-    }
-}
-
-fn permission_mode_label(mode: PermissionMode) -> &'static str {
-    match mode {
-        PermissionMode::Restricted => "restricted",
-        PermissionMode::AcceptEdits => "accept-edits",
-        PermissionMode::Yolo => "yolo",
-    }
 }
 
 fn project_path_label(app: &TuiApp) -> String {

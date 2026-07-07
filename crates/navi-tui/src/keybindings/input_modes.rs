@@ -68,6 +68,7 @@ pub(crate) fn handle_normal_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyM
         KeyCode::Char('/') if app.input.is_empty() => {
             super::replace_modal(app, ModalKind::Commands);
             app.command_filter.clear();
+            app.command_filter_cursor = 0;
             app.selected_command = 0;
             app.command_scroll = 0;
         }
@@ -117,9 +118,7 @@ pub(crate) fn handle_normal_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyM
         KeyCode::Enter => {
             if !app.pending_questions.is_empty() {
                 super::replace_modal(app, ModalKind::Question);
-            } else if (!app.input.trim().is_empty() || !app.pending_images.is_empty())
-                && !app.is_loading
-            {
+            } else if !app.input.trim().is_empty() || !app.pending_images.is_empty() {
                 submit_message(app);
             }
         }

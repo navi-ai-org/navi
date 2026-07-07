@@ -1,5 +1,5 @@
 use crate::TuiApp;
-use crate::tools::{approve_pending_tool, cancel_stream, deny_pending_tool};
+use crate::tools::{approve_pending_tool, deny_pending_tool};
 use crate::ui::keymap::KeyOutcome;
 use crossterm::event::{KeyCode, KeyModifiers};
 
@@ -65,13 +65,7 @@ fn route_normal_cancel_key(app: &mut TuiApp, code: KeyCode) -> KeyOutcome {
         && code == KeyCode::Esc
         && (app.is_loading || app.has_async_task())
     {
-        if app.cancel_esc_pressed {
-            cancel_stream(app);
-            app.cancel_esc_pressed = false;
-        } else {
-            app.cancel_esc_pressed = true;
-            crate::notifications::show_notification(app, "Cancel", "Press Esc again to stop");
-        }
+        crate::keybindings::replace_modal(app, crate::state::ModalKind::ConfirmCancelTurn);
         return KeyOutcome::Handled;
     }
     KeyOutcome::Ignored

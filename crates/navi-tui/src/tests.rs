@@ -98,7 +98,7 @@ fn app_with_missing_provider_key() -> TuiApp {
         base_url: Some("https://example.com/v1".to_string()),
         models: vec![navi_sdk::ProviderModelConfig {
             name: "test-large".to_string(),
-            task_size: navi_sdk::ModelTaskSize::Large,
+            task_size: Some(navi_sdk::ModelTaskSize::Large),
             context_window_tokens: None,
             max_output_tokens: None,
             recommended_temperature: None,
@@ -960,7 +960,7 @@ fn model_picker_filters_by_model_and_provider_text() {
         provider_id: "opencode".to_string(),
         provider_label: "OpenCode Zen".to_string(),
         provider_description: "Free public models".to_string(),
-        task_size: navi_sdk::ModelTaskSize::Small,
+        task_size: Some(navi_sdk::ModelTaskSize::Small),
         context_window_tokens: None,
     });
     open_model_picker(&mut app);
@@ -1009,7 +1009,7 @@ fn model_picker_clips_long_rows_inside_modal_border() {
             "Extremely Verbose Provider Label That Should Never Spill Past The Modal Border"
                 .to_string(),
         provider_description: "provider used for clipping tests".to_string(),
-        task_size: navi_sdk::ModelTaskSize::Large,
+        task_size: Some(navi_sdk::ModelTaskSize::Large),
         context_window_tokens: None,
     });
     app.loaded_config.config.model.provider = "verbose-provider".to_string();
@@ -1079,7 +1079,7 @@ fn model_picker_renders_search_separators_and_footer_hints() {
         provider_id: "charm-hyper".to_string(),
         provider_label: "Charm Hyper".to_string(),
         provider_description: "provider used for model picker layout tests".to_string(),
-        task_size: navi_sdk::ModelTaskSize::Large,
+        task_size: Some(navi_sdk::ModelTaskSize::Large),
         context_window_tokens: None,
     });
     open_model_picker(&mut app);
@@ -2904,7 +2904,7 @@ fn opencode_free_models_can_use_public_access_without_key() {
         provider_id: "opencode".to_string(),
         provider_label: "OpenCode Zen".to_string(),
         provider_description: "Recommended".to_string(),
-        task_size: navi_sdk::ModelTaskSize::Small,
+        task_size: Some(navi_sdk::ModelTaskSize::Small),
         context_window_tokens: None,
     };
 

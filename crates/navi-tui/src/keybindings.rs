@@ -83,6 +83,7 @@ pub(crate) fn open_model_picker(app: &mut TuiApp) {
     replace_modal(app, ModalKind::Models);
     app.pending_model_selection = None;
     app.model_filter.clear();
+    app.model_filter_cursor = 0;
     app.model_scroll = 0;
     app.refresh_authenticated_providers();
 
@@ -101,6 +102,8 @@ pub(crate) fn open_model_picker(app: &mut TuiApp) {
 
 fn open_provider_settings(app: &mut TuiApp) {
     replace_modal(app, ModalKind::Providers);
+    app.provider_filter.clear();
+    app.provider_filter_cursor = 0;
     app.provider_settings_scroll = 0;
     // Land on the first non-header row so the highlight is on a selectable
     // provider instead of a "— Recent —" divider.
@@ -122,6 +125,7 @@ fn open_sessions_picker(app: &mut TuiApp) {
     app.selected_session = 0;
     app.session_scroll = 0;
     app.session_filter.clear();
+    app.session_filter_cursor = 0;
 }
 
 fn open_skills_picker(app: &mut TuiApp) {
@@ -129,6 +133,7 @@ fn open_skills_picker(app: &mut TuiApp) {
     replace_modal(app, ModalKind::Skills);
     app.selected_skill = 0;
     app.skill_filter.clear();
+    app.skill_filter_cursor = 0;
     app.skill_scroll = 0;
 }
 
@@ -144,21 +149,21 @@ fn open_plugins_picker(app: &mut TuiApp) {
 fn route_mode_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyModifiers) -> KeyOutcome {
     let should_quit = match app.mode {
         Mode::Normal => self::input_modes::handle_normal_key(app, code, modifiers),
-        Mode::Commands => self::commands::handle_command_key(app, code),
+        Mode::Commands => self::commands::handle_command_key(app, code, modifiers),
         Mode::Models => self::modals::handle_model_key(app, code, modifiers),
         Mode::ApiKeyEntry => self::modals::handle_api_key_key(app, code, modifiers),
         Mode::Thinking => self::modals::handle_thinking_key(app, code),
-        Mode::Sessions => self::modals::handle_sessions_key(app, code),
+        Mode::Sessions => self::modals::handle_sessions_key(app, code, modifiers),
         Mode::Settings => self::modals::handle_settings_key(app, code),
         Mode::Providers => self::modals::handle_providers_key(app, code, modifiers),
         Mode::Usage => self::modals::handle_usage_key(app, code),
         Mode::Debug => self::modals::handle_debug_key(app, code),
         Mode::Help => self::modals::handle_help_key(app, code),
-        Mode::Skills => self::modals::handle_skills_key(app, code),
+        Mode::Skills => self::modals::handle_skills_key(app, code, modifiers),
         Mode::Plugins => self::modals::handle_plugins_key(app, code),
         Mode::PluginApproval => self::modals::handle_plugin_approval_key(app, code, modifiers),
         Mode::Question => self::modals::handle_question_key(app, code, modifiers),
-        Mode::ThemePicker => self::modals::handle_theme_picker_key(app, code),
+        Mode::ThemePicker => self::modals::handle_theme_picker_key(app, code, modifiers),
         Mode::MessageActions => self::modals::handle_message_actions_key(app, code),
         Mode::Mcp => self::modals::handle_mcp_key(app, code, modifiers),
         Mode::OAuth => self::modals::handle_oauth_key(app, code, modifiers),
@@ -167,9 +172,14 @@ fn route_mode_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyModifiers) -> K
             self::modals::handle_background_command_output_key(app, code)
         }
         Mode::BackgroundModels => self::modals::handle_background_models_key(app, code),
-        Mode::BgModelPicker => self::modals::handle_bg_model_picker_key(app, code),
+        Mode::BgModelPicker => self::modals::handle_bg_model_picker_key(app, code, modifiers),
         Mode::Setup => self::input_modes::handle_normal_key(app, code, modifiers),
         Mode::AttachmentModels => self::modals::handle_attachment_models_key(app, code),
+        Mode::MessageQueue => self::modals::handle_message_queue_key(app, code, modifiers),
+        Mode::QueuedMessageEdit => {
+            self::modals::handle_queued_message_edit_key(app, code, modifiers)
+        }
+        Mode::ConfirmCancelTurn => self::modals::handle_confirm_cancel_turn_key(app, code),
     };
     if should_quit {
         KeyOutcome::Quit
