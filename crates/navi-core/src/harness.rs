@@ -327,6 +327,24 @@ fn build_system_prompt_inner(
         prompt.push_str(memory);
         prompt.push('\n');
     }
+    if tools_enabled {
+        prompt.push_str(
+            "\nAuto-memory:\n\
+             - You have a persistent memory system via the `memory` tool.\n\
+             - Use `memory(action='write')` to save useful facts for future sessions.\n\
+             - Use `memory(action='search', query='...')` to find relevant memories when you need them.\n\
+             - Use `memory(action='list')` to see all stored memories.\n\
+             - Memory types: `user` (preferences, identity, working style), `feedback` (behaviors to\n\
+               repeat/avoid), `project` (non-derivable context like deadlines and decisions),\n\
+               `reference` (links to dashboards, external docs).\n\
+             - Write memories when you learn something durable. Do not write temporary notes,\n\
+               secrets, or one-off debugging state — use `append_note` for those.\n\
+             - Each memory has: id, name, description, body, type, confidence, and status.\n\
+             - Use `memory(action='update')` to edit existing memories or change their status.\n\
+             - Use `memory(action='delete')` to remove obsolete memories.\n\
+             - Search before writing to avoid duplicates.\n",
+        );
+    }
     if let Some(manifest) = tool_manifest {
         let manifest_header = match tool_calling_mode {
             crate::config::ToolCallingMode::TextExtracted

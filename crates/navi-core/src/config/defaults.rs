@@ -103,8 +103,10 @@ impl Default for MemoryConfig {
             checkpoint_thresholds: vec![0.20, 0.45, 0.70],
             rebuild_threshold: 0.85,
             injected_context_token_budget: 65000,
-            dream_interval_days: 7,
+            dream_interval_days: 1,
             distill_interval_days: 30,
+            embedding_model_path: String::new(),
+            embedding_tokenizer_path: String::new(),
             history: HistoryConfig::default(),
         }
     }

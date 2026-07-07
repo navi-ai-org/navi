@@ -718,6 +718,85 @@ impl NaviNapiEngine {
             .map_err(to_napi_error)
     }
 
+    // ── Auto-Memory ─────────────────────────────────────────────────────
+
+    #[napi]
+    pub fn memory_write(
+        &self,
+        id: String,
+        memory_type: String,
+        name: String,
+        description: String,
+        body: String,
+    ) -> Result<()> {
+        let mt = navi_sdk::MemoryType::from_str(&memory_type)
+            .ok_or_else(|| to_napi_error(anyhow::anyhow!("invalid memory_type: {memory_type}")))?;
+        self.inner.memory_write(&id, mt, &name, &description, &body)
+            .map_err(to_napi_error)
+    }
+
+    #[napi]
+    pub fn memory_read(&self, id: String) -> Result<JsonValue> {
+        let entry = self.inner.memory_read(&id)
+            .map_err(to_napi_error)?;
+        match entry {
+            Some(e) => serde_json::to_value(e).map_err(to_napi_error),
+            None => Ok(json!(null)),
+        }
+    }
+
+    #[napi]
+    pub fn memory_list(&self, status: Option<String>) -> Result<JsonValue> {
+        let filter = status.as_deref().and_then(navi_sdk::MemoryStatus::from_str);
+        let memories = self.inner.memory_list(filter).map_err(to_napi_error)?;
+        serde_json::to_value(memories).map_err(to_napi_error)
+    }
+
+    #[napi]
+    pub fn memory_search(&self, query: String, limit: Option<i32>) -> Result<JsonValue> {
+        let lim = limit.map(|l| l as usize).unwrap_or(20);
+        let results = self.inner.memory_search(&query, lim).map_err(to_napi_error)?;
+        serde_json::to_value(results).map_err(to_napi_error)
+    }
+
+    #[napi]
+    pub fn memory_update(
+        &self,
+        id: String,
+        name: Option<String>,
+        description: Option<String>,
+        body: Option<String>,
+        status: Option<String>,
+    ) -> Result<()> {
+        let st = status.as_deref().and_then(navi_sdk::MemoryStatus::from_str);
+        self.inner
+            .memory_update(
+                &id,
+                name.as_deref(),
+                description.as_deref(),
+                body.as_deref(),
+                st,
+            )
+            .map_err(to_napi_error)
+    }
+
+    #[napi]
+    pub fn memory_delete(&self, id: String) -> Result<()> {
+        self.inner.memory_delete(&id).map_err(to_napi_error)
+    }
+
+    #[napi]
+    pub fn memory_count(&self) -> Result<i32> {
+        self.inner.memory_count()
+            .map(|c| c as i32)
+            .map_err(to_napi_error)
+    }
+
+    #[napi]
+    pub fn memory_index(&self) -> String {
+        self.inner.memory_index()
+    }
+
     // ── Session Management ─────────────────────────────────────────────
 
     #[napi]

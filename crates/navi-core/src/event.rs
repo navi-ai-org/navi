@@ -174,10 +174,33 @@ pub enum RuntimeEventKind {
         /// Human-readable reason for the failure.
         reason: String,
     },
+    /// Auto-dream memory consolidation has started.
+    AutoDreamStarted {
+        /// Hours since the last dream run.
+        hours_since_last: u64,
+        /// Number of sessions reviewed.
+        sessions_reviewed: usize,
+    },
+    /// Auto-dream memory consolidation has completed.
+    AutoDreamCompleted {
+        /// Memories marked stale.
+        marked_stale: usize,
+        /// Duplicates merged.
+        duplicates_merged: usize,
+        /// Active memories remaining.
+        active_count: usize,
+    },
+    /// Auto-dream memory consolidation has failed.
+    AutoDreamFailed {
+        /// Human-readable reason for the failure.
+        reason: String,
+    },
     /// The agent requested to set a goal via natural language.
     SetGoalRequested {
         /// The objective text.
         objective: String,
+        /// Optional short UI label.
+        short_description: Option<String>,
         /// Optional token budget.
         token_budget: Option<i64>,
     },
@@ -188,6 +211,8 @@ pub enum RuntimeEventKind {
         goal_id: String,
         /// The objective text.
         objective: String,
+        /// Optional short UI label.
+        short_description: Option<String>,
         /// Current goal status.
         status: GoalStatus,
         /// Tokens consumed so far.
@@ -282,15 +307,18 @@ impl RuntimeEventKind {
             RuntimeEventKind::Error { message } => Some(AgentEvent::Error { message }),
             RuntimeEventKind::SetGoalRequested {
                 objective,
+                short_description,
                 token_budget,
             } => Some(AgentEvent::SetGoalRequested {
                 objective,
+                short_description,
                 token_budget,
             }),
             RuntimeEventKind::GoalUpdated {
                 session_id,
                 goal_id,
                 objective,
+                short_description,
                 status,
                 tokens_used,
                 token_budget,
@@ -298,6 +326,7 @@ impl RuntimeEventKind {
                 session_id,
                 goal_id,
                 objective,
+                short_description,
                 status,
                 tokens_used,
                 token_budget,
@@ -403,6 +432,27 @@ pub enum AgentEvent {
         /// Human-readable error message.
         message: String,
     },
+    /// Auto-dream memory consolidation has started.
+    AutoDreamStarted {
+        /// Hours since the last dream run.
+        hours_since_last: u64,
+        /// Number of sessions reviewed.
+        sessions_reviewed: usize,
+    },
+    /// Auto-dream memory consolidation has completed.
+    AutoDreamCompleted {
+        /// Memories marked stale.
+        marked_stale: usize,
+        /// Duplicates merged.
+        duplicates_merged: usize,
+        /// Active memories remaining.
+        active_count: usize,
+    },
+    /// Auto-dream memory consolidation has failed.
+    AutoDreamFailed {
+        /// Human-readable reason for the failure.
+        reason: String,
+    },
     /// Token usage was reported by the model provider.
     UsageReported {
         /// Number of input/prompt tokens consumed.
@@ -418,6 +468,8 @@ pub enum AgentEvent {
     SetGoalRequested {
         /// The objective text.
         objective: String,
+        /// Optional short UI label.
+        short_description: Option<String>,
         /// Optional token budget.
         token_budget: Option<i64>,
     },
@@ -429,6 +481,8 @@ pub enum AgentEvent {
         goal_id: String,
         /// The objective text.
         objective: String,
+        /// Optional short UI label.
+        short_description: Option<String>,
         /// Current goal status.
         status: GoalStatus,
         /// Tokens consumed so far.

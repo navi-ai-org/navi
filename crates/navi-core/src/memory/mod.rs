@@ -1,4 +1,7 @@
+pub mod auto_dream;
+pub mod auto_memory;
 pub mod checkpoint_writer;
+pub mod embedding;
 pub mod history_store;
 pub mod maintenance;
 pub mod memory_store;
@@ -8,6 +11,16 @@ pub mod schemas;
 #[cfg(test)]
 pub mod tests;
 
+pub use auto_dream::AutoDreamState;
+pub use auto_memory::{
+    AutoMemoryStore, ConsolidationReport, MemoryEntry, MemoryStatus, MemorySummary, MemoryType,
+    cosine_similarity, new_entry, sanitize_id,
+};
+pub use embedding::{
+    Embedder, EmbeddingConfig, NoEmbedder, DEFAULT_MODEL_FILE, DEFAULT_MODEL_REPO,
+    DEFAULT_TOKENIZER_FILE, DEFAULT_TOKENIZER_REPO, EMBED_DIM,
+    create_embedder, embeddings_available,
+};
 pub use checkpoint_writer::run_checkpoint_writer;
 pub use history_store::{HistoryEvent, HistoryStore, SessionSummary};
 pub use maintenance::{

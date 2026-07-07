@@ -221,6 +221,15 @@ pub enum MemoryAction {
     },
     /// Run distill maintenance
     Distill,
+    /// Initialize or repair the auto-memory database and download embedding model
+    Init {
+        /// Download the embedding model for semantic search (Qwen3-Embedding-0.6B GGUF)
+        #[arg(long)]
+        embeddings: bool,
+        /// Force re-download even if the model already exists
+        #[arg(long)]
+        force: bool,
+    },
     /// Validate files, paths, permissions, SQLite schema, and config
     Doctor,
 }

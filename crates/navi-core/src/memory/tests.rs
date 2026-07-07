@@ -508,6 +508,8 @@ async fn test_full_continuity_session_rebuild() {
         injected_context_token_budget: 65000,
         dream_interval_days: 7,
         distill_interval_days: 30,
+        embedding_model_path: String::new(),
+        embedding_tokenizer_path: String::new(),
         history: HistoryConfig {
             enabled: true,
             sqlite_path: "history.sqlite".to_string(),

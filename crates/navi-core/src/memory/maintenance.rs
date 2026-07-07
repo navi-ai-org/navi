@@ -91,6 +91,7 @@ pub struct DreamResult {
     pub global_memory_path: PathBuf,
     pub report_path: PathBuf,
     pub applied: bool,
+    pub auto_memory_report: Option<crate::memory::ConsolidationReport>,
 }
 
 pub async fn run_dream_maintenance(
@@ -185,12 +186,84 @@ pub async fn run_dream_maintenance_with_options(
         memory_store.write_global_memory(updated_gm.trim())?;
     }
 
+    // Consolidate auto-memory SQLite store (mark stale, deduplicate, backfill embeddings)
+    let auto_memory_report = {
+        let db_path = memory_store.memory_root.join("memories.db");
+        match crate::memory::AutoMemoryStore::open(&db_path) {
+            Ok(store) => {
+                // Consolidation pass (stale + dedup)
+                match store.consolidate(30) {
+                    Ok(report) => {
+                        tracing::info!(
+                            "auto-memory consolidation: {} stale, {} duplicates, {} active",
+                            report.marked_stale,
+                            report.duplicates_merged,
+                            report.remaining_active
+                        );
+
+                        // Backfill embeddings for memories without them
+                        if crate::memory::embeddings_available() {
+                            let models_dir = memory_store.memory_root.join("models");
+                            let model_path = models_dir.join(crate::memory::DEFAULT_MODEL_FILE);
+                            let tokenizer_path = models_dir.join(crate::memory::DEFAULT_TOKENIZER_FILE);
+
+                            if model_path.exists() && tokenizer_path.exists() {
+                                let embed_config = crate::memory::EmbeddingConfig {
+                                    model_path,
+                                    tokenizer_path,
+                                    ..Default::default()
+                                };
+                                let embedder = crate::memory::create_embedder(embed_config);
+
+                                let missing = store.list_without_embeddings()
+                                    .unwrap_or_default();
+
+                                if !missing.is_empty() {
+                                    tracing::info!(
+                                        "backfilling embeddings for {} memories",
+                                        missing.len()
+                                    );
+                                    for m in &missing {
+                                        if let Some(text) = store.get_memory_text(&m.id).unwrap_or(None) {
+                                            match embedder.embed(&text) {
+                                                Ok(emb) => {
+                                                    let _ = store.set_embedding(&m.id, &emb);
+                                                }
+                                                Err(e) => {
+                                                    tracing::debug!(
+                                                        "embedding backfill failed for {}: {}",
+                                                        m.id, e
+                                                    );
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        Some(report)
+                    }
+                    Err(e) => {
+                        tracing::warn!("auto-memory consolidation failed: {}", e);
+                        None
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::debug!("auto-memory store not available for consolidation: {}", e);
+                None
+            }
+        }
+    };
+
     Ok(DreamResult {
         output_dir,
         project_memory_path,
         global_memory_path,
         report_path,
         applied: options.apply,
+        auto_memory_report,
     })
 }
 
