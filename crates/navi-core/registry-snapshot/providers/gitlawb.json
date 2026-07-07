@@ -8,7 +8,6 @@
   "models": [
     {
       "name": "mimo-v2.5-pro",
-      "task_size": "large",
       "context_window_tokens": 1048576,
       "max_output_tokens": 131072,
       "recommended_temperature": 1.0,
@@ -21,7 +20,6 @@
     },
     {
       "name": "mimo-v2.5",
-      "task_size": "large",
       "context_window_tokens": 1048576,
       "max_output_tokens": 131072,
       "recommended_temperature": 1.0,
@@ -34,7 +32,6 @@
     },
     {
       "name": "google/gemini-3.1-flash-lite-preview",
-      "task_size": "small",
       "context_window_tokens": 1000000,
       "max_output_tokens": 65536,
       "recommended_temperature": 1.0,

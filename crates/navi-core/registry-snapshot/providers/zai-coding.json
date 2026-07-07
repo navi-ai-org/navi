@@ -8,7 +8,6 @@
   "models": [
     {
       "name": "glm-5.1",
-      "task_size": "large",
       "context_window_tokens": 200000,
       "max_output_tokens": 128000,
       "recommended_temperature": 1.0,
@@ -21,7 +20,6 @@
     },
     {
       "name": "glm-5",
-      "task_size": "large",
       "context_window_tokens": 200000,
       "max_output_tokens": 128000,
       "recommended_temperature": 1.0,
@@ -34,7 +32,6 @@
     },
     {
       "name": "glm-5-turbo",
-      "task_size": "large",
       "context_window_tokens": 200000,
       "max_output_tokens": 128000,
       "recommended_temperature": 1.0,

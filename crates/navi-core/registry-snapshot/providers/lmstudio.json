@@ -6,14 +6,41 @@
   "api_key_env": "LMSTUDIO_API_KEY",
   "base_url": "http://localhost:1234/v1",
   "models": [
-    { "name": "local-model", "task_size": "large", "context_window_tokens": 128000 },
-    { "name": "qwen2.5-coder-14b", "task_size": "small", "context_window_tokens": 32000 },
-    { "name": "qwen2.5-coder-7b", "task_size": "small", "context_window_tokens": 32000 },
-    { "name": "qwen2.5-coder-32b", "task_size": "large", "context_window_tokens": 128000 },
-    { "name": "deepseek-r1-distill-qwen-32b", "task_size": "large", "context_window_tokens": 128000 },
-    { "name": "deepseek-r1-distill-llama-8b", "task_size": "small", "context_window_tokens": 32000 },
-    { "name": "mistral-small-instruct", "task_size": "small", "context_window_tokens": 32000 },
-    { "name": "gemma-3-27b-it", "task_size": "large", "context_window_tokens": 128000 },
-    { "name": "llama-3.2-3b-instruct", "task_size": "small", "context_window_tokens": 128000 }
+    {
+      "name": "local-model",
+      "context_window_tokens": 128000
+    },
+    {
+      "name": "qwen2.5-coder-14b",
+      "context_window_tokens": 32000
+    },
+    {
+      "name": "qwen2.5-coder-7b",
+      "context_window_tokens": 32000
+    },
+    {
+      "name": "qwen2.5-coder-32b",
+      "context_window_tokens": 128000
+    },
+    {
+      "name": "deepseek-r1-distill-qwen-32b",
+      "context_window_tokens": 128000
+    },
+    {
+      "name": "deepseek-r1-distill-llama-8b",
+      "context_window_tokens": 32000
+    },
+    {
+      "name": "mistral-small-instruct",
+      "context_window_tokens": 32000
+    },
+    {
+      "name": "gemma-3-27b-it",
+      "context_window_tokens": 128000
+    },
+    {
+      "name": "llama-3.2-3b-instruct",
+      "context_window_tokens": 128000
+    }
   ]
 }

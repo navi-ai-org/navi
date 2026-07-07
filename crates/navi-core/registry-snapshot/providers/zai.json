@@ -1,14 +1,13 @@
 {
   "id": "zai",
   "label": "Z.AI",
-  "description": "GLM models by Zhipu AI \u2014 flagship, turbo, and cost-optimized language models",
+  "description": "GLM models by Zhipu AI — flagship, turbo, and cost-optimized language models",
   "kind": "openai-chat-completions",
   "api_key_env": "ZAI_API_KEY",
   "base_url": "https://api.z.ai/api/paas/v4/",
   "models": [
     {
       "name": "glm-5.1",
-      "task_size": "large",
       "context_window_tokens": 200000,
       "max_output_tokens": 131072,
       "recommended_temperature": 1.0,
@@ -21,7 +20,6 @@
     },
     {
       "name": "glm-5",
-      "task_size": "large",
       "context_window_tokens": 200000,
       "max_output_tokens": 131072,
       "recommended_temperature": 1.0,
@@ -34,7 +32,6 @@
     },
     {
       "name": "glm-5-turbo",
-      "task_size": "small",
       "context_window_tokens": 200000,
       "max_output_tokens": 131072,
       "recommended_temperature": 1.0,
@@ -47,7 +44,6 @@
     },
     {
       "name": "glm-4.7",
-      "task_size": "large",
       "context_window_tokens": 200000,
       "max_output_tokens": 131072,
       "recommended_temperature": 1.0,
@@ -60,7 +56,6 @@
     },
     {
       "name": "glm-4.6",
-      "task_size": "large",
       "context_window_tokens": 200000,
       "max_output_tokens": 131072,
       "recommended_temperature": 1.0,
@@ -73,7 +68,6 @@
     },
     {
       "name": "glm-4.5",
-      "task_size": "large",
       "context_window_tokens": 128000,
       "max_output_tokens": 98304,
       "recommended_temperature": 1.0,
@@ -86,7 +80,6 @@
     },
     {
       "name": "glm-4.5-air",
-      "task_size": "small",
       "context_window_tokens": 128000,
       "max_output_tokens": 98304,
       "recommended_temperature": 1.0,
@@ -99,7 +92,6 @@
     },
     {
       "name": "glm-4.5-x",
-      "task_size": "large",
       "context_window_tokens": 128000,
       "max_output_tokens": 98304,
       "recommended_temperature": 1.0,
@@ -112,7 +104,6 @@
     },
     {
       "name": "glm-4.5-flash",
-      "task_size": "small",
       "context_window_tokens": 128000,
       "max_output_tokens": 98304,
       "recommended_temperature": 1.0,
@@ -125,7 +116,6 @@
     },
     {
       "name": "glm-4-plus",
-      "task_size": "large",
       "context_window_tokens": 128000,
       "max_output_tokens": 4096,
       "recommended_temperature": 0.9,
@@ -138,7 +128,6 @@
     },
     {
       "name": "glm-4-flash",
-      "task_size": "small",
       "context_window_tokens": 128000,
       "max_output_tokens": 4096,
       "recommended_temperature": 0.9,
@@ -151,7 +140,6 @@
     },
     {
       "name": "glm-4-long",
-      "task_size": "large",
       "context_window_tokens": 1000000,
       "max_output_tokens": 4096,
       "recommended_temperature": 0.9,
@@ -164,7 +152,6 @@
     },
     {
       "name": "glm-4-air",
-      "task_size": "small",
       "context_window_tokens": 128000,
       "max_output_tokens": 4096,
       "recommended_temperature": 0.9,
@@ -177,7 +164,6 @@
     },
     {
       "name": "glm-4-airx",
-      "task_size": "small",
       "context_window_tokens": 128000,
       "max_output_tokens": 4096,
       "recommended_temperature": 0.9,
@@ -190,7 +176,6 @@
     },
     {
       "name": "glm-4-0520",
-      "task_size": "large",
       "context_window_tokens": 128000,
       "max_output_tokens": 4096,
       "recommended_temperature": 0.9,

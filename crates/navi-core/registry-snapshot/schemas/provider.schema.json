@@ -46,6 +46,11 @@
       "enum": ["native", "text-extracted", "manifest-only", "disabled"],
       "description": "How NAVI should expose tools to this provider (optional)"
     },
+    "aggregator": {
+      "type": "boolean",
+      "default": false,
+      "description": "When true, the model list is fetched dynamically from the provider's /models API at sync time"
+    },
     "default_large_model": {
       "type": "string",
       "description": "Default large task-size model for this provider (optional)"
@@ -97,7 +102,7 @@
     },
     "model": {
       "type": "object",
-      "required": ["name", "task_size"],
+      "required": ["name"],
       "additionalProperties": false,
       "properties": {
         "name": {
@@ -112,7 +117,7 @@
         "task_size": {
           "type": "string",
           "enum": ["small", "large"],
-          "description": "Harness routing size"
+          "description": "Deprecated. Ignored at runtime — harness profile is inferred from context_window_tokens."
         },
         "context_window_tokens": {
           "type": "integer",
