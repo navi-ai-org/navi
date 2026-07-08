@@ -3,6 +3,54 @@ use crate::goal::types::SessionGoal;
 /// Builds a continuation steering prompt for injection when the agent is idle
 /// but has an active goal.
 pub fn build_continuation_prompt(goal: &SessionGoal) -> String {
+    let checklist_section = if goal.checklist.is_empty() {
+        "\n## ⚠ NO CHECKLIST DEFINED\n\
+        You have not yet created a task checklist for this goal. Your FIRST action in this turn\n\
+        MUST be to call `update_goal_checklist(action=\"set\", tasks=[...])` with a concrete,\n\
+        verifiable decomposition of the objective. Each task should be small enough to verify\n\
+        independently (e.g. \"run cargo test -p navi-core\", \"add X function to Y file\", etc).\n\
+        Do NOT attempt to mark the goal complete without a checklist.\n"
+            .to_string()
+    } else {
+        let total = goal.checklist.len();
+        let finished = goal.finished_count();
+        let verified = goal.verified_count();
+        let task_lines: Vec<String> = goal
+            .checklist
+            .iter()
+            .map(|t| {
+                let marker = match t.status {
+                    crate::goal::types::TaskStatus::Verified => "✓",
+                    crate::goal::types::TaskStatus::Skipped => "⊘",
+                    crate::goal::types::TaskStatus::InProgress => "▶",
+                    crate::goal::types::TaskStatus::Done => "○",
+                    crate::goal::types::TaskStatus::Pending => "·",
+                };
+                let ver = if t.verified {
+                    " (verified)".to_string()
+                } else if let Some(ref v) = t.verification {
+                    format!(" (verification: {})", v)
+                } else {
+                    String::new()
+                };
+                format!("  {} [{}] {}{}", marker, t.status, t.description, ver)
+            })
+            .collect();
+
+        format!(
+            "\n## Checklist Progress: {verified}/{total} verified ({finished} finished)\n\
+            {tasks}\n\n\
+            ### Next Action\n\
+            Work on the next unfinished task. After implementing it, run verification\n\
+            (tests, build, lint) and mark it `verified` with `update_goal_checklist`.\n\
+            Only mark the goal as `complete` when ALL tasks are `verified` or `skipped`.\n",
+            verified = verified,
+            total = total,
+            finished = finished,
+            tasks = task_lines.join("\n"),
+        )
+    };
+
     format!(
         "\
 # Active Thread Goal
@@ -14,7 +62,7 @@ pub fn build_continuation_prompt(goal: &SessionGoal) -> String {
 **Goal Status**: {status}
 **Tokens Used**: {tokens_used} / {budget}
 **Time Elapsed**: {time_seconds}s
-
+{checklist_section}
 ## Instructions
 
 Continue working toward the active thread goal above. You are in an auto-continuation
@@ -22,10 +70,11 @@ turn — the user expects you to make progress without additional prompting.
 
 ### Completion Audit Rules
 Before marking this goal as complete:
-1. The objective must be fully satisfied and verified.
+1. A checklist MUST exist and ALL tasks must be `verified` or `skipped`.
 2. All tests must pass and build must succeed.
 3. The final deliverable must be ready for end-user use.
 4. Do not call update_goal(complete) unless all verification steps pass.
+5. If you try to call update_goal(complete) with unfinished tasks, it will be REJECTED.
 
 ### Blocked Audit Rules
 If the same blocker occurs for 3+ consecutive turns, call update_goal(blocked) with
@@ -41,6 +90,7 @@ Temporary failures like network flakes are not blockers.
             .map(|b| b.to_string())
             .unwrap_or_else(|| "unlimited".to_string()),
         time_seconds = goal.time_used_seconds,
+        checklist_section = checklist_section,
     )
 }
 

@@ -16,7 +16,8 @@ use crate::event::{
     AgentEvent, ApprovalDecision, QuestionResponse, RuntimeEvent, RuntimeEventKind,
 };
 use crate::goal::{
-    CreateGoalTool, GetGoalTool, GoalExtension, GoalRuntimeHandle, GoalService, UpdateGoalTool,
+    CreateGoalTool, GetGoalTool, GoalExtension, GoalRuntimeHandle, GoalService,
+    UpdateGoalChecklistTool, UpdateGoalTool,
 };
 use crate::harness::select_harness_policy;
 use crate::model::{ModelMessage, ModelProvider, ModelResponse};
@@ -796,7 +797,8 @@ impl AgentRuntime {
     ) {
         executor.register_tool(Arc::new(GetGoalTool::new(goal_runtime.clone())));
         executor.register_tool(Arc::new(CreateGoalTool::new(goal_runtime.clone())));
-        executor.register_tool(Arc::new(UpdateGoalTool::new(goal_runtime)));
+        executor.register_tool(Arc::new(UpdateGoalTool::new(goal_runtime.clone())));
+        executor.register_tool(Arc::new(UpdateGoalChecklistTool::new(goal_runtime)));
     }
 
     /// Returns the configured tool executor, if any.

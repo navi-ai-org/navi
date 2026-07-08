@@ -12,5 +12,7 @@ pub use accounting::GoalAccountingState;
 pub use extension::GoalExtension;
 pub use runtime::GoalRuntimeHandle;
 pub use service::GoalService;
-pub use tools::{CreateGoalTool, GetGoalTool, UpdateGoalTool, goal_tool_definitions};
-pub use types::{GoalId, GoalStatus, SessionGoal};
+pub use tools::{
+    CreateGoalTool, GetGoalTool, UpdateGoalChecklistTool, UpdateGoalTool, goal_tool_definitions,
+};
+pub use types::{GoalId, GoalStatus, GoalTask, SessionGoal, TaskStatus};

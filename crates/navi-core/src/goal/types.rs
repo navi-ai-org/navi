@@ -100,10 +100,80 @@ impl std::fmt::Display for GoalStatus {
     }
 }
 
+/// Status of a single task within a goal checklist.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskStatus {
+    /// Not yet started.
+    Pending,
+    /// Currently being worked on.
+    InProgress,
+    /// Implementation done but not yet verified.
+    Done,
+    /// Verified — tests pass, build succeeds, deliverable confirmed.
+    Verified,
+    /// Skipped or no longer relevant.
+    Skipped,
+}
+
+impl TaskStatus {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Pending => "pending",
+            Self::InProgress => "in_progress",
+            Self::Done => "done",
+            Self::Verified => "verified",
+            Self::Skipped => "skipped",
+        }
+    }
+
+    /// Returns true if the task is considered "finished" (verified or skipped).
+    pub fn is_finished(&self) -> bool {
+        matches!(self, Self::Verified | Self::Skipped)
+    }
+}
+
+impl std::fmt::Display for TaskStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
+}
+
+/// A single task in a goal's checklist.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GoalTask {
+    /// Unique index within the checklist (0-based).
+    pub id: usize,
+    /// Human-readable description of what needs to be done.
+    pub description: String,
+    /// Current status of this task.
+    pub status: TaskStatus,
+    /// Optional verification command that was run (e.g. "cargo test -p navi-core").
+    #[serde(default)]
+    pub verification: Option<String>,
+    /// Whether verification passed.
+    #[serde(default)]
+    pub verified: bool,
+}
+
+impl GoalTask {
+    pub fn new(id: usize, description: String) -> Self {
+        Self {
+            id,
+            description,
+            status: TaskStatus::Pending,
+            verification: None,
+            verified: false,
+        }
+    }
+}
+
 /// A persistent goal associated with a session.
 ///
 /// The goal guides the agent across multiple turns, with budget tracking,
-/// auto-continuation, and steering prompt injection.
+/// auto-continuation, and steering prompt injection. The checklist decomposes
+/// the objective into verifiable tasks that must all be verified before the
+/// goal can be marked complete.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionGoal {
     /// The session this goal belongs to.
@@ -127,6 +197,9 @@ pub struct SessionGoal {
     pub consecutive_blocked_turns: u32,
     /// The reason for the current block (if any).
     pub block_reason: Option<String>,
+    /// Structured checklist of tasks that must be verified before completion.
+    #[serde(default)]
+    pub checklist: Vec<GoalTask>,
     /// When the goal was created (Unix timestamp seconds).
     pub created_at: u64,
     /// When the goal was last updated (Unix timestamp seconds).
@@ -148,6 +221,7 @@ impl SessionGoal {
             time_used_seconds: 0,
             consecutive_blocked_turns: 0,
             block_reason: None,
+            checklist: Vec::new(),
             created_at: now,
             updated_at: now,
         }
@@ -207,6 +281,65 @@ impl SessionGoal {
         } else {
             false
         }
+    }
+
+    // ── Checklist helpers ──────────────────────────────────────────
+
+    /// Returns true if all checklist tasks are finished (verified or skipped).
+    /// An empty checklist means no tasks have been defined yet — the goal
+    /// cannot be considered "checklist complete" in that case.
+    pub fn is_checklist_complete(&self) -> bool {
+        !self.checklist.is_empty() && self.checklist.iter().all(|t| t.status.is_finished())
+    }
+
+    /// Returns the number of tasks that are verified.
+    pub fn verified_count(&self) -> usize {
+        self.checklist.iter().filter(|t| t.status == TaskStatus::Verified).count()
+    }
+
+    /// Returns the number of tasks that are finished (verified + skipped).
+    pub fn finished_count(&self) -> usize {
+        self.checklist.iter().filter(|t| t.status.is_finished()).count()
+    }
+
+    /// Returns the next pending or in-progress task, if any.
+    pub fn next_unfinished_task(&self) -> Option<&GoalTask> {
+        self.checklist.iter().find(|t| !t.status.is_finished())
+    }
+
+    /// Updates a task's status by index. Returns false if the index is out of bounds.
+    pub fn update_task_status(&mut self, task_id: usize, status: TaskStatus) -> bool {
+        if let Some(task) = self.checklist.iter_mut().find(|t| t.id == task_id) {
+            task.status = status;
+            if status == TaskStatus::Verified {
+                task.verified = true;
+            }
+            self.updated_at = crate::session::current_unix_timestamp();
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Sets the verification command and result for a task.
+    pub fn set_task_verification(&mut self, task_id: usize, command: String, passed: bool) -> bool {
+        if let Some(task) = self.checklist.iter_mut().find(|t| t.id == task_id) {
+            task.verification = Some(command);
+            task.verified = passed;
+            if passed {
+                task.status = TaskStatus::Verified;
+            }
+            self.updated_at = crate::session::current_unix_timestamp();
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Replaces the entire checklist.
+    pub fn set_checklist(&mut self, tasks: Vec<GoalTask>) {
+        self.checklist = tasks;
+        self.updated_at = crate::session::current_unix_timestamp();
     }
 
     /// Returns a progress snapshot suitable for display.
