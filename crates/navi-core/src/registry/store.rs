@@ -9,7 +9,8 @@ use std::path::Path;
 use std::sync::Mutex;
 
 use super::types::{
-    ModelCapability, ModelPricing, Profile, RankedModel, RegistryManifest, RegistryProvider,
+    ModelCapability, ModelPricing, Profile, RankedModel, RegistryAttachments, RegistryManifest,
+    RegistryModel, RegistryProvider,
 };
 
 /// SQLite-backed registry store.
@@ -232,6 +233,55 @@ impl RegistryStore {
             ids.insert(row?);
         }
         Ok(ids)
+    }
+
+    /// Loads existing models for a provider from the cache, keyed by model name.
+    /// Used by aggregator sync to preserve metadata (context_window, etc) for
+    /// models that the API returns without rich metadata.
+    pub fn load_provider_models(
+        &self,
+        provider_id: &str,
+    ) -> Result<std::collections::HashMap<String, RegistryModel>> {
+        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let mut stmt = conn.prepare(
+            "SELECT name, task_size, context_window_tokens, max_output_tokens, recommended_temperature, supports_thinking, supports_images, supports_audio, supports_video, supports_documents
+             FROM models WHERE provider_id = ?1",
+        )?;
+        let rows = stmt.query_map(params![provider_id], |row| {
+            let name: String = row.get(0)?;
+            let task_size_str: Option<String> = row.get(1)?;
+            let ctx: Option<i64> = row.get(2)?;
+            let max_out: Option<i64> = row.get(3)?;
+            let temp: Option<f64> = row.get(4)?;
+            let thinking: Option<i64> = row.get(5)?;
+            let images: Option<i64> = row.get(6)?;
+            let audio: Option<i64> = row.get(7)?;
+            let video: Option<i64> = row.get(8)?;
+            let documents: Option<i64> = row.get(9)?;
+
+            Ok(RegistryModel {
+                name: name.clone(),
+                task_size: task_size_str,
+                context_window_tokens: ctx.map(|v| v as u64),
+                max_output_tokens: max_out.map(|v| v as u64),
+                recommended_temperature: temp,
+                supports_thinking: thinking.map(|v| v != 0),
+                supports_images: images.map(|v| v != 0),
+                supports_audio: audio.map(|v| v != 0),
+                supports_video: video.map(|v| v != 0),
+                supports_documents: documents.map(|v| v != 0),
+                supports_attachments: None,
+                attachments: RegistryAttachments::default(),
+                capabilities: Vec::new(),
+            })
+        })?;
+
+        let mut map = std::collections::HashMap::new();
+        for row in rows {
+            let model = row?;
+            map.insert(model.name.clone(), model);
+        }
+        Ok(map)
     }
 
     /// Deletes providers that are not in the given set of ids.

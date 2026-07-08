@@ -199,7 +199,35 @@ pub async fn sync_aggregator_models(
 
     let models: Vec<RegistryModel> = body.data.iter().map(openrouter_model_to_registry).collect();
 
-    let model_count = models.len();
+    // Merge with existing cached models to preserve metadata (context_window,
+    // max_output, etc) that the API may not return, and to keep models that
+    // exist in the cache but were not returned by the API.
+    let existing = store.load_provider_models(&provider_config.id).unwrap_or_default();
+    let mut merged: Vec<RegistryModel> = models
+        .into_iter()
+        .map(|mut m| {
+            // Try exact match first, then case-insensitive match.
+            if let Some(cached) = existing.get(&m.name) {
+                merge_model_metadata(&mut m, cached);
+            } else {
+                let lower = m.name.to_lowercase();
+                if let Some((_, cached)) = existing.iter().find(|(k, _)| k.to_lowercase() == lower) {
+                    merge_model_metadata(&mut m, cached);
+                }
+            }
+            m
+        })
+        .collect();
+
+    // Keep models that are in the cache but not returned by the API.
+    let api_names: HashSet<String> = merged.iter().map(|m| m.name.to_lowercase()).collect();
+    for (name, cached) in &existing {
+        if !api_names.contains(&name.to_lowercase()) {
+            merged.push(cached.clone());
+        }
+    }
+
+    let model_count = merged.len();
 
     let registry_provider = RegistryProvider {
         id: provider_config.id.clone(),
@@ -214,7 +242,7 @@ pub async fn sync_aggregator_models(
         aggregator: true,
         defaults: Default::default(),
         request_options: provider_config.request_options.clone().unwrap_or_default(),
-        models,
+        models: merged,
     };
 
     store.upsert_provider_with_sha256(&registry_provider, None)?;
@@ -226,6 +254,27 @@ pub async fn sync_aggregator_models(
     );
 
     Ok(model_count)
+}
+
+/// Fills in missing metadata from the cached model. The API often returns
+/// models without context_window_tokens, max_output_tokens, etc. We preserve
+/// the richer metadata from the embedded snapshot or a previous sync.
+fn merge_model_metadata(api_model: &mut RegistryModel, cached: &RegistryModel) {
+    if api_model.context_window_tokens.is_none() {
+        api_model.context_window_tokens = cached.context_window_tokens;
+    }
+    if api_model.max_output_tokens.is_none() {
+        api_model.max_output_tokens = cached.max_output_tokens;
+    }
+    if api_model.recommended_temperature.is_none() {
+        api_model.recommended_temperature = cached.recommended_temperature;
+    }
+    if api_model.task_size.is_none() {
+        api_model.task_size = cached.task_size.clone();
+    }
+    if api_model.supports_thinking.is_none() {
+        api_model.supports_thinking = cached.supports_thinking;
+    }
 }
 
 #[cfg(test)]
