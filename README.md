@@ -21,15 +21,18 @@
 
 ## Latest Release
 
-### 0.1.2 - 2026-07-04
+### 0.2.0 — First public multi-platform release (2026-07-08)
 
-- Added multimodal attachment support for images, audio, video, and documents across the engine and SDK-facing APIs.
-- Added per-modality fallback model routing and the `analyze_attachment` host tool for unsupported attachment analysis.
-- Added registry attachment metadata with provider-level `defaults.attachments` and per-model `attachments` overrides.
-- Fixed compact user image indicators and small-terminal TUI layout clipping.
+- **Prebuilt binaries** for Linux (x64/arm64), macOS (Intel/Apple Silicon), and Windows x64
+- **One-line install** via curl / PowerShell (no Rust required)
+- Plan Mode, goals checklist, SQLite memory, multi-provider registry, OAuth (incl. xAI), session cost estimates
+- TUI coding agent with tools, approvals, MCP, plugins, and embeddable SDK
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/navi-ai-org/navi/main/scripts/install.sh | sh
+```
 
 See [CHANGELOG.md](CHANGELOG.md) for the full release notes.
-
 ---
 
 ## Why NAVI?
@@ -66,7 +69,7 @@ export PATH="$HOME/.local/bin:$PATH"
 Pin a version:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/navi-ai-org/navi/main/scripts/install.sh | sh -s -- --version 0.1.2
+curl -fsSL https://raw.githubusercontent.com/navi-ai-org/navi/main/scripts/install.sh | sh -s -- --version 0.2.0
 ```
 
 **Windows (PowerShell):**
