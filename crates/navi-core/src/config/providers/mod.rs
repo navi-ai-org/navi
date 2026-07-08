@@ -38,7 +38,7 @@ pub fn provider_catalog(config: &NaviConfig) -> Vec<ProviderConfig> {
     providers
 }
 
-fn base_provider_catalog() -> Vec<ProviderConfig> {
+pub(crate) fn base_provider_catalog() -> Vec<ProviderConfig> {
     REGISTRY_STORE.with(|cell| {
         cell.borrow().as_ref().map_or_else(
             || {
