@@ -503,9 +503,9 @@ async fn malformed_tool_arguments_stop_the_turn() {
         config: Arc::new(std::sync::RwLock::new(crate::config::NaviConfig::default())),
         memory_injection: None,
         compaction_provider: None,
-        agent_mode: crate::plan_mode::AgentMode::Default,
         compaction_model_name: None,
         session_id: "test-session".to_string(),
+        agent_mode: crate::plan_mode::AgentMode::Default,
         allowed_tool_names: None,
     };
     let policy = crate::harness::policy_for_profile(
@@ -598,9 +598,9 @@ fn build_test_ctx(project_dir: PathBuf) -> TurnContext {
         config: Arc::new(std::sync::RwLock::new(crate::config::NaviConfig::default())),
         memory_injection: None,
         compaction_provider: None,
-        agent_mode: crate::plan_mode::AgentMode::Default,
         compaction_model_name: None,
         session_id: "test-session".to_string(),
+        agent_mode: crate::plan_mode::AgentMode::Default,
         allowed_tool_names: None,
     }
 }

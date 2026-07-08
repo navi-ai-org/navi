@@ -366,7 +366,12 @@ impl AgentRuntime {
     /// Returns a continuation steering prompt if the goal is active and should auto-continue.
     pub fn goal_idle_prompt(&self) -> Option<String> {
         // In Plan mode, don't auto-continue — the user needs to confirm the plan first.
-        if self.agent_mode.read().unwrap_or_else(|e| e.into_inner()).restricts_tools() {
+        if self
+            .agent_mode
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .restricts_tools()
+        {
             return None;
         }
         if !self.loaded_config.config.goals.enabled {
@@ -1341,6 +1346,43 @@ impl AgentRuntime {
                     token_budget: goal.token_budget,
                 });
             }
+            AgentEvent::ModelDelta { text } => {
+                // Feed text deltas to plan parser when in Plan mode.
+                if self.agent_mode() == crate::plan_mode::AgentMode::Plan {
+                    let plans = self.feed_plan_text(&text);
+                    for plan in plans {
+                        self.event_bus.publish(RuntimeEventKind::PlanProposed {
+                            session_id: self.session.id().as_str().to_string(),
+                            title: plan.title,
+                            steps: plan.steps,
+                        });
+                    }
+                }
+            }
+            AgentEvent::ModelOutput { text, .. } => {
+                // Feed final model output to plan parser (catches plans at end of turn).
+                if self.agent_mode() == crate::plan_mode::AgentMode::Plan {
+                    let plans = self.feed_plan_text(text);
+                    for plan in plans {
+                        self.event_bus.publish(RuntimeEventKind::PlanProposed {
+                            session_id: self.session.id().as_str().to_string(),
+                            title: plan.title,
+                            steps: plan.steps,
+                        });
+                    }
+                    // Also drain any unclosed plans at end of turn.
+                    let remaining = self.drain_plans();
+                    for plan in remaining {
+                        self.event_bus.publish(RuntimeEventKind::PlanProposed {
+                            session_id: self.session.id().as_str().to_string(),
+                            title: plan.title,
+                            steps: plan.steps,
+                        });
+                    }
+                }
+            }
+            AgentEvent::PlanProposed { .. } => {}
+            AgentEvent::AgentModeChanged { .. } => {}
             _ => {}
         }
 
@@ -1522,6 +1564,8 @@ fn runtime_event_kind_from_agent_event(event: &AgentEvent) -> Option<RuntimeEven
         AgentEvent::AutoDreamFailed { reason } => Some(RuntimeEventKind::AutoDreamFailed {
             reason: reason.clone(),
         }),
+        AgentEvent::PlanProposed { .. } => None,
+        AgentEvent::AgentModeChanged { .. } => None,
     }
 }
 

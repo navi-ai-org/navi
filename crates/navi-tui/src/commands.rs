@@ -31,6 +31,7 @@ pub(crate) enum CommandAction {
     AttachmentModels,
     Memory,
     Dream,
+    TogglePlanMode,
 }
 
 pub(crate) const COMMANDS: &[CommandItem] = &[
@@ -153,6 +154,11 @@ pub(crate) const COMMANDS: &[CommandItem] = &[
         label: "Run Dream",
         shortcut: None,
         action: CommandAction::Dream,
+    },
+    CommandItem {
+        label: "Toggle Plan Mode",
+        shortcut: None,
+        action: CommandAction::TogglePlanMode,
     },
 ];
 

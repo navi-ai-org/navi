@@ -547,6 +547,26 @@ fn handle_agent_event(app: &mut TuiApp, event: AgentEvent) {
             app.dreaming = false;
             tracing::warn!("auto-dream failed: {}", reason);
         }
+        AgentEvent::PlanProposed { title, steps } => {
+            app.proposed_plan = Some(navi_sdk::ProposedPlan {
+                title: title.clone(),
+                steps: steps.clone(),
+            });
+            show_notification(app, "Plan Proposed", &title);
+        }
+        AgentEvent::AgentModeChanged { mode } => {
+            app.agent_mode = mode;
+            if mode.restricts_tools() {
+                show_notification(
+                    app,
+                    "Plan Mode",
+                    "Read-only tools only. Model will propose a plan.",
+                );
+            } else {
+                show_notification(app, "Default Mode", "Full tool access restored.");
+                app.proposed_plan = None;
+            }
+        }
     }
 }
 

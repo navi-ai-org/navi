@@ -122,11 +122,7 @@ impl ProposedPlanParser {
 
     /// Returns the partial plan body being accumulated (for live UI preview).
     pub fn partial_body(&self) -> &str {
-        if self.in_plan {
-            &self.plan_body
-        } else {
-            ""
-        }
+        if self.in_plan { &self.plan_body } else { "" }
     }
 
     /// Returns the parsed title of the current plan (for live UI preview).
@@ -210,14 +206,12 @@ impl ProposedPlanParser {
                     .map(|end| tag_content[value_start..value_start + end].to_string())
             })
             .or_else(|| {
-                tag_content
-                    .find("title='")
-                    .and_then(|t_pos| {
-                        let value_start = t_pos + "title='".len();
-                        tag_content[value_start..]
-                            .find('\'')
-                            .map(|end| tag_content[value_start..value_start + end].to_string())
-                    })
+                tag_content.find("title='").and_then(|t_pos| {
+                    let value_start = t_pos + "title='".len();
+                    tag_content[value_start..]
+                        .find('\'')
+                        .map(|end| tag_content[value_start..value_start + end].to_string())
+                })
             });
 
         Some(OpeningTagInfo { consume_len, title })
@@ -272,10 +266,7 @@ fn parse_plan_steps(body: &str) -> Vec<String> {
 /// Returns true if a tool kind is allowed in Plan mode.
 /// Only read-only and search tools are permitted.
 pub fn is_tool_allowed_in_plan_mode(kind: ToolKind) -> bool {
-    matches!(
-        kind,
-        ToolKind::Read
-    )
+    matches!(kind, ToolKind::Read)
 }
 
 #[cfg(test)]

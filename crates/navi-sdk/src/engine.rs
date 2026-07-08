@@ -542,6 +542,31 @@ impl NaviEngine {
         Ok(())
     }
 
+    /// Returns the current agent mode (Default or Plan).
+    pub fn agent_mode(&self, session_id: &str) -> Result<navi_core::plan_mode::AgentMode> {
+        let session = self.session(session_id)?;
+        let runtime = session.runtime.try_lock();
+        Ok(runtime
+            .map(|r| r.agent_mode())
+            .unwrap_or(navi_core::plan_mode::AgentMode::Default))
+    }
+
+    /// Enters Plan mode for the given session.
+    pub async fn enter_plan_mode(&self, session_id: &str) -> Result<()> {
+        let session = self.session(session_id)?;
+        let runtime = session.runtime.lock().await;
+        runtime.enter_plan_mode();
+        Ok(())
+    }
+
+    /// Exits Plan mode and returns to normal execution.
+    pub async fn exit_plan_mode(&self, session_id: &str) -> Result<()> {
+        let session = self.session(session_id)?;
+        let runtime = session.runtime.lock().await;
+        runtime.exit_plan_mode();
+        Ok(())
+    }
+
     /// Resolves a pending tool approval request. Returns `true` if the approval was
     /// consumed, `false` if there was no pending request.
     pub async fn resolve_approval(

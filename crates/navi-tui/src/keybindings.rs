@@ -180,6 +180,9 @@ fn route_mode_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyModifiers) -> K
             self::modals::handle_queued_message_edit_key(app, code, modifiers)
         }
         Mode::ConfirmCancelTurn => self::modals::handle_confirm_cancel_turn_key(app, code),
+        Mode::Plan | Mode::ConfirmPlan => {
+            self::input_modes::handle_normal_key(app, code, modifiers)
+        }
     };
     if should_quit {
         KeyOutcome::Quit

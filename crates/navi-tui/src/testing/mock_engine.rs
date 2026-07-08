@@ -211,6 +211,18 @@ impl EngineDriver for MockEngine {
         Ok(())
     }
 
+    fn agent_mode(&self, _session_id: &str) -> Result<navi_core::plan_mode::AgentMode> {
+        Ok(navi_core::plan_mode::AgentMode::Default)
+    }
+
+    async fn enter_plan_mode(&self, _session_id: &str) -> Result<()> {
+        Ok(())
+    }
+
+    async fn exit_plan_mode(&self, _session_id: &str) -> Result<()> {
+        Ok(())
+    }
+
     async fn resolve_approval(&self, session_id: &str, decision: ApprovalDecision) -> Result<bool> {
         self.state
             .lock()

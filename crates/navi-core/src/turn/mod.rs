@@ -71,9 +71,6 @@ pub struct TurnContext {
     pub compaction_model_name: Option<String>,
     pub session_id: String,
     /// Optional set of tool names the subagent is allowed to call.
-    /// When set, tool calls outside this set are denied and definitions
-    /// outside this set are hidden from the model.
-    /// `None` means all registered tools are permitted.
     pub allowed_tool_names: Option<Vec<String>>,
 }
 
@@ -192,10 +189,10 @@ async fn ensure_system_prompt(ctx: &TurnContext, messages: &mut Vec<ModelMessage
         config: ctx.active_config(),
         project_dir: ctx.project_dir.clone(),
         memory_injection,
-        tools: ctx.components.harness.filter_tools(
-            tools,
-            ctx.allowed_tool_names.as_deref(),
-        ),
+        tools: ctx
+            .components
+            .harness
+            .filter_tools(tools, ctx.allowed_tool_names.as_deref()),
         include_tool_prompt_manifest: ctx.include_tool_prompt_manifest,
         context_packets,
         available_skills,
@@ -226,8 +223,23 @@ async fn ensure_system_prompt(ctx: &TurnContext, messages: &mut Vec<ModelMessage
         messages.remove(0);
     }
 
-    let mut prefix = Vec::with_capacity(1 + rendered.developer_messages.len());
+    let mut prefix = Vec::with_capacity(2 + rendered.developer_messages.len());
     prefix.push(ModelMessage::system(rendered.instructions));
+    // In Plan mode, inject a developer message instructing the model to
+    // propose a plan via <proposed_plan> tags instead of executing.
+    if ctx.agent_mode.restricts_tools() {
+        prefix.push(ModelMessage::developer(
+            "You are in Plan mode. Only read-only tools are available. \
+             Do NOT attempt to write files or run commands. \
+             Instead, inspect the codebase and propose a plan by emitting:\n\
+             <proposed_plan title=\"Plan title\">\n\
+             1. Step one\n\
+             2. Step two\n\
+             </proposed_plan>\n\
+             The user will review the plan before implementation begins."
+                .to_string(),
+        ));
+    }
     prefix.extend(rendered.developer_messages);
     messages.splice(0..0, prefix);
 }
