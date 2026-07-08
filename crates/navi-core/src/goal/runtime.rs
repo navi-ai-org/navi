@@ -7,6 +7,9 @@ use super::steering;
 /// Per-session goal lifecycle manager.
 ///
 /// Drives auto-continuation, status transitions, and steering prompt injection.
+/// All mutations go through `with_goal_state` which serializes access via a
+/// dedicated state lock, preventing external `set`/`clear` calls from
+/// interfering with `continue_if_idle`.
 pub struct GoalRuntimeHandle {
     /// The currently bound session id.
     session_id: RwLock<Option<String>>,
@@ -16,6 +19,9 @@ pub struct GoalRuntimeHandle {
     accounting: RwLock<Option<GoalAccountingState>>,
     /// Whether auto-continuation is enabled.
     auto_continue: RwLock<bool>,
+    /// Serializes goal state mutations to prevent race conditions between
+    /// external set/clear and internal continue_if_idle.
+    state_lock: std::sync::Mutex<()>,
 }
 
 impl GoalRuntimeHandle {
@@ -33,6 +39,7 @@ impl GoalRuntimeHandle {
             goal: RwLock::new(initial_goal),
             accounting: RwLock::new(accounting),
             auto_continue: RwLock::new(true),
+            state_lock: std::sync::Mutex::new(()),
         }
     }
 
@@ -238,7 +245,10 @@ impl GoalRuntimeHandle {
 
     /// If the goal is active and should auto-continue, returns a steering
     /// continuation prompt to inject into the conversation.
+    /// Acquires the state lock to prevent race conditions with concurrent
+    /// set/clear operations.
     pub fn continue_if_idle(&self) -> Option<String> {
+        let _lock = self.state_lock.lock().unwrap_or_else(|e| e.into_inner());
         let goal = self.get_goal()?;
         if !goal.status.should_auto_continue() {
             return None;

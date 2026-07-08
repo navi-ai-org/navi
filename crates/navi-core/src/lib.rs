@@ -17,6 +17,7 @@ pub mod logging;
 pub mod mcp_firewall;
 pub mod memory;
 pub mod model;
+pub mod plan_mode;
 pub mod model_router;
 pub mod operational_memory;
 pub mod patch;
@@ -51,9 +52,9 @@ pub use capability::{
 };
 pub use compact::{CompactState, CompactThreshold};
 pub use config::{
-    AttachmentModelsConfig, BackgroundModelEntry, BackgroundModelsConfig, HarnessProfile,
-    LoadedConfig, McpConfig, McpServerConfig, ModelOption, ModelTaskSize, NaviConfig,
-    PermissionMode, PluginConfig, ProviderConfig, ProviderKind, ProviderModelConfig,
+    AttachmentModelsConfig, BackgroundModelEntry, BackgroundModelsConfig, GoalsConfig,
+    HarnessProfile, LoadedConfig, McpConfig, McpServerConfig, ModelOption, ModelTaskSize,
+    NaviConfig, PermissionMode, PluginConfig, ProviderConfig, ProviderKind, ProviderModelConfig,
     ProviderRequestOptions, SecurityConfig, ToolCallingMode, ToolPromptManifest, WasmPluginConfig,
     available_model_options, canonical_provider_id, default_request_options_for,
     effective_context_window, effective_tool_calling_mode, is_free_model_name,
@@ -99,6 +100,7 @@ pub use model_router::{ModelRoute, ModelRouteRole, ModelRouter, ModelScorecard};
 pub use operational_memory::{MemoryScope, OperationalMemoryEntry, OperationalMemoryStore};
 pub use patch::PatchProposal;
 pub use prompt::{PromptCache, RenderedPrompt, SystemPromptInput, SystemPromptRenderer};
+pub use plan_mode::{AgentMode, ProposedPlan, ProposedPlanParser, is_tool_allowed_in_plan_mode};
 pub use provider_id::ProviderId;
 pub use replay_gate::{
     ReplayGateConfig, ReplayGateReport, SuperiorityGateReport, evaluate_replay_gate,

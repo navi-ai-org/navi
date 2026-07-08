@@ -42,6 +42,7 @@ mod tests {
             registry: RegistryConfig::default(),
             tui: TuiConfig::default(),
             background_models: BackgroundModelsConfig::default(),
+            goals: GoalsConfig::default(),
         };
 
         let mut project = NaviConfig {
@@ -87,6 +88,7 @@ mod tests {
             registry: RegistryConfig::default(),
             tui: TuiConfig::default(),
             background_models: BackgroundModelsConfig::default(),
+            goals: GoalsConfig::default(),
         };
         project.plugins.clear();
         project.mcp = McpConfig::default();

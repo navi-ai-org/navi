@@ -48,6 +48,9 @@ pub struct NaviConfig {
     /// Background model routing configuration.
     #[serde(default)]
     pub background_models: BackgroundModelsConfig,
+    /// Goal system configuration.
+    #[serde(default)]
+    pub goals: GoalsConfig,
 }
 
 /// TUI-specific settings (global config).
@@ -807,6 +810,28 @@ pub struct BackgroundModelEntry {
     pub model: Option<String>,
     /// Fallback strategy: "main_model" or an explicit "provider:model".
     pub fallback: Option<String>,
+}
+
+/// Goal system configuration.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct GoalsConfig {
+    /// Whether the goal system is enabled. When disabled, goal tools are not
+    /// registered and auto-continuation is suppressed.
+    pub enabled: bool,
+    /// Maximum number of auto-continuation turns before the goal is marked
+    /// `Blocked` with reason "auto-continuation limit reached".
+    /// Set to 0 for unlimited.
+    pub max_auto_continue_turns: u32,
+}
+
+impl Default for GoalsConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            max_auto_continue_turns: 50,
+        }
+    }
 }
 
 /// A fully resolved configuration with paths and merged config layers.
