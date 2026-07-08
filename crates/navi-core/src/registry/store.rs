@@ -158,6 +158,7 @@ impl RegistryStore {
         ensure_provider_tool_calling_mode_column(&conn)?;
         ensure_provider_sha256_column(&conn)?;
         ensure_provider_aggregator_column(&conn)?;
+        relax_models_task_size_not_null(&conn)?;
         Ok(())
     }
 
@@ -950,6 +951,58 @@ fn ensure_provider_aggregator_column(conn: &Connection) -> Result<()> {
             [],
         )?;
     }
+
+    Ok(())
+}
+
+/// Migrates the `models` table from an older schema where `task_size` was
+/// `NOT NULL` to the current nullable version. SQLite doesn't support
+/// `ALTER COLUMN`, so we rebuild the table.
+fn relax_models_task_size_not_null(conn: &Connection) -> Result<()> {
+    // Check if task_size has a NOT NULL constraint.
+    let mut stmt = conn.prepare("PRAGMA table_info(models)")?;
+    let has_not_null: bool = stmt
+        .query_map([], |row| {
+            let name: String = row.get(1)?;
+            let notnull: i64 = row.get(3)?;
+            Ok((name, notnull))
+        })?
+        .filter_map(|r| r.ok())
+        .any(|(name, notnull)| name == "task_size" && notnull != 0);
+
+    if !has_not_null {
+        return Ok(());
+    }
+
+    tracing::info!("migrating models table: relaxing task_size NOT NULL constraint");
+
+    conn.execute_batch(
+        "
+        CREATE TABLE IF NOT EXISTS models_new (
+            provider_id         TEXT NOT NULL,
+            name                TEXT NOT NULL,
+            task_size           TEXT,
+            context_window_tokens INTEGER,
+            max_output_tokens   INTEGER,
+            recommended_temperature REAL,
+            supports_thinking   INTEGER,
+            supports_images     INTEGER,
+            supports_audio      INTEGER,
+            supports_video      INTEGER,
+            supports_documents  INTEGER,
+            tool_prompt_manifest INTEGER,
+            PRIMARY KEY (provider_id, name),
+            FOREIGN KEY (provider_id) REFERENCES providers(id) ON DELETE CASCADE
+        );
+
+        INSERT INTO models_new (provider_id, name, task_size, context_window_tokens, max_output_tokens, recommended_temperature, supports_thinking, supports_images, supports_audio, supports_video, supports_documents, tool_prompt_manifest)
+        SELECT provider_id, name, task_size, context_window_tokens, max_output_tokens, recommended_temperature, supports_thinking, supports_images, supports_audio, supports_video, supports_documents, tool_prompt_manifest
+        FROM models;
+
+        DROP TABLE models;
+        ALTER TABLE models_new RENAME TO models;
+        ",
+    )?;
 
     Ok(())
 }
