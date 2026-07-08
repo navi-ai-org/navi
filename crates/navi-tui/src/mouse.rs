@@ -13,6 +13,7 @@ use crate::providers::{
 use crate::render::text::display_width;
 use crate::runtime::provider_supports_oauth;
 use crate::state::{Mode, SelectionState};
+use crate::tools::cancel_stream;
 use crate::ui::SelectListState;
 use crate::ui::interaction::{HitAction, HitRegion, ScrollTarget};
 
@@ -133,6 +134,11 @@ pub(crate) fn finish_selection(app: &mut TuiApp, end: Option<(usize, usize)>) ->
     selected_text(app).is_some()
 }
 
+fn cancel_active_turn(app: &mut TuiApp) {
+    cancel_stream(app);
+    show_notification(app, "Cancelled", "Turn cancelled by double-click.".to_string());
+}
+
 pub(crate) fn handle_mouse(app: &mut TuiApp, mouse: MouseEvent) {
     match mouse.kind {
         MouseEventKind::ScrollDown => {
@@ -148,6 +154,27 @@ pub(crate) fn handle_mouse(app: &mut TuiApp, mouse: MouseEvent) {
             app.scroll_offset = app.scroll_offset.saturating_add(3);
         }
         MouseEventKind::Down(MouseButton::Left) => {
+            // Double-click detection: if the model is running and the user
+            // clicks twice quickly in the same spot, cancel the turn directly
+            // without opening the confirmation modal.
+            let now = std::time::Instant::now();
+            let is_double_click = app
+                .last_click_time
+                .map(|t| now.duration_since(t).as_millis() < 400)
+                .unwrap_or(false)
+                && app.last_click_pos == Some((mouse.column, mouse.row));
+
+            app.last_click_time = Some(now);
+            app.last_click_pos = Some((mouse.column, mouse.row));
+
+            if is_double_click
+                && app.mode == Mode::Normal
+                && (app.is_loading || app.has_async_task())
+            {
+                cancel_active_turn(app);
+                return;
+            }
+
             if let Some(hit) = app.hit_test(mouse.column, mouse.row) {
                 if matches!(hit.action, HitAction::ScrollTo { .. }) {
                     dispatch_hit(app, hit);

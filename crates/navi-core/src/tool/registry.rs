@@ -25,6 +25,13 @@ pub struct RegisteredTool {
     pub phases: Vec<String>,
 }
 
+/// Threshold below which Deferred tools are promoted to Direct visibility.
+/// Mirrors Codex's DIRECT_MCP_TOOL_EXPOSURE_THRESHOLD (100). When the total
+/// number of Direct + ModelOnly tools is below this, Deferred tools (e.g. MCP
+/// tools) are included in the visible tool list so the model can use them
+/// without needing tool_search.
+pub const MCP_TOOL_DEFER_THRESHOLD: usize = 100;
+
 impl ToolRegistry {
     /// Creates an empty registry.
     pub fn new() -> Self {
@@ -64,20 +71,39 @@ impl ToolRegistry {
     }
 
     /// Returns all visible tool definitions for the model (Direct + ModelOnly).
+    /// If the number of Direct+ModelOnly tools is below the promotion threshold,
+    /// Deferred tools are also included (promoted to Direct) so the model can
+    /// see them without needing tool_search. This mirrors the Codex behavior
+    /// where MCP tools are only deferred when the total tool count is high.
     pub fn visible_definitions(&self) -> Vec<ToolDefinition> {
-        self.tools
+        let direct: Vec<&RegisteredTool> = self
+            .tools
             .values()
             .filter(|t| matches!(t.exposure, ToolExposure::Direct | ToolExposure::ModelOnly))
+            .collect();
+
+        if direct.len() >= MCP_TOOL_DEFER_THRESHOLD {
+            return direct.iter().map(|t| t.definition.clone()).collect();
+        }
+
+        // Below threshold: promote Deferred tools so the model can see them.
+        self.tools
+            .values()
+            .filter(|t| {
+                matches!(
+                    t.exposure,
+                    ToolExposure::Direct | ToolExposure::ModelOnly | ToolExposure::Deferred
+                )
+            })
             .map(|t| t.definition.clone())
             .collect()
     }
 
     /// Returns all visible tool names for the model (Direct + ModelOnly).
     pub fn visible_tool_names(&self) -> Vec<String> {
-        self.tools
-            .values()
-            .filter(|t| matches!(t.exposure, ToolExposure::Direct | ToolExposure::ModelOnly))
-            .map(|t| t.definition.name.clone())
+        self.visible_definitions()
+            .into_iter()
+            .map(|d| d.name)
             .collect()
     }
 
@@ -302,10 +328,16 @@ mod tests {
     #[test]
     fn registry_deferred_tools_not_visible() {
         let mut reg = ToolRegistry::new();
+        // Fill with enough Direct tools to exceed the threshold so Deferred
+        // tools are not promoted.
+        for i in 0..MCP_TOOL_DEFER_THRESHOLD {
+            let def = make_def(&format!("direct_tool_{i}"), ToolKind::Read, &["tool"], &[]);
+            reg.register(def);
+        }
         let mut def = make_def("secret_tool", ToolKind::Custom, &["internal"], &[]);
         def.metadata.exposure = ToolExposure::Deferred;
         reg.register(def);
-        assert!(reg.visible_definitions().is_empty());
+        assert_eq!(reg.visible_definitions().len(), MCP_TOOL_DEFER_THRESHOLD);
         assert_eq!(reg.deferred_definitions().len(), 1);
     }
 
