@@ -225,6 +225,23 @@ pub enum RuntimeEventKind {
         /// Human-readable error message.
         message: String,
     },
+    /// The agent proposed a plan in Plan mode.
+    /// The UI should show a confirmation popup to implement or discard.
+    PlanProposed {
+        /// The session that proposed the plan.
+        session_id: String,
+        /// Title/summary of the plan.
+        title: String,
+        /// Ordered list of steps.
+        steps: Vec<String>,
+    },
+    /// The agent mode changed (e.g. Default → Plan or Plan → Default).
+    AgentModeChanged {
+        /// The session whose mode changed.
+        session_id: String,
+        /// The new mode.
+        mode: crate::plan_mode::AgentMode,
+    },
 }
 
 impl RuntimeEventKind {

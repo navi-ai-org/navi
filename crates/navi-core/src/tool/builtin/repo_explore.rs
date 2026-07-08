@@ -186,6 +186,7 @@ impl Tool for RepoExploreTool {
             config: self.config.clone(),
             memory_injection: None,
             compaction_provider: None,
+            agent_mode: crate::plan_mode::AgentMode::Default,
             compaction_model_name: None,
             session_id: "repo-explore-subagent".to_string(),
             allowed_tool_names: None,

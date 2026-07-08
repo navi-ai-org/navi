@@ -870,6 +870,7 @@ mod tests {
             )),
             memory_injection: None,
             compaction_provider: None,
+            agent_mode: crate::plan_mode::AgentMode::Default,
             compaction_model_name: None,
             session_id: "test-session".to_string(),
             allowed_tool_names: None,

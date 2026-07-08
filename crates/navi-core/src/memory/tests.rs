@@ -751,6 +751,7 @@ None.
         config: Arc::new(std::sync::RwLock::new(navi_config)),
         memory_injection: None,
         compaction_provider: None,
+        agent_mode: crate::plan_mode::AgentMode::Default,
         compaction_model_name: None,
         session_id: "integration-session".to_string(),
         allowed_tool_names: None,
