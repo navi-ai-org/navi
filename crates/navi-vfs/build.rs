@@ -1,4 +1,8 @@
-use std::{env, path::PathBuf};
+use std::{
+    env, fs,
+    path::{Path, PathBuf},
+    process::Command,
+};
 
 struct Grammar {
     name: &'static str,
@@ -108,15 +112,19 @@ const GRAMMARS: &[Grammar] = &[
 
 fn main() {
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
-    let registry = find_registry_src();
+    let cargo_home = cargo_home();
+
+    // Ensure build-deps pull sources into the registry before we compile them.
+    println!("cargo:rerun-if-changed=build.rs");
+    println!("cargo:rerun-if-env-changed=CARGO_HOME");
 
     for g in GRAMMARS {
-        let crate_dir = registry.join(format!("{}-{}", g.name, g.version));
+        let crate_dir = resolve_crate_dir(&cargo_home, g.name, g.version);
         let src_dir = crate_dir.join(g.subdir);
         let parser_c = src_dir.join("parser.c");
         if !parser_c.exists() {
             panic!(
-                "Grammar source not found: {} (expected in {})",
+                "Grammar source not found: {} (crate dir {})",
                 parser_c.display(),
                 crate_dir.display()
             );
@@ -125,17 +133,15 @@ fn main() {
         let symbol = grammar_symbol(g);
         let so_path = out_dir.join(shared_lib_name(&symbol));
 
-        // Skip if .so already exists.
+        // Skip if shared library already exists.
         if so_path.exists() {
             continue;
         }
 
         let cc = cc::Build::new().get_compiler();
 
-        // Compile parser.c → {symbol}_parser.o
         compile_c(&cc, &src_dir, &parser_c, &out_dir, &symbol);
 
-        // Compile scanner.c → {symbol}_scanner.o (if present)
         if g.has_scanner {
             let scanner_c = src_dir.join("scanner.c");
             if scanner_c.exists() {
@@ -143,9 +149,13 @@ fn main() {
             }
         }
 
-        // Link .o files → .so
         let mut link = cc.to_command();
-        link.arg("-shared").arg("-o").arg(&so_path).arg("-lc");
+        // Windows: produce a DLL; Unix: shared object / dylib.
+        if cfg!(target_os = "windows") {
+            link.arg("-shared").arg("-o").arg(&so_path);
+        } else {
+            link.arg("-shared").arg("-o").arg(&so_path).arg("-lc");
+        }
         link_obj(&mut link, &out_dir, &symbol, "parser");
         if g.has_scanner {
             let scanner_c = src_dir.join("scanner.c");
@@ -159,10 +169,122 @@ fn main() {
     }
 }
 
+fn cargo_home() -> PathBuf {
+    if let Ok(home) = env::var("CARGO_HOME") {
+        return PathBuf::from(home);
+    }
+    let home = env::var("HOME")
+        .or_else(|_| env::var("USERPROFILE"))
+        .unwrap_or_else(|_| ".".into());
+    PathBuf::from(home).join(".cargo")
+}
+
+/// Locate `name-version` under registry/src, or extract it from registry/cache.
+fn resolve_crate_dir(cargo_home: &Path, name: &str, version: &str) -> PathBuf {
+    let want = format!("{name}-{version}");
+    let src_root = cargo_home.join("registry").join("src");
+
+    if src_root.is_dir() {
+        if let Ok(entries) = fs::read_dir(&src_root) {
+            for entry in entries.flatten() {
+                let candidate = entry.path().join(&want);
+                if candidate.is_dir() {
+                    return candidate;
+                }
+            }
+        }
+    }
+
+    // Extract from the downloaded .crate archive (always present once the
+    // package is a build-dependency, even if `src/` was not unpacked yet).
+    let cache_root = cargo_home.join("registry").join("cache");
+    let crate_file = find_crate_file(&cache_root, &want)
+        .unwrap_or_else(|| {
+            panic!(
+                "Could not find {want} in cargo registry src or cache under {}",
+                cargo_home.display()
+            )
+        });
+
+    // Prefer the first existing registry src index dir; create one if needed.
+    let extract_root = if src_root.is_dir() {
+        fs::read_dir(&src_root)
+            .ok()
+            .and_then(|mut it| it.find_map(|e| e.ok().map(|e| e.path())).filter(|p| p.is_dir()))
+            .unwrap_or_else(|| {
+                let p = src_root.join("index.crates.io-extracted");
+                fs::create_dir_all(&p).ok();
+                p
+            })
+    } else {
+        let p = src_root.join("index.crates.io-extracted");
+        fs::create_dir_all(&p).expect("create registry src");
+        p
+    };
+
+    let dest = extract_root.join(&want);
+    if !dest.is_dir() {
+        extract_crate(&crate_file, &extract_root, &want);
+    }
+    if !dest.is_dir() {
+        panic!(
+            "Failed to extract {} from {}",
+            want,
+            crate_file.display()
+        );
+    }
+    dest
+}
+
+fn find_crate_file(cache_root: &Path, want: &str) -> Option<PathBuf> {
+    if !cache_root.is_dir() {
+        return None;
+    }
+    let entries = fs::read_dir(cache_root).ok()?;
+    for entry in entries.flatten() {
+        let path = entry.path().join(format!("{want}.crate"));
+        if path.is_file() {
+            return Some(path);
+        }
+    }
+    None
+}
+
+fn extract_crate(crate_file: &Path, extract_root: &Path, want: &str) {
+    fs::create_dir_all(extract_root).ok();
+    // .crate files are gzip-compressed tar archives.
+    let status = Command::new("tar")
+        .arg("-xzf")
+        .arg(crate_file)
+        .arg("-C")
+        .arg(extract_root)
+        .status();
+    match status {
+        Ok(s) if s.success() => {}
+        Ok(s) => panic!("tar extract of {} failed: {s}", crate_file.display()),
+        Err(e) => {
+            // Windows runners may lack tar in PATH for some shells; try bsdtar.
+            let status2 = Command::new("bsdtar")
+                .arg("-xzf")
+                .arg(crate_file)
+                .arg("-C")
+                .arg(extract_root)
+                .status();
+            match status2 {
+                Ok(s) if s.success() => {}
+                _ => panic!(
+                    "tar extract of {} failed ({e}); expected directory {want}",
+                    crate_file.display()
+                ),
+            }
+        }
+    }
+}
+
 fn compile_c(
     cc: &cc::Tool,
-    src_dir: &std::path::Path,
-    src: &std::path::Path,
+    src_dir: &Path,
+    src: &Path,
     out_dir: &PathBuf,
     symbol: &str,
 ) {
@@ -180,21 +302,8 @@ fn compile_c(
     run(&mut cmd, &format!("cc -c {} ({})", stem, symbol));
 }
 
-fn link_obj(cmd: &mut std::process::Command, out_dir: &PathBuf, symbol: &str, stem: &str) {
+fn link_obj(cmd: &mut Command, out_dir: &PathBuf, symbol: &str, stem: &str) {
     cmd.arg(out_dir.join(format!("{symbol}_{stem}.o")));
-}
-
-fn find_registry_src() -> PathBuf {
-    let cargo_home = env::var("CARGO_HOME")
-        .unwrap_or_else(|_| format!("{}/.cargo", env::var("HOME").unwrap_or_default()));
-    let src = PathBuf::from(cargo_home).join("registry").join("src");
-    for entry in std::fs::read_dir(&src).unwrap() {
-        let entry = entry.unwrap();
-        if entry.file_type().unwrap().is_dir() {
-            return entry.path();
-        }
-    }
-    panic!("No cargo registry src in {}", src.display());
 }
 
 fn grammar_symbol(g: &Grammar) -> String {
@@ -218,7 +327,7 @@ fn shared_lib_name(symbol: &str) -> String {
     }
 }
 
-fn run(cmd: &mut std::process::Command, label: &str) {
+fn run(cmd: &mut Command, label: &str) {
     let status = cmd
         .status()
         .unwrap_or_else(|e| panic!("{label} failed: {e}"));
