@@ -47,49 +47,58 @@ See [CHANGELOG.md](CHANGELOG.md) for the full release notes.
 
 ## Install
 
+### Quick install (recommended)
+
+Downloads the latest prebuilt binary from [GitHub Releases](https://github.com/navi-ai-org/navi/releases) — no Rust toolchain required.
+
+**macOS / Linux:**
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/navi-ai-org/navi/main/scripts/install.sh | sh
+```
+
+Installs to `~/.local/bin` (fallback: `~/.navi/bin`). If needed:
+
+```bash
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+Pin a version:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/navi-ai-org/navi/main/scripts/install.sh | sh -s -- --version 0.1.2
+```
+
+**Windows (PowerShell):**
+
+```powershell
+irm https://raw.githubusercontent.com/navi-ai-org/navi/main/scripts/install.ps1 | iex
+```
+
+Installs to `%USERPROFILE%\.navi\bin` and adds it to your user `PATH`.
+
 ### Homebrew (macOS / Linux)
 
 ```bash
 brew install navi-ai-org/tap/navi
 ```
 
-### Cargo (from source)
+### npm
 
 ```bash
-cargo install navi-cli
+npm install -g @navi-agent/navi
 ```
 
-Requires [Rust](https://rustup.rs). Builds the `navi` binary with full TUI and headless support.
+### From source (development)
 
-### Shell installer (curl — macOS / Linux)
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/navi-ai-org/navi/main/scripts/install.sh | sh
-```
-
-Detects your OS and architecture, downloads the latest release binary, and installs it to `~/.local/bin` (or `~/.navi/bin` as fallback). Add to your `PATH`:
-
-```bash
-export PATH="$HOME/.local/bin:$PATH"
-```
-
-### PowerShell installer (Windows)
-
-```powershell
-powershell -ExecutionPolicy Bypass -c "irm https://raw.githubusercontent.com/navi-ai-org/navi/main/scripts/install.ps1 | iex"
-```
-
-Detects your architecture, downloads the latest release binary, and installs it to `~/.navi/bin`. Prompts to add to your user `PATH` automatically.
-
-### From source (git)
+Requires [Rust](https://rustup.rs) (edition 2024):
 
 ```bash
 git clone https://github.com/navi-ai-org/navi.git
 cd navi
-just build
-# binary: target/debug/navi
+just install-release   # cargo install --path crates/navi-cli --release
+# or: cargo build -p navi-cli --release  → target/release/navi
 ```
-
 ---
 
 ## Quick start

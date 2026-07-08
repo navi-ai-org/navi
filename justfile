@@ -25,11 +25,15 @@ build:
 build-release:
     cargo build --workspace --release
 
-# Install the navi binary to ~/.cargo/bin (or wherever cargo install puts it).
+# Install the latest prebuilt release binary (curl installer — preferred for users).
+install-bin:
+    curl -fsSL https://raw.githubusercontent.com/navi-ai-org/navi/main/scripts/install.sh | sh
+
+# Build from this checkout and install into cargo's bin dir (dev).
 install:
     cargo install --path crates/navi-cli
 
-# Install the navi binary in release mode.
+# Build from this checkout in release mode and install (dev).
 install-release:
     cargo install --path crates/navi-cli --release
 
