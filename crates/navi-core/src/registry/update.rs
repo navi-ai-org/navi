@@ -22,7 +22,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use crate::config::types::{ProviderConfig, RegistryConfig};
 
 use super::embedded::{embedded_manifest, embedded_provider_schema, embedded_providers};
-use super::store::{registry_provider_to_config, RegistryStore};
+use super::store::RegistryStore;
 use super::types::{RegistryManifest, RegistryProvider};
 
 /// Trait abstracting registry fetching so the update flow can be tested without network.
@@ -77,43 +77,25 @@ pub enum RegistrySource {
 /// Loads the registry for use, preferring cache, then embedded snapshot, then a minimal fallback.
 ///
 /// This is the entry point for startup. It never blocks on network.
-/// If the embedded snapshot is newer than the local cache, the cache is re-seeded
-/// from the embedded snapshot so users get updated provider definitions without
+/// After loading the cache, it upserts any providers whose embedded snapshot
+/// hash differs from the cached version. This ensures new models and pricing
+/// updates shipped with the binary are merged into the local cache without
 /// waiting for a remote sync.
 pub fn load_registry(store: &RegistryStore) -> LoadedRegistry {
     // Try cache first.
     if let Some(loaded) = load_cached_registry(store) {
-        // Check if embedded snapshot is newer than cached manifest.
-        if let Ok(embedded_manifest) = embedded_manifest() {
-            if embedded_manifest.version > loaded.manifest.version {
-                tracing::info!(
-                    cached_version = loaded.manifest.version,
-                    embedded_version = embedded_manifest.version,
-                    "embedded snapshot is newer than local cache, re-seeding"
-                );
-                if let Ok(embedded_providers) = embedded_providers() {
-                    if let Err(err) = store.replace_all(&embedded_providers) {
-                        tracing::warn!(error = %err, "failed to re-seed cache from newer embedded snapshot");
-                    } else {
-                        if let Err(err) = save_registry_metadata(
-                            store,
-                            &embedded_manifest,
-                            None,
-                            None,
-                        ) {
-                            tracing::warn!(error = %err, "failed to save manifest metadata after re-seeding");
-                        }
-                        return LoadedRegistry {
-                            manifest: embedded_manifest,
-                            providers: embedded_providers
-                                .into_iter()
-                                .map(registry_provider_to_config)
-                                .collect(),
-                            source: RegistrySource::Embedded,
-                        };
-                    }
-                }
-            }
+        // Merge in any providers from the embedded snapshot that are newer
+        // (different SHA-256) than what's in the cache.
+        merge_embedded_provider_updates(store);
+
+        // Reload after merging so the returned registry reflects updates.
+        if let Some(reloaded) = load_cached_registry(store) {
+            tracing::info!(
+                version = reloaded.manifest.version,
+                providers = reloaded.providers.len(),
+                "loaded registry from local cache (after embedded merge)"
+            );
+            return reloaded;
         }
         tracing::info!(
             version = loaded.manifest.version,
@@ -145,6 +127,56 @@ pub fn load_registry(store: &RegistryStore) -> LoadedRegistry {
         },
         providers: minimal_fallback_providers(),
         source: RegistrySource::MinimalFallback,
+    }
+}
+
+/// Upserts providers from the embedded snapshot whose SHA-256 hash differs
+/// from the cached version. This merges new models and pricing updates into
+/// the local cache without overwriting providers that are newer in the cache
+/// (e.g. from a remote sync).
+fn merge_embedded_provider_updates(store: &RegistryStore) {
+    let embedded_manifest = match embedded_manifest() {
+        Ok(m) => m,
+        Err(_) => return,
+    };
+    let embedded_providers = match embedded_providers() {
+        Ok(p) => p,
+        Err(_) => return,
+    };
+
+    let mut updated = 0;
+    for ep in &embedded_providers {
+        let id = &ep.id;
+        let embedded_sha = embedded_manifest.providers.get(id).map(|e| e.sha256.as_str());
+        let cached_sha = store.provider_sha256(id).ok().flatten();
+
+        let needs_update = match (&cached_sha, embedded_sha) {
+            (Some(cached), Some(embedded)) => cached != embedded,
+            (None, _) => true,
+            (Some(_), None) => false,
+        };
+
+        if needs_update {
+            if let Err(err) = store.upsert_provider_with_sha256(ep, embedded_sha) {
+                tracing::warn!(
+                    provider = id,
+                    error = %err,
+                    "failed to upsert embedded provider update"
+                );
+            } else {
+                updated += 1;
+            }
+        }
+    }
+
+    if updated > 0 {
+        tracing::info!(
+            updated_providers = updated,
+            "merged embedded provider updates into local cache"
+        );
+        // Update manifest metadata to reflect merged state.
+        let _ = store.save_manifest_meta(&embedded_manifest);
+        let _ = save_registry_metadata(store, &embedded_manifest, None, None);
     }
 }
 

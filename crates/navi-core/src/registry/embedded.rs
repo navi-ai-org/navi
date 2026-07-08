@@ -46,6 +46,16 @@ mod tests {
     }
 
     #[test]
+    fn embedded_manifest_version_is_at_least_2() {
+        let manifest = embedded_manifest().expect("manifest should parse");
+        assert!(
+            manifest.version >= 2,
+            "manifest version should be >= 2 (bumped when GLM-5.2 was added), got {}",
+            manifest.version
+        );
+    }
+
+    #[test]
     fn embedded_providers_parse_cleanly() {
         let providers = embedded_providers().expect("providers should parse");
         assert!(!providers.is_empty());
