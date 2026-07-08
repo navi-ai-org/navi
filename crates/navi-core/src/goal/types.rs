@@ -204,6 +204,10 @@ pub struct SessionGoal {
     pub created_at: u64,
     /// When the goal was last updated (Unix timestamp seconds).
     pub updated_at: u64,
+    /// When goal time accounting was last finalized (Unix timestamp seconds).
+    /// Used to track wall-clock time between turns, not just within turns.
+    #[serde(default)]
+    pub last_accounted_at: u64,
 }
 
 impl SessionGoal {
@@ -224,6 +228,7 @@ impl SessionGoal {
             checklist: Vec::new(),
             created_at: now,
             updated_at: now,
+            last_accounted_at: now,
         }
     }
 
@@ -253,10 +258,24 @@ impl SessionGoal {
         }
     }
 
-    /// Records elapsed wall-clock time.
+    /// Records elapsed wall-clock time and updates the accounting timestamp.
     pub fn record_time(&mut self, seconds: i64) {
         self.time_used_seconds = self.time_used_seconds.saturating_add(seconds);
-        self.updated_at = crate::session::current_unix_timestamp();
+        self.last_accounted_at = crate::session::current_unix_timestamp();
+        self.updated_at = self.last_accounted_at;
+    }
+
+    /// Records wall-clock time elapsed since the last accounting point.
+    /// Returns the number of seconds recorded.
+    pub fn record_time_since_last_accounted(&mut self) -> i64 {
+        let now = crate::session::current_unix_timestamp();
+        let elapsed = (now.saturating_sub(self.last_accounted_at)) as i64;
+        if elapsed > 0 {
+            self.time_used_seconds = self.time_used_seconds.saturating_add(elapsed);
+            self.last_accounted_at = now;
+            self.updated_at = now;
+        }
+        elapsed
     }
 
     /// Transitions the goal to a new status.

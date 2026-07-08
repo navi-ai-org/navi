@@ -173,6 +173,11 @@ impl TurnCanceller {
     pub fn cancel(&self) {
         self.inner.cancel();
     }
+
+    /// Returns `true` if cancellation has been requested.
+    pub fn is_cancelled(&self) -> bool {
+        self.inner.is_requested()
+    }
 }
 
 /// Options for constructing an [`AgentRuntime`].
@@ -240,6 +245,14 @@ pub struct AgentRuntime {
     turn_used_memory_write: bool,
     /// Last user task text — used for extractMemories context.
     last_user_task: String,
+    /// Whether a user message is pending (set when send_turn is called
+    /// while the runtime is busy with auto-continuation).
+    pending_user_input: std::sync::atomic::AtomicBool,
+    /// Current agent mode (Default or Plan). In Plan mode, only read-only
+    /// tools are available and the model is instructed to propose a plan.
+    agent_mode: std::sync::RwLock<crate::plan_mode::AgentMode>,
+    /// Parser for `<proposed_plan>` tags in streaming text.
+    plan_parser: std::sync::Mutex<crate::plan_mode::ProposedPlanParser>,
 }
 
 impl AgentRuntime {
@@ -302,6 +315,9 @@ impl AgentRuntime {
             goal_extension,
             turn_used_memory_write: false,
             last_user_task: String::new(),
+            pending_user_input: std::sync::atomic::AtomicBool::new(false),
+            agent_mode: std::sync::RwLock::new(crate::plan_mode::AgentMode::Default),
+            plan_parser: std::sync::Mutex::new(crate::plan_mode::ProposedPlanParser::new()),
         }
     }
 
@@ -349,7 +365,99 @@ impl AgentRuntime {
 
     /// Returns a continuation steering prompt if the goal is active and should auto-continue.
     pub fn goal_idle_prompt(&self) -> Option<String> {
+        // In Plan mode, don't auto-continue — the user needs to confirm the plan first.
+        if self.agent_mode.read().unwrap_or_else(|e| e.into_inner()).restricts_tools() {
+            return None;
+        }
+        if !self.loaded_config.config.goals.enabled {
+            return None;
+        }
         self.goal_extension.on_idle()
+    }
+
+    /// Returns the goals configuration.
+    pub fn goals_config(&self) -> crate::config::GoalsConfig {
+        self.loaded_config.config.goals.clone()
+    }
+
+    /// Returns a reference to the goal runtime handle.
+    pub fn goal_runtime(&self) -> &Arc<GoalRuntimeHandle> {
+        &self.goal_runtime
+    }
+
+    // ── Plan Mode ──────────────────────────────────────────────
+
+    /// Returns the current agent mode.
+    pub fn agent_mode(&self) -> crate::plan_mode::AgentMode {
+        *self.agent_mode.read().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// Enters Plan mode. Only read-only tools will be available, and the
+    /// model is instructed to propose a plan via `<proposed_plan>` tags.
+    pub fn enter_plan_mode(&self) {
+        *self.agent_mode.write().unwrap_or_else(|e| e.into_inner()) =
+            crate::plan_mode::AgentMode::Plan;
+        *self.plan_parser.lock().unwrap_or_else(|e| e.into_inner()) =
+            crate::plan_mode::ProposedPlanParser::new();
+        if let Some(ref session_id) =
+            self.session.session_id.read().unwrap_or_else(|e| e.into_inner()).as_ref()
+        {
+            self.event_bus.publish(RuntimeEventKind::AgentModeChanged {
+                session_id: session_id.to_string(),
+                mode: crate::plan_mode::AgentMode::Plan,
+            });
+        }
+    }
+
+    /// Exits Plan mode and returns to normal execution.
+    pub fn exit_plan_mode(&self) {
+        *self.agent_mode.write().unwrap_or_else(|e| e.into_inner()) =
+            crate::plan_mode::AgentMode::Default;
+        if let Some(ref session_id) =
+            self.session.session_id.read().unwrap_or_else(|e| e.into_inner()).as_ref()
+        {
+            self.event_bus.publish(RuntimeEventKind::AgentModeChanged {
+                session_id: session_id.to_string(),
+                mode: crate::plan_mode::AgentMode::Default,
+            });
+        }
+    }
+
+    /// Feeds a text delta into the plan parser. Returns any completed plans.
+    pub fn feed_plan_text(&self, text: &str) -> Vec<crate::plan_mode::ProposedPlan> {
+        self.plan_parser
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push_text(text)
+    }
+
+    /// Drains any pending plans from the parser (call at end of turn).
+    pub fn drain_plans(&self) -> Vec<crate::plan_mode::ProposedPlan> {
+        self.plan_parser
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .drain()
+    }
+
+    /// Returns true if the parser is currently inside a `<proposed_plan>` block.
+    pub fn is_parsing_plan(&self) -> bool {
+        self.plan_parser
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .is_in_plan()
+    }
+
+    /// Returns `true` if a user message is pending (set when `send_turn` is
+    /// called while the runtime is busy with auto-continuation).
+    pub fn has_pending_user_input(&self) -> bool {
+        self.pending_user_input
+            .load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// Marks that a user message is pending.
+    pub fn set_pending_user_input(&self, pending: bool) {
+        self.pending_user_input
+            .store(pending, std::sync::atomic::Ordering::SeqCst);
     }
 
     /// Returns all agent events recorded so far.
@@ -548,6 +656,10 @@ impl AgentRuntime {
         content_parts: Vec<crate::model::ContentPart>,
         thinking_override: Option<crate::model::ThinkingConfig>,
     ) -> Result<ModelResponse> {
+        // Mark that user input is being processed.
+        self.pending_user_input
+            .store(false, std::sync::atomic::Ordering::SeqCst);
+
         if !self.session.started() || self.session.runtime().is_none() {
             self.start_session()?;
         }
@@ -753,7 +865,11 @@ impl AgentRuntime {
     fn ensure_tool_executor(&mut self) -> Result<Arc<ToolExecutor>> {
         if let Some(executor) = self.tool_executor.as_mut() {
             if let Some(executor) = Arc::get_mut(executor) {
-                Self::register_goal_tools_on_executor(executor, self.goal_runtime.clone());
+                Self::register_goal_tools_on_executor(
+                    executor,
+                    self.goal_runtime.clone(),
+                    self.loaded_config.config.goals.enabled,
+                );
                 executor.register_skill_loader(
                     self.project_dir.clone(),
                     self.loaded_config.data_dir.clone(),
@@ -775,7 +891,11 @@ impl AgentRuntime {
             self.runtime_components.security.clone(),
         );
         executor.set_harness_profile(profile_name);
-        Self::register_goal_tools_on_executor(&mut executor, self.goal_runtime.clone());
+        Self::register_goal_tools_on_executor(
+            &mut executor,
+            self.goal_runtime.clone(),
+            self.loaded_config.config.goals.enabled,
+        );
         executor.register_skill_loader(
             self.project_dir.clone(),
             self.loaded_config.data_dir.clone(),
@@ -816,7 +936,11 @@ impl AgentRuntime {
     fn register_goal_tools_on_executor(
         executor: &mut ToolExecutor,
         goal_runtime: Arc<GoalRuntimeHandle>,
+        goals_enabled: bool,
     ) {
+        if !goals_enabled {
+            return;
+        }
         executor.register_tool(Arc::new(GetGoalTool::new(goal_runtime.clone())));
         executor.register_tool(Arc::new(CreateGoalTool::new(goal_runtime.clone())));
         executor.register_tool(Arc::new(UpdateGoalTool::new(goal_runtime.clone())));

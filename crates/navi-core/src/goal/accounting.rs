@@ -24,9 +24,16 @@ impl GoalAccountingState {
         }
     }
 
-    /// Starts a new turn: records the start time and resets the turn token counter.
+    /// Starts a new turn: records wall-clock time since the last accounting
+    /// point, then records the turn start time and resets the turn token counter.
     pub fn start_turn(&self) {
         let now = crate::session::current_unix_timestamp();
+        // Record wall-clock time elapsed since the last accounting point
+        // (covers idle time between turns, approval waits, etc.).
+        {
+            let mut goal = self.goal.lock().unwrap_or_else(|e| e.into_inner());
+            goal.record_time_since_last_accounted();
+        }
         self.turn_start_time.store(now, Ordering::SeqCst);
         self.tokens_this_turn.store(0, Ordering::SeqCst);
     }

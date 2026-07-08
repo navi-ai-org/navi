@@ -421,12 +421,37 @@ impl NaviEngine {
             .await?;
         // Check for goal auto-continue after turn completes.
         let mut response_text = response.text;
+        let goals_config = runtime.goals_config();
+        let mut auto_continue_count = 0u32;
         loop {
+            // Gate 1: goals must be enabled.
+            if !goals_config.enabled {
+                break;
+            }
+            // Gate 2: max auto-continue turns limit (0 = unlimited).
+            if goals_config.max_auto_continue_turns > 0
+                && auto_continue_count >= goals_config.max_auto_continue_turns
+            {
+                // Mark goal as blocked with reason.
+                runtime
+                    .goal_runtime()
+                    .record_blocked_turn("auto-continuation limit reached");
+                break;
+            }
+            // Gate 3: check if the user has requested cancellation.
+            if session.turn_canceller.is_cancelled() {
+                break;
+            }
             let continuation = runtime.goal_idle_prompt();
             if let Some(prompt) = continuation {
+                auto_continue_count += 1;
                 drop(runtime);
                 // Auto-continue: start a new turn with the steering prompt as input.
                 let mut new_runtime = session.runtime.lock().await;
+                // Gate 4: don't auto-continue if a new user message is pending.
+                if new_runtime.has_pending_user_input() {
+                    break;
+                }
                 let auto_response = new_runtime
                     .send_turn_with_parts(prompt, Vec::new(), None)
                     .await?;
