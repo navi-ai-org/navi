@@ -10,6 +10,7 @@ use navi_core::{
     resolve_provider_api_key, resolve_provider_config, resolve_provider_credential_status,
     save_global_config, save_project_config,
 };
+use navi_core::registry::types::{RegistryAttachments, RegistryModel, RegistryProvider};
 use navi_mcp::{LoadedMcpServers, McpServerInfo, load_configured_mcp_servers};
 use navi_plugin_host::LoadedPlugin;
 use std::collections::HashMap;
@@ -1168,6 +1169,75 @@ impl NaviEngine {
             match list_models_for_provider(&provider, api_key).await {
                 Ok(models) => {
                     let model_count = models.len();
+
+                    // Persist synced model names into the SQLite registry cache
+                    // so they survive config.toml stripping and are available via
+                    // --print-providers and the model picker. Merge with existing
+                    // cached models to preserve metadata from the embedded snapshot.
+                    if let Some(ref store) = self.inner.registry_store {
+                        let existing = store.load_provider_models(&provider.id).unwrap_or_default();
+                        let mut merged: Vec<RegistryModel> = models
+                            .iter()
+                            .enumerate()
+                            .map(|(_i, name)| {
+                                if let Some(cached) = existing.get(name) {
+                                    cached.clone()
+                                } else {
+                                    let lower = name.to_lowercase();
+                                    if let Some((_, cached)) = existing.iter().find(|(k, _)| k.to_lowercase() == lower) {
+                                        cached.clone()
+                                    } else {
+                                        RegistryModel {
+                                            name: name.clone(),
+                                            task_size: None,
+                                            context_window_tokens: None,
+                                            max_output_tokens: None,
+                                            recommended_temperature: None,
+                                            supports_thinking: None,
+                                            supports_attachments: None,
+                                            supports_images: None,
+                                            supports_audio: None,
+                                            supports_video: None,
+                                            supports_documents: None,
+                                            attachments: RegistryAttachments::default(),
+                                            capabilities: Vec::new(),
+                                        }
+                                    }
+                                }
+                            })
+                            .collect();
+
+                        // Keep cached models not returned by the API.
+                        let api_names: std::collections::HashSet<String> =
+                            merged.iter().map(|m| m.name.to_lowercase()).collect();
+                        for (name, cached) in &existing {
+                            if !api_names.contains(&name.to_lowercase()) {
+                                merged.push(cached.clone());
+                            }
+                        }
+
+                        // Deduplicate by name (case-insensitive).
+                        let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+                        merged.retain(|m| seen.insert(m.name.to_lowercase()));
+
+                        let registry_provider = RegistryProvider {
+                            id: provider.id.clone(),
+                            label: provider.label.clone(),
+                            description: provider.description.clone(),
+                            kind: format!("{:?}", provider.kind).to_lowercase(),
+                            api_key_env: provider.api_key_env.clone(),
+                            base_url: provider.base_url.clone(),
+                            tool_calling_mode: provider.tool_calling_mode.map(|m| format!("{:?}", m).to_lowercase()),
+                            aggregator: provider.aggregator,
+                            defaults: Default::default(),
+                            request_options: provider.request_options.clone().unwrap_or_default(),
+                            models: merged,
+                        };
+                        if let Err(err) = store.upsert_provider_with_sha256(&registry_provider, None) {
+                            tracing::warn!(provider = %provider.id, error = %err, "failed to persist synced models to registry cache");
+                        }
+                    }
+
                     loaded_config
                         .config
                         .update_provider_models(&provider.id, &models);
