@@ -35,13 +35,12 @@ If no prebuilt binary is available for your platform, the postinstall script wil
 ## Alternative install methods
 
 ```bash
-# Cargo (from source)
-cargo install navi-cli
-
-# Shell installer
+# Shell installer (primary — no Node required)
 curl -fsSL https://raw.githubusercontent.com/navi-ai-org/navi/main/scripts/install.sh | sh
-```
 
+# From source (development)
+cargo install --git https://github.com/navi-ai-org/navi navi-cli
+```
 ## License
 
 Apache-2.0

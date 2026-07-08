@@ -4,21 +4,36 @@ This guide covers how to install, configure, and use NAVI as a terminal code age
 
 ## Installation
 
-Build from source:
+### Recommended — prebuilt binary
+
+**macOS / Linux:**
 
 ```bash
-git clone https://github.com/enrell/navi.git
-cd navi
-cargo build --release
+curl -fsSL https://raw.githubusercontent.com/navi-ai-org/navi/main/scripts/install.sh | sh
 ```
 
-The binary is at `target/release/navi-cli`. Copy it to your `$PATH` as `navi` if desired.
+**Windows (PowerShell):**
+
+```powershell
+irm https://raw.githubusercontent.com/navi-ai-org/navi/main/scripts/install.ps1 | iex
+```
+
+Pin a release: `sh -s -- --version 0.1.2` (or set `NAVI_VERSION`).
+
+### From source
+
+```bash
+git clone https://github.com/navi-ai-org/navi.git
+cd navi
+cargo build -p navi-cli --release
+# binary: target/release/navi
+```
 
 ### Requirements
 
-- Rust 1.85+ (edition 2024)
-- A provider API key (OpenAI, Anthropic, Gemini, Groq, GitHub Copilot, Gitlawb, or any OpenAI-compatible endpoint)
-
+- For the curl installer: nothing beyond a normal OS (no Rust needed)
+- For building from source: Rust 1.85+ (edition 2024)
+- A provider API key (OpenAI, Anthropic, Gemini, xAI, OpenRouter, etc.)
 ## Quick Start
 
 ```bash

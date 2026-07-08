@@ -1,25 +1,50 @@
-# Release workflow — builds binaries and creates a GitHub Release.
+# Release workflow — builds navi binaries for all platforms and publishes a GitHub Release.
 #
-# Trigger: push a tag matching v* (e.g., v0.2.0)
-#   git tag v0.2.0
-#   git push origin v0.2.0
+# Trigger: push a version tag
+#   git tag v0.1.3
+#   git push origin v0.1.3
+#
+# Or re-run / publish for an existing tag via Actions → Release → Run workflow.
+#
+# Assets (names must match scripts/install.sh and scripts/install.ps1):
+#   navi-linux-x64.tar.gz
+#   navi-linux-arm64.tar.gz
+#   navi-darwin-x64.tar.gz
+#   navi-darwin-arm64.tar.gz
+#   navi-win32-x64.zip
+#   SHA256SUMS.txt
 #
 name: Release
 
 on:
+  push:
+    tags:
+      - "v*"
   workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing git tag to build and release (e.g. v0.1.3)"
+        required: true
+        type: string
 
 env:
   CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  # Resolve release tag from tag-push ref or manual input.
+  RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
 
 permissions:
   contents: write
 
+concurrency:
+  group: release-${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
 jobs:
-  # ── Build binaries for all platforms ──────────────────────────────────────
+  # ── Build binaries ──────────────────────────────────────────────────────────
 
   build:
-    name: Build ${{ matrix.target }}
+    name: Build ${{ matrix.archive }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -28,114 +53,216 @@ jobs:
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
             archive: navi-linux-x64
-            npm_package: "@navi-agent/navi-linux-x64"
             npm_platform: linux-x64
 
+          # Native arm64 runner — more reliable than cross for tree-sitter / C deps.
           - target: aarch64-unknown-linux-gnu
-            os: ubuntu-latest
+            os: ubuntu-24.04-arm
             archive: navi-linux-arm64
-            npm_package: "@navi-agent/navi-linux-arm64"
             npm_platform: linux-arm64
-            use_cross: true
 
           - target: x86_64-apple-darwin
             os: macos-13
             archive: navi-darwin-x64
-            npm_package: "@navi-agent/navi-darwin-x64"
             npm_platform: darwin-x64
 
           - target: aarch64-apple-darwin
             os: macos-latest
             archive: navi-darwin-arm64
-            npm_package: "@navi-agent/navi-darwin-arm64"
             npm_platform: darwin-arm64
 
           - target: x86_64-pc-windows-msvc
             os: windows-latest
             archive: navi-win32-x64
-            npm_package: "@navi-agent/navi-win32-x64"
             npm_platform: win32-x64
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
 
-      - uses: dtolnay/rust-toolchain@stable
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
 
-      - name: Install cross (Linux arm64)
-        if: matrix.use_cross
-        run: cargo install cross --locked
-
-      - uses: Swatinem/rust-cache@v2
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
         with:
-          key: ${{ matrix.target }}
+          key: release-${{ matrix.target }}
+          shared-key: release
 
-      - name: Build (cross)
-        if: matrix.use_cross
-        run: cross build -p navi-cli --release --target ${{ matrix.target }}
+      - name: Build release binary
+        run: cargo build -p navi-cli --locked --release --target ${{ matrix.target }}
 
-      - name: Build (cargo)
-        if: ${{ !matrix.use_cross }}
-        run: cargo build -p navi-cli --release --target ${{ matrix.target }}
+      - name: Strip binary (unix)
+        if: runner.os != 'Windows'
+        run: |
+          BIN="target/${{ matrix.target }}/release/navi"
+          if command -v strip >/dev/null 2>&1; then
+            strip "$BIN" || true
+          fi
+          ls -lh "$BIN"
+          file "$BIN" || true
 
-      # ── Package archive ────────────────────────────────────────────────────
+      - name: Smoke test binary (native arch only)
+        if: |
+          (runner.os == 'Linux' && (matrix.target == 'x86_64-unknown-linux-gnu' || matrix.target == 'aarch64-unknown-linux-gnu')) ||
+          (runner.os == 'macOS' && matrix.target == 'aarch64-apple-darwin' && runner.arch == 'ARM64') ||
+          (runner.os == 'macOS' && matrix.target == 'x86_64-apple-darwin' && runner.arch == 'X64') ||
+          runner.os == 'Windows'
+        shell: bash
+        run: |
+          if [[ "${{ runner.os }}" == "Windows" ]]; then
+            "./target/${{ matrix.target }}/release/navi.exe" --help >/dev/null
+          else
+            "./target/${{ matrix.target }}/release/navi" --help >/dev/null
+          fi
 
       - name: Package (unix)
         if: runner.os != 'Windows'
+        shell: bash
         run: |
-          cd target/${{ matrix.target }}/release
-          tar -czf ../../../${{ matrix.archive }}.tar.gz navi
+          set -euo pipefail
+          mkdir -p dist
+          tar -C "target/${{ matrix.target }}/release" -czf "dist/${{ matrix.archive }}.tar.gz" navi
+          ls -lh "dist/${{ matrix.archive }}.tar.gz"
 
       - name: Package (windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          Compress-Archive -Path "target/${{ matrix.target }}/release/navi.exe" -DestinationPath "${{ matrix.archive }}.zip"
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Compress-Archive -Path "target/${{ matrix.target }}/release/navi.exe" `
+            -DestinationPath "dist/${{ matrix.archive }}.zip" -Force
+          Get-Item "dist/${{ matrix.archive }}.zip" | Format-List Name, Length
 
       - name: Upload archive
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.archive }}
-          path: ${{ matrix.archive }}.*
-
-      # ── Prepare npm platform package ───────────────────────────────────────
+          path: dist/${{ matrix.archive }}.*
+          if-no-files-found: error
+          retention-days: 14
 
       - name: Stage npm binary (unix)
         if: runner.os != 'Windows'
         run: |
-          cp target/${{ matrix.target }}/release/navi npm/navi/npm/${{ matrix.npm_platform }}/navi
+          cp "target/${{ matrix.target }}/release/navi" "npm/navi/npm/${{ matrix.npm_platform }}/navi"
+          chmod +x "npm/navi/npm/${{ matrix.npm_platform }}/navi"
 
       - name: Stage npm binary (windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          Copy-Item "target/${{ matrix.target }}/release/navi.exe" "npm/navi/npm/${{ matrix.npm_platform }}/navi.exe"
+          Copy-Item "target/${{ matrix.target }}/release/navi.exe" `
+            "npm/navi/npm/${{ matrix.npm_platform }}/navi.exe" -Force
 
-      - name: Upload npm package
+      - name: Upload npm package tree
         uses: actions/upload-artifact@v4
         with:
           name: npm-${{ matrix.npm_platform }}
           path: npm/navi/npm/${{ matrix.npm_platform }}/
+          if-no-files-found: error
+          retention-days: 14
 
-  # ── Create GitHub Release ─────────────────────────────────────────────────
+  # ── Publish GitHub Release ──────────────────────────────────────────────────
 
   release:
     name: GitHub Release
     needs: build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
 
-      - name: Download all archives
+      - name: Validate tag matches workspace version
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="${{ env.RELEASE_TAG }}"
+          TAG="${TAG#v}"
+          # workspace.package.version under [workspace.package]
+          CARGO_VERSION=$(
+            awk '
+              /^\[workspace\.package\]/ { in_pkg=1; next }
+              /^\[/ { in_pkg=0 }
+              in_pkg && /^version[[:space:]]*=/ {
+                gsub(/"/, "", $3); print $3; exit
+              }
+            ' Cargo.toml
+          )
+          if [[ -z "$CARGO_VERSION" ]]; then
+            echo "Could not read workspace.package.version from Cargo.toml" >&2
+            exit 1
+          fi
+          echo "tag version:    $TAG"
+          echo "Cargo.toml version: $CARGO_VERSION"
+          if [[ "$TAG" != "$CARGO_VERSION" ]]; then
+            echo "error: tag v$TAG does not match Cargo.toml version $CARGO_VERSION" >&2
+            echo "Bump workspace.package.version before tagging." >&2
+            exit 1
+          fi
+
+      - name: Download archives
         uses: actions/download-artifact@v4
         with:
           pattern: navi-*
           path: artifacts/
           merge-multiple: true
 
-      - name: Create release
+      - name: Generate checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd artifacts
+          # Only archive files (not npm folders)
+          shopt -s nullglob
+          files=( *.tar.gz *.zip )
+          if (( ${#files[@]} == 0 )); then
+            echo "No release archives found in artifacts/" >&2
+            ls -la
+            exit 1
+          fi
+          sha256sum "${files[@]}" | tee SHA256SUMS.txt
+          ls -lh
+
+      - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ env.RELEASE_TAG }}
+          name: NAVI ${{ env.RELEASE_TAG }}
           generate_release_notes: true
-          files: artifacts/**/*
+          draft: false
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          files: |
+            artifacts/*.tar.gz
+            artifacts/*.zip
+            artifacts/SHA256SUMS.txt
+          body: |
+            ## Install
+
+            **macOS / Linux (recommended):**
+            ```bash
+            curl -fsSL https://raw.githubusercontent.com/navi-ai-org/navi/main/scripts/install.sh | sh
+            ```
+
+            **Windows (PowerShell):**
+            ```powershell
+            irm https://raw.githubusercontent.com/navi-ai-org/navi/main/scripts/install.ps1 | iex
+            ```
+
+            Pin this version:
+            ```bash
+            curl -fsSL https://raw.githubusercontent.com/navi-ai-org/navi/main/scripts/install.sh | sh -s -- --version ${{ env.RELEASE_TAG }}
+            ```
+
+            ### Manual download
+            Pick the archive for your platform below, extract `navi` (or `navi.exe`), and put it on your `PATH`.
+
+            Checksums: `SHA256SUMS.txt`
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
