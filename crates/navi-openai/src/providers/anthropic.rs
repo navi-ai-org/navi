@@ -38,8 +38,20 @@ impl crate::provider::OpenAiProvider {
             )?;
             let model = request.model.clone();
             tracing::info!(provider = %provider_id, model = %model, api = "anthropic-messages", tools = request.tools.len(), "provider stream started");
-            let (system, messages) =
+            let (mut system, messages) =
                 anthropic_messages_with_cache_control(&request.messages, cache_control.as_ref());
+            // Prepend the stable base instructions as the first system block
+            // with cache_control so the prefix is cached independently of
+            // the dynamic developer blocks that follow.
+            if let Some(instructions) = &request.instructions {
+                if !instructions.is_empty() {
+                    let mut block = json!({ "type": "text", "text": instructions });
+                    if let Some(cache_control) = &cache_control {
+                        block["cache_control"] = cache_control.clone();
+                    }
+                    system.insert(0, block);
+                }
+            }
             let thinking = request.thinking.to_thinking_request();
             let budget = thinking.budget_tokens.unwrap_or(0);
             let max_tokens = (budget + 1024).max(4096);
@@ -270,7 +282,7 @@ pub(crate) fn anthropic_messages_with_cache_control(
     let system_cache_count = if caching_enabled {
         messages
             .iter()
-            .filter(|m| m.role == ModelRole::System)
+            .filter(|m| m.role == ModelRole::System || m.role == ModelRole::Developer)
             .map(|m| {
                 if let Some((stable, _)) = m.content.split_once(RUNTIME_CONTEXT_MARKER) {
                     if stable.trim_end().is_empty() { 0 } else { 1 }
@@ -293,7 +305,7 @@ pub(crate) fn anthropic_messages_with_cache_control(
     // ── System messages ───────────────────────────────────────────────────
     let mut system_breakpoints = 0usize;
     for message in messages {
-        if message.role != ModelRole::System {
+        if message.role != ModelRole::System && message.role != ModelRole::Developer {
             continue;
         }
         if let Some((stable, dynamic)) = message.content.split_once(RUNTIME_CONTEXT_MARKER) {
@@ -331,7 +343,7 @@ pub(crate) fn anthropic_messages_with_cache_control(
     let mut converted = Vec::new();
     for (index, message) in messages.iter().enumerate() {
         match message.role {
-            ModelRole::System => {} // already handled above
+            ModelRole::System | ModelRole::Developer => {} // already handled above
             ModelRole::User => {
                 if !message.content_parts.is_empty() {
                     // Multimodal message: emit Anthropic-native content blocks.

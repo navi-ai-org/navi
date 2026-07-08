@@ -22,7 +22,18 @@ impl crate::provider::OpenAiProvider {
         Box::pin(try_stream! {
             let model_name = request.model.clone();
             tracing::info!(provider = %provider_id, model = %model_name, api = "gemini-generate-content", tools = request.tools.len(), "provider stream started");
-            let (system, contents) = gemini_contents(&request.messages);
+            let (mut system, contents) = gemini_contents(&request.messages);
+            // Prepend the stable base instructions to the system instruction
+            // so the prefix is cached independently of dynamic developer blocks.
+            if let Some(instructions) = &request.instructions {
+                if !instructions.is_empty() {
+                    if system.is_empty() {
+                        system = instructions.clone();
+                    } else {
+                        system = format!("{}\n\n{}", instructions, system);
+                    }
+                }
+            }
             let thinking = request.thinking.to_thinking_request();
             let thinking_budget = if thinking.enabled {
                 thinking.budget_tokens.unwrap_or(0)
@@ -149,7 +160,7 @@ pub(crate) fn gemini_contents(messages: &[ModelMessage]) -> (String, Vec<Value>)
 
     for message in messages {
         match message.role {
-            ModelRole::System => system.push(message.content.clone()),
+            ModelRole::System | ModelRole::Developer => system.push(message.content.clone()),
             ModelRole::User => {
                 if !message.content_parts.is_empty() {
                     // Multimodal message: emit Gemini-native inlineData parts.

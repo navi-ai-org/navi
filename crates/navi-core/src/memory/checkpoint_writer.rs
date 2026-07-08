@@ -102,6 +102,7 @@ pub async fn run_checkpoint_writer(
 
     let request = ModelRequest {
         model: model_name.to_string(),
+        instructions: None,
         messages: vec![
             ModelMessage::system(
                 "You are a precise agent checkpoint writer. Output only the requested XML tags.",
@@ -150,6 +151,7 @@ fn format_conversation_history(messages: &[ModelMessage]) -> String {
             crate::model::ModelRole::Assistant => "Assistant",
             crate::model::ModelRole::Tool => "Tool",
             crate::model::ModelRole::System => "System",
+            crate::model::ModelRole::Developer => "Developer",
         };
         out.push_str(&format!("[{}]: {}\n", role, msg.content));
         if let Some(ref tool) = msg.tool_name {

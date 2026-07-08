@@ -909,6 +909,7 @@ async fn test_stream_normal() {
 
     let request = navi_core::ModelRequest {
         model: "gpt-4".to_string(),
+        instructions: None,
         messages: vec![ModelMessage {
             role: navi_core::ModelRole::User,
             content: "Hi".to_string(),
@@ -969,6 +970,7 @@ async fn chat_completions_omits_prompt_cache_fields_by_default() {
 
     let request = navi_core::ModelRequest {
         model: "minimaxai/minimax-m3".to_string(),
+        instructions: None,
         messages: vec![ModelMessage::user("Hi".to_string())],
         thinking: navi_core::ThinkingConfig::Off,
         tools: vec![],
@@ -1024,6 +1026,7 @@ async fn opencode_zen_chat_completions_enables_parallel_tool_calls() {
         .expect("provider");
     let request = navi_core::ModelRequest {
         model: "deepseek-v4-flash-free".to_string(),
+        instructions: None,
         messages: vec![ModelMessage::user("Inspect files".to_string())],
         thinking: navi_core::ThinkingConfig::Off,
         tools: vec![navi_core::ToolDefinition {
@@ -1084,6 +1087,7 @@ async fn chat_completions_includes_configured_openai_prompt_cache_fields() {
 
     let request = navi_core::ModelRequest {
         model: "gpt-5".to_string(),
+        instructions: None,
         messages: vec![ModelMessage::user("Hi".to_string())],
         thinking: navi_core::ThinkingConfig::Off,
         tools: vec![],
@@ -1130,6 +1134,7 @@ async fn test_opencode_zen_chat_request_uses_bearer_api_key() {
 
     let request = navi_core::ModelRequest {
         model: "deepseek-v4-flash-free".to_string(),
+        instructions: None,
         messages: vec![ModelMessage::user("Hi".to_string())],
         thinking: navi_core::ThinkingConfig::Off,
         tools: vec![],
@@ -1176,6 +1181,7 @@ async fn test_opencode_zen_gpt_models_use_responses_endpoint() {
 
     let request = navi_core::ModelRequest {
         model: "gpt-5.5".to_string(),
+        instructions: None,
         messages: vec![ModelMessage::user("Hi".to_string())],
         thinking: navi_core::ThinkingConfig::Off,
         tools: vec![],
@@ -1224,6 +1230,7 @@ async fn test_github_copilot_request_uses_oauth_headers() {
 
     let request = navi_core::ModelRequest {
         model: "gpt-5.1".to_string(),
+        instructions: None,
         messages: vec![ModelMessage::user("Hi".to_string())],
         thinking: navi_core::ThinkingConfig::Off,
         tools: vec![],
@@ -1268,6 +1275,7 @@ async fn test_opencode_zen_claude_models_use_messages_endpoint() {
 
     let request = navi_core::ModelRequest {
         model: "claude-sonnet-4.5".to_string(),
+        instructions: None,
         messages: vec![ModelMessage::user("Hi".to_string())],
         thinking: navi_core::ThinkingConfig::Off,
         tools: vec![],
@@ -1353,6 +1361,7 @@ async fn test_stream_idle_timeout() {
 
     let request = navi_core::ModelRequest {
         model: "gpt-4".to_string(),
+        instructions: None,
         messages: vec![],
         thinking: navi_core::ThinkingConfig::Off,
         tools: vec![],
@@ -1410,6 +1419,7 @@ async fn test_rate_limit_retry() {
 
     let request = navi_core::ModelRequest {
         model: "gpt-4".to_string(),
+        instructions: None,
         messages: vec![],
         thinking: navi_core::ThinkingConfig::Off,
         tools: vec![],

@@ -171,6 +171,7 @@ pub async fn run_dream_maintenance_with_options(
 
     let request = ModelRequest {
         model: model_name.to_string(),
+        instructions: None,
         messages: vec![
             ModelMessage::system(
                 "You are a helpful memory maintenance bot. Return only the requested XML tags.",
@@ -327,6 +328,7 @@ async fn run_model_based_consolidation(
 
     let request = ModelRequest {
         model: model_name.to_string(),
+        instructions: None,
         messages: vec![
             ModelMessage::system(
                 "You are a memory consolidation bot. Return only a JSON array of actions.",
@@ -400,6 +402,7 @@ pub async fn run_distill_maintenance(
 
     let request = ModelRequest {
         model: model_name.to_string(),
+        instructions: None,
         messages: vec![
             ModelMessage::system(
                 "You are a process distillation bot. Return only the requested XML tags.",

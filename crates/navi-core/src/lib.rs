@@ -98,7 +98,7 @@ pub use model::{
 pub use model_router::{ModelRoute, ModelRouteRole, ModelRouter, ModelScorecard};
 pub use operational_memory::{MemoryScope, OperationalMemoryEntry, OperationalMemoryStore};
 pub use patch::PatchProposal;
-pub use prompt::{PromptCache, SystemPromptInput, SystemPromptRenderer};
+pub use prompt::{PromptCache, RenderedPrompt, SystemPromptInput, SystemPromptRenderer};
 pub use provider_id::ProviderId;
 pub use replay_gate::{
     ReplayGateConfig, ReplayGateReport, SuperiorityGateReport, evaluate_replay_gate,

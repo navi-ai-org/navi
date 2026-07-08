@@ -147,7 +147,10 @@ fn merge_embedded_provider_updates(store: &RegistryStore) {
     let mut updated = 0;
     for ep in &embedded_providers {
         let id = &ep.id;
-        let embedded_sha = embedded_manifest.providers.get(id).map(|e| e.sha256.as_str());
+        let embedded_sha = embedded_manifest
+            .providers
+            .get(id)
+            .map(|e| e.sha256.as_str());
         let cached_sha = store.provider_sha256(id).ok().flatten();
 
         let needs_update = match (&cached_sha, embedded_sha) {

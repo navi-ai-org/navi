@@ -239,6 +239,7 @@ async fn test_turn_loop_with_parallel_tools() {
         available_skills: Arc::new(std::sync::Mutex::new(Vec::new())),
         active_skills: Arc::new(std::sync::Mutex::new(Vec::new())),
         prompt_cache: Arc::new(crate::prompt::PromptCache::new()),
+        instructions: std::sync::Arc::new(std::sync::RwLock::new(None)),
         components: crate::RuntimeComponents::default(),
         cancel_token: CancelToken::new(),
         config: Arc::new(std::sync::RwLock::new(crate::config::NaviConfig::default())),
@@ -409,13 +410,14 @@ async fn system_prompt_includes_session_memory_and_rebuild_context() {
     let _ = run_turn(&ctx, &mut messages, policy).await.unwrap();
 
     let requests = requests.lock().unwrap();
-    let system = requests[0]
+    // Memory injection is now in a developer message, not the system message.
+    let memory_msg = requests[0]
         .messages
         .iter()
-        .find(|msg| msg.role == ModelRole::System)
-        .expect("system message");
-    assert!(system.content.contains("durable session memory"));
-    assert!(system.content.contains("Durable rebuild state"));
+        .find(|msg| msg.role == ModelRole::Developer && msg.content.contains("session memory"))
+        .expect("developer message with session memory");
+    assert!(memory_msg.content.contains("durable session memory"));
+    assert!(memory_msg.content.contains("Durable rebuild state"));
 }
 
 #[tokio::test]
@@ -494,6 +496,7 @@ async fn malformed_tool_arguments_stop_the_turn() {
         available_skills: Arc::new(std::sync::Mutex::new(Vec::new())),
         active_skills: Arc::new(std::sync::Mutex::new(Vec::new())),
         prompt_cache: Arc::new(crate::prompt::PromptCache::new()),
+        instructions: std::sync::Arc::new(std::sync::RwLock::new(None)),
         components: crate::RuntimeComponents::default(),
         cancel_token: CancelToken::new(),
         config: Arc::new(std::sync::RwLock::new(crate::config::NaviConfig::default())),
@@ -587,6 +590,7 @@ fn build_test_ctx(project_dir: PathBuf) -> TurnContext {
         available_skills: Arc::new(std::sync::Mutex::new(Vec::new())),
         active_skills: Arc::new(std::sync::Mutex::new(Vec::new())),
         prompt_cache: Arc::new(crate::prompt::PromptCache::new()),
+        instructions: std::sync::Arc::new(std::sync::RwLock::new(None)),
         components: crate::RuntimeComponents::default(),
         cancel_token: CancelToken::new(),
         config: Arc::new(std::sync::RwLock::new(crate::config::NaviConfig::default())),
@@ -611,17 +615,22 @@ async fn test_ensure_system_prompt_reads_agents_md() {
     let mut messages = vec![];
     ensure_system_prompt(&ctx, &mut messages).await;
 
-    assert_eq!(messages.len(), 1);
+    // System message (base instructions) + developer message (AGENTS.md).
+    assert!(messages.len() >= 2);
     assert_eq!(messages[0].role, ModelRole::System);
+    let agents_msg = messages
+        .iter()
+        .find(|m| m.role == ModelRole::Developer && m.content.contains("AGENTS.md"))
+        .expect("should have a developer message for AGENTS.md");
     assert!(
-        messages[0].content.contains("Custom project instructions"),
-        "system prompt should include AGENTS.md content"
+        agents_msg.content.contains("Custom project instructions"),
+        "developer message should include AGENTS.md content"
     );
     assert!(
-        messages[0]
+        agents_msg
             .content
             .contains("AGENTS.md / Project Instructions"),
-        "system prompt should have the AGENTS.md section header"
+        "developer message should have the AGENTS.md section header"
     );
 }
 
@@ -634,13 +643,17 @@ async fn test_ensure_system_prompt_falls_back_without_agents_md() {
     let mut messages = vec![];
     ensure_system_prompt(&ctx, &mut messages).await;
 
-    assert_eq!(messages.len(), 1);
+    assert!(messages.len() >= 2);
     assert_eq!(messages[0].role, ModelRole::System);
+    let agents_msg = messages
+        .iter()
+        .find(|m| m.role == ModelRole::Developer && m.content.contains("AGENTS.md"))
+        .expect("should have a developer message for AGENTS.md");
     assert!(
-        messages[0]
+        agents_msg
             .content
             .contains("Default NAVI base instructions"),
-        "system prompt should fall back to default instructions when AGENTS.md is absent"
+        "developer message should fall back to default instructions when AGENTS.md is absent"
     );
 }
 
@@ -653,17 +666,25 @@ async fn test_ensure_system_prompt_updates_existing_system_message() {
     ensure_system_prompt(&ctx, &mut messages).await;
 
     // Should replace the existing system message, not add a second one.
-    assert_eq!(messages.len(), 1);
+    let system_count = messages
+        .iter()
+        .filter(|m| m.role == ModelRole::System)
+        .count();
+    assert_eq!(system_count, 1, "should have exactly one system message");
     assert_eq!(messages[0].role, ModelRole::System);
-    assert!(
-        messages[0]
-            .content
-            .contains("Default NAVI base instructions"),
-        "existing system message should be replaced"
-    );
     assert!(
         !messages[0].content.contains("stale prompt"),
         "old system message content should be gone"
+    );
+    let agents_msg = messages
+        .iter()
+        .find(|m| m.role == ModelRole::Developer && m.content.contains("AGENTS.md"))
+        .expect("should have a developer message for AGENTS.md");
+    assert!(
+        agents_msg
+            .content
+            .contains("Default NAVI base instructions"),
+        "developer message should have the default fallback"
     );
 }
 
@@ -675,10 +696,14 @@ async fn test_ensure_system_prompt_inserts_before_non_system_message() {
     let mut messages = vec![ModelMessage::user("hello".to_string())];
     ensure_system_prompt(&ctx, &mut messages).await;
 
-    assert_eq!(messages.len(), 2);
+    // System + developer messages are inserted before the user message.
+    assert!(messages.len() >= 2);
     assert_eq!(messages[0].role, ModelRole::System);
-    assert_eq!(messages[1].role, ModelRole::User);
-    assert_eq!(messages[1].content, "hello");
+    let user_msg = messages
+        .iter()
+        .find(|m| m.role == ModelRole::User)
+        .expect("should have the user message");
+    assert_eq!(user_msg.content, "hello");
 }
 
 #[tokio::test]

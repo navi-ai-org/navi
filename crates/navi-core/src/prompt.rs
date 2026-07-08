@@ -1,6 +1,7 @@
 use crate::NaviConfig;
 use crate::context::{ContextPacket, render_context_packets};
 use crate::harness::{build_system_prompt_with_manifest_text, tool_prompt_manifest};
+use crate::model::ModelMessage;
 use crate::skills::{SkillManifest, render_active_skills, render_available_skills};
 use crate::tool::ToolDefinition;
 use anyhow::{Context, Result};
@@ -94,6 +95,23 @@ impl PromptCache {
     }
 }
 
+/// The result of rendering a system prompt: a stable base `instructions`
+/// string (sent in the provider's `instructions` field or as the first
+/// system message) and a list of dynamic `developer_messages` (injected
+/// as separate messages so that changes to context blocks don't
+/// invalidate the provider's prompt cache for the base prefix).
+#[derive(Debug, Clone, Default)]
+pub struct RenderedPrompt {
+    /// Stable base instructions for the `instructions` field of the
+    /// provider request. Kept identical across turns when config, cwd,
+    /// and tool set are unchanged.
+    pub instructions: String,
+    /// Dynamic context blocks injected as separate developer-role
+    /// messages after the base instructions. Each block can change
+    /// independently without invalidating the cache for `instructions`.
+    pub developer_messages: Vec<ModelMessage>,
+}
+
 #[derive(Clone)]
 pub struct SystemPromptRenderer {
     cache: std::sync::Arc<PromptCache>,
@@ -104,39 +122,72 @@ impl SystemPromptRenderer {
         Self { cache }
     }
 
-    pub fn render(&self, input: SystemPromptInput) -> String {
-        let agents = self
-            .cache
-            .read_file(&input.project_dir.join("AGENTS.md"))
-            .unwrap_or_else(|_| DEFAULT_AGENTS_INSTRUCTIONS.to_string());
+    pub fn render(&self, input: SystemPromptInput) -> RenderedPrompt {
         let manifest = if input.include_tool_prompt_manifest && !input.tools.is_empty() {
             Some(self.cache.render_tool_manifest(&input.tools))
         } else {
             None
         };
-        let mut system_content = format!(
-            "{}\n\n=== AGENTS.md / Project Instructions ===\n{}",
-            build_system_prompt_with_manifest_text(
-                &input.config,
-                &input.project_dir,
-                input.memory_injection.as_deref(),
-                manifest.as_deref(),
-            ),
-            agents
+
+        // Stable base: identity, workflow, tool rules, code tools, sprint
+        // contract, auto-memory instructions, and tool manifest. Does NOT
+        // include AGENTS.md, context packets, skills, or memory injection.
+        let instructions = build_system_prompt_with_manifest_text(
+            &input.config,
+            &input.project_dir,
+            None,
+            manifest.as_deref(),
         );
+
+        let mut developer_messages = Vec::new();
+
+        // Global user instructions (~/.config/navi/AGENTS.md).
+        if let Ok(dirs) = crate::config::persistence::navi_dirs() {
+            let global_agents_path = dirs.config_dir().join("AGENTS.md");
+            if let Ok(global_agents) = self.cache.read_file(&global_agents_path)
+                && !global_agents.trim().is_empty()
+            {
+                developer_messages.push(ModelMessage::developer(format!(
+                    "=== Global User Instructions (AGENTS.md) ===\n{global_agents}"
+                )));
+            }
+        }
+
+        // Project-level AGENTS.md.
+        let project_agents = self
+            .cache
+            .read_file(&input.project_dir.join("AGENTS.md"))
+            .unwrap_or_else(|_| DEFAULT_AGENTS_INSTRUCTIONS.to_string());
+        developer_messages.push(ModelMessage::developer(format!(
+            "=== AGENTS.md / Project Instructions ===\n{project_agents}"
+        )));
+
+        // Context packets (external context from clients).
         if let Some(context) = render_context_packets(&input.context_packets) {
-            system_content.push_str("\n\n");
-            system_content.push_str(&context);
+            developer_messages.push(ModelMessage::developer(context));
         }
+
+        // Available skills catalog.
         if let Some(skills) = render_available_skills(&input.available_skills) {
-            system_content.push_str("\n\n");
-            system_content.push_str(&skills);
+            developer_messages.push(ModelMessage::developer(skills));
         }
+
+        // Active skills with instruction text.
         if let Some(skills) = render_active_skills(&input.active_skills) {
-            system_content.push_str("\n\n");
-            system_content.push_str(&skills);
+            developer_messages.push(ModelMessage::developer(skills));
         }
-        system_content
+
+        // Memory injection (auto-memory index + session memory).
+        if let Some(memory) = &input.memory_injection
+            && !memory.trim().is_empty()
+        {
+            developer_messages.push(ModelMessage::developer(memory.clone()));
+        }
+
+        RenderedPrompt {
+            instructions,
+            developer_messages,
+        }
     }
 }
 
@@ -227,8 +278,24 @@ mod tests {
 
         let first = renderer.render(input());
         let second = renderer.render(input());
-        assert!(first.contains("project rules"));
-        assert_eq!(first, second);
+        assert!(
+            first
+                .developer_messages
+                .iter()
+                .any(|m| m.content.contains("project rules"))
+        );
+        assert_eq!(first.instructions, second.instructions);
+        assert_eq!(
+            first.developer_messages.len(),
+            second.developer_messages.len()
+        );
+        for (a, b) in first
+            .developer_messages
+            .iter()
+            .zip(second.developer_messages.iter())
+        {
+            assert_eq!(a.content, b.content);
+        }
         assert_eq!(cache.disk_read_count(), 1);
     }
 }

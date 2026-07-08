@@ -1,6 +1,7 @@
 use crate::types::NaviError;
 use anyhow::Context;
 type Result<T> = std::result::Result<T, NaviError>;
+use navi_core::registry::types::{RegistryAttachments, RegistryModel, RegistryProvider};
 use navi_core::{
     AgentRuntime, AgentRuntimeOptions, ApprovalDecision, CredentialStore, LoadedConfig,
     ModelOption, ProviderConfig, QuestionResponse, RuntimeComponents, RuntimeEvent, SessionGoal,
@@ -10,7 +11,6 @@ use navi_core::{
     resolve_provider_api_key, resolve_provider_config, resolve_provider_credential_status,
     save_global_config, save_project_config,
 };
-use navi_core::registry::types::{RegistryAttachments, RegistryModel, RegistryProvider};
 use navi_mcp::{LoadedMcpServers, McpServerInfo, load_configured_mcp_servers};
 use navi_plugin_host::LoadedPlugin;
 use std::collections::HashMap;
@@ -1224,7 +1224,9 @@ impl NaviEngine {
                                     cached.clone()
                                 } else {
                                     let lower = name.to_lowercase();
-                                    if let Some((_, cached)) = existing.iter().find(|(k, _)| k.to_lowercase() == lower) {
+                                    if let Some((_, cached)) =
+                                        existing.iter().find(|(k, _)| k.to_lowercase() == lower)
+                                    {
                                         cached.clone()
                                     } else {
                                         RegistryModel {
@@ -1257,7 +1259,8 @@ impl NaviEngine {
                         }
 
                         // Deduplicate by name (case-insensitive).
-                        let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+                        let mut seen: std::collections::HashSet<String> =
+                            std::collections::HashSet::new();
                         merged.retain(|m| seen.insert(m.name.to_lowercase()));
 
                         let registry_provider = RegistryProvider {
@@ -1267,13 +1270,17 @@ impl NaviEngine {
                             kind: format!("{:?}", provider.kind).to_lowercase(),
                             api_key_env: provider.api_key_env.clone(),
                             base_url: provider.base_url.clone(),
-                            tool_calling_mode: provider.tool_calling_mode.map(|m| format!("{:?}", m).to_lowercase()),
+                            tool_calling_mode: provider
+                                .tool_calling_mode
+                                .map(|m| format!("{:?}", m).to_lowercase()),
                             aggregator: provider.aggregator,
                             defaults: Default::default(),
                             request_options: provider.request_options.clone().unwrap_or_default(),
                             models: merged,
                         };
-                        if let Err(err) = store.upsert_provider_with_sha256(&registry_provider, None) {
+                        if let Err(err) =
+                            store.upsert_provider_with_sha256(&registry_provider, None)
+                        {
                             tracing::warn!(provider = %provider.id, error = %err, "failed to persist synced models to registry cache");
                         }
                     }

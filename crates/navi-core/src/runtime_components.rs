@@ -6,7 +6,7 @@ use crate::harness::{
     record_tool_result,
 };
 use crate::model::{ModelMessage, ModelProvider, ModelRole};
-use crate::prompt::{PromptCache, SystemPromptInput, SystemPromptRenderer};
+use crate::prompt::{PromptCache, RenderedPrompt, SystemPromptInput, SystemPromptRenderer};
 use crate::security::{SecurityDecision, SecurityPolicy};
 use crate::skills::{render_active_skills, render_available_skills};
 use crate::tool::{ToolDefinition, ToolInvocation, ToolResult};
@@ -162,14 +162,14 @@ impl HarnessDriver for DefaultHarnessDriver {
 }
 
 pub trait PromptBuilder: Send + Sync {
-    fn build(&self, input: SystemPromptInput, cache: Arc<PromptCache>) -> String;
+    fn build(&self, input: SystemPromptInput, cache: Arc<PromptCache>) -> RenderedPrompt;
 }
 
 #[derive(Debug, Default)]
 pub struct DefaultPromptBuilder;
 
 impl PromptBuilder for DefaultPromptBuilder {
-    fn build(&self, input: SystemPromptInput, cache: Arc<PromptCache>) -> String {
+    fn build(&self, input: SystemPromptInput, cache: Arc<PromptCache>) -> RenderedPrompt {
         SystemPromptRenderer::new(cache).render(input)
     }
 }
@@ -338,7 +338,7 @@ impl TutorPromptBuilder {
 }
 
 impl PromptBuilder for TutorPromptBuilder {
-    fn build(&self, input: SystemPromptInput, cache: Arc<PromptCache>) -> String {
+    fn build(&self, input: SystemPromptInput, cache: Arc<PromptCache>) -> RenderedPrompt {
         let agents = cache
             .read_file(&input.project_dir.join("AGENTS.md"))
             .unwrap_or_else(|_| "No project instructions found.".to_string());
@@ -348,7 +348,7 @@ impl PromptBuilder for TutorPromptBuilder {
             None
         };
 
-        let mut prompt = format!(
+        let instructions = format!(
             concat!(
                 "You are NAVI Tutor, an autonomous learning guide.\n",
                 "Role: {role}. Teaching style: {style}. Response language: {language}.\n",
@@ -370,30 +370,37 @@ impl PromptBuilder for TutorPromptBuilder {
             workspace = input.project_dir.display(),
         );
 
-        if let Some(memory) = input.memory_injection {
-            prompt.push_str("\n=== Learning Memory ===\n");
-            prompt.push_str(&memory);
-            prompt.push('\n');
+        let mut developer_messages = Vec::new();
+
+        if let Some(memory) = &input.memory_injection {
+            if !memory.trim().is_empty() {
+                developer_messages.push(ModelMessage::developer(format!(
+                    "=== Learning Memory ===\n{memory}"
+                )));
+            }
         }
-        prompt.push_str("\n=== Workspace Instructions ===\n");
-        prompt.push_str(&agents);
+        developer_messages.push(ModelMessage::developer(format!(
+            "=== Workspace Instructions ===\n{agents}"
+        )));
         if let Some(context) = render_context_packets(&input.context_packets) {
-            prompt.push_str("\n\n");
-            prompt.push_str(&context);
+            developer_messages.push(ModelMessage::developer(context));
         }
         if let Some(skills) = render_available_skills(&input.available_skills) {
-            prompt.push_str("\n\n");
-            prompt.push_str(&skills);
+            developer_messages.push(ModelMessage::developer(skills));
         }
         if let Some(skills) = render_active_skills(&input.active_skills) {
-            prompt.push_str("\n\n");
-            prompt.push_str(&skills);
+            developer_messages.push(ModelMessage::developer(skills));
         }
         if let Some(manifest) = manifest {
-            prompt.push_str("\n\n=== Available Tutor Tools ===\n");
-            prompt.push_str(&manifest);
+            developer_messages.push(ModelMessage::developer(format!(
+                "=== Available Tutor Tools ===\n{manifest}"
+            )));
         }
-        prompt
+
+        RenderedPrompt {
+            instructions,
+            developer_messages,
+        }
     }
 }
 
@@ -605,8 +612,13 @@ mod tests {
         };
 
         let prompt = TutorPromptBuilder::default().build(input, Arc::new(PromptCache::new()));
-        assert!(prompt.contains("NAVI Tutor"));
-        assert!(prompt.contains("student remembers variables"));
-        assert!(prompt.contains("Response language: pt-BR"));
+        assert!(prompt.instructions.contains("NAVI Tutor"));
+        assert!(
+            prompt
+                .developer_messages
+                .iter()
+                .any(|m| m.content.contains("student remembers variables"))
+        );
+        assert!(prompt.instructions.contains("Response language: pt-BR"));
     }
 }

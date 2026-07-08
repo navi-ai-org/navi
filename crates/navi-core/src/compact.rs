@@ -200,15 +200,16 @@ impl CompactState {
             return Ok(None);
         }
 
-        // Split: system message(s) first, then conversation messages.
+        // Split: system + developer messages first (the prompt prefix),
+        // then conversation messages.
         let system_msgs: Vec<ModelMessage> = messages
             .iter()
-            .filter(|m| m.role == ModelRole::System)
+            .filter(|m| m.role == ModelRole::System || m.role == ModelRole::Developer)
             .cloned()
             .collect();
         let conversation_msgs: Vec<ModelMessage> = messages
             .iter()
-            .filter(|m| m.role != ModelRole::System)
+            .filter(|m| m.role != ModelRole::System && m.role != ModelRole::Developer)
             .cloned()
             .collect();
 
@@ -247,6 +248,7 @@ impl CompactState {
 
         let request = ModelRequest {
             model: model_name.to_string(),
+            instructions: None,
             messages: vec![
                 ModelMessage::system("You are a precise conversation summarizer."),
                 ModelMessage::user(prompt),
@@ -336,14 +338,11 @@ impl CompactState {
 fn build_conversation_text(messages: &[ModelMessage]) -> String {
     let mut text = String::new();
     for msg in messages {
-        if msg.role == ModelRole::System {
-            continue;
-        }
         let role_label = match msg.role {
             ModelRole::User => "User",
             ModelRole::Assistant => "Assistant",
             ModelRole::Tool => "Tool",
-            ModelRole::System => continue,
+            ModelRole::System | ModelRole::Developer => continue,
         };
         if msg.role == ModelRole::Tool {
             if let Some(ref tool_name) = msg.tool_name {

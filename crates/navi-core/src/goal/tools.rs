@@ -501,7 +501,10 @@ impl Tool for UpdateGoalChecklistTool {
                 let tasks: Vec<super::types::GoalTask> = task_descs
                     .iter()
                     .enumerate()
-                    .filter_map(|(i, v)| v.as_str().map(|s| super::types::GoalTask::new(i, s.to_string())))
+                    .filter_map(|(i, v)| {
+                        v.as_str()
+                            .map(|s| super::types::GoalTask::new(i, s.to_string()))
+                    })
                     .collect();
 
                 if tasks.is_empty() {
@@ -550,7 +553,10 @@ impl Tool for UpdateGoalChecklistTool {
                     }
                 };
 
-                let verification = args.get("verification").and_then(|v| v.as_str()).map(|s| s.to_string());
+                let verification = args
+                    .get("verification")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
 
                 let goal = match self.runtime.get_goal() {
                     Some(g) => g,
@@ -575,7 +581,11 @@ impl Tool for UpdateGoalChecklistTool {
                     let _ = self.runtime.update_task_status(task_id, status);
                     // Also record verification on the goal
                     if let Some(mut g) = self.runtime.get_goal() {
-                        g.set_task_verification(task_id, ver.clone(), status == super::types::TaskStatus::Verified);
+                        g.set_task_verification(
+                            task_id,
+                            ver.clone(),
+                            status == super::types::TaskStatus::Verified,
+                        );
                         self.runtime.update_goal(g.clone());
                         make_result(
                             &invocation.id,
@@ -595,7 +605,11 @@ impl Tool for UpdateGoalChecklistTool {
                             }),
                         )
                     } else {
-                        make_result(&invocation.id, false, json!({"error": "Failed to update task verification."}))
+                        make_result(
+                            &invocation.id,
+                            false,
+                            json!({"error": "Failed to update task verification."}),
+                        )
                     }
                 } else {
                     match self.runtime.update_task_status(task_id, status) {

@@ -140,20 +140,42 @@ fn build_commandcode_headers(api_key: &str, cli_version: &str) -> reqwest::heade
 }
 
 fn build_alpha_generate_body(request: &ModelRequest) -> Value {
-    let (system_prompt, messages) = commandcode_messages(&request.messages);
+    let (mut system_prompt, messages) = commandcode_messages(&request.messages);
+    // Prepend the stable base instructions to the system prompt so the
+    // prefix is cached independently of dynamic developer blocks.
+    if let Some(instructions) = &request.instructions
+        && !instructions.is_empty()
+    {
+        if system_prompt.is_empty() {
+            system_prompt = instructions.clone();
+        } else {
+            system_prompt = format!("{}\n\n{}", instructions, system_prompt);
+        }
+    }
 
     let cwd = std::env::current_dir()
         .map(|p| p.to_string_lossy().to_string())
         .unwrap_or_default();
     let date = chrono_now_date();
-    let environment = format!("{}, Node.js {}", std::env::consts::OS, "navi");
+    let environment = format!(
+        "{}, NAVI {}",
+        std::env::consts::OS,
+        env!("CARGO_PKG_VERSION")
+    );
+
+    // Derive max_tokens from the thinking budget, matching the logic used
+    // by the Anthropic and Responses providers.
+    let thinking = request.thinking.to_thinking_request();
+    let budget = thinking.budget_tokens.unwrap_or(0);
+    let max_tokens = (budget + 1024).max(4096);
+
     let (is_git_repo, current_branch, main_branch, git_status, recent_commits) =
         detect_git_context();
 
     let mut params = json!({
         "model": request.model,
         "messages": messages,
-        "max_tokens": 32000,
+        "max_tokens": max_tokens,
         "stream": true,
     });
 
@@ -294,7 +316,7 @@ fn commandcode_messages(messages: &[navi_core::ModelMessage]) -> (String, Vec<Va
 
     for message in messages {
         match message.role {
-            navi_core::ModelRole::System => {
+            navi_core::ModelRole::System | navi_core::ModelRole::Developer => {
                 if !message.content.trim().is_empty() {
                     system_parts.push(message.content.clone());
                 }
@@ -1181,6 +1203,7 @@ mod tests {
         use navi_core::{ModelMessage, ThinkingConfig};
         let request = ModelRequest {
             model: "xiaomi/mimo-v2.5-pro".to_string(),
+            instructions: None,
             messages: vec![ModelMessage::user("test")],
             thinking: ThinkingConfig::Off,
             tools: vec![],
@@ -1202,6 +1225,7 @@ mod tests {
 
         let request = ModelRequest {
             model: "xiaomi/mimo-v2.5-pro".to_string(),
+            instructions: None,
             messages: vec![
                 ModelMessage::system("be helpful"),
                 ModelMessage::user("hi"),
@@ -1237,6 +1261,7 @@ mod tests {
 
         let request = ModelRequest {
             model: "claude-sonnet-4-6".to_string(),
+            instructions: None,
             messages: vec![ModelMessage::user("test")],
             thinking: ThinkingConfig::Off,
             tools: vec![ToolDefinition {
@@ -1269,6 +1294,7 @@ mod tests {
 
         let request = ModelRequest {
             model: "minimax-m3".to_string(),
+            instructions: None,
             messages: vec![ModelMessage::user_multimodal(
                 "describe this image",
                 vec![

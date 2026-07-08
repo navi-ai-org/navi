@@ -297,9 +297,12 @@ deny_tool_regex = ["^danger_"]
         let test_model = options
             .iter()
             .find(|m| {
-                m.context_window_tokens.is_some_and(|c| c != crate::config::defaults::DEFAULT_CONTEXT_WINDOW)
+                m.context_window_tokens
+                    .is_some_and(|c| c != crate::config::defaults::DEFAULT_CONTEXT_WINDOW)
             })
-            .expect("embedded registry should have at least one model with non-default context window");
+            .expect(
+                "embedded registry should have at least one model with non-default context window",
+            );
 
         let mut config = NaviConfig::default();
         config.model.provider = test_model.provider_id.clone();
