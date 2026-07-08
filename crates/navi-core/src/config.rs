@@ -276,6 +276,38 @@ deny_tool_regex = ["^danger_"]
     }
 
     #[test]
+    fn glm_5_2_context_window_is_1048k_from_embedded_registry() {
+        use crate::config::providers::set_registry_store;
+        use crate::registry::RegistryStore;
+        use std::sync::Arc;
+
+        let store = RegistryStore::open_memory().expect("memory store");
+        let loaded = crate::registry::load_registry(&store);
+        assert!(
+            !loaded.providers.is_empty(),
+            "embedded registry should load providers"
+        );
+        set_registry_store(Arc::new(store));
+
+        let mut config = NaviConfig::default();
+        config.model.provider = "charm-hyper".to_string();
+        config.model.name = "GLM-5.2".to_string();
+
+        let ctx = effective_context_window(&config);
+        assert_eq!(
+            ctx, 1_048_000,
+            "GLM-5.2 should have 1048000 context window from embedded registry, got {}. \
+             Available models: {:?}",
+            ctx,
+            available_model_options(&config)
+                .iter()
+                .filter(|m| m.provider_id == "charm-hyper")
+                .map(|m| (&m.name, m.context_window_tokens))
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
     fn tool_prompt_manifest_defaults_to_disabled_for_native_models() {
         let config = NaviConfig::default();
         assert!(!effective_tool_prompt_manifest(&config));
