@@ -1,6 +1,7 @@
 mod attachment_tool;
 mod credentials;
 mod engine;
+mod engine_api;
 mod engine_driver;
 mod host_tool;
 mod tooling;
@@ -13,6 +14,7 @@ pub use credentials::{
     start_provider_device_oauth,
 };
 pub use engine::{NaviEngine, NaviEngineBuilder, NaviSession};
+pub use engine_api::{NAVI_ENGINE_API_METHODS, NAVI_NAPI_BOUND_METHODS};
 pub use engine_driver::EngineDriver;
 pub use host_tool::{
     HostToolDefinition, HostToolHandler, HostToolInvocation, SdkHostTool, SdkHostToolResult,
@@ -40,9 +42,9 @@ pub use navi_core::session::{
 // Event/session types
 pub use navi_core::{
     AgentEvent, AgentRunState, Capability, CapabilityDecision, CapabilityGrant, CapabilityLedger,
-    CapabilityLedgerEntry, CapabilityScope, GoalStatus, ModelMessage, ModelRole, QuestionOption,
-    QuestionRequest, QuestionResponse, RuntimeEvent, RuntimeEventKind, SessionGoal, SessionId,
-    SessionSnapshot, SubagentTranscriptItem, SubagentTranscriptKind, GoalTask, TaskStatus,
+    CapabilityLedgerEntry, CapabilityScope, GoalStatus, GoalTask, ModelMessage, ModelRole,
+    QuestionOption, QuestionRequest, QuestionResponse, RuntimeEvent, RuntimeEventKind, SessionGoal,
+    SessionId, SessionSnapshot, SubagentTranscriptItem, SubagentTranscriptKind, TaskStatus,
 };
 // Event auxiliary types
 pub use navi_core::event::RepetitionWarningKind;

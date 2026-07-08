@@ -110,7 +110,7 @@ fn plugin_policy_alias_enables_learning_components() {
     );
 
     assert!(warnings.is_empty());
-    assert!(prompt.contains("You are NAVI Tutor"));
+    assert!(prompt.instructions.contains("You are NAVI Tutor"));
 }
 
 #[test]
