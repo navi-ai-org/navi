@@ -82,12 +82,18 @@ impl NaviConfig {
 }
 
 /// Saves the config to the global config path, creating parent directories if needed.
+/// Strips model lists from providers that exist in the registry catalog so the
+/// config.toml stays clean — the registry SQLite is the authoritative source
+/// for model metadata, not the config file.
 pub fn save_global_config(global_path: &Path, config: &NaviConfig) -> Result<PathBuf> {
     if let Some(parent) = global_path.parent() {
         fs::create_dir_all(parent)
             .with_context(|| format!("failed to create {}", parent.display()))?;
     }
-    let content = toml::to_string_pretty(config).context("failed to serialize config")?;
+    let mut config_to_save = config.clone();
+    strip_registry_provider_models(&mut config_to_save);
+    let content = toml::to_string_pretty(&config_to_save)
+        .context("failed to serialize config")?;
     fs::write(global_path, &content)
         .with_context(|| format!("failed to write {}", global_path.display()))?;
     Ok(global_path.to_path_buf())
@@ -100,10 +106,32 @@ pub fn save_project_config(cwd: &Path, config: &NaviConfig) -> Result<PathBuf> {
         fs::create_dir_all(parent)
             .with_context(|| format!("failed to create {}", parent.display()))?;
     }
-    let content = toml::to_string_pretty(config).context("failed to serialize config")?;
+    let mut config_to_save = config.clone();
+    strip_registry_provider_models(&mut config_to_save);
+    let content = toml::to_string_pretty(&config_to_save)
+        .context("failed to serialize config")?;
     fs::write(&project_path, &content)
         .with_context(|| format!("failed to write {}", project_path.display()))?;
     Ok(project_path)
+}
+
+/// Removes model lists from provider overrides that match a provider in the
+/// registry catalog. The registry is the authoritative source for model
+/// metadata (context_window_tokens, pricing, etc). Provider overrides in
+/// config.toml should only carry provider-level settings (base_url,
+/// request_options, etc), not model lists.
+fn strip_registry_provider_models(config: &mut NaviConfig) {
+    let registry_ids: std::collections::HashSet<String> =
+        crate::config::providers::base_provider_catalog()
+            .into_iter()
+            .map(|p| p.id)
+            .collect();
+
+    for provider in &mut config.providers {
+        if registry_ids.contains(&provider.id) {
+            provider.models.clear();
+        }
+    }
 }
 
 enum ConfigSource {
