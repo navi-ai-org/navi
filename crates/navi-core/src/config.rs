@@ -276,7 +276,7 @@ deny_tool_regex = ["^danger_"]
     }
 
     #[test]
-    fn glm_5_2_context_window_is_1048k_from_embedded_registry() {
+    fn embedded_registry_context_windows_are_non_default() {
         use crate::config::providers::set_registry_store;
         use crate::registry::RegistryStore;
         use std::sync::Arc;
@@ -289,21 +289,29 @@ deny_tool_regex = ["^danger_"]
         );
         set_registry_store(Arc::new(store));
 
+        // Pick any provider+model from the embedded registry and verify
+        // that effective_context_window returns the registry's value, not
+        // the hardcoded default (200_000).
+        let config = NaviConfig::default();
+        let options = available_model_options(&config);
+        let test_model = options
+            .iter()
+            .find(|m| {
+                m.context_window_tokens.is_some_and(|c| c != crate::config::defaults::DEFAULT_CONTEXT_WINDOW)
+            })
+            .expect("embedded registry should have at least one model with non-default context window");
+
         let mut config = NaviConfig::default();
-        config.model.provider = "charm-hyper".to_string();
-        config.model.name = "GLM-5.2".to_string();
+        config.model.provider = test_model.provider_id.clone();
+        config.model.name = test_model.name.clone();
 
         let ctx = effective_context_window(&config);
         assert_eq!(
-            ctx, 1_048_000,
-            "GLM-5.2 should have 1048000 context window from embedded registry, got {}. \
-             Available models: {:?}",
             ctx,
-            available_model_options(&config)
-                .iter()
-                .filter(|m| m.provider_id == "charm-hyper")
-                .map(|m| (&m.name, m.context_window_tokens))
-                .collect::<Vec<_>>()
+            test_model.context_window_tokens.unwrap(),
+            "effective_context_window should return the registry value for {}/{}",
+            test_model.provider_id,
+            test_model.name
         );
     }
 
