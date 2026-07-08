@@ -472,6 +472,76 @@ impl NaviNapiEngine {
             .map_err(to_napi_error)
     }
 
+    #[napi]
+    pub async fn update_goal_status(
+        &self,
+        session_id: String,
+        status: String,
+    ) -> Result<JsonValue> {
+        let goal_status = match status.as_str() {
+            "active" => navi_sdk::GoalStatus::Active,
+            "paused" => navi_sdk::GoalStatus::Paused,
+            "blocked" => navi_sdk::GoalStatus::Blocked,
+            "usage_limited" => navi_sdk::GoalStatus::UsageLimited,
+            "budget_limited" => navi_sdk::GoalStatus::BudgetLimited,
+            "complete" => navi_sdk::GoalStatus::Complete,
+            other => {
+                return Err(to_napi_error(anyhow::anyhow!(
+                    "unknown goal status: {other}"
+                )))
+            }
+        };
+        let goal = self
+            .inner
+            .update_goal_status(&session_id, goal_status)
+            .await
+            .map_err(to_napi_error)?;
+        serde_json::to_value(goal).map_err(to_napi_error)
+    }
+
+    #[napi]
+    pub async fn update_goal_checklist(
+        &self,
+        session_id: String,
+        tasks: JsonValue,
+    ) -> Result<JsonValue> {
+        let tasks: Vec<navi_sdk::GoalTask> =
+            serde_json::from_value(tasks).map_err(to_napi_error)?;
+        let goal = self
+            .inner
+            .update_goal_checklist(&session_id, tasks)
+            .await
+            .map_err(to_napi_error)?;
+        serde_json::to_value(goal).map_err(to_napi_error)
+    }
+
+    #[napi]
+    pub async fn update_goal_task_status(
+        &self,
+        session_id: String,
+        task_id: u32,
+        status: String,
+    ) -> Result<JsonValue> {
+        let task_status = match status.as_str() {
+            "pending" => navi_sdk::TaskStatus::Pending,
+            "in_progress" => navi_sdk::TaskStatus::InProgress,
+            "done" => navi_sdk::TaskStatus::Done,
+            "verified" => navi_sdk::TaskStatus::Verified,
+            "skipped" => navi_sdk::TaskStatus::Skipped,
+            other => {
+                return Err(to_napi_error(anyhow::anyhow!(
+                    "unknown task status: {other}"
+                )))
+            }
+        };
+        let goal = self
+            .inner
+            .update_goal_task_status(&session_id, task_id as usize, task_status)
+            .await
+            .map_err(to_napi_error)?;
+        serde_json::to_value(goal).map_err(to_napi_error)
+    }
+
     // ── Questions ──────────────────────────────────────────────────────
 
     #[napi]

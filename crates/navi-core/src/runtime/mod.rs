@@ -325,6 +325,28 @@ impl AgentRuntime {
         self.goal_runtime.clear_goal();
     }
 
+    /// Updates the stored goal (used after status transitions).
+    pub fn update_goal(&self, goal: crate::goal::types::SessionGoal) {
+        self.goal_runtime.update_goal(goal);
+    }
+
+    /// Updates the goal checklist (replaces all tasks).
+    pub fn update_goal_checklist(
+        &self,
+        tasks: Vec<crate::goal::types::GoalTask>,
+    ) -> Option<crate::goal::types::SessionGoal> {
+        self.goal_runtime.update_checklist(tasks)
+    }
+
+    /// Updates a single task's status in the goal checklist.
+    pub fn update_goal_task_status(
+        &self,
+        task_id: usize,
+        status: crate::goal::types::TaskStatus,
+    ) -> Option<crate::goal::types::SessionGoal> {
+        self.goal_runtime.update_task_status(task_id, status)
+    }
+
     /// Returns a continuation steering prompt if the goal is active and should auto-continue.
     pub fn goal_idle_prompt(&self) -> Option<String> {
         self.goal_extension.on_idle()
