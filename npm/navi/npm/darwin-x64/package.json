@@ -1,11 +1,17 @@
 {
   "name": "@navi-agent/navi-darwin-x64",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "macOS x64 prebuilt binary for @navi-agent/navi.",
   "license": "Apache-2.0",
-  "os": ["darwin"],
-  "cpu": ["x64"],
-  "files": ["navi"],
+  "os": [
+    "darwin"
+  ],
+  "cpu": [
+    "x64"
+  ],
+  "files": [
+    "navi"
+  ],
   "bin": {
     "navi": "navi"
   },
