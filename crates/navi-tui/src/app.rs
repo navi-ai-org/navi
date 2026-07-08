@@ -414,6 +414,7 @@ impl TuiApp {
         }
 
         crate::panels::register_modal_panels(&mut app);
+        crate::panels::regions::register_region_panels(&mut app);
 
         Ok(app)
     }

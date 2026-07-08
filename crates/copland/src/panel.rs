@@ -71,6 +71,14 @@ pub trait Panel: Send + Sync {
         PanelSize::Flex
     }
 
+    /// Preferred size given the current context. Override this when the panel's
+    /// size depends on app state (e.g. dynamic input height). Defaults to
+    /// `preferred_size()` for backward compatibility.
+    fn preferred_size_in_context(&self, ctx: &dyn PanelContext) -> PanelSize {
+        let _ = ctx;
+        self.preferred_size()
+    }
+
     /// Whether this panel should be visible in the current state.
     fn is_visible(&self) -> bool {
         true
@@ -175,14 +183,25 @@ impl PanelManager {
 
     /// Render all panels: regions first (top-to-bottom), then overlays.
     pub fn render(&mut self, frame: &mut Frame, ctx: &dyn PanelContext) {
+        self.render_regions(frame, ctx);
+        self.render_overlays(frame, ctx);
+    }
+
+    /// Render only region panels (top-to-bottom).
+    pub fn render_regions(&mut self, frame: &mut Frame, ctx: &dyn PanelContext) {
         let area = ctx.area();
-        let region_areas = self.layout_regions(area);
+        let region_areas = self.layout_regions(area, ctx);
 
         for (panel, rect) in self.regions.iter_mut().zip(region_areas.iter()) {
             if panel.is_visible() {
                 panel.render(frame, *rect, ctx);
             }
         }
+    }
+
+    /// Render only overlay panels (sorted by z-order, highest first).
+    pub fn render_overlays(&mut self, frame: &mut Frame, ctx: &dyn PanelContext) {
+        let area = ctx.area();
 
         for overlay in self
             .visible_overlays_mut()
@@ -231,16 +250,16 @@ impl PanelManager {
     /// 2. Give `Min` panels their minimum height.
     /// 3. Distribute remaining space among `Min` and `Flex` panels.
     ///    `Min` panels grow first (up to reasonable bounds), then `Flex`.
-    fn layout_regions(&self, area: Rect) -> Vec<Rect> {
+    fn layout_regions(&self, area: Rect, ctx: &dyn PanelContext) -> Vec<Rect> {
         if self.regions.is_empty() {
             return Vec::new();
         }
 
-        // Collect visible panel info.
+        // Collect visible panel info with context-aware sizes.
         let visible: Vec<(bool, PanelSize)> = self
             .regions
             .iter()
-            .map(|p| (p.is_visible(), p.preferred_size()))
+            .map(|p| (p.is_visible(), p.preferred_size_in_context(ctx)))
             .collect();
 
         let mut fixed_total: u16 = 0;
@@ -374,7 +393,10 @@ mod tests {
             z: 0,
         }));
 
-        let areas = mgr.layout_regions(Rect::new(0, 0, 80, 20));
+        let ctx = TestCtx {
+            area: Rect::new(0, 0, 80, 20),
+        };
+        let areas = mgr.layout_regions(Rect::new(0, 0, 80, 20), &ctx);
         assert_eq!(areas[0].height, 1);
         assert_eq!(areas[1].height, 16); // 20 - 1 - 3
         assert_eq!(areas[2].height, 3);
@@ -402,7 +424,10 @@ mod tests {
             z: 0,
         }));
 
-        let areas = mgr.layout_regions(Rect::new(0, 0, 80, 16));
+        let ctx = TestCtx {
+            area: Rect::new(0, 0, 80, 16),
+        };
+        let areas = mgr.layout_regions(Rect::new(0, 0, 80, 16), &ctx);
         assert_eq!(areas[0].height, 1);
         // 15 remaining, min 5 + 5 = 10, 5 extra → split 3+2
         assert_eq!(areas[1].height, 8); // 5 + 3

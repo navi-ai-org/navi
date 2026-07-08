@@ -26,9 +26,7 @@ use crate::TuiApp;
 use crate::render::{fill_modal_scrim, modal_rect, opaque_fill};
 use crate::state::Mode;
 use crate::theme::{self, bg, ghost, muted, text};
-use crate::ui::{RootLayoutHeights, root_layout, viewport_rect};
-
-
+use crate::ui::viewport_rect;
 
 pub(crate) fn render(frame: &mut Frame<'_>, app: &mut TuiApp) {
     theme::with_palette(&app.theme_palette(), || render_inner(frame, app));
@@ -40,53 +38,20 @@ fn render_inner(frame: &mut Frame<'_>, app: &mut TuiApp) {
     opaque_fill(frame, area, Style::default().bg(theme::bg()));
     let content_area = viewport_rect(area);
 
-    let input_width = composer_text_width(app, content_area.width);
-    let compact_viewport = content_area.width < 64 || content_area.height < 18;
-    let mut input_height = input::composer_height(app, input_width);
-    if compact_viewport {
-        input_height = input_height.min(3);
-    }
-    let input_hint_height = if compact_viewport {
-        0
-    } else {
-        input::composer_hint_height(app)
-    };
-    let image_preview_height = 0;
-    let input_activity_height = input::composer_activity_height(app);
-    let layout = root_layout(
-        content_area,
-        RootLayoutHeights {
-            header: 1,
-            image_preview: image_preview_height,
-            input_activity: input_activity_height,
-            input: input_height,
-            input_hint: input_hint_height,
-        },
-    );
-
-    render_header(frame, app, layout.header);
-    chat::render_chat_area(frame, app, layout.chat);
-
-    // Render image previews above input
-    let input_area = layout.input;
-
-    input::render_input_activity(frame, app, layout.input_activity);
-    input::render_input(frame, app, input_area);
-    input::render_input_hint(frame, app, layout.input_hint);
-
-    if modal_backdrop_active(app) {
-        fill_modal_scrim(frame, content_area);
-    }
-
     // Load plugin-registered TUI panels once after the session is started.
     if !app.plugin_panels_loaded && !app.session_id.as_str().is_empty() {
         crate::panels::load_plugin_panels(app);
         app.plugin_panels_loaded = true;
     }
 
-    // Render modals via the PanelManager (copland).
-    // All modals — including Mcp and Setup — are now registered as
-    // overlay panels in the PanelManager.
+    // Render region panels (header, chat, input, etc.) via the PanelManager.
+    crate::panels::render_regions(frame, app, content_area);
+
+    if modal_backdrop_active(app) {
+        fill_modal_scrim(frame, content_area);
+    }
+
+    // Render overlay panels (modals, plugin panels) via the PanelManager.
     crate::panels::render_overlays(frame, app, area);
 
     if !app.pending_approvals.is_empty() {
@@ -96,27 +61,11 @@ fn render_inner(frame: &mut Frame<'_>, app: &mut TuiApp) {
     notification::render_notification(frame, app, area);
 }
 
-fn composer_text_width(_app: &TuiApp, width: u16) -> usize {
-    width.saturating_sub(4) as usize
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn composer_areas_use_full_width() {
-        let app = crate::tests::test_app("");
-        let width = composer_text_width(&app, 100);
-        assert_eq!(width, 96);
-    }
-}
-
 fn modal_backdrop_active(app: &TuiApp) -> bool {
     app.mode != Mode::Normal || !app.pending_approvals.is_empty()
 }
 
-fn render_header(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
+pub(crate) fn render_header(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
     if area.width == 0 || area.height == 0 {
         return;
     }
