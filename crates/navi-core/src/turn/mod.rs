@@ -454,6 +454,13 @@ async fn collect_model_output(ctx: &TurnContext, request: ModelRequest) -> Resul
                 }
             }
             ModelStreamEvent::ToolCall(invocation) => {
+                if invocation.tool_name.is_empty() {
+                    tracing::warn!(
+                        invocation_id = %invocation.id,
+                        "skipping tool call with empty tool name from model"
+                    );
+                    continue;
+                }
                 tracing::info!(
                     tool = %invocation.tool_name,
                     invocation_id = %invocation.id,

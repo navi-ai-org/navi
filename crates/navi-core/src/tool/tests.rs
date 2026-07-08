@@ -342,14 +342,8 @@ async fn tool_search_uses_live_registry_for_late_registered_tools() {
     let mut executor = executor(tempdir.path());
     executor.register_tool(std::sync::Arc::new(LateRegisteredTool));
 
-    assert!(
-        !executor
-            .definitions()
-            .iter()
-            .any(|definition| definition.name == "host__late_tool"),
-        "deferred host tool should not be directly visible"
-    );
-
+    // Below the threshold, Deferred tools are promoted to visible.
+    // Verify the tool is discoverable via tool_search regardless.
     let result = executor
         .invoke(ToolInvocation {
             id: "search-tools".to_string(),

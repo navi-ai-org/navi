@@ -362,7 +362,9 @@ impl ChatToolCallAccumulator {
             }
             if let Some(function) = chunk.get("function") {
                 if let Some(name) = function.get("name").and_then(Value::as_str) {
-                    call.name = Some(name.to_string());
+                    if !name.is_empty() {
+                        call.name = Some(name.to_string());
+                    }
                 }
                 if let Some(arguments) = function.get("arguments").and_then(Value::as_str) {
                     call.arguments.push_str(arguments);

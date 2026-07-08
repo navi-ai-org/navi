@@ -144,6 +144,8 @@ pub struct TuiApp {
     pub(crate) expanded_tool_results: HashSet<String>,
     pub(crate) hovered_chat_source: Option<crate::state::ChatLineSource>,
     pub(crate) cancel_esc_pressed: bool,
+    pub(crate) last_click_time: Option<std::time::Instant>,
+    pub(crate) last_click_pos: Option<(u16, u16)>,
 
     /// Cached set of canonical provider IDs with resolved credentials.
     /// Populated by refresh_authenticated_providers().
@@ -357,6 +359,8 @@ impl TuiApp {
             expanded_tool_results: HashSet::new(),
             hovered_chat_source: None,
             cancel_esc_pressed: false,
+            last_click_time: None,
+            last_click_pos: None,
             authenticated_providers: HashSet::new(),
             available_skills: Vec::new(),
             active_skills: initial_active_skills,
