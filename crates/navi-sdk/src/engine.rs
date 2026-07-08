@@ -471,6 +471,46 @@ impl NaviEngine {
         Ok(())
     }
 
+    /// Updates the goal status (e.g. pause, resume, complete, blocked).
+    pub async fn update_goal_status(
+        &self,
+        session_id: &str,
+        status: navi_core::GoalStatus,
+    ) -> Result<Option<SessionGoal>> {
+        let session = self.session(session_id)?;
+        let runtime = session.runtime.lock().await;
+        if let Some(mut goal) = runtime.get_goal() {
+            goal.transition_to(status);
+            runtime.update_goal(goal.clone());
+            Ok(Some(goal))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Replaces the goal's checklist with a new set of tasks.
+    pub async fn update_goal_checklist(
+        &self,
+        session_id: &str,
+        tasks: Vec<navi_core::GoalTask>,
+    ) -> Result<Option<SessionGoal>> {
+        let session = self.session(session_id)?;
+        let runtime = session.runtime.lock().await;
+        Ok(runtime.update_goal_checklist(tasks))
+    }
+
+    /// Updates a single task's status in the goal checklist.
+    pub async fn update_goal_task_status(
+        &self,
+        session_id: &str,
+        task_id: usize,
+        status: navi_core::TaskStatus,
+    ) -> Result<Option<SessionGoal>> {
+        let session = self.session(session_id)?;
+        let runtime = session.runtime.lock().await;
+        Ok(runtime.update_goal_task_status(task_id, status))
+    }
+
     pub async fn cancel_turn(&self, session_id: &str) -> Result<()> {
         let session = self.session(session_id)?;
         session.turn_canceller.cancel();

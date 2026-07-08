@@ -82,7 +82,8 @@ pub use event::{
 };
 pub use goal::{
     CreateGoalTool, GetGoalTool, GoalExtension, GoalId, GoalRuntimeHandle, GoalService, GoalStatus,
-    SessionGoal, UpdateGoalTool, goal_tool_definitions,
+    GoalTask, SessionGoal, TaskStatus, UpdateGoalChecklistTool, UpdateGoalTool,
+    goal_tool_definitions,
 };
 pub use harness::{
     AgentRunState, HarnessPolicy, build_system_prompt, build_system_prompt_with_memory,
