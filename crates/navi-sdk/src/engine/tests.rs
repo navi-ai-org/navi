@@ -70,6 +70,8 @@ fn test_config() -> NaviConfig {
             supports_documents: None,
 
             tool_prompt_manifest: None,
+            pricing_input_per_1m: None,
+            pricing_output_per_1m: None,
         }],
 
         ..Default::default()

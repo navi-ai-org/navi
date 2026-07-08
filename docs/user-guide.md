@@ -153,6 +153,7 @@ Some providers need request/stream adapters even when they expose an OpenAI-comp
 | `google-gemini` | chat completions | Gemini Generate Content adapter. |
 | `openrouter` | chat completions | Required headers and reasoning config. |
 | `github-copilot` | chat completions | GitHub device OAuth bearer tokens. |
+| `xai` | responses | Platform API key (`XAI_API_KEY`) or Grok OAuth (browser/device) via `auth.x.ai`. OAuth also reuses `~/.grok/auth.json` when present. |
 | `gitlawb` | chat completions | OpenAI-compatible gateway at `https://opengateway.gitlawb.com/v1`. |
 | `groq` | chat completions | OpenAI-compatible with Groq adapter. |
 | `xai` | responses | Reasoning effort mapping. |

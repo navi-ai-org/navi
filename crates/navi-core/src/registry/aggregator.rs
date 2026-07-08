@@ -10,7 +10,9 @@ use std::collections::HashSet;
 
 use crate::config::types::ProviderConfig;
 use crate::registry::store::RegistryStore;
-use crate::registry::types::{RegistryAttachments, RegistryModel, RegistryProvider};
+use crate::registry::types::{
+    RegistryAttachments, RegistryModel, RegistryModelPricing, RegistryProvider,
+};
 
 /// OpenRouter `/models` response item.
 #[derive(Debug, serde::Deserialize)]
@@ -26,6 +28,17 @@ struct OpenRouterModel {
     supported_parameters: Vec<String>,
     #[serde(default)]
     reasoning: Option<OpenRouterReasoning>,
+    #[serde(default)]
+    pricing: Option<OpenRouterPricing>,
+}
+
+#[derive(Debug, Default, serde::Deserialize)]
+struct OpenRouterPricing {
+    /// USD per token (not per 1M) as returned by OpenRouter.
+    #[serde(default)]
+    prompt: Option<String>,
+    #[serde(default)]
+    completion: Option<String>,
 }
 
 #[derive(Debug, Default, serde::Deserialize)]
@@ -61,6 +74,26 @@ fn extract_tags(id: &str) -> Vec<String> {
         tags.push("online".to_string());
     }
     tags
+}
+
+fn openrouter_pricing(model: &OpenRouterModel) -> Option<RegistryModelPricing> {
+    let pricing = model.pricing.as_ref()?;
+    let parse = |s: &Option<String>| -> Option<f64> {
+        let raw = s.as_ref()?;
+        let per_token: f64 = raw.parse().ok()?;
+        // OpenRouter returns USD per token; convert to per 1M tokens.
+        Some(per_token * 1_000_000.0)
+    };
+    let input = parse(&pricing.prompt);
+    let output = parse(&pricing.completion);
+    if input.is_none() && output.is_none() {
+        return None;
+    }
+    Some(RegistryModelPricing {
+        input_per_1m: input,
+        output_per_1m: output,
+        currency: Some("USD".into()),
+    })
 }
 
 /// Strips `:free`, `:nitro`, `:online` suffixes from the model ID.
@@ -143,6 +176,7 @@ fn openrouter_model_to_registry(model: &OpenRouterModel) -> RegistryModel {
         supports_documents: attachments.documents,
         attachments,
         capabilities,
+        pricing: openrouter_pricing(model),
     }
 }
 
@@ -344,6 +378,7 @@ mod tests {
                 mandatory: Some(false),
                 default_enabled: Some(true),
             }),
+            pricing: None,
         };
         let reg = openrouter_model_to_registry(&model);
         assert_eq!(reg.name, "tencent/hy3");
@@ -351,5 +386,26 @@ mod tests {
         assert!(reg.capabilities.contains(&"tool_calling".to_string()));
         assert_eq!(reg.supports_thinking, Some(true));
         assert_eq!(reg.context_window_tokens, Some(262144));
+    }
+
+    #[test]
+    fn openrouter_pricing_converts_per_token_to_per_1m() {
+        let model = OpenRouterModel {
+            id: "openai/gpt-5".to_string(),
+            context_length: Some(128000),
+            architecture: None,
+            top_provider: None,
+            supported_parameters: Vec::new(),
+            reasoning: None,
+            pricing: Some(OpenRouterPricing {
+                prompt: Some("0.000002".into()),    // $2 / 1M
+                completion: Some("0.000006".into()), // $6 / 1M
+            }),
+        };
+        let reg = openrouter_model_to_registry(&model);
+        let pricing = reg.pricing.expect("pricing");
+        assert!((pricing.input_per_1m.unwrap() - 2.0).abs() < 1e-9);
+        assert!((pricing.output_per_1m.unwrap() - 6.0).abs() < 1e-9);
+        assert_eq!(pricing.currency.as_deref(), Some("USD"));
     }
 }

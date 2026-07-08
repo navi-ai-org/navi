@@ -24,6 +24,34 @@ pub fn try_read_clipboard_image() -> Option<PendingImage> {
     }
 }
 
+/// Reads plain text from the system clipboard (Wayland `wl-paste` / X11 `xclip`).
+pub fn try_read_clipboard_text() -> Option<String> {
+    if !cfg!(target_os = "linux") {
+        return None;
+    }
+    let session = ClipboardSession::detect()?;
+    let output = match session {
+        ClipboardSession::Wayland => Command::new("wl-paste")
+            .args(["--type", "text/plain", "--no-newline"])
+            .output()
+            .ok()?,
+        ClipboardSession::X11 => Command::new("xclip")
+            .args(["-selection", "clipboard", "-o"])
+            .output()
+            .ok()?,
+    };
+    if !output.status.success() {
+        return None;
+    }
+    let text = String::from_utf8(output.stdout).ok()?;
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
+}
+
 /// Attempts to parse the given string as a file path and load it if it is an image.
 /// This enables "drag and drop" functionality because terminal emulators paste
 /// the dropped file's path.

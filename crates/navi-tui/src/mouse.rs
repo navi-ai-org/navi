@@ -630,7 +630,7 @@ fn active_scroll_target(app: &TuiApp) -> Option<ScrollTarget> {
         | Mode::BgModelPicker
         | Mode::AttachmentModels => None,
         Mode::Setup => None,
-        Mode::Plan | Mode::ConfirmPlan => None,
+        Mode::ConfirmPlan => None,
     }
 }
 

@@ -262,6 +262,8 @@ fn minimal_fallback_providers() -> Vec<ProviderConfig> {
             supports_video: None,
             supports_documents: None,
             tool_prompt_manifest: None,
+            pricing_input_per_1m: None,
+            pricing_output_per_1m: None,
         }],
         request_options: crate::config::providers::default_request_options_for("openai"),
         ..Default::default()
@@ -655,6 +657,7 @@ mod tests {
                 supports_documents: None,
                 attachments: Default::default(),
                 capabilities: Vec::new(),
+                pricing: None,
             }],
         }
     }

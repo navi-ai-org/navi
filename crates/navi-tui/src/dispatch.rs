@@ -2,7 +2,7 @@ use crate::state::SetupPhase;
 use navi_sdk::{
     AgentEvent, ApprovalDecision, ApprovalRisk, BackgroundCommandSnapshot, LoadedConfig,
     ModelMessage, NaviUsageReport, available_model_options, canonical_provider_id,
-    compact_tool_observation,
+    compact_tool_observation, provider_catalog,
 };
 
 use crate::app::TuiApp;
@@ -31,6 +31,7 @@ pub enum AsyncEvent {
         provider_id: String,
         verification_uri: String,
         user_code: String,
+        paste_slot: Option<std::sync::Arc<std::sync::Mutex<Option<String>>>>,
     },
     OAuthCompleted {
         provider_id: String,
@@ -196,14 +197,26 @@ pub(crate) fn handle_async_event(app: &mut TuiApp, event: AsyncEvent) {
             provider_id,
             verification_uri,
             user_code,
+            paste_slot,
         } => {
             app.oauth_state = Some(OAuthUiState {
                 provider_id,
-                verification_uri,
+                verification_uri: verification_uri.clone(),
                 user_code,
+                paste_slot,
+                paste_status: None,
             });
             crate::keybindings::replace_modal(app, ModalKind::OAuth);
-            show_notification(app, "OAuth", "Open the login link to continue.");
+            // Open the authorize / device URL automatically (user can still
+            // copy it from the OAuth modal with `c` if the browser fails).
+            if !verification_uri.is_empty() {
+                crate::browser::open_url(app, verification_uri);
+            }
+            show_notification(
+                app,
+                "OAuth",
+                "Browser opened — finish login. If a code is shown, press p/Ctrl+V to paste it.",
+            );
         }
         AsyncEvent::OAuthCompleted {
             provider_id,
@@ -410,6 +423,21 @@ fn handle_agent_event(app: &mut TuiApp, event: AgentEvent) {
             cache_read_tokens,
         } => {
             app.compact_state.update_usage(input_tokens);
+            app.usage_state.session_input_tokens =
+                app.usage_state.session_input_tokens.saturating_add(input_tokens);
+            app.usage_state.session_output_tokens = app
+                .usage_state
+                .session_output_tokens
+                .saturating_add(output_tokens);
+            app.usage_state.last_input_tokens = Some(input_tokens);
+            app.usage_state.last_output_tokens = Some(output_tokens);
+
+            // Non-OAuth / API-key billing: estimate spend from registry list prices.
+            if let Some(cost) = estimate_turn_cost_usd(app, input_tokens, output_tokens) {
+                app.usage_state.session_cost_usd += cost;
+                app.usage_state.session_cost_known = true;
+            }
+
             if let Some(msg) = app.messages.last_mut()
                 && msg.role == ChatRole::Assistant
                 && msg.usage_label.is_none()
@@ -553,6 +581,7 @@ fn handle_agent_event(app: &mut TuiApp, event: AgentEvent) {
                 steps: steps.clone(),
             });
             show_notification(app, "Plan Proposed", &title);
+            crate::keybindings::replace_modal(app, ModalKind::ConfirmPlan);
         }
         AgentEvent::AgentModeChanged { mode } => {
             app.agent_mode = mode;
@@ -565,6 +594,9 @@ fn handle_agent_event(app: &mut TuiApp, event: AgentEvent) {
             } else {
                 show_notification(app, "Default Mode", "Full tool access restored.");
                 app.proposed_plan = None;
+                if app.mode == Mode::ConfirmPlan {
+                    crate::keybindings::close_active_modal(app);
+                }
             }
         }
     }
@@ -647,6 +679,35 @@ fn handle_setup_interview_done(app: &mut TuiApp) {
     app.reset_run_state();
     show_notification(app, "Setup", "Onboarding complete. Welcome to NAVI!");
 }
+
+/// Estimate USD cost for a turn from registry list pricing (per 1M tokens).
+///
+/// Used for non-OAuth / API-key providers that bill per token. Returns `None`
+/// when the selected model has no known pricing.
+fn estimate_turn_cost_usd(app: &TuiApp, input_tokens: u64, output_tokens: u64) -> Option<f64> {
+    let provider_id = app.loaded_config.config.model.provider.as_str();
+    let model_name = app.loaded_config.config.model.name.as_str();
+    let model = provider_catalog(&app.loaded_config.config)
+        .into_iter()
+        .find(|p| canonical_provider_id(&p.id) == canonical_provider_id(provider_id))
+        .and_then(|p| p.models.into_iter().find(|m| m.name == model_name))?;
+
+    let input_rate = model.pricing_input_per_1m;
+    let output_rate = model.pricing_output_per_1m;
+    if input_rate.is_none() && output_rate.is_none() {
+        return None;
+    }
+
+    let mut cost = 0.0;
+    if let Some(rate) = input_rate {
+        cost += (input_tokens as f64 / 1_000_000.0) * rate;
+    }
+    if let Some(rate) = output_rate {
+        cost += (output_tokens as f64 / 1_000_000.0) * rate;
+    }
+    Some(cost)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -878,6 +939,78 @@ mod tests {
 
         let msg = app.messages.last().unwrap();
         assert_eq!(msg.usage_label.as_deref(), Some("3k in · 1k out"));
+    }
+
+    #[test]
+    fn usage_reported_accumulates_session_cost_from_pricing() {
+        let mut app = test_app("");
+        // Inject list pricing on the selected model (API-key / non-OAuth path).
+        let provider_id = app.loaded_config.config.model.provider.clone();
+        let model_name = app.loaded_config.config.model.name.clone();
+        if let Some(provider) = app
+            .loaded_config
+            .config
+            .providers
+            .iter_mut()
+            .find(|p| p.id == provider_id)
+        {
+            if let Some(model) = provider.models.iter_mut().find(|m| m.name == model_name) {
+                model.pricing_input_per_1m = Some(1.0); // $1 / 1M input
+                model.pricing_output_per_1m = Some(2.0); // $2 / 1M output
+            } else {
+                provider.models.push(navi_sdk::ProviderModelConfig {
+                    name: model_name.clone(),
+                    task_size: None,
+                    context_window_tokens: None,
+                    max_output_tokens: None,
+                    recommended_temperature: None,
+                    supports_thinking: None,
+                    supports_images: None,
+                    supports_audio: None,
+                    supports_video: None,
+                    supports_documents: None,
+                    tool_prompt_manifest: None,
+                    pricing_input_per_1m: Some(1.0),
+                    pricing_output_per_1m: Some(2.0),
+                });
+            }
+        } else {
+            app.loaded_config.config.providers.push(navi_sdk::ProviderConfig {
+                id: provider_id,
+                models: vec![navi_sdk::ProviderModelConfig {
+                    name: model_name,
+                    task_size: None,
+                    context_window_tokens: None,
+                    max_output_tokens: None,
+                    recommended_temperature: None,
+                    supports_thinking: None,
+                    supports_images: None,
+                    supports_audio: None,
+                    supports_video: None,
+                    supports_documents: None,
+                    tool_prompt_manifest: None,
+                    pricing_input_per_1m: Some(1.0),
+                    pricing_output_per_1m: Some(2.0),
+                }],
+                ..Default::default()
+            });
+        }
+
+        handle_async_event(
+            &mut app,
+            AsyncEvent::Agent(AgentEvent::UsageReported {
+                input_tokens: 1_000_000,
+                output_tokens: 500_000,
+                cache_creation_tokens: 0,
+                cache_read_tokens: 0,
+            }),
+        );
+
+        // $1.00 input + $1.00 output = $2.00
+        assert!(app.usage_state.session_cost_known);
+        assert!((app.usage_state.session_cost_usd - 2.0).abs() < 1e-9);
+        assert_eq!(app.usage_state.session_input_tokens, 1_000_000);
+        assert_eq!(app.usage_state.session_output_tokens, 500_000);
     }
 
     // ── AutoCompact ───────────────────────────────────────────────────

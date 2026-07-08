@@ -306,6 +306,9 @@ fn provider_config_for_api_key(
         return openai_chatgpt_codex_config(provider_config);
     }
 
+    // xAI OAuth JWTs work against Platform api.x.ai (same base URL as API keys).
+    // Do NOT route them to cli-chat-proxy: that endpoint requires Grok CLI
+    // version headers and returns HTTP 426 without them.
     inferred_provider_config_for_api_key(provider_config, api_key)
 }
 

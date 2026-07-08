@@ -1,4 +1,4 @@
-use navi_core::{CommandCodeCredentialMetadata, CredentialStore};
+use navi_core::{CommandCodeCredentialMetadata, CredentialStore, XAI_GROK_CLI_OAUTH_KIND};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -11,6 +11,9 @@ use std::time::Duration;
 pub struct DeviceOAuthStarted {
     pub verification_uri: String,
     pub user_code: String,
+    /// Optional slot the TUI can write an authorization code into when the
+    /// browser shows "copy this code" instead of redirecting to loopback.
+    pub paste_slot: Option<std::sync::Arc<std::sync::Mutex<Option<String>>>>,
 }
 
 const COMMANDCODE_DEFAULT_API_BASE: &str = "https://api.commandcode.ai";
@@ -19,6 +22,17 @@ const COMMANDCODE_CLI_VERSION: &str = "0.38.2";
 const OPENAI_DEFAULT_ISSUER: &str = "https://auth.openai.com";
 const OPENAI_DEFAULT_CLIENT_ID: &str = "app_EMoamEEZ73f0CkXaXp7hrann";
 const OPENAI_CALLBACK_PATH: &str = "/auth/callback";
+
+/// xAI Grok CLI public OIDC client (same as official `grok` binary).
+const XAI_DEFAULT_ISSUER: &str = "https://auth.x.ai";
+const XAI_DEFAULT_CLIENT_ID: &str = "b1a00492-073a-47ea-816f-4c329264a828";
+const XAI_CALLBACK_PATH: &str = "/callback";
+const XAI_DEFAULT_SCOPES: &str =
+    "openid profile email offline_access grok-cli:access api:access conversations:read conversations:write";
+/// Base URL for Grok CLI session tokens (OAuth), not Platform API keys.
+pub const XAI_GROK_CLI_BASE_URL: &str = "https://cli-chat-proxy.grok.com/v1";
+/// Early refresh buffer: refresh when fewer than this many seconds remain.
+const XAI_REFRESH_SKEW_SECS: i64 = 300;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -114,6 +128,7 @@ where
     on_started(DeviceOAuthStarted {
         verification_uri,
         user_code,
+        paste_slot: None,
     });
 
     for _ in 0..120 {
@@ -186,6 +201,149 @@ pub async fn openai_usage_report(
     Ok(payload.into_report())
 }
 
+/// OpenRouter account usage from `GET /api/v1/key`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenRouterUsageReport {
+    pub label: Option<String>,
+    pub is_free_tier: Option<bool>,
+    pub usage: Option<f64>,
+    pub usage_daily: Option<f64>,
+    pub usage_weekly: Option<f64>,
+    pub usage_monthly: Option<f64>,
+    pub limit: Option<f64>,
+    pub limit_remaining: Option<f64>,
+    pub limit_reset: Option<String>,
+}
+
+pub async fn openrouter_usage_report(
+    api_key: &str,
+) -> std::result::Result<OpenRouterUsageReport, String> {
+    let response = reqwest::Client::new()
+        .get("https://openrouter.ai/api/v1/key")
+        .header("Authorization", format!("Bearer {api_key}"))
+        .header("Accept", "application/json")
+        .header("User-Agent", "navi/0.1.0")
+        .send()
+        .await
+        .map_err(|err| err.to_string())?;
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        return Err(format!("OpenRouter usage request failed: {status}: {body}"));
+    }
+    let payload: serde_json::Value = response.json().await.map_err(|err| err.to_string())?;
+    let data = payload.get("data").cloned().unwrap_or(payload);
+    Ok(OpenRouterUsageReport {
+        label: data
+            .get("label")
+            .and_then(|v| v.as_str())
+            .map(str::to_string),
+        is_free_tier: data.get("is_free_tier").and_then(|v| v.as_bool()),
+        usage: data.get("usage").and_then(|v| v.as_f64()),
+        usage_daily: data.get("usage_daily").and_then(|v| v.as_f64()),
+        usage_weekly: data.get("usage_weekly").and_then(|v| v.as_f64()),
+        usage_monthly: data.get("usage_monthly").and_then(|v| v.as_f64()),
+        limit: data.get("limit").and_then(|v| v.as_f64()),
+        limit_remaining: data.get("limit_remaining").and_then(|v| v.as_f64()),
+        limit_reset: data
+            .get("limit_reset")
+            .and_then(|v| v.as_str())
+            .map(str::to_string),
+    })
+}
+
+/// xAI / Grok account usage from the CLI billing proxy (OAuth session tokens).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct XaiUsageReport {
+    pub credit_usage_percent: Option<f64>,
+    pub period_type: Option<String>,
+    pub period_start: Option<String>,
+    pub period_end: Option<String>,
+    pub product_usage: Vec<XaiProductUsage>,
+    pub prepaid_balance: Option<f64>,
+    pub on_demand_used: Option<f64>,
+    pub on_demand_cap: Option<f64>,
+    pub is_unified_billing: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct XaiProductUsage {
+    pub product: String,
+    pub usage_percent: f64,
+}
+
+pub async fn xai_usage_report(access_token: &str) -> std::result::Result<XaiUsageReport, String> {
+    // Billing lives on the Grok CLI chat proxy and requires the CLI token
+    // auth header + client version (otherwise 426 / 401).
+    let response = reqwest::Client::new()
+        .get(format!(
+            "{}/billing?format=credits",
+            XAI_GROK_CLI_BASE_URL.trim_end_matches('/')
+        ))
+        .header("Authorization", format!("Bearer {access_token}"))
+        .header("Accept", "application/json")
+        .header("User-Agent", "navi/0.1.0")
+        .header("X-XAI-Token-Auth", "xai-grok-cli")
+        .header("x-grok-client-version", "0.2.91")
+        .send()
+        .await
+        .map_err(|err| err.to_string())?;
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        return Err(format!("xAI usage request failed: {status}: {body}"));
+    }
+    let payload: serde_json::Value = response.json().await.map_err(|err| err.to_string())?;
+    let config = payload.get("config").cloned().unwrap_or(payload);
+    let period = config.get("currentPeriod");
+    let product_usage = config
+        .get("productUsage")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|item| {
+                    Some(XaiProductUsage {
+                        product: item.get("product")?.as_str()?.to_string(),
+                        usage_percent: item.get("usagePercent")?.as_f64().unwrap_or(0.0),
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    Ok(XaiUsageReport {
+        credit_usage_percent: config.get("creditUsagePercent").and_then(|v| v.as_f64()),
+        period_type: period
+            .and_then(|p| p.get("type"))
+            .and_then(|v| v.as_str())
+            .map(str::to_string),
+        period_start: period
+            .and_then(|p| p.get("start"))
+            .and_then(|v| v.as_str())
+            .map(str::to_string),
+        period_end: period
+            .and_then(|p| p.get("end"))
+            .and_then(|v| v.as_str())
+            .map(str::to_string),
+        product_usage,
+        prepaid_balance: config
+            .get("prepaidBalance")
+            .and_then(|v| v.get("val"))
+            .and_then(|v| v.as_f64()),
+        on_demand_used: config
+            .get("onDemandUsed")
+            .and_then(|v| v.get("val"))
+            .and_then(|v| v.as_f64()),
+        on_demand_cap: config
+            .get("onDemandCap")
+            .and_then(|v| v.get("val"))
+            .and_then(|v| v.as_f64()),
+        is_unified_billing: config.get("isUnifiedBillingUser").and_then(|v| v.as_bool()),
+    })
+}
+
 pub async fn openai_browser_oauth<F>(
     credential_store: CredentialStore,
     provider_id: &str,
@@ -202,10 +360,7 @@ where
     let client_id = openai_client_id();
     let auth_url = openai_authorize_url(&issuer, &client_id, &redirect_uri, &pkce, &state);
 
-    on_started(DeviceOAuthStarted {
-        verification_uri: auth_url,
-        user_code: String::new(),
-    });
+    on_started(DeviceOAuthStarted { verification_uri: auth_url, user_code: String::new(), paste_slot: None });
 
     let code = tokio::task::spawn_blocking(move || {
         wait_for_openai_callback(listener, &state, Duration::from_secs(300))
@@ -219,6 +374,471 @@ where
         .set_oauth_credential(provider_id, &tokens.access_token, "chatgpt-codex")
         .map_err(|err| err.to_string())?;
     Ok(())
+}
+
+/// Browser OIDC login for xAI Grok (Authorization Code + PKCE, loopback redirect).
+pub async fn xai_browser_oauth<F>(
+    credential_store: CredentialStore,
+    provider_id: &str,
+    mut on_started: F,
+) -> std::result::Result<(), String>
+where
+    F: FnMut(DeviceOAuthStarted) + Send,
+{
+    let (port, listener) = xai_auth_listener()?;
+    let redirect_uri = format!("http://127.0.0.1:{port}{XAI_CALLBACK_PATH}");
+    let state = generate_oauth_token();
+    let pkce = PkceCodes::generate();
+    let issuer = xai_issuer();
+    let client_id = xai_client_id();
+    let auth_url = xai_authorize_url(&issuer, &client_id, &redirect_uri, &pkce, &state);
+
+    let paste_slot = std::sync::Arc::new(std::sync::Mutex::new(None::<String>));
+    on_started(DeviceOAuthStarted {
+        verification_uri: auth_url,
+        user_code: String::new(),
+        paste_slot: Some(paste_slot.clone()),
+    });
+
+    let code = tokio::task::spawn_blocking(move || {
+        wait_for_xai_callback(listener, &state, paste_slot, Duration::from_secs(600))
+    })
+    .await
+    .map_err(|err| err.to_string())??;
+
+    let tokens =
+        exchange_xai_code_for_tokens(&issuer, &client_id, &redirect_uri, &pkce, &code).await?;
+    store_xai_tokens(&credential_store, provider_id, &tokens)?;
+    Ok(())
+}
+
+/// Device-code OIDC login for xAI Grok (headless / remote environments).
+pub async fn xai_device_oauth<F>(
+    credential_store: CredentialStore,
+    provider_id: &str,
+    mut on_started: F,
+) -> std::result::Result<(), String>
+where
+    F: FnMut(DeviceOAuthStarted) + Send,
+{
+    let issuer = xai_issuer();
+    let client_id = xai_client_id();
+    let client = reqwest::Client::new();
+
+    let device_body = [
+        ("client_id", client_id.as_str()),
+        ("scope", XAI_DEFAULT_SCOPES),
+    ]
+    .into_iter()
+    .map(|(key, value)| format!("{key}={}", url_encode_component(value)))
+    .collect::<Vec<_>>()
+    .join("&");
+
+    let device_response = client
+        .post(format!(
+            "{}/oauth2/device/code",
+            issuer.trim_end_matches('/')
+        ))
+        .header("Content-Type", "application/x-www-form-urlencoded")
+        .body(device_body)
+        .send()
+        .await
+        .map_err(|err| err.to_string())?;
+
+    if device_response.status().as_u16() == 404 {
+        return Err(
+            "xAI device-code endpoint unavailable (404); use browser OAuth instead".to_string(),
+        );
+    }
+    if !device_response.status().is_success() {
+        let status = device_response.status();
+        let body = device_response.text().await.unwrap_or_default();
+        return Err(format!("xAI device authorization failed: {status}: {body}"));
+    }
+
+    let device_data: serde_json::Value = device_response
+        .json()
+        .await
+        .map_err(|err| err.to_string())?;
+    let verification_uri = device_data
+        .get("verification_uri_complete")
+        .or_else(|| device_data.get("verification_uri"))
+        .and_then(|value| value.as_str())
+        .ok_or_else(|| "missing verification URL".to_string())?
+        .to_string();
+    let user_code = device_data
+        .get("user_code")
+        .and_then(|value| value.as_str())
+        .unwrap_or("")
+        .to_string();
+    let device_code = device_data
+        .get("device_code")
+        .and_then(|value| value.as_str())
+        .ok_or_else(|| "missing device code".to_string())?
+        .to_string();
+    let mut interval = device_data
+        .get("interval")
+        .and_then(|value| value.as_u64())
+        .unwrap_or(5)
+        .max(1);
+
+    on_started(DeviceOAuthStarted {
+        verification_uri,
+        user_code,
+        paste_slot: None,
+    });
+
+    for _ in 0..120 {
+        tokio::time::sleep(Duration::from_secs(interval)).await;
+        let token_body = [
+            ("grant_type", "urn:ietf:params:oauth:grant-type:device_code"),
+            ("device_code", device_code.as_str()),
+            ("client_id", client_id.as_str()),
+        ]
+        .into_iter()
+        .map(|(key, value)| format!("{key}={}", url_encode_component(value)))
+        .collect::<Vec<_>>()
+        .join("&");
+
+        let token_response = client
+            .post(format!("{}/oauth2/token", issuer.trim_end_matches('/')))
+            .header("Content-Type", "application/x-www-form-urlencoded")
+            .body(token_body)
+            .send()
+            .await
+            .map_err(|err| err.to_string())?;
+
+        if !token_response.status().is_success() {
+            let status = token_response.status();
+            let body = token_response.text().await.unwrap_or_default();
+            if let Ok(err_json) = serde_json::from_str::<serde_json::Value>(&body) {
+                match err_json.get("error").and_then(|v| v.as_str()) {
+                    Some("authorization_pending") => continue,
+                    Some("slow_down") => {
+                        interval += 5;
+                        continue;
+                    }
+                    Some(error) => return Err(error.to_string()),
+                    None => {}
+                }
+            }
+            return Err(format!("xAI token exchange failed: {status}: {body}"));
+        }
+
+        let tokens: XaiTokenResponse = token_response.json().await.map_err(|err| err.to_string())?;
+        if tokens.access_token.is_empty() {
+            continue;
+        }
+        store_xai_tokens(&credential_store, provider_id, &tokens)?;
+        return Ok(());
+    }
+
+    Err("xAI device authorization timed out".to_string())
+}
+
+/// Default xAI OAuth entry point used by the TUI: browser loopback PKCE.
+pub async fn xai_oauth<F>(
+    credential_store: CredentialStore,
+    provider_id: &str,
+    on_started: F,
+) -> std::result::Result<(), String>
+where
+    F: FnMut(DeviceOAuthStarted) + Send,
+{
+    if std::env::var("NAVI_XAI_OAUTH_DEVICE")
+        .map(|value| value == "1" || value.eq_ignore_ascii_case("true"))
+        .unwrap_or(false)
+    {
+        return xai_device_oauth(credential_store, provider_id, on_started).await;
+    }
+    xai_browser_oauth(credential_store, provider_id, on_started).await
+}
+
+/// Refresh a stored xAI access token when it is near expiry.
+pub async fn ensure_xai_access_token(
+    credential_store: &CredentialStore,
+    provider_id: &str,
+) -> std::result::Result<Option<String>, String> {
+    let Some(kind) = credential_store.get_oauth_api_kind(provider_id) else {
+        return Ok(credential_store.get_model_api_key(provider_id));
+    };
+    if kind != XAI_GROK_CLI_OAUTH_KIND {
+        return Ok(credential_store.get_model_api_key(provider_id));
+    }
+
+    let Some(access) = credential_store.get_api_key(provider_id) else {
+        return Ok(None);
+    };
+
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs() as i64;
+    let expires_at = credential_store
+        .get_oauth_expires_at(provider_id)
+        .unwrap_or(i64::MAX);
+    if expires_at - XAI_REFRESH_SKEW_SECS > now {
+        return Ok(Some(access));
+    }
+
+    let Some(refresh_token) = credential_store.get_oauth_refresh_token(provider_id) else {
+        return Ok(Some(access));
+    };
+
+    let issuer = xai_issuer();
+    let client_id = xai_client_id();
+    let body = [
+        ("grant_type", "refresh_token"),
+        ("refresh_token", refresh_token.as_str()),
+        ("client_id", client_id.as_str()),
+    ]
+    .into_iter()
+    .map(|(key, value)| format!("{key}={}", url_encode_component(value)))
+    .collect::<Vec<_>>()
+    .join("&");
+
+    let response = reqwest::Client::new()
+        .post(format!("{}/oauth2/token", issuer.trim_end_matches('/')))
+        .header("Content-Type", "application/x-www-form-urlencoded")
+        .body(body)
+        .send()
+        .await
+        .map_err(|err| err.to_string())?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        return Err(format!("xAI token refresh failed: {status}: {body}"));
+    }
+
+    let mut tokens: XaiTokenResponse = response.json().await.map_err(|err| err.to_string())?;
+    if tokens.refresh_token.is_none() {
+        tokens.refresh_token = Some(refresh_token);
+    }
+    store_xai_tokens(credential_store, provider_id, &tokens)?;
+    Ok(Some(tokens.access_token))
+}
+
+/// Returns true when `token` looks like an xAI OAuth access JWT (not a Platform API key).
+pub fn is_xai_oauth_access_token(token: &str) -> bool {
+    let token = token.trim();
+    !token.is_empty()
+        && !token.starts_with("xai-")
+        && token.starts_with("eyJ")
+        && token.matches('.').count() >= 2
+}
+
+fn store_xai_tokens(
+    credential_store: &CredentialStore,
+    provider_id: &str,
+    tokens: &XaiTokenResponse,
+) -> std::result::Result<(), String> {
+    let expires_at = tokens.expires_in.map(|secs| {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs() as i64;
+        now + secs as i64
+    });
+    credential_store
+        .set_oauth_credential_full(
+            provider_id,
+            &tokens.access_token,
+            XAI_GROK_CLI_OAUTH_KIND,
+            tokens.refresh_token.as_deref(),
+            expires_at,
+        )
+        .map_err(|err| err.to_string())
+}
+
+#[derive(Debug, Deserialize)]
+struct XaiTokenResponse {
+    access_token: String,
+    #[serde(default)]
+    refresh_token: Option<String>,
+    #[serde(default)]
+    expires_in: Option<u64>,
+}
+
+async fn exchange_xai_code_for_tokens(
+    issuer: &str,
+    client_id: &str,
+    redirect_uri: &str,
+    pkce: &PkceCodes,
+    code: &str,
+) -> std::result::Result<XaiTokenResponse, String> {
+    let body = [
+        ("grant_type", "authorization_code"),
+        ("code", code),
+        ("redirect_uri", redirect_uri),
+        ("client_id", client_id),
+        ("code_verifier", &pkce.code_verifier),
+    ]
+    .into_iter()
+    .map(|(key, value)| format!("{key}={}", url_encode_component(value)))
+    .collect::<Vec<_>>()
+    .join("&");
+
+    let response = reqwest::Client::new()
+        .post(format!("{}/oauth2/token", issuer.trim_end_matches('/')))
+        .header("Content-Type", "application/x-www-form-urlencoded")
+        .body(body)
+        .send()
+        .await
+        .map_err(|err| err.to_string())?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        return Err(format!("xAI token exchange failed: {status}: {body}"));
+    }
+
+    response.json().await.map_err(|err| err.to_string())
+}
+
+fn xai_issuer() -> String {
+    std::env::var("NAVI_XAI_OAUTH_ISSUER")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| XAI_DEFAULT_ISSUER.to_string())
+        .trim_end_matches('/')
+        .to_string()
+}
+
+fn xai_client_id() -> String {
+    std::env::var("NAVI_XAI_OAUTH_CLIENT_ID")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| XAI_DEFAULT_CLIENT_ID.to_string())
+}
+
+fn xai_auth_listener() -> std::result::Result<(u16, TcpListener), String> {
+    for port in 8765..8785 {
+        match TcpListener::bind(("127.0.0.1", port)) {
+            Ok(listener) => {
+                listener
+                    .set_nonblocking(true)
+                    .map_err(|err| err.to_string())?;
+                return Ok((port, listener));
+            }
+            Err(_) => continue,
+        }
+    }
+    match TcpListener::bind(("127.0.0.1", 0)) {
+        Ok(listener) => {
+            let port = listener.local_addr().map_err(|err| err.to_string())?.port();
+            listener
+                .set_nonblocking(true)
+                .map_err(|err| err.to_string())?;
+            Ok((port, listener))
+        }
+        Err(err) => Err(format!("no available local callback port for xAI OAuth: {err}")),
+    }
+}
+
+fn xai_authorize_url(
+    issuer: &str,
+    client_id: &str,
+    redirect_uri: &str,
+    pkce: &PkceCodes,
+    state: &str,
+) -> String {
+    let query = [
+        ("response_type", "code"),
+        ("client_id", client_id),
+        ("redirect_uri", redirect_uri),
+        ("scope", XAI_DEFAULT_SCOPES),
+        ("code_challenge", &pkce.code_challenge),
+        ("code_challenge_method", "S256"),
+        ("state", state),
+    ]
+    .into_iter()
+    .map(|(key, value)| format!("{key}={}", url_encode_component(value)))
+    .collect::<Vec<_>>()
+    .join("&");
+    format!(
+        "{}/oauth2/authorize?{query}",
+        issuer.trim_end_matches('/')
+    )
+}
+
+fn wait_for_xai_callback(
+    listener: TcpListener,
+    state: &str,
+    paste_slot: std::sync::Arc<std::sync::Mutex<Option<String>>>,
+    timeout: Duration,
+) -> std::result::Result<String, String> {
+    let deadline = std::time::Instant::now() + timeout;
+    while std::time::Instant::now() < deadline {
+        // Prefer a code the user pasted from the Grok "copy this code" page.
+        if let Ok(mut guard) = paste_slot.lock()
+            && let Some(code) = guard.take()
+        {
+            let code = code.trim().to_string();
+            if !code.is_empty() {
+                return Ok(code);
+            }
+        }
+
+        match listener.accept() {
+            Ok((mut stream, _)) => {
+                if let Some(code) = handle_xai_callback_stream(&mut stream, state)? {
+                    return Ok(code);
+                }
+            }
+            Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            Err(err) => return Err(err.to_string()),
+        }
+    }
+    Err(
+        "xAI OAuth timed out. If the browser showed a code, copy it and press `p` (or Ctrl+V) in the OAuth modal to paste it."
+            .to_string(),
+    )
+}
+
+fn handle_xai_callback_stream(
+    stream: &mut TcpStream,
+    state: &str,
+) -> std::result::Result<Option<String>, String> {
+    let request = read_http_request(stream)?;
+    let Some((request_line, _)) = request.split_once("\r\n") else {
+        write_html_response(stream, 400, "Invalid request")?;
+        return Ok(None);
+    };
+
+    let is_callback = request_line.starts_with(&format!("GET {XAI_CALLBACK_PATH}?"))
+        || request_line.starts_with("GET /callback?");
+    if !is_callback {
+        write_html_response(stream, 404, "Not found")?;
+        return Ok(None);
+    }
+
+    let params = parse_get_query_params(request_line)?;
+    if params.get("state").map(String::as_str) != Some(state) {
+        write_html_response(stream, 400, "State mismatch")?;
+        return Ok(None);
+    }
+    if let Some(error) = params.get("error") {
+        let description = params
+            .get("error_description")
+            .map(String::as_str)
+            .unwrap_or(error);
+        write_html_response(stream, 400, "xAI login failed")?;
+        return Err(description.to_string());
+    }
+    let Some(code) = params.get("code").filter(|code| !code.trim().is_empty()) else {
+        write_html_response(stream, 400, "Missing authorization code")?;
+        return Ok(None);
+    };
+
+    write_html_response(
+        stream,
+        200,
+        "xAI / Grok login received. You can return to NAVI.",
+    )?;
+    Ok(Some(code.clone()))
 }
 
 #[derive(Debug, Deserialize)]
@@ -391,10 +1011,7 @@ where
     let (port, listener) = commandcode_auth_listener()?;
     let state = generate_commandcode_state();
     let auth_url = commandcode_auth_url(port, &state);
-    on_started(DeviceOAuthStarted {
-        verification_uri: auth_url,
-        user_code: String::new(),
-    });
+    on_started(DeviceOAuthStarted { verification_uri: auth_url, user_code: String::new(), paste_slot: None });
 
     let callback = tokio::task::spawn_blocking(move || {
         wait_for_commandcode_callback(listener, &state, Duration::from_secs(120))
@@ -1034,10 +1651,7 @@ mod tests {
 
     #[test]
     fn device_oauth_started_fields_are_accessible() {
-        let started = DeviceOAuthStarted {
-            verification_uri: "https://github.com/login/device".to_string(),
-            user_code: "ABCD-1234".to_string(),
-        };
+        let started = DeviceOAuthStarted { verification_uri: "https://github.com/login/device".to_string(), user_code: "ABCD-1234".to_string(), paste_slot: None };
 
         assert_eq!(started.verification_uri, "https://github.com/login/device");
         assert_eq!(started.user_code, "ABCD-1234");
@@ -1047,10 +1661,7 @@ mod tests {
     fn device_oauth_started_can_be_cloned_via_field_access() {
         // DeviceOAuthStarted does not derive Clone, but its fields are public
         // Strings, so consumers can copy field values as needed.
-        let started = DeviceOAuthStarted {
-            verification_uri: "https://example.com/verify".to_string(),
-            user_code: "WXYZ-9999".to_string(),
-        };
+        let started = DeviceOAuthStarted { verification_uri: "https://example.com/verify".to_string(), user_code: "WXYZ-9999".to_string(), paste_slot: None };
 
         let uri_copy = started.verification_uri.clone();
         let code_copy = started.user_code.clone();
@@ -1061,10 +1672,7 @@ mod tests {
 
     #[test]
     fn device_oauth_started_debug_output_contains_fields() {
-        let started = DeviceOAuthStarted {
-            verification_uri: "https://github.com/login/device".to_string(),
-            user_code: "TEST-CODE".to_string(),
-        };
+        let started = DeviceOAuthStarted { verification_uri: "https://github.com/login/device".to_string(), user_code: "TEST-CODE".to_string(), paste_slot: None };
 
         let debug = format!("{:?}", started);
         assert!(
@@ -1080,10 +1688,7 @@ mod tests {
     #[test]
     fn device_oauth_started_accepts_empty_strings() {
         // Edge case: empty fields should not cause construction to fail.
-        let started = DeviceOAuthStarted {
-            verification_uri: String::new(),
-            user_code: String::new(),
-        };
+        let started = DeviceOAuthStarted { verification_uri: String::new(), user_code: String::new(), paste_slot: None };
 
         assert!(started.verification_uri.is_empty());
         assert!(started.user_code.is_empty());
@@ -1095,6 +1700,38 @@ mod tests {
             commandcode_auth_url(5959, "state-token"),
             "https://commandcode.ai/studio/auth/cli?callback=http%3A%2F%2Flocalhost%3A5959%2Fcallback&state=state-token"
         );
+    }
+
+    #[test]
+    fn xai_authorize_url_uses_pkce_and_loopback() {
+        let pkce = PkceCodes {
+            code_verifier: "verifier".to_string(),
+            code_challenge: "challenge".to_string(),
+        };
+        let url = xai_authorize_url(
+            "https://auth.x.ai",
+            XAI_DEFAULT_CLIENT_ID,
+            "http://127.0.0.1:8765/callback",
+            &pkce,
+            "state-1",
+        );
+        assert!(url.starts_with("https://auth.x.ai/oauth2/authorize?"));
+        assert!(url.contains("response_type=code"));
+        assert!(url.contains(&format!("client_id={XAI_DEFAULT_CLIENT_ID}")));
+        assert!(url.contains("code_challenge=challenge"));
+        assert!(url.contains("code_challenge_method=S256"));
+        assert!(url.contains("redirect_uri=http%3A%2F%2F127.0.0.1%3A8765%2Fcallback"));
+        assert!(url.contains("offline_access"));
+    }
+
+    #[test]
+    fn is_xai_oauth_access_token_detects_jwt_not_platform_key() {
+        assert!(is_xai_oauth_access_token(
+            "eyJhbGciOiJFUzI1NiIsInR5cCI6ImF0K2p3dCJ9.payload.signature"
+        ));
+        assert!(!is_xai_oauth_access_token("xai-platform-api-key-abc"));
+        assert!(!is_xai_oauth_access_token(""));
+        assert!(!is_xai_oauth_access_token("not-a-jwt"));
     }
 
     #[test]

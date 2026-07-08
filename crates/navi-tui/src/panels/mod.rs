@@ -244,6 +244,14 @@ pub fn register_modal_panels(app: &mut TuiApp) {
         62,
         9,
     )));
+    // Confirm proposed plan
+    pm.add_overlay(Box::new(ModalPanel::new(
+        "confirm-plan",
+        Mode::ConfirmPlan,
+        modals::render_confirm_plan,
+        72,
+        18,
+    )));
 
     // --- Special-case modals that need &mut TuiApp ---
     // MCP modal needs &mut TuiApp and a theme palette reference.

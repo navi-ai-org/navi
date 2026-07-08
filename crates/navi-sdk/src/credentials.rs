@@ -17,13 +17,16 @@ pub use navi_providers::DeviceOAuthStarted;
 pub fn provider_supports_device_oauth(provider_id: &str) -> bool {
     matches!(
         canonical_provider_id(provider_id),
-        "openai" | "commandcode" | "github-copilot"
+        "openai" | "commandcode" | "github-copilot" | "xai"
     )
 }
 
 /// Start browser/device OAuth for a supported provider.
 ///
-/// Currently supported: `openai`, `commandcode`, `github-copilot`.
+/// Currently supported: `openai`, `commandcode`, `github-copilot`, `xai`.
+///
+/// For `xai`, the default is browser OIDC (PKCE + loopback). Set
+/// `NAVI_XAI_OAUTH_DEVICE=1` to force the device-code flow.
 pub async fn start_provider_device_oauth<F>(
     credential_store: &CredentialStore,
     provider_id: &str,
@@ -55,6 +58,10 @@ where
         .await
         .map(|_| None)
         .map_err(|err| anyhow::anyhow!(err)),
+        "xai" => navi_providers::xai_oauth(credential_store.clone(), provider_id, on_started)
+            .await
+            .map(|_| None)
+            .map_err(|err| anyhow::anyhow!(err)),
         other => bail!("device OAuth is not supported for provider '{other}'"),
     }
 }

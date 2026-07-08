@@ -29,7 +29,7 @@ pub use types::{
     NaviProviderCredentialStatus, NaviProviderSyncFailure, NaviProviderSyncReport,
     NaviProviderSyncSkipped, NaviRuntimeTooling, NaviSavedSessionInfo, NaviSessionInfo,
     NaviSessionRequest, NaviSkillInfo, NaviSyncedProvider, NaviTurnRequest, NaviTurnResponse,
-    NaviUsageLimitSnapshot, NaviUsageReport, NaviUsageWindow,
+    NaviUsageDetail, NaviUsageLimitSnapshot, NaviUsageReport, NaviUsageWindow,
 };
 
 // Re-export engine types so TUI/clients can import from navi_sdk instead of navi_core.

@@ -152,6 +152,23 @@ pub struct NaviUsageReport {
     pub plan_type: Option<String>,
     pub limit_reached_kind: Option<String>,
     pub limits: Vec<NaviUsageLimitSnapshot>,
+    /// Where account limits came from (e.g. `openai-oauth`, `openrouter`, `xai-oauth`, `session`).
+    #[serde(default)]
+    pub source: String,
+    /// Human-readable note (auth type, missing remote API, etc.).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub notes: Option<String>,
+    /// Optional free-form account metrics (spend, credits, …).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub details: Vec<NaviUsageDetail>,
+}
+
+/// A single labeled metric line for the Usage modal.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NaviUsageDetail {
+    pub label: String,
+    pub value: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

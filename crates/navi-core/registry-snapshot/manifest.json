@@ -1,6 +1,6 @@
 {
-  "version": 3,
-  "updated_at": "2026-07-07T00:00:00Z",
+  "version": 4,
+  "updated_at": "2026-07-08T00:00:00Z",
   "providers": {
     "anthropic": {
       "file": "providers/anthropic.json",
@@ -119,8 +119,8 @@
     },
     "xai": {
       "file": "providers/xai.json",
-      "sha256": "bc944d5c1bb8d259eb7a6553028acbafea2670165702e70ddea4593cc2a182dd",
-      "model_count": 12
+      "sha256": "324fd77119d9bf250693af307d664fed3c40604b7b80bdfe54d6faa1b01468e1",
+      "model_count": 14
     },
     "xiaomi": {
       "file": "providers/xiaomi.json",

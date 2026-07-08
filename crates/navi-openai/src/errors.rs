@@ -64,6 +64,13 @@ fn format_api_error(
         (503, _) => "The provider service is temporarily unavailable. They may be undergoing maintenance.".to_string(),
         (_, Some("server_error" | "api_error")) if status_code >= 500 => format!("The provider returned an upstream server error ({}). This is usually temporary.", status_code),
         (_, _) if status_code >= 500 => format!("The provider returned an unexpected server error ({}). This is usually temporary.", status_code),
+        (426, _) => {
+            if body.contains("outdated") || body.contains("Grok CLI version") {
+                "Grok/xAI rejected the request as an outdated CLI client (HTTP 426). NAVI should call api.x.ai directly — rebuild/update NAVI, or use an XAI_API_KEY from console.x.ai.".to_string()
+            } else {
+                "The provider requires a protocol or client upgrade (HTTP 426).".to_string()
+            }
+        }
         (_, _) if status_code >= 400 => format!("The provider rejected the request ({}).", status_code),
         (_, _) => format!("Unexpected response status: {}", status_code),
     };

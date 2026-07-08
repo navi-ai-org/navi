@@ -22,11 +22,11 @@ use crate::tooling::{
     build_local_tooling, build_provider_for_project_config, list_models_for_provider,
 };
 use crate::types::{
-    NaviConfigSaveTarget, NaviMissingCredentialError, NaviModelInfo, NaviModelSelectionRequest,
+    NaviConfigSaveTarget, NaviModelInfo, NaviModelSelectionRequest,
     NaviModelSelectionResult, NaviProviderAccountInfo, NaviProviderCredentialStatus,
     NaviProviderSyncFailure, NaviProviderSyncReport, NaviProviderSyncSkipped, NaviSavedSessionInfo,
     NaviSessionInfo, NaviSessionRequest, NaviSkillInfo, NaviSyncedProvider, NaviTurnRequest,
-    NaviTurnResponse, NaviUsageLimitSnapshot, NaviUsageReport, NaviUsageWindow,
+    NaviTurnResponse, NaviUsageDetail, NaviUsageLimitSnapshot, NaviUsageReport, NaviUsageWindow,
 };
 
 /// Builder for constructing a [`NaviEngine`] with custom configuration.
@@ -738,42 +738,141 @@ impl NaviEngine {
             .collect::<Result<Vec<_>>>()
     }
 
-    /// Fetches OpenAI/ChatGPT usage windows for the selected OpenAI account.
+    /// Fetches account usage / rate-limit windows for the selected provider.
+    ///
+    /// Always returns a report when credentials exist (or when the provider has
+    /// no remote usage API). Session/context usage is layered on by the TUI.
     pub async fn usage_report(&self) -> Result<NaviUsageReport> {
         let loaded_config = self.loaded_config();
         let provider_id = loaded_config.config.model.provider.as_str();
-        if canonical_provider_id(provider_id) != "openai" {
-            return Err(NaviError::Config(
-                "usage windows are currently available only for the OpenAI provider".into(),
-            ));
-        }
-
+        let canonical = canonical_provider_id(provider_id);
         let provider = resolve_provider_config(&loaded_config.config, provider_id)
             .with_context(|| format!("unknown provider {provider_id}"))?;
         let credential_store = self.credential_store();
-        let access_token = resolve_provider_api_key(&credential_store, &provider, provider_id)
-            .ok_or_else(|| {
-                NaviError::MissingCredential(NaviMissingCredentialError {
-                    provider_id: provider_id.to_string(),
-                    env_var: provider.api_key_env.clone(),
-                    credential_store_path: credential_store.path().to_path_buf(),
-                })
-            })?;
 
-        let report = navi_providers::openai_usage_report(&access_token)
-            .await
-            .map_err(NaviError::Provider)?;
-        Ok(NaviUsageReport {
-            provider_id: provider_id.to_string(),
-            provider_label: provider.label,
-            plan_type: report.plan_type,
-            limit_reached_kind: report.limit_reached_kind,
-            limits: report
-                .limits
-                .into_iter()
-                .map(openai_usage_limit_snapshot_to_sdk)
-                .collect(),
-        })
+        // Prefer any stored credential (including OAuth tokens that are not
+        // usable as model keys, e.g. ChatGPT OAuth).
+        let access_token = credential_store
+            .get_api_key(provider_id)
+            .or_else(|| resolve_provider_api_key(&credential_store, &provider, provider_id));
+
+        match canonical {
+            "openai" => {
+                let Some(token) = access_token else {
+                    return Ok(empty_usage_report(
+                        &provider,
+                        "session",
+                        Some("No OpenAI credential configured. Add an API key or sign in with OAuth.".into()),
+                    ));
+                };
+                let oauth_kind = credential_store.get_oauth_api_kind(provider_id);
+                // ChatGPT usage windows require a browser-OAuth access token,
+                // not a Platform `sk-…` API key.
+                if oauth_kind.is_some() || !token.starts_with("sk-") {
+                    match navi_providers::openai_usage_report(&token).await {
+                        Ok(report) => Ok(NaviUsageReport {
+                            provider_id: provider.id.clone(),
+                            provider_label: provider.label.clone(),
+                            plan_type: report.plan_type,
+                            limit_reached_kind: report.limit_reached_kind,
+                            limits: report
+                                .limits
+                                .into_iter()
+                                .map(openai_usage_limit_snapshot_to_sdk)
+                                .collect(),
+                            source: "openai-oauth".into(),
+                            notes: Some("ChatGPT usage windows (OAuth).".into()),
+                            details: Vec::new(),
+                        }),
+                        Err(err) => Ok(empty_usage_report(
+                            &provider,
+                            "openai-oauth-error",
+                            Some(format!("Account usage unavailable: {err}")),
+                        )),
+                    }
+                } else {
+                    Ok(empty_usage_report(
+                        &provider,
+                        "openai-api-key",
+                        Some(
+                            "Platform API keys do not expose ChatGPT usage windows. Sign in with OpenAI OAuth for rate-limit bars, or check platform.openai.com usage.".into(),
+                        ),
+                    ))
+                }
+            }
+            "xai" => {
+                let Some(token) = access_token else {
+                    return Ok(empty_usage_report(
+                        &provider,
+                        "session",
+                        Some("No xAI credential configured.".into()),
+                    ));
+                };
+                if navi_providers::is_xai_oauth_access_token(&token)
+                    || credential_store.get_oauth_api_kind(provider_id).as_deref()
+                        == Some(navi_core::XAI_GROK_CLI_OAUTH_KIND)
+                {
+                    match navi_providers::xai_usage_report(&token).await {
+                        Ok(report) => Ok(xai_report_to_sdk(&provider, report)),
+                        Err(err) => Ok(empty_usage_report(
+                            &provider,
+                            "xai-oauth-error",
+                            Some(format!("xAI billing unavailable: {err}")),
+                        )),
+                    }
+                } else {
+                    Ok(empty_usage_report(
+                        &provider,
+                        "xai-api-key",
+                        Some(
+                            "Platform XAI_API_KEY has no public usage endpoint. Sign in with Grok OAuth for weekly credit usage, or check console.x.ai.".into(),
+                        ),
+                    ))
+                }
+            }
+            "openrouter" => {
+                let Some(token) = access_token else {
+                    return Ok(empty_usage_report(
+                        &provider,
+                        "session",
+                        Some("No OpenRouter credential configured.".into()),
+                    ));
+                };
+                match navi_providers::openrouter_usage_report(&token).await {
+                    Ok(report) => Ok(openrouter_report_to_sdk(&provider, report)),
+                    Err(err) => Ok(empty_usage_report(
+                        &provider,
+                        "openrouter-error",
+                        Some(format!("OpenRouter usage unavailable: {err}")),
+                    )),
+                }
+            }
+            "commandcode" => {
+                let Some(token) = access_token else {
+                    return Ok(empty_usage_report(
+                        &provider,
+                        "session",
+                        Some("No Command Code credential configured.".into()),
+                    ));
+                };
+                match navi_providers::commandcode_fetch_usage_data(&token).await {
+                    Ok(data) => Ok(commandcode_report_to_sdk(&provider, data)),
+                    Err(err) => Ok(empty_usage_report(
+                        &provider,
+                        "commandcode-error",
+                        Some(format!("Command Code usage unavailable: {err}")),
+                    )),
+                }
+            }
+            _ => Ok(empty_usage_report(
+                &provider,
+                "session",
+                Some(format!(
+                    "{} has no remote usage API in NAVI yet — showing session/context usage only.",
+                    provider.label
+                )),
+            )),
+        }
     }
 
     /// Returns the credential status for a specific provider.
@@ -1293,6 +1392,7 @@ impl NaviEngine {
                                             supports_documents: None,
                                             attachments: RegistryAttachments::default(),
                                             capabilities: Vec::new(),
+                                            pricing: None,
                                         }
                                     }
                                 }
@@ -1485,6 +1585,239 @@ fn openai_usage_window_to_sdk(window: navi_providers::OpenAiUsageWindow) -> Navi
         limit_window_seconds: window.limit_window_seconds,
         reset_after_seconds: window.reset_after_seconds,
         reset_at: window.reset_at,
+    }
+}
+
+fn empty_usage_report(
+    provider: &navi_core::ProviderConfig,
+    source: &str,
+    notes: Option<String>,
+) -> NaviUsageReport {
+    NaviUsageReport {
+        provider_id: provider.id.clone(),
+        provider_label: provider.label.clone(),
+        plan_type: None,
+        limit_reached_kind: None,
+        limits: Vec::new(),
+        source: source.to_string(),
+        notes,
+        details: Vec::new(),
+    }
+}
+
+fn percent_window(used_percent: f64) -> NaviUsageWindow {
+    let used = used_percent.clamp(0.0, 100.0).round() as i32;
+    NaviUsageWindow {
+        used_percent: used,
+        limit_window_seconds: 0,
+        reset_after_seconds: 0,
+        reset_at: 0,
+    }
+}
+
+fn xai_report_to_sdk(
+    provider: &navi_core::ProviderConfig,
+    report: navi_providers::XaiUsageReport,
+) -> NaviUsageReport {
+    let mut limits = Vec::new();
+    if let Some(credit) = report.credit_usage_percent {
+        limits.push(NaviUsageLimitSnapshot {
+            limit_id: Some("credits".into()),
+            limit_name: Some("Weekly credits".into()),
+            metered_feature: Some("credits".into()),
+            limit_reached: credit >= 100.0,
+            primary: Some(percent_window(credit)),
+            secondary: None,
+        });
+    }
+    for product in report.product_usage {
+        limits.push(NaviUsageLimitSnapshot {
+            limit_id: Some(product.product.to_ascii_lowercase()),
+            limit_name: Some(product.product.clone()),
+            metered_feature: Some(product.product.clone()),
+            limit_reached: product.usage_percent >= 100.0,
+            primary: Some(percent_window(product.usage_percent)),
+            secondary: None,
+        });
+    }
+
+    let mut details = Vec::new();
+    if let Some(start) = report.period_start.as_ref() {
+        details.push(NaviUsageDetail {
+            label: "Period start".into(),
+            value: start.clone(),
+        });
+    }
+    if let Some(end) = report.period_end.as_ref() {
+        details.push(NaviUsageDetail {
+            label: "Period end".into(),
+            value: end.clone(),
+        });
+    }
+    if let Some(bal) = report.prepaid_balance {
+        details.push(NaviUsageDetail {
+            label: "Prepaid balance".into(),
+            value: format!("{bal}"),
+        });
+    }
+    if let (Some(used), Some(cap)) = (report.on_demand_used, report.on_demand_cap) {
+        details.push(NaviUsageDetail {
+            label: "On-demand".into(),
+            value: format!("{used} / {cap}"),
+        });
+    }
+
+    let plan = if report.is_unified_billing == Some(true) {
+        Some("unified".into())
+    } else {
+        report.period_type
+    };
+
+    NaviUsageReport {
+        provider_id: provider.id.clone(),
+        provider_label: provider.label.clone(),
+        plan_type: plan,
+        limit_reached_kind: None,
+        limits,
+        source: "xai-oauth".into(),
+        notes: Some("xAI / Grok weekly credits (OAuth).".into()),
+        details,
+    }
+}
+
+fn openrouter_report_to_sdk(
+    provider: &navi_core::ProviderConfig,
+    report: navi_providers::OpenRouterUsageReport,
+) -> NaviUsageReport {
+    let mut details = Vec::new();
+    let fmt_usd = |v: f64| format!("${v:.4}");
+    if let Some(v) = report.usage {
+        details.push(NaviUsageDetail {
+            label: "Lifetime spend".into(),
+            value: fmt_usd(v),
+        });
+    }
+    if let Some(v) = report.usage_daily {
+        details.push(NaviUsageDetail {
+            label: "Today".into(),
+            value: fmt_usd(v),
+        });
+    }
+    if let Some(v) = report.usage_weekly {
+        details.push(NaviUsageDetail {
+            label: "This week".into(),
+            value: fmt_usd(v),
+        });
+    }
+    if let Some(v) = report.usage_monthly {
+        details.push(NaviUsageDetail {
+            label: "This month".into(),
+            value: fmt_usd(v),
+        });
+    }
+    if let Some(v) = report.limit {
+        details.push(NaviUsageDetail {
+            label: "Credit limit".into(),
+            value: fmt_usd(v),
+        });
+    }
+    if let Some(v) = report.limit_remaining {
+        details.push(NaviUsageDetail {
+            label: "Remaining".into(),
+            value: fmt_usd(v),
+        });
+    }
+    if let Some(v) = report.limit_reset.as_ref() {
+        details.push(NaviUsageDetail {
+            label: "Resets".into(),
+            value: v.clone(),
+        });
+    }
+
+    let mut limits = Vec::new();
+    if let (Some(limit), Some(remaining)) = (report.limit, report.limit_remaining) {
+        if limit > 0.0 {
+            let used_pct = ((limit - remaining) / limit * 100.0).clamp(0.0, 100.0);
+            limits.push(NaviUsageLimitSnapshot {
+                limit_id: Some("credit-limit".into()),
+                limit_name: Some("Credit limit".into()),
+                metered_feature: Some("credits".into()),
+                limit_reached: remaining <= 0.0,
+                primary: Some(percent_window(used_pct)),
+                secondary: None,
+            });
+        }
+    }
+
+    let plan = if report.is_free_tier == Some(true) {
+        Some("free".into())
+    } else {
+        report.label
+    };
+
+    NaviUsageReport {
+        provider_id: provider.id.clone(),
+        provider_label: provider.label.clone(),
+        plan_type: plan,
+        limit_reached_kind: None,
+        limits,
+        source: "openrouter".into(),
+        notes: Some("OpenRouter key usage.".into()),
+        details,
+    }
+}
+
+fn commandcode_report_to_sdk(
+    provider: &navi_core::ProviderConfig,
+    data: navi_providers::CommandCodeUsageData,
+) -> NaviUsageReport {
+    let mut details = Vec::new();
+    if let Some(whoami) = data.whoami.as_object() {
+        if let Some(email) = whoami
+            .get("email")
+            .or_else(|| whoami.get("user").and_then(|u| u.get("email")))
+            .and_then(|v| v.as_str())
+        {
+            details.push(NaviUsageDetail {
+                label: "Account".into(),
+                value: email.to_string(),
+            });
+        }
+    }
+    if let Some(credits) = data.credits.as_ref() {
+        details.push(NaviUsageDetail {
+            label: "Credits".into(),
+            value: credits.to_string(),
+        });
+    }
+    if let Some(sub) = data.subscription.as_ref() {
+        details.push(NaviUsageDetail {
+            label: "Subscription".into(),
+            value: sub.to_string(),
+        });
+    }
+    if let Some(summary) = data.usage_summary.as_ref() {
+        details.push(NaviUsageDetail {
+            label: "Usage summary".into(),
+            value: summary.to_string(),
+        });
+    }
+    if !data.models.is_empty() {
+        details.push(NaviUsageDetail {
+            label: "Models".into(),
+            value: format!("{} available", data.models.len()),
+        });
+    }
+
+    NaviUsageReport {
+        provider_id: provider.id.clone(),
+        provider_label: provider.label.clone(),
+        plan_type: None,
+        limit_reached_kind: None,
+        limits: Vec::new(),
+        source: "commandcode".into(),
+        notes: Some("Command Code account usage.".into()),
+        details,
     }
 }
 

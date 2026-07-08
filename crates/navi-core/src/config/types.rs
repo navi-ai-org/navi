@@ -574,6 +574,12 @@ pub struct ProviderModelConfig {
     /// Whether to force-include the tool prompt manifest for this model.
     #[serde(default)]
     pub tool_prompt_manifest: Option<bool>,
+    /// Price per 1M input tokens (USD), when known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pricing_input_per_1m: Option<f64>,
+    /// Price per 1M output tokens (USD), when known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pricing_output_per_1m: Option<f64>,
 }
 
 /// Task size classification used to infer the harness profile in `Auto` mode.

@@ -508,9 +508,28 @@ pub(crate) fn handle_providers_key(
             }
         }
         KeyCode::Char('o') | KeyCode::Char('O') if modifiers.contains(KeyModifiers::CONTROL) => {
-            if let Some(provider) = provider_at_row(&list_rows, &catalog, current_row_pos).cloned()
-            {
-                start_provider_oauth(app, &provider);
+            // Resolve a provider even when the cursor sits on a section header
+            // (common after filtering): try current row → next selectable → first.
+            let provider = provider_at_row(&list_rows, &catalog, current_row_pos)
+                .cloned()
+                .or_else(|| {
+                    next_selectable_after(current_row_pos)
+                        .and_then(|pos| provider_at_row(&list_rows, &catalog, pos).cloned())
+                })
+                .or_else(|| {
+                    list_rows.iter().find_map(|row| match row {
+                        ProviderListRow::Provider { index } => catalog.get(*index).cloned(),
+                        ProviderListRow::Account { provider_index, .. } => {
+                            catalog.get(*provider_index).cloned()
+                        }
+                        ProviderListRow::Header { .. } => None,
+                    })
+                });
+            match provider {
+                Some(provider) => start_provider_oauth(app, &provider),
+                None => {
+                    show_notification(app, "OAuth", "Select a provider that supports OAuth.");
+                }
             }
         }
         KeyCode::Char('r') if modifiers.contains(KeyModifiers::CONTROL) => {
@@ -585,9 +604,58 @@ pub(crate) fn handle_oauth_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyMo
                 crate::browser::open_url(app, uri);
             }
         }
+        // Paste authorization code from Grok's "copy this code" page.
+        KeyCode::Char('p') | KeyCode::Char('P')
+            if modifiers.is_empty() || modifiers.contains(KeyModifiers::CONTROL) =>
+        {
+            paste_oauth_code_from_clipboard(app);
+        }
+        KeyCode::Char('v') | KeyCode::Char('V') if modifiers.contains(KeyModifiers::CONTROL) => {
+            paste_oauth_code_from_clipboard(app);
+        }
         _ => {}
     }
     false
+}
+
+fn paste_oauth_code_from_clipboard(app: &mut TuiApp) {
+    let Some(state) = app.oauth_state.as_mut() else {
+        return;
+    };
+    let Some(slot) = state.paste_slot.clone() else {
+        state.paste_status = Some("This login flow does not accept a pasted code.".into());
+        show_notification(app, "OAuth", "This login flow does not accept a pasted code.");
+        return;
+    };
+    let Some(raw) = crate::clipboard::try_read_clipboard_text() else {
+        state.paste_status = Some("Clipboard is empty — copy the code from the browser first.".into());
+        show_notification(app, "OAuth", "Clipboard empty. Copy the code from the browser.");
+        return;
+    };
+    let code = raw
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .unwrap_or("")
+        .trim()
+        .trim_matches(|c: char| c == '"' || c == '\'')
+        .to_string();
+    if code.is_empty() || code.len() < 8 {
+        state.paste_status = Some("Clipboard does not look like an auth code.".into());
+        show_notification(app, "OAuth", "Clipboard does not look like an auth code.");
+        return;
+    }
+    match slot.lock() {
+        Ok(mut guard) => {
+            *guard = Some(code);
+            state.paste_status = Some("Code pasted — finishing login…".into());
+            show_notification(app, "OAuth", "Code pasted — finishing login…");
+        }
+        Err(_) => {
+            state.paste_status = Some("Failed to hand code to OAuth waiter.".into());
+            show_notification(app, "OAuth", "Failed to hand code to OAuth waiter.");
+        }
+    }
 }
 
 pub(crate) fn handle_sessions_key(
@@ -799,6 +867,23 @@ pub(crate) fn handle_confirm_cancel_turn_key(app: &mut TuiApp, code: KeyCode) ->
             super::close_active_modal(app);
         }
         KeyCode::Esc | KeyCode::Char('n') | KeyCode::Char('N') => {
+            super::close_active_modal(app);
+        }
+        _ => {}
+    }
+    false
+}
+
+pub(crate) fn handle_confirm_plan_key(app: &mut TuiApp, code: KeyCode) -> bool {
+    match code {
+        KeyCode::Enter | KeyCode::Char('y') | KeyCode::Char('Y')
+        | KeyCode::Esc | KeyCode::Char('n') | KeyCode::Char('N') => {
+            let session_id = app.session_id.as_str().to_string();
+            let engine = app.engine();
+            tokio::spawn(async move {
+                let _ = engine.exit_plan_mode(&session_id).await;
+            });
+            app.proposed_plan = None;
             super::close_active_modal(app);
         }
         _ => {}
