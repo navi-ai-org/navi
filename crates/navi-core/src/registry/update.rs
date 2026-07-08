@@ -156,6 +156,19 @@ fn merge_embedded_provider_updates(store: &RegistryStore) {
             (Some(_), None) => false,
         };
 
+        // Don't overwrite providers that already have models in the cache.
+        // Aggregator sync (e.g. OpenRouter with 327 models) upserts with
+        // sha256=None, which would trigger a re-upsert of the embedded
+        // snapshot (5 models) on every provider_catalog() call. Skip if
+        // the cache already has models for this provider.
+        if needs_update {
+            if let Ok(existing) = store.load_provider_models(id) {
+                if !existing.is_empty() && existing.len() >= ep.models.len() {
+                    continue;
+                }
+            }
+        }
+
         if needs_update {
             if let Err(err) = store.upsert_provider_with_sha256(ep, embedded_sha) {
                 tracing::warn!(

@@ -227,6 +227,11 @@ pub async fn sync_aggregator_models(
         }
     }
 
+    // Deduplicate by name (case-insensitive) to avoid UNIQUE constraint
+    // failures when the API returns models that differ only in casing.
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    merged.retain(|m| seen.insert(m.name.to_lowercase()));
+
     let model_count = merged.len();
 
     let registry_provider = RegistryProvider {
