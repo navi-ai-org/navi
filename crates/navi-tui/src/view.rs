@@ -19,14 +19,16 @@ use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
+/// Setup-specific rendering: welcome text or interview chat.
+pub(crate) mod setup;
+
 use crate::TuiApp;
 use crate::render::{fill_modal_scrim, modal_rect, opaque_fill};
 use crate::state::Mode;
 use crate::theme::{self, bg, ghost, muted, text};
 use crate::ui::{RootLayoutHeights, root_layout, viewport_rect};
 
-/// Setup-specific rendering: welcome text or interview chat.
-mod setup;
+
 
 pub(crate) fn render(frame: &mut Frame<'_>, app: &mut TuiApp) {
     theme::with_palette(&app.theme_palette(), || render_inner(frame, app));
@@ -82,19 +84,10 @@ fn render_inner(frame: &mut Frame<'_>, app: &mut TuiApp) {
         app.plugin_panels_loaded = true;
     }
 
-    // Render modals via the PanelManager (copland) for all standard modes.
-    // Special cases that need &mut TuiApp or extra params are handled below.
+    // Render modals via the PanelManager (copland).
+    // All modals — including Mcp and Setup — are now registered as
+    // overlay panels in the PanelManager.
     crate::panels::render_overlays(frame, app, area);
-
-    // Special-case modals that don't fit the ModalPanel pattern yet.
-    match app.mode {
-        Mode::Mcp => {
-            let palette = app.theme_palette();
-            crate::ui::mcp::draw_mcp_modal(frame, modal_rect(area, 90, 22), app, &palette)
-        }
-        Mode::Setup => setup::render_setup(frame, app, content_area),
-        _ => {}
-    }
 
     if !app.pending_approvals.is_empty() {
         modals::render_tool_approval(frame, app, modal_rect(area, 72, 12));
