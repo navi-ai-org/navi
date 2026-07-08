@@ -694,6 +694,7 @@ mod tests {
         let trace = trace_request_summary(
             &ModelRequest {
                 model: "test-model".to_string(),
+                instructions: None,
                 messages: Vec::new(),
                 thinking: ThinkingConfig::Off,
                 tools: Vec::new(),

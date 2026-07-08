@@ -202,7 +202,9 @@ pub async fn sync_aggregator_models(
     // Merge with existing cached models to preserve metadata (context_window,
     // max_output, etc) that the API may not return, and to keep models that
     // exist in the cache but were not returned by the API.
-    let existing = store.load_provider_models(&provider_config.id).unwrap_or_default();
+    let existing = store
+        .load_provider_models(&provider_config.id)
+        .unwrap_or_default();
     let mut merged: Vec<RegistryModel> = models
         .into_iter()
         .map(|mut m| {
@@ -211,7 +213,8 @@ pub async fn sync_aggregator_models(
                 merge_model_metadata(&mut m, cached);
             } else {
                 let lower = m.name.to_lowercase();
-                if let Some((_, cached)) = existing.iter().find(|(k, _)| k.to_lowercase() == lower) {
+                if let Some((_, cached)) = existing.iter().find(|(k, _)| k.to_lowercase() == lower)
+                {
                     merge_model_metadata(&mut m, cached);
                 }
             }

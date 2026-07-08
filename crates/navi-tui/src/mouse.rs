@@ -136,7 +136,11 @@ pub(crate) fn finish_selection(app: &mut TuiApp, end: Option<(usize, usize)>) ->
 
 fn cancel_active_turn(app: &mut TuiApp) {
     cancel_stream(app);
-    show_notification(app, "Cancelled", "Turn cancelled by double-click.".to_string());
+    show_notification(
+        app,
+        "Cancelled",
+        "Turn cancelled by double-click.".to_string(),
+    );
 }
 
 pub(crate) fn handle_mouse(app: &mut TuiApp, mouse: MouseEvent) {

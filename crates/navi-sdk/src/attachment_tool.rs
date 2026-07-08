@@ -129,6 +129,7 @@ impl Tool for AttachmentAnalysisTool {
 
         let request = ModelRequest {
             model: model.name.clone(),
+            instructions: None,
             messages: vec![
                 ModelMessage::system("Analyze the attachment and return concise text only."),
                 ModelMessage::user_multimodal(

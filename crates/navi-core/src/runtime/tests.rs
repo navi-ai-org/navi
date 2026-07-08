@@ -28,7 +28,14 @@ impl ModelProvider for MockToolProvider {
         if call_number == 1 {
             assert!(!request.tools.is_empty());
             assert!(request.messages[0].content.contains("Workflow contract"));
-            assert!(request.messages[0].content.contains("runtime context"));
+            // Context packets are now in developer messages, not the system message.
+            assert!(
+                request
+                    .messages
+                    .iter()
+                    .any(|m| m.content.contains("runtime context")),
+                "context packet content should be in a developer message"
+            );
             Box::pin(stream::iter(vec![Ok(ModelStreamEvent::ToolCall(
                 ToolInvocation {
                     id: "call-1".to_string(),

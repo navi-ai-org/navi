@@ -745,6 +745,7 @@ None.
         available_skills: Arc::new(std::sync::Mutex::new(Vec::new())),
         active_skills: Arc::new(std::sync::Mutex::new(Vec::new())),
         prompt_cache: Arc::new(crate::prompt::PromptCache::new()),
+        instructions: std::sync::Arc::new(std::sync::RwLock::new(None)),
         components: crate::RuntimeComponents::default(),
         cancel_token: CancelToken::new(),
         config: Arc::new(std::sync::RwLock::new(navi_config)),
@@ -869,24 +870,17 @@ None.
         1
     );
 
-    // Verify messages list is rebuilt (only 1 boot system prompt remains)
-    assert_eq!(messages.len(), 1);
-    assert_eq!(messages[0].role, ModelRole::System);
-    assert!(
-        messages[0]
-            .content
-            .contains("To test the complete end-to-end context continuity rebuild.")
-    );
-    assert!(
-        messages[0]
-            .content
-            .contains("Verify next action continuation.")
-    );
-    assert!(
-        messages[0]
-            .content
-            .contains("You are continuing an existing logical coding session")
-    );
+    // Verify messages list is rebuilt (1 system message + developer messages remain)
+    let system_count = messages
+        .iter()
+        .filter(|m| m.role == ModelRole::System)
+        .count();
+    assert_eq!(system_count, 1, "should have exactly 1 system message");
+    // The rebuild context content should be in a developer message now.
+    let all_content: String = messages.iter().map(|m| m.content.as_str()).collect();
+    assert!(all_content.contains("To test the complete end-to-end context continuity rebuild."));
+    assert!(all_content.contains("Verify next action continuation."));
+    assert!(all_content.contains("You are continuing an existing logical coding session"));
 
     // Verify project memory received promotions (SQLite)
     // The promoted facts are stored as a memory entry with type=project

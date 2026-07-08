@@ -138,6 +138,7 @@ pub async fn generate_session_title(
 
     let request = crate::model::ModelRequest {
         model: model_name.to_string(),
+        instructions: None,
         messages: vec![
             crate::model::ModelMessage::system(
                 "You are a title generator. Return only a short, descriptive title.",
@@ -861,6 +862,7 @@ mod tests {
             available_skills: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
             active_skills: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
             prompt_cache: std::sync::Arc::new(crate::prompt::PromptCache::new()),
+            instructions: std::sync::Arc::new(std::sync::RwLock::new(None)),
             components: crate::RuntimeComponents::default(),
             cancel_token: crate::cancel::CancelToken::new(),
             config: std::sync::Arc::new(std::sync::RwLock::new(

@@ -92,8 +92,7 @@ pub fn save_global_config(global_path: &Path, config: &NaviConfig) -> Result<Pat
     }
     let mut config_to_save = config.clone();
     strip_registry_provider_models(&mut config_to_save);
-    let content = toml::to_string_pretty(&config_to_save)
-        .context("failed to serialize config")?;
+    let content = toml::to_string_pretty(&config_to_save).context("failed to serialize config")?;
     fs::write(global_path, &content)
         .with_context(|| format!("failed to write {}", global_path.display()))?;
     Ok(global_path.to_path_buf())
@@ -108,8 +107,7 @@ pub fn save_project_config(cwd: &Path, config: &NaviConfig) -> Result<PathBuf> {
     }
     let mut config_to_save = config.clone();
     strip_registry_provider_models(&mut config_to_save);
-    let content = toml::to_string_pretty(&config_to_save)
-        .context("failed to serialize config")?;
+    let content = toml::to_string_pretty(&config_to_save).context("failed to serialize config")?;
     fs::write(&project_path, &content)
         .with_context(|| format!("failed to write {}", project_path.display()))?;
     Ok(project_path)
@@ -182,7 +180,7 @@ fn merge_from_file(
     Ok(Some(path.to_path_buf()))
 }
 
-fn navi_dirs() -> Result<ProjectDirs> {
+pub(crate) fn navi_dirs() -> Result<ProjectDirs> {
     ProjectDirs::from("dev", "navi", "navi").context("failed to locate user config directory")
 }
 

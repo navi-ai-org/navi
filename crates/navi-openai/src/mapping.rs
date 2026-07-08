@@ -91,6 +91,7 @@ pub(crate) fn message_to_json(message: &ModelMessage) -> Value {
 
     let role = match message.role {
         ModelRole::System => "system",
+        ModelRole::Developer => "developer",
         ModelRole::User => "user",
         ModelRole::Assistant => "assistant",
         ModelRole::Tool => "tool",
@@ -168,6 +169,20 @@ pub(crate) fn responses_input_item_to_json(message: &ModelMessage) -> Vec<Value>
             "role": "user",
             "content": Value::Array(content),
         })];
+    }
+
+    // Developer messages go into the input array as developer-role message items.
+    // System messages are sent in the `instructions` field, not the input array.
+    if message.role == ModelRole::Developer {
+        return vec![json!({
+            "type": "message",
+            "role": "developer",
+            "content": message.content,
+        })];
+    }
+
+    if message.role == ModelRole::System {
+        return Vec::new();
     }
 
     vec![message_to_json(message)]

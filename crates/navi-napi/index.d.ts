@@ -168,6 +168,9 @@ export class NaviNapiEngine {
   getGoal(sessionId: string): Promise<JsonValue>;
   setGoal(sessionId: string, objective: string, tokenBudget?: number | null): Promise<JsonValue>;
   clearGoal(sessionId: string): Promise<void>;
+  updateGoalStatus(sessionId: string, status: string): Promise<JsonValue>;
+  updateGoalChecklist(sessionId: string, tasks: JsonValue): Promise<JsonValue>;
+  updateGoalTaskStatus(sessionId: string, taskId: number, status: string): Promise<JsonValue>;
   // Background tasks
   listBackgroundCommands(sessionId: string): Promise<JsonValue>;
   pollBackgroundCommand(sessionId: string, taskId: string): Promise<JsonValue>;

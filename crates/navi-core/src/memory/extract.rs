@@ -77,6 +77,7 @@ pub async fn extract_memories(
 
     let request = ModelRequest {
         model: model_name.to_string(),
+        instructions: None,
         messages: vec![
             ModelMessage::system("You are a memory extraction bot. Return only a JSON array."),
             ModelMessage::user(prompt),

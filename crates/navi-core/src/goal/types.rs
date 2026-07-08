@@ -294,12 +294,18 @@ impl SessionGoal {
 
     /// Returns the number of tasks that are verified.
     pub fn verified_count(&self) -> usize {
-        self.checklist.iter().filter(|t| t.status == TaskStatus::Verified).count()
+        self.checklist
+            .iter()
+            .filter(|t| t.status == TaskStatus::Verified)
+            .count()
     }
 
     /// Returns the number of tasks that are finished (verified + skipped).
     pub fn finished_count(&self) -> usize {
-        self.checklist.iter().filter(|t| t.status.is_finished()).count()
+        self.checklist
+            .iter()
+            .filter(|t| t.status.is_finished())
+            .count()
     }
 
     /// Returns the next pending or in-progress task, if any.

@@ -204,6 +204,13 @@ pub type ModelStream = BoxStream<'static, Result<ModelStreamEvent>>;
 pub struct ModelRequest {
     /// The model identifier to use (e.g. `"gpt-5.5"`, `"claude-sonnet-4-20250514"`).
     pub model: String,
+    /// Stable base instructions sent in the provider's `instructions` field
+    /// (Responses API) or as the first system message (Chat Completions,
+    /// Anthropic, Gemini). Kept separate from [`Self::messages`] so that
+    /// dynamic context blocks (developer messages) don't invalidate the
+    /// provider's prompt cache for this prefix.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub instructions: Option<String>,
     /// The conversation messages to send to the model.
     pub messages: Vec<ModelMessage>,
     /// The thinking/reasoning effort level to request.
@@ -254,6 +261,9 @@ pub struct ModelMessage {
 pub enum ModelRole {
     /// System-level instructions (system prompt).
     System,
+    /// Developer-level instructions (context blocks injected separately from
+    /// the base system prompt for provider cache efficiency).
+    Developer,
     /// End-user input.
     User,
     /// Model-generated response.
@@ -308,6 +318,12 @@ impl ModelMessage {
     /// Creates a system-role message.
     pub fn system(content: impl Into<String>) -> Self {
         Self::new(ModelRole::System, content)
+    }
+
+    /// Creates a developer-role message (context block injected separately
+    /// from the base system prompt for provider cache efficiency).
+    pub fn developer(content: impl Into<String>) -> Self {
+        Self::new(ModelRole::Developer, content)
     }
 
     /// Creates a user-role message.

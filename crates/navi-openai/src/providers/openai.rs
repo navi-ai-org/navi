@@ -33,6 +33,14 @@ impl crate::provider::OpenAiProvider {
             "model": request.model,
             "input": request.messages.iter().flat_map(responses_input_item_to_json).collect::<Vec<_>>(),
         });
+        // Use the `instructions` field for the stable base prompt when
+        // available. This lets the provider cache the prefix independently
+        // of dynamic developer messages in the input array.
+        if let Some(instructions) = &request.instructions {
+            if !instructions.is_empty() {
+                body["instructions"] = json!(instructions);
+            }
+        }
         if !request.tools.is_empty() {
             body["tools"] = json!(request.tools.iter().map(responses_tool_to_json).collect::<Vec<_>>());
             body["tool_choice"] = json!("auto");
@@ -111,9 +119,20 @@ impl crate::provider::OpenAiProvider {
         )?;
         let model = request.model.clone();
         tracing::info!(provider = %provider_id, model = %model, api = "chat-completions", tools = request.tools.len(), "provider stream started");
+        let mut messages_json: Vec<Value> = request.messages.iter().map(message_to_json).collect::<Vec<_>>();
+        // Chat Completions has no `instructions` field. Prepend the stable
+        // base prompt as a system message so it is cached as a stable prefix.
+        if let Some(instructions) = &request.instructions {
+            if !instructions.is_empty() {
+                messages_json.insert(0, json!({
+                    "role": "system",
+                    "content": instructions,
+                }));
+            }
+        }
         let mut body = json!({
             "model": request.model,
-            "messages": request.messages.iter().map(message_to_json).collect::<Vec<_>>(),
+            "messages": messages_json,
         });
         if !request.tools.is_empty() {
             body["tools"] = json!(request.tools.iter().map(chat_tool_to_json).collect::<Vec<_>>());

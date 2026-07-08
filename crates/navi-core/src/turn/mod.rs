@@ -51,6 +51,10 @@ pub struct TurnContext {
     pub prompt_cache: Arc<PromptCache>,
     pub components: RuntimeComponents,
     pub cancel_token: CancelToken,
+    /// Stable base instructions for the `instructions` field of the provider
+    /// request, separated from dynamic developer messages for prompt cache
+    /// efficiency. Populated by `ensure_system_prompt` on each turn.
+    pub instructions: Arc<RwLock<Option<String>>>,
     /// Snapshot of the active `NaviConfig` taken at turn start. Used by
     /// `ensure_system_prompt` so the model sees the user-configured harness
     /// profile, model and provider rather than the defaults.
@@ -189,17 +193,33 @@ async fn ensure_system_prompt(ctx: &TurnContext, messages: &mut Vec<ModelMessage
     };
     let prompt = ctx.components.prompt.clone();
     let prompt_cache = ctx.prompt_cache.clone();
-    let system_content = tokio::task::spawn_blocking(move || prompt.build(input, prompt_cache))
+    let rendered = tokio::task::spawn_blocking(move || prompt.build(input, prompt_cache))
         .await
-        .unwrap_or_else(|_| "Default NAVI base instructions".to_string());
+        .unwrap_or_else(|_| crate::prompt::RenderedPrompt {
+            instructions: "Default NAVI base instructions".to_string(),
+            developer_messages: Vec::new(),
+        });
 
-    if messages.is_empty() {
-        messages.push(ModelMessage::system(system_content));
-    } else if messages[0].role == ModelRole::System {
-        messages[0].content = system_content;
-    } else {
-        messages.insert(0, ModelMessage::system(system_content));
+    // Store the stable base instructions on the turn context so
+    // `build_model_request` can place them in the provider's
+    // `instructions` field.
+    *ctx.instructions.write().unwrap_or_else(|e| e.into_inner()) =
+        Some(rendered.instructions.clone());
+
+    // Rebuild the message prefix: one system message with the base
+    // instructions, followed by developer messages for each context block.
+    // Remove any existing system or developer messages from the prefix.
+    while matches!(
+        messages.first(),
+        Some(m) if m.role == ModelRole::System || m.role == ModelRole::Developer
+    ) {
+        messages.remove(0);
     }
+
+    let mut prefix = Vec::with_capacity(1 + rendered.developer_messages.len());
+    prefix.push(ModelMessage::system(rendered.instructions));
+    prefix.extend(rendered.developer_messages);
+    messages.splice(0..0, prefix);
 }
 
 async fn maintain_context_budget(ctx: &TurnContext, messages: &mut Vec<ModelMessage>) {
@@ -292,6 +312,11 @@ fn build_model_request(ctx: &TurnContext, messages: &[ModelMessage]) -> ModelReq
 
     ModelRequest {
         model: ctx.active_model_name(),
+        instructions: ctx
+            .instructions
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone(),
         messages: rewrite_unsupported_attachments(ctx, messages),
         thinking,
         tools: match crate::config::effective_tool_calling_mode(&config) {
@@ -1144,6 +1169,7 @@ pub async fn sync_messages_to_history(ctx: &TurnContext, messages: &[ModelMessag
             crate::model::ModelRole::Assistant => "assistant",
             crate::model::ModelRole::Tool => "tool",
             crate::model::ModelRole::System => "system",
+            crate::model::ModelRole::Developer => "developer",
         };
 
         let tool_name = msg.tool_name.clone();

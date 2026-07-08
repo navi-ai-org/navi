@@ -1133,6 +1133,7 @@ impl AgentRuntime {
             available_skills: self.shared_available_skills.clone(),
             active_skills: self.shared_active_skills.clone(),
             prompt_cache: self.prompt_cache.clone(),
+            instructions: std::sync::Arc::new(std::sync::RwLock::new(None)),
             components: self.runtime_components.clone(),
             cancel_token: self.cancel_token.clone(),
             config: self.shared_config.clone(),

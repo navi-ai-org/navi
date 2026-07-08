@@ -532,7 +532,10 @@ mod tests {
             crate::goal::types::GoalTask::new(1, "task 1".into()),
         ];
         assert!(goal.update_task_status(0, crate::goal::types::TaskStatus::InProgress));
-        assert_eq!(goal.checklist[0].status, crate::goal::types::TaskStatus::InProgress);
+        assert_eq!(
+            goal.checklist[0].status,
+            crate::goal::types::TaskStatus::InProgress
+        );
         assert!(!goal.update_task_status(99, crate::goal::types::TaskStatus::Verified));
     }
 
@@ -552,7 +555,12 @@ mod tests {
             .await
             .expect("invoke");
         assert!(!result.ok);
-        assert!(result.output["error"].as_str().unwrap().contains("checklist"));
+        assert!(
+            result.output["error"]
+                .as_str()
+                .unwrap()
+                .contains("checklist")
+        );
     }
 
     #[tokio::test]
@@ -562,9 +570,10 @@ mod tests {
         runtime.set_objective("test".into(), None);
 
         // Set a checklist with one pending task
-        runtime.update_checklist(vec![
-            crate::goal::types::GoalTask::new(0, "implement feature".into()),
-        ]);
+        runtime.update_checklist(vec![crate::goal::types::GoalTask::new(
+            0,
+            "implement feature".into(),
+        )]);
 
         let tool = crate::goal::UpdateGoalTool::new(runtime.clone());
         let result = tool
@@ -576,7 +585,12 @@ mod tests {
             .await
             .expect("invoke");
         assert!(!result.ok);
-        assert!(result.output["error"].as_str().unwrap().contains("unfinished"));
+        assert!(
+            result.output["error"]
+                .as_str()
+                .unwrap()
+                .contains("unfinished")
+        );
     }
 
     #[tokio::test]
@@ -630,7 +644,10 @@ mod tests {
         let goal = runtime.get_goal().unwrap();
         assert_eq!(goal.checklist.len(), 3);
         assert_eq!(goal.checklist[0].description, "write code");
-        assert_eq!(goal.checklist[0].status, crate::goal::types::TaskStatus::Pending);
+        assert_eq!(
+            goal.checklist[0].status,
+            crate::goal::types::TaskStatus::Pending
+        );
     }
 
     #[tokio::test]
@@ -638,9 +655,7 @@ mod tests {
         let runtime = Arc::new(GoalRuntimeHandle::new(None));
         runtime.set_session_id("sess-1");
         runtime.set_objective("test".into(), None);
-        runtime.update_checklist(vec![
-            crate::goal::types::GoalTask::new(0, "task 0".into()),
-        ]);
+        runtime.update_checklist(vec![crate::goal::types::GoalTask::new(0, "task 0".into())]);
 
         let tool = crate::goal::UpdateGoalChecklistTool::new(runtime.clone());
         let result = tool
@@ -660,9 +675,15 @@ mod tests {
         assert_eq!(result.output["status"], "verified");
 
         let goal = runtime.get_goal().unwrap();
-        assert_eq!(goal.checklist[0].status, crate::goal::types::TaskStatus::Verified);
+        assert_eq!(
+            goal.checklist[0].status,
+            crate::goal::types::TaskStatus::Verified
+        );
         assert!(goal.checklist[0].verified);
-        assert_eq!(goal.checklist[0].verification.as_deref(), Some("cargo test -p navi-core"));
+        assert_eq!(
+            goal.checklist[0].verification.as_deref(),
+            Some("cargo test -p navi-core")
+        );
     }
 
     #[test]
