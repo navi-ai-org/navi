@@ -120,6 +120,44 @@ impl GoalRuntimeHandle {
         *self.session_id.write().unwrap_or_else(|e| e.into_inner()) = None;
     }
 
+    /// Updates the checklist on the current goal. Returns the updated goal if successful.
+    pub fn update_checklist(&self, tasks: Vec<super::types::GoalTask>) -> Option<SessionGoal> {
+        let mut goal = self.goal.write().unwrap_or_else(|e| e.into_inner());
+        if let Some(ref mut g) = *goal {
+            g.set_checklist(tasks);
+            let cloned = g.clone();
+            drop(goal);
+            if let Some(ref acct) = *self.accounting.read().unwrap_or_else(|e| e.into_inner()) {
+                acct.replace_goal(cloned.clone());
+            }
+            Some(cloned)
+        } else {
+            None
+        }
+    }
+
+    /// Updates a single task's status in the goal checklist.
+    pub fn update_task_status(
+        &self,
+        task_id: usize,
+        status: super::types::TaskStatus,
+    ) -> Option<SessionGoal> {
+        let mut goal = self.goal.write().unwrap_or_else(|e| e.into_inner());
+        if let Some(ref mut g) = *goal {
+            if !g.update_task_status(task_id, status) {
+                return None;
+            }
+            let cloned = g.clone();
+            drop(goal);
+            if let Some(ref acct) = *self.accounting.read().unwrap_or_else(|e| e.into_inner()) {
+                acct.replace_goal(cloned.clone());
+            }
+            Some(cloned)
+        } else {
+            None
+        }
+    }
+
     // ── Accounting ─────────────────────────────────────────────
 
     /// Starts turn accounting for the active goal.

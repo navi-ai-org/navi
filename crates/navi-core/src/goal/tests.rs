@@ -197,11 +197,12 @@ mod tests {
             })
             .await
             .expect("update goal");
-        assert!(result.ok);
+        // Without a checklist, complete should be rejected.
+        assert!(!result.ok);
 
         runtime.finish_turn();
         let goal = runtime.get_goal().unwrap();
-        assert_eq!(goal.status, GoalStatus::Complete);
+        assert_eq!(goal.status, GoalStatus::Active);
     }
 
     #[tokio::test]
@@ -352,11 +353,12 @@ mod tests {
     #[test]
     fn goal_tool_definitions_exist() {
         let defs = crate::goal::goal_tool_definitions();
-        assert_eq!(defs.len(), 3);
+        assert_eq!(defs.len(), 4);
         let names: Vec<&str> = defs.iter().map(|d| d.name.as_str()).collect();
         assert!(names.contains(&"get_goal"));
         assert!(names.contains(&"create_goal"));
         assert!(names.contains(&"update_goal"));
+        assert!(names.contains(&"update_goal_checklist"));
     }
 
     #[test]
@@ -440,5 +442,260 @@ mod tests {
         assert!(!ext.on_token_usage(50, 30));
         ext.on_turn_end("sess-1");
         ext.on_session_end("sess-1");
+    }
+
+    // ── Checklist tests ───────────────────────────────────────
+
+    #[test]
+    fn checklist_empty_is_not_complete() {
+        let goal = SessionGoal::new("s1".into(), "obj".into(), None);
+        assert!(!goal.is_checklist_complete());
+    }
+
+    #[test]
+    fn checklist_all_verified_is_complete() {
+        let mut goal = SessionGoal::new("s1".into(), "obj".into(), None);
+        goal.checklist = vec![
+            crate::goal::types::GoalTask {
+                id: 0,
+                description: "task 0".into(),
+                status: crate::goal::types::TaskStatus::Verified,
+                verification: Some("cargo test".into()),
+                verified: true,
+            },
+            crate::goal::types::GoalTask {
+                id: 1,
+                description: "task 1".into(),
+                status: crate::goal::types::TaskStatus::Verified,
+                verification: Some("cargo build".into()),
+                verified: true,
+            },
+        ];
+        assert!(goal.is_checklist_complete());
+        assert_eq!(goal.verified_count(), 2);
+        assert_eq!(goal.finished_count(), 2);
+    }
+
+    #[test]
+    fn checklist_with_pending_is_not_complete() {
+        let mut goal = SessionGoal::new("s1".into(), "obj".into(), None);
+        goal.checklist = vec![
+            crate::goal::types::GoalTask {
+                id: 0,
+                description: "task 0".into(),
+                status: crate::goal::types::TaskStatus::Verified,
+                verification: None,
+                verified: true,
+            },
+            crate::goal::types::GoalTask {
+                id: 1,
+                description: "task 1".into(),
+                status: crate::goal::types::TaskStatus::Pending,
+                verification: None,
+                verified: false,
+            },
+        ];
+        assert!(!goal.is_checklist_complete());
+        assert_eq!(goal.finished_count(), 1);
+        assert!(goal.next_unfinished_task().is_some());
+    }
+
+    #[test]
+    fn checklist_skipped_counts_as_finished() {
+        let mut goal = SessionGoal::new("s1".into(), "obj".into(), None);
+        goal.checklist = vec![
+            crate::goal::types::GoalTask {
+                id: 0,
+                description: "task 0".into(),
+                status: crate::goal::types::TaskStatus::Verified,
+                verification: None,
+                verified: true,
+            },
+            crate::goal::types::GoalTask {
+                id: 1,
+                description: "task 1".into(),
+                status: crate::goal::types::TaskStatus::Skipped,
+                verification: None,
+                verified: false,
+            },
+        ];
+        assert!(goal.is_checklist_complete());
+        assert_eq!(goal.verified_count(), 1);
+        assert_eq!(goal.finished_count(), 2);
+    }
+
+    #[test]
+    fn checklist_update_task_status() {
+        let mut goal = SessionGoal::new("s1".into(), "obj".into(), None);
+        goal.checklist = vec![
+            crate::goal::types::GoalTask::new(0, "task 0".into()),
+            crate::goal::types::GoalTask::new(1, "task 1".into()),
+        ];
+        assert!(goal.update_task_status(0, crate::goal::types::TaskStatus::InProgress));
+        assert_eq!(goal.checklist[0].status, crate::goal::types::TaskStatus::InProgress);
+        assert!(!goal.update_task_status(99, crate::goal::types::TaskStatus::Verified));
+    }
+
+    #[tokio::test]
+    async fn complete_blocked_without_checklist() {
+        let runtime = Arc::new(GoalRuntimeHandle::new(None));
+        runtime.set_session_id("sess-1");
+        runtime.set_objective("test".into(), None);
+
+        let tool = crate::goal::UpdateGoalTool::new(runtime.clone());
+        let result = tool
+            .invoke(ToolInvocation {
+                id: "t1".into(),
+                tool_name: "update_goal".into(),
+                input: json!({ "action": "complete" }),
+            })
+            .await
+            .expect("invoke");
+        assert!(!result.ok);
+        assert!(result.output["error"].as_str().unwrap().contains("checklist"));
+    }
+
+    #[tokio::test]
+    async fn complete_blocked_with_unfinished_tasks() {
+        let runtime = Arc::new(GoalRuntimeHandle::new(None));
+        runtime.set_session_id("sess-1");
+        runtime.set_objective("test".into(), None);
+
+        // Set a checklist with one pending task
+        runtime.update_checklist(vec![
+            crate::goal::types::GoalTask::new(0, "implement feature".into()),
+        ]);
+
+        let tool = crate::goal::UpdateGoalTool::new(runtime.clone());
+        let result = tool
+            .invoke(ToolInvocation {
+                id: "t1".into(),
+                tool_name: "update_goal".into(),
+                input: json!({ "action": "complete" }),
+            })
+            .await
+            .expect("invoke");
+        assert!(!result.ok);
+        assert!(result.output["error"].as_str().unwrap().contains("unfinished"));
+    }
+
+    #[tokio::test]
+    async fn complete_allowed_with_all_verified() {
+        let runtime = Arc::new(GoalRuntimeHandle::new(None));
+        runtime.set_session_id("sess-1");
+        runtime.set_objective("test".into(), None);
+
+        // Set checklist and verify all tasks
+        runtime.update_checklist(vec![
+            crate::goal::types::GoalTask::new(0, "task 0".into()),
+            crate::goal::types::GoalTask::new(1, "task 1".into()),
+        ]);
+        runtime.update_task_status(0, crate::goal::types::TaskStatus::Verified);
+        runtime.update_task_status(1, crate::goal::types::TaskStatus::Verified);
+
+        let tool = crate::goal::UpdateGoalTool::new(runtime.clone());
+        let result = tool
+            .invoke(ToolInvocation {
+                id: "t1".into(),
+                tool_name: "update_goal".into(),
+                input: json!({ "action": "complete" }),
+            })
+            .await
+            .expect("invoke");
+        assert!(result.ok);
+        assert_eq!(runtime.get_goal().unwrap().status, GoalStatus::Complete);
+    }
+
+    #[tokio::test]
+    async fn checklist_set_via_tool() {
+        let runtime = Arc::new(GoalRuntimeHandle::new(None));
+        runtime.set_session_id("sess-1");
+        runtime.set_objective("test".into(), None);
+
+        let tool = crate::goal::UpdateGoalChecklistTool::new(runtime.clone());
+        let result = tool
+            .invoke(ToolInvocation {
+                id: "t1".into(),
+                tool_name: "update_goal_checklist".into(),
+                input: json!({
+                    "action": "set",
+                    "tasks": ["write code", "run tests", "fix lint"]
+                }),
+            })
+            .await
+            .expect("invoke");
+        assert!(result.ok);
+        assert_eq!(result.output["task_count"].as_u64().unwrap(), 3);
+
+        let goal = runtime.get_goal().unwrap();
+        assert_eq!(goal.checklist.len(), 3);
+        assert_eq!(goal.checklist[0].description, "write code");
+        assert_eq!(goal.checklist[0].status, crate::goal::types::TaskStatus::Pending);
+    }
+
+    #[tokio::test]
+    async fn checklist_update_status_via_tool() {
+        let runtime = Arc::new(GoalRuntimeHandle::new(None));
+        runtime.set_session_id("sess-1");
+        runtime.set_objective("test".into(), None);
+        runtime.update_checklist(vec![
+            crate::goal::types::GoalTask::new(0, "task 0".into()),
+        ]);
+
+        let tool = crate::goal::UpdateGoalChecklistTool::new(runtime.clone());
+        let result = tool
+            .invoke(ToolInvocation {
+                id: "t1".into(),
+                tool_name: "update_goal_checklist".into(),
+                input: json!({
+                    "action": "update",
+                    "task_id": 0,
+                    "status": "verified",
+                    "verification": "cargo test -p navi-core"
+                }),
+            })
+            .await
+            .expect("invoke");
+        assert!(result.ok);
+        assert_eq!(result.output["status"], "verified");
+
+        let goal = runtime.get_goal().unwrap();
+        assert_eq!(goal.checklist[0].status, crate::goal::types::TaskStatus::Verified);
+        assert!(goal.checklist[0].verified);
+        assert_eq!(goal.checklist[0].verification.as_deref(), Some("cargo test -p navi-core"));
+    }
+
+    #[test]
+    fn steering_prompt_shows_checklist_warning_when_empty() {
+        let goal = SessionGoal::new("s1".into(), "do stuff".into(), None);
+        let prompt = crate::goal::steering::build_continuation_prompt(&goal);
+        assert!(prompt.contains("NO CHECKLIST DEFINED"));
+    }
+
+    #[test]
+    fn steering_prompt_shows_checklist_progress() {
+        let mut goal = SessionGoal::new("s1".into(), "do stuff".into(), None);
+        goal.checklist = vec![
+            crate::goal::types::GoalTask {
+                id: 0,
+                description: "task A".into(),
+                status: crate::goal::types::TaskStatus::Verified,
+                verification: Some("cargo test".into()),
+                verified: true,
+            },
+            crate::goal::types::GoalTask {
+                id: 1,
+                description: "task B".into(),
+                status: crate::goal::types::TaskStatus::InProgress,
+                verification: None,
+                verified: false,
+            },
+        ];
+        let prompt = crate::goal::steering::build_continuation_prompt(&goal);
+        assert!(prompt.contains("1/2 verified"));
+        assert!(prompt.contains("task A"));
+        assert!(prompt.contains("task B"));
+        assert!(prompt.contains("▶"));
+        assert!(prompt.contains("✓"));
     }
 }

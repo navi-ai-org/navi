@@ -299,6 +299,36 @@ impl Tool for UpdateGoalTool {
 
         let result = match action {
             "complete" => {
+                // Enforce checklist completion before allowing the goal to be marked complete.
+                if !goal.checklist.is_empty() && !goal.is_checklist_complete() {
+                    let unfinished: Vec<String> = goal
+                        .checklist
+                        .iter()
+                        .filter(|t| !t.status.is_finished())
+                        .map(|t| format!("  [{}] {}", t.status, t.description))
+                        .collect();
+                    return Ok(make_result(
+                        &invocation.id,
+                        false,
+                        json!({
+                            "error": "Cannot mark goal as complete: checklist has unfinished tasks.",
+                            "unfinished_tasks": unfinished,
+                            "finished": goal.finished_count(),
+                            "total": goal.checklist.len(),
+                            "message": "Complete or skip all checklist tasks before marking the goal as complete. Use update_goal_checklist to update task statuses."
+                        }),
+                    ));
+                }
+                if goal.checklist.is_empty() {
+                    return Ok(make_result(
+                        &invocation.id,
+                        false,
+                        json!({
+                            "error": "Cannot mark goal as complete: no checklist has been defined.",
+                            "message": "Use update_goal_checklist to define a task checklist first. Decompose the objective into concrete, verifiable tasks."
+                        }),
+                    ));
+                }
                 self.runtime
                     .update_goal(goal_with_status(&goal, GoalStatus::Complete));
                 make_result(
@@ -307,7 +337,9 @@ impl Tool for UpdateGoalTool {
                     json!({
                         "updated": true,
                         "status": "complete",
-                        "message": "Goal marked as complete. No further auto-continuation."
+                        "verified_tasks": goal.verified_count(),
+                        "total_tasks": goal.checklist.len(),
+                        "message": "Goal marked as complete. All checklist tasks verified."
                     }),
                 )
             }
@@ -385,11 +417,236 @@ impl Tool for UpdateGoalTool {
     }
 }
 
-/// Convenience: returns a vec of all three goal tool definitions (without constructing tools).
+// ── update_goal_checklist ─────────────────────────────────────
+
+pub struct UpdateGoalChecklistTool {
+    runtime: Arc<GoalRuntimeHandle>,
+}
+
+impl UpdateGoalChecklistTool {
+    pub fn new(runtime: Arc<GoalRuntimeHandle>) -> Self {
+        Self { runtime }
+    }
+
+    pub fn definition_static() -> ToolDefinition {
+        ToolDefinition {
+            name: "update_goal_checklist".to_string(),
+            description:
+                "Manage the task checklist for the current goal. Use action `set` to define \
+                 the full checklist (replaces existing), or `update` to change a single task's \
+                 status. The checklist must be fully verified before the goal can be marked \
+                 complete. Always decompose the objective into concrete, verifiable tasks."
+                    .to_string(),
+            kind: ToolKind::Write,
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "enum": ["set", "update"],
+                        "description": "`set` replaces the entire checklist. `update` changes a single task's status."
+                    },
+                    "tasks": {
+                        "type": "array",
+                        "description": "Full task list (required for `set`). Each task is a string description.",
+                        "items": { "type": "string" }
+                    },
+                    "task_id": {
+                        "type": "integer",
+                        "description": "The 0-based index of the task to update (required for `update`)."
+                    },
+                    "status": {
+                        "type": "string",
+                        "enum": ["pending", "in_progress", "done", "verified", "skipped"],
+                        "description": "New status for the task (required for `update`). Use `verified` only after running tests/build and confirming they pass."
+                    },
+                    "verification": {
+                        "type": "string",
+                        "description": "Optional verification command that was run (e.g. \"cargo test -p navi-core\")."
+                    }
+                },
+                "required": ["action"],
+                "additionalProperties": false
+            }),
+            metadata: ToolMetadata {
+                tags: vec!["goal".to_string(), "session".to_string()],
+                capabilities: vec!["goal.update".to_string()],
+                ..ToolMetadata::default()
+            },
+        }
+    }
+}
+
+#[async_trait]
+impl Tool for UpdateGoalChecklistTool {
+    fn definition(&self) -> ToolDefinition {
+        Self::definition_static()
+    }
+
+    async fn invoke(&self, invocation: ToolInvocation) -> anyhow::Result<ToolResult> {
+        let args = invocation.input.clone();
+        let action = args.get("action").and_then(|v| v.as_str()).unwrap_or("");
+
+        let result = match action {
+            "set" => {
+                let tasks = args.get("tasks").and_then(|v| v.as_array()).cloned();
+                let Some(task_descs) = tasks else {
+                    return Ok(make_result(
+                        &invocation.id,
+                        false,
+                        json!({"error": "tasks array is required for `set` action"}),
+                    ));
+                };
+
+                let tasks: Vec<super::types::GoalTask> = task_descs
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(i, v)| v.as_str().map(|s| super::types::GoalTask::new(i, s.to_string())))
+                    .collect();
+
+                if tasks.is_empty() {
+                    return Ok(make_result(
+                        &invocation.id,
+                        false,
+                        json!({"error": "tasks array must not be empty"}),
+                    ));
+                }
+
+                match self.runtime.update_checklist(tasks.clone()) {
+                    Some(goal) => make_result(
+                        &invocation.id,
+                        true,
+                        json!({
+                            "updated": true,
+                            "task_count": goal.checklist.len(),
+                            "checklist": goal.checklist.iter().map(|t| {
+                                json!({"id": t.id, "description": t.description, "status": t.status.as_str()})
+                            }).collect::<Vec<_>>(),
+                            "message": format!("Checklist set with {} tasks. Work through each task and mark it `verified` after running tests.", goal.checklist.len())
+                        }),
+                    ),
+                    None => make_result(
+                        &invocation.id,
+                        false,
+                        json!({"error": "No goal is currently set. Use create_goal to set one first."}),
+                    ),
+                }
+            }
+            "update" => {
+                let task_id = args.get("task_id").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+                let status_str = args.get("status").and_then(|v| v.as_str()).unwrap_or("");
+                let status = match status_str {
+                    "pending" => super::types::TaskStatus::Pending,
+                    "in_progress" => super::types::TaskStatus::InProgress,
+                    "done" => super::types::TaskStatus::Done,
+                    "verified" => super::types::TaskStatus::Verified,
+                    "skipped" => super::types::TaskStatus::Skipped,
+                    _ => {
+                        return Ok(make_result(
+                            &invocation.id,
+                            false,
+                            json!({"error": format!("Unknown status `{status_str}`. Valid: pending, in_progress, done, verified, skipped.")}),
+                        ));
+                    }
+                };
+
+                let verification = args.get("verification").and_then(|v| v.as_str()).map(|s| s.to_string());
+
+                let goal = match self.runtime.get_goal() {
+                    Some(g) => g,
+                    None => {
+                        return Ok(make_result(
+                            &invocation.id,
+                            false,
+                            json!({"error": "No goal is currently set."}),
+                        ));
+                    }
+                };
+
+                if task_id >= goal.checklist.len() {
+                    return Ok(make_result(
+                        &invocation.id,
+                        false,
+                        json!({"error": format!("task_id {} is out of bounds (checklist has {} tasks)", task_id, goal.checklist.len())}),
+                    ));
+                }
+
+                if let Some(ref ver) = verification {
+                    let _ = self.runtime.update_task_status(task_id, status);
+                    // Also record verification on the goal
+                    if let Some(mut g) = self.runtime.get_goal() {
+                        g.set_task_verification(task_id, ver.clone(), status == super::types::TaskStatus::Verified);
+                        self.runtime.update_goal(g.clone());
+                        make_result(
+                            &invocation.id,
+                            true,
+                            json!({
+                                "updated": true,
+                                "task_id": task_id,
+                                "status": status.as_str(),
+                                "verification": ver,
+                                "finished": g.finished_count(),
+                                "total": g.checklist.len(),
+                                "message": if g.is_checklist_complete() {
+                                    "All checklist tasks are finished. You can now mark the goal as complete with update_goal(complete)."
+                                } else {
+                                    "Task updated. Continue working on remaining tasks."
+                                }
+                            }),
+                        )
+                    } else {
+                        make_result(&invocation.id, false, json!({"error": "Failed to update task verification."}))
+                    }
+                } else {
+                    match self.runtime.update_task_status(task_id, status) {
+                        Some(g) => make_result(
+                            &invocation.id,
+                            true,
+                            json!({
+                                "updated": true,
+                                "task_id": task_id,
+                                "status": status.as_str(),
+                                "finished": g.finished_count(),
+                                "total": g.checklist.len(),
+                                "message": if g.is_checklist_complete() {
+                                    "All checklist tasks are finished. You can now mark the goal as complete with update_goal(complete)."
+                                } else {
+                                    "Task updated. Continue working on remaining tasks."
+                                }
+                            }),
+                        ),
+                        None => make_result(
+                            &invocation.id,
+                            false,
+                            json!({"error": "Failed to update task status."}),
+                        ),
+                    }
+                }
+            }
+            other => make_result(
+                &invocation.id,
+                false,
+                json!({"error": format!("Unknown action `{other}`. Valid actions: set, update.")}),
+            ),
+        };
+        Ok(result)
+    }
+
+    async fn invoke_with_context(
+        &self,
+        invocation: ToolInvocation,
+        _context: ToolInvocationContext,
+    ) -> anyhow::Result<ToolResult> {
+        self.invoke(invocation).await
+    }
+}
+
+/// Convenience: returns a vec of all goal tool definitions (without constructing tools).
 pub fn goal_tool_definitions() -> Vec<ToolDefinition> {
     vec![
         GetGoalTool::definition_static(),
         CreateGoalTool::definition_static(),
         UpdateGoalTool::definition_static(),
+        UpdateGoalChecklistTool::definition_static(),
     ]
 }
