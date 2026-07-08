@@ -177,6 +177,19 @@ pub(crate) fn run_selected_command(app: &mut TuiApp) -> bool {
                 );
             }
         }
+        CommandAction::TogglePlanMode => {
+            let session_id = app.session_id.as_str().to_string();
+            let engine = app.engine();
+            let currently_plan = app.agent_mode.restricts_tools();
+            tokio::spawn(async move {
+                if currently_plan {
+                    let _ = engine.exit_plan_mode(&session_id).await;
+                } else {
+                    let _ = engine.enter_plan_mode(&session_id).await;
+                }
+            });
+            super::close_all_modals(app);
+        }
         _ => super::close_all_modals(app),
     }
 

@@ -634,9 +634,9 @@ impl SubagentTool {
                 config: Arc::new(std::sync::RwLock::new(config_snapshot)),
                 memory_injection: None,
                 compaction_provider: None,
-            agent_mode: crate::plan_mode::AgentMode::Default,
                 compaction_model_name: None,
                 session_id: "subagent-bg".to_string(),
+                agent_mode: crate::plan_mode::AgentMode::Default,
                 allowed_tool_names: allowed_tool_names_clone,
             };
 

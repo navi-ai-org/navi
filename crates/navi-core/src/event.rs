@@ -348,6 +348,12 @@ impl RuntimeEventKind {
                 tokens_used,
                 token_budget,
             }),
+            RuntimeEventKind::PlanProposed { title, steps, .. } => {
+                Some(AgentEvent::PlanProposed { title, steps })
+            }
+            RuntimeEventKind::AgentModeChanged { mode, .. } => {
+                Some(AgentEvent::AgentModeChanged { mode })
+            }
             _ => None,
         }
     }
@@ -523,6 +529,18 @@ pub enum AgentEvent {
     AutoCompactFailed {
         /// Human-readable failure reason.
         reason: String,
+    },
+    /// The agent proposed a plan in Plan mode.
+    PlanProposed {
+        /// Title/summary of the plan.
+        title: String,
+        /// Ordered list of steps.
+        steps: Vec<String>,
+    },
+    /// The agent mode changed (e.g. Default → Plan or Plan → Default).
+    AgentModeChanged {
+        /// The new mode.
+        mode: crate::plan_mode::AgentMode,
     },
 }
 

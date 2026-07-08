@@ -48,6 +48,15 @@ pub trait EngineDriver: Send + Sync {
     /// Cancel the currently active turn for the given session, if any.
     async fn cancel_turn(&self, session_id: &str) -> Result<()>;
 
+    /// Returns the current agent mode (Default or Plan).
+    fn agent_mode(&self, session_id: &str) -> Result<navi_core::plan_mode::AgentMode>;
+
+    /// Enters Plan mode for the given session.
+    async fn enter_plan_mode(&self, session_id: &str) -> Result<()>;
+
+    /// Exits Plan mode and returns to normal execution.
+    async fn exit_plan_mode(&self, session_id: &str) -> Result<()>;
+
     /// Resolve a pending tool approval.
     async fn resolve_approval(&self, session_id: &str, decision: ApprovalDecision) -> Result<bool>;
 
@@ -162,6 +171,18 @@ impl EngineDriver for crate::NaviEngine {
 
     async fn cancel_turn(&self, session_id: &str) -> Result<()> {
         crate::NaviEngine::cancel_turn(self, session_id).await
+    }
+
+    fn agent_mode(&self, session_id: &str) -> Result<navi_core::plan_mode::AgentMode> {
+        crate::NaviEngine::agent_mode(self, session_id)
+    }
+
+    async fn enter_plan_mode(&self, session_id: &str) -> Result<()> {
+        crate::NaviEngine::enter_plan_mode(self, session_id).await
+    }
+
+    async fn exit_plan_mode(&self, session_id: &str) -> Result<()> {
+        crate::NaviEngine::exit_plan_mode(self, session_id).await
     }
 
     async fn resolve_approval(&self, session_id: &str, decision: ApprovalDecision) -> Result<bool> {

@@ -147,6 +147,10 @@ pub struct TuiApp {
     pub(crate) last_click_time: Option<std::time::Instant>,
     pub(crate) last_click_pos: Option<(u16, u16)>,
 
+    // Plan mode state
+    pub(crate) agent_mode: navi_sdk::AgentMode,
+    pub(crate) proposed_plan: Option<navi_sdk::ProposedPlan>,
+
     /// Cached set of canonical provider IDs with resolved credentials.
     /// Populated by refresh_authenticated_providers().
     pub(crate) authenticated_providers: HashSet<String>,
@@ -361,6 +365,8 @@ impl TuiApp {
             cancel_esc_pressed: false,
             last_click_time: None,
             last_click_pos: None,
+            agent_mode: navi_sdk::AgentMode::Default,
+            proposed_plan: None,
             authenticated_providers: HashSet::new(),
             available_skills: Vec::new(),
             active_skills: initial_active_skills,

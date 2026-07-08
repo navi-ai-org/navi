@@ -250,6 +250,8 @@ pub enum Mode {
     MessageQueue,
     QueuedMessageEdit,
     ConfirmCancelTurn,
+    Plan,
+    ConfirmPlan,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -280,6 +282,8 @@ pub(crate) enum ModalKind {
     MessageQueue,
     QueuedMessageEdit,
     ConfirmCancelTurn,
+    Plan,
+    ConfirmPlan,
 }
 
 impl ModalKind {
@@ -311,6 +315,8 @@ impl ModalKind {
             Self::MessageQueue => Mode::MessageQueue,
             Self::QueuedMessageEdit => Mode::QueuedMessageEdit,
             Self::ConfirmCancelTurn => Mode::ConfirmCancelTurn,
+            Self::Plan => Mode::Plan,
+            Self::ConfirmPlan => Mode::ConfirmPlan,
         }
     }
 }
