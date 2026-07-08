@@ -13,7 +13,7 @@ mod input;
 mod keybindings;
 mod mouse;
 mod notifications;
-mod panels;
+pub(crate) mod panels;
 mod persistence;
 mod plugin_approval;
 mod plugins;

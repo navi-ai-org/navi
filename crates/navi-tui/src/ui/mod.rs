@@ -2,7 +2,7 @@
 // continue to work during the incremental migration to the Panel system.
 pub use copland::effect::UiEffect;
 pub use copland::keymap::KeyOutcome;
-pub use copland::layout::{ModalSpec, RootLayoutHeights, root_layout, viewport_rect};
+pub use copland::layout::{ModalSpec, viewport_rect};
 pub use copland::list::SelectListState;
 pub use copland::modal::ModalStack;
 pub use copland::text_input::{

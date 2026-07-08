@@ -21,6 +21,8 @@ use crate::state::Mode;
 use crate::view;
 use crate::view::setup;
 
+pub(crate) mod regions;
+
 /// Register all existing modals as overlay panels in the PanelManager.
 ///
 /// This is the bridge step: instead of a hardcoded match in render_inner,
@@ -265,11 +267,16 @@ pub fn register_modal_panels(app: &mut TuiApp) {
     )));
 }
 
-/// Render all registered overlay panels using the NaviPanelContext.
-/// Returns true if any overlay was rendered (i.e., a modal was active).
+/// Render all region panels (header, chat, input, etc.) via the PanelManager.
+pub fn render_regions(frame: &mut Frame, app: &mut TuiApp, area: Rect) {
+    let ctx = NaviPanelContext::new(app, area);
+    app.panel_manager.render_regions(frame, &ctx);
+}
+
+/// Render all overlay panels (modals, plugin panels) via the PanelManager.
 pub fn render_overlays(frame: &mut Frame, app: &mut TuiApp, area: Rect) {
     let ctx = NaviPanelContext::new(app, area);
-    app.panel_manager.render(frame, &ctx);
+    app.panel_manager.render_overlays(frame, &ctx);
 }
 
 /// Concrete PanelContext for navi-tui.
@@ -520,7 +527,10 @@ impl Panel for PluginPanelAdapter {
     }
 
     fn render(&mut self, frame: &mut Frame, area: Rect, ctx: &dyn PanelContext) {
-        self.inner.lock().expect("PluginPanelAdapter mutex poisoned").render(frame, area, ctx);
+        self.inner
+            .lock()
+            .expect("PluginPanelAdapter mutex poisoned")
+            .render(frame, area, ctx);
     }
 
     fn handle_key(&self, key: &KeyEvent, ctx: &dyn PanelContext) -> KeyOutcome {
@@ -528,20 +538,32 @@ impl Panel for PluginPanelAdapter {
         // TuiComponent::handle_key takes &mut self. The Mutex lets us
         // get &mut access. This is safe because the TUI event loop is
         // single-threaded — the mutex is never contended.
-        let mut inner = self.inner.lock().expect("PluginPanelAdapter mutex poisoned");
+        let mut inner = self
+            .inner
+            .lock()
+            .expect("PluginPanelAdapter mutex poisoned");
         inner.handle_key(key, ctx)
     }
 
     fn preferred_size(&self) -> PanelSize {
-        self.inner.lock().expect("PluginPanelAdapter mutex poisoned").preferred_size()
+        self.inner
+            .lock()
+            .expect("PluginPanelAdapter mutex poisoned")
+            .preferred_size()
     }
 
     fn is_visible(&self) -> bool {
-        self.inner.lock().expect("PluginPanelAdapter mutex poisoned").is_visible()
+        self.inner
+            .lock()
+            .expect("PluginPanelAdapter mutex poisoned")
+            .is_visible()
     }
 
     fn z_order(&self) -> i16 {
-        self.inner.lock().expect("PluginPanelAdapter mutex poisoned").z_order()
+        self.inner
+            .lock()
+            .expect("PluginPanelAdapter mutex poisoned")
+            .z_order()
     }
 }
 

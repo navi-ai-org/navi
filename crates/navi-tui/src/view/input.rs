@@ -125,7 +125,7 @@ pub(crate) fn render_input(frame: &mut Frame<'_>, app: &mut TuiApp, area: Rect) 
     }
 }
 
-pub(super) fn composer_height(app: &TuiApp, input_width: usize) -> u16 {
+pub(crate) fn composer_height(app: &TuiApp, input_width: usize) -> u16 {
     let wrap_width = input_width.saturating_sub(6);
     let visible_lines =
         input_visual_line_count(&app.input, wrap_width).clamp(1, COMPOSER_MAX_VISIBLE_LINES) as u16;
@@ -133,13 +133,13 @@ pub(super) fn composer_height(app: &TuiApp, input_width: usize) -> u16 {
     INPUT_TOP_PADDING_ROWS + visible_lines.max(3) + 1
 }
 
-pub(super) fn composer_hint_height(app: &TuiApp) -> u16 {
+pub(crate) fn composer_hint_height(app: &TuiApp) -> u16 {
     let hint = if show_composer_hint(app) { 1 } else { 0 };
     let goal = if app.goal_state.is_some() { 1 } else { 0 };
     hint + goal
 }
 
-pub(super) fn composer_activity_height(app: &TuiApp) -> u16 {
+pub(crate) fn composer_activity_height(app: &TuiApp) -> u16 {
     if composer_activity_line(app, 1).is_some() {
         3
     } else {
