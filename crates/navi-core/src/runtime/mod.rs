@@ -399,28 +399,20 @@ impl AgentRuntime {
             crate::plan_mode::AgentMode::Plan;
         *self.plan_parser.lock().unwrap_or_else(|e| e.into_inner()) =
             crate::plan_mode::ProposedPlanParser::new();
-        if let Some(ref session_id) =
-            self.session.session_id.read().unwrap_or_else(|e| e.into_inner()).as_ref()
-        {
-            self.event_bus.publish(RuntimeEventKind::AgentModeChanged {
-                session_id: session_id.to_string(),
-                mode: crate::plan_mode::AgentMode::Plan,
-            });
-        }
+        self.event_bus.publish(RuntimeEventKind::AgentModeChanged {
+            session_id: self.session.id().as_str().to_string(),
+            mode: crate::plan_mode::AgentMode::Plan,
+        });
     }
 
     /// Exits Plan mode and returns to normal execution.
     pub fn exit_plan_mode(&self) {
         *self.agent_mode.write().unwrap_or_else(|e| e.into_inner()) =
             crate::plan_mode::AgentMode::Default;
-        if let Some(ref session_id) =
-            self.session.session_id.read().unwrap_or_else(|e| e.into_inner()).as_ref()
-        {
-            self.event_bus.publish(RuntimeEventKind::AgentModeChanged {
-                session_id: session_id.to_string(),
-                mode: crate::plan_mode::AgentMode::Default,
-            });
-        }
+        self.event_bus.publish(RuntimeEventKind::AgentModeChanged {
+            session_id: self.session.id().as_str().to_string(),
+            mode: crate::plan_mode::AgentMode::Default,
+        });
     }
 
     /// Feeds a text delta into the plan parser. Returns any completed plans.
@@ -1263,6 +1255,7 @@ impl AgentRuntime {
             config: self.shared_config.clone(),
             memory_injection: memory_injection.clone(),
             compaction_provider: None,
+            agent_mode: self.agent_mode(),
             compaction_model_name: None,
             session_id: self.session.id().as_str().to_string(),
             allowed_tool_names: None,

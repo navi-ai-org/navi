@@ -178,7 +178,10 @@ mod tests {
             .filter(|w| w[0] == w[1])
             .map(|w| w[0])
             .collect();
-        assert!(dups.is_empty(), "duplicate methods in NAVI_ENGINE_API_METHODS: {dups:?}");
+        assert!(
+            dups.is_empty(),
+            "duplicate methods in NAVI_ENGINE_API_METHODS: {dups:?}"
+        );
     }
 
     #[test]

@@ -64,6 +64,9 @@ pub struct TurnContext {
     /// Optional separate provider for compaction/summarization. When set,
     /// auto_compact uses this instead of the main model provider.
     pub compaction_provider: Option<Arc<dyn ModelProvider>>,
+    /// Current agent mode (Default or Plan). In Plan mode, only read-only
+    /// tools are available to the model.
+    pub agent_mode: crate::plan_mode::AgentMode,
     /// Model name for the compaction provider.
     pub compaction_model_name: Option<String>,
     pub session_id: String,
@@ -178,12 +181,19 @@ async fn ensure_system_prompt(ctx: &TurnContext, messages: &mut Vec<ModelMessage
         .unwrap_or_else(|e| e.into_inner())
         .clone();
     let memory_injection = combined_memory_injection(ctx).await;
+    let mut tools = ctx.tool_executor.definitions();
+
+    // In Plan mode, filter to read-only tools only.
+    if ctx.agent_mode.restricts_tools() {
+        tools.retain(|t| crate::plan_mode::is_tool_allowed_in_plan_mode(t.kind));
+    }
+
     let input = SystemPromptInput {
         config: ctx.active_config(),
         project_dir: ctx.project_dir.clone(),
         memory_injection,
         tools: ctx.components.harness.filter_tools(
-            ctx.tool_executor.definitions(),
+            tools,
             ctx.allowed_tool_names.as_deref(),
         ),
         include_tool_prompt_manifest: ctx.include_tool_prompt_manifest,
