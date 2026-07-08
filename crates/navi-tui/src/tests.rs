@@ -108,6 +108,8 @@ fn app_with_missing_provider_key() -> TuiApp {
             supports_video: None,
             supports_documents: None,
             tool_prompt_manifest: None,
+            pricing_input_per_1m: None,
+            pricing_output_per_1m: None,
         }],
         ..Default::default()
     }];
@@ -1261,6 +1263,57 @@ fn ctrl_o_in_provider_modal_does_not_toggle_full_tool_view() {
 }
 
 #[test]
+fn ctrl_o_on_provider_header_resolves_xai_for_oauth() {
+    use navi_sdk::{provider_catalog, provider_supports_device_oauth};
+
+    assert!(
+        provider_supports_device_oauth("xai"),
+        "xAI must support device/browser OAuth"
+    );
+
+    let mut app = test_app("");
+    app.mode = Mode::Commands;
+    app.command_filter = "providers".to_string();
+    assert!(!run_selected_command(&mut app));
+    assert_eq!(app.mode, Mode::Providers);
+
+    // Filter to xAI; cursor often lands on a section header (index 0).
+    app.provider_filter = "xai".to_string();
+    app.selected_provider_setting = 0;
+    let rows = app.filtered_providers();
+    assert!(
+        !rows.is_empty(),
+        "filtering providers by 'xai' should yield rows"
+    );
+
+    // Even with selection on a header, a provider row must be resolvable.
+    let catalog = provider_catalog(&app.loaded_config.config);
+    let has_xai = catalog.iter().any(|p| p.id == "xai");
+    assert!(has_xai, "catalog must include xai provider");
+    let resolved = rows.iter().find_map(|row| match row {
+        crate::providers::ProviderListRow::Provider { index } => catalog.get(*index),
+        crate::providers::ProviderListRow::Account { provider_index, .. } => {
+            catalog.get(*provider_index)
+        }
+        crate::providers::ProviderListRow::Header { .. } => None,
+    });
+    assert_eq!(resolved.map(|p| p.id.as_str()), Some("xai"));
+
+    // Drive Ctrl+O under a Tokio runtime so spawn does not panic.
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("tokio runtime");
+    let _guard = runtime.enter();
+    handle_key(&mut app, KeyCode::Char('o'), KeyModifiers::CONTROL);
+    assert!(!app.full_tool_view);
+    assert!(
+        app.is_loading || app.notification().is_some(),
+        "Ctrl+O on xAI should start OAuth or show a status notification"
+    );
+}
+
+#[test]
 fn oauth_started_opens_modal_without_chat_message() {
     let mut app = test_app("");
 
@@ -1270,6 +1323,7 @@ fn oauth_started_opens_modal_without_chat_message() {
             provider_id: "commandcode".to_string(),
             verification_uri: "https://commandcode.ai/studio/auth/cli?state=test".to_string(),
             user_code: String::new(),
+            paste_slot: None,
         },
     );
 
@@ -1287,6 +1341,7 @@ fn oauth_modal_copy_shortcut_copies_link() {
             provider_id: "commandcode".to_string(),
             verification_uri: "https://commandcode.ai/studio/auth/cli?state=test".to_string(),
             user_code: String::new(),
+            paste_slot: None,
         },
     );
 
@@ -1308,6 +1363,7 @@ fn oauth_modal_registers_clickable_link_hit_region() {
             provider_id: "commandcode".to_string(),
             verification_uri: "https://commandcode.ai/studio/auth/cli?state=test".to_string(),
             user_code: String::new(),
+            paste_slot: None,
         },
     );
     let backend = TestBackend::new(80, 24);
@@ -1336,6 +1392,7 @@ fn oauth_completion_clears_modal_text_from_next_frame() {
             provider_id: "commandcode".to_string(),
             verification_uri: "https://example.test/stale-oauth-marker".to_string(),
             user_code: String::new(),
+            paste_slot: None,
         },
     );
     terminal

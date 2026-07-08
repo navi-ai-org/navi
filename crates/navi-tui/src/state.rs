@@ -250,7 +250,6 @@ pub enum Mode {
     MessageQueue,
     QueuedMessageEdit,
     ConfirmCancelTurn,
-    Plan,
     ConfirmPlan,
 }
 
@@ -282,7 +281,6 @@ pub(crate) enum ModalKind {
     MessageQueue,
     QueuedMessageEdit,
     ConfirmCancelTurn,
-    Plan,
     ConfirmPlan,
 }
 
@@ -315,7 +313,6 @@ impl ModalKind {
             Self::MessageQueue => Mode::MessageQueue,
             Self::QueuedMessageEdit => Mode::QueuedMessageEdit,
             Self::ConfirmCancelTurn => Mode::ConfirmCancelTurn,
-            Self::Plan => Mode::Plan,
             Self::ConfirmPlan => Mode::ConfirmPlan,
         }
     }
@@ -326,6 +323,16 @@ pub(crate) struct UsageUiState {
     pub loading: bool,
     pub report: Option<NaviUsageReport>,
     pub error: Option<String>,
+    /// Cumulative tokens for the current TUI session (all providers).
+    pub session_input_tokens: u64,
+    pub session_output_tokens: u64,
+    pub last_input_tokens: Option<u64>,
+    pub last_output_tokens: Option<u64>,
+    /// Estimated session spend in USD from registry list pricing × tokens.
+    /// Used for non-OAuth / API-key providers that bill per token.
+    pub session_cost_usd: f64,
+    /// True once at least one turn had list pricing available.
+    pub session_cost_known: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -333,6 +340,11 @@ pub(crate) struct OAuthUiState {
     pub provider_id: String,
     pub verification_uri: String,
     pub user_code: String,
+    /// When set, the TUI can write a pasted authorization code here for the
+    /// waiting OAuth task (xAI shows a copy-code page when loopback fails).
+    pub paste_slot: Option<std::sync::Arc<std::sync::Mutex<Option<String>>>>,
+    /// Last paste feedback shown in the modal.
+    pub paste_status: Option<String>,
 }
 
 #[derive(Debug, Clone)]

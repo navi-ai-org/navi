@@ -103,6 +103,26 @@ impl RegistryProviderDefaults {
     }
 }
 
+/// Pricing for a registry model (USD per 1M tokens by default).
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct RegistryModelPricing {
+    /// Price per 1M input tokens.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_per_1m: Option<f64>,
+    /// Price per 1M output tokens.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_per_1m: Option<f64>,
+    /// Currency code (defaults to USD when absent).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub currency: Option<String>,
+}
+
+impl RegistryModelPricing {
+    pub fn is_empty(&self) -> bool {
+        self.input_per_1m.is_none() && self.output_per_1m.is_none()
+    }
+}
+
 /// A single model entry in the remote registry JSON.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RegistryModel {
@@ -142,6 +162,9 @@ pub struct RegistryModel {
     /// Free-form capability tags such as `vision`, `audio`, `video`, `documents`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub capabilities: Vec<String>,
+    /// Optional list pricing used for session cost estimates.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pricing: Option<RegistryModelPricing>,
 }
 
 /// A full provider entry as stored in `registry/providers/<id>.json`.

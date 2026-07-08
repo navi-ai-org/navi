@@ -89,6 +89,8 @@ fn minimal_fallback_providers() -> Vec<ProviderConfig> {
             supports_video: None,
             supports_documents: None,
             tool_prompt_manifest: None,
+            pricing_input_per_1m: None,
+            pricing_output_per_1m: None,
         }],
         request_options: default_request_options_for("openai"),
         ..Default::default()
@@ -267,6 +269,8 @@ impl NaviConfig {
                     supports_video: None,
                     supports_documents: None,
                     tool_prompt_manifest: None,
+                    pricing_input_per_1m: None,
+                    pricing_output_per_1m: None,
                 });
             }
         }
@@ -365,6 +369,12 @@ pub(crate) fn merge_provider_configs(
                         tool_prompt_manifest: override_model
                             .tool_prompt_manifest
                             .or(registry_model.tool_prompt_manifest),
+                        pricing_input_per_1m: override_model
+                            .pricing_input_per_1m
+                            .or(registry_model.pricing_input_per_1m),
+                        pricing_output_per_1m: override_model
+                            .pricing_output_per_1m
+                            .or(registry_model.pricing_output_per_1m),
                     });
                 } else {
                     merged_models.push(override_model);
@@ -470,6 +480,8 @@ mod tests {
                 supports_video: None,
                 supports_documents: None,
                 tool_prompt_manifest: None,
+                pricing_input_per_1m: None,
+                pricing_output_per_1m: None,
             }],
             ..Default::default()
         });
@@ -513,6 +525,8 @@ mod tests {
                     supports_video: None,
                     supports_documents: None,
                     tool_prompt_manifest: None,
+                    pricing_input_per_1m: None,
+                    pricing_output_per_1m: None,
                 },
                 ProviderModelConfig {
                     name: "model-b".to_string(),
@@ -526,6 +540,8 @@ mod tests {
                     supports_video: None,
                     supports_documents: None,
                     tool_prompt_manifest: None,
+                    pricing_input_per_1m: None,
+                    pricing_output_per_1m: None,
                 },
                 ProviderModelConfig {
                     name: "model-c".to_string(),
@@ -539,6 +555,8 @@ mod tests {
                     supports_video: None,
                     supports_documents: None,
                     tool_prompt_manifest: None,
+                    pricing_input_per_1m: None,
+                    pricing_output_per_1m: None,
                 },
             ],
             ..Default::default()
@@ -558,6 +576,8 @@ mod tests {
                 supports_video: None,
                 supports_documents: None,
                 tool_prompt_manifest: None,
+                pricing_input_per_1m: None,
+                pricing_output_per_1m: None,
             }],
             ..Default::default()
         };

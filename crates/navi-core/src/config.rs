@@ -357,6 +357,8 @@ deny_tool_regex = ["^danger_"]
                 supports_video: None,
                 supports_documents: None,
                 tool_prompt_manifest: Some(true),
+                pricing_input_per_1m: None,
+                pricing_output_per_1m: None,
             }],
             ..Default::default()
         });
@@ -385,6 +387,8 @@ deny_tool_regex = ["^danger_"]
                 supports_video: None,
                 supports_documents: None,
                 tool_prompt_manifest: None,
+                pricing_input_per_1m: None,
+                pricing_output_per_1m: None,
             }],
             ..Default::default()
         });
@@ -461,6 +465,8 @@ deny_tool_regex = ["^danger_"]
                 supports_video: None,
                 supports_documents: None,
                 tool_prompt_manifest: None,
+                pricing_input_per_1m: None,
+                pricing_output_per_1m: None,
             }],
             ..Default::default()
         });
@@ -503,6 +509,8 @@ deny_tool_regex = ["^danger_"]
                 supports_video: None,
                 supports_documents: None,
                 tool_prompt_manifest: None,
+                pricing_input_per_1m: None,
+                pricing_output_per_1m: None,
             }],
             request_options: Some(ProviderRequestOptions::default()), // explicit opt-out
             ..Default::default()
@@ -539,6 +547,8 @@ deny_tool_regex = ["^danger_"]
                 supports_video: None,
                 supports_documents: None,
                 tool_prompt_manifest: None,
+                pricing_input_per_1m: None,
+                pricing_output_per_1m: None,
             }],
             ..Default::default()
         });
@@ -570,6 +580,8 @@ deny_tool_regex = ["^danger_"]
                 supports_video: None,
                 supports_documents: Some(true),
                 tool_prompt_manifest: None,
+                pricing_input_per_1m: None,
+                pricing_output_per_1m: None,
             }],
             ..Default::default()
         });

@@ -173,9 +173,13 @@ pub(crate) fn render_oauth(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
         .style(Style::default().bg(modal_bg())),
         rows[0],
     );
+    let instruction = if state.paste_slot.is_some() {
+        "Complete login in your browser. If it shows a code, copy it and press p / Ctrl+V here."
+    } else {
+        "Complete login in your browser."
+    };
     frame.render_widget(
-        Paragraph::new("Complete login in your browser.")
-            .style(Style::default().fg(text()).bg(modal_bg())),
+        Paragraph::new(instruction).style(Style::default().fg(text()).bg(modal_bg())),
         rows[1],
     );
 
@@ -199,10 +203,12 @@ pub(crate) fn render_oauth(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
         );
     }
 
-    let help = if state.user_code.is_empty() {
-        "c copy link     ctrl+o open browser     esc close"
+    let help = if let Some(status) = state.paste_status.as_deref() {
+        format!("{status}     c copy link     ctrl+o open     p paste code     esc close")
+    } else if state.paste_slot.is_some() {
+        "c copy link     ctrl+o open browser     p/ctrl+v paste code     esc close".to_string()
     } else {
-        "c copy link     ctrl+o open browser     esc close"
+        "c copy link     ctrl+o open browser     esc close".to_string()
     };
     frame.render_widget(
         Paragraph::new(help).style(Style::default().fg(muted()).bg(modal_bg())),
@@ -523,6 +529,52 @@ pub(crate) fn render_confirm_cancel_turn(frame: &mut Frame<'_>, app: &TuiApp, ar
             Span::styled(" cancel  ·  ", Style::default().fg(muted()).bg(modal_bg())),
             Span::styled("esc", Style::default().fg(text()).bg(modal_bg())),
             Span::styled(" keep working", Style::default().fg(muted()).bg(modal_bg())),
+        ]))
+        .style(Style::default().bg(modal_bg())),
+        rows[1],
+    );
+}
+
+pub(crate) fn render_confirm_plan(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
+    clear_modal_area(frame, area);
+    frame.render_widget(modal_block("Proposed Plan"), area);
+    let inner = area.inner(Margin {
+        horizontal: 2,
+        vertical: 1,
+    });
+    let Some(plan) = &app.proposed_plan else {
+        return;
+    };
+    let mut lines: Vec<Line> = Vec::new();
+    lines.push(Line::from(Span::styled(
+        plan.title.clone(),
+        Style::default()
+            .fg(text())
+            .bg(modal_bg())
+            .add_modifier(Modifier::BOLD),
+    )));
+    for step in &plan.steps {
+        lines.push(Line::from(Span::styled(
+            format!("• {step}"),
+            Style::default().fg(muted()).bg(modal_bg()),
+        )));
+    }
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(2), Constraint::Length(1)])
+        .split(inner);
+    frame.render_widget(
+        Paragraph::new(Text::from(lines))
+            .wrap(Wrap { trim: true })
+            .style(Style::default().fg(text()).bg(modal_bg())),
+        rows[0],
+    );
+    frame.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::styled("enter", Style::default().fg(red()).bg(modal_bg())),
+            Span::styled(" accept  ·  ", Style::default().fg(muted()).bg(modal_bg())),
+            Span::styled("esc", Style::default().fg(text()).bg(modal_bg())),
+            Span::styled(" reject", Style::default().fg(muted()).bg(modal_bg())),
         ]))
         .style(Style::default().bg(modal_bg())),
         rows[1],
@@ -1613,30 +1665,25 @@ pub(crate) fn render_usage(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
 
     let mut lines: Vec<Line<'_>> = Vec::new();
 
+    // Always show local session / context usage (works for every provider).
+    render_session_usage(&mut lines, app);
+    lines.push(Line::from(""));
+
     if app.usage_state.loading {
         lines.push(Line::from(Span::styled(
-            "Loading usage data...",
+            "Loading account usage…",
             Style::default().fg(signal()),
         )));
     } else if let Some(ref error) = app.usage_state.error {
         lines.push(Line::from(Span::styled(
-            format!("Error: {error}"),
+            format!("Account usage error: {error}"),
             Style::default().fg(red()),
-        )));
-        lines.push(Line::from(""));
-        lines.push(Line::from(Span::styled(
-            "Usage windows are only available for OpenAI OAuth accounts.",
-            Style::default().fg(muted()),
-        )));
-        lines.push(Line::from(Span::styled(
-            "API key auth does not support this endpoint.",
-            Style::default().fg(muted()),
         )));
     } else if let Some(ref report) = app.usage_state.report {
         render_usage_report(&mut lines, report);
     } else {
         lines.push(Line::from(Span::styled(
-            "No usage data available.",
+            "No account usage data yet — press r to refresh.",
             Style::default().fg(muted()),
         )));
     }
@@ -1660,9 +1707,114 @@ pub(crate) fn render_usage(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
     );
 }
 
+fn render_session_usage(lines: &mut Vec<Line<'_>>, app: &TuiApp) {
+    lines.push(Line::from(Span::styled(
+        "This session",
+        Style::default().fg(text()).add_modifier(Modifier::BOLD),
+    )));
+
+    let context = app.compact_state.usage_label(0);
+    lines.push(Line::from(vec![
+        Span::styled("  Context  ", Style::default().fg(muted())),
+        Span::styled(context, Style::default().fg(text())),
+    ]));
+
+    let fmt = |t: u64| {
+        if t >= 1_000_000 {
+            format!("{:.1}M", t as f64 / 1_000_000.0)
+        } else if t >= 1_000 {
+            format!("{}k", t / 1_000)
+        } else {
+            t.to_string()
+        }
+    };
+
+    lines.push(Line::from(vec![
+        Span::styled("  Totals   ", Style::default().fg(muted())),
+        Span::styled(
+            format!(
+                "{} in · {} out",
+                fmt(app.usage_state.session_input_tokens),
+                fmt(app.usage_state.session_output_tokens)
+            ),
+            Style::default().fg(text()),
+        ),
+    ]));
+
+    if let (Some(inp), Some(out)) = (
+        app.usage_state.last_input_tokens,
+        app.usage_state.last_output_tokens,
+    ) {
+        lines.push(Line::from(vec![
+            Span::styled("  Last turn", Style::default().fg(muted())),
+            Span::styled(
+                format!(" {} in · {} out", fmt(inp), fmt(out)),
+                Style::default().fg(text()),
+            ),
+        ]));
+    }
+
+    // Session spend from registry list pricing (API-key / non-OAuth billing).
+    if app.usage_state.session_cost_known {
+        lines.push(Line::from(vec![
+            Span::styled("  Est. cost", Style::default().fg(muted())),
+            Span::styled(
+                format!(" {}", format_usd(app.usage_state.session_cost_usd)),
+                Style::default().fg(text()),
+            ),
+        ]));
+    } else if let Some((in_rate, out_rate)) = current_model_pricing(app) {
+        lines.push(Line::from(vec![
+            Span::styled("  Est. cost", Style::default().fg(muted())),
+            Span::styled(
+                format!(
+                    " $0.00  (rates ${:.2}/1M in · ${:.2}/1M out)",
+                    in_rate, out_rate
+                ),
+                Style::default().fg(text()),
+            ),
+        ]));
+    }
+
+    let provider = &app.loaded_config.config.model.provider;
+    let model = &app.loaded_config.config.model.name;
+    lines.push(Line::from(vec![
+        Span::styled("  Model    ", Style::default().fg(muted())),
+        Span::styled(
+            format!("{model} ({provider})"),
+            Style::default().fg(text()),
+        ),
+    ]));
+}
+
+fn format_usd(amount: f64) -> String {
+    if amount >= 1.0 {
+        format!("${amount:.2}")
+    } else if amount >= 0.01 {
+        format!("${amount:.3}")
+    } else if amount > 0.0 {
+        format!("${amount:.4}")
+    } else {
+        "$0.00".to_string()
+    }
+}
+
+fn current_model_pricing(app: &TuiApp) -> Option<(f64, f64)> {
+    use navi_sdk::{canonical_provider_id, provider_catalog};
+    let provider_id = app.loaded_config.config.model.provider.as_str();
+    let model_name = app.loaded_config.config.model.name.as_str();
+    let model = provider_catalog(&app.loaded_config.config)
+        .into_iter()
+        .find(|p| canonical_provider_id(&p.id) == canonical_provider_id(provider_id))
+        .and_then(|p| p.models.into_iter().find(|m| m.name == model_name))?;
+    let input = model.pricing_input_per_1m?;
+    let output = model.pricing_output_per_1m?;
+    Some((input, output))
+}
+
 fn render_usage_report(lines: &mut Vec<Line<'_>>, report: &NaviUsageReport) {
-    // Header: provider + plan
-    let plan_label = report.plan_type.as_deref().unwrap_or("unknown");
+    // Header: provider + plan + source
+    let plan_label = report.plan_type.as_deref().unwrap_or("account");
     lines.push(Line::from(vec![
         Span::styled(
             format!("{} ", report.provider_label),
@@ -1670,12 +1822,47 @@ fn render_usage_report(lines: &mut Vec<Line<'_>>, report: &NaviUsageReport) {
         ),
         Span::styled(format!("({plan_label})"), Style::default().fg(muted())),
     ]));
+    if !report.source.is_empty() {
+        lines.push(Line::from(Span::styled(
+            format!("  source: {}", report.source),
+            Style::default().fg(muted()),
+        )));
+    }
 
     if let Some(ref kind) = report.limit_reached_kind {
         lines.push(Line::from(Span::styled(
             format!("⚠ Limit reached: {kind}"),
             Style::default().fg(red()),
         )));
+    }
+    if let Some(ref notes) = report.notes {
+        lines.push(Line::from(Span::styled(
+            format!("  {notes}"),
+            Style::default().fg(muted()),
+        )));
+    }
+
+    if !report.details.is_empty() {
+        lines.push(Line::from(""));
+        for detail in &report.details {
+            // Keep JSON-ish blobs short in the TUI.
+            let value = if detail.value.len() > 80 {
+                format!("{}…", &detail.value[..77])
+            } else {
+                detail.value.clone()
+            };
+            lines.push(Line::from(vec![
+                Span::styled(
+                    format!("  {:14} ", detail.label),
+                    Style::default().fg(muted()),
+                ),
+                Span::styled(value, Style::default().fg(text())),
+            ]));
+        }
+    }
+
+    if report.limits.is_empty() {
+        return;
     }
 
     lines.push(Line::from(""));
@@ -1698,16 +1885,18 @@ fn render_usage_report(lines: &mut Vec<Line<'_>>, report: &NaviUsageReport) {
             ),
         ]));
 
-        // Primary window (5h)
         if let Some(ref primary) = limit.primary {
-            render_window_line(lines, "5h limit", primary);
+            let label = if primary.limit_window_seconds > 0 {
+                "primary"
+            } else {
+                "usage"
+            };
+            render_window_line(lines, label, primary);
         }
-        // Secondary window (weekly)
         if let Some(ref secondary) = limit.secondary {
-            render_window_line(lines, "Weekly", secondary);
+            render_window_line(lines, "secondary", secondary);
         }
 
-        // Spacing between limits
         if i < report.limits.len() - 1 {
             lines.push(Line::from(""));
         }

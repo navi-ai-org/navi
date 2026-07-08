@@ -29,6 +29,10 @@ pub const NAVI_ENGINE_API_METHODS: &[&str] = &[
     "update_goal_status",
     "update_goal_checklist",
     "update_goal_task_status",
+    // Plan mode
+    "agent_mode",
+    "enter_plan_mode",
+    "exit_plan_mode",
     // Approval / question
     "resolve_approval",
     "resolve_question",
@@ -65,6 +69,10 @@ pub const NAVI_ENGINE_API_METHODS: &[&str] = &[
     "memory_delete",
     "memory_count",
     "memory_index",
+    // Plan mode
+    "agent_mode",
+    "enter_plan_mode",
+    "exit_plan_mode",
     // Registry sync
     "sync_registry",
     "sync_provider_models",
@@ -104,6 +112,10 @@ pub const NAVI_NAPI_BOUND_METHODS: &[&str] = &[
     "update_goal_status",
     "update_goal_checklist",
     "update_goal_task_status",
+    // Plan mode
+    "agent_mode",
+    "enter_plan_mode",
+    "exit_plan_mode",
     // Approval / question
     "resolve_approval",
     "resolve_question",

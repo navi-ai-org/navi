@@ -43,6 +43,20 @@ struct CredentialAccount {
     authenticated_at: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     oauth_api_kind: Option<String>,
+    /// OAuth refresh token (e.g. xAI Grok CLI session).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    oauth_refresh_token: Option<String>,
+    /// Unix epoch seconds when the access token expires.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    oauth_expires_at: Option<i64>,
+}
+
+/// OAuth credential kinds that can be used as model API Bearer tokens.
+pub const XAI_GROK_CLI_OAUTH_KIND: &str = "xai-grok-cli";
+
+/// Returns true when an OAuth credential kind is usable for model API calls.
+pub fn is_model_usable_oauth_kind(kind: &str) -> bool {
+    kind == XAI_GROK_CLI_OAUTH_KIND
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -99,7 +113,12 @@ impl ProviderCredentials {
         self.default_account_id()
             .and_then(|account_id| self.account_model_api_key(&account_id))
             .or_else(|| {
-                if !self.api_key.is_empty() && self.default_oauth_api_kind().is_none() {
+                if !self.api_key.is_empty()
+                    && self
+                        .default_oauth_api_kind()
+                        .as_deref()
+                        .is_none_or(|kind| is_model_usable_oauth_kind(kind))
+                {
                     Some(self.api_key.clone())
                 } else {
                     None
@@ -110,13 +129,21 @@ impl ProviderCredentials {
     fn account_model_api_key(&self, account_id: &str) -> Option<String> {
         if account_id == DEFAULT_ACCOUNT_ID
             && !self.api_key.is_empty()
-            && self.default_oauth_api_kind().is_none()
+            && self
+                .default_oauth_api_kind()
+                .as_deref()
+                .is_none_or(|kind| is_model_usable_oauth_kind(kind))
         {
             return Some(self.api_key.clone());
         }
         self.accounts
             .get(account_id)
-            .filter(|account| account.oauth_api_kind.is_none())
+            .filter(|account| {
+                account
+                    .oauth_api_kind
+                    .as_deref()
+                    .is_none_or(is_model_usable_oauth_kind)
+            })
             .map(|account| account.api_key.clone())
     }
 
@@ -126,6 +153,23 @@ impl ProviderCredentials {
                 .accounts
                 .values()
                 .any(|account| account.oauth_api_kind.is_some())
+    }
+
+    /// True when the only stored credential is OAuth that cannot call model APIs.
+    fn has_non_model_oauth_only(&self) -> bool {
+        self.has_oauth_credential() && self.default_model_api_key().is_none()
+    }
+
+    fn default_oauth_refresh_token(&self) -> Option<String> {
+        self.default_account_id()
+            .and_then(|account_id| self.accounts.get(&account_id))
+            .and_then(|account| account.oauth_refresh_token.clone())
+    }
+
+    fn default_oauth_expires_at(&self) -> Option<i64> {
+        self.default_account_id()
+            .and_then(|account_id| self.accounts.get(&account_id))
+            .and_then(|account| account.oauth_expires_at)
     }
 
     fn default_commandcode_metadata(&self) -> Option<CommandCodeCredentialMetadata> {
@@ -335,6 +379,8 @@ impl CredentialStore {
                         .as_ref()
                         .map(|metadata| metadata.authenticated_at.clone()),
                     oauth_api_kind: None,
+                    oauth_refresh_token: None,
+                    oauth_expires_at: None,
                 },
             );
         }
@@ -406,6 +452,8 @@ impl CredentialStore {
                         commandcode: None,
                         authenticated_at: None,
                         oauth_api_kind: None,
+                        oauth_refresh_token: None,
+                        oauth_expires_at: None,
                     },
                 )]),
                 default_account: Some(DEFAULT_ACCOUNT_ID.to_string()),
@@ -425,11 +473,29 @@ impl CredentialStore {
         api_key: &str,
         oauth_api_kind: &str,
     ) -> Result<()> {
+        self.set_oauth_credential_full(provider_id, api_key, oauth_api_kind, None, None)
+    }
+
+    /// Stores an OAuth credential with optional refresh token and expiry.
+    pub fn set_oauth_credential_full(
+        &self,
+        provider_id: &str,
+        api_key: &str,
+        oauth_api_kind: &str,
+        refresh_token: Option<&str>,
+        expires_at: Option<i64>,
+    ) -> Result<()> {
         let provider_id = credential_provider_key(provider_id);
         ensure_private_parent_dir(&self.path)?;
 
         let mut file = self.load_file()?;
         file.ignored_providers.retain(|p| p != &provider_id);
+
+        let label = if is_model_usable_oauth_kind(oauth_api_kind) {
+            "Grok OAuth".to_string()
+        } else {
+            "Default".to_string()
+        };
 
         file.providers.insert(
             provider_id,
@@ -440,10 +506,14 @@ impl CredentialStore {
                     DEFAULT_ACCOUNT_ID.to_string(),
                     CredentialAccount {
                         api_key: api_key.to_string(),
-                        label: Some("Default".to_string()),
+                        label: Some(label),
                         commandcode: None,
-                        authenticated_at: None,
+                        authenticated_at: Some(current_unix_timestamp_string()),
                         oauth_api_kind: Some(oauth_api_kind.to_string()),
+                        oauth_refresh_token: refresh_token
+                            .filter(|value| !value.is_empty())
+                            .map(str::to_string),
+                        oauth_expires_at: expires_at,
                     },
                 )]),
                 default_account: Some(DEFAULT_ACCOUNT_ID.to_string()),
@@ -454,6 +524,26 @@ impl CredentialStore {
         self.write_content(&content)?;
 
         Ok(())
+    }
+
+    /// Returns the stored OAuth refresh token, if any.
+    pub fn get_oauth_refresh_token(&self, provider_id: &str) -> Option<String> {
+        let provider_id = credential_provider_key(provider_id);
+        let content = fs::read_to_string(&self.path).ok()?;
+        let file: CredentialsFile = toml::from_str(&content).ok()?;
+        file.providers
+            .get(&provider_id)
+            .and_then(ProviderCredentials::default_oauth_refresh_token)
+    }
+
+    /// Returns the stored OAuth access-token expiry (unix seconds), if any.
+    pub fn get_oauth_expires_at(&self, provider_id: &str) -> Option<i64> {
+        let provider_id = credential_provider_key(provider_id);
+        let content = fs::read_to_string(&self.path).ok()?;
+        let file: CredentialsFile = toml::from_str(&content).ok()?;
+        file.providers
+            .get(&provider_id)
+            .and_then(ProviderCredentials::default_oauth_expires_at)
     }
 
     /// Stores a Command Code OAuth-created API key and callback metadata.
@@ -478,6 +568,8 @@ impl CredentialStore {
                 authenticated_at: Some(metadata.authenticated_at.clone()),
                 commandcode: Some(metadata),
                 oauth_api_kind: None,
+                oauth_refresh_token: None,
+                oauth_expires_at: None,
             },
         );
         if credentials.default_account.is_none() && credentials.api_key.is_empty() {
@@ -609,6 +701,16 @@ pub fn resolve_provider_api_key(
                 None
             }
         })
+        // Fallback: reuse Grok CLI session (~/.grok/auth.json) for xAI when NAVI
+        // has no stored/env credential yet.
+        .or_else(|| grok_auth_json_access_token(credential_store, &provider_config.id))
+        .or_else(|| {
+            if requested_provider_id != provider_config.id {
+                grok_auth_json_access_token(credential_store, requested_provider_id)
+            } else {
+                None
+            }
+        })
 }
 
 pub fn resolve_provider_api_key_for_project(
@@ -688,17 +790,43 @@ pub fn resolve_provider_credential_status(
                 .get_model_api_key(requested_provider_id)
                 .is_some())
     {
+        let oauth_kind = credential_store
+            .get_oauth_api_kind(&provider_config.id)
+            .or_else(|| {
+                (requested_provider_id != provider_config.id)
+                    .then(|| credential_store.get_oauth_api_kind(requested_provider_id))
+                    .flatten()
+            });
+        let (label, detail) = if oauth_kind.as_deref() == Some(XAI_GROK_CLI_OAUTH_KIND) {
+            ("oauth".to_string(), Some("xAI Grok OAuth".to_string()))
+        } else {
+            (
+                "stored".to_string(),
+                Some("stored credential".to_string()),
+            )
+        };
         return CredentialStatus {
             configured: true,
             source: Some(CredentialSource::Stored),
-            label: "stored".to_string(),
-            detail: Some("stored credential".to_string()),
+            label,
+            detail,
         };
     }
 
-    if credential_store.has_oauth_credential(&provider_config.id)
+    if is_xai_provider_id(&provider_config.id)
+        && grok_auth_json_access_token(credential_store, &provider_config.id).is_some()
+    {
+        return CredentialStatus {
+            configured: true,
+            source: Some(CredentialSource::External),
+            label: "grok".to_string(),
+            detail: Some("Grok CLI auth.json".to_string()),
+        };
+    }
+
+    if is_non_model_oauth_only(credential_store, &provider_config.id)
         || (requested_provider_id != provider_config.id
-            && credential_store.has_oauth_credential(requested_provider_id))
+            && is_non_model_oauth_only(credential_store, requested_provider_id))
     {
         return CredentialStatus {
             configured: false,
@@ -782,6 +910,136 @@ fn opencode_auth_json_api_key(
     } else {
         None
     }
+}
+
+fn is_non_model_oauth_only(credential_store: &CredentialStore, provider_id: &str) -> bool {
+    let provider_id = credential_provider_key(provider_id);
+    let content = match fs::read_to_string(credential_store.path()) {
+        Ok(content) => content,
+        Err(_) => return false,
+    };
+    let file: CredentialsFile = match toml::from_str(&content) {
+        Ok(file) => file,
+        Err(_) => return false,
+    };
+    file.providers
+        .get(&provider_id)
+        .is_some_and(ProviderCredentials::has_non_model_oauth_only)
+}
+
+fn is_xai_provider_id(provider_id: &str) -> bool {
+    credential_provider_key(provider_id) == ProviderId::XAI
+}
+
+/// Reads a still-valid access token from Grok CLI's `~/.grok/auth.json`.
+fn grok_auth_json_access_token(
+    credential_store: &CredentialStore,
+    provider_id: &str,
+) -> Option<String> {
+    if !is_xai_provider_id(provider_id) || credential_store.is_ignored(provider_id) {
+        return None;
+    }
+
+    if let Ok(content) = std::env::var("GROK_AUTH_CONTENT")
+        && let Some(key) = grok_key_from_auth_content(&content)
+    {
+        return Some(key);
+    }
+
+    grok_auth_paths()
+        .into_iter()
+        .find_map(|path| grok_key_from_auth_file(&path))
+}
+
+fn grok_auth_paths() -> Vec<PathBuf> {
+    let mut paths = Vec::new();
+    if let Ok(home) = std::env::var("HOME")
+        && !home.is_empty()
+    {
+        paths.push(PathBuf::from(home).join(".grok").join("auth.json"));
+    }
+    if let Some(base_dirs) = BaseDirs::new() {
+        paths.push(base_dirs.home_dir().join(".grok").join("auth.json"));
+    }
+    paths.sort();
+    paths.dedup();
+    paths
+}
+
+fn grok_key_from_auth_file(path: &Path) -> Option<String> {
+    let content = fs::read_to_string(path).ok()?;
+    grok_key_from_auth_content(&content)
+}
+
+fn grok_key_from_auth_content(content: &str) -> Option<String> {
+    let data: Value = serde_json::from_str(content).ok()?;
+    let now = current_unix_timestamp_secs();
+    let mut best: Option<(i64, String)> = None;
+
+    for (key, entry) in data.as_object()? {
+        if !key.contains("auth.x.ai") {
+            continue;
+        }
+        let Some(access) = entry
+            .get("key")
+            .or_else(|| entry.get("access_token"))
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        else {
+            continue;
+        };
+
+        let expires_at = entry
+            .get("expires_at")
+            .and_then(Value::as_str)
+            .and_then(parse_rfc3339_to_unix)
+            .unwrap_or(i64::MAX);
+
+        if expires_at + 300 < now {
+            continue;
+        }
+
+        match &best {
+            Some((best_exp, _)) if *best_exp >= expires_at => {}
+            _ => best = Some((expires_at, access.to_string())),
+        }
+    }
+
+    best.map(|(_, token)| token)
+}
+
+fn parse_rfc3339_to_unix(value: &str) -> Option<i64> {
+    let trimmed = value.trim().trim_end_matches('Z');
+    let (date, time) = trimmed.split_once('T')?;
+    let mut date_parts = date.split('-');
+    let year: i64 = date_parts.next()?.parse().ok()?;
+    let month: i64 = date_parts.next()?.parse().ok()?;
+    let day: i64 = date_parts.next()?.parse().ok()?;
+    let time = time.split(['.', '+']).next()?;
+    let mut time_parts = time.split(':');
+    let hour: i64 = time_parts.next()?.parse().ok()?;
+    let minute: i64 = time_parts.next()?.parse().ok()?;
+    let second: i64 = time_parts.next()?.parse().ok()?;
+
+    let y = if month <= 2 { year - 1 } else { year };
+    let era = y.div_euclid(400);
+    let yoe = y.rem_euclid(400);
+    let doy = (153 * (month + if month > 2 { -3 } else { 9 }) + 2) / 5 + day - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    let days = era * 146097 + doe - 719468;
+    Some(days * 86_400 + hour * 3600 + minute * 60 + second)
+}
+
+fn current_unix_timestamp_secs() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs() as i64
+}
+
+fn current_unix_timestamp_string() -> String {
+    current_unix_timestamp_secs().to_string()
 }
 
 fn project_account_key(project_dir: &Path) -> String {
@@ -1083,6 +1341,85 @@ mod tests {
         let status = resolve_provider_credential_status(&store, &provider, "openai", None);
         assert!(!status.configured);
         assert_eq!(status.label, "oauth-only");
+    }
+
+    #[test]
+    fn xai_grok_oauth_credential_resolves_as_model_api_key() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let store = CredentialStore::new(tempdir.path().to_path_buf());
+        let provider = ProviderConfig {
+            id: "xai".to_string(),
+            label: "xAI".to_string(),
+            description: String::new(),
+            kind: ProviderKind::OpenAiResponses,
+            api_key_env: "NAVI_NONEXISTENT_ENV_VAR_XAI_OAUTH".to_string(),
+            base_url: Some("https://api.x.ai/v1".to_string()),
+            ..Default::default()
+        };
+
+        store
+            .set_oauth_credential_full(
+                "xai",
+                "eyJhbGciOiJFUzI1NiIsInR5cCI6ImF0K2p3dCJ9.payload.sig",
+                XAI_GROK_CLI_OAUTH_KIND,
+                Some("refresh-token-xyz"),
+                Some(9_999_999_999),
+            )
+            .expect("save oauth");
+
+        assert_eq!(
+            store.get_model_api_key("xai").as_deref(),
+            Some("eyJhbGciOiJFUzI1NiIsInR5cCI6ImF0K2p3dCJ9.payload.sig")
+        );
+        assert_eq!(
+            store.get_oauth_api_kind("xai").as_deref(),
+            Some(XAI_GROK_CLI_OAUTH_KIND)
+        );
+        assert_eq!(
+            store.get_oauth_refresh_token("xai").as_deref(),
+            Some("refresh-token-xyz")
+        );
+        assert!(resolve_provider_api_key(&store, &provider, "xai").is_some());
+
+        let status = resolve_provider_credential_status(&store, &provider, "xai", None);
+        assert!(status.configured);
+        assert_eq!(status.label, "oauth");
+    }
+
+    #[test]
+    fn grok_auth_json_content_is_used_as_external_xai_credential() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let store = CredentialStore::new(tempdir.path().to_path_buf());
+        let provider = ProviderConfig {
+            id: "xai".to_string(),
+            label: "xAI".to_string(),
+            description: String::new(),
+            kind: ProviderKind::OpenAiResponses,
+            api_key_env: "NAVI_NONEXISTENT_ENV_VAR_XAI_GROK".to_string(),
+            base_url: Some("https://api.x.ai/v1".to_string()),
+            ..Default::default()
+        };
+
+        let far_future = "2099-01-01T00:00:00Z";
+        let content = format!(
+            r#"{{
+                "https://auth.x.ai::b1a00492-073a-47ea-816f-4c329264a828": {{
+                    "key": "eyJ.test.token",
+                    "auth_mode": "oidc",
+                    "expires_at": "{far_future}",
+                    "oidc_issuer": "https://auth.x.ai"
+                }}
+            }}"#
+        );
+        // SAFETY: test-only env mutation.
+        unsafe { std::env::set_var("GROK_AUTH_CONTENT", &content) };
+        let key = resolve_provider_api_key(&store, &provider, "xai");
+        let status = resolve_provider_credential_status(&store, &provider, "xai", None);
+        unsafe { std::env::remove_var("GROK_AUTH_CONTENT") };
+
+        assert_eq!(key.as_deref(), Some("eyJ.test.token"));
+        assert!(status.configured);
+        assert_eq!(status.label, "grok");
     }
 
     #[test]

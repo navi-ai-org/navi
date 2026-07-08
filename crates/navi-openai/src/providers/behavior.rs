@@ -443,6 +443,11 @@ impl ProviderBehavior for GroqBehavior {
 
 // ─── Xai ──────────────────────────────────────────────────────────────────────
 
+/// Header that tells xAI auth middleware to treat the Bearer as a Grok CLI
+/// OAuth session token (not a Platform API key).
+const XAI_TOKEN_AUTH_HEADER: &str = "X-XAI-Token-Auth";
+const XAI_TOKEN_AUTH_VALUE: &str = "xai-grok-cli";
+
 pub(crate) struct XaiBehavior;
 
 impl ProviderBehavior for XaiBehavior {
@@ -462,7 +467,16 @@ impl ProviderBehavior for XaiBehavior {
         api_key: &str,
         _endpoint: Endpoint,
     ) -> Result<HeaderMap, ProviderError> {
-        standard_bearer_headers(api_key, true)
+        let mut headers = standard_bearer_headers(api_key, true)?;
+        // OAuth access JWTs need the CLI token auth header.
+        // Platform keys start with `xai-` and use normal Bearer only.
+        if crate::oauth::is_xai_oauth_access_token(api_key) {
+            headers.insert(
+                XAI_TOKEN_AUTH_HEADER,
+                HeaderValue::from_static(XAI_TOKEN_AUTH_VALUE),
+            );
+        }
+        Ok(headers)
     }
 
     fn supports_parallel_tool_calls(&self, endpoint: Endpoint) -> bool {
@@ -548,6 +562,36 @@ pub(crate) fn behavior_for_provider(provider_id: &ProviderId) -> Box<dyn Provide
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn xai_oauth_jwt_adds_cli_token_auth_header() {
+        let behavior = behavior_for_provider(&ProviderId::from_config_id(ProviderId::XAI));
+        let headers = behavior
+            .build_headers(
+                "eyJhbGciOiJFUzI1NiIsInR5cCI6ImF0K2p3dCJ9.payload.sig",
+                Endpoint::Responses,
+            )
+            .expect("headers");
+        assert_eq!(
+            headers.get("X-XAI-Token-Auth").and_then(|v| v.to_str().ok()),
+            Some("xai-grok-cli")
+        );
+        assert!(
+            headers
+                .get(AUTHORIZATION)
+                .and_then(|v| v.to_str().ok())
+                .is_some_and(|v| v.starts_with("Bearer eyJ"))
+        );
+    }
+
+    #[test]
+    fn xai_platform_key_skips_cli_token_auth_header() {
+        let behavior = behavior_for_provider(&ProviderId::from_config_id(ProviderId::XAI));
+        let headers = behavior
+            .build_headers("xai-platform-key-abc", Endpoint::Responses)
+            .expect("headers");
+        assert!(headers.get("X-XAI-Token-Auth").is_none());
+    }
 
     #[test]
     fn commandcode_routes_all_models_to_alpha_generate() {

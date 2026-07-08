@@ -824,6 +824,8 @@ fn rewrite_unsupported_attachments_keeps_supported_images_and_routes_audio() {
             supports_video: None,
             supports_documents: None,
             tool_prompt_manifest: None,
+            pricing_input_per_1m: None,
+            pricing_output_per_1m: None,
         }],
         ..Default::default()
     }];

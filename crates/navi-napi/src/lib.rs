@@ -542,6 +542,33 @@ impl NaviNapiEngine {
         serde_json::to_value(goal).map_err(to_napi_error)
     }
 
+    // ── Plan Mode ───────────────────────────────────────────────────
+
+    #[napi]
+    pub fn agent_mode(&self, session_id: String) -> Result<String> {
+        let mode = self
+            .inner
+            .agent_mode(&session_id)
+            .map_err(to_napi_error)?;
+        Ok(mode.to_string())
+    }
+
+    #[napi]
+    pub async fn enter_plan_mode(&self, session_id: String) -> Result<()> {
+        self.inner
+            .enter_plan_mode(&session_id)
+            .await
+            .map_err(to_napi_error)
+    }
+
+    #[napi]
+    pub async fn exit_plan_mode(&self, session_id: String) -> Result<()> {
+        self.inner
+            .exit_plan_mode(&session_id)
+            .await
+            .map_err(to_napi_error)
+    }
+
     // ── Questions ──────────────────────────────────────────────────────
 
     #[napi]

@@ -7,6 +7,30 @@
   "base_url": "https://api.x.ai/v1",
   "models": [
     {
+      "name": "grok-4.5",
+      "context_window_tokens": 500000,
+      "max_output_tokens": 131072,
+      "recommended_temperature": 1.0,
+      "supports_thinking": true,
+      "pricing": {
+        "input_per_1m": 2.0,
+        "output_per_1m": 6.0,
+        "currency": "USD"
+      }
+    },
+    {
+      "name": "grok-4.5-latest",
+      "context_window_tokens": 500000,
+      "max_output_tokens": 131072,
+      "recommended_temperature": 1.0,
+      "supports_thinking": true,
+      "pricing": {
+        "input_per_1m": 2.0,
+        "output_per_1m": 6.0,
+        "currency": "USD"
+      }
+    },
+    {
       "name": "grok-4.3",
       "context_window_tokens": 1000000,
       "max_output_tokens": 131072,

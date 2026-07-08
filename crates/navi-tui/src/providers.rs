@@ -241,14 +241,23 @@ pub(crate) fn start_provider_oauth(app: &mut TuiApp, provider: &ProviderConfig) 
         show_notification(
             app,
             "OAuth",
-            format!("{} uses API key setup.", provider.label),
+            format!(
+                "{} uses API key setup (OAuth: openai, xai, commandcode, github-copilot).",
+                provider.label
+            ),
         );
         return;
     }
     if app.is_loading {
+        show_notification(app, "OAuth", "Wait for the current operation to finish.");
         return;
     }
 
+    show_notification(
+        app,
+        "OAuth",
+        format!("Starting {} login…", provider.label),
+    );
     app.is_loading = true;
     app.loading_start = Some(Instant::now());
     let tx = app.async_sender();
@@ -260,6 +269,7 @@ pub(crate) fn start_provider_oauth(app: &mut TuiApp, provider: &ProviderConfig) 
                 provider_id: provider_id.clone(),
                 verification_uri: started.verification_uri,
                 user_code: started.user_code,
+                paste_slot: started.paste_slot,
             });
         })
         .await

@@ -190,11 +190,10 @@ fn parse_sha256_bytes(s: &str) -> Result<[u8; 32], String> {
 mod tests {
     use super::*;
     use ed25519_dalek::{Signer, SigningKey};
-    use rand::rngs::OsRng;
 
     fn generate_keypair() -> (SigningKey, VerifyingKey) {
-        let mut csprng = OsRng;
-        let secret_bytes: [u8; 32] = rand::Rng::r#gen(&mut csprng);
+        // rand 0.10: OsRng moved to SysRng; `rand::random()` is the simple path.
+        let secret_bytes: [u8; 32] = rand::random();
         let signing_key = SigningKey::from_bytes(&secret_bytes);
         let verifying_key = signing_key.verifying_key();
         (signing_key, verifying_key)

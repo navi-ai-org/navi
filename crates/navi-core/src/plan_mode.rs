@@ -179,10 +179,6 @@ impl ProposedPlanParser {
         std::mem::take(&mut self.completed_plans)
     }
 
-    fn find_tag(&self, tag: &str) -> Option<usize> {
-        self.buffer.find(tag).map(|pos| pos + tag.len())
-    }
-
     fn finalize_plan(&mut self) -> ProposedPlan {
         let title = self.plan_title.take().unwrap_or_default();
         let body = std::mem::take(&mut self.plan_body);

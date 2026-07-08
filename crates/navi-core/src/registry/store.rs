@@ -273,6 +273,7 @@ impl RegistryStore {
                 supports_attachments: None,
                 attachments: RegistryAttachments::default(),
                 capabilities: Vec::new(),
+                pricing: None,
             })
         })?;
 
@@ -370,6 +371,34 @@ impl RegistryStore {
             }
         }
 
+        // Seed/refresh pricing from registry JSON (per 1M token rates).
+        tx.execute(
+            "DELETE FROM model_pricing WHERE provider_id = ?1",
+            params![provider.id],
+        )?;
+        {
+            let mut price_stmt = tx.prepare(
+                "INSERT OR REPLACE INTO model_pricing (model_id, provider_id, input_price, output_price, currency)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+            )?;
+            for model in &provider.models {
+                let Some(pricing) = model.pricing.as_ref() else {
+                    continue;
+                };
+                if pricing.is_empty() {
+                    continue;
+                }
+                let model_id = format!("{}:{}", provider.id, model.name);
+                price_stmt.execute(params![
+                    model_id,
+                    provider.id,
+                    pricing.input_per_1m,
+                    pricing.output_per_1m,
+                    pricing.currency.as_deref().unwrap_or("USD"),
+                ])?;
+            }
+        }
+
         tx.commit()?;
         let _ = kind; // used above for validation if needed
         Ok(())
@@ -420,8 +449,15 @@ impl RegistryStore {
             let aggregator = aggregator_val.unwrap_or(0) != 0;
 
             let mut model_stmt = conn.prepare(
-                "SELECT name, task_size, context_window_tokens, max_output_tokens, recommended_temperature, supports_thinking, supports_images, supports_audio, supports_video, supports_documents, tool_prompt_manifest
-                 FROM models WHERE provider_id = ?1 ORDER BY rowid",
+                "SELECT m.name, m.task_size, m.context_window_tokens, m.max_output_tokens,
+                        m.recommended_temperature, m.supports_thinking, m.supports_images,
+                        m.supports_audio, m.supports_video, m.supports_documents,
+                        m.tool_prompt_manifest, pr.input_price, pr.output_price
+                 FROM models m
+                 LEFT JOIN model_pricing pr
+                   ON pr.model_id = (m.provider_id || ':' || m.name)
+                 WHERE m.provider_id = ?1
+                 ORDER BY m.rowid",
             )?;
 
             let models = model_stmt
@@ -437,6 +473,8 @@ impl RegistryStore {
                     let video: Option<i64> = row.get(8)?;
                     let documents: Option<i64> = row.get(9)?;
                     let tpm: Option<i64> = row.get(10)?;
+                    let input_price: Option<f64> = row.get(11)?;
+                    let output_price: Option<f64> = row.get(12)?;
 
                     Ok(ProviderModelConfig {
                         name,
@@ -454,6 +492,8 @@ impl RegistryStore {
                         supports_video: video.map(|v| v != 0),
                         supports_documents: documents.map(|v| v != 0),
                         tool_prompt_manifest: tpm.map(|v| v != 0),
+                        pricing_input_per_1m: input_price,
+                        pricing_output_per_1m: output_price,
                     })
                 })?
                 .collect::<std::result::Result<Vec<_>, _>>()?;
@@ -809,6 +849,8 @@ pub fn registry_provider_to_config(rp: RegistryProvider) -> ProviderConfig {
                 supports_video,
                 supports_documents,
                 tool_prompt_manifest: None,
+                pricing_input_per_1m: m.pricing.as_ref().and_then(|p| p.input_per_1m),
+                pricing_output_per_1m: m.pricing.as_ref().and_then(|p| p.output_per_1m),
             }
         })
         .collect();
@@ -1091,6 +1133,7 @@ mod tests {
                     supports_documents: None,
                     attachments: Default::default(),
                     capabilities: Vec::new(),
+                    pricing: None,
                 },
                 RegistryModel {
                     name: "test-model-small".to_string(),
@@ -1106,6 +1149,7 @@ mod tests {
                     supports_documents: None,
                     attachments: Default::default(),
                     capabilities: Vec::new(),
+                    pricing: None,
                 },
             ],
         }
@@ -1177,6 +1221,7 @@ mod tests {
             supports_documents: None,
             attachments: Default::default(),
             capabilities: Vec::new(),
+            pricing: None,
         }];
         store.upsert_provider(&provider).expect("upsert again");
 
@@ -1257,6 +1302,7 @@ mod tests {
                 supports_documents: None,
                 attachments: Default::default(),
                 capabilities: Vec::new(),
+                pricing: None,
             }],
         };
         store.upsert_provider(&provider).expect("upsert");
@@ -1401,6 +1447,7 @@ mod tests {
                 supports_documents: None,
                 attachments: Default::default(),
                 capabilities: Vec::new(),
+                pricing: None,
             }],
         };
         store.upsert_provider(&provider).expect("upsert");
