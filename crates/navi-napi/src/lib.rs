@@ -488,7 +488,7 @@ impl NaviNapiEngine {
             other => {
                 return Err(to_napi_error(anyhow::anyhow!(
                     "unknown goal status: {other}"
-                )))
+                )));
             }
         };
         let goal = self
@@ -531,7 +531,7 @@ impl NaviNapiEngine {
             other => {
                 return Err(to_napi_error(anyhow::anyhow!(
                     "unknown task status: {other}"
-                )))
+                )));
             }
         };
         let goal = self
@@ -786,6 +786,47 @@ impl NaviNapiEngine {
             .delete_saved_session_async(&session_id)
             .await
             .map_err(to_napi_error)
+    }
+
+    #[napi]
+    pub async fn list_saved_sessions_async(&self) -> Result<JsonValue> {
+        let sessions = self
+            .inner
+            .list_saved_sessions_async()
+            .await
+            .map_err(to_napi_error)?;
+        serde_json::to_value(sessions).map_err(to_napi_error)
+    }
+
+    #[napi]
+    pub async fn load_saved_session_async(&self, session_id: String) -> Result<JsonValue> {
+        let snapshot = self
+            .inner
+            .load_saved_session_async(&session_id)
+            .await
+            .map_err(to_napi_error)?;
+        serde_json::to_value(snapshot).map_err(to_napi_error)
+    }
+
+    #[napi]
+    pub async fn delete_saved_session_async(&self, session_id: String) -> Result<bool> {
+        self.inner
+            .delete_saved_session_async(&session_id)
+            .await
+            .map_err(to_napi_error)
+    }
+
+    #[napi]
+    pub fn take_tui_panels(&self, session_id: String) -> Result<Vec<JsonValue>> {
+        let panels = self
+            .inner
+            .take_tui_panels(&session_id)
+            .map_err(to_napi_error)?;
+        // TuiComponent is not serializable, return metadata only
+        Ok(panels
+            .iter()
+            .map(|_| serde_json::json!({"taken": true}))
+            .collect())
     }
 
     // ── Auto-Memory ─────────────────────────────────────────────────────

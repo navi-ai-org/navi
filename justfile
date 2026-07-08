@@ -36,6 +36,10 @@ install-release:
 check:
     cargo check --workspace --all-targets
 
+# Verify SDK ↔ N-API binding parity (no drift between surfaces).
+parity-check:
+    cargo test -p navi-sdk --lib engine_api::tests::napi_binding_covers_all -- --test-threads={{test_threads}}
+
 fmt:
     cargo fmt --all
 
