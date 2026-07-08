@@ -8,6 +8,7 @@
 //!   dynamic PanelManager.
 
 use std::any::Any;
+use std::sync::Mutex;
 
 use copland::keymap::KeyOutcome;
 use copland::panel::{Panel, PanelContext, PanelSize};
@@ -18,6 +19,7 @@ use ratatui::layout::Rect;
 use crate::app::TuiApp;
 use crate::state::Mode;
 use crate::view;
+use crate::view::setup;
 
 /// Register all existing modals as overlay panels in the PanelManager.
 ///
@@ -240,6 +242,27 @@ pub fn register_modal_panels(app: &mut TuiApp) {
         62,
         9,
     )));
+
+    // --- Special-case modals that need &mut TuiApp ---
+    // MCP modal needs &mut TuiApp and a theme palette reference.
+    pm.add_overlay(Box::new(ModalPanelMut::new(
+        "mcp",
+        Mode::Mcp,
+        |frame, app, area| {
+            let palette = app.theme_palette();
+            crate::ui::mcp::draw_mcp_modal(frame, area, app, &palette);
+        },
+        90,
+        22,
+    )));
+    // Setup modal needs &mut TuiApp and full content area.
+    pm.add_overlay(Box::new(ModalPanelMut::new_with_area(
+        "setup",
+        Mode::Setup,
+        |frame, app, area| {
+            setup::render_setup(frame, app, area);
+        },
+    )));
 }
 
 /// Render all registered overlay panels using the NaviPanelContext.
@@ -381,48 +404,144 @@ impl Panel for ModalPanel {
     }
 }
 
+/// Type alias for a render function that draws a modal into a given area,
+/// with mutable access to TuiApp.
+type ModalRenderFnMut = fn(&mut Frame, &mut TuiApp, Rect);
+
+/// A Panel wrapper for modals that need `&mut TuiApp`.
+///
+/// Like `ModalPanel`, but the render function receives `&mut TuiApp` instead
+/// of `&TuiApp`. Used for modals like MCP and Setup that need mutable access.
+pub struct ModalPanelMut {
+    id: String,
+    mode: Mode,
+    render_fn: ModalRenderFnMut,
+    modal_width: u16,
+    modal_height: u16,
+    use_full_area: bool,
+    z: i16,
+}
+
+impl ModalPanelMut {
+    pub fn new(id: &str, mode: Mode, render_fn: ModalRenderFnMut, width: u16, height: u16) -> Self {
+        Self {
+            id: id.to_string(),
+            mode,
+            render_fn,
+            modal_width: width,
+            modal_height: height,
+            use_full_area: false,
+            z: 10,
+        }
+    }
+
+    /// Use the full content area instead of a centered modal rect.
+    pub fn new_with_area(id: &str, mode: Mode, render_fn: ModalRenderFnMut) -> Self {
+        Self {
+            id: id.to_string(),
+            mode,
+            render_fn,
+            modal_width: 0,
+            modal_height: 0,
+            use_full_area: true,
+            z: 10,
+        }
+    }
+}
+
+impl Panel for ModalPanelMut {
+    fn id(&self) -> &str {
+        &self.id
+    }
+
+    fn render(&mut self, frame: &mut Frame, area: Rect, ctx: &dyn PanelContext) {
+        let navi_ctx = ctx
+            .as_any()
+            .downcast_ref::<NaviPanelContext>()
+            .expect("ModalPanelMut requires NaviPanelContext");
+        if navi_ctx.app().mode != self.mode {
+            return;
+        }
+        let render_area = if self.use_full_area {
+            area
+        } else {
+            crate::render::modal_rect(area, self.modal_width, self.modal_height)
+        };
+        (self.render_fn)(frame, navi_ctx.app_mut(), render_area);
+    }
+
+    fn handle_key(&self, _key: &KeyEvent, ctx: &dyn PanelContext) -> KeyOutcome {
+        let navi_ctx = ctx
+            .as_any()
+            .downcast_ref::<NaviPanelContext>()
+            .expect("ModalPanelMut requires NaviPanelContext");
+        if navi_ctx.app().mode != self.mode {
+            return KeyOutcome::Ignored;
+        }
+        KeyOutcome::Ignored
+    }
+
+    fn preferred_size(&self) -> PanelSize {
+        PanelSize::Flex
+    }
+
+    fn is_visible(&self) -> bool {
+        true
+    }
+
+    fn z_order(&self) -> i16 {
+        self.z
+    }
+}
+
 /// Adapter that wraps a plugin's `TuiComponent` as a copland `Panel`.
 ///
 /// This is the bridge between the plugin API's `TuiComponent` trait and
 /// copland's `Panel` trait, allowing plugin-registered components to be
 /// rendered by the `PanelManager`.
 pub struct PluginPanelAdapter {
-    inner: Box<dyn navi_plugin_api::TuiComponent>,
+    id: String,
+    inner: Mutex<Box<dyn navi_plugin_api::TuiComponent>>,
 }
 
 impl PluginPanelAdapter {
     pub fn new(component: Box<dyn navi_plugin_api::TuiComponent>) -> Self {
-        Self { inner: component }
+        let id = component.id().to_string();
+        Self {
+            id,
+            inner: Mutex::new(component),
+        }
     }
 }
 
 impl Panel for PluginPanelAdapter {
     fn id(&self) -> &str {
-        self.inner.id()
+        &self.id
     }
 
     fn render(&mut self, frame: &mut Frame, area: Rect, ctx: &dyn PanelContext) {
-        self.inner.render(frame, area, ctx);
+        self.inner.lock().expect("PluginPanelAdapter mutex poisoned").render(frame, area, ctx);
     }
 
     fn handle_key(&self, key: &KeyEvent, ctx: &dyn PanelContext) -> KeyOutcome {
-        // TuiComponent::handle_key takes &mut self, but Panel::handle_key takes &self.
-        // For now, we ignore key events from plugin panels.
-        // This will be addressed when the key routing system is migrated.
-        let _ = (key, ctx);
-        KeyOutcome::Ignored
+        // Use interior mutability: Panel::handle_key takes &self, but
+        // TuiComponent::handle_key takes &mut self. The Mutex lets us
+        // get &mut access. This is safe because the TUI event loop is
+        // single-threaded — the mutex is never contended.
+        let mut inner = self.inner.lock().expect("PluginPanelAdapter mutex poisoned");
+        inner.handle_key(key, ctx)
     }
 
     fn preferred_size(&self) -> PanelSize {
-        self.inner.preferred_size()
+        self.inner.lock().expect("PluginPanelAdapter mutex poisoned").preferred_size()
     }
 
     fn is_visible(&self) -> bool {
-        self.inner.is_visible()
+        self.inner.lock().expect("PluginPanelAdapter mutex poisoned").is_visible()
     }
 
     fn z_order(&self) -> i16 {
-        self.inner.z_order()
+        self.inner.lock().expect("PluginPanelAdapter mutex poisoned").z_order()
     }
 }
 
