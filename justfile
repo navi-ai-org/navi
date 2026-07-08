@@ -25,6 +25,14 @@ build:
 build-release:
     cargo build --workspace --release
 
+# Install the navi binary to ~/.cargo/bin (or wherever cargo install puts it).
+install:
+    cargo install --path crates/navi-cli
+
+# Install the navi binary in release mode.
+install-release:
+    cargo install --path crates/navi-cli --release
+
 check:
     cargo check --workspace --all-targets
 
