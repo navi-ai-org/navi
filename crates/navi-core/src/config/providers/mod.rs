@@ -321,8 +321,20 @@ pub(crate) fn merge_provider_configs(
 
             let mut merged_models = Vec::new();
             for override_model in override_config.models {
-                if let Some(registry_model) = existing_models.get(&override_model.name) {
-                    let name = override_model.name.clone();
+                // Try exact match first, then case-insensitive match so that
+                // user config overrides with different casing (e.g. "glm-5.2"
+                // vs registry "GLM-5.2") still inherit registry metadata.
+                let match_key = override_model.name.clone();
+                let matched = existing_models.remove(&match_key).or_else(|| {
+                    let lower = match_key.to_lowercase();
+                    existing_models
+                        .keys()
+                        .find(|k| k.to_lowercase() == lower)
+                        .cloned()
+                        .and_then(|k| existing_models.remove(&k))
+                });
+
+                if let Some(registry_model) = matched {
                     merged_models.push(ProviderModelConfig {
                         name: override_model.name,
                         task_size: override_model.task_size.or(registry_model.task_size),
@@ -354,8 +366,6 @@ pub(crate) fn merge_provider_configs(
                             .tool_prompt_manifest
                             .or(registry_model.tool_prompt_manifest),
                     });
-                    // Mark as consumed so we can preserve unmatched registry models.
-                    existing_models.remove(&name);
                 } else {
                     merged_models.push(override_model);
                 }
