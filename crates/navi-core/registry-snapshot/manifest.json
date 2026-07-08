@@ -1,5 +1,5 @@
 {
-  "version": 2,
+  "version": 3,
   "updated_at": "2026-07-07T00:00:00Z",
   "providers": {
     "anthropic": {
@@ -9,8 +9,8 @@
     },
     "charm-hyper": {
       "file": "providers/charm-hyper.json",
-      "sha256": "7b0030dbe6a858392e8a5ca6befa129185018f9a634f8bba5387448f819a133b",
-      "model_count": 12
+      "sha256": "a21987a42e21690b9cb7e4f84650294a11511dec5f375391e36f596f79d0d9a7",
+      "model_count": 20
     },
     "commandcode": {
       "file": "providers/commandcode.json",

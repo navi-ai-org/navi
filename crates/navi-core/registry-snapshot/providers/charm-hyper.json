@@ -5,11 +5,29 @@
   "kind": "openai-chat-completions",
   "api_key_env": "CHARM_HYPER_API_KEY",
   "base_url": "https://hyper.charm.land/v1",
+  "aggregator": true,
   "models": [
     {
-      "name": "Kimi K2.6",
-      "context_window_tokens": 256000,
-      "max_output_tokens": 16384,
+      "name": "kimi-k2.6",
+      "task_size": "large",
+      "context_window_tokens": 262000,
+      "max_output_tokens": 262000,
+      "recommended_temperature": 1.0,
+      "supports_thinking": true,
+      "attachments": {
+        "images": true
+      },
+      "pricing": {
+        "input_per_1m": 0.57,
+        "output_per_1m": 2.3,
+        "currency": "USD"
+      }
+    },
+    {
+      "name": "kimi-k2.5",
+      "task_size": "large",
+      "context_window_tokens": 262144,
+      "max_output_tokens": 26214,
       "recommended_temperature": 1.0,
       "supports_thinking": true,
       "pricing": {
@@ -19,21 +37,21 @@
       }
     },
     {
-      "name": "Kimi K2.5",
-      "context_window_tokens": 256000,
-      "max_output_tokens": 16384,
+      "name": "kimi-k2.7-code",
+      "task_size": "large",
+      "context_window_tokens": 262000,
+      "max_output_tokens": 32768,
       "recommended_temperature": 1.0,
       "supports_thinking": true,
-      "pricing": {
-        "input_per_1m": 0.57,
-        "output_per_1m": 2.3,
-        "currency": "USD"
+      "attachments": {
+        "images": true
       }
     },
     {
-      "name": "DeepSeek V4 Pro",
+      "name": "deepseek-v4-pro",
+      "task_size": "large",
       "context_window_tokens": 1000000,
-      "max_output_tokens": 16384,
+      "max_output_tokens": 384000,
       "recommended_temperature": 1.0,
       "supports_thinking": true,
       "pricing": {
@@ -43,9 +61,10 @@
       }
     },
     {
-      "name": "DeepSeek V4 Flash",
+      "name": "deepseek-v4-flash",
+      "task_size": "small",
       "context_window_tokens": 1000000,
-      "max_output_tokens": 16384,
+      "max_output_tokens": 384000,
       "recommended_temperature": 1.0,
       "supports_thinking": true,
       "pricing": {
@@ -55,21 +74,10 @@
       }
     },
     {
-      "name": "Gemma 4 26B A4B",
-      "context_window_tokens": 262144,
-      "max_output_tokens": 8192,
-      "recommended_temperature": 1.0,
-      "supports_thinking": true,
-      "pricing": {
-        "input_per_1m": 0.1,
-        "output_per_1m": 0.2,
-        "currency": "USD"
-      }
-    },
-    {
-      "name": "GLM-5.2",
-      "context_window_tokens": 1048000,
-      "max_output_tokens": 16384,
+      "name": "glm-5.2",
+      "task_size": "large",
+      "context_window_tokens": 1048576,
+      "max_output_tokens": 131072,
       "recommended_temperature": 1.0,
       "supports_thinking": true,
       "pricing": {
@@ -79,9 +87,10 @@
       }
     },
     {
-      "name": "GLM-5.1",
-      "context_window_tokens": 200000,
-      "max_output_tokens": 16384,
+      "name": "glm-5.1",
+      "task_size": "large",
+      "context_window_tokens": 202800,
+      "max_output_tokens": 131072,
       "recommended_temperature": 1.0,
       "supports_thinking": true,
       "pricing": {
@@ -91,9 +100,10 @@
       }
     },
     {
-      "name": "GLM-5",
-      "context_window_tokens": 200000,
-      "max_output_tokens": 16384,
+      "name": "glm-5",
+      "task_size": "large",
+      "context_window_tokens": 202752,
+      "max_output_tokens": 20275,
       "recommended_temperature": 1.0,
       "supports_thinking": true,
       "pricing": {
@@ -103,50 +113,117 @@
       }
     },
     {
-      "name": "Qwen 3 32B",
-      "context_window_tokens": 128000,
-      "max_output_tokens": 8192,
+      "name": "gemma-4-26b-a4b-it",
+      "task_size": "small",
+      "context_window_tokens": 256000,
+      "max_output_tokens": 25600,
       "recommended_temperature": 1.0,
       "supports_thinking": true,
       "pricing": {
-        "input_per_1m": 0.08,
-        "output_per_1m": 0.28,
+        "input_per_1m": 0.1,
+        "output_per_1m": 0.2,
         "currency": "USD"
       }
     },
     {
-      "name": "MiniMax M2.1",
-      "context_window_tokens": 204800,
-      "max_output_tokens": 8192,
+      "name": "qwen3.7-max",
+      "task_size": "large",
+      "context_window_tokens": 1000000,
+      "max_output_tokens": 64000,
+      "recommended_temperature": 1.0,
+      "supports_thinking": true
+    },
+    {
+      "name": "qwen3.7-plus",
+      "task_size": "large",
+      "context_window_tokens": 1000000,
+      "max_output_tokens": 64000,
       "recommended_temperature": 1.0,
       "supports_thinking": true,
-      "pricing": {
-        "input_per_1m": 0.3,
-        "output_per_1m": 1.2,
-        "currency": "USD"
+      "attachments": {
+        "images": true
       }
+    },
+    {
+      "name": "qwen3.6-max",
+      "task_size": "large",
+      "context_window_tokens": 256000,
+      "max_output_tokens": 64000,
+      "recommended_temperature": 1.0,
+      "supports_thinking": true
+    },
+    {
+      "name": "qwen3.6-plus",
+      "task_size": "large",
+      "context_window_tokens": 1000000,
+      "max_output_tokens": 64000,
+      "recommended_temperature": 1.0,
+      "supports_thinking": true,
+      "attachments": {
+        "images": true
+      }
+    },
+    {
+      "name": "qwen3.6-flash",
+      "task_size": "small",
+      "context_window_tokens": 1000000,
+      "max_output_tokens": 64000,
+      "recommended_temperature": 1.0,
+      "supports_thinking": true,
+      "attachments": {
+        "images": true
+      }
+    },
+    {
+      "name": "qwen3-next-80b-a3b-instruct",
+      "task_size": "small",
+      "context_window_tokens": 262144,
+      "max_output_tokens": 26214,
+      "recommended_temperature": 1.0,
+      "supports_thinking": true
+    },
+    {
+      "name": "qwen3-coder-480b-a35b-instruct-int4-mixed-ar",
+      "task_size": "large",
+      "context_window_tokens": 106000,
+      "max_output_tokens": 10600,
+      "recommended_temperature": 1.0,
+      "supports_thinking": true
+    },
+    {
+      "name": "minimax-m2.7",
+      "task_size": "large",
+      "context_window_tokens": 204800,
+      "max_output_tokens": 20480,
+      "recommended_temperature": 1.0,
+      "supports_thinking": true
+    },
+    {
+      "name": "llama-4-maverick-17b-128e-instruct-fp8",
+      "task_size": "large",
+      "context_window_tokens": 430000,
+      "max_output_tokens": 43000,
+      "recommended_temperature": 1.0,
+      "supports_thinking": true
+    },
+    {
+      "name": "llama-3.3-70b-instruct",
+      "task_size": "small",
+      "context_window_tokens": 128000,
+      "max_output_tokens": 12800,
+      "recommended_temperature": 1.0,
+      "supports_thinking": true
     },
     {
       "name": "gpt-oss-120b",
-      "context_window_tokens": 128000,
-      "max_output_tokens": 16384,
+      "task_size": "large",
+      "context_window_tokens": 131072,
+      "max_output_tokens": 13107,
       "recommended_temperature": 1.0,
-      "supports_thinking": false,
+      "supports_thinking": true,
       "pricing": {
         "input_per_1m": 0.03,
         "output_per_1m": 0.15,
-        "currency": "USD"
-      }
-    },
-    {
-      "name": "gpt-oss-20b",
-      "context_window_tokens": 128000,
-      "max_output_tokens": 8192,
-      "recommended_temperature": 1.0,
-      "supports_thinking": false,
-      "pricing": {
-        "input_per_1m": 0.029,
-        "output_per_1m": 0.14,
         "currency": "USD"
       }
     }
