@@ -119,8 +119,8 @@
     },
     "xai": {
       "file": "providers/xai.json",
-      "sha256": "324fd77119d9bf250693af307d664fed3c40604b7b80bdfe54d6faa1b01468e1",
-      "model_count": 14
+      "sha256": "4cf5daeb97507ec2e00f1d8c7b9e135d7880586eff4aab24ff0aac5c6310768c",
+      "model_count": 16
     },
     "xiaomi": {
       "file": "providers/xiaomi.json",
