@@ -56,12 +56,13 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # ubuntu-22.04 → glibc 2.35 (runs on Debian bookworm 2.36+, Ubuntu 22.04+).
+          # Note: not static/musl yet — Alpine and some older AMIs may still fail.
           - target: x86_64-unknown-linux-gnu
-            os: ubuntu-latest
+            os: ubuntu-22.04
             archive: navi-linux-x64
             npm_platform: linux-x64
 
-          # Native arm64 runner — more reliable than cross for tree-sitter / C deps.
           - target: aarch64-unknown-linux-gnu
             os: ubuntu-24.04-arm
             archive: navi-linux-arm64

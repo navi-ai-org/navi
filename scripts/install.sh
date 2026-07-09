@@ -1,6 +1,7 @@
-#!/usr/bin/env bash
+#!/bin/sh
 #
 # NAVI installer — downloads a prebuilt binary from GitHub Releases.
+# POSIX sh compatible (dash on Ubuntu, ash on Alpine, bash, …).
 #
 # Primary install method:
 #   curl -fsSL https://raw.githubusercontent.com/navi-ai-org/navi/main/scripts/install.sh | sh
@@ -20,7 +21,9 @@
 # archive root. tar.gz is the industry default (rustup, deno, go, …) — integrity
 # comes from checksums/signatures, not from the archive format.
 #
-set -euo pipefail
+set -eu
+# Enable pipefail when the shell supports it (bash/ksh); dash/ash ignore this.
+( set -o pipefail ) 2>/dev/null && set -o pipefail
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -186,7 +189,7 @@ verify_sha256() {
     error "The download may be corrupt or tampered with. Aborting."
     exit 1
   fi
-  info "SHA-256 OK (${actual:0:12}…)"
+  info "SHA-256 OK ($(printf '%s' "$actual" | cut -c1-12)…)"
 }
 
 # Authenticate SHA256SUMS via Sigstore (proves it was produced by our Release
@@ -224,22 +227,23 @@ verify_cosign_bundle() {
 
 # Reject path traversal / multi-file payloads. Only a single root binary is allowed.
 assert_safe_archive_members() {
-  local archive_path="$1"
-  local expected_name="$2"
-  local ext="$3"
-  local members member count=0
+  archive_path="$1"
+  expected_name="$2"
+  ext="$3"
+  count=0
+  list_file=$(mktemp)
 
   if [ "$ext" = "zip" ]; then
-    members=$(unzip -Z1 "$archive_path")
+    unzip -Z1 "$archive_path" >"$list_file"
   else
-    members=$(tar -tzf "$archive_path")
+    tar -tzf "$archive_path" >"$list_file"
   fi
 
-  while IFS= read -r member; do
+  while IFS= read -r member || [ -n "$member" ]; do
     [ -z "$member" ] && continue
     # Normalize trailing slash directories (reject them).
     case "$member" in
-      */|*/) error "Archive must not contain directories: $member"; exit 1 ;;
+      */) error "Archive must not contain directories: $member"; rm -f "$list_file"; exit 1 ;;
     esac
     # Strip leading ./
     member="${member#./}"
@@ -247,6 +251,7 @@ assert_safe_archive_members() {
       ""|*"/"*|*".."*|*"\\"*)
         error "Unsafe archive member rejected: $member"
         error "Expected a single root file named '${expected_name}'."
+        rm -f "$list_file"
         exit 1
         ;;
       "$expected_name")
@@ -255,10 +260,12 @@ assert_safe_archive_members() {
       *)
         error "Unexpected archive member: $member"
         error "Expected only '${expected_name}'."
+        rm -f "$list_file"
         exit 1
         ;;
     esac
-  done <<< "$members"
+  done <"$list_file"
+  rm -f "$list_file"
 
   if [ "$count" -ne 1 ]; then
     error "Archive must contain exactly one file named '${expected_name}' (found $count)."
