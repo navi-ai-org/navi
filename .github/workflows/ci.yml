@@ -1,12 +1,20 @@
 name: CI
 
 on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
   workflow_dispatch:
 
 env:
   CARGO_TERM_COLOR: always
   CARGO_BUILD_JOBS: "2"
   CARGO_TEST_THREADS: "4"
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   fmt:
@@ -49,4 +57,32 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - run: cargo test --workspace -- --test-threads=4
+      - name: Run workspace tests
+        run: cargo test --workspace --locked -- --test-threads=4
+
+  # Single green check for branch protection / release gates.
+  ci-ok:
+    name: CI OK
+    if: always()
+    needs: [fmt, check, clippy, test]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Aggregate job results
+        run: |
+          set -euo pipefail
+          echo "fmt=${{ needs.fmt.result }}"
+          echo "check=${{ needs.check.result }}"
+          echo "clippy=${{ needs.clippy.result }}"
+          echo "test=${{ needs.test.result }}"
+          for r in \
+            "${{ needs.fmt.result }}" \
+            "${{ needs.check.result }}" \
+            "${{ needs.clippy.result }}" \
+            "${{ needs.test.result }}"
+          do
+            if [[ "$r" != "success" ]]; then
+              echo "CI failed (job result: $r)" >&2
+              exit 1
+            fi
+          done
+          echo "All CI jobs passed."
