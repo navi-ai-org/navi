@@ -18,6 +18,106 @@ fn truncate_to_lines(text: &str, max_lines: usize) -> &str {
     text
 }
 
+/// One-line label for a tool that is still running (no result yet).
+///
+/// Mirrors the settled summaries but without exit/elapsed status so the chat
+/// can show `◆ Run cargo test · 3s` while the command is in flight.
+pub(crate) fn tool_running_text(invocation: &ToolInvocation) -> String {
+    match invocation.tool_name.as_str() {
+        "bash" => {
+            let action = invocation.input.get("action").and_then(|v| v.as_str());
+            if action == Some("list") {
+                return "List background commands".into();
+            }
+            if let Some(task_id) = invocation.input.get("task_id").and_then(|v| v.as_str()) {
+                return if action == Some("cancel") {
+                    format!("Cancel background command {task_id}")
+                } else {
+                    format!("Poll background command {task_id}")
+                };
+            }
+            let command = invocation
+                .input
+                .get("command")
+                .and_then(|v| v.as_str())
+                .unwrap_or("command");
+            let bg = invocation
+                .input
+                .get("background")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            if bg {
+                format!("Run {} (background…)", one_line(command))
+            } else {
+                format!("Run {}", one_line(command))
+            }
+        }
+        "read" | "read_file" | "view_file" => {
+            let path = invocation
+                .input
+                .get("path")
+                .or_else(|| invocation.input.get("file_path"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("file");
+            format!("Read {}", display_path(path))
+        }
+        "write" | "write_file" => {
+            let path = invocation
+                .input
+                .get("path")
+                .or_else(|| invocation.input.get("file_path"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("file");
+            format!("Write {}", display_path(path))
+        }
+        "grep" => {
+            let pattern = invocation
+                .input
+                .get("pattern")
+                .and_then(|v| v.as_str())
+                .unwrap_or("pattern");
+            format!("Grep {}", one_line(pattern))
+        }
+        "search" | "glob" | "list_dir" => {
+            let q = invocation
+                .input
+                .get("pattern")
+                .or_else(|| invocation.input.get("query"))
+                .or_else(|| invocation.input.get("path"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("…");
+            format!("{} {}", humanize_tool_name(&invocation.tool_name), one_line(q))
+        }
+        "subagent" => {
+            let desc = invocation
+                .input
+                .get("description")
+                .or_else(|| invocation.input.get("prompt"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("Subagent");
+            format!("Subagent {}", one_line(desc))
+        }
+        "plan" => {
+            let action = invocation
+                .input
+                .get("action")
+                .and_then(|v| v.as_str())
+                .unwrap_or("plan");
+            let title = invocation
+                .input
+                .get("title")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            if title.is_empty() {
+                format!("Plan {action}")
+            } else {
+                format!("Plan {action} \"{}\"", one_line(title))
+            }
+        }
+        other => humanize_tool_name(other),
+    }
+}
+
 pub(crate) fn tool_compact_text(invocation: &ToolInvocation, result: &ToolResult) -> String {
     let mut text = match invocation.tool_name.as_str() {
         // ── Existing (kept) ──────────────────────────────────────────────
@@ -94,20 +194,24 @@ pub(crate) fn tool_compact_text(invocation: &ToolInvocation, result: &ToolResult
     text
 }
 
+/// Full tool content including the one-line summary (used by tests / copy).
 pub(crate) fn tool_full_content(invocation: &ToolInvocation, result: &ToolResult) -> String {
     let mut content = format!(
         "{} {}\n\n",
-        if result.ok { "✓" } else { "✗" },
+        super::status::settled_diamond(),
         tool_compact_text(invocation, result),
     );
-
-    if let Some(formatted) = formatted_tool_output(invocation, result) {
-        content.push_str(&formatted);
-    } else {
-        content.push_str(&generic_tool_summary(invocation, result));
-    }
-
+    content.push_str(&tool_body_content(invocation, result));
     content
+}
+
+/// Body only — the chat renderer already paints the compact header card above.
+pub(crate) fn tool_body_content(invocation: &ToolInvocation, result: &ToolResult) -> String {
+    if let Some(formatted) = formatted_tool_output(invocation, result) {
+        formatted
+    } else {
+        generic_tool_summary(invocation, result)
+    }
 }
 fn formatted_tool_output(invocation: &ToolInvocation, result: &ToolResult) -> Option<String> {
     let obj = result.output.as_object()?;
@@ -189,12 +293,21 @@ fn formatted_tool_output(invocation: &ToolInvocation, result: &ToolResult) -> Op
             content.push_str("```\n");
         }
     } else if invocation.tool_name == "write_file" || invocation.tool_name == "write" {
-        let path = obj.get("path").and_then(|v| v.as_str())?;
+        let path = obj
+            .get("path")
+            .and_then(|v| v.as_str())
+            .or_else(|| invocation.input.get("path").and_then(|v| v.as_str()))
+            .unwrap_or("file");
         let (added, removed) = write_file_line_counts(invocation, result);
         content.push_str(&format!(
             "Edited {} (+{added} -{removed} lines)\n",
             display_path(path)
         ));
+        // Grok-style: show the change body as a fenced diff (green + / red −).
+        if let Some(diff) = write_display_diff(invocation, result) {
+            content.push('\n');
+            append_diff_fence(&diff, &mut content);
+        }
     } else if invocation.tool_name == "bash" {
         let status = obj.get("status").and_then(|v| v.as_i64());
         if let Some(status_code) = status {
@@ -693,20 +806,92 @@ fn append_patch_bodies(patches: &[String], content: &mut String) {
         } else {
             content.push_str(&format!("\nPatch {}:\n", index + 1));
         }
-        content.push_str("```diff\n");
-        let truncated_patch = truncate_to_lines(patch, MAX_TOOL_RENDER_LINES);
-        content.push_str(truncated_patch);
-        if !truncated_patch.ends_with('\n') {
-            content.push('\n');
-        }
-        if truncated_patch.len() < patch.len() {
-            content.push_str(&format!(
-                "... (truncated, {} lines total)\n",
-                patch.lines().count()
-            ));
-        }
-        content.push_str("```\n");
+        append_diff_fence(patch, content);
     }
+}
+
+/// Fence a display/unified/structured diff as ```diff so markdown colors +/− lines.
+/// Caller supplies any leading blank line / label (`Patch:\n`, etc.).
+fn append_diff_fence(diff: &str, content: &mut String) {
+    if diff.is_empty() {
+        return;
+    }
+    content.push_str("```diff\n");
+    let normalized = normalize_diff_for_display(diff);
+    let truncated = truncate_to_lines(&normalized, MAX_TOOL_RENDER_LINES);
+    content.push_str(truncated);
+    if !truncated.ends_with('\n') {
+        content.push('\n');
+    }
+    if truncated.len() < normalized.len() {
+        content.push_str(&format!(
+            "… (truncated, {} lines total)\n",
+            normalized.lines().count()
+        ));
+    }
+    content.push_str("```\n");
+}
+
+/// Prefer the tool-provided `diff` field; otherwise synthesize from write `content`.
+fn write_display_diff(invocation: &ToolInvocation, result: &ToolResult) -> Option<String> {
+    if let Some(diff) = result
+        .output
+        .get("diff")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+    {
+        return Some(diff.to_string());
+    }
+
+    // Fallback: build an Add/Update-style view from the write input so the body
+    // still shows a colored diff even when the result predates the `diff` field.
+    let path = result
+        .output
+        .get("path")
+        .or_else(|| invocation.input.get("path"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("file");
+    let new_content = invocation.input.get("content").and_then(|v| v.as_str())?;
+    let removed = result
+        .output
+        .get("lines_removed")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+
+    let mut out = if removed == 0 {
+        format!("*** Add File: {path}\n")
+    } else {
+        format!("*** Update File: {path}\n@@\n")
+    };
+    for line in new_content.lines() {
+        out.push('+');
+        out.push_str(line);
+        out.push('\n');
+    }
+    // Empty content still yields a useful header-only block.
+    Some(out)
+}
+
+/// Insert Grok-like hunk separators (`…`) between `@@` hunks; keep path markers.
+fn normalize_diff_for_display(patch: &str) -> String {
+    let mut out = String::with_capacity(patch.len().saturating_add(16));
+    let mut last_was_hunk = false;
+    for line in patch.lines() {
+        if line.starts_with("@@") {
+            if last_was_hunk {
+                out.push_str("…\n");
+            }
+            last_was_hunk = true;
+        } else if line.starts_with("*** Update File:")
+            || line.starts_with("*** Add File:")
+            || line.starts_with("*** Delete File:")
+        {
+            last_was_hunk = false;
+        }
+        out.push_str(line);
+        out.push('\n');
+    }
+    out
 }
 
 fn patch_inputs(invocation: &ToolInvocation) -> Vec<String> {
@@ -2398,6 +2583,14 @@ mod tests {
     }
 
     #[test]
+    fn tool_running_text_summarizes_bash_command() {
+        let inv = invocation("bash", json!({ "command": "npm test -- --watch" }));
+        let label = tool_running_text(&inv);
+        assert!(label.starts_with("Run "), "{label}");
+        assert!(label.contains("npm test"), "{label}");
+    }
+
+    #[test]
     fn process_full_view_renders_stdout_and_structured_output() {
         let content = tool_full_content(
             &invocation("process", json!({ "command": "printf hi" })),
@@ -2487,5 +2680,79 @@ mod tests {
         assert!(content.contains("Patch 2:\n```diff\n"));
         assert!(content.contains("*** Add File: one.txt"));
         assert!(content.contains("*** Add File: two.txt"));
+    }
+
+    #[test]
+    fn full_direct_write_output_includes_diff_body() {
+        let content = tool_full_content(
+            &invocation(
+                "write",
+                json!({
+                    "path": "src/main.rs",
+                    "content": "fn main() {}\n"
+                }),
+            ),
+            &ok_result(json!({
+                "path": "src/main.rs",
+                "bytes": 13,
+                "lines_added": 1,
+                "lines_removed": 0,
+                "diff": "*** Add File: src/main.rs\n+fn main() {}\n"
+            })),
+        );
+
+        assert!(content.contains("Edited src/main.rs (+1 -0 lines)"));
+        assert!(content.contains("```diff\n"));
+        assert!(content.contains("*** Add File: src/main.rs"));
+        assert!(content.contains("+fn main() {}"));
+    }
+
+    #[test]
+    fn direct_write_synthesizes_diff_from_content_when_missing() {
+        let content = tool_full_content(
+            &invocation(
+                "write_file",
+                json!({
+                    "path": "hello.txt",
+                    "content": "a\nb\n"
+                }),
+            ),
+            &ok_result(json!({
+                "path": "hello.txt",
+                "lines_added": 2,
+                "lines_removed": 0
+            })),
+        );
+
+        assert!(content.contains("Edited hello.txt (+2 -0 lines)"));
+        assert!(content.contains("```diff\n"));
+        assert!(content.contains("*** Add File: hello.txt"));
+        assert!(content.contains("+a\n+b\n"));
+    }
+
+    #[test]
+    fn write_edits_render_as_diff_body() {
+        let content = tool_full_content(
+            &invocation(
+                "write",
+                json!({
+                    "edits": [{
+                        "path": "lib.rs",
+                        "search": "fn old() {}",
+                        "replace": "fn new() {}"
+                    }]
+                }),
+            ),
+            &ok_result(json!({
+                "method": "search_replace",
+                "files_changed": ["lib.rs"],
+                "edits_applied": 1
+            })),
+        );
+
+        assert!(content.contains("```diff\n"));
+        assert!(content.contains("*** Update File: lib.rs"));
+        assert!(content.contains("-fn old() {}"));
+        assert!(content.contains("+fn new() {}"));
     }
 }

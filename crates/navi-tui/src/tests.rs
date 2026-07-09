@@ -110,6 +110,8 @@ fn app_with_missing_provider_key() -> TuiApp {
             tool_prompt_manifest: None,
             pricing_input_per_1m: None,
             pricing_output_per_1m: None,
+            reasoning_levels: Vec::new(),
+            default_reasoning_effort: None,
         }],
         ..Default::default()
     }];
@@ -241,6 +243,7 @@ fn selected_text_extracts_multiline_text_from_chat_cache() {
         start: (0, 6),
         end: (1, 6),
         active: false,
+        bound_source: None,
     });
 
     assert_eq!(selected_text(&app).as_deref(), Some("world\nsecond"));
@@ -254,6 +257,7 @@ fn zero_width_mouse_selection_does_not_copy_text() {
         start: (0, 3),
         end: (0, 3),
         active: true,
+        bound_source: None,
     });
 
     assert!(!finish_selection(&mut app, None));
@@ -268,6 +272,7 @@ fn mouse_up_outside_chat_finishes_existing_selection() {
         start: (0, 0),
         end: (0, 5),
         active: true,
+        bound_source: None,
     });
 
     assert!(finish_selection(&mut app, None));
@@ -283,6 +288,7 @@ fn ctrl_shift_c_copies_selection_from_lowercase_shift_key_event() {
         start: (0, 0),
         end: (0, 5),
         active: false,
+        bound_source: None,
     });
 
     let should_quit = handle_key(
@@ -305,6 +311,7 @@ fn ctrl_shift_c_reaches_global_shortcut_from_question_mode() {
         start: (0, 6),
         end: (0, 11),
         active: false,
+        bound_source: None,
     });
 
     let should_quit = handle_key(&mut app, KeyCode::Char('C'), KeyModifiers::CONTROL);
@@ -315,7 +322,44 @@ fn ctrl_shift_c_reaches_global_shortcut_from_question_mode() {
 }
 
 #[test]
-fn mouse_down_on_user_chat_message_opens_message_actions() {
+fn text_drag_selection_stays_inside_selected_block() {
+    let mut app = test_app("");
+    // Two message blocks with sources so drag cannot bleed across them.
+    app.messages
+        .push(ChatMessage::new(ChatRole::User, "alpha".to_string()));
+    app.messages
+        .push(ChatMessage::new(ChatRole::Assistant, "beta line".to_string()));
+    {
+        let mut cache = app.chat_render_cache.borrow_mut();
+        cache.lines = vec![
+            ratatui::text::Line::from("alpha"),
+            ratatui::text::Line::from("beta line"),
+        ];
+        cache.line_sources = vec![
+            ChatLineSource::Message(0),
+            ChatLineSource::Message(1),
+        ];
+        cache.chat_rect = Some(Rect::new(0, 0, 20, 4));
+        cache.width = 20;
+        cache.signature_hash = 1;
+    }
+
+    app.selection = Some(SelectionState {
+        start: (0, 0),
+        end: (0, 0),
+        active: true,
+        bound_source: Some(ChatLineSource::Message(0)),
+    });
+    let clamped = crate::chat_blocks::clamp_line_to_block(
+        &app,
+        1,
+        &Some(ChatLineSource::Message(0)),
+    );
+    assert_eq!(clamped, 0, "drag must not enter the next block");
+}
+
+#[test]
+fn mouse_down_on_user_chat_message_selects_block() {
     let mut app = test_app("");
     app.messages
         .push(ChatMessage::new(ChatRole::User, "change this".to_string()));
@@ -336,9 +380,55 @@ fn mouse_down_on_user_chat_message_opens_message_actions() {
         },
     );
 
+    // First click selects the block (Grok-style).
+    assert_eq!(app.mode, Mode::Normal);
+    assert_eq!(
+        app.selected_chat_source,
+        Some(ChatLineSource::Message(0))
+    );
+    assert!(app.message_action_target.is_none());
+
+    // Second click on the same user block opens message actions.
+    app.register_hit(
+        Rect::new(0, 0, 20, 1),
+        5,
+        "user message",
+        HitAction::ChatMessage(0),
+    );
+    handle_mouse(
+        &mut app,
+        MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 2,
+            row: 0,
+            modifiers: KeyModifiers::NONE,
+        },
+    );
     assert_eq!(app.mode, Mode::MessageActions);
     assert_eq!(app.message_action_target, Some(0));
     assert_eq!(app.selected_message_action, 0);
+}
+
+#[test]
+fn mouse_down_outside_chat_clears_selected_block() {
+    let mut app = test_app("");
+    app.messages
+        .push(ChatMessage::new(ChatRole::User, "keep me".to_string()));
+    app.selected_chat_source = Some(ChatLineSource::Message(0));
+    // No hits registered, no chat_rect → click is "outside".
+    handle_mouse(
+        &mut app,
+        MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 50,
+            row: 50,
+            modifiers: KeyModifiers::NONE,
+        },
+    );
+    assert!(
+        app.selected_chat_source.is_none(),
+        "click outside must deselect the chat block"
+    );
 }
 
 #[test]
@@ -399,6 +489,7 @@ fn revert_to_user_message_truncates_cacheable_prefix_without_rewriting_it() {
         AgentEvent::UserTaskSubmitted {
             text: "first".to_string(),
             content_parts: vec![],
+            submitted_at: None,
         },
         AgentEvent::ModelOutput {
             text: "answer one".to_string(),
@@ -407,6 +498,7 @@ fn revert_to_user_message_truncates_cacheable_prefix_without_rewriting_it() {
         AgentEvent::UserTaskSubmitted {
             text: "second".to_string(),
             content_parts: vec![],
+            submitted_at: None,
         },
         AgentEvent::ModelOutput {
             text: "answer two".to_string(),
@@ -444,6 +536,7 @@ fn fork_from_user_message_saves_original_and_keeps_prefix_in_new_session() {
         AgentEvent::UserTaskSubmitted {
             text: "first".to_string(),
             content_parts: vec![],
+            submitted_at: None,
         },
         AgentEvent::ModelOutput {
             text: "answer one".to_string(),
@@ -452,6 +545,7 @@ fn fork_from_user_message_saves_original_and_keeps_prefix_in_new_session() {
         AgentEvent::UserTaskSubmitted {
             text: "second".to_string(),
             content_parts: vec![],
+            submitted_at: None,
         },
     ];
 
@@ -482,6 +576,7 @@ fn ctrl_n_starts_clean_session_without_old_events_or_context() {
         AgentEvent::UserTaskSubmitted {
             text: "old prompt".to_string(),
             content_parts: vec![],
+            submitted_at: None,
         },
         AgentEvent::ModelOutput {
             text: "old answer".to_string(),
@@ -535,6 +630,7 @@ fn command_palette_new_session_uses_full_session_reset() {
         AgentEvent::UserTaskSubmitted {
             text: "old prompt".to_string(),
             content_parts: vec![],
+            submitted_at: None,
         },
         AgentEvent::ModelOutput {
             text: "old answer".to_string(),
@@ -641,6 +737,7 @@ fn loading_saved_session_restores_snapshot_session_id() {
         events: vec![AgentEvent::UserTaskSubmitted {
             text: "saved prompt".to_string(),
             content_parts: vec![],
+            submitted_at: Some(1_704_067_200),
         }],
         memory: None,
         goal: None,
@@ -652,6 +749,11 @@ fn loading_saved_session_restores_snapshot_session_id() {
     assert_eq!(app.session_title.as_deref(), Some("Saved"));
     assert_eq!(app.messages.len(), 1);
     assert_eq!(app.messages[0].content, "saved prompt");
+    assert_eq!(
+        app.messages[0].sent_at,
+        Some(std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_704_067_200)),
+        "submitted_at must restore wall-clock stamp on reload"
+    );
     assert_eq!(app.conversation_history.len(), 2);
 }
 
@@ -964,6 +1066,9 @@ fn model_picker_filters_by_model_and_provider_text() {
         provider_description: "Free public models".to_string(),
         task_size: Some(navi_sdk::ModelTaskSize::Small),
         context_window_tokens: None,
+        supports_thinking: None,
+        reasoning_levels: Vec::new(),
+        default_reasoning_effort: None,
     });
     open_model_picker(&mut app);
 
@@ -1013,6 +1118,9 @@ fn model_picker_clips_long_rows_inside_modal_border() {
         provider_description: "provider used for clipping tests".to_string(),
         task_size: Some(navi_sdk::ModelTaskSize::Large),
         context_window_tokens: None,
+        supports_thinking: None,
+        reasoning_levels: Vec::new(),
+        default_reasoning_effort: None,
     });
     app.loaded_config.config.model.provider = "verbose-provider".to_string();
     app.loaded_config.config.model.name = app.models[0].name.clone();
@@ -1083,6 +1191,9 @@ fn model_picker_renders_search_separators_and_footer_hints() {
         provider_description: "provider used for model picker layout tests".to_string(),
         task_size: Some(navi_sdk::ModelTaskSize::Large),
         context_window_tokens: None,
+        supports_thinking: None,
+        reasoning_levels: Vec::new(),
+        default_reasoning_effort: None,
     });
     open_model_picker(&mut app);
     app.authenticated_providers
@@ -1535,8 +1646,8 @@ fn background_task_enter_and_click_open_output_modal() {
     app.register_hit(
         Rect::new(2, 2, 20, 1),
         20,
-        "background task bg_1",
-        HitAction::BackgroundCommand(0),
+        "open background task bg_1",
+        HitAction::BackgroundCommandOpen(0),
     );
     handle_mouse(
         &mut app,
@@ -1551,7 +1662,44 @@ fn background_task_enter_and_click_open_output_modal() {
 }
 
 #[test]
-fn composer_hint_stays_visible_while_typing() {
+fn background_task_click_cancel_keeps_list_modal() {
+    let mut app = test_app("");
+    app.mode = Mode::BackgroundCommands;
+    app.background_commands = vec![sample_background_command("bg_1")];
+    assert!(app.background_commands[0].is_running());
+
+    app.register_hit(
+        Rect::new(40, 2, 2, 1),
+        50,
+        "cancel background task bg_1",
+        HitAction::BackgroundCommandCancel(0),
+    );
+    handle_mouse(
+        &mut app,
+        MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 40,
+            row: 2,
+            modifiers: KeyModifiers::NONE,
+        },
+    );
+    // Cancel is fire-and-forget against the engine; list modal stays open.
+    assert_eq!(app.mode, Mode::BackgroundCommands);
+    assert_eq!(app.bg_command_selected, 0);
+}
+
+#[test]
+fn background_task_right_arrow_opens_output() {
+    let mut app = test_app("");
+    app.mode = Mode::BackgroundCommands;
+    app.background_commands = vec![sample_background_command("bg_1")];
+
+    handle_key(&mut app, KeyCode::Right, KeyModifiers::NONE);
+    assert_eq!(app.mode, Mode::BackgroundCommandOutput);
+}
+
+#[test]
+fn composer_does_not_show_permanent_keyboard_hints() {
     let mut app = test_app("typed text");
     let backend = TestBackend::new(100, 28);
     let mut terminal = Terminal::new(backend).expect("terminal");
@@ -1561,10 +1709,13 @@ fn composer_hint_stays_visible_while_typing() {
         .expect("draw normal");
 
     let frame = terminal_buffer_text(&terminal);
-    assert!(frame.contains("ctrl+p commands"));
-    assert!(frame.contains("ctrl+t background tasks"));
-    assert!(frame.contains("ctrl+b background agents"));
-    assert!(frame.contains("ctrl+v paste image"));
+    // Grok-style: no sticky shortcut footer — discover via Help.
+    assert!(
+        !frame.contains("ctrl+p commands"),
+        "permanent keyboard hints should be gone:\n{frame}"
+    );
+    assert!(!frame.contains("ctrl+t background tasks"));
+    assert!(!frame.contains("ctrl+b background agents"));
 }
 
 #[test]
@@ -2209,6 +2360,7 @@ fn write_file_tool_full_content_uses_edit_summary() {
             "bytes": 16,
             "lines_added": 2,
             "lines_removed": 1,
+            "diff": "*** Update File: src/index.html\n@@\n-old\n+<!doctype html>\n+<html></html>\n"
         }),
     };
 
@@ -2216,10 +2368,14 @@ fn write_file_tool_full_content_uses_edit_summary() {
 
     assert!(content.contains("Write src/index.html (+2 -1 lines)"));
     assert!(content.contains("Edited src/index.html (+2 -1 lines)"));
+    // Grok-style fenced diff body with +/- coloring via markdown.
+    assert!(content.contains("```diff\n"));
+    assert!(content.contains("*** Update File: src/index.html"));
+    assert!(content.contains("-old\n"));
+    assert!(content.contains("+<!doctype html>\n"));
     assert!(!content.contains("Input"));
     assert!(!content.contains("Output"));
     assert!(!content.contains("```json"));
-    assert!(!content.contains("<!doctype html>"));
 }
 
 #[test]
@@ -2688,9 +2844,112 @@ fn compact_tool_render_expands_only_clicked_tool_result() {
         .collect::<Vec<_>>()
         .join("\n");
 
-    assert!(expanded.contains("Click to collapse"));
+    assert!(
+        expanded.to_lowercase().contains("collapse"),
+        "expected collapse hint, got: {expanded}"
+    );
     assert!(expanded.contains("expanded-only-content"));
     assert!(!app.full_tool_view);
+}
+
+#[test]
+fn write_file_auto_expands_without_manual_expand() {
+    let mut app = test_app("");
+    app.messages.push(ChatMessage {
+        status: Some("tool result".to_string()),
+        tool_invocation: Some(ToolInvocation {
+            id: "w1".to_string(),
+            tool_name: "write_file".to_string(),
+            input: serde_json::json!({
+                "path": "src/lib.rs",
+                "content": "fn main() {\n  println!(\"hi\");\n}\n"
+            }),
+        }),
+        tool_result: Some(ToolResult {
+            invocation_id: "w1".to_string(),
+            ok: true,
+            output: serde_json::json!({
+                "path": "src/lib.rs",
+                "lines_added": 3,
+                "lines_removed": 0
+            }),
+        }),
+        ..ChatMessage::new(ChatRole::Assistant, String::new())
+    });
+
+    let text = build_chat_lines(&mut app, 100)
+        .iter()
+        .map(line_text)
+        .collect::<Vec<_>>()
+        .join("\n");
+    // Useful edit body is visible without clicking / expand-all.
+    assert!(text.contains("Write"));
+    assert!(
+        text.contains("src/lib.rs") || text.contains("lib.rs"),
+        "expected path in auto-expanded write: {text}"
+    );
+}
+
+#[test]
+fn ctrl_o_leaving_expand_all_keeps_selected_tool_open() {
+    let mut app = test_app("");
+    app.messages.push(ChatMessage {
+        status: Some("tool result".to_string()),
+        tool_invocation: Some(ToolInvocation {
+            id: "bash-1".to_string(),
+            tool_name: "bash".to_string(),
+            input: serde_json::json!({ "command": "echo hi" }),
+        }),
+        tool_result: Some(ToolResult {
+            invocation_id: "bash-1".to_string(),
+            ok: true,
+            output: serde_json::json!({
+                "stdout": "hi-output-line",
+                "stderr": "",
+                "exit_code": 0
+            }),
+        }),
+        ..ChatMessage::new(ChatRole::Assistant, String::new())
+    });
+
+    // Bash is collapsed by default.
+    let collapsed = build_chat_lines(&mut app, 80)
+        .iter()
+        .map(line_text)
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(!collapsed.contains("hi-output-line"));
+
+    // User opens it.
+    app.selected_chat_source = Some(ChatLineSource::ToolResult("bash-1".to_string()));
+    app.expanded_tool_results.insert("bash-1".to_string());
+
+    // Ctrl+O → expand all, then Ctrl+O back to smart — selected tool stays pinned.
+    assert!(crate::render::tool_policy::toggle_expand_all_mode(
+        &mut app.full_tool_view,
+        &mut app.expanded_tool_results,
+        &mut app.collapsed_tool_results,
+        Some("bash-1"),
+    ));
+    assert!(app.full_tool_view);
+    assert!(!crate::render::tool_policy::toggle_expand_all_mode(
+        &mut app.full_tool_view,
+        &mut app.expanded_tool_results,
+        &mut app.collapsed_tool_results,
+        Some("bash-1"),
+    ));
+    assert!(!app.full_tool_view);
+    assert!(app.expanded_tool_results.contains("bash-1"));
+
+    let text = build_chat_lines(&mut app, 80)
+        .iter()
+        .map(line_text)
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        text.contains("hi-output-line"),
+        "pinned tool must stay open after Ctrl+O cycle: {text}"
+    );
 }
 
 #[test]
@@ -2963,6 +3222,9 @@ fn opencode_free_models_can_use_public_access_without_key() {
         provider_description: "Recommended".to_string(),
         task_size: Some(navi_sdk::ModelTaskSize::Small),
         context_window_tokens: None,
+        supports_thinking: None,
+        reasoning_levels: Vec::new(),
+        default_reasoning_effort: None,
     };
 
     assert!(model_is_available_for_selection(&app, &model));
@@ -3257,3 +3519,6 @@ fn build_model_rows_prepends_recent_section() {
         "expected a Recent header in the rendered model rows"
     );
 }
+
+
+

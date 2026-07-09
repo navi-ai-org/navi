@@ -210,9 +210,8 @@ impl WriteTool {
         let full_path_clone = full_path_str.clone();
         let content_clone = content.clone();
 
-        let (line_counts, _existing_content) = tokio::task::spawn_blocking(move || {
+        let existing_content = tokio::task::spawn_blocking(move || {
             let existing = fs::read_to_string(&full_path_clone).ok();
-            let lines_removed = existing.as_ref().map(|c| count_lines(c)).unwrap_or(0);
 
             if let Some(parent) = Path::new(&full_path_clone).parent()
                 && !parent.as_os_str().is_empty()
@@ -220,22 +219,31 @@ impl WriteTool {
                 fs::create_dir_all(parent)
                     .with_context(|| format!("failed to create {}", parent.display()))?;
             }
-            fs::write(&full_path_clone, content_clone)
+            fs::write(&full_path_clone, &content_clone)
                 .with_context(|| format!("failed to write {full_path_clone}"))?;
 
-            Ok::<_, anyhow::Error>((lines_removed, existing))
+            Ok::<_, anyhow::Error>(existing)
         })
         .await
         .map_err(|e| anyhow::anyhow!("task join error: {}", e))??;
 
-        let lines_added = count_lines(&content);
-        let output = json!({
+        // Grok-style display diff (red/green in the TUI via ```diff fences).
+        let display_path = raw_path.as_str();
+        let diff = build_write_display_diff(display_path, existing_content.as_deref(), &content);
+        let (lines_added, lines_removed) = count_diff_add_remove(&diff);
+        let total_lines = count_lines(&content);
+        let mut output = json!({
             "path": path,
             "bytes": content.len(),
             "lines_added": lines_added,
-            "lines_removed": line_counts,
-            "total_lines": lines_added,
+            "lines_removed": lines_removed,
+            "total_lines": total_lines,
         });
+        if !diff.is_empty() {
+            if let Value::Object(ref mut obj) = output {
+                obj.insert("diff".to_string(), Value::String(diff));
+            }
+        }
 
         Ok(helpers::ok(invocation.id, output))
     }
@@ -247,6 +255,161 @@ fn count_lines(content: &str) -> usize {
     } else {
         content.lines().count().max(1)
     }
+}
+
+/// Cap for O(n·m) line-diff DP. Larger files fall back to a full rewrite view.
+const MAX_LINE_DIFF_LINES: usize = 2000;
+
+/// Build a Grok-style structured display diff for a full-file write.
+///
+/// Uses `*** Add File` / `*** Update File` markers (same vocabulary as
+/// structured patches) so the TUI can fence the body as ```diff and color
+/// `+` / `-` lines green / red.
+pub(crate) fn build_write_display_diff(path: &str, old: Option<&str>, new: &str) -> String {
+    match old {
+        None => add_file_display_diff(path, new),
+        Some(old) if old.is_empty() && new.is_empty() => add_file_display_diff(path, new),
+        Some(old) if old.is_empty() => add_file_display_diff(path, new),
+        Some(old) if old == new => String::new(),
+        Some(old) => update_file_display_diff(path, old, new),
+    }
+}
+
+fn add_file_display_diff(path: &str, new: &str) -> String {
+    let mut out = format!("*** Add File: {path}\n");
+    append_prefixed_content(&mut out, '+', new);
+    out
+}
+
+fn update_file_display_diff(path: &str, old: &str, new: &str) -> String {
+    let old_lines: Vec<&str> = old.lines().collect();
+    let new_lines: Vec<&str> = new.lines().collect();
+
+    if old_lines.len() > MAX_LINE_DIFF_LINES || new_lines.len() > MAX_LINE_DIFF_LINES {
+        return full_rewrite_display_diff(path, &old_lines, &new_lines);
+    }
+
+    let ops = compute_line_ops(&old_lines, &new_lines);
+    format_ops_as_display_diff(path, &ops)
+}
+
+fn full_rewrite_display_diff(path: &str, old_lines: &[&str], new_lines: &[&str]) -> String {
+    let mut out = format!("*** Update File: {path}\n@@\n");
+    for line in old_lines {
+        out.push('-');
+        out.push_str(line);
+        out.push('\n');
+    }
+    for line in new_lines {
+        out.push('+');
+        out.push_str(line);
+        out.push('\n');
+    }
+    out
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum DiffTag {
+    Equal,
+    Delete,
+    Insert,
+}
+
+/// Classic LCS backtrack → line ops. Fine for interactive tool output sizes.
+fn compute_line_ops<'a>(old: &[&'a str], new: &[&'a str]) -> Vec<(DiffTag, &'a str)> {
+    let n = old.len();
+    let m = new.len();
+    let mut dp = vec![vec![0u32; m + 1]; n + 1];
+    for i in 0..n {
+        for j in 0..m {
+            if old[i] == new[j] {
+                dp[i + 1][j + 1] = dp[i][j] + 1;
+            } else {
+                dp[i + 1][j + 1] = dp[i + 1][j].max(dp[i][j + 1]);
+            }
+        }
+    }
+
+    let mut ops = Vec::new();
+    let mut i = n;
+    let mut j = m;
+    while i > 0 || j > 0 {
+        if i > 0 && j > 0 && old[i - 1] == new[j - 1] {
+            ops.push((DiffTag::Equal, old[i - 1]));
+            i -= 1;
+            j -= 1;
+        } else if j > 0 && (i == 0 || dp[i][j - 1] >= dp[i - 1][j]) {
+            ops.push((DiffTag::Insert, new[j - 1]));
+            j -= 1;
+        } else if i > 0 {
+            ops.push((DiffTag::Delete, old[i - 1]));
+            i -= 1;
+        } else {
+            break;
+        }
+    }
+    ops.reverse();
+    ops
+}
+
+/// Emit only changed lines, split into `@@` hunks (equal runs open a new hunk).
+fn format_ops_as_display_diff(path: &str, ops: &[(DiffTag, &str)]) -> String {
+    let has_change = ops.iter().any(|(tag, _)| *tag != DiffTag::Equal);
+    if !has_change {
+        return String::new();
+    }
+
+    let mut out = format!("*** Update File: {path}\n");
+    let mut in_hunk = false;
+
+    for (tag, line) in ops {
+        match tag {
+            DiffTag::Equal => {
+                in_hunk = false;
+            }
+            DiffTag::Delete | DiffTag::Insert => {
+                if !in_hunk {
+                    out.push_str("@@\n");
+                    in_hunk = true;
+                }
+                let prefix = if *tag == DiffTag::Delete { '-' } else { '+' };
+                out.push(prefix);
+                out.push_str(line);
+                out.push('\n');
+            }
+        }
+    }
+    out
+}
+
+fn append_prefixed_content(output: &mut String, prefix: char, text: &str) {
+    if text.is_empty() {
+        return;
+    }
+    for line in text.lines() {
+        output.push(prefix);
+        output.push_str(line);
+        output.push('\n');
+    }
+    // Preserve a trailing empty line when content ends with `\n\n`? lines() drops
+    // a final empty segment after a trailing newline, which is the usual display.
+}
+
+/// Count `+` / `-` lines in a display or unified-style diff (ignore `+++` / `---` headers).
+pub(crate) fn count_diff_add_remove(diff: &str) -> (usize, usize) {
+    let mut added = 0usize;
+    let mut removed = 0usize;
+    for line in diff.lines() {
+        if line.starts_with("+++") || line.starts_with("---") {
+            continue;
+        }
+        if line.starts_with('+') {
+            added += 1;
+        } else if line.starts_with('-') {
+            removed += 1;
+        }
+    }
+    (added, removed)
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1907,6 +2070,9 @@ mod tests {
         assert_eq!(output["path"], "test.txt");
         assert_eq!(output["lines_added"], 2);
         assert_eq!(output["lines_removed"], 0);
+        let diff = output["diff"].as_str().unwrap_or("");
+        assert!(diff.contains("*** Add File: test.txt"));
+        assert!(diff.contains("+hello\n+world\n"));
     }
 
     #[tokio::test]
@@ -1948,8 +2114,33 @@ mod tests {
             .unwrap();
         assert!(result.ok);
         assert_eq!(fs::read_to_string(&path).unwrap(), "new content");
-        // Should report lines removed.
+        // Should report lines removed and a display diff with both sides.
         assert!(result.output["lines_removed"].as_u64().unwrap_or(0) > 0);
+        let diff = result.output["diff"].as_str().unwrap_or("");
+        assert!(diff.contains("*** Update File: overwrite.txt"));
+        assert!(diff.contains("-old") || diff.contains("-content"));
+        assert!(diff.contains("+new content"));
+    }
+
+    #[test]
+    fn test_build_write_display_diff_add_and_update() {
+        let add = build_write_display_diff("a.rs", None, "fn a() {}\n");
+        assert!(add.starts_with("*** Add File: a.rs\n"));
+        assert!(add.contains("+fn a() {}\n"));
+
+        let update = build_write_display_diff(
+            "a.rs",
+            Some("fn a() {\n    1\n}\n"),
+            "fn a() {\n    2\n}\n",
+        );
+        assert!(update.contains("*** Update File: a.rs\n"));
+        assert!(update.contains("-    1\n"));
+        assert!(update.contains("+    2\n"));
+        // Unchanged lines are omitted from the display hunks.
+        assert!(!update.contains("fn a() {"));
+
+        let identical = build_write_display_diff("a.rs", Some("same\n"), "same\n");
+        assert!(identical.is_empty());
     }
 
     // ── Search/replace edits (simple surgical edits) ─────────────────────

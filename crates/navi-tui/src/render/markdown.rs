@@ -1998,7 +1998,11 @@ fn is_diff_language(language: &str) -> bool {
 fn diff_line_spans(raw_line: &str) -> Vec<Span<'static>> {
     let (bg, marker_color, content_color, bold) = if raw_line.starts_with("@@") {
         (diff_hunk_bg(), code_const(), code_const(), true)
-    } else if raw_line.starts_with("diff ") || raw_line.starts_with("index ") {
+    } else if raw_line.starts_with("diff ")
+        || raw_line.starts_with("index ")
+        || raw_line.starts_with("*** ")
+    {
+        // Unified headers + structured patch markers (*** Update/Add/Delete File).
         (diff_meta_bg(), code_func(), code_func(), true)
     } else if raw_line.starts_with("+++") || raw_line.starts_with("---") {
         (diff_meta_bg(), code_type(), code_type(), true)
