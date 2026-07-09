@@ -1,10 +1,11 @@
-# Release workflow — builds navi binaries for all platforms and publishes a GitHub Release.
+# Release workflow — builds portable navi binaries and publishes a GitHub Release.
 #
 # Trigger: push a version tag
-#   git tag v0.1.3
-#   git push origin v0.1.3
+#   git tag v0.2.1
+#   git push origin v0.2.1
 #
-# Or re-run / publish for an existing tag via Actions → Release → Run workflow.
+# Linux builds use Alpine (musl) containers so the binary runs on:
+#   Alpine, Debian bookworm+, Ubuntu, Amazon Linux, and most enterprise containers.
 #
 # Assets (names must match scripts/install.sh and scripts/install.ps1):
 #   navi-linux-x64.tar.gz
@@ -13,10 +14,7 @@
 #   navi-darwin-arm64.tar.gz
 #   navi-win32-x64.zip
 #   SHA256SUMS.txt
-#   SHA256SUMS.txt.sigstore.json   (Sigstore/cosign keyless bundle)
-#
-# Archives contain a single root binary (navi / navi.exe). tar.gz is intentional:
-# preserves executable bit + standard packaging; integrity is via SHA-256 + Sigstore.
+#   SHA256SUMS.txt.sigstore.json
 #
 name: Release
 
@@ -27,19 +25,17 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Existing git tag to build and release (e.g. v0.1.3)"
+        description: "Existing git tag to build and release (e.g. v0.2.1)"
         required: true
         type: string
 
 env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: "0"
-  # Resolve release tag from tag-push ref or manual input.
   RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
 
 permissions:
   contents: write
-  # Required for cosign keyless (GitHub OIDC → Sigstore).
   id-token: write
 
 concurrency:
@@ -47,28 +43,97 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  # ── Build binaries ──────────────────────────────────────────────────────────
+  # ── Linux (musl via Alpine) — portable across distros & containers ─────────
 
-  build:
+  build-linux:
+    name: Build ${{ matrix.archive }}
+    runs-on: ${{ matrix.os }}
+    container: rust:1-alpine
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            archive: navi-linux-x64
+            npm_platform: linux-x64
+          - os: ubuntu-24.04-arm
+            archive: navi-linux-arm64
+            npm_platform: linux-arm64
+
+    steps:
+      - name: Install Alpine build deps
+        run: |
+          set -eu
+          apk add --no-cache \
+            build-base clang lld make protoc pkgconfig \
+            git curl ca-certificates file
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: release-linux-musl-${{ matrix.archive }}
+          shared-key: release-musl
+
+      # Host triple on rust:1-alpine is *-unknown-linux-musl → target/release/navi
+      - name: Build release binary (musl)
+        run: cargo build -p navi-cli --locked --release
+
+      - name: Strip + smoke test
+        run: |
+          set -eu
+          BIN=target/release/navi
+          strip "$BIN" || true
+          file "$BIN"
+          # static-pie / musl — should not depend on glibc
+          ldd "$BIN" 2>&1 || true
+          "$BIN" --help >/dev/null
+          ls -lh "$BIN"
+
+      - name: Package
+        run: |
+          set -eu
+          mkdir -p dist
+          tar -C target/release -czf "dist/${{ matrix.archive }}.tar.gz" navi
+          members=$(tar -tzf "dist/${{ matrix.archive }}.tar.gz")
+          test "$members" = "navi"
+          ls -lh "dist/${{ matrix.archive }}.tar.gz"
+
+      - name: Upload archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.archive }}
+          path: dist/${{ matrix.archive }}.tar.gz
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Stage npm binary
+        run: |
+          set -eu
+          cp target/release/navi "npm/navi/npm/${{ matrix.npm_platform }}/navi"
+          chmod +x "npm/navi/npm/${{ matrix.npm_platform }}/navi"
+
+      - name: Upload npm package tree
+        uses: actions/upload-artifact@v4
+        with:
+          name: npm-${{ matrix.npm_platform }}
+          path: npm/navi/npm/${{ matrix.npm_platform }}/
+          if-no-files-found: error
+          retention-days: 14
+
+  # ── macOS + Windows ────────────────────────────────────────────────────────
+
+  build-desktop:
     name: Build ${{ matrix.archive }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         include:
-          # ubuntu-22.04 → glibc 2.35 (runs on Debian bookworm 2.36+, Ubuntu 22.04+).
-          # Note: not static/musl yet — Alpine and some older AMIs may still fail.
-          - target: x86_64-unknown-linux-gnu
-            os: ubuntu-22.04
-            archive: navi-linux-x64
-            npm_platform: linux-x64
-
-          - target: aarch64-unknown-linux-gnu
-            os: ubuntu-24.04-arm
-            archive: navi-linux-arm64
-            npm_platform: linux-arm64
-
-          # Cross-compile Intel macOS from Apple Silicon runners (macos-13 is scarce).
           - target: x86_64-apple-darwin
             os: macos-latest
             archive: navi-darwin-x64
@@ -99,7 +164,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           key: release-${{ matrix.target }}
-          shared-key: release
+          shared-key: release-desktop
 
       - name: Build release binary
         run: cargo build -p navi-cli --locked --release --target ${{ matrix.target }}
@@ -108,15 +173,12 @@ jobs:
         if: runner.os != 'Windows'
         run: |
           BIN="target/${{ matrix.target }}/release/navi"
-          if command -v strip >/dev/null 2>&1; then
-            strip "$BIN" || true
-          fi
+          strip "$BIN" || true
           ls -lh "$BIN"
           file "$BIN" || true
 
       - name: Smoke test binary (native arch only)
         if: |
-          (runner.os == 'Linux' && (matrix.target == 'x86_64-unknown-linux-gnu' || matrix.target == 'aarch64-unknown-linux-gnu')) ||
           (runner.os == 'macOS' && matrix.target == 'aarch64-apple-darwin' && runner.arch == 'ARM64') ||
           (runner.os == 'macOS' && matrix.target == 'x86_64-apple-darwin' && runner.arch == 'X64') ||
           runner.os == 'Windows'
@@ -134,9 +196,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p dist
-          # Single-file archive at root: installers reject any other member.
           tar -C "target/${{ matrix.target }}/release" -czf "dist/${{ matrix.archive }}.tar.gz" navi
-          # Guard: archive must list exactly one member named navi.
           mapfile -t members < <(tar -tzf "dist/${{ matrix.archive }}.tar.gz")
           if [[ ${#members[@]} -ne 1 || "${members[0]}" != "navi" ]]; then
             echo "invalid archive members: ${members[*]}" >&2
@@ -186,7 +246,7 @@ jobs:
 
   release:
     name: GitHub Release
-    needs: build
+    needs: [build-linux, build-desktop]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -200,7 +260,6 @@ jobs:
           set -euo pipefail
           TAG="${{ env.RELEASE_TAG }}"
           TAG="${TAG#v}"
-          # workspace.package.version under [workspace.package]
           CARGO_VERSION=$(
             awk '
               /^\[workspace\.package\]/ { in_pkg=1; next }
@@ -218,7 +277,6 @@ jobs:
           echo "Cargo.toml version: $CARGO_VERSION"
           if [[ "$TAG" != "$CARGO_VERSION" ]]; then
             echo "error: tag v$TAG does not match Cargo.toml version $CARGO_VERSION" >&2
-            echo "Bump workspace.package.version before tagging." >&2
             exit 1
           fi
 
@@ -234,7 +292,6 @@ jobs:
         run: |
           set -euo pipefail
           cd artifacts
-          shopt -s nullglob
           expected=(
             navi-linux-x64.tar.gz
             navi-linux-arm64.tar.gz
@@ -271,7 +328,6 @@ jobs:
             --certificate-identity-regexp "https://github.com/${{ github.repository }}/\\.github/workflows/release\\.yml@refs/tags/v.*" \
             --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
             artifacts/SHA256SUMS.txt
-          ls -lh artifacts/SHA256SUMS.txt artifacts/SHA256SUMS.txt.sigstore.json
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
@@ -289,29 +345,18 @@ jobs:
           body: |
             ## Install
 
-            **macOS / Linux (recommended):**
             ```bash
             curl -fsSL https://raw.githubusercontent.com/navi-ai-org/navi/main/scripts/install.sh | sh
             ```
 
-            **Windows (PowerShell):**
-            ```powershell
-            irm https://raw.githubusercontent.com/navi-ai-org/navi/main/scripts/install.ps1 | iex
-            ```
+            **Windows:** `irm https://raw.githubusercontent.com/navi-ai-org/navi/main/scripts/install.ps1 | iex`
 
-            Pin this version:
-            ```bash
-            curl -fsSL https://raw.githubusercontent.com/navi-ai-org/navi/main/scripts/install.sh | sh -s -- --version ${{ env.RELEASE_TAG }}
-            ```
-
-            ### Manual download
-            Each archive contains a **single** root binary (`navi` or `navi.exe`).
-            Verify with `SHA256SUMS.txt` (and optionally the Sigstore bundle
-            `SHA256SUMS.txt.sigstore.json` via `cosign verify-blob`).
+            ### Linux / containers
+            Linux builds are **musl** (Alpine toolchain) so the same binary runs on
+            Alpine, Debian, Ubuntu, Amazon Linux, and most enterprise container images.
 
             ### Security
-            - Archives are `.tar.gz` / `.zip` by design (standard packaging; not a security boundary).
-            - The installer **hard-fails** unless the archive SHA-256 matches `SHA256SUMS.txt`.
-            - `SHA256SUMS.txt` is signed keyless with Sigstore (GitHub Actions OIDC).
+            - Archive SHA-256 must match `SHA256SUMS.txt` (installer hard-fails otherwise)
+            - `SHA256SUMS.txt` is Sigstore-signed (GitHub Actions OIDC)
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -82,6 +82,16 @@ curl -fsSL https://raw.githubusercontent.com/navi-ai-org/navi/main/scripts/insta
 | Archive shape | Each `.tar.gz` / `.zip` contains **only** `navi` / `navi.exe` at the root (path traversal rejected) |
 | Format | `.tar.gz` is intentional (executable bit + standard packaging). Integrity is checksum/signature, not the archive format |
 
+**Containers / Linux portability**
+
+Linux release binaries are built with **musl** (Alpine) so one artifact runs on:
+
+- Alpine and other musl images
+- Debian / Ubuntu / Amazon Linux / RHEL-class glibc images
+- Distroless-style and enterprise base images (as long as the arch matches)
+
+No glibc version pin for the shipped Linux binary.
+
 High-assurance install (pin script commit + release + require cosign):
 
 ```bash
