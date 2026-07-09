@@ -101,7 +101,7 @@ pub struct TuiApp {
     pub(crate) pending_images: Vec<crate::state::PendingImage>,
     /// Floating image preview shown while hovering an `[Image N]` tag.
     pub(crate) image_hover: Option<crate::state::ImageHoverPreview>,
-    /// Kitty/Sixel/iTerm2 protocol state for the current hover (None = text-only).
+    /// Kitty/Sixel/iTerm2 stateful protocol for the lightbox hover (None = text-only).
     pub(crate) image_hover_protocol: Option<ratatui_image::protocol::StatefulProtocol>,
     pub(crate) queued_user_messages: VecDeque<QueuedUserMessage>,
     pub(crate) queued_message_selected: usize,
@@ -145,8 +145,13 @@ pub struct TuiApp {
     pub(crate) theme_id: ThemeId,
     pub(crate) message_action_target: Option<usize>,
     pub(crate) selected_message_action: usize,
+    /// User force-opened tool bodies (click / pin).
     pub(crate) expanded_tool_results: HashSet<String>,
+    /// User force-collapsed tool bodies (overrides auto-expand and expand-all).
+    pub(crate) collapsed_tool_results: HashSet<String>,
     pub(crate) hovered_chat_source: Option<crate::state::ChatLineSource>,
+    /// Currently selected scrollback block (Grok-style entry selection).
+    pub(crate) selected_chat_source: Option<crate::state::ChatLineSource>,
     pub(crate) cancel_esc_pressed: bool,
     pub(crate) last_click_time: Option<std::time::Instant>,
     pub(crate) last_click_pos: Option<(u16, u16)>,
@@ -367,7 +372,9 @@ impl TuiApp {
             message_action_target: None,
             selected_message_action: 0,
             expanded_tool_results: HashSet::new(),
+            collapsed_tool_results: HashSet::new(),
             hovered_chat_source: None,
+            selected_chat_source: None,
             cancel_esc_pressed: false,
             last_click_time: None,
             last_click_pos: None,

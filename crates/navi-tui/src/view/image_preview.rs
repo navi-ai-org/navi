@@ -1,16 +1,17 @@
-use ratatui::layout::Rect;
+use ratatui::layout::{Alignment, Rect};
 use ratatui::prelude::{Frame, Line, Span};
 use ratatui::style::{Modifier, Style};
-use ratatui::widgets::{Block, Borders, Clear, Paragraph};
+use ratatui::widgets::{Block, Borders, Paragraph};
 use ratatui_image::{Resize, StatefulImage};
 
 use crate::app::TuiApp;
+use crate::render::layout::opaque_fill;
 use crate::render::markdown::{is_image_tag, parse_image_tag_index};
 use crate::render::text::display_width;
 use crate::state::ImageHoverPreview;
 use crate::theme::*;
 use crate::ui::interaction::HitAction;
-use crate::view::terminal_graphics;
+use crate::view::terminal_graphics::{self, lightbox_cells};
 
 /// Height of the legacy attachment strip (kept for layout callers that still reserve space).
 #[allow(dead_code)]
@@ -28,50 +29,35 @@ pub(crate) fn render_image_previews(frame: &mut Frame<'_>, app: &mut TuiApp, are
 
 /// Floating hover modal for an `[Image N]` chip (composer or chat).
 ///
-/// - **Kitty / Sixel / iTerm2:** bordered card with metadata header + live image.
-/// - **Other terminals:** compact text-only metadata card (no fake halfblock preview).
+/// - **Kitty / Sixel / iTerm2:** large lightbox (~90%×80% of the content area)
+///   with metadata title and the image scaled to fill the body.
+/// - **Other terminals:** compact text-only metadata card.
 pub(crate) fn render_image_hover_modal(frame: &mut Frame<'_>, app: &mut TuiApp, area: Rect) {
     let Some(preview) = app.image_hover.clone() else {
         return;
     };
-    if area.width < 24 || area.height < 3 {
+    if area.width < 20 || area.height < 3 {
         return;
     }
 
-    let graphics = terminal_graphics::session_graphics();
-    let show_pixels = graphics.supports_image_preview() && app.image_hover_protocol.is_some();
-
     let header = preview.header_line();
-    let header_w = display_width(&header) as u16;
+    let has_graphics = app.image_hover_protocol.is_some();
+    let fill = Style::default().bg(panel()).fg(text());
 
-    let max_body = ratatui::layout::Size::new(
-        area.width.saturating_sub(6).max(20),
-        area.height.saturating_sub(6).max(4),
-    );
-
-    let (modal_width, modal_height) = if show_pixels {
-        let est = graphics.estimate_cells(preview.width, preview.height, max_body);
-        let w = header_w
-            .saturating_add(4)
-            .max(est.width.saturating_add(4))
-            .min(area.width.saturating_sub(2).max(24));
-        let h = est
-            .height
-            .saturating_add(3) // borders + title
-            .min(area.height.saturating_sub(2).max(8));
-        (w, h)
+    let (modal_width, modal_height) = if has_graphics {
+        lightbox_cells(ratatui::layout::Size::new(area.width, area.height))
     } else {
-        // Text-only: slim card with metadata in the title (like the reference chrome).
-        let w = header_w
-            .saturating_add(6)
-            .clamp(28, area.width.saturating_sub(4).max(24));
+        let header_w = (display_width(&header) as u16).saturating_add(6);
+        let w = header_w.clamp(28, area.width.saturating_sub(4).max(28));
         (w, 3.min(area.height))
     };
 
     let x = area
         .x
         .saturating_add(area.width.saturating_sub(modal_width) / 2);
-    let y = area.y.saturating_add(1);
+    let y = area
+        .y
+        .saturating_add(area.height.saturating_sub(modal_height) / 4); // slightly upper-center
     let modal = Rect {
         x,
         y,
@@ -79,10 +65,11 @@ pub(crate) fn render_image_hover_modal(frame: &mut Frame<'_>, app: &mut TuiApp, 
         height: modal_height,
     };
 
-    frame.render_widget(Clear, modal);
+    // Solid underlay — Kitty skips cells; without this, chat bleeds through.
+    opaque_fill(frame, modal, fill);
 
     let title = Line::from(vec![
-        Span::styled(" ", Style::default().bg(panel())),
+        Span::styled(" ", fill),
         Span::styled(
             header,
             Style::default()
@@ -90,27 +77,27 @@ pub(crate) fn render_image_hover_modal(frame: &mut Frame<'_>, app: &mut TuiApp, 
                 .bg(panel())
                 .add_modifier(Modifier::BOLD),
         ),
-        Span::styled(" ", Style::default().bg(panel())),
-    ]);
+        Span::styled(" ", fill),
+    ])
+    .alignment(Alignment::Center);
 
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(ghost()).bg(panel()))
-        .style(Style::default().bg(panel()).fg(text()))
-        .title(title);
+        .style(fill)
+        .title(title)
+        .title_alignment(Alignment::Center);
     let inner = block.inner(modal);
     frame.render_widget(block, modal);
+    opaque_fill(frame, inner, fill);
 
-    if show_pixels {
-        if let Some(protocol) = app.image_hover_protocol.as_mut() {
-            // Image fills the body; StatefulImage fits to the area.
-            let image = StatefulImage::default().resize(Resize::Fit(None));
-            frame.render_stateful_widget(image, inner, protocol);
-        }
+    if let Some(protocol) = app.image_hover_protocol.as_mut() {
+        // Scale image to fill the large body (Fit keeps aspect ratio).
+        let image = StatefulImage::default().resize(Resize::Fit(None));
+        frame.render_stateful_widget(image, inner, protocol);
     } else if inner.height > 0 {
-        // Text-only: fill the slim card body so the border doesn't look empty.
         frame.render_widget(
-            Paragraph::new("").style(Style::default().bg(panel())),
+            Paragraph::new("").style(fill).alignment(Alignment::Center),
             inner,
         );
     }
@@ -236,7 +223,6 @@ pub(crate) fn set_hover_from_action(app: &mut TuiApp, action: &HitAction) -> boo
         _ => return false,
     };
 
-    // Rebuild graphics protocol only when the hovered image changes.
     let same = match (&app.image_hover, &preview) {
         (Some(prev), Some(next)) => {
             prev.index == next.index
@@ -248,9 +234,22 @@ pub(crate) fn set_hover_from_action(app: &mut TuiApp, action: &HitAction) -> boo
 
     app.image_hover = preview;
     if !same {
-        app.image_hover_protocol = app.image_hover.as_ref().and_then(|hover| {
-            terminal_graphics::session_graphics().encode_preview(&hover.data)
-        });
+        app.image_hover_protocol = None;
+        if let Some(hover) = app.image_hover.as_mut() {
+            if hover.width.is_none() || hover.height.is_none() {
+                if let Some((w, h)) = terminal_graphics::peek_image_dimensions(&hover.data) {
+                    hover.width = Some(w);
+                    hover.height = Some(h);
+                }
+            }
+            if let Some(encoded) =
+                terminal_graphics::session_graphics().encode_preview(&hover.data)
+            {
+                hover.width = Some(encoded.pixel_width);
+                hover.height = Some(encoded.pixel_height);
+                app.image_hover_protocol = Some(encoded.protocol);
+            }
+        }
     }
     true
 }
