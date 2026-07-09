@@ -131,6 +131,30 @@
       "supports_thinking": false
     },
     {
+      "name": "composer-2.5",
+      "context_window_tokens": 256000,
+      "max_output_tokens": 65536,
+      "recommended_temperature": 1.0,
+      "supports_thinking": true,
+      "pricing": {
+        "input_per_1m": 1.0,
+        "output_per_1m": 2.0,
+        "currency": "USD"
+      }
+    },
+    {
+      "name": "grok-composer-2.5-fast",
+      "context_window_tokens": 256000,
+      "max_output_tokens": 65536,
+      "recommended_temperature": 1.0,
+      "supports_thinking": true,
+      "pricing": {
+        "input_per_1m": 3.0,
+        "output_per_1m": 15.0,
+        "currency": "USD"
+      }
+    },
+    {
       "name": "grok-build-0.1",
       "context_window_tokens": 256000,
       "max_output_tokens": 16384,
