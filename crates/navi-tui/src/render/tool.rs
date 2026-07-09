@@ -220,7 +220,7 @@ fn formatted_tool_output(invocation: &ToolInvocation, result: &ToolResult) -> Op
     if let Some(error) = obj.get("error").and_then(|v| v.as_str()) {
         content.push_str(&format!("Error: {error}\n"));
         if invocation.tool_name == "bash" {
-            // Grok-style: plain streams only — no Stdout:/``` fences or raw JSON dump.
+            // plain streams only — no Stdout:/``` fences or raw JSON dump.
             append_shell_streams(obj, &mut content);
             return Some(content);
         }
@@ -273,23 +273,9 @@ fn formatted_tool_output(invocation: &ToolInvocation, result: &ToolResult) -> Op
             }
         }
         append_patch_bodies(&patches, &mut content);
-        let stdout = obj.get("stdout").and_then(|v| v.as_str()).unwrap_or("");
-        let stderr = obj.get("stderr").and_then(|v| v.as_str()).unwrap_or("");
-        if !stdout.is_empty() {
-            content.push_str("\nStdout:\n```\n");
-            content.push_str(stdout);
-            if !stdout.ends_with('\n') {
-                content.push('\n');
-            }
-            content.push_str("```\n");
-        }
-        if !stderr.is_empty() {
-            content.push_str("\nStderr:\n```\n");
-            content.push_str(stderr);
-            if !stderr.ends_with('\n') {
-                content.push('\n');
-            }
-            content.push_str("```\n");
+        // Any apply_patch tool stdout/stderr: plain streams, no Stdout:/``` chrome.
+        if obj.contains_key("stdout") || obj.contains_key("stderr") {
+            append_shell_streams(obj, &mut content);
         }
     } else if invocation.tool_name == "write_file" || invocation.tool_name == "write" {
         // Header already has "Write path (+N -M lines)". Body is just the diff.
@@ -297,7 +283,7 @@ fn formatted_tool_output(invocation: &ToolInvocation, result: &ToolResult) -> Op
             append_diff_fence(&diff, &mut content);
         }
     } else if invocation.tool_name == "bash" {
-        // Grok-style shell body: raw stdout/stderr only. Header card already
+        // shell body: raw stdout/stderr only. Header card already
         // shows the command; skip "Command completed" / "Stdout:" chrome.
         append_shell_streams(obj, &mut content);
     } else if invocation.tool_name == "grep" {
@@ -469,23 +455,10 @@ fn render_process_output(result: &ToolResult, content: &mut String) {
     if let Some(status) = result.output.get("status").and_then(|v| v.as_str()) {
         content.push_str(&format!("Status: {status}\n"));
     }
-    if let Some(exit_code) = result.output.get("exit_code").and_then(|v| v.as_i64()) {
-        content.push_str(&format!("Exit code: {exit_code}\n"));
+    // Streams first (plain, like bash); skip Exit code line when streams imply success.
+    if let Some(obj) = result.output.as_object() {
+        append_shell_streams(obj, content);
     }
-    let stdout = result
-        .output
-        .get("stdout")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
-    let stderr = result
-        .output
-        .get("stderr")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
-    append_text_block(content, "Stdout", stdout, "");
-    append_text_block(content, "Stderr", stderr, "");
-
-    append_json_section(content, "Output", &result.output);
 }
 
 fn render_test_runner_output(result: &ToolResult, content: &mut String) {
@@ -514,9 +487,8 @@ fn render_test_runner_output(result: &ToolResult, content: &mut String) {
         content.push('\n');
     }
     if let Some(raw) = result.output.get("raw_output").and_then(|v| v.as_str()) {
-        append_text_block(content, "Raw output", raw, "");
+        append_plain_stream(content, raw);
     }
-    append_json_section(content, "Output", &result.output);
 }
 
 fn render_build_runner_output(result: &ToolResult, content: &mut String) {
@@ -634,26 +606,7 @@ fn append_json_section(content: &mut String, title: &str, value: &Value) {
     content.push_str("```\n");
 }
 
-fn append_text_block(content: &mut String, title: &str, text: &str, language: &str) {
-    if text.is_empty() {
-        return;
-    }
-    content.push_str(&format!("\n{title}:\n```{language}\n"));
-    let truncated = truncate_to_lines(text, MAX_TOOL_RENDER_LINES);
-    content.push_str(truncated);
-    if !truncated.ends_with('\n') {
-        content.push('\n');
-    }
-    if truncated.len() < text.len() {
-        content.push_str(&format!(
-            "... (truncated, {} lines total)\n",
-            text.lines().count()
-        ));
-    }
-    content.push_str("```\n");
-}
-
-/// Shell/tool stream body (Grok-style): plain text, no labels or code fences.
+/// Shell/tool stream body: plain text, no labels or code fences.
 /// Non-zero exit codes get a single `exit N` line above the streams.
 fn append_shell_streams(obj: &serde_json::Map<String, Value>, content: &mut String) {
     let stdout = obj.get("stdout").and_then(|v| v.as_str()).unwrap_or("");
@@ -708,7 +661,7 @@ fn compact_json(value: &Value) -> String {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-//  Existing summaries (unchanged)
+// Existing summaries (unchanged)
 // ═══════════════════════════════════════════════════════════════════════════
 
 fn read_file_summary(invocation: &ToolInvocation, result: &ToolResult) -> String {
@@ -899,7 +852,7 @@ fn write_display_diff(invocation: &ToolInvocation, result: &ToolResult) -> Optio
     Some(out)
 }
 
-/// Insert Grok-like hunk separators (`…`) between `@@` hunks; keep path markers.
+/// Insert hunk separators (`…`) between `@@` hunks; keep path markers.
 fn normalize_diff_for_display(patch: &str) -> String {
     let mut out = String::with_capacity(patch.len().saturating_add(16));
     let mut last_was_hunk = false;
@@ -1079,7 +1032,7 @@ fn fs_browser_summary(invocation: &ToolInvocation, result: &ToolResult) -> Strin
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-//  New: Process & Command tools
+// New: Process & Command tools
 // ═══════════════════════════════════════════════════════════════════════════
 
 fn process_summary(invocation: &ToolInvocation, result: &ToolResult) -> String {
@@ -1246,7 +1199,7 @@ fn build_runner_summary(_invocation: &ToolInvocation, result: &ToolResult) -> St
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-//  New: Code Intelligence tools
+// New: Code Intelligence tools
 // ═══════════════════════════════════════════════════════════════════════════
 
 fn code_summary(invocation: &ToolInvocation, result: &ToolResult) -> String {
@@ -1476,7 +1429,7 @@ fn churn_summary(result: &ToolResult) -> String {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-//  New: Repo Search Aliases
+// New: Repo Search Aliases
 // ═══════════════════════════════════════════════════════════════════════════
 
 fn search_tool_summary(invocation: &ToolInvocation, result: &ToolResult) -> String {
@@ -1568,7 +1521,7 @@ fn count_tree_entries(entries: &[serde_json::Value]) -> usize {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-//  New: Repo Explore & Subagent
+// New: Repo Explore & Subagent
 // ═══════════════════════════════════════════════════════════════════════════
 
 fn repo_explore_summary(invocation: &ToolInvocation, result: &ToolResult) -> String {
@@ -1658,7 +1611,7 @@ fn subagent_summary(invocation: &ToolInvocation, result: &ToolResult) -> String 
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-//  New: Planning & Session
+// New: Planning & Session
 // ═══════════════════════════════════════════════════════════════════════════
 
 fn plan_summary(invocation: &ToolInvocation, result: &ToolResult) -> String {
@@ -1786,7 +1739,7 @@ fn mark_feature_done_summary(result: &ToolResult) -> String {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-//  New: Interaction tools
+// New: Interaction tools
 // ═══════════════════════════════════════════════════════════════════════════
 
 fn question_summary(invocation: &ToolInvocation) -> String {
@@ -1817,7 +1770,7 @@ fn append_note_summary(result: &ToolResult) -> String {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-//  New: Utility tools
+// New: Utility tools
 // ═══════════════════════════════════════════════════════════════════════════
 
 fn current_time_summary(result: &ToolResult) -> String {
@@ -2046,7 +1999,7 @@ fn branch_race_summary(result: &ToolResult) -> String {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-//  New: History, Sandbox, Package Manager
+// New: History, Sandbox, Package Manager
 // ═══════════════════════════════════════════════════════════════════════════
 
 fn history_ops_summary(invocation: &ToolInvocation, result: &ToolResult) -> String {
@@ -2223,7 +2176,7 @@ fn package_manager_summary(invocation: &ToolInvocation, result: &ToolResult) -> 
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-//  Shared helpers
+// Shared helpers
 // ═══════════════════════════════════════════════════════════════════════════
 
 fn humanize_tool_name(name: &str) -> String {
@@ -2659,7 +2612,7 @@ mod tests {
     }
 
     #[test]
-    fn process_full_view_renders_stdout_and_structured_output() {
+    fn process_full_view_renders_plain_stdout() {
         let content = tool_full_content(
             &invocation("process", json!({ "command": "printf hi" })),
             &ok_result(json!({
@@ -2670,9 +2623,10 @@ mod tests {
             })),
         );
 
-        assert!(content.contains("Exit code: 0"));
-        assert!(content.contains("Stdout:\n```\nhi\n```"));
-        assert!(content.contains("Output:\n```json"));
+        assert!(content.contains("hi\n"));
+        assert!(!content.contains("Stdout:"));
+        assert!(!content.contains("```"));
+        assert!(!content.contains("Exit code: 0"));
     }
 
     #[test]
