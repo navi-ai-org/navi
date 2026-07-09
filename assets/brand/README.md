@@ -1,28 +1,18 @@
 # NAVI brand
 
-Canonical mark for **NAVI** — coding agent engine; name puns on *nave* (spaceship).
+Canonical mark and demo assets for **NAVI** — coding agent engine; name puns on *nave* (spaceship).
 
-## Concept
+## Concept (logo)
 
-- Side-profile futuristic craft with **cockpit canopy** (not a classic rocket)
-- ~**70°** climb (nose upper-right)
-- Quiet deep-space field, sparse stars
-- Accents: terminal cyan / starlight blue on canopy and thruster
-- Flat, minimal product logo
+- Side-profile futuristic craft with cockpit canopy
+- ~70° climb, deep-space field, cyan accents
 
 ## Files
 
 | File | Role |
 | --- | --- |
-| **`navi-icon.jpg`** | Canonical logo (README, GitHub, product) |
-| **`navi-demo.gif`** | Real TUI session recording (README demo) |
+| **`navi-icon.jpg`** | Canonical logo |
+| **`navi-demo.gif`** | Real TUI demo (README) — welcome logo, prompt, model switch, final answer |
+| **`navi-demo.mp4`** | Same recording, MP4 |
 
-## Palette
-
-| Token | Hex |
-| --- | --- |
-| Space / bg | `#070a0e` – `#0e1116` |
-| Accent | `#58a6ff` / cyan thruster & canopy |
-| Hull | light gray / white planes |
-
-Raster master for now. Prefer SVG for production scaling when available.
+Demo recorded with **xAI grok-4.5** (Composer 2.5 is unreliable on some accounts).
