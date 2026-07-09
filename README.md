@@ -5,8 +5,8 @@
 <h1 align="center">NAVI</h1>
 
 <p align="center">
-  <strong>A real coding agent in your terminal — not a chat box with file tools.</strong><br/>
-  Read. Write. Test. Build. Ship. Sandboxed by default. Built in Rust. Under ~35&nbsp;MB RAM.
+  <strong>The coding agent engine that lives in your terminal.</strong><br/>
+  Same harness for TUI, headless, edge, and apps. Multi-provider. Built in Rust. Under ~35&nbsp;MB RAM.
 </p>
 
 <p align="center">
