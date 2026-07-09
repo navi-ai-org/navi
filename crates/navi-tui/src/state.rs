@@ -388,6 +388,10 @@ pub enum Mode {
     QueuedMessageEdit,
     ConfirmCancelTurn,
     ConfirmPlan,
+    /// Masked sudo password (secret never enters chat/model context).
+    SudoPassword,
+    /// `@` path/file/folder mention palette.
+    PathMentions,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -419,6 +423,8 @@ pub(crate) enum ModalKind {
     QueuedMessageEdit,
     ConfirmCancelTurn,
     ConfirmPlan,
+    SudoPassword,
+    PathMentions,
 }
 
 impl ModalKind {
@@ -451,8 +457,20 @@ impl ModalKind {
             Self::QueuedMessageEdit => Mode::QueuedMessageEdit,
             Self::ConfirmCancelTurn => Mode::ConfirmCancelTurn,
             Self::ConfirmPlan => Mode::ConfirmPlan,
+            Self::SudoPassword => Mode::SudoPassword,
+            Self::PathMentions => Mode::PathMentions,
         }
     }
+}
+
+/// UI state for the masked sudo password modal.
+#[derive(Debug, Clone)]
+pub(crate) struct SudoPasswordUiState {
+    pub request_id: String,
+    pub command_summary: String,
+    /// In-memory only; never written to session logs.
+    pub password: String,
+    pub cursor: usize,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -676,6 +694,19 @@ impl From<ThinkingLevel> for ThinkingConfig {
     }
 }
 
+impl From<ThinkingConfig> for ThinkingLevel {
+    fn from(value: ThinkingConfig) -> Self {
+        match value {
+            ThinkingConfig::Adaptive => Self::Adaptive,
+            ThinkingConfig::Max => Self::Max,
+            ThinkingConfig::High => Self::High,
+            ThinkingConfig::Medium => Self::Medium,
+            ThinkingConfig::Low => Self::Low,
+            ThinkingConfig::Off => Self::Off,
+        }
+    }
+}
+
 impl ThinkingLevel {
     pub(crate) fn label(self) -> &'static str {
         match self {
@@ -689,15 +720,7 @@ impl ThinkingLevel {
     }
 
     pub(crate) fn from_config(value: &str) -> Self {
-        match value.trim().to_lowercase().as_str() {
-            "adaptive" => Self::Adaptive,
-            "max" => Self::Max,
-            "high" => Self::High,
-            "medium" => Self::Medium,
-            "low" => Self::Low,
-            "off" => Self::Off,
-            _ => Self::Adaptive,
-        }
+        ThinkingConfig::from_config_str(value).into()
     }
 
     pub(crate) fn config_value(self) -> &'static str {
@@ -713,6 +736,31 @@ impl ThinkingLevel {
             Self::Low => 4,
             Self::Off => 5,
         }
+    }
+
+    /// Levels offered for the currently selected model (registry-aware).
+    pub(crate) fn options_for_model(model: Option<&navi_sdk::ModelOption>) -> Vec<Self> {
+        let (supports, levels) = match model {
+            Some(m) => (m.supports_thinking, m.reasoning_levels.as_slice()),
+            None => (None, &[][..]),
+        };
+        navi_sdk::thinking_levels_for_model(supports, levels)
+            .into_iter()
+            .map(Self::from)
+            .collect()
+    }
+
+    /// Clamp `self` to a level the model supports; apply registry default if needed.
+    pub(crate) fn resolve_for_model(self, model: Option<&navi_sdk::ModelOption>) -> Self {
+        let (supports, levels, default) = match model {
+            Some(m) => (
+                m.supports_thinking,
+                m.reasoning_levels.as_slice(),
+                m.default_reasoning_effort.as_deref(),
+            ),
+            None => (None, &[][..], None),
+        };
+        navi_sdk::resolve_model_thinking_level(self.into(), supports, levels, default).into()
     }
 }
 

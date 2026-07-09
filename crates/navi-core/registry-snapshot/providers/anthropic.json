@@ -23,7 +23,14 @@
         "input_per_1m": 15.0,
         "output_per_1m": 75.0,
         "currency": "USD"
-      }
+      },
+      "reasoning_levels": [
+        "low",
+        "medium",
+        "high",
+        "max"
+      ],
+      "default_reasoning_effort": "high"
     },
     {
       "name": "claude-opus-4-1-20250805",
@@ -32,7 +39,14 @@
       "recommended_temperature": 1.0,
       "supports_thinking": true,
       "supports_images": true,
-      "supports_documents": true
+      "supports_documents": true,
+      "reasoning_levels": [
+        "low",
+        "medium",
+        "high",
+        "max"
+      ],
+      "default_reasoning_effort": "high"
     },
     {
       "name": "claude-opus-4-20250514",
@@ -41,7 +55,14 @@
       "recommended_temperature": 1.0,
       "supports_thinking": true,
       "supports_images": true,
-      "supports_documents": true
+      "supports_documents": true,
+      "reasoning_levels": [
+        "low",
+        "medium",
+        "high",
+        "max"
+      ],
+      "default_reasoning_effort": "high"
     },
     {
       "name": "claude-sonnet-4",
@@ -55,7 +76,14 @@
         "input_per_1m": 3.0,
         "output_per_1m": 15.0,
         "currency": "USD"
-      }
+      },
+      "reasoning_levels": [
+        "low",
+        "medium",
+        "high",
+        "max"
+      ],
+      "default_reasoning_effort": "high"
     },
     {
       "name": "claude-sonnet-4-20250514",
@@ -64,7 +92,14 @@
       "recommended_temperature": 1.0,
       "supports_thinking": true,
       "supports_images": true,
-      "supports_documents": true
+      "supports_documents": true,
+      "reasoning_levels": [
+        "low",
+        "medium",
+        "high",
+        "max"
+      ],
+      "default_reasoning_effort": "high"
     },
     {
       "name": "claude-haiku-4",
@@ -73,7 +108,14 @@
       "recommended_temperature": 1.0,
       "supports_thinking": true,
       "supports_images": true,
-      "supports_documents": true
+      "supports_documents": true,
+      "reasoning_levels": [
+        "low",
+        "medium",
+        "high",
+        "max"
+      ],
+      "default_reasoning_effort": "high"
     },
     {
       "name": "claude-3.7-sonnet",
@@ -82,7 +124,14 @@
       "recommended_temperature": 1.0,
       "supports_thinking": true,
       "supports_images": true,
-      "supports_documents": true
+      "supports_documents": true,
+      "reasoning_levels": [
+        "low",
+        "medium",
+        "high",
+        "max"
+      ],
+      "default_reasoning_effort": "high"
     },
     {
       "name": "claude-3-7-sonnet-20250219",
@@ -91,7 +140,14 @@
       "recommended_temperature": 1.0,
       "supports_thinking": true,
       "supports_images": true,
-      "supports_documents": true
+      "supports_documents": true,
+      "reasoning_levels": [
+        "low",
+        "medium",
+        "high",
+        "max"
+      ],
+      "default_reasoning_effort": "high"
     },
     {
       "name": "claude-3.5-sonnet",

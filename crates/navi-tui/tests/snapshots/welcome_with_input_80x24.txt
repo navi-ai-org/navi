@@ -16,9 +16,9 @@
 
 
 
-  ▌
-  ▌ explain the routing module
-  ▌
-  ▌ gpt-5.5 OpenAI · adaptive · 0 / 200k (0%)                      restricted
-  ▌
-               ctrl+p commands · ctrl+m models · ctrl+enter send · ctrl+v image
+
+
+  ╭──────────────────────────────────────────────────────────────────────────╮
+  │ › explain the routing module                                             │
+  ╰──────────────────────────────────────────────────────────────────────────╯
+                               gpt-5.5 (adaptive) · 7 / 200k (0%) · restricted

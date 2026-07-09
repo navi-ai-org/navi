@@ -168,6 +168,7 @@ impl NaviEngineBuilder {
                 runtime_components: self.runtime_components,
                 sessions: RwLock::new(HashMap::new()),
                 registry_store,
+                voice: std::sync::Mutex::new(crate::voice::VoiceRuntime::new()),
             }),
         })
     }
@@ -204,16 +205,18 @@ fn normalize_plugin_policy_name(name: &str) -> String {
 /// skill discovery, and MCP server access. Create via [`NaviEngineBuilder`].
 #[derive(Clone)]
 pub struct NaviEngine {
-    inner: Arc<NaviEngineInner>,
+    pub(crate) inner: Arc<NaviEngineInner>,
 }
 
-struct NaviEngineInner {
-    project_dir: PathBuf,
+pub(crate) struct NaviEngineInner {
+    pub(crate) project_dir: PathBuf,
     loaded_config: RwLock<LoadedConfig>,
     host_tools: Vec<Arc<dyn navi_core::Tool>>,
     runtime_components: RuntimeComponents,
     sessions: RwLock<HashMap<String, Arc<NaviSession>>>,
     registry_store: Option<Arc<RegistryStore>>,
+    /// Local dictation (ONNX). Engine-scoped, not per-session.
+    pub(crate) voice: std::sync::Mutex<crate::voice::VoiceRuntime>,
 }
 
 /// An active NAVI session with its own runtime, event stream, and approval handles.
@@ -222,6 +225,8 @@ pub struct NaviSession {
     events: broadcast::Receiver<RuntimeEvent>,
     approval_resolver: navi_core::ApprovalResolver,
     question_resolver: navi_core::QuestionResolver,
+    plan_review_resolver: navi_core::PlanReviewResolver,
+    sudo_password_resolver: navi_core::SudoPasswordResolver,
     turn_canceller: navi_core::TurnCanceller,
     tui_components: Vec<String>,
     tui_panels: std::sync::Mutex<Vec<Box<dyn navi_plugin_api::TuiComponent>>>,
@@ -378,6 +383,8 @@ impl NaviEngine {
         let session_id = runtime.start_session()?;
         let approval_resolver = runtime.approval_resolver();
         let question_resolver = runtime.question_resolver();
+        let plan_review_resolver = runtime.plan_review_resolver();
+        let sudo_password_resolver = runtime.sudo_password_resolver();
         let turn_canceller = runtime.turn_canceller();
         let info = NaviSessionInfo {
             id: session_id.as_str().to_string(),
@@ -396,6 +403,8 @@ impl NaviEngine {
                     events,
                     approval_resolver,
                     question_resolver,
+                    plan_review_resolver,
+                    sudo_password_resolver,
                     turn_canceller,
                     tui_components,
                     tui_panels: std::sync::Mutex::new(tui_panels),
@@ -587,6 +596,26 @@ impl NaviEngine {
     ) -> Result<bool> {
         let session = self.session(session_id)?;
         Ok(session.question_resolver.resolve(response))
+    }
+
+    /// Resolves a pending plan review (unblocks the plan tool / turn).
+    pub async fn resolve_plan_review(
+        &self,
+        session_id: &str,
+        response: navi_core::event::PlanReviewResponse,
+    ) -> Result<bool> {
+        let session = self.session(session_id)?;
+        Ok(session.plan_review_resolver.resolve(response))
+    }
+
+    /// Resolves a sudo password prompt. The password never enters chat history.
+    pub async fn resolve_sudo_password(
+        &self,
+        session_id: &str,
+        response: navi_core::event::SudoPasswordResponse,
+    ) -> Result<bool> {
+        let session = self.session(session_id)?;
+        Ok(session.sudo_password_resolver.resolve(response))
     }
 
     /// Adds a context packet (file, selection, memory, etc.) to an active session.
@@ -1385,6 +1414,8 @@ impl NaviEngine {
                                             max_output_tokens: None,
                                             recommended_temperature: None,
                                             supports_thinking: None,
+                                            reasoning_levels: Vec::new(),
+                                            default_reasoning_effort: None,
                                             supports_attachments: None,
                                             supports_images: None,
                                             supports_audio: None,
@@ -1834,6 +1865,9 @@ fn model_info_from_option(option: ModelOption) -> NaviModelInfo {
         provider_label: option.provider_label,
         task_size: format!("{:?}", option.task_size),
         context_window_tokens: option.context_window_tokens,
+        supports_thinking: option.supports_thinking,
+        reasoning_levels: option.reasoning_levels,
+        default_reasoning_effort: option.default_reasoning_effort,
     }
 }
 

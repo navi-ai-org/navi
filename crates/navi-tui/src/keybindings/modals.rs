@@ -22,6 +22,7 @@ use navi_sdk::QuestionResponse;
 
 use crate::runtime::spawn_runtime_task;
 
+/// Fallback full set when no model is selected / registry has no levels.
 pub(crate) const THINKING_OPTIONS: &[ThinkingLevel] = &[
     ThinkingLevel::Adaptive,
     ThinkingLevel::Max,
@@ -30,6 +31,27 @@ pub(crate) const THINKING_OPTIONS: &[ThinkingLevel] = &[
     ThinkingLevel::Low,
     ThinkingLevel::Off,
 ];
+
+/// Registry-aware options for the thinking picker (selected model).
+pub(crate) fn thinking_options_for_app(app: &TuiApp) -> Vec<ThinkingLevel> {
+    let model = app.models.get(app.selected_model);
+    let options = ThinkingLevel::options_for_model(model);
+    if options.is_empty() {
+        THINKING_OPTIONS.to_vec()
+    } else {
+        options
+    }
+}
+
+/// Clamp the app's thinking level to what the selected model supports.
+pub(crate) fn clamp_thinking_to_selected_model(app: &mut TuiApp) {
+    let model = app.models.get(app.selected_model);
+    let resolved = app.thinking_level.resolve_for_model(model);
+    if resolved != app.thinking_level {
+        app.thinking_level = resolved;
+        app.selected_thinking = resolved.index();
+    }
+}
 
 pub(crate) fn handle_debug_key(app: &mut TuiApp, code: KeyCode) -> bool {
     match code {
@@ -43,9 +65,46 @@ pub(crate) fn handle_debug_key(app: &mut TuiApp, code: KeyCode) -> bool {
 }
 
 pub(crate) fn handle_help_key(app: &mut TuiApp, code: KeyCode) -> bool {
+    use crate::view::help::{
+        ensure_help_visible, help_entry_count, move_help_selection, set_help_visible_rows,
+    };
+
+    // Keep a sane default until the first frame measures the list body.
+    if app.help_visible_rows.get() < 3 {
+        set_help_visible_rows(app, 8);
+    }
+
     match code {
-        KeyCode::Esc | KeyCode::Enter | KeyCode::Char('?') => {
+        KeyCode::Esc | KeyCode::Char('?') => {
             super::apply_ui_effect(app, UiEffect::CloseModal);
+        }
+        KeyCode::Enter => {
+            // Enter closes (same as Grok cheatsheet dismiss).
+            super::apply_ui_effect(app, UiEffect::CloseModal);
+        }
+        KeyCode::Down | KeyCode::Char('j') | KeyCode::Tab => {
+            move_help_selection(app, 1);
+        }
+        KeyCode::Up | KeyCode::Char('k') => {
+            move_help_selection(app, -1);
+        }
+        KeyCode::PageDown => {
+            let step = app.help_visible_rows.get().max(3) as isize;
+            move_help_selection(app, step);
+        }
+        KeyCode::PageUp => {
+            let step = app.help_visible_rows.get().max(3) as isize;
+            move_help_selection(app, -step);
+        }
+        KeyCode::Home => {
+            app.selected_help = 0;
+            app.help_scroll = 0;
+            crate::view::help::clamp_help_selection(app);
+            ensure_help_visible(app);
+        }
+        KeyCode::End => {
+            app.selected_help = help_entry_count().saturating_sub(1);
+            ensure_help_visible(app);
         }
         _ => {}
     }
@@ -285,16 +344,37 @@ fn resolve_active_question(app: &mut TuiApp, response: QuestionResponse) {
 }
 
 pub(crate) fn handle_thinking_key(app: &mut TuiApp, code: KeyCode) -> bool {
+    let options = thinking_options_for_app(app);
+    let max_idx = options.len().saturating_sub(1);
+    // Map selected_thinking (global index) onto the filtered list.
+    let mut local_idx = options
+        .iter()
+        .position(|l| *l == app.thinking_level)
+        .or_else(|| options.get(app.selected_thinking).map(|_| app.selected_thinking.min(max_idx)))
+        .unwrap_or(0);
+    // Prefer selected_thinking if it points into options by label order.
+    if let Some(sel) = options.get(app.selected_thinking) {
+        if let Some(pos) = options.iter().position(|l| l == sel) {
+            local_idx = pos;
+        }
+    }
+
     match code {
         KeyCode::Esc => super::close_active_modal(app),
         KeyCode::Down => {
-            app.selected_thinking = (app.selected_thinking + 1).min(THINKING_OPTIONS.len() - 1);
+            local_idx = (local_idx + 1).min(max_idx);
+            app.selected_thinking = options[local_idx].index();
         }
         KeyCode::Up => {
-            app.selected_thinking = app.selected_thinking.saturating_sub(1);
+            local_idx = local_idx.saturating_sub(1);
+            app.selected_thinking = options[local_idx].index();
         }
         KeyCode::Enter => {
-            let level = THINKING_OPTIONS[app.selected_thinking];
+            let level = options
+                .iter()
+                .find(|l| l.index() == app.selected_thinking)
+                .copied()
+                .unwrap_or(options[local_idx]);
             app.thinking_level = level;
             app.selected_thinking = level.index();
             super::close_all_modals(app);
@@ -338,7 +418,18 @@ pub(crate) fn handle_settings_key(app: &mut TuiApp, code: KeyCode) -> bool {
                 save_preferences(app);
             }
             1 => {
-                app.full_tool_view = !app.full_tool_view;
+                let pin = app
+                    .selected_chat_source
+                    .as_ref()
+                    .and_then(crate::render::tool_policy::selected_tool_id)
+                    .map(str::to_string);
+                crate::render::tool_policy::toggle_expand_all_mode(
+                    &mut app.full_tool_view,
+                    &mut app.expanded_tool_results,
+                    &mut app.collapsed_tool_results,
+                    pin.as_deref(),
+                );
+                app.chat_render_cache.borrow_mut().signature_hash = 0;
                 show_notification(
                     app,
                     "Settings",
@@ -860,6 +951,73 @@ fn save_queued_message_edit(app: &mut TuiApp) {
     super::close_active_modal(app);
 }
 
+pub(crate) fn handle_sudo_password_key(
+    app: &mut TuiApp,
+    code: KeyCode,
+    modifiers: KeyModifiers,
+) -> bool {
+    use navi_sdk::SudoPasswordResponse;
+
+    match code {
+        KeyCode::Esc => {
+            if let Some(prompt) = app.sudo_password_prompt.take() {
+                let session_id = app.session_id.as_str().to_string();
+                let engine = app.engine();
+                let response = SudoPasswordResponse::Cancelled {
+                    id: prompt.request_id,
+                };
+                tokio::spawn(async move {
+                    let _ = engine.resolve_sudo_password(&session_id, response).await;
+                });
+            }
+            super::close_active_modal(app);
+        }
+        KeyCode::Enter => {
+            if let Some(prompt) = app.sudo_password_prompt.take() {
+                let session_id = app.session_id.as_str().to_string();
+                let engine = app.engine();
+                let response = SudoPasswordResponse::Submitted {
+                    id: prompt.request_id,
+                    password: prompt.password,
+                };
+                tokio::spawn(async move {
+                    let _ = engine.resolve_sudo_password(&session_id, response).await;
+                });
+            }
+            super::close_active_modal(app);
+        }
+        KeyCode::Backspace => {
+            if let Some(p) = app.sudo_password_prompt.as_mut()
+                && p.cursor > 0
+                && !p.password.is_empty()
+            {
+                let mut c = p.cursor.min(p.password.len());
+                while c > 0 && !p.password.is_char_boundary(c) {
+                    c -= 1;
+                }
+                if c > 0 {
+                    let prev = p.password[..c]
+                        .char_indices()
+                        .next_back()
+                        .map(|(i, _)| i)
+                        .unwrap_or(0);
+                    p.password.replace_range(prev..c, "");
+                    p.cursor = prev;
+                }
+            }
+        }
+        KeyCode::Char(ch) if !ch.is_control() && !modifiers.contains(KeyModifiers::CONTROL) => {
+            if let Some(p) = app.sudo_password_prompt.as_mut() {
+                let c = p.cursor.min(p.password.len());
+                p.password.insert(c, ch);
+                p.cursor = c + ch.len_utf8();
+            }
+        }
+        _ => {}
+    }
+    false
+}
+
 pub(crate) fn handle_confirm_cancel_turn_key(app: &mut TuiApp, code: KeyCode) -> bool {
     match code {
         KeyCode::Enter | KeyCode::Char('y') | KeyCode::Char('Y') => {
@@ -875,18 +1033,164 @@ pub(crate) fn handle_confirm_cancel_turn_key(app: &mut TuiApp, code: KeyCode) ->
 }
 
 pub(crate) fn handle_confirm_plan_key(app: &mut TuiApp, code: KeyCode) -> bool {
-    match code {
-        KeyCode::Enter | KeyCode::Char('y') | KeyCode::Char('Y')
-        | KeyCode::Esc | KeyCode::Char('n') | KeyCode::Char('N') => {
-            let session_id = app.session_id.as_str().to_string();
-            let engine = app.engine();
-            tokio::spawn(async move {
-                let _ = engine.exit_plan_mode(&session_id).await;
-            });
-            app.proposed_plan = None;
-            super::close_active_modal(app);
+    use crate::plan_review::{PlanReviewFocus, begin_comment, commit_comment};
+
+    // Without rich review state, fall back to simple accept/reject.
+    if app.plan_review.is_none() {
+        match code {
+            KeyCode::Enter | KeyCode::Char('y') | KeyCode::Char('Y') => {
+                crate::plan_review::approve_plan(app);
+            }
+            KeyCode::Esc | KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Char('q') => {
+                crate::plan_review::quit_plan(app);
+            }
+            _ => {}
         }
-        _ => {}
+        return false;
+    }
+
+    let focus = app
+        .plan_review
+        .as_ref()
+        .map(|r| r.focus)
+        .unwrap_or_default();
+
+    match focus {
+        PlanReviewFocus::Preview => match code {
+            KeyCode::Up | KeyCode::Char('k') => {
+                if let Some(r) = app.plan_review.as_mut() {
+                    r.cursor_line = r.cursor_line.saturating_sub(1);
+                    r.sel_anchor = None;
+                    r.ensure_cursor_visible(12);
+                }
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                if let Some(r) = app.plan_review.as_mut() {
+                    r.cursor_line = r.cursor_line.saturating_add(1);
+                    r.clamp_cursor();
+                    r.sel_anchor = None;
+                    r.ensure_cursor_visible(12);
+                }
+            }
+            KeyCode::Char('K') => {
+                if let Some(r) = app.plan_review.as_mut() {
+                    if r.sel_anchor.is_none() {
+                        r.sel_anchor = Some(r.cursor_line);
+                    }
+                    r.cursor_line = r.cursor_line.saturating_sub(1);
+                    r.ensure_cursor_visible(12);
+                }
+            }
+            KeyCode::Char('J') => {
+                if let Some(r) = app.plan_review.as_mut() {
+                    if r.sel_anchor.is_none() {
+                        r.sel_anchor = Some(r.cursor_line);
+                    }
+                    r.cursor_line = r.cursor_line.saturating_add(1);
+                    r.clamp_cursor();
+                    r.ensure_cursor_visible(12);
+                }
+            }
+            KeyCode::Char('c') | KeyCode::Enter => begin_comment(app),
+            KeyCode::Char('a') => crate::plan_review::approve_plan(app),
+            KeyCode::Char('s') => {
+                if let Some(r) = app.plan_review.as_mut() {
+                    r.focus = PlanReviewFocus::Prompt;
+                }
+            }
+            KeyCode::Char('q') | KeyCode::Esc => crate::plan_review::quit_plan(app),
+            KeyCode::Tab => {
+                if let Some(r) = app.plan_review.as_mut() {
+                    r.focus = PlanReviewFocus::Prompt;
+                }
+            }
+            _ => {}
+        },
+        PlanReviewFocus::CommentInput => match code {
+            KeyCode::Esc => {
+                if let Some(r) = app.plan_review.as_mut() {
+                    r.comment_draft.clear();
+                    r.focus = PlanReviewFocus::Preview;
+                }
+            }
+            KeyCode::Enter => commit_comment(app),
+            KeyCode::Backspace => {
+                if let Some(r) = app.plan_review.as_mut()
+                    && r.comment_cursor > 0
+                    && !r.comment_draft.is_empty()
+                {
+                    let mut c = r.comment_cursor.min(r.comment_draft.len());
+                    while c > 0 && !r.comment_draft.is_char_boundary(c) {
+                        c -= 1;
+                    }
+                    if c > 0 {
+                        let prev = r.comment_draft[..c]
+                            .char_indices()
+                            .next_back()
+                            .map(|(i, _)| i)
+                            .unwrap_or(0);
+                        r.comment_draft.replace_range(prev..c, "");
+                        r.comment_cursor = prev;
+                    }
+                }
+            }
+            KeyCode::Char(ch) if !ch.is_control() => {
+                if let Some(r) = app.plan_review.as_mut() {
+                    let c = r.comment_cursor.min(r.comment_draft.len());
+                    r.comment_draft.insert(c, ch);
+                    r.comment_cursor = c + ch.len_utf8();
+                }
+            }
+            KeyCode::Tab => {
+                if let Some(r) = app.plan_review.as_mut() {
+                    r.focus = PlanReviewFocus::Preview;
+                }
+            }
+            _ => {}
+        },
+        PlanReviewFocus::Prompt => match code {
+            KeyCode::Esc => {
+                if let Some(r) = app.plan_review.as_mut() {
+                    r.focus = PlanReviewFocus::Preview;
+                }
+            }
+            KeyCode::Enter => crate::plan_review::request_plan_changes(app),
+            KeyCode::Backspace => {
+                if let Some(r) = app.plan_review.as_mut()
+                    && r.prompt_cursor > 0
+                    && !r.prompt_draft.is_empty()
+                {
+                    let mut c = r.prompt_cursor.min(r.prompt_draft.len());
+                    while c > 0 && !r.prompt_draft.is_char_boundary(c) {
+                        c -= 1;
+                    }
+                    if c > 0 {
+                        let prev = r.prompt_draft[..c]
+                            .char_indices()
+                            .next_back()
+                            .map(|(i, _)| i)
+                            .unwrap_or(0);
+                        r.prompt_draft.replace_range(prev..c, "");
+                        r.prompt_cursor = prev;
+                    }
+                }
+            }
+            KeyCode::Char('a') => crate::plan_review::approve_plan(app),
+            KeyCode::Char('q') => crate::plan_review::quit_plan(app),
+            KeyCode::Char(ch) if !ch.is_control() => {
+                if let Some(r) = app.plan_review.as_mut() {
+                    let c = r.prompt_cursor.min(r.prompt_draft.len());
+                    r.prompt_draft.insert(c, ch);
+                    r.prompt_cursor = c + ch.len_utf8();
+                }
+            }
+            KeyCode::Tab => {
+                if let Some(r) = app.plan_review.as_mut() {
+                    r.focus = PlanReviewFocus::Preview;
+                }
+            }
+            _ => {}
+        },
     }
     false
 }
@@ -1241,20 +1545,12 @@ pub(crate) fn handle_background_commands_key(app: &mut TuiApp, code: KeyCode) ->
             }
             crate::background::clamp_background_selection(app);
         }
-        KeyCode::Char('c') => {
-            // Cancel selected background command
-            if let Some(cmd) = app.background_commands.get(app.bg_command_selected) {
-                if cmd.is_running() {
-                    let task_id = cmd.task_id.clone();
-                    let engine = app.engine();
-                    let session_id = app.session_id.as_str().to_string();
-                    spawn_runtime_task(async move {
-                        let _ = engine
-                            .cancel_background_command(&session_id, &task_id)
-                            .await;
-                    });
-                }
-            }
+        KeyCode::Char('c') | KeyCode::Delete | KeyCode::Backspace => {
+            crate::background::cancel_background_command_at(app, app.bg_command_selected);
+        }
+        KeyCode::Right | KeyCode::Char('l') => {
+            // Arrow / chevron equivalent: open selected task.
+            crate::background::open_background_command_output(app, app.bg_command_selected);
         }
         KeyCode::Char('r') => {
             crate::background::refresh_background_commands(app);
@@ -1270,19 +1566,8 @@ pub(crate) fn handle_background_command_output_key(app: &mut TuiApp, code: KeyCo
             super::replace_modal(app, ModalKind::BackgroundCommands);
         }
         KeyCode::Char('r') => crate::background::refresh_background_commands(app),
-        KeyCode::Char('c') => {
-            if let Some(cmd) = app.background_commands.get(app.bg_command_selected) {
-                if cmd.is_running() {
-                    let task_id = cmd.task_id.clone();
-                    let engine = app.engine();
-                    let session_id = app.session_id.as_str().to_string();
-                    spawn_runtime_task(async move {
-                        let _ = engine
-                            .cancel_background_command(&session_id, &task_id)
-                            .await;
-                    });
-                }
-            }
+        KeyCode::Char('c') | KeyCode::Delete | KeyCode::Backspace => {
+            crate::background::cancel_background_command_at(app, app.bg_command_selected);
         }
         KeyCode::Up | KeyCode::Char('k') => {
             app.bg_command_output_follow = false;

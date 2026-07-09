@@ -3,7 +3,11 @@ use crate::ui::{TextInputRef, floor_char_boundary};
 use crossterm::event::{KeyCode, KeyModifiers};
 
 const PROMPT_WIDTH: usize = 0;
-pub(crate) const COMPOSER_MAX_VISIBLE_LINES: usize = 6;
+/// Max draft lines when the composer is focused (Grok grows the box with content).
+/// Beyond this, content scrolls inside the box.
+pub(crate) const COMPOSER_MAX_VISIBLE_LINES: usize = 12;
+/// Collapsed height in content lines when scrollback is focused.
+pub(crate) const COMPOSER_COLLAPSED_LINES: usize = 1;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct VisualInputLine {

@@ -40,8 +40,14 @@ pub(crate) fn render_image_hover_modal(frame: &mut Frame<'_>, app: &mut TuiApp, 
         return;
     }
 
-    let header = preview.header_line();
-    let has_graphics = app.image_hover_protocol.is_some();
+    let gfx = terminal_graphics::session_graphics();
+    let has_graphics =
+        app.image_hover_protocol.is_some() && gfx.supports_image_preview();
+    let header = if has_graphics {
+        format!("{} · {}", preview.header_line(), gfx.protocol_label())
+    } else {
+        preview.header_line()
+    };
     let fill = Style::default().bg(panel()).fg(text());
 
     let (modal_width, modal_height) = if has_graphics {
@@ -242,8 +248,9 @@ pub(crate) fn set_hover_from_action(app: &mut TuiApp, action: &HitAction) -> boo
                     hover.height = Some(h);
                 }
             }
-            if let Some(encoded) =
-                terminal_graphics::session_graphics().encode_preview(&hover.data)
+            let gfx = terminal_graphics::session_graphics();
+            if gfx.supports_image_preview()
+                && let Some(encoded) = gfx.encode_preview(&hover.data)
             {
                 hover.width = Some(encoded.pixel_width);
                 hover.height = Some(encoded.pixel_height);

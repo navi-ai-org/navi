@@ -106,12 +106,11 @@ impl Panel for InputPanel {
         let (app, _) = app_refs(ctx);
         let content_area = ctx.area();
         let input_width = content_area.width.saturating_sub(4) as usize;
-        let compact = content_area.width < 64 || content_area.height < 18;
-        let mut h = view::input::composer_height(app, input_width);
-        if compact {
-            h = h.min(3);
-        }
-        PanelSize::Fixed(h)
+        // Height follows animated expand/collapse (min: 1 content + borders + meta = 4).
+        let h = view::input::composer_height(app, input_width);
+        // On tiny viewports, still allow growth but cap total composer share.
+        let max_for_viewport = (content_area.height / 2).max(4);
+        PanelSize::Fixed(h.clamp(4, max_for_viewport))
     }
 }
 

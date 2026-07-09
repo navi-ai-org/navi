@@ -32,6 +32,7 @@ pub(crate) enum CommandAction {
     Memory,
     Dream,
     TogglePlanMode,
+    Help,
 }
 
 pub(crate) const COMMANDS: &[CommandItem] = &[
@@ -124,6 +125,11 @@ pub(crate) const COMMANDS: &[CommandItem] = &[
         label: "Settings",
         shortcut: None,
         action: CommandAction::Settings,
+    },
+    CommandItem {
+        label: "Help",
+        shortcut: Some("? / ctrl+."),
+        action: CommandAction::Help,
     },
     CommandItem {
         label: "Quit",

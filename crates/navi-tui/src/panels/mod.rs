@@ -35,6 +35,7 @@ pub fn register_modal_panels(app: &mut TuiApp) {
     use view::background_commands;
     use view::command_palette;
     use view::debug;
+    use view::help;
     use view::modals;
     use view::model_picker;
     use view::plugins;
@@ -51,6 +52,14 @@ pub fn register_modal_panels(app: &mut TuiApp) {
         command_palette::render,
         68,
         15,
+    )));
+    // @ path mentions
+    pm.add_overlay(Box::new(ModalPanel::new(
+        "path-mentions",
+        Mode::PathMentions,
+        modals::render_path_mentions,
+        72,
+        16,
     )));
     // Model picker
     pm.add_overlay(Box::new(ModalPanel::new(
@@ -116,13 +125,13 @@ pub fn register_modal_panels(app: &mut TuiApp) {
         76,
         18,
     )));
-    // Help
+    // Help — Grok-style keyboard cheatsheet (sectioned + scrollable)
     pm.add_overlay(Box::new(ModalPanel::new(
         "help",
         Mode::Help,
-        modals::render_help_modal,
-        62,
-        19,
+        help::render,
+        78,
+        24,
     )));
     // Skills
     pm.add_overlay(Box::new(ModalPanel::new(
@@ -244,13 +253,21 @@ pub fn register_modal_panels(app: &mut TuiApp) {
         62,
         9,
     )));
-    // Confirm proposed plan
-    pm.add_overlay(Box::new(ModalPanel::new(
+    // Confirm / review plan (needs &mut for mouse hits)
+    pm.add_overlay(Box::new(ModalPanelMut::new(
         "confirm-plan",
         Mode::ConfirmPlan,
         modals::render_confirm_plan,
-        72,
-        18,
+        78,
+        22,
+    )));
+    // Sudo password (masked)
+    pm.add_overlay(Box::new(ModalPanel::new(
+        "sudo-password",
+        Mode::SudoPassword,
+        modals::render_sudo_password,
+        64,
+        12,
     )));
 
     // --- Special-case modals that need &mut TuiApp ---

@@ -14,7 +14,8 @@ use navi_sdk::{
     ApprovalDecision, EngineDriver, LoadedConfig, McpServerInfo, NaviConfig, NaviConfigSaveTarget,
     NaviError, NaviModelSelectionRequest, NaviModelSelectionResult, NaviProviderCredentialStatus,
     NaviProviderSyncReport, NaviSessionInfo, NaviSessionRequest, NaviSkillInfo, NaviTurnRequest,
-    NaviTurnResponse, NaviUsageReport, QuestionResponse, RuntimeEvent, SessionSnapshot,
+    NaviTurnResponse, NaviUsageReport, PlanReviewResponse, QuestionResponse, RuntimeEvent,
+    SessionSnapshot, SudoPasswordResponse,
 };
 
 /// A recorded call to a method on the engine.
@@ -31,6 +32,15 @@ pub enum EngineCall {
     ResolveQuestion {
         session_id: String,
         response: QuestionResponse,
+    },
+    ResolvePlanReview {
+        session_id: String,
+        response: PlanReviewResponse,
+    },
+    ResolveSudoPassword {
+        session_id: String,
+        /// Only records whether submitted — never the secret.
+        submitted: bool,
     },
     SnapshotSession(String),
     ReloadWasmPlugins,
@@ -243,6 +253,41 @@ impl EngineDriver for MockEngine {
             .push(EngineCall::ResolveQuestion {
                 session_id: session_id.to_string(),
                 response,
+            });
+        Ok(true)
+    }
+
+    async fn resolve_plan_review(
+        &self,
+        session_id: &str,
+        response: PlanReviewResponse,
+    ) -> Result<bool> {
+        self.state
+            .lock()
+            .unwrap()
+            .calls
+            .push(EngineCall::ResolvePlanReview {
+                session_id: session_id.to_string(),
+                response,
+            });
+        Ok(true)
+    }
+
+    async fn resolve_sudo_password(
+        &self,
+        session_id: &str,
+        response: SudoPasswordResponse,
+    ) -> Result<bool> {
+        let submitted = matches!(response, SudoPasswordResponse::Submitted { .. });
+        // Drop response (and password) immediately after noting the call.
+        drop(response);
+        self.state
+            .lock()
+            .unwrap()
+            .calls
+            .push(EngineCall::ResolveSudoPassword {
+                session_id: session_id.to_string(),
+                submitted,
             });
         Ok(true)
     }

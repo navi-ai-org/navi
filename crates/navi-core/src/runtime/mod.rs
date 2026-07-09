@@ -13,7 +13,8 @@ use crate::cancel::CancelToken;
 use crate::config::LoadedConfig;
 use crate::context::ContextPacket;
 use crate::event::{
-    AgentEvent, ApprovalDecision, QuestionResponse, RuntimeEvent, RuntimeEventKind,
+    AgentEvent, ApprovalDecision, PlanReviewResponse, QuestionResponse, RuntimeEvent,
+    RuntimeEventKind, SudoPasswordResponse,
 };
 use crate::goal::{
     CreateGoalTool, GetGoalTool, GoalExtension, GoalRuntimeHandle, GoalService,
@@ -39,6 +40,10 @@ pub use session_state::SessionState;
 
 type PendingApprovals = Arc<std::sync::Mutex<HashMap<String, oneshot::Sender<ApprovalDecision>>>>;
 type PendingQuestions = Arc<std::sync::Mutex<HashMap<String, oneshot::Sender<QuestionResponse>>>>;
+type PendingPlanReviews =
+    Arc<std::sync::Mutex<HashMap<String, oneshot::Sender<PlanReviewResponse>>>>;
+type PendingSudoPasswords =
+    Arc<std::sync::Mutex<HashMap<String, oneshot::Sender<SudoPasswordResponse>>>>;
 
 /// Resolves pending tool approvals by matching decision ids to waiting
 /// receivers. Cloneable so it can be handed to the UI layer.
@@ -54,6 +59,107 @@ pub struct ApprovalResolver {
 pub struct QuestionResolver {
     pending_questions: PendingQuestions,
     runtime_events_tx: broadcast::Sender<RuntimeEvent>,
+}
+
+/// Resolves pending plan reviews (blocks `plan` create until the user finishes).
+#[derive(Clone)]
+pub struct PlanReviewResolver {
+    pending_reviews: PendingPlanReviews,
+    runtime_events_tx: broadcast::Sender<RuntimeEvent>,
+}
+
+/// Resolves sudo password prompts without putting secrets on the event bus.
+#[derive(Clone)]
+pub struct SudoPasswordResolver {
+    pending: PendingSudoPasswords,
+}
+
+impl SudoPasswordResolver {
+    #[cfg(test)]
+    pub fn new_for_test() -> Self {
+        Self {
+            pending: Arc::new(std::sync::Mutex::new(HashMap::new())),
+        }
+    }
+
+    pub(crate) fn new_standalone() -> Self {
+        Self {
+            pending: Arc::new(std::sync::Mutex::new(HashMap::new())),
+        }
+    }
+
+    pub fn register(&self, id: String) -> oneshot::Receiver<SudoPasswordResponse> {
+        let (tx, rx) = oneshot::channel();
+        self.pending
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(id, tx);
+        rx
+    }
+
+    /// Deliver the user's response. The password (if any) never goes on the runtime event bus.
+    pub fn resolve(&self, response: SudoPasswordResponse) -> bool {
+        let id = response.id().to_string();
+        if let Some(tx) = self
+            .pending
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&id)
+        {
+            let _ = tx.send(response);
+            true
+        } else {
+            false
+        }
+    }
+}
+
+impl PlanReviewResolver {
+    #[cfg(test)]
+    pub fn new_for_test() -> Self {
+        let (tx, _) = broadcast::channel(16);
+        Self {
+            pending_reviews: Arc::new(std::sync::Mutex::new(HashMap::new())),
+            runtime_events_tx: tx,
+        }
+    }
+
+    pub(crate) fn new_standalone() -> Self {
+        let (tx, _) = broadcast::channel(16);
+        Self {
+            pending_reviews: Arc::new(std::sync::Mutex::new(HashMap::new())),
+            runtime_events_tx: tx,
+        }
+    }
+
+    pub fn register(&self, id: String) -> oneshot::Receiver<PlanReviewResponse> {
+        let (tx, rx) = oneshot::channel();
+        self.pending_reviews
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(id, tx);
+        rx
+    }
+
+    pub fn resolve(&self, response: PlanReviewResponse) -> bool {
+        let id = response.id.clone();
+        if let Some(tx) = self
+            .pending_reviews
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&id)
+        {
+            let _ = tx.send(response.clone());
+            let _ =
+                self.runtime_events_tx
+                    .send(RuntimeEvent::new(RuntimeEventKind::PlanReviewResolved(
+                        response,
+                    )));
+            true
+        } else {
+            false
+        }
+    }
 }
 
 impl QuestionResolver {
@@ -234,6 +340,8 @@ pub struct AgentRuntime {
     cancel_token: CancelToken,
     pending_approvals: PendingApprovals,
     pending_questions: PendingQuestions,
+    pending_plan_reviews: PendingPlanReviews,
+    pending_sudo_passwords: PendingSudoPasswords,
     event_bus: EventBus,
     session: SessionState,
     /// Goal runtime handle for the current session.
@@ -304,6 +412,8 @@ impl AgentRuntime {
             cancel_token: CancelToken::new(),
             pending_approvals: Arc::new(std::sync::Mutex::new(HashMap::new())),
             pending_questions: Arc::new(std::sync::Mutex::new(HashMap::new())),
+            pending_plan_reviews: Arc::new(std::sync::Mutex::new(HashMap::new())),
+            pending_sudo_passwords: Arc::new(std::sync::Mutex::new(HashMap::new())),
             event_bus: EventBus::new(),
             session: SessionState::new_with_history(
                 options.session_id,
@@ -582,6 +692,11 @@ impl AgentRuntime {
         self.question_resolver().resolve(response)
     }
 
+    /// Resolves a pending plan review by invocation id. Returns `true` if found.
+    pub fn resolve_plan_review(&self, response: PlanReviewResponse) -> bool {
+        self.plan_review_resolver().resolve(response)
+    }
+
     /// Returns an [`ApprovalResolver`] handle for external approval resolution.
     pub fn approval_resolver(&self) -> ApprovalResolver {
         ApprovalResolver {
@@ -596,6 +711,25 @@ impl AgentRuntime {
             pending_questions: self.pending_questions.clone(),
             runtime_events_tx: self.event_bus.sender(),
         }
+    }
+
+    /// Returns a [`PlanReviewResolver`] handle for external plan-review resolution.
+    pub fn plan_review_resolver(&self) -> PlanReviewResolver {
+        PlanReviewResolver {
+            pending_reviews: self.pending_plan_reviews.clone(),
+            runtime_events_tx: self.event_bus.sender(),
+        }
+    }
+
+    /// Returns a [`SudoPasswordResolver`] for interactive sudo prompts.
+    pub fn sudo_password_resolver(&self) -> SudoPasswordResolver {
+        SudoPasswordResolver {
+            pending: self.pending_sudo_passwords.clone(),
+        }
+    }
+
+    pub fn resolve_sudo_password(&self, response: SudoPasswordResponse) -> bool {
+        self.sudo_password_resolver().resolve(response)
     }
 
     /// Returns a [`TurnCanceller`] handle for external cancellation.
@@ -625,6 +759,8 @@ impl AgentRuntime {
         self.cancel_token.reset();
         self.pending_approvals = Arc::new(std::sync::Mutex::new(HashMap::new()));
         self.pending_questions = Arc::new(std::sync::Mutex::new(HashMap::new()));
+        self.pending_plan_reviews = Arc::new(std::sync::Mutex::new(HashMap::new()));
+        self.pending_sudo_passwords = Arc::new(std::sync::Mutex::new(HashMap::new()));
         self.session.start();
 
         let (session_runtime, event_rx) = self.build_session_runtime()?;
@@ -1244,6 +1380,8 @@ impl AgentRuntime {
             event_tx: Some(event_tx),
             approval_resolver: self.approval_resolver(),
             question_resolver: self.question_resolver(),
+            plan_review_resolver: self.plan_review_resolver(),
+            sudo_password_resolver: self.sudo_password_resolver(),
             compact_state: Arc::new(tokio::sync::Mutex::new(crate::compact::CompactState::new(
                 crate::config::effective_context_window(&self.loaded_config.config),
             ))),
@@ -1383,6 +1521,8 @@ impl AgentRuntime {
                 }
             }
             AgentEvent::PlanProposed { .. } => {}
+            AgentEvent::PlanReviewRequested(_) | AgentEvent::PlanReviewResolved(_) => {}
+            AgentEvent::SudoPasswordRequested(_) => {}
             AgentEvent::AgentModeChanged { .. } => {}
             _ => {}
         }
@@ -1508,6 +1648,15 @@ fn runtime_event_kind_from_agent_event(event: &AgentEvent) -> Option<RuntimeEven
         AgentEvent::QuestionResolved(response) => {
             Some(RuntimeEventKind::QuestionResolved(response.clone()))
         }
+        AgentEvent::PlanReviewRequested(request) => {
+            Some(RuntimeEventKind::PlanReviewRequired(request.clone()))
+        }
+        AgentEvent::PlanReviewResolved(response) => {
+            Some(RuntimeEventKind::PlanReviewResolved(response.clone()))
+        }
+        AgentEvent::SudoPasswordRequested(request) => {
+            Some(RuntimeEventKind::SudoPasswordRequired(request.clone()))
+        }
         AgentEvent::HarnessTrace(value) => Some(RuntimeEventKind::HarnessTrace(value.clone())),
         AgentEvent::HarnessStopped {
             reason,
@@ -1566,6 +1715,7 @@ fn runtime_event_kind_from_agent_event(event: &AgentEvent) -> Option<RuntimeEven
             reason: reason.clone(),
         }),
         AgentEvent::PlanProposed { .. } => None,
+        // Also mapped above via dedicated arms; keep fallthrough safe.
         AgentEvent::AgentModeChanged { .. } => None,
         AgentEvent::SessionRecap { .. } => None,
     }

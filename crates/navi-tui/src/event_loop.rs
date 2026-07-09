@@ -395,7 +395,27 @@ where
     let mut needs_draw = true;
     let mut leaked_terminal_sequence_filter = LeakedTerminalSequenceFilter::default();
     loop {
-        if needs_draw {
+        // Grok-style composer expand/collapse animation.
+        let input_width = terminal
+            .size()
+            .map(|s| s.width.saturating_sub(4) as usize)
+            .unwrap_or(80);
+        let composer_animating =
+            crate::view::input::advance_composer_animation(app, input_width);
+        // Pulse ◆/◇ for in-flight tools, turn loading, and background commands.
+        // Without this the event loop only redraws on input/events, so the
+        // running diamond freezes on the first frame.
+        let bg_running = app.background_commands.iter().any(|c| c.is_running());
+        let activity_animating = app.is_loading
+            || !app.running_tools.is_empty()
+            || bg_running
+            || (matches!(
+                app.mode,
+                crate::state::Mode::BackgroundCommands
+                    | crate::state::Mode::BackgroundCommandOutput
+            ) && bg_running);
+
+        if needs_draw || composer_animating || activity_animating {
             terminal.draw(|frame| render(frame, app))?;
             app.advance_tick();
             needs_draw = false;
@@ -411,8 +431,9 @@ where
             handle_async_event(app, event);
         }
 
-        let timeout = if app.is_loading {
-            Duration::from_millis(16)
+        let timeout = if activity_animating || composer_animating {
+            // ~30fps is enough for a 320ms pulse frame and keeps CPU low.
+            Duration::from_millis(33)
         } else if app.messages.is_empty() || visible_notification(app).is_some() {
             Duration::from_millis(80)
         } else {

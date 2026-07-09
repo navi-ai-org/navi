@@ -1,11 +1,15 @@
 mod attachment_tool;
+mod auth_ops;
 mod credentials;
 mod engine;
 mod engine_api;
 mod engine_driver;
 mod host_tool;
+mod memory_ops;
+mod plugins;
 mod tooling;
 mod types;
+mod voice;
 
 pub use credentials::{
     CommandCodeUsageData, CredentialAccountInfo, CredentialSource, CredentialStatus,
@@ -43,8 +47,10 @@ pub use navi_core::session::{
 pub use navi_core::{
     AgentEvent, AgentRunState, Capability, CapabilityDecision, CapabilityGrant, CapabilityLedger,
     CapabilityLedgerEntry, CapabilityScope, GoalStatus, GoalTask, ModelMessage, ModelRole,
-    QuestionOption, QuestionRequest, QuestionResponse, RuntimeEvent, RuntimeEventKind, SessionGoal,
-    SessionId, SessionSnapshot, SubagentTranscriptItem, SubagentTranscriptKind, TaskStatus,
+    PlanReviewDecision, PlanReviewRequest, PlanReviewResponse, QuestionOption, QuestionRequest,
+    QuestionResponse, RuntimeEvent, RuntimeEventKind, SessionGoal, SessionId, SessionSnapshot,
+    SubagentTranscriptItem, SubagentTranscriptKind, SudoPasswordRequest, SudoPasswordResponse,
+    TaskStatus,
 };
 // Event auxiliary types
 pub use navi_core::event::RepetitionWarningKind;
@@ -58,7 +64,8 @@ pub use navi_core::{
     AttachmentModelsConfig, BackgroundModelEntry, BackgroundModelsConfig, CompactState,
     CompactThreshold, CredentialStore, HarnessPolicy, HarnessProfile, LoadedConfig, ModelOption,
     ModelTaskSize, NaviConfig, PermissionMode, ProviderConfig, ProviderKind, ProviderModelConfig,
-    SessionStore, ThinkingConfig, select_harness_policy,
+    SessionStore, ThinkingConfig, parse_reasoning_level, resolve_effort_label,
+    resolve_model_thinking_level, select_harness_policy, thinking_levels_for_model,
 };
 // Utility functions
 pub use navi_core::{
@@ -76,6 +83,23 @@ pub use navi_mcp::McpServerInfo;
 pub use navi_core::memory::{
     AutoMemoryStore, MemoryEntry, MemoryStatus, MemorySummary, MemoryType,
 };
+
+// Local voice / dictation (navi-voice)
+pub use navi_voice::{
+    AsrEngineId, CHUNK_SAMPLES, DoctorReport, SAMPLE_RATE, TranscribeResult, VoiceEvent,
+    VoiceInstallOptions, VoiceRecorderInfo, VoiceStatus,
+};
+
+// Extended memory ops DTOs
+pub use memory_ops::{
+    MemoryDoctorReport, MemoryDreamReport, MemoryInitReport, MemoryStatusReport,
+};
+
+// Plugin lifecycle DTOs
+pub use plugins::{PluginInfo, PluginInstallResult, PluginMarketplaceEntry};
+
+// OAuth / registry DTOs
+pub use auth_ops::{DeviceOAuthStartedInfo, RegistryProviderSummary};
 
 #[cfg(test)]
 mod tests {

@@ -472,8 +472,9 @@ pub struct ThinkingRequest {
     /// Whether thinking/reasoning is enabled.
     pub enabled: bool,
     /// Reasoning effort level for providers that use effort strings
-    /// (OpenAI, OpenRouter, Groq, etc.).
-    pub effort: Option<&'static str>,
+    /// (OpenAI, OpenRouter, Groq, etc.). Owned so registry labels
+    /// (e.g. `xhigh`, `minimal`) can pass through unchanged.
+    pub effort: Option<String>,
     /// Token budget for providers that use budget-based thinking
     /// (Anthropic, Gemini).
     pub budget_tokens: Option<u32>,
@@ -488,22 +489,24 @@ impl ThinkingConfig {
         match self {
             Self::Max => ThinkingRequest {
                 enabled: true,
-                effort: Some("high"),
+                // Prefer xhigh on wire when providers accept it; callers may
+                // remap via [`resolve_effort_label`] using registry levels.
+                effort: Some("xhigh".to_string()),
                 budget_tokens: Some(32000),
             },
             Self::High => ThinkingRequest {
                 enabled: true,
-                effort: Some("high"),
+                effort: Some("high".to_string()),
                 budget_tokens: Some(10000),
             },
             Self::Medium => ThinkingRequest {
                 enabled: true,
-                effort: Some("medium"),
+                effort: Some("medium".to_string()),
                 budget_tokens: Some(4096),
             },
             Self::Low => ThinkingRequest {
                 enabled: true,
-                effort: Some("low"),
+                effort: Some("low".to_string()),
                 budget_tokens: Some(1024),
             },
             Self::Off => ThinkingRequest {
@@ -515,6 +518,23 @@ impl ThinkingConfig {
             // Fallback to Medium if called directly.
             Self::Adaptive => Self::Medium.to_thinking_request(),
         }
+    }
+
+    /// Config key used in `tui.thinking_level` / UI labels.
+    pub fn as_config_str(self) -> &'static str {
+        match self {
+            Self::Adaptive => "adaptive",
+            Self::Max => "max",
+            Self::High => "high",
+            Self::Medium => "medium",
+            Self::Low => "low",
+            Self::Off => "off",
+        }
+    }
+
+    /// Parse a config / registry effort string into a [`ThinkingConfig`].
+    pub fn from_config_str(value: &str) -> Self {
+        parse_reasoning_level(value).unwrap_or(Self::Adaptive)
     }
 
     /// Resolve an adaptive thinking level based on task context heuristics.
@@ -532,6 +552,169 @@ impl ThinkingConfig {
             TaskComplexity::Complex => Self::High,
         }
     }
+
+    /// Clamp this level to one supported by the model (registry reasoning_levels).
+    pub fn clamp_to_supported(self, supported: &[ThinkingConfig]) -> Self {
+        if supported.is_empty() || supported.contains(&self) {
+            return self;
+        }
+        // Prefer keeping "on" if possible; Off last.
+        for candidate in [
+            Self::Adaptive,
+            Self::Medium,
+            Self::High,
+            Self::Low,
+            Self::Max,
+            Self::Off,
+        ] {
+            if supported.contains(&candidate) {
+                return candidate;
+            }
+        }
+        supported[0]
+    }
+}
+
+/// Parse a registry / config reasoning level string.
+///
+/// Accepts common aliases used across OpenAI, OpenRouter, Anthropic, and Grok.
+pub fn parse_reasoning_level(raw: &str) -> Option<ThinkingConfig> {
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "adaptive" | "auto" => Some(ThinkingConfig::Adaptive),
+        "max" | "xhigh" | "x-high" | "ultra" | "highest" => Some(ThinkingConfig::Max),
+        "high" => Some(ThinkingConfig::High),
+        "medium" | "med" | "mid" | "default" => Some(ThinkingConfig::Medium),
+        "low" | "minimal" | "min" => Some(ThinkingConfig::Low),
+        "off" | "none" | "disabled" | "false" | "0" => Some(ThinkingConfig::Off),
+        _ => None,
+    }
+}
+
+/// Default full picker when the registry does not list levels for a thinking model.
+pub const DEFAULT_REASONING_LEVELS: &[ThinkingConfig] = &[
+    ThinkingConfig::Adaptive,
+    ThinkingConfig::Max,
+    ThinkingConfig::High,
+    ThinkingConfig::Medium,
+    ThinkingConfig::Low,
+    ThinkingConfig::Off,
+];
+
+/// Resolve the thinking levels the UI / runtime should offer for a model.
+///
+/// - `supports_thinking == false` → only Off
+/// - empty `reasoning_levels` + thinking supported/unknown → full default set
+/// - non-empty registry levels → those levels (+ Adaptive when any non-Off exists)
+pub fn thinking_levels_for_model(
+    supports_thinking: Option<bool>,
+    reasoning_levels: &[String],
+) -> Vec<ThinkingConfig> {
+    if supports_thinking == Some(false) {
+        return vec![ThinkingConfig::Off];
+    }
+
+    if reasoning_levels.is_empty() {
+        return DEFAULT_REASONING_LEVELS.to_vec();
+    }
+
+    let mut out = Vec::new();
+    for raw in reasoning_levels {
+        if let Some(level) = parse_reasoning_level(raw) {
+            if !out.contains(&level) {
+                out.push(level);
+            }
+        }
+    }
+    if out.is_empty() {
+        return DEFAULT_REASONING_LEVELS.to_vec();
+    }
+    // Always allow Adaptive when the model can think (maps onto a concrete level later).
+    if !out.contains(&ThinkingConfig::Off) || out.len() > 1 {
+        if !out.contains(&ThinkingConfig::Adaptive) {
+            out.insert(0, ThinkingConfig::Adaptive);
+        }
+    }
+    // Stable UI order.
+    let order = DEFAULT_REASONING_LEVELS;
+    out.sort_by_key(|l| order.iter().position(|o| o == l).unwrap_or(99));
+    out
+}
+
+/// Pick a default thinking level for a model from registry + current preference.
+pub fn resolve_model_thinking_level(
+    current: ThinkingConfig,
+    supports_thinking: Option<bool>,
+    reasoning_levels: &[String],
+    default_reasoning_effort: Option<&str>,
+) -> ThinkingConfig {
+    let supported = thinking_levels_for_model(supports_thinking, reasoning_levels);
+    if supported.contains(&current) {
+        return current;
+    }
+    if let Some(def) = default_reasoning_effort.and_then(parse_reasoning_level) {
+        return def.clamp_to_supported(&supported);
+    }
+    current.clamp_to_supported(&supported)
+}
+
+/// Map a [`ThinkingConfig`] to a provider effort label, preferring registry strings.
+///
+/// Returns `None` when thinking is off.
+pub fn resolve_effort_label(
+    thinking: ThinkingConfig,
+    reasoning_levels: &[String],
+    provider_id: &str,
+) -> Option<String> {
+    if matches!(thinking, ThinkingConfig::Off) {
+        return None;
+    }
+    let concrete = match thinking {
+        ThinkingConfig::Adaptive => ThinkingConfig::Medium,
+        other => other,
+    };
+
+    // Prefer an exact registry string that maps to this level.
+    for raw in reasoning_levels {
+        if parse_reasoning_level(raw) == Some(concrete) {
+            return Some(raw.trim().to_ascii_lowercase());
+        }
+    }
+
+    // Provider-specific fallbacks when registry has no levels yet.
+    let provider = crate::ProviderId::from_config_id(provider_id);
+    if provider.as_str() == crate::ProviderId::OPENROUTER {
+        return Some(
+            match concrete {
+                ThinkingConfig::Max => "xhigh",
+                ThinkingConfig::High => "high",
+                ThinkingConfig::Medium => "medium",
+                ThinkingConfig::Low => "low",
+                ThinkingConfig::Off | ThinkingConfig::Adaptive => "medium",
+            }
+            .to_string(),
+        );
+    }
+
+    Some(
+        match concrete {
+            ThinkingConfig::Max => {
+                // OpenAI-style: xhigh when present in levels else high.
+                if reasoning_levels
+                    .iter()
+                    .any(|l| matches!(l.trim().to_ascii_lowercase().as_str(), "xhigh" | "max"))
+                {
+                    "xhigh"
+                } else {
+                    "high"
+                }
+            }
+            ThinkingConfig::High => "high",
+            ThinkingConfig::Medium | ThinkingConfig::Adaptive => "medium",
+            ThinkingConfig::Low => "low",
+            ThinkingConfig::Off => return None,
+        }
+        .to_string(),
+    )
 }
 
 /// Task complexity classification for adaptive thinking.
@@ -621,7 +804,7 @@ mod tests {
     fn regression_thinking_request_high_produces_effort_and_budget() {
         let request = ThinkingConfig::High.to_thinking_request();
         assert!(request.enabled);
-        assert_eq!(request.effort, Some("high"));
+        assert_eq!(request.effort.as_deref(), Some("high"));
         assert_eq!(request.budget_tokens, Some(10000));
     }
 
@@ -629,7 +812,7 @@ mod tests {
     fn regression_thinking_request_max_produces_effort_and_budget() {
         let request = ThinkingConfig::Max.to_thinking_request();
         assert!(request.enabled);
-        assert_eq!(request.effort, Some("high"));
+        assert_eq!(request.effort.as_deref(), Some("xhigh"));
         assert_eq!(request.budget_tokens, Some(32000));
     }
 
@@ -645,7 +828,7 @@ mod tests {
     fn regression_thinking_request_medium_produces_medium_effort() {
         let request = ThinkingConfig::Medium.to_thinking_request();
         assert!(request.enabled);
-        assert_eq!(request.effort, Some("medium"));
+        assert_eq!(request.effort.as_deref(), Some("medium"));
         assert_eq!(request.budget_tokens, Some(4096));
     }
 
@@ -653,8 +836,47 @@ mod tests {
     fn regression_thinking_request_low_produces_low_effort() {
         let request = ThinkingConfig::Low.to_thinking_request();
         assert!(request.enabled);
-        assert_eq!(request.effort, Some("low"));
+        assert_eq!(request.effort.as_deref(), Some("low"));
         assert_eq!(request.budget_tokens, Some(1024));
+    }
+
+    #[test]
+    fn thinking_levels_for_model_respects_registry() {
+        let levels = thinking_levels_for_model(
+            Some(true),
+            &["none".into(), "low".into(), "high".into(), "xhigh".into()],
+        );
+        assert!(levels.contains(&ThinkingConfig::Adaptive));
+        assert!(levels.contains(&ThinkingConfig::Off));
+        assert!(levels.contains(&ThinkingConfig::Low));
+        assert!(levels.contains(&ThinkingConfig::High));
+        assert!(levels.contains(&ThinkingConfig::Max));
+        assert!(!levels.contains(&ThinkingConfig::Medium));
+    }
+
+    #[test]
+    fn thinking_levels_off_only_when_no_thinking() {
+        let levels = thinking_levels_for_model(Some(false), &["high".into()]);
+        assert_eq!(levels, vec![ThinkingConfig::Off]);
+    }
+
+    #[test]
+    fn resolve_effort_prefers_registry_label() {
+        let label = resolve_effort_label(
+            ThinkingConfig::Max,
+            &["low".into(), "high".into(), "xhigh".into()],
+            "openai",
+        );
+        assert_eq!(label.as_deref(), Some("xhigh"));
+    }
+
+    #[test]
+    fn clamp_unsupported_level_to_supported() {
+        let supported = vec![ThinkingConfig::Low, ThinkingConfig::Off];
+        assert_eq!(
+            ThinkingConfig::High.clamp_to_supported(&supported),
+            ThinkingConfig::Low
+        );
     }
 
     // ── Regression: ModelMessage constructors ─────────────────────────────────
@@ -792,7 +1014,7 @@ mod tests {
     fn adaptive_falls_back_to_medium_in_to_thinking_request() {
         let request = ThinkingConfig::Adaptive.to_thinking_request();
         assert!(request.enabled);
-        assert_eq!(request.effort, Some("medium"));
+        assert_eq!(request.effort.as_deref(), Some("medium"));
     }
 
     #[test]

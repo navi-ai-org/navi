@@ -316,6 +316,8 @@ fn handle_agent_event(app: &mut TuiApp, event: AgentEvent) {
                 if is_background_running {
                     crate::background::start_background_poller(app);
                 }
+                // Plan review modal is opened by PlanReviewRequested (blocks the
+                // turn until the user resolves it) — not on ToolCompleted.
             }
             app.events.push(AgentEvent::ToolCompleted(result));
             update_active_assistant_status(app);
@@ -465,11 +467,17 @@ fn handle_agent_event(app: &mut TuiApp, event: AgentEvent) {
             suppressed,
         } => {
             if !suppressed && !summary.trim().is_empty() {
-                app.messages.push(ChatMessage {
-                    status: Some("recap".to_string()),
-                    is_recap: true,
-                    ..ChatMessage::new(ChatRole::Assistant, summary.clone())
-                });
+                // Upgrade in place when a later LLM recap arrives (same turn).
+                if let Some(existing) = app.messages.iter_mut().rev().find(|m| m.is_recap) {
+                    existing.content = summary.clone();
+                    existing.status = Some("recap".to_string());
+                } else {
+                    app.messages.push(ChatMessage {
+                        status: Some("recap".to_string()),
+                        is_recap: true,
+                        ..ChatMessage::new(ChatRole::Assistant, summary.clone())
+                    });
+                }
                 app.chat_render_cache.borrow_mut().signature_hash = 0;
                 app.scroll_offset = 0;
             }
@@ -600,12 +608,31 @@ fn handle_agent_event(app: &mut TuiApp, event: AgentEvent) {
             tracing::warn!("auto-dream failed: {}", reason);
         }
         AgentEvent::PlanProposed { title, steps } => {
-            app.proposed_plan = Some(navi_sdk::ProposedPlan {
-                title: title.clone(),
-                steps: steps.clone(),
+            crate::plan_review::open_plan_review_from_proposed(
+                app,
+                title.clone(),
+                steps.clone(),
+            );
+        }
+        AgentEvent::PlanReviewRequested(request) => {
+            crate::plan_review::open_plan_review_from_request(app, request.clone());
+            app.events
+                .push(AgentEvent::PlanReviewRequested(request));
+        }
+        AgentEvent::PlanReviewResolved(response) => {
+            app.events
+                .push(AgentEvent::PlanReviewResolved(response));
+        }
+        AgentEvent::SudoPasswordRequested(request) => {
+            app.sudo_password_prompt = Some(crate::state::SudoPasswordUiState {
+                request_id: request.id.clone(),
+                command_summary: request.command_summary.clone(),
+                password: String::new(),
+                cursor: 0,
             });
-            show_notification(app, "Plan Proposed", &title);
-            crate::keybindings::replace_modal(app, ModalKind::ConfirmPlan);
+            crate::keybindings::replace_modal(app, ModalKind::SudoPassword);
+            app.events
+                .push(AgentEvent::SudoPasswordRequested(request));
         }
         AgentEvent::AgentModeChanged { mode } => {
             app.agent_mode = mode;
@@ -618,6 +645,7 @@ fn handle_agent_event(app: &mut TuiApp, event: AgentEvent) {
             } else {
                 show_notification(app, "Default Mode", "Full tool access restored.");
                 app.proposed_plan = None;
+                app.plan_review = None;
                 if app.mode == Mode::ConfirmPlan {
                     crate::keybindings::close_active_modal(app);
                 }
@@ -689,32 +717,86 @@ fn handle_turn_completed(app: &mut TuiApp, res: std::result::Result<String, Stri
     }
 }
 
-/// Grok-style recap after a successful turn (local extractive; optional LLM later).
+/// Grok-style recap after a successful turn.
+///
+/// 1. Instant short local line (never dumps assistant prose).
+/// 2. Background model upgrades it to a true one-sentence summary when possible.
 fn maybe_emit_session_recap(app: &mut TuiApp, assistant_text: &str) {
     let user_prompt = app
         .messages
         .iter()
         .rev()
         .find(|m| m.role == ChatRole::User)
-        .map(|m| m.content.as_str())
-        .unwrap_or("");
-    let tool_calls = app
+        .map(|m| m.content.clone())
+        .unwrap_or_default();
+
+    let mut tool_names: Vec<String> = app
         .events
         .iter()
         .rev()
         .take(80)
-        .filter(|e| matches!(e, AgentEvent::ToolRequested(_)))
-        .count();
+        .filter_map(|e| match e {
+            AgentEvent::ToolRequested(inv) => Some(inv.tool_name.clone()),
+            _ => None,
+        })
+        .collect();
+    tool_names.reverse();
+    let tool_calls = tool_names.len();
     let suppressed =
         navi_core::should_suppress_recap(assistant_text.chars().count(), tool_calls);
-    let summary = navi_core::local_recap(user_prompt, assistant_text);
+
+    let local_summary =
+        navi_core::local_recap_with_tools(&user_prompt, assistant_text, &tool_names);
+
+    // Always emit local immediately (UI + tests); long-tail stays suppressed.
     handle_async_event(
         app,
         AsyncEvent::Agent(AgentEvent::SessionRecap {
-            summary,
+            summary: local_summary,
             suppressed,
         }),
     );
+
+    if suppressed {
+        return;
+    }
+
+    let model_name = app
+        .models
+        .get(app.selected_model)
+        .map(|m| m.name.clone())
+        .unwrap_or_else(|| app.loaded_config.config.model.name.clone());
+    let loaded_config = app.loaded_config.clone();
+    let project_dir = app.project_dir.clone();
+    let assistant = assistant_text.to_string();
+    let tx = app.async_sender();
+
+    // Upgrade with a real model one-liner (Grok voice). On failure, keep local.
+    spawn_runtime_task(async move {
+        let Ok(provider) =
+            navi_sdk::build_provider_for_project_config(&loaded_config, &project_dir)
+        else {
+            return;
+        };
+        let Ok(text) = navi_core::llm_recap(
+            provider.as_ref(),
+            &model_name,
+            &user_prompt,
+            &assistant,
+            &tool_names,
+        )
+        .await
+        else {
+            return;
+        };
+        if text.trim().is_empty() {
+            return;
+        }
+        let _ = tx.send(AsyncEvent::Agent(AgentEvent::SessionRecap {
+            summary: text,
+            suppressed: false,
+        }));
+    });
 }
 
 /// React to setup interview completion — exit setup wizard, mark onboarding done.
@@ -1044,6 +1126,8 @@ mod tests {
                     tool_prompt_manifest: None,
                     pricing_input_per_1m: Some(1.0),
                     pricing_output_per_1m: Some(2.0),
+                    reasoning_levels: Vec::new(),
+                    default_reasoning_effort: None,
                 });
             }
         } else {
@@ -1063,6 +1147,8 @@ mod tests {
                     tool_prompt_manifest: None,
                     pricing_input_per_1m: Some(1.0),
                     pricing_output_per_1m: Some(2.0),
+                    reasoning_levels: Vec::new(),
+                    default_reasoning_effort: None,
                 }],
                 ..Default::default()
             });
@@ -1154,7 +1240,8 @@ mod tests {
 
         assert!(!app.is_loading);
         assert!(app.loading_start.is_none());
-        assert_eq!(app.scroll_offset, 10);
+        // Successful turns may append a session recap and jump scroll to the tail.
+        assert_eq!(app.scroll_offset, 0);
         assert!(app.running_tools.is_empty());
         assert!(app.pending_approvals.is_empty());
     }
@@ -1313,12 +1400,15 @@ mod tests {
             app_ok.loading_start.is_some(),
             app_err.loading_start.is_some()
         );
-        assert_eq!(app_ok.scroll_offset, app_err.scroll_offset);
+        // Shared cleanup: tools/approvals cleared on both paths.
+        // Scroll may differ: ok path can jump to tail after a session recap.
         assert_eq!(app_ok.running_tools.len(), app_err.running_tools.len());
         assert_eq!(
             app_ok.pending_approvals.len(),
             app_err.pending_approvals.len()
         );
+        assert!(!app_ok.is_loading);
+        assert!(app_ok.running_tools.is_empty());
     }
 
     // ── RetryModel ────────────────────────────────────────────────────

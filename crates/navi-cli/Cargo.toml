@@ -27,6 +27,12 @@ navi-plugin-broker.workspace = true
 navi-plugin-manifest.workspace = true
 navi-sdk.workspace = true
 navi-tui.workspace = true
+navi-voice = { path = "../navi-voice", default-features = false }
+
+[features]
+# ONNX Runtime dictation is on by default (downloads ORT at build time).
+default = ["voice-onnx"]
+voice-onnx = ["navi-voice/onnx"]
 
 [dev-dependencies]
 wiremock.workspace = true

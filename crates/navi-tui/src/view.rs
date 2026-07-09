@@ -2,6 +2,7 @@ pub(crate) mod background_commands;
 pub(crate) mod chat;
 pub(crate) mod command_palette;
 pub(crate) mod debug;
+pub(crate) mod help;
 pub(crate) mod image_preview;
 pub(crate) mod input;
 pub(crate) mod terminal_graphics;

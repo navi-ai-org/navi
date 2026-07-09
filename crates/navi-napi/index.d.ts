@@ -158,6 +158,10 @@ export class NaviNapiEngine {
   cancelTurn(sessionId: string): Promise<void>;
   resolveApproval(sessionId: string, approvalId: string, approved: boolean): Promise<boolean>;
   resolveQuestion(sessionId: string, response: JsonValue): Promise<boolean>;
+  /** Resolve plan review: { id, planId, decision: "approve"|"request_changes"|"quit", comments?, freeform? } */
+  resolvePlanReview(sessionId: string, response: JsonValue): Promise<boolean>;
+  /** Resolve sudo: { kind: "submitted", id, password } | { kind: "cancelled", id } */
+  resolveSudoPassword(sessionId: string, response: JsonValue): Promise<boolean>;
   addContextPacket(sessionId: string, packet: ContextPacket): Promise<void>;
   listModels(): JsonValue;
   listTuiComponents(sessionId: string): string[];
@@ -180,6 +184,12 @@ export class NaviNapiEngine {
   credentialStatus(providerId: string): JsonValue;
   setProviderApiKey(providerId: string, apiKey: string): void;
   deleteProviderApiKey(providerId: string): boolean;
+  providerSupportsDeviceOauth(providerId: string): boolean;
+  /** Device/browser OAuth; onStarted gets { verificationUri, userCode }. Returns optional secondary token. */
+  startDeviceOauth(
+    providerId: string,
+    onStarted?: (info: { verificationUri: string; userCode: string }) => void
+  ): Promise<string | null>;
   syncProviderModels(providerId: string, saveTarget?: SaveTarget): Promise<ProviderSyncReport>;
   syncModels(saveTarget?: SaveTarget): Promise<ProviderSyncReport>;
   // Usage
@@ -192,12 +202,22 @@ export class NaviNapiEngine {
   listMcpTools(sessionId: string): string[];
   // Registry & plugins
   syncRegistry(force?: boolean): Promise<boolean>;
+  listRegistry(): JsonValue;
+  pluginList(): JsonValue;
+  pluginInfo(pluginId: string): JsonValue;
+  pluginSearch(query?: string): Promise<JsonValue>;
+  /** Install from local path; confirm must be true (non-interactive approval). */
+  pluginInstallPath(path: string, confirm: boolean): JsonValue;
+  pluginInstallMarketplace(pluginId: string, confirm: boolean): Promise<JsonValue>;
+  pluginUpdatePath(path: string, force?: boolean, confirm?: boolean): JsonValue;
+  pluginUpdateMarketplace(pluginId: string, force?: boolean, confirm?: boolean): Promise<JsonValue>;
+  pluginRemove(pluginId: string): void;
   reloadWasmPlugins(): Promise<string[]>;
   // Saved sessions
   listSavedSessions(): Promise<JsonValue>;
   loadSavedSession(sessionId: string): Promise<JsonValue>;
   deleteSavedSession(sessionId: string): Promise<boolean>;
-  // Auto-memory
+  // Auto-memory CRUD
   memoryWrite(id: string, memoryType: string, name: string, description: string, body: string): void;
   memoryRead(id: string): JsonValue;
   memoryList(status?: string): JsonValue;
@@ -206,6 +226,26 @@ export class NaviNapiEngine {
   memoryDelete(id: string): void;
   memoryCount(): number;
   memoryIndex(): string;
+  // Auto-memory ops
+  memoryStatus(): JsonValue;
+  memoryDoctor(): JsonValue;
+  memoryInit(embeddings?: boolean, force?: boolean): Promise<JsonValue>;
+  memoryHistorySearch(query: string, sessionId?: string, limit?: number): JsonValue;
+  memoryDream(apply?: boolean, sessions?: number, instructions?: string): Promise<JsonValue>;
+  memoryDistill(): Promise<void>;
+  memoryCheckpoint(): Promise<string>;
+  // Voice / local dictation (16 kHz mono PCM from client; engine owns ONNX ASR)
+  voiceStatus(): JsonValue;
+  voiceDoctor(): JsonValue;
+  voiceEngineInstalled(engine?: string): boolean;
+  voiceInit(engine?: string, force?: boolean): Promise<string>;
+  voiceTranscribeFile(path: string, language?: string): Promise<{ text: string; tokenIds: number[] }>;
+  voiceStartStream(language?: string): void;
+  /** Push 16 kHz mono samples; returns text delta for this chunk (may be empty). */
+  voicePushPcm(samples: number[] | Float32Array): string;
+  voiceEndStream(): string;
+  voiceCancelStream(): void;
+  subscribeVoiceEvents(): NaviNapiVoiceEventStream;
   // Permission mode
   getPermissionMode(): string;
   setPermissionMode(mode: string): void;
@@ -216,4 +256,9 @@ export class NaviNapiEngine {
 
 export class NaviNapiEventStream {
   next(): Promise<RuntimeEvent | null>;
+}
+
+/** Engine-global voice events: started | partial | final | error | stopped | model_missing */
+export class NaviNapiVoiceEventStream {
+  next(): Promise<JsonValue | null>;
 }

@@ -115,6 +115,7 @@ fn open_provider_settings(app: &mut TuiApp) {
 }
 
 fn open_thinking_picker(app: &mut TuiApp) {
+    crate::keybindings::modals::clamp_thinking_to_selected_model(app);
     replace_modal(app, ModalKind::Thinking);
     app.selected_thinking = app.thinking_level.index();
 }
@@ -181,6 +182,10 @@ fn route_mode_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyModifiers) -> K
         }
         Mode::ConfirmCancelTurn => self::modals::handle_confirm_cancel_turn_key(app, code),
         Mode::ConfirmPlan => self::modals::handle_confirm_plan_key(app, code),
+        Mode::SudoPassword => self::modals::handle_sudo_password_key(app, code, modifiers),
+        Mode::PathMentions => {
+            crate::path_mentions::handle_path_mentions_key(app, code, modifiers)
+        }
     };
     if should_quit {
         KeyOutcome::Quit

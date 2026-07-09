@@ -1,74 +1,15 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 use async_trait::async_trait;
-use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use std::fs;
 use std::hash::{Hash, Hasher};
-use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::path::Path;
 
 use super::helpers;
+use crate::plan_store::{
+    MAX_PLANS, MAX_STEPS, Plan, PlanStatus, PlanStep, PlanStore, now_ms,
+};
 use crate::security::SecurityPolicy;
 use crate::tool::{Tool, ToolDefinition, ToolInvocation, ToolKind, ToolResult};
-
-/// Maximum number of plans to list.
-const MAX_PLANS: usize = 20;
-/// Maximum steps per plan.
-const MAX_STEPS: usize = 50;
-
-/// A work plan with checklist steps, persisted to NAVI data directory.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Plan {
-    /// Unique plan identifier (e.g. `"plan-1719612345000"`).
-    pub id: String,
-    /// Human-readable plan title.
-    pub title: String,
-    /// Optional high-level description of the goal.
-    #[serde(default)]
-    pub description: String,
-    /// Ordered checklist steps.
-    pub steps: Vec<PlanStep>,
-    /// Overall plan status.
-    pub status: PlanStatus,
-    /// Unix timestamp (milliseconds) when the plan was created.
-    pub created_at: u64,
-    /// Unix timestamp (milliseconds) when the plan was last updated.
-    pub updated_at: u64,
-}
-
-/// A single step in a plan.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PlanStep {
-    /// Step description.
-    pub description: String,
-    /// Whether this step is completed.
-    pub completed: bool,
-    /// Optional notes added when completing or reviewing the step.
-    #[serde(default)]
-    pub notes: String,
-}
-
-/// Plan lifecycle status.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "kebab-case")]
-pub enum PlanStatus {
-    /// Plan is actively being worked on.
-    Active,
-    /// All steps are completed.
-    Completed,
-    /// Plan was abandoned.
-    Abandoned,
-}
-
-impl std::fmt::Display for PlanStatus {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            PlanStatus::Active => write!(f, "active"),
-            PlanStatus::Completed => write!(f, "completed"),
-            PlanStatus::Abandoned => write!(f, "abandoned"),
-        }
-    }
-}
 
 /// Atomic counter for generating unique plan IDs even within the same millisecond.
 static PLAN_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
@@ -76,32 +17,57 @@ static PLAN_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64
 /// Built-in tool for creating and managing work plans with checklist tracking.
 pub(crate) struct PlanTool {
     policy: SecurityPolicy,
+    store: PlanStore,
 }
 
 impl PlanTool {
     pub(crate) fn new(policy: SecurityPolicy) -> Self {
-        Self { policy }
+        let store = PlanStore::open_default(policy.data_dir())
+            .unwrap_or_else(|_| {
+                // Fallback: in-memory is not available; open a temp path under data_dir.
+                PlanStore::open(&policy.data_dir().join("plans.sqlite"))
+                    .expect("open plan store")
+            });
+        // Best-effort one-time migration of legacy JSON plans.
+        let _ = store.migrate_json_dir(&policy.data_dir().join("plans"));
+        Self { policy, store }
     }
 
-    fn plans_dir(&self) -> PathBuf {
-        let project_hash = project_hash(self.policy.project_root());
-        self.policy.data_dir().join("plans").join(project_hash)
+    fn project_id(&self) -> String {
+        project_hash(self.policy.project_root())
     }
 }
 
 #[async_trait]
 impl Tool for PlanTool {
     fn definition(&self) -> ToolDefinition {
+        // Schema shape follows Grok/Cursor CreatePlan + agentic post-training norms:
+        // models reliably emit markdown plan bodies and/or todos[{id,content}], and often
+        // omit nested {description} objects. Multi-action CRUD is kept, but create accepts
+        // those familiar shapes so frontier models don't bounce on empty_steps.
         helpers::definition(
             "plan",
-            "Create and manage work plans with checklist steps. Use this for multi-step tasks to track progress. Actions:\n\
-             - create: Create a new plan with title, description, and steps. If title is omitted, it is derived from description.\n\
-             - update: Add, remove, or reorder steps. Set status.\n\
-             - complete_step: Mark a step as completed (by index, 0-based). Add optional notes.\n\
-             - get: Retrieve the full plan by id.\n\
-             - list: List all plans (optionally filtered by status).\n\
-             - active: Get the currently active plan (most recent with status=active).\n\
-             Plans are persisted and survive across turns and compaction.",
+            "Create a concise, actionable work plan and track checklist progress.\n\
+             \n\
+             Prefer create with BOTH a short title and concrete steps (or todos). \
+             Creating a plan opens a TUI review modal for approval before execution.\n\
+             \n\
+             Actions:\n\
+             - create: REQUIRED content = steps[] OR todos[] OR plan/body markdown. \
+               Title alone is not enough for a good plan.\n\
+             - update: change title/description/steps/status of an existing plan_id.\n\
+             - complete_step: mark steps[step_index] done (0-based).\n\
+             - get / list / active: read plans.\n\
+             \n\
+             Create example (preferred):\n\
+             {\"action\":\"create\",\"title\":\"Add footer meter\",\n\
+              \"steps\":[\"Read usage state\",\"Wire footer label\",\"Test meter\"]}\n\
+             \n\
+             CreatePlan-compatible example:\n\
+             {\"action\":\"create\",\"plan\":\"# Title\\n\\nApproach...\\n\",\n\
+              \"todos\":[{\"id\":\"wire-ui\",\"content\":\"Wire footer label\"}]}\n\
+             \n\
+             Do NOT call create with only {\"action\":\"create\",\"title\":\"...\"}.",
             ToolKind::Read,
             json!({
                 "type": "object",
@@ -109,7 +75,7 @@ impl Tool for PlanTool {
                     "action": {
                         "type": "string",
                         "enum": ["create", "update", "complete_step", "get", "list", "active"],
-                        "description": "Operation to perform on the plan."
+                        "description": "Operation to perform. Use create to finalize a plan for user review."
                     },
                     "plan_id": {
                         "type": "string",
@@ -117,25 +83,77 @@ impl Tool for PlanTool {
                     },
                     "title": {
                         "type": "string",
-                        "description": "Plan title for create/update. Optional for create; defaults to description or first step."
+                        "description": "Short plan title. Optional if plan/body markdown starts with # heading or steps exist."
                     },
                     "description": {
                         "type": "string",
-                        "description": "High-level plan description (for create/update)."
+                        "description": "High-level summary (non-checklist prose)."
+                    },
+                    "plan": {
+                        "type": "string",
+                        "description": "CreatePlan-style markdown body. First line may be '# Title'. Bullet/numbered lists become steps when steps/todos omitted."
+                    },
+                    "body": {
+                        "type": "string",
+                        "description": "Alias for plan (markdown body)."
+                    },
+                    "body_markdown": {
+                        "type": "string",
+                        "description": "Alias for plan (markdown body)."
+                    },
+                    "content": {
+                        "type": "string",
+                        "description": "Alias for plan (markdown body)."
+                    },
+                    "overview": {
+                        "type": "string",
+                        "description": "Optional one-line overview; stored in description if description is empty."
                     },
                     "steps": {
                         "type": "array",
+                        "description": "Checklist steps for create/update. Each item may be a string OR an object with description|content|title|text. Prefer 3–12 concrete steps.",
+                        "minItems": 1,
                         "items": {
-                            "type": "object",
-                            "properties": {
-                                "description": { "type": "string" },
-                                "completed": { "type": "boolean" },
-                                "notes": { "type": "string" }
-                            },
-                            "required": ["description"],
-                            "additionalProperties": false
-                        },
-                        "description": "Checklist steps (for create, or to replace all steps in update)."
+                            "anyOf": [
+                                { "type": "string", "minLength": 1 },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "description": { "type": "string" },
+                                        "content": { "type": "string" },
+                                        "title": { "type": "string" },
+                                        "text": { "type": "string" },
+                                        "id": { "type": "string" },
+                                        "completed": { "type": "boolean" },
+                                        "notes": { "type": "string" }
+                                    },
+                                    "additionalProperties": true
+                                }
+                            ]
+                        }
+                    },
+                    "todos": {
+                        "type": "array",
+                        "description": "CreatePlan/TodoWrite-compatible alias for steps. Items: string or {id, content|description}.",
+                        "minItems": 1,
+                        "items": {
+                            "anyOf": [
+                                { "type": "string", "minLength": 1 },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "id": { "type": "string" },
+                                        "content": { "type": "string" },
+                                        "description": { "type": "string" },
+                                        "title": { "type": "string" },
+                                        "text": { "type": "string" },
+                                        "completed": { "type": "boolean" },
+                                        "notes": { "type": "string" }
+                                    },
+                                    "additionalProperties": true
+                                }
+                            ]
+                        }
                     },
                     "step_index": {
                         "type": "integer",
@@ -168,15 +186,15 @@ impl Tool for PlanTool {
 
     async fn invoke(&self, invocation: ToolInvocation) -> Result<ToolResult> {
         let action = helpers::required_string(&invocation.input, "action")?.to_string();
-        let plans_dir = self.plans_dir();
+        let project_id = self.project_id();
 
         match action.as_str() {
-            "create" => action_create(&invocation, &plans_dir),
-            "update" => action_update(&invocation, &plans_dir),
-            "complete_step" => action_complete_step(&invocation, &plans_dir),
-            "get" => action_get(&invocation, &plans_dir),
-            "list" => action_list(&invocation, &plans_dir),
-            "active" => action_active(&plans_dir),
+            "create" => action_create(&invocation, &self.store, &project_id),
+            "update" => action_update(&invocation, &self.store),
+            "complete_step" => action_complete_step(&invocation, &self.store),
+            "get" => action_get(&invocation, &self.store),
+            "list" => action_list(&invocation, &self.store, &project_id),
+            "active" => action_active(&self.store, &project_id),
             _ => Ok(ToolResult {
                 invocation_id: invocation.id,
                 ok: false,
@@ -194,15 +212,14 @@ impl Tool for PlanTool {
 
 // ── Actions ────────────────────────────────────────────────────────────────
 
-fn action_create(invocation: &ToolInvocation, plans_dir: &Path) -> Result<ToolResult> {
-    let description =
-        helpers::optional_string(&invocation.input, "description").unwrap_or_default();
-    let steps = parse_steps(&invocation.input)?;
-    let title = helpers::optional_string(&invocation.input, "title")
-        .filter(|title| !title.trim().is_empty())
-        .unwrap_or_else(|| derive_plan_title(&description, &steps));
+fn action_create(
+    invocation: &ToolInvocation,
+    store: &PlanStore,
+    project_id: &str,
+) -> Result<ToolResult> {
+    let parsed = parse_create_payload(&invocation.input)?;
 
-    if steps.is_empty() {
+    if parsed.steps.is_empty() {
         return Ok(ToolResult {
             invocation_id: invocation.id.clone(),
             ok: false,
@@ -210,25 +227,35 @@ fn action_create(invocation: &ToolInvocation, plans_dir: &Path) -> Result<ToolRe
                 "empty_steps",
                 "a plan must have at least one step",
                 true,
-                Some("Provide a 'steps' array with at least one step object."),
+                Some(
+                    "Provide steps (array of strings or {description}), \
+                     todos ([{id,content}]), or a markdown plan/body with a checklist. \
+                     Example: {\"action\":\"create\",\"title\":\"…\",\
+                     \"steps\":[\"Step one\",\"Step two\"]}",
+                ),
                 None,
             ),
         });
     }
 
-    let now = current_unix_millis();
+    let now = now_ms();
     let seq = PLAN_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    // Proposed until the user reviews in the TUI modal.
     let plan = Plan {
         id: format!("plan-{now}-{seq}"),
-        title,
-        description,
-        steps,
-        status: PlanStatus::Active,
+        title: parsed.title,
+        description: parsed.description,
+        steps: parsed.steps,
+        status: PlanStatus::Proposed,
         created_at: now,
         updated_at: now,
+        body_markdown: parsed.body_markdown,
+        comments: Vec::new(),
+        project_id: project_id.to_string(),
+        session_id: String::new(),
     };
 
-    save_plan(&plan, plans_dir)?;
+    store.upsert(&plan)?;
 
     Ok(helpers::ok(
         invocation.id.clone(),
@@ -236,16 +263,29 @@ fn action_create(invocation: &ToolInvocation, plans_dir: &Path) -> Result<ToolRe
             "schema_version": helpers::SPECIALIZED_SCHEMA_VERSION,
             "plan_id": plan.id,
             "title": plan.title,
+            "description": plan.description,
+            "steps": plan.steps.iter().map(|s| json!({
+                "description": s.description,
+                "completed": s.completed,
+                "notes": s.notes,
+            })).collect::<Vec<_>>(),
             "steps_count": plan.steps.len(),
             "status": format!("{}", plan.status),
-            "message": format!("Plan '{}' created with {} steps.", plan.title, plan.steps.len()),
+            "needs_review": true,
+            "message": format!(
+                "Plan '{}' created with {} steps. Awaiting user review.",
+                plan.title,
+                plan.steps.len()
+            ),
         }),
     ))
 }
 
-fn action_update(invocation: &ToolInvocation, plans_dir: &Path) -> Result<ToolResult> {
+fn action_update(invocation: &ToolInvocation, store: &PlanStore) -> Result<ToolResult> {
     let plan_id = required_plan_id(invocation)?;
-    let mut plan = load_plan(&plan_id, plans_dir)?;
+    let mut plan = store
+        .get(&plan_id)?
+        .ok_or_else(|| anyhow::anyhow!("plan '{plan_id}' not found"))?;
 
     if let Some(title) = helpers::optional_string(&invocation.input, "title") {
         plan.title = title;
@@ -258,11 +298,11 @@ fn action_update(invocation: &ToolInvocation, plans_dir: &Path) -> Result<ToolRe
         plan.steps = steps;
     }
     if let Some(status) = helpers::optional_string(&invocation.input, "status") {
-        plan.status = parse_status(&status)?;
+        plan.status = PlanStatus::parse(&status)?;
     }
 
-    plan.updated_at = current_unix_millis();
-    save_plan(&plan, plans_dir)?;
+    plan.updated_at = now_ms();
+    store.upsert(&plan)?;
 
     Ok(helpers::ok(
         invocation.id.clone(),
@@ -277,7 +317,7 @@ fn action_update(invocation: &ToolInvocation, plans_dir: &Path) -> Result<ToolRe
     ))
 }
 
-fn action_complete_step(invocation: &ToolInvocation, plans_dir: &Path) -> Result<ToolResult> {
+fn action_complete_step(invocation: &ToolInvocation, store: &PlanStore) -> Result<ToolResult> {
     let plan_id = required_plan_id(invocation)?;
     let step_index = helpers::optional_u64(&invocation.input, "step_index")
         .ok_or_else(|| anyhow::anyhow!("missing required 'step_index'"))?
@@ -286,7 +326,9 @@ fn action_complete_step(invocation: &ToolInvocation, plans_dir: &Path) -> Result
         .or_else(|| helpers::optional_string(&invocation.input, "notes"))
         .unwrap_or_default();
 
-    let mut plan = load_plan(&plan_id, plans_dir)?;
+    let mut plan = store
+        .get(&plan_id)?
+        .ok_or_else(|| anyhow::anyhow!("plan '{plan_id}' not found"))?;
 
     if step_index >= plan.steps.len() {
         return Ok(ToolResult {
@@ -309,14 +351,13 @@ fn action_complete_step(invocation: &ToolInvocation, plans_dir: &Path) -> Result
     plan.steps[step_index].completed = true;
     plan.steps[step_index].notes = notes;
 
-    // Auto-complete the plan if all steps are done.
     let all_done = plan.steps.iter().all(|s| s.completed);
-    if all_done && plan.status == PlanStatus::Active {
+    if all_done && matches!(plan.status, PlanStatus::Active | PlanStatus::Proposed) {
         plan.status = PlanStatus::Completed;
     }
 
-    plan.updated_at = current_unix_millis();
-    save_plan(&plan, plans_dir)?;
+    plan.updated_at = now_ms();
+    store.upsert(&plan)?;
 
     let completed_count = plan.steps.iter().filter(|s| s.completed).count();
     let total = plan.steps.len();
@@ -336,28 +377,23 @@ fn action_complete_step(invocation: &ToolInvocation, plans_dir: &Path) -> Result
     ))
 }
 
-fn action_get(invocation: &ToolInvocation, plans_dir: &Path) -> Result<ToolResult> {
+fn action_get(invocation: &ToolInvocation, store: &PlanStore) -> Result<ToolResult> {
     let plan_id = required_plan_id(invocation)?;
-    let plan = load_plan(&plan_id, plans_dir)?;
+    let plan = store
+        .get(&plan_id)?
+        .ok_or_else(|| anyhow::anyhow!("plan '{plan_id}' not found"))?;
     Ok(helpers::ok(invocation.id.clone(), plan_to_json(&plan)))
 }
 
-fn action_list(invocation: &ToolInvocation, plans_dir: &Path) -> Result<ToolResult> {
+fn action_list(
+    invocation: &ToolInvocation,
+    store: &PlanStore,
+    project_id: &str,
+) -> Result<ToolResult> {
     let filter = helpers::optional_string(&invocation.input, "filter_status");
-    let plans = load_all_plans(plans_dir)?;
+    let plans = store.list(project_id, filter.as_deref(), MAX_PLANS)?;
 
-    let filtered: Vec<&Plan> = plans
-        .iter()
-        .filter(|p| {
-            filter
-                .as_deref()
-                .map(|f| format!("{}", p.status) == f)
-                .unwrap_or(true)
-        })
-        .take(MAX_PLANS)
-        .collect();
-
-    let summaries: Vec<Value> = filtered
+    let summaries: Vec<Value> = plans
         .iter()
         .map(|p| {
             json!({
@@ -381,12 +417,18 @@ fn action_list(invocation: &ToolInvocation, plans_dir: &Path) -> Result<ToolResu
     ))
 }
 
-fn action_active(plans_dir: &Path) -> Result<ToolResult> {
-    let plans = load_all_plans(plans_dir)?;
-    let active = plans.iter().find(|p| p.status == PlanStatus::Active);
-
-    match active {
-        Some(plan) => Ok(helpers::ok("active".to_string(), plan_to_json(plan))),
+fn action_active(store: &PlanStore, project_id: &str) -> Result<ToolResult> {
+    // Prefer active; fall back to proposed (awaiting user review).
+    let plan = store
+        .active(project_id)?
+        .or_else(|| {
+            store
+                .list(project_id, Some("proposed"), 1)
+                .ok()
+                .and_then(|mut v| v.pop())
+        });
+    match plan {
+        Some(plan) => Ok(helpers::ok("active".to_string(), plan_to_json(&plan))),
         None => Ok(helpers::ok(
             "active".to_string(),
             json!({
@@ -400,29 +442,162 @@ fn action_active(plans_dir: &Path) -> Result<ToolResult> {
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
+struct ParsedCreate {
+    title: String,
+    description: String,
+    body_markdown: String,
+    steps: Vec<PlanStep>,
+}
+
 fn required_plan_id(invocation: &ToolInvocation) -> Result<String> {
     helpers::required_string(&invocation.input, "plan_id").map(|s| s.to_string())
 }
 
-fn derive_plan_title(description: &str, steps: &[PlanStep]) -> String {
+fn derive_plan_title(description: &str, steps: &[PlanStep], body: &str) -> String {
     if !description.trim().is_empty() {
-        return description.trim().to_string();
+        let first = description
+            .lines()
+            .map(str::trim)
+            .find(|l| !l.is_empty())
+            .unwrap_or("Plan");
+        return truncate_title(first);
+    }
+    if let Some(heading) = markdown_title(body) {
+        return heading;
     }
     steps
         .first()
         .map(|step| step.description.trim())
         .filter(|title| !title.is_empty())
-        .unwrap_or("Plan")
-        .to_string()
+        .map(truncate_title)
+        .unwrap_or_else(|| "Plan".to_string())
+}
+
+fn truncate_title(s: &str) -> String {
+    let t = s.trim();
+    if t.chars().count() <= 80 {
+        t.to_string()
+    } else {
+        let mut out: String = t.chars().take(79).collect();
+        out.push('…');
+        out
+    }
+}
+
+fn markdown_title(body: &str) -> Option<String> {
+    for line in body.lines() {
+        let t = line.trim();
+        if t.is_empty() {
+            continue;
+        }
+        if let Some(rest) = t.strip_prefix("# ") {
+            let title = rest.trim();
+            if !title.is_empty() {
+                return Some(truncate_title(title));
+            }
+        }
+        // First non-empty non-heading line as weak title fallback.
+        return Some(truncate_title(t.trim_start_matches('#').trim()));
+    }
+    None
+}
+
+/// Resolve create payload from the shapes frontier agentic models actually emit:
+/// - navi native: steps:[{description}]
+/// - string list: steps:["a","b"]
+/// - CreatePlan/TodoWrite: todos:[{id,content}]
+/// - CreatePlan markdown: plan/body/body_markdown/content
+fn parse_create_payload(input: &Value) -> Result<ParsedCreate> {
+    let mut description =
+        helpers::optional_string(input, "description").unwrap_or_default();
+    if description.trim().is_empty() {
+        if let Some(overview) = helpers::optional_string(input, "overview") {
+            description = overview;
+        }
+    }
+
+    let body_markdown = first_nonempty_string(input, &["plan", "body", "body_markdown", "content"])
+        .unwrap_or_default();
+
+    let mut steps = parse_step_list(input.get("steps"))?;
+    if steps.is_empty() {
+        steps = parse_step_list(input.get("todos"))?;
+    }
+    if steps.is_empty() && !body_markdown.trim().is_empty() {
+        steps = steps_from_markdown(&body_markdown);
+    }
+
+    // Soft recovery for title/description-only creates (common model mistake).
+    // Prefer a real checklist next turn; still open review rather than empty_steps loop.
+    if steps.is_empty() {
+        let title_hint = helpers::optional_string(input, "title").unwrap_or_default();
+        let seed = if !description.trim().is_empty() {
+            description.trim().to_string()
+        } else if !title_hint.trim().is_empty() {
+            format!("Implement: {}", title_hint.trim())
+        } else {
+            String::new()
+        };
+        if !seed.is_empty() {
+            steps.push(PlanStep {
+                description: seed,
+                completed: false,
+                notes: String::new(),
+            });
+        }
+    }
+
+    let title = helpers::optional_string(input, "title")
+        .filter(|title| !title.trim().is_empty())
+        .unwrap_or_else(|| derive_plan_title(&description, &steps, &body_markdown));
+
+    Ok(ParsedCreate {
+        title,
+        description,
+        body_markdown,
+        steps,
+    })
+}
+
+fn first_nonempty_string(input: &Value, keys: &[&str]) -> Option<String> {
+    for key in keys {
+        if let Some(s) = helpers::optional_string(input, key) {
+            if !s.trim().is_empty() {
+                return Some(s);
+            }
+        }
+    }
+    None
 }
 
 fn parse_steps(input: &Value) -> Result<Vec<PlanStep>> {
-    let Some(steps_value) = input.get("steps") else {
+    // Prefer explicit steps, then todos (update path).
+    let mut steps = parse_step_list(input.get("steps"))?;
+    if steps.is_empty() {
+        steps = parse_step_list(input.get("todos"))?;
+    }
+    Ok(steps)
+}
+
+fn parse_step_list(value: Option<&Value>) -> Result<Vec<PlanStep>> {
+    let Some(steps_value) = value else {
         return Ok(Vec::new());
     };
+    // Single string treated as one step (models occasionally do this).
+    if let Some(s) = steps_value.as_str() {
+        let t = s.trim();
+        if t.is_empty() {
+            return Ok(Vec::new());
+        }
+        return Ok(vec![PlanStep {
+            description: t.to_string(),
+            completed: false,
+            notes: String::new(),
+        }]);
+    }
     let steps_array = steps_value
         .as_array()
-        .ok_or_else(|| anyhow::anyhow!("'steps' must be an array"))?;
+        .ok_or_else(|| anyhow::anyhow!("'steps'/'todos' must be an array or string"))?;
 
     if steps_array.len() > MAX_STEPS {
         return Err(anyhow::anyhow!(
@@ -432,75 +607,144 @@ fn parse_steps(input: &Value) -> Result<Vec<PlanStep>> {
         ));
     }
 
-    steps_array
+    let mut out = Vec::with_capacity(steps_array.len());
+    for s in steps_array {
+        if let Some(step) = coerce_step(s)? {
+            out.push(step);
+        }
+    }
+    Ok(out)
+}
+
+fn coerce_step(value: &Value) -> Result<Option<PlanStep>> {
+    if let Some(s) = value.as_str() {
+        let t = s.trim();
+        if t.is_empty() {
+            return Ok(None);
+        }
+        return Ok(Some(PlanStep {
+            description: t.to_string(),
+            completed: false,
+            notes: String::new(),
+        }));
+    }
+    let Some(obj) = value.as_object() else {
+        return Err(anyhow::anyhow!(
+            "each step must be a string or object with description/content"
+        ));
+    };
+    let description = ["description", "content", "title", "text", "name", "task"]
         .iter()
-        .map(|s| {
-            let description = s
-                .get("description")
+        .find_map(|k| obj.get(*k).and_then(Value::as_str))
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string);
+
+    // TodoWrite sometimes only has id; skip empty content.
+    let description = match description {
+        Some(d) => d,
+        None => {
+            if let Some(id) = obj.get("id").and_then(Value::as_str) {
+                let id = id.trim();
+                if id.is_empty() {
+                    return Ok(None);
+                }
+                // Prefer readable content; id alone is a weak step label.
+                id.replace('-', " ")
+            } else {
+                return Ok(None);
+            }
+        }
+    };
+
+    let completed = obj
+        .get("completed")
+        .and_then(Value::as_bool)
+        .or_else(|| {
+            obj.get("status")
                 .and_then(Value::as_str)
-                .ok_or_else(|| anyhow::anyhow!("each step must have a 'description'"))?
-                .to_string();
-            let completed = s.get("completed").and_then(Value::as_bool).unwrap_or(false);
-            let notes = s
-                .get("notes")
-                .and_then(Value::as_str)
-                .unwrap_or("")
-                .to_string();
-            Ok(PlanStep {
-                description,
-                completed,
-                notes,
-            })
+                .map(|s| matches!(s.to_ascii_lowercase().as_str(), "completed" | "done"))
         })
-        .collect()
+        .unwrap_or(false);
+    let notes = obj
+        .get("notes")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+
+    Ok(Some(PlanStep {
+        description,
+        completed,
+        notes,
+    }))
 }
 
-fn parse_status(s: &str) -> Result<PlanStatus> {
-    match s {
-        "active" => Ok(PlanStatus::Active),
-        "completed" => Ok(PlanStatus::Completed),
-        "abandoned" => Ok(PlanStatus::Abandoned),
-        _ => Err(anyhow::anyhow!(
-            "invalid status '{}', use active/completed/abandoned",
-            s
-        )),
-    }
-}
-
-fn save_plan(plan: &Plan, plans_dir: &Path) -> Result<()> {
-    fs::create_dir_all(plans_dir)
-        .with_context(|| format!("failed to create {}", plans_dir.display()))?;
-    let path = plans_dir.join(format!("{}.json", plan.id));
-    let data = serde_json::to_vec_pretty(plan)?;
-    fs::write(&path, data).with_context(|| format!("failed to write {}", path.display()))?;
-    Ok(())
-}
-
-fn load_plan(plan_id: &str, plans_dir: &Path) -> Result<Plan> {
-    let path = plans_dir.join(format!("{plan_id}.json"));
-    let content = fs::read_to_string(&path)
-        .with_context(|| format!("failed to read plan '{plan_id}' at {}", path.display()))?;
-    serde_json::from_str(&content).with_context(|| format!("failed to parse plan '{plan_id}'"))
-}
-
-fn load_all_plans(plans_dir: &Path) -> Result<Vec<Plan>> {
-    let mut plans = Vec::new();
-    if !plans_dir.exists() {
-        return Ok(plans);
-    }
-    for entry in fs::read_dir(plans_dir)? {
-        let entry = entry?;
-        let path = entry.path();
-        if path.extension().and_then(|e| e.to_str()) == Some("json") {
-            if let Ok(content) = fs::read_to_string(&path)
-                && let Ok(plan) = serde_json::from_str::<Plan>(&content)
-            {
-                plans.push(plan);
+/// Extract checklist items from markdown (Grok CreatePlan bodies).
+fn steps_from_markdown(body: &str) -> Vec<PlanStep> {
+    let mut steps = Vec::new();
+    for line in body.lines() {
+        let t = line.trim();
+        if t.is_empty() || t.starts_with('#') {
+            continue;
+        }
+        let item = t
+            .strip_prefix("- [ ] ")
+            .or_else(|| t.strip_prefix("- [x] "))
+            .or_else(|| t.strip_prefix("- [X] "))
+            .or_else(|| t.strip_prefix("* [ ] "))
+            .or_else(|| t.strip_prefix("- "))
+            .or_else(|| t.strip_prefix("* "))
+            .or_else(|| {
+                // "1. foo" / "1) foo"
+                let bytes = t.as_bytes();
+                let mut i = 0;
+                while i < bytes.len() && bytes[i].is_ascii_digit() {
+                    i += 1;
+                }
+                if i > 0 && i < bytes.len() && (bytes[i] == b'.' || bytes[i] == b')') {
+                    Some(t[i + 1..].trim())
+                } else {
+                    None
+                }
+            });
+        if let Some(text) = item {
+            let text = text.trim();
+            if text.is_empty() {
+                continue;
+            }
+            steps.push(PlanStep {
+                description: text.to_string(),
+                completed: false,
+                notes: String::new(),
+            });
+            if steps.len() >= MAX_STEPS {
+                break;
             }
         }
     }
-    plans.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
-    Ok(plans)
+    // If markdown had no list, use non-heading paragraphs as coarse steps (max 8).
+    if steps.is_empty() {
+        for para in body.split("\n\n") {
+            let t = para
+                .lines()
+                .map(str::trim)
+                .filter(|l| !l.is_empty() && !l.starts_with('#'))
+                .collect::<Vec<_>>()
+                .join(" ");
+            if t.chars().count() < 8 {
+                continue;
+            }
+            steps.push(PlanStep {
+                description: truncate_title(&t),
+                completed: false,
+                notes: String::new(),
+            });
+            if steps.len() >= 8 {
+                break;
+            }
+        }
+    }
+    steps
 }
 
 fn plan_to_json(plan: &Plan) -> Value {
@@ -529,6 +773,7 @@ fn plan_to_json(plan: &Plan) -> Value {
         "steps_completed": plan.steps.iter().filter(|s| s.completed).count(),
         "created_at": plan.created_at,
         "updated_at": plan.updated_at,
+        "needs_review": plan.status == PlanStatus::Proposed,
     })
 }
 
@@ -536,13 +781,6 @@ fn project_hash(project_dir: &Path) -> String {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     project_dir.hash(&mut hasher);
     format!("{:016x}", hasher.finish())
-}
-
-fn current_unix_millis() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis() as u64
 }
 
 #[cfg(test)]
@@ -553,8 +791,8 @@ mod tests {
         let td = tempfile::tempdir().expect("tempdir");
         let project = td.path().join("project");
         let data = td.path().join("data");
-        fs::create_dir_all(&project).unwrap();
-        fs::create_dir_all(&data).unwrap();
+        std::fs::create_dir_all(&project).unwrap();
+        std::fs::create_dir_all(&data).unwrap();
         let policy =
             SecurityPolicy::new(project, data, crate::config::SecurityConfig::default()).unwrap();
         (policy, td)
@@ -611,18 +849,93 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn create_plan_requires_steps() {
+    async fn create_plan_title_only_soft_recovers() {
+        // Models frequently emit only action+title (CreatePlan habit). Soft-recover
+        // into a single seed step so the review modal can open instead of empty_steps.
         let (policy, _td) = temp_policy();
         let tool = PlanTool::new(policy);
         let inv = make_invocation(
             "c2",
             json!({
                 "action": "create",
-                "title": "Empty plan"
+                "title": "Simulador gráfico OBR EV3"
             }),
         );
         let result = tool.invoke(inv).await.unwrap();
+        assert!(result.ok, "title-only create should soft-recover: {:?}", result.output);
+        assert_eq!(result.output["steps_count"], 1);
+        assert!(
+            result.output["steps"][0]["description"]
+                .as_str()
+                .unwrap()
+                .contains("Simulador")
+        );
+    }
+
+    #[tokio::test]
+    async fn create_plan_accepts_string_steps() {
+        let (policy, _td) = temp_policy();
+        let tool = PlanTool::new(policy);
+        let inv = make_invocation(
+            "c2s",
+            json!({
+                "action": "create",
+                "title": "Canvas sim",
+                "steps": ["Scaffold HTML", "Draw field", "Wire controls"]
+            }),
+        );
+        let result = tool.invoke(inv).await.unwrap();
+        assert!(result.ok);
+        assert_eq!(result.output["steps_count"], 3);
+    }
+
+    #[tokio::test]
+    async fn create_plan_accepts_todos_createplan_shape() {
+        let (policy, _td) = temp_policy();
+        let tool = PlanTool::new(policy);
+        let inv = make_invocation(
+            "c2t",
+            json!({
+                "action": "create",
+                "plan": "# Canvas simulator\n\nUse HTML+Canvas without pygame.\n\n- Build index.html\n- Implement robot draw loop\n- Add keyboard controls",
+                "todos": [
+                    { "id": "scaffold", "content": "Scaffold HTML/CSS/JS" },
+                    { "id": "draw", "content": "Draw OBR field" }
+                ]
+            }),
+        );
+        let result = tool.invoke(inv).await.unwrap();
+        assert!(result.ok, "{:?}", result.output);
+        // todos take precedence over markdown list extraction when present
+        assert_eq!(result.output["steps_count"], 2);
+        assert_eq!(result.output["title"], "Canvas simulator");
+    }
+
+    #[tokio::test]
+    async fn create_plan_accepts_markdown_only() {
+        let (policy, _td) = temp_policy();
+        let tool = PlanTool::new(policy);
+        let inv = make_invocation(
+            "c2m",
+            json!({
+                "action": "create",
+                "body": "# Fix footer meter\n\n1. Read usage state\n2. Wire label\n3. Smoke test UI"
+            }),
+        );
+        let result = tool.invoke(inv).await.unwrap();
+        assert!(result.ok, "{:?}", result.output);
+        assert_eq!(result.output["title"], "Fix footer meter");
+        assert_eq!(result.output["steps_count"], 3);
+    }
+
+    #[tokio::test]
+    async fn create_plan_rejects_truly_empty() {
+        let (policy, _td) = temp_policy();
+        let tool = PlanTool::new(policy);
+        let inv = make_invocation("c2e", json!({ "action": "create" }));
+        let result = tool.invoke(inv).await.unwrap();
         assert!(!result.ok);
+        assert_eq!(result.output["error_code"], "empty_steps");
     }
 
     #[tokio::test]
@@ -658,7 +971,11 @@ mod tests {
         let result = tool.invoke(inv).await.unwrap();
         assert!(result.ok);
         assert_eq!(result.output["completed_steps"], 1);
-        assert_eq!(result.output["plan_status"], "active");
+        // Created plans start as proposed until TUI review.
+        assert!(
+            result.output["plan_status"] == "proposed"
+                || result.output["plan_status"] == "active"
+        );
 
         // Complete step 1 → plan auto-completes
         let inv = make_invocation(

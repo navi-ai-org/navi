@@ -290,6 +290,51 @@ impl Harness {
         self
     }
 
+    /// Select a message block by message index (for UI visual tests).
+    pub fn select_message_block(&mut self, message_index: usize) -> &mut Self {
+        crate::chat_blocks::select_chat_block(
+            &mut self.app,
+            crate::state::ChatLineSource::Message(message_index),
+        );
+        self
+    }
+
+    /// Select a tool-result block by invocation id (for UI visual tests).
+    pub fn select_tool_block(&mut self, invocation_id: impl Into<String>) -> &mut Self {
+        crate::chat_blocks::select_chat_block(
+            &mut self.app,
+            crate::state::ChatLineSource::ToolResult(invocation_id.into()),
+        );
+        self
+    }
+
+    /// Replace the background-command list (for modal visual tests).
+    pub fn set_background_commands(
+        &mut self,
+        commands: Vec<navi_sdk::BackgroundCommandSnapshot>,
+    ) -> &mut Self {
+        crate::background::replace_background_commands(&mut self.app, commands);
+        self
+    }
+
+    /// Force-open a tool body by invocation id (user expand).
+    pub fn expand_tool(&mut self, id: impl Into<String>) -> &mut Self {
+        let id = id.into();
+        self.app.collapsed_tool_results.remove(&id);
+        self.app.expanded_tool_results.insert(id);
+        self.app.chat_render_cache.borrow_mut().signature_hash = 0;
+        self
+    }
+
+    /// Write the current buffer text to `path` for manual UI review.
+    pub fn dump_screen(&self, path: impl AsRef<std::path::Path>) {
+        let path = path.as_ref();
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let _ = std::fs::write(path, format!("{}\n", self.buffer_text()));
+    }
+
     /// Clear the chat message log.
     pub fn clear_messages(&mut self) -> &mut Self {
         self.app.messages.clear();

@@ -23,6 +23,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 
 const QUESTION_TOOL_NAME: &str = "question";
+const PLAN_TOOL_NAME: &str = "plan";
 
 struct ModelTurnOutput {
     text: String,
@@ -42,6 +43,8 @@ pub struct TurnContext {
     pub event_tx: Option<tokio::sync::mpsc::UnboundedSender<AgentEvent>>,
     pub approval_resolver: crate::runtime::ApprovalResolver,
     pub question_resolver: crate::runtime::QuestionResolver,
+    pub plan_review_resolver: crate::runtime::PlanReviewResolver,
+    pub sudo_password_resolver: crate::runtime::SudoPasswordResolver,
     pub compact_state: Arc<tokio::sync::Mutex<CompactState>>,
     pub harness_config: crate::config::HarnessConfig,
     pub include_tool_prompt_manifest: bool,
@@ -319,7 +322,7 @@ fn build_model_request(ctx: &TurnContext, messages: &[ModelMessage]) -> ModelReq
     let config = ctx.active_config();
     let thinking_level = config.tui.thinking_level.trim().to_lowercase();
 
-    let thinking = match thinking_level.as_str() {
+    let mut thinking = match thinking_level.as_str() {
         "adaptive" => {
             let tool_names: Vec<String> = ctx.tool_executor.tool_names();
             ThinkingConfig::resolve_adaptive(messages, &tool_names, 0)
@@ -332,8 +335,36 @@ fn build_model_request(ctx: &TurnContext, messages: &[ModelMessage]) -> ModelReq
         _ => ThinkingConfig::Adaptive,
     };
 
+    // Clamp to registry reasoning_levels for the active model when available.
+    let model_name = ctx.active_model_name();
+    let provider_id = config.model.provider.clone();
+    if let Some(provider) = crate::config::resolve_provider_config(&config, &provider_id) {
+        if let Some(model) = provider
+            .models
+            .iter()
+            .find(|m| m.name == model_name || m.name.eq_ignore_ascii_case(&model_name))
+        {
+            thinking = crate::resolve_model_thinking_level(
+                thinking,
+                model.supports_thinking,
+                &model.reasoning_levels,
+                model.default_reasoning_effort.as_deref(),
+            );
+            // Adaptive already resolved above when config said adaptive; if registry
+            // forced Adaptive again (shouldn't), leave as-is.
+            if matches!(thinking, ThinkingConfig::Adaptive) {
+                let tool_names: Vec<String> = ctx.tool_executor.tool_names();
+                thinking = ThinkingConfig::resolve_adaptive(messages, &tool_names, 0);
+                thinking = thinking.clamp_to_supported(&crate::thinking_levels_for_model(
+                    model.supports_thinking,
+                    &model.reasoning_levels,
+                ));
+            }
+        }
+    }
+
     ModelRequest {
-        model: ctx.active_model_name(),
+        model: model_name,
         instructions: ctx
             .instructions
             .read()
@@ -860,10 +891,16 @@ async fn execute_tool_call(
         return (invocation, result, observation);
     }
 
-    let result = match ctx.tool_executor.validate(&invocation) {
+    let tool_ctx = crate::tool::ToolInvocationContext {
+        event_tx: ctx.event_tx.clone(),
+        sudo_password_resolver: Some(ctx.sudo_password_resolver.clone()),
+        cancel_token: Some(ctx.cancel_token.clone()),
+    };
+
+    let mut result = match ctx.tool_executor.validate(&invocation) {
         SecurityDecision::Allow => {
             ctx.tool_executor
-                .invoke_with_event_tx(invocation.clone(), ctx.event_tx.clone())
+                .invoke_with_full_context(invocation.clone(), tool_ctx, false)
                 .await
         }
         SecurityDecision::NeedsApproval(risk) => {
@@ -871,6 +908,18 @@ async fn execute_tool_call(
         }
         SecurityDecision::Deny(reason) => tool_error_result(&invocation, reason),
     };
+
+    // Plan create: block the turn until the user finishes the review modal.
+    if result.ok
+        && invocation.tool_name == PLAN_TOOL_NAME
+        && result
+            .output
+            .get("needs_review")
+            .and_then(|v| v.as_bool())
+            == Some(true)
+    {
+        result = wait_for_plan_review(ctx, &invocation, result).await;
+    }
 
     if ctx.cancellation_requested() {
         let result = tool_error_result(&invocation, "turn cancelled");
@@ -890,6 +939,131 @@ async fn execute_tool_call(
         .harness
         .compact_tool_observation(&invocation, &result, policy);
     (invocation, result, observation)
+}
+
+/// Block after `plan(create)` until the TUI resolves the review modal.
+async fn wait_for_plan_review(
+    ctx: &TurnContext,
+    invocation: &crate::tool::ToolInvocation,
+    created: crate::tool::ToolResult,
+) -> crate::tool::ToolResult {
+    let Some(ref tx) = ctx.event_tx else {
+        // Headless: return create result without blocking.
+        return created;
+    };
+
+    let plan_id = created
+        .output
+        .get("plan_id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let title = created
+        .output
+        .get("title")
+        .and_then(|v| v.as_str())
+        .unwrap_or("Plan")
+        .to_string();
+    let description = created
+        .output
+        .get("description")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let steps: Vec<String> = created
+        .output
+        .get("steps")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|s| {
+                    s.get("description")
+                        .and_then(|d| d.as_str())
+                        .map(str::to_string)
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let request = crate::event::PlanReviewRequest {
+        id: invocation.id.clone(),
+        plan_id: plan_id.clone(),
+        title,
+        description,
+        steps,
+    };
+
+    let answer_rx = ctx.plan_review_resolver.register(invocation.id.clone());
+    let _ = tx.send(AgentEvent::PlanReviewRequested(request));
+
+    let response = tokio::select! {
+        response = answer_rx => response.ok(),
+        _ = ctx.cancel_token.notified() => None,
+    };
+
+    match response {
+        Some(resp) => {
+            let _ = tx.send(AgentEvent::PlanReviewResolved(resp.clone()));
+            let decision = match resp.decision {
+                crate::event::PlanReviewDecision::Approve => "approve",
+                crate::event::PlanReviewDecision::RequestChanges => "request_changes",
+                crate::event::PlanReviewDecision::Quit => "quit",
+            };
+            let comments_json: Vec<Value> = resp
+                .comments
+                .iter()
+                .map(|c| {
+                    json!({
+                        "start_line": c.start_line,
+                        "end_line": c.end_line,
+                        "text": c.text,
+                    })
+                })
+                .collect();
+            let ok = !matches!(resp.decision, crate::event::PlanReviewDecision::Quit);
+            let mut output = created.output;
+            if let Some(obj) = output.as_object_mut() {
+                obj.insert("decision".into(), json!(decision));
+                obj.insert("comments".into(), json!(comments_json));
+                obj.insert("freeform".into(), json!(resp.freeform));
+                obj.insert(
+                    "message".into(),
+                    json!(match resp.decision {
+                        crate::event::PlanReviewDecision::Approve =>
+                            "User approved the plan. Proceed with implementation.",
+                        crate::event::PlanReviewDecision::RequestChanges =>
+                            "User requested changes to the plan. Revise based on comments.",
+                        crate::event::PlanReviewDecision::Quit =>
+                            "User abandoned the plan. Do not implement it.",
+                    }),
+                );
+                // Still true that review finished; model should not open another modal.
+                obj.insert("needs_review".into(), json!(false));
+                obj.insert("review_complete".into(), json!(true));
+            }
+            crate::tool::ToolResult {
+                invocation_id: invocation.id.clone(),
+                ok,
+                output,
+            }
+        }
+        None => {
+            let mut output = created.output;
+            if let Some(obj) = output.as_object_mut() {
+                obj.insert("decision".into(), json!("cancelled"));
+                obj.insert("needs_review".into(), json!(false));
+                obj.insert(
+                    "message".into(),
+                    json!("Plan review cancelled (turn cancelled)."),
+                );
+            }
+            crate::tool::ToolResult {
+                invocation_id: invocation.id.clone(),
+                ok: false,
+                output,
+            }
+        }
+    }
 }
 
 async fn ask_user_question(
@@ -1047,7 +1221,15 @@ async fn approve_and_invoke_tool(
             let is_approved = matches!(decision, crate::event::ApprovalDecision::Approved { .. });
             if is_approved {
                 ctx.tool_executor
-                    .invoke_approved_with_event_tx(invocation.clone(), ctx.event_tx.clone())
+                    .invoke_with_full_context(
+                        invocation.clone(),
+                        crate::tool::ToolInvocationContext {
+                            event_tx: ctx.event_tx.clone(),
+                            sudo_password_resolver: Some(ctx.sudo_password_resolver.clone()),
+                            cancel_token: Some(ctx.cancel_token.clone()),
+                        },
+                        true,
+                    )
                     .await
             } else {
                 tool_error_result(invocation, "user denied tool execution")

@@ -16,9 +16,9 @@
     │                                                                      │
     │                                                                      │
     │                                                                      │
-  ▌ │                                                                      │
-  ▌ │                                                                      │
-  ▌ │ ↑/↓ choose  ·  connect provider ctrl+e  ·  favorite ctrl+f           │
-  ▌ ╰──────────────────────────────────────────────────────────────────────╯d
-  ▌
-               ctrl+p commands · ctrl+m models · ctrl+enter send · ctrl+v image
+    │                                                                      │
+    │                                                                      │
+  ╭─│ ↑/↓ choose  ·  connect provider ctrl+e  ·  favorite ctrl+f           │─╮
+  │ ╰──────────────────────────────────────────────────────────────────────╯ │
+  ╰──────────────────────────────────────────────────────────────────────────╯
+                                 model (adaptive) · 0 / 200k (0%) · restricted

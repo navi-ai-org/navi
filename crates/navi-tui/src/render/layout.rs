@@ -1,5 +1,5 @@
 use ratatui::layout::Rect;
-use ratatui::prelude::{Frame, Line, Modifier, Span, Style};
+use ratatui::prelude::{Color, Frame, Line, Modifier, Span, Style};
 use ratatui::widgets::{Block, BorderType, Borders};
 
 use crate::theme::*;
@@ -45,16 +45,27 @@ pub(crate) fn fill_modal_surface(frame: &mut Frame<'_>, area: Rect) {
     opaque_fill(frame, area, modal_style());
 }
 
+/// Dim the content under a modal without erasing it.
+///
+/// Keeps chat/composer glyphs visible (faded) so the modal feels layered
+/// instead of wiping the whole TUI to a solid blank. The modal panel itself
+/// is still painted opaque via `clear_modal_area` / `fill_modal_surface`.
 pub(crate) fn fill_modal_scrim(frame: &mut Frame<'_>, area: Rect) {
     let area = area.intersection(frame.area());
     if area.is_empty() {
         return;
     }
     let buf = frame.buffer_mut();
+    let dim_fg = ghost();
     for y in area.top()..area.bottom() {
         for x in area.left()..area.right() {
             let cell = &mut buf[(x, y)];
-            cell.set_style(cell.style().add_modifier(Modifier::DIM));
+            // Keep symbols — only fade ink. Do not blank the cell.
+            cell.modifier.insert(Modifier::DIM);
+            // Soften bright foregrounds so the modal card reads as the focus.
+            if cell.fg != Color::Reset {
+                cell.set_fg(dim_fg);
+            }
         }
     }
 }
@@ -146,6 +157,37 @@ mod tests {
             assert_eq!(buf[(3, 0)].symbol(), " ");
             assert_eq!(buf[(4, 0)].symbol(), "Z");
             assert_eq!(buf[(2, 0)].bg, modal_bg());
+        });
+    }
+
+    #[test]
+    fn fill_modal_scrim_dims_without_erasing_content() {
+        with_palette(&ThemeId::Lain.palette(), || {
+            let backend = TestBackend::new(8, 1);
+            let mut terminal = Terminal::new(backend).expect("terminal");
+            terminal
+                .draw(|frame| {
+                    for (x, ch) in "restricd".chars().enumerate() {
+                        let cell = &mut frame.buffer_mut()[(x as u16, 0)];
+                        cell.set_symbol(&ch.to_string());
+                        cell.set_fg(Color::White);
+                    }
+                    fill_modal_scrim(frame, Rect::new(0, 0, 8, 1));
+                })
+                .expect("draw");
+
+            let buf = terminal.backend().buffer();
+            for (x, ch) in "restricd".chars().enumerate() {
+                assert_eq!(
+                    buf[(x as u16, 0)].symbol(),
+                    ch.to_string(),
+                    "scrim must keep glyph at {x}"
+                );
+                assert!(
+                    buf[(x as u16, 0)].modifier.contains(Modifier::DIM),
+                    "scrim must dim cell {x}"
+                );
+            }
         });
     }
 }

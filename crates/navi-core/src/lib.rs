@@ -22,6 +22,7 @@ pub mod model_router;
 pub mod operational_memory;
 pub mod patch;
 pub mod plan_mode;
+pub mod plan_store;
 pub mod prompt;
 mod provider_id;
 pub mod registry;
@@ -55,13 +56,15 @@ pub use compact::{
     AUTO_COMPACT_THRESHOLD_PERCENT, CompactState, CompactThreshold,
 };
 pub use recap::{
-    local_recap, llm_recap, should_suppress_recap, RECAP_LONG_TAIL_CHARS,
+    local_recap, local_recap_with_tools, llm_recap, should_suppress_recap, RECAP_LONG_TAIL_CHARS,
+    RECAP_MAX_DISPLAY_CHARS,
 };
 pub use config::{
     AttachmentModelsConfig, BackgroundModelEntry, BackgroundModelsConfig, GoalsConfig,
     HarnessProfile, LoadedConfig, McpConfig, McpServerConfig, ModelOption, ModelTaskSize,
     NaviConfig, PermissionMode, PluginConfig, ProviderConfig, ProviderKind, ProviderModelConfig,
-    ProviderRequestOptions, SecurityConfig, ToolCallingMode, ToolPromptManifest, WasmPluginConfig,
+    ProviderRequestOptions, SecurityConfig, ToolCallingMode, ToolPromptManifest, VoiceConfig,
+    WasmPluginConfig,
     available_model_options, canonical_provider_id, default_request_options_for,
     effective_context_window, effective_tool_calling_mode, is_free_model_name,
     model_can_run_publicly, model_supports_attachment, provider_catalog,
@@ -83,9 +86,10 @@ pub use eval::{
     EvalSuite, eval_case_from_trace,
 };
 pub use event::{
-    AgentEvent, ApprovalDecision, ApprovalRequest, ApprovalRisk, QuestionOption, QuestionRequest,
-    QuestionResponse, RuntimeEvent, RuntimeEventKind, SubagentTranscriptItem,
-    SubagentTranscriptKind,
+    AgentEvent, ApprovalDecision, ApprovalRequest, ApprovalRisk, PlanReviewDecision,
+    PlanReviewRequest, PlanReviewResponse, QuestionOption, QuestionRequest, QuestionResponse,
+    RuntimeEvent, RuntimeEventKind, SubagentTranscriptItem, SubagentTranscriptKind,
+    SudoPasswordRequest, SudoPasswordResponse,
 };
 pub use goal::{
     CreateGoalTool, GetGoalTool, GoalExtension, GoalId, GoalRuntimeHandle, GoalService, GoalStatus,
@@ -101,11 +105,16 @@ pub use mcp_firewall::{McpFirewallDecision, McpFirewallPolicy, McpProvenance, Mc
 pub use model::{
     AttachmentKind, ContentPart, ModelMessage, ModelProvider, ModelRequest, ModelResponse,
     ModelRole, ModelStream, ModelStreamEvent, ThinkingConfig, ThinkingRequest,
+    DEFAULT_REASONING_LEVELS, parse_reasoning_level, resolve_effort_label,
+    resolve_model_thinking_level, thinking_levels_for_model,
 };
 pub use model_router::{ModelRoute, ModelRouteRole, ModelRouter, ModelScorecard};
 pub use operational_memory::{MemoryScope, OperationalMemoryEntry, OperationalMemoryStore};
 pub use patch::PatchProposal;
 pub use plan_mode::{AgentMode, ProposedPlan, ProposedPlanParser, is_tool_allowed_in_plan_mode};
+pub use plan_store::{
+    Plan, PlanLineComment, PlanStatus, PlanStep, PlanStore, format_plan_feedback, plan_view_lines,
+};
 pub use prompt::{PromptCache, RenderedPrompt, SystemPromptInput, SystemPromptRenderer};
 pub use provider_id::ProviderId;
 pub use replay_gate::{
@@ -119,7 +128,8 @@ pub use repo_intelligence::{
     search_symbols, search_text_matches,
 };
 pub use runtime::{
-    AgentRuntime, AgentRuntimeOptions, ApprovalResolver, QuestionResolver, TurnCanceller,
+    AgentRuntime, AgentRuntimeOptions, ApprovalResolver, PlanReviewResolver, QuestionResolver,
+    SudoPasswordResolver, TurnCanceller,
 };
 pub use runtime_components::{
     CompactionStrategy, DefaultCompactionStrategy, DefaultHarnessDriver, DefaultPromptBuilder,

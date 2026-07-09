@@ -264,6 +264,8 @@ fn minimal_fallback_providers() -> Vec<ProviderConfig> {
             tool_prompt_manifest: None,
             pricing_input_per_1m: None,
             pricing_output_per_1m: None,
+            reasoning_levels: Vec::new(),
+            default_reasoning_effort: None,
         }],
         request_options: crate::config::providers::default_request_options_for("openai"),
         ..Default::default()
@@ -650,6 +652,8 @@ mod tests {
                 max_output_tokens: None,
                 recommended_temperature: None,
                 supports_thinking: None,
+                reasoning_levels: Vec::new(),
+                default_reasoning_effort: None,
                 supports_attachments: None,
                 supports_images: None,
                 supports_audio: None,

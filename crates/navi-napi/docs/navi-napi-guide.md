@@ -668,6 +668,41 @@ const count = engine.memoryCount();
 const index = engine.memoryIndex();
 ```
 
+---
+
+## Voice / local dictation
+
+Engine-scoped ASR (not tied to a chat session). The **desktop client owns the mic** and pushes **16 kHz mono** PCM; NAVI owns model install and ONNX decode.
+
+```typescript
+const st = engine.voiceStatus();
+// → { enabled, engine, language, installed, model_dir, streaming_active, sample_rate, chunk_samples, recorders }
+
+if (!st.installed) {
+  await engine.voiceInit("nemotron_streaming"); // downloads into data_dir
+}
+
+const voiceEvents = engine.subscribeVoiceEvents();
+(async () => {
+  for (;;) {
+    const ev = await voiceEvents.next();
+    if (!ev) break;
+    // { type: "started" | "partial" | "final" | "error" | "stopped" | "model_missing", ... }
+  }
+})();
+
+engine.voiceStartStream("en-US");
+// from Web Audio / OS capture → Float32Array @ 16 kHz mono:
+engine.voicePushPcm(chunk);
+const finalText = engine.voiceEndStream();
+// or engine.voiceCancelStream();
+
+// Offline file path:
+const { text, tokenIds } = await engine.voiceTranscribeFile("/path/to/clip.wav", "pt-BR");
+```
+
+`voiceDoctor()` returns `{ ok, lines }` (same diagnostics as `navi voice doctor`).
+
 ### Memory Types
 
 - `user` — preferences, identity, working style

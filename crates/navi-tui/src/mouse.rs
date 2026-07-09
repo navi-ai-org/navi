@@ -143,6 +143,55 @@ fn cancel_active_turn(app: &mut TuiApp) {
     );
 }
 
+/// Hits that belong to a selectable chat block (message / tool / subagent).
+fn is_chat_block_hit(action: &HitAction) -> bool {
+    matches!(
+        action,
+        HitAction::ChatMessage(_)
+            | HitAction::ToolResult(_)
+            | HitAction::ToolGroup(_)
+            | HitAction::Subagent(_)
+            | HitAction::PreviewChatImage { .. }
+            | HitAction::MessageAction(_)
+    )
+}
+
+/// Second-click actions on an already-selected chat block (expand tool, menu, …).
+/// Kept separate from [`dispatch_hit`] so first-click can select without firing them.
+fn run_secondary_chat_click(app: &mut TuiApp, action: &HitAction) {
+    match action {
+        HitAction::ChatMessage(index) => {
+            if app
+                .messages
+                .get(*index)
+                .is_some_and(|message| message.role == crate::state::ChatRole::User)
+            {
+                app.message_action_target = Some(*index);
+                app.selected_message_action = 0;
+                replace_modal(app, crate::state::ModalKind::MessageActions);
+            }
+        }
+        HitAction::ToolResult(id) => {
+            toggle_tool_result(app, id);
+        }
+        HitAction::ToolGroup(ids) => {
+            let expand = ids.iter().any(|id| !app.expanded_tool_results.contains(id));
+            for id in ids {
+                if expand {
+                    app.expanded_tool_results.insert(id.clone());
+                } else {
+                    app.expanded_tool_results.remove(id);
+                }
+            }
+            app.chat_render_cache.borrow_mut().signature_hash = 0;
+        }
+        HitAction::Subagent(id) => {
+            app.open_subagent_view(id.clone());
+        }
+        _ => {}
+    }
+}
+
 pub(crate) fn handle_mouse(app: &mut TuiApp, mouse: MouseEvent) {
     match mouse.kind {
         MouseEventKind::ScrollDown => {
@@ -170,6 +219,7 @@ pub(crate) fn handle_mouse(app: &mut TuiApp, mouse: MouseEvent) {
 
             app.last_click_time = Some(now);
             app.last_click_pos = Some((mouse.column, mouse.row));
+            app.pending_chat_click = None;
 
             if is_double_click
                 && app.mode == Mode::Normal
@@ -184,21 +234,77 @@ pub(crate) fn handle_mouse(app: &mut TuiApp, mouse: MouseEvent) {
                     dispatch_hit(app, hit);
                     return;
                 }
+
+                // Chat lines always register hit regions. If we dispatch + return
+                // here, drag-to-select text can never start. Instead: select the
+                // block, start a text selection, and defer click actions (expand
+                // tool / message menu) until mouse-up if it was a click not a drag.
+                if app.mode == Mode::Normal && is_chat_block_hit(&hit.action) {
+                    app.hover_index = None;
+                    app.hovered_chat_source = chat_source_for_action(&hit.action);
+                    // Remember if this was already the selected block (for 2nd-click actions).
+                    let already_selected = app
+                        .hovered_chat_source
+                        .as_ref()
+                        .zip(app.selected_chat_source.as_ref())
+                        .is_some_and(|(a, b)| crate::chat_blocks::chat_sources_match(a, b));
+                    if let Some(source) = app.hovered_chat_source.clone() {
+                        crate::chat_blocks::select_chat_block(app, source);
+                    }
+                    if let Some(pos) = map_mouse_to_text(app, mouse.column, mouse.row) {
+                        let bound = app.hovered_chat_source.clone().or_else(|| {
+                            crate::chat_blocks::source_at_line(app, pos.0)
+                        });
+                        app.selection = Some(SelectionState {
+                            start: pos,
+                            end: pos,
+                            active: true,
+                            bound_source: bound,
+                        });
+                        // Defer 2nd-click actions until mouse-up so a drag can copy text.
+                        if already_selected {
+                            app.pending_chat_click = Some(hit.action);
+                        }
+                    } else if already_selected {
+                        // No chat_rect (tests / unmapped): can't drag-select — run 2nd-click now.
+                        run_secondary_chat_click(app, &hit.action);
+                    }
+                    // First click with no map: block is selected; nothing else.
+                    return;
+                }
+
                 app.hover_index = None;
                 app.hovered_chat_source = chat_source_for_action(&hit.action);
+                // Clicking outside a chat block clears block selection (composer,
+                // chrome, empty chrome hits, etc.).
+                if !is_chat_block_hit(&hit.action) {
+                    crate::chat_blocks::clear_selected_block(app);
+                    app.selection = None;
+                }
                 dispatch_hit(app, hit);
                 return;
             }
             app.hover_index = None;
             app.hovered_chat_source = None;
             if let Some(pos) = map_mouse_to_text(app, mouse.column, mouse.row) {
+                let bound = crate::chat_blocks::source_at_line(app, pos.0);
+                // Starting a text drag also selects that block (Grok entry focus).
+                if let Some(source) = bound.clone() {
+                    crate::chat_blocks::select_chat_block(app, source);
+                } else {
+                    // Empty gap inside the chat viewport — deselect.
+                    crate::chat_blocks::clear_selected_block(app);
+                }
                 app.selection = Some(SelectionState {
                     start: pos,
                     end: pos,
                     active: true,
+                    bound_source: bound,
                 });
             } else {
+                // Click completely outside chat text — clear block + drag selection.
                 app.selection = None;
+                crate::chat_blocks::clear_selected_block(app);
             }
         }
         MouseEventKind::Drag(MouseButton::Left) => {
@@ -218,11 +324,20 @@ pub(crate) fn handle_mouse(app: &mut TuiApp, mouse: MouseEvent) {
                     app.scroll_offset = app.scroll_offset.saturating_sub(1);
                 }
             }
-            if let Some(pos) = map_mouse_to_text_clamped(app, mouse.column, mouse.row)
-                && let Some(selection) = &mut app.selection
-                && selection.active
-            {
-                selection.end = pos;
+            if let Some(pos) = map_mouse_to_text_clamped(app, mouse.column, mouse.row) {
+                let bound = app
+                    .selection
+                    .as_ref()
+                    .filter(|s| s.active)
+                    .and_then(|s| s.bound_source.clone());
+                let active = app.selection.as_ref().is_some_and(|s| s.active);
+                if active {
+                    let clamped_line =
+                        crate::chat_blocks::clamp_line_to_block(app, pos.0, &bound);
+                    if let Some(selection) = &mut app.selection {
+                        selection.end = (clamped_line, pos.1);
+                    }
+                }
             }
         }
         MouseEventKind::Up(MouseButton::Left) => {
@@ -232,13 +347,39 @@ pub(crate) fn handle_mouse(app: &mut TuiApp, mouse: MouseEvent) {
                 .is_some_and(|selection| selection.active)
             {
                 let pos = map_mouse_to_text_clamped(app, mouse.column, mouse.row);
+                // Clamp end into the bound block so partial-line drags stay valid.
+                let pos = pos.map(|(line, col)| {
+                    let bound = app
+                        .selection
+                        .as_ref()
+                        .and_then(|s| s.bound_source.clone());
+                    (
+                        crate::chat_blocks::clamp_line_to_block(app, line, &bound),
+                        col,
+                    )
+                });
+                let was_drag = app.selection.as_ref().is_some_and(|s| {
+                    let end = pos.unwrap_or(s.end);
+                    s.start != end
+                });
                 if finish_selection(app, pos)
+                    && was_drag
                     && let Some(text) = selected_text(app)
                 {
                     copy_text_to_clipboard(app, &text);
+                    app.pending_chat_click = None;
+                } else if !was_drag {
+                    // Pure click on a chat block: run deferred 2nd-click action
+                    // (expand tool / user message menu / open subagent).
+                    if let Some(action) = app.pending_chat_click.take() {
+                        run_secondary_chat_click(app, &action);
+                    }
+                    // Clear zero-width selection so the highlight doesn't linger.
+                    app.selection = None;
                 }
                 return;
             }
+            app.pending_chat_click = None;
             if app.hit_test(mouse.column, mouse.row).is_some() {
                 app.selection = None;
                 return;
@@ -477,8 +618,15 @@ fn dispatch_hit(app: &mut TuiApp, hit: HitRegion<HitAction>) {
             }
         }
         HitAction::PluginRefresh => crate::plugins::refresh_plugin_catalog(app),
-        HitAction::BackgroundCommand(index) => {
+        HitAction::BackgroundCommandOpen(index) => {
             crate::background::open_background_command_output(app, index);
+        }
+        HitAction::BackgroundCommandCancel(index) => {
+            crate::background::cancel_background_command_at(app, index);
+        }
+        HitAction::HelpRow(index) => {
+            app.selected_help = index.min(crate::view::help::help_entry_count().saturating_sub(1));
+            crate::view::help::ensure_help_visible(app);
         }
         HitAction::ToolApprove => crate::tools::approve_pending_tool(app),
         HitAction::ToolDeny => crate::tools::deny_pending_tool(app),
@@ -508,10 +656,18 @@ fn dispatch_hit(app: &mut TuiApp, hit: HitRegion<HitAction>) {
             }
         }
         HitAction::ChatMessage(index) => {
-            if app
-                .messages
-                .get(index)
-                .is_some_and(|message| message.role == crate::state::ChatRole::User)
+            let source = crate::state::ChatLineSource::Message(index);
+            let already = app
+                .selected_chat_source
+                .as_ref()
+                .is_some_and(|s| crate::chat_blocks::chat_sources_match(s, &source));
+            crate::chat_blocks::select_chat_block(app, source);
+            // Second click on an already-selected user message opens actions.
+            if already
+                && app
+                    .messages
+                    .get(index)
+                    .is_some_and(|message| message.role == crate::state::ChatRole::User)
             {
                 app.message_action_target = Some(index);
                 app.selected_message_action = 0;
@@ -519,21 +675,46 @@ fn dispatch_hit(app: &mut TuiApp, hit: HitRegion<HitAction>) {
             }
         }
         HitAction::ToolResult(id) => {
-            toggle_tool_result(app, &id);
+            let source = crate::state::ChatLineSource::ToolResult(id.clone());
+            let already = app
+                .selected_chat_source
+                .as_ref()
+                .is_some_and(|s| crate::chat_blocks::chat_sources_match(s, &source));
+            crate::chat_blocks::select_chat_block(app, source);
+            // Second click expands/collapses the tool block.
+            if already {
+                toggle_tool_result(app, &id);
+            }
         }
         HitAction::ToolGroup(ids) => {
-            let expand = ids.iter().any(|id| !app.expanded_tool_results.contains(id));
-            for id in ids {
-                if expand {
-                    app.expanded_tool_results.insert(id);
-                } else {
-                    app.expanded_tool_results.remove(&id);
+            let source = crate::state::ChatLineSource::ToolGroup(ids.clone());
+            let already = app
+                .selected_chat_source
+                .as_ref()
+                .is_some_and(|s| crate::chat_blocks::chat_sources_match(s, &source));
+            crate::chat_blocks::select_chat_block(app, source);
+            if already {
+                let expand = ids.iter().any(|id| !app.expanded_tool_results.contains(id));
+                for id in ids {
+                    if expand {
+                        app.expanded_tool_results.insert(id);
+                    } else {
+                        app.expanded_tool_results.remove(&id);
+                    }
                 }
+                app.chat_render_cache.borrow_mut().signature_hash = 0;
             }
-            app.chat_render_cache.borrow_mut().signature_hash = 0;
         }
         HitAction::Subagent(id) => {
-            app.open_subagent_view(id);
+            let source = crate::state::ChatLineSource::Subagent(id.clone());
+            let already = app
+                .selected_chat_source
+                .as_ref()
+                .is_some_and(|s| crate::chat_blocks::chat_sources_match(s, &source));
+            crate::chat_blocks::select_chat_block(app, source);
+            if already {
+                app.open_subagent_view(id);
+            }
         }
         HitAction::MessageAction(index) => {
             run_message_action(app, index);
@@ -556,12 +737,54 @@ fn dispatch_hit(app: &mut TuiApp, hit: HitRegion<HitAction>) {
         HitAction::PreviewPendingImage(_) | HitAction::PreviewChatImage { .. } => {
             let _ = crate::view::image_preview::set_hover_from_action(app, &hit.action);
         }
+        HitAction::PlanReviewLine(line) => {
+            if let Some(r) = app.plan_review.as_mut() {
+                // Shift-free click: set cursor. Second click on same line starts comment.
+                let already = r.cursor_line == line;
+                r.cursor_line = line;
+                r.sel_anchor = None;
+                r.clamp_cursor();
+                r.ensure_cursor_visible(12);
+                r.focus = crate::plan_review::PlanReviewFocus::Preview;
+                if already {
+                    crate::plan_review::begin_comment(app);
+                }
+            }
+        }
+        HitAction::PlanReviewApprove => crate::plan_review::approve_plan(app),
+        HitAction::PlanReviewChanges => {
+            if let Some(r) = app.plan_review.as_mut() {
+                r.focus = crate::plan_review::PlanReviewFocus::Prompt;
+            }
+        }
+        HitAction::PlanReviewComment => crate::plan_review::begin_comment(app),
+        HitAction::PlanReviewQuit => crate::plan_review::quit_plan(app),
     }
 }
 
 fn toggle_tool_result(app: &mut TuiApp, id: &str) {
+    // Prefer policy-aware toggle when we still have the tool message.
+    for msg in &app.messages {
+        if let (Some(inv), Some(result)) = (&msg.tool_invocation, &msg.tool_result)
+            && result.invocation_id == id
+        {
+            crate::render::tool_policy::toggle_tool_body(
+                inv,
+                result,
+                app.full_tool_view,
+                &mut app.expanded_tool_results,
+                &mut app.collapsed_tool_results,
+            );
+            app.chat_render_cache.borrow_mut().signature_hash = 0;
+            return;
+        }
+    }
+    // Fallback: plain expanded set toggle.
     if !app.expanded_tool_results.remove(id) {
         app.expanded_tool_results.insert(id.to_string());
+        app.collapsed_tool_results.remove(id);
+    } else {
+        app.collapsed_tool_results.insert(id.to_string());
     }
     app.chat_render_cache.borrow_mut().signature_hash = 0;
 }
@@ -624,10 +847,11 @@ fn active_scroll_target(app: &TuiApp) -> Option<ScrollTarget> {
         Mode::BackgroundCommands => Some(ScrollTarget::BackgroundCommands),
         Mode::BackgroundCommandOutput => Some(ScrollTarget::BackgroundCommandOutput),
         Mode::MessageQueue => Some(ScrollTarget::MessageQueue),
+        Mode::Help => Some(ScrollTarget::Help),
+        Mode::PathMentions => Some(ScrollTarget::PathMentions),
         Mode::Settings
         | Mode::ThemePicker
         | Mode::Thinking
-        | Mode::Help
         | Mode::Debug
         | Mode::MessageActions
         | Mode::OAuth
@@ -641,7 +865,7 @@ fn active_scroll_target(app: &TuiApp) -> Option<ScrollTarget> {
         | Mode::BgModelPicker
         | Mode::AttachmentModels => None,
         Mode::Setup => None,
-        Mode::ConfirmPlan => None,
+        Mode::ConfirmPlan | Mode::SudoPassword => None,
     }
 }
 
@@ -751,6 +975,29 @@ fn scroll_by(app: &mut TuiApp, target: ScrollTarget, delta: isize) {
             app.queued_message_selected = selected;
             app.queued_message_scroll = scroll;
         }
+        ScrollTarget::Help => {
+            let visible = app.help_visible_rows.get().max(3);
+            let len = crate::view::help::help_entry_count();
+            app.help_scroll = shifted_scroll(app.help_scroll, len, visible, delta);
+            app.selected_help = app.selected_help.clamp(
+                app.help_scroll,
+                app.help_scroll
+                    .saturating_add(visible.saturating_sub(1))
+                    .min(len.saturating_sub(1)),
+            );
+        }
+        ScrollTarget::PathMentions => {
+            let len = crate::path_mentions::filtered_path_candidates(app).len();
+            let (selected, scroll) = shifted_select_state(
+                app.selected_path,
+                app.path_scroll,
+                len,
+                delta,
+                12,
+            );
+            app.selected_path = selected;
+            app.path_scroll = scroll;
+        }
     }
 }
 
@@ -806,6 +1053,22 @@ fn scroll_to(app: &mut TuiApp, target: ScrollTarget, offset: usize) {
             let len = app.queued_user_messages.len();
             app.queued_message_selected = offset.min(len.saturating_sub(1));
             app.queued_message_scroll = app.queued_message_selected;
+        }
+        ScrollTarget::Help => {
+            let len = crate::view::help::help_entry_count();
+            let visible = app.help_visible_rows.get().max(3);
+            app.help_scroll = offset.min(len.saturating_sub(visible));
+            app.selected_help = app.selected_help.clamp(
+                app.help_scroll,
+                app.help_scroll
+                    .saturating_add(visible.saturating_sub(1))
+                    .min(len.saturating_sub(1)),
+            );
+        }
+        ScrollTarget::PathMentions => {
+            let len = crate::path_mentions::filtered_path_candidates(app).len();
+            app.selected_path = offset.min(len.saturating_sub(1));
+            app.path_scroll = app.selected_path.saturating_sub(11);
         }
     }
 }
@@ -1124,6 +1387,36 @@ mod tests {
         assert_eq!(selected_text(&app).as_deref(), Some("hello"));
         assert!(!app.selection.as_ref().expect("selection").active);
         assert_eq!(app.mode, Mode::Normal);
+    }
+
+    #[test]
+    fn mouse_drag_on_full_line_chat_hit_selects_text() {
+        // Regression: chat lines register full-width hits; drag must still select text.
+        let mut app = test_app("");
+        seed_chat_cache(&mut app, &["hello world"], Rect::new(0, 0, 20, 1));
+        app.messages
+            .push(crate::state::ChatMessage::new(
+                crate::state::ChatRole::Assistant,
+                "hello world".into(),
+            ));
+        // Full line hit — matches real chat hit registration.
+        app.register_hit(
+            Rect::new(0, 0, 20, 1),
+            5,
+            "assistant line",
+            HitAction::ChatMessage(0),
+        );
+
+        handle_mouse(&mut app, mouse_down(0, 0));
+        assert!(
+            app.selection.as_ref().is_some_and(|s| s.active),
+            "drag selection must start even when a chat hit covers the line"
+        );
+        handle_mouse(&mut app, mouse_drag(5, 0));
+        handle_mouse(&mut app, mouse_up(5, 0));
+
+        assert_eq!(selected_text(&app).as_deref(), Some("hello"));
+        assert!(!app.selection.as_ref().expect("selection").active);
     }
 
     #[test]

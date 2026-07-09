@@ -11,6 +11,7 @@ mod mcp_cmd;
 mod memory_cmd;
 mod plugin_cmd;
 mod registry_cmd;
+mod voice_cmd;
 
 #[derive(Debug, Parser)]
 #[command(name = "navi")]
@@ -79,6 +80,11 @@ enum Commands {
     Memory {
         #[command(subcommand)]
         action: MemoryAction,
+    },
+    /// Local voice / dictation models and mic diagnostics
+    Voice {
+        #[command(subcommand)]
+        action: VoiceAction,
     },
     /// Run local harness eval suites
     Eval {
@@ -268,6 +274,31 @@ pub enum MemoryAction {
 }
 
 #[derive(Debug, Subcommand)]
+pub enum VoiceAction {
+    /// Show voice config and install status
+    Status,
+    /// Download a local ASR engine package into {data_dir}/voice/models/
+    Init {
+        /// Engine id: nemotron_streaming (default) | distil_whisper (later)
+        #[arg(long, default_value = "nemotron_streaming")]
+        engine: String,
+        /// Force re-download even if already installed
+        #[arg(long)]
+        force: bool,
+    },
+    /// Check recorders, model files, and checksums
+    Doctor,
+    /// Transcribe a WAV file with the installed Nemotron ONNX engine
+    Transcribe {
+        /// Path to a WAV file (any rate; resampled to 16 kHz mono)
+        path: String,
+        /// Language prompt: auto | en-US | pt-BR | …
+        #[arg(long, default_value = "auto")]
+        language: String,
+    },
+}
+
+#[derive(Debug, Subcommand)]
 enum McpAction {
     /// List configured MCP servers, connection status, and tools
     List,
@@ -367,6 +398,11 @@ async fn main() -> Result<()> {
     // Handle memory subcommand early
     if let Some(Commands::Memory { action }) = cli.command {
         return memory_cmd::handle_memory_command(action, &loaded_config, &cwd).await;
+    }
+
+    // Handle voice subcommand early
+    if let Some(Commands::Voice { action }) = cli.command {
+        return voice_cmd::handle_voice_command(action, &loaded_config).await;
     }
 
     // Handle eval subcommand early

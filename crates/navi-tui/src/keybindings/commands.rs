@@ -55,6 +55,9 @@ pub(crate) fn run_selected_command(app: &mut TuiApp) -> bool {
     };
 
     match command.action {
+        CommandAction::Help => {
+            crate::view::help::open_help(app);
+        }
         CommandAction::NewSession => {
             start_new_session(app);
             super::close_all_modals(app);
@@ -232,7 +235,8 @@ fn session_transcript(app: &TuiApp) -> String {
             AgentEvent::UserTaskSubmitted {
                 text,
                 content_parts: _,
-            } => {
+            submitted_at: _,
+        } => {
                 lines.push(format!("User:\n{}", text.trim_end()));
             }
             AgentEvent::ModelOutput { text, thinking: _ } => {

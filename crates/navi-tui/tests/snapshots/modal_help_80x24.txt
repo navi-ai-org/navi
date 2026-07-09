@@ -1,24 +1,24 @@
   main  /tmp/navi-test-project
 
-         ╭ Shortcuts ─────────────────────────────────────────────────╮
-    ███╗ │ ctrl+p      commands                                       │
-    ████╗│ ctrl+t      background tasks                               │
-    ██╔██│ ctrl+b      background agents                              │
-    ██║╚█│ ctrl+a      select input text                              │
-    ██║ ╚│ ctrl+v      paste image                                    │
-    ╚═╝  │ tab         refresh/provider actions                       │
-         │ ctrl+m      models                                         │
-         │ ctrl+n      new layer                                      │atch
-         │ ctrl+s      memory                                         │
-         │ ctrl+o      compact/full tool output                       │
-         │ ctrl+d      debug                                          │
-         │ shift+tab   cycle permission mode                          │
-         │ ctrl+enter  send prompt                                    │
-         │ enter       new line                                       │
-         │ ctrl+j      new line                                       │
-  ▌      │ /           commands when input is empty                   │
-  ▌      │                                                            │
-  ▌      ╰────────────────────────────────────────────────────────────╯
-  ▌ gpt-5.5 OpenAI · adaptive · 0 / 200k (0%)                      restricted
-  ▌
-               ctrl+p commands · ctrl+m models · ctrl+enter send · ctrl+v image
+    ╭ Help · Keyboard Shortcuts ───────────────────────────────────────────╮
+    │ NAVI TUI cheatsheet  ·  bindings are built-in                        │
+    │  General ──────────────────────────────────────────────────────────█ │
+    │ ctrl+p             Command palette                                 █ │
+    │ ctrl+.  /  ?       Open this help                                  █ │
+    │ ctrl+c             Quit NAVI                                       █ │
+    │ esc                Cancel / close                                  █ │
+    │                                                                    █ │
+    │  Composer ─────────────────────────────────────────────────────────█ │
+    │ ctrl+enter         Send prompt                                     │ │
+    │ enter  /  ctrl+j   Insert newline                                  │ │
+    │ ctrl+a             Select all input                                │ │
+    │ ctrl+v  /  ctrl+i  Paste image                                     │ │
+    │ /                  Commands (empty input)                          │ │
+    │                                                                    │ │
+    │  Scrollback ───────────────────────────────────────────────────────│ │
+    │ ↑  /  ↓            Select block                                    │ │
+    │ Fuzzy-search every action and slash-style command, then run it.      │
+  ╭─│ ↑↓/j k select   pgup/pgdn   esc/? close                              │─╮
+  │ ╰──────────────────────────────────────────────────────────────────────╯ │
+  ╰──────────────────────────────────────────────────────────────────────────╯
+                               gpt-5.5 (adaptive) · 0 / 200k (0%) · restricted

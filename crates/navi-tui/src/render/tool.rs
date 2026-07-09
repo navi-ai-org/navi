@@ -220,10 +220,9 @@ fn formatted_tool_output(invocation: &ToolInvocation, result: &ToolResult) -> Op
     if let Some(error) = obj.get("error").and_then(|v| v.as_str()) {
         content.push_str(&format!("Error: {error}\n"));
         if invocation.tool_name == "bash" {
-            let stdout = obj.get("stdout").and_then(|v| v.as_str()).unwrap_or("");
-            let stderr = obj.get("stderr").and_then(|v| v.as_str()).unwrap_or("");
-            append_text_block(&mut content, "Stdout", stdout, "");
-            append_text_block(&mut content, "Stderr", stderr, "");
+            // Grok-style: plain streams only — no Stdout:/``` fences or raw JSON dump.
+            append_shell_streams(obj, &mut content);
+            return Some(content);
         }
         append_json_section(&mut content, "Output", &result.output);
         return Some(content);
@@ -293,32 +292,14 @@ fn formatted_tool_output(invocation: &ToolInvocation, result: &ToolResult) -> Op
             content.push_str("```\n");
         }
     } else if invocation.tool_name == "write_file" || invocation.tool_name == "write" {
-        let path = obj
-            .get("path")
-            .and_then(|v| v.as_str())
-            .or_else(|| invocation.input.get("path").and_then(|v| v.as_str()))
-            .unwrap_or("file");
-        let (added, removed) = write_file_line_counts(invocation, result);
-        content.push_str(&format!(
-            "Edited {} (+{added} -{removed} lines)\n",
-            display_path(path)
-        ));
-        // Grok-style: show the change body as a fenced diff (green + / red −).
+        // Header already has "Write path (+N -M lines)". Body is just the diff.
         if let Some(diff) = write_display_diff(invocation, result) {
-            content.push('\n');
             append_diff_fence(&diff, &mut content);
         }
     } else if invocation.tool_name == "bash" {
-        let status = obj.get("status").and_then(|v| v.as_i64());
-        if let Some(status_code) = status {
-            content.push_str(&format!("Command exited with status {status_code}\n"));
-        } else {
-            content.push_str("Command completed\n");
-        }
-        let stdout = obj.get("stdout").and_then(|v| v.as_str()).unwrap_or("");
-        let stderr = obj.get("stderr").and_then(|v| v.as_str()).unwrap_or("");
-        append_text_block(&mut content, "Stdout", stdout, "");
-        append_text_block(&mut content, "Stderr", stderr, "");
+        // Grok-style shell body: raw stdout/stderr only. Header card already
+        // shows the command; skip "Command completed" / "Stdout:" chrome.
+        append_shell_streams(obj, &mut content);
     } else if invocation.tool_name == "grep" {
         content.push_str("Found matches:\n\n");
         if let Some(matches) = obj.get("matches").and_then(|v| v.as_array()) {
@@ -670,6 +651,52 @@ fn append_text_block(content: &mut String, title: &str, text: &str, language: &s
         ));
     }
     content.push_str("```\n");
+}
+
+/// Shell/tool stream body (Grok-style): plain text, no labels or code fences.
+/// Non-zero exit codes get a single `exit N` line above the streams.
+fn append_shell_streams(obj: &serde_json::Map<String, Value>, content: &mut String) {
+    let stdout = obj.get("stdout").and_then(|v| v.as_str()).unwrap_or("");
+    let stderr = obj.get("stderr").and_then(|v| v.as_str()).unwrap_or("");
+    let exit_code = obj
+        .get("exit_code")
+        .and_then(|v| v.as_i64())
+        .or_else(|| obj.get("status").and_then(|v| v.as_i64()));
+
+    if let Some(code) = exit_code
+        && code != 0
+    {
+        content.push_str(&format!("exit {code}\n"));
+    }
+
+    append_plain_stream(content, stdout);
+    if !stderr.is_empty() {
+        if !content.is_empty() && !content.ends_with('\n') {
+            content.push('\n');
+        }
+        // Separate stderr from stdout when both present (no "Stderr:" chrome).
+        if !stdout.is_empty() && !content.ends_with("\n\n") {
+            content.push('\n');
+        }
+        append_plain_stream(content, stderr);
+    }
+}
+
+fn append_plain_stream(content: &mut String, text: &str) {
+    if text.is_empty() {
+        return;
+    }
+    let truncated = truncate_to_lines(text, MAX_TOOL_RENDER_LINES);
+    content.push_str(truncated);
+    if !truncated.ends_with('\n') {
+        content.push('\n');
+    }
+    if truncated.len() < text.len() {
+        content.push_str(&format!(
+            "… (truncated, {} lines total)\n",
+            text.lines().count()
+        ));
+    }
 }
 
 fn pretty_json(value: &Value) -> String {
@@ -2591,6 +2618,47 @@ mod tests {
     }
 
     #[test]
+    fn bash_body_is_plain_streams_without_chrome() {
+        let content = tool_full_content(
+            &invocation("bash", json!({ "command": "ls -la" })),
+            &ok_result(json!({
+                "exit_code": 0,
+                "stdout": "total 8\ndrwxr-xr-x  2 user user 4096 Jan 1 12:00 .\n",
+                "stderr": ""
+            })),
+        );
+
+        assert!(content.contains("total 8\n"));
+        assert!(content.contains("drwxr-xr-x"));
+        assert!(
+            !content.contains("Command completed"),
+            "unexpected chrome: {content}"
+        );
+        assert!(
+            !content.contains("Stdout:"),
+            "unexpected Stdout label: {content}"
+        );
+        assert!(!content.contains("```"), "should not fence shell output: {content}");
+    }
+
+    #[test]
+    fn bash_body_shows_exit_code_only_on_failure() {
+        let content = tool_full_content(
+            &invocation("bash", json!({ "command": "false" })),
+            &ok_result(json!({
+                "exit_code": 1,
+                "stdout": "",
+                "stderr": "boom\n"
+            })),
+        );
+
+        assert!(content.contains("exit 1\n"));
+        assert!(content.contains("boom\n"));
+        assert!(!content.contains("Stderr:"));
+        assert!(!content.contains("Command completed"));
+    }
+
+    #[test]
     fn process_full_view_renders_stdout_and_structured_output() {
         let content = tool_full_content(
             &invocation("process", json!({ "command": "printf hi" })),
@@ -2701,7 +2769,8 @@ mod tests {
             })),
         );
 
-        assert!(content.contains("Edited src/main.rs (+1 -0 lines)"));
+        assert!(content.contains("Write src/main.rs (+1 -0 lines)"));
+        assert!(!content.contains("Edited src/main.rs"));
         assert!(content.contains("```diff\n"));
         assert!(content.contains("*** Add File: src/main.rs"));
         assert!(content.contains("+fn main() {}"));
@@ -2724,7 +2793,8 @@ mod tests {
             })),
         );
 
-        assert!(content.contains("Edited hello.txt (+2 -0 lines)"));
+        assert!(content.contains("Write hello.txt (+2 -0 lines)"));
+        assert!(!content.contains("Edited hello.txt"));
         assert!(content.contains("```diff\n"));
         assert!(content.contains("*** Add File: hello.txt"));
         assert!(content.contains("+a\n+b\n"));
