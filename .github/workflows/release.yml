@@ -400,10 +400,12 @@ jobs:
               exit 1
             fi
           done
+          # sha256sum prints "HASH  name" (two spaces); do not use a dummy field.
           sha256sum "${expected[@]}" | tee SHA256SUMS.txt
-          while read -r hash _ name; do
+          while read -r hash name; do
+            name="${name#\*}" # strip optional binary-mode marker
             [[ "$hash" =~ ^[0-9a-f]{64}$ ]] || { echo "bad hash: $hash"; exit 1; }
-            [[ -f "$name" ]] || { echo "sums name missing file: $name"; exit 1; }
+            [[ -n "$name" && -f "$name" ]] || { echo "sums name missing file: [$name]"; exit 1; }
           done < SHA256SUMS.txt
           ls -lh
 
