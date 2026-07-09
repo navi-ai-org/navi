@@ -57,12 +57,15 @@ pub(super) fn json_schema(properties: &[(&str, &str)], required: &[&str]) -> Val
 }
 
 pub(super) fn bash_json_schema() -> Value {
+    // Keep the schema free of oneOf/anyOf/allOf so model-facing simplification
+    // does not force `command` when the model only needs to poll/cancel/list.
+    // Runtime validation in BashTool::invoke still requires a usable mode.
     json!({
         "type": "object",
         "properties": {
             "command": {
                 "type": "string",
-                "description": "Shell command to run. Required when starting a new command."
+                "description": "Shell command to run when starting a new command. Omit when polling/cancelling a task_id or listing background tasks."
             },
             "description": {
                 "type": "string",
@@ -82,19 +85,14 @@ pub(super) fn bash_json_schema() -> Value {
             },
             "task_id": {
                 "type": "string",
-                "description": "Background task id returned by an earlier bash call."
+                "description": "Background task id returned by an earlier bash call. Use with action=poll/cancel (poll is default)."
             },
             "action": {
                 "type": "string",
                 "enum": ["poll", "cancel", "list"],
-                "description": "Use poll/cancel with task_id, or list to show background tasks."
+                "description": "Use poll/cancel with task_id, or list to show background tasks. Modes: command | task_id | action=list."
             }
         },
-        "anyOf": [
-            { "required": ["command"] },
-            { "required": ["task_id"] },
-            { "properties": { "action": { "const": "list" } }, "required": ["action"] }
-        ],
         "additionalProperties": false,
     })
 }
@@ -112,7 +110,17 @@ pub(super) fn optional_string(input: &Value, key: &str) -> Option<String> {
 }
 
 pub(super) fn optional_u64(input: &Value, key: &str) -> Option<u64> {
-    input.get(key).and_then(Value::as_u64)
+    let value = input.get(key)?;
+    if let Some(n) = value.as_u64() {
+        return Some(n);
+    }
+    // Some providers emit integers as signed JSON numbers.
+    if let Some(n) = value.as_i64() {
+        if n >= 0 {
+            return Some(n as u64);
+        }
+    }
+    None
 }
 
 pub(super) fn optional_bool(input: &Value, key: &str) -> Option<bool> {

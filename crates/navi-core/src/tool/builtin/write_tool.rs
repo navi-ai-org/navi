@@ -120,14 +120,12 @@ impl Tool for WriteTool {
         let input = &invocation.input;
 
         // --- Mode detection ---
+        // Empty `content` is a valid full-file write (truncate / create empty file).
         let has_direct = input
             .get("path")
             .and_then(Value::as_str)
             .is_some_and(|s| !s.is_empty())
-            && input
-                .get("content")
-                .and_then(Value::as_str)
-                .is_some_and(|s| !s.is_empty());
+            && input.get("content").and_then(Value::as_str).is_some();
 
         let has_patch = input
             .get("patch")
@@ -200,7 +198,13 @@ impl WriteTool {
             self.project_root.join(path)
         };
         let full_path_str = full_path.to_string_lossy().to_string();
-        let content = helpers::required_string(&invocation.input, "content")?.to_string();
+        // Allow empty content (truncate/create empty file). required_string rejects "".
+        let content = invocation
+            .input
+            .get("content")
+            .and_then(Value::as_str)
+            .map(str::to_string)
+            .context("missing required string `content`")?;
 
         let _path_clone = raw_path.clone();
         let full_path_clone = full_path_str.clone();
@@ -1003,13 +1007,8 @@ fn write_json_schema() -> serde_json::Value {
                 "minItems": 1
             }
         },
-        "anyOf": [
-            { "required": ["path", "content"] },
-            { "required": ["patch"] },
-            { "required": ["patches"] },
-            { "required": ["edits"] }
-        ],
-        "maxProperties": 2,
+        // Runtime validates mode selection. Avoid anyOf so model-facing schemas
+        // do not force path+content when the model intends patch/edits mode.
         "additionalProperties": false,
         "examples": [
             { "path": "src/main.rs", "content": "fn main() { println!(\"hello\"); }" },
@@ -1070,11 +1069,6 @@ fn patch_write_json_schema() -> serde_json::Value {
                 "minItems": 1
             }
         },
-        "anyOf": [
-            { "required": ["patch"] },
-            { "required": ["patches"] },
-            { "required": ["edits"] }
-        ],
         "additionalProperties": false,
         "examples": [
             { "patch": "*** Begin Patch\n*** Update File: src/lib.rs\n@@\n-old\n+new\n*** End Patch" },

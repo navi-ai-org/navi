@@ -76,15 +76,15 @@ impl Tool for SearchTool {
             self.name,
             match self.mode {
                 SearchToolMode::Unified => {
-                    "Search the project filesystem with action-based dispatch. Actions: grep (text search), list (flat directory listing), tree (directory tree), find (search by filename pattern), stat (file metadata)."
+                    "Search the project filesystem with action-based dispatch. Actions: grep (text search), list (recursive file listing), tree (directory tree), find (search by filename pattern), stat (file metadata). Paths in results are project-relative."
                 }
                 SearchToolMode::Grep => {
                     "Search project files for literal text. Special characters are matched literally."
                 }
                 SearchToolMode::FsBrowser => {
-                    "Browse the project filesystem. Actions: list, tree, find, stat."
+                    "Browse the project filesystem. Actions: list (recursive files), tree, find (filename pattern), stat. Paths in results are project-relative."
                 }
-                SearchToolMode::ListDir => "List files and directories under a project path.",
+                SearchToolMode::ListDir => "Recursively list project files under a path (skips build dirs). Returns project-relative paths. Use fs_browser action=tree for directory structure.",
                 SearchToolMode::Glob => {
                     "Find project files whose path or filename matches a glob-like pattern."
                 }
@@ -620,7 +620,7 @@ impl SearchTool {
         let files = tokio::task::spawn_blocking(move || {
             let root_path = resolve_project_path(&project_root, &path_for_closure);
             let mut files = Vec::new();
-            collect_files_recursive(&root_path, &config, 0, u64::MAX, &mut files);
+            collect_files_recursive(&project_root, &root_path, &config, 0, u64::MAX, &mut files);
             files
         })
         .await
@@ -688,7 +688,7 @@ impl SearchTool {
         let files = tokio::task::spawn_blocking(move || {
             let root_path = resolve_project_path(&project_root, &path_for_closure);
             let mut files = Vec::new();
-            collect_files_recursive(&root_path, &config, 0, u64::MAX, &mut files);
+            collect_files_recursive(&project_root, &root_path, &config, 0, u64::MAX, &mut files);
             files
         })
         .await
@@ -756,6 +756,7 @@ fn unix_permissions(_meta: &fs::Metadata) -> u32 {
 }
 
 fn collect_files_recursive(
+    project_root: &Path,
     root: &Path,
     config: &CollectConfig,
     depth: u64,
@@ -771,7 +772,7 @@ fn collect_files_recursive(
     }
 
     if root.is_file() {
-        let display = root.display().to_string();
+        let display = display_path(project_root, root);
         if matches_pattern(&display, config.pattern.as_deref()) {
             files.push(display);
         }
@@ -800,9 +801,9 @@ fn collect_files_recursive(
 
         let path = entry.path();
         if path.is_dir() {
-            collect_files_recursive(&path, config, depth + 1, max_depth, files);
+            collect_files_recursive(project_root, &path, config, depth + 1, max_depth, files);
         } else {
-            let display = path.display().to_string();
+            let display = display_path(project_root, &path);
             if matches_pattern(&display, config.pattern.as_deref()) {
                 files.push(display);
             }

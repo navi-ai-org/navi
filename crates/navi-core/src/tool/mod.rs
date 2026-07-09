@@ -239,17 +239,10 @@ impl ToolExecutor {
         data_dir: std::path::PathBuf,
         config: std::sync::Arc<std::sync::RwLock<crate::config::NaviConfig>>,
     ) {
+        // Build the tool once with the caller-provided config and register it
+        // through the normal path so validators/metadata stay consistent.
         let loader = crate::tool::builtin::SkillTool::new(project_dir, data_dir, config);
-        let def = loader.definition();
-        let name = def.name.clone();
-        self.registry.register(def);
-        self.tools.entry(name).or_insert_with(|| {
-            std::sync::Arc::new(crate::tool::builtin::SkillTool::new(
-                self.policy.project_root().to_path_buf(),
-                self.policy.data_dir().to_path_buf(),
-                std::sync::Arc::new(std::sync::RwLock::new(crate::config::NaviConfig::default())),
-            ))
-        });
+        self.register_tool(std::sync::Arc::new(loader));
     }
 
     pub(crate) fn new_code_exec_host(policy: SecurityPolicy) -> Self {
@@ -1067,12 +1060,16 @@ fn simplify_schema_object_for_model(object: &Map<String, Value>) -> Value {
 
 fn suggest_tool_replacements(tool_name: &str, available_tools: &[String]) -> Vec<String> {
     let candidates: &[&str] = match tool_name {
-        "glob" | "list_files" | "ls" | "find" => &["search", "fs_browser"],
-        "read" | "cat" | "read_file" => &["read"],
-        "edit" | "patch" | "write_file" | "apply_patch" => &["write"],
-        "shell" | "run" | "terminal" => &["bash", "process"],
-        "search" | "rg" | "grep" => &["search", "grep"],
-        "symbols" | "symbol" => &["code"],
+        "list_files" | "ls" | "listdir" | "dir" => &["list_dir", "fs_browser", "search", "glob"],
+        "find" | "find_files" => &["glob", "fs_browser", "search"],
+        "cat" | "type" | "open" | "view_file" => &["read", "read_file"],
+        "edit" | "patch" | "str_replace" | "search_replace" => {
+            &["write", "apply_patch", "write_file"]
+        }
+        "shell" | "run" | "terminal" | "exec" | "sh" | "cmd" => &["bash", "process"],
+        "rg" | "ripgrep" | "search_code" => &["grep", "search", "ast_search"],
+        "symbols" | "symbol" | "symbols_overview" | "find_symbol" | "find_references"
+        | "code_diagnostics" => &["code", "ast_search", "symbol_goto"],
         "replace_symbol_body"
         | "insert_before_symbol"
         | "insert_after_symbol"

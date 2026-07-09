@@ -399,16 +399,36 @@ fn rewrite_unsupported_attachments(
 
 fn unsupported_attachment_tool_instruction(kind: AttachmentKind, part: &ContentPart) -> String {
     let media_type = part.media_type().unwrap_or("application/octet-stream");
-    let data = part.data().unwrap_or("");
-    serde_json::json!({
-        "navi_attachment_requires_tool": true,
-        "tool": "analyze_attachment",
-        "instruction": "Call analyze_attachment with this payload and a task-specific prompt before answering.",
-        "kind": kind.as_str(),
-        "media_type": media_type,
-        "data": data,
-    })
-    .to_string()
+    // Never inline base64 attachment bytes into the prompt. Free/small models
+    // hang or rate-limit when the rewritten text carries multi-MB payloads, and
+    // models cannot reliably re-emit base64 into analyze_attachment anyway.
+    let byte_len = part
+        .data()
+        .map(|data| approx_decoded_attachment_bytes(data))
+        .unwrap_or(0);
+    let name = part
+        .name()
+        .map(|n| format!(" name={n:?}"))
+        .unwrap_or_default();
+    format!(
+        "[NAVI attachment unavailable to this chat model]\n\
+         kind={kind} media_type={media_type} approx_bytes={byte_len}{name}\n\
+         This model cannot view {kind} attachments directly. Tell the user to:\n\
+         1) switch to a vision-capable model (registry supports_images), or\n\
+         2) configure attachment_models.{kind} so analyze_attachment can run on a specialized model.\n\
+         Do not invent the contents of the attachment.",
+        kind = kind.as_str(),
+    )
+}
+
+/// Base64 payload size estimate (decoded). Avoids allocating a decoded buffer.
+fn approx_decoded_attachment_bytes(b64: &str) -> usize {
+    let trimmed = b64.trim();
+    if trimmed.is_empty() {
+        return 0;
+    }
+    let padding = trimmed.chars().rev().take_while(|c| *c == '=').count();
+    trimmed.len().saturating_mul(3) / 4 - padding.min(2)
 }
 
 fn emit_request_trace(ctx: &TurnContext, request: &ModelRequest, policy: HarnessPolicy) {

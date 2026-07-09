@@ -118,6 +118,16 @@ impl ContentPart {
         }
     }
 
+    /// Optional filename/label for audio, video, or document attachments.
+    pub fn name(&self) -> Option<&str> {
+        match self {
+            Self::Audio { name, .. } | Self::Video { name, .. } | Self::Document { name, .. } => {
+                name.as_deref()
+            }
+            Self::Text { .. } | Self::Image { .. } => None,
+        }
+    }
+
     /// Extracts the text content if this is a text part.
     pub fn as_text(&self) -> Option<&str> {
         match self {

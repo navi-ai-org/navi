@@ -865,11 +865,12 @@ async fn unknown_tool_returns_bounded_suggestions() {
     assert!(!result.ok);
     assert_eq!(result.output["error_code"], "unknown_tool");
     assert_eq!(result.output["error_kind"], "unknown_tool");
+    let suggestions = result.output["suggestions"].as_array().unwrap();
     assert!(
-        result.output["suggestions"]
-            .as_array()
-            .unwrap()
-            .contains(&json!("search"))
+        suggestions.iter().any(|s| {
+            matches!(s.as_str(), Some("list_dir" | "fs_browser" | "search" | "glob"))
+        }),
+        "expected filesystem tool suggestions, got {suggestions:?}"
     );
 }
 
@@ -1104,8 +1105,8 @@ async fn search_accepts_grep_style_arguments() {
     assert!(result.output["truncated"].as_bool().unwrap());
 }
 
-#[test]
-fn apply_patch_requires_patch_argument() {
+#[tokio::test]
+async fn apply_patch_requires_patch_argument() {
     let tempdir = tempfile::tempdir().expect("tempdir");
     let executor = executor(tempdir.path());
 
@@ -1115,10 +1116,12 @@ fn apply_patch_requires_patch_argument() {
         input: json!({}),
     };
 
-    let err = executor
-        .validate_arguments(&invalid)
-        .expect_err("missing patch should fail");
-    assert!(matches!(err, ToolCallInvalid::InvalidArguments { .. }));
+    // Schema is intentionally permissive so model-facing simplification does not
+    // force a single mode. Runtime still rejects empty apply_patch calls.
+    assert!(executor.validate_arguments(&invalid).is_ok());
+    let result = executor.invoke(invalid).await;
+    assert!(!result.ok, "{:?}", result.output);
+    assert_eq!(result.output["error_code"], "invalid_arguments");
 }
 
 #[tokio::test]
@@ -1766,4 +1769,148 @@ async fn regression_bash_timeout_capped_at_max() {
 
     assert!(result.ok);
     assert_eq!(result.output["stdout"].as_str().unwrap().trim(), "ok");
+}
+
+// ── Audit fixes: path relativity, empty writes, bash poll schema ─────────────
+
+#[tokio::test]
+async fn fs_browser_list_returns_project_relative_paths() {
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let executor = executor(tempdir.path());
+    std::fs::create_dir_all(tempdir.path().join("src")).unwrap();
+    std::fs::write(tempdir.path().join("src/lib.rs"), "fn main() {}\n").unwrap();
+
+    let result = executor
+        .invoke(ToolInvocation {
+            id: "rel-list".to_string(),
+            tool_name: "fs_browser".to_string(),
+            input: json!({ "action": "list", "path": "src" }),
+        })
+        .await;
+
+    assert!(result.ok, "{:?}", result.output);
+    let files = result.output["files"].as_array().unwrap();
+    assert!(!files.is_empty());
+    for path in files {
+        let path = path.as_str().unwrap();
+        assert!(
+            !Path::new(path).is_absolute(),
+            "expected project-relative path, got absolute: {path}"
+        );
+    }
+    assert!(
+        files
+            .iter()
+            .any(|p| matches!(p.as_str(), Some("src/lib.rs") | Some("lib.rs"))),
+        "{files:?}"
+    );
+}
+
+#[tokio::test]
+async fn list_dir_returns_project_relative_paths() {
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let executor = executor(tempdir.path());
+    std::fs::write(tempdir.path().join("README.md"), "hello\n").unwrap();
+
+    let result = executor
+        .invoke(ToolInvocation {
+            id: "list-dir".to_string(),
+            tool_name: "list_dir".to_string(),
+            input: json!({ "path": "." }),
+        })
+        .await;
+
+    assert!(result.ok, "{:?}", result.output);
+    let files = result.output["files"].as_array().unwrap();
+    assert!(
+        files.iter().any(|p| p.as_str() == Some("README.md")),
+        "expected relative README.md in {files:?}"
+    );
+}
+
+#[tokio::test]
+async fn write_file_allows_empty_content() {
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let executor = executor(tempdir.path());
+    std::fs::write(tempdir.path().join("notes.txt"), "old\n").unwrap();
+
+    let result = executor
+        .invoke(ToolInvocation {
+            id: "empty-write".to_string(),
+            tool_name: "write_file".to_string(),
+            input: json!({ "path": "notes.txt", "content": "" }),
+        })
+        .await;
+
+    assert!(result.ok, "{:?}", result.output);
+    assert_eq!(
+        std::fs::read_to_string(tempdir.path().join("notes.txt")).unwrap(),
+        ""
+    );
+    assert_eq!(result.output["lines_added"], 0);
+}
+
+#[test]
+fn model_facing_bash_schema_does_not_require_command() {
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let executor = executor(tempdir.path());
+    let bash = executor
+        .definitions()
+        .into_iter()
+        .find(|definition| definition.name == "bash")
+        .expect("bash");
+
+    let required = bash
+        .input_schema
+        .get("required")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+    assert!(
+        !required.iter().any(|v| v.as_str() == Some("command")),
+        "bash model schema must allow poll/list without command; required={required:?}"
+    );
+    assert!(bash.input_schema["properties"]["task_id"].is_object());
+    assert!(bash.input_schema["properties"]["action"].is_object());
+}
+
+#[test]
+fn register_skill_loader_registers_load_skill_tool() {
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let mut executor = executor(tempdir.path());
+    let config = std::sync::Arc::new(std::sync::RwLock::new(crate::config::NaviConfig::default()));
+
+    executor.register_skill_loader(
+        tempdir.path().to_path_buf(),
+        tempdir.path().join(".navi-data"),
+        config,
+    );
+
+    assert!(executor.definition("load_skill").is_some());
+    let names = executor.tool_names();
+    assert!(names.contains(&"load_skill".to_string()), "{names:?}");
+}
+
+#[test]
+fn model_facing_write_schema_allows_patch_mode() {
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let executor = executor(tempdir.path());
+    let write = executor
+        .definitions()
+        .into_iter()
+        .find(|definition| definition.name == "write")
+        .expect("write");
+
+    let required = write
+        .input_schema
+        .get("required")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+    assert!(
+        !required.iter().any(|v| v.as_str() == Some("path")),
+        "write model schema must not force path+content for patch mode; required={required:?}"
+    );
+    assert!(write.input_schema["properties"]["patch"].is_object());
+    assert!(write.input_schema["properties"]["edits"].is_object());
 }
