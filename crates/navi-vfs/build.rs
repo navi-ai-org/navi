@@ -173,13 +173,13 @@ fn resolve_crate_dir(cargo_home: &Path, name: &str, version: &str) -> PathBuf {
     let want = format!("{name}-{version}");
     let src_root = cargo_home.join("registry").join("src");
 
-    if src_root.is_dir() {
-        if let Ok(entries) = fs::read_dir(&src_root) {
-            for entry in entries.flatten() {
-                let candidate = entry.path().join(&want);
-                if candidate.is_dir() {
-                    return candidate;
-                }
+    if src_root.is_dir()
+        && let Ok(entries) = fs::read_dir(&src_root)
+    {
+        for entry in entries.flatten() {
+            let candidate = entry.path().join(&want);
+            if candidate.is_dir() {
+                return candidate;
             }
         }
     }

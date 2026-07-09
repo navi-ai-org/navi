@@ -96,18 +96,10 @@ pub trait Panel: Send + Sync {
 /// Region panels are laid out vertically in registration order. Overlay
 /// panels are rendered on top, sorted by z-order, and receive key events
 /// first (top-most first).
+#[derive(Default)]
 pub struct PanelManager {
     regions: Vec<Box<dyn Panel>>,
     overlays: Vec<Box<dyn Panel>>,
-}
-
-impl Default for PanelManager {
-    fn default() -> Self {
-        Self {
-            regions: Vec::new(),
-            overlays: Vec::new(),
-        }
-    }
 }
 
 impl PanelManager {
@@ -311,14 +303,13 @@ impl PanelManager {
                     h.saturating_add(extra)
                 }
                 PanelSize::Flex => {
-                    let extra = extra_each
+                    extra_each
                         + if extra_remainder > 0 {
                             extra_remainder -= 1;
                             1
                         } else {
                             0
-                        };
-                    extra
+                        }
                 }
             };
             let height = height.min(area.height.saturating_sub(y.saturating_sub(area.y)));
