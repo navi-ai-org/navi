@@ -21,18 +21,18 @@
 
 ## Latest Release
 
-### 0.2.0 — First public multi-platform release (2026-07-08)
+### 0.2.1 — Portable Linux / containers (2026-07-09)
 
-- **Prebuilt binaries** for Linux (x64/arm64), macOS (Intel/Apple Silicon), and Windows x64
-- **One-line install** via curl / PowerShell (no Rust required)
-- Plan Mode, goals checklist, SQLite memory, multi-provider registry, OAuth (incl. xAI), session cost estimates
-- TUI coding agent with tools, approvals, MCP, plugins, and embeddable SDK
+- **musl Linux binaries** — Alpine, Debian, Ubuntu, Amazon Linux, Rocky, Fedora, distroless
+- **xAI Composer 2.5** in the registry
+- Hardened installers (strict SHA-256, safe archives, optional Sigstore)
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/navi-ai-org/navi/main/scripts/install.sh | sh
 ```
 
-See [CHANGELOG.md](CHANGELOG.md) for the full release notes.
+Full changelog: https://github.com/navi-ai-org/navi/compare/v0.2.0...v0.2.1 · [CHANGELOG.md](CHANGELOG.md)
+
 ---
 
 ## Why NAVI?
@@ -69,7 +69,7 @@ export PATH="$HOME/.local/bin:$PATH"
 Pin a version:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/navi-ai-org/navi/main/scripts/install.sh | sh -s -- --version 0.2.0
+curl -fsSL https://raw.githubusercontent.com/navi-ai-org/navi/main/scripts/install.sh | sh -s -- --version 0.2.1
 ```
 
 **Install security**
@@ -96,7 +96,7 @@ High-assurance install (pin script commit + release + require cosign):
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/navi-ai-org/navi/<commit-sha>/scripts/install.sh \
-  | sh -s -- --version 0.2.0 --require-cosign
+  | sh -s -- --version 0.2.1 --require-cosign
 ```
 
 **Windows (PowerShell):**

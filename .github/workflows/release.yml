@@ -342,21 +342,27 @@ jobs:
             artifacts/*.zip
             artifacts/SHA256SUMS.txt
             artifacts/SHA256SUMS.txt.sigstore.json
+          # Body is replaced after publish from .github/release-notes-*.md when needed.
+          # Default stub keeps the section structure consistent.
           body: |
-            ## Install
+            ## New Features
 
-            ```bash
-            curl -fsSL https://raw.githubusercontent.com/navi-ai-org/navi/main/scripts/install.sh | sh
-            ```
+            _See release notes._
 
-            **Windows:** `irm https://raw.githubusercontent.com/navi-ai-org/navi/main/scripts/install.ps1 | iex`
+            ## Bug Fixes
 
-            ### Linux / containers
-            Linux builds are **musl** (Alpine toolchain) so the same binary runs on
-            Alpine, Debian, Ubuntu, Amazon Linux, and most enterprise container images.
+            _See release notes._
 
-            ### Security
-            - Archive SHA-256 must match `SHA256SUMS.txt` (installer hard-fails otherwise)
-            - `SHA256SUMS.txt` is Sigstore-signed (GitHub Actions OIDC)
+            ## Documentation
+
+            _See release notes._
+
+            ## Chores
+
+            _See release notes._
+
+            ## Changelog
+
+            Full changelog: https://github.com/${{ github.repository }}/compare/${{ env.RELEASE_TAG }}...${{ env.RELEASE_TAG }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
