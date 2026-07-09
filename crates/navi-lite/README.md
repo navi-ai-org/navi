@@ -42,13 +42,13 @@ Run against an OpenAI-compatible gateway:
 NAVI_LITE_API_KEY=... \
 NAVI_LITE_BASE_URL=https://your-gateway.example/v1 \
 NAVI_LITE_MODEL=your-model \
-cargo run -p navi-lite --bin navi-lite-demo -- --json
+cargo run -p navi-lite --bin navi-lite -- --json
 ```
 
 The demo also accepts explicit flags:
 
 ```bash
-cargo run -p navi-lite --bin navi-lite-demo -- \
+cargo run -p navi-lite --bin navi-lite -- \
   --base-url https://your-gateway.example/v1 \
   --model your-model \
   --api-key "$NAVI_LITE_API_KEY" \

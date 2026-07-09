@@ -4,7 +4,7 @@ use navi_lite::{LiteConfig, LiteMission, LiteRuntime};
 use std::path::PathBuf;
 
 #[derive(Debug, Parser)]
-#[command(name = "navi-lite-demo")]
+#[command(name = "navi-lite")]
 #[command(about = "Run a sealed NAVI Lite health-check mission")]
 struct Args {
     #[arg(long)]

@@ -21,17 +21,17 @@
 
 ## Latest Release
 
-### 0.2.1 — Portable Linux / containers (2026-07-09)
+### 0.2.2 — navi-lite + portable containers (2026-07-09)
 
-- **musl Linux binaries** — Alpine, Debian, Ubuntu, Amazon Linux, Rocky, Fedora, distroless
-- **xAI Composer 2.5** in the registry
-- Hardened installers (strict SHA-256, safe archives, optional Sigstore)
+- **`navi-lite`** sealed edge/embedded runtime (mission allowlist, no desktop stack)
+- **musl Linux** binaries for Alpine and enterprise containers
+- **xAI Composer 2.5**; hardened installers + Sigstore checksums
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/navi-ai-org/navi/main/scripts/install.sh | sh
 ```
 
-Full changelog: https://github.com/navi-ai-org/navi/compare/v0.2.0...v0.2.1 · [CHANGELOG.md](CHANGELOG.md)
+Full changelog: https://github.com/navi-ai-org/navi/compare/v0.2.0...v0.2.2 · [CHANGELOG.md](CHANGELOG.md)
 
 ---
 
@@ -69,7 +69,7 @@ export PATH="$HOME/.local/bin:$PATH"
 Pin a version:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/navi-ai-org/navi/main/scripts/install.sh | sh -s -- --version 0.2.1
+curl -fsSL https://raw.githubusercontent.com/navi-ai-org/navi/main/scripts/install.sh | sh -s -- --version 0.2.2
 ```
 
 **Install security**
@@ -96,7 +96,7 @@ High-assurance install (pin script commit + release + require cosign):
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/navi-ai-org/navi/<commit-sha>/scripts/install.sh \
-  | sh -s -- --version 0.2.1 --require-cosign
+  | sh -s -- --version 0.2.2 --require-cosign
 ```
 
 **Windows (PowerShell):**

@@ -69,33 +69,47 @@ jobs:
           shared-key: release-musl
 
       # Host triple on rust:1-alpine is musl → target/release/navi
-      - name: Build release binary (musl)
-        run: cargo build -p navi-cli --locked --release
+      - name: Build release binaries (musl)
+        run: cargo build -p navi-cli -p navi-lite --locked --release
 
       - name: Strip + smoke test
         run: |
           set -eu
           BIN=target/release/navi
+          LITE_BIN=target/release/navi-lite
           strip "$BIN" || true
+          strip "$LITE_BIN" || true
           file "$BIN"
+          file "$LITE_BIN"
           ldd "$BIN" 2>&1 || true
+          ldd "$LITE_BIN" 2>&1 || true
           "$BIN" --help >/dev/null
+          "$LITE_BIN" --help >/dev/null
           ls -lh "$BIN"
+          ls -lh "$LITE_BIN"
 
       - name: Package
         run: |
           set -eu
           mkdir -p dist
           tar -C target/release -czf dist/navi-linux-x64.tar.gz navi
-          members=$(tar -tzf dist/navi-linux-x64.tar.gz)
-          test "$members" = "navi"
-          ls -lh dist/navi-linux-x64.tar.gz
+          tar -C target/release -czf dist/navi-lite-linux-x64.tar.gz navi-lite
+          for a in navi-linux-x64.tar.gz navi-lite-linux-x64.tar.gz; do
+            members=$(tar -tzf "dist/$a")
+            case "$a" in
+              navi-linux-*) test "$members" = "navi" ;;
+              navi-lite-*) test "$members" = "navi-lite" ;;
+            esac
+            ls -lh "dist/$a"
+          done
 
       - name: Upload archive
         uses: actions/upload-artifact@v4
         with:
           name: navi-linux-x64
-          path: dist/navi-linux-x64.tar.gz
+          path: |
+            dist/navi-linux-x64.tar.gz
+            dist/navi-lite-linux-x64.tar.gz
           if-no-files-found: error
           retention-days: 14
 
@@ -136,13 +150,18 @@ jobs:
               apk add --no-cache \
                 build-base clang lld make protoc pkgconfig \
                 git curl ca-certificates file
-              cargo build -p navi-cli --locked --release
+              cargo build -p navi-cli -p navi-lite --locked --release
               strip /tmp/target-musl/release/navi || true
+              strip /tmp/target-musl/release/navi-lite || true
               file /tmp/target-musl/release/navi
+              file /tmp/target-musl/release/navi-lite
               ldd /tmp/target-musl/release/navi 2>&1 || true
+              ldd /tmp/target-musl/release/navi-lite 2>&1 || true
               /tmp/target-musl/release/navi --help >/dev/null
+              /tmp/target-musl/release/navi-lite --help >/dev/null
               mkdir -p /src/target/release
               cp /tmp/target-musl/release/navi /src/target/release/navi
+              cp /tmp/target-musl/release/navi-lite /src/target/release/navi-lite
             '
 
       - name: Package
@@ -150,15 +169,23 @@ jobs:
           set -euo pipefail
           mkdir -p dist
           tar -C target/release -czf dist/navi-linux-arm64.tar.gz navi
-          members=$(tar -tzf dist/navi-linux-arm64.tar.gz)
-          test "$members" = "navi"
-          ls -lh dist/navi-linux-arm64.tar.gz
+          tar -C target/release -czf dist/navi-lite-linux-arm64.tar.gz navi-lite
+          for a in navi-linux-arm64.tar.gz navi-lite-linux-arm64.tar.gz; do
+            members=$(tar -tzf "dist/$a")
+            case "$a" in
+              navi-linux-*) test "$members" = "navi" ;;
+              navi-lite-*) test "$members" = "navi-lite" ;;
+            esac
+            ls -lh "dist/$a"
+          done
 
       - name: Upload archive
         uses: actions/upload-artifact@v4
         with:
           name: navi-linux-arm64
-          path: dist/navi-linux-arm64.tar.gz
+          path: |
+            dist/navi-linux-arm64.tar.gz
+            dist/navi-lite-linux-arm64.tar.gz
           if-no-files-found: error
           retention-days: 14
 
@@ -215,16 +242,20 @@ jobs:
           key: release-${{ matrix.target }}
           shared-key: release-desktop
 
-      - name: Build release binary
-        run: cargo build -p navi-cli --locked --release --target ${{ matrix.target }}
+      - name: Build release binaries
+        run: cargo build -p navi-cli -p navi-lite --locked --release --target ${{ matrix.target }}
 
       - name: Strip binary (unix)
         if: runner.os != 'Windows'
         run: |
           BIN="target/${{ matrix.target }}/release/navi"
+          LITE_BIN="target/${{ matrix.target }}/release/navi-lite"
           strip "$BIN" || true
+          strip "$LITE_BIN" || true
           ls -lh "$BIN"
+          ls -lh "$LITE_BIN"
           file "$BIN" || true
+          file "$LITE_BIN" || true
 
       - name: Smoke test binary (native arch only)
         if: |
@@ -235,8 +266,10 @@ jobs:
         run: |
           if [[ "${{ runner.os }}" == "Windows" ]]; then
             "./target/${{ matrix.target }}/release/navi.exe" --help >/dev/null
+            "./target/${{ matrix.target }}/release/navi-lite.exe" --help >/dev/null
           else
             "./target/${{ matrix.target }}/release/navi" --help >/dev/null
+            "./target/${{ matrix.target }}/release/navi-lite" --help >/dev/null
           fi
 
       - name: Package (unix)
@@ -246,12 +279,16 @@ jobs:
           set -euo pipefail
           mkdir -p dist
           tar -C "target/${{ matrix.target }}/release" -czf "dist/${{ matrix.archive }}.tar.gz" navi
+          # navi-lite archive name: navi-lite-darwin-x64 / navi-lite-darwin-arm64
+          lite_archive=$(echo "${{ matrix.archive }}" | sed 's/^navi-/navi-lite-/')
+          tar -C "target/${{ matrix.target }}/release" -czf "dist/${lite_archive}.tar.gz" navi-lite
           members=$(tar -tzf "dist/${{ matrix.archive }}.tar.gz")
-          if [[ "$members" != "navi" ]]; then
-            echo "invalid archive members: $members" >&2
+          lite_members=$(tar -tzf "dist/${lite_archive}.tar.gz")
+          if [[ "$members" != "navi" || "$lite_members" != "navi-lite" ]]; then
+            echo "invalid archive members: navi=[$members] lite=[$lite_members]" >&2
             exit 1
           fi
-          ls -lh "dist/${{ matrix.archive }}.tar.gz"
+          ls -lh "dist/${{ matrix.archive }}.tar.gz" "dist/${lite_archive}.tar.gz"
 
       - name: Package (windows)
         if: runner.os == 'Windows'
@@ -260,13 +297,16 @@ jobs:
           New-Item -ItemType Directory -Force -Path dist | Out-Null
           Compress-Archive -Path "target/${{ matrix.target }}/release/navi.exe" `
             -DestinationPath "dist/${{ matrix.archive }}.zip" -Force
+          Compress-Archive -Path "target/${{ matrix.target }}/release/navi-lite.exe" `
+            -DestinationPath "dist/navi-lite-win32-x64.zip" -Force
           Get-Item "dist/${{ matrix.archive }}.zip" | Format-List Name, Length
+          Get-Item "dist/navi-lite-win32-x64.zip" | Format-List Name, Length
 
       - name: Upload archive
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.archive }}
-          path: dist/${{ matrix.archive }}.*
+          path: dist/*
           if-no-files-found: error
           retention-days: 14
 
@@ -347,6 +387,11 @@ jobs:
             navi-darwin-x64.tar.gz
             navi-darwin-arm64.tar.gz
             navi-win32-x64.zip
+            navi-lite-linux-x64.tar.gz
+            navi-lite-linux-arm64.tar.gz
+            navi-lite-darwin-x64.tar.gz
+            navi-lite-darwin-arm64.tar.gz
+            navi-lite-win32-x64.zip
           )
           for f in "${expected[@]}"; do
             if [[ ! -f "$f" ]]; then
