@@ -240,6 +240,7 @@ jobs:
 
   build-desktop:
     name: Build ${{ matrix.archive }}
+    needs: [test]
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
