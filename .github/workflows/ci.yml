@@ -27,6 +27,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo check --workspace --all-targets
+      - name: Build lite binary
+        run: cargo build -p navi-lite --bin navi-lite
 
   clippy:
     name: Clippy

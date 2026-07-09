@@ -7,59 +7,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.2.1] - 2026-07-09
+## [0.2.2] - 2026-07-09
 
-Full changelog: https://github.com/navi-ai-org/navi/compare/v0.2.0...v0.2.1
+Full changelog: https://github.com/navi-ai-org/navi/compare/v0.2.0...v0.2.2
 
 ### New Features
 
-- Ship **portable musl Linux binaries** (Alpine toolchain) so one artifact runs on Alpine, Debian, Ubuntu, Amazon Linux, Rocky/RHEL-class images, Fedora, and distroless bases
-- Add **xAI Composer 2.5** models to the registry (`composer-2.5`, `grok-composer-2.5-fast`)
-- Harden release installers: strict SHA-256 (hard fail), single-file archive validation, optional Sigstore/cosign verification of `SHA256SUMS.txt`
-- Sign release checksums keyless with **Sigstore** (GitHub Actions OIDC) as `SHA256SUMS.txt.sigstore.json`
+- Add **`navi-lite`**: sealed, mission-scoped headless runtime for edge/embedded Linux prototypes (feature-gated `navi-core` without embeddings, TUI, MCP, or plugins)
+- Ship **`navi-lite`** prebuilt binaries alongside full `navi` for all platforms
+- Ship **portable musl Linux binaries** (Alpine toolchain) for containers and enterprise images
+- Add **xAI Composer 2.5** models (`composer-2.5`, `grok-composer-2.5-fast`)
+- Harden installers: strict SHA-256, single-file archives, optional Sigstore verification
+- Sign `SHA256SUMS.txt` keyless with Sigstore (GitHub Actions OIDC)
 
 ### Bug Fixes
 
-- Make `install.sh` **POSIX / dash-safe** so `curl | sh` works on Ubuntu (dash) and Alpine (ash)
-- Reject unsafe or multi-member release archives during install (path traversal / zip-slip style members)
-- Disable `--no-verify` on the shell installer (integrity checks are required)
+- Make `install.sh` POSIX/dash-safe (`curl | sh` on Ubuntu/Alpine)
+- Reject unsafe multi-member release archives during install
+- Fix Linux arm64 musl release builds (Docker Alpine on arm runners)
+- Fix macOS package validation without bash `mapfile`
 
 ### Documentation
 
-- Document install security controls (HTTPS, checksums, Sigstore, archive shape)
-- Document Linux/container portability and a sample Alpine Dockerfile
-- Expand user-guide install section for prebuilt binaries and containers
+- Document `navi-lite` sealed edge runtime and mission allowlist model
+- Install security controls and container/Linux portability notes
+- Sample Alpine Dockerfile for agent sidecars
 
 ### Chores
 
-- Drop OpenSSL/`native-tls` from the dependency graph (`hf-hub` on rustls only) to enable musl builds
-- Build Linux release artifacts inside `rust:1-alpine` containers in CI
-- Validate release asset set and checksum lines before publishing
+- Drop OpenSSL/`native-tls` (`hf-hub` on rustls) to enable musl builds
+- CI builds `navi-lite` and checks the lite binary
+- Stricter multi-asset release packaging and checksum validation
 
 ## [0.2.0] - 2026-07-08
 
 Full changelog: https://github.com/navi-ai-org/navi/compare/v0.1.2...v0.2.0
 
-**First public multi-platform release** with prebuilt binaries and a one-line installer.
-
 ### New Features
 
-- Tag-triggered multi-platform release pipeline (Linux, macOS, Windows)
-- Primary install path via `curl` / PowerShell download of prebuilt binaries
-- Plan Mode, goals checklist, multi-provider registry, OAuth (incl. xAI), session cost estimates
-- Copland modular TUI; SQLite memory; multimodal attachments
+- First public multi-platform prebuilt binaries and one-line installer
+- Plan Mode, goals, multi-provider registry, OAuth, session cost estimates
 
 ### Bug Fixes
 
-- Registry metadata merge, concurrent SQLite, deferred MCP tools, TUI layout clipping
+- Registry merge, concurrent SQLite, deferred MCP tools, TUI layout
 
 ### Documentation
 
-- README install path, CHANGELOG, user guide updates for the public release
+- Public install path and first-release notes
 
 ### Chores
 
-- Dependency and registry snapshot updates for the first binary release
+- Dependency and registry snapshot updates for the binary release
 
 ## [0.1.2] - 2026-07-04
 
@@ -67,20 +66,19 @@ Full changelog: https://github.com/navi-ai-org/navi/compare/v0.1.0...v0.1.2
 
 ### New Features
 
-- Multimodal attachments and `analyze_attachment` host tool
-- Registry attachment metadata
+- Multimodal attachments and `analyze_attachment`
 
 ### Bug Fixes
 
-- Compact image indicators; registry background tasks without a Tokio runtime
+- Compact image indicators; registry background tasks without Tokio runtime
 
 ### Documentation
 
-- Release notes for multimodal support
+- Multimodal release notes
 
 ### Chores
 
-- Provider request mapping updates for Gemini/Anthropic media parts
+- Provider media request mapping updates
 
 ## [0.1.0] - 2026-06-29
 
@@ -90,8 +88,8 @@ Full changelog: https://github.com/navi-ai-org/navi/releases/tag/v0.1.0
 
 - Initial open-source scaffold of the NAVI agent engine and TUI
 
-[Unreleased]: https://github.com/navi-ai-org/navi/compare/v0.2.1...HEAD
-[0.2.1]: https://github.com/navi-ai-org/navi/compare/v0.2.0...v0.2.1
+[Unreleased]: https://github.com/navi-ai-org/navi/compare/v0.2.2...HEAD
+[0.2.2]: https://github.com/navi-ai-org/navi/compare/v0.2.0...v0.2.2
 [0.2.0]: https://github.com/navi-ai-org/navi/compare/v0.1.2...v0.2.0
 [0.1.2]: https://github.com/navi-ai-org/navi/compare/v0.1.0...v0.1.2
 [0.1.0]: https://github.com/navi-ai-org/navi/releases/tag/v0.1.0
