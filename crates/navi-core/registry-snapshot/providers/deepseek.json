@@ -11,132 +11,77 @@
       "context_window_tokens": 1000000,
       "max_output_tokens": 384000,
       "recommended_temperature": 1.0,
-      "supports_thinking": true,
-      "pricing": {
-        "input_per_1m": 0.435,
-        "output_per_1m": 0.87,
-        "currency": "USD"
-      }
+      "supports_thinking": true
     },
     {
       "name": "deepseek-v4-flash",
       "context_window_tokens": 1000000,
       "max_output_tokens": 384000,
       "recommended_temperature": 1.0,
-      "supports_thinking": true,
-      "pricing": {
-        "input_per_1m": 0.09,
-        "output_per_1m": 0.18,
-        "currency": "USD"
-      }
+      "supports_thinking": true
     },
     {
       "name": "deepseek-chat",
       "context_window_tokens": 1000000,
       "max_output_tokens": 384000,
       "recommended_temperature": 1.0,
-      "supports_thinking": false,
-      "pricing": {
-        "input_per_1m": 0.2002,
-        "output_per_1m": 0.8001,
-        "currency": "USD"
-      }
+      "supports_thinking": false
     },
     {
       "name": "deepseek-reasoner",
       "context_window_tokens": 1000000,
       "max_output_tokens": 384000,
       "recommended_temperature": 1.0,
-      "supports_thinking": true,
-      "pricing": {
-        "input_per_1m": 0.7,
-        "output_per_1m": 2.5,
-        "currency": "USD"
-      }
+      "supports_thinking": true
     },
     {
       "name": "deepseek-coder",
       "context_window_tokens": 16384,
       "max_output_tokens": 4096,
       "recommended_temperature": 0.6,
-      "supports_thinking": false,
-      "pricing": {
-        "input_per_1m": 0.2,
-        "output_per_1m": 0.8,
-        "currency": "USD"
-      }
+      "supports_thinking": false
     },
     {
       "name": "deepseek-coder-v2",
       "context_window_tokens": 128000,
       "max_output_tokens": 8192,
       "recommended_temperature": 0.6,
-      "supports_thinking": false,
-      "pricing": {
-        "input_per_1m": 0.2,
-        "output_per_1m": 0.8,
-        "currency": "USD"
-      }
+      "supports_thinking": false
     },
     {
       "name": "deepseek-coder-v2-lite",
       "context_window_tokens": 128000,
       "max_output_tokens": 8192,
       "recommended_temperature": 0.6,
-      "supports_thinking": false,
-      "pricing": {
-        "input_per_1m": 0.1,
-        "output_per_1m": 0.4,
-        "currency": "USD"
-      }
+      "supports_thinking": false
     },
     {
       "name": "deepseek-v3",
       "context_window_tokens": 131072,
       "max_output_tokens": 16384,
       "recommended_temperature": 1.0,
-      "supports_thinking": false,
-      "pricing": {
-        "input_per_1m": 0.2,
-        "output_per_1m": 0.8,
-        "currency": "USD"
-      }
+      "supports_thinking": false
     },
     {
       "name": "deepseek-v3.1",
       "context_window_tokens": 131072,
       "max_output_tokens": 65536,
       "recommended_temperature": 0.6,
-      "supports_thinking": true,
-      "pricing": {
-        "input_per_1m": 0.2288,
-        "output_per_1m": 0.3432,
-        "currency": "USD"
-      }
+      "supports_thinking": true
     },
     {
       "name": "deepseek-v3.2",
       "context_window_tokens": 131072,
       "max_output_tokens": 65536,
       "recommended_temperature": 1.0,
-      "supports_thinking": true,
-      "pricing": {
-        "input_per_1m": 0.2288,
-        "output_per_1m": 0.3432,
-        "currency": "USD"
-      }
+      "supports_thinking": true
     },
     {
       "name": "deepseek-r1",
       "context_window_tokens": 131072,
       "max_output_tokens": 32768,
       "recommended_temperature": 0.6,
-      "supports_thinking": true,
-      "pricing": {
-        "input_per_1m": 0.7,
-        "output_per_1m": 2.5,
-        "currency": "USD"
-      }
+      "supports_thinking": true
     }
   ]
 }

@@ -611,4 +611,123 @@ deny_tool_regex = ["^danger_"]
             crate::AttachmentKind::Document
         ));
     }
+
+    #[test]
+    fn model_supports_attachment_matches_aliases_and_cross_provider() {
+        let mut config = NaviConfig::default();
+        config.providers.push(ProviderConfig {
+            id: "commandcode".to_string(),
+            label: "Command Code".to_string(),
+            description: String::new(),
+            kind: ProviderKind::OpenAiChatCompletions,
+            api_key_env: "COMMANDCODE_KEY".to_string(),
+            base_url: Some("https://example.test/v1".to_string()),
+            models: vec![ProviderModelConfig {
+                name: "MiniMaxAI/MiniMax-M3".to_string(),
+                task_size: None,
+                context_window_tokens: None,
+                max_output_tokens: None,
+                recommended_temperature: None,
+                supports_thinking: Some(true),
+                supports_images: Some(true),
+                supports_audio: None,
+                supports_video: None,
+                supports_documents: None,
+                tool_prompt_manifest: None,
+                pricing_input_per_1m: None,
+                pricing_output_per_1m: None,
+            }],
+            ..Default::default()
+        });
+        config.providers.push(ProviderConfig {
+            id: "xiaomi".to_string(),
+            label: "Xiaomi".to_string(),
+            description: String::new(),
+            kind: ProviderKind::OpenAiChatCompletions,
+            api_key_env: "XIAOMI_KEY".to_string(),
+            base_url: Some("https://example.test/v1".to_string()),
+            models: vec![ProviderModelConfig {
+                name: "mimo-v2.5".to_string(),
+                task_size: None,
+                context_window_tokens: None,
+                max_output_tokens: None,
+                recommended_temperature: None,
+                supports_thinking: None,
+                supports_images: Some(true),
+                supports_audio: None,
+                supports_video: None,
+                supports_documents: Some(true),
+                tool_prompt_manifest: None,
+                pricing_input_per_1m: None,
+                pricing_output_per_1m: None,
+            }],
+            ..Default::default()
+        });
+        config.providers.push(ProviderConfig {
+            id: "opencode".to_string(),
+            label: "OpenCode".to_string(),
+            description: String::new(),
+            kind: ProviderKind::OpenAiChatCompletions,
+            api_key_env: "OPENCODE_KEY".to_string(),
+            base_url: Some("https://example.test/v1".to_string()),
+            // Registry entry without local vision flag — should inherit via alias
+            // from xiaomi `mimo-v2.5`.
+            models: vec![ProviderModelConfig {
+                name: "mimo-v2.5-free".to_string(),
+                task_size: None,
+                context_window_tokens: None,
+                max_output_tokens: None,
+                recommended_temperature: None,
+                supports_thinking: Some(true),
+                supports_images: None,
+                supports_audio: None,
+                supports_video: None,
+                supports_documents: None,
+                tool_prompt_manifest: None,
+                pricing_input_per_1m: None,
+                pricing_output_per_1m: None,
+            }],
+            ..Default::default()
+        });
+
+        assert!(model_supports_attachment(
+            &config,
+            "commandcode",
+            "MiniMaxAI/MiniMax-M3",
+            crate::AttachmentKind::Image
+        ));
+        // Leaf / case-normalized match against the same provider entry.
+        assert!(model_supports_attachment(
+            &config,
+            "commandcode",
+            "minimax-m3",
+            crate::AttachmentKind::Image
+        ));
+        // Free-tier alias + cross-provider inheritance from xiaomi mimo-v2.5.
+        assert!(model_supports_attachment(
+            &config,
+            "opencode",
+            "mimo-v2.5-free",
+            crate::AttachmentKind::Image
+        ));
+        // Document support also inherits from the base xiaomi entry.
+        assert!(model_supports_attachment(
+            &config,
+            "opencode",
+            "mimo-v2.5-free",
+            crate::AttachmentKind::Document
+        ));
+    }
+
+    #[test]
+    fn model_attachment_name_candidates_strips_free_and_vendor_prefix() {
+        let candidates = model_attachment_name_candidates("mimo-v2.5-free");
+        assert!(candidates.iter().any(|c| c == "mimo-v2.5-free"));
+        assert!(candidates.iter().any(|c| c == "mimo-v2.5"));
+
+        let candidates = model_attachment_name_candidates("MiniMaxAI/MiniMax-M3");
+        assert!(candidates.iter().any(|c| c == "MiniMaxAI/MiniMax-M3"));
+        assert!(candidates.iter().any(|c| c == "MiniMax-M3"));
+        assert!(candidates.iter().any(|c| c == "minimax-m3"));
+    }
 }

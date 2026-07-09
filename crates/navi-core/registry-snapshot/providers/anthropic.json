@@ -17,6 +17,8 @@
       "max_output_tokens": 32000,
       "recommended_temperature": 1.0,
       "supports_thinking": true,
+      "supports_images": true,
+      "supports_documents": true,
       "pricing": {
         "input_per_1m": 15.0,
         "output_per_1m": 75.0,
@@ -28,14 +30,18 @@
       "context_window_tokens": 200000,
       "max_output_tokens": 32000,
       "recommended_temperature": 1.0,
-      "supports_thinking": true
+      "supports_thinking": true,
+      "supports_images": true,
+      "supports_documents": true
     },
     {
       "name": "claude-opus-4-20250514",
       "context_window_tokens": 200000,
       "max_output_tokens": 32000,
       "recommended_temperature": 1.0,
-      "supports_thinking": true
+      "supports_thinking": true,
+      "supports_images": true,
+      "supports_documents": true
     },
     {
       "name": "claude-sonnet-4",
@@ -43,6 +49,8 @@
       "max_output_tokens": 64000,
       "recommended_temperature": 1.0,
       "supports_thinking": true,
+      "supports_images": true,
+      "supports_documents": true,
       "pricing": {
         "input_per_1m": 3.0,
         "output_per_1m": 15.0,
@@ -54,7 +62,9 @@
       "context_window_tokens": 200000,
       "max_output_tokens": 64000,
       "recommended_temperature": 1.0,
-      "supports_thinking": true
+      "supports_thinking": true,
+      "supports_images": true,
+      "supports_documents": true
     },
     {
       "name": "claude-haiku-4",
@@ -62,11 +72,8 @@
       "max_output_tokens": 64000,
       "recommended_temperature": 1.0,
       "supports_thinking": true,
-      "pricing": {
-        "input_per_1m": 0.25,
-        "output_per_1m": 1.25,
-        "currency": "USD"
-      }
+      "supports_images": true,
+      "supports_documents": true
     },
     {
       "name": "claude-3.7-sonnet",
@@ -74,18 +81,17 @@
       "max_output_tokens": 64000,
       "recommended_temperature": 1.0,
       "supports_thinking": true,
-      "pricing": {
-        "input_per_1m": 3.0,
-        "output_per_1m": 15.0,
-        "currency": "USD"
-      }
+      "supports_images": true,
+      "supports_documents": true
     },
     {
       "name": "claude-3-7-sonnet-20250219",
       "context_window_tokens": 200000,
       "max_output_tokens": 64000,
       "recommended_temperature": 1.0,
-      "supports_thinking": true
+      "supports_thinking": true,
+      "supports_images": true,
+      "supports_documents": true
     },
     {
       "name": "claude-3.5-sonnet",
@@ -93,25 +99,26 @@
       "max_output_tokens": 8192,
       "recommended_temperature": 1.0,
       "supports_thinking": false,
-      "pricing": {
-        "input_per_1m": 3.0,
-        "output_per_1m": 15.0,
-        "currency": "USD"
-      }
+      "supports_images": true,
+      "supports_documents": true
     },
     {
       "name": "claude-3-5-sonnet-20241022",
       "context_window_tokens": 200000,
       "max_output_tokens": 8192,
       "recommended_temperature": 1.0,
-      "supports_thinking": false
+      "supports_thinking": false,
+      "supports_images": true,
+      "supports_documents": true
     },
     {
       "name": "claude-3-5-sonnet-20240620",
       "context_window_tokens": 200000,
       "max_output_tokens": 8192,
       "recommended_temperature": 1.0,
-      "supports_thinking": false
+      "supports_thinking": false,
+      "supports_images": true,
+      "supports_documents": true
     },
     {
       "name": "claude-3.5-haiku",
@@ -119,39 +126,44 @@
       "max_output_tokens": 8192,
       "recommended_temperature": 1.0,
       "supports_thinking": false,
-      "pricing": {
-        "input_per_1m": 0.25,
-        "output_per_1m": 1.25,
-        "currency": "USD"
-      }
+      "supports_images": true,
+      "supports_documents": true
     },
     {
       "name": "claude-3-5-haiku-20241022",
       "context_window_tokens": 200000,
       "max_output_tokens": 8192,
       "recommended_temperature": 1.0,
-      "supports_thinking": false
+      "supports_thinking": false,
+      "supports_images": true,
+      "supports_documents": true
     },
     {
       "name": "claude-3-opus-20240229",
       "context_window_tokens": 200000,
       "max_output_tokens": 4096,
       "recommended_temperature": 1.0,
-      "supports_thinking": false
+      "supports_thinking": false,
+      "supports_images": true,
+      "supports_documents": true
     },
     {
       "name": "claude-3-sonnet-20240229",
       "context_window_tokens": 200000,
       "max_output_tokens": 4096,
       "recommended_temperature": 1.0,
-      "supports_thinking": false
+      "supports_thinking": false,
+      "supports_images": true,
+      "supports_documents": true
     },
     {
       "name": "claude-3-haiku-20240307",
       "context_window_tokens": 200000,
       "max_output_tokens": 4096,
       "recommended_temperature": 1.0,
-      "supports_thinking": false
+      "supports_thinking": false,
+      "supports_images": true,
+      "supports_documents": true
     }
   ],
   "defaults": {

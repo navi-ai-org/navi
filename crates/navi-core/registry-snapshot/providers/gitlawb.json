@@ -1,10 +1,18 @@
 {
   "id": "gitlawb",
   "label": "Gitlawb",
-  "description": "Decentralized code collaboration platform gateway with Xiaomi MiMo and Google Gemini models.",
+  "description": "Decentralized code collaboration platform gateway with Xiaomi MiMo, Google Gemini, and GMI Cloud partner models.",
   "kind": "openai-chat-completions",
   "api_key_env": "GITLAWB_API_KEY",
   "base_url": "https://opengateway.gitlawb.com/v1",
+  "defaults": {
+    "attachments": {
+      "images": false,
+      "audio": false,
+      "video": false,
+      "documents": false
+    }
+  },
   "models": [
     {
       "name": "mimo-v2.5-pro",
@@ -12,11 +20,16 @@
       "max_output_tokens": 131072,
       "recommended_temperature": 1.0,
       "supports_thinking": true,
+      "attachments": {
+        "images": true,
+        "documents": true
+      },
       "pricing": {
         "input_per_1m": 0.435,
         "output_per_1m": 0.87,
         "currency": "USD"
-      }
+      },
+      "supports_images": true
     },
     {
       "name": "mimo-v2.5",
@@ -24,6 +37,13 @@
       "max_output_tokens": 131072,
       "recommended_temperature": 1.0,
       "supports_thinking": false,
+      "attachments": {
+        "images": true,
+        "documents": true
+      },
+      "supports_images": true,
+      "supports_audio": true,
+      "supports_video": true,
       "pricing": {
         "input_per_1m": 0.105,
         "output_per_1m": 0.28,
@@ -31,14 +51,87 @@
       }
     },
     {
-      "name": "google/gemini-3.1-flash-lite-preview",
+      "name": "mimo-v2-flash",
+      "context_window_tokens": 262144,
+      "max_output_tokens": 16384,
+      "recommended_temperature": 1.0,
+      "supports_thinking": true,
+      "attachments": {
+        "images": true,
+        "documents": true
+      },
+      "supports_images": true
+    },
+    {
+      "name": "google/gemini-3.1-flash-lite",
       "context_window_tokens": 1000000,
       "max_output_tokens": 65536,
       "recommended_temperature": 1.0,
       "supports_thinking": true,
+      "attachments": {
+        "images": true,
+        "audio": true,
+        "video": true,
+        "documents": true
+      },
+      "supports_images": true,
+      "supports_audio": true,
+      "supports_video": true,
+      "supports_documents": true,
       "pricing": {
         "input_per_1m": 0.25,
         "output_per_1m": 1.5,
+        "currency": "USD"
+      }
+    },
+    {
+      "name": "minimax/minimax-m3",
+      "context_window_tokens": 1048576,
+      "max_output_tokens": 131072,
+      "recommended_temperature": 0.7,
+      "supports_thinking": true,
+      "attachments": {
+        "images": true
+      },
+      "supports_images": true
+    },
+    {
+      "name": "qwen/qwen3.7-max",
+      "context_window_tokens": 1000000,
+      "max_output_tokens": 65536,
+      "recommended_temperature": 1.0,
+      "supports_thinking": true
+    },
+    {
+      "name": "z-ai/glm-5.2",
+      "context_window_tokens": 1000000,
+      "max_output_tokens": 131072,
+      "recommended_temperature": 1.0,
+      "supports_thinking": true
+    },
+    {
+      "name": "nvidia/nemotron-3-ultra-550b-a55b:free",
+      "context_window_tokens": 1000000,
+      "max_output_tokens": 65536,
+      "recommended_temperature": 1.0,
+      "supports_thinking": true
+    },
+    {
+      "name": "tencent/hy3",
+      "context_window_tokens": 262144,
+      "max_output_tokens": 65536,
+      "recommended_temperature": 1.0,
+      "supports_thinking": true,
+      "attachments": {
+        "images": true,
+        "audio": true,
+        "video": true,
+        "documents": true
+      },
+      "supports_images": true,
+      "pricing": {
+        "input_per_1m": 0,
+        "output_per_1m": 0,
         "currency": "USD"
       }
     }

@@ -5,30 +5,28 @@
   "kind": "openai-chat-completions",
   "api_key_env": "GROQ_API_KEY",
   "base_url": "https://api.groq.com/openai/v1",
+  "defaults": {
+    "attachments": {
+      "images": false,
+      "audio": false,
+      "video": false,
+      "documents": false
+    }
+  },
   "models": [
     {
       "name": "llama-3.3-70b-versatile",
       "context_window_tokens": 131072,
       "max_output_tokens": 32768,
       "recommended_temperature": 0.7,
-      "supports_thinking": false,
-      "pricing": {
-        "input_per_1m": 0.59,
-        "output_per_1m": 0.79,
-        "currency": "USD"
-      }
+      "supports_thinking": false
     },
     {
       "name": "llama-3.1-8b-instant",
       "context_window_tokens": 131072,
       "max_output_tokens": 8192,
       "recommended_temperature": 0.7,
-      "supports_thinking": false,
-      "pricing": {
-        "input_per_1m": 0.05,
-        "output_per_1m": 0.08,
-        "currency": "USD"
-      }
+      "supports_thinking": false
     },
     {
       "name": "openai/gpt-oss-120b",
@@ -36,6 +34,9 @@
       "max_output_tokens": 32768,
       "recommended_temperature": 0.7,
       "supports_thinking": true,
+      "attachments": {
+        "images": true
+      },
       "pricing": {
         "input_per_1m": 0.03,
         "output_per_1m": 0.15,
@@ -48,6 +49,9 @@
       "max_output_tokens": 32768,
       "recommended_temperature": 0.7,
       "supports_thinking": true,
+      "attachments": {
+        "images": true
+      },
       "pricing": {
         "input_per_1m": 0.029,
         "output_per_1m": 0.14,
@@ -61,8 +65,8 @@
       "recommended_temperature": 0.6,
       "supports_thinking": true,
       "pricing": {
-        "input_per_1m": 0.29,
-        "output_per_1m": 0.59,
+        "input_per_1m": 0.08,
+        "output_per_1m": 0.28,
         "currency": "USD"
       }
     },
@@ -84,10 +88,9 @@
       "max_output_tokens": 16384,
       "recommended_temperature": 0.7,
       "supports_thinking": false,
-      "pricing": {
-        "input_per_1m": 0.57,
-        "output_per_1m": 2.3,
-        "currency": "USD"
+      "attachments": {
+        "images": true,
+        "documents": true
       }
     },
     {
@@ -96,10 +99,8 @@
       "max_output_tokens": 16384,
       "recommended_temperature": 0.7,
       "supports_thinking": false,
-      "pricing": {
-        "input_per_1m": 0.15,
-        "output_per_1m": 0.6,
-        "currency": "USD"
+      "attachments": {
+        "images": true
       }
     },
     {
@@ -108,10 +109,8 @@
       "max_output_tokens": 16384,
       "recommended_temperature": 0.7,
       "supports_thinking": false,
-      "pricing": {
-        "input_per_1m": 0.1,
-        "output_per_1m": 0.3,
-        "currency": "USD"
+      "attachments": {
+        "images": true
       }
     },
     {
@@ -119,7 +118,13 @@
       "context_window_tokens": 131072,
       "max_output_tokens": 4096,
       "recommended_temperature": 0.0,
-      "supports_thinking": false
+      "supports_thinking": false,
+      "supports_images": true,
+      "pricing": {
+        "input_per_1m": 0.18,
+        "output_per_1m": 0.18,
+        "currency": "USD"
+      }
     },
     {
       "name": "mistral-saba-24b",
