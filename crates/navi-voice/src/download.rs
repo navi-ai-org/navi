@@ -117,17 +117,16 @@ fn http_client() -> Result<reqwest::Client> {
     // Optional HF token for gated/rate-limited downloads.
     if let Ok(token) =
         std::env::var("HF_TOKEN").or_else(|_| std::env::var("HUGGING_FACE_HUB_TOKEN"))
+        && !token.trim().is_empty()
     {
-        if !token.trim().is_empty() {
-            let mut headers = reqwest::header::HeaderMap::new();
-            headers.insert(
-                reqwest::header::AUTHORIZATION,
-                format!("Bearer {}", token.trim())
-                    .parse()
-                    .context("invalid HF token header")?,
-            );
-            builder = builder.default_headers(headers);
-        }
+        let mut headers = reqwest::header::HeaderMap::new();
+        headers.insert(
+            reqwest::header::AUTHORIZATION,
+            format!("Bearer {}", token.trim())
+                .parse()
+                .context("invalid HF token header")?,
+        );
+        builder = builder.default_headers(headers);
     }
     builder.build().context("build HTTP client")
 }

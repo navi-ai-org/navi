@@ -53,16 +53,16 @@ impl<'a> TextInputRef<'a> {
     pub fn delete_previous_char(&mut self) {
         self.clamp_cursor();
         let prefix = &self.text[..*self.cursor];
-        if prefix.ends_with(']') {
-            if let Some(start_bracket) = prefix.rfind('[') {
-                let tag_candidate = &prefix[start_bracket..];
-                if tag_candidate.starts_with("[Image ") {
-                    let digits_part = &tag_candidate[7..tag_candidate.len() - 1];
-                    if !digits_part.is_empty() && digits_part.chars().all(|c| c.is_ascii_digit()) {
-                        self.text.drain(start_bracket..*self.cursor);
-                        *self.cursor = start_bracket;
-                        return;
-                    }
+        if prefix.ends_with(']')
+            && let Some(start_bracket) = prefix.rfind('[')
+        {
+            let tag_candidate = &prefix[start_bracket..];
+            if tag_candidate.starts_with("[Image ") {
+                let digits_part = &tag_candidate[7..tag_candidate.len() - 1];
+                if !digits_part.is_empty() && digits_part.chars().all(|c| c.is_ascii_digit()) {
+                    self.text.drain(start_bracket..*self.cursor);
+                    *self.cursor = start_bracket;
+                    return;
                 }
             }
         }
@@ -76,15 +76,15 @@ impl<'a> TextInputRef<'a> {
     pub fn delete_next_char(&mut self) {
         self.clamp_cursor();
         let suffix = &self.text[*self.cursor..];
-        if suffix.starts_with("[Image ") {
-            if let Some(end_bracket) = suffix.find(']') {
-                let tag_candidate = &suffix[..=end_bracket];
-                let digits_part = &tag_candidate[7..tag_candidate.len() - 1];
-                if !digits_part.is_empty() && digits_part.chars().all(|c| c.is_ascii_digit()) {
-                    let tag_len = tag_candidate.len();
-                    self.text.drain(*self.cursor..*self.cursor + tag_len);
-                    return;
-                }
+        if suffix.starts_with("[Image ")
+            && let Some(end_bracket) = suffix.find(']')
+        {
+            let tag_candidate = &suffix[..=end_bracket];
+            let digits_part = &tag_candidate[7..tag_candidate.len() - 1];
+            if !digits_part.is_empty() && digits_part.chars().all(|c| c.is_ascii_digit()) {
+                let tag_len = tag_candidate.len();
+                self.text.drain(*self.cursor..*self.cursor + tag_len);
+                return;
             }
         }
         let Some(next) = next_char_boundary(self.text, *self.cursor) else {
