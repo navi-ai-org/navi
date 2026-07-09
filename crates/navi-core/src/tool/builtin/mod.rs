@@ -1,7 +1,9 @@
 mod bash;
 mod branch_race;
+#[cfg(feature = "code-vfs")]
 mod code_edit_tool;
 mod code_exec;
+#[cfg(feature = "code-vfs")]
 mod code_tool;
 mod extra_tools;
 mod goal;
@@ -35,8 +37,10 @@ pub(super) use extra_tools::{
 
 pub(super) use bash::BashTool;
 pub(super) use branch_race::BranchRaceTool;
+#[cfg(feature = "code-vfs")]
 pub(super) use code_edit_tool::CodeEditTool;
 pub(super) use code_exec::CodeExecTool;
+#[cfg(feature = "code-vfs")]
 pub(super) use code_tool::CodeReadTool;
 pub(super) use helpers::truncate_tool_result;
 pub(super) use long_running::{InitSessionTool, MarkFeatureDoneTool};

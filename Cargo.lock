@@ -2875,6 +2875,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "navi-lite"
+version = "0.2.1"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "clap",
+ "futures-util",
+ "navi-core",
+ "navi-openai",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "navi-mcp"
 version = "0.2.1"
 dependencies = [
