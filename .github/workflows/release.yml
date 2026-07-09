@@ -71,6 +71,7 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: Workspace tests
+        # Headless e2e has a 180s timeout (cold binary on CI after full suite).
         run: cargo test --workspace --locked -- --test-threads=4
         # Clippy -D warnings stays on CI (main/PR). Release only gates on
         # fmt + tests so a green suite ships without blocking on legacy lints.
