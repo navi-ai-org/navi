@@ -18,7 +18,7 @@
 </p>
 
 <p align="center">
-  <sub>Alpha — APIs and config may change. Pin a release for production use.</sub>
+  <sub>Beta — APIs and config may still change. Pin a release for production use.</sub>
 </p>
 
 <p align="center">
