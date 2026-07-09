@@ -373,6 +373,11 @@ pub enum AgentEvent {
         /// Optional multimodal content parts (images + text).
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         content_parts: Vec<crate::model::ContentPart>,
+        /// Unix timestamp (seconds since epoch) when the user submitted this
+        /// message. Used for wall-clock display in clients (e.g. TUI sticky bar).
+        /// Optional for backward-compatible session JSON (pre-timestamp sessions).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        submitted_at: Option<u64>,
     },
     /// A complete model output with optional thinking/reasoning content.
     ModelOutput {
@@ -486,6 +491,13 @@ pub enum AgentEvent {
         cache_creation_tokens: u64,
         /// Number of tokens read from the prompt cache (Anthropic).
         cache_read_tokens: u64,
+    },
+    /// Short post-turn session recap (Grok-style "Recap" line).
+    SessionRecap {
+        /// One- or two-sentence summary of the turn.
+        summary: String,
+        /// When true, the recap was generated but should not be shown (long-tail).
+        suppressed: bool,
     },
     /// The agent requested to set a goal via natural language.
     SetGoalRequested {

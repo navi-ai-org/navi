@@ -282,13 +282,14 @@ fn composer_activity_line(app: &TuiApp, width: usize) -> Option<Line<'static>> {
     let (status, color) = composer_activity_status(app);
     let elapsed = format_activity_elapsed(elapsed_ms);
     let suffix = format!(" · {elapsed}");
-    let dots = activity_dots(elapsed_ms);
-    let status_width = width.saturating_sub(display_width(dots) + display_width(&suffix) + 2);
+    // Grok-style diamond pulse while a turn is running — no corner trail.
+    let diamond = crate::render::status::running_diamond(elapsed_ms);
+    let status_width = width.saturating_sub(display_width(diamond) + display_width(&suffix) + 2);
     let status = fit_display_width(&status, status_width.max(1));
 
     Some(Line::from(vec![
         Span::styled(
-            dots,
+            diamond,
             Style::default().fg(color).add_modifier(Modifier::BOLD),
         ),
         Span::styled(" ", Style::default().fg(ghost())),
@@ -386,14 +387,7 @@ fn active_assistant_message(app: &TuiApp) -> Option<&crate::state::ChatMessage> 
     })
 }
 
-fn activity_dots(elapsed_ms: u64) -> &'static str {
-    match (elapsed_ms / 300) % 4 {
-        0 => ".  ",
-        1 => ".. ",
-        2 => "...",
-        _ => " ..",
-    }
-}
+
 
 fn format_activity_elapsed(ms: u64) -> String {
     let seconds = ms / 1_000;
@@ -546,7 +540,8 @@ fn composer_footer_line(app: &TuiApp, width: usize) -> Line<'static> {
     let provider = selected_provider_label(app);
     let thinking = app.thinking_level.label();
     let model = selected_model_label(app);
-    let context = app.compact_state.usage_label(0);
+    // Include composer draft in preflight estimate (Grok-style live meter).
+    let context = app.compact_state.usage_label(app.input.len());
 
     if width < 48 {
         let available_model_width = width.saturating_sub(display_width(&context) + 3).max(1);
@@ -589,6 +584,14 @@ fn composer_footer_line(app: &TuiApp, width: usize) -> Line<'static> {
             .fg(code_number())
             .add_modifier(Modifier::BOLD),
     ));
+    // Per-turn usage from the last UsageReported event (Grok updates this every turn).
+    if let Some(turn) = app.usage_state.last_turn_label.as_ref() {
+        spans.push(Span::styled(" · ", Style::default().fg(ghost())));
+        spans.push(Span::styled(
+            turn.clone(),
+            Style::default().fg(muted()),
+        ));
+    }
 
     footer_with_permission(spans, app, width)
 }

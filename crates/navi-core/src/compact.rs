@@ -55,6 +55,8 @@ pub const WARNING_THRESHOLD_BUFFER_TOKENS: u64 = 20_000;
 pub const ERROR_THRESHOLD_BUFFER_TOKENS: u64 = 20_000;
 pub const MAX_OUTPUT_TOKENS_FOR_SUMMARY: u64 = 20_000;
 pub const MAX_CONSECUTIVE_FAILURES: u32 = 3;
+/// Grok-style auto-compact when context usage reaches this percent of the window.
+pub const AUTO_COMPACT_THRESHOLD_PERCENT: u8 = 85;
 
 /// Context usage severity level used to trigger compact warnings and errors.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -81,14 +83,30 @@ impl std::fmt::Display for CompactThreshold {
 }
 
 /// Tracks token usage and compact failure state for autocompact decisions.
-#[derive(Debug, Clone, Default)]
+///
+/// Measurement model (aligned with Grok Build TUI):
+/// - **context tokens used** = last API `input_tokens` (ground truth for the
+///   current context) + client preflight for unsent bytes (`bytes/4`)
+/// - **window** = model `context_window` from registry
+/// - **usage %** = used / window
+/// - **total before compaction** = cumulative input tokens across turns
+///   (historical; does not reset when the bar drops after compact)
+#[derive(Debug, Clone)]
 pub struct CompactState {
-    /// Token count from the last model response, if available.
+    /// Token count from the last model response usage (current context size).
     pub last_input_tokens: Option<u64>,
+    /// Output tokens from the last model response (UI turn label).
+    pub last_output_tokens: Option<u64>,
     /// Estimated bytes of new messages not yet sent to the model.
     pub estimated_unsent_bytes: usize,
     /// Context window size in tokens for the current model.
     pub context_window: u64,
+    /// Cumulative input tokens processed before/during compaction cycles.
+    pub total_tokens_before_compaction: u64,
+    /// Number of compaction runs in this session.
+    pub compaction_count: u32,
+    /// Auto-compact when `context_percentage >= this` (Grok default: 85).
+    pub auto_compact_threshold_percent: u8,
     /// Number of consecutive compact failures.
     pub consecutive_failures: u32,
     pub summary: Option<String>,
@@ -100,6 +118,36 @@ pub struct CompactState {
     pub crossed_thresholds: Vec<f64>,
     /// Fingerprints of messages already copied into long-horizon history.
     pub history_synced_message_keys: HashSet<u64>,
+}
+
+impl Default for CompactState {
+    fn default() -> Self {
+        Self {
+            last_input_tokens: None,
+            last_output_tokens: None,
+            estimated_unsent_bytes: 0,
+            context_window: 0,
+            total_tokens_before_compaction: 0,
+            compaction_count: 0,
+            auto_compact_threshold_percent: AUTO_COMPACT_THRESHOLD_PERCENT,
+            consecutive_failures: 0,
+            summary: None,
+            summary_message_count: 0,
+            rebuild_context: None,
+            crossed_thresholds: Vec::new(),
+            history_synced_message_keys: HashSet::new(),
+        }
+    }
+}
+
+fn format_token_short(t: u64) -> String {
+    if t >= 1_000_000 {
+        format!("{:.1}M", t as f64 / 1_000_000.0)
+    } else if t >= 1_000 {
+        format!("{}k", t / 1_000)
+    } else {
+        t.to_string()
+    }
 }
 
 impl CompactState {
@@ -118,6 +166,23 @@ impl CompactState {
         self.estimated_unsent_bytes = 0;
     }
 
+    /// Current context size (Grok `contextTokensUsed` analogue).
+    pub fn context_tokens_used(&self, pending_input_bytes: usize) -> u64 {
+        self.total_estimated_tokens(pending_input_bytes)
+    }
+
+    /// Context window size (Grok `contextWindowTokens` analogue).
+    pub fn context_window_tokens(&self) -> u64 {
+        self.context_window
+    }
+
+    /// Integer percent of the window in use (Grok `contextWindowUsage` analogue).
+    pub fn context_window_usage(&self, pending_input_bytes: usize) -> u8 {
+        self.context_percentage(pending_input_bytes)
+    }
+
+    /// Estimate tokens for the next request:
+    /// API last-input (server) + unsent/pending client bytes as `ceil(bytes/4)`.
     pub fn total_estimated_tokens(&self, pending_input_bytes: usize) -> u64 {
         let server_tokens = self.last_input_tokens.unwrap_or(0);
         let client_bytes = self.estimated_unsent_bytes + pending_input_bytes;
@@ -147,10 +212,20 @@ impl CompactState {
         if self.consecutive_failures >= MAX_CONSECUTIVE_FAILURES {
             return false;
         }
+        if self.context_window == 0 {
+            return false;
+        }
+        // Grok-style: compact near 85% of the window (includes unsent preflight).
+        let used = self.total_estimated_tokens(0);
+        let pct = (used as f64 / self.context_window as f64) * 100.0;
+        if pct >= f64::from(self.auto_compact_threshold_percent) {
+            return true;
+        }
+        // Hard ceiling: last API input + reserved buffer would fill the window.
         let Some(input_tokens) = self.last_input_tokens else {
             return false;
         };
-        input_tokens + buffer_tokens >= self.context_window
+        input_tokens.saturating_add(buffer_tokens) >= self.context_window
     }
 
     pub fn context_percentage(&self, pending_input_bytes: usize) -> u8 {
@@ -164,29 +239,39 @@ impl CompactState {
 
     pub fn usage_label(&self, pending_input_bytes: usize) -> String {
         let pct = self.context_percentage(pending_input_bytes);
-        let format_tokens = |t: u64| {
-            if t >= 1_000_000 {
-                format!("{:.1}M", t as f64 / 1_000_000.0)
-            } else if t >= 1_000 {
-                format!("{}k", t / 1_000)
-            } else {
-                t.to_string()
-            }
-        };
-
         let total_tokens = self.total_estimated_tokens(pending_input_bytes);
-
         format!(
             "{} / {} ({}%)",
-            format_tokens(total_tokens),
-            format_tokens(self.context_window),
+            format_token_short(total_tokens),
+            format_token_short(self.context_window),
             pct
         )
     }
 
+    /// Record provider usage for this turn (called every stream that reports usage).
     pub fn update_usage(&mut self, input_tokens: u64) {
+        self.update_usage_full(input_tokens, 0);
+    }
+
+    /// Record full turn usage and refresh live context metrics.
+    pub fn update_usage_full(&mut self, input_tokens: u64, output_tokens: u64) {
         self.last_input_tokens = Some(input_tokens);
+        self.last_output_tokens = Some(output_tokens);
+        self.total_tokens_before_compaction = self
+            .total_tokens_before_compaction
+            .saturating_add(input_tokens);
         self.clear_unsent_bytes();
+    }
+
+    /// Label shown in the TUI footer — updates every turn after `update_usage*`.
+    pub fn turn_usage_label(&self) -> Option<String> {
+        let input = self.last_input_tokens?;
+        let output = self.last_output_tokens.unwrap_or(0);
+        Some(format!(
+            "{}→{}",
+            format_token_short(input),
+            format_token_short(output)
+        ))
     }
 
     pub async fn auto_compact(
@@ -275,6 +360,8 @@ impl CompactState {
                 self.summary_message_count = messages.len();
                 self.consecutive_failures = 0;
                 self.last_input_tokens = None;
+                self.last_output_tokens = None;
+                self.compaction_count = self.compaction_count.saturating_add(1);
 
                 let tokens_saved =
                     previous_tokens.saturating_sub(harness_config.autocompact_max_output_tokens);
@@ -329,6 +416,8 @@ impl CompactState {
         self.summary_message_count = messages.len();
         self.consecutive_failures = 0;
         self.last_input_tokens = None;
+        self.last_output_tokens = None;
+        self.compaction_count = self.compaction_count.saturating_add(1);
         self.clear_unsent_bytes();
 
         estimated_previous_tokens
@@ -534,6 +623,30 @@ mod tests {
             ..Default::default()
         };
         assert!(state.should_autocompact(AUTOCOMPACT_BUFFER_TOKENS));
+    }
+
+    #[test]
+    fn compact_state_autocompact_at_eighty_five_percent() {
+        // Grok-style: 170k / 200k = 85% triggers even when buffer would not.
+        let state = CompactState {
+            last_input_tokens: Some(170_000),
+            context_window: 200_000,
+            auto_compact_threshold_percent: 85,
+            ..Default::default()
+        };
+        assert!(state.should_autocompact(0));
+        assert_eq!(state.context_window_usage(0), 85);
+    }
+
+    #[test]
+    fn compact_state_update_usage_full_tracks_cumulative() {
+        let mut state = CompactState::new(200_000);
+        state.update_usage_full(10_000, 500);
+        state.update_usage_full(12_000, 800);
+        assert_eq!(state.last_input_tokens, Some(12_000));
+        assert_eq!(state.last_output_tokens, Some(800));
+        assert_eq!(state.total_tokens_before_compaction, 22_000);
+        assert_eq!(state.turn_usage_label().as_deref(), Some("12k→800"));
     }
 
     #[test]
