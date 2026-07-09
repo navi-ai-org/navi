@@ -21,6 +21,10 @@
   <sub>Alpha — APIs and config may change. Pin a release for production use.</sub>
 </p>
 
+<p align="center">
+  <img src="assets/brand/navi-demo.gif" width="900" alt="NAVI terminal session — read tools and answer with grok-4.5" />
+</p>
+
 ---
 
 ## Install

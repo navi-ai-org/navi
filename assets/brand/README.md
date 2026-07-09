@@ -15,6 +15,7 @@ Canonical mark for **NAVI** — coding agent engine; name puns on *nave* (spaces
 | File | Role |
 | --- | --- |
 | **`navi-icon.jpg`** | Canonical logo (README, GitHub, product) |
+| **`navi-demo.gif`** | Real TUI session recording (README demo) |
 
 ## Palette
 
