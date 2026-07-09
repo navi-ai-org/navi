@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.3] - 2026-07-09
+
+Full changelog: https://github.com/navi-ai-org/navi/compare/v0.2.2...v0.2.3
+
+### New Features
+
+- TUI: colored write/edit diffs, plain process/patch tool streams, boxed markdown tables
+- TUI: jump-to-latest control, hover context % chip, session USD/credit spend tracking
+- Session recap + per-turn context token meter; plan tools polish
+- Local voice ASR surface for desktop clients
+- Image hover previews (Kitty/Sixel/iTerm2) and `[Image N]` chips
+
+### Bug Fixes
+
+- **Prompt cache / quota**: stop double system prompt on Chat Completions; stable tool order for prefix caching; cache-aware Hyper credit estimates
+- **Multimodal Grok/xAI**: treat unknown SKUs via provider defaults; fix Ctrl+R sync inheritance so new models (e.g. `grok-4.5`) get vision/context from defaults + family siblings instead of bare `NULL` rows
+- Registry snapshot: add `grok-4.5` / `grok-4.20` with `supports_images`
+- Context meter: include cached tokens from aggregator usage reports
+- Charm Hyper credits reporting + embedded pricing fallback when SQLite pricing is empty
+
+### Chores
+
+- Version bump to 0.2.3
+
 ## [0.2.2] - 2026-07-09
 
 Full changelog: https://github.com/navi-ai-org/navi/compare/v0.2.0...v0.2.2
@@ -88,7 +112,8 @@ Full changelog: https://github.com/navi-ai-org/navi/releases/tag/v0.1.0
 
 - Initial open-source scaffold of the NAVI agent engine and TUI
 
-[Unreleased]: https://github.com/navi-ai-org/navi/compare/v0.2.2...HEAD
+[Unreleased]: https://github.com/navi-ai-org/navi/compare/v0.2.3...HEAD
+[0.2.3]: https://github.com/navi-ai-org/navi/compare/v0.2.2...v0.2.3
 [0.2.2]: https://github.com/navi-ai-org/navi/compare/v0.2.0...v0.2.2
 [0.2.0]: https://github.com/navi-ai-org/navi/compare/v0.1.2...v0.2.0
 [0.1.2]: https://github.com/navi-ai-org/navi/compare/v0.1.0...v0.1.2

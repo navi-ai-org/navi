@@ -154,6 +154,8 @@ pub struct TuiApp {
     pub(crate) interaction_registry: RefCell<InteractionRegistry<HitAction>>,
     pub(crate) selection: Option<SelectionState>,
     pub(crate) hover_index: Option<usize>,
+    /// Hovering the composer context-usage chip (reveals window %).
+    pub(crate) hover_context_usage: bool,
     pub(crate) theme_id: ThemeId,
     pub(crate) message_action_target: Option<usize>,
     pub(crate) selected_message_action: usize,
@@ -162,7 +164,7 @@ pub struct TuiApp {
     /// User force-collapsed tool bodies (overrides auto-expand and expand-all).
     pub(crate) collapsed_tool_results: HashSet<String>,
     pub(crate) hovered_chat_source: Option<crate::state::ChatLineSource>,
-    /// Currently selected scrollback block (Grok-style entry selection).
+    /// Currently selected scrollback block (entry selection).
     pub(crate) selected_chat_source: Option<crate::state::ChatLineSource>,
     pub(crate) cancel_esc_pressed: bool,
     pub(crate) last_click_time: Option<std::time::Instant>,
@@ -170,14 +172,14 @@ pub struct TuiApp {
     /// Chat hit deferred until mouse-up when the gesture was a click (not a drag).
     /// Lets drag-to-select text work on lines that also register hit regions.
     pub(crate) pending_chat_click: Option<crate::ui::interaction::HitAction>,
-    /// Animated composer content-line height (Grok expand/collapse).
+    /// Animated composer content-line height .
     /// Interpolates toward the focused multi-line size or a 1-line collapse.
     pub(crate) composer_anim_lines: f32,
 
     // Plan mode state
     pub(crate) agent_mode: navi_sdk::AgentMode,
     pub(crate) proposed_plan: Option<navi_sdk::ProposedPlan>,
-    /// Grok-style plan review modal state (line comments, approve/changes).
+    /// plan review modal state (line comments, approve/changes).
     pub(crate) plan_review: Option<crate::plan_review::PlanReviewState>,
     /// Active sudo password prompt (id + command summary; password lives only in buffer).
     pub(crate) sudo_password_prompt: Option<crate::state::SudoPasswordUiState>,
@@ -397,6 +399,7 @@ impl TuiApp {
             plugin_panels_loaded: false,
             selection: None,
             hover_index: None,
+            hover_context_usage: false,
             theme_id,
             message_action_target: None,
             selected_message_action: 0,

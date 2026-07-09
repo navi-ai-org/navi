@@ -204,6 +204,7 @@ impl SessionState {
                 events: self.events.clone(),
                 memory,
                 goal,
+                usage: None,
             };
             session_store.save(&snap)?;
             Ok::<_, anyhow::Error>(snap)
@@ -234,6 +235,7 @@ impl SessionState {
             events: self.events.clone(),
             memory,
             goal,
+            usage: None,
         };
         session_store.save_async(snapshot.clone()).await?;
         event_bus.publish(crate::event::RuntimeEventKind::SessionSaved {

@@ -658,7 +658,7 @@ pub(crate) fn render_confirm_plan(frame: &mut Frame<'_>, app: &mut TuiApp, area:
         vertical: 1,
     });
 
-    // Grok-style review when we have full state.
+    // review when we have full state.
     if let Some(review) = &app.plan_review {
         use crate::plan_review::PlanReviewFocus;
         let footer_h: u16 = match review.focus {
@@ -2051,16 +2051,29 @@ fn render_session_usage(lines: &mut Vec<Line<'_>>, app: &TuiApp) {
         ]));
     }
 
-    // Session spend from registry list pricing (API-key / non-OAuth billing).
+    // Session spend from list rates (USD) and prepaid credits when applicable.
+    let rates = current_model_pricing(app);
     if app.usage_state.session_cost_known {
         lines.push(Line::from(vec![
             Span::styled("  Est. cost", Style::default().fg(muted())),
             Span::styled(
                 format!(" {}", format_usd(app.usage_state.session_cost_usd)),
-                Style::default().fg(text()),
+                Style::default().fg(text()).add_modifier(Modifier::BOLD),
             ),
         ]));
-    } else if let Some((in_rate, out_rate)) = current_model_pricing(app) {
+        if let (Some(credits), Some(unit)) = (
+            app.usage_state.session_credits_spent,
+            app.usage_state.session_credit_unit.as_deref(),
+        ) {
+            lines.push(Line::from(vec![
+                Span::styled("  Est. credits", Style::default().fg(muted())),
+                Span::styled(
+                    format!(" {credits:.2} {unit}"),
+                    Style::default().fg(text()),
+                ),
+            ]));
+        }
+    } else if let Some((in_rate, out_rate)) = rates {
         lines.push(Line::from(vec![
             Span::styled("  Est. cost", Style::default().fg(muted())),
             Span::styled(
@@ -2069,6 +2082,24 @@ fn render_session_usage(lines: &mut Vec<Line<'_>>, app: &TuiApp) {
                     in_rate, out_rate
                 ),
                 Style::default().fg(text()),
+            ),
+        ]));
+    } else {
+        lines.push(Line::from(vec![
+            Span::styled("  Est. cost", Style::default().fg(muted())),
+            Span::styled(
+                " unknown (no list pricing for this model)".to_string(),
+                Style::default().fg(ghost()),
+            ),
+        ]));
+    }
+
+    if let Some((in_rate, out_rate)) = rates {
+        lines.push(Line::from(vec![
+            Span::styled("  Rates    ", Style::default().fg(muted())),
+            Span::styled(
+                format!("${in_rate:.2}/1M in · ${out_rate:.2}/1M out"),
+                Style::default().fg(ghost()),
             ),
         ]));
     }
@@ -2097,16 +2128,9 @@ fn format_usd(amount: f64) -> String {
 }
 
 fn current_model_pricing(app: &TuiApp) -> Option<(f64, f64)> {
-    use navi_sdk::{canonical_provider_id, provider_catalog};
     let provider_id = app.loaded_config.config.model.provider.as_str();
     let model_name = app.loaded_config.config.model.name.as_str();
-    let model = provider_catalog(&app.loaded_config.config)
-        .into_iter()
-        .find(|p| canonical_provider_id(&p.id) == canonical_provider_id(provider_id))
-        .and_then(|p| p.models.into_iter().find(|m| m.name == model_name))?;
-    let input = model.pricing_input_per_1m?;
-    let output = model.pricing_output_per_1m?;
-    Some((input, output))
+    navi_sdk::model_list_pricing(&app.loaded_config.config, provider_id, model_name)
 }
 
 fn render_usage_report(lines: &mut Vec<Line<'_>>, report: &NaviUsageReport) {

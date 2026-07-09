@@ -701,7 +701,7 @@ pub fn resolve_provider_api_key(
                 None
             }
         })
-        // Fallback: reuse Grok CLI session (~/.grok/auth.json) for xAI when NAVI
+        // Fallback: reuse xAI CLI session (~/.grok/auth.json) when NAVI
         // has no stored/env credential yet.
         .or_else(|| grok_auth_json_access_token(credential_store, &provider_config.id))
         .or_else(|| {

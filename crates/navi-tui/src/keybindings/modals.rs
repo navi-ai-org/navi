@@ -79,7 +79,7 @@ pub(crate) fn handle_help_key(app: &mut TuiApp, code: KeyCode) -> bool {
             super::apply_ui_effect(app, UiEffect::CloseModal);
         }
         KeyCode::Enter => {
-            // Enter closes (same as Grok cheatsheet dismiss).
+            // Enter closes (same as keyboard cheatsheet dismiss).
             super::apply_ui_effect(app, UiEffect::CloseModal);
         }
         KeyCode::Down | KeyCode::Char('j') | KeyCode::Tab => {
@@ -695,7 +695,7 @@ pub(crate) fn handle_oauth_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyMo
                 crate::browser::open_url(app, uri);
             }
         }
-        // Paste authorization code from Grok's "copy this code" page.
+        // Paste authorization code from the provider "copy this code" page.
         KeyCode::Char('p') | KeyCode::Char('P')
             if modifiers.is_empty() || modifiers.contains(KeyModifiers::CONTROL) =>
         {

@@ -216,6 +216,59 @@ pub struct OpenRouterUsageReport {
     pub limit_reset: Option<String>,
 }
 
+/// Charm Hyper account credit balance from `GET /v1/credits`.
+///
+/// Hyper bills in **Hypercredits** (prepaid). FAQ: **1 Hypercredit = $0.05 USD**.
+/// Token costs still have USD list rates; session spend can be shown as both USD
+/// and Hypercredits (`usd / 0.05`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CharmHyperCreditsReport {
+    /// Remaining Hypercredits on the account.
+    pub balance: f64,
+}
+
+/// USD value of one Hypercredit (Charm FAQ, 2026).
+pub const HYPERCREDIT_USD: f64 = 0.05;
+
+pub fn usd_to_hypercredits(usd: f64) -> f64 {
+    if HYPERCREDIT_USD <= 0.0 {
+        return 0.0;
+    }
+    usd / HYPERCREDIT_USD
+}
+
+pub fn hypercredits_to_usd(credits: f64) -> f64 {
+    credits * HYPERCREDIT_USD
+}
+
+pub async fn charm_hyper_credits_report(
+    api_key: &str,
+) -> std::result::Result<CharmHyperCreditsReport, String> {
+    let response = reqwest::Client::new()
+        .get("https://hyper.charm.land/v1/credits")
+        .header("Authorization", format!("Bearer {api_key}"))
+        .header("Accept", "application/json")
+        .header("User-Agent", "navi/0.1.0")
+        .send()
+        .await
+        .map_err(|err| err.to_string())?;
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        return Err(format!("Charm Hyper credits request failed: {status}: {body}"));
+    }
+    let payload: serde_json::Value = response.json().await.map_err(|err| err.to_string())?;
+    let balance = payload
+        .get("balance")
+        .and_then(|v| {
+            v.as_f64()
+                .or_else(|| v.as_i64().map(|n| n as f64))
+                .or_else(|| v.as_u64().map(|n| n as f64))
+        })
+        .ok_or_else(|| "Charm Hyper credits response missing balance".to_string())?;
+    Ok(CharmHyperCreditsReport { balance })
+}
+
 pub async fn openrouter_usage_report(
     api_key: &str,
 ) -> std::result::Result<OpenRouterUsageReport, String> {

@@ -577,7 +577,7 @@ impl ThinkingConfig {
 
 /// Parse a registry / config reasoning level string.
 ///
-/// Accepts common aliases used across OpenAI, OpenRouter, Anthropic, and Grok.
+/// Accepts common aliases used across OpenAI, OpenRouter, Anthropic, and xAI.
 pub fn parse_reasoning_level(raw: &str) -> Option<ThinkingConfig> {
     match raw.trim().to_ascii_lowercase().as_str() {
         "adaptive" | "auto" => Some(ThinkingConfig::Adaptive),

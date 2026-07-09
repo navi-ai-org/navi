@@ -375,9 +375,13 @@ fn build_model_request(ctx: &TurnContext, messages: &[ModelMessage]) -> ModelReq
         tools: match crate::config::effective_tool_calling_mode(&config) {
             crate::config::ToolCallingMode::Native => {
                 let all_tools = ctx.tool_executor.definitions();
-                ctx.components
+                let mut tools = ctx
+                    .components
                     .harness
-                    .filter_tools(all_tools, ctx.allowed_tool_names.as_deref())
+                    .filter_tools(all_tools, ctx.allowed_tool_names.as_deref());
+                // Keep tool schema order stable for provider prefix caching.
+                tools.sort_by(|a, b| a.name.cmp(&b.name));
+                tools
             }
             crate::config::ToolCallingMode::TextExtracted
             | crate::config::ToolCallingMode::ManifestOnly
@@ -575,21 +579,33 @@ async fn collect_model_output(ctx: &TurnContext, request: ModelRequest) -> Resul
                 cache_creation_tokens,
                 cache_read_tokens,
             } => {
-                let in_tok = input_tokens.unwrap_or(0);
                 let out_tok = output_tokens.unwrap_or(0);
                 let cache_create = cache_creation_tokens.unwrap_or(0);
                 let cache_read = cache_read_tokens.unwrap_or(0);
+                // Context meter must count cached prompt tokens. Some aggregators
+                // report only non-cached prompt (e.g. 430) with a large cache_read
+                // (e.g. 63k) — without summing, the UI shows a bogus ~430 / 1M.
+                let context_in = crate::compact::context_tokens_for_meter(
+                    input_tokens,
+                    cache_create,
+                    cache_read,
+                );
                 if let Some(ref tx) = ctx.event_tx {
                     let _ = tx.send(AgentEvent::UsageReported {
-                        input_tokens: in_tok,
+                        // Prefer full context size for session accounting.
+                        input_tokens: context_in.unwrap_or(input_tokens.unwrap_or(0)),
                         output_tokens: out_tok,
                         cache_creation_tokens: cache_create,
                         cache_read_tokens: cache_read,
                     });
                 }
-                let mut state = ctx.compact_state.lock().await;
-                // Grok-style: every usage event refreshes live context + cumulative totals.
-                state.update_usage_full(in_tok, out_tok);
+                if let Some(in_tok) = context_in {
+                    // Never clobber a real prior reading with a zero/empty partial.
+                    if in_tok > 0 {
+                        let mut state = ctx.compact_state.lock().await;
+                        state.update_usage_full(in_tok, out_tok);
+                    }
+                }
             }
             ModelStreamEvent::Done => {
                 emit_split_text(ctx, &mut output, think_tags.drain_pending());

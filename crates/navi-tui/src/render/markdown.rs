@@ -14,14 +14,14 @@ use super::tool::{tool_compact_text, tool_running_text};
 const USER_MESSAGE_VERTICAL_PADDING: usize = 0;
 
 /// Blank line between structural markdown blocks (prose ↔ table/code/heading).
-/// Mirrors Grok's outer_vpad / block breathing room.
+/// outer_vpad / block breathing room.
 const MD_BLOCK_V_GAP: usize = 1;
 /// Shared content column: user text (after `› `), tools (`◆ `), assistant prose.
-/// Keeps scrollback on two visual columns — gutter | content — like Grok.
+/// Keeps scrollback on two visual columns — gutter | content — .
 const CONTENT_GUTTER: usize = 2;
 /// Left pad for structural blocks so tables/code align under tool diamonds (`◆ `).
 const MD_BLOCK_H_PAD: usize = CONTENT_GUTTER;
-/// Inner horizontal pad inside each table cell (Grok block_pad feel).
+/// Inner horizontal pad inside each table cell .
 const TABLE_CELL_H_PAD: usize = 1;
 /// Width of an interior vertical border glyph (`│`).
 const TABLE_BORDER_W: usize = 1;
@@ -90,7 +90,7 @@ pub(crate) fn build_chat_render_for_messages(
 
         match msg.role {
             ChatRole::User => {
-                // Grok-style sticky prompt: `› text…` left, clock right-aligned.
+                // sticky prompt: `› text…` left, clock right-aligned.
                 let lines = render_user_message_lines(&msg.content, chat_width, msg.sent_at);
                 for line in lines {
                     rendered_lines.push(line);
@@ -111,7 +111,7 @@ pub(crate) fn build_chat_render_for_messages(
             }
             ChatRole::Assistant => {
                 if msg.is_recap {
-                    // Grok-style: "Recap" label + one short summary (hard-cap 1 wrap line).
+                    // "Recap" label + one short summary (hard-cap 1 wrap line).
                     let summary = msg.content.trim();
                     let label = "Recap ";
                     let label_w = display_width(label);
@@ -287,10 +287,10 @@ fn push_sourced_lines(
     }
 }
 
-/// Grok-style user prompt row:
+/// user prompt row:
 /// ```text
 /// › message text that wraps…                         4:25 AM
-///   continued on next line without the clock
+/// continued on next line without the clock
 /// ```
 ///
 /// Two columns: prefix+text on the left, wall-clock on the right of the first line.
@@ -390,7 +390,7 @@ fn render_user_message_lines(
     lines
 }
 
-/// Format wall clock like Grok: `4:25 AM`. Empty if unknown.
+/// Format wall clock  `4:25 AM`. Empty if unknown.
 fn format_message_clock(sent_at: Option<std::time::SystemTime>) -> String {
     let Some(sent_at) = sent_at else {
         return String::new();
@@ -675,7 +675,7 @@ fn render_compact_tool_result(
         collapsed_tool_results,
     );
 
-    // Always show the one-line header (Grok tool card title).
+    // Always show the one-line header (tool card title).
     lines.push((
         render_compact_tool_line_with_width(invocation, result, chat_width, loading_elapsed_ms),
         source.clone(),
@@ -1201,7 +1201,7 @@ fn table_block_lines_at(
     }
 
     // Align tables under tool diamonds: marker (`◆ `) or MD_BLOCK_H_PAD spaces.
-    // Grok-style full box needs outer left/right borders (`│` × (cols+1)).
+    // full box needs outer left/right borders (`│` × (cols+1)).
     let gutter_width = if show_marker { 2 } else { MD_BLOCK_H_PAD };
     let available_width = max_width.saturating_sub(gutter_width).min(MAX_TABLE_WIDTH);
     let border_budget = column_count.saturating_add(1).saturating_mul(TABLE_BORDER_W);
@@ -1236,12 +1236,12 @@ fn table_block_lines_at(
 
     shrink_table_widths(&mut content_widths, &minimum_widths, columns_width);
 
-    // Grok Build table: full box frame on a panel surface.
-    //   ┌──────┬──────┐
-    //   │ head │ head │
-    //   ├──────┼──────┤
-    //   │ cell │ cell │
-    //   └──────┴──────┘
+    // Table: full box frame on a panel surface.
+    // ┌──────┬──────┐
+    // │ head │ head │
+    // ├──────┼──────┤
+    // │ cell │ cell │
+    // └──────┴──────┘
     let mut lines = Vec::new();
     let is_first = take_lead_marker(lead_marker, show_marker);
     lines.push(table_border_line(
@@ -1300,7 +1300,7 @@ fn shrink_table_widths(widths: &mut [usize], minimum_widths: &[usize], target: u
     }
 }
 
-/// Box-drawing row kinds for Grok-style tables.
+/// Box-drawing row kinds for tables.
 #[derive(Clone, Copy)]
 enum TableBorderKind {
     Top,
@@ -1309,7 +1309,7 @@ enum TableBorderKind {
 }
 
 fn table_surface_bg() -> Color {
-    // Slightly elevated surface like Grok chat cards / code panels.
+    // Slightly elevated surface  chat cards / code panels.
     code_block_bg()
 }
 
@@ -1355,7 +1355,7 @@ fn wrapped_table_row_lines_at(
     marker_color: Color,
     lead_marker: &mut bool,
 ) -> Vec<Line<'static>> {
-    // Header uses muted bold (Grok table headers); body uses default text.
+    // Header uses muted bold (table headers); body uses default text.
     // Inline `code` keeps syntax colors via inline_text_spans.
     let color = if header { muted() } else { text() };
     let bg = table_surface_bg();
@@ -2362,7 +2362,7 @@ mod tests {
                 .iter()
                 .any(|line| { line.spans.iter().any(|span| span.content.contains('│')) })
         );
-        // Full Grok box: top/header/bottom junctions.
+        // Full box: top/header/bottom junctions.
         assert!(
             lines.iter().any(|line| {
                 line.spans
@@ -2492,12 +2492,12 @@ mod tests {
         assert!(!first.starts_with('┃'));
         assert!(
             first.contains('┌'),
-            "Grok table should open with top border, got {first:?}"
+            "Table should open with top border, got {first:?}"
         );
     }
 
     #[test]
-    fn grok_style_table_has_full_box_frame() {
+    fn table_has_full_box_frame() {
         let markdown = "| Área | Fix |\n| --- | --- |\n| Chat | running tools |\n| Cache | pulse frame |";
         let lines = render_markdown_lines(markdown, 80, text(), text(), false);
         let rendered: Vec<String> = lines
@@ -2534,8 +2534,8 @@ fn code_panel_prefix_width() -> usize {
 ///
 /// - Marked (thinking): diamond on the first line, plain indent after.
 /// - Unmarked (assistant/tool body): always `CONTENT_GUTTER` spaces so prose,
-///   tables, and code share one content column with user `› ` and tool `◆ `.
-/// Never draws a vertical bar / corner stroke (Grok quote-bar).
+/// tables, and code share one content column with user `› ` and tool `◆ `.
+/// Never draws a vertical bar / corner stroke (quote-bar).
 fn marker_spans_at(
     show_marker: bool,
     marker_color: Color,

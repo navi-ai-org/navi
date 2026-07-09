@@ -49,6 +49,7 @@ pub use navi_core::{
     CapabilityLedgerEntry, CapabilityScope, GoalStatus, GoalTask, ModelMessage, ModelRole,
     PlanReviewDecision, PlanReviewRequest, PlanReviewResponse, QuestionOption, QuestionRequest,
     QuestionResponse, RuntimeEvent, RuntimeEventKind, SessionGoal, SessionId, SessionSnapshot,
+    SessionUsageSnapshot,
     SubagentTranscriptItem, SubagentTranscriptKind, SudoPasswordRequest, SudoPasswordResponse,
     TaskStatus,
 };
@@ -69,11 +70,13 @@ pub use navi_core::{
 };
 // Utility functions
 pub use navi_core::{
-    available_model_options, build_system_prompt, canonical_provider_id, compact_tool_observation,
-    effective_context_window, is_free_model_name, log_path, model_can_run_publicly,
-    provider_catalog, provider_request_model_name, resolve_provider_api_key_for_project,
+    available_model_options, billable_input_split, build_system_prompt, canonical_provider_id,
+    compact_tool_observation, effective_context_window, estimate_token_cost_usd,
+    estimate_token_cost_usd_with_cache, is_free_model_name, log_path, model_cache_list_pricing,
+    model_can_run_publicly, model_list_pricing, provider_catalog, provider_credit_unit,
+    provider_request_model_name, provider_uses_credits, resolve_provider_api_key_for_project,
     resolve_provider_config, resolve_provider_credential_status, save_global_config,
-    set_registry_store,
+    set_registry_store, usd_to_provider_credits,
 };
 // Registry
 pub use navi_core::registry::{RegistryFetcher, RegistryStore, load_registry};

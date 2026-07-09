@@ -182,6 +182,13 @@ sync-registry-snapshot:
     @echo "Registry snapshot updated. Rebuild navi to embed it."
     @echo "  cargo check -p navi-core"
 
+# ─── Brand / demo GIF ─────────────────────────────────────────────────────────
+
+# Record the real NAVI TUI (VHS PTY) and composite floating mouse + focus zoom.
+# Requires: vhs, ffmpeg, pillow; uses NAVI_BIN (default ~/.local/bin/navi).
+record-demo:
+    bash scripts/record-demo.sh
+
 # ─── Aggregates ────────────────────────────────────────────────────────────────
 
 # Fast local gate: format, compile, unit tests

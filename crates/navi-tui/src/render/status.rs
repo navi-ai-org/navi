@@ -1,6 +1,6 @@
 //! Status diamonds for tool/activity indicators.
 //!
-//! Grok-style filled diamond (`◆`) without the left quote-bar / vertical trail.
+//! filled diamond (`◆`) without the left quote-bar / vertical trail.
 //! Running states pulse between filled and hollow so the user can see activity.
 
 use ratatui::style::Color;

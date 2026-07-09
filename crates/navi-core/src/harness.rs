@@ -495,7 +495,7 @@ pub fn record_tool_result(
         return ToolLoopDecision::Stop(stop_for_failure(
             HarnessStopReason::ConsecutiveUnknownTools,
             invocation,
-            "unknown tools",
+            "unknown tools (use registered names like read_file, fs_browser, bash, grep — not file paths as tool names)",
             state.consecutive_unknown_tools,
         ));
     }

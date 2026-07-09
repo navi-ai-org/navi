@@ -1,5 +1,5 @@
 use navi_sdk::{
-    AgentEvent, CompactState, ModelMessage, SessionSnapshot, SessionStore,
+    AgentEvent, CompactState, ModelMessage, SessionSnapshot, SessionStore, SessionUsageSnapshot,
     effective_context_window, save_global_config, session_title_from_events,
 };
 
@@ -34,6 +34,14 @@ pub(crate) fn snapshot_current_session(app: &TuiApp) {
         events: app.events.clone(),
         memory: None,
         goal: existing_goal,
+        usage: Some(SessionUsageSnapshot {
+            input_tokens: app.usage_state.session_input_tokens,
+            output_tokens: app.usage_state.session_output_tokens,
+            cost_usd: app.usage_state.session_cost_usd,
+            cost_known: app.usage_state.session_cost_known,
+            credits_spent: app.usage_state.session_credits_spent,
+            credit_unit: app.usage_state.session_credit_unit.clone(),
+        }),
     };
     if let Err(err) = tokio::task::block_in_place(|| app.session_store.save(&snapshot)) {
         tracing::warn!(error = %err, "failed to save session");
@@ -112,6 +120,25 @@ pub(crate) fn load_session(app: &mut TuiApp, snapshot: &SessionSnapshot) {
     reset_system_context(app);
     app.events.clear();
     app.compact_state = CompactState::new(effective_context_window(&app.loaded_config.config));
+    // Restore persisted session spend / token totals.
+    if let Some(usage) = &snapshot.usage {
+        app.usage_state.session_input_tokens = usage.input_tokens;
+        app.usage_state.session_output_tokens = usage.output_tokens;
+        app.usage_state.session_cost_usd = usage.cost_usd;
+        app.usage_state.session_cost_known = usage.cost_known;
+        app.usage_state.session_credits_spent = usage.credits_spent;
+        app.usage_state.session_credit_unit = usage.credit_unit.clone();
+    } else {
+        app.usage_state.session_input_tokens = 0;
+        app.usage_state.session_output_tokens = 0;
+        app.usage_state.session_cost_usd = 0.0;
+        app.usage_state.session_cost_known = false;
+        app.usage_state.session_credits_spent = None;
+        app.usage_state.session_credit_unit = None;
+    }
+    app.usage_state.last_input_tokens = None;
+    app.usage_state.last_output_tokens = None;
+    app.usage_state.last_turn_label = None;
     app.pending_approvals.clear();
     app.pending_questions.clear();
     app.running_tools.clear();

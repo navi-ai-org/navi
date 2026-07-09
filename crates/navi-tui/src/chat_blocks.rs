@@ -1,4 +1,4 @@
-//! Grok-style scrollback block selection helpers.
+//! scrollback block selection helpers.
 //!
 //! Each discrete chat entry (user message, assistant message, tool result,
 //! tool group, subagent) is a selectable block. Selection and text-drag stay

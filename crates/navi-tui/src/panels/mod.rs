@@ -2,10 +2,10 @@
 //!
 //! This module provides:
 //! - [`NaviPanelContext`]: a concrete `PanelContext` that gives panels access
-//!   to `&mut TuiApp` (safe because the TUI event loop is single-threaded).
+//! to `&mut TuiApp` (safe because the TUI event loop is single-threaded).
 //! - [`ModalPanel`]: a Panel wrapper for existing render functions, enabling
-//!   incremental migration from the hardcoded `render_inner` match to the
-//!   dynamic PanelManager.
+//! incremental migration from the hardcoded `render_inner` match to the
+//! dynamic PanelManager.
 
 use std::any::Any;
 use std::sync::Mutex;
@@ -125,7 +125,7 @@ pub fn register_modal_panels(app: &mut TuiApp) {
         76,
         18,
     )));
-    // Help — Grok-style keyboard cheatsheet (sectioned + scrollable)
+    // Help — keyboard cheatsheet (sectioned + scrollable)
     pm.add_overlay(Box::new(ModalPanel::new(
         "help",
         Mode::Help,

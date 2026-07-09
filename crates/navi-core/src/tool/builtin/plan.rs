@@ -41,7 +41,7 @@ impl PlanTool {
 #[async_trait]
 impl Tool for PlanTool {
     fn definition(&self) -> ToolDefinition {
-        // Schema shape follows Grok/Cursor CreatePlan + agentic post-training norms:
+        // Schema shape follows CreatePlan + agentic post-training norms:
         // models reliably emit markdown plan bodies and/or todos[{id,content}], and often
         // omit nested {description} objects. Multi-action CRUD is kept, but create accepts
         // those familiar shapes so frontier models don't bounce on empty_steps.
@@ -679,7 +679,7 @@ fn coerce_step(value: &Value) -> Result<Option<PlanStep>> {
     }))
 }
 
-/// Extract checklist items from markdown (Grok CreatePlan bodies).
+/// Extract checklist items from markdown (CreatePlan bodies).
 fn steps_from_markdown(body: &str) -> Vec<PlanStep> {
     let mut steps = Vec::new();
     for line in body.lines() {

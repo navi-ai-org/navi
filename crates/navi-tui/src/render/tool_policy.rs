@@ -1,4 +1,4 @@
-//! Tool body expand/collapse policy (Grok-inspired).
+//! Tool body expand/collapse policy (compact).
 //!
 //! Useful output (edits/diffs, errors, small structured results) opens by default.
 //! Noisy tools (reads, greps, shell dumps) stay collapsed unless the user opens them.
@@ -69,7 +69,7 @@ pub(crate) fn tool_body_reason(
     ToolBodyReason::CollapsedDefault
 }
 
-/// Tools whose output is high-signal for reading (Grok: edits expanded by default).
+/// Tools whose output is high-signal for reading .
 pub(crate) fn tool_auto_expand(invocation: &ToolInvocation, result: &ToolResult) -> bool {
     // Failures are always useful.
     if !result.ok {

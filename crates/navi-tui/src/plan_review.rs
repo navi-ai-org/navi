@@ -1,4 +1,4 @@
-//! Grok/Twilight-style plan review: line selection, comments, approve/changes/quit.
+//! plan review: line selection, comments, approve/changes/quit.
 
 use navi_core::{Plan, PlanLineComment, PlanStatus, PlanStore, plan_view_lines};
 

@@ -49,6 +49,10 @@ pub enum HitAction {
         target: ScrollTarget,
         offset: usize,
     },
+    /// Jump chat scrollback to the latest message (bottom / follow tail).
+    ScrollToBottom,
+    /// Hover/click the composer context-usage chip (`3 / 200k` → show %).
+    ContextUsage,
     #[allow(dead_code)]
     RemoveImage(usize),
     /// Hover/preview a pending composer image (0-based index into `pending_images`).

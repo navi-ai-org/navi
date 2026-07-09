@@ -418,6 +418,7 @@ mod tests {
             events: vec![],
             memory: None,
             goal: Some(SessionGoal::new("s1".into(), "obj".into(), None)),
+            usage: None,
         };
         assert!(snap.goal.is_some());
         let goal = snap.goal.as_ref().unwrap();

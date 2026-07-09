@@ -4,7 +4,7 @@
 //!
 //! 1. **Direct write**: `{ path, content }` — write content to a single file.
 //! 2. **Patch mode**: `{ patch }` or `{ patches: [...] }` — apply structured patches
-//!    (`*** Begin Patch … *** End Patch`) or unified diffs.
+//! (`*** Begin Patch … *** End Patch`) or unified diffs.
 //!
 //! Features inherited from NAVI:
 //! - Structured patch parser with full backup/rollback on failure
@@ -17,7 +17,7 @@
 //! - **Verification phase**: prior to applying, reads target files to check context match
 //! - **Delta tracking**: `AppliedPatchDelta` records every committed mutation
 //! - **Fuzzy unicode matching**: EN DASH (U+2013), EM DASH (U+2014), NB-HYPHEN (U+2011)
-//!   are normalised to ASCII before context matching
+//! are normalised to ASCII before context matching
 //! - **Environment ID preamble**: `*** Environment ID: <id>` line is parsed and echoed
 
 use anyhow::{Context, Result, bail};
@@ -227,7 +227,7 @@ impl WriteTool {
         .await
         .map_err(|e| anyhow::anyhow!("task join error: {}", e))??;
 
-        // Grok-style display diff (red/green in the TUI via ```diff fences).
+        // display diff (red/green in the TUI via ```diff fences).
         let display_path = raw_path.as_str();
         let diff = build_write_display_diff(display_path, existing_content.as_deref(), &content);
         let (lines_added, lines_removed) = count_diff_add_remove(&diff);
@@ -260,7 +260,7 @@ fn count_lines(content: &str) -> usize {
 /// Cap for O(n·m) line-diff DP. Larger files fall back to a full rewrite view.
 const MAX_LINE_DIFF_LINES: usize = 2000;
 
-/// Build a Grok-style structured display diff for a full-file write.
+/// Build a structured display diff for a full-file write.
 ///
 /// Uses `*** Add File` / `*** Update File` markers (same vocabulary as
 /// structured patches) so the TUI can fence the body as ```diff and color

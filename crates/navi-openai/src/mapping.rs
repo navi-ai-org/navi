@@ -346,26 +346,45 @@ pub(crate) fn usage_from_value_with_behavior(
     let normalized = if let Some(b) = behavior {
         b.parse_usage(usage)
     } else {
-        // Fallback: try all common field name variants
-        let input_tokens = usage
-            .get("input_tokens")
-            .or_else(|| usage.get("prompt_tokens"))
-            .or_else(|| usage.get("promptTokenCount"))
-            .and_then(Value::as_u64);
-        let output_tokens = usage
-            .get("output_tokens")
-            .or_else(|| usage.get("completion_tokens"))
-            .or_else(|| usage.get("candidatesTokenCount"))
-            .and_then(Value::as_u64);
-        crate::providers::behavior::NormalizedUsage {
+        // Fallback: try all common field name variants (lenient numbers).
+        use crate::providers::behavior::{json_u64, NormalizedUsage};
+        let mut input_tokens = json_u64(
+            usage
+                .get("input_tokens")
+                .or_else(|| usage.get("prompt_tokens"))
+                .or_else(|| usage.get("promptTokenCount")),
+        );
+        let output_tokens = json_u64(
+            usage
+                .get("output_tokens")
+                .or_else(|| usage.get("completion_tokens"))
+                .or_else(|| usage.get("candidatesTokenCount")),
+        );
+        let cache_read_tokens = usage
+            .get("input_tokens_details")
+            .or_else(|| usage.get("prompt_tokens_details"))
+            .and_then(|d| d.get("cached_tokens"))
+            .and_then(crate::providers::behavior::json_u64_value)
+            .or_else(|| json_u64(usage.get("cache_read_input_tokens")));
+        let cache_creation_tokens = json_u64(usage.get("cache_creation_input_tokens"));
+        if input_tokens.is_none() {
+            if let Some(total) = json_u64(usage.get("total_tokens")) {
+                input_tokens = Some(total.saturating_sub(output_tokens.unwrap_or(0)));
+            }
+        }
+        NormalizedUsage {
             input_tokens,
             output_tokens,
-            cache_creation_tokens: None,
-            cache_read_tokens: None,
+            cache_creation_tokens,
+            cache_read_tokens,
         }
     };
 
-    if normalized.input_tokens.is_some() || normalized.output_tokens.is_some() {
+    if normalized.input_tokens.is_some()
+        || normalized.output_tokens.is_some()
+        || normalized.cache_read_tokens.is_some()
+        || normalized.cache_creation_tokens.is_some()
+    {
         vec![Ok(navi_core::ModelStreamEvent::Usage {
             input_tokens: normalized.input_tokens,
             output_tokens: normalized.output_tokens,

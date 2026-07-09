@@ -1,20 +1,20 @@
-//! Session recap — short post-turn summary (Grok Build TUI analogue).
+//! Session recap — short post-turn summary after each successful turn.
 //!
-//! Grok shows a compact one-liner under a "Recap" label:
-//!   You asked … : <concrete specifics>
-//!   We <past-tense verb> … : <concrete specifics>
+//! Shows a compact one-liner under a "Recap" label:
+//! - You asked … : <concrete specifics>
+//! - We <past-tense verb> … : <concrete specifics>
 //! ~25–40 words, never a wall of assistant prose.
 
 use crate::model::{ModelMessage, ModelProvider, ModelRequest, ThinkingConfig};
 use anyhow::Result;
 
-/// Suppress UI recap when the assistant output is a long dump (Grok long-tail).
+/// Suppress UI recap when the assistant output is a long dump (long-tail).
 pub const RECAP_LONG_TAIL_CHARS: usize = 4_000;
 /// Max tool calls before treating a turn as long-tail (display suppressed).
 pub const RECAP_LONG_TAIL_TOOL_CALLS: usize = 40;
-/// Soft max length for a displayed recap (Grok-style one short sentence).
+/// Soft max length for a displayed recap (one short sentence).
 pub const RECAP_MAX_DISPLAY_CHARS: usize = 160;
-/// Prefer staying under this word count (Grok ~25–40 words).
+/// Prefer staying under this word count (~25–40 words).
 const RECAP_TARGET_WORDS: usize = 40;
 
 /// Whether the recap should be hidden in the chat (artifact may still be saved).
@@ -24,7 +24,7 @@ pub fn should_suppress_recap(assistant_chars: usize, tool_call_count: usize) -> 
 
 /// Fast extractive/synthetic recap — no model call. Prefer for UI latency / fallback.
 ///
-/// Produces a **short** outcome line in Grok voice, not a dump of the assistant message.
+/// Produces a **short** outcome line, not a dump of the assistant message.
 pub fn local_recap(user_prompt: &str, assistant_text: &str) -> String {
     local_recap_with_tools(user_prompt, assistant_text, &[])
 }
@@ -41,7 +41,7 @@ pub fn local_recap_with_tools(
     finalize_recap(&body)
 }
 
-/// LLM recap (Grok-style). One short sentence only.
+/// LLM recap. One short sentence only.
 pub async fn llm_recap(
     provider: &dyn ModelProvider,
     model: &str,
@@ -83,7 +83,7 @@ pub async fn llm_recap(
         instructions: None,
         messages: vec![
             ModelMessage::system(
-                "You write ultra-short session recaps for a coding CLI, matching Grok Build style. \
+                "You write ultra-short session recaps for a coding CLI. \
                  Exactly one concise sentence. Past-tense outcomes preferred when work landed. \
                  Never invent work not reflected in the turn. Never dump the assistant message.",
             ),
@@ -132,7 +132,7 @@ fn clean_recap_text(raw: &str) -> String {
     first_sentence(&text)
 }
 
-/// Synthesize a short Grok-shaped line without calling a model.
+/// Synthesize a short short line without calling a model.
 fn synthesize_local(user: &str, assistant: &str, tool_names: &[String]) -> String {
     let user_snip = snippet_topic(user, 72);
     let asst_snip = snippet_outcome(assistant, 88);
@@ -158,7 +158,7 @@ fn synthesize_local(user: &str, assistant: &str, tool_names: &[String]) -> Strin
         return format!("We finished: {asst_snip}");
     }
 
-    // Question / plan / no landed change — Grok "You asked …"
+    // Question / plan / no landed change — "You asked …"
     if !user_snip.is_empty() {
         if !asst_snip.is_empty() && !is_process_language(&asst_snip) {
             return format!("You asked about {user_snip}: {asst_snip}");

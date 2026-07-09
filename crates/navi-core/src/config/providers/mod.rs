@@ -151,6 +151,157 @@ pub fn effective_context_window(config: &NaviConfig) -> u64 {
         .unwrap_or(crate::config::defaults::DEFAULT_CONTEXT_WINDOW)
 }
 
+/// List pricing (USD per 1M tokens) for a provider/model.
+///
+/// Prefers the live catalog (registry + overrides). Falls back to the embedded
+/// snapshot so cost estimates still work when SQLite pricing rows are missing.
+pub fn model_list_pricing(
+    config: &NaviConfig,
+    provider_id: &str,
+    model_name: &str,
+) -> Option<(f64, f64)> {
+    let canonical = canonical_provider_id(provider_id);
+    let from_catalog = provider_catalog(config).into_iter().find_map(|p| {
+        if canonical_provider_id(&p.id) != canonical {
+            return None;
+        }
+        p.models.into_iter().find_map(|m| {
+            if m.name != model_name {
+                return None;
+            }
+            match (m.pricing_input_per_1m, m.pricing_output_per_1m) {
+                (Some(i), Some(o)) => Some((i, o)),
+                (Some(i), None) => Some((i, 0.0)),
+                (None, Some(o)) => Some((0.0, o)),
+                (None, None) => None,
+            }
+        })
+    });
+    if from_catalog.is_some() {
+        return from_catalog;
+    }
+    // Embedded snapshot fallback (e.g. SQLite cache missing model_pricing rows).
+    // `load_embedded_registry` already maps to ProviderConfig with pricing fields.
+    let embedded = crate::registry::load_embedded_registry()?;
+    embedded.providers.into_iter().find_map(|p| {
+        if canonical_provider_id(&p.id) != canonical {
+            return None;
+        }
+        p.models.into_iter().find_map(|m| {
+            if m.name != model_name {
+                return None;
+            }
+            match (m.pricing_input_per_1m, m.pricing_output_per_1m) {
+                (Some(i), Some(o)) => Some((i, o)),
+                (Some(i), None) => Some((i, 0.0)),
+                (None, Some(o)) => Some((0.0, o)),
+                (None, None) => None,
+            }
+        })
+    })
+}
+
+/// Estimate USD cost from token counts and list rates.
+pub fn estimate_token_cost_usd(
+    input_tokens: u64,
+    output_tokens: u64,
+    input_per_1m: f64,
+    output_per_1m: f64,
+) -> f64 {
+    estimate_token_cost_usd_with_cache(
+        input_tokens,
+        output_tokens,
+        0,
+        0,
+        input_per_1m,
+        output_per_1m,
+        None,
+        None,
+    )
+}
+
+/// Split total/prompt tokens into billable non-cached vs cached portions.
+///
+/// OpenAI-compat (inclusive): `prompt_tokens` includes `cached_tokens`.
+/// Anthropic-style (exclusive): `input` is non-cached; add cache fields separately.
+pub fn billable_input_split(
+    total_or_input: u64,
+    cache_read: u64,
+    cache_create: u64,
+) -> (u64, u64, u64) {
+    if cache_read > 0 && total_or_input >= cache_read {
+        // Inclusive: only the non-cached tail is full-price.
+        (
+            total_or_input.saturating_sub(cache_read),
+            cache_read,
+            cache_create,
+        )
+    } else {
+        // Exclusive or no cache detail.
+        (total_or_input, cache_read, cache_create)
+    }
+}
+
+/// USD cost with cache-aware rates.
+///
+/// `cache_input_per_1m` / `cache_write_per_1m` default to provider-aware values
+/// when `None` (Charm Hyper: cached input free; else ~0 so we don't invent fees).
+pub fn estimate_token_cost_usd_with_cache(
+    input_tokens: u64,
+    output_tokens: u64,
+    cache_read_tokens: u64,
+    cache_create_tokens: u64,
+    input_per_1m: f64,
+    output_per_1m: f64,
+    cache_input_per_1m: Option<f64>,
+    cache_write_per_1m: Option<f64>,
+) -> f64 {
+    let (non_cached, cached, created) =
+        billable_input_split(input_tokens, cache_read_tokens, cache_create_tokens);
+    let cache_in = cache_input_per_1m.unwrap_or(0.0);
+    let cache_write = cache_write_per_1m.unwrap_or(input_per_1m);
+    (non_cached as f64 / 1_000_000.0) * input_per_1m
+        + (cached as f64 / 1_000_000.0) * cache_in
+        + (created as f64 / 1_000_000.0) * cache_write
+        + (output_tokens as f64 / 1_000_000.0) * output_per_1m
+}
+
+/// Optional cache list rates (USD / 1M) for a provider.
+/// Charm Hyper model card: `1m_in_cache = 0`, `1m_out_cache = 0.14`.
+pub fn model_cache_list_pricing(provider_id: &str) -> Option<(f64, f64)> {
+    match canonical_provider_id(provider_id) {
+        "charm-hyper" => Some((0.0, 0.0)), // input cache free; write treated as full input
+        _ => None,
+    }
+}
+
+/// Whether this provider bills in prepaid credits (not pure card-to-API).
+pub fn provider_uses_credits(provider_id: &str) -> bool {
+    matches!(
+        canonical_provider_id(provider_id),
+        "charm-hyper" | "commandcode"
+    )
+}
+
+/// Credit unit label for prepaid providers.
+pub fn provider_credit_unit(provider_id: &str) -> Option<&'static str> {
+    match canonical_provider_id(provider_id) {
+        "charm-hyper" => Some("hypercredits"),
+        "commandcode" => Some("credits"),
+        _ => None,
+    }
+}
+
+/// Convert USD list-rate spend into the provider's prepaid credit unit.
+///
+/// Charm Hyper FAQ: **1 Hypercredit = $0.05**.
+pub fn usd_to_provider_credits(provider_id: &str, usd: f64) -> Option<f64> {
+    match canonical_provider_id(provider_id) {
+        "charm-hyper" => Some(usd / 0.05),
+        _ => None,
+    }
+}
+
 /// Whether the tool prompt manifest should be included for the selected model,
 /// based on harness config and provider/model settings.
 pub(crate) fn effective_tool_prompt_manifest(config: &NaviConfig) -> bool {
@@ -199,14 +350,18 @@ pub fn effective_tool_calling_mode(config: &NaviConfig) -> ToolCallingMode {
 }
 
 /// Returns whether a configured model can consume the given attachment kind
-/// directly. Unknown metadata is treated as unsupported so callers can route
-/// through a specialized attachment analysis model.
+/// directly.
 ///
-/// Lookup is resilient to provider-specific naming:
-/// - exact `provider + model` match
-/// - same provider with normalized aliases (`mimo-v2.5-free` → `mimo-v2.5`,
-///   `MiniMaxAI/MiniMax-M3` → `MiniMax-M3`)
-/// - any provider entry for a normalized name that explicitly supports the modality
+/// Lookup order:
+/// 1. exact / alias match on the selected provider
+/// 2. cross-provider alias match (e.g. opencode `mimo-v2.5-free` → xiaomi `mimo-v2.5`)
+/// 3. family stem match (`grok-4.5` → `grok-4` / `grok-4.3`)
+/// 4. provider attachment defaults (xAI/Gemini/Anthropic default to vision)
+///
+/// Explicit `supports_images = false` always wins over defaults. Only when the
+/// registry/SQLite cache has no flag (common for newly listed models like
+/// `grok-4.5`) do we fall back — treating unknown as unsupported was stripping
+/// multimodal content from models that clearly support it.
 pub fn model_supports_attachment(
     config: &NaviConfig,
     provider_id: &str,
@@ -228,7 +383,47 @@ pub fn model_supports_attachment(
         return flag;
     }
 
+    // Family stem: `grok-4.5` / `x-ai/grok-4.5` inherit from catalogued `grok-4`.
+    let family = model_attachment_family_candidates(model_name);
+    if !family.is_empty() {
+        if let Some(flag) =
+            lookup_attachment_support(&catalog, Some(provider_id), &family, kind)
+        {
+            return flag;
+        }
+        if let Some(flag) = lookup_attachment_support(&catalog, None, &family, kind) {
+            return flag;
+        }
+    }
+
+    // Provider-level defaults from the registry snapshot (e.g. xAI images=true).
+    if let Some(flag) = provider_attachment_default(provider_id, kind) {
+        return flag;
+    }
+
     false
+}
+
+/// Registry `defaults.attachments` for providers that publish a family-wide default.
+///
+/// Used when a model is missing from the catalog or has no per-modality flag
+/// (dynamically listed models after `sync models`).
+fn provider_attachment_default(provider_id: &str, kind: AttachmentKind) -> Option<bool> {
+    // Keep in sync with registry-snapshot/providers/*/defaults.attachments.
+    let (images, audio, video, documents) = match canonical_provider_id(provider_id) {
+        "xai" => (true, false, false, false),
+        "google-gemini" | "gemini" => (true, true, true, true),
+        "anthropic" => (true, false, false, true),
+        "openai" => (true, false, false, false),
+        // OpenRouter / aggregators are mixed; never invent a family-wide true.
+        _ => return None,
+    };
+    Some(match kind {
+        AttachmentKind::Image => images,
+        AttachmentKind::Audio => audio,
+        AttachmentKind::Video => video,
+        AttachmentKind::Document => documents,
+    })
 }
 
 fn attachment_flag(model: &ProviderModelConfig, kind: AttachmentKind) -> Option<bool> {
@@ -315,6 +510,82 @@ pub(crate) fn model_attachment_name_candidates(model_name: &str) -> Vec<String> 
     out
 }
 
+/// Broader family stems for capability inheritance when a specific SKU is
+/// missing from the registry (e.g. `grok-4.5` → `grok-4`, `grok-4.3`).
+///
+/// Does **not** include the original full name — callers already try exact
+/// candidates first. Order is longest stem first so a closer sibling wins.
+pub(crate) fn model_attachment_family_candidates(model_name: &str) -> Vec<String> {
+    fn push_unique(out: &mut Vec<String>, value: String) {
+        if !value.is_empty() && !out.iter().any(|existing| existing == &value) {
+            out.push(value);
+        }
+    }
+
+    let leaf = model_name
+        .rsplit('/')
+        .next()
+        .unwrap_or(model_name)
+        .replace('_', "-");
+    let lower = leaf.to_ascii_lowercase();
+
+    let mut stems = Vec::new();
+    // Drop trailing date/build suffixes: grok-2-vision-1212 → grok-2-vision
+    let mut cur = lower.as_str();
+    loop {
+        let next = if let Some((head, tail)) = cur.rsplit_once('-') {
+            // Only peel pure numeric / dotted version tails (4.5, 1212, 0309).
+            if tail.chars().all(|c| c.is_ascii_digit() || c == '.') && !head.is_empty() {
+                Some(head)
+            } else if tail
+                .chars()
+                .all(|c| c.is_ascii_digit() || c == '.' || c == 'x')
+                && tail.contains('.')
+                && !head.is_empty()
+            {
+                Some(head)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        // Also peel dotted minor versions glued without hyphen: handled below.
+        match next {
+            Some(head) => {
+                push_unique(&mut stems, head.to_string());
+                cur = head;
+            }
+            None => break,
+        }
+    }
+
+    // Peel dotted version segments: grok-4.5 → grok-4, glm-5.2 → glm-5
+    cur = lower.as_str();
+    while let Some((head, tail)) = cur.rsplit_once('.') {
+        if !tail.is_empty()
+            && tail.chars().all(|c| c.is_ascii_digit())
+            && !head.is_empty()
+            && head
+                .chars()
+                .last()
+                .is_some_and(|c| c.is_ascii_digit() || c.is_ascii_alphanumeric())
+        {
+            push_unique(&mut stems, head.to_string());
+            // Continue peeling only if head still ends with a version-like token.
+            if head.contains('.') || head.chars().last().is_some_and(|c| c.is_ascii_digit()) {
+                cur = head;
+                continue;
+            }
+        }
+        break;
+    }
+
+    // Prefer longer stems first.
+    stems.sort_by_key(|s| std::cmp::Reverse(s.len()));
+    stems
+}
+
 fn model_names_equivalent(left: &str, right: &str) -> bool {
     if left == right {
         return true;
@@ -362,29 +633,57 @@ impl NaviConfig {
 
         let mut new_models = Vec::new();
         for name in model_names {
-            if let Some(model) = existing_models.get(name) {
+            let mut model = if let Some(model) = existing_models.get(name) {
                 let mut model = model.clone();
                 model.name = name.clone();
-                new_models.push(model);
+                model
             } else {
-                new_models.push(ProviderModelConfig {
-                    name: name.clone(),
-                    task_size: registry::determine_task_size(name),
-                    context_window_tokens: None,
-                    max_output_tokens: None,
-                    recommended_temperature: None,
-                    supports_thinking: None,
-                    supports_images: None,
-                    supports_audio: None,
-                    supports_video: None,
-                    supports_documents: None,
-                    tool_prompt_manifest: None,
-                    pricing_input_per_1m: None,
-                    pricing_output_per_1m: None,
-                    reasoning_levels: Vec::new(),
-                    default_reasoning_effort: None,
+                // Family inheritance for config-layer fields (context, thinking)
+                // from siblings already known on this provider.
+                let family = model_attachment_family_candidates(name);
+                let donor = existing_models.values().find(|m| {
+                    family.iter().any(|stem| {
+                        let leaf = m
+                            .name
+                            .rsplit('/')
+                            .next()
+                            .unwrap_or(&m.name)
+                            .to_ascii_lowercase();
+                        let stem_l = stem.to_ascii_lowercase();
+                        leaf == stem_l
+                            || leaf.starts_with(&format!("{stem_l}-"))
+                            || leaf.starts_with(&format!("{stem_l}."))
+                    })
                 });
-            }
+                ProviderModelConfig {
+                    name: name.clone(),
+                    task_size: donor
+                        .and_then(|d| d.task_size)
+                        .or_else(|| registry::determine_task_size(name)),
+                    context_window_tokens: donor.and_then(|d| d.context_window_tokens),
+                    max_output_tokens: donor.and_then(|d| d.max_output_tokens),
+                    recommended_temperature: donor.and_then(|d| d.recommended_temperature),
+                    supports_thinking: donor.and_then(|d| d.supports_thinking),
+                    supports_images: donor.and_then(|d| d.supports_images),
+                    supports_audio: donor.and_then(|d| d.supports_audio),
+                    supports_video: donor.and_then(|d| d.supports_video),
+                    supports_documents: donor.and_then(|d| d.supports_documents),
+                    tool_prompt_manifest: donor.and_then(|d| d.tool_prompt_manifest),
+                    pricing_input_per_1m: donor.and_then(|d| d.pricing_input_per_1m),
+                    pricing_output_per_1m: donor.and_then(|d| d.pricing_output_per_1m),
+                    reasoning_levels: donor
+                        .map(|d| d.reasoning_levels.clone())
+                        .unwrap_or_default(),
+                    default_reasoning_effort: donor.and_then(|d| d.default_reasoning_effort.clone()),
+                }
+            };
+            // Always fill remaining None modality flags from provider defaults
+            // (covers both brand-new SKUs and stale cache rows with NULL flags).
+            crate::registry::apply_provider_attachment_defaults_to_config_model(
+                &mut model,
+                &provider_id,
+            );
+            new_models.push(model);
         }
 
         if let Some(p) = self
@@ -578,10 +877,74 @@ fn apply_default_request_options(providers: &mut [ProviderConfig]) {
 
 #[cfg(test)]
 mod tests {
-    use super::{effective_tool_calling_mode, effective_tool_prompt_manifest};
+    use super::{
+        billable_input_split, effective_tool_calling_mode, effective_tool_prompt_manifest,
+        estimate_token_cost_usd_with_cache, model_cache_list_pricing,
+    };
     use crate::config::types::{
         ModelTaskSize, NaviConfig, ProviderConfig, ProviderModelConfig, ToolCallingMode,
     };
+
+    #[test]
+    fn billable_input_split_inclusive_openai_style() {
+        // prompt_tokens includes cached_tokens
+        assert_eq!(
+            billable_input_split(22_000, 21_500, 0),
+            (500, 21_500, 0)
+        );
+    }
+
+    #[test]
+    fn billable_input_split_exclusive_anthropic_style() {
+        // input is non-cached only; cache fields separate
+        assert_eq!(
+            billable_input_split(500, 21_500, 100),
+            (500, 21_500, 100)
+        );
+    }
+
+    #[test]
+    fn hyper_cache_read_costs_zero_on_list_rates() {
+        // glm-5.2 list rates; 99% cache hit should only bill the tail + output.
+        let cost = estimate_token_cost_usd_with_cache(
+            22_000,
+            100,
+            21_780, // cache read
+            0,
+            1.4,  // input / 1M
+            4.4,  // output / 1M
+            Some(0.0), // Hyper cached input free
+            Some(1.4),
+        );
+        // non-cached 220 * 1.4/1M + output 100 * 4.4/1M
+        let expected = (220.0 / 1_000_000.0) * 1.4 + (100.0 / 1_000_000.0) * 4.4;
+        assert!((cost - expected).abs() < 1e-12, "cost={cost} expected={expected}");
+        // Sanity: full-price would be ~0.031; cache-aware is ~0.0007
+        assert!(cost < 0.002);
+        assert_eq!(model_cache_list_pricing("charm-hyper"), Some((0.0, 0.0)));
+    }
+
+    #[test]
+    fn update_provider_models_inherits_defaults_for_new_xai_sku() {
+        let mut config = NaviConfig::default();
+        // Simulate Ctrl+R discovering grok-4.5 before the registry snapshot knows it.
+        config.update_provider_models("xai", &["grok-4.5".to_string()]);
+        let xai = config
+            .providers
+            .iter()
+            .find(|p| p.id == "xai")
+            .expect("xai provider created by sync");
+        let grok = xai
+            .models
+            .iter()
+            .find(|m| m.name == "grok-4.5")
+            .expect("grok-4.5 listed");
+        assert_eq!(
+            grok.supports_images,
+            Some(true),
+            "sync must seed xAI vision default onto new SKUs"
+        );
+    }
 
     #[test]
     fn update_provider_models_prefers_registry_metadata_over_stale_override() {

@@ -194,7 +194,7 @@ pub(crate) fn format_bg_elapsed(snapshot: &BackgroundCommandSnapshot) -> String 
     format_duration_ms(snapshot.elapsed_ms)
 }
 
-/// Returns a human status label for a background command (Grok-style).
+/// Returns a human status label for a background command.
 pub(crate) fn bg_status_label(snapshot: &BackgroundCommandSnapshot) -> &'static str {
     match snapshot.status {
         navi_sdk::BackgroundTaskStatus::Running => "Running",

@@ -750,4 +750,86 @@ deny_tool_regex = ["^danger_"]
         assert!(candidates.iter().any(|c| c == "MiniMax-M3"));
         assert!(candidates.iter().any(|c| c == "minimax-m3"));
     }
+
+    #[test]
+    fn model_supports_attachment_xai_defaults_cover_unknown_grok_skus() {
+        // Empty providers: only provider-default path (xAI images=true).
+        let config = NaviConfig::default();
+        assert!(
+            model_supports_attachment(&config, "xai", "grok-4.5", crate::AttachmentKind::Image),
+            "xAI default attachments.images=true must cover unlisted Grok SKUs"
+        );
+        assert!(
+            model_supports_attachment(
+                &config,
+                "xai",
+                "x-ai/grok-4.5",
+                crate::AttachmentKind::Image
+            ),
+            "vendor-prefixed Grok ids should still resolve via xAI defaults"
+        );
+        // Audio is not a family default for xAI.
+        assert!(!model_supports_attachment(
+            &config,
+            "xai",
+            "grok-4.5",
+            crate::AttachmentKind::Audio
+        ));
+    }
+
+    #[test]
+    fn model_supports_attachment_family_inherits_from_catalogued_sibling() {
+        let mut config = NaviConfig::default();
+        config.providers.push(ProviderConfig {
+            id: "xai".to_string(),
+            label: "xAI".to_string(),
+            description: String::new(),
+            kind: ProviderKind::OpenAiResponses,
+            api_key_env: "XAI_API_KEY".to_string(),
+            base_url: Some("https://api.x.ai/v1".to_string()),
+            models: vec![ProviderModelConfig {
+                name: "grok-4".to_string(),
+                task_size: None,
+                context_window_tokens: None,
+                max_output_tokens: None,
+                recommended_temperature: None,
+                supports_thinking: Some(true),
+                supports_images: Some(true),
+                supports_audio: None,
+                supports_video: None,
+                supports_documents: Some(true),
+                tool_prompt_manifest: None,
+                pricing_input_per_1m: None,
+                pricing_output_per_1m: None,
+                reasoning_levels: Vec::new(),
+                default_reasoning_effort: None,
+            }],
+            ..Default::default()
+        });
+        // Override catalog entry for xai — family path should still find grok-4.
+        // Note: provider_catalog merges with base registry; explicit true on
+        // grok-4.5 missing means family or defaults apply.
+        assert!(model_supports_attachment(
+            &config,
+            "xai",
+            "grok-4.5",
+            crate::AttachmentKind::Image
+        ));
+    }
+
+    #[test]
+    fn model_attachment_family_candidates_peel_versions() {
+        let family = model_attachment_family_candidates("grok-4.5");
+        assert!(
+            family.iter().any(|c| c == "grok-4"),
+            "expected grok-4 stem in {family:?}"
+        );
+        let family = model_attachment_family_candidates("x-ai/grok-4.20");
+        assert!(
+            family
+                .iter()
+                .any(|c| c == "grok-4" || c.starts_with("grok-4")),
+            "expected grok-4* stem in {family:?}"
+        );
+    }
 }

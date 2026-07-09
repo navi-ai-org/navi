@@ -1,7 +1,7 @@
 use crate::types::NaviError;
 use anyhow::Context;
 type Result<T> = std::result::Result<T, NaviError>;
-use navi_core::registry::types::{RegistryAttachments, RegistryModel, RegistryProvider};
+use navi_core::registry::types::{RegistryModel, RegistryProvider};
 use navi_core::{
     AgentRuntime, AgentRuntimeOptions, ApprovalDecision, CredentialStore, LoadedConfig,
     ModelOption, ProviderConfig, QuestionResponse, RuntimeComponents, RuntimeEvent, SessionGoal,
@@ -38,8 +38,8 @@ use crate::types::{
 /// use navi_sdk::{NaviEngineBuilder, NaviEngine};
 ///
 /// let engine = NaviEngineBuilder::from_project(".")
-///     .build()
-///     .expect("engine");
+/// .build()
+/// .expect("engine");
 /// ```
 #[derive(Clone)]
 pub struct NaviEngineBuilder {
@@ -854,7 +854,7 @@ impl NaviEngine {
                         &provider,
                         "xai-api-key",
                         Some(
-                            "Platform XAI_API_KEY has no public usage endpoint. Sign in with Grok OAuth for weekly credit usage, or check console.x.ai.".into(),
+                            "Platform XAI_API_KEY has no public usage endpoint. Sign in with xAI OAuth for weekly credit usage, or check console.x.ai.".into(),
                         ),
                     ))
                 }
@@ -890,6 +890,23 @@ impl NaviEngine {
                         &provider,
                         "commandcode-error",
                         Some(format!("Command Code usage unavailable: {err}")),
+                    )),
+                }
+            }
+            "charm-hyper" => {
+                let Some(token) = access_token else {
+                    return Ok(empty_usage_report(
+                        &provider,
+                        "session",
+                        Some("No Charm Hyper credential configured.".into()),
+                    ));
+                };
+                match navi_providers::charm_hyper_credits_report(&token).await {
+                    Ok(report) => Ok(charm_hyper_report_to_sdk(&provider, report)),
+                    Err(err) => Ok(empty_usage_report(
+                        &provider,
+                        "charm-hyper-error",
+                        Some(format!("Charm Hyper credits unavailable: {err}")),
                     )),
                 }
             }
@@ -1390,52 +1407,35 @@ impl NaviEngine {
 
                     // Persist synced model names into the SQLite registry cache
                     // so they survive config.toml stripping and are available via
-                    // --print-providers and the model picker. Merge with existing
-                    // cached models to preserve metadata from the embedded snapshot.
+                    // --print-providers and the model picker.
+                    //
+                    // Critical: `/models` only returns ids. New SKUs (e.g. grok-4.5)
+                    // must inherit vision/context from provider defaults + family
+                    // siblings already in the cache — never write bare NULL rows.
                     if let Some(ref store) = self.inner.registry_store {
                         let existing = store.load_provider_models(&provider.id).unwrap_or_default();
                         let mut merged: Vec<RegistryModel> = models
                             .iter()
-                            .enumerate()
-                            .map(|(_i, name)| {
-                                if let Some(cached) = existing.get(name) {
-                                    cached.clone()
-                                } else {
-                                    let lower = name.to_lowercase();
-                                    if let Some((_, cached)) =
-                                        existing.iter().find(|(k, _)| k.to_lowercase() == lower)
-                                    {
-                                        cached.clone()
-                                    } else {
-                                        RegistryModel {
-                                            name: name.clone(),
-                                            task_size: None,
-                                            context_window_tokens: None,
-                                            max_output_tokens: None,
-                                            recommended_temperature: None,
-                                            supports_thinking: None,
-                                            reasoning_levels: Vec::new(),
-                                            default_reasoning_effort: None,
-                                            supports_attachments: None,
-                                            supports_images: None,
-                                            supports_audio: None,
-                                            supports_video: None,
-                                            supports_documents: None,
-                                            attachments: RegistryAttachments::default(),
-                                            capabilities: Vec::new(),
-                                            pricing: None,
-                                        }
-                                    }
-                                }
+                            .map(|name| {
+                                navi_core::registry::enrich_synced_registry_model(
+                                    name,
+                                    &existing,
+                                    &provider.id,
+                                )
                             })
                             .collect();
 
-                        // Keep cached models not returned by the API.
+                        // Keep cached models not returned by the API (still enrich
+                        // attachment gaps so stale NULL rows get provider defaults).
                         let api_names: std::collections::HashSet<String> =
                             merged.iter().map(|m| m.name.to_lowercase()).collect();
-                        for (name, cached) in &existing {
+                        for (name, _cached) in &existing {
                             if !api_names.contains(&name.to_lowercase()) {
-                                merged.push(cached.clone());
+                                merged.push(navi_core::registry::enrich_synced_registry_model(
+                                    name,
+                                    &existing,
+                                    &provider.id,
+                                ));
                             }
                         }
 
@@ -1455,7 +1455,9 @@ impl NaviEngine {
                                 .tool_calling_mode
                                 .map(|m| format!("{:?}", m).to_lowercase()),
                             aggregator: provider.aggregator,
-                            defaults: Default::default(),
+                            defaults: navi_core::registry::provider_registry_defaults(
+                                &provider.id,
+                            ),
                             request_options: provider.request_options.clone().unwrap_or_default(),
                             models: merged,
                         };
@@ -1711,7 +1713,7 @@ fn xai_report_to_sdk(
         limit_reached_kind: None,
         limits,
         source: "xai-oauth".into(),
-        notes: Some("xAI / Grok weekly credits (OAuth).".into()),
+        notes: Some("xAI weekly credits (OAuth).".into()),
         details,
     }
 }
@@ -1794,6 +1796,44 @@ fn openrouter_report_to_sdk(
         limits,
         source: "openrouter".into(),
         notes: Some("OpenRouter key usage.".into()),
+        details,
+    }
+}
+
+fn charm_hyper_report_to_sdk(
+    provider: &navi_core::ProviderConfig,
+    report: navi_providers::CharmHyperCreditsReport,
+) -> NaviUsageReport {
+    let balance = report.balance;
+    let usd = navi_providers::hypercredits_to_usd(balance);
+    let details = vec![
+        NaviUsageDetail {
+            label: "Balance".into(),
+            value: format!("{balance:.0} hypercredits"),
+        },
+        NaviUsageDetail {
+            label: "Balance (USD)".into(),
+            value: format!("≈ ${usd:.2}  (1 hypercredit = $0.05)"),
+        },
+        NaviUsageDetail {
+            label: "Billing".into(),
+            value: "Prepaid Hypercredits — session spend is estimated from list rates and converted to credits.".into(),
+        },
+    ];
+    NaviUsageReport {
+        provider_id: provider.id.clone(),
+        provider_label: provider.label.clone(),
+        plan_type: Some("hypercredits".into()),
+        limit_reached_kind: if balance <= 0.0 {
+            Some("credits_depleted".into())
+        } else {
+            None
+        },
+        limits: Vec::new(),
+        source: "charm-hyper-credits".into(),
+        notes: Some(
+            "Charm Hyper prepaid balance (GET /v1/credits). Token list rates are USD; credits = USD ÷ $0.05.".into(),
+        ),
         details,
     }
 }
