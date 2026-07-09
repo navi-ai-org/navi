@@ -139,31 +139,20 @@ fn main() {
         }
 
         let cc = cc::Build::new().get_compiler();
+        let is_msvc = cc.is_like_msvc();
 
-        compile_c(&cc, &src_dir, &parser_c, &out_dir, &symbol);
+        compile_c(&cc, &src_dir, &parser_c, &out_dir, &symbol, is_msvc);
 
+        let mut objects = vec![obj_path(&out_dir, &symbol, "parser", is_msvc)];
         if g.has_scanner {
             let scanner_c = src_dir.join("scanner.c");
             if scanner_c.exists() {
-                compile_c(&cc, &src_dir, &scanner_c, &out_dir, &symbol);
+                compile_c(&cc, &src_dir, &scanner_c, &out_dir, &symbol, is_msvc);
+                objects.push(obj_path(&out_dir, &symbol, "scanner", is_msvc));
             }
         }
 
-        let mut link = cc.to_command();
-        // Windows: produce a DLL; Unix: shared object / dylib.
-        if cfg!(target_os = "windows") {
-            link.arg("-shared").arg("-o").arg(&so_path);
-        } else {
-            link.arg("-shared").arg("-o").arg(&so_path).arg("-lc");
-        }
-        link_obj(&mut link, &out_dir, &symbol, "parser");
-        if g.has_scanner {
-            let scanner_c = src_dir.join("scanner.c");
-            if scanner_c.exists() {
-                link_obj(&mut link, &out_dir, &symbol, "scanner");
-            }
-        }
-        run(&mut link, &format!("link {}", g.name));
+        link_shared(&cc, &so_path, &objects, is_msvc, g.name);
 
         println!("cargo:rerun-if-changed={}", parser_c.display());
     }
@@ -281,29 +270,60 @@ fn extract_crate(crate_file: &Path, extract_root: &Path, want: &str) {
     }
 }
 
+fn obj_path(out_dir: &Path, symbol: &str, stem: &str, is_msvc: bool) -> PathBuf {
+    let ext = if is_msvc { "obj" } else { "o" };
+    out_dir.join(format!("{symbol}_{stem}.{ext}"))
+}
+
 fn compile_c(
     cc: &cc::Tool,
     src_dir: &Path,
     src: &Path,
-    out_dir: &PathBuf,
+    out_dir: &Path,
     symbol: &str,
+    is_msvc: bool,
 ) {
     let stem = src.file_stem().unwrap_or_default().to_str().unwrap_or("x");
-    let out_obj = out_dir.join(format!("{symbol}_{stem}.o"));
+    let out_obj = obj_path(out_dir, symbol, stem, is_msvc);
     let mut cmd = cc.to_command();
-    cmd.arg("-std=c11")
-        .arg("-fPIC")
-        .arg("-I")
-        .arg(src_dir)
-        .arg("-c")
-        .arg("-o")
-        .arg(&out_obj)
-        .arg(src);
+    if is_msvc {
+        // cl.exe /nologo /std:c11 /c /Foout.obj /Iinclude file.c
+        cmd.arg("/nologo")
+            .arg("/std:c11")
+            .arg("/c")
+            .arg(format!("/Fo{}", out_obj.display()))
+            .arg(format!("/I{}", src_dir.display()))
+            .arg(src);
+    } else {
+        cmd.arg("-std=c11")
+            .arg("-fPIC")
+            .arg("-I")
+            .arg(src_dir)
+            .arg("-c")
+            .arg("-o")
+            .arg(&out_obj)
+            .arg(src);
+    }
     run(&mut cmd, &format!("cc -c {} ({})", stem, symbol));
 }
 
-fn link_obj(cmd: &mut Command, out_dir: &PathBuf, symbol: &str, stem: &str) {
-    cmd.arg(out_dir.join(format!("{symbol}_{stem}.o")));
+fn link_shared(cc: &cc::Tool, so_path: &Path, objects: &[PathBuf], is_msvc: bool, name: &str) {
+    let mut cmd = cc.to_command();
+    if is_msvc {
+        // cl.exe /nologo /LD /Fe:out.dll a.obj b.obj
+        cmd.arg("/nologo")
+            .arg("/LD")
+            .arg(format!("/Fe:{}", so_path.display()));
+        for obj in objects {
+            cmd.arg(obj);
+        }
+    } else {
+        cmd.arg("-shared").arg("-o").arg(so_path).arg("-lc");
+        for obj in objects {
+            cmd.arg(obj);
+        }
+    }
+    run(&mut cmd, &format!("link {name}"));
 }
 
 fn grammar_symbol(g: &Grammar) -> String {

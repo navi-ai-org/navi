@@ -38,16 +38,16 @@ where
         .map(|p| p.as_ref().to_path_buf())
         .collect();
 
-    #[cfg(all(target_os = "linux", feature = "landlock"))]
+    #[cfg(target_os = "linux")]
     {
         apply_landlock_sandbox(&paths)
     }
 
-    #[cfg(not(all(target_os = "linux", feature = "landlock")))]
+    #[cfg(not(target_os = "linux"))]
     {
         let _ = paths;
         Ok(SandboxStatus::Unavailable(
-            "sandbox support not compiled in (need linux + landlock feature)",
+            "sandbox support not compiled in (Landlock is Linux-only)",
         ))
     }
 }
@@ -68,7 +68,7 @@ where
     Ok(paths)
 }
 
-#[cfg(all(target_os = "linux", feature = "landlock"))]
+#[cfg(target_os = "linux")]
 fn apply_landlock_sandbox(allow_paths: &[PathBuf]) -> Result<SandboxStatus> {
     use anyhow::Context;
     use landlock::{ABI, Access, AccessFs, Ruleset, RulesetAttr, RulesetCreatedAttr};
@@ -143,7 +143,7 @@ fn apply_landlock_sandbox(allow_paths: &[PathBuf]) -> Result<SandboxStatus> {
 }
 
 /// Wrapper that opens a `PathFd` and returns `None` on error.
-#[cfg(all(target_os = "linux", feature = "landlock"))]
+#[cfg(target_os = "linux")]
 fn path_fd_silent(path: &Path) -> Option<landlock::PathFd> {
     use landlock::PathFd;
     if !path.exists() {

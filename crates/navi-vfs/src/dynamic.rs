@@ -43,16 +43,20 @@ pub(crate) fn load_language(lang: LangId) -> Result<Language> {
     Ok(cache.last().unwrap().1.language.clone())
 }
 
-/// Construct the path to the compiled grammar `.so`.
+/// Construct the path to the compiled grammar shared library.
+///
+/// Naming must match [`build.rs`]:
+/// - Unix: `lib{symbol}.so` / `lib{symbol}.dylib`
+/// - Windows: `{symbol}.dll` (no `lib` prefix)
 fn so_path(lang: LangId) -> PathBuf {
     let out_dir = PathBuf::from(env!("OUT_DIR"));
-    let lib_name = format!("lib{}", lang.so_name());
+    let symbol = lang.so_name();
     if cfg!(target_os = "macos") {
-        out_dir.join(format!("{}.dylib", lib_name))
+        out_dir.join(format!("lib{symbol}.dylib"))
     } else if cfg!(target_os = "windows") {
-        out_dir.join(format!("{}.dll", lib_name))
+        out_dir.join(format!("{symbol}.dll"))
     } else {
-        out_dir.join(format!("{}.so", lib_name))
+        out_dir.join(format!("lib{symbol}.so"))
     }
 }
 
