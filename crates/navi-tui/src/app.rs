@@ -101,6 +101,8 @@ pub struct TuiApp {
     pub(crate) pending_images: Vec<crate::state::PendingImage>,
     /// Floating image preview shown while hovering an `[Image N]` tag.
     pub(crate) image_hover: Option<crate::state::ImageHoverPreview>,
+    /// Kitty/Sixel/iTerm2 protocol state for the current hover (None = text-only).
+    pub(crate) image_hover_protocol: Option<ratatui_image::protocol::StatefulProtocol>,
     pub(crate) queued_user_messages: VecDeque<QueuedUserMessage>,
     pub(crate) queued_message_selected: usize,
     pub(crate) queued_message_scroll: usize,
@@ -318,6 +320,7 @@ impl TuiApp {
             dreaming: false,
             pending_images: Vec::new(),
             image_hover: None,
+            image_hover_protocol: None,
             queued_user_messages: VecDeque::new(),
             queued_message_selected: 0,
             queued_message_scroll: 0,

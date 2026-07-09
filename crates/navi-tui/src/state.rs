@@ -108,8 +108,7 @@ pub struct ImageHoverPreview {
     pub height: Option<u32>,
     pub size_bytes: usize,
     pub filename: Option<String>,
-    /// Reserved for future terminal image-protocol / half-block rendering.
-    #[allow(dead_code)]
+    /// Base64 payload used to encode a Kitty/Sixel/iTerm2 preview when supported.
     pub data: String,
 }
 
@@ -154,7 +153,7 @@ impl ImageHoverPreview {
         if let Some(name) = &self.filename {
             parts.push(name.clone());
         }
-        parts.join("  ·  ")
+        parts.join(" · ")
     }
 }
 

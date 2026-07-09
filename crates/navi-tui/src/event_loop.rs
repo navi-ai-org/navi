@@ -89,6 +89,10 @@ impl Drop for TerminalModeGuard {
 pub fn run(app: TuiApp) -> Result<()> {
     install_terminal_restore_panic_hook();
     let mut terminal_modes = TerminalModeGuard::enter()?;
+    // Probe Kitty/Sixel/iTerm2 after alternate-screen entry (before event reads).
+    crate::view::terminal_graphics::install_session_graphics(
+        crate::view::terminal_graphics::TerminalGraphics::detect(),
+    );
     let backend = CrosstermBackend::new(io::stdout());
     let mut terminal = Terminal::new(backend)?;
 

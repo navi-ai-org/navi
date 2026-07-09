@@ -1,7 +1,8 @@
-use ratatui::layout::{Alignment, Rect};
+use ratatui::layout::Rect;
 use ratatui::prelude::{Frame, Line, Span};
 use ratatui::style::{Modifier, Style};
-use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
+use ratatui::widgets::{Block, Borders, Clear, Paragraph};
+use ratatui_image::{Resize, StatefulImage};
 
 use crate::app::TuiApp;
 use crate::render::markdown::{is_image_tag, parse_image_tag_index};
@@ -9,13 +10,13 @@ use crate::render::text::display_width;
 use crate::state::ImageHoverPreview;
 use crate::theme::*;
 use crate::ui::interaction::HitAction;
+use crate::view::terminal_graphics;
 
 /// Height of the legacy attachment strip (kept for layout callers that still reserve space).
 #[allow(dead_code)]
 pub(crate) const IMAGE_PREVIEW_HEIGHT: u16 = 0;
 
 /// Composer strip is no longer used — images show as `[Image N]` chips in the input.
-/// Kept as a no-op so existing layout call sites stay valid.
 #[allow(dead_code)]
 pub(crate) fn render_image_previews(frame: &mut Frame<'_>, app: &mut TuiApp, area: Rect) -> Rect {
     let _ = (frame, app);
@@ -26,21 +27,47 @@ pub(crate) fn render_image_previews(frame: &mut Frame<'_>, app: &mut TuiApp, are
 }
 
 /// Floating hover modal for an `[Image N]` chip (composer or chat).
-pub(crate) fn render_image_hover_modal(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
-    let Some(preview) = app.image_hover.as_ref() else {
+///
+/// - **Kitty / Sixel / iTerm2:** bordered card with metadata header + live image.
+/// - **Other terminals:** compact text-only metadata card (no fake halfblock preview).
+pub(crate) fn render_image_hover_modal(frame: &mut Frame<'_>, app: &mut TuiApp, area: Rect) {
+    let Some(preview) = app.image_hover.clone() else {
         return;
     };
-    if area.width < 24 || area.height < 6 {
+    if area.width < 24 || area.height < 3 {
         return;
     }
 
+    let graphics = terminal_graphics::session_graphics();
+    let show_pixels = graphics.supports_image_preview() && app.image_hover_protocol.is_some();
+
     let header = preview.header_line();
     let header_w = display_width(&header) as u16;
-    let modal_width = header_w
-        .saturating_add(6)
-        .clamp(36, area.width.saturating_sub(4).max(24));
-    // Compact card: header + thin body (placeholder frame for the image).
-    let modal_height = 8u16.min(area.height.saturating_sub(2).max(5));
+
+    let max_body = ratatui::layout::Size::new(
+        area.width.saturating_sub(6).max(20),
+        area.height.saturating_sub(6).max(4),
+    );
+
+    let (modal_width, modal_height) = if show_pixels {
+        let est = graphics.estimate_cells(preview.width, preview.height, max_body);
+        let w = header_w
+            .saturating_add(4)
+            .max(est.width.saturating_add(4))
+            .min(area.width.saturating_sub(2).max(24));
+        let h = est
+            .height
+            .saturating_add(3) // borders + title
+            .min(area.height.saturating_sub(2).max(8));
+        (w, h)
+    } else {
+        // Text-only: slim card with metadata in the title (like the reference chrome).
+        let w = header_w
+            .saturating_add(6)
+            .clamp(28, area.width.saturating_sub(4).max(24));
+        (w, 3.min(area.height))
+    };
+
     let x = area
         .x
         .saturating_add(area.width.saturating_sub(modal_width) / 2);
@@ -53,54 +80,39 @@ pub(crate) fn render_image_hover_modal(frame: &mut Frame<'_>, app: &TuiApp, area
     };
 
     frame.render_widget(Clear, modal);
+
+    let title = Line::from(vec![
+        Span::styled(" ", Style::default().bg(panel())),
+        Span::styled(
+            header,
+            Style::default()
+                .fg(text())
+                .bg(panel())
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(" ", Style::default().bg(panel())),
+    ]);
+
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(ghost()).bg(panel()))
         .style(Style::default().bg(panel()).fg(text()))
-        .title(Line::from(vec![
-            Span::styled(" ", Style::default().bg(panel())),
-            Span::styled(
-                header,
-                Style::default()
-                    .fg(text())
-                    .bg(panel())
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(" ", Style::default().bg(panel())),
-        ]));
+        .title(title);
     let inner = block.inner(modal);
     frame.render_widget(block, modal);
 
-    // Body: dim preview placeholder (true pixel rendering needs terminal image protocol).
-    let dims = match (preview.width, preview.height) {
-        (Some(w), Some(h)) => format!("{w}×{h}"),
-        _ => "image".to_string(),
-    };
-    let body = format!(
-        "\n  ▣  {} preview\n  hover target · {} · {}",
-        preview.format_short(),
-        dims,
-        format_size(preview.size_bytes),
-    );
-    frame.render_widget(
-        Paragraph::new(body)
-            .style(Style::default().fg(muted()).bg(panel()))
-            .alignment(Alignment::Left)
-            .wrap(Wrap { trim: false }),
-        inner,
-    );
-}
-
-fn format_size(bytes: usize) -> String {
-    const KB: f64 = 1024.0;
-    const MB: f64 = 1024.0 * 1024.0;
-    let n = bytes as f64;
-    if n >= MB {
-        format!("{:.1} MB", n / MB)
-    } else if n >= KB {
-        format!("{:.1} KB", n / KB)
-    } else {
-        format!("{bytes} B")
+    if show_pixels {
+        if let Some(protocol) = app.image_hover_protocol.as_mut() {
+            // Image fills the body; StatefulImage fits to the area.
+            let image = StatefulImage::default().resize(Resize::Fit(None));
+            frame.render_stateful_widget(image, inner, protocol);
+        }
+    } else if inner.height > 0 {
+        // Text-only: fill the slim card body so the border doesn't look empty.
+        frame.render_widget(
+            Paragraph::new("").style(Style::default().bg(panel())),
+            inner,
+        );
     }
 }
 
@@ -176,7 +188,6 @@ pub(crate) fn register_pending_image_hits(
                 if let Some(one_based) = parse_image_tag_index(tag) {
                     let image_index = one_based.saturating_sub(1);
                     if image_index < app.pending_images.len() {
-                        // Ensure the tag still maps into the full input (not a stale wrap).
                         let absolute = line_start_byte + idx;
                         if absolute < input_text.len() {
                             let hit = Rect {
@@ -209,25 +220,42 @@ pub(crate) fn register_pending_image_hits(
 }
 
 pub(crate) fn set_hover_from_action(app: &mut TuiApp, action: &HitAction) -> bool {
-    match action {
-        HitAction::PreviewPendingImage(index) => {
-            app.image_hover = app
-                .pending_images
-                .get(*index)
-                .map(|image| ImageHoverPreview::from_pending(*index, image));
-            true
-        }
+    let preview = match action {
+        HitAction::PreviewPendingImage(index) => app
+            .pending_images
+            .get(*index)
+            .map(|image| ImageHoverPreview::from_pending(*index, image)),
         HitAction::PreviewChatImage {
             message_index,
             image_index,
-        } => {
-            app.image_hover = app
-                .messages
-                .get(*message_index)
-                .and_then(|message| message.images.get(*image_index))
-                .map(ImageHoverPreview::from_chat);
-            true
+        } => app
+            .messages
+            .get(*message_index)
+            .and_then(|message| message.images.get(*image_index))
+            .map(ImageHoverPreview::from_chat),
+        _ => return false,
+    };
+
+    // Rebuild graphics protocol only when the hovered image changes.
+    let same = match (&app.image_hover, &preview) {
+        (Some(prev), Some(next)) => {
+            prev.index == next.index
+                && prev.size_bytes == next.size_bytes
+                && prev.data == next.data
         }
         _ => false,
+    };
+
+    app.image_hover = preview;
+    if !same {
+        app.image_hover_protocol = app.image_hover.as_ref().and_then(|hover| {
+            terminal_graphics::session_graphics().encode_preview(&hover.data)
+        });
     }
+    true
+}
+
+pub(crate) fn clear_image_hover(app: &mut TuiApp) {
+    app.image_hover = None;
+    app.image_hover_protocol = None;
 }

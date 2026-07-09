@@ -4,6 +4,7 @@ pub(crate) mod command_palette;
 pub(crate) mod debug;
 pub(crate) mod image_preview;
 pub(crate) mod input;
+pub(crate) mod terminal_graphics;
 pub(crate) mod modals;
 pub(crate) mod model_picker;
 pub(crate) mod notification;
@@ -59,7 +60,7 @@ fn render_inner(frame: &mut Frame<'_>, app: &mut TuiApp) {
     }
 
     notification::render_notification(frame, app, area);
-    // Image hover preview sits above chat/composer but below hard modal scrims.
+    // Image hover preview sits above chat/composer (Kitty/Sixel when available).
     image_preview::render_image_hover_modal(frame, app, content_area);
 }
 
