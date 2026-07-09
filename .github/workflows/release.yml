@@ -13,6 +13,10 @@
 #   navi-darwin-arm64.tar.gz
 #   navi-win32-x64.zip
 #   SHA256SUMS.txt
+#   SHA256SUMS.txt.sigstore.json   (Sigstore/cosign keyless bundle)
+#
+# Archives contain a single root binary (navi / navi.exe). tar.gz is intentional:
+# preserves executable bit + standard packaging; integrity is via SHA-256 + Sigstore.
 #
 name: Release
 
@@ -35,6 +39,8 @@ env:
 
 permissions:
   contents: write
+  # Required for cosign keyless (GitHub OIDC → Sigstore).
+  id-token: write
 
 concurrency:
   group: release-${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
@@ -127,7 +133,14 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p dist
+          # Single-file archive at root: installers reject any other member.
           tar -C "target/${{ matrix.target }}/release" -czf "dist/${{ matrix.archive }}.tar.gz" navi
+          # Guard: archive must list exactly one member named navi.
+          mapfile -t members < <(tar -tzf "dist/${{ matrix.archive }}.tar.gz")
+          if [[ ${#members[@]} -ne 1 || "${members[0]}" != "navi" ]]; then
+            echo "invalid archive members: ${members[*]}" >&2
+            exit 1
+          fi
           ls -lh "dist/${{ matrix.archive }}.tar.gz"
 
       - name: Package (windows)
@@ -220,16 +233,44 @@ jobs:
         run: |
           set -euo pipefail
           cd artifacts
-          # Only archive files (not npm folders)
           shopt -s nullglob
-          files=( *.tar.gz *.zip )
-          if (( ${#files[@]} == 0 )); then
-            echo "No release archives found in artifacts/" >&2
-            ls -la
-            exit 1
-          fi
-          sha256sum "${files[@]}" | tee SHA256SUMS.txt
+          expected=(
+            navi-linux-x64.tar.gz
+            navi-linux-arm64.tar.gz
+            navi-darwin-x64.tar.gz
+            navi-darwin-arm64.tar.gz
+            navi-win32-x64.zip
+          )
+          for f in "${expected[@]}"; do
+            if [[ ! -f "$f" ]]; then
+              echo "missing required archive: $f" >&2
+              ls -la
+              exit 1
+            fi
+          done
+          sha256sum "${expected[@]}" | tee SHA256SUMS.txt
+          while read -r hash _ name; do
+            [[ "$hash" =~ ^[0-9a-f]{64}$ ]] || { echo "bad hash: $hash"; exit 1; }
+            [[ -f "$name" ]] || { echo "sums name missing file: $name"; exit 1; }
+          done < SHA256SUMS.txt
           ls -lh
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3.8.1
+
+      - name: Sign SHA256SUMS with Sigstore (keyless)
+        shell: bash
+        run: |
+          set -euo pipefail
+          cosign sign-blob --yes \
+            --bundle artifacts/SHA256SUMS.txt.sigstore.json \
+            artifacts/SHA256SUMS.txt
+          cosign verify-blob \
+            --bundle artifacts/SHA256SUMS.txt.sigstore.json \
+            --certificate-identity-regexp "https://github.com/${{ github.repository }}/\\.github/workflows/release\\.yml@refs/tags/v.*" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            artifacts/SHA256SUMS.txt
+          ls -lh artifacts/SHA256SUMS.txt artifacts/SHA256SUMS.txt.sigstore.json
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
@@ -243,6 +284,7 @@ jobs:
             artifacts/*.tar.gz
             artifacts/*.zip
             artifacts/SHA256SUMS.txt
+            artifacts/SHA256SUMS.txt.sigstore.json
           body: |
             ## Install
 
@@ -262,8 +304,13 @@ jobs:
             ```
 
             ### Manual download
-            Pick the archive for your platform below, extract `navi` (or `navi.exe`), and put it on your `PATH`.
+            Each archive contains a **single** root binary (`navi` or `navi.exe`).
+            Verify with `SHA256SUMS.txt` (and optionally the Sigstore bundle
+            `SHA256SUMS.txt.sigstore.json` via `cosign verify-blob`).
 
-            Checksums: `SHA256SUMS.txt`
+            ### Security
+            - Archives are `.tar.gz` / `.zip` by design (standard packaging; not a security boundary).
+            - The installer **hard-fails** unless the archive SHA-256 matches `SHA256SUMS.txt`.
+            - `SHA256SUMS.txt` is signed keyless with Sigstore (GitHub Actions OIDC).
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
