@@ -72,6 +72,23 @@ Pin a version:
 curl -fsSL https://raw.githubusercontent.com/navi-ai-org/navi/main/scripts/install.sh | sh -s -- --version 0.2.0
 ```
 
+**Install security**
+
+| Control | Behavior |
+| --- | --- |
+| Transport | HTTPS only (`curl --proto '=https' --tlsv1.2`) |
+| Integrity | Archive **must** match release `SHA256SUMS.txt` (hard fail) |
+| Authenticity | Optional Sigstore verify of `SHA256SUMS.txt` when [`cosign`](https://docs.sigstore.dev/) is installed |
+| Archive shape | Each `.tar.gz` / `.zip` contains **only** `navi` / `navi.exe` at the root (path traversal rejected) |
+| Format | `.tar.gz` is intentional (executable bit + standard packaging). Integrity is checksum/signature, not the archive format |
+
+High-assurance install (pin script commit + release + require cosign):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/navi-ai-org/navi/<commit-sha>/scripts/install.sh \
+  | sh -s -- --version 0.2.0 --require-cosign
+```
+
 **Windows (PowerShell):**
 
 ```powershell

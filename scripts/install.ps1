@@ -3,13 +3,19 @@
 # Primary install method:
 #   irm https://raw.githubusercontent.com/navi-ai-org/navi/main/scripts/install.ps1 | iex
 #
-# Or pin a version:
-#   $env:NAVI_VERSION = "0.1.2"
+# Pin a version:
+#   $env:NAVI_VERSION = "0.2.0"
 #   irm https://raw.githubusercontent.com/navi-ai-org/navi/main/scripts/install.ps1 | iex
+#
+# Security:
+#   • HTTPS only
+#   • Archive SHA-256 MUST match release SHA256SUMS.txt (hard fail)
+#   • Zip may only contain a single root file: navi.exe
+#   • Install under user profile by default (%USERPROFILE%\.navi\bin)
 #
 # Environment:
 #   NAVI_VERSION  — version or tag (default: latest)
-#   NAVI_INSTALL  — install directory (default: %USERPROFILE%\.navi\bin)
+#   NAVI_INSTALL  — install directory
 #   NAVI_REPO     — GitHub repo (default: navi-ai-org/navi)
 
 $ErrorActionPreference = 'Stop'
@@ -21,14 +27,11 @@ function Write-Err  { param([string]$Msg) Write-Host "[navi] $Msg" -ForegroundCo
 
 $Repo = if ($env:NAVI_REPO) { $env:NAVI_REPO } else { "navi-ai-org/navi" }
 
-# ── Platform ─────────────────────────────────────────────────────────────────
-
 if (-not [Environment]::Is64BitOperatingSystem) {
     Write-Err "Unsupported architecture: 32-bit Windows is not supported."
     exit 1
 }
 
-# Prefer process arch when available (ARM64 Windows).
 $ProcArch = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString().ToLowerInvariant()
 $Arch = switch -Regex ($ProcArch) {
     'arm64' { 'x64'; Write-Warn "ARM64 Windows: using x64 binary via emulation (no native arm64 build yet)." }
@@ -38,10 +41,12 @@ $Arch = switch -Regex ($ProcArch) {
 
 $PlatformArch = "win32-$Arch"
 
-# ── Version ──────────────────────────────────────────────────────────────────
-
 function Normalize-Version([string]$v) {
-    if ($v.StartsWith("v") -or $v.StartsWith("V")) { return $v.Substring(1) }
+    if ($v.StartsWith("v") -or $v.StartsWith("V")) { $v = $v.Substring(1) }
+    if ($v -notmatch '^[A-Za-z0-9._-]+$') {
+        Write-Err "Invalid version string: $v"
+        exit 1
+    }
     return $v
 }
 
@@ -58,6 +63,16 @@ function Get-LatestVersion {
     }
 }
 
+function Get-Sha256Hex([string]$Path) {
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $bytes = [System.IO.File]::ReadAllBytes($Path)
+        return ([BitConverter]::ToString($sha.ComputeHash($bytes)) -replace "-", "").ToLowerInvariant()
+    } finally {
+        $sha.Dispose()
+    }
+}
+
 $Version = if ($env:NAVI_VERSION) { Normalize-Version $env:NAVI_VERSION } else { Get-LatestVersion }
 $InstallDir = if ($env:NAVI_INSTALL) { $env:NAVI_INSTALL } else {
     Join-Path $env:USERPROFILE ".navi\bin"
@@ -70,13 +85,19 @@ $ArchiveName = "navi-${PlatformArch}.zip"
 $DownloadUrl = "https://github.com/$Repo/releases/download/v${Version}/${ArchiveName}"
 $SumsUrl = "https://github.com/$Repo/releases/download/v${Version}/SHA256SUMS.txt"
 
+if (-not $DownloadUrl.StartsWith("https://") -or -not $SumsUrl.StartsWith("https://")) {
+    Write-Err "Refusing non-HTTPS download URL."
+    exit 1
+}
+
 $TmpDir = Join-Path ([System.IO.Path]::GetTempPath()) ("navi-install-" + [System.Guid]::NewGuid().ToString("N").Substring(0, 8))
 New-Item -ItemType Directory -Path $TmpDir -Force | Out-Null
 
 try {
     $ArchivePath = Join-Path $TmpDir $ArchiveName
-    Write-Info "Downloading $DownloadUrl..."
+    $SumsPath = Join-Path $TmpDir "SHA256SUMS.txt"
 
+    Write-Info "Downloading $DownloadUrl..."
     try {
         Invoke-WebRequest -Uri $DownloadUrl -OutFile $ArchivePath -UseBasicParsing
     } catch {
@@ -85,35 +106,72 @@ try {
         exit 1
     }
 
-    # Optional checksum verification
+    Write-Info "Downloading SHA256SUMS.txt..."
     try {
-        $sums = Invoke-WebRequest -Uri $SumsUrl -UseBasicParsing
-        $line = ($sums.Content -split "`n" | Where-Object { $_ -match [regex]::Escape($ArchiveName) } | Select-Object -First 1)
-        if ($line) {
-            $expected = ($line -split "\s+")[0].Trim()
-            $sha = [System.Security.Cryptography.SHA256]::Create()
-            $bytes = [System.IO.File]::ReadAllBytes($ArchivePath)
-            $actual = ([BitConverter]::ToString($sha.ComputeHash($bytes)) -replace "-", "").ToLowerInvariant()
-            $sha.Dispose()
-            if ($actual -ne $expected.ToLowerInvariant()) {
-                Write-Err "Checksum mismatch for $ArchiveName"
-                Write-Err "  expected: $expected"
-                Write-Err "  actual:   $actual"
-                exit 1
-            }
-            Write-Info "Checksum OK"
-        }
+        Invoke-WebRequest -Uri $SumsUrl -OutFile $SumsPath -UseBasicParsing
     } catch {
-        Write-Warn "Could not verify SHA256SUMS.txt; continuing without verify."
+        Write-Err "Failed to download SHA256SUMS.txt — refusing to install."
+        exit 1
     }
 
-    Write-Info "Extracting..."
-    $ExtractDir = Join-Path $TmpDir "extracted"
-    Expand-Archive -Path $ArchivePath -DestinationPath $ExtractDir -Force
+    $sumsText = Get-Content -Raw -Path $SumsPath
+    $line = ($sumsText -split "`n" | Where-Object {
+        $_ -match ("\s" + [regex]::Escape($ArchiveName) + "\s*$") -or
+        $_ -match ("\s\*" + [regex]::Escape($ArchiveName) + "\s*$")
+    } | Select-Object -First 1)
 
-    $Binary = Get-ChildItem -Path $ExtractDir -Filter "navi.exe" -Recurse | Select-Object -First 1
-    if (-not $Binary) {
-        Write-Err "Could not find navi.exe in the downloaded archive."
+    if (-not $line) {
+        Write-Err "No SHA-256 entry for $ArchiveName in SHA256SUMS.txt"
+        Write-Err "Refusing to install."
+        exit 1
+    }
+
+    $expected = (($line -split "\s+")[0]).Trim().ToLowerInvariant()
+    if ($expected -notmatch '^[0-9a-f]{64}$') {
+        Write-Err "Malformed checksum for ${ArchiveName}: $expected"
+        exit 1
+    }
+
+    $actual = Get-Sha256Hex $ArchivePath
+    if ($actual -ne $expected) {
+        Write-Err "Checksum mismatch for $ArchiveName"
+        Write-Err "  expected: $expected"
+        Write-Err "  actual:   $actual"
+        Write-Err "The download may be corrupt or tampered with. Aborting."
+        exit 1
+    }
+    Write-Info ("SHA-256 OK (" + $actual.Substring(0, 12) + "…)")
+
+    Write-Info "Extracting (single-file navi.exe)..."
+    $ExtractDir = Join-Path $TmpDir "extracted"
+    New-Item -ItemType Directory -Path $ExtractDir -Force | Out-Null
+
+    # Validate zip members before extract (zip-slip / multi-file rejection).
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $zip = [System.IO.Compression.ZipFile]::OpenRead($ArchivePath)
+    try {
+        $entries = @($zip.Entries | Where-Object { -not [string]::IsNullOrEmpty($_.Name) -or $_.FullName.EndsWith("/") })
+        $files = @($zip.Entries | Where-Object { -not $_.FullName.EndsWith("/") })
+        if ($files.Count -ne 1) {
+            Write-Err "Archive must contain exactly one file (found $($files.Count))."
+            exit 1
+        }
+        $entry = $files[0]
+        $name = $entry.FullName -replace '\\', '/'
+        $name = $name.TrimStart('./')
+        if ($name -ne "navi.exe" -or $name.Contains("..") -or $name.Contains("/")) {
+            Write-Err "Unsafe or unexpected zip member: $($entry.FullName)"
+            Write-Err "Expected a single root file named navi.exe."
+            exit 1
+        }
+        [System.IO.Compression.ZipFileExtensions]::ExtractToFile($entry, (Join-Path $ExtractDir "navi.exe"), $true)
+    } finally {
+        $zip.Dispose()
+    }
+
+    $BinaryPath = Join-Path $ExtractDir "navi.exe"
+    if (-not (Test-Path $BinaryPath)) {
+        Write-Err "Extraction failed: navi.exe missing."
         exit 1
     }
 
@@ -122,7 +180,9 @@ try {
     }
 
     $Dest = Join-Path $InstallDir "navi.exe"
-    Copy-Item -Path $Binary.FullName -Destination $Dest -Force
+    $TmpDest = "$Dest.tmp"
+    Copy-Item -Path $BinaryPath -Destination $TmpDest -Force
+    Move-Item -Path $TmpDest -Destination $Dest -Force
     Write-Ok "NAVI v${Version} installed to $Dest"
 
     $CurrentPath = [Environment]::GetEnvironmentVariable("Path", "User")
@@ -131,7 +191,6 @@ try {
         Write-Warn "$InstallDir is not in your PATH."
         Write-Warn ""
 
-        # Non-interactive (piped iex): auto-add to PATH.
         $interactive = [Environment]::UserInteractive -and -not [Console]::IsInputRedirected
         $add = $true
         if ($interactive) {
