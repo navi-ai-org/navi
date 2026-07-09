@@ -1,8 +1,11 @@
-# Release workflow — builds portable navi binaries and publishes a GitHub Release.
+# Release workflow — tests, then builds portable navi binaries and publishes
+# a GitHub Release.
 #
 # Trigger: push a version tag
 #   git tag v0.2.1
 #   git push origin v0.2.1
+#
+# Gates: `test` must pass before any platform build or publish step.
 #
 # Linux builds use Alpine (musl) containers so the binary runs on:
 #   Alpine, Debian bookworm+, Ubuntu, Amazon Linux, and most enterprise containers.
@@ -32,6 +35,7 @@ on:
 env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: "0"
+  CARGO_TEST_THREADS: "4"
   RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
 
 permissions:
@@ -43,10 +47,40 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # ── Quality gate (must pass before multi-platform builds) ─────────────────
+
+  test:
+    name: Test (gate)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release-test-gate
+          shared-key: release-test
+
+      - name: Format check
+        run: cargo fmt --all -- --check
+
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+
+      - name: Workspace tests
+        run: cargo test --workspace --locked -- --test-threads=4
+
   # ── Linux x64 musl (Alpine container — JS actions only work on x64) ────────
 
   build-linux-x64:
     name: Build navi-linux-x64
+    needs: [test]
     runs-on: ubuntu-latest
     container: rust:1-alpine
     steps:
@@ -129,6 +163,7 @@ jobs:
 
   build-linux-arm64:
     name: Build navi-linux-arm64
+    needs: [test]
     runs-on: ubuntu-24.04-arm
     steps:
       - name: Checkout
