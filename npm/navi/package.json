@@ -1,6 +1,6 @@
 {
   "name": "@navi-agent/navi",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "The coding agent engine that lives in your terminal. Install the navi CLI binary.",
   "license": "Apache-2.0",
   "author": "NAVI Contributors",
@@ -45,11 +45,11 @@
     "arm64"
   ],
   "optionalDependencies": {
-    "@navi-agent/navi-linux-x64": "0.2.0",
-    "@navi-agent/navi-linux-arm64": "0.2.0",
-    "@navi-agent/navi-darwin-x64": "0.2.0",
-    "@navi-agent/navi-darwin-arm64": "0.2.0",
-    "@navi-agent/navi-win32-x64": "0.2.0"
+    "@navi-agent/navi-linux-x64": "0.2.1",
+    "@navi-agent/navi-linux-arm64": "0.2.1",
+    "@navi-agent/navi-darwin-x64": "0.2.1",
+    "@navi-agent/navi-darwin-arm64": "0.2.1",
+    "@navi-agent/navi-win32-x64": "0.2.1"
   },
   "publishConfig": {
     "access": "public",
