@@ -99,12 +99,7 @@ pub fn try_read_image_from_path(text: &str) -> Option<PendingImage> {
         "loaded image from path"
     );
 
-    Some(PendingImage {
-        media_type: media_type.to_string(),
-        data: BASE64.encode(&bytes),
-        width: None,
-        height: None,
-    })
+    Some(pending_image(media_type, &bytes))
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -186,10 +181,18 @@ fn try_clipboard_command(program: &str, args: &[&str], media_type: &str) -> Opti
         "clipboard image captured"
     );
 
-    Some(PendingImage {
+    Some(pending_image(media_type, &bytes))
+}
+
+fn pending_image(media_type: &str, bytes: &[u8]) -> PendingImage {
+    let data = BASE64.encode(bytes);
+    let (width, height) = crate::view::terminal_graphics::peek_image_dimensions(&data)
+        .map(|(w, h)| (Some(w), Some(h)))
+        .unwrap_or((None, None));
+    PendingImage {
         media_type: media_type.to_string(),
-        data: BASE64.encode(&bytes),
-        width: None,
-        height: None,
-    })
+        data,
+        width,
+        height,
+    }
 }

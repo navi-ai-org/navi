@@ -21,6 +21,13 @@ pub struct TerminalGraphics {
     protocol: ProtocolType,
 }
 
+/// Decoded preview ready for a large lightbox (scales to the modal body).
+pub struct EncodedPreview {
+    pub protocol: StatefulProtocol,
+    pub pixel_width: u32,
+    pub pixel_height: u32,
+}
+
 impl Default for TerminalGraphics {
     fn default() -> Self {
         Self {
@@ -43,9 +50,15 @@ impl TerminalGraphics {
                     protocol,
                     ProtocolType::Kitty | ProtocolType::Sixel | ProtocolType::Iterm2
                 );
-                debug!(?protocol, supports, "terminal graphics capability");
+                let fs = picker.font_size();
+                debug!(
+                    ?protocol,
+                    supports,
+                    font_w = fs.width,
+                    font_h = fs.height,
+                    "terminal graphics capability"
+                );
                 Self {
-                    // Only keep the picker when we will actually render images.
                     picker: supports.then_some(picker),
                     protocol,
                 }
@@ -76,34 +89,30 @@ impl TerminalGraphics {
         }
     }
 
-    /// Decode base64 image bytes into a stateful protocol for `StatefulImage`.
-    pub fn encode_preview(&self, data_b64: &str) -> Option<StatefulProtocol> {
+    /// Decode base64 into a stateful protocol that can scale into any modal body.
+    pub fn encode_preview(&self, data_b64: &str) -> Option<EncodedPreview> {
         let picker = self.picker.as_ref()?;
-        let bytes = base64::engine::general_purpose::STANDARD
-            .decode(data_b64.as_bytes())
-            .or_else(|_| {
-                base64::engine::general_purpose::STANDARD_NO_PAD.decode(data_b64.as_bytes())
-            })
-            .ok()?;
+        let bytes = decode_b64(data_b64)?;
         let reader = ImageReader::new(Cursor::new(bytes))
             .with_guessed_format()
             .ok()?;
         let dyn_img = reader.decode().ok()?;
-        Some(picker.new_resize_protocol(dyn_img))
+        let pixel_width = dyn_img.width();
+        let pixel_height = dyn_img.height();
+        let protocol = picker.new_resize_protocol(dyn_img);
+        Some(EncodedPreview {
+            protocol,
+            pixel_width,
+            pixel_height,
+        })
     }
+}
 
-    /// Cell size for a pixel image using the probed font metrics when available.
-    pub fn estimate_cells(&self, image_w: Option<u32>, image_h: Option<u32>, max: Size) -> Size {
-        let (cell_w, cell_h) = self
-            .picker
-            .as_ref()
-            .map(|p| {
-                let fs = p.font_size();
-                (fs.width.max(1) as u32, fs.height.max(1) as u32)
-            })
-            .unwrap_or((10, 20));
-        estimate_cell_size_with_font(image_w, image_h, max, cell_w, cell_h)
-    }
+fn decode_b64(data_b64: &str) -> Option<Vec<u8>> {
+    base64::engine::general_purpose::STANDARD
+        .decode(data_b64.as_bytes())
+        .or_else(|_| base64::engine::general_purpose::STANDARD_NO_PAD.decode(data_b64.as_bytes()))
+        .ok()
 }
 
 /// Process-wide probe result from the live TUI session (set once in `run`).
@@ -117,29 +126,14 @@ pub fn session_graphics() -> &'static TerminalGraphics {
     SESSION_GRAPHICS.get_or_init(TerminalGraphics::default)
 }
 
-/// Fixed cell size used when estimating modal dimensions for a pixel image.
-#[cfg(test)]
-fn estimate_cell_size(image_w: Option<u32>, image_h: Option<u32>, max: Size) -> Size {
-    estimate_cell_size_with_font(image_w, image_h, max, 10, 20)
-}
-
-fn estimate_cell_size_with_font(
-    image_w: Option<u32>,
-    image_h: Option<u32>,
-    max: Size,
-    cell_w: u32,
-    cell_h: u32,
-) -> Size {
-    let (pw, ph) = match (image_w, image_h) {
-        (Some(w), Some(h)) if w > 0 && h > 0 => (w, h),
-        _ => return Size::new(max.width.min(48), max.height.min(14)),
-    };
-    let cols = pw.div_ceil(cell_w.max(1)) as u16;
-    let rows = ph.div_ceil(cell_h.max(1)) as u16;
-    Size::new(
-        cols.clamp(20, max.width.max(20)),
-        rows.clamp(6, max.height.max(6)),
-    )
+/// Decode pixel dimensions from base64 image data (for labels without graphics).
+pub fn peek_image_dimensions(data_b64: &str) -> Option<(u32, u32)> {
+    let bytes = decode_b64(data_b64)?;
+    let reader = ImageReader::new(Cursor::new(bytes))
+        .with_guessed_format()
+        .ok()?;
+    let dyn_img = reader.decode().ok()?;
+    Some((dyn_img.width(), dyn_img.height()))
 }
 
 #[cfg(test)]
@@ -154,9 +148,38 @@ mod tests {
     }
 
     #[test]
-    fn estimate_cells_clamps_to_max() {
-        let size = estimate_cell_size(Some(4000), Some(3000), Size::new(40, 12));
-        assert!(size.width <= 40);
-        assert!(size.height <= 12);
+    fn peek_dimensions_reads_png() {
+        use image::{ImageBuffer, ImageEncoder, Rgb};
+        let img: ImageBuffer<Rgb<u8>, Vec<u8>> =
+            ImageBuffer::from_pixel(12, 8, Rgb([10, 20, 30]));
+        let mut png = Vec::new();
+        image::codecs::png::PngEncoder::new(&mut png)
+            .write_image(img.as_raw(), 12, 8, image::ExtendedColorType::Rgb8)
+            .expect("encode png");
+        let b64 = base64::engine::general_purpose::STANDARD.encode(&png);
+        assert_eq!(peek_image_dimensions(&b64), Some((12, 8)));
     }
+
+    #[test]
+    fn lightbox_size_is_large_fraction_of_viewport() {
+        let area = Size::new(100, 40);
+        let (w, h) = lightbox_cells(area);
+        assert!(w >= 80, "width {w}");
+        assert!(h >= 28, "height {h}");
+        assert!(w <= area.width);
+        assert!(h <= area.height);
+    }
+}
+
+/// Large lightbox size relative to the available content area.
+pub fn lightbox_cells(area: Size) -> (u16, u16) {
+    // ~92% width, ~80% height — big preview like the reference chrome, with
+    // a little room left so the composer/footer stay visible underneath.
+    let w = ((area.width as u32 * 92) / 100)
+        .max(48)
+        .min(area.width.saturating_sub(2).max(48) as u32) as u16;
+    let h = ((area.height as u32 * 80) / 100)
+        .max(16)
+        .min(area.height.saturating_sub(3).max(16) as u32) as u16;
+    (w, h)
 }
