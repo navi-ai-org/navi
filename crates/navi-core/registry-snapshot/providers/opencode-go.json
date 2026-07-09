@@ -4,7 +4,15 @@
   "description": "Low-cost multi-model coding subscription with open-source models from DeepSeek, Qwen, GLM, Kimi, and MiniMax. $10/mo flat rate with generous usage limits.",
   "kind": "openai-chat-completions",
   "api_key_env": "OPENCODE_GO_API_KEY",
-  "base_url": null,
+  "base_url": "https://go.opencode.ai/v1",
+  "defaults": {
+    "attachments": {
+      "images": false,
+      "audio": false,
+      "video": false,
+      "documents": false
+    }
+  },
   "models": [
     {
       "name": "deepseek-v4-flash",
@@ -36,9 +44,11 @@
       "max_output_tokens": 65536,
       "recommended_temperature": 1.0,
       "supports_thinking": false,
+      "supports_images": true,
+      "supports_video": true,
       "pricing": {
-        "input_per_1m": 0.3,
-        "output_per_1m": 1.8,
+        "input_per_1m": 0.325,
+        "output_per_1m": 1.95,
         "currency": "USD"
       }
     },
@@ -48,9 +58,12 @@
       "max_output_tokens": 32768,
       "recommended_temperature": 1.0,
       "supports_thinking": false,
+      "attachments": {
+        "images": true
+      },
       "pricing": {
         "input_per_1m": 0.6,
-        "output_per_1m": 2.2,
+        "output_per_1m": 1.92,
         "currency": "USD"
       }
     },
@@ -60,9 +73,14 @@
       "max_output_tokens": 65536,
       "recommended_temperature": 1.0,
       "supports_thinking": false,
+      "attachments": {
+        "images": true,
+        "documents": true
+      },
+      "supports_images": true,
       "pricing": {
-        "input_per_1m": 0.57,
-        "output_per_1m": 2.3,
+        "input_per_1m": 0.375,
+        "output_per_1m": 2.025,
         "currency": "USD"
       }
     },
@@ -73,8 +91,8 @@
       "recommended_temperature": 1.0,
       "supports_thinking": false,
       "pricing": {
-        "input_per_1m": 0.2,
-        "output_per_1m": 1.0,
+        "input_per_1m": 0.12,
+        "output_per_1m": 0.48,
         "currency": "USD"
       }
     }

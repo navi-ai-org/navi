@@ -5,6 +5,14 @@
   "kind": "openai-chat-completions",
   "api_key_env": "OLLAMA_API_KEY",
   "base_url": "http://localhost:11434/v1",
+  "defaults": {
+    "attachments": {
+      "images": false,
+      "audio": false,
+      "video": false,
+      "documents": false
+    }
+  },
   "models": [
     {
       "name": "llama3.1",
@@ -20,7 +28,13 @@
     },
     {
       "name": "deepseek-r1",
-      "context_window_tokens": 1000000
+      "context_window_tokens": 1000000,
+      "supports_thinking": true,
+      "pricing": {
+        "input_per_1m": 0.7,
+        "output_per_1m": 2.5,
+        "currency": "USD"
+      }
     },
     {
       "name": "qwen3",
@@ -56,15 +70,27 @@
     },
     {
       "name": "gemma3",
-      "context_window_tokens": 128000
+      "context_window_tokens": 128000,
+      "attachments": {
+        "images": true
+      },
+      "supports_images": true
     },
     {
       "name": "gemma3:27b",
-      "context_window_tokens": 128000
+      "context_window_tokens": 128000,
+      "attachments": {
+        "images": true
+      },
+      "supports_images": true
     },
     {
       "name": "gemma3:12b",
-      "context_window_tokens": 128000
+      "context_window_tokens": 128000,
+      "attachments": {
+        "images": true
+      },
+      "supports_images": true
     },
     {
       "name": "mistral",

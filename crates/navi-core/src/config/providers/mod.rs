@@ -196,28 +196,133 @@ pub fn effective_tool_calling_mode(config: &NaviConfig) -> ToolCallingMode {
 /// Returns whether a configured model can consume the given attachment kind
 /// directly. Unknown metadata is treated as unsupported so callers can route
 /// through a specialized attachment analysis model.
+///
+/// Lookup is resilient to provider-specific naming:
+/// - exact `provider + model` match
+/// - same provider with normalized aliases (`mimo-v2.5-free` → `mimo-v2.5`,
+///   `MiniMaxAI/MiniMax-M3` → `MiniMax-M3`)
+/// - any provider entry for a normalized name that explicitly supports the modality
 pub fn model_supports_attachment(
     config: &NaviConfig,
     provider_id: &str,
     model_name: &str,
     kind: AttachmentKind,
 ) -> bool {
-    provider_catalog(config)
-        .into_iter()
-        .find(|provider| canonical_provider_id(&provider.id) == canonical_provider_id(provider_id))
-        .and_then(|provider| {
-            provider
-                .models
-                .into_iter()
-                .find(|model| model.name == model_name)
-        })
-        .and_then(|model| match kind {
-            AttachmentKind::Image => model.supports_images,
-            AttachmentKind::Audio => model.supports_audio,
-            AttachmentKind::Video => model.supports_video,
-            AttachmentKind::Document => model.supports_documents,
-        })
-        .unwrap_or(false)
+    let catalog = provider_catalog(config);
+    let candidates = model_attachment_name_candidates(model_name);
+    let provider_id = canonical_provider_id(provider_id);
+
+    if let Some(flag) =
+        lookup_attachment_support(&catalog, Some(provider_id), &candidates, kind)
+    {
+        return flag;
+    }
+
+    // Cross-provider: e.g. opencode `mimo-v2.5-free` inherits vision from xiaomi `mimo-v2.5`.
+    if let Some(flag) = lookup_attachment_support(&catalog, None, &candidates, kind) {
+        return flag;
+    }
+
+    false
+}
+
+fn attachment_flag(model: &ProviderModelConfig, kind: AttachmentKind) -> Option<bool> {
+    match kind {
+        AttachmentKind::Image => model.supports_images,
+        AttachmentKind::Audio => model.supports_audio,
+        AttachmentKind::Video => model.supports_video,
+        AttachmentKind::Document => model.supports_documents,
+    }
+}
+
+fn lookup_attachment_support(
+    catalog: &[ProviderConfig],
+    provider_id: Option<&str>,
+    candidates: &[String],
+    kind: AttachmentKind,
+) -> Option<bool> {
+    let mut saw_explicit_false = false;
+    for provider in catalog {
+        if let Some(want) = provider_id {
+            if canonical_provider_id(&provider.id) != want {
+                continue;
+            }
+        }
+        for model in &provider.models {
+            if !candidates
+                .iter()
+                .any(|candidate| model_names_equivalent(&model.name, candidate))
+            {
+                continue;
+            }
+            match attachment_flag(model, kind) {
+                Some(true) => return Some(true),
+                Some(false) => saw_explicit_false = true,
+                None => {}
+            }
+        }
+    }
+    if saw_explicit_false {
+        Some(false)
+    } else {
+        None
+    }
+}
+
+/// Name variants used when resolving attachment capability across registries.
+pub(crate) fn model_attachment_name_candidates(model_name: &str) -> Vec<String> {
+    fn push_unique(out: &mut Vec<String>, value: String) {
+        if !value.is_empty() && !out.iter().any(|existing| existing == &value) {
+            out.push(value);
+        }
+    }
+
+    let mut out = Vec::new();
+    push_unique(&mut out, model_name.to_string());
+    push_unique(&mut out, model_name.to_ascii_lowercase());
+
+    if let Some((_, rest)) = model_name.split_once('/') {
+        push_unique(&mut out, rest.to_string());
+        push_unique(&mut out, rest.to_ascii_lowercase());
+    }
+
+    let bases = out.clone();
+    for base in bases {
+        for suffix in ["-free", "-highspeed", "-high-speed", "-turbo"] {
+            let lower = base.to_ascii_lowercase();
+            if let Some(stripped) = lower.strip_suffix(suffix) {
+                if base.len() >= suffix.len() {
+                    push_unique(&mut out, base[..base.len() - suffix.len()].to_string());
+                }
+                push_unique(&mut out, stripped.to_string());
+            }
+        }
+    }
+
+    // MiniMaxAI/MiniMax-M3 → minimax-m3 / MiniMax-M3
+    let bases = out.clone();
+    for base in bases {
+        let compact = base.replace('_', "-");
+        push_unique(&mut out, compact.clone());
+        push_unique(&mut out, compact.to_ascii_lowercase());
+    }
+
+    out
+}
+
+fn model_names_equivalent(left: &str, right: &str) -> bool {
+    if left == right {
+        return true;
+    }
+    let norm = |value: &str| {
+        value
+            .rsplit('/')
+            .next()
+            .unwrap_or(value)
+            .replace('_', "-")
+            .to_ascii_lowercase()
+    };
+    norm(left) == norm(right)
 }
 
 impl NaviConfig {

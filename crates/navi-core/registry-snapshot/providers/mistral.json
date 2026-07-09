@@ -11,324 +11,189 @@
       "context_window_tokens": 128000,
       "max_output_tokens": 32768,
       "recommended_temperature": 0.7,
-      "supports_thinking": false,
-      "pricing": {
-        "input_per_1m": 2.0,
-        "output_per_1m": 6.0,
-        "currency": "USD"
-      }
+      "supports_thinking": false
     },
     {
       "name": "mistral-large-2411",
       "context_window_tokens": 128000,
       "max_output_tokens": 32768,
       "recommended_temperature": 0.7,
-      "supports_thinking": false,
-      "pricing": {
-        "input_per_1m": 2.0,
-        "output_per_1m": 6.0,
-        "currency": "USD"
-      }
+      "supports_thinking": false
     },
     {
       "name": "mistral-large-2407",
       "context_window_tokens": 128000,
       "max_output_tokens": 32768,
       "recommended_temperature": 0.7,
-      "supports_thinking": false,
-      "pricing": {
-        "input_per_1m": 3.0,
-        "output_per_1m": 9.0,
-        "currency": "USD"
-      }
+      "supports_thinking": false
     },
     {
       "name": "mistral-medium-latest",
       "context_window_tokens": 128000,
       "max_output_tokens": 32768,
       "recommended_temperature": 0.7,
-      "supports_thinking": false,
-      "pricing": {
-        "input_per_1m": 2.0,
-        "output_per_1m": 6.0,
-        "currency": "USD"
-      }
+      "supports_thinking": false
     },
     {
       "name": "mistral-medium-2508",
       "context_window_tokens": 262144,
       "max_output_tokens": 32768,
       "recommended_temperature": 0.7,
-      "supports_thinking": true,
-      "pricing": {
-        "input_per_1m": 2.0,
-        "output_per_1m": 6.0,
-        "currency": "USD"
-      }
+      "supports_thinking": true
     },
     {
       "name": "mistral-small-latest",
       "context_window_tokens": 256000,
       "max_output_tokens": 32768,
       "recommended_temperature": 0.7,
-      "supports_thinking": true,
-      "pricing": {
-        "input_per_1m": 0.2,
-        "output_per_1m": 0.6,
-        "currency": "USD"
-      }
+      "supports_thinking": true
     },
     {
       "name": "mistral-small-2506",
       "context_window_tokens": 256000,
       "max_output_tokens": 32768,
       "recommended_temperature": 0.7,
-      "supports_thinking": true,
-      "pricing": {
-        "input_per_1m": 0.2,
-        "output_per_1m": 0.6,
-        "currency": "USD"
-      }
+      "supports_thinking": true
     },
     {
       "name": "mistral-small-2503",
       "context_window_tokens": 128000,
       "max_output_tokens": 32768,
       "recommended_temperature": 0.7,
-      "supports_thinking": true,
-      "pricing": {
-        "input_per_1m": 0.2,
-        "output_per_1m": 0.6,
-        "currency": "USD"
-      }
+      "supports_thinking": true
     },
     {
       "name": "codestral-latest",
       "context_window_tokens": 256000,
       "max_output_tokens": 32768,
       "recommended_temperature": 0.0,
-      "supports_thinking": false,
-      "pricing": {
-        "input_per_1m": 0.2,
-        "output_per_1m": 0.6,
-        "currency": "USD"
-      }
+      "supports_thinking": false
     },
     {
       "name": "codestral-2508",
       "context_window_tokens": 128000,
       "max_output_tokens": 32768,
       "recommended_temperature": 0.0,
-      "supports_thinking": false,
-      "pricing": {
-        "input_per_1m": 0.2,
-        "output_per_1m": 0.6,
-        "currency": "USD"
-      }
+      "supports_thinking": false
     },
     {
       "name": "codestral-2501",
       "context_window_tokens": 256000,
       "max_output_tokens": 32768,
       "recommended_temperature": 0.0,
-      "supports_thinking": false,
-      "pricing": {
-        "input_per_1m": 0.2,
-        "output_per_1m": 0.6,
-        "currency": "USD"
-      }
+      "supports_thinking": false
     },
     {
       "name": "codestral-2405",
       "context_window_tokens": 32000,
       "max_output_tokens": 32768,
       "recommended_temperature": 0.0,
-      "supports_thinking": false,
-      "pricing": {
-        "input_per_1m": 0.2,
-        "output_per_1m": 0.6,
-        "currency": "USD"
-      }
+      "supports_thinking": false
     },
     {
       "name": "devstral-medium-latest",
       "context_window_tokens": 256000,
       "max_output_tokens": 32768,
       "recommended_temperature": 0.3,
-      "supports_thinking": false,
-      "pricing": {
-        "input_per_1m": 0.5,
-        "output_per_1m": 1.5,
-        "currency": "USD"
-      }
+      "supports_thinking": false
     },
     {
       "name": "devstral-medium-2507",
       "context_window_tokens": 256000,
       "max_output_tokens": 32768,
       "recommended_temperature": 0.3,
-      "supports_thinking": false,
-      "pricing": {
-        "input_per_1m": 0.5,
-        "output_per_1m": 1.5,
-        "currency": "USD"
-      }
+      "supports_thinking": false
     },
     {
       "name": "devstral-small-latest",
       "context_window_tokens": 256000,
       "max_output_tokens": 32768,
       "recommended_temperature": 0.3,
-      "supports_thinking": false,
-      "pricing": {
-        "input_per_1m": 0.2,
-        "output_per_1m": 0.6,
-        "currency": "USD"
-      }
+      "supports_thinking": false
     },
     {
       "name": "devstral-small-2507",
       "context_window_tokens": 256000,
       "max_output_tokens": 32768,
       "recommended_temperature": 0.3,
-      "supports_thinking": false,
-      "pricing": {
-        "input_per_1m": 0.2,
-        "output_per_1m": 0.6,
-        "currency": "USD"
-      }
+      "supports_thinking": false
     },
     {
       "name": "devstral-small-2505",
       "context_window_tokens": 256000,
       "max_output_tokens": 32768,
       "recommended_temperature": 0.3,
-      "supports_thinking": false,
-      "pricing": {
-        "input_per_1m": 0.2,
-        "output_per_1m": 0.6,
-        "currency": "USD"
-      }
+      "supports_thinking": false
     },
     {
       "name": "magistral-medium-latest",
       "context_window_tokens": 128000,
       "max_output_tokens": 32768,
       "recommended_temperature": 0.7,
-      "supports_thinking": true,
-      "pricing": {
-        "input_per_1m": 2.0,
-        "output_per_1m": 6.0,
-        "currency": "USD"
-      }
+      "supports_thinking": true
     },
     {
       "name": "magistral-small-latest",
       "context_window_tokens": 128000,
       "max_output_tokens": 32768,
       "recommended_temperature": 0.7,
-      "supports_thinking": true,
-      "pricing": {
-        "input_per_1m": 0.2,
-        "output_per_1m": 0.6,
-        "currency": "USD"
-      }
+      "supports_thinking": true
     },
     {
       "name": "pixtral-large-latest",
       "context_window_tokens": 128000,
       "max_output_tokens": 32768,
       "recommended_temperature": 0.7,
-      "supports_thinking": false,
-      "pricing": {
-        "input_per_1m": 2.0,
-        "output_per_1m": 6.0,
-        "currency": "USD"
-      }
+      "supports_thinking": false
     },
     {
       "name": "pixtral-12b-2409",
       "context_window_tokens": 128000,
       "max_output_tokens": 32768,
       "recommended_temperature": 0.7,
-      "supports_thinking": false,
-      "pricing": {
-        "input_per_1m": 0.2,
-        "output_per_1m": 0.6,
-        "currency": "USD"
-      }
+      "supports_thinking": false
     },
     {
       "name": "open-mistral-nemo",
       "context_window_tokens": 128000,
       "max_output_tokens": 32768,
       "recommended_temperature": 0.7,
-      "supports_thinking": false,
-      "pricing": {
-        "input_per_1m": 0.15,
-        "output_per_1m": 0.3,
-        "currency": "USD"
-      }
+      "supports_thinking": false
     },
     {
       "name": "open-mixtral-8x22b",
       "context_window_tokens": 65536,
       "max_output_tokens": 32768,
       "recommended_temperature": 0.7,
-      "supports_thinking": false,
-      "pricing": {
-        "input_per_1m": 2.0,
-        "output_per_1m": 6.0,
-        "currency": "USD"
-      }
+      "supports_thinking": false
     },
     {
       "name": "open-mixtral-8x7b",
       "context_window_tokens": 32768,
       "max_output_tokens": 32768,
       "recommended_temperature": 0.7,
-      "supports_thinking": false,
-      "pricing": {
-        "input_per_1m": 0.7,
-        "output_per_1m": 0.7,
-        "currency": "USD"
-      }
+      "supports_thinking": false
     },
     {
       "name": "open-mistral-7b",
       "context_window_tokens": 32768,
       "max_output_tokens": 32768,
       "recommended_temperature": 0.7,
-      "supports_thinking": false,
-      "pricing": {
-        "input_per_1m": 0.2,
-        "output_per_1m": 0.2,
-        "currency": "USD"
-      }
+      "supports_thinking": false
     },
     {
       "name": "ministral-8b-latest",
       "context_window_tokens": 128000,
       "max_output_tokens": 32768,
       "recommended_temperature": 0.7,
-      "supports_thinking": false,
-      "pricing": {
-        "input_per_1m": 0.1,
-        "output_per_1m": 0.1,
-        "currency": "USD"
-      }
+      "supports_thinking": false
     },
     {
       "name": "ministral-3b-latest",
       "context_window_tokens": 128000,
       "max_output_tokens": 32768,
       "recommended_temperature": 0.7,
-      "supports_thinking": false,
-      "pricing": {
-        "input_per_1m": 0.04,
-        "output_per_1m": 0.04,
-        "currency": "USD"
-      }
+      "supports_thinking": false
     }
   ]
 }

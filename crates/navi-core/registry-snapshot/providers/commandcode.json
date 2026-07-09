@@ -6,19 +6,36 @@
   "api_key_env": "CMD_API_KEY",
   "base_url": "https://api.commandcode.ai",
   "tool_calling_mode": "native",
+  "defaults": {
+    "attachments": {
+      "images": false,
+      "audio": false,
+      "video": false,
+      "documents": false
+    }
+  },
   "models": [
     {
       "name": "claude-sonnet-4-6",
       "context_window_tokens": 1000000,
-      "pricing": {
-        "input_per_1m": 3.0,
-        "output_per_1m": 15.0,
-        "currency": "USD"
-      }
+      "supports_thinking": true,
+      "attachments": {
+        "images": true,
+        "documents": true
+      },
+      "supports_images": true,
+      "supports_documents": true
     },
     {
       "name": "claude-fable-5",
       "context_window_tokens": 1000000,
+      "supports_thinking": true,
+      "attachments": {
+        "images": true,
+        "documents": true
+      },
+      "supports_images": true,
+      "supports_documents": true,
       "pricing": {
         "input_per_1m": 10.0,
         "output_per_1m": 50.0,
@@ -28,33 +45,47 @@
     {
       "name": "claude-opus-4-8",
       "context_window_tokens": 1000000,
-      "pricing": {
-        "input_per_1m": 5.0,
-        "output_per_1m": 25.0,
-        "currency": "USD"
-      }
+      "supports_thinking": true,
+      "attachments": {
+        "images": true,
+        "documents": true
+      },
+      "supports_images": true,
+      "supports_documents": true
     },
     {
       "name": "claude-opus-4-7",
       "context_window_tokens": 1000000,
-      "pricing": {
-        "input_per_1m": 30.0,
-        "output_per_1m": 150.0,
-        "currency": "USD"
-      }
+      "supports_thinking": true,
+      "attachments": {
+        "images": true,
+        "documents": true
+      },
+      "supports_images": true,
+      "supports_documents": true
     },
     {
       "name": "claude-haiku-4-5-20251001",
       "context_window_tokens": 200000,
-      "pricing": {
-        "input_per_1m": 1.0,
-        "output_per_1m": 5.0,
-        "currency": "USD"
-      }
+      "supports_thinking": true,
+      "attachments": {
+        "images": true,
+        "documents": true
+      },
+      "supports_images": true,
+      "supports_documents": true
     },
     {
       "name": "gpt-5.5",
       "context_window_tokens": 200000,
+      "supports_thinking": true,
+      "attachments": {
+        "images": true,
+        "audio": true,
+        "documents": true
+      },
+      "supports_images": true,
+      "supports_documents": true,
       "pricing": {
         "input_per_1m": 5.0,
         "output_per_1m": 30.0,
@@ -64,6 +95,14 @@
     {
       "name": "gpt-5.4",
       "context_window_tokens": 400000,
+      "supports_thinking": true,
+      "attachments": {
+        "images": true,
+        "audio": true,
+        "documents": true
+      },
+      "supports_images": true,
+      "supports_documents": true,
       "pricing": {
         "input_per_1m": 2.5,
         "output_per_1m": 15.0,
@@ -73,33 +112,50 @@
     {
       "name": "gpt-5.3-codex",
       "context_window_tokens": 400000,
+      "supports_thinking": true,
+      "attachments": {
+        "images": true,
+        "audio": true,
+        "documents": true
+      },
+      "supports_images": true,
+      "supports_documents": true,
       "pricing": {
-        "input_per_1m": 2.5,
-        "output_per_1m": 15.0,
+        "input_per_1m": 1.75,
+        "output_per_1m": 14.0,
         "currency": "USD"
       }
     },
     {
       "name": "gpt-5.4-mini",
       "context_window_tokens": 400000,
+      "supports_thinking": true,
+      "attachments": {
+        "images": true,
+        "audio": true,
+        "documents": true
+      },
+      "supports_images": true,
+      "supports_documents": true,
       "pricing": {
-        "input_per_1m": 0.5,
-        "output_per_1m": 2.0,
+        "input_per_1m": 0.75,
+        "output_per_1m": 4.5,
         "currency": "USD"
       }
     },
     {
       "name": "MiniMaxAI/MiniMax-M3",
       "context_window_tokens": 1000000,
-      "pricing": {
-        "input_per_1m": 0.3,
-        "output_per_1m": 1.2,
-        "currency": "USD"
+      "supports_thinking": true,
+      "supports_images": true,
+      "attachments": {
+        "images": true
       }
     },
     {
       "name": "deepseek/deepseek-v4-pro",
       "context_window_tokens": 1000000,
+      "supports_thinking": true,
       "pricing": {
         "input_per_1m": 0.435,
         "output_per_1m": 0.87,
@@ -109,6 +165,7 @@
     {
       "name": "deepseek/deepseek-v4-flash",
       "context_window_tokens": 1000000,
+      "supports_thinking": true,
       "pricing": {
         "input_per_1m": 0.09,
         "output_per_1m": 0.18,
@@ -118,78 +175,82 @@
     {
       "name": "moonshotai/Kimi-K2.7-Code",
       "context_window_tokens": 256000,
-      "pricing": {
-        "input_per_1m": 0.74,
-        "output_per_1m": 3.5,
-        "currency": "USD"
+      "supports_thinking": true,
+      "attachments": {
+        "images": true,
+        "documents": true
       }
     },
     {
       "name": "moonshotai/Kimi-K2.6",
       "context_window_tokens": 256000,
-      "pricing": {
-        "input_per_1m": 0.57,
-        "output_per_1m": 2.3,
-        "currency": "USD"
+      "supports_thinking": true,
+      "attachments": {
+        "images": true,
+        "documents": true
       }
     },
     {
       "name": "moonshotai/Kimi-K2.5",
       "context_window_tokens": 256000,
-      "pricing": {
-        "input_per_1m": 0.57,
-        "output_per_1m": 2.3,
-        "currency": "USD"
+      "supports_thinking": true,
+      "attachments": {
+        "images": true,
+        "documents": true
       }
     },
     {
       "name": "zai-org/GLM-5.1",
       "context_window_tokens": 200000,
-      "pricing": {
-        "input_per_1m": 0.6,
-        "output_per_1m": 2.2,
-        "currency": "USD"
+      "supports_thinking": true,
+      "attachments": {
+        "images": true
       }
     },
     {
       "name": "zai-org/GLM-5",
       "context_window_tokens": 200000,
-      "pricing": {
-        "input_per_1m": 0.6,
-        "output_per_1m": 2.2,
-        "currency": "USD"
+      "supports_thinking": true,
+      "attachments": {
+        "images": true
       }
     },
     {
       "name": "MiniMaxAI/MiniMax-M2.7",
       "context_window_tokens": 200000,
-      "pricing": {
-        "input_per_1m": 0.3,
-        "output_per_1m": 1.2,
-        "currency": "USD"
-      }
+      "supports_thinking": true
     },
     {
       "name": "MiniMaxAI/MiniMax-M2.5",
       "context_window_tokens": 200000,
-      "pricing": {
-        "input_per_1m": 0.3,
-        "output_per_1m": 1.2,
-        "currency": "USD"
-      }
+      "supports_thinking": true
     },
     {
       "name": "xiaomi/mimo-v2.5-pro",
       "context_window_tokens": 1000000,
+      "supports_thinking": true,
+      "attachments": {
+        "images": true,
+        "documents": true
+      },
       "pricing": {
         "input_per_1m": 0.435,
         "output_per_1m": 0.87,
         "currency": "USD"
-      }
+      },
+      "supports_images": true
     },
     {
       "name": "xiaomi/mimo-v2.5",
       "context_window_tokens": 1000000,
+      "supports_thinking": false,
+      "attachments": {
+        "images": true,
+        "documents": true
+      },
+      "supports_images": true,
+      "supports_audio": true,
+      "supports_video": true,
       "pricing": {
         "input_per_1m": 0.105,
         "output_per_1m": 0.28,
@@ -199,60 +260,47 @@
     {
       "name": "Qwen/Qwen3.6-Max-Preview",
       "context_window_tokens": 200000,
-      "pricing": {
-        "input_per_1m": 1.04,
-        "output_per_1m": 6.24,
-        "currency": "USD"
-      }
+      "supports_thinking": true
     },
     {
       "name": "Qwen/Qwen3.6-Plus",
       "context_window_tokens": 200000,
-      "pricing": {
-        "input_per_1m": 0.3,
-        "output_per_1m": 1.8,
-        "currency": "USD"
-      }
+      "supports_thinking": true
     },
     {
       "name": "Qwen/Qwen3.7-Max",
       "context_window_tokens": 1000000,
-      "pricing": {
-        "input_per_1m": 1.25,
-        "output_per_1m": 3.75,
-        "currency": "USD"
-      }
+      "supports_thinking": true
     },
     {
       "name": "Qwen/Qwen3.7-Plus",
       "context_window_tokens": 1000000,
-      "pricing": {
-        "input_per_1m": 0.32,
-        "output_per_1m": 1.28,
-        "currency": "USD"
-      }
+      "supports_thinking": true
     },
     {
       "name": "stepfun/Step-3.7-Flash",
       "context_window_tokens": 256000,
-      "pricing": {
-        "input_per_1m": 0.2,
-        "output_per_1m": 1.15,
-        "currency": "USD"
-      }
+      "supports_thinking": true
     },
     {
       "name": "stepfun/Step-3.5-Flash",
       "context_window_tokens": 1000000,
-      "pricing": {
-        "input_per_1m": 0.2,
-        "output_per_1m": 1.15,
-        "currency": "USD"
-      }
+      "supports_thinking": true
     },
     {
       "name": "google/gemini-3.5-flash",
       "context_window_tokens": 1000000,
+      "supports_thinking": true,
+      "attachments": {
+        "images": true,
+        "audio": true,
+        "video": true,
+        "documents": true
+      },
+      "supports_images": true,
+      "supports_audio": true,
+      "supports_video": true,
+      "supports_documents": true,
       "pricing": {
         "input_per_1m": 1.5,
         "output_per_1m": 9.0,
@@ -262,6 +310,17 @@
     {
       "name": "google/gemini-3.1-flash-lite",
       "context_window_tokens": 1000000,
+      "supports_thinking": true,
+      "attachments": {
+        "images": true,
+        "audio": true,
+        "video": true,
+        "documents": true
+      },
+      "supports_images": true,
+      "supports_audio": true,
+      "supports_video": true,
+      "supports_documents": true,
       "pricing": {
         "input_per_1m": 0.25,
         "output_per_1m": 1.5,
@@ -271,6 +330,7 @@
     {
       "name": "nvidia/nemotron-3-ultra-550b-a55b",
       "context_window_tokens": 1000000,
+      "supports_thinking": true,
       "pricing": {
         "input_per_1m": 0.5,
         "output_per_1m": 2.2,
