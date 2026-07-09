@@ -98,6 +98,7 @@ impl Default for EmbeddingConfig {
     }
 }
 
+#[cfg(feature = "embeddings")]
 mod candle_embedder {
     use super::*;
     use anyhow::{Context, Result as AnyResult};
@@ -243,12 +244,14 @@ mod candle_embedder {
     }
 }
 
+#[cfg(feature = "embeddings")]
 pub use candle_embedder::CandleEmbedder;
 
 /// Creates an embedder based on whether the feature is enabled and the model exists.
-pub fn create_embedder(_config: EmbeddingConfig) -> Box<dyn Embedder> {
-    if _config.model_path.exists() && _config.tokenizer_path.exists() {
-        match CandleEmbedder::load(_config) {
+#[cfg(feature = "embeddings")]
+pub fn create_embedder(config: EmbeddingConfig) -> Box<dyn Embedder> {
+    if config.model_path.exists() && config.tokenizer_path.exists() {
+        match CandleEmbedder::load(config) {
             Ok(embedder) => {
                 tracing::info!("Local embedding model loaded successfully");
                 return Box::new(embedder);
@@ -261,18 +264,18 @@ pub fn create_embedder(_config: EmbeddingConfig) -> Box<dyn Embedder> {
             }
         }
     } else {
-        if !_config.model_path.exists() {
+        if !config.model_path.exists() {
             tracing::info!(
                 "Embedding model not found at {:?}. Download with: huggingface-cli download {} {}",
-                _config.model_path,
+                config.model_path,
                 DEFAULT_MODEL_REPO,
                 DEFAULT_MODEL_FILE
             );
         }
-        if !_config.tokenizer_path.exists() {
+        if !config.tokenizer_path.exists() {
             tracing::info!(
                 "Tokenizer not found at {:?}. Download with: huggingface-cli download {} {}",
-                _config.tokenizer_path,
+                config.tokenizer_path,
                 DEFAULT_TOKENIZER_REPO,
                 DEFAULT_TOKENIZER_FILE
             );
@@ -282,9 +285,22 @@ pub fn create_embedder(_config: EmbeddingConfig) -> Box<dyn Embedder> {
     Box::new(NoEmbedder)
 }
 
+/// Creates an embedder based on whether the feature is enabled and the model exists.
+#[cfg(not(feature = "embeddings"))]
+pub fn create_embedder(_config: EmbeddingConfig) -> Box<dyn Embedder> {
+    Box::new(NoEmbedder)
+}
+
 /// Convenience: check if embeddings are available at runtime.
+#[cfg(feature = "embeddings")]
 pub fn embeddings_available() -> bool {
     true
+}
+
+/// Convenience: check if embeddings are available at runtime.
+#[cfg(not(feature = "embeddings"))]
+pub fn embeddings_available() -> bool {
+    false
 }
 
 #[cfg(test)]

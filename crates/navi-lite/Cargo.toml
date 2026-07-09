@@ -1,0 +1,29 @@
+[package]
+name = "navi-lite"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Minimal sealed NAVI runtime for edge and embedded Linux prototypes."
+repository.workspace = true
+homepage.workspace = true
+readme = "README.md"
+
+[[bin]]
+name = "navi-lite-demo"
+path = "src/bin/navi-lite-demo.rs"
+
+[dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
+clap.workspace = true
+futures-util.workspace = true
+navi-core = { version = "0.2.0", path = "../navi-core", default-features = false }
+navi-openai.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

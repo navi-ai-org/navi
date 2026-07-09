@@ -69,10 +69,6 @@ pub const NAVI_ENGINE_API_METHODS: &[&str] = &[
     "memory_delete",
     "memory_count",
     "memory_index",
-    // Plan mode
-    "agent_mode",
-    "enter_plan_mode",
-    "exit_plan_mode",
     // Registry sync
     "sync_registry",
     "sync_provider_models",

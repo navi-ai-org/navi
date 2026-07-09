@@ -20,7 +20,7 @@ sha2.workspace = true
 tracing.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
-navi-core.workspace = true
+navi-core = { version = "0.2.0", path = "../navi-core", default-features = false }
 
 [dev-dependencies]
 wiremock.workspace = true

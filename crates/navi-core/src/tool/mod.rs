@@ -23,13 +23,14 @@ mod tests;
 
 use builtin::BranchRaceTool;
 use builtin::{
-    AppendNoteTool, BashTool, CodeEditTool, CodeExecTool, CodeReadTool, ContextRemainingTool,
-    CurrentTimeTool, HistoryOpsTool, InitSessionTool, MarkFeatureDoneTool, MemoryTool,
-    NewContextWindowTool, PackageManagerTool, PlanTool, ProcessTool, QuestionTool, ReadTool,
-    RepoIntelligenceAction, RepoIntelligenceTool, RequestUserInputTool, RuntimeInfoTool,
-    SandboxTool, SearchTool, SetGoalTool, SleepTool, ToolSearchTool, VerifierTool, ViewImageTool,
-    WriteTool, builtin_metadata, truncate_tool_result,
+    AppendNoteTool, BashTool, CodeExecTool, ContextRemainingTool, CurrentTimeTool, HistoryOpsTool,
+    InitSessionTool, MarkFeatureDoneTool, MemoryTool, NewContextWindowTool, PackageManagerTool,
+    PlanTool, ProcessTool, QuestionTool, ReadTool, RepoIntelligenceAction, RepoIntelligenceTool,
+    RequestUserInputTool, RuntimeInfoTool, SandboxTool, SearchTool, SetGoalTool, SleepTool,
+    ToolSearchTool, VerifierTool, ViewImageTool, WriteTool, builtin_metadata, truncate_tool_result,
 };
+#[cfg(feature = "code-vfs")]
+use builtin::{CodeEditTool, CodeReadTool};
 
 pub use builtin::{AgentProfile, ApprovalMode, ProviderBuilderFn, RepoExploreTool, SubagentTool};
 pub use metadata::{ToolExposure, ToolMetadata, ToolRisk, capabilities};
@@ -183,11 +184,15 @@ impl ToolExecutor {
         Self::with_security_policy(policy, Arc::new(DefaultToolSecurityPolicy))
     }
 
-    pub fn with_security_policy(
+    pub fn empty(policy: SecurityPolicy) -> Self {
+        Self::empty_with_security_policy(policy, Arc::new(DefaultToolSecurityPolicy))
+    }
+
+    pub fn empty_with_security_policy(
         policy: SecurityPolicy,
         security: Arc<dyn ToolSecurityPolicy>,
     ) -> Self {
-        let mut executor = Self {
+        Self {
             tools: HashMap::new(),
             validators: HashMap::new(),
             invalid_schemas: HashMap::new(),
@@ -195,7 +200,14 @@ impl ToolExecutor {
             security,
             harness_profile: "medium".to_string(),
             registry: ToolRegistry::new(),
-        };
+        }
+    }
+
+    pub fn with_security_policy(
+        policy: SecurityPolicy,
+        security: Arc<dyn ToolSecurityPolicy>,
+    ) -> Self {
+        let mut executor = Self::empty_with_security_policy(policy, security);
         executor.register_builtin_tools();
         executor
     }
@@ -900,8 +912,11 @@ impl ToolExecutor {
             self.policy.clone(),
             self.harness_profile.clone(),
         ));
-        self.register(CodeReadTool::new(self.policy.clone()));
-        self.register(CodeEditTool::new(self.policy.clone()));
+        #[cfg(feature = "code-vfs")]
+        {
+            self.register(CodeReadTool::new(self.policy.clone()));
+            self.register(CodeEditTool::new(self.policy.clone()));
+        }
         self.register(CodeExecTool::new(self.policy.clone()));
         self.register(RepoIntelligenceTool::new(
             self.policy.clone(),

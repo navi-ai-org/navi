@@ -22,6 +22,7 @@
 
 use anyhow::{Context, Result, bail};
 use async_trait::async_trait;
+#[cfg(feature = "code-vfs")]
 use navi_vfs::code::{replace_symbol_definition, symbols_for_source};
 use serde_json::{Value, json};
 use std::fs;
@@ -822,34 +823,45 @@ fn symbol_replacements_from_hunks(
     relative_path: &str,
     hunk_lines: &[String],
 ) -> Result<Vec<SymbolReplacementCandidate>> {
-    let path = checked_project_path(project_root, relative_path)?;
-    let source =
-        fs::read_to_string(&path).with_context(|| format!("failed to read {relative_path}"))?;
-    let mut candidates = Vec::new();
-
-    for replacement in extract_complete_function_blocks(hunk_lines) {
-        let Ok(symbols) = symbols_for_source(&path, &replacement) else {
-            continue;
-        };
-        if symbols.len() != 1 {
-            continue;
-        }
-        let symbol = &symbols[0];
-        let Ok(edit) = replace_symbol_definition(&path, &source, &symbol.name, &replacement, None)
-        else {
-            continue;
-        };
-        if edit.content != source {
-            candidates.push(SymbolReplacementCandidate {
-                path: path.clone(),
-                content: edit.content,
-            });
-        }
+    #[cfg(not(feature = "code-vfs"))]
+    {
+        let _ = (project_root, relative_path, hunk_lines);
+        return Ok(Vec::new());
     }
 
-    Ok(candidates)
+    #[cfg(feature = "code-vfs")]
+    {
+        let path = checked_project_path(project_root, relative_path)?;
+        let source =
+            fs::read_to_string(&path).with_context(|| format!("failed to read {relative_path}"))?;
+        let mut candidates = Vec::new();
+
+        for replacement in extract_complete_function_blocks(hunk_lines) {
+            let Ok(symbols) = symbols_for_source(&path, &replacement) else {
+                continue;
+            };
+            if symbols.len() != 1 {
+                continue;
+            }
+            let symbol = &symbols[0];
+            let Ok(edit) =
+                replace_symbol_definition(&path, &source, &symbol.name, &replacement, None)
+            else {
+                continue;
+            };
+            if edit.content != source {
+                candidates.push(SymbolReplacementCandidate {
+                    path: path.clone(),
+                    content: edit.content,
+                });
+            }
+        }
+
+        Ok(candidates)
+    }
 }
 
+#[cfg(feature = "code-vfs")]
 fn extract_complete_function_blocks(hunk_lines: &[String]) -> Vec<String> {
     let mut blocks = Vec::new();
     let mut index = 0;
@@ -894,6 +906,7 @@ fn extract_complete_function_blocks(hunk_lines: &[String]) -> Vec<String> {
     blocks
 }
 
+#[cfg(feature = "code-vfs")]
 fn replacement_line_content(line: &str) -> Option<&str> {
     if line.starts_with("@@") || line.starts_with('-') {
         None
@@ -906,6 +919,7 @@ fn replacement_line_content(line: &str) -> Option<&str> {
     }
 }
 
+#[cfg(feature = "code-vfs")]
 fn looks_like_function_start(line: &str) -> bool {
     let trimmed = line.trim_start();
     trimmed.starts_with("fn ")
