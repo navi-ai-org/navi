@@ -5,277 +5,275 @@
 <h1 align="center">NAVI</h1>
 
 <p align="center">
-  <strong>The coding agent engine that lives in your terminal.</strong><br/>
-  Built in Rust. Fast. Secure. Embeddable. Yours. Less than ~35MB of memory usage per instance.
+  <strong>A real coding agent in your terminal — not a chat box with file tools.</strong><br/>
+  Read. Write. Test. Build. Ship. Sandboxed by default. Built in Rust. Under ~35&nbsp;MB RAM.
 </p>
 
 <p align="center">
-  <strong>⚠️ Alpha — under active development. APIs, config formats, and behavior may change.</strong>
+  <a href="#install">Install</a> ·
+  <a href="#quick-start">Quick start</a> ·
+  <a href="#why-navi">Why NAVI</a> ·
+  <a href="docs/user-guide.md">User guide</a> ·
+  <a href="https://github.com/navi-ai-org/navi/releases">Releases</a>
 </p>
 
 <p align="center">
-  <a href="#install">Install</a> · <a href="#quick-start">Quick Start</a> · <a href="docs/user-guide.md">User Guide</a> · <a href="docs/sdk-agents.md">SDK Docs</a> · <a href="AGENTS.md">Architecture</a>
+  <sub>Alpha — APIs and config may change. Pin a release for production use.</sub>
 </p>
-
----
-
-## Latest Release
-
-### 0.2.2 — navi-lite + portable containers (2026-07-09)
-
-- **`navi-lite`** sealed edge/embedded runtime (mission allowlist, no desktop stack)
-- **musl Linux** binaries for Alpine and enterprise containers
-- **xAI Composer 2.5**; hardened installers + Sigstore checksums
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/navi-ai-org/navi/main/scripts/install.sh | sh
-```
-
-Full changelog: https://github.com/navi-ai-org/navi/compare/v0.2.0...v0.2.2 · [CHANGELOG.md](CHANGELOG.md)
-
----
-
-## Why NAVI?
-
-**NAVI is not another chat wrapper.** It's a coding agent engine with a first-class terminal UI — designed for developers who live in the terminal and want an agent that can actually read, write, test, build, and ship code.
-
-- **Real tools, not toy wrappers** — file R/W, apply-patch, grep, bash, test runner, build runner, package manager, sub-agents. All sandboxed, all auditable.
-- **Multi-provider** — OpenAI, Anthropic, Google Gemini, OpenRouter, GitHub Copilot, xAI, or any OpenAI-compatible API. Swap in config, no recompile.
-- **Session-aware** — conversation compaction, session memory, secret redaction. Survives long repo sessions without losing context.
-- **Embeddable** — the same engine powers the TUI, headless CLI, and your Rust or Node.js app via `navi-sdk` / `@navi-agent/napi`.
-- **Extensible** — WASM plugins, MCP servers, native host tools. Install without forking.
-- **Secure by default** — path scoping, command blocklist, write/command approvals, plugin sandbox, session secret redaction. All in TOML, all auditable.
 
 ---
 
 ## Install
 
-### Quick install (recommended)
+One line. No Rust toolchain. Prebuilt binary from [GitHub Releases](https://github.com/navi-ai-org/navi/releases).
 
-Downloads the latest prebuilt binary from [GitHub Releases](https://github.com/navi-ai-org/navi/releases) — no Rust toolchain required.
-
-**macOS / Linux:**
+**macOS / Linux**
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/navi-ai-org/navi/main/scripts/install.sh | sh
 ```
 
-Installs to `~/.local/bin` (fallback: `~/.navi/bin`). If needed:
-
 ```bash
-export PATH="$HOME/.local/bin:$PATH"
+export PATH="$HOME/.local/bin:$PATH"   # if needed
+navi
 ```
 
-Pin a version:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/navi-ai-org/navi/main/scripts/install.sh | sh -s -- --version 0.2.2
-```
-
-**Install security**
-
-| Control | Behavior |
-| --- | --- |
-| Transport | HTTPS only (`curl --proto '=https' --tlsv1.2`) |
-| Integrity | Archive **must** match release `SHA256SUMS.txt` (hard fail) |
-| Authenticity | Optional Sigstore verify of `SHA256SUMS.txt` when [`cosign`](https://docs.sigstore.dev/) is installed |
-| Archive shape | Each `.tar.gz` / `.zip` contains **only** `navi` / `navi.exe` at the root (path traversal rejected) |
-| Format | `.tar.gz` is intentional (executable bit + standard packaging). Integrity is checksum/signature, not the archive format |
-
-**Containers / Linux portability**
-
-Linux release binaries are built with **musl** (Alpine) so one artifact runs on:
-
-- Alpine and other musl images
-- Debian / Ubuntu / Amazon Linux / RHEL-class glibc images
-- Distroless-style and enterprise base images (as long as the arch matches)
-
-No glibc version pin for the shipped Linux binary.
-
-High-assurance install (pin script commit + release + require cosign):
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/navi-ai-org/navi/<commit-sha>/scripts/install.sh \
-  | sh -s -- --version 0.2.2 --require-cosign
-```
-
-**Windows (PowerShell):**
+**Windows (PowerShell)**
 
 ```powershell
 irm https://raw.githubusercontent.com/navi-ai-org/navi/main/scripts/install.ps1 | iex
 ```
 
-Installs to `%USERPROFILE%\.navi\bin` and adds it to your user `PATH`.
+<details>
+<summary>Other install options (Homebrew, npm, pin version, source, containers)</summary>
 
-### Homebrew (macOS / Linux)
+**Pin a version**
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/navi-ai-org/navi/main/scripts/install.sh | sh -s -- --version 0.2.2
+```
+
+**Homebrew**
 
 ```bash
 brew install navi-ai-org/tap/navi
 ```
 
-### npm
+**npm**
 
 ```bash
 npm install -g @navi-agent/navi
 ```
 
-### From source (development)
-
-Requires [Rust](https://rustup.rs) (edition 2024):
+**From source** (Rust 1.85+ / edition 2024)
 
 ```bash
-git clone https://github.com/navi-ai-org/navi.git
-cd navi
-just install-release   # cargo install --path crates/navi-cli --release
-# or: cargo build -p navi-cli --release  → target/release/navi
+git clone https://github.com/navi-ai-org/navi.git && cd navi
+just install-release   # or: cargo build -p navi-cli --release
 ```
+
+**Containers** — Linux binaries are **musl** (Alpine). One artifact runs on Alpine, Debian, Ubuntu, Amazon Linux, Rocky/RHEL, and distroless:
+
+```dockerfile
+FROM alpine:3.20
+RUN apk add --no-cache ca-certificates curl tar \
+ && curl -fsSL https://raw.githubusercontent.com/navi-ai-org/navi/main/scripts/install.sh | sh \
+ && mv /root/.local/bin/navi /usr/local/bin/navi
+ENTRYPOINT ["navi"]
+```
+
+**Installer security** — HTTPS only · archive must match release `SHA256SUMS.txt` · optional Sigstore when `cosign` is installed · single-file root binary only (path traversal rejected).
+
+```bash
+# high-assurance: pin script commit + release + require cosign
+curl -fsSL https://raw.githubusercontent.com/navi-ai-org/navi/<commit-sha>/scripts/install.sh \
+  | sh -s -- --version 0.2.2 --require-cosign
+```
+
+</details>
+
 ---
 
 ## Quick start
 
 ```bash
-# First run — opens the TUI, walks you through provider setup
-navi
-
-# Headless mode — run a task without the TUI
-navi --no-tui "find the main entrypoint and suggest a refactor"
-
-# Pipe-friendly — reads from stdin
-cat error.log | navi --no-tui "explain this error"
-
-# See available providers and their credential status
-navi --print-providers
+navi                                          # TUI + first-run provider setup
+navi --no-tui "find the main entrypoint"      # headless task
+cat error.log | navi --no-tui "explain this"  # pipe-friendly
+navi --print-providers                        # credential status
 ```
 
-Config lives in `~/.config/navi/config.toml` (global) and `.navi/config.toml` (per-project). API keys are read from environment variables first, then the credential store. The TUI walks you through setup when a provider has no key.
+Config: `~/.config/navi/config.toml` (global) and `.navi/config.toml` (project).  
+API keys: environment variables first, then the credential store. The TUI guides setup when a provider has no key.
 
 ---
 
-## What you get
+## Why NAVI?
 
-### A real coding harness
+Most “coding agents” are a chat UI glued to a few tools. **NAVI is an agent engine** with a terminal UI on top — the same loop that reads your repo, edits code, runs tests, and ships changes is available headless, in containers, or embedded in your app.
 
-Not a chatbot with a file tool. NAVI runs a structured agent loop with:
+| You want… | You get… |
+| --- | --- |
+| **Work that finishes** | Structured agent loop: tools, plans, sub-agents, verification — not endless chat |
+| **Any model** | OpenAI, Anthropic, Gemini, OpenRouter, Copilot, xAI, or any OpenAI-compatible API |
+| **Speed in the terminal** | Native TUI (Rust + ratatui): model picker, sessions, tool I/O, markdown — no Electron |
+| **Safety you can audit** | Path scope, command blocklist, write/command approvals, secret redaction — all TOML |
+| **One engine, many surfaces** | TUI · headless CLI · `navi-lite` (edge) · Rust SDK · Node (`@navi-agent/napi`) |
+| **Portable binary** | ~musl Linux for containers · macOS · Windows · under ~35&nbsp;MB RAM per instance |
 
-| Capability | What it does |
-|---|---|
-| **9 built-in tools** | `read_file`, `write_file`, `apply_patch`, `grep`, `bash`, `test_runner`, `build_runner`, `package_manager`, `fs_browser` |
-| **Sub-agents** | Spawn isolated agents for parallel exploration, verification, or implementation tasks |
-| **Harness profiles** | `auto` / `small` / `medium` — tune observation budgets and tool-loop limits per session |
-| **Compaction** | Micro-compact (clears stale tool output), auto-compact (model-summarized context), session memory (survives across sessions) |
-| **Plan & execute** | Built-in planning tool. See the plan, approve the steps, watch the agent execute |
+**Not a wrapper.** Built-in tools include file R/W, apply-patch, grep, bash, test/build runners, package manager, and sub-agents — sandboxed and auditable.
 
-### A terminal UI built for speed
+---
 
-- **Model picker** (`ctrl+m`) — switch providers and models mid-session
-- **Command palette** (`ctrl+p`) — providers, plugins, skills, settings
-- **Session manager** (`ctrl+s`) — save, resume, browse sessions
-- **Tool I/O view** (`ctrl+o`) — inspect every tool call and result
-- **Thinking levels** — `max` / `high` / `medium` / `low` / `off` per model
-- **Markdown + code** — syntax-highlighted code blocks, tables, links, inline code
-- **Mouse support** — scroll, select, copy
+## Surfaces
 
-### An embeddable SDK
+### Terminal UI
 
-Same engine, different surfaces:
+What you open when you type `navi`:
+
+- **Model picker** `ctrl+m` — switch provider/model mid-session  
+- **Command palette** `ctrl+p` — providers, plugins, skills, settings  
+- **Sessions** `ctrl+s` — save, resume, browse  
+- **Tool I/O** `ctrl+o` — every call and result  
+- Thinking levels, syntax-highlighted markdown, mouse scroll/select/copy  
+
+### Headless CLI
+
+CI, scripts, and agents talking to agents:
+
+```bash
+navi --no-tui "run the tests and fix failures"
+```
+
+### navi-lite — edge / embedded
+
+Sealed, mission-scoped runtime for edge Linux prototypes. **No** TUI, MCP, plugins, embeddings, or registry sync — only the tools you allowlist.
+
+```bash
+# binary from the same GitHub Release as navi
+./navi-lite --help
+```
+
+See [`crates/navi-lite/README.md`](crates/navi-lite/README.md).
+
+### Embed the engine
+
+Same harness inside your product:
 
 ```rust
 // Rust — navi-sdk
 let engine = NaviEngineBuilder::from_project(".").build()?;
 let session = engine.start_session(NaviSessionRequest::default()).await?;
-engine.subscribe_events(&session.id)?;  // tool.*, assistant.*, approval.*
-engine.send_turn(NaviTurnRequest { session_id: session.id, message: "refactor this".into(), .. }).await?;
+engine.send_turn(NaviTurnRequest {
+    session_id: session.id,
+    message: "refactor this".into(),
+    ..Default::default()
+}).await?;
 ```
 
 ```javascript
 // Node.js — @navi-agent/napi
 const navi = require('@navi-agent/napi');
 const session = await navi.startSession({ projectDir: '.' });
-const events = navi.subscribeEvents(session.id);
 await navi.sendTurn(session.id, 'run the tests and fix failures');
 ```
 
-### Plugin ecosystem
-
-```bash
-navi plugin search                  # discover plugins
-navi plugin install-marketplace <id> --yes  # install from registry
-navi plugin install ./my-plugin     # local dev plugin
-```
-
-WASM plugins are sandboxed, lockfile-tracked, and hot-reloadable. Native host plugins can extend tools, providers, context processors, and more.
-
-### Security you can audit
-
-```toml
-[security]
-restrict_paths_to_project = true    # agents can't escape your repo
-protect_git_metadata = true         # .git is read-only
-redact_secrets_in_sessions = true   # API keys never hit disk
-blocked_commands = ["rm", "sudo"]   # customize the blocklist
-
-[approvals]
-require_for_writes = true           # approve before files change
-require_for_commands = true         # approve before commands run
-```
-
-Project config can't enable MCP servers or plugin paths — those require global config. Supply-chain safety by design.
+More: [SDK Agents Guide](docs/sdk-agents.md).
 
 ---
 
-## Architecture
+## Harness highlights
 
-```
-navi-cli        →  binary entrypoint, CLI parsing, mode selection
-navi-tui        →  ratatui terminal UI (chat, modals, rendering)
-navi-sdk        →  embedding facade (sessions, turns, events, approvals)
-navi-core       →  harness, tools, security, compaction, sessions, config
-navi-openai     →  provider streaming (OpenAI, Anthropic, Gemini, OpenRouter, Copilot, xAI)
-navi-mcp        →  MCP stdio client (remote tool registration)
-navi-napi       →  Node.js bindings (@navi-agent/napi)
-navi-plugin-*   →  plugin API, host loader, broker, orchestrator, runtime
-```
+| Capability | What it does |
+| --- | --- |
+| **Built-in tools** | `read_file`, `write_file`, `apply_patch`, `grep`, `bash`, `test_runner`, `build_runner`, `package_manager`, `fs_browser` |
+| **Sub-agents** | Isolated agents for explore / verify / implement in parallel |
+| **Compaction** | Micro-compact, auto-compact, session memory for long repos |
+| **Plan & execute** | Plan tool → approve steps → watch execution |
+| **Plugins & MCP** | WASM plugins (sandboxed) + MCP servers — install without forking |
 
-NAVI follows one rule: **the engine is not the UI.** The TUI is a powerful frontend. The SDK is the same engine for apps. No coupling, no leaking abstractions.
+```bash
+navi plugin search
+navi plugin install-marketplace <id> --yes
+```
 
 ---
 
 ## Providers
 
-| Provider | Protocol | Notes |
-|---|---|---|
-| **OpenAI** | Responses | GPT-5.5, GPT-4o, o-series, reasoning effort |
-| **Anthropic** | Messages | Claude 4.5 Sonnet, Claude 4 Sonnet, extended thinking |
-| **Google Gemini** | Generate Content | Gemini 2.5 Pro/Flash |
-| **OpenRouter** | Chat Completions | 100+ models, auto-routing |
-| **GitHub Copilot** | Chat Completions | Device OAuth, enterprise support |
-| **xAI** | Responses | Grok models, reasoning effort |
-| **Custom** | OpenAI-compatible | Any API that speaks the protocol |
+| Provider | Notes |
+| --- | --- |
+| **OpenAI** | GPT-5.x, o-series, reasoning effort |
+| **Anthropic** | Claude 4.x, extended thinking |
+| **Google Gemini** | Gemini 2.5 Pro / Flash |
+| **OpenRouter** | 100+ models, auto-routing |
+| **GitHub Copilot** | Device OAuth, enterprise |
+| **xAI** | Grok + Composer 2.5 |
+| **Custom** | Any OpenAI-compatible endpoint |
+
+Swap in config — no recompile.
+
+---
+
+## Security (defaults on)
+
+```toml
+[security]
+restrict_paths_to_project = true
+protect_git_metadata = true
+redact_secrets_in_sessions = true
+blocked_commands = ["rm", "sudo"]
+
+[approvals]
+require_for_writes = true
+require_for_commands = true
+```
+
+Project config cannot enable MCP servers or plugin paths — those require global config. Details: [User Guide](docs/user-guide.md) · [SECURITY.md](SECURITY.md).
+
+---
+
+## Architecture (short)
+
+```
+navi-cli     binary + modes
+navi-tui     terminal UI
+navi-sdk     embed facade (sessions, turns, events)
+navi-core    harness, tools, security, compaction
+navi-openai  providers (OpenAI, Anthropic, Gemini, …)
+navi-lite    sealed edge runtime
+navi-napi    Node bindings
+navi-plugin-*  WASM + host plugins
+```
+
+**Rule:** the engine is not the UI. TUI and SDK share one core.
+
+Full map: [AGENTS.md](AGENTS.md).
 
 ---
 
 ## Docs
 
-| | |
-|---|---|
-| [User Guide](docs/user-guide.md) | Installation, config, TUI controls, providers, tools, security |
-| [SDK Agents Guide](docs/sdk-agents.md) | Embedding NAVI, engine API, runtime events, host tools |
-| [AGENTS.md](AGENTS.md) | Full architecture reference for contributors |
-| [Compaction](docs/compaction.md) | How context management works |
-| [TUI Internals](docs/tui.md) | State, keybindings, rendering |
-| [Plugin System](docs/plugin-system.md) | WASM plugins, host tools, marketplace |
+| Doc | For |
+| --- | --- |
+| [User Guide](docs/user-guide.md) | Install, config, TUI, providers, tools, security |
+| [SDK Agents](docs/sdk-agents.md) | Embed NAVI, events, host tools |
+| [navi-lite](crates/navi-lite/README.md) | Edge / mission allowlist runtime |
+| [CHANGELOG](CHANGELOG.md) | What’s new per release |
+| [AGENTS.md](AGENTS.md) | Architecture for contributors |
+| [Contributing](CONTRIBUTING.md) | `just verify` / `just ci` |
 
 ---
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md). The short version:
-
 ```bash
-just setup-tools    # first time: install quality tooling
-just verify         # fmt + check + test
-just ci             # full pre-PR gate
+just setup-tools   # first time
+just verify        # fmt + check + test
+just ci            # full pre-PR gate
 ```
+
+See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ---
 
