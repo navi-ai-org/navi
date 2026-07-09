@@ -12,7 +12,7 @@ use navi_sdk::SubagentTranscriptKind;
 use crate::TuiApp;
 use crate::render::markdown::build_chat_render_for_messages;
 use crate::render::text::display_width;
-use crate::state::{ChatLineSource, ChatRole, ChatView, Mode};
+use crate::state::{ChatLineSource, ChatView, Mode};
 use crate::theme::*;
 use crate::ui::interaction::{HitAction, line_rect};
 
@@ -102,21 +102,17 @@ pub(crate) fn render_chat_area(frame: &mut Frame<'_>, app: &mut TuiApp, area: Re
         for (offset, source) in visible_sources.iter().enumerate() {
             let line_area = line_rect(inner, offset);
             let action = match source {
-                ChatLineSource::Message(index)
-                    if app
-                        .messages
-                        .get(*index)
-                        .is_some_and(|message| message.role == ChatRole::User) =>
-                {
+                ChatLineSource::Message(index) => {
                     // Higher-priority hits for `[Image N]` chips enable hover preview.
                     if let Some(line) = visible_lines.get(offset) {
                         crate::view::image_preview::register_chat_image_hits(
                             app, line, line_area, *index,
                         );
                     }
+                    // Every message block is selectable (user + assistant).
                     Some(HitAction::ChatMessage(*index))
                 }
-                ChatLineSource::ToolResult(id) if !app.full_tool_view => {
+                ChatLineSource::ToolResult(id) => {
                     Some(HitAction::ToolResult(id.clone()))
                 }
                 ChatLineSource::ToolGroup(ids) if !ids.is_empty() => {
@@ -373,73 +369,72 @@ fn style_interactive_lines(
     width: usize,
 ) {
     for (line, source) in lines.iter_mut().zip(sources.iter()) {
-        let Some((hovered, selected)) = interactive_state(app, source) else {
+        let Some((hovered, selected, soft_card)) = interactive_state(app, source) else {
             continue;
         };
-        if matches!(
-            source,
-            ChatLineSource::ToolResult(_)
-                | ChatLineSource::ToolGroup(_)
-                | ChatLineSource::Subagent(_)
-        ) && !hovered
-            && !selected
-        {
+        // Soft tool cards only paint when hovered/selected/expanded.
+        if soft_card && !hovered && !selected {
             continue;
         }
         let bg = if selected {
-            interactive_bg()
+            // Grok-style block selection highlight.
+            selection_bg()
         } else if hovered {
             interactive_hover_bg()
         } else {
             interactive_bg()
         };
-        apply_card_bg(line, width, bg, hovered || selected);
+        apply_card_bg(line, width, bg, hovered || selected, selected);
     }
 }
 
-fn interactive_state(app: &TuiApp, source: &ChatLineSource) -> Option<(bool, bool)> {
-    let selected = match source {
-        ChatLineSource::Message(index) => {
-            if !app
-                .messages
-                .get(*index)
-                .is_some_and(|message| message.role == ChatRole::User)
-            {
-                return None;
-            }
-            app.message_action_target == Some(*index)
+/// Returns (hovered, selected, soft_card).
+/// soft_card = true for tools that only show card chrome when interactive.
+fn interactive_state(app: &TuiApp, source: &ChatLineSource) -> Option<(bool, bool, bool)> {
+    if matches!(source, ChatLineSource::None) {
+        return None;
+    }
+    let block_selected = app
+        .selected_chat_source
+        .as_ref()
+        .is_some_and(|selected| crate::chat_blocks::chat_sources_match(selected, source));
+    let action_selected = match source {
+        ChatLineSource::Message(index) => app.message_action_target == Some(*index),
+        ChatLineSource::ToolResult(id) => {
+            app.expanded_tool_results.contains(id) && !app.collapsed_tool_results.contains(id)
         }
-        ChatLineSource::ToolResult(_) | ChatLineSource::ToolGroup(_) if app.full_tool_view => {
-            return None;
-        }
-        ChatLineSource::ToolResult(id) => app.expanded_tool_results.contains(id),
         ChatLineSource::ToolGroup(ids) => {
-            !ids.is_empty() && ids.iter().any(|id| app.expanded_tool_results.contains(id))
+            !ids.is_empty()
+                && ids.iter().any(|id| {
+                    app.expanded_tool_results.contains(id)
+                        && !app.collapsed_tool_results.contains(id)
+                })
         }
         ChatLineSource::Subagent(id) => matches!(
             &app.chat_view,
             crate::state::ChatView::Subagent { invocation_id } if invocation_id == id
         ),
-        ChatLineSource::None => return None,
+        ChatLineSource::None => false,
     };
+    let selected = block_selected || action_selected;
+    let soft_card = matches!(
+        source,
+        ChatLineSource::ToolResult(_) | ChatLineSource::ToolGroup(_) | ChatLineSource::Subagent(_)
+    );
     let hovered = app
         .hovered_chat_source
         .as_ref()
-        .is_some_and(|hovered| chat_sources_match(hovered, source));
-    Some((hovered, selected))
+        .is_some_and(|hovered| crate::chat_blocks::chat_sources_match(hovered, source));
+    Some((hovered, selected, soft_card))
 }
 
-fn chat_sources_match(a: &ChatLineSource, b: &ChatLineSource) -> bool {
-    match (a, b) {
-        (ChatLineSource::Message(left), ChatLineSource::Message(right)) => left == right,
-        (ChatLineSource::ToolResult(left), ChatLineSource::ToolResult(right)) => left == right,
-        (ChatLineSource::ToolGroup(left), ChatLineSource::ToolGroup(right)) => left == right,
-        (ChatLineSource::Subagent(left), ChatLineSource::Subagent(right)) => left == right,
-        _ => false,
-    }
-}
-
-fn apply_card_bg(line: &mut Line<'static>, width: usize, bg: Color, emphasize: bool) {
+fn apply_card_bg(
+    line: &mut Line<'static>,
+    width: usize,
+    bg: Color,
+    emphasize: bool,
+    block_selected: bool,
+) {
     let mut used = 0usize;
     for (index, span) in line.spans.iter_mut().enumerate() {
         used = used.saturating_add(display_width(&span.content));
@@ -449,14 +444,25 @@ fn apply_card_bg(line: &mut Line<'static>, width: usize, bg: Color, emphasize: b
             continue;
         }
         span.style = span.style.bg(bg);
-        if emphasize && index == 0 {
+        if block_selected {
+            // Selection box: keep readable text on selection background.
+            if span.style.fg.is_none() {
+                span.style = span.style.fg(selection_fg());
+            }
+        } else if emphasize && index == 0 {
             span.style = span.style.fg(signal()).add_modifier(Modifier::BOLD);
         }
     }
     if used < width {
         line.spans.push(Span::styled(
             " ".repeat(width - used),
-            Style::default().fg(text()).bg(bg),
+            Style::default()
+                .fg(if block_selected {
+                    selection_fg()
+                } else {
+                    text()
+                })
+                .bg(bg),
         ));
     }
 }
@@ -582,6 +588,12 @@ fn chat_render_signature(app: &TuiApp) -> u64 {
         msg.model_label.hash(&mut hasher);
         msg.provider_label.hash(&mut hasher);
         msg.is_compact_summary.hash(&mut hasher);
+        msg.is_recap.hash(&mut hasher);
+        // Invalidate cache when wall-clock stamps appear (user prompt time).
+        msg.sent_at
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|d| d.as_secs())
+            .hash(&mut hasher);
         if let Some(result) = &msg.tool_result {
             result.ok.hash(&mut hasher);
         }
@@ -598,12 +610,20 @@ fn chat_render_signature(app: &TuiApp) -> u64 {
 }
 
 fn expanded_tool_signature(app: &TuiApp) -> String {
-    let mut ids = app.expanded_tool_results.iter().collect::<Vec<_>>();
-    ids.sort();
-    ids.into_iter()
-        .map(String::as_str)
-        .collect::<Vec<_>>()
-        .join(",")
+    let mut open = app.expanded_tool_results.iter().cloned().collect::<Vec<_>>();
+    open.sort();
+    let mut closed = app
+        .collapsed_tool_results
+        .iter()
+        .cloned()
+        .collect::<Vec<_>>();
+    closed.sort();
+    format!(
+        "full={} open={} closed={}",
+        app.full_tool_view,
+        open.join(","),
+        closed.join(",")
+    )
 }
 
 #[cfg(test)]
@@ -622,6 +642,7 @@ fn build_chat_render(
         app.show_thinking,
         app.compact_tool_visible_limit,
         &app.expanded_tool_results,
+        &app.collapsed_tool_results,
         &app.running_tools,
         &app.subagent_activity,
         &mut app.chat_render_cache.borrow_mut().tool_render_cache,
@@ -676,7 +697,12 @@ mod tests {
             .join("\n");
 
         assert!(rendered.contains("ykdl tui ja esta funcional."));
-        assert_eq!(cache.lines.len(), 3);
+        // Sticky user bar: single content line (`› text…` [+ optional clock]).
+        assert_eq!(cache.lines.len(), 1);
+        assert!(
+            rendered.starts_with('›') || rendered.starts_with("› "),
+            "expected › user prefix, got {rendered:?}"
+        );
     }
 
     #[test]

@@ -557,7 +557,8 @@ async fn collect_model_output(ctx: &TurnContext, request: ModelRequest) -> Resul
                     });
                 }
                 let mut state = ctx.compact_state.lock().await;
-                state.update_usage(in_tok);
+                // Grok-style: every usage event refreshes live context + cumulative totals.
+                state.update_usage_full(in_tok, out_tok);
             }
             ModelStreamEvent::Done => {
                 emit_split_text(ctx, &mut output, think_tags.drain_pending());

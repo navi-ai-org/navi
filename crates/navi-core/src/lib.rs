@@ -4,6 +4,7 @@ pub mod cancel;
 pub mod capability;
 pub mod compact;
 pub mod config;
+pub mod recap;
 pub mod context;
 pub mod credentials;
 pub mod dataset;
@@ -50,7 +51,12 @@ pub use capability::{
     Capability, CapabilityDecision, CapabilityGrant, CapabilityLedger, CapabilityLedgerEntry,
     CapabilityScope, capabilities_from_tool_metadata,
 };
-pub use compact::{CompactState, CompactThreshold};
+pub use compact::{
+    AUTO_COMPACT_THRESHOLD_PERCENT, CompactState, CompactThreshold,
+};
+pub use recap::{
+    local_recap, llm_recap, should_suppress_recap, RECAP_LONG_TAIL_CHARS,
+};
 pub use config::{
     AttachmentModelsConfig, BackgroundModelEntry, BackgroundModelsConfig, GoalsConfig,
     HarnessProfile, LoadedConfig, McpConfig, McpServerConfig, ModelOption, ModelTaskSize,

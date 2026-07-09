@@ -711,6 +711,7 @@ impl AgentRuntime {
         self.record_event(AgentEvent::UserTaskSubmitted {
             text: task.clone(),
             content_parts: content_parts.clone(),
+            submitted_at: Some(crate::session::current_unix_timestamp()),
         });
         self.last_user_task = task.clone();
         self.event_bus.publish(RuntimeEventKind::TurnStarted {
@@ -1566,6 +1567,7 @@ fn runtime_event_kind_from_agent_event(event: &AgentEvent) -> Option<RuntimeEven
         }),
         AgentEvent::PlanProposed { .. } => None,
         AgentEvent::AgentModeChanged { .. } => None,
+        AgentEvent::SessionRecap { .. } => None,
     }
 }
 

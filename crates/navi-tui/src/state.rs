@@ -225,6 +225,11 @@ pub struct ChatMessage {
     pub tool_invocation: Option<ToolInvocation>,
     pub tool_result: Option<ToolResult>,
     pub is_compact_summary: bool,
+    /// Post-turn recap line (Grok-style "Recap").
+    pub is_recap: bool,
+    /// Wall-clock time when the message was submitted/received (for Grok-style
+    /// right-aligned timestamps on user prompts).
+    pub sent_at: Option<std::time::SystemTime>,
 }
 
 impl ChatMessage {
@@ -243,7 +248,15 @@ impl ChatMessage {
             tool_invocation: None,
             tool_result: None,
             is_compact_summary: false,
+            is_recap: false,
+            sent_at: None,
         }
+    }
+
+    /// Stamp `sent_at` with the local wall clock (user submit / assistant done).
+    pub fn stamp_now(mut self) -> Self {
+        self.sent_at = Some(std::time::SystemTime::now());
+        self
     }
 }
 
@@ -457,6 +470,8 @@ pub(crate) struct UsageUiState {
     pub session_cost_usd: f64,
     /// True once at least one turn had list pricing available.
     pub session_cost_known: bool,
+    /// Last turn in→out label (e.g. `34k→1.2k`) for the footer after each UsageReported.
+    pub last_turn_label: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -706,6 +721,9 @@ pub(crate) struct SelectionState {
     pub start: (usize, usize),
     pub end: (usize, usize),
     pub active: bool,
+    /// When set, free-form text selection stays inside this chat block
+    /// (Grok-style per-entry selection, no cross-block bleed).
+    pub bound_source: Option<ChatLineSource>,
 }
 
 /// A pending plugin install/update approval in the TUI.

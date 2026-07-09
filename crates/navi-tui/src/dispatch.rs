@@ -422,7 +422,9 @@ fn handle_agent_event(app: &mut TuiApp, event: AgentEvent) {
             cache_creation_tokens,
             cache_read_tokens,
         } => {
-            app.compact_state.update_usage(input_tokens);
+            // Refresh context meter every turn (Grok: contextTokensUsed updates mid-session).
+            app.compact_state
+                .update_usage_full(input_tokens, output_tokens);
             app.usage_state.session_input_tokens =
                 app.usage_state.session_input_tokens.saturating_add(input_tokens);
             app.usage_state.session_output_tokens = app
@@ -431,6 +433,7 @@ fn handle_agent_event(app: &mut TuiApp, event: AgentEvent) {
                 .saturating_add(output_tokens);
             app.usage_state.last_input_tokens = Some(input_tokens);
             app.usage_state.last_output_tokens = Some(output_tokens);
+            app.usage_state.last_turn_label = app.compact_state.turn_usage_label();
 
             // Non-OAuth / API-key billing: estimate spend from registry list prices.
             if let Some(cost) = estimate_turn_cost_usd(app, input_tokens, output_tokens) {
@@ -438,21 +441,41 @@ fn handle_agent_event(app: &mut TuiApp, event: AgentEvent) {
                 app.usage_state.session_cost_known = true;
             }
 
+            // Annotate the active assistant bubble so usage is visible per turn.
             if let Some(msg) = app.messages.last_mut()
                 && msg.role == ChatRole::Assistant
-                && msg.usage_label.is_none()
             {
                 msg.usage_label = Some(format!(
-                    "{}k in · {}k out",
-                    input_tokens / 1000,
-                    output_tokens / 1000,
+                    "{} in · {} out",
+                    format_tokens_k(input_tokens),
+                    format_tokens_k(output_tokens),
                 ));
             }
+            // Force footer/chat redraw so the meter updates immediately.
+            app.chat_render_cache.borrow_mut().signature_hash = 0;
             app.events.push(AgentEvent::UsageReported {
                 input_tokens,
                 output_tokens,
                 cache_creation_tokens,
                 cache_read_tokens,
+            });
+        }
+        AgentEvent::SessionRecap {
+            summary,
+            suppressed,
+        } => {
+            if !suppressed && !summary.trim().is_empty() {
+                app.messages.push(ChatMessage {
+                    status: Some("recap".to_string()),
+                    is_recap: true,
+                    ..ChatMessage::new(ChatRole::Assistant, summary.clone())
+                });
+                app.chat_render_cache.borrow_mut().signature_hash = 0;
+                app.scroll_offset = 0;
+            }
+            app.events.push(AgentEvent::SessionRecap {
+                summary,
+                suppressed,
             });
         }
         AgentEvent::MicroCompactApplied { messages_cleared } => {
@@ -505,6 +528,7 @@ fn handle_agent_event(app: &mut TuiApp, event: AgentEvent) {
         AgentEvent::UserTaskSubmitted {
             text: _,
             content_parts: _,
+            submitted_at: _,
         } => {}
         AgentEvent::ModelOutput {
             text: _,
@@ -624,6 +648,7 @@ fn handle_turn_completed(app: &mut TuiApp, res: std::result::Result<String, Stri
         .map(|start| start.elapsed().as_millis() as u64)
         .unwrap_or(0);
     let completed_ok = res.is_ok();
+    let mut recap_text: Option<String> = None;
     match res {
         Ok(text) => {
             finalize_active_assistant(app, elapsed_ms, &text);
@@ -640,6 +665,7 @@ fn handle_turn_completed(app: &mut TuiApp, res: std::result::Result<String, Stri
                     return;
                 }
             }
+            recap_text = Some(text);
         }
         Err(err) => {
             handle_model_error(app, err);
@@ -656,8 +682,39 @@ fn handle_turn_completed(app: &mut TuiApp, res: std::result::Result<String, Stri
         crate::keybindings::close_active_modal(app);
     }
     if completed_ok {
+        if let Some(assistant) = recap_text {
+            maybe_emit_session_recap(app, &assistant);
+        }
         drain_next_queued_message(app);
     }
+}
+
+/// Grok-style recap after a successful turn (local extractive; optional LLM later).
+fn maybe_emit_session_recap(app: &mut TuiApp, assistant_text: &str) {
+    let user_prompt = app
+        .messages
+        .iter()
+        .rev()
+        .find(|m| m.role == ChatRole::User)
+        .map(|m| m.content.as_str())
+        .unwrap_or("");
+    let tool_calls = app
+        .events
+        .iter()
+        .rev()
+        .take(80)
+        .filter(|e| matches!(e, AgentEvent::ToolRequested(_)))
+        .count();
+    let suppressed =
+        navi_core::should_suppress_recap(assistant_text.chars().count(), tool_calls);
+    let summary = navi_core::local_recap(user_prompt, assistant_text);
+    handle_async_event(
+        app,
+        AsyncEvent::Agent(AgentEvent::SessionRecap {
+            summary,
+            suppressed,
+        }),
+    );
 }
 
 /// React to setup interview completion — exit setup wizard, mark onboarding done.
@@ -678,6 +735,16 @@ fn handle_setup_interview_done(app: &mut TuiApp) {
     app.events.clear();
     app.reset_run_state();
     show_notification(app, "Setup", "Onboarding complete. Welcome to NAVI!");
+}
+
+fn format_tokens_k(tokens: u64) -> String {
+    if tokens >= 1_000_000 {
+        format!("{:.1}M", tokens as f64 / 1_000_000.0)
+    } else if tokens >= 1_000 {
+        format!("{}k", tokens / 1_000)
+    } else {
+        tokens.to_string()
+    }
 }
 
 /// Estimate USD cost for a turn from registry list pricing (per 1M tokens).
@@ -939,6 +1006,11 @@ mod tests {
 
         let msg = app.messages.last().unwrap();
         assert_eq!(msg.usage_label.as_deref(), Some("3k in · 1k out"));
+        // 3000→1500 formats as 3k→1k
+        assert_eq!(
+            app.usage_state.last_turn_label.as_deref(),
+            Some("3k→1k")
+        );
     }
 
     #[test]
@@ -1338,7 +1410,8 @@ mod tests {
             AsyncEvent::Agent(AgentEvent::UserTaskSubmitted {
                 text: "do something".to_string(),
                 content_parts: vec![],
-            }),
+            submitted_at: None,
+        }),
         );
 
         assert_eq!(app.messages.len(), messages_before);
