@@ -193,22 +193,39 @@ fn render_task_card(
     selected: bool,
     area: Rect,
 ) {
-    let bg = if selected { selection_bg() } else { solid_surface() };
-    let bg = if matches!(bg, Color::Reset) {
-        solid_surface()
+    // Selected cards use the theme selection pair (fg+bg) so light highlight
+    // bars never leave light text on a light background.
+    let (fg, bg) = if selected {
+        let bg = selection_bg();
+        let fg = selection_fg();
+        (
+            if matches!(fg, Color::Reset) {
+                Color::Black
+            } else {
+                fg
+            },
+            if matches!(bg, Color::Reset) {
+                solid_surface()
+            } else {
+                bg
+            },
+        )
     } else {
-        bg
+        (text(), solid_surface())
     };
     let width = area.width as usize;
-    let lines = card_lines(cmd, selected, width, app.tick());
+    let lines = card_lines(cmd, selected, width, app.tick(), fg, bg);
 
-    opaque_fill(frame, area, Style::default().fg(text()).bg(bg));
+    opaque_fill(frame, area, Style::default().fg(fg).bg(bg));
     for (row, line) in lines.into_iter().enumerate() {
         if row as u16 >= area.height {
             break;
         }
         let row_area = line_rect(area, row);
-        frame.render_widget(Paragraph::new(line).style(Style::default().bg(bg)), row_area);
+        frame.render_widget(
+            Paragraph::new(line).style(Style::default().fg(fg).bg(bg)),
+            row_area,
+        );
     }
 
     app.register_hit(
@@ -249,10 +266,20 @@ fn card_lines(
     selected: bool,
     width: usize,
     tick: u64,
+    fg: Color,
+    bg: Color,
 ) -> Vec<Line<'static>> {
-    let status_color = status_color(cmd.status);
-    let title_color = text();
-    let muted_color = if selected { text() } else { muted() };
+    // On selected rows force all ink through `fg` (theme selection_fg) so a light
+    // selection bar never hosts light-on-light text.
+    let status_color = if selected {
+        fg
+    } else {
+        status_color(cmd.status)
+    };
+    let title_color = fg;
+    let muted_color = if selected { fg } else { muted() };
+    let dim = if selected { fg } else { ghost() };
+    let base = Style::default().fg(fg).bg(bg);
 
     let chevron = if selected { "▾" } else { "▸" };
     let glyph = status_glyph(cmd, tick);
@@ -267,37 +294,33 @@ fn card_lines(
     let mut line1 = vec![
         Span::styled(
             format!("{chevron} "),
-            Style::default()
-                .fg(if selected { accent() } else { ghost() })
+            base.fg(if selected { fg } else { ghost() })
                 .add_modifier(Modifier::BOLD),
         ),
         Span::styled(
             format!("{glyph} "),
-            Style::default()
-                .fg(status_color)
-                .add_modifier(Modifier::BOLD),
+            base.fg(status_color).add_modifier(Modifier::BOLD),
         ),
         Span::styled(
             format!("{status} · {elapsed}"),
-            Style::default()
-                .fg(status_color)
-                .add_modifier(Modifier::BOLD),
+            base.fg(status_color).add_modifier(Modifier::BOLD),
         ),
-        Span::styled(" ".repeat(pad1), Style::default().fg(ghost())),
+        Span::styled(" ".repeat(pad1), base.fg(dim)),
     ];
     if cmd.is_running() {
         line1.push(Span::styled(
             "✕",
-            Style::default().fg(red()).add_modifier(Modifier::BOLD),
+            base.fg(if selected { fg } else { red() })
+                .add_modifier(Modifier::BOLD),
         ));
     }
 
     let cmd_text = truncate_display(&cmd.command.replace('\n', " "), width.saturating_sub(3));
     let line2 = Line::from(vec![
-        Span::styled("   ", Style::default().fg(ghost())),
+        Span::styled("   ", base.fg(dim)),
         Span::styled(
             cmd_text,
-            Style::default().fg(title_color).add_modifier(if selected {
+            base.fg(title_color).add_modifier(if selected {
                 Modifier::BOLD
             } else {
                 Modifier::empty()
@@ -316,10 +339,10 @@ fn card_lines(
         format!("{desc}  ·  {}", cmd.task_id)
     };
     let line3 = Line::from(vec![
-        Span::styled("   ", Style::default().fg(ghost())),
+        Span::styled("   ", base.fg(dim)),
         Span::styled(
             truncate_display(&detail, width.saturating_sub(3)),
-            Style::default().fg(muted_color),
+            base.fg(muted_color),
         ),
     ]);
 
