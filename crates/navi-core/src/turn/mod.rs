@@ -928,11 +928,7 @@ async fn execute_tool_call(
     // Plan create: block the turn until the user finishes the review modal.
     if result.ok
         && invocation.tool_name == PLAN_TOOL_NAME
-        && result
-            .output
-            .get("needs_review")
-            .and_then(|v| v.as_bool())
-            == Some(true)
+        && result.output.get("needs_review").and_then(|v| v.as_bool()) == Some(true)
     {
         result = wait_for_plan_review(ctx, &invocation, result).await;
     }

@@ -252,9 +252,10 @@ pub(crate) fn handle_mouse(app: &mut TuiApp, mouse: MouseEvent) {
                         crate::chat_blocks::select_chat_block(app, source);
                     }
                     if let Some(pos) = map_mouse_to_text(app, mouse.column, mouse.row) {
-                        let bound = app.hovered_chat_source.clone().or_else(|| {
-                            crate::chat_blocks::source_at_line(app, pos.0)
-                        });
+                        let bound = app
+                            .hovered_chat_source
+                            .clone()
+                            .or_else(|| crate::chat_blocks::source_at_line(app, pos.0));
                         app.selection = Some(SelectionState {
                             start: pos,
                             end: pos,
@@ -332,8 +333,7 @@ pub(crate) fn handle_mouse(app: &mut TuiApp, mouse: MouseEvent) {
                     .and_then(|s| s.bound_source.clone());
                 let active = app.selection.as_ref().is_some_and(|s| s.active);
                 if active {
-                    let clamped_line =
-                        crate::chat_blocks::clamp_line_to_block(app, pos.0, &bound);
+                    let clamped_line = crate::chat_blocks::clamp_line_to_block(app, pos.0, &bound);
                     if let Some(selection) = &mut app.selection {
                         selection.end = (clamped_line, pos.1);
                     }
@@ -349,10 +349,7 @@ pub(crate) fn handle_mouse(app: &mut TuiApp, mouse: MouseEvent) {
                 let pos = map_mouse_to_text_clamped(app, mouse.column, mouse.row);
                 // Clamp end into the bound block so partial-line drags stay valid.
                 let pos = pos.map(|(line, col)| {
-                    let bound = app
-                        .selection
-                        .as_ref()
-                        .and_then(|s| s.bound_source.clone());
+                    let bound = app.selection.as_ref().and_then(|s| s.bound_source.clone());
                     (
                         crate::chat_blocks::clamp_line_to_block(app, line, &bound),
                         col,
@@ -1001,13 +998,8 @@ fn scroll_by(app: &mut TuiApp, target: ScrollTarget, delta: isize) {
         }
         ScrollTarget::PathMentions => {
             let len = crate::path_mentions::filtered_path_candidates(app).len();
-            let (selected, scroll) = shifted_select_state(
-                app.selected_path,
-                app.path_scroll,
-                len,
-                delta,
-                12,
-            );
+            let (selected, scroll) =
+                shifted_select_state(app.selected_path, app.path_scroll, len, delta, 12);
             app.selected_path = selected;
             app.path_scroll = scroll;
         }
@@ -1407,11 +1399,10 @@ mod tests {
         // Regression: chat lines register full-width hits; drag must still select text.
         let mut app = test_app("");
         seed_chat_cache(&mut app, &["hello world"], Rect::new(0, 0, 20, 1));
-        app.messages
-            .push(crate::state::ChatMessage::new(
-                crate::state::ChatRole::Assistant,
-                "hello world".into(),
-            ));
+        app.messages.push(crate::state::ChatMessage::new(
+            crate::state::ChatRole::Assistant,
+            "hello world".into(),
+        ));
         // Full line hit — matches real chat hit registration.
         app.register_hit(
             Rect::new(0, 0, 20, 1),

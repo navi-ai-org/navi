@@ -800,10 +800,7 @@ pub fn resolve_provider_credential_status(
         let (label, detail) = if oauth_kind.as_deref() == Some(XAI_GROK_CLI_OAUTH_KIND) {
             ("oauth".to_string(), Some("xAI Grok OAuth".to_string()))
         } else {
-            (
-                "stored".to_string(),
-                Some("stored credential".to_string()),
-            )
+            ("stored".to_string(), Some("stored credential".to_string()))
         };
         return CredentialStatus {
             configured: true,

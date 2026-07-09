@@ -183,9 +183,7 @@ fn route_mode_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyModifiers) -> K
         Mode::ConfirmCancelTurn => self::modals::handle_confirm_cancel_turn_key(app, code),
         Mode::ConfirmPlan => self::modals::handle_confirm_plan_key(app, code),
         Mode::SudoPassword => self::modals::handle_sudo_password_key(app, code, modifiers),
-        Mode::PathMentions => {
-            crate::path_mentions::handle_path_mentions_key(app, code, modifiers)
-        }
+        Mode::PathMentions => crate::path_mentions::handle_path_mentions_key(app, code, modifiers),
     };
     if should_quit {
         KeyOutcome::Quit

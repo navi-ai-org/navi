@@ -619,8 +619,8 @@ impl SubagentTool {
                 event_tx: Some(event_tx),
                 approval_resolver: resolver,
                 question_resolver: crate::runtime::QuestionResolver::new_standalone(),
-            plan_review_resolver: crate::runtime::PlanReviewResolver::new_standalone(),
-            sudo_password_resolver: crate::runtime::SudoPasswordResolver::new_standalone(),
+                plan_review_resolver: crate::runtime::PlanReviewResolver::new_standalone(),
+                sudo_password_resolver: crate::runtime::SudoPasswordResolver::new_standalone(),
                 compact_state: Arc::new(tokio::sync::Mutex::new(CompactState::new(
                     crate::config::effective_context_window(&config_snapshot),
                 ))),

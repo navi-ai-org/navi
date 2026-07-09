@@ -150,11 +150,9 @@ impl PlanReviewResolver {
             .remove(&id)
         {
             let _ = tx.send(response.clone());
-            let _ =
-                self.runtime_events_tx
-                    .send(RuntimeEvent::new(RuntimeEventKind::PlanReviewResolved(
-                        response,
-                    )));
+            let _ = self.runtime_events_tx.send(RuntimeEvent::new(
+                RuntimeEventKind::PlanReviewResolved(response),
+            ));
             true
         } else {
             false

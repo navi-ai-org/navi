@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use crate::types::{AsrEngineId, VoiceInstallOptions, DEFAULT_VOICE_HF_REPO};
+use crate::types::{AsrEngineId, DEFAULT_VOICE_HF_REPO, VoiceInstallOptions};
 
 /// `{data_dir}/voice`
 pub fn voice_root(data_dir: &Path) -> PathBuf {

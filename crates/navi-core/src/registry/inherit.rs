@@ -173,10 +173,7 @@ fn names_match_family(existing_name: &str, target_name: &str, family_stems: &[St
 }
 
 fn leaf_name(name: &str) -> String {
-    name.rsplit('/')
-        .next()
-        .unwrap_or(name)
-        .replace('_', "-")
+    name.rsplit('/').next().unwrap_or(name).replace('_', "-")
 }
 
 fn donor_richness(model: &RegistryModel) -> i32 {

@@ -21,10 +21,7 @@ pub(crate) const IMAGE_PREVIEW_HEIGHT: u16 = 0;
 #[allow(dead_code)]
 pub(crate) fn render_image_previews(frame: &mut Frame<'_>, app: &mut TuiApp, area: Rect) -> Rect {
     let _ = (frame, app);
-    Rect {
-        height: 0,
-        ..area
-    }
+    Rect { height: 0, ..area }
 }
 
 /// Floating hover modal for an `[Image N]` chip (composer or chat).
@@ -41,8 +38,7 @@ pub(crate) fn render_image_hover_modal(frame: &mut Frame<'_>, app: &mut TuiApp, 
     }
 
     let gfx = terminal_graphics::session_graphics();
-    let has_graphics =
-        app.image_hover_protocol.is_some() && gfx.supports_image_preview();
+    let has_graphics = app.image_hover_protocol.is_some() && gfx.supports_image_preview();
     let header = if has_graphics {
         format!("{} · {}", preview.header_line(), gfx.protocol_label())
     } else {
@@ -231,9 +227,7 @@ pub(crate) fn set_hover_from_action(app: &mut TuiApp, action: &HitAction) -> boo
 
     let same = match (&app.image_hover, &preview) {
         (Some(prev), Some(next)) => {
-            prev.index == next.index
-                && prev.size_bytes == next.size_bytes
-                && prev.data == next.data
+            prev.index == next.index && prev.size_bytes == next.size_bytes && prev.data == next.data
         }
         _ => false,
     };

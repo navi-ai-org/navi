@@ -73,10 +73,7 @@ pub fn run_doctor(data_dir: &Path, input: &DoctorInput) -> Result<DoctorReport> 
             }
             None => {
                 ok = false;
-                lines.push(format!(
-                    "Selected recorder '{}' not found",
-                    input.recorder
-                ));
+                lines.push(format!("Selected recorder '{}' not found", input.recorder));
             }
         }
     }
@@ -92,10 +89,7 @@ pub fn run_doctor(data_dir: &Path, input: &DoctorInput) -> Result<DoctorReport> 
                 paths.engine_dir.display()
             ));
             match verify_engine_checksums(data_dir, &input.options, engine) {
-                Ok(()) => lines.push(format!(
-                    "     checksums OK ({})",
-                    paths.checksums.display()
-                )),
+                Ok(()) => lines.push(format!("     checksums OK ({})", paths.checksums.display())),
                 Err(err) => {
                     ok = false;
                     lines.push(format!("     checksum FAILED: {err:#}"));
@@ -123,9 +117,7 @@ pub fn run_doctor(data_dir: &Path, input: &DoctorInput) -> Result<DoctorReport> 
 
     if input.enabled && !engine_installed(data_dir, &input.options, input.engine) {
         ok = false;
-        lines.push(
-            "Voice is enabled in config but the selected engine is not installed.".into(),
-        );
+        lines.push("Voice is enabled in config but the selected engine is not installed.".into());
     }
 
     lines.push(if ok {

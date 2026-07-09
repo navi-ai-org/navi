@@ -83,44 +83,50 @@ impl NaviEngine {
         let manager = self.memory_manager()?;
         let mut lines = Vec::new();
         let active = manager.auto_memory.count_active().unwrap_or(0);
-        lines.push(format!("Memory root: {}", manager.store.memory_root.display()));
+        lines.push(format!(
+            "Memory root: {}",
+            manager.store.memory_root.display()
+        ));
         lines.push(format!("Active memories: {active}"));
 
         let sessions = manager
             .history
             .list_sessions()
             .map_err(|e| NaviError::Config(e.to_string()))?;
-        let (last_session_id, rebuild_count, checkpoint_count, last_checkpoint_time, message_event_count) =
-            if let Some(session) = sessions.first() {
-                let rebuild = manager.history.get_rebuild_count(&session.id).unwrap_or(0);
-                let checkpoint = manager
-                    .history
-                    .get_checkpoint_count(&session.id)
-                    .unwrap_or(0);
-                let last_cp = manager
-                    .history
-                    .get_last_checkpoint_time(&session.id)
-                    .ok()
-                    .flatten();
-                let events = manager
-                    .history
-                    .get_event_count(&session.id, "message")
-                    .unwrap_or(0);
-                (
-                    Some(session.id.clone()),
-                    rebuild,
-                    checkpoint,
-                    last_cp,
-                    events,
-                )
-            } else {
-                (None, 0, 0, None, 0)
-            };
+        let (
+            last_session_id,
+            rebuild_count,
+            checkpoint_count,
+            last_checkpoint_time,
+            message_event_count,
+        ) = if let Some(session) = sessions.first() {
+            let rebuild = manager.history.get_rebuild_count(&session.id).unwrap_or(0);
+            let checkpoint = manager
+                .history
+                .get_checkpoint_count(&session.id)
+                .unwrap_or(0);
+            let last_cp = manager
+                .history
+                .get_last_checkpoint_time(&session.id)
+                .ok()
+                .flatten();
+            let events = manager
+                .history
+                .get_event_count(&session.id, "message")
+                .unwrap_or(0);
+            (
+                Some(session.id.clone()),
+                rebuild,
+                checkpoint,
+                last_cp,
+                events,
+            )
+        } else {
+            (None, 0, 0, None, 0)
+        };
 
         let embeddings_available = navi_core::memory::embeddings_available();
-        lines.push(format!(
-            "Embeddings available: {embeddings_available}"
-        ));
+        lines.push(format!("Embeddings available: {embeddings_available}"));
 
         Ok(MemoryStatusReport {
             memory_root: manager.store.memory_root.display().to_string(),
@@ -184,9 +190,7 @@ impl NaviEngine {
         if navi_core::memory::embeddings_available() {
             lines.push("[OK] Embedding model available".into());
         } else {
-            lines.push(
-                "[WARN] Embeddings not available — run memory_init(embeddings=true)".into(),
-            );
+            lines.push("[WARN] Embeddings not available — run memory_init(embeddings=true)".into());
         }
 
         lines.push(if ok {
@@ -253,9 +257,7 @@ impl NaviEngine {
                 if force && model_path.exists() {
                     let _ = std::fs::remove_file(&model_path);
                 }
-                let url = format!(
-                    "https://huggingface.co/{model_repo}/resolve/main/{model_file}"
-                );
+                let url = format!("https://huggingface.co/{model_repo}/resolve/main/{model_file}");
                 lines.push(format!("Downloading embedding model from {url}"));
                 let response = client
                     .get(&url)
@@ -292,10 +294,7 @@ impl NaviEngine {
                             lines.push(format!("Tokenizer saved: {}", tokenizer_path.display()));
                         }
                     }
-                    Ok(r) => lines.push(format!(
-                        "Tokenizer download failed: HTTP {}",
-                        r.status()
-                    )),
+                    Ok(r) => lines.push(format!("Tokenizer download failed: HTTP {}", r.status())),
                     Err(e) => lines.push(format!("Tokenizer download error: {e}")),
                 }
             } else {
@@ -444,12 +443,9 @@ impl NaviEngine {
             .history
             .list_sessions()
             .map_err(|e| NaviError::Config(e.to_string()))?;
-        let session_id = sessions
-            .first()
-            .map(|s| s.id.clone())
-            .ok_or_else(|| {
-                NaviError::Config("no session in history — cannot build rebuild preview".into())
-            })?;
+        let session_id = sessions.first().map(|s| s.id.clone()).ok_or_else(|| {
+            NaviError::Config("no session in history — cannot build rebuild preview".into())
+        })?;
         let events = manager
             .history
             .get_recent_events(&session_id, None)

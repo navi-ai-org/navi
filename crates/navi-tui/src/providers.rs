@@ -254,11 +254,7 @@ pub(crate) fn start_provider_oauth(app: &mut TuiApp, provider: &ProviderConfig) 
         return;
     }
 
-    show_notification(
-        app,
-        "OAuth",
-        format!("Starting {} login…", provider.label),
-    );
+    show_notification(app, "OAuth", format!("Starting {} login…", provider.label));
     app.is_loading = true;
     app.loading_start = Some(Instant::now());
     let tx = app.async_sender();

@@ -96,7 +96,11 @@ pub async fn llm_recap(
     let response = provider.complete(request).await?;
     let cleaned = clean_recap_text(&response.text);
     if cleaned.is_empty() {
-        Ok(local_recap_with_tools(user_prompt, assistant_text, tool_names))
+        Ok(local_recap_with_tools(
+            user_prompt,
+            assistant_text,
+            tool_names,
+        ))
     } else {
         Ok(finalize_recap(&cleaned))
     }
@@ -115,7 +119,10 @@ fn clean_recap_text(raw: &str) -> String {
         "◈ recap",
     ] {
         if let Some(rest) = text.strip_prefix(prefix) {
-            text = rest.trim_start_matches([':', '—', '-', ' ']).trim().to_string();
+            text = rest
+                .trim_start_matches([':', '—', '-', ' '])
+                .trim()
+                .to_string();
         }
     }
     // Drop surrounding quotes the model sometimes adds.
@@ -137,9 +144,8 @@ fn synthesize_local(user: &str, assistant: &str, tool_names: &[String]) -> Strin
     let user_snip = snippet_topic(user, 72);
     let asst_snip = snippet_outcome(assistant, 88);
     let has_tools = !tool_names.is_empty();
-    let looks_like_landed = has_tools
-        || looks_landed_change(assistant)
-        || looks_landed_change(user);
+    let looks_like_landed =
+        has_tools || looks_landed_change(assistant) || looks_landed_change(user);
 
     if user_snip.is_empty() && asst_snip.is_empty() {
         return "Turn completed.".to_string();
@@ -228,10 +234,7 @@ fn snippet_topic(text: &str, max: usize) -> String {
         return String::new();
     }
     // Drop common command-ish noise.
-    let t = t
-        .trim_start_matches(['/', '!', '#'])
-        .trim()
-        .to_string();
+    let t = t.trim_start_matches(['/', '!', '#']).trim().to_string();
     truncate_at_word(&t, max)
 }
 

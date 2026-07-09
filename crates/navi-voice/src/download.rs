@@ -75,8 +75,14 @@ async fn download_nemotron(
     let client = http_client()?;
 
     // 1) SHA256SUMS defines the file set.
-    let checksums_text =
-        download_text(&client, &repo, "SHA256SUMS", &paths.checksums, progress.as_ref()).await?;
+    let checksums_text = download_text(
+        &client,
+        &repo,
+        "SHA256SUMS",
+        &paths.checksums,
+        progress.as_ref(),
+    )
+    .await?;
     let entries = parse_sha256sums(&checksums_text)?;
 
     // 2) Download each file listed in checksums.
@@ -98,10 +104,7 @@ async fn download_nemotron(
 
     // Ensure manifest is present (also in checksums).
     if !paths.manifest.is_file() {
-        bail!(
-            "navi-manifest.json missing after download from {}",
-            repo
-        );
+        bail!("navi-manifest.json missing after download from {}", repo);
     }
     let _manifest: VoiceManifest = serde_json::from_str(&fs::read_to_string(&paths.manifest)?)
         .context("parse navi-manifest.json")?;
@@ -112,7 +115,8 @@ async fn download_nemotron(
 fn http_client() -> Result<reqwest::Client> {
     let mut builder = reqwest::Client::builder().timeout(std::time::Duration::from_secs(600));
     // Optional HF token for gated/rate-limited downloads.
-    if let Ok(token) = std::env::var("HF_TOKEN").or_else(|_| std::env::var("HUGGING_FACE_HUB_TOKEN"))
+    if let Ok(token) =
+        std::env::var("HF_TOKEN").or_else(|_| std::env::var("HUGGING_FACE_HUB_TOKEN"))
     {
         if !token.trim().is_empty() {
             let mut headers = reqwest::header::HeaderMap::new();
@@ -134,7 +138,10 @@ fn resolve_url(repo: &str, relative_path: &str) -> String {
     format!(
         "https://huggingface.co/{}/resolve/main/{}",
         repo,
-        rel.split('/').map(urlencoding_segment).collect::<Vec<_>>().join("/")
+        rel.split('/')
+            .map(urlencoding_segment)
+            .collect::<Vec<_>>()
+            .join("/")
     )
 }
 
@@ -238,9 +245,7 @@ fn verify_checksums(engine_dir: &Path, checksums_path: &Path) -> Result<()> {
         }
         let actual = file_sha256(&path)?;
         if !actual.eq_ignore_ascii_case(&expected) {
-            bail!(
-                "checksum mismatch for {rel}: expected {expected}, got {actual}"
-            );
+            bail!("checksum mismatch for {rel}: expected {expected}, got {actual}");
         }
     }
     Ok(())
@@ -279,8 +284,11 @@ bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb  bar.bin
     #[test]
     fn resolve_model_dir_default() {
         let opts = VoiceInstallOptions::default();
-        let dir =
-            resolve_model_dir(Path::new("/tmp/navi-data"), &opts, AsrEngineId::NemotronStreaming);
+        let dir = resolve_model_dir(
+            Path::new("/tmp/navi-data"),
+            &opts,
+            AsrEngineId::NemotronStreaming,
+        );
         assert!(dir.ends_with("voice/models/nemotron-3.5-asr-streaming-0.6b-onnx"));
     }
 }

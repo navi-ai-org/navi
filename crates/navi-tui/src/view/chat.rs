@@ -122,9 +122,7 @@ pub(crate) fn render_chat_area(frame: &mut Frame<'_>, app: &mut TuiApp, area: Re
                     // Every message block is selectable (user + assistant).
                     Some(HitAction::ChatMessage(*index))
                 }
-                ChatLineSource::ToolResult(id) => {
-                    Some(HitAction::ToolResult(id.clone()))
-                }
+                ChatLineSource::ToolResult(id) => Some(HitAction::ToolResult(id.clone())),
                 ChatLineSource::ToolGroup(ids) if !ids.is_empty() => {
                     Some(HitAction::ToolGroup(ids.clone()))
                 }
@@ -162,7 +160,9 @@ fn render_jump_to_latest_button(frame: &mut Frame<'_>, app: &mut TuiApp, chat_ar
     // Label mirrors Grok “Go to bottom” affordance.
     let label = " ↓ Latest ";
     let label_w = display_width(label) as u16;
-    let width = (label_w.saturating_add(2)).min(chat_area.width.saturating_sub(2)).max(8);
+    let width = (label_w.saturating_add(2))
+        .min(chat_area.width.saturating_sub(2))
+        .max(8);
     let height = 3u16.min(chat_area.height);
     // Bottom-center of the chat pane (above the composer gap).
     let x = chat_area.x + chat_area.width.saturating_sub(width) / 2;
@@ -222,7 +222,10 @@ fn highlight_selection_columns(
             let selected = next_col > start_col && current_col < end_col;
             let style = if selected {
                 // Force readable contrast on the selection bar.
-                span.style.fg(sel_fg).bg(sel_bg).add_modifier(Modifier::BOLD)
+                span.style
+                    .fg(sel_fg)
+                    .bg(sel_bg)
+                    .add_modifier(Modifier::BOLD)
             } else {
                 span.style
             };
@@ -475,10 +478,7 @@ fn style_interactive_lines(
 
 /// Returns (hovered, block_selected, action_selected, soft_card).
 /// soft_card = true for tools that only show card chrome when interactive.
-fn interactive_state(
-    app: &TuiApp,
-    source: &ChatLineSource,
-) -> Option<(bool, bool, bool, bool)> {
+fn interactive_state(app: &TuiApp, source: &ChatLineSource) -> Option<(bool, bool, bool, bool)> {
     if matches!(source, ChatLineSource::None) {
         return None;
     }
@@ -553,7 +553,8 @@ fn apply_selection_rail(line: &mut Line<'static>) {
         }
     }
     line.spans.retain(|span| !span.content.is_empty());
-    line.spans.insert(0, Span::styled(RAIL.to_string(), rail_style));
+    line.spans
+        .insert(0, Span::styled(RAIL.to_string(), rail_style));
 }
 
 fn apply_card_bg(line: &mut Line<'static>, width: usize, bg: Color, emphasize: bool) {
@@ -725,7 +726,11 @@ fn chat_render_signature(app: &TuiApp) -> u64 {
 }
 
 fn expanded_tool_signature(app: &TuiApp) -> String {
-    let mut open = app.expanded_tool_results.iter().cloned().collect::<Vec<_>>();
+    let mut open = app
+        .expanded_tool_results
+        .iter()
+        .cloned()
+        .collect::<Vec<_>>();
     open.sort();
     let mut closed = app
         .collapsed_tool_results
@@ -857,9 +862,9 @@ mod tests {
 
     #[test]
     fn selected_block_uses_left_rail_not_selection_bg() {
-        use ratatui::style::Color;
         use crate::state::ChatLineSource;
-        use crate::theme::{selection_bg, with_palette, ThemeId};
+        use crate::theme::{ThemeId, selection_bg, with_palette};
+        use ratatui::style::Color;
 
         with_palette(&ThemeId::Lain.palette(), || {
             let mut app = crate::tests::test_app("");

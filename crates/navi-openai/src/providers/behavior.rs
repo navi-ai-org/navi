@@ -592,7 +592,9 @@ mod tests {
             )
             .expect("headers");
         assert_eq!(
-            headers.get("X-XAI-Token-Auth").and_then(|v| v.to_str().ok()),
+            headers
+                .get("X-XAI-Token-Auth")
+                .and_then(|v| v.to_str().ok()),
             Some("xai-grok-cli")
         );
         assert!(

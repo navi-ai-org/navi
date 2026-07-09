@@ -1,11 +1,11 @@
 use anyhow::{Context, Result, bail};
 use navi_core::LoadedConfig;
+#[cfg(feature = "voice-onnx")]
+use navi_voice::NemotronOnnxEngine;
 use navi_voice::{
     AsrEngineId, DoctorInput, VoiceInstallOptions, download_engine, engine_installed,
     resolve_model_dir, run_doctor, voice_root,
 };
-#[cfg(feature = "voice-onnx")]
-use navi_voice::NemotronOnnxEngine;
 
 pub async fn handle_voice_command(
     action: crate::VoiceAction,
@@ -45,9 +45,7 @@ pub async fn handle_voice_command(
         }
         crate::VoiceAction::Init { engine, force } => {
             let engine = AsrEngineId::parse(&engine).with_context(|| {
-                format!(
-                    "unknown engine '{engine}'. Use: nemotron_streaming | distil_whisper"
-                )
+                format!("unknown engine '{engine}'. Use: nemotron_streaming | distil_whisper")
             })?;
             println!("Voice init — {}", engine.display_name());
             println!("  Destination under: {}", voice_root(data_dir).display());
@@ -64,10 +62,7 @@ pub async fn handle_voice_command(
                 }
                 if let Some(t) = total {
                     if t > 0 && downloaded == t {
-                        println!(
-                            "       done {:.1} MB",
-                            downloaded as f64 / 1_048_576.0
-                        );
+                        println!("       done {:.1} MB", downloaded as f64 / 1_048_576.0);
                     }
                 }
             });

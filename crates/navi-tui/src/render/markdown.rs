@@ -182,13 +182,8 @@ pub(crate) fn build_chat_render_for_messages(
                 // Assistant prose/tables/code all start at the shared content
                 // column (CONTENT_GUTTER) — same as user text after `› ` and
                 // tool labels after `◆ `.
-                let assistant_lines = render_markdown_lines(
-                    &msg.content,
-                    chat_width,
-                    text(),
-                    text(),
-                    false,
-                );
+                let assistant_lines =
+                    render_markdown_lines(&msg.content, chat_width, text(), text(), false);
                 push_sourced_lines(
                     &mut rendered_lines,
                     &mut line_sources,
@@ -308,10 +303,7 @@ fn render_user_message_lines(
     } else {
         display_width(&time_label).saturating_add(1) // leading space
     };
-    let content_width = width
-        .saturating_sub(prefix_w)
-        .saturating_sub(time_w)
-        .max(8);
+    let content_width = width.saturating_sub(prefix_w).saturating_sub(time_w).max(8);
 
     let display = text.trim();
     if display.is_empty() {
@@ -326,23 +318,21 @@ fn render_user_message_lines(
 
     for (i, line) in wrapped.into_iter().enumerate() {
         let is_first = i == 0;
-        let mut spans = vec![
-            Span::styled(
-                if is_first {
-                    prefix.to_string()
+        let mut spans = vec![Span::styled(
+            if is_first {
+                prefix.to_string()
+            } else {
+                " ".repeat(prefix_w)
+            },
+            Style::default()
+                .fg(if is_first { user_accent() } else { ghost() })
+                .bg(panel())
+                .add_modifier(if is_first {
+                    Modifier::BOLD
                 } else {
-                    " ".repeat(prefix_w)
-                },
-                Style::default()
-                    .fg(if is_first { user_accent() } else { ghost() })
-                    .bg(panel())
-                    .add_modifier(if is_first {
-                        Modifier::BOLD
-                    } else {
-                        Modifier::empty()
-                    }),
-            ),
-        ];
+                    Modifier::empty()
+                }),
+        )];
         spans.extend(
             style_user_line_with_image_tags(&line, text_color_for_user())
                 .into_iter()
@@ -567,9 +557,7 @@ fn push_running_tools(
         let mut spans = vec![
             Span::styled(
                 spinner.to_string(),
-                Style::default()
-                    .fg(spin_color)
-                    .add_modifier(Modifier::BOLD),
+                Style::default().fg(spin_color).add_modifier(Modifier::BOLD),
             ),
             Span::styled(
                 action,
@@ -724,12 +712,7 @@ fn render_compact_tool_line_with_width(
     // while the process is still going — keep the diamond pulsing.
     let still_running = tool_result_still_running(result);
     let elapsed = loading_elapsed_ms
-        .or_else(|| {
-            result
-                .output
-                .get("elapsed_ms")
-                .and_then(|v| v.as_u64())
-        })
+        .or_else(|| result.output.get("elapsed_ms").and_then(|v| v.as_u64()))
         .unwrap_or(0);
 
     let (prefix, status_color) = if still_running {
@@ -997,7 +980,9 @@ fn classify_prose_line(trimmed: &str) -> MdBlockKind {
     if (1..=6).contains(&heading) && trimmed.chars().nth(heading) == Some(' ') {
         return MdBlockKind::Heading;
     }
-    if trimmed.starts_with("- ") || trimmed.starts_with("* ") || ordered_list_marker(trimmed).is_some()
+    if trimmed.starts_with("- ")
+        || trimmed.starts_with("* ")
+        || ordered_list_marker(trimmed).is_some()
     {
         return MdBlockKind::List;
     }
@@ -1204,7 +1189,9 @@ fn table_block_lines_at(
     // full box needs outer left/right borders (`│` × (cols+1)).
     let gutter_width = if show_marker { 2 } else { MD_BLOCK_H_PAD };
     let available_width = max_width.saturating_sub(gutter_width).min(MAX_TABLE_WIDTH);
-    let border_budget = column_count.saturating_add(1).saturating_mul(TABLE_BORDER_W);
+    let border_budget = column_count
+        .saturating_add(1)
+        .saturating_mul(TABLE_BORDER_W);
     let pad_budget = column_count.saturating_mul(TABLE_CELL_H_PAD.saturating_mul(2));
     let columns_width = available_width
         .saturating_sub(border_budget)
@@ -2168,7 +2155,10 @@ mod tests {
             joined.contains("◆") || joined.contains("◇"),
             "expected pulse diamond, got: {joined}"
         );
-        assert!(joined.contains("3s") || joined.contains("3200"), "expected elapsed: {joined}");
+        assert!(
+            joined.contains("3s") || joined.contains("3200"),
+            "expected elapsed: {joined}"
+        );
     }
 
     #[test]
@@ -2339,7 +2329,11 @@ mod tests {
         // Rule sits in the content column after the shared gutter.
         assert_eq!(
             rendered,
-            format!("{}{}", " ".repeat(CONTENT_GUTTER), "─".repeat(80 - CONTENT_GUTTER))
+            format!(
+                "{}{}",
+                " ".repeat(CONTENT_GUTTER),
+                "─".repeat(80 - CONTENT_GUTTER)
+            )
         );
         assert!(!rendered.contains("---"));
     }
@@ -2498,7 +2492,8 @@ mod tests {
 
     #[test]
     fn table_has_full_box_frame() {
-        let markdown = "| Área | Fix |\n| --- | --- |\n| Chat | running tools |\n| Cache | pulse frame |";
+        let markdown =
+            "| Área | Fix |\n| --- | --- |\n| Chat | running tools |\n| Cache | pulse frame |";
         let lines = render_markdown_lines(markdown, 80, text(), text(), false);
         let rendered: Vec<String> = lines
             .iter()
@@ -2513,14 +2508,13 @@ mod tests {
         assert!(joined.contains('┌') && joined.contains('┐'), "{joined}");
         assert!(joined.contains('├') && joined.contains('┤'), "{joined}");
         assert!(joined.contains('└') && joined.contains('┘'), "{joined}");
-        assert!(joined.contains("Área") && joined.contains("Chat"), "{joined}");
+        assert!(
+            joined.contains("Área") && joined.contains("Chat"),
+            "{joined}"
+        );
         // Column separators present on body rows.
         assert!(
-            rendered
-                .iter()
-                .filter(|l| l.contains('│'))
-                .count()
-                >= 2,
+            rendered.iter().filter(|l| l.contains('│')).count() >= 2,
             "{joined}"
         );
     }

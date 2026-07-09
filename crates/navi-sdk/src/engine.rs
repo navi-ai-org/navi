@@ -22,11 +22,11 @@ use crate::tooling::{
     build_local_tooling, build_provider_for_project_config, list_models_for_provider,
 };
 use crate::types::{
-    NaviConfigSaveTarget, NaviModelInfo, NaviModelSelectionRequest,
-    NaviModelSelectionResult, NaviProviderAccountInfo, NaviProviderCredentialStatus,
-    NaviProviderSyncFailure, NaviProviderSyncReport, NaviProviderSyncSkipped, NaviSavedSessionInfo,
-    NaviSessionInfo, NaviSessionRequest, NaviSkillInfo, NaviSyncedProvider, NaviTurnRequest,
-    NaviTurnResponse, NaviUsageDetail, NaviUsageLimitSnapshot, NaviUsageReport, NaviUsageWindow,
+    NaviConfigSaveTarget, NaviModelInfo, NaviModelSelectionRequest, NaviModelSelectionResult,
+    NaviProviderAccountInfo, NaviProviderCredentialStatus, NaviProviderSyncFailure,
+    NaviProviderSyncReport, NaviProviderSyncSkipped, NaviSavedSessionInfo, NaviSessionInfo,
+    NaviSessionRequest, NaviSkillInfo, NaviSyncedProvider, NaviTurnRequest, NaviTurnResponse,
+    NaviUsageDetail, NaviUsageLimitSnapshot, NaviUsageReport, NaviUsageWindow,
 };
 
 /// Builder for constructing a [`NaviEngine`] with custom configuration.
@@ -1455,9 +1455,7 @@ impl NaviEngine {
                                 .tool_calling_mode
                                 .map(|m| format!("{:?}", m).to_lowercase()),
                             aggregator: provider.aggregator,
-                            defaults: navi_core::registry::provider_registry_defaults(
-                                &provider.id,
-                            ),
+                            defaults: navi_core::registry::provider_registry_defaults(&provider.id),
                             request_options: provider.request_options.clone().unwrap_or_default(),
                             models: merged,
                         };

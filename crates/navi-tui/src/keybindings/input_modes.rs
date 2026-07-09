@@ -20,10 +20,7 @@ pub(crate) fn handle_normal_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyM
 
     // block selection: when the prompt is empty, Up/Down/y/Enter
     // operate on discrete scrollback entries instead of the input field.
-    if app.input.is_empty()
-        && modifiers.is_empty()
-        && handle_block_selection_key(app, code)
-    {
+    if app.input.is_empty() && modifiers.is_empty() && handle_block_selection_key(app, code) {
         return false;
     }
 
@@ -177,7 +174,10 @@ fn handle_block_selection_key(app: &mut TuiApp, code: KeyCode) -> bool {
             true
         }
         // First arrow with no selection: select nearest block in that direction.
-        KeyCode::Up if app.selected_chat_source.is_none() && !crate::chat_blocks::chat_blocks(app).is_empty() => {
+        KeyCode::Up
+            if app.selected_chat_source.is_none()
+                && !crate::chat_blocks::chat_blocks(app).is_empty() =>
+        {
             crate::chat_blocks::select_adjacent_block(app, -1);
             true
         }

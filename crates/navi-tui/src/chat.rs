@@ -64,8 +64,7 @@ fn submit_current_message_now(app: &mut TuiApp) {
     let has_images = !app.pending_images.is_empty();
     let text = app.input.clone();
     // Hydrate @file / @folder mentions for the model (chat bubble keeps the short form).
-    let model_text =
-        crate::path_mentions::hydrate_path_mentions(&app.project_dir, &text);
+    let model_text = crate::path_mentions::hydrate_path_mentions(&app.project_dir, &text);
     tracing::info!(
         model = %app.loaded_config.config.model.name,
         provider = %app.loaded_config.config.model.provider,

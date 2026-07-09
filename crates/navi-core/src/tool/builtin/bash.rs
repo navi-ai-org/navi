@@ -417,13 +417,7 @@ impl Tool for BashTool {
 
         // Interactive sudo: collect password via TUI modal (never in model context).
         let sudo_env = if command_likely_needs_sudo(command) {
-            match request_sudo_password(
-                &context,
-                &invocation.id,
-                command,
-            )
-            .await
-            {
+            match request_sudo_password(&context, &invocation.id, command).await {
                 Ok(Some(password)) => Some(prepare_sudo_askpass(&password)?),
                 Ok(None) => {
                     return Ok(ToolResult {

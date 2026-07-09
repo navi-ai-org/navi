@@ -339,11 +339,15 @@ fn commandcode_messages(messages: &[navi_core::ModelMessage]) -> (String, Vec<Va
                                     "image": format!("data:{media_type};base64,{data}"),
                                 })
                             }
-                            ContentPart::Audio { media_type, name, .. } => json!({
+                            ContentPart::Audio {
+                                media_type, name, ..
+                            } => json!({
                                 "type": "text",
                                 "text": attachment_placeholder("audio", media_type, name.as_deref())
                             }),
-                            ContentPart::Video { media_type, name, .. } => json!({
+                            ContentPart::Video {
+                                media_type, name, ..
+                            } => json!({
                                 "type": "text",
                                 "text": attachment_placeholder("video", media_type, name.as_deref())
                             }),
@@ -373,7 +377,7 @@ fn commandcode_messages(messages: &[navi_core::ModelMessage]) -> (String, Vec<Va
                                         )
                                     })
                                 }
-                            },
+                            }
                         })
                         .collect();
                     converted.push(json!({ "role": "user", "content": content }));

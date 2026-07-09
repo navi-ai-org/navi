@@ -4,7 +4,6 @@ pub mod cancel;
 pub mod capability;
 pub mod compact;
 pub mod config;
-pub mod recap;
 pub mod context;
 pub mod credentials;
 pub mod dataset;
@@ -25,6 +24,7 @@ pub mod plan_mode;
 pub mod plan_store;
 pub mod prompt;
 mod provider_id;
+pub mod recap;
 pub mod registry;
 pub mod repetition;
 pub mod replay_gate;
@@ -52,26 +52,19 @@ pub use capability::{
     Capability, CapabilityDecision, CapabilityGrant, CapabilityLedger, CapabilityLedgerEntry,
     CapabilityScope, capabilities_from_tool_metadata,
 };
-pub use compact::{
-    AUTO_COMPACT_THRESHOLD_PERCENT, CompactState, CompactThreshold,
-};
-pub use recap::{
-    local_recap, local_recap_with_tools, llm_recap, should_suppress_recap, RECAP_LONG_TAIL_CHARS,
-    RECAP_MAX_DISPLAY_CHARS,
-};
+pub use compact::{AUTO_COMPACT_THRESHOLD_PERCENT, CompactState, CompactThreshold};
 pub use config::{
     AttachmentModelsConfig, BackgroundModelEntry, BackgroundModelsConfig, GoalsConfig,
     HarnessProfile, LoadedConfig, McpConfig, McpServerConfig, ModelOption, ModelTaskSize,
     NaviConfig, PermissionMode, PluginConfig, ProviderConfig, ProviderKind, ProviderModelConfig,
     ProviderRequestOptions, SecurityConfig, ToolCallingMode, ToolPromptManifest, VoiceConfig,
-    WasmPluginConfig,
-    available_model_options, billable_input_split, canonical_provider_id,
+    WasmPluginConfig, available_model_options, billable_input_split, canonical_provider_id,
     default_request_options_for, effective_context_window, effective_tool_calling_mode,
     estimate_token_cost_usd, estimate_token_cost_usd_with_cache, is_free_model_name,
     model_cache_list_pricing, model_can_run_publicly, model_list_pricing,
-    model_supports_attachment, provider_catalog, provider_credit_unit,
-    provider_request_model_name, provider_uses_credits, resolve_provider_config,
-    save_global_config, save_project_config, set_registry_store, usd_to_provider_credits,
+    model_supports_attachment, provider_catalog, provider_credit_unit, provider_request_model_name,
+    provider_uses_credits, resolve_provider_config, save_global_config, save_project_config,
+    set_registry_store, usd_to_provider_credits,
 };
 pub use context::{ContextPacket, ContextSource};
 pub use credentials::{
@@ -105,10 +98,10 @@ pub use harness::{
 pub use logging::{LoggingGuard, LoggingRuntimeConfig, init_logging, log_dir, log_path};
 pub use mcp_firewall::{McpFirewallDecision, McpFirewallPolicy, McpProvenance, McpTaint};
 pub use model::{
-    AttachmentKind, ContentPart, ModelMessage, ModelProvider, ModelRequest, ModelResponse,
-    ModelRole, ModelStream, ModelStreamEvent, ThinkingConfig, ThinkingRequest,
-    DEFAULT_REASONING_LEVELS, parse_reasoning_level, resolve_effort_label,
-    resolve_model_thinking_level, thinking_levels_for_model,
+    AttachmentKind, ContentPart, DEFAULT_REASONING_LEVELS, ModelMessage, ModelProvider,
+    ModelRequest, ModelResponse, ModelRole, ModelStream, ModelStreamEvent, ThinkingConfig,
+    ThinkingRequest, parse_reasoning_level, resolve_effort_label, resolve_model_thinking_level,
+    thinking_levels_for_model,
 };
 pub use model_router::{ModelRoute, ModelRouteRole, ModelRouter, ModelScorecard};
 pub use operational_memory::{MemoryScope, OperationalMemoryEntry, OperationalMemoryStore};
@@ -119,6 +112,10 @@ pub use plan_store::{
 };
 pub use prompt::{PromptCache, RenderedPrompt, SystemPromptInput, SystemPromptRenderer};
 pub use provider_id::ProviderId;
+pub use recap::{
+    RECAP_LONG_TAIL_CHARS, RECAP_MAX_DISPLAY_CHARS, llm_recap, local_recap, local_recap_with_tools,
+    should_suppress_recap,
+};
 pub use replay_gate::{
     ReplayGateConfig, ReplayGateReport, SuperiorityGateReport, evaluate_replay_gate,
     evaluate_superiority_gate, unsafe_guarded_auto_approval_count,
@@ -143,8 +140,7 @@ pub use runtime_components::{
 pub use security::{SecurityDecision, SecurityPolicy};
 pub use session::{
     SessionId, SessionRuntime, SessionSnapshot, SessionStore, SessionUsageSnapshot,
-    clean_session_title,
-    session_title_from_events,
+    clean_session_title, session_title_from_events,
 };
 pub use setup::{SETUP_INTERVIEW_COMPLETE_MARKER, SETUP_INTERVIEW_PROMPT};
 pub use skill_mining::{

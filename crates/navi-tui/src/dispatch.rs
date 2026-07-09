@@ -427,8 +427,10 @@ fn handle_agent_event(app: &mut TuiApp, event: AgentEvent) {
             // Refresh context meter every turn .
             app.compact_state
                 .update_usage_full(input_tokens, output_tokens);
-            app.usage_state.session_input_tokens =
-                app.usage_state.session_input_tokens.saturating_add(input_tokens);
+            app.usage_state.session_input_tokens = app
+                .usage_state
+                .session_input_tokens
+                .saturating_add(input_tokens);
             app.usage_state.session_output_tokens = app
                 .usage_state
                 .session_output_tokens
@@ -615,20 +617,14 @@ fn handle_agent_event(app: &mut TuiApp, event: AgentEvent) {
             tracing::warn!("auto-dream failed: {}", reason);
         }
         AgentEvent::PlanProposed { title, steps } => {
-            crate::plan_review::open_plan_review_from_proposed(
-                app,
-                title.clone(),
-                steps.clone(),
-            );
+            crate::plan_review::open_plan_review_from_proposed(app, title.clone(), steps.clone());
         }
         AgentEvent::PlanReviewRequested(request) => {
             crate::plan_review::open_plan_review_from_request(app, request.clone());
-            app.events
-                .push(AgentEvent::PlanReviewRequested(request));
+            app.events.push(AgentEvent::PlanReviewRequested(request));
         }
         AgentEvent::PlanReviewResolved(response) => {
-            app.events
-                .push(AgentEvent::PlanReviewResolved(response));
+            app.events.push(AgentEvent::PlanReviewResolved(response));
         }
         AgentEvent::SudoPasswordRequested(request) => {
             app.sudo_password_prompt = Some(crate::state::SudoPasswordUiState {
@@ -638,8 +634,7 @@ fn handle_agent_event(app: &mut TuiApp, event: AgentEvent) {
                 cursor: 0,
             });
             crate::keybindings::replace_modal(app, ModalKind::SudoPassword);
-            app.events
-                .push(AgentEvent::SudoPasswordRequested(request));
+            app.events.push(AgentEvent::SudoPasswordRequested(request));
         }
         AgentEvent::AgentModeChanged { mode } => {
             app.agent_mode = mode;
@@ -749,8 +744,7 @@ fn maybe_emit_session_recap(app: &mut TuiApp, assistant_text: &str) {
         .collect();
     tool_names.reverse();
     let tool_calls = tool_names.len();
-    let suppressed =
-        navi_core::should_suppress_recap(assistant_text.chars().count(), tool_calls);
+    let suppressed = navi_core::should_suppress_recap(assistant_text.chars().count(), tool_calls);
 
     let local_summary =
         navi_core::local_recap_with_tools(&user_prompt, assistant_text, &tool_names);
@@ -851,7 +845,8 @@ fn estimate_turn_cost_usd(
     let model_name = app.loaded_config.config.model.name.as_str();
     let (in_rate, out_rate) =
         navi_sdk::model_list_pricing(&app.loaded_config.config, provider_id, model_name)?;
-    let (cache_in, _cache_out) = navi_sdk::model_cache_list_pricing(provider_id).unwrap_or((0.0, 0.0));
+    let (cache_in, _cache_out) =
+        navi_sdk::model_cache_list_pricing(provider_id).unwrap_or((0.0, 0.0));
     Some(navi_sdk::estimate_token_cost_usd_with_cache(
         input_tokens,
         output_tokens,
@@ -1115,10 +1110,7 @@ mod tests {
         let msg = app.messages.last().unwrap();
         assert_eq!(msg.usage_label.as_deref(), Some("3k in · 1k out"));
         // 3000→1500: turn label keeps one decimal under 10k (1.5k).
-        assert_eq!(
-            app.usage_state.last_turn_label.as_deref(),
-            Some("3k→1.5k")
-        );
+        assert_eq!(app.usage_state.last_turn_label.as_deref(), Some("3k→1.5k"));
     }
 
     #[test]
@@ -1157,27 +1149,30 @@ mod tests {
                 });
             }
         } else {
-            app.loaded_config.config.providers.push(navi_sdk::ProviderConfig {
-                id: provider_id,
-                models: vec![navi_sdk::ProviderModelConfig {
-                    name: model_name,
-                    task_size: None,
-                    context_window_tokens: None,
-                    max_output_tokens: None,
-                    recommended_temperature: None,
-                    supports_thinking: None,
-                    supports_images: None,
-                    supports_audio: None,
-                    supports_video: None,
-                    supports_documents: None,
-                    tool_prompt_manifest: None,
-                    pricing_input_per_1m: Some(1.0),
-                    pricing_output_per_1m: Some(2.0),
-                    reasoning_levels: Vec::new(),
-                    default_reasoning_effort: None,
-                }],
-                ..Default::default()
-            });
+            app.loaded_config
+                .config
+                .providers
+                .push(navi_sdk::ProviderConfig {
+                    id: provider_id,
+                    models: vec![navi_sdk::ProviderModelConfig {
+                        name: model_name,
+                        task_size: None,
+                        context_window_tokens: None,
+                        max_output_tokens: None,
+                        recommended_temperature: None,
+                        supports_thinking: None,
+                        supports_images: None,
+                        supports_audio: None,
+                        supports_video: None,
+                        supports_documents: None,
+                        tool_prompt_manifest: None,
+                        pricing_input_per_1m: Some(1.0),
+                        pricing_output_per_1m: Some(2.0),
+                        reasoning_levels: Vec::new(),
+                        default_reasoning_effort: None,
+                    }],
+                    ..Default::default()
+                });
         }
 
         handle_async_event(
@@ -1203,7 +1198,8 @@ mod tests {
         app.loaded_config.config.model.provider = "charm-hyper".into();
         app.loaded_config.config.model.name = "glm-5.2".into();
         // Ensure rates resolve (embedded snapshot fallback).
-        let rates = navi_sdk::model_list_pricing(&app.loaded_config.config, "charm-hyper", "glm-5.2");
+        let rates =
+            navi_sdk::model_list_pricing(&app.loaded_config.config, "charm-hyper", "glm-5.2");
         assert!(
             rates.is_some(),
             "glm-5.2 should have list pricing in the registry snapshot"
@@ -1588,8 +1584,8 @@ mod tests {
             AsyncEvent::Agent(AgentEvent::UserTaskSubmitted {
                 text: "do something".to_string(),
                 content_parts: vec![],
-            submitted_at: None,
-        }),
+                submitted_at: None,
+            }),
         );
 
         assert_eq!(app.messages.len(), messages_before);

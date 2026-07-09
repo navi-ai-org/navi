@@ -372,9 +372,7 @@ pub fn model_supports_attachment(
     let candidates = model_attachment_name_candidates(model_name);
     let provider_id = canonical_provider_id(provider_id);
 
-    if let Some(flag) =
-        lookup_attachment_support(&catalog, Some(provider_id), &candidates, kind)
-    {
+    if let Some(flag) = lookup_attachment_support(&catalog, Some(provider_id), &candidates, kind) {
         return flag;
     }
 
@@ -386,9 +384,7 @@ pub fn model_supports_attachment(
     // Family stem: `grok-4.5` / `x-ai/grok-4.5` inherit from catalogued `grok-4`.
     let family = model_attachment_family_candidates(model_name);
     if !family.is_empty() {
-        if let Some(flag) =
-            lookup_attachment_support(&catalog, Some(provider_id), &family, kind)
-        {
+        if let Some(flag) = lookup_attachment_support(&catalog, Some(provider_id), &family, kind) {
             return flag;
         }
         if let Some(flag) = lookup_attachment_support(&catalog, None, &family, kind) {
@@ -674,7 +670,8 @@ impl NaviConfig {
                     reasoning_levels: donor
                         .map(|d| d.reasoning_levels.clone())
                         .unwrap_or_default(),
-                    default_reasoning_effort: donor.and_then(|d| d.default_reasoning_effort.clone()),
+                    default_reasoning_effort: donor
+                        .and_then(|d| d.default_reasoning_effort.clone()),
                 }
             };
             // Always fill remaining None modality flags from provider defaults
@@ -888,19 +885,13 @@ mod tests {
     #[test]
     fn billable_input_split_inclusive_openai_style() {
         // prompt_tokens includes cached_tokens
-        assert_eq!(
-            billable_input_split(22_000, 21_500, 0),
-            (500, 21_500, 0)
-        );
+        assert_eq!(billable_input_split(22_000, 21_500, 0), (500, 21_500, 0));
     }
 
     #[test]
     fn billable_input_split_exclusive_anthropic_style() {
         // input is non-cached only; cache fields separate
-        assert_eq!(
-            billable_input_split(500, 21_500, 100),
-            (500, 21_500, 100)
-        );
+        assert_eq!(billable_input_split(500, 21_500, 100), (500, 21_500, 100));
     }
 
     #[test]
@@ -911,14 +902,17 @@ mod tests {
             100,
             21_780, // cache read
             0,
-            1.4,  // input / 1M
-            4.4,  // output / 1M
+            1.4,       // input / 1M
+            4.4,       // output / 1M
             Some(0.0), // Hyper cached input free
             Some(1.4),
         );
         // non-cached 220 * 1.4/1M + output 100 * 4.4/1M
         let expected = (220.0 / 1_000_000.0) * 1.4 + (100.0 / 1_000_000.0) * 4.4;
-        assert!((cost - expected).abs() < 1e-12, "cost={cost} expected={expected}");
+        assert!(
+            (cost - expected).abs() < 1e-12,
+            "cost={cost} expected={expected}"
+        );
         // Sanity: full-price would be ~0.031; cache-aware is ~0.0007
         assert!(cost < 0.002);
         assert_eq!(model_cache_list_pricing("charm-hyper"), Some((0.0, 0.0)));

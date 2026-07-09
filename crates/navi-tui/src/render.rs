@@ -274,7 +274,9 @@ mod tests {
             "bottom border: {table:?}"
         );
         assert!(
-            table.iter().any(|l| l.contains("Crate") && l.contains("Purpose")),
+            table
+                .iter()
+                .any(|l| l.contains("Crate") && l.contains("Purpose")),
             "header row: {table:?}"
         );
         assert!(

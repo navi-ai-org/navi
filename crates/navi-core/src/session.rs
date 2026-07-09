@@ -720,7 +720,7 @@ mod tests {
             events: Vec::new(),
             memory: None,
             goal: None,
-        usage: None,
+            usage: None,
         };
 
         let path = store.save(&snapshot).expect("save session");
@@ -746,7 +746,7 @@ mod tests {
             events: Vec::new(),
             memory: None,
             goal: None,
-        usage: None,
+            usage: None,
         };
 
         let path = store.save(&snapshot).expect("save session");
@@ -779,11 +779,11 @@ mod tests {
             events: vec![AgentEvent::UserTaskSubmitted {
                 text: "OPENAI_API_KEY=sk-proj-1234567890abcdef".to_string(),
                 content_parts: vec![],
-            submitted_at: None,
-        }],
+                submitted_at: None,
+            }],
             memory: None,
             goal: None,
-        usage: None,
+            usage: None,
         };
 
         let path = store.save(&snapshot).expect("save session");
@@ -814,7 +814,7 @@ mod tests {
                 }],
             }),
             goal: None,
-        usage: None,
+            usage: None,
         };
 
         let path = store.save(&snapshot).expect("save session");
@@ -838,11 +838,11 @@ mod tests {
             events: vec![AgentEvent::UserTaskSubmitted {
                 text: "OPENAI_API_KEY=sk-proj-1234567890abcdef".to_string(),
                 content_parts: vec![],
-            submitted_at: None,
-        }],
+                submitted_at: None,
+            }],
             memory: None,
             goal: None,
-        usage: None,
+            usage: None,
         };
 
         let path = store.save(&snapshot).expect("save session");
@@ -1034,7 +1034,7 @@ mod tests {
             events: Vec::new(),
             memory: None,
             goal: None,
-        usage: None,
+            usage: None,
         }
     }
 
@@ -1120,8 +1120,8 @@ mod tests {
                 AgentEvent::UserTaskSubmitted {
                     text: "hello".to_string(),
                     content_parts: vec![],
-            submitted_at: None,
-        },
+                    submitted_at: None,
+                },
                 AgentEvent::ModelOutput {
                     text: "response".to_string(),
                     thinking: Some("reasoning".to_string()),
@@ -1129,7 +1129,7 @@ mod tests {
             ],
             memory: None,
             goal: None,
-        usage: None,
+            usage: None,
         };
         let json = serde_json::to_string(&snapshot).expect("serialize");
         let loaded: SessionSnapshot = serde_json::from_str(&json).expect("deserialize");
@@ -1143,8 +1143,8 @@ mod tests {
             AgentEvent::UserTaskSubmitted {
                 text: "do something".to_string(),
                 content_parts: vec![],
-            submitted_at: None,
-        },
+                submitted_at: None,
+            },
             AgentEvent::ModelOutput {
                 text: "# My Analysis\n\nSome content here".to_string(),
                 thinking: None,
@@ -1198,8 +1198,8 @@ mod tests {
                 AgentEvent::UserTaskSubmitted {
                     text: "task".to_string(),
                     content_parts: vec![],
-            submitted_at: None,
-        },
+                    submitted_at: None,
+                },
                 AgentEvent::ToolRequested(ToolInvocation {
                     id: "c1".to_string(),
                     tool_name: "read_file".to_string(),
@@ -1213,7 +1213,7 @@ mod tests {
             ],
             memory: None,
             goal: None,
-        usage: None,
+            usage: None,
         };
         store.save(&snapshot).expect("save");
         let loaded = store.load("events-session").expect("load");

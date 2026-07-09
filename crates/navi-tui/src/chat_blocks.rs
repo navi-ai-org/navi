@@ -91,11 +91,7 @@ pub(crate) fn select_chat_block(app: &mut TuiApp, source: ChatLineSource) {
     }
     app.selected_chat_source = Some(source);
     // Keep text drag selection cleared when jumping blocks.
-    if app
-        .selection
-        .as_ref()
-        .is_some_and(|s| !s.active)
-    {
+    if app.selection.as_ref().is_some_and(|s| !s.active) {
         app.selection = None;
     }
     ensure_selected_block_visible(app);

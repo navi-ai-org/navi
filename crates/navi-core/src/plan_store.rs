@@ -241,9 +241,7 @@ impl PlanStore {
             FROM plans WHERE id = ?1
             "#,
         )?;
-        let plan = stmt
-            .query_row(params![plan_id], row_to_plan)
-            .optional()?;
+        let plan = stmt.query_row(params![plan_id], row_to_plan).optional()?;
         Ok(plan)
     }
 
@@ -386,10 +384,7 @@ pub fn format_plan_feedback(
 ) -> String {
     let view = plan_view_lines(plan);
     let mut out = String::new();
-    out.push_str(&format!(
-        "## Plan review feedback (plan_id={})\n",
-        plan.id
-    ));
+    out.push_str(&format!("## Plan review feedback (plan_id={})\n", plan.id));
     out.push_str(&format!("### Decision: {decision}\n"));
     if !comments.is_empty() {
         out.push_str("### Line comments\n");

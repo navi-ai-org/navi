@@ -84,7 +84,9 @@ impl Tool for SearchTool {
                 SearchToolMode::FsBrowser => {
                     "Browse the project filesystem. Actions: list (recursive files), tree, find (filename pattern), stat. Paths in results are project-relative."
                 }
-                SearchToolMode::ListDir => "Recursively list project files under a path (skips build dirs). Returns project-relative paths. Use fs_browser action=tree for directory structure.",
+                SearchToolMode::ListDir => {
+                    "Recursively list project files under a path (skips build dirs). Returns project-relative paths. Use fs_browser action=tree for directory structure."
+                }
                 SearchToolMode::Glob => {
                     "Find project files whose path or filename matches a glob-like pattern."
                 }

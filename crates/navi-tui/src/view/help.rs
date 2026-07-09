@@ -10,8 +10,8 @@ use ratatui::style::{Modifier, Style};
 use ratatui::widgets::{Paragraph, Wrap};
 
 use crate::TuiApp;
-use crate::render::{clear_modal_area, modal_block};
 use crate::render::text::display_width;
+use crate::render::{clear_modal_area, modal_block};
 use crate::theme::*;
 use crate::ui::interaction::{HitAction, ScrollTarget, line_rect};
 use crate::ui::list::render_scrollbar;
@@ -234,10 +234,7 @@ pub(crate) fn ensure_help_visible(app: &mut TuiApp) {
     if app.selected_help < app.help_scroll {
         app.help_scroll = app.selected_help;
     } else if app.selected_help >= app.help_scroll.saturating_add(visible) {
-        app.help_scroll = app
-            .selected_help
-            .saturating_add(1)
-            .saturating_sub(visible);
+        app.help_scroll = app.selected_help.saturating_add(1).saturating_sub(visible);
     }
     let max_scroll = help_entry_count().saturating_sub(visible);
     if app.help_scroll > max_scroll {
@@ -335,7 +332,10 @@ pub(crate) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
                 ])
             }
         };
-        frame.render_widget(Paragraph::new(line).style(Style::default().bg(bg)), row_area);
+        frame.render_widget(
+            Paragraph::new(line).style(Style::default().bg(bg)),
+            row_area,
+        );
         if matches!(help_row, HelpRow::Entry { .. }) {
             app.register_hit(
                 row_area,

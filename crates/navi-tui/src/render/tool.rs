@@ -86,7 +86,11 @@ pub(crate) fn tool_running_text(invocation: &ToolInvocation) -> String {
                 .or_else(|| invocation.input.get("path"))
                 .and_then(|v| v.as_str())
                 .unwrap_or("…");
-            format!("{} {}", humanize_tool_name(&invocation.tool_name), one_line(q))
+            format!(
+                "{} {}",
+                humanize_tool_name(&invocation.tool_name),
+                one_line(q)
+            )
         }
         "subagent" => {
             let desc = invocation
@@ -2591,7 +2595,10 @@ mod tests {
             !content.contains("Stdout:"),
             "unexpected Stdout label: {content}"
         );
-        assert!(!content.contains("```"), "should not fence shell output: {content}");
+        assert!(
+            !content.contains("```"),
+            "should not fence shell output: {content}"
+        );
     }
 
     #[test]

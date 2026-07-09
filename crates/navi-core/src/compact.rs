@@ -768,10 +768,7 @@ mod tests {
     #[test]
     fn context_tokens_for_meter_sums_exclusive_cache() {
         // Charm-style undercount: tiny non-cached prompt + large cache hit.
-        assert_eq!(
-            context_tokens_for_meter(Some(430), 0, 63_570),
-            Some(64_000)
-        );
+        assert_eq!(context_tokens_for_meter(Some(430), 0, 63_570), Some(64_000));
     }
 
     #[test]

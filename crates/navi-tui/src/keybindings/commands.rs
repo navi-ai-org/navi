@@ -235,8 +235,8 @@ fn session_transcript(app: &TuiApp) -> String {
             AgentEvent::UserTaskSubmitted {
                 text,
                 content_parts: _,
-            submitted_at: _,
-        } => {
+                submitted_at: _,
+            } => {
                 lines.push(format!("User:\n{}", text.trim_end()));
             }
             AgentEvent::ModelOutput { text, thinking: _ } => {

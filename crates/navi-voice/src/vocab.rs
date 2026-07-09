@@ -14,8 +14,8 @@ pub struct Vocab {
 
 impl Vocab {
     pub fn load(path: &Path) -> Result<Self> {
-        let text = fs::read_to_string(path)
-            .with_context(|| format!("read vocab {}", path.display()))?;
+        let text =
+            fs::read_to_string(path).with_context(|| format!("read vocab {}", path.display()))?;
         let pieces: Vec<String> = text.lines().map(|l| l.to_string()).collect();
         if pieces.is_empty() {
             bail!("empty vocab at {}", path.display());

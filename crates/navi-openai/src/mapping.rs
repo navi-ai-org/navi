@@ -295,9 +295,7 @@ pub(crate) fn thinking_request_for_api_with_levels(
     let mut request = thinking.to_thinking_request();
 
     // Prefer registry/provider effort label (may be xhigh, none, minimal, …).
-    if let Some(label) =
-        navi_core::resolve_effort_label(thinking, reasoning_levels, provider_id)
-    {
+    if let Some(label) = navi_core::resolve_effort_label(thinking, reasoning_levels, provider_id) {
         request.effort = Some(label);
     } else if matches!(thinking, navi_core::ThinkingConfig::Off) {
         request.effort = None;
@@ -347,7 +345,7 @@ pub(crate) fn usage_from_value_with_behavior(
         b.parse_usage(usage)
     } else {
         // Fallback: try all common field name variants (lenient numbers).
-        use crate::providers::behavior::{json_u64, NormalizedUsage};
+        use crate::providers::behavior::{NormalizedUsage, json_u64};
         let mut input_tokens = json_u64(
             usage
                 .get("input_tokens")

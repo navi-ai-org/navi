@@ -2051,8 +2051,8 @@ mod tests {
             AgentEvent::UserTaskSubmitted {
                 text: "OPENAI_API_KEY=sk-proj-1234567890abcdef".to_string(),
                 content_parts: vec![],
-            submitted_at: None,
-        },
+                submitted_at: None,
+            },
             AgentEvent::ModelOutput {
                 text: "ok".to_string(),
                 thinking: Some("bearer ghp_1234567890abcdef1234".to_string()),

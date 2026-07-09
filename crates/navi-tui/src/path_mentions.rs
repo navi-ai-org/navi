@@ -159,9 +159,10 @@ fn sync_filter_from_input(app: &mut TuiApp) {
 }
 
 fn apply_path_selection(app: &mut TuiApp, choice: &PathCandidate) {
-    let Some(start) = app.path_mention_start.or_else(|| {
-        active_mention_query(&app.input, app.input_cursor).map(|(at, _)| at)
-    }) else {
+    let Some(start) = app
+        .path_mention_start
+        .or_else(|| active_mention_query(&app.input, app.input_cursor).map(|(at, _)| at))
+    else {
         crate::keybindings::close_active_modal(app);
         return;
     };
@@ -224,7 +225,15 @@ fn list_candidates(project_dir: &Path, filter: &str, limit: usize) -> Vec<PathCa
 
     // Also fuzzy-walk from project root when filter has no slash or few hits.
     if out.len() < 20 && !filter.is_empty() && !filter.contains('/') {
-        walk_fuzzy(project_dir, project_dir, "", &filter_lower, &mut out, limit, 0);
+        walk_fuzzy(
+            project_dir,
+            project_dir,
+            "",
+            &filter_lower,
+            &mut out,
+            limit,
+            0,
+        );
     }
 
     // Prefer shorter paths, dirs first for same depth, then name match.
@@ -404,7 +413,9 @@ pub(crate) fn hydrate_path_mentions(project_dir: &Path, text: &str) -> String {
                     out.push_str(&format!("\n<file path=\"{clean}\">\n{content}\n</file>\n"));
                 }
                 Err(err) => {
-                    out.push_str(&format!("\n<file path=\"{clean}\">\n(error: {err})\n</file>\n"));
+                    out.push_str(&format!(
+                        "\n<file path=\"{clean}\">\n(error: {err})\n</file>\n"
+                    ));
                 }
             }
         } else if path.is_dir() {
@@ -434,9 +445,9 @@ fn extract_mentions(text: &str) -> Vec<String> {
         if !token.is_empty()
             && !token.starts_with('/')
             && !token.contains("..")
-            && token.chars().all(|c| {
-                c.is_alphanumeric() || matches!(c, '/' | '.' | '_' | '-' | '+' | '~')
-            })
+            && token
+                .chars()
+                .all(|c| c.is_alphanumeric() || matches!(c, '/' | '.' | '_' | '-' | '+' | '~'))
         {
             let full = format!("@{token}");
             if !found.iter().any(|f: &String| f == &full) {
@@ -477,11 +488,7 @@ fn list_dir_brief(path: &Path, limit: usize) -> String {
     for entry in entries.into_iter().take(limit) {
         let name = entry.file_name().to_string_lossy().into_owned();
         let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
-        lines.push(if is_dir {
-            format!("{name}/")
-        } else {
-            name
-        });
+        lines.push(if is_dir { format!("{name}/") } else { name });
     }
     if lines.is_empty() {
         "(empty)".into()

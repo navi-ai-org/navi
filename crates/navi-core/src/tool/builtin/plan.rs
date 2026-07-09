@@ -5,9 +5,7 @@ use std::hash::{Hash, Hasher};
 use std::path::Path;
 
 use super::helpers;
-use crate::plan_store::{
-    MAX_PLANS, MAX_STEPS, Plan, PlanStatus, PlanStep, PlanStore, now_ms,
-};
+use crate::plan_store::{MAX_PLANS, MAX_STEPS, Plan, PlanStatus, PlanStep, PlanStore, now_ms};
 use crate::security::SecurityPolicy;
 use crate::tool::{Tool, ToolDefinition, ToolInvocation, ToolKind, ToolResult};
 
@@ -22,12 +20,10 @@ pub(crate) struct PlanTool {
 
 impl PlanTool {
     pub(crate) fn new(policy: SecurityPolicy) -> Self {
-        let store = PlanStore::open_default(policy.data_dir())
-            .unwrap_or_else(|_| {
-                // Fallback: in-memory is not available; open a temp path under data_dir.
-                PlanStore::open(&policy.data_dir().join("plans.sqlite"))
-                    .expect("open plan store")
-            });
+        let store = PlanStore::open_default(policy.data_dir()).unwrap_or_else(|_| {
+            // Fallback: in-memory is not available; open a temp path under data_dir.
+            PlanStore::open(&policy.data_dir().join("plans.sqlite")).expect("open plan store")
+        });
         // Best-effort one-time migration of legacy JSON plans.
         let _ = store.migrate_json_dir(&policy.data_dir().join("plans"));
         Self { policy, store }
@@ -419,14 +415,12 @@ fn action_list(
 
 fn action_active(store: &PlanStore, project_id: &str) -> Result<ToolResult> {
     // Prefer active; fall back to proposed (awaiting user review).
-    let plan = store
-        .active(project_id)?
-        .or_else(|| {
-            store
-                .list(project_id, Some("proposed"), 1)
-                .ok()
-                .and_then(|mut v| v.pop())
-        });
+    let plan = store.active(project_id)?.or_else(|| {
+        store
+            .list(project_id, Some("proposed"), 1)
+            .ok()
+            .and_then(|mut v| v.pop())
+    });
     match plan {
         Some(plan) => Ok(helpers::ok("active".to_string(), plan_to_json(&plan))),
         None => Ok(helpers::ok(
@@ -508,8 +502,7 @@ fn markdown_title(body: &str) -> Option<String> {
 /// - CreatePlan/TodoWrite: todos:[{id,content}]
 /// - CreatePlan markdown: plan/body/body_markdown/content
 fn parse_create_payload(input: &Value) -> Result<ParsedCreate> {
-    let mut description =
-        helpers::optional_string(input, "description").unwrap_or_default();
+    let mut description = helpers::optional_string(input, "description").unwrap_or_default();
     if description.trim().is_empty() {
         if let Some(overview) = helpers::optional_string(input, "overview") {
             description = overview;
@@ -862,7 +855,11 @@ mod tests {
             }),
         );
         let result = tool.invoke(inv).await.unwrap();
-        assert!(result.ok, "title-only create should soft-recover: {:?}", result.output);
+        assert!(
+            result.ok,
+            "title-only create should soft-recover: {:?}",
+            result.output
+        );
         assert_eq!(result.output["steps_count"], 1);
         assert!(
             result.output["steps"][0]["description"]
@@ -973,8 +970,7 @@ mod tests {
         assert_eq!(result.output["completed_steps"], 1);
         // Created plans start as proposed until TUI review.
         assert!(
-            result.output["plan_status"] == "proposed"
-                || result.output["plan_status"] == "active"
+            result.output["plan_status"] == "proposed" || result.output["plan_status"] == "active"
         );
 
         // Complete step 1 → plan auto-completes

@@ -27,8 +27,7 @@ const OPENAI_CALLBACK_PATH: &str = "/auth/callback";
 const XAI_DEFAULT_ISSUER: &str = "https://auth.x.ai";
 const XAI_DEFAULT_CLIENT_ID: &str = "b1a00492-073a-47ea-816f-4c329264a828";
 const XAI_CALLBACK_PATH: &str = "/callback";
-const XAI_DEFAULT_SCOPES: &str =
-    "openid profile email offline_access grok-cli:access api:access conversations:read conversations:write";
+const XAI_DEFAULT_SCOPES: &str = "openid profile email offline_access grok-cli:access api:access conversations:read conversations:write";
 /// Base URL for Grok CLI session tokens (OAuth), not Platform API keys.
 pub const XAI_GROK_CLI_BASE_URL: &str = "https://cli-chat-proxy.grok.com/v1";
 /// Early refresh buffer: refresh when fewer than this many seconds remain.
@@ -255,7 +254,9 @@ pub async fn charm_hyper_credits_report(
     if !response.status().is_success() {
         let status = response.status();
         let body = response.text().await.unwrap_or_default();
-        return Err(format!("Charm Hyper credits request failed: {status}: {body}"));
+        return Err(format!(
+            "Charm Hyper credits request failed: {status}: {body}"
+        ));
     }
     let payload: serde_json::Value = response.json().await.map_err(|err| err.to_string())?;
     let balance = payload
@@ -413,7 +414,11 @@ where
     let client_id = openai_client_id();
     let auth_url = openai_authorize_url(&issuer, &client_id, &redirect_uri, &pkce, &state);
 
-    on_started(DeviceOAuthStarted { verification_uri: auth_url, user_code: String::new(), paste_slot: None });
+    on_started(DeviceOAuthStarted {
+        verification_uri: auth_url,
+        user_code: String::new(),
+        paste_slot: None,
+    });
 
     let code = tokio::task::spawn_blocking(move || {
         wait_for_openai_callback(listener, &state, Duration::from_secs(300))
@@ -578,7 +583,8 @@ where
             return Err(format!("xAI token exchange failed: {status}: {body}"));
         }
 
-        let tokens: XaiTokenResponse = token_response.json().await.map_err(|err| err.to_string())?;
+        let tokens: XaiTokenResponse =
+            token_response.json().await.map_err(|err| err.to_string())?;
         if tokens.access_token.is_empty() {
             continue;
         }
@@ -785,7 +791,9 @@ fn xai_auth_listener() -> std::result::Result<(u16, TcpListener), String> {
                 .map_err(|err| err.to_string())?;
             Ok((port, listener))
         }
-        Err(err) => Err(format!("no available local callback port for xAI OAuth: {err}")),
+        Err(err) => Err(format!(
+            "no available local callback port for xAI OAuth: {err}"
+        )),
     }
 }
 
@@ -809,10 +817,7 @@ fn xai_authorize_url(
     .map(|(key, value)| format!("{key}={}", url_encode_component(value)))
     .collect::<Vec<_>>()
     .join("&");
-    format!(
-        "{}/oauth2/authorize?{query}",
-        issuer.trim_end_matches('/')
-    )
+    format!("{}/oauth2/authorize?{query}", issuer.trim_end_matches('/'))
 }
 
 fn wait_for_xai_callback(
@@ -1064,7 +1069,11 @@ where
     let (port, listener) = commandcode_auth_listener()?;
     let state = generate_commandcode_state();
     let auth_url = commandcode_auth_url(port, &state);
-    on_started(DeviceOAuthStarted { verification_uri: auth_url, user_code: String::new(), paste_slot: None });
+    on_started(DeviceOAuthStarted {
+        verification_uri: auth_url,
+        user_code: String::new(),
+        paste_slot: None,
+    });
 
     let callback = tokio::task::spawn_blocking(move || {
         wait_for_commandcode_callback(listener, &state, Duration::from_secs(120))
@@ -1704,7 +1713,11 @@ mod tests {
 
     #[test]
     fn device_oauth_started_fields_are_accessible() {
-        let started = DeviceOAuthStarted { verification_uri: "https://github.com/login/device".to_string(), user_code: "ABCD-1234".to_string(), paste_slot: None };
+        let started = DeviceOAuthStarted {
+            verification_uri: "https://github.com/login/device".to_string(),
+            user_code: "ABCD-1234".to_string(),
+            paste_slot: None,
+        };
 
         assert_eq!(started.verification_uri, "https://github.com/login/device");
         assert_eq!(started.user_code, "ABCD-1234");
@@ -1714,7 +1727,11 @@ mod tests {
     fn device_oauth_started_can_be_cloned_via_field_access() {
         // DeviceOAuthStarted does not derive Clone, but its fields are public
         // Strings, so consumers can copy field values as needed.
-        let started = DeviceOAuthStarted { verification_uri: "https://example.com/verify".to_string(), user_code: "WXYZ-9999".to_string(), paste_slot: None };
+        let started = DeviceOAuthStarted {
+            verification_uri: "https://example.com/verify".to_string(),
+            user_code: "WXYZ-9999".to_string(),
+            paste_slot: None,
+        };
 
         let uri_copy = started.verification_uri.clone();
         let code_copy = started.user_code.clone();
@@ -1725,7 +1742,11 @@ mod tests {
 
     #[test]
     fn device_oauth_started_debug_output_contains_fields() {
-        let started = DeviceOAuthStarted { verification_uri: "https://github.com/login/device".to_string(), user_code: "TEST-CODE".to_string(), paste_slot: None };
+        let started = DeviceOAuthStarted {
+            verification_uri: "https://github.com/login/device".to_string(),
+            user_code: "TEST-CODE".to_string(),
+            paste_slot: None,
+        };
 
         let debug = format!("{:?}", started);
         assert!(
@@ -1741,7 +1762,11 @@ mod tests {
     #[test]
     fn device_oauth_started_accepts_empty_strings() {
         // Edge case: empty fields should not cause construction to fail.
-        let started = DeviceOAuthStarted { verification_uri: String::new(), user_code: String::new(), paste_slot: None };
+        let started = DeviceOAuthStarted {
+            verification_uri: String::new(),
+            user_code: String::new(),
+            paste_slot: None,
+        };
 
         assert!(started.verification_uri.is_empty());
         assert!(started.user_code.is_empty());
