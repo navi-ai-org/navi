@@ -61,8 +61,9 @@ jobs:
             archive: navi-linux-arm64
             npm_platform: linux-arm64
 
+          # Cross-compile Intel macOS from Apple Silicon runners (macos-13 is scarce).
           - target: x86_64-apple-darwin
-            os: macos-13
+            os: macos-latest
             archive: navi-darwin-x64
             npm_platform: darwin-x64
 
