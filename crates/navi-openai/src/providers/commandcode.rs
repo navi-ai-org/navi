@@ -330,12 +330,13 @@ fn commandcode_messages(messages: &[navi_core::ModelMessage]) -> (String, Vec<Va
                             ContentPart::Text { text } => {
                                 json!({ "type": "text", "text": text })
                             }
+                            // Command Code `/alpha/generate` validates Anthropic-style blocks
+                            // (and the CLI's compact `{ type: "image", image: data-url }` form).
+                            // OpenAI `image_url` parts are rejected with BAD_REQUEST.
                             ContentPart::Image { media_type, data } => {
                                 json!({
-                                    "type": "image_url",
-                                    "image_url": {
-                                        "url": format!("data:{media_type};base64,{data}")
-                                    }
+                                    "type": "image",
+                                    "image": format!("data:{media_type};base64,{data}"),
                                 })
                             }
                             ContentPart::Audio { media_type, name, .. } => json!({
@@ -346,10 +347,33 @@ fn commandcode_messages(messages: &[navi_core::ModelMessage]) -> (String, Vec<Va
                                 "type": "text",
                                 "text": attachment_placeholder("video", media_type, name.as_deref())
                             }),
-                            ContentPart::Document { media_type, name, .. } => json!({
-                                "type": "text",
-                                "text": attachment_placeholder("document", media_type, name.as_deref())
-                            }),
+                            ContentPart::Document {
+                                media_type,
+                                data,
+                                name,
+                            } => {
+                                if media_type == "application/pdf"
+                                    || media_type.starts_with("image/")
+                                {
+                                    json!({
+                                        "type": "document",
+                                        "source": {
+                                            "type": "base64",
+                                            "media_type": media_type,
+                                            "data": data,
+                                        }
+                                    })
+                                } else {
+                                    json!({
+                                        "type": "text",
+                                        "text": attachment_placeholder(
+                                            "document",
+                                            media_type,
+                                            name.as_deref()
+                                        )
+                                    })
+                                }
+                            },
                         })
                         .collect();
                     converted.push(json!({ "role": "user", "content": content }));
@@ -1316,11 +1340,40 @@ mod tests {
 
         assert_eq!(content[0]["type"], "text");
         assert_eq!(content[0]["text"], "describe this image");
-        assert_eq!(content[1]["type"], "image_url");
-        assert_eq!(
-            content[1]["image_url"]["url"],
-            "data:image/png;base64,abc123"
-        );
+        assert_eq!(content[1]["type"], "image");
+        assert_eq!(content[1]["image"], "data:image/png;base64,abc123");
+    }
+
+    #[test]
+    fn build_body_uses_commandcode_pdf_document_parts() {
+        use navi_core::{ContentPart, ModelMessage, ThinkingConfig};
+
+        let request = ModelRequest {
+            model: "claude-sonnet-4-6".to_string(),
+            instructions: None,
+            messages: vec![ModelMessage::user_multimodal(
+                "summarize",
+                vec![
+                    ContentPart::Text {
+                        text: "summarize".to_string(),
+                    },
+                    ContentPart::Document {
+                        media_type: "application/pdf".to_string(),
+                        data: "pdfbytes".to_string(),
+                        name: Some("doc.pdf".to_string()),
+                    },
+                ],
+            )],
+            thinking: ThinkingConfig::Off,
+            tools: vec![],
+        };
+
+        let body = build_alpha_generate_body(&request);
+        let content = body["params"]["messages"][0]["content"].as_array().unwrap();
+        assert_eq!(content[1]["type"], "document");
+        assert_eq!(content[1]["source"]["type"], "base64");
+        assert_eq!(content[1]["source"]["media_type"], "application/pdf");
+        assert_eq!(content[1]["source"]["data"], "pdfbytes");
     }
 
     #[test]
