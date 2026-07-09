@@ -111,13 +111,15 @@ task_size = "small"
         .spawn()
         .expect("spawn navi");
 
+    // CI runners can be cold after a full workspace suite; 30s was too tight for
+    // first process start of the (large) navi binary + mock multi-turn stream.
     let output =
-        match tokio::time::timeout(std::time::Duration::from_secs(30), child.wait_with_output())
+        match tokio::time::timeout(std::time::Duration::from_secs(180), child.wait_with_output())
             .await
         {
             Ok(Ok(o)) => o,
             Ok(Err(e)) => panic!("failed to wait for navi: {e}"),
-            Err(_) => panic!("navi headless test timed out after 30s"),
+            Err(_) => panic!("navi headless test timed out after 180s"),
         };
 
     assert!(
