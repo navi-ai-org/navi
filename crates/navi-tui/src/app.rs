@@ -99,6 +99,8 @@ pub struct TuiApp {
     // clipboard images
     /// Images captured from the clipboard, waiting to be attached to the next message.
     pub(crate) pending_images: Vec<crate::state::PendingImage>,
+    /// Floating image preview shown while hovering an `[Image N]` tag.
+    pub(crate) image_hover: Option<crate::state::ImageHoverPreview>,
     pub(crate) queued_user_messages: VecDeque<QueuedUserMessage>,
     pub(crate) queued_message_selected: usize,
     pub(crate) queued_message_scroll: usize,
@@ -315,6 +317,7 @@ impl TuiApp {
             compact_state: CompactState::new(context_window),
             dreaming: false,
             pending_images: Vec::new(),
+            image_hover: None,
             queued_user_messages: VecDeque::new(),
             queued_message_selected: 0,
             queued_message_scroll: 0,

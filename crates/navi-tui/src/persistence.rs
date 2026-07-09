@@ -131,13 +131,25 @@ pub(crate) fn load_session(app: &mut TuiApp, snapshot: &SessionSnapshot) {
             } => {
                 let mut msg = ChatMessage::new(ChatRole::User, text.clone());
                 for part in content_parts.iter() {
-                    if let navi_core::model::ContentPart::Image { media_type, .. } = part {
-                        let mime_short = media_type
-                            .strip_prefix("image/")
-                            .unwrap_or(media_type)
-                            .to_uppercase();
-                        msg.image_labels.push(mime_short.clone());
-                        msg.images.push(ChatImage { label: mime_short });
+                    if let navi_core::model::ContentPart::Image {
+                        media_type, data, ..
+                    } = part
+                    {
+                        let index = msg.images.len() + 1;
+                        let chat_image = ChatImage {
+                            index,
+                            media_type: media_type.clone(),
+                            width: None,
+                            height: None,
+                            data: data.clone(),
+                            label: media_type
+                                .strip_prefix("image/")
+                                .unwrap_or(media_type)
+                                .to_uppercase(),
+                        };
+                        msg.image_labels
+                            .push(format!("[Image {}]", chat_image.index));
+                        msg.images.push(chat_image);
                     }
                 }
                 app.messages.push(msg);

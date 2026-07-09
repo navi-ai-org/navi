@@ -74,8 +74,39 @@ pub(crate) fn render_input(frame: &mut Frame<'_>, app: &mut TuiApp, area: Rect) 
 
     app.input_wrap_width = input_area.width as usize;
     let (lines, cursor_line, cursor_column) = input_lines(app, input_area.width as usize);
+    let ranges = crate::input::input_visual_line_ranges(&app.input, input_area.width as usize);
     let (input_lines, visible_start) =
         visible_input_lines(lines, input_area.height as usize, cursor_line);
+
+    // Register hover hits for `[Image N]` chips before paint so z-order is ready.
+    if app.mode == crate::state::Mode::Normal && !app.pending_images.is_empty() {
+        let input_owned = app.input.clone();
+        for (visible_row, line_index) in
+            (visible_start..visible_start + input_lines.len()).enumerate()
+        {
+            let Some((start, end)) = ranges.get(line_index).copied() else {
+                continue;
+            };
+            if end > input_owned.len() || start > end {
+                continue;
+            }
+            let line_text = input_owned[start..end].to_string();
+            let line_area = Rect::new(
+                input_area.x,
+                input_area.y.saturating_add(visible_row as u16),
+                input_area.width,
+                1,
+            );
+            crate::view::image_preview::register_pending_image_hits(
+                app,
+                &input_owned,
+                start,
+                &line_text,
+                line_area,
+            );
+        }
+    }
+
     frame.render_widget(
         Paragraph::new(Text::from(input_lines))
             .style(Style::default().fg(text()).bg(composer_panel_bg(app)))

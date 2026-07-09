@@ -98,38 +98,45 @@ pub(crate) fn render_chat_area(frame: &mut Frame<'_>, app: &mut TuiApp, area: Re
         }
     }
 
+    if app.mode == Mode::Normal {
+        for (offset, source) in visible_sources.iter().enumerate() {
+            let line_area = line_rect(inner, offset);
+            let action = match source {
+                ChatLineSource::Message(index)
+                    if app
+                        .messages
+                        .get(*index)
+                        .is_some_and(|message| message.role == ChatRole::User) =>
+                {
+                    // Higher-priority hits for `[Image N]` chips enable hover preview.
+                    if let Some(line) = visible_lines.get(offset) {
+                        crate::view::image_preview::register_chat_image_hits(
+                            app, line, line_area, *index,
+                        );
+                    }
+                    Some(HitAction::ChatMessage(*index))
+                }
+                ChatLineSource::ToolResult(id) if !app.full_tool_view => {
+                    Some(HitAction::ToolResult(id.clone()))
+                }
+                ChatLineSource::ToolGroup(ids) if !ids.is_empty() => {
+                    Some(HitAction::ToolGroup(ids.clone()))
+                }
+                ChatLineSource::Subagent(id) => Some(HitAction::Subagent(id.clone())),
+                _ => None,
+            };
+            if let Some(action) = action {
+                app.register_hit(line_area, 5, "chat", action);
+            }
+        }
+    }
+
     frame.render_widget(
         Paragraph::new(Text::from(visible_lines))
             .style(Style::default().bg(bg()))
             .wrap(Wrap { trim: false }),
         inner,
     );
-
-    if app.mode == Mode::Normal {
-        for (offset, source) in visible_sources.into_iter().enumerate() {
-            let action = match source {
-                ChatLineSource::Message(index)
-                    if app
-                        .messages
-                        .get(index)
-                        .is_some_and(|message| message.role == ChatRole::User) =>
-                {
-                    Some(HitAction::ChatMessage(index))
-                }
-                ChatLineSource::ToolResult(id) if !app.full_tool_view => {
-                    Some(HitAction::ToolResult(id))
-                }
-                ChatLineSource::ToolGroup(ids) if !ids.is_empty() => {
-                    Some(HitAction::ToolGroup(ids))
-                }
-                ChatLineSource::Subagent(id) => Some(HitAction::Subagent(id)),
-                _ => None,
-            };
-            if let Some(action) = action {
-                app.register_hit(line_rect(inner, offset), 5, "chat", action);
-            }
-        }
-    }
 }
 
 fn highlight_selection_columns(
@@ -436,6 +443,11 @@ fn apply_card_bg(line: &mut Line<'static>, width: usize, bg: Color, emphasize: b
     let mut used = 0usize;
     for (index, span) in line.spans.iter_mut().enumerate() {
         used = used.saturating_add(display_width(&span.content));
+        // Keep composer-style image chips highlighted on hover/select.
+        if crate::render::markdown::is_image_tag(&span.content) {
+            span.style = Style::default().bg(code_const()).fg(Color::Black);
+            continue;
+        }
         span.style = span.style.bg(bg);
         if emphasize && index == 0 {
             span.style = span.style.fg(signal()).add_modifier(Modifier::BOLD);
