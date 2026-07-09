@@ -95,6 +95,12 @@ pub enum RuntimeEventKind {
     QuestionRequired(QuestionRequest),
     /// An interactive user choice has been resolved.
     QuestionResolved(QuestionResponse),
+    /// Plan tool create is waiting for user review (blocks the turn).
+    PlanReviewRequired(PlanReviewRequest),
+    /// User finished plan review.
+    PlanReviewResolved(PlanReviewResponse),
+    /// Sudo password needed (no secret in event payload).
+    SudoPasswordRequired(SudoPasswordRequest),
     /// A tool invocation has begun execution.
     ToolStarted(ToolInvocation),
     /// A tool invocation has completed.
@@ -274,6 +280,15 @@ impl RuntimeEventKind {
             RuntimeEventKind::QuestionResolved(response) => {
                 Some(AgentEvent::QuestionResolved(response))
             }
+            RuntimeEventKind::PlanReviewRequired(request) => {
+                Some(AgentEvent::PlanReviewRequested(request))
+            }
+            RuntimeEventKind::PlanReviewResolved(response) => {
+                Some(AgentEvent::PlanReviewResolved(response))
+            }
+            RuntimeEventKind::SudoPasswordRequired(request) => {
+                Some(AgentEvent::SudoPasswordRequested(request))
+            }
             RuntimeEventKind::ToolCompleted(result) => Some(AgentEvent::ToolCompleted(result)),
             RuntimeEventKind::SubagentActivity {
                 invocation_id,
@@ -439,6 +454,14 @@ pub enum AgentEvent {
     QuestionRequested(QuestionRequest),
     /// An interactive user choice was resolved.
     QuestionResolved(QuestionResponse),
+    /// Plan tool create is waiting for user review (blocks the turn).
+    PlanReviewRequested(PlanReviewRequest),
+    /// User finished plan review (approve / changes / quit).
+    PlanReviewResolved(PlanReviewResponse),
+    /// Bash/`sudo` needs a password; TUI shows a masked modal. Password is
+    /// never included in this event — only a correlation id. The secret is
+    /// delivered solely through the sudo password resolver oneshot.
+    SudoPasswordRequested(SudoPasswordRequest),
     /// The same tool was called consecutively with identical arguments.
     /// The tool is NOT executed; this is a notification to the user.
     RepeatedToolCallWarning {
@@ -639,6 +662,87 @@ impl QuestionResponse {
     pub fn id(&self) -> &str {
         match self {
             Self::Answered { id, .. } | Self::Dismissed { id } => id,
+        }
+    }
+}
+
+/// Interactive plan review requested after `plan(action=create)`.
+/// The turn **blocks** until the user resolves it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PlanReviewRequest {
+    /// Tool invocation id (used as correlation key for the oneshot).
+    pub id: String,
+    /// Persisted plan id in SQLite.
+    pub plan_id: String,
+    pub title: String,
+    pub description: String,
+    pub steps: Vec<String>,
+}
+
+/// User decision from the plan review modal.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PlanReviewDecision {
+    Approve,
+    RequestChanges,
+    Quit,
+}
+
+/// Resolution for a blocked plan review.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PlanReviewResponse {
+    /// Matching tool invocation id.
+    pub id: String,
+    pub plan_id: String,
+    pub decision: PlanReviewDecision,
+    /// Line-oriented comments from the modal.
+    #[serde(default)]
+    pub comments: Vec<crate::plan_store::PlanLineComment>,
+    /// Freeform notes from the prompt field.
+    #[serde(default)]
+    pub freeform: String,
+}
+
+impl PlanReviewResponse {
+    pub fn id(&self) -> &str {
+        &self.id
+    }
+}
+
+/// Request for a sudo password from the interactive TUI.
+///
+/// **Security:** this event must never carry the password itself — only a
+/// correlation id and UI context (command summary). The secret is delivered
+/// solely through [`crate::runtime::SudoPasswordResolver`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SudoPasswordRequest {
+    /// Correlation id for the oneshot resolver.
+    pub id: String,
+    /// Short, non-secret description (e.g. truncated command).
+    pub command_summary: String,
+}
+
+/// Resolution of a sudo password prompt.
+///
+/// Prefer not to serialize responses that still hold a password into logs.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum SudoPasswordResponse {
+    /// User entered a password. Cleared from memory after bash consumes it.
+    Submitted {
+        id: String,
+        /// Secret — never write to chat history or tool observations.
+        #[serde(skip_serializing)]
+        password: String,
+    },
+    /// User cancelled the modal.
+    Cancelled { id: String },
+}
+
+impl SudoPasswordResponse {
+    pub fn id(&self) -> &str {
+        match self {
+            Self::Submitted { id, .. } | Self::Cancelled { id } => id,
         }
     }
 }

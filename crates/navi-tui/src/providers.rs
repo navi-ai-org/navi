@@ -104,6 +104,7 @@ pub(crate) fn apply_model_selection(app: &mut TuiApp, model_index: usize) {
             app.provider_configured = selection.provider_configured;
             app.selected_model = model_index;
             app.model_scroll = 0;
+            crate::keybindings::modals::clamp_thinking_to_selected_model(app);
             if navi_sdk::ProviderId::from_config_id(&model.provider_id).is_opencode_family()
                 && is_free_model_name(&model.name)
             {

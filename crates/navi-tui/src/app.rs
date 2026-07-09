@@ -46,6 +46,18 @@ pub struct TuiApp {
     pub(crate) command_filter_cursor: usize,
     pub(crate) selected_command: usize,
     pub(crate) command_scroll: usize,
+    /// Filter text after `@` in the path-mention palette.
+    pub(crate) path_filter: String,
+    pub(crate) selected_path: usize,
+    pub(crate) path_scroll: usize,
+    /// Byte offset of the active `@` in `input` (path mention).
+    pub(crate) path_mention_start: Option<usize>,
+    /// Selected row in the Help cheatsheet modal.
+    pub(crate) selected_help: usize,
+    /// Scroll offset (first visible row) for the Help modal list.
+    pub(crate) help_scroll: usize,
+    /// Visible list height last observed for Help scroll clamping.
+    pub(crate) help_visible_rows: std::cell::Cell<usize>,
     pub(crate) models: Vec<ModelOption>,
     pub(crate) selected_model: usize,
     pub(crate) model_scroll: usize,
@@ -155,10 +167,20 @@ pub struct TuiApp {
     pub(crate) cancel_esc_pressed: bool,
     pub(crate) last_click_time: Option<std::time::Instant>,
     pub(crate) last_click_pos: Option<(u16, u16)>,
+    /// Chat hit deferred until mouse-up when the gesture was a click (not a drag).
+    /// Lets drag-to-select text work on lines that also register hit regions.
+    pub(crate) pending_chat_click: Option<crate::ui::interaction::HitAction>,
+    /// Animated composer content-line height (Grok expand/collapse).
+    /// Interpolates toward the focused multi-line size or a 1-line collapse.
+    pub(crate) composer_anim_lines: f32,
 
     // Plan mode state
     pub(crate) agent_mode: navi_sdk::AgentMode,
     pub(crate) proposed_plan: Option<navi_sdk::ProposedPlan>,
+    /// Grok-style plan review modal state (line comments, approve/changes).
+    pub(crate) plan_review: Option<crate::plan_review::PlanReviewState>,
+    /// Active sudo password prompt (id + command summary; password lives only in buffer).
+    pub(crate) sudo_password_prompt: Option<crate::state::SudoPasswordUiState>,
 
     /// Cached set of canonical provider IDs with resolved credentials.
     /// Populated by refresh_authenticated_providers().
@@ -284,6 +306,13 @@ impl TuiApp {
             command_filter_cursor: 0,
             selected_command: 0,
             command_scroll: 0,
+            path_filter: String::new(),
+            selected_path: 0,
+            path_scroll: 0,
+            path_mention_start: None,
+            selected_help: 0,
+            help_scroll: 0,
+            help_visible_rows: std::cell::Cell::new(12),
             models,
             selected_model,
             model_scroll: 0,
@@ -378,8 +407,12 @@ impl TuiApp {
             cancel_esc_pressed: false,
             last_click_time: None,
             last_click_pos: None,
+            pending_chat_click: None,
+            composer_anim_lines: 1.0,
             agent_mode: navi_sdk::AgentMode::Default,
             proposed_plan: None,
+            plan_review: None,
+            sudo_password_prompt: None,
             authenticated_providers: HashSet::new(),
             available_skills: Vec::new(),
             active_skills: initial_active_skills,

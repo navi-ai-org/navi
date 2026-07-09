@@ -1,8 +1,6 @@
   main  /tmp/navi-test-project
 
-
-        Hello, world
-
+   › Hello, world
 
 
 
@@ -14,11 +12,13 @@
 
 
 
-    .   Waiting for model · 0s
 
-  ▌
-  ▌
-  ▌
-  ▌ gpt-5.5 OpenAI · adaptive · 0 / 200k (0%)                      restricted
-  ▌
-               ctrl+p commands · ctrl+m models · ctrl+enter send · ctrl+v image
+
+
+
+    ◆ Waiting for model · 0s
+
+  ╭──────────────────────────────────────────────────────────────────────────╮
+  │ ›                                                                        │
+  ╰──────────────────────────────────────────────────────────────────────────╯
+                               gpt-5.5 (adaptive) · 0 / 200k (0%) · restricted

@@ -33,17 +33,22 @@ pub const NAVI_ENGINE_API_METHODS: &[&str] = &[
     "agent_mode",
     "enter_plan_mode",
     "exit_plan_mode",
-    // Approval / question
+    // Approval / question / plan / sudo
     "resolve_approval",
     "resolve_question",
+    "resolve_plan_review",
+    "resolve_sudo_password",
     "add_context_packet",
     // Model / provider
     "list_models",
     "select_model",
+    "set_model",
     "list_provider_accounts",
     "credential_status",
     "set_provider_api_key",
     "delete_provider_api_key",
+    "provider_supports_device_oauth",
+    "start_device_oauth",
     "usage_report",
     // Skills
     "list_skills",
@@ -60,7 +65,7 @@ pub const NAVI_ENGINE_API_METHODS: &[&str] = &[
     "list_background_commands",
     "poll_background_command",
     "cancel_background_command",
-    // Memory
+    // Memory (CRUD)
     "memory_write",
     "memory_read",
     "memory_list",
@@ -69,10 +74,39 @@ pub const NAVI_ENGINE_API_METHODS: &[&str] = &[
     "memory_delete",
     "memory_count",
     "memory_index",
-    // Registry sync
+    // Memory (ops / maintenance)
+    "memory_status",
+    "memory_doctor",
+    "memory_init",
+    "memory_history_search",
+    "memory_dream",
+    "memory_distill",
+    "memory_checkpoint",
+    // Voice / dictation
+    "voice_status",
+    "voice_doctor",
+    "voice_engine_installed",
+    "voice_init",
+    "voice_transcribe_file",
+    "voice_start_stream",
+    "voice_push_pcm",
+    "voice_end_stream",
+    "voice_cancel_stream",
+    "subscribe_voice_events",
+    // Registry
     "sync_registry",
+    "list_registry",
     "sync_provider_models",
     "sync_models",
+    // Plugins
+    "plugin_list",
+    "plugin_info",
+    "plugin_search",
+    "plugin_install_path",
+    "plugin_install_marketplace",
+    "plugin_update_path",
+    "plugin_update_marketplace",
+    "plugin_remove",
     // Saved sessions
     "list_saved_sessions",
     "list_saved_sessions_async",
@@ -112,17 +146,22 @@ pub const NAVI_NAPI_BOUND_METHODS: &[&str] = &[
     "agent_mode",
     "enter_plan_mode",
     "exit_plan_mode",
-    // Approval / question
+    // Approval / question / plan / sudo
     "resolve_approval",
     "resolve_question",
+    "resolve_plan_review",
+    "resolve_sudo_password",
     "add_context_packet",
     // Model / provider
     "list_models",
     "select_model",
+    "set_model",
     "list_provider_accounts",
     "credential_status",
     "set_provider_api_key",
     "delete_provider_api_key",
+    "provider_supports_device_oauth",
+    "start_device_oauth",
     "usage_report",
     // Skills
     "list_skills",
@@ -139,7 +178,7 @@ pub const NAVI_NAPI_BOUND_METHODS: &[&str] = &[
     "list_background_commands",
     "poll_background_command",
     "cancel_background_command",
-    // Memory
+    // Memory (CRUD)
     "memory_write",
     "memory_read",
     "memory_list",
@@ -148,10 +187,39 @@ pub const NAVI_NAPI_BOUND_METHODS: &[&str] = &[
     "memory_delete",
     "memory_count",
     "memory_index",
-    // Registry sync
+    // Memory (ops / maintenance)
+    "memory_status",
+    "memory_doctor",
+    "memory_init",
+    "memory_history_search",
+    "memory_dream",
+    "memory_distill",
+    "memory_checkpoint",
+    // Voice / dictation
+    "voice_status",
+    "voice_doctor",
+    "voice_engine_installed",
+    "voice_init",
+    "voice_transcribe_file",
+    "voice_start_stream",
+    "voice_push_pcm",
+    "voice_end_stream",
+    "voice_cancel_stream",
+    "subscribe_voice_events",
+    // Registry
     "sync_registry",
+    "list_registry",
     "sync_provider_models",
     "sync_models",
+    // Plugins
+    "plugin_list",
+    "plugin_info",
+    "plugin_search",
+    "plugin_install_path",
+    "plugin_install_marketplace",
+    "plugin_update_path",
+    "plugin_update_marketplace",
+    "plugin_remove",
     // Saved sessions
     "list_saved_sessions",
     "list_saved_sessions_async",

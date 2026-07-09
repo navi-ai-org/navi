@@ -658,7 +658,7 @@ fn render_compact_tool_result(
     tool_render_cache: &mut HashMap<String, Vec<Line<'static>>>,
     loading_elapsed_ms: Option<u64>,
 ) -> Vec<(Line<'static>, ChatLineSource)> {
-    use super::tool_policy::{tool_auto_expand, tool_body_reason, tool_body_visible, ToolBodyReason};
+    use super::tool_policy::{tool_auto_expand, tool_body_visible};
 
     let source = if invocation.tool_name == "subagent" {
         ChatLineSource::Subagent(result.invocation_id.clone())
@@ -674,13 +674,6 @@ fn render_compact_tool_result(
         expanded_tool_results,
         collapsed_tool_results,
     );
-    let reason = tool_body_reason(
-        invocation,
-        result,
-        full_tool_view,
-        expanded_tool_results,
-        collapsed_tool_results,
-    );
 
     // Always show the one-line header (Grok tool card title).
     lines.push((
@@ -689,19 +682,6 @@ fn render_compact_tool_result(
     ));
 
     if show_body {
-        let hint = match reason {
-            ToolBodyReason::AutoUseful => "auto · click to collapse",
-            ToolBodyReason::ExpandAll => "expand-all · click to collapse",
-            ToolBodyReason::UserExpanded => "click to collapse",
-            _ => "click to collapse",
-        };
-        lines.push((
-            Line::from(Span::styled(
-                format!("  {hint}"),
-                Style::default().fg(ghost()),
-            )),
-            source.clone(),
-        ));
         let cache_key = format!(
             "{}|{}|{}",
             result.invocation_id,

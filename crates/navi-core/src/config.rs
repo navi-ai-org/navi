@@ -43,6 +43,7 @@ mod tests {
             tui: TuiConfig::default(),
             background_models: BackgroundModelsConfig::default(),
             goals: GoalsConfig::default(),
+            voice: VoiceConfig::default(),
         };
 
         let mut project = NaviConfig {
@@ -89,6 +90,7 @@ mod tests {
             tui: TuiConfig::default(),
             background_models: BackgroundModelsConfig::default(),
             goals: GoalsConfig::default(),
+            voice: VoiceConfig::default(),
         };
         project.plugins.clear();
         project.mcp = McpConfig::default();
@@ -359,6 +361,8 @@ deny_tool_regex = ["^danger_"]
                 tool_prompt_manifest: Some(true),
                 pricing_input_per_1m: None,
                 pricing_output_per_1m: None,
+                reasoning_levels: Vec::new(),
+                default_reasoning_effort: None,
             }],
             ..Default::default()
         });
@@ -389,6 +393,8 @@ deny_tool_regex = ["^danger_"]
                 tool_prompt_manifest: None,
                 pricing_input_per_1m: None,
                 pricing_output_per_1m: None,
+                reasoning_levels: Vec::new(),
+                default_reasoning_effort: None,
             }],
             ..Default::default()
         });
@@ -467,6 +473,8 @@ deny_tool_regex = ["^danger_"]
                 tool_prompt_manifest: None,
                 pricing_input_per_1m: None,
                 pricing_output_per_1m: None,
+                reasoning_levels: Vec::new(),
+                default_reasoning_effort: None,
             }],
             ..Default::default()
         });
@@ -511,6 +519,8 @@ deny_tool_regex = ["^danger_"]
                 tool_prompt_manifest: None,
                 pricing_input_per_1m: None,
                 pricing_output_per_1m: None,
+                reasoning_levels: Vec::new(),
+                default_reasoning_effort: None,
             }],
             request_options: Some(ProviderRequestOptions::default()), // explicit opt-out
             ..Default::default()
@@ -549,6 +559,8 @@ deny_tool_regex = ["^danger_"]
                 tool_prompt_manifest: None,
                 pricing_input_per_1m: None,
                 pricing_output_per_1m: None,
+                reasoning_levels: Vec::new(),
+                default_reasoning_effort: None,
             }],
             ..Default::default()
         });
@@ -582,6 +594,8 @@ deny_tool_regex = ["^danger_"]
                 tool_prompt_manifest: None,
                 pricing_input_per_1m: None,
                 pricing_output_per_1m: None,
+                reasoning_levels: Vec::new(),
+                default_reasoning_effort: None,
             }],
             ..Default::default()
         });
@@ -636,6 +650,8 @@ deny_tool_regex = ["^danger_"]
                 tool_prompt_manifest: None,
                 pricing_input_per_1m: None,
                 pricing_output_per_1m: None,
+                reasoning_levels: Vec::new(),
+                default_reasoning_effort: None,
             }],
             ..Default::default()
         });
@@ -660,6 +676,8 @@ deny_tool_regex = ["^danger_"]
                 tool_prompt_manifest: None,
                 pricing_input_per_1m: None,
                 pricing_output_per_1m: None,
+                reasoning_levels: Vec::new(),
+                default_reasoning_effort: None,
             }],
             ..Default::default()
         });
@@ -686,6 +704,8 @@ deny_tool_regex = ["^danger_"]
                 tool_prompt_manifest: None,
                 pricing_input_per_1m: None,
                 pricing_output_per_1m: None,
+                reasoning_levels: Vec::new(),
+                default_reasoning_effort: None,
             }],
             ..Default::default()
         });

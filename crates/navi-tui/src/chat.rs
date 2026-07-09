@@ -63,10 +63,14 @@ pub(crate) fn drain_next_queued_message(app: &mut TuiApp) {
 fn submit_current_message_now(app: &mut TuiApp) {
     let has_images = !app.pending_images.is_empty();
     let text = app.input.clone();
+    // Hydrate @file / @folder mentions for the model (chat bubble keeps the short form).
+    let model_text =
+        crate::path_mentions::hydrate_path_mentions(&app.project_dir, &text);
     tracing::info!(
         model = %app.loaded_config.config.model.name,
         provider = %app.loaded_config.config.model.provider,
         chars = text.len(),
+        model_chars = model_text.len(),
         images = has_images,
         "TUI prompt submitted"
     );
@@ -75,7 +79,7 @@ fn submit_current_message_now(app: &mut TuiApp) {
         warn_if_model_cannot_view_images(app);
     }
 
-    let mut chat_msg = ChatMessage::new(ChatRole::User, text.clone());
+    let mut chat_msg = ChatMessage::new(ChatRole::User, text.clone()).stamp_now();
 
     // Collect pending images into ContentParts and labels.
     let mut content_parts: Vec<ContentPart> = Vec::new();
@@ -156,20 +160,47 @@ fn submit_current_message_now(app: &mut TuiApp) {
 
     app.messages.push(chat_msg);
 
-    app.compact_state.add_unsent_bytes(text.len());
-    if content_parts.is_empty() {
+    app.compact_state.add_unsent_bytes(model_text.len());
+    // Prefer hydrated text for the model; keep image parts when present.
+    let mut model_parts = content_parts.clone();
+    if model_text != text {
+        if model_parts.is_empty() {
+            // plain text path uses model_text below
+        } else {
+            // Replace leading/only text part with hydrated content when possible.
+            match model_parts.first_mut() {
+                Some(ContentPart::Text { text: t }) => *t = model_text.clone(),
+                _ => model_parts.insert(
+                    0,
+                    ContentPart::Text {
+                        text: model_text.clone(),
+                    },
+                ),
+            }
+        }
+    }
+    if model_parts.is_empty() {
         app.conversation_history
-            .push(ModelMessage::user(text.clone()));
+            .push(ModelMessage::user(model_text.clone()));
     } else {
         app.conversation_history.push(ModelMessage::user_multimodal(
-            text.clone(),
-            content_parts.clone(),
+            model_text.clone(),
+            model_parts.clone(),
         ));
     }
 
+    let submitted_at = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .ok();
     app.events.push(AgentEvent::UserTaskSubmitted {
-        text: text.clone(),
-        content_parts: content_parts.clone(),
+        text: model_text.clone(),
+        content_parts: if model_parts.is_empty() {
+            content_parts.clone()
+        } else {
+            model_parts.clone()
+        },
+        submitted_at,
     });
 
     app.input.clear();
@@ -496,7 +527,9 @@ pub(crate) fn start_new_session(app: &mut TuiApp) {
     app.message_action_target = None;
     app.selected_message_action = 0;
     app.expanded_tool_results.clear();
+    app.collapsed_tool_results.clear();
     app.hovered_chat_source = None;
+    app.selected_chat_source = None;
     app.selection = None;
     app.hover_index = None;
     app.session_title = None;
@@ -592,7 +625,9 @@ fn apply_prefix(app: &mut TuiApp, prefix: ChatPrefix) {
     app.subagent_order.clear();
     app.chat_view = crate::state::ChatView::Parent;
     app.expanded_tool_results.clear();
+    app.collapsed_tool_results.clear();
     app.hovered_chat_source = None;
+    app.selected_chat_source = None;
     app.tool_invocations.clear();
     for event in &app.events {
         if let AgentEvent::ToolRequested(invocation) = event {

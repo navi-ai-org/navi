@@ -53,6 +53,9 @@ pub trait Tool: Send + Sync {
 #[derive(Clone, Default)]
 pub struct ToolInvocationContext {
     pub event_tx: Option<mpsc::UnboundedSender<AgentEvent>>,
+    /// When set, bash can request a sudo password without exposing it to the model.
+    pub sudo_password_resolver: Option<crate::runtime::SudoPasswordResolver>,
+    pub cancel_token: Option<crate::cancel::CancelToken>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -459,7 +462,15 @@ impl ToolExecutor {
         invocation: ToolInvocation,
         event_tx: Option<mpsc::UnboundedSender<AgentEvent>>,
     ) -> ToolResult {
-        self.invoke_inner(invocation, event_tx, false).await
+        self.invoke_with_context_inner(
+            invocation,
+            ToolInvocationContext {
+                event_tx,
+                ..Default::default()
+            },
+            false,
+        )
+        .await
     }
 
     pub async fn invoke_approved_with_event_tx(
@@ -467,15 +478,34 @@ impl ToolExecutor {
         invocation: ToolInvocation,
         event_tx: Option<mpsc::UnboundedSender<AgentEvent>>,
     ) -> ToolResult {
-        self.invoke_inner(invocation, event_tx, true).await
+        self.invoke_with_context_inner(
+            invocation,
+            ToolInvocationContext {
+                event_tx,
+                ..Default::default()
+            },
+            true,
+        )
+        .await
     }
 
-    async fn invoke_inner(
+    pub async fn invoke_with_full_context(
         &self,
         invocation: ToolInvocation,
-        event_tx: Option<mpsc::UnboundedSender<AgentEvent>>,
+        context: ToolInvocationContext,
         approval_granted: bool,
     ) -> ToolResult {
+        self.invoke_with_context_inner(invocation, context, approval_granted)
+            .await
+    }
+
+    async fn invoke_with_context_inner(
+        &self,
+        invocation: ToolInvocation,
+        context: ToolInvocationContext,
+        approval_granted: bool,
+    ) -> ToolResult {
+        let event_tx = context.event_tx.clone();
         let inv_id = invocation.id.clone();
         let tool_name = invocation.tool_name.clone();
         let started = std::time::Instant::now();
@@ -564,10 +594,7 @@ impl ToolExecutor {
         // before it is consumed by invoke_with_context.
         let inv_input = invocation.input.clone();
 
-        let mut result = match tool
-            .invoke_with_context(invocation, ToolInvocationContext { event_tx })
-            .await
-        {
+        let mut result = match tool.invoke_with_context(invocation, context).await {
             Ok(r) => truncate_tool_result(r),
             Err(e) => ToolResult {
                 invocation_id: inv_id.clone(),

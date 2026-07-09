@@ -750,7 +750,8 @@ mod tests {
             events: vec![AgentEvent::UserTaskSubmitted {
                 text: "OPENAI_API_KEY=sk-proj-1234567890abcdef".to_string(),
                 content_parts: vec![],
-            }],
+            submitted_at: None,
+        }],
             memory: None,
             goal: None,
         };
@@ -806,7 +807,8 @@ mod tests {
             events: vec![AgentEvent::UserTaskSubmitted {
                 text: "OPENAI_API_KEY=sk-proj-1234567890abcdef".to_string(),
                 content_parts: vec![],
-            }],
+            submitted_at: None,
+        }],
             memory: None,
             goal: None,
         };
@@ -853,6 +855,8 @@ mod tests {
             event_tx: None,
             approval_resolver: crate::runtime::ApprovalResolver::new_for_test(),
             question_resolver: crate::runtime::QuestionResolver::new_for_test(),
+            plan_review_resolver: crate::runtime::PlanReviewResolver::new_for_test(),
+            sudo_password_resolver: crate::runtime::SudoPasswordResolver::new_for_test(),
             compact_state: std::sync::Arc::new(tokio::sync::Mutex::new(
                 crate::compact::CompactState::new(128_000),
             )),
@@ -1083,7 +1087,8 @@ mod tests {
                 AgentEvent::UserTaskSubmitted {
                     text: "hello".to_string(),
                     content_parts: vec![],
-                },
+            submitted_at: None,
+        },
                 AgentEvent::ModelOutput {
                     text: "response".to_string(),
                     thinking: Some("reasoning".to_string()),
@@ -1104,7 +1109,8 @@ mod tests {
             AgentEvent::UserTaskSubmitted {
                 text: "do something".to_string(),
                 content_parts: vec![],
-            },
+            submitted_at: None,
+        },
             AgentEvent::ModelOutput {
                 text: "# My Analysis\n\nSome content here".to_string(),
                 thinking: None,
@@ -1119,6 +1125,7 @@ mod tests {
         let events = vec![AgentEvent::UserTaskSubmitted {
             text: "Fix the bug".to_string(),
             content_parts: vec![],
+            submitted_at: None,
         }];
         let title = session_title_from_events(&events);
         assert_eq!(title.as_deref(), Some("Fix the bug"));
@@ -1157,7 +1164,8 @@ mod tests {
                 AgentEvent::UserTaskSubmitted {
                     text: "task".to_string(),
                     content_parts: vec![],
-                },
+            submitted_at: None,
+        },
                 AgentEvent::ToolRequested(ToolInvocation {
                     id: "c1".to_string(),
                     tool_name: "read_file".to_string(),

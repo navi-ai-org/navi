@@ -91,6 +91,8 @@ fn minimal_fallback_providers() -> Vec<ProviderConfig> {
             tool_prompt_manifest: None,
             pricing_input_per_1m: None,
             pricing_output_per_1m: None,
+            reasoning_levels: Vec::new(),
+            default_reasoning_effort: None,
         }],
         request_options: default_request_options_for("openai"),
         ..Default::default()
@@ -130,6 +132,9 @@ pub fn available_model_options(config: &NaviConfig) -> Vec<ModelOption> {
                     provider_description: desc.clone(),
                     task_size: model.task_size,
                     context_window_tokens: model.context_window_tokens,
+                    supports_thinking: model.supports_thinking,
+                    reasoning_levels: model.reasoning_levels,
+                    default_reasoning_effort: model.default_reasoning_effort,
                 })
         })
         .collect()
@@ -376,6 +381,8 @@ impl NaviConfig {
                     tool_prompt_manifest: None,
                     pricing_input_per_1m: None,
                     pricing_output_per_1m: None,
+                    reasoning_levels: Vec::new(),
+                    default_reasoning_effort: None,
                 });
             }
         }
@@ -459,6 +466,14 @@ pub(crate) fn merge_provider_configs(
                         supports_thinking: override_model
                             .supports_thinking
                             .or(registry_model.supports_thinking),
+                        reasoning_levels: if override_model.reasoning_levels.is_empty() {
+                            registry_model.reasoning_levels
+                        } else {
+                            override_model.reasoning_levels
+                        },
+                        default_reasoning_effort: override_model
+                            .default_reasoning_effort
+                            .or(registry_model.default_reasoning_effort),
                         supports_images: override_model
                             .supports_images
                             .or(registry_model.supports_images),
@@ -587,6 +602,8 @@ mod tests {
                 tool_prompt_manifest: None,
                 pricing_input_per_1m: None,
                 pricing_output_per_1m: None,
+                reasoning_levels: Vec::new(),
+                default_reasoning_effort: None,
             }],
             ..Default::default()
         });
@@ -632,6 +649,8 @@ mod tests {
                     tool_prompt_manifest: None,
                     pricing_input_per_1m: None,
                     pricing_output_per_1m: None,
+                    reasoning_levels: Vec::new(),
+                    default_reasoning_effort: None,
                 },
                 ProviderModelConfig {
                     name: "model-b".to_string(),
@@ -647,6 +666,8 @@ mod tests {
                     tool_prompt_manifest: None,
                     pricing_input_per_1m: None,
                     pricing_output_per_1m: None,
+                    reasoning_levels: Vec::new(),
+                    default_reasoning_effort: None,
                 },
                 ProviderModelConfig {
                     name: "model-c".to_string(),
@@ -662,6 +683,8 @@ mod tests {
                     tool_prompt_manifest: None,
                     pricing_input_per_1m: None,
                     pricing_output_per_1m: None,
+                    reasoning_levels: Vec::new(),
+                    default_reasoning_effort: None,
                 },
             ],
             ..Default::default()
@@ -683,6 +706,8 @@ mod tests {
                 tool_prompt_manifest: None,
                 pricing_input_per_1m: None,
                 pricing_output_per_1m: None,
+                reasoning_levels: Vec::new(),
+                default_reasoning_effort: None,
             }],
             ..Default::default()
         };

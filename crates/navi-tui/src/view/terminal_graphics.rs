@@ -79,7 +79,6 @@ impl TerminalGraphics {
             )
     }
 
-    #[allow(dead_code)]
     pub fn protocol_label(&self) -> &'static str {
         match self.protocol {
             ProtocolType::Kitty => "kitty",

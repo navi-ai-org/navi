@@ -28,7 +28,10 @@ pub enum HitAction {
     Setting(usize),
     PluginInstallOrUpdate(usize),
     PluginRefresh,
-    BackgroundCommand(usize),
+    /// Open background-task output (chevron / card body).
+    BackgroundCommandOpen(usize),
+    /// Cancel a running background task (✕ control).
+    BackgroundCommandCancel(usize),
     McpServer(usize),
     McpTool(usize),
     ToolApprove,
@@ -55,6 +58,14 @@ pub enum HitAction {
         message_index: usize,
         image_index: usize,
     },
+    /// Select a row in the Help cheatsheet modal.
+    HelpRow(usize),
+    /// Plan review: click a plan body line (0-based view line index).
+    PlanReviewLine(usize),
+    PlanReviewApprove,
+    PlanReviewChanges,
+    PlanReviewComment,
+    PlanReviewQuit,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -70,4 +81,6 @@ pub enum ScrollTarget {
     BackgroundCommands,
     BackgroundCommandOutput,
     MessageQueue,
+    Help,
+    PathMentions,
 }

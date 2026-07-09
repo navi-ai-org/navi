@@ -650,9 +650,11 @@ pub fn redact_agent_event(event: &AgentEvent) -> AgentEvent {
         AgentEvent::UserTaskSubmitted {
             text,
             content_parts,
+            submitted_at,
         } => AgentEvent::UserTaskSubmitted {
             text: redact_secrets(text),
             content_parts: content_parts.clone(),
+            submitted_at: *submitted_at,
         },
         AgentEvent::ModelOutput { text, thinking } => AgentEvent::ModelOutput {
             text: redact_secrets(text),
@@ -2049,7 +2051,8 @@ mod tests {
             AgentEvent::UserTaskSubmitted {
                 text: "OPENAI_API_KEY=sk-proj-1234567890abcdef".to_string(),
                 content_parts: vec![],
-            },
+            submitted_at: None,
+        },
             AgentEvent::ModelOutput {
                 text: "ok".to_string(),
                 thinking: Some("bearer ghp_1234567890abcdef1234".to_string()),

@@ -110,7 +110,10 @@ mod tests {
                         "short_description": "1234567890123456789012345678901234567890extra",
                     }),
                 },
-                ToolInvocationContext { event_tx: Some(tx) },
+                ToolInvocationContext {
+                    event_tx: Some(tx),
+                    ..Default::default()
+                },
             )
             .await
             .expect("set goal");

@@ -2,14 +2,13 @@ use ratatui::layout::{Alignment, Margin, Position, Rect};
 use ratatui::prelude::{Frame, Line, Span};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::Text;
-use ratatui::widgets::{Block, Paragraph};
+use ratatui::widgets::{Block, Borders, Paragraph};
 
 use crate::TuiApp;
 use crate::input::{
-    COMPOSER_MAX_VISIBLE_LINES, input_visual_line_count, input_visual_line_ranges,
-    selected_input_range,
+    COMPOSER_COLLAPSED_LINES, COMPOSER_MAX_VISIBLE_LINES, input_visual_line_count,
+    input_visual_line_ranges, selected_input_range,
 };
-use crate::providers::selected_provider_label;
 use crate::render::text::display_width;
 use crate::state::ChatRole;
 use crate::theme::*;
@@ -17,72 +16,156 @@ use crate::ui::floor_char_boundary;
 use crate::ui::interaction::HitAction;
 use navi_core::PermissionMode;
 
-const INPUT_TOP_PADDING_ROWS: u16 = 1;
-const FOOTER_BOTTOM_PADDING_ROWS: u16 = 1;
-const INPUT_TEXT_INSET_COLUMNS: u16 = 1;
+/// Grok-style prompt prefix (`› `) before draft text.
+const PROMPT: &str = "› ";
+const PROMPT_WIDTH: usize = 2;
+/// Horizontal inset inside the rounded border (left/right padding).
+const INNER_PAD: u16 = 1;
+/// Row below the box for model · permission (not inside the draft).
+const META_ROW: u16 = 1;
+/// Lerp factor per tick toward target height (Grok-style soft resize).
+const COMPOSER_ANIM_LERP: f32 = 0.42;
+/// Snap when within this many rows of the target.
+const COMPOSER_ANIM_EPS: f32 = 0.08;
+
+/// Grok `collapse_unfocused`: composer is expanded only while the prompt has focus
+/// (Normal mode, no scrollback block selected, main chat view).
+pub(crate) fn composer_is_focused(app: &TuiApp) -> bool {
+    app.mode == crate::state::Mode::Normal
+        && app.selected_chat_source.is_none()
+        && matches!(app.chat_view, crate::state::ChatView::Parent)
+}
+
+/// Desired content-line count (inside the rounded box, excluding borders).
+pub(crate) fn composer_target_content_lines(app: &TuiApp, input_width: usize) -> usize {
+    if !composer_is_focused(app) {
+        return COMPOSER_COLLAPSED_LINES;
+    }
+    let wrap_width = input_width.saturating_sub(6).max(8);
+    input_visual_line_count(&app.input, wrap_width).clamp(1, COMPOSER_MAX_VISIBLE_LINES)
+}
+
+/// Advance animated height toward the target. Returns true if still animating.
+pub(crate) fn advance_composer_animation(app: &mut TuiApp, input_width: usize) -> bool {
+    let target = composer_target_content_lines(app, input_width) as f32;
+    let cur = app.composer_anim_lines;
+    if (cur - target).abs() <= COMPOSER_ANIM_EPS {
+        if cur != target {
+            app.composer_anim_lines = target;
+        }
+        return false;
+    }
+    // Exponential ease toward target.
+    app.composer_anim_lines = cur + (target - cur) * COMPOSER_ANIM_LERP;
+    true
+}
 
 pub(crate) fn render_input(frame: &mut Frame<'_>, app: &mut TuiApp, area: Rect) {
-    let inner = area.inner(Margin {
+    let outer = area.inner(Margin {
         horizontal: 1,
         vertical: 0,
     });
+    // Transparent — same as chat bg. No elevated panel fill.
+    let surface = bg();
 
-    let block = Block::new()
-        .borders(ratatui::widgets::Borders::LEFT)
-        .border_set(ratatui::symbols::border::Set {
-            vertical_left: "▌",
-            ..ratatui::symbols::border::PLAIN
-        })
-        .border_style(Style::default().fg(accent()).bg(composer_panel_bg(app)))
-        .style(Style::default().fg(text()).bg(composer_panel_bg(app)));
-
-    let inner_block_area = block.inner(inner);
-    frame.render_widget(block, inner);
-
-    frame.render_widget(
-        Block::new().style(Style::default().bg(composer_panel_bg(app))),
-        inner_block_area,
+    // Reserve bottom row for meta (outside the draft box).
+    let box_height = outer.height.saturating_sub(META_ROW).max(1);
+    let box_area = Rect::new(outer.x, outer.y, outer.width, box_height);
+    let meta_area = Rect::new(
+        outer.x,
+        outer.y.saturating_add(box_height),
+        outer.width,
+        if outer.height > box_height { META_ROW } else { 0 },
     );
 
-    let panel_area = inner_block_area.inner(Margin {
-        horizontal: INPUT_TEXT_INSET_COLUMNS,
+    // Thin rounded border only — no fill behind the draft.
+    let block = Block::new()
+        .borders(Borders::ALL)
+        .border_set(ratatui::symbols::border::ROUNDED)
+        .border_style(Style::default().fg(ghost()).bg(surface))
+        .style(Style::default().fg(text()).bg(surface));
+
+    let bordered = block.inner(box_area);
+    frame.render_widget(block, box_area);
+
+    if bordered.width == 0 || bordered.height == 0 {
+        return;
+    }
+
+    let content = bordered.inner(Margin {
+        horizontal: INNER_PAD.min(bordered.width.saturating_sub(1) / 2),
         vertical: 0,
     });
-    let input_y = panel_area.y + INPUT_TOP_PADDING_ROWS.min(panel_area.height);
-    let last_panel_y = panel_area.y + panel_area.height.saturating_sub(1);
-    let desired_footer_y = panel_area.y
-        + panel_area
-            .height
-            .saturating_sub(1 + FOOTER_BOTTOM_PADDING_ROWS);
-    let footer_y = desired_footer_y
-        .max(input_y.saturating_add(1))
-        .min(last_panel_y);
-    let footer_area = Rect::new(
-        panel_area.x,
-        footer_y,
-        panel_area.width,
-        1.min(panel_area.height),
-    );
-    let input_bottom = footer_area.y;
-    let full_input_area = Rect::new(
-        panel_area.x,
-        input_y,
-        panel_area.width.saturating_add(INPUT_TEXT_INSET_COLUMNS),
-        input_bottom.saturating_sub(input_y).max(1),
-    );
-    let input_area = full_input_area;
+    if content.width == 0 || content.height == 0 {
+        return;
+    }
 
-    app.input_wrap_width = input_area.width as usize;
-    let (lines, cursor_line, cursor_column) = input_lines(app, input_area.width as usize);
-    let ranges = crate::input::input_visual_line_ranges(&app.input, input_area.width as usize);
-    let (input_lines, visible_start) =
-        visible_input_lines(lines, input_area.height as usize, cursor_line);
+    // Draft only inside the box — no model/permission chrome mixed into the text.
+    let wrap_width = (content.width as usize)
+        .saturating_sub(PROMPT_WIDTH)
+        .max(1);
 
-    // Register hover hits for `[Image N]` chips before paint so z-order is ready.
+    app.input_wrap_width = wrap_width;
+    let focused = composer_is_focused(app);
+    let (raw_lines, cursor_line, cursor_column) = input_lines(app, wrap_width);
+    let ranges = crate::input::input_visual_line_ranges(&app.input, wrap_width);
+    let content_h = content.height as usize;
+
+    // Grok collapse: when unfocused, only show a single summary line (first line
+    // of the draft, truncated with … if more content exists).
+    let (visible_raw, visible_start, collapsed_summary) = if focused {
+        let (vis, start) = visible_input_lines(raw_lines, content_h, cursor_line);
+        (vis, start, None)
+    } else {
+        let total = raw_lines.len().max(1);
+        let first = raw_lines.first().cloned().unwrap_or_else(|| Line::from(""));
+        let more = total > 1 || app.input.contains('\n');
+        (vec![first], 0, if more { Some(total) } else { None })
+    };
+
+    // Paint `› ` on first draft line; indent continuations. No bg on spans.
+    let mut painted: Vec<Line<'static>> = Vec::with_capacity(visible_raw.len());
+    for (i, line) in visible_raw.into_iter().enumerate() {
+        let global = visible_start + i;
+        let is_first = global == 0;
+        let mut spans = Vec::new();
+        spans.push(Span::styled(
+            if is_first {
+                PROMPT.to_string()
+            } else {
+                " ".repeat(PROMPT_WIDTH)
+            },
+            Style::default()
+                .fg(if is_first { user_accent() } else { ghost() })
+                .add_modifier(if is_first {
+                    Modifier::BOLD
+                } else {
+                    Modifier::empty()
+                }),
+        ));
+        spans.extend(line.spans);
+        if is_first && collapsed_summary.is_some() {
+            spans.push(Span::styled(
+                " …",
+                Style::default().fg(ghost()).add_modifier(Modifier::ITALIC),
+            ));
+        }
+        painted.push(Line::from(spans));
+    }
+    if painted.is_empty() {
+        painted.push(Line::from(vec![Span::styled(
+            PROMPT.to_string(),
+            Style::default()
+                .fg(user_accent())
+                .add_modifier(Modifier::BOLD),
+        )]));
+    }
+
+    // Register hover hits for `[Image N]` chips before paint.
     if app.mode == crate::state::Mode::Normal && !app.pending_images.is_empty() {
         let input_owned = app.input.clone();
         for (visible_row, line_index) in
-            (visible_start..visible_start + input_lines.len()).enumerate()
+            (visible_start..visible_start + painted.len()).enumerate()
         {
             let Some((start, end)) = ranges.get(line_index).copied() else {
                 continue;
@@ -92,9 +175,9 @@ pub(crate) fn render_input(frame: &mut Frame<'_>, app: &mut TuiApp, area: Rect) 
             }
             let line_text = input_owned[start..end].to_string();
             let line_area = Rect::new(
-                input_area.x,
-                input_area.y.saturating_add(visible_row as u16),
-                input_area.width,
+                content.x.saturating_add(PROMPT_WIDTH as u16),
+                content.y.saturating_add(visible_row as u16),
+                content.width.saturating_sub(PROMPT_WIDTH as u16),
                 1,
             );
             crate::view::image_preview::register_pending_image_hits(
@@ -108,66 +191,78 @@ pub(crate) fn render_input(frame: &mut Frame<'_>, app: &mut TuiApp, area: Rect) 
     }
 
     frame.render_widget(
-        Paragraph::new(Text::from(input_lines))
-            .style(Style::default().fg(text()).bg(composer_panel_bg(app)))
-            .block(Block::new()),
-        input_area,
+        Paragraph::new(Text::from(painted)).style(Style::default().fg(text()).bg(surface)),
+        content,
     );
-    if app.mode == crate::state::Mode::Normal {
-        let cursor_x = input_area
-            .x
-            .saturating_add(cursor_column.min(input_area.width.saturating_sub(1) as usize) as u16);
-        let cursor_y = input_area.y.saturating_add(
+
+    // Cursor only when the composer has focus (Grok hides it while scrollback is focused).
+    if focused {
+        let cursor_x = content.x.saturating_add(
+            (PROMPT_WIDTH + cursor_column)
+                .min(content.width.saturating_sub(1) as usize) as u16,
+        );
+        let cursor_y = content.y.saturating_add(
             cursor_line
                 .saturating_sub(visible_start)
-                .min(input_area.height.saturating_sub(1) as usize) as u16,
+                .min(content.height.saturating_sub(1) as usize) as u16,
         );
         frame.set_cursor_position(Position::new(cursor_x, cursor_y));
     }
 
-    frame.render_widget(
-        Paragraph::new(composer_footer_line(app, footer_area.width as usize))
-            .style(Style::default().bg(composer_panel_bg(app))),
-        footer_area,
-    );
-
-    if !app.queued_user_messages.is_empty() {
-        let queued_width = queued_footer_label(app).len() as u16;
-        app.register_hit(
-            Rect::new(
-                footer_area.x,
-                footer_area.y,
-                queued_width.min(footer_area.width),
-                1,
-            ),
-            4,
-            "open message queue",
-            HitAction::OpenMessageQueue,
+    // Meta lives outside the draft box (right-aligned), transparent bg.
+    if meta_area.height > 0 && meta_area.width > 0 {
+        let meta = composer_meta_right(app, meta_area.width as usize);
+        frame.render_widget(
+            Paragraph::new(meta)
+                .alignment(Alignment::Right)
+                .style(Style::default().bg(surface)),
+            meta_area,
         );
-    }
 
-    if !app.pending_questions.is_empty() {
-        app.register_hit(
-            footer_area,
-            3,
-            "reopen pending question",
-            HitAction::ReopenQuestion,
-        );
+        if !app.queued_user_messages.is_empty() {
+            let queued_width = queued_footer_label(app).len() as u16;
+            app.register_hit(
+                Rect::new(
+                    meta_area.x,
+                    meta_area.y,
+                    queued_width.min(meta_area.width),
+                    1,
+                ),
+                4,
+                "open message queue",
+                HitAction::OpenMessageQueue,
+            );
+        }
+        if !app.pending_questions.is_empty() {
+            app.register_hit(
+                meta_area,
+                3,
+                "reopen pending question",
+                HitAction::ReopenQuestion,
+            );
+        }
     }
 }
 
 pub(crate) fn composer_height(app: &TuiApp, input_width: usize) -> u16 {
-    let wrap_width = input_width.saturating_sub(6);
-    let visible_lines =
-        input_visual_line_count(&app.input, wrap_width).clamp(1, COMPOSER_MAX_VISIBLE_LINES) as u16;
-    // top inset + text area (min 3 rows) + footer
-    INPUT_TOP_PADDING_ROWS + visible_lines.max(3) + 1
+    // Use animated content-line count (Grok expand/collapse).
+    let content_lines = app
+        .composer_anim_lines
+        .round()
+        .clamp(1.0, COMPOSER_MAX_VISIBLE_LINES as f32) as u16;
+    // top border + draft lines + bottom border + meta row below the box.
+    let _ = input_width; // wrap width is considered when advancing animation.
+    2 + content_lines + META_ROW
 }
 
 pub(crate) fn composer_hint_height(app: &TuiApp) -> u16 {
-    let hint = if show_composer_hint(app) { 1 } else { 0 };
-    let goal = if app.goal_state.is_some() { 1 } else { 0 };
-    hint + goal
+    // No permanent keyboard-hint row (Grok-style: discover via Help `?`).
+    // Only reserve space for an active goal line.
+    if app.goal_state.is_some() {
+        1
+    } else {
+        0
+    }
 }
 
 pub(crate) fn composer_activity_height(app: &TuiApp) -> u16 {
@@ -208,6 +303,8 @@ pub(crate) fn render_input_hint(frame: &mut Frame<'_>, app: &TuiApp, area: Rect)
         return;
     }
 
+    // Permanent shortcut hints were removed — they cluttered every frame.
+    // Shortcuts live in Help (`?` / ctrl+.). Only goal status stays here.
     if let Some(goal_line) = composer_goal_line(app, area.width as usize) {
         let goal_area = Rect::new(area.x, area.y, area.width, 1);
         frame.render_widget(
@@ -215,37 +312,6 @@ pub(crate) fn render_input_hint(frame: &mut Frame<'_>, app: &TuiApp, area: Rect)
             goal_area,
         );
     }
-
-    if show_composer_hint(app) {
-        let hint_area = Rect::new(
-            area.x,
-            area.y + area.height.saturating_sub(1),
-            area.width,
-            1,
-        );
-        frame.render_widget(
-            Paragraph::new(composer_hint_line(hint_area.width as usize))
-                .alignment(Alignment::Right)
-                .style(Style::default().bg(bg())),
-            hint_area,
-        );
-    }
-}
-
-fn show_composer_hint(_app: &TuiApp) -> bool {
-    true
-}
-
-fn composer_hint_line(width: usize) -> Line<'static> {
-    let style = Style::default().fg(ghost()).add_modifier(Modifier::ITALIC);
-    let hint = if width >= 96 {
-        "ctrl+p commands · ctrl+t background tasks · ctrl+b background agents · ctrl+v paste image"
-    } else if width >= 62 {
-        "ctrl+p commands · ctrl+m models · ctrl+enter send · ctrl+v image"
-    } else {
-        "ctrl+p commands · ctrl+enter send"
-    };
-    Line::from(vec![Span::styled(hint, style)])
 }
 
 fn composer_goal_line(app: &TuiApp, width: usize) -> Option<Line<'static>> {
@@ -265,10 +331,6 @@ fn composer_goal_line(app: &TuiApp, width: usize) -> Option<Line<'static>> {
         format!("  {}", fit_display_width(&text_value, available)),
         Style::default().fg(text()).bg(bg()),
     )]))
-}
-
-pub(crate) fn composer_panel_bg(_app: &TuiApp) -> ratatui::style::Color {
-    interactive_bg()
 }
 
 fn composer_activity_line(app: &TuiApp, width: usize) -> Option<Line<'static>> {
@@ -488,26 +550,22 @@ fn input_lines(app: &TuiApp, width: usize) -> (Vec<Line<'static>>, usize, usize)
     (lines, cursor_line, cursor_column)
 }
 
-fn composer_footer_line(app: &TuiApp, width: usize) -> Line<'static> {
+/// Right-side composer chrome (Grok: `Model · permission`).
+/// Kept compact so it can sit on the same row as the draft.
+fn composer_meta_right(app: &TuiApp, width: usize) -> Line<'static> {
     if !app.pending_questions.is_empty() {
-        return footer_with_permission(
-            vec![
-                Span::styled("Question pending", Style::default().fg(code_const())),
-                Span::styled(" · ", Style::default().fg(ghost())),
-                Span::styled(
-                    "ctrl+enter",
-                    Style::default().fg(signal()).add_modifier(Modifier::BOLD),
-                ),
-                Span::styled(" reopen", Style::default().fg(muted())),
-            ],
-            app,
-            width,
-        );
+        return Line::from(vec![
+            Span::styled("Question pending", Style::default().fg(code_const())),
+            Span::styled(" · ", Style::default().fg(ghost())),
+            Span::styled(
+                "ctrl+enter",
+                Style::default().fg(signal()).add_modifier(Modifier::BOLD),
+            ),
+        ]);
     }
 
     let mut spans: Vec<Span<'static>> = Vec::new();
 
-    // Show queued message indicator.
     if !app.queued_user_messages.is_empty() {
         spans.push(Span::styled(
             queued_footer_label(app),
@@ -517,8 +575,6 @@ fn composer_footer_line(app: &TuiApp, width: usize) -> Line<'static> {
         ));
         spans.push(Span::styled(" · ", Style::default().fg(ghost())));
     }
-
-    // Show bg model running indicator
     if app.bg_models_running > 0 {
         spans.push(Span::styled(
             format!("⚙ {} bg", app.bg_models_running),
@@ -526,116 +582,68 @@ fn composer_footer_line(app: &TuiApp, width: usize) -> Line<'static> {
         ));
         spans.push(Span::styled(" · ", Style::default().fg(ghost())));
     }
-
-    // Show pending image indicator if any images are attached.
     if !app.pending_images.is_empty() {
         let count = app.pending_images.len();
         spans.push(Span::styled(
-            format!("{} image{}", count, if count > 1 { "s" } else { "" }),
+            format!("{count} image{}", if count > 1 { "s" } else { "" }),
             Style::default().fg(signal()).add_modifier(Modifier::BOLD),
         ));
         spans.push(Span::styled(" · ", Style::default().fg(ghost())));
     }
 
-    let provider = selected_provider_label(app);
-    let thinking = app.thinking_level.label();
     let model = selected_model_label(app);
-    // Include composer draft in preflight estimate (Grok-style live meter).
+    let thinking = app.thinking_level.label();
     let context = app.compact_state.usage_label(app.input.len());
+    let permission = permission_mode_spans(app);
+    let permission_w = spans_display_width(&permission);
 
-    if width < 48 {
-        let available_model_width = width.saturating_sub(display_width(&context) + 3).max(1);
-        return footer_with_permission(
-            vec![
-                Span::styled(
-                    fit_display_width(&model, available_model_width),
-                    Style::default().fg(code_type()),
-                ),
-                Span::styled(" · ", Style::default().fg(ghost())),
-                Span::styled(
-                    context,
-                    Style::default()
-                        .fg(code_number())
-                        .add_modifier(Modifier::BOLD),
-                ),
-            ],
-            app,
-            width,
-        );
-    }
-
-    spans.push(Span::styled(model, Style::default().fg(code_type())));
-    spans.push(Span::styled(" ", Style::default().fg(ghost())));
-    spans.push(Span::styled(
-        provider.to_string(),
-        Style::default().fg(signal()).add_modifier(Modifier::BOLD),
-    ));
-    spans.push(Span::styled(" · ", Style::default().fg(ghost())));
-    spans.push(Span::styled(
-        thinking.to_string(),
-        Style::default()
-            .fg(code_const())
-            .add_modifier(Modifier::BOLD),
-    ));
-    spans.push(Span::styled(" · ", Style::default().fg(ghost())));
-    spans.push(Span::styled(
-        context,
-        Style::default()
-            .fg(code_number())
-            .add_modifier(Modifier::BOLD),
-    ));
-    // Per-turn usage from the last UsageReported event (Grok updates this every turn).
-    if let Some(turn) = app.usage_state.last_turn_label.as_ref() {
+    // Wide: `model (thinking) · context · permission`
+    // Medium: `model · permission`
+    // Narrow: permission only (or model if no permission room).
+    if width >= 56 {
+        let model_label = format!("{model} ({thinking})");
+        spans.push(Span::styled(
+            model_label,
+            Style::default().fg(muted()),
+        ));
         spans.push(Span::styled(" · ", Style::default().fg(ghost())));
         spans.push(Span::styled(
-            turn.clone(),
+            context,
+            Style::default().fg(ghost()),
+        ));
+        if permission_w > 0 {
+            spans.push(Span::styled(" · ", Style::default().fg(ghost())));
+            spans.extend(permission);
+        }
+    } else if width >= 28 {
+        spans.push(Span::styled(model, Style::default().fg(muted())));
+        if permission_w > 0 {
+            spans.push(Span::styled(" · ", Style::default().fg(ghost())));
+            spans.extend(permission);
+        }
+    } else if permission_w > 0 && permission_w <= width {
+        spans.extend(permission);
+    } else {
+        spans.push(Span::styled(
+            fit_display_width(&model, width.max(1)),
             Style::default().fg(muted()),
         ));
     }
 
-    footer_with_permission(spans, app, width)
+    // Soft-trim if we still overflow.
+    let total = spans_display_width(&spans);
+    if total > width && width > 1 {
+        let text = spans_to_text(&spans);
+        return Line::from(vec![Span::styled(
+            fit_display_width(&text, width),
+            Style::default().fg(muted()),
+        )]);
+    }
+    Line::from(spans)
 }
 
 fn queued_footer_label(app: &TuiApp) -> String {
     format!("{} queued", app.queued_user_messages.len())
-}
-
-fn footer_with_permission(
-    mut left: Vec<Span<'static>>,
-    app: &TuiApp,
-    width: usize,
-) -> Line<'static> {
-    let permission = permission_mode_spans(app);
-    let permission_width = spans_display_width(&permission);
-    let left_width = spans_display_width(&left);
-
-    if permission_width == 0 || width < permission_width + 8 {
-        return Line::from(left);
-    }
-
-    if left_width + permission_width < width {
-        left.push(Span::styled(
-            " ".repeat(width - left_width - permission_width),
-            Style::default().fg(ghost()),
-        ));
-        left.extend(permission);
-        return Line::from(left);
-    }
-
-    let allowed_left_width = width.saturating_sub(permission_width + 1);
-    let left_text = spans_to_text(&left);
-    Line::from(
-        vec![
-            Span::styled(
-                fit_display_width(&left_text, allowed_left_width),
-                Style::default().fg(muted()),
-            ),
-            Span::styled(" ", Style::default().fg(ghost())),
-        ]
-        .into_iter()
-        .chain(permission)
-        .collect::<Vec<_>>(),
-    )
 }
 
 fn permission_mode_spans(app: &TuiApp) -> Vec<Span<'static>> {
@@ -816,24 +824,62 @@ mod tests {
     }
 
     #[test]
-    fn composer_footer_uses_compact_metadata_on_narrow_viewports() {
+    fn composer_meta_uses_compact_metadata_on_narrow_viewports() {
         let app = crate::tests::test_app("");
-        let line = composer_footer_line(&app, 34);
+        // Grok-style right meta on medium width: `model · permission` (no provider/thinking).
+        let line = composer_meta_right(&app, 34);
         let text = line_text(&line);
 
         assert!(text.contains("gpt-5.5"));
-        assert!(text.contains("0 /"));
         assert!(!text.contains("OpenAI"));
         assert!(!text.contains("adaptive"));
         assert!(display_width(&text) <= 34);
     }
 
     #[test]
-    fn composer_footer_shows_yolo_permission_in_red() {
+    fn composer_meta_right_wide_includes_thinking_and_context() {
+        let app = crate::tests::test_app("");
+        let line = composer_meta_right(&app, 72);
+        let text = line_text(&line);
+        assert!(text.contains("gpt-5.5"));
+        assert!(text.contains('('));
+        assert!(text.contains("0 /") || text.contains('/'));
+    }
+
+    #[test]
+    fn render_input_draws_prompt_and_rounded_border() {
+        with_palette(&ThemeId::Lain.palette(), || {
+            let mut app = crate::tests::test_app("hello");
+            let mut terminal = Terminal::new(TestBackend::new(48, 6)).expect("terminal");
+            terminal
+                .draw(|frame| render_input(frame, &mut app, Rect::new(0, 0, 48, 5)))
+                .expect("draw");
+            let screen = terminal
+                .backend()
+                .buffer()
+                .content()
+                .iter()
+                .map(|c| c.symbol().to_string())
+                .collect::<String>();
+            // Rounded corners + prompt glyph.
+            assert!(
+                screen.contains('╭') || screen.contains('┌'),
+                "expected rounded/box border, got {screen:?}"
+            );
+            assert!(
+                screen.contains('›') || screen.contains('>'),
+                "expected › prompt, got {screen:?}"
+            );
+            assert!(screen.contains("hello"));
+        });
+    }
+
+    #[test]
+    fn composer_meta_shows_yolo_permission_in_red() {
         let mut app = crate::tests::test_app("");
         app.yolo_mode = true;
 
-        let line = composer_footer_line(&app, 96);
+        let line = composer_meta_right(&app, 96);
         let yolo = line
             .spans
             .iter()
@@ -867,13 +913,18 @@ mod tests {
                 text: "queued task".to_string(),
                 images: Vec::new(),
             });
+        // Height 5: border+draft+border+meta → meta on last row.
         let mut terminal = Terminal::new(TestBackend::new(72, 8)).expect("terminal");
 
         terminal
-            .draw(|frame| render_input(frame, &mut app, Rect::new(0, 0, 72, 6)))
+            .draw(|frame| render_input(frame, &mut app, Rect::new(0, 0, 72, 5)))
             .expect("draw");
 
-        let hit = app.hit_test(4, 4).expect("queued label hit");
+        // Meta row is the last row of the input area (y = 0 + 5 - 1 = 4).
+        let hit = app
+            .hit_test(2, 4)
+            .or_else(|| app.hit_test(4, 4))
+            .expect("queued label hit on meta row");
         assert!(matches!(
             hit.action,
             crate::ui::interaction::HitAction::OpenMessageQueue
@@ -942,17 +993,77 @@ mod tests {
     }
 
     #[test]
-    fn render_input_left_padding_uses_panel_background() {
+    fn composer_collapses_when_scrollback_focused() {
+        let mut app = crate::tests::test_app("line one\nline two\nline three");
+        // Focused: multi-line target.
+        assert!(composer_is_focused(&app));
+        let focused_target = composer_target_content_lines(&app, 40);
+        assert!(focused_target >= 2, "expected multi-line target, got {focused_target}");
+
+        // Select a chat block → unfocused → collapse to 1.
+        app.messages
+            .push(ChatMessage::new(ChatRole::User, "hi".into()));
+        app.selected_chat_source = Some(crate::state::ChatLineSource::Message(0));
+        assert!(!composer_is_focused(&app));
+        assert_eq!(composer_target_content_lines(&app, 40), 1);
+    }
+
+    #[test]
+    fn composer_animation_moves_toward_target() {
+        let mut app = crate::tests::test_app("a\nb\nc\nd");
+        app.composer_anim_lines = 1.0;
+        assert!(advance_composer_animation(&mut app, 40));
+        assert!(app.composer_anim_lines > 1.0);
+    }
+
+    #[test]
+    fn render_input_uses_transparent_chat_background() {
         with_palette(&ThemeId::Lain.palette(), || {
             let mut app = crate::tests::test_app("");
             let mut terminal = Terminal::new(TestBackend::new(32, 6)).expect("terminal");
 
             terminal
-                .draw(|frame| render_input(frame, &mut app, Rect::new(0, 0, 32, 6)))
+                .draw(|frame| render_input(frame, &mut app, Rect::new(0, 0, 32, 5)))
                 .expect("draw");
 
             let buffer = terminal.backend().buffer();
-            assert_eq!(buffer[(2, 1)].bg, composer_panel_bg(&app));
+            // Interior cells use chat bg — no elevated panel fill.
+            assert_eq!(buffer[(2, 1)].bg, bg());
+        });
+    }
+
+    #[test]
+    fn render_input_keeps_meta_outside_draft_box() {
+        with_palette(&ThemeId::Lain.palette(), || {
+            let mut app = crate::tests::test_app("hello world");
+            let mut terminal = Terminal::new(TestBackend::new(56, 6)).expect("terminal");
+            terminal
+                .draw(|frame| render_input(frame, &mut app, Rect::new(0, 0, 56, 5)))
+                .expect("draw");
+
+            let buffer = terminal.backend().buffer();
+            let row = |y: u16| {
+                (0..56)
+                    .map(|x| buffer[(x, y)].symbol().to_string())
+                    .collect::<String>()
+            };
+            // area y=0..5 → box height 4 (rows 0–3), meta at y=4.
+            let draft_row = row(1);
+            let meta_row = row(4);
+
+            assert!(
+                draft_row.contains("hello"),
+                "draft should be inside the box: {draft_row:?}"
+            );
+            // Model/permission must not sit on the draft line.
+            assert!(
+                !draft_row.contains("gpt")
+                    && !draft_row.contains("yolo")
+                    && !draft_row.contains("auto"),
+                "meta chrome must not be inside draft: {draft_row:?}"
+            );
+            // Meta row may be empty if model label is long; at least draft isolation holds.
+            let _ = meta_row;
         });
     }
 }

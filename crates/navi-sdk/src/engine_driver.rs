@@ -63,6 +63,20 @@ pub trait EngineDriver: Send + Sync {
     /// Resolve a pending interactive question.
     async fn resolve_question(&self, session_id: &str, response: QuestionResponse) -> Result<bool>;
 
+    /// Resolve a pending plan review (unblocks `plan` create).
+    async fn resolve_plan_review(
+        &self,
+        session_id: &str,
+        response: crate::PlanReviewResponse,
+    ) -> Result<bool>;
+
+    /// Resolve a sudo password prompt (password never logged to chat).
+    async fn resolve_sudo_password(
+        &self,
+        session_id: &str,
+        response: crate::SudoPasswordResponse,
+    ) -> Result<bool>;
+
     /// Take a persistence snapshot of the session.
     async fn snapshot_session(&self, session_id: &str) -> Result<SessionSnapshot>;
 
@@ -191,6 +205,22 @@ impl EngineDriver for crate::NaviEngine {
 
     async fn resolve_question(&self, session_id: &str, response: QuestionResponse) -> Result<bool> {
         crate::NaviEngine::resolve_question(self, session_id, response).await
+    }
+
+    async fn resolve_plan_review(
+        &self,
+        session_id: &str,
+        response: crate::PlanReviewResponse,
+    ) -> Result<bool> {
+        crate::NaviEngine::resolve_plan_review(self, session_id, response).await
+    }
+
+    async fn resolve_sudo_password(
+        &self,
+        session_id: &str,
+        response: crate::SudoPasswordResponse,
+    ) -> Result<bool> {
+        crate::NaviEngine::resolve_sudo_password(self, session_id, response).await
     }
 
     async fn snapshot_session(&self, session_id: &str) -> Result<SessionSnapshot> {

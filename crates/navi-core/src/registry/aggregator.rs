@@ -159,6 +159,19 @@ fn openrouter_model_to_registry(model: &OpenRouterModel) -> RegistryModel {
         .map(parse_attachments)
         .unwrap_or_default();
 
+    // OpenRouter wire effort set when reasoning is available.
+    let reasoning_levels = if supports_thinking == Some(true) {
+        vec![
+            "none".into(),
+            "low".into(),
+            "medium".into(),
+            "high".into(),
+            "xhigh".into(),
+        ]
+    } else {
+        Vec::new()
+    };
+
     RegistryModel {
         name,
         task_size: None,
@@ -169,6 +182,10 @@ fn openrouter_model_to_registry(model: &OpenRouterModel) -> RegistryModel {
             .and_then(|tp| tp.max_completion_tokens),
         recommended_temperature: None,
         supports_thinking,
+        reasoning_levels,
+        default_reasoning_effort: supports_thinking
+            .filter(|v| *v)
+            .map(|_| "medium".to_string()),
         supports_attachments: None,
         supports_images: attachments.images,
         supports_audio: attachments.audio,
@@ -316,6 +333,12 @@ fn merge_model_metadata(api_model: &mut RegistryModel, cached: &RegistryModel) {
     }
     if api_model.supports_thinking.is_none() {
         api_model.supports_thinking = cached.supports_thinking;
+    }
+    if api_model.reasoning_levels.is_empty() && !cached.reasoning_levels.is_empty() {
+        api_model.reasoning_levels = cached.reasoning_levels.clone();
+    }
+    if api_model.default_reasoning_effort.is_none() {
+        api_model.default_reasoning_effort = cached.default_reasoning_effort.clone();
     }
 }
 

@@ -785,7 +785,8 @@ mod tests {
             AgentEvent::UserTaskSubmitted {
                 text: "verify".to_string(),
                 content_parts: Vec::new(),
-            },
+            submitted_at: None,
+        },
             AgentEvent::CapabilityRecorded(CapabilityLedgerEntry {
                 capability: crate::capability::Capability::RepoRead,
                 scope: crate::capability::CapabilityScope::SingleCall("read".to_string()),

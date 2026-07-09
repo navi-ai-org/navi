@@ -141,6 +141,13 @@ pub struct RegistryModel {
     /// Whether the model supports extended thinking / reasoning mode.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub supports_thinking: Option<bool>,
+    /// Supported reasoning effort levels from the registry
+    /// (e.g. `["none","low","medium","high","xhigh"]`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub reasoning_levels: Vec<String>,
+    /// Default reasoning effort for this model when the user has not picked one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_reasoning_effort: Option<String>,
     /// Legacy coarse flag for models that support file/image attachments.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub supports_attachments: Option<bool>,

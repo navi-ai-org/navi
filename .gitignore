@@ -25,3 +25,6 @@ target/musl-portable/
 npm/navi/npm/*/navi
 npm/navi/npm/*/navi.exe
 npm/navi/**/*.tgz
+
+# Local HF voice packaging staging (do not commit weights)
+.cache-voice-staging/

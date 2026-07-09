@@ -137,6 +137,29 @@ pub(crate) fn open_background_command_output(app: &mut TuiApp, index: usize) {
     }
 }
 
+/// Cancel a running background command by list index and refresh the list.
+pub(crate) fn cancel_background_command_at(app: &mut TuiApp, index: usize) {
+    let Some(cmd) = app.background_commands.get(index) else {
+        return;
+    };
+    if !cmd.is_running() {
+        return;
+    }
+    app.bg_command_selected = index;
+    let task_id = cmd.task_id.clone();
+    let engine = app.engine();
+    let session_id = app.session_id.as_str().to_string();
+    let tx = app.async_sender();
+    crate::runtime::spawn_runtime_task(async move {
+        let _ = engine
+            .cancel_background_command(&session_id, &task_id)
+            .await;
+        if let Ok(commands) = engine.list_background_commands(&session_id).await {
+            let _ = tx.send(AsyncEvent::BackgroundCommandsUpdated(commands));
+        }
+    });
+}
+
 pub(crate) fn clamp_background_selection(app: &mut TuiApp) {
     if app.background_commands.is_empty() {
         app.bg_command_selected = 0;
@@ -146,15 +169,16 @@ pub(crate) fn clamp_background_selection(app: &mut TuiApp) {
     app.bg_command_selected = app
         .bg_command_selected
         .min(app.background_commands.len().saturating_sub(1));
-    let visible_rows = 12;
+    // Cards are multi-line; keep a few visible cards in scroll window.
+    let visible_cards = 4;
     if app.bg_command_selected < app.bg_command_scroll {
         app.bg_command_scroll = app.bg_command_selected;
-    } else if app.bg_command_selected >= app.bg_command_scroll + visible_rows {
-        app.bg_command_scroll = app.bg_command_selected.saturating_sub(visible_rows - 1);
+    } else if app.bg_command_selected >= app.bg_command_scroll + visible_cards {
+        app.bg_command_scroll = app.bg_command_selected.saturating_sub(visible_cards - 1);
     }
     app.bg_command_scroll = app
         .bg_command_scroll
-        .min(app.background_commands.len().saturating_sub(visible_rows));
+        .min(app.background_commands.len().saturating_sub(visible_cards));
 }
 
 /// Stops the background poller task if running.
@@ -170,14 +194,14 @@ pub(crate) fn format_bg_elapsed(snapshot: &BackgroundCommandSnapshot) -> String 
     format_duration_ms(snapshot.elapsed_ms)
 }
 
-/// Returns a status label for a background command.
+/// Returns a human status label for a background command (Grok-style).
 pub(crate) fn bg_status_label(snapshot: &BackgroundCommandSnapshot) -> &'static str {
     match snapshot.status {
-        navi_sdk::BackgroundTaskStatus::Running => "running",
-        navi_sdk::BackgroundTaskStatus::Completed => "completed",
-        navi_sdk::BackgroundTaskStatus::Failed => "failed",
-        navi_sdk::BackgroundTaskStatus::TimedOut => "timed_out",
-        navi_sdk::BackgroundTaskStatus::Cancelled => "cancelled",
+        navi_sdk::BackgroundTaskStatus::Running => "Running",
+        navi_sdk::BackgroundTaskStatus::Completed => "Done",
+        navi_sdk::BackgroundTaskStatus::Failed => "Failed",
+        navi_sdk::BackgroundTaskStatus::TimedOut => "Timed out",
+        navi_sdk::BackgroundTaskStatus::Cancelled => "Cancelled",
     }
 }
 

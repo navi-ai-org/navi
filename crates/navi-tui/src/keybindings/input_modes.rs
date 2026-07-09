@@ -18,6 +18,15 @@ pub(crate) fn handle_normal_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyM
         return false;
     }
 
+    // Grok-style block selection: when the prompt is empty, Up/Down/y/Enter
+    // operate on discrete scrollback entries instead of the input field.
+    if app.input.is_empty()
+        && modifiers.is_empty()
+        && handle_block_selection_key(app, code)
+    {
+        return false;
+    }
+
     if modifiers.contains(KeyModifiers::CONTROL) {
         match code {
             KeyCode::Left | KeyCode::Char('b') => move_input_previous_control_stop(app),
@@ -73,7 +82,17 @@ pub(crate) fn handle_normal_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyM
             app.command_scroll = 0;
         }
         KeyCode::Char('?') if app.input.is_empty() => {
-            super::replace_modal(app, ModalKind::Help);
+            crate::view::help::open_help(app);
+        }
+        KeyCode::Char('@') => {
+            insert_input_char(app, '@');
+            // Open path palette for a fresh `@` token at the cursor.
+            if let Some((at, query)) =
+                crate::path_mentions::active_mention_query(&app.input, app.input_cursor)
+            {
+                crate::path_mentions::open_path_mentions(app, at);
+                app.path_filter = query;
+            }
         }
         KeyCode::Char(ch) => insert_input_char(app, ch),
         KeyCode::Backspace => {
@@ -123,12 +142,55 @@ pub(crate) fn handle_normal_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyM
             }
         }
         KeyCode::Esc => {
-            app.scroll_offset = 0;
+            if app.selected_chat_source.is_some() {
+                crate::chat_blocks::clear_selected_block(app);
+            } else {
+                app.scroll_offset = 0;
+            }
         }
         _ => {}
     }
 
     false
+}
+
+/// Block-level scrollback selection (empty prompt only).
+fn handle_block_selection_key(app: &mut TuiApp, code: KeyCode) -> bool {
+    match code {
+        KeyCode::Up | KeyCode::Char('k') if app.selected_chat_source.is_some() => {
+            crate::chat_blocks::select_adjacent_block(app, -1);
+            true
+        }
+        KeyCode::Down | KeyCode::Char('j') if app.selected_chat_source.is_some() => {
+            crate::chat_blocks::select_adjacent_block(app, 1);
+            true
+        }
+        // First arrow with no selection: select nearest block in that direction.
+        KeyCode::Up if app.selected_chat_source.is_none() && !crate::chat_blocks::chat_blocks(app).is_empty() => {
+            crate::chat_blocks::select_adjacent_block(app, -1);
+            true
+        }
+        KeyCode::Down
+            if app.selected_chat_source.is_none()
+                && !crate::chat_blocks::chat_blocks(app).is_empty() =>
+        {
+            crate::chat_blocks::select_adjacent_block(app, 1);
+            true
+        }
+        KeyCode::Char('y') if app.selected_chat_source.is_some() => {
+            crate::chat_blocks::copy_selected_block(app);
+            true
+        }
+        KeyCode::Enter if app.selected_chat_source.is_some() => {
+            crate::chat_blocks::activate_selected_block(app);
+            true
+        }
+        KeyCode::Esc if app.selected_chat_source.is_some() => {
+            crate::chat_blocks::clear_selected_block(app);
+            true
+        }
+        _ => false,
+    }
 }
 
 fn handle_subagent_view_key(app: &mut TuiApp, code: KeyCode) -> bool {

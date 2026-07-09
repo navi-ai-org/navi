@@ -1,7 +1,7 @@
   main  /tmp/navi-test-project
 
+   › read the file
 
-        read the file
 
 
     ╭ Tool Approval ───────────────────────────────────────────────────────╮
@@ -16,9 +16,9 @@
     │                                                                      │
     │                                                                      │
     ╰──────────────────────────────────────────────────────────────────────╯
-  ▌
-  ▌
-  ▌
-  ▌ gpt-5.5 OpenAI · adaptive · 18 / 200k (0%)                     restricted
-  ▌
-               ctrl+p commands · ctrl+m models · ctrl+enter send · ctrl+v image
+    ◆ Waiting for approval: tool · 0s
+
+  ╭──────────────────────────────────────────────────────────────────────────╮
+  │ ›                                                                        │
+  ╰──────────────────────────────────────────────────────────────────────────╯
+                              gpt-5.5 (adaptive) · 18 / 200k (0%) · restricted

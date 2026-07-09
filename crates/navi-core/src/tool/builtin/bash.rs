@@ -2,6 +2,7 @@ use anyhow::{Context, Result};
 use async_trait::async_trait;
 use serde_json::{Value, json};
 use std::collections::HashMap;
+use std::fs;
 use std::path::PathBuf;
 use std::process::Stdio;
 use std::sync::Arc;
@@ -9,7 +10,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use super::helpers;
-use crate::tool::{Tool, ToolDefinition, ToolInvocation, ToolKind, ToolResult};
+use crate::event::{AgentEvent, SudoPasswordRequest, SudoPasswordResponse};
+use crate::tool::{
+    Tool, ToolDefinition, ToolInvocation, ToolInvocationContext, ToolKind, ToolResult,
+};
 
 const BASH_DEFAULT_TIMEOUT_MS: u64 = 30_000;
 const BASH_MAX_TIMEOUT_MS: u64 = 120_000;
@@ -47,6 +51,7 @@ impl BashBackgroundRegistry {
         description: Option<String>,
         project_root: PathBuf,
         timeout_ms: u64,
+        sudo_env: Option<SudoAskpassEnv>,
     ) -> Result<Arc<BashBackgroundTask>> {
         let mut tasks = self.tasks.lock().await;
         let running_tasks = tasks
@@ -64,6 +69,7 @@ impl BashBackgroundRegistry {
             description,
             project_root,
             timeout_ms,
+            sudo_env,
         )?);
         tasks.insert(task_id, task.clone());
         Ok(task)
@@ -99,6 +105,8 @@ struct BashBackgroundTask {
     stdout: Arc<tokio::sync::Mutex<Vec<u8>>>,
     stderr: Arc<tokio::sync::Mutex<Vec<u8>>>,
     state: std::sync::Mutex<BashBackgroundState>,
+    /// Keeps askpass temp files alive until the task finishes.
+    _sudo_askpass: Option<SudoAskpassEnv>,
 }
 
 impl BashBackgroundTask {
@@ -108,13 +116,16 @@ impl BashBackgroundTask {
         description: Option<String>,
         project_root: PathBuf,
         timeout_ms: u64,
+        sudo_env: Option<SudoAskpassEnv>,
     ) -> Result<Self> {
+        let (shell_cmd, _guard) = wrap_command_for_sudo(&command, sudo_env.as_ref())?;
         let mut child = tokio::process::Command::new("bash")
             .arg("-lc")
-            .arg(&command)
+            .arg(&shell_cmd)
             .current_dir(&project_root)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
+            .stdin(Stdio::null())
             .kill_on_drop(true)
             .spawn()
             .context("failed to spawn bash")?;
@@ -139,6 +150,7 @@ impl BashBackgroundTask {
             stdout,
             stderr,
             state: std::sync::Mutex::new(BashBackgroundState::running()),
+            _sudo_askpass: sudo_env,
         })
     }
 
@@ -356,13 +368,22 @@ impl Tool for BashTool {
     fn definition(&self) -> ToolDefinition {
         helpers::definition(
             "bash",
-            "Run an ad-hoc shell command in the current project. Common git, test, build, grep, ls/find, and package-manager commands are not executed here; bash returns a native_tool_available suggestion. Use background=true and wait_ms for long-running commands.",
+            "Run an ad-hoc shell command in the current project. Common git, test, build, grep, ls/find, and package-manager commands are not executed here; bash returns a native_tool_available suggestion. Use background=true and wait_ms for long-running commands. Commands using sudo open a secure password modal in the TUI — the password is never shown to the model.",
             ToolKind::Command,
             helpers::bash_json_schema(),
         )
     }
 
     async fn invoke(&self, invocation: ToolInvocation) -> Result<ToolResult> {
+        self.invoke_with_context(invocation, ToolInvocationContext::default())
+            .await
+    }
+
+    async fn invoke_with_context(
+        &self,
+        invocation: ToolInvocation,
+        context: ToolInvocationContext,
+    ) -> Result<ToolResult> {
         let action = helpers::optional_string(&invocation.input, "action");
         if action.as_deref() == Some("list") {
             return Ok(self.background.list(invocation.id).await);
@@ -393,6 +414,39 @@ impl Tool for BashTool {
                 output: suggestion,
             });
         }
+
+        // Interactive sudo: collect password via TUI modal (never in model context).
+        let sudo_env = if command_likely_needs_sudo(command) {
+            match request_sudo_password(
+                &context,
+                &invocation.id,
+                command,
+            )
+            .await
+            {
+                Ok(Some(password)) => Some(prepare_sudo_askpass(&password)?),
+                Ok(None) => {
+                    return Ok(ToolResult {
+                        invocation_id: invocation.id,
+                        ok: false,
+                        output: json!({
+                            "error": "sudo password cancelled by user",
+                            "hint": "Re-run without sudo or approve the password prompt.",
+                        }),
+                    });
+                }
+                Err(msg) => {
+                    return Ok(ToolResult {
+                        invocation_id: invocation.id,
+                        ok: false,
+                        output: json!({ "error": msg }),
+                    });
+                }
+            }
+        } else {
+            None
+        };
+
         if helpers::optional_bool(&invocation.input, "background").unwrap_or(false) {
             let timeout_ms = helpers::optional_u64(&invocation.input, "timeout_ms")
                 .unwrap_or(BASH_DEFAULT_BACKGROUND_TIMEOUT_MS)
@@ -407,6 +461,7 @@ impl Tool for BashTool {
                     helpers::optional_string(&invocation.input, "description"),
                     self.project_root.clone(),
                     timeout_ms,
+                    sudo_env,
                 )
                 .await?;
             return Ok(task.observe(wait_ms, invocation.id).await);
@@ -416,7 +471,7 @@ impl Tool for BashTool {
             .unwrap_or(BASH_DEFAULT_TIMEOUT_MS)
             .min(BASH_MAX_TIMEOUT_MS);
 
-        self.run_foreground(command, timeout_ms, invocation.id)
+        self.run_foreground(command, timeout_ms, invocation.id, sudo_env)
             .await
     }
 }
@@ -630,13 +685,16 @@ impl BashTool {
         command: &str,
         timeout_ms: u64,
         invocation_id: String,
+        sudo_env: Option<SudoAskpassEnv>,
     ) -> Result<ToolResult> {
+        let (shell_cmd, _guard) = wrap_command_for_sudo(command, sudo_env.as_ref())?;
         let mut child = tokio::process::Command::new("bash")
             .arg("-lc")
-            .arg(command)
+            .arg(&shell_cmd)
             .current_dir(&self.project_root)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
+            .stdin(Stdio::null())
             .kill_on_drop(true)
             .spawn()
             .context("failed to spawn bash")?;
@@ -668,6 +726,9 @@ impl BashTool {
 
         // Give readers a moment to drain remaining output.
         tokio::time::sleep(Duration::from_millis(50)).await;
+        let _ = _guard;
+        // Drop askpass env (deletes password file) after process ends.
+        drop(sudo_env);
 
         let stdout_bytes = stdout_data.lock().await.clone();
         let stderr_bytes = stderr_data.lock().await.clone();
@@ -696,6 +757,163 @@ impl BashTool {
                 }),
             })
         }
+    }
+}
+
+// ── Sudo password (TUI modal + SUDO_ASKPASS; secret never reaches the model) ─
+
+/// Temp files + script for `sudo -A`. Dropped after the command finishes.
+struct SudoAskpassEnv {
+    dir: PathBuf,
+    script_path: PathBuf,
+    pass_path: PathBuf,
+}
+
+impl Drop for SudoAskpassEnv {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.pass_path);
+        let _ = fs::remove_file(&self.script_path);
+        let _ = fs::remove_dir_all(&self.dir);
+    }
+}
+
+fn command_likely_needs_sudo(command: &str) -> bool {
+    // Conservative: look for a sudo token that is not part of another word.
+    for token in command.split(|c: char| c.is_whitespace() || "|&;<>()$`\"'".contains(c)) {
+        if token == "sudo" || token == "/usr/bin/sudo" || token == "/bin/sudo" {
+            return true;
+        }
+    }
+    false
+}
+
+fn summarize_command(command: &str) -> String {
+    let one_line = command.lines().next().unwrap_or(command).trim();
+    if one_line.chars().count() <= 80 {
+        one_line.to_string()
+    } else {
+        let mut s: String = one_line.chars().take(77).collect();
+        s.push('…');
+        s
+    }
+}
+
+async fn request_sudo_password(
+    context: &ToolInvocationContext,
+    invocation_id: &str,
+    command: &str,
+) -> Result<Option<String>, String> {
+    let Some(resolver) = context.sudo_password_resolver.as_ref() else {
+        return Err(
+            "sudo requires an interactive TUI password prompt (no password resolver available)"
+                .into(),
+        );
+    };
+    let Some(tx) = context.event_tx.as_ref() else {
+        return Err("sudo requires an interactive client".into());
+    };
+
+    let id = format!("sudo-{invocation_id}");
+    let rx = resolver.register(id.clone());
+    let _ = tx.send(AgentEvent::SudoPasswordRequested(SudoPasswordRequest {
+        id: id.clone(),
+        command_summary: summarize_command(command),
+    }));
+
+    let response = if let Some(cancel) = context.cancel_token.as_ref() {
+        tokio::select! {
+            r = rx => r.ok(),
+            _ = cancel.notified() => None,
+        }
+    } else {
+        rx.await.ok()
+    };
+
+    match response {
+        Some(SudoPasswordResponse::Submitted { password, .. }) => Ok(Some(password)),
+        Some(SudoPasswordResponse::Cancelled { .. }) | None => Ok(None),
+    }
+}
+
+fn prepare_sudo_askpass(password: &str) -> Result<SudoAskpassEnv> {
+    let dir = std::env::temp_dir().join(format!("navi-sudo-{}", fastrand::u64(..)));
+    fs::create_dir_all(&dir).context("create temp dir for sudo askpass")?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = fs::set_permissions(&dir, fs::Permissions::from_mode(0o700));
+    }
+    let pass_path = dir.join("pass");
+    let script_path = dir.join("askpass.sh");
+    fs::write(&pass_path, format!("{password}\n")).context("write sudo password file")?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = fs::set_permissions(&pass_path, fs::Permissions::from_mode(0o600));
+    }
+    // Askpass: print password once, then delete the secret file immediately.
+    let script = format!(
+        "#!/bin/sh\ncat '{pass}' 2>/dev/null\nrm -f '{pass}'\n",
+        pass = pass_path.display()
+    );
+    fs::write(&script_path, script).context("write sudo askpass script")?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = fs::set_permissions(&script_path, fs::Permissions::from_mode(0o700));
+    }
+    Ok(SudoAskpassEnv {
+        dir,
+        script_path,
+        pass_path,
+    })
+}
+
+/// Wrap user command so every `sudo` becomes `sudo -A` with our askpass.
+fn wrap_command_for_sudo(
+    command: &str,
+    sudo: Option<&SudoAskpassEnv>,
+) -> Result<(String, Option<()>)> {
+    let Some(env) = sudo else {
+        return Ok((command.to_string(), None));
+    };
+    let askpass = env.script_path.display().to_string();
+    // Function-based sudo wrapper works with bash -lc.
+    let wrapped = format!(
+        "export SUDO_ASKPASS={askpass:?}; \
+         export SUDO_PROMPT=''; \
+         sudo() {{ command sudo -A \"$@\"; }}; \
+         export -f sudo; \
+         {command}"
+    );
+    Ok((wrapped, Some(())))
+}
+
+#[cfg(test)]
+mod sudo_tests {
+    use super::*;
+
+    #[test]
+    fn detects_sudo_commands() {
+        assert!(command_likely_needs_sudo("sudo pacman -S foo"));
+        assert!(command_likely_needs_sudo("sudo -n true"));
+        assert!(!command_likely_needs_sudo("echo sudo is cool"));
+        assert!(!command_likely_needs_sudo("ls /tmp"));
+    }
+
+    #[test]
+    fn askpass_script_reads_password_once() {
+        let env = prepare_sudo_askpass("secret-pass").unwrap();
+        let out = std::process::Command::new(&env.script_path)
+            .output()
+            .expect("run askpass");
+        assert!(out.status.success());
+        assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "secret-pass");
+        // Second run should yield empty (file removed).
+        let out2 = std::process::Command::new(&env.script_path)
+            .output()
+            .expect("run askpass again");
+        assert!(String::from_utf8_lossy(&out2.stdout).trim().is_empty());
     }
 }
 

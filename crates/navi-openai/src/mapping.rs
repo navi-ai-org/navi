@@ -282,28 +282,43 @@ pub(crate) fn thinking_request_for_api(
     api_kind: OpenAiApiKind,
     provider_id: &str,
 ) -> ThinkingRequest {
+    thinking_request_for_api_with_levels(thinking, api_kind, provider_id, &[])
+}
+
+/// Like [`thinking_request_for_api`], but prefers registry `reasoning_levels` labels.
+pub(crate) fn thinking_request_for_api_with_levels(
+    thinking: navi_core::ThinkingConfig,
+    api_kind: OpenAiApiKind,
+    provider_id: &str,
+    reasoning_levels: &[String],
+) -> ThinkingRequest {
     let mut request = thinking.to_thinking_request();
 
-    // OpenRouter uses different effort levels
+    // Prefer registry/provider effort label (may be xhigh, none, minimal, …).
+    if let Some(label) =
+        navi_core::resolve_effort_label(thinking, reasoning_levels, provider_id)
+    {
+        request.effort = Some(label);
+    } else if matches!(thinking, navi_core::ThinkingConfig::Off) {
+        request.effort = None;
+        request.enabled = false;
+    }
+
+    // OpenRouter off uses "none" as an effort string when thinking is disabled
+    // only if the model still exposes a none level; otherwise leave disabled.
     if navi_core::ProviderId::from_config_id(provider_id).as_str()
         == navi_core::ProviderId::OPENROUTER
+        && matches!(thinking, navi_core::ThinkingConfig::Off)
+        && reasoning_levels
+            .iter()
+            .any(|l| l.eq_ignore_ascii_case("none"))
     {
-        request.effort = Some(match thinking {
-            navi_core::ThinkingConfig::Max => "xhigh",
-            navi_core::ThinkingConfig::High => "high",
-            navi_core::ThinkingConfig::Medium => "medium",
-            navi_core::ThinkingConfig::Low => "low",
-            navi_core::ThinkingConfig::Off => "none",
-            navi_core::ThinkingConfig::Adaptive => "medium",
-        });
+        request.enabled = false;
+        request.effort = Some("none".to_string());
     }
 
     // Opencode family in Responses mode uses Responses-style effort
-    if navi_core::ProviderId::from_config_id(provider_id).is_opencode_family()
-        && matches!(api_kind, OpenAiApiKind::Responses)
-    {
-        // Keep the default effort, no override needed
-    }
+    let _ = api_kind;
 
     request
 }

@@ -7,16 +7,102 @@ use ratatui::text::Text;
 use ratatui::widgets::{Block, BorderType, Borders, List, ListItem, ListState, Paragraph, Wrap};
 
 use crate::TuiApp;
-use crate::keybindings::THINKING_OPTIONS;
+
 use crate::providers::*;
 use crate::render::*;
 use crate::state::MessageAction;
 use crate::theme::*;
 use crate::ui::interaction::{HitAction, line_rect};
 use crate::ui::list::render_scrollbar;
+// selection_fg/bg via theme::*
 use crate::ui::{
     TextInputRenderSpec, floor_char_boundary, next_char_boundary, render_text_input_line,
 };
+
+pub(crate) fn render_sudo_password(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
+    clear_modal_area(frame, area);
+    frame.render_widget(modal_block("Sudo password"), area);
+    let inner = area.inner(Margin {
+        horizontal: 2,
+        vertical: 1,
+    });
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(1),
+            Constraint::Length(1),
+            Constraint::Length(1),
+            Constraint::Length(1),
+            Constraint::Length(1),
+            Constraint::Length(1),
+        ])
+        .split(inner);
+
+    let prompt = app.sudo_password_prompt.as_ref();
+    let summary = prompt
+        .map(|p| p.command_summary.as_str())
+        .unwrap_or("sudo");
+    let password = prompt.map(|p| p.password.as_str()).unwrap_or("");
+    let cursor = prompt.map(|p| p.cursor).unwrap_or(0);
+
+    frame.render_widget(
+        Paragraph::new(Line::from(Span::styled(
+            "A command needs elevated privileges.",
+            Style::default().fg(muted()).bg(modal_bg()),
+        )))
+        .style(Style::default().bg(modal_bg())),
+        rows[0],
+    );
+    frame.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::styled("Command: ", Style::default().fg(ghost()).bg(modal_bg())),
+            Span::styled(
+                summary.to_string(),
+                Style::default().fg(text()).bg(modal_bg()),
+            ),
+        ]))
+        .style(Style::default().bg(modal_bg())),
+        rows[1],
+    );
+    frame.render_widget(
+        Paragraph::new(Line::from(Span::styled(
+            "Password is never shown to the model or saved in chat history.",
+            Style::default().fg(ghost()).bg(modal_bg()),
+        )))
+        .style(Style::default().bg(modal_bg())),
+        rows[2],
+    );
+
+    let masked: String = "*".repeat(password.chars().count());
+    let masked_cursor = password[..cursor.min(password.len())].chars().count();
+    render_text_input_line(
+        frame,
+        rows[4],
+        TextInputRenderSpec {
+            value: &masked,
+            cursor: masked_cursor,
+            placeholder: "password",
+            prefix: "› ",
+            focused: true,
+            text_style: Style::default().fg(text()).bg(modal_bg()),
+            placeholder_style: Style::default().fg(ghost()).bg(modal_bg()),
+            prefix_style: Style::default().fg(signal()).bg(modal_bg()),
+            cursor_style: Style::default().fg(bg()).bg(signal()),
+            background_style: Style::default().bg(modal_bg()),
+        },
+    );
+
+    frame.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::styled("enter", Style::default().fg(red()).bg(modal_bg())),
+            Span::styled(" submit  ·  ", Style::default().fg(muted()).bg(modal_bg())),
+            Span::styled("esc", Style::default().fg(text()).bg(modal_bg())),
+            Span::styled(" cancel", Style::default().fg(muted()).bg(modal_bg())),
+        ]))
+        .style(Style::default().bg(modal_bg())),
+        rows[5],
+    );
+}
 
 pub(crate) fn render_api_key_entry(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
     clear_modal_area(frame, area);
@@ -151,11 +237,13 @@ pub(crate) fn render_oauth(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
         return;
     };
 
+    let show_code = !state.user_code.trim().is_empty();
     let rows = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(1),
             Constraint::Length(1),
+            Constraint::Length(if show_code { 1 } else { 0 }),
             Constraint::Length(1),
             Constraint::Min(3),
             Constraint::Length(1),
@@ -183,13 +271,30 @@ pub(crate) fn render_oauth(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
         rows[1],
     );
 
+    if show_code {
+        frame.render_widget(
+            Paragraph::new(Line::from(vec![
+                Span::styled("Code: ", Style::default().fg(muted())),
+                Span::styled(
+                    state.user_code.clone(),
+                    Style::default()
+                        .fg(accent())
+                        .bg(modal_bg())
+                        .add_modifier(Modifier::BOLD),
+                ),
+            ]))
+            .style(Style::default().bg(modal_bg())),
+            rows[2],
+        );
+    }
+
     let link_style = Style::default()
         .fg(signal())
         .bg(modal_bg())
         .add_modifier(Modifier::UNDERLINED);
-    let link_lines = wrap_plain(&state.verification_uri, rows[3].width as usize);
-    for (offset, line) in link_lines.iter().take(rows[3].height as usize).enumerate() {
-        let row = line_rect(rows[3], offset);
+    let link_lines = wrap_plain(&state.verification_uri, rows[4].width as usize);
+    for (offset, line) in link_lines.iter().take(rows[4].height as usize).enumerate() {
+        let row = line_rect(rows[4], offset);
         frame.render_widget(
             Paragraph::new(Line::from(Span::styled(line.clone(), link_style)))
                 .style(Style::default().bg(modal_bg())),
@@ -212,7 +317,7 @@ pub(crate) fn render_oauth(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
     };
     frame.render_widget(
         Paragraph::new(help).style(Style::default().fg(muted()).bg(modal_bg())),
-        rows[4],
+        rows[5],
     );
 }
 
@@ -535,13 +640,173 @@ pub(crate) fn render_confirm_cancel_turn(frame: &mut Frame<'_>, app: &TuiApp, ar
     );
 }
 
-pub(crate) fn render_confirm_plan(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
+pub(crate) fn render_confirm_plan(frame: &mut Frame<'_>, app: &mut TuiApp, area: Rect) {
     clear_modal_area(frame, area);
-    frame.render_widget(modal_block("Proposed Plan"), area);
+    let title = app
+        .plan_review
+        .as_ref()
+        .map(|r| format!("Plan · {}", r.title))
+        .or_else(|| {
+            app.proposed_plan
+                .as_ref()
+                .map(|p| format!("Plan · {}", p.title))
+        })
+        .unwrap_or_else(|| "Proposed Plan".to_string());
+    frame.render_widget(modal_block(&title), area);
     let inner = area.inner(Margin {
         horizontal: 2,
         vertical: 1,
     });
+
+    // Grok-style review when we have full state.
+    if let Some(review) = &app.plan_review {
+        use crate::plan_review::PlanReviewFocus;
+        let footer_h: u16 = match review.focus {
+            PlanReviewFocus::CommentInput | PlanReviewFocus::Prompt => 2,
+            PlanReviewFocus::Preview => 1,
+        };
+        let rows = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Min(2), Constraint::Length(footer_h)])
+            .split(inner);
+
+        let visible = rows[0].height as usize;
+        let (sel_lo, sel_hi) = review.selected_range();
+        let mut body: Vec<Line> = Vec::new();
+        let end = (review.scroll + visible).min(review.lines.len());
+        for (idx, line) in review.lines[review.scroll..end].iter().enumerate() {
+            let global = review.scroll + idx;
+            let in_sel = global >= sel_lo && global <= sel_hi;
+            let has_comment = review.comment_on_line(global).is_some();
+            let marker = if has_comment { "💬 " } else { "  " };
+            let style = if in_sel {
+                Style::default()
+                    .fg(selection_fg())
+                    .bg(selection_bg())
+                    .add_modifier(Modifier::BOLD)
+            } else if global == review.cursor_line {
+                Style::default()
+                    .fg(signal())
+                    .bg(modal_bg())
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(text()).bg(modal_bg())
+            };
+            body.push(Line::from(Span::styled(
+                format!("{marker}{line}"),
+                style,
+            )));
+
+            // Register mouse hit for this line.
+            if app.mode == crate::state::Mode::ConfirmPlan {
+                let line_area = Rect::new(
+                    rows[0].x,
+                    rows[0].y.saturating_add(idx as u16),
+                    rows[0].width,
+                    1,
+                );
+                app.register_hit(
+                    line_area,
+                    20,
+                    "plan line",
+                    crate::ui::interaction::HitAction::PlanReviewLine(global),
+                );
+            }
+        }
+        frame.render_widget(
+            Paragraph::new(Text::from(body)).style(Style::default().bg(modal_bg())),
+            rows[0],
+        );
+
+        let approve_label = if review.comments.is_empty() {
+            "a approve"
+        } else {
+            "a approve w/ comments"
+        };
+        let mut footer_spans = vec![
+            Span::styled(
+                approve_label,
+                Style::default().fg(red()).bg(modal_bg()).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled("  ·  ", Style::default().fg(ghost()).bg(modal_bg())),
+            Span::styled("s changes", Style::default().fg(text()).bg(modal_bg())),
+            Span::styled("  ·  ", Style::default().fg(ghost()).bg(modal_bg())),
+            Span::styled("c comment", Style::default().fg(text()).bg(modal_bg())),
+            Span::styled("  ·  ", Style::default().fg(ghost()).bg(modal_bg())),
+            Span::styled("q quit", Style::default().fg(text()).bg(modal_bg())),
+            Span::styled("  ·  ", Style::default().fg(ghost()).bg(modal_bg())),
+            Span::styled("tab focus", Style::default().fg(muted()).bg(modal_bg())),
+        ];
+        if !review.comments.is_empty() {
+            footer_spans.push(Span::styled(
+                format!("  ·  {} comments", review.comments.len()),
+                Style::default().fg(code_const()).bg(modal_bg()),
+            ));
+        }
+
+        match review.focus {
+            PlanReviewFocus::Preview => {
+                frame.render_widget(
+                    Paragraph::new(Line::from(footer_spans)).style(Style::default().bg(modal_bg())),
+                    rows[1],
+                );
+            }
+            PlanReviewFocus::CommentInput => {
+                let input = format!("› comment: {}_", review.comment_draft);
+                frame.render_widget(
+                    Paragraph::new(Text::from(vec![
+                        Line::from(footer_spans),
+                        Line::from(Span::styled(
+                            input,
+                            Style::default().fg(signal()).bg(modal_bg()),
+                        )),
+                    ]))
+                    .style(Style::default().bg(modal_bg())),
+                    rows[1],
+                );
+            }
+            PlanReviewFocus::Prompt => {
+                let input = format!("› changes: {}_", review.prompt_draft);
+                frame.render_widget(
+                    Paragraph::new(Text::from(vec![
+                        Line::from(footer_spans),
+                        Line::from(Span::styled(
+                            input,
+                            Style::default().fg(signal()).bg(modal_bg()),
+                        )),
+                    ]))
+                    .style(Style::default().bg(modal_bg())),
+                    rows[1],
+                );
+            }
+        }
+
+        // Action hits for mouse.
+        if app.mode == crate::state::Mode::ConfirmPlan {
+            let w = rows[1].width.max(1);
+            let seg = (w / 4).max(1);
+            for (i, action) in [
+                crate::ui::interaction::HitAction::PlanReviewApprove,
+                crate::ui::interaction::HitAction::PlanReviewChanges,
+                crate::ui::interaction::HitAction::PlanReviewComment,
+                crate::ui::interaction::HitAction::PlanReviewQuit,
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                let x = rows[1].x.saturating_add((i as u16).saturating_mul(seg));
+                app.register_hit(
+                    Rect::new(x, rows[1].y, seg, 1),
+                    25,
+                    "plan action",
+                    action,
+                );
+            }
+        }
+        return;
+    }
+
+    // Legacy thin proposed_plan fallback.
     let Some(plan) = &app.proposed_plan else {
         return;
     };
@@ -571,10 +836,10 @@ pub(crate) fn render_confirm_plan(frame: &mut Frame<'_>, app: &TuiApp, area: Rec
     );
     frame.render_widget(
         Paragraph::new(Line::from(vec![
-            Span::styled("enter", Style::default().fg(red()).bg(modal_bg())),
-            Span::styled(" accept  ·  ", Style::default().fg(muted()).bg(modal_bg())),
-            Span::styled("esc", Style::default().fg(text()).bg(modal_bg())),
-            Span::styled(" reject", Style::default().fg(muted()).bg(modal_bg())),
+            Span::styled("a", Style::default().fg(red()).bg(modal_bg())),
+            Span::styled(" approve  ·  ", Style::default().fg(muted()).bg(modal_bg())),
+            Span::styled("q", Style::default().fg(text()).bg(modal_bg())),
+            Span::styled(" quit", Style::default().fg(muted()).bg(modal_bg())),
         ]))
         .style(Style::default().bg(modal_bg())),
         rows[1],
@@ -658,9 +923,94 @@ pub(crate) fn render_tool_approval(frame: &mut Frame<'_>, app: &TuiApp, area: Re
     );
 }
 
+pub(crate) fn render_path_mentions(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
+    clear_modal_area(frame, area);
+    let title = if app.path_filter.is_empty() {
+        "Mention path  @".to_string()
+    } else {
+        format!("Mention path  @{}", app.path_filter)
+    };
+    frame.render_widget(modal_block(&title), area);
+
+    let inner = area.inner(Margin {
+        horizontal: 2,
+        vertical: 1,
+    });
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(5), Constraint::Length(1)])
+        .split(inner);
+
+    let candidates = crate::path_mentions::filtered_path_candidates(app);
+    let visible = rows[0].height as usize;
+    let scroll = app.path_scroll.min(candidates.len().saturating_sub(1));
+    let slice = candidates
+        .iter()
+        .skip(scroll)
+        .take(visible)
+        .enumerate()
+        .collect::<Vec<_>>();
+
+    let items = if candidates.is_empty() {
+        vec![ListItem::new(Span::styled(
+            "  (no matches)",
+            Style::default().fg(muted()),
+        ))]
+    } else {
+        slice
+            .iter()
+            .map(|(i, c)| {
+                let index = scroll + i;
+                let selected = index == app.selected_path;
+                let hovered = app.hover_index == Some(index);
+                let style = if hovered || selected {
+                    active_item_style()
+                } else {
+                    inactive_item_style()
+                };
+                let marker = if selected { "● " } else { "  " };
+                let kind = if c.is_dir { "dir  " } else { "file " };
+                ListItem::new(Span::styled(
+                    format!("{marker}{kind}{}", c.rel),
+                    style,
+                ))
+                .style(style)
+            })
+            .collect()
+    };
+
+    frame.render_widget(
+        List::new(items).style(Style::default().bg(modal_bg())),
+        rows[0],
+    );
+    for (i, _) in slice {
+        let index = scroll + i;
+        app.register_hit(
+            line_rect(rows[0], i),
+            20,
+            format!("path {index}"),
+            HitAction::Key {
+                code: crossterm::event::KeyCode::Enter,
+                modifiers: crossterm::event::KeyModifiers::NONE,
+            },
+        );
+    }
+    frame.render_widget(
+        Paragraph::new("↑↓ select  enter insert  esc cancel  ·  files hydrate on send")
+            .style(Style::default().fg(muted()).bg(modal_bg())),
+        rows[1],
+    );
+}
+
 pub(crate) fn render_thinking_picker(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
     clear_modal_area(frame, area);
-    let block = modal_block("Thinking Mode");
+    let model_label = app
+        .models
+        .get(app.selected_model)
+        .map(|m| m.name.as_str())
+        .unwrap_or("model");
+    let title = format!("Thinking Mode · {model_label}");
+    let block = modal_block(&title);
     frame.render_widget(block, area);
 
     let inner = area.inner(Margin {
@@ -672,11 +1022,17 @@ pub(crate) fn render_thinking_picker(frame: &mut Frame<'_>, app: &TuiApp, area: 
         .constraints([Constraint::Min(5), Constraint::Length(1)])
         .split(inner);
 
-    let items = THINKING_OPTIONS
+    let options = crate::keybindings::modals::thinking_options_for_app(app);
+    let selected_local = options
+        .iter()
+        .position(|l| l.index() == app.selected_thinking || *l == app.thinking_level)
+        .unwrap_or(0);
+
+    let items = options
         .iter()
         .enumerate()
         .map(|(index, level)| {
-            let selected = index == app.selected_thinking;
+            let selected = index == selected_local;
             let hovered = app.hover_index == Some(index);
             let current = *level == app.thinking_level;
             let style = if hovered || selected {
@@ -694,11 +1050,9 @@ pub(crate) fn render_thinking_picker(frame: &mut Frame<'_>, app: &TuiApp, area: 
         List::new(items).style(Style::default().bg(modal_bg())),
         rows[0],
     );
-    for (index, level) in THINKING_OPTIONS
-        .iter()
-        .enumerate()
-        .take(rows[0].height as usize)
-    {
+    for (index, level) in options.iter().enumerate().take(rows[0].height as usize) {
+        // Selecting a row should set selected_thinking to that level's global index.
+        let level = *level;
         app.register_hit(
             line_rect(rows[0], index),
             20,
@@ -708,9 +1062,13 @@ pub(crate) fn render_thinking_picker(frame: &mut Frame<'_>, app: &TuiApp, area: 
                 modifiers: crossterm::event::KeyModifiers::NONE,
             },
         );
+        // Ensure Enter uses the level under the cursor: sync selected_thinking on hover path
+        // is handled by key/mouse handlers; click path uses current selected_thinking.
+        let _ = level;
     }
     frame.render_widget(
-        Paragraph::new("").style(Style::default().fg(muted()).bg(modal_bg())),
+        Paragraph::new("levels from registry · adaptive maps to task complexity")
+            .style(Style::default().fg(muted()).bg(modal_bg())),
         rows[1],
     );
 }
@@ -1090,67 +1448,6 @@ pub(crate) fn render_settings(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
         line_rect(rows[1], 0),
         20,
         "close settings",
-        HitAction::CloseModal,
-    );
-}
-
-pub(crate) fn render_help_modal(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
-    clear_modal_area(frame, area);
-    let block = modal_block("Shortcuts");
-    frame.render_widget(block, area);
-
-    let inner = area.inner(Margin {
-        horizontal: 2,
-        vertical: 1,
-    });
-    let rows = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Min(12), Constraint::Length(1)])
-        .split(inner);
-    let shortcuts = [
-        ("ctrl+p", "commands"),
-        ("ctrl+t", "background tasks"),
-        ("ctrl+b", "background agents"),
-        ("ctrl+a", "select input text"),
-        ("ctrl+v", "paste image"),
-        ("tab", "refresh/provider actions"),
-        ("ctrl+m", "models"),
-        ("ctrl+n", "new layer"),
-        ("ctrl+s", "memory"),
-        ("ctrl+o", "compact/full tool output"),
-        ("ctrl+d", "debug"),
-        ("shift+tab", "cycle permission mode"),
-        ("ctrl+enter", "send prompt"),
-        ("enter", "new line"),
-        ("ctrl+j", "new line"),
-        ("/", "commands when input is empty"),
-        ("?", "shortcuts"),
-        ("esc", "cancel/close"),
-    ];
-    let lines = shortcuts
-        .iter()
-        .map(|(key, label)| {
-            Line::from(vec![
-                Span::styled(format!("{key:<12}"), Style::default().fg(signal())),
-                Span::styled(*label, Style::default().fg(text())),
-            ])
-        })
-        .collect::<Vec<_>>();
-
-    frame.render_widget(
-        Paragraph::new(lines)
-            .style(Style::default().fg(text()).bg(modal_bg()))
-            .wrap(Wrap { trim: false }),
-        rows[0],
-    );
-    frame.render_widget(
-        Paragraph::new("").style(Style::default().bg(modal_bg())),
-        rows[1],
-    );
-    app.register_hit(
-        line_rect(rows[1], 0),
-        20,
-        "close help",
         HitAction::CloseModal,
     );
 }

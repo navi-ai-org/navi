@@ -232,6 +232,8 @@ async fn test_turn_loop_with_parallel_tools() {
         event_tx: None,
         approval_resolver: crate::runtime::ApprovalResolver::new_for_test(),
         question_resolver: crate::runtime::QuestionResolver::new_for_test(),
+            plan_review_resolver: crate::runtime::PlanReviewResolver::new_for_test(),
+            sudo_password_resolver: crate::runtime::SudoPasswordResolver::new_for_test(),
         compact_state: Arc::new(tokio::sync::Mutex::new(CompactState::new(128_000))),
         harness_config: crate::config::HarnessConfig::default(),
         include_tool_prompt_manifest: false,
@@ -490,6 +492,8 @@ async fn malformed_tool_arguments_stop_the_turn() {
         event_tx: None,
         approval_resolver: crate::runtime::ApprovalResolver::new_for_test(),
         question_resolver: crate::runtime::QuestionResolver::new_for_test(),
+            plan_review_resolver: crate::runtime::PlanReviewResolver::new_for_test(),
+            sudo_password_resolver: crate::runtime::SudoPasswordResolver::new_for_test(),
         compact_state: Arc::new(tokio::sync::Mutex::new(CompactState::new(128_000))),
         harness_config: crate::config::HarnessConfig::default(),
         include_tool_prompt_manifest: false,
@@ -585,6 +589,8 @@ fn build_test_ctx(project_dir: PathBuf) -> TurnContext {
         event_tx: None,
         approval_resolver: crate::runtime::ApprovalResolver::new_for_test(),
         question_resolver: crate::runtime::QuestionResolver::new_for_test(),
+            plan_review_resolver: crate::runtime::PlanReviewResolver::new_for_test(),
+            sudo_password_resolver: crate::runtime::SudoPasswordResolver::new_for_test(),
         compact_state: Arc::new(tokio::sync::Mutex::new(CompactState::new(128_000))),
         harness_config: crate::config::HarnessConfig::default(),
         include_tool_prompt_manifest: false,
@@ -826,6 +832,8 @@ fn rewrite_unsupported_attachments_keeps_supported_images_and_routes_audio() {
             tool_prompt_manifest: None,
             pricing_input_per_1m: None,
             pricing_output_per_1m: None,
+            reasoning_levels: Vec::new(),
+            default_reasoning_effort: None,
         }],
         ..Default::default()
     }];
@@ -894,6 +902,8 @@ fn rewrite_unsupported_images_do_not_inline_base64() {
             tool_prompt_manifest: None,
             pricing_input_per_1m: None,
             pricing_output_per_1m: None,
+            reasoning_levels: Vec::new(),
+            default_reasoning_effort: None,
         }],
         ..Default::default()
     }];

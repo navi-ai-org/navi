@@ -1,13 +1,11 @@
   main  /tmp/navi-test-project
 
+   › Hello, world
 
-        Hello, world
+     Hi there!
 
-
-   Hi there!
-
-
-
+   ◈ recap
+   │ Hi there!
 
 
 
@@ -16,9 +14,11 @@
 
 
 
-  ▌
-  ▌
-  ▌
-  ▌ gpt-5.5 OpenAI · adaptive · 3 / 200k (0%)                      restricted
-  ▌
-               ctrl+p commands · ctrl+m models · ctrl+enter send · ctrl+v image
+
+
+
+
+  ╭──────────────────────────────────────────────────────────────────────────╮
+  │ ›                                                                        │
+  ╰──────────────────────────────────────────────────────────────────────────╯
+                               gpt-5.5 (adaptive) · 3 / 200k (0%) · restricted

@@ -1,7 +1,7 @@
 {
   "id": "moonshot",
   "label": "Moonshot AI",
-  "description": "Kimi models via Moonshot AI — multimodal, long-context, and reasoning models",
+  "description": "Kimi models via Moonshot AI \u2014 multimodal, long-context, and reasoning models",
   "kind": "openai-chat-completions",
   "api_key_env": "MOONSHOT_API_KEY",
   "base_url": "https://api.moonshot.cn/v1",
@@ -11,21 +11,39 @@
       "context_window_tokens": 262144,
       "max_output_tokens": 65536,
       "recommended_temperature": 1.0,
-      "supports_thinking": true
+      "supports_thinking": true,
+      "reasoning_levels": [
+        "low",
+        "medium",
+        "high"
+      ],
+      "default_reasoning_effort": "medium"
     },
     {
       "name": "kimi-k2.5",
       "context_window_tokens": 262144,
       "max_output_tokens": 65536,
       "recommended_temperature": 1.0,
-      "supports_thinking": true
+      "supports_thinking": true,
+      "reasoning_levels": [
+        "low",
+        "medium",
+        "high"
+      ],
+      "default_reasoning_effort": "medium"
     },
     {
       "name": "kimi-k2-thinking",
       "context_window_tokens": 256000,
       "max_output_tokens": 65536,
       "recommended_temperature": 1.0,
-      "supports_thinking": true
+      "supports_thinking": true,
+      "reasoning_levels": [
+        "low",
+        "medium",
+        "high"
+      ],
+      "default_reasoning_effort": "medium"
     },
     {
       "name": "kimi-k2",
@@ -53,7 +71,13 @@
       "context_window_tokens": 128000,
       "max_output_tokens": 65536,
       "recommended_temperature": 1.0,
-      "supports_thinking": true
+      "supports_thinking": true,
+      "reasoning_levels": [
+        "low",
+        "medium",
+        "high"
+      ],
+      "default_reasoning_effort": "medium"
     },
     {
       "name": "moonshot-v1-128k",

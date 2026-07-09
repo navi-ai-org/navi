@@ -101,6 +101,11 @@ pub struct NaviNapiEventStream {
 }
 
 #[napi]
+pub struct NaviNapiVoiceEventStream {
+    receiver: AsyncMutex<broadcast::Receiver<navi_sdk::VoiceEvent>>,
+}
+
+#[napi]
 pub struct NaviNapiEngineBuilder {
     project_dir: String,
     learning_tutor: bool,
@@ -580,6 +585,36 @@ impl NaviNapiEngine {
             .map_err(to_napi_error)
     }
 
+    #[napi]
+    pub async fn resolve_plan_review(
+        &self,
+        session_id: String,
+        response: JsonValue,
+    ) -> Result<bool> {
+        let pr: navi_sdk::PlanReviewResponse =
+            serde_json::from_value(response).map_err(to_napi_error)?;
+        self.inner
+            .resolve_plan_review(&session_id, pr)
+            .await
+            .map_err(to_napi_error)
+    }
+
+    /// Resolve a sudo password prompt. Pass `{ kind: "submitted", id, password }` or
+    /// `{ kind: "cancelled", id }`. Password must never be logged by the client.
+    #[napi]
+    pub async fn resolve_sudo_password(
+        &self,
+        session_id: String,
+        response: JsonValue,
+    ) -> Result<bool> {
+        let sr: navi_sdk::SudoPasswordResponse =
+            serde_json::from_value(response).map_err(to_napi_error)?;
+        self.inner
+            .resolve_sudo_password(&session_id, sr)
+            .await
+            .map_err(to_napi_error)
+    }
+
     // ── Background Tasks ───────────────────────────────────────────────
 
     #[napi]
@@ -648,6 +683,35 @@ impl NaviNapiEngine {
     pub fn delete_provider_api_key(&self, provider_id: String) -> Result<bool> {
         self.inner
             .delete_provider_api_key(&provider_id)
+            .map_err(to_napi_error)
+    }
+
+    #[napi]
+    pub fn provider_supports_device_oauth(&self, provider_id: String) -> bool {
+        self.inner.provider_supports_device_oauth(&provider_id)
+    }
+
+    /// Run device/browser OAuth. Optional `onStarted` receives
+    /// `{ verificationUri, userCode }` when the user must authorize.
+    /// Blocks until the flow completes; returns optional secondary token.
+    #[napi]
+    pub async fn start_device_oauth(
+        &self,
+        provider_id: String,
+        on_started: Option<ThreadsafeFunction<JsonValue, UnknownReturnValue>>,
+    ) -> Result<Option<String>> {
+        let cb = on_started.map(Arc::new);
+        self.inner
+            .start_device_oauth(&provider_id, move |info| {
+                if let Some(ref tsfn) = cb {
+                    let payload = json!({
+                        "verificationUri": info.verification_uri,
+                        "userCode": info.user_code,
+                    });
+                    let _ = tsfn.call(Ok(payload), ThreadsafeFunctionCallMode::NonBlocking);
+                }
+            })
+            .await
             .map_err(to_napi_error)
     }
 
@@ -761,6 +825,100 @@ impl NaviNapiEngine {
             .sync_registry(force.unwrap_or(false))
             .await
             .map_err(to_napi_error)
+    }
+
+    #[napi]
+    pub fn list_registry(&self) -> Result<JsonValue> {
+        self.inner.list_registry().map_err(to_napi_error)
+    }
+
+    // ── Plugins (install / marketplace) ────────────────────────────────
+
+    #[napi]
+    pub fn plugin_list(&self) -> Result<JsonValue> {
+        let list = self.inner.plugin_list().map_err(to_napi_error)?;
+        serde_json::to_value(list).map_err(to_napi_error)
+    }
+
+    #[napi]
+    pub fn plugin_info(&self, plugin_id: String) -> Result<JsonValue> {
+        let info = self.inner.plugin_info(&plugin_id).map_err(to_napi_error)?;
+        serde_json::to_value(info).map_err(to_napi_error)
+    }
+
+    #[napi]
+    pub async fn plugin_search(&self, query: Option<String>) -> Result<JsonValue> {
+        let hits = self
+            .inner
+            .plugin_search(query.as_deref())
+            .await
+            .map_err(to_napi_error)?;
+        serde_json::to_value(hits).map_err(to_napi_error)
+    }
+
+    #[napi]
+    pub fn plugin_install_path(&self, path: String, confirm: bool) -> Result<JsonValue> {
+        let result = self
+            .inner
+            .plugin_install_path(std::path::Path::new(&path), confirm)
+            .map_err(to_napi_error)?;
+        serde_json::to_value(result).map_err(to_napi_error)
+    }
+
+    #[napi]
+    pub async fn plugin_install_marketplace(
+        &self,
+        plugin_id: String,
+        confirm: bool,
+    ) -> Result<JsonValue> {
+        let result = self
+            .inner
+            .plugin_install_marketplace(&plugin_id, confirm)
+            .await
+            .map_err(to_napi_error)?;
+        serde_json::to_value(result).map_err(to_napi_error)
+    }
+
+    #[napi]
+    pub fn plugin_update_path(
+        &self,
+        path: String,
+        force: Option<bool>,
+        confirm: Option<bool>,
+    ) -> Result<JsonValue> {
+        let result = self
+            .inner
+            .plugin_update_path(
+                std::path::Path::new(&path),
+                force.unwrap_or(false),
+                confirm.unwrap_or(false),
+            )
+            .map_err(to_napi_error)?;
+        serde_json::to_value(result).map_err(to_napi_error)
+    }
+
+    #[napi]
+    pub async fn plugin_update_marketplace(
+        &self,
+        plugin_id: String,
+        force: Option<bool>,
+        confirm: Option<bool>,
+    ) -> Result<JsonValue> {
+        let result = self
+            .inner
+            .plugin_update_marketplace(
+                &plugin_id,
+                force.unwrap_or(false),
+                confirm.unwrap_or(false),
+            )
+            .await
+            .map_err(to_napi_error)?;
+        serde_json::to_value(result).map_err(to_napi_error)
+    }
+
+    #[napi]
+    pub fn plugin_remove(&self, plugin_id: String) -> Result<()> {
+        self.inner.plugin_remove(&plugin_id).map_err(to_napi_error)
     }
 
     // ── Wasm Plugins ───────────────────────────────────────────────────
@@ -939,6 +1097,163 @@ impl NaviNapiEngine {
         self.inner.memory_index()
     }
 
+    #[napi]
+    pub fn memory_status(&self) -> Result<JsonValue> {
+        let report = self.inner.memory_status().map_err(to_napi_error)?;
+        serde_json::to_value(report).map_err(to_napi_error)
+    }
+
+    #[napi]
+    pub fn memory_doctor(&self) -> Result<JsonValue> {
+        let report = self.inner.memory_doctor().map_err(to_napi_error)?;
+        serde_json::to_value(report).map_err(to_napi_error)
+    }
+
+    #[napi]
+    pub async fn memory_init(
+        &self,
+        embeddings: Option<bool>,
+        force: Option<bool>,
+    ) -> Result<JsonValue> {
+        let report = self
+            .inner
+            .memory_init(embeddings.unwrap_or(false), force.unwrap_or(false))
+            .await
+            .map_err(to_napi_error)?;
+        serde_json::to_value(report).map_err(to_napi_error)
+    }
+
+    #[napi]
+    pub fn memory_history_search(
+        &self,
+        query: String,
+        session_id: Option<String>,
+        limit: Option<i64>,
+    ) -> Result<JsonValue> {
+        let events = self
+            .inner
+            .memory_history_search(&query, session_id.as_deref(), limit)
+            .map_err(to_napi_error)?;
+        serde_json::to_value(events).map_err(to_napi_error)
+    }
+
+    #[napi]
+    pub async fn memory_dream(
+        &self,
+        apply: Option<bool>,
+        sessions: Option<u32>,
+        instructions: Option<String>,
+    ) -> Result<JsonValue> {
+        let report = self
+            .inner
+            .memory_dream(
+                apply.unwrap_or(false),
+                sessions.unwrap_or(10) as usize,
+                instructions,
+            )
+            .await
+            .map_err(to_napi_error)?;
+        serde_json::to_value(report).map_err(to_napi_error)
+    }
+
+    #[napi]
+    pub async fn memory_distill(&self) -> Result<()> {
+        self.inner.memory_distill().await.map_err(to_napi_error)
+    }
+
+    #[napi]
+    pub async fn memory_checkpoint(&self) -> Result<String> {
+        self.inner.memory_checkpoint().await.map_err(to_napi_error)
+    }
+
+    // ── Voice / dictation ────────────────────────────────────────────────
+
+    #[napi]
+    pub fn voice_status(&self) -> Result<JsonValue> {
+        let status = self.inner.voice_status().map_err(to_napi_error)?;
+        serde_json::to_value(status).map_err(to_napi_error)
+    }
+
+    #[napi]
+    pub fn voice_doctor(&self) -> Result<JsonValue> {
+        let report = self.inner.voice_doctor().map_err(to_napi_error)?;
+        serde_json::to_value(report).map_err(to_napi_error)
+    }
+
+    #[napi]
+    pub fn voice_engine_installed(&self, engine: Option<String>) -> Result<bool> {
+        self.inner
+            .voice_engine_installed(engine.as_deref())
+            .map_err(to_napi_error)
+    }
+
+    #[napi]
+    pub async fn voice_init(
+        &self,
+        engine: Option<String>,
+        force: Option<bool>,
+    ) -> Result<String> {
+        let path = self
+            .inner
+            .voice_init(engine.as_deref(), force.unwrap_or(false))
+            .await
+            .map_err(to_napi_error)?;
+        Ok(path.display().to_string())
+    }
+
+    /// Transcribe a WAV file (blocking ONNX runs on a worker thread).
+    #[napi]
+    pub async fn voice_transcribe_file(
+        &self,
+        path: String,
+        language: Option<String>,
+    ) -> Result<JsonValue> {
+        let engine = self.inner.clone();
+        let lang = language.clone();
+        let result = tokio::task::spawn_blocking(move || {
+            engine.voice_transcribe_file(&path, lang.as_deref())
+        })
+        .await
+        .map_err(|e| to_napi_error(anyhow::anyhow!("voice_transcribe_file join: {e}")))?
+        .map_err(to_napi_error)?;
+        serde_json::to_value(json!({
+            "text": result.text,
+            "tokenIds": result.token_ids,
+        }))
+        .map_err(to_napi_error)
+    }
+
+    #[napi]
+    pub fn voice_start_stream(&self, language: Option<String>) -> Result<()> {
+        self.inner
+            .voice_start_stream(language.as_deref())
+            .map_err(to_napi_error)
+    }
+
+    /// Push 16 kHz mono PCM samples (`number[]` or Float32Array via JS).
+    #[napi]
+    pub fn voice_push_pcm(&self, samples: Vec<f64>) -> Result<String> {
+        let pcm: Vec<f32> = samples.iter().map(|s| *s as f32).collect();
+        self.inner.voice_push_pcm(&pcm).map_err(to_napi_error)
+    }
+
+    #[napi]
+    pub fn voice_end_stream(&self) -> Result<String> {
+        self.inner.voice_end_stream().map_err(to_napi_error)
+    }
+
+    #[napi]
+    pub fn voice_cancel_stream(&self) -> Result<()> {
+        self.inner.voice_cancel_stream().map_err(to_napi_error)
+    }
+
+    #[napi]
+    pub fn subscribe_voice_events(&self) -> NaviNapiVoiceEventStream {
+        NaviNapiVoiceEventStream {
+            receiver: AsyncMutex::new(self.inner.subscribe_voice_events()),
+        }
+    }
+
     // ── Permission Mode ──────────────────────────────────────────────────
 
     #[napi]
@@ -1022,6 +1337,25 @@ impl NaviNapiEventStream {
         loop {
             match receiver.recv().await {
                 Ok(event) => return runtime_event_to_json(event).map(Some),
+                Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(broadcast::error::RecvError::Closed) => return Ok(None),
+            }
+        }
+    }
+}
+
+#[napi]
+impl NaviNapiVoiceEventStream {
+    #[napi]
+    pub async fn next(&self) -> Result<Option<JsonValue>> {
+        let mut receiver = self.receiver.lock().await;
+        loop {
+            match receiver.recv().await {
+                Ok(event) => {
+                    return serde_json::to_value(event)
+                        .map(Some)
+                        .map_err(to_napi_error);
+                }
                 Err(broadcast::error::RecvError::Lagged(_)) => continue,
                 Err(broadcast::error::RecvError::Closed) => return Ok(None),
             }
@@ -1164,7 +1498,8 @@ fn initial_messages_from_events(events: &[AgentEvent]) -> Vec<ModelMessage> {
             AgentEvent::UserTaskSubmitted {
                 text,
                 content_parts,
-            } => {
+            submitted_at: _,
+        } => {
                 if content_parts.is_empty() {
                     messages.push(ModelMessage::user(text.clone()));
                 } else {

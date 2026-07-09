@@ -58,7 +58,9 @@ pub(crate) fn save_current_session(app: &mut TuiApp) {
     app.message_action_target = None;
     app.selected_message_action = 0;
     app.expanded_tool_results.clear();
+    app.collapsed_tool_results.clear();
     app.hovered_chat_source = None;
+    app.selected_chat_source = None;
 }
 
 pub(crate) fn sync_preferences_to_config(app: &mut TuiApp) {
@@ -128,8 +130,13 @@ pub(crate) fn load_session(app: &mut TuiApp, snapshot: &SessionSnapshot) {
             AgentEvent::UserTaskSubmitted {
                 text,
                 content_parts,
+                submitted_at,
             } => {
                 let mut msg = ChatMessage::new(ChatRole::User, text.clone());
+                if let Some(secs) = submitted_at {
+                    msg.sent_at =
+                        Some(std::time::UNIX_EPOCH + std::time::Duration::from_secs(*secs));
+                }
                 for part in content_parts.iter() {
                     if let navi_core::model::ContentPart::Image {
                         media_type, data, ..
@@ -206,5 +213,7 @@ pub(crate) fn load_session(app: &mut TuiApp, snapshot: &SessionSnapshot) {
     app.message_action_target = None;
     app.selected_message_action = 0;
     app.expanded_tool_results.clear();
+    app.collapsed_tool_results.clear();
     app.hovered_chat_source = None;
+    app.selected_chat_source = None;
 }

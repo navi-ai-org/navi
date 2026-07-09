@@ -30,6 +30,9 @@ pub struct NaviConfig {
     pub plugins: Vec<PluginConfig>,
     /// Session memory settings.
     pub memory: MemoryConfig,
+    /// Local voice / dictation settings (optional).
+    #[serde(default)]
+    pub voice: VoiceConfig,
     /// Skill discovery and activation.
     pub skills: SkillsConfig,
     /// MCP server configuration.
@@ -559,6 +562,12 @@ pub struct ProviderModelConfig {
     /// Whether the model supports extended thinking / reasoning mode.
     #[serde(default)]
     pub supports_thinking: Option<bool>,
+    /// Supported reasoning effort levels from the registry (e.g. none/low/medium/high/xhigh).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub reasoning_levels: Vec<String>,
+    /// Default reasoning effort for this model (registry `default_reasoning_effort`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_reasoning_effort: Option<String>,
     /// Whether the model can consume image attachments directly.
     #[serde(default)]
     pub supports_images: Option<bool>,
@@ -609,6 +618,12 @@ pub struct ModelOption {
     pub task_size: Option<ModelTaskSize>,
     /// Context window size in tokens, if known.
     pub context_window_tokens: Option<u64>,
+    /// Whether the model supports extended thinking / reasoning mode.
+    pub supports_thinking: Option<bool>,
+    /// Supported reasoning effort levels from the registry for this model.
+    pub reasoning_levels: Vec<String>,
+    /// Default reasoning effort for this model, when known.
+    pub default_reasoning_effort: Option<String>,
 }
 
 /// A native plugin library path with an enable toggle.
@@ -725,6 +740,41 @@ impl Default for HistoryConfig {
         Self {
             enabled: true,
             sqlite_path: default_history_sqlite_path(),
+        }
+    }
+}
+
+/// Local voice / dictation settings (`[voice]` in config.toml).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct VoiceConfig {
+    /// Master switch — dictation remains opt-in.
+    pub enabled: bool,
+    /// Active ASR engine id (`nemotron_streaming` | `distil_whisper`).
+    pub engine: String,
+    /// Language hint (`auto`, `en-US`, `pt-BR`, …).
+    pub language: String,
+    /// `toggle` or `hold`.
+    pub capture: String,
+    /// `auto` or explicit recorder (`pw-record`, `parec`, `arecord`).
+    pub recorder: String,
+    /// Override model root; empty = `{data_dir}/voice/models/<engine>/`.
+    pub model_dir: String,
+    /// Hugging Face repo for the Nemotron ONNX package.
+    pub hf_repo_nemotron: String,
+}
+
+impl Default for VoiceConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            engine: "nemotron_streaming".to_string(),
+            language: "auto".to_string(),
+            capture: "toggle".to_string(),
+            recorder: "auto".to_string(),
+            model_dir: String::new(),
+            hf_repo_nemotron: "navi-org/navi-voice-nemotron-3.5-asr-streaming-0.6b-onnx"
+                .to_string(),
         }
     }
 }

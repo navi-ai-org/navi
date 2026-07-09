@@ -59,7 +59,8 @@ mod tests {
             AgentEvent::UserTaskSubmitted {
                 text: "make a dashboard".to_string(),
                 content_parts: vec![],
-            },
+            submitted_at: None,
+        },
             AgentEvent::ModelOutput {
                 text: "## Cyberpunk Analytics Dashboard\n\nImplemented.".to_string(),
                 thinking: None,

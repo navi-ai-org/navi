@@ -143,6 +143,9 @@ fn highlight_selection_columns(
     if start_col >= end_col {
         return line.clone();
     }
+    // Theme selection colors — DarkGray alone is invisible on many dark themes.
+    let sel_bg = selection_bg();
+    let sel_fg = selection_fg();
     let mut spans = Vec::new();
     let mut current_col = 0usize;
     for span in &line.spans {
@@ -151,7 +154,8 @@ fn highlight_selection_columns(
             let next_col = current_col.saturating_add(width);
             let selected = next_col > start_col && current_col < end_col;
             let style = if selected {
-                span.style.bg(Color::DarkGray)
+                // Force readable contrast on the selection bar.
+                span.style.fg(sel_fg).bg(sel_bg).add_modifier(Modifier::BOLD)
             } else {
                 span.style
             };
@@ -369,28 +373,45 @@ fn style_interactive_lines(
     width: usize,
 ) {
     for (line, source) in lines.iter_mut().zip(sources.iter()) {
-        let Some((hovered, selected, soft_card)) = interactive_state(app, source) else {
+        let Some((hovered, block_selected, action_selected, soft_card)) =
+            interactive_state(app, source)
+        else {
             continue;
         };
-        // Soft tool cards only paint when hovered/selected/expanded.
-        if soft_card && !hovered && !selected {
+
+        // Block selection: Recap-style left rail only — no solid fill, no fg wipe.
+        if block_selected {
+            apply_selection_rail(line);
             continue;
         }
-        let bg = if selected {
-            // Grok-style block selection highlight.
-            selection_bg()
-        } else if hovered {
-            interactive_hover_bg()
-        } else {
-            interactive_bg()
-        };
-        apply_card_bg(line, width, bg, hovered || selected, selected);
+
+        // Soft tool cards only paint when hovered/expanded.
+        if soft_card {
+            if !hovered && !action_selected {
+                continue;
+            }
+            let bg = if hovered {
+                interactive_hover_bg()
+            } else {
+                interactive_bg()
+            };
+            apply_card_bg(line, width, bg, hovered || action_selected);
+            continue;
+        }
+
+        // Messages: hover only (user sticky panel stays from markdown render).
+        if hovered {
+            apply_card_bg(line, width, interactive_hover_bg(), true);
+        }
     }
 }
 
-/// Returns (hovered, selected, soft_card).
+/// Returns (hovered, block_selected, action_selected, soft_card).
 /// soft_card = true for tools that only show card chrome when interactive.
-fn interactive_state(app: &TuiApp, source: &ChatLineSource) -> Option<(bool, bool, bool)> {
+fn interactive_state(
+    app: &TuiApp,
+    source: &ChatLineSource,
+) -> Option<(bool, bool, bool, bool)> {
     if matches!(source, ChatLineSource::None) {
         return None;
     }
@@ -416,7 +437,6 @@ fn interactive_state(app: &TuiApp, source: &ChatLineSource) -> Option<(bool, boo
         ),
         ChatLineSource::None => false,
     };
-    let selected = block_selected || action_selected;
     let soft_card = matches!(
         source,
         ChatLineSource::ToolResult(_) | ChatLineSource::ToolGroup(_) | ChatLineSource::Subagent(_)
@@ -425,16 +445,51 @@ fn interactive_state(app: &TuiApp, source: &ChatLineSource) -> Option<(bool, boo
         .hovered_chat_source
         .as_ref()
         .is_some_and(|hovered| crate::chat_blocks::chat_sources_match(hovered, source));
-    Some((hovered, selected, soft_card))
+    Some((hovered, block_selected, action_selected, soft_card))
 }
 
-fn apply_card_bg(
-    line: &mut Line<'static>,
-    width: usize,
-    bg: Color,
-    emphasize: bool,
-    block_selected: bool,
-) {
+/// Recap-style vertical rail on the left of a selected block.
+/// Keeps original text colors; no full-width selection_bg fill.
+fn apply_selection_rail(line: &mut Line<'static>) {
+    // Thin continuous bar (Grok Recap). `│` is one cell wide everywhere.
+    const RAIL: &str = "│";
+    // Muted like Recap — selection is the rail alone, not a fill + fg wipe.
+    let rail_style = Style::default().fg(muted()).bg(bg());
+    let chat_bg = bg();
+
+    // Drop solid panel/selection fills so the rail is the only selection
+    // chrome (text sits on the chat bg). Keep intentional code-block bg.
+    // Use explicit theme bg (not Color::Reset) so terminals never flash a
+    // light default behind selected lines.
+    for span in line.spans.iter_mut() {
+        if crate::render::markdown::is_image_tag(&span.content) {
+            span.style = Style::default().bg(code_const()).fg(Color::Black);
+            continue;
+        }
+        if span.style.bg == Some(code_block_bg()) {
+            continue;
+        }
+        span.style = span.style.bg(chat_bg);
+    }
+
+    // Recap (and similar) already start with a rail — restyle, don't double.
+    if let Some(first) = line.spans.first_mut() {
+        let content = first.content.as_ref();
+        if content == RAIL || content.starts_with('│') {
+            first.style = rail_style;
+            return;
+        }
+        // Eat one leading space from the gutter so content stays column-aligned
+        // (CONTENT_GUTTER / continuation indent). Do not eat markers like `›`.
+        if let Some(stripped) = content.strip_prefix(' ') {
+            first.content = stripped.to_string().into();
+        }
+    }
+    line.spans.retain(|span| !span.content.is_empty());
+    line.spans.insert(0, Span::styled(RAIL.to_string(), rail_style));
+}
+
+fn apply_card_bg(line: &mut Line<'static>, width: usize, bg: Color, emphasize: bool) {
     let mut used = 0usize;
     for (index, span) in line.spans.iter_mut().enumerate() {
         used = used.saturating_add(display_width(&span.content));
@@ -443,36 +498,15 @@ fn apply_card_bg(
             span.style = Style::default().bg(code_const()).fg(Color::Black);
             continue;
         }
-        if block_selected {
-            // Light selection bars use selection_fg for ALL ink. Tool cards ship
-            // light syntax colors (text/code_*) which vanish on selection_bg
-            // unless we override them.
-            let bold = span.style.add_modifier.contains(Modifier::BOLD);
-            span.style = Style::default()
-                .fg(selection_fg())
-                .bg(bg)
-                .add_modifier(if bold {
-                    Modifier::BOLD
-                } else {
-                    Modifier::empty()
-                });
-        } else {
-            span.style = span.style.bg(bg);
-            if emphasize && index == 0 {
-                span.style = span.style.fg(signal()).add_modifier(Modifier::BOLD);
-            }
+        span.style = span.style.bg(bg);
+        if emphasize && index == 0 {
+            span.style = span.style.fg(signal()).add_modifier(Modifier::BOLD);
         }
     }
     if used < width {
         line.spans.push(Span::styled(
             " ".repeat(width - used),
-            Style::default()
-                .fg(if block_selected {
-                    selection_fg()
-                } else {
-                    text()
-                })
-                .bg(bg),
+            Style::default().fg(text()).bg(bg),
         ));
     }
 }
@@ -564,14 +598,18 @@ fn chat_render_signature(app: &TuiApp) -> u64 {
     app.chat_view.hash(&mut hasher);
     app.theme_id.config_value().hash(&mut hasher);
     app.compact_tool_visible_limit.hash(&mut hasher);
+    // Invalidate once per pulse frame so ◆/◇ advances while tools/commands run.
     if app.is_loading
         || !app.running_tools.is_empty()
         || app.background_commands.iter().any(|c| c.is_running())
     {
-        (app.tick() % 8).hash(&mut hasher);
-        app.loading_start
-            .map(|start| start.elapsed().as_secs())
-            .hash(&mut hasher);
+        let elapsed_ms = app
+            .loading_start
+            .map(|start| start.elapsed().as_millis() as u64)
+            .unwrap_or_else(|| app.tick().saturating_mul(80));
+        crate::render::status::running_pulse_frame(elapsed_ms).hash(&mut hasher);
+        // Also track wall clock seconds for elapsed labels (· 3s).
+        (elapsed_ms / 1000).hash(&mut hasher);
     }
     let mut running_tools = app.running_tools.values().collect::<Vec<_>>();
     running_tools.sort_by(|left, right| left.id.cmp(&right.id));
@@ -736,5 +774,60 @@ mod tests {
 
         assert!(rendered.contains("xyz"));
         assert!(!rendered.contains("abc"));
+    }
+
+    #[test]
+    fn selected_block_uses_left_rail_not_selection_bg() {
+        use ratatui::style::Color;
+        use crate::state::ChatLineSource;
+        use crate::theme::{selection_bg, with_palette, ThemeId};
+
+        with_palette(&ThemeId::Lain.palette(), || {
+            let mut app = crate::tests::test_app("");
+            app.messages.push(ChatMessage::new(
+                ChatRole::Assistant,
+                "hello selected".to_string(),
+            ));
+            app.selected_chat_source = Some(ChatLineSource::Message(0));
+
+            let mut lines = vec![ratatui::prelude::Line::from(vec![
+                ratatui::prelude::Span::styled(
+                    "  hello selected",
+                    ratatui::style::Style::default().fg(crate::theme::text()),
+                ),
+            ])];
+            let sources = vec![ChatLineSource::Message(0)];
+            super::style_interactive_lines(&mut lines, &sources, &app, 40);
+
+            let line = &lines[0];
+            assert!(
+                line.spans
+                    .first()
+                    .is_some_and(|s| s.content.as_ref() == "│"),
+                "expected left rail, got {:?}",
+                line.spans
+                    .iter()
+                    .map(|s| s.content.as_ref())
+                    .collect::<Vec<_>>()
+            );
+            let bad = selection_bg();
+            for span in &line.spans {
+                assert_ne!(
+                    span.style.bg,
+                    Some(bad),
+                    "selection must not paint selection_bg on {:?}",
+                    span.content.as_ref()
+                );
+                // No light lavender fill — chat bg or code block only.
+                if let Some(Color::Rgb(r, g, b)) = span.style.bg {
+                    // Lain selection_bg is (236, 232, 255) — reject near-white lavenders.
+                    assert!(
+                        !(r > 200 && g > 200 && b > 200),
+                        "unexpected light bg on selected span {:?}",
+                        span.content.as_ref()
+                    );
+                }
+            }
+        });
     }
 }

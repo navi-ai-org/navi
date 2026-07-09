@@ -72,6 +72,8 @@ fn test_config() -> NaviConfig {
             tool_prompt_manifest: None,
             pricing_input_per_1m: None,
             pricing_output_per_1m: None,
+            reasoning_levels: Vec::new(),
+            default_reasoning_effort: None,
         }],
 
         ..Default::default()
@@ -174,6 +176,7 @@ fn write_session_file(tempdir: &tempfile::TempDir, session_id: &str) {
         events: vec![AgentEvent::UserTaskSubmitted {
             text: "test task".to_string(),
             content_parts: vec![],
+            submitted_at: None,
         }],
 
         memory: None,
@@ -1050,4 +1053,96 @@ async fn start_multiple_sessions_independent() {
         .expect("start session 2");
 
     assert_ne!(s1.id, s2.id);
+}
+
+#[test]
+fn voice_status_without_model() {
+    let (engine, _tempdir) = test_engine();
+    let status = engine.voice_status().expect("status");
+    assert!(!status.installed);
+    assert!(!status.streaming_active);
+    assert_eq!(status.sample_rate, 16000);
+    assert_eq!(status.chunk_samples, 8960);
+}
+
+#[test]
+fn voice_push_without_start_errors() {
+    let (engine, _tempdir) = test_engine();
+    let err = engine.voice_push_pcm(&[0.0f32; 100]).unwrap_err();
+    let msg = err.to_string();
+    assert!(
+        msg.contains("not active") || msg.contains("start"),
+        "unexpected error: {msg}"
+    );
+}
+
+#[test]
+fn voice_cancel_when_idle_ok() {
+    let (engine, _tempdir) = test_engine();
+    engine.voice_cancel_stream().expect("cancel idle");
+}
+
+#[test]
+fn voice_doctor_runs() {
+    let (engine, _tempdir) = test_engine();
+    let report = engine.voice_doctor().expect("doctor");
+    // Model missing → not ok, but doctor itself returns a report
+    assert!(!report.lines.is_empty());
+}
+
+#[test]
+fn voice_engine_installed_false_by_default() {
+    let (engine, _tempdir) = test_engine();
+    assert!(!engine
+        .voice_engine_installed(Some("nemotron_streaming"))
+        .expect("installed check"));
+}
+
+#[test]
+fn voice_start_without_model_errors() {
+    let (engine, _tempdir) = test_engine();
+    let err = engine.voice_start_stream(Some("en-US")).unwrap_err();
+    assert!(
+        err.to_string().contains("not installed") || err.to_string().contains("model"),
+        "unexpected: {err}"
+    );
+}
+
+#[test]
+fn memory_status_and_doctor_without_data() {
+    let (engine, _tempdir) = test_engine();
+    let status = engine.memory_status().expect("memory_status");
+    assert!(!status.memory_root.is_empty());
+    let doctor = engine.memory_doctor().expect("memory_doctor");
+    assert!(!doctor.lines.is_empty());
+}
+
+#[test]
+fn plugin_list_empty_by_default() {
+    let (engine, _tempdir) = test_engine();
+    let list = engine.plugin_list().expect("plugin_list");
+    assert!(list.is_empty());
+}
+
+#[test]
+fn list_registry_returns_providers() {
+    let (engine, _tempdir) = test_engine();
+    let reg = engine.list_registry().expect("list_registry");
+    assert!(reg.get("providers").is_some());
+}
+
+#[test]
+fn oauth_support_check() {
+    let (engine, _tempdir) = test_engine();
+    assert!(engine.provider_supports_device_oauth("github-copilot"));
+    assert!(!engine.provider_supports_device_oauth("unknown-xyz"));
+}
+
+#[test]
+fn plugin_install_requires_confirm() {
+    let (engine, _tempdir) = test_engine();
+    let err = engine
+        .plugin_install_path(std::path::Path::new("/tmp/nope"), false)
+        .unwrap_err();
+    assert!(err.to_string().contains("confirm"));
 }

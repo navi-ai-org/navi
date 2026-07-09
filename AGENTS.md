@@ -100,7 +100,10 @@ NAVI exposes a small, serializable, UI-agnostic runtime API:
 - `NaviEngine::send_turn(...)` — sends a user message, returns structured events
 - `NaviEngine::cancel_turn(...)` — cancels an active turn
 - `NaviEngine::resolve_approval(...)` — resolves tool approval prompts
+- `NaviEngine::resolve_plan_review(...)` — resolves plan tool user review
+- `NaviEngine::resolve_sudo_password(...)` — resolves sudo password prompts (secret never in chat)
 - `NaviEngine::add_context_packet(...)` — injects context from external sources
+- `NaviEngine::set_model(...)` — changes model on an active session
 - `NaviEngine::snapshot_session(...)` — takes a persistence snapshot
 - `NaviEngine::list_models(...)` — lists available models
 - `NaviEngine::set_model(...)` — selects a model
@@ -116,6 +119,13 @@ NAVI exposes a small, serializable, UI-agnostic runtime API:
 - `NaviEngine::memory_delete(...)` — deletes a memory
 - `NaviEngine::memory_count(...)` — returns count of active memories
 - `NaviEngine::memory_index()` — returns markdown index for prompt injection
+- `NaviEngine::voice_status()` — config, install path, recorders, streaming flag
+- `NaviEngine::voice_doctor()` — mic tools + model files + checksum diagnostics
+- `NaviEngine::voice_engine_installed(...)` — whether an ASR package is on disk
+- `NaviEngine::voice_init(...)` — download + verify a local ASR engine package
+- `NaviEngine::voice_transcribe_file(...)` — offline WAV → text (16 kHz mono path)
+- `NaviEngine::voice_start_stream(...)` / `voice_push_pcm(...)` / `voice_end_stream()` / `voice_cancel_stream()` — client-fed streaming dictation (16 kHz mono f32)
+- `NaviEngine::subscribe_voice_events()` — engine-global `VoiceEvent` stream (partial/final/error; not session-bound)
 - Host tools through `SdkHostTool` and `HostToolHandler`
 
 Structured events are serializable, versioned, and suitable for both TUI and Tutor: `session.started`, `turn.started`, `assistant.delta`, `assistant.thinking_delta`, `tool.requested`, `approval.required`, `tool.started`, `tool.completed`, `context.updated`, `tokens.updated`, `session.saved`, `turn.completed`, `session.finished`, `error`, `auto_dream.started`, `auto_dream.completed`, `auto_dream.failed`.
@@ -536,7 +546,7 @@ Global (cross-project) memory lives at `{data_dir}/memory/global-memory.db` (SQL
 
 ### SDK API
 
-`NaviEngine` exposes 8 methods: `memory_write`, `memory_read`, `memory_list`, `memory_search`, `memory_update`, `memory_delete`, `memory_count`, `memory_index`. All are also bound in `navi-napi` as `#[napi]` methods for Node.js/Electron clients.
+`NaviEngine` memory surface: CRUD (`memory_write` … `memory_index`) plus ops (`memory_status`, `memory_doctor`, `memory_init`, `memory_history_search`, `memory_dream`, `memory_distill`, `memory_checkpoint`). Voice: 10 methods (`voice_status` … `subscribe_voice_events`). Plugins: `plugin_list` / `plugin_info` / `plugin_search` / `plugin_install_*` / `plugin_update_*` / `plugin_remove`. Auth: `provider_supports_device_oauth`, `start_device_oauth`. Registry: `sync_registry`, `list_registry`. All are also bound in `navi-napi` for Node.js/Electron (NAV Desktop). Voice is engine-scoped (client-fed 16 kHz PCM + dedicated event stream).
 
 ### Events
 

@@ -114,6 +114,8 @@ impl RegistryStore {
                 supports_video      INTEGER,
                 supports_documents  INTEGER,
                 tool_prompt_manifest INTEGER,
+                reasoning_levels    TEXT NOT NULL DEFAULT '[]',
+                default_reasoning_effort TEXT,
                 PRIMARY KEY (provider_id, name),
                 FOREIGN KEY (provider_id) REFERENCES providers(id) ON DELETE CASCADE
             );
@@ -244,7 +246,7 @@ impl RegistryStore {
     ) -> Result<std::collections::HashMap<String, RegistryModel>> {
         let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
         let mut stmt = conn.prepare(
-            "SELECT name, task_size, context_window_tokens, max_output_tokens, recommended_temperature, supports_thinking, supports_images, supports_audio, supports_video, supports_documents
+            "SELECT name, task_size, context_window_tokens, max_output_tokens, recommended_temperature, supports_thinking, supports_images, supports_audio, supports_video, supports_documents, reasoning_levels, default_reasoning_effort
              FROM models WHERE provider_id = ?1",
         )?;
         let rows = stmt.query_map(params![provider_id], |row| {
@@ -258,6 +260,8 @@ impl RegistryStore {
             let audio: Option<i64> = row.get(7)?;
             let video: Option<i64> = row.get(8)?;
             let documents: Option<i64> = row.get(9)?;
+            let levels_json: Option<String> = row.get(10)?;
+            let default_effort: Option<String> = row.get(11)?;
 
             Ok(RegistryModel {
                 name: name.clone(),
@@ -266,6 +270,8 @@ impl RegistryStore {
                 max_output_tokens: max_out.map(|v| v as u64),
                 recommended_temperature: temp,
                 supports_thinking: thinking.map(|v| v != 0),
+                reasoning_levels: parse_reasoning_levels_json(levels_json.as_deref()),
+                default_reasoning_effort: default_effort,
                 supports_images: images.map(|v| v != 0),
                 supports_audio: audio.map(|v| v != 0),
                 supports_video: video.map(|v| v != 0),
@@ -349,12 +355,14 @@ impl RegistryStore {
 
         {
             let mut stmt = tx.prepare(
-                "INSERT INTO models (provider_id, name, task_size, context_window_tokens, max_output_tokens, recommended_temperature, supports_thinking, supports_images, supports_audio, supports_video, supports_documents, tool_prompt_manifest)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, NULL)",
+                "INSERT INTO models (provider_id, name, task_size, context_window_tokens, max_output_tokens, recommended_temperature, supports_thinking, supports_images, supports_audio, supports_video, supports_documents, tool_prompt_manifest, reasoning_levels, default_reasoning_effort)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, NULL, ?12, ?13)",
             )?;
 
             let attachment_defaults = &provider.defaults.attachments;
             for model in &provider.models {
+                let levels_json =
+                    serde_json::to_string(&model.reasoning_levels).unwrap_or_else(|_| "[]".into());
                 stmt.execute(params![
                     provider.id,
                     model.name,
@@ -367,6 +375,8 @@ impl RegistryStore {
                     registry_model_supports_audio(model, attachment_defaults).map(|v| v as i64),
                     registry_model_supports_video(model, attachment_defaults).map(|v| v as i64),
                     registry_model_supports_documents(model, attachment_defaults).map(|v| v as i64),
+                    levels_json,
+                    model.default_reasoning_effort,
                 ])?;
             }
         }
@@ -452,7 +462,8 @@ impl RegistryStore {
                 "SELECT m.name, m.task_size, m.context_window_tokens, m.max_output_tokens,
                         m.recommended_temperature, m.supports_thinking, m.supports_images,
                         m.supports_audio, m.supports_video, m.supports_documents,
-                        m.tool_prompt_manifest, pr.input_price, pr.output_price
+                        m.tool_prompt_manifest, pr.input_price, pr.output_price,
+                        m.reasoning_levels, m.default_reasoning_effort
                  FROM models m
                  LEFT JOIN model_pricing pr
                    ON pr.model_id = (m.provider_id || ':' || m.name)
@@ -475,6 +486,8 @@ impl RegistryStore {
                     let tpm: Option<i64> = row.get(10)?;
                     let input_price: Option<f64> = row.get(11)?;
                     let output_price: Option<f64> = row.get(12)?;
+                    let levels_json: Option<String> = row.get(13)?;
+                    let default_effort: Option<String> = row.get(14)?;
 
                     Ok(ProviderModelConfig {
                         name,
@@ -487,6 +500,8 @@ impl RegistryStore {
                         max_output_tokens: max_out.map(|v| v as u64),
                         recommended_temperature: temp,
                         supports_thinking: thinking.map(|v| v != 0),
+                        reasoning_levels: parse_reasoning_levels_json(levels_json.as_deref()),
+                        default_reasoning_effort: default_effort,
                         supports_images: images.map(|v| v != 0),
                         supports_audio: audio.map(|v| v != 0),
                         supports_video: video.map(|v| v != 0),
@@ -844,6 +859,8 @@ pub fn registry_provider_to_config(rp: RegistryProvider) -> ProviderConfig {
                 max_output_tokens: m.max_output_tokens,
                 recommended_temperature: m.recommended_temperature,
                 supports_thinking: m.supports_thinking,
+                reasoning_levels: m.reasoning_levels,
+                default_reasoning_effort: m.default_reasoning_effort,
                 supports_images,
                 supports_audio,
                 supports_video,
@@ -958,6 +975,13 @@ fn ensure_provider_request_options_column(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
+fn parse_reasoning_levels_json(raw: Option<&str>) -> Vec<String> {
+    let Some(raw) = raw.map(str::trim).filter(|s| !s.is_empty()) else {
+        return Vec::new();
+    };
+    serde_json::from_str::<Vec<String>>(raw).unwrap_or_default()
+}
+
 fn ensure_model_output_columns(conn: &Connection) -> Result<()> {
     let mut stmt = conn.prepare("PRAGMA table_info(models)")?;
     let columns: Vec<String> = stmt
@@ -995,6 +1019,18 @@ fn ensure_model_output_columns(conn: &Connection) -> Result<()> {
     if !columns.contains(&"supports_documents".to_string()) {
         conn.execute(
             "ALTER TABLE models ADD COLUMN supports_documents INTEGER",
+            [],
+        )?;
+    }
+    if !columns.contains(&"reasoning_levels".to_string()) {
+        conn.execute(
+            "ALTER TABLE models ADD COLUMN reasoning_levels TEXT NOT NULL DEFAULT '[]'",
+            [],
+        )?;
+    }
+    if !columns.contains(&"default_reasoning_effort".to_string()) {
+        conn.execute(
+            "ALTER TABLE models ADD COLUMN default_reasoning_effort TEXT",
             [],
         )?;
     }
@@ -1126,6 +1162,8 @@ mod tests {
                     max_output_tokens: Some(8_192),
                     recommended_temperature: Some(0.7),
                     supports_thinking: None,
+                    reasoning_levels: Vec::new(),
+                    default_reasoning_effort: None,
                     supports_attachments: None,
                     supports_images: None,
                     supports_audio: None,
@@ -1142,6 +1180,8 @@ mod tests {
                     max_output_tokens: Some(4_096),
                     recommended_temperature: Some(0.5),
                     supports_thinking: None,
+                    reasoning_levels: Vec::new(),
+                    default_reasoning_effort: None,
                     supports_attachments: None,
                     supports_images: None,
                     supports_audio: None,
@@ -1214,6 +1254,8 @@ mod tests {
             max_output_tokens: Some(16_384),
             recommended_temperature: Some(0.8),
             supports_thinking: None,
+            reasoning_levels: Vec::new(),
+            default_reasoning_effort: None,
             supports_attachments: None,
             supports_images: None,
             supports_audio: None,
@@ -1295,6 +1337,8 @@ mod tests {
                 max_output_tokens: None,
                 recommended_temperature: None,
                 supports_thinking: None,
+                reasoning_levels: Vec::new(),
+                default_reasoning_effort: None,
                 supports_attachments: None,
                 supports_images: None,
                 supports_audio: None,
@@ -1440,6 +1484,8 @@ mod tests {
                 max_output_tokens: None,
                 recommended_temperature: None,
                 supports_thinking: None,
+                reasoning_levels: Vec::new(),
+                default_reasoning_effort: None,
                 supports_attachments: None,
                 supports_images: None,
                 supports_audio: None,

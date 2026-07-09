@@ -1,4 +1,5 @@
 mod chat;
+mod chat_blocks;
 pub mod clipboard;
 mod ui;
 
@@ -14,7 +15,9 @@ mod keybindings;
 mod mouse;
 mod notifications;
 pub(crate) mod panels;
+mod path_mentions;
 mod persistence;
+mod plan_review;
 mod plugin_approval;
 mod plugins;
 mod providers;

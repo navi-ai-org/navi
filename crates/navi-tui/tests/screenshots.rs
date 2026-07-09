@@ -13,6 +13,7 @@
 //! fail with a full diff if the rendered output drifts.
 
 use crossterm::event::{KeyCode, KeyModifiers};
+use navi_sdk::{BackgroundCommandSnapshot, BackgroundTaskStatus};
 use navi_tui::testing::{AgentEvent, AsyncEvent, ChatMessage, ChatRole, Harness, Mode, TestConfig};
 
 // -----------------------------------------------------------------------------
@@ -255,4 +256,203 @@ fn tool_completion_message_in_chat() {
     )));
     h.render();
     h.assert_screen("stream_tool_completed_80x24");
+}
+
+// -----------------------------------------------------------------------------
+// Visual review: tool policy, block selection, background tasks
+// -----------------------------------------------------------------------------
+
+fn review_dir() -> std::path::PathBuf {
+    let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/ui-review");
+    let _ = std::fs::create_dir_all(&dir);
+    dir
+}
+
+#[test]
+fn ui_review_tool_policy_auto_vs_collapsed() {
+    let mut h = h_size(100, 32);
+    // No sent_at here: wall-clock is TZ-dependent and covered by unit tests.
+    // Layout of `›` prefix is what this screenshot locks.
+    h.push_message(ChatMessage::new(
+        ChatRole::User,
+        "apply the patch and list files".to_string(),
+    ));
+    // Useful: write/patch auto-expands
+    h.push_message(ChatMessage {
+        status: Some("tool result".to_string()),
+        tool_invocation: Some(navi_sdk::ToolInvocation {
+            id: "w1".to_string(),
+            tool_name: "write_file".to_string(),
+            input: serde_json::json!({
+                "path": "src/lib.rs",
+                "content": "fn main() {\n    println!(\"hi\");\n}\n"
+            }),
+        }),
+        tool_result: Some(navi_sdk::ToolResult {
+            invocation_id: "w1".to_string(),
+            ok: true,
+            output: serde_json::json!({
+                "path": "src/lib.rs",
+                "lines_added": 3,
+                "lines_removed": 0
+            }),
+        }),
+        ..ChatMessage::new(ChatRole::Assistant, String::new())
+    });
+    // Noise: bash stays collapsed by default
+    h.push_message(ChatMessage {
+        status: Some("tool result".to_string()),
+        tool_invocation: Some(navi_sdk::ToolInvocation {
+            id: "b1".to_string(),
+            tool_name: "bash".to_string(),
+            input: serde_json::json!({ "command": "cargo test -p navi-tui" }),
+        }),
+        tool_result: Some(navi_sdk::ToolResult {
+            invocation_id: "b1".to_string(),
+            ok: true,
+            output: serde_json::json!({
+                "stdout": "running 256 tests\nok",
+                "stderr": "",
+                "exit_code": 0
+            }),
+        }),
+        ..ChatMessage::new(ChatRole::Assistant, String::new())
+    });
+    // Noise: read collapsed
+    h.push_message(ChatMessage {
+        status: Some("tool result".to_string()),
+        tool_invocation: Some(navi_sdk::ToolInvocation {
+            id: "r1".to_string(),
+            tool_name: "read_file".to_string(),
+            input: serde_json::json!({ "path": "README.md" }),
+        }),
+        tool_result: Some(navi_sdk::ToolResult {
+            invocation_id: "r1".to_string(),
+            ok: true,
+            output: serde_json::json!({
+                "path": "README.md",
+                "content": "# NAVI\n\nlocal agentic engine\n"
+            }),
+        }),
+        ..ChatMessage::new(ChatRole::Assistant, String::new())
+    });
+    h.push_message(ChatMessage::new(
+        ChatRole::Assistant,
+        "Done — write is open, shell/read stay compact.".to_string(),
+    ));
+    h.render();
+    h.dump_screen(review_dir().join("01_tool_policy_smart.txt"));
+    h.assert_screen("ui_tool_policy_smart_100x32");
+}
+
+#[test]
+fn ui_review_block_selection_highlight() {
+    let mut h = h_size(80, 24);
+    h.push_message(ChatMessage::new(
+        ChatRole::User,
+        "first user block".to_string(),
+    ));
+    h.push_message(ChatMessage::new(
+        ChatRole::Assistant,
+        "assistant reply block with **markdown**.".to_string(),
+    ));
+    h.push_message(ChatMessage {
+        status: Some("tool result".to_string()),
+        tool_invocation: Some(navi_sdk::ToolInvocation {
+            id: "g1".to_string(),
+            tool_name: "grep".to_string(),
+            input: serde_json::json!({ "pattern": "TODO", "path": "src" }),
+        }),
+        tool_result: Some(navi_sdk::ToolResult {
+            invocation_id: "g1".to_string(),
+            ok: true,
+            output: serde_json::json!({ "matches": [] }),
+        }),
+        ..ChatMessage::new(ChatRole::Assistant, String::new())
+    });
+    // Select the assistant message block (index 1).
+    h.select_message_block(1);
+    h.render();
+    h.dump_screen(review_dir().join("02_block_selection.txt"));
+    h.assert_screen("ui_block_selection_80x24");
+}
+
+#[test]
+fn ui_review_background_tasks_modal() {
+    let mut h = h_size(80, 24);
+    h.set_background_commands(vec![
+        BackgroundCommandSnapshot {
+            task_id: "bg_1".to_string(),
+            command: "cargo test -p navi-tui -- --test-threads=4".to_string(),
+            description: Some("run tui tests".to_string()),
+            status: BackgroundTaskStatus::Running,
+            elapsed_ms: 4_700,
+            timeout_ms: 300_000,
+            exit_code: None,
+            stdout: "running\n".to_string(),
+            stderr: String::new(),
+            stdout_truncated: false,
+            stderr_truncated: false,
+            error: None,
+        },
+        BackgroundCommandSnapshot {
+            task_id: "bg_2".to_string(),
+            command: "sleep 5".to_string(),
+            description: Some("finished sleep".to_string()),
+            status: BackgroundTaskStatus::Completed,
+            elapsed_ms: 5_000,
+            timeout_ms: 60_000,
+            exit_code: Some(0),
+            stdout: String::new(),
+            stderr: String::new(),
+            stdout_truncated: false,
+            stderr_truncated: false,
+            error: None,
+        },
+    ]);
+    h.press(KeyCode::Char('t'), KeyModifiers::CONTROL);
+    assert_eq!(h.mode(), Mode::BackgroundCommands);
+    h.render();
+    h.dump_screen(review_dir().join("03_background_tasks_modal.txt"));
+    h.assert_screen("ui_background_tasks_modal_80x24");
+}
+
+#[test]
+fn ui_review_ctrl_o_keeps_opened_bash() {
+    let mut h = h_size(100, 28);
+    h.push_message(ChatMessage::new(
+        ChatRole::User,
+        "run tests and keep shell open".to_string(),
+    ));
+    h.push_message(ChatMessage {
+        status: Some("tool result".to_string()),
+        tool_invocation: Some(navi_sdk::ToolInvocation {
+            id: "bash-open".to_string(),
+            tool_name: "bash".to_string(),
+            input: serde_json::json!({ "command": "echo keep-me-open" }),
+        }),
+        tool_result: Some(navi_sdk::ToolResult {
+            invocation_id: "bash-open".to_string(),
+            ok: true,
+            output: serde_json::json!({
+                "stdout": "keep-me-open",
+                "stderr": "",
+                "exit_code": 0
+            }),
+        }),
+        ..ChatMessage::new(ChatRole::Assistant, String::new())
+    });
+    // User opens the noisy bash tool, selects it, then cycles Ctrl+O.
+    h.expand_tool("bash-open");
+    h.select_tool_block("bash-open");
+    h.press(KeyCode::Char('o'), KeyModifiers::CONTROL); // expand all
+    h.press(KeyCode::Char('o'), KeyModifiers::CONTROL); // back to smart
+    h.render();
+    h.dump_screen(review_dir().join("04_ctrl_o_preserves_open_tool.txt"));
+    h.assert_screen("ui_ctrl_o_preserves_open_tool_100x28");
+    let text = h.buffer_text();
+    assert!(
+        text.contains("keep-me-open"),
+        "Ctrl+O cycle must not close the opened tool:\n{text}"
+    );
 }

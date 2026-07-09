@@ -95,6 +95,15 @@ pub struct NaviModelInfo {
     pub provider_label: String,
     pub task_size: String,
     pub context_window_tokens: Option<u64>,
+    /// Whether the model supports extended thinking / reasoning.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub supports_thinking: Option<bool>,
+    /// Registry-supported reasoning effort levels for this model.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub reasoning_levels: Vec<String>,
+    /// Default reasoning effort when the user has not picked one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_reasoning_effort: Option<String>,
 }
 
 /// A discovered skill (SKILL.md) available for activation.

@@ -1,12 +1,10 @@
   main  /tmp/navi-test-project
 
+   › Hello, world
 
-        Hello, world
+     Partial
 
-
-   Partial
-
-   ⚠ Error: rate limited
+     ⚠ Error: rate limited
 
 
 
@@ -16,9 +14,11 @@
 
 
 
-  ▌
-  ▌
-  ▌
-  ▌ gpt-5.5 OpenAI · adaptive · 0 / 200k (0%)                      restricted
-  ▌
-               ctrl+p commands · ctrl+m models · ctrl+enter send · ctrl+v image
+
+
+
+
+  ╭──────────────────────────────────────────────────────────────────────────╮
+  │ ›                                                                        │
+  ╰──────────────────────────────────────────────────────────────────────────╯
+                               gpt-5.5 (adaptive) · 0 / 200k (0%) · restricted

@@ -2367,8 +2367,8 @@ fn write_file_tool_full_content_uses_edit_summary() {
     let content = tool_full_content(&invocation, &result);
 
     assert!(content.contains("Write src/index.html (+2 -1 lines)"));
-    assert!(content.contains("Edited src/index.html (+2 -1 lines)"));
-    // Grok-style fenced diff body with +/- coloring via markdown.
+    // Body is the fenced diff only (no redundant "Edited …" chrome).
+    assert!(!content.contains("Edited src/index.html"));
     assert!(content.contains("```diff\n"));
     assert!(content.contains("*** Update File: src/index.html"));
     assert!(content.contains("-old\n"));
@@ -2844,11 +2844,11 @@ fn compact_tool_render_expands_only_clicked_tool_result() {
         .collect::<Vec<_>>()
         .join("\n");
 
-    assert!(
-        expanded.to_lowercase().contains("collapse"),
-        "expected collapse hint, got: {expanded}"
-    );
     assert!(expanded.contains("expanded-only-content"));
+    assert!(
+        !expanded.to_lowercase().contains("click to collapse"),
+        "collapse hint should not appear on expanded tools: {expanded}"
+    );
     assert!(!app.full_tool_view);
 }
 

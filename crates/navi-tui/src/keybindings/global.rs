@@ -58,7 +58,8 @@ pub(super) fn route_global_key(
                 );
             }
             KeyCode::Char('.') => {
-                return super::apply_ui_effect(app, UiEffect::ReplaceModal(ModalKind::Help));
+                crate::view::help::open_help(app);
+                return KeyOutcome::Handled;
             }
             KeyCode::Char('m') => {
                 super::open_model_picker(app);
@@ -85,14 +86,27 @@ pub(super) fn route_global_key(
                 return KeyOutcome::Handled;
             }
             KeyCode::Char('o') | KeyCode::Char('O') => {
-                app.full_tool_view = !app.full_tool_view;
+                // Smart toggle: expand-all ↔ smart defaults, without closing
+                // the tool the user currently has selected/open.
+                let pin = app
+                    .selected_chat_source
+                    .as_ref()
+                    .and_then(crate::render::tool_policy::selected_tool_id)
+                    .map(str::to_string);
+                let expand_all = crate::render::tool_policy::toggle_expand_all_mode(
+                    &mut app.full_tool_view,
+                    &mut app.expanded_tool_results,
+                    &mut app.collapsed_tool_results,
+                    pin.as_deref(),
+                );
+                app.chat_render_cache.borrow_mut().signature_hash = 0;
                 show_notification(
                     app,
                     "Tools",
-                    if app.full_tool_view {
-                        "Full tool view enabled."
+                    if expand_all {
+                        "Expand all tool output."
                     } else {
-                        "Compact tool view enabled."
+                        "Smart tool output (useful open, rest collapsed)."
                     },
                 );
                 save_preferences(app);

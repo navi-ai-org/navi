@@ -1,0 +1,24 @@
+  main  /tmp/navi-test-project
+
+    ╭ Background Tasks  ·  2 ──────────────────────────────────────────────╮
+    │ 1 running  ·  1 done    ▸ open  ·  ✕ cancel                          │
+    │ ▾ ◆ Running · 4s                                                  ✕  │
+    │    cargo test -p navi-tui -- --test-threads=4                        │
+    │    run tui tests  ·  bg_1                                            │
+    │                                                                      │
+    │ ▸ ✓ Done · 5s                                                        │
+    │    sleep 5                                                           │
+    │    finished sleep  ·  bg_2                                           │
+    │                                                                      │
+    │                                                                      │
+    │                                                                      │
+    │                                                                      │
+    │                                                                      │
+    │                                                                      │
+    │                                                                      │
+    │                                                                      │
+    │                                                                      │
+  ╭─│ enter open   c/✕ cancel   r refresh   ↑↓ select   esc close          │─╮
+  │ ╰──────────────────────────────────────────────────────────────────────╯ │
+  ╰──────────────────────────────────────────────────────────────────────────╯
+                               gpt-5.5 (adaptive) · 0 / 200k (0%) · restricted

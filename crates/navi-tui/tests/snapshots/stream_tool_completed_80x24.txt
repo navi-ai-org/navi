@@ -1,10 +1,8 @@
   main  /tmp/navi-test-project
 
+   › read the file
 
-        read the file
-
-
-   ✓ Read src/main.rs
+   ◆ Read src/main.rs
 
 
 
@@ -14,11 +12,13 @@
 
 
 
-    .   Waiting for model · 0s
 
-  ▌
-  ▌
-  ▌
-  ▌ gpt-5.5 OpenAI · adaptive · 0 / 200k (0%)                      restricted
-  ▌
-               ctrl+p commands · ctrl+m models · ctrl+enter send · ctrl+v image
+
+
+
+    ◆ Waiting for model · 0s
+
+  ╭──────────────────────────────────────────────────────────────────────────╮
+  │ ›                                                                        │
+  ╰──────────────────────────────────────────────────────────────────────────╯
+                               gpt-5.5 (adaptive) · 0 / 200k (0%) · restricted

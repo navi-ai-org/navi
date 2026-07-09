@@ -1,0 +1,24 @@
+  main  /tmp/navi-test-project
+
+   › first user block
+
+   │ assistant reply block with markdown.
+
+   ◆ Search "TODO" in src (0 matches)
+
+
+
+
+
+
+
+
+
+
+
+
+
+  ╭──────────────────────────────────────────────────────────────────────────╮
+  │ ›                                                                        │
+  ╰──────────────────────────────────────────────────────────────────────────╯
+                               gpt-5.5 (adaptive) · 0 / 200k (0%) · restricted
