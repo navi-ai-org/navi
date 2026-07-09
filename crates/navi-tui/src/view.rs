@@ -59,6 +59,8 @@ fn render_inner(frame: &mut Frame<'_>, app: &mut TuiApp) {
     }
 
     notification::render_notification(frame, app, area);
+    // Image hover preview sits above chat/composer but below hard modal scrims.
+    image_preview::render_image_hover_modal(frame, app, content_area);
 }
 
 fn modal_backdrop_active(app: &TuiApp) -> bool {

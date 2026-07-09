@@ -26,13 +26,31 @@ pub(crate) struct QueuedUserMessage {
     pub(crate) images: Vec<PendingImage>,
 }
 
+/// Display + hover-preview metadata for an image attached to a chat message.
+/// Base64 is kept for the hover modal (same bytes already live in conversation history).
 pub struct ChatImage {
+    /// 1-based index shown in `[Image N]` tags.
+    pub index: usize,
+    /// MIME type (e.g. `"image/png"`).
+    pub media_type: String,
+    /// Image width in pixels, if known.
+    pub width: Option<u32>,
+    /// Image height in pixels, if known.
+    pub height: Option<u32>,
+    /// Raw base64 payload (no data-URL prefix) for hover preview.
+    pub data: String,
+    /// Short label used by older render paths (e.g. `"PNG"` or `"image PNG 1200x800"`).
     pub label: String,
 }
 
 impl std::fmt::Debug for ChatImage {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ChatImage")
+            .field("index", &self.index)
+            .field("media_type", &self.media_type)
+            .field("width", &self.width)
+            .field("height", &self.height)
+            .field("data_len", &self.data.len())
             .field("label", &self.label)
             .finish()
     }
@@ -41,8 +59,115 @@ impl std::fmt::Debug for ChatImage {
 impl Clone for ChatImage {
     fn clone(&self) -> Self {
         Self {
+            index: self.index,
+            media_type: self.media_type.clone(),
+            width: self.width,
+            height: self.height,
+            data: self.data.clone(),
             label: self.label.clone(),
         }
+    }
+}
+
+impl ChatImage {
+    pub fn from_pending(index: usize, image: &PendingImage) -> Self {
+        let mime_short = image
+            .media_type
+            .strip_prefix("image/")
+            .unwrap_or(&image.media_type)
+            .to_uppercase();
+        Self {
+            index: index.max(1),
+            media_type: image.media_type.clone(),
+            width: image.width,
+            height: image.height,
+            data: image.data.clone(),
+            label: mime_short,
+        }
+    }
+
+    pub fn estimated_bytes(&self) -> usize {
+        // base64 → roughly 3/4 raw bytes
+        self.data.len().saturating_mul(3) / 4
+    }
+
+    pub fn format_short(&self) -> String {
+        self.media_type
+            .strip_prefix("image/")
+            .unwrap_or(&self.media_type)
+            .to_uppercase()
+    }
+}
+
+/// Floating hover preview for an attached image (composer or chat).
+#[derive(Debug, Clone)]
+pub struct ImageHoverPreview {
+    pub index: usize,
+    pub media_type: String,
+    pub width: Option<u32>,
+    pub height: Option<u32>,
+    pub size_bytes: usize,
+    pub filename: Option<String>,
+    /// Reserved for future terminal image-protocol / half-block rendering.
+    #[allow(dead_code)]
+    pub data: String,
+}
+
+impl ImageHoverPreview {
+    pub fn from_pending(index: usize, image: &PendingImage) -> Self {
+        Self {
+            index: index.saturating_add(1),
+            media_type: image.media_type.clone(),
+            width: image.width,
+            height: image.height,
+            size_bytes: image.data.len().saturating_mul(3) / 4,
+            filename: None,
+            data: image.data.clone(),
+        }
+    }
+
+    pub fn from_chat(image: &ChatImage) -> Self {
+        Self {
+            index: image.index,
+            media_type: image.media_type.clone(),
+            width: image.width,
+            height: image.height,
+            size_bytes: image.estimated_bytes(),
+            filename: None,
+            data: image.data.clone(),
+        }
+    }
+
+    pub fn format_short(&self) -> String {
+        self.media_type
+            .strip_prefix("image/")
+            .unwrap_or(&self.media_type)
+            .to_uppercase()
+    }
+
+    pub fn header_line(&self) -> String {
+        let mut parts = vec![format!("Image #{}", self.index), self.format_short()];
+        if let (Some(w), Some(h)) = (self.width, self.height) {
+            parts.push(format!("{w}×{h}"));
+        }
+        parts.push(format_byte_size(self.size_bytes));
+        if let Some(name) = &self.filename {
+            parts.push(name.clone());
+        }
+        parts.join("  ·  ")
+    }
+}
+
+fn format_byte_size(bytes: usize) -> String {
+    const KB: f64 = 1024.0;
+    const MB: f64 = 1024.0 * 1024.0;
+    let n = bytes as f64;
+    if n >= MB {
+        format!("{:.1} MB", n / MB)
+    } else if n >= KB {
+        format!("{:.1} KB", n / KB)
+    } else {
+        format!("{bytes} B")
     }
 }
 

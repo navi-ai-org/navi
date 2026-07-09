@@ -107,9 +107,9 @@ fn submit_current_message_now(app: &mut TuiApp) {
                                 data: img.data.clone(),
                             });
 
-                            let label = img.label();
-                            chat_msg.image_labels.push(label.clone());
-                            chat_msg.images.push(ChatImage { label });
+                            let chat_image = ChatImage::from_pending(num, img);
+                            chat_msg.image_labels.push(format!("[Image {}]", num));
+                            chat_msg.images.push(chat_image);
 
                             last_idx += check_idx + 1;
                             continue;

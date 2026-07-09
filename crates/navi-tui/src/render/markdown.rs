@@ -72,14 +72,24 @@ pub(crate) fn build_chat_render_for_messages(
 
         match msg.role {
             ChatRole::User => {
+                // Prefer the same `[Image N]` chips used in the composer. Content already
+                // carries those tags; style them and skip the old full-width `[1] PNG` cards.
                 let lines = render_user_message_lines(&msg.content, chat_width);
                 for line in lines {
                     rendered_lines.push(line);
                     line_sources.push(ChatLineSource::Message(index));
                 }
-                for (image_index, label) in user_image_labels(msg).iter().enumerate() {
-                    rendered_lines.push(user_image_fallback_line(image_index, label));
-                    line_sources.push(ChatLineSource::Message(index));
+                // Only append chips when the stored text has no tags (legacy sessions).
+                if !msg.content.contains("[Image ") && !user_image_labels(msg).is_empty() {
+                    for (image_index, label) in user_image_labels(msg).iter().enumerate() {
+                        let tag = if label.starts_with("[Image ") {
+                            label.clone()
+                        } else {
+                            format!("[Image {}]", image_index + 1)
+                        };
+                        rendered_lines.push(user_image_tag_line(&tag, chat_width));
+                        line_sources.push(ChatLineSource::Message(index));
+                    }
                 }
             }
             ChatRole::Assistant => {
@@ -187,24 +197,64 @@ pub(crate) fn build_chat_render_for_messages(
     }
 }
 
-fn user_image_fallback_line(index: usize, label: &str) -> Line<'static> {
-    Line::from(vec![
-        Span::styled(" ", Style::default().fg(user_accent()).bg(user_accent())),
+fn user_image_tag_line(tag: &str, chat_width: usize) -> Line<'static> {
+    let width = chat_width.max(8);
+    let accent_width = 1usize;
+    let text_padding = 4usize;
+    let mut spans = vec![
         Span::styled(
-            format!("  [{}] {} ", index + 1, label),
-            Style::default()
-                .fg(muted())
-                .bg(panel())
-                .add_modifier(Modifier::ITALIC),
+            " ".repeat(accent_width),
+            Style::default().fg(user_accent()).bg(user_accent()),
         ),
-    ])
+        Span::styled(
+            " ".repeat(text_padding),
+            Style::default().fg(muted()).bg(panel()),
+        ),
+        Span::styled(
+            tag.to_string(),
+            Style::default().bg(code_const()).fg(Color::Black),
+        ),
+    ];
+    let used = spans
+        .iter()
+        .map(|span| display_width(&span.content))
+        .sum::<usize>();
+    if used < width {
+        spans.push(Span::styled(
+            " ".repeat(width - used),
+            Style::default().fg(muted()).bg(panel()),
+        ));
+    }
+    Line::from(spans)
 }
 
 fn user_image_labels(msg: &ChatMessage) -> Vec<String> {
     if !msg.image_labels.is_empty() {
         return msg.image_labels.clone();
     }
-    msg.images.iter().map(|image| image.label.clone()).collect()
+    msg.images
+        .iter()
+        .map(|image| format!("[Image {}]", image.index.max(1)))
+        .collect()
+}
+
+/// True when `text` is exactly an `[Image N]` chip (optionally padded).
+pub(crate) fn is_image_tag(text: &str) -> bool {
+    let trimmed = text.trim();
+    let bytes = trimmed.as_bytes();
+    if !bytes.starts_with(b"[Image ") || !bytes.ends_with(b"]") || bytes.len() < 9 {
+        return false;
+    }
+    let digits = &bytes[7..bytes.len() - 1];
+    !digits.is_empty() && digits.iter().all(|b| b.is_ascii_digit())
+}
+
+/// Parse 1-based image index from an `[Image N]` tag.
+pub(crate) fn parse_image_tag_index(text: &str) -> Option<usize> {
+    let trimmed = text.trim();
+    let inner = trimmed.strip_prefix("[Image ")?.strip_suffix(']')?;
+    let index = inner.parse::<usize>().ok()?;
+    (index >= 1).then_some(index)
 }
 
 fn push_block_gap(lines: &mut Vec<Line<'static>>, sources: &mut Vec<ChatLineSource>) {
@@ -231,7 +281,12 @@ fn render_user_message_lines(text: &str, chat_width: usize) -> Vec<Line<'static>
     let accent_width = 1usize;
     let text_padding = 4usize;
     let content_width = width.saturating_sub(accent_width + text_padding + 1);
-    let wrapped = wrap_text(text, content_width);
+    // Image-only prompts are just `[Image N]` tags — keep the bubble compact.
+    let display = text.trim();
+    if display.is_empty() {
+        return Vec::new();
+    }
+    let wrapped = wrap_text(display, content_width);
     let mut lines = Vec::new();
 
     for _ in 0..USER_MESSAGE_VERTICAL_PADDING {
@@ -249,16 +304,7 @@ fn render_user_message_lines(text: &str, chat_width: usize) -> Vec<Line<'static>
                 Style::default().fg(muted()).bg(panel()),
             ),
         ];
-        spans.extend(
-            inline_text_spans(&line, text_color_for_user())
-                .into_iter()
-                .map(|mut span| {
-                    if span.style.bg.is_none() {
-                        span.style = span.style.bg(panel());
-                    }
-                    span
-                }),
-        );
+        spans.extend(style_user_line_with_image_tags(&line, text_color_for_user()));
         let used = spans
             .iter()
             .map(|span| display_width(&span.content))
@@ -277,6 +323,61 @@ fn render_user_message_lines(text: &str, chat_width: usize) -> Vec<Line<'static>
         lines.push(user_blank_card_line(width, accent_width));
     }
     lines
+}
+
+/// Style user prose while keeping `[Image N]` chips as solid highlighted spans
+/// (same look as the composer input).
+fn style_user_line_with_image_tags(line: &str, fallback: Color) -> Vec<Span<'static>> {
+    let mut spans = Vec::new();
+    let mut idx = 0usize;
+    while idx < line.len() {
+        let rest = &line[idx..];
+        let rest_bytes = rest.as_bytes();
+        if rest_bytes.starts_with(b"[Image ") {
+            let mut check_idx = 7;
+            let mut has_digits = false;
+            while check_idx < rest_bytes.len() && rest_bytes[check_idx].is_ascii_digit() {
+                has_digits = true;
+                check_idx += 1;
+            }
+            if has_digits && check_idx < rest_bytes.len() && rest_bytes[check_idx] == b']' {
+                let tag_end = idx + check_idx + 1;
+                let tag = &line[idx..tag_end];
+                spans.push(Span::styled(
+                    tag.to_string(),
+                    Style::default().bg(code_const()).fg(Color::Black),
+                ));
+                idx = tag_end;
+                continue;
+            }
+        }
+
+        // Take the next run of non-tag text as one unit for markdown inline styling.
+        let next_tag = rest.find("[Image ").unwrap_or(rest.len());
+        let chunk = &rest[..next_tag];
+        if !chunk.is_empty() {
+            spans.extend(
+                inline_text_spans(chunk, fallback)
+                    .into_iter()
+                    .map(|mut span| {
+                        if span.style.bg.is_none() {
+                            span.style = span.style.bg(panel());
+                        }
+                        span
+                    }),
+            );
+            idx += chunk.len();
+        } else {
+            // Avoid infinite loop on a bare '[' that is not an image tag.
+            let ch = rest.chars().next().unwrap_or(' ');
+            spans.push(Span::styled(
+                ch.to_string(),
+                Style::default().fg(fallback).bg(panel()),
+            ));
+            idx += ch.len_utf8();
+        }
+    }
+    spans
 }
 
 fn user_blank_card_line(width: usize, accent_width: usize) -> Line<'static> {
@@ -1552,10 +1653,15 @@ mod tests {
     use crate::state::{ChatImage, ChatMessage, ChatRole};
 
     #[test]
-    fn user_images_render_compact_indicators() {
-        let mut message = ChatMessage::new(ChatRole::User, "describe".to_string());
-        message.image_labels.push("PNG".to_string());
+    fn user_images_render_as_input_style_tags() {
+        let mut message = ChatMessage::new(ChatRole::User, "describe [Image 1]".to_string());
+        message.image_labels.push("[Image 1]".to_string());
         message.images.push(ChatImage {
+            index: 1,
+            media_type: "image/png".to_string(),
+            width: Some(100),
+            height: Some(80),
+            data: "abc".to_string(),
             label: "PNG".to_string(),
         });
 
@@ -1575,8 +1681,22 @@ mod tests {
         assert!(output.lines.iter().any(|line| {
             line.spans
                 .iter()
+                .any(|span| span.content.as_ref() == "[Image 1]")
+        }));
+        assert!(!output.lines.iter().any(|line| {
+            line.spans
+                .iter()
                 .any(|span| span.content.contains("[1] PNG"))
         }));
+    }
+
+    #[test]
+    fn is_image_tag_recognizes_chip_text() {
+        assert!(is_image_tag("[Image 1]"));
+        assert!(is_image_tag("  [Image 12]  "));
+        assert!(!is_image_tag("[Image]"));
+        assert!(!is_image_tag("Image 1"));
+        assert_eq!(parse_image_tag_index("[Image 3]"), Some(3));
     }
 
     #[test]

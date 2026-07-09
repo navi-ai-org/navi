@@ -256,6 +256,7 @@ pub(crate) fn handle_mouse(app: &mut TuiApp, mouse: MouseEvent) {
             } else {
                 app.hover_index = None;
                 app.hovered_chat_source = None;
+                app.image_hover = None;
             }
         }
         _ => {}
@@ -284,6 +285,12 @@ fn slice_display_columns(text: &str, start_col: usize, end_col: usize) -> String
 
 fn apply_hover(app: &mut TuiApp, hit: &HitRegion<HitAction>) {
     app.hovered_chat_source = chat_source_for_action(&hit.action);
+    if crate::view::image_preview::set_hover_from_action(app, &hit.action) {
+        app.hover_index = None;
+        return;
+    }
+    // Leaving an image chip clears the floating preview.
+    app.image_hover = None;
     match &hit.action {
         HitAction::QuestionOption(index) => {
             app.hover_index = Some(*index);
@@ -544,6 +551,10 @@ fn dispatch_hit(app: &mut TuiApp, hit: HitRegion<HitAction>) {
             if index < app.pending_images.len() {
                 app.pending_images.remove(index);
             }
+        }
+        // Hover-only preview targets; click keeps the floating card open.
+        HitAction::PreviewPendingImage(_) | HitAction::PreviewChatImage { .. } => {
+            let _ = crate::view::image_preview::set_hover_from_action(app, &hit.action);
         }
     }
 }

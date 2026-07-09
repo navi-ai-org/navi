@@ -48,6 +48,13 @@ pub enum HitAction {
     },
     #[allow(dead_code)]
     RemoveImage(usize),
+    /// Hover/preview a pending composer image (0-based index into `pending_images`).
+    PreviewPendingImage(usize),
+    /// Hover/preview an image on a sent chat message.
+    PreviewChatImage {
+        message_index: usize,
+        image_index: usize,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
