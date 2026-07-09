@@ -49,9 +49,8 @@ pub use navi_core::{
     CapabilityLedgerEntry, CapabilityScope, GoalStatus, GoalTask, ModelMessage, ModelRole,
     PlanReviewDecision, PlanReviewRequest, PlanReviewResponse, QuestionOption, QuestionRequest,
     QuestionResponse, RuntimeEvent, RuntimeEventKind, SessionGoal, SessionId, SessionSnapshot,
-    SessionUsageSnapshot,
-    SubagentTranscriptItem, SubagentTranscriptKind, SudoPasswordRequest, SudoPasswordResponse,
-    TaskStatus,
+    SessionUsageSnapshot, SubagentTranscriptItem, SubagentTranscriptKind, SudoPasswordRequest,
+    SudoPasswordResponse, TaskStatus,
 };
 // Event auxiliary types
 pub use navi_core::event::RepetitionWarningKind;
@@ -94,9 +93,7 @@ pub use navi_voice::{
 };
 
 // Extended memory ops DTOs
-pub use memory_ops::{
-    MemoryDoctorReport, MemoryDreamReport, MemoryInitReport, MemoryStatusReport,
-};
+pub use memory_ops::{MemoryDoctorReport, MemoryDreamReport, MemoryInitReport, MemoryStatusReport};
 
 // Plugin lifecycle DTOs
 pub use plugins::{PluginInfo, PluginInstallResult, PluginMarketplaceEntry};

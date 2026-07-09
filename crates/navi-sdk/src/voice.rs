@@ -168,11 +168,7 @@ impl NaviEngine {
         language: Option<&str>,
     ) -> Result<TranscribeResult> {
         let lang = self.resolve_voice_language(language);
-        let mut rt = self
-            .inner
-            .voice
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
+        let mut rt = self.inner.voice.lock().unwrap_or_else(|e| e.into_inner());
         self.ensure_nemotron_locked(&mut rt, &lang)?;
         let engine = rt
             .engine
@@ -187,11 +183,7 @@ impl NaviEngine {
     /// Start a streaming recognition session (client pushes PCM).
     pub fn voice_start_stream(&self, language: Option<&str>) -> Result<()> {
         let lang = self.resolve_voice_language(language);
-        let mut rt = self
-            .inner
-            .voice
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
+        let mut rt = self.inner.voice.lock().unwrap_or_else(|e| e.into_inner());
         if rt.active {
             return Err(NaviError::Config(
                 "voice stream already active; call voice_end_stream or voice_cancel_stream first"
@@ -214,11 +206,7 @@ impl NaviEngine {
 
     /// Push 16 kHz mono f32 samples. Returns text delta emitted this call (may be empty).
     pub fn voice_push_pcm(&self, samples: &[f32]) -> Result<String> {
-        let mut rt = self
-            .inner
-            .voice
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
+        let mut rt = self.inner.voice.lock().unwrap_or_else(|e| e.into_inner());
         if !rt.active {
             return Err(NaviError::Config(
                 "voice stream not active; call voice_start_stream first".into(),
@@ -240,11 +228,7 @@ impl NaviEngine {
 
     /// Flush remaining audio, emit final text, stop stream.
     pub fn voice_end_stream(&self) -> Result<String> {
-        let mut rt = self
-            .inner
-            .voice
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
+        let mut rt = self.inner.voice.lock().unwrap_or_else(|e| e.into_inner());
         if !rt.active {
             return Err(NaviError::Config(
                 "voice stream not active; call voice_start_stream first".into(),
@@ -259,20 +243,14 @@ impl NaviEngine {
             .map_err(|e| NaviError::Config(e.to_string()))?;
         let text = engine.partial_text();
         rt.active = false;
-        rt.emit(VoiceEvent::Final {
-            text: text.clone(),
-        });
+        rt.emit(VoiceEvent::Final { text: text.clone() });
         rt.emit(VoiceEvent::Stopped);
         Ok(text)
     }
 
     /// Abort stream without committing final text.
     pub fn voice_cancel_stream(&self) -> Result<()> {
-        let mut rt = self
-            .inner
-            .voice
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
+        let mut rt = self.inner.voice.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(engine) = rt.engine.as_mut() {
             engine.reset();
         }
@@ -310,13 +288,10 @@ impl NaviEngine {
         }
         if rt.engine.is_none() {
             let model_dir = resolve_model_dir(&loaded.data_dir, &options, engine_id);
-            let eng = NemotronOnnxEngine::load(&model_dir, language).map_err(|e| {
-                NaviError::Config(format!("load Nemotron ONNX engine: {e:#}"))
-            })?;
+            let eng = NemotronOnnxEngine::load(&model_dir, language)
+                .map_err(|e| NaviError::Config(format!("load Nemotron ONNX engine: {e:#}")))?;
             rt.engine = Some(eng);
         }
         Ok(())
     }
 }
-
-

@@ -287,10 +287,7 @@ fn parse_tool_arguments(arguments: &str) -> Value {
 /// Developer context blocks are mapped to `system` for OpenAI-compat providers
 /// that only accept classic roles.
 pub(crate) fn chat_completions_messages(request: &ModelRequest) -> Vec<Value> {
-    let has_instructions = request
-        .instructions
-        .as_ref()
-        .is_some_and(|s| !s.is_empty());
+    let has_instructions = request.instructions.as_ref().is_some_and(|s| !s.is_empty());
     let mut messages_json: Vec<Value> =
         Vec::with_capacity(request.messages.len().saturating_add(1));
     if has_instructions {
@@ -808,7 +805,11 @@ mod message_build_tests {
         );
         assert_eq!(messages.len(), 3); // system base, system agents, user
         assert_eq!(
-            messages.last().unwrap().get("role").and_then(|r| r.as_str()),
+            messages
+                .last()
+                .unwrap()
+                .get("role")
+                .and_then(|r| r.as_str()),
             Some("user")
         );
     }

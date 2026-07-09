@@ -187,19 +187,21 @@ fn resolve_crate_dir(cargo_home: &Path, name: &str, version: &str) -> PathBuf {
     // Extract from the downloaded .crate archive (always present once the
     // package is a build-dependency, even if `src/` was not unpacked yet).
     let cache_root = cargo_home.join("registry").join("cache");
-    let crate_file = find_crate_file(&cache_root, &want)
-        .unwrap_or_else(|| {
-            panic!(
-                "Could not find {want} in cargo registry src or cache under {}",
-                cargo_home.display()
-            )
-        });
+    let crate_file = find_crate_file(&cache_root, &want).unwrap_or_else(|| {
+        panic!(
+            "Could not find {want} in cargo registry src or cache under {}",
+            cargo_home.display()
+        )
+    });
 
     // Prefer the first existing registry src index dir; create one if needed.
     let extract_root = if src_root.is_dir() {
         fs::read_dir(&src_root)
             .ok()
-            .and_then(|mut it| it.find_map(|e| e.ok().map(|e| e.path())).filter(|p| p.is_dir()))
+            .and_then(|mut it| {
+                it.find_map(|e| e.ok().map(|e| e.path()))
+                    .filter(|p| p.is_dir())
+            })
             .unwrap_or_else(|| {
                 let p = src_root.join("index.crates.io-extracted");
                 fs::create_dir_all(&p).ok();
@@ -216,11 +218,7 @@ fn resolve_crate_dir(cargo_home: &Path, name: &str, version: &str) -> PathBuf {
         extract_crate(&crate_file, &extract_root, &want);
     }
     if !dest.is_dir() {
-        panic!(
-            "Failed to extract {} from {}",
-            want,
-            crate_file.display()
-        );
+        panic!("Failed to extract {} from {}", want, crate_file.display());
     }
     dest
 }

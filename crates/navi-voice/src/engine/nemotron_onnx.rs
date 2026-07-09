@@ -281,8 +281,8 @@ impl NemotronOnnxEngine {
                 extract_4d_f32(&outputs["cache_last_channel_next"]).context("cache_ch_next")?;
             self.cache_last_time =
                 extract_4d_f32(&outputs["cache_last_time_next"]).context("cache_t_next")?;
-            self.cache_last_channel_len =
-                extract_1d_i64(&outputs["cache_last_channel_len_next"]).context("cache_len_next")?;
+            self.cache_last_channel_len = extract_1d_i64(&outputs["cache_last_channel_len_next"])
+                .context("cache_len_next")?;
             (enc_out, enc_len)
         };
 
@@ -313,7 +313,10 @@ impl NemotronOnnxEngine {
                 let dec_out =
                     extract_3d_f32(&dec_outs["decoder_output"]).context("decoder_output")?;
                 // decoder_output: [batch, 640, target_len] → joint wants [batch, target_len, 640]
-                let dec_for_joint = dec_out.permuted_axes([0, 2, 1]).as_standard_layout().to_owned();
+                let dec_for_joint = dec_out
+                    .permuted_axes([0, 2, 1])
+                    .as_standard_layout()
+                    .to_owned();
                 let h_new = extract_3d_f32(&dec_outs["h_out"]).context("h_out")?;
                 let c_new = extract_3d_f32(&dec_outs["c_out"]).context("c_out")?;
 

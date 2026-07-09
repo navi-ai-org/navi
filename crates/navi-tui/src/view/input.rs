@@ -75,7 +75,11 @@ pub(crate) fn render_input(frame: &mut Frame<'_>, app: &mut TuiApp, area: Rect) 
         outer.x,
         outer.y.saturating_add(box_height),
         outer.width,
-        if outer.height > box_height { META_ROW } else { 0 },
+        if outer.height > box_height {
+            META_ROW
+        } else {
+            0
+        },
     );
 
     // Thin rounded border only — no fill behind the draft.
@@ -101,9 +105,7 @@ pub(crate) fn render_input(frame: &mut Frame<'_>, app: &mut TuiApp, area: Rect) 
     }
 
     // Draft only inside the box — no model/permission chrome mixed into the text.
-    let wrap_width = (content.width as usize)
-        .saturating_sub(PROMPT_WIDTH)
-        .max(1);
+    let wrap_width = (content.width as usize).saturating_sub(PROMPT_WIDTH).max(1);
 
     app.input_wrap_width = wrap_width;
     let focused = composer_is_focused(app);
@@ -164,8 +166,7 @@ pub(crate) fn render_input(frame: &mut Frame<'_>, app: &mut TuiApp, area: Rect) 
     // Register hover hits for `[Image N]` chips before paint.
     if app.mode == crate::state::Mode::Normal && !app.pending_images.is_empty() {
         let input_owned = app.input.clone();
-        for (visible_row, line_index) in
-            (visible_start..visible_start + painted.len()).enumerate()
+        for (visible_row, line_index) in (visible_start..visible_start + painted.len()).enumerate()
         {
             let Some((start, end)) = ranges.get(line_index).copied() else {
                 continue;
@@ -198,8 +199,7 @@ pub(crate) fn render_input(frame: &mut Frame<'_>, app: &mut TuiApp, area: Rect) 
     // Cursor only when the composer has focus .
     if focused {
         let cursor_x = content.x.saturating_add(
-            (PROMPT_WIDTH + cursor_column)
-                .min(content.width.saturating_sub(1) as usize) as u16,
+            (PROMPT_WIDTH + cursor_column).min(content.width.saturating_sub(1) as usize) as u16,
         );
         let cursor_y = content.y.saturating_add(
             cursor_line
@@ -226,8 +226,11 @@ pub(crate) fn render_input(frame: &mut Frame<'_>, app: &mut TuiApp, area: Rect) 
                 .x
                 .saturating_add(meta_area.width.saturating_sub(full_w as u16))
                 .saturating_add(offset_cols as u16);
-            let hit_w = (chip_w as u16)
-                .min(meta_area.width.saturating_sub(start_x.saturating_sub(meta_area.x)));
+            let hit_w = (chip_w as u16).min(
+                meta_area
+                    .width
+                    .saturating_sub(start_x.saturating_sub(meta_area.x)),
+            );
             if hit_w > 0 {
                 app.register_hit(
                     Rect::new(start_x, meta_area.y, hit_w, 1),
@@ -277,11 +280,7 @@ pub(crate) fn composer_height(app: &TuiApp, input_width: usize) -> u16 {
 pub(crate) fn composer_hint_height(app: &TuiApp) -> u16 {
     // No permanent keyboard-hint row .
     // Only reserve space for an active goal line.
-    if app.goal_state.is_some() {
-        1
-    } else {
-        0
-    }
+    if app.goal_state.is_some() { 1 } else { 0 }
 }
 
 pub(crate) fn composer_activity_height(app: &TuiApp) -> u16 {
@@ -468,8 +467,6 @@ fn active_assistant_message(app: &TuiApp) -> Option<&crate::state::ChatMessage> 
     })
 }
 
-
-
 fn format_activity_elapsed(ms: u64) -> String {
     let seconds = ms / 1_000;
     if seconds < 60 {
@@ -645,10 +642,7 @@ fn composer_meta_right(app: &TuiApp, width: usize) -> ComposerMetaBuilt {
     // Narrow: permission only (or model if no permission room).
     if width >= 56 {
         let model_label = format!("{model} ({thinking})");
-        spans.push(Span::styled(
-            model_label,
-            Style::default().fg(muted()),
-        ));
+        spans.push(Span::styled(model_label, Style::default().fg(muted())));
         spans.push(Span::styled(" · ", Style::default().fg(ghost())));
         let start = spans_display_width(&spans);
         let chip_w = display_width(&context);
@@ -689,10 +683,7 @@ fn composer_meta_right(app: &TuiApp, width: usize) -> ComposerMetaBuilt {
         let trimmed = fit_display_width(&text, width);
         let display_width = display_width(&trimmed);
         return ComposerMetaBuilt {
-            line: Line::from(vec![Span::styled(
-                trimmed,
-                Style::default().fg(muted()),
-            )]),
+            line: Line::from(vec![Span::styled(trimmed, Style::default().fg(muted()))]),
             display_width,
             context_range: None,
         };
@@ -1097,7 +1088,10 @@ mod tests {
         // Focused: multi-line target.
         assert!(composer_is_focused(&app));
         let focused_target = composer_target_content_lines(&app, 40);
-        assert!(focused_target >= 2, "expected multi-line target, got {focused_target}");
+        assert!(
+            focused_target >= 2,
+            "expected multi-line target, got {focused_target}"
+        );
 
         // Select a chat block → unfocused → collapse to 1.
         app.messages

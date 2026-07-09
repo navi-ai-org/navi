@@ -108,11 +108,7 @@ pub(crate) fn open_plan_review(app: &mut TuiApp, plan: Plan, invocation_id: Stri
 }
 
 /// Open review from PlanProposed event (tag path — non-blocking legacy).
-pub(crate) fn open_plan_review_from_proposed(
-    app: &mut TuiApp,
-    title: String,
-    steps: Vec<String>,
-) {
+pub(crate) fn open_plan_review_from_proposed(app: &mut TuiApp, title: String, steps: Vec<String>) {
     let plan = Plan {
         id: format!("proposed-{}", navi_core::plan_store::now_ms()),
         title: title.clone(),
@@ -241,12 +237,7 @@ pub(crate) fn quit_plan(app: &mut TuiApp) {
     finish_review(app, "quit", PlanStatus::Abandoned, false);
 }
 
-fn finish_review(
-    app: &mut TuiApp,
-    decision: &str,
-    next_status: PlanStatus,
-    _send_feedback: bool,
-) {
+fn finish_review(app: &mut TuiApp, decision: &str, next_status: PlanStatus, _send_feedback: bool) {
     let Some(review) = app.plan_review.take() else {
         close_active_modal(app);
         return;

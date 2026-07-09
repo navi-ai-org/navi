@@ -421,7 +421,7 @@ mod tests {
             supported_parameters: Vec::new(),
             reasoning: None,
             pricing: Some(OpenRouterPricing {
-                prompt: Some("0.000002".into()),    // $2 / 1M
+                prompt: Some("0.000002".into()),     // $2 / 1M
                 completion: Some("0.000006".into()), // $6 / 1M
             }),
         };

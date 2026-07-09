@@ -19,12 +19,10 @@ pub use doctor::{DoctorInput, DoctorReport, run_doctor};
 pub use download::{DownloadProgress, download_engine, engine_installed};
 pub use lang::resolve_lang_id;
 pub use mel::{CHUNK_SAMPLES, SAMPLE_RATE};
-pub use paths::{
-    VoicePaths, default_hf_repo, engine_dir_name, resolve_model_dir, voice_root,
-};
+pub use paths::{VoicePaths, default_hf_repo, engine_dir_name, resolve_model_dir, voice_root};
 pub use types::{
-    AsrEngineId, VoiceCaptureMode, VoiceEvent, VoiceInstallOptions, VoiceManifest,
-    VoiceRecorderInfo, VoiceStatus, DEFAULT_VOICE_HF_REPO,
+    AsrEngineId, DEFAULT_VOICE_HF_REPO, VoiceCaptureMode, VoiceEvent, VoiceInstallOptions,
+    VoiceManifest, VoiceRecorderInfo, VoiceStatus,
 };
 pub use vocab::Vocab;
 pub use wav::{load_wav_16k_mono, load_wav_mono_f32, resample_linear};

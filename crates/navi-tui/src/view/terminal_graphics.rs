@@ -149,8 +149,7 @@ mod tests {
     #[test]
     fn peek_dimensions_reads_png() {
         use image::{ImageBuffer, ImageEncoder, Rgb};
-        let img: ImageBuffer<Rgb<u8>, Vec<u8>> =
-            ImageBuffer::from_pixel(12, 8, Rgb([10, 20, 30]));
+        let img: ImageBuffer<Rgb<u8>, Vec<u8>> = ImageBuffer::from_pixel(12, 8, Rgb([10, 20, 30]));
         let mut png = Vec::new();
         image::codecs::png::PngEncoder::new(&mut png)
             .write_image(img.as_raw(), 12, 8, image::ExtendedColorType::Rgb8)

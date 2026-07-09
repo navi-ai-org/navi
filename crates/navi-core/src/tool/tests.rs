@@ -868,7 +868,10 @@ async fn unknown_tool_returns_bounded_suggestions() {
     let suggestions = result.output["suggestions"].as_array().unwrap();
     assert!(
         suggestions.iter().any(|s| {
-            matches!(s.as_str(), Some("list_dir" | "fs_browser" | "search" | "glob"))
+            matches!(
+                s.as_str(),
+                Some("list_dir" | "fs_browser" | "search" | "glob")
+            )
         }),
         "expected filesystem tool suggestions, got {suggestions:?}"
     );
@@ -1358,7 +1361,11 @@ async fn recovers_path_as_tool_name_to_read_file() {
         })
         .await;
 
-    assert!(result.ok, "expected recovery into read_file: {}", result.output);
+    assert!(
+        result.ok,
+        "expected recovery into read_file: {}",
+        result.output
+    );
     assert!(
         result.output["content"]
             .as_str()
@@ -1383,10 +1390,16 @@ async fn recovers_dot_list_as_fs_browser() {
         })
         .await;
 
-    assert!(result.ok, "expected recovery into fs_browser: {}", result.output);
+    assert!(
+        result.ok,
+        "expected recovery into fs_browser: {}",
+        result.output
+    );
     let files = result.output["files"].as_array().expect("files array");
     assert!(
-        files.iter().any(|f| f.as_str().is_some_and(|s| s.ends_with("foo.txt"))),
+        files
+            .iter()
+            .any(|f| f.as_str().is_some_and(|s| s.ends_with("foo.txt"))),
         "missing foo.txt in {files:?}"
     );
 }

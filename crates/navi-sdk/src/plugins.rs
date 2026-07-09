@@ -54,14 +54,7 @@ pub struct PluginInstallResult {
 impl NaviEngine {
     fn plugin_registry_url(&self) -> String {
         let loaded = self.loaded_config();
-        registry_url(
-            loaded
-                .config
-                .plugin_marketplace
-                .registry_url
-                .as_deref(),
-        )
-        .to_string()
+        registry_url(loaded.config.plugin_marketplace.registry_url.as_deref()).to_string()
     }
 
     /// List installed plugins under `{data_dir}/plugins`.
@@ -84,8 +77,8 @@ impl NaviEngine {
             if !manifest_path.is_file() {
                 continue;
             }
-            let content = fs::read_to_string(&manifest_path)
-                .map_err(|e| NaviError::Config(e.to_string()))?;
+            let content =
+                fs::read_to_string(&manifest_path).map_err(|e| NaviError::Config(e.to_string()))?;
             if let Ok(manifest) = parse_manifest(&content) {
                 out.push(PluginInfo {
                     id: manifest.plugin.id.clone(),
@@ -108,14 +101,11 @@ impl NaviEngine {
         let path = loaded.data_dir.join("plugins").join(plugin_id);
         let manifest_path = path.join("plugin.toml");
         if !manifest_path.is_file() {
-            return Err(NaviError::Config(format!(
-                "plugin '{plugin_id}' not found"
-            )));
+            return Err(NaviError::Config(format!("plugin '{plugin_id}' not found")));
         }
         let content =
             fs::read_to_string(&manifest_path).map_err(|e| NaviError::Config(e.to_string()))?;
-        let manifest =
-            parse_manifest(&content).map_err(|e| NaviError::Config(e.to_string()))?;
+        let manifest = parse_manifest(&content).map_err(|e| NaviError::Config(e.to_string()))?;
         Ok(PluginInfo {
             id: manifest.plugin.id.clone(),
             version: manifest.plugin.version.clone(),
@@ -209,13 +199,12 @@ impl NaviEngine {
         }
 
         let old_manifest_path = installed_dir.join("plugin.toml");
-        let old_content = fs::read_to_string(&old_manifest_path)
-            .map_err(|e| NaviError::Config(e.to_string()))?;
+        let old_content =
+            fs::read_to_string(&old_manifest_path).map_err(|e| NaviError::Config(e.to_string()))?;
         let old_manifest =
             parse_manifest(&old_content).map_err(|e| NaviError::Config(e.to_string()))?;
         let plugins_root = installed_plugins_dir(&loaded.data_dir);
-        let lockfile =
-            Lockfile::load(&aggregate_lockfile_path(&plugins_root)).unwrap_or_default();
+        let lockfile = Lockfile::load(&aggregate_lockfile_path(&plugins_root)).unwrap_or_default();
         let old_entry = lockfile.find(&plugin_id).cloned().ok_or_else(|| {
             NaviError::Config(format!(
                 "plugin '{plugin_id}' has no lockfile entry; reinstall"
@@ -278,9 +267,7 @@ impl NaviEngine {
         let loaded = self.loaded_config();
         let plugin_dir = loaded.data_dir.join("plugins").join(plugin_id);
         if !plugin_dir.exists() {
-            return Err(NaviError::Config(format!(
-                "plugin '{plugin_id}' not found"
-            )));
+            return Err(NaviError::Config(format!("plugin '{plugin_id}' not found")));
         }
         fs::remove_dir_all(&plugin_dir)
             .map_err(|e| NaviError::Config(format!("remove plugin: {e}")))?;
@@ -310,8 +297,7 @@ fn load_and_validate_manifest(path: &Path) -> Result<navi_plugin_manifest::Plugi
         fs::read_to_string(&manifest_path).map_err(|e| NaviError::Config(e.to_string()))?;
     let manifest =
         parse_manifest(&manifest_content).map_err(|e| NaviError::Config(e.to_string()))?;
-    validate(&manifest, TrustLevel::Community)
-        .map_err(|e| NaviError::Config(e.to_string()))?;
+    validate(&manifest, TrustLevel::Community).map_err(|e| NaviError::Config(e.to_string()))?;
     let wasm_path = path.join(&manifest.plugin.entry);
     if !wasm_path.exists() {
         return Err(NaviError::Config(format!(
@@ -319,8 +305,7 @@ fn load_and_validate_manifest(path: &Path) -> Result<navi_plugin_manifest::Plugi
             wasm_path.display()
         )));
     }
-    let wasm_bytes =
-        fs::read(&wasm_path).map_err(|e| NaviError::Config(e.to_string()))?;
+    let wasm_bytes = fs::read(&wasm_path).map_err(|e| NaviError::Config(e.to_string()))?;
     let actual_hash = compute_wasm_hash(&wasm_bytes);
     if actual_hash != manifest.plugin.wasm_hash {
         return Err(NaviError::Config(format!(

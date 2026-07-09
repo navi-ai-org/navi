@@ -102,7 +102,10 @@ mod tests {
 
     #[test]
     fn parse_recorder_kinds() {
-        assert_eq!(RecorderKind::parse("pw-record"), Some(RecorderKind::PwRecord));
+        assert_eq!(
+            RecorderKind::parse("pw-record"),
+            Some(RecorderKind::PwRecord)
+        );
         assert_eq!(RecorderKind::parse("parec"), Some(RecorderKind::Parec));
         assert_eq!(RecorderKind::parse("arecord"), Some(RecorderKind::Arecord));
         assert_eq!(RecorderKind::parse("auto"), None);

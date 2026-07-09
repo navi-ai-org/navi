@@ -400,8 +400,7 @@ where
             .size()
             .map(|s| s.width.saturating_sub(4) as usize)
             .unwrap_or(80);
-        let composer_animating =
-            crate::view::input::advance_composer_animation(app, input_width);
+        let composer_animating = crate::view::input::advance_composer_animation(app, input_width);
         // Pulse ◆/◇ for in-flight tools, turn loading, and background commands.
         // Without this the event loop only redraws on input/events, so the
         // running diamond freezes on the first frame.

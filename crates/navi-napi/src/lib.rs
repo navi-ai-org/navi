@@ -551,10 +551,7 @@ impl NaviNapiEngine {
 
     #[napi]
     pub fn agent_mode(&self, session_id: String) -> Result<String> {
-        let mode = self
-            .inner
-            .agent_mode(&session_id)
-            .map_err(to_napi_error)?;
+        let mode = self.inner.agent_mode(&session_id).map_err(to_napi_error)?;
         Ok(mode.to_string())
     }
 
@@ -906,11 +903,7 @@ impl NaviNapiEngine {
     ) -> Result<JsonValue> {
         let result = self
             .inner
-            .plugin_update_marketplace(
-                &plugin_id,
-                force.unwrap_or(false),
-                confirm.unwrap_or(false),
-            )
+            .plugin_update_marketplace(&plugin_id, force.unwrap_or(false), confirm.unwrap_or(false))
             .await
             .map_err(to_napi_error)?;
         serde_json::to_value(result).map_err(to_napi_error)
@@ -1188,11 +1181,7 @@ impl NaviNapiEngine {
     }
 
     #[napi]
-    pub async fn voice_init(
-        &self,
-        engine: Option<String>,
-        force: Option<bool>,
-    ) -> Result<String> {
+    pub async fn voice_init(&self, engine: Option<String>, force: Option<bool>) -> Result<String> {
         let path = self
             .inner
             .voice_init(engine.as_deref(), force.unwrap_or(false))
@@ -1352,9 +1341,7 @@ impl NaviNapiVoiceEventStream {
         loop {
             match receiver.recv().await {
                 Ok(event) => {
-                    return serde_json::to_value(event)
-                        .map(Some)
-                        .map_err(to_napi_error);
+                    return serde_json::to_value(event).map(Some).map_err(to_napi_error);
                 }
                 Err(broadcast::error::RecvError::Lagged(_)) => continue,
                 Err(broadcast::error::RecvError::Closed) => return Ok(None),
@@ -1498,8 +1485,8 @@ fn initial_messages_from_events(events: &[AgentEvent]) -> Vec<ModelMessage> {
             AgentEvent::UserTaskSubmitted {
                 text,
                 content_parts,
-            submitted_at: _,
-        } => {
+                submitted_at: _,
+            } => {
                 if content_parts.is_empty() {
                     messages.push(ModelMessage::user(text.clone()));
                 } else {

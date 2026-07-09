@@ -2128,11 +2128,8 @@ mod tests {
         assert!(add.starts_with("*** Add File: a.rs\n"));
         assert!(add.contains("+fn a() {}\n"));
 
-        let update = build_write_display_diff(
-            "a.rs",
-            Some("fn a() {\n    1\n}\n"),
-            "fn a() {\n    2\n}\n",
-        );
+        let update =
+            build_write_display_diff("a.rs", Some("fn a() {\n    1\n}\n"), "fn a() {\n    2\n}\n");
         assert!(update.contains("*** Update File: a.rs\n"));
         assert!(update.contains("-    1\n"));
         assert!(update.contains("+    2\n"));

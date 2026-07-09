@@ -25,10 +25,10 @@ use navi_sdk::{BackgroundCommandSnapshot, BackgroundTaskStatus};
 
 use crate::TuiApp;
 use crate::background::{bg_status_label, format_bg_elapsed};
+use crate::render::clear_modal_area;
 use crate::render::layout::opaque_fill;
 use crate::render::status::{DIAMOND, DIAMOND_HOLLOW, running_diamond};
 use crate::render::text::display_width;
-use crate::render::clear_modal_area;
 use crate::theme::*;
 use crate::ui::interaction::{HitAction, ScrollTarget, line_rect};
 use crate::ui::list::render_scrollbar;
@@ -415,12 +415,8 @@ pub(crate) fn render_output(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
     } else {
         app.bg_command_output_scroll.min(max_scroll)
     };
-    let visible_lines: Vec<Line<'static>> = lines
-        .iter()
-        .skip(offset)
-        .take(visible)
-        .cloned()
-        .collect();
+    let visible_lines: Vec<Line<'static>> =
+        lines.iter().skip(offset).take(visible).cloned().collect();
 
     // Pre-wrapped lines — do NOT enable Paragraph wrap (double-wrap mess).
     frame.render_widget(
@@ -680,18 +676,10 @@ fn section_header(label: &str, color: Color) -> Line<'static> {
 }
 
 fn blank_line() -> Line<'static> {
-    Line::from(Span::styled(
-        "",
-        Style::default().bg(solid_surface()),
-    ))
+    Line::from(Span::styled("", Style::default().bg(solid_surface())))
 }
 
-fn push_wrapped(
-    lines: &mut Vec<Line<'static>>,
-    content: &str,
-    width: usize,
-    color: Color,
-) {
+fn push_wrapped(lines: &mut Vec<Line<'static>>, content: &str, width: usize, color: Color) {
     // Indent body under section headers for clear hierarchy.
     let indent = "  ";
     let body_width = width.saturating_sub(display_width(indent)).max(8);
@@ -703,10 +691,7 @@ fn push_wrapped(
         for wrapped in wrap_line(raw, body_width) {
             lines.push(Line::from(vec![
                 Span::styled(indent, Style::default().bg(solid_surface())),
-                Span::styled(
-                    wrapped,
-                    Style::default().fg(color).bg(solid_surface()),
-                ),
+                Span::styled(wrapped, Style::default().fg(color).bg(solid_surface())),
             ]));
         }
     }

@@ -512,10 +512,9 @@ impl ToolExecutor {
         // Weak models sometimes emit a path or bare action as the tool name.
         // Recover high-confidence mistakes before validation so analysis turns
         // don't die on three consecutive unknown tools.
-        let invocation = recover_misnamed_tool_invocation(&invocation, |name| {
-            self.definition(name).is_some()
-        })
-        .unwrap_or(invocation);
+        let invocation =
+            recover_misnamed_tool_invocation(&invocation, |name| self.definition(name).is_some())
+                .unwrap_or(invocation);
         let tool_name = invocation.tool_name.clone();
 
         // Determine tool kind and metadata before consuming the invocation.
@@ -1211,7 +1210,9 @@ fn recover_misnamed_tool_invocation(
                 }
                 recovered.input = Value::Object(obj);
             } else if path_from_input.as_deref() != Some(name)
-                && path_from_input.as_deref().is_some_and(|p| p == "." || p.is_empty())
+                && path_from_input
+                    .as_deref()
+                    .is_some_and(|p| p == "." || p.is_empty())
             {
                 // Prefer the path-like tool name when the path field is a placeholder.
                 if let Some(obj) = recovered.input.as_object_mut() {

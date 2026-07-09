@@ -182,7 +182,7 @@ fn write_session_file(tempdir: &tempfile::TempDir, session_id: &str) {
         memory: None,
 
         goal: None,
-    usage: None,
+        usage: None,
     };
 
     let content = serde_json::to_string(&snapshot).expect("serialize session");
@@ -1094,9 +1094,11 @@ fn voice_doctor_runs() {
 #[test]
 fn voice_engine_installed_false_by_default() {
     let (engine, _tempdir) = test_engine();
-    assert!(!engine
-        .voice_engine_installed(Some("nemotron_streaming"))
-        .expect("installed check"));
+    assert!(
+        !engine
+            .voice_engine_installed(Some("nemotron_streaming"))
+            .expect("installed check")
+    );
 }
 
 #[test]

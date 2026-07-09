@@ -232,8 +232,8 @@ async fn test_turn_loop_with_parallel_tools() {
         event_tx: None,
         approval_resolver: crate::runtime::ApprovalResolver::new_for_test(),
         question_resolver: crate::runtime::QuestionResolver::new_for_test(),
-            plan_review_resolver: crate::runtime::PlanReviewResolver::new_for_test(),
-            sudo_password_resolver: crate::runtime::SudoPasswordResolver::new_for_test(),
+        plan_review_resolver: crate::runtime::PlanReviewResolver::new_for_test(),
+        sudo_password_resolver: crate::runtime::SudoPasswordResolver::new_for_test(),
         compact_state: Arc::new(tokio::sync::Mutex::new(CompactState::new(128_000))),
         harness_config: crate::config::HarnessConfig::default(),
         include_tool_prompt_manifest: false,
@@ -492,8 +492,8 @@ async fn malformed_tool_arguments_stop_the_turn() {
         event_tx: None,
         approval_resolver: crate::runtime::ApprovalResolver::new_for_test(),
         question_resolver: crate::runtime::QuestionResolver::new_for_test(),
-            plan_review_resolver: crate::runtime::PlanReviewResolver::new_for_test(),
-            sudo_password_resolver: crate::runtime::SudoPasswordResolver::new_for_test(),
+        plan_review_resolver: crate::runtime::PlanReviewResolver::new_for_test(),
+        sudo_password_resolver: crate::runtime::SudoPasswordResolver::new_for_test(),
         compact_state: Arc::new(tokio::sync::Mutex::new(CompactState::new(128_000))),
         harness_config: crate::config::HarnessConfig::default(),
         include_tool_prompt_manifest: false,
@@ -589,8 +589,8 @@ fn build_test_ctx(project_dir: PathBuf) -> TurnContext {
         event_tx: None,
         approval_resolver: crate::runtime::ApprovalResolver::new_for_test(),
         question_resolver: crate::runtime::QuestionResolver::new_for_test(),
-            plan_review_resolver: crate::runtime::PlanReviewResolver::new_for_test(),
-            sudo_password_resolver: crate::runtime::SudoPasswordResolver::new_for_test(),
+        plan_review_resolver: crate::runtime::PlanReviewResolver::new_for_test(),
+        sudo_password_resolver: crate::runtime::SudoPasswordResolver::new_for_test(),
         compact_state: Arc::new(tokio::sync::Mutex::new(CompactState::new(128_000))),
         harness_config: crate::config::HarnessConfig::default(),
         include_tool_prompt_manifest: false,
@@ -867,7 +867,10 @@ fn rewrite_unsupported_attachments_keeps_supported_images_and_routes_audio() {
         routed.contains("attachment unavailable") || routed.contains("cannot view"),
         "unsupported attachments should become a short capability notice: {routed}"
     );
-    assert!(routed.contains("audio"), "notice should mention kind: {routed}");
+    assert!(
+        routed.contains("audio"),
+        "notice should mention kind: {routed}"
+    );
     assert!(
         !routed.contains("audio-data"),
         "must not inline attachment base64 into the chat prompt: {routed}"
@@ -925,7 +928,10 @@ fn rewrite_unsupported_images_do_not_inline_base64() {
 
     let rewritten = rewrite_unsupported_attachments(&ctx, &messages);
     let text = rewritten[0].content_parts[1].as_text().unwrap();
-    assert!(!text.contains(&huge), "must not dump image base64 into prompt");
+    assert!(
+        !text.contains(&huge),
+        "must not dump image base64 into prompt"
+    );
     assert!(text.contains("image/png"));
     assert!(text.contains("cannot view") || text.contains("unavailable"));
 }

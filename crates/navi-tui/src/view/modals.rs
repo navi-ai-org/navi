@@ -39,9 +39,7 @@ pub(crate) fn render_sudo_password(frame: &mut Frame<'_>, app: &TuiApp, area: Re
         .split(inner);
 
     let prompt = app.sudo_password_prompt.as_ref();
-    let summary = prompt
-        .map(|p| p.command_summary.as_str())
-        .unwrap_or("sudo");
+    let summary = prompt.map(|p| p.command_summary.as_str()).unwrap_or("sudo");
     let password = prompt.map(|p| p.password.as_str()).unwrap_or("");
     let cursor = prompt.map(|p| p.cursor).unwrap_or(0);
 
@@ -692,10 +690,7 @@ pub(crate) fn render_confirm_plan(frame: &mut Frame<'_>, app: &mut TuiApp, area:
             } else {
                 Style::default().fg(text()).bg(modal_bg())
             };
-            body.push(Line::from(Span::styled(
-                format!("{marker}{line}"),
-                style,
-            )));
+            body.push(Line::from(Span::styled(format!("{marker}{line}"), style)));
 
             // Register mouse hit for this line.
             if app.mode == crate::state::Mode::ConfirmPlan {
@@ -726,7 +721,10 @@ pub(crate) fn render_confirm_plan(frame: &mut Frame<'_>, app: &mut TuiApp, area:
         let mut footer_spans = vec![
             Span::styled(
                 approve_label,
-                Style::default().fg(red()).bg(modal_bg()).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(red())
+                    .bg(modal_bg())
+                    .add_modifier(Modifier::BOLD),
             ),
             Span::styled("  ·  ", Style::default().fg(ghost()).bg(modal_bg())),
             Span::styled("s changes", Style::default().fg(text()).bg(modal_bg())),
@@ -795,12 +793,7 @@ pub(crate) fn render_confirm_plan(frame: &mut Frame<'_>, app: &mut TuiApp, area:
             .enumerate()
             {
                 let x = rows[1].x.saturating_add((i as u16).saturating_mul(seg));
-                app.register_hit(
-                    Rect::new(x, rows[1].y, seg, 1),
-                    25,
-                    "plan action",
-                    action,
-                );
+                app.register_hit(Rect::new(x, rows[1].y, seg, 1), 25, "plan action", action);
             }
         }
         return;
@@ -970,11 +963,7 @@ pub(crate) fn render_path_mentions(frame: &mut Frame<'_>, app: &TuiApp, area: Re
                 };
                 let marker = if selected { "● " } else { "  " };
                 let kind = if c.is_dir { "dir  " } else { "file " };
-                ListItem::new(Span::styled(
-                    format!("{marker}{kind}{}", c.rel),
-                    style,
-                ))
-                .style(style)
+                ListItem::new(Span::styled(format!("{marker}{kind}{}", c.rel), style)).style(style)
             })
             .collect()
     };
@@ -2067,10 +2056,7 @@ fn render_session_usage(lines: &mut Vec<Line<'_>>, app: &TuiApp) {
         ) {
             lines.push(Line::from(vec![
                 Span::styled("  Est. credits", Style::default().fg(muted())),
-                Span::styled(
-                    format!(" {credits:.2} {unit}"),
-                    Style::default().fg(text()),
-                ),
+                Span::styled(format!(" {credits:.2} {unit}"), Style::default().fg(text())),
             ]));
         }
     } else if let Some((in_rate, out_rate)) = rates {
@@ -2108,10 +2094,7 @@ fn render_session_usage(lines: &mut Vec<Line<'_>>, app: &TuiApp) {
     let model = &app.loaded_config.config.model.name;
     lines.push(Line::from(vec![
         Span::styled("  Model    ", Style::default().fg(muted())),
-        Span::styled(
-            format!("{model} ({provider})"),
-            Style::default().fg(text()),
-        ),
+        Span::styled(format!("{model} ({provider})"), Style::default().fg(text())),
     ]));
 }
 

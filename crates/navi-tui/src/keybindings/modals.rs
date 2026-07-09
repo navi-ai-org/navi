@@ -350,7 +350,11 @@ pub(crate) fn handle_thinking_key(app: &mut TuiApp, code: KeyCode) -> bool {
     let mut local_idx = options
         .iter()
         .position(|l| *l == app.thinking_level)
-        .or_else(|| options.get(app.selected_thinking).map(|_| app.selected_thinking.min(max_idx)))
+        .or_else(|| {
+            options
+                .get(app.selected_thinking)
+                .map(|_| app.selected_thinking.min(max_idx))
+        })
         .unwrap_or(0);
     // Prefer selected_thinking if it points into options by label order.
     if let Some(sel) = options.get(app.selected_thinking) {
@@ -715,12 +719,21 @@ fn paste_oauth_code_from_clipboard(app: &mut TuiApp) {
     };
     let Some(slot) = state.paste_slot.clone() else {
         state.paste_status = Some("This login flow does not accept a pasted code.".into());
-        show_notification(app, "OAuth", "This login flow does not accept a pasted code.");
+        show_notification(
+            app,
+            "OAuth",
+            "This login flow does not accept a pasted code.",
+        );
         return;
     };
     let Some(raw) = crate::clipboard::try_read_clipboard_text() else {
-        state.paste_status = Some("Clipboard is empty — copy the code from the browser first.".into());
-        show_notification(app, "OAuth", "Clipboard empty. Copy the code from the browser.");
+        state.paste_status =
+            Some("Clipboard is empty — copy the code from the browser first.".into());
+        show_notification(
+            app,
+            "OAuth",
+            "Clipboard empty. Copy the code from the browser.",
+        );
         return;
     };
     let code = raw

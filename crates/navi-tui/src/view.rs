@@ -5,7 +5,6 @@ pub(crate) mod debug;
 pub(crate) mod help;
 pub(crate) mod image_preview;
 pub(crate) mod input;
-pub(crate) mod terminal_graphics;
 pub(crate) mod modals;
 pub(crate) mod model_picker;
 pub(crate) mod notification;
@@ -13,6 +12,7 @@ pub(crate) mod plugins;
 pub(crate) mod provider_settings;
 pub(crate) mod sessions;
 pub(crate) mod skills;
+pub(crate) mod terminal_graphics;
 pub(crate) mod welcome;
 
 use ratatui::layout::Rect;

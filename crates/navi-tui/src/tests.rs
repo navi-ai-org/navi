@@ -327,18 +327,17 @@ fn text_drag_selection_stays_inside_selected_block() {
     // Two message blocks with sources so drag cannot bleed across them.
     app.messages
         .push(ChatMessage::new(ChatRole::User, "alpha".to_string()));
-    app.messages
-        .push(ChatMessage::new(ChatRole::Assistant, "beta line".to_string()));
+    app.messages.push(ChatMessage::new(
+        ChatRole::Assistant,
+        "beta line".to_string(),
+    ));
     {
         let mut cache = app.chat_render_cache.borrow_mut();
         cache.lines = vec![
             ratatui::text::Line::from("alpha"),
             ratatui::text::Line::from("beta line"),
         ];
-        cache.line_sources = vec![
-            ChatLineSource::Message(0),
-            ChatLineSource::Message(1),
-        ];
+        cache.line_sources = vec![ChatLineSource::Message(0), ChatLineSource::Message(1)];
         cache.chat_rect = Some(Rect::new(0, 0, 20, 4));
         cache.width = 20;
         cache.signature_hash = 1;
@@ -350,11 +349,8 @@ fn text_drag_selection_stays_inside_selected_block() {
         active: true,
         bound_source: Some(ChatLineSource::Message(0)),
     });
-    let clamped = crate::chat_blocks::clamp_line_to_block(
-        &app,
-        1,
-        &Some(ChatLineSource::Message(0)),
-    );
+    let clamped =
+        crate::chat_blocks::clamp_line_to_block(&app, 1, &Some(ChatLineSource::Message(0)));
     assert_eq!(clamped, 0, "drag must not enter the next block");
 }
 
@@ -382,10 +378,7 @@ fn mouse_down_on_user_chat_message_selects_block() {
 
     // First click selects the block .
     assert_eq!(app.mode, Mode::Normal);
-    assert_eq!(
-        app.selected_chat_source,
-        Some(ChatLineSource::Message(0))
-    );
+    assert_eq!(app.selected_chat_source, Some(ChatLineSource::Message(0)));
     assert!(app.message_action_target.is_none());
 
     // Second click on the same user block opens message actions.
@@ -741,7 +734,7 @@ fn loading_saved_session_restores_snapshot_session_id() {
         }],
         memory: None,
         goal: None,
-    usage: None,
+        usage: None,
     };
 
     crate::persistence::load_session(&mut app, &snapshot);
@@ -771,7 +764,7 @@ fn filtered_sessions_prioritizes_current_project_sessions() {
             events: vec![],
             memory: None,
             goal: None,
-        usage: None,
+            usage: None,
         }
     }
 
@@ -3521,6 +3514,3 @@ fn build_model_rows_prepends_recent_section() {
         "expected a Recent header in the rendered model rows"
     );
 }
-
-
-

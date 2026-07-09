@@ -128,8 +128,7 @@ pub(crate) fn toggle_tool_body(
     collapsed: &mut HashSet<String>,
 ) -> bool {
     let id = result.invocation_id.clone();
-    let currently =
-        tool_body_visible(invocation, result, full_tool_view, expanded, collapsed);
+    let currently = tool_body_visible(invocation, result, full_tool_view, expanded, collapsed);
     if currently {
         // Force closed (overrides auto + expand-all until toggled again).
         expanded.remove(&id);
@@ -244,7 +243,8 @@ mod tests {
         let mut full = true;
         let mut expanded = HashSet::new();
         let mut collapsed = HashSet::from(["noise".to_string()]);
-        let now_full = toggle_expand_all_mode(&mut full, &mut expanded, &mut collapsed, Some("open-me"));
+        let now_full =
+            toggle_expand_all_mode(&mut full, &mut expanded, &mut collapsed, Some("open-me"));
         assert!(!now_full);
         assert!(!full);
         assert!(expanded.contains("open-me"));

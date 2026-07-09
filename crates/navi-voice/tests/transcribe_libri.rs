@@ -18,11 +18,8 @@ fn model_dir() -> Option<PathBuf> {
     }
     let data = std::env::var_os("XDG_DATA_HOME")
         .map(PathBuf::from)
-        .or_else(|| {
-            std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share"))
-        })?;
-    let path = data
-        .join("navi/voice/models/nemotron-3.5-asr-streaming-0.6b-onnx");
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share")))?;
+    let path = data.join("navi/voice/models/nemotron-3.5-asr-streaming-0.6b-onnx");
     if path.join("onnx/encoder.onnx").is_file() {
         Some(path)
     } else {
