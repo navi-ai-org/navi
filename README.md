@@ -22,7 +22,7 @@
 </p>
 
 <p align="center">
-  <img src="assets/brand/navi-demo.gif" width="900" alt="NAVI terminal session — read tools and answer with grok-4.5" />
+  <img src="assets/brand/navi-demo.gif" width="900" alt="NAVI terminal session — tools and model response" />
 </p>
 
 ---
@@ -54,7 +54,7 @@ irm https://raw.githubusercontent.com/navi-ai-org/navi/main/scripts/install.ps1 
 **Pin a version**
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/navi-ai-org/navi/main/scripts/install.sh | sh -s -- --version 0.2.2
+curl -fsSL https://raw.githubusercontent.com/navi-ai-org/navi/main/scripts/install.sh | sh -s -- --version 0.2.3
 ```
 
 **Homebrew**
@@ -91,7 +91,7 @@ ENTRYPOINT ["navi"]
 ```bash
 # high-assurance: pin script commit + release + require cosign
 curl -fsSL https://raw.githubusercontent.com/navi-ai-org/navi/<commit-sha>/scripts/install.sh \
-  | sh -s -- --version 0.2.2 --require-cosign
+  | sh -s -- --version 0.2.3 --require-cosign
 ```
 
 </details>
@@ -107,7 +107,7 @@ cat error.log | navi --no-tui "explain this"  # pipe-friendly
 navi --print-providers                        # credential status
 ```
 
-Config: `~/.config/navi/config.toml` (global) and `.navi/config.toml` (project).  
+Config: `~/.config/navi/config.toml` (global) and `.navi/config.toml` (project).
 API keys: environment variables first, then the credential store. The TUI guides setup when a provider has no key.
 
 ---
@@ -135,11 +135,11 @@ Most “coding agents” are a chat UI glued to a few tools. **NAVI is an agent 
 
 What you open when you type `navi`:
 
-- **Model picker** `ctrl+m` — switch provider/model mid-session  
-- **Command palette** `ctrl+p` — providers, plugins, skills, settings  
-- **Sessions** `ctrl+s` — save, resume, browse  
-- **Tool I/O** `ctrl+o` — every call and result  
-- Thinking levels, syntax-highlighted markdown, mouse scroll/select/copy  
+- **Model picker** `ctrl+m` — switch provider/model mid-session
+- **Command palette** `ctrl+p` — providers, plugins, skills, settings
+- **Sessions** `ctrl+s` — save, resume, browse
+- **Tool I/O** `ctrl+o` — every call and result
+- Thinking levels, syntax-highlighted markdown, mouse scroll/select/copy
 
 ### Headless CLI
 
@@ -212,7 +212,7 @@ navi plugin install-marketplace <id> --yes
 | **Google Gemini** | Gemini 2.5 Pro / Flash |
 | **OpenRouter** | 100+ models, auto-routing |
 | **GitHub Copilot** | Device OAuth, enterprise |
-| **xAI** | Grok + Composer 2.5 |
+| **xAI** | Composer 2.5 and model family |
 | **Custom** | Any OpenAI-compatible endpoint |
 
 Swap in config — no recompile.

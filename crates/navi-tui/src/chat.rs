@@ -533,6 +533,16 @@ pub(crate) fn start_new_session(app: &mut TuiApp) {
     app.selection = None;
     app.hover_index = None;
     app.session_title = None;
+    // Fresh session: reset token/cost accumulators (persisted separately per snapshot).
+    app.usage_state.session_input_tokens = 0;
+    app.usage_state.session_output_tokens = 0;
+    app.usage_state.session_cost_usd = 0.0;
+    app.usage_state.session_cost_known = false;
+    app.usage_state.session_credits_spent = None;
+    app.usage_state.session_credit_unit = None;
+    app.usage_state.last_input_tokens = None;
+    app.usage_state.last_output_tokens = None;
+    app.usage_state.last_turn_label = None;
     app.chat_render_cache.borrow_mut().signature_hash = 0;
 }
 

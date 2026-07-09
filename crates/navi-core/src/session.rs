@@ -226,6 +226,29 @@ fn default_session_version() -> u32 {
     1
 }
 
+/// Accumulated token/cost usage for a session (persisted with the snapshot).
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct SessionUsageSnapshot {
+    /// Cumulative prompt/context tokens billed this session.
+    #[serde(default)]
+    pub input_tokens: u64,
+    /// Cumulative completion tokens billed this session.
+    #[serde(default)]
+    pub output_tokens: u64,
+    /// Estimated spend in USD from list rates × tokens (when known).
+    #[serde(default)]
+    pub cost_usd: f64,
+    /// True once at least one turn had usable list pricing.
+    #[serde(default)]
+    pub cost_known: bool,
+    /// Estimated prepaid credits spent (e.g. Hypercredits = USD / $0.05).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub credits_spent: Option<f64>,
+    /// Credit unit label when `credits_spent` is set (e.g. `hypercredits`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub credit_unit: Option<String>,
+}
+
 /// A serializable snapshot of a complete session, persisted to disk as JSON.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionSnapshot {
@@ -253,6 +276,9 @@ pub struct SessionSnapshot {
     /// Optional session goal co-persisted with the session.
     #[serde(default)]
     pub goal: Option<SessionGoal>,
+    /// Token and estimated cost usage for this session (restored on reload).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub usage: Option<SessionUsageSnapshot>,
 }
 
 /// Lightweight metadata for listing saved sessions without loading event history.
@@ -355,6 +381,7 @@ impl SessionStore {
                 goal: snapshot.goal.clone(),
                 events: redact_snapshot_events(&snapshot.events),
                 memory: snapshot.memory.as_ref().map(redact_memory),
+                usage: snapshot.usage.clone(),
             }
         } else {
             snapshot.clone()
@@ -693,6 +720,7 @@ mod tests {
             events: Vec::new(),
             memory: None,
             goal: None,
+        usage: None,
         };
 
         let path = store.save(&snapshot).expect("save session");
@@ -718,6 +746,7 @@ mod tests {
             events: Vec::new(),
             memory: None,
             goal: None,
+        usage: None,
         };
 
         let path = store.save(&snapshot).expect("save session");
@@ -754,6 +783,7 @@ mod tests {
         }],
             memory: None,
             goal: None,
+        usage: None,
         };
 
         let path = store.save(&snapshot).expect("save session");
@@ -784,6 +814,7 @@ mod tests {
                 }],
             }),
             goal: None,
+        usage: None,
         };
 
         let path = store.save(&snapshot).expect("save session");
@@ -811,6 +842,7 @@ mod tests {
         }],
             memory: None,
             goal: None,
+        usage: None,
         };
 
         let path = store.save(&snapshot).expect("save session");
@@ -1002,6 +1034,7 @@ mod tests {
             events: Vec::new(),
             memory: None,
             goal: None,
+        usage: None,
         }
     }
 
@@ -1096,6 +1129,7 @@ mod tests {
             ],
             memory: None,
             goal: None,
+        usage: None,
         };
         let json = serde_json::to_string(&snapshot).expect("serialize");
         let loaded: SessionSnapshot = serde_json::from_str(&json).expect("deserialize");
@@ -1179,6 +1213,7 @@ mod tests {
             ],
             memory: None,
             goal: None,
+        usage: None,
         };
         store.save(&snapshot).expect("save");
         let loaded = store.load("events-session").expect("load");

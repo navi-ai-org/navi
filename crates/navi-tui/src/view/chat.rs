@@ -5,11 +5,12 @@ use ratatui::layout::{Margin, Rect};
 use ratatui::prelude::{Frame, Line, Span};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::Text;
-use ratatui::widgets::{Paragraph, Wrap};
+use ratatui::widgets::{Block, BorderType, Borders, Paragraph, Wrap};
 
 use navi_sdk::SubagentTranscriptKind;
 
 use crate::TuiApp;
+use crate::render::clear_modal_area;
 use crate::render::markdown::build_chat_render_for_messages;
 use crate::render::text::display_width;
 use crate::state::{ChatLineSource, ChatView, Mode};
@@ -17,6 +18,15 @@ use crate::theme::*;
 use crate::ui::interaction::{HitAction, line_rect};
 
 use super::welcome::welcome_text;
+
+/// Jump scrollback to the latest message (follow the tail).
+/// Same as Grok “Go to bottom” / Shift+G.
+pub(crate) fn jump_to_latest(app: &mut TuiApp) {
+    app.scroll_offset = 0;
+    // Clear block selection so composer focus returns to the live end.
+    crate::chat_blocks::clear_selected_block(app);
+    app.selection = None;
+}
 
 pub(crate) fn render_chat_area(frame: &mut Frame<'_>, app: &mut TuiApp, area: Rect) {
     let inner = area.inner(Margin {
@@ -133,6 +143,63 @@ pub(crate) fn render_chat_area(frame: &mut Frame<'_>, app: &mut TuiApp, area: Re
             .wrap(Wrap { trim: false }),
         inner,
     );
+
+    // Grok-style: floating “↓ Latest” when scrolled away from the live end.
+    render_jump_to_latest_button(frame, app, inner);
+}
+
+/// Floating pill above the composer when the user has scrolled up in history.
+/// Click (or Shift+G) jumps to the last message.
+fn render_jump_to_latest_button(frame: &mut Frame<'_>, app: &mut TuiApp, chat_area: Rect) {
+    if app.scroll_offset == 0 || chat_area.width < 12 || chat_area.height < 3 {
+        return;
+    }
+    // Hide under modals; Normal / Subagent scrollback only.
+    if !matches!(app.mode, Mode::Normal) {
+        return;
+    }
+
+    // Label mirrors Grok “Go to bottom” affordance.
+    let label = " ↓ Latest ";
+    let label_w = display_width(label) as u16;
+    let width = (label_w.saturating_add(2)).min(chat_area.width.saturating_sub(2)).max(8);
+    let height = 3u16.min(chat_area.height);
+    // Bottom-center of the chat pane (above the composer gap).
+    let x = chat_area.x + chat_area.width.saturating_sub(width) / 2;
+    let y = chat_area
+        .y
+        .saturating_add(chat_area.height.saturating_sub(height).saturating_sub(1));
+    let rect = Rect::new(x, y, width, height);
+
+    clear_modal_area(frame, rect);
+    frame.render_widget(
+        Block::new()
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .border_style(Style::default().fg(accent()).bg(panel()))
+            .style(Style::default().bg(panel())),
+        rect,
+    );
+    let inner = rect.inner(Margin {
+        horizontal: 1,
+        vertical: 1,
+    });
+    if inner.width > 0 && inner.height > 0 {
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                label.to_string(),
+                Style::default()
+                    .fg(accent())
+                    .bg(panel())
+                    .add_modifier(Modifier::BOLD),
+            )))
+            .style(Style::default().bg(panel())),
+            inner,
+        );
+    }
+
+    // High z so it wins over chat line hits.
+    app.register_hit(rect, 80, "jump to latest", HitAction::ScrollToBottom);
 }
 
 fn highlight_selection_columns(
@@ -451,7 +518,7 @@ fn interactive_state(
 /// Recap-style vertical rail on the left of a selected block.
 /// Keeps original text colors; no full-width selection_bg fill.
 fn apply_selection_rail(line: &mut Line<'static>) {
-    // Thin continuous bar (Grok Recap). `│` is one cell wide everywhere.
+    // Thin continuous bar (Recap). `│` is one cell wide everywhere.
     const RAIL: &str = "│";
     // Muted like Recap — selection is the rail alone, not a fill + fg wipe.
     let rail_style = Style::default().fg(muted()).bg(bg());
@@ -720,6 +787,18 @@ mod tests {
     #[test]
     fn anchored_scroll_tracks_removed_lines_when_scrolled_up() {
         assert_eq!(anchored_scroll_offset(10, 100, 94), 4);
+    }
+
+    #[test]
+    fn jump_to_latest_clears_scroll_and_selection() {
+        use crate::state::ChatLineSource;
+        let mut app = crate::tests::test_app("");
+        app.scroll_offset = 42;
+        app.selected_chat_source = Some(ChatLineSource::Message(0));
+        super::jump_to_latest(&mut app);
+        assert_eq!(app.scroll_offset, 0);
+        assert!(app.selected_chat_source.is_none());
+        assert!(app.selection.is_none());
     }
 
     #[test]

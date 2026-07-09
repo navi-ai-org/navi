@@ -18,7 +18,7 @@ pub(crate) fn handle_normal_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyM
         return false;
     }
 
-    // Grok-style block selection: when the prompt is empty, Up/Down/y/Enter
+    // block selection: when the prompt is empty, Up/Down/y/Enter
     // operate on discrete scrollback entries instead of the input field.
     if app.input.is_empty()
         && modifiers.is_empty()
@@ -36,6 +36,8 @@ pub(crate) fn handle_normal_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyM
             | KeyCode::Char('w')
             | KeyCode::Char('\u{7f}') => delete_input_previous_hump(app),
             KeyCode::Delete => delete_input_next_hump(app),
+            // Grok-style jump to last message (also works while typing).
+            KeyCode::End => crate::view::chat::jump_to_latest(app),
             KeyCode::Char('a') => select_all_input(app),
             KeyCode::Char('e') => {
                 app.input_cursor = app.input.len();
@@ -93,6 +95,15 @@ pub(crate) fn handle_normal_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyM
                 crate::path_mentions::open_path_mentions(app, at);
                 app.path_filter = query;
             }
+        }
+        // Grok: Shift+G with empty prompt + scrolled history → go to bottom
+        // (must be before the generic Char insert arm).
+        KeyCode::Char('G')
+            if modifiers.contains(KeyModifiers::SHIFT)
+                && app.input.is_empty()
+                && app.scroll_offset > 0 =>
+        {
+            crate::view::chat::jump_to_latest(app);
         }
         KeyCode::Char(ch) => insert_input_char(app, ch),
         KeyCode::Backspace => {
@@ -213,6 +224,10 @@ fn handle_subagent_view_key(app: &mut TuiApp, code: KeyCode) -> bool {
         }
         KeyCode::PageDown | KeyCode::Down => {
             app.scroll_offset = app.scroll_offset.saturating_sub(15);
+            true
+        }
+        KeyCode::Char('G') | KeyCode::End => {
+            crate::view::chat::jump_to_latest(app);
             true
         }
         _ => false,

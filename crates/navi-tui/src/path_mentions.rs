@@ -1,4 +1,4 @@
-//! `@` path mentions — pick a project file/folder into the composer (Grok/Cursor style).
+//! `@` path mentions — pick a project file/folder into the composer (agent UI style).
 //!
 //! Typing `@` opens a filtered path palette. Selecting an entry inserts `@rel/path`
 //! (directories get a trailing `/`). On submit, mentions are hydrated into the

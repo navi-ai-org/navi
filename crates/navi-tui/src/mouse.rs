@@ -288,7 +288,7 @@ pub(crate) fn handle_mouse(app: &mut TuiApp, mouse: MouseEvent) {
             app.hovered_chat_source = None;
             if let Some(pos) = map_mouse_to_text(app, mouse.column, mouse.row) {
                 let bound = crate::chat_blocks::source_at_line(app, pos.0);
-                // Starting a text drag also selects that block (Grok entry focus).
+                // Starting a text drag also selects that block (entry focus).
                 if let Some(source) = bound.clone() {
                     crate::chat_blocks::select_chat_block(app, source);
                 } else {
@@ -397,6 +397,7 @@ pub(crate) fn handle_mouse(app: &mut TuiApp, mouse: MouseEvent) {
             } else {
                 app.hover_index = None;
                 app.hovered_chat_source = None;
+                app.hover_context_usage = false;
                 crate::view::image_preview::clear_image_hover(app);
             }
         }
@@ -428,10 +429,12 @@ fn apply_hover(app: &mut TuiApp, hit: &HitRegion<HitAction>) {
     app.hovered_chat_source = chat_source_for_action(&hit.action);
     if crate::view::image_preview::set_hover_from_action(app, &hit.action) {
         app.hover_index = None;
+        app.hover_context_usage = false;
         return;
     }
     // Leaving an image chip clears the floating preview.
     crate::view::image_preview::clear_image_hover(app);
+    app.hover_context_usage = matches!(hit.action, HitAction::ContextUsage);
     match &hit.action {
         HitAction::QuestionOption(index) => {
             app.hover_index = Some(*index);
@@ -455,6 +458,9 @@ fn apply_hover(app: &mut TuiApp, hit: &HitRegion<HitAction>) {
             app.hover_index = Some(*index);
         }
         HitAction::ThemeSelect(index) => app.hover_index = Some(*index),
+        HitAction::ContextUsage => {
+            app.hover_index = None;
+        }
         _ => {
             app.hover_index = None;
         }
@@ -720,6 +726,13 @@ fn dispatch_hit(app: &mut TuiApp, hit: HitRegion<HitAction>) {
             run_message_action(app, index);
         }
         HitAction::ScrollTo { target, offset } => scroll_to(app, target, offset),
+        HitAction::ScrollToBottom => {
+            crate::view::chat::jump_to_latest(app);
+        }
+        HitAction::ContextUsage => {
+            // Click opens the full usage modal (hover already reveals %).
+            crate::usage::open_usage_modal(app);
+        }
         HitAction::McpServer(index) => {
             app.mcp_ui_state.selected_server = index;
             app.mcp_ui_state.is_focused_on_tools = false;

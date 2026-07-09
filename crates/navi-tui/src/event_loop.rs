@@ -395,7 +395,7 @@ where
     let mut needs_draw = true;
     let mut leaked_terminal_sequence_filter = LeakedTerminalSequenceFilter::default();
     loop {
-        // Grok-style composer expand/collapse animation.
+        // composer expand/collapse animation.
         let input_width = terminal
             .size()
             .map(|s| s.width.saturating_sub(4) as usize)

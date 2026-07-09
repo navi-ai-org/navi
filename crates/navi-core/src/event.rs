@@ -515,7 +515,7 @@ pub enum AgentEvent {
         /// Number of tokens read from the prompt cache (Anthropic).
         cache_read_tokens: u64,
     },
-    /// Short post-turn session recap (Grok-style "Recap" line).
+    /// Short post-turn session recap ("Recap" line).
     SessionRecap {
         /// One- or two-sentence summary of the turn.
         summary: String,

@@ -257,7 +257,7 @@ mod tests {
         );
         let rendered = lines.iter().map(line_text).collect::<Vec<_>>();
 
-        // Grok-style full box frame (outer ┌┐└┘, header ┼, body │).
+        // full box frame (outer ┌┐└┘, header ┼, body │).
         assert_eq!(rendered[0], "  ◆ Project Overview");
         assert!(rendered[1].trim().is_empty());
         let table = &rendered[2..];

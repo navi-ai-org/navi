@@ -380,7 +380,7 @@ fn mouse_down_on_user_chat_message_selects_block() {
         },
     );
 
-    // First click selects the block (Grok-style).
+    // First click selects the block .
     assert_eq!(app.mode, Mode::Normal);
     assert_eq!(
         app.selected_chat_source,
@@ -741,6 +741,7 @@ fn loading_saved_session_restores_snapshot_session_id() {
         }],
         memory: None,
         goal: None,
+    usage: None,
     };
 
     crate::persistence::load_session(&mut app, &snapshot);
@@ -770,6 +771,7 @@ fn filtered_sessions_prioritizes_current_project_sessions() {
             events: vec![],
             memory: None,
             goal: None,
+        usage: None,
         }
     }
 
@@ -1709,7 +1711,7 @@ fn composer_does_not_show_permanent_keyboard_hints() {
         .expect("draw normal");
 
     let frame = terminal_buffer_text(&terminal);
-    // Grok-style: no sticky shortcut footer — discover via Help.
+    // no sticky shortcut footer — discover via Help.
     assert!(
         !frame.contains("ctrl+p commands"),
         "permanent keyboard hints should be gone:\n{frame}"

@@ -1344,6 +1344,53 @@ async fn unknown_tool_returns_available_tools_advice() {
     assert!(result.output["available_tools"].as_array().unwrap().len() <= 20);
 }
 
+#[tokio::test]
+async fn recovers_path_as_tool_name_to_read_file() {
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    std::fs::write(tempdir.path().join("IDEA.md"), "# idea\n").unwrap();
+    let executor = executor(tempdir.path());
+
+    let result = executor
+        .invoke(ToolInvocation {
+            id: "path-as-name".to_string(),
+            tool_name: "IDEA.md".to_string(),
+            input: json!({ "path": "IDEA.md" }),
+        })
+        .await;
+
+    assert!(result.ok, "expected recovery into read_file: {}", result.output);
+    assert!(
+        result.output["content"]
+            .as_str()
+            .unwrap_or("")
+            .contains("idea"),
+        "unexpected output: {}",
+        result.output
+    );
+}
+
+#[tokio::test]
+async fn recovers_dot_list_as_fs_browser() {
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    std::fs::write(tempdir.path().join("foo.txt"), "hi").unwrap();
+    let executor = executor(tempdir.path());
+
+    let result = executor
+        .invoke(ToolInvocation {
+            id: "dot-list".to_string(),
+            tool_name: ".".to_string(),
+            input: json!({ "action": "list", "path": "." }),
+        })
+        .await;
+
+    assert!(result.ok, "expected recovery into fs_browser: {}", result.output);
+    let files = result.output["files"].as_array().expect("files array");
+    assert!(
+        files.iter().any(|f| f.as_str().is_some_and(|s| s.ends_with("foo.txt"))),
+        "missing foo.txt in {files:?}"
+    );
+}
+
 // ── fs_browser regression tests ──────────────────────────────────────────────
 
 #[tokio::test]

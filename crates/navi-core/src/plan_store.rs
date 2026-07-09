@@ -1,4 +1,4 @@
-//! SQLite-backed plan persistence (Grok-style reviewable work plans).
+//! SQLite-backed plan persistence (reviewable work plans).
 //!
 //! Replaces the per-plan JSON files under `data_dir/plans/<project>/` with a
 //! single SQLite database so plans survive restarts and support line comments.

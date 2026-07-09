@@ -16,19 +16,19 @@ use crate::ui::floor_char_boundary;
 use crate::ui::interaction::HitAction;
 use navi_core::PermissionMode;
 
-/// Grok-style prompt prefix (`› `) before draft text.
+/// prompt prefix (`› `) before draft text.
 const PROMPT: &str = "› ";
 const PROMPT_WIDTH: usize = 2;
 /// Horizontal inset inside the rounded border (left/right padding).
 const INNER_PAD: u16 = 1;
 /// Row below the box for model · permission (not inside the draft).
 const META_ROW: u16 = 1;
-/// Lerp factor per tick toward target height (Grok-style soft resize).
+/// Lerp factor per tick toward target height (soft resize).
 const COMPOSER_ANIM_LERP: f32 = 0.42;
 /// Snap when within this many rows of the target.
 const COMPOSER_ANIM_EPS: f32 = 0.08;
 
-/// Grok `collapse_unfocused`: composer is expanded only while the prompt has focus
+/// `collapse_unfocused`: composer is expanded only while the prompt has focus
 /// (Normal mode, no scrollback block selected, main chat view).
 pub(crate) fn composer_is_focused(app: &TuiApp) -> bool {
     app.mode == crate::state::Mode::Normal
@@ -111,7 +111,7 @@ pub(crate) fn render_input(frame: &mut Frame<'_>, app: &mut TuiApp, area: Rect) 
     let ranges = crate::input::input_visual_line_ranges(&app.input, wrap_width);
     let content_h = content.height as usize;
 
-    // Grok collapse: when unfocused, only show a single summary line (first line
+    // Collapse: when unfocused, only show a single summary line (first line
     // of the draft, truncated with … if more content exists).
     let (visible_raw, visible_start, collapsed_summary) = if focused {
         let (vis, start) = visible_input_lines(raw_lines, content_h, cursor_line);
@@ -195,7 +195,7 @@ pub(crate) fn render_input(frame: &mut Frame<'_>, app: &mut TuiApp, area: Rect) 
         content,
     );
 
-    // Cursor only when the composer has focus (Grok hides it while scrollback is focused).
+    // Cursor only when the composer has focus .
     if focused {
         let cursor_x = content.x.saturating_add(
             (PROMPT_WIDTH + cursor_column)
@@ -211,13 +211,32 @@ pub(crate) fn render_input(frame: &mut Frame<'_>, app: &mut TuiApp, area: Rect) 
 
     // Meta lives outside the draft box (right-aligned), transparent bg.
     if meta_area.height > 0 && meta_area.width > 0 {
-        let meta = composer_meta_right(app, meta_area.width as usize);
+        let built = composer_meta_right(app, meta_area.width as usize);
         frame.render_widget(
-            Paragraph::new(meta)
+            Paragraph::new(built.line)
                 .alignment(Alignment::Right)
                 .style(Style::default().bg(surface)),
             meta_area,
         );
+
+        // Context chip: hover reveals window %; click opens usage modal.
+        if let Some((offset_cols, chip_w)) = built.context_range {
+            let full_w = built.display_width;
+            let start_x = meta_area
+                .x
+                .saturating_add(meta_area.width.saturating_sub(full_w as u16))
+                .saturating_add(offset_cols as u16);
+            let hit_w = (chip_w as u16)
+                .min(meta_area.width.saturating_sub(start_x.saturating_sub(meta_area.x)));
+            if hit_w > 0 {
+                app.register_hit(
+                    Rect::new(start_x, meta_area.y, hit_w, 1),
+                    20,
+                    "context usage",
+                    HitAction::ContextUsage,
+                );
+            }
+        }
 
         if !app.queued_user_messages.is_empty() {
             let queued_width = queued_footer_label(app).len() as u16;
@@ -245,7 +264,7 @@ pub(crate) fn render_input(frame: &mut Frame<'_>, app: &mut TuiApp, area: Rect) 
 }
 
 pub(crate) fn composer_height(app: &TuiApp, input_width: usize) -> u16 {
-    // Use animated content-line count (Grok expand/collapse).
+    // Use animated content-line count .
     let content_lines = app
         .composer_anim_lines
         .round()
@@ -256,7 +275,7 @@ pub(crate) fn composer_height(app: &TuiApp, input_width: usize) -> u16 {
 }
 
 pub(crate) fn composer_hint_height(app: &TuiApp) -> u16 {
-    // No permanent keyboard-hint row (Grok-style: discover via Help `?`).
+    // No permanent keyboard-hint row .
     // Only reserve space for an active goal line.
     if app.goal_state.is_some() {
         1
@@ -344,7 +363,7 @@ fn composer_activity_line(app: &TuiApp, width: usize) -> Option<Line<'static>> {
     let (status, color) = composer_activity_status(app);
     let elapsed = format_activity_elapsed(elapsed_ms);
     let suffix = format!(" · {elapsed}");
-    // Grok-style diamond pulse while a turn is running — no corner trail.
+    // diamond pulse while a turn is running — no corner trail.
     let diamond = crate::render::status::running_diamond(elapsed_ms);
     let status_width = width.saturating_sub(display_width(diamond) + display_width(&suffix) + 2);
     let status = fit_display_width(&status, status_width.max(1));
@@ -550,11 +569,22 @@ fn input_lines(app: &TuiApp, width: usize) -> (Vec<Line<'static>>, usize, usize)
     (lines, cursor_line, cursor_column)
 }
 
-/// Right-side composer chrome (Grok: `Model · permission`).
+/// Built composer meta line + optional context-chip hit range (col offset, width).
+struct ComposerMetaBuilt {
+    line: Line<'static>,
+    display_width: usize,
+    /// `(start_col_in_line, chip_display_width)` for the context token meter.
+    context_range: Option<(usize, usize)>,
+}
+
+/// Right-side composer chrome.
 /// Kept compact so it can sit on the same row as the draft.
-fn composer_meta_right(app: &TuiApp, width: usize) -> Line<'static> {
+///
+/// Context chip (Grok-style): default shows `3.2k / 200k`; hover reveals
+/// `(12%)` with threshold coloring.
+fn composer_meta_right(app: &TuiApp, width: usize) -> ComposerMetaBuilt {
     if !app.pending_questions.is_empty() {
-        return Line::from(vec![
+        let line = Line::from(vec![
             Span::styled("Question pending", Style::default().fg(code_const())),
             Span::styled(" · ", Style::default().fg(ghost())),
             Span::styled(
@@ -562,9 +592,16 @@ fn composer_meta_right(app: &TuiApp, width: usize) -> Line<'static> {
                 Style::default().fg(signal()).add_modifier(Modifier::BOLD),
             ),
         ]);
+        let display_width = spans_display_width(&line.spans);
+        return ComposerMetaBuilt {
+            line,
+            display_width,
+            context_range: None,
+        };
     }
 
     let mut spans: Vec<Span<'static>> = Vec::new();
+    let mut context_range: Option<(usize, usize)> = None;
 
     if !app.queued_user_messages.is_empty() {
         spans.push(Span::styled(
@@ -593,7 +630,13 @@ fn composer_meta_right(app: &TuiApp, width: usize) -> Line<'static> {
 
     let model = selected_model_label(app);
     let thinking = app.thinking_level.label();
-    let context = app.compact_state.usage_label(app.input.len());
+    let pending = app.input.len();
+    let context = if app.hover_context_usage {
+        app.compact_state.usage_label_with_percent(pending)
+    } else {
+        app.compact_state.usage_label_compact(pending)
+    };
+    let context_color = context_usage_color(app, pending);
     let permission = permission_mode_spans(app);
     let permission_w = spans_display_width(&permission);
 
@@ -607,10 +650,19 @@ fn composer_meta_right(app: &TuiApp, width: usize) -> Line<'static> {
             Style::default().fg(muted()),
         ));
         spans.push(Span::styled(" · ", Style::default().fg(ghost())));
+        let start = spans_display_width(&spans);
+        let chip_w = display_width(&context);
         spans.push(Span::styled(
             context,
-            Style::default().fg(ghost()),
+            Style::default()
+                .fg(context_color)
+                .add_modifier(if app.hover_context_usage {
+                    Modifier::BOLD
+                } else {
+                    Modifier::empty()
+                }),
         ));
+        context_range = Some((start, chip_w));
         if permission_w > 0 {
             spans.push(Span::styled(" · ", Style::default().fg(ghost())));
             spans.extend(permission);
@@ -630,16 +682,41 @@ fn composer_meta_right(app: &TuiApp, width: usize) -> Line<'static> {
         ));
     }
 
-    // Soft-trim if we still overflow.
+    // Soft-trim if we still overflow — drop the hit range (layout changed).
     let total = spans_display_width(&spans);
     if total > width && width > 1 {
         let text = spans_to_text(&spans);
-        return Line::from(vec![Span::styled(
-            fit_display_width(&text, width),
-            Style::default().fg(muted()),
-        )]);
+        let trimmed = fit_display_width(&text, width);
+        let display_width = display_width(&trimmed);
+        return ComposerMetaBuilt {
+            line: Line::from(vec![Span::styled(
+                trimmed,
+                Style::default().fg(muted()),
+            )]),
+            display_width,
+            context_range: None,
+        };
     }
-    Line::from(spans)
+    ComposerMetaBuilt {
+        line: Line::from(spans),
+        display_width: total,
+        context_range,
+    }
+}
+
+fn context_usage_color(app: &TuiApp, pending: usize) -> ratatui::style::Color {
+    use navi_core::compact::CompactThreshold;
+    match app.compact_state.threshold_level(pending) {
+        CompactThreshold::Error | CompactThreshold::CircuitOpen => red(),
+        CompactThreshold::Warning => signal(),
+        CompactThreshold::Normal => {
+            if app.hover_context_usage {
+                accent()
+            } else {
+                ghost()
+            }
+        }
+    }
 }
 
 fn queued_footer_label(app: &TuiApp) -> String {
@@ -826,9 +903,9 @@ mod tests {
     #[test]
     fn composer_meta_uses_compact_metadata_on_narrow_viewports() {
         let app = crate::tests::test_app("");
-        // Grok-style right meta on medium width: `model · permission` (no provider/thinking).
-        let line = composer_meta_right(&app, 34);
-        let text = line_text(&line);
+        // right meta on medium width: `model · permission` (no provider/thinking).
+        let built = composer_meta_right(&app, 34);
+        let text = line_text(&built.line);
 
         assert!(text.contains("gpt-5.5"));
         assert!(!text.contains("OpenAI"));
@@ -839,11 +916,32 @@ mod tests {
     #[test]
     fn composer_meta_right_wide_includes_thinking_and_context() {
         let app = crate::tests::test_app("");
-        let line = composer_meta_right(&app, 72);
-        let text = line_text(&line);
+        let built = composer_meta_right(&app, 72);
+        let text = line_text(&built.line);
         assert!(text.contains("gpt-5.5"));
         assert!(text.contains('('));
         assert!(text.contains("0 /") || text.contains('/'));
+        // Default: counts only — no percent until hover.
+        assert!(
+            !text.contains('%'),
+            "percent should be hover-only, got {text}"
+        );
+        assert!(built.context_range.is_some());
+    }
+
+    #[test]
+    fn composer_meta_reveals_percent_on_context_hover() {
+        let mut app = crate::tests::test_app("");
+        app.compact_state.last_input_tokens = Some(20_000);
+        app.compact_state.context_window = 200_000;
+        app.hover_context_usage = true;
+        let built = composer_meta_right(&app, 80);
+        let text = line_text(&built.line);
+        assert!(
+            text.contains('%'),
+            "hover should reveal window percent: {text}"
+        );
+        assert!(text.contains("20k") || text.contains("20000") || text.contains('/'));
     }
 
     #[test]
@@ -879,8 +977,9 @@ mod tests {
         let mut app = crate::tests::test_app("");
         app.yolo_mode = true;
 
-        let line = composer_meta_right(&app, 96);
-        let yolo = line
+        let built = composer_meta_right(&app, 96);
+        let yolo = built
+            .line
             .spans
             .iter()
             .find(|span| span.content.as_ref() == "yolo")

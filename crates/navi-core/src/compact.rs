@@ -55,7 +55,7 @@ pub const WARNING_THRESHOLD_BUFFER_TOKENS: u64 = 20_000;
 pub const ERROR_THRESHOLD_BUFFER_TOKENS: u64 = 20_000;
 pub const MAX_OUTPUT_TOKENS_FOR_SUMMARY: u64 = 20_000;
 pub const MAX_CONSECUTIVE_FAILURES: u32 = 3;
-/// Grok-style auto-compact when context usage reaches this percent of the window.
+/// auto-compact when context usage reaches this percent of the window.
 pub const AUTO_COMPACT_THRESHOLD_PERCENT: u8 = 85;
 
 /// Context usage severity level used to trigger compact warnings and errors.
@@ -84,13 +84,13 @@ impl std::fmt::Display for CompactThreshold {
 
 /// Tracks token usage and compact failure state for autocompact decisions.
 ///
-/// Measurement model (aligned with Grok Build TUI):
+/// Measurement model (aligned with modern coding CLI TUI):
 /// - **context tokens used** = last API `input_tokens` (ground truth for the
-///   current context) + client preflight for unsent bytes (`bytes/4`)
+/// current context) + client preflight for unsent bytes (`bytes/4`)
 /// - **window** = model `context_window` from registry
 /// - **usage %** = used / window
 /// - **total before compaction** = cumulative input tokens across turns
-///   (historical; does not reset when the bar drops after compact)
+/// (historical; does not reset when the bar drops after compact)
 #[derive(Debug, Clone)]
 pub struct CompactState {
     /// Token count from the last model response usage (current context size).
@@ -105,7 +105,7 @@ pub struct CompactState {
     pub total_tokens_before_compaction: u64,
     /// Number of compaction runs in this session.
     pub compaction_count: u32,
-    /// Auto-compact when `context_percentage >= this` (Grok default: 85).
+    /// Auto-compact when `context_percentage >= this` (default: 85).
     pub auto_compact_threshold_percent: u8,
     /// Number of consecutive compact failures.
     pub consecutive_failures: u32,
@@ -142,12 +142,52 @@ impl Default for CompactState {
 
 fn format_token_short(t: u64) -> String {
     if t >= 1_000_000 {
-        format!("{:.1}M", t as f64 / 1_000_000.0)
-    } else if t >= 1_000 {
+        let m = t as f64 / 1_000_000.0;
+        // Prefer `1M` over `1.0M` when close to a whole million.
+        if (m - m.round()).abs() < 0.05 {
+            format!("{}M", m.round() as u64)
+        } else {
+            format!("{:.1}M", m)
+        }
+    } else if t >= 10_000 {
         format!("{}k", t / 1_000)
+    } else if t >= 1_000 {
+        // Keep one decimal under 10k so 1.5k doesn't collapse to `1k`.
+        let k = t as f64 / 1_000.0;
+        if (k - k.floor()).abs() < 0.05 {
+            format!("{}k", k.floor() as u64)
+        } else {
+            format!("{:.1}k", k)
+        }
     } else {
         t.to_string()
     }
+}
+
+/// Effective prompt tokens for the context-window meter.
+///
+/// Handles providers that split non-cached vs cached prompt tokens (Anthropic
+/// and some OpenAI-compat aggregators). Without this, a session can show
+/// `430 / 1M` while the real fill is ~64k.
+pub fn context_tokens_for_meter(
+    input_tokens: Option<u64>,
+    cache_creation_tokens: u64,
+    cache_read_tokens: u64,
+) -> Option<u64> {
+    let input = input_tokens.unwrap_or(0);
+    if input == 0 && cache_creation_tokens == 0 && cache_read_tokens == 0 {
+        return None;
+    }
+    // Inclusive (OpenAI): prompt_tokens already includes cached_tokens.
+    if cache_read_tokens > 0 && input >= cache_read_tokens {
+        return Some(input.saturating_add(cache_creation_tokens));
+    }
+    // Exclusive: non-cached input + cache create + cache read.
+    Some(
+        input
+            .saturating_add(cache_creation_tokens)
+            .saturating_add(cache_read_tokens),
+    )
 }
 
 impl CompactState {
@@ -166,17 +206,17 @@ impl CompactState {
         self.estimated_unsent_bytes = 0;
     }
 
-    /// Current context size (Grok `contextTokensUsed` analogue).
+    /// Current context size (live context usage).
     pub fn context_tokens_used(&self, pending_input_bytes: usize) -> u64 {
         self.total_estimated_tokens(pending_input_bytes)
     }
 
-    /// Context window size (Grok `contextWindowTokens` analogue).
+    /// Context window size (context window size).
     pub fn context_window_tokens(&self) -> u64 {
         self.context_window
     }
 
-    /// Integer percent of the window in use (Grok `contextWindowUsage` analogue).
+    /// Integer percent of the window in use (context window usage percent).
     pub fn context_window_usage(&self, pending_input_bytes: usize) -> u8 {
         self.context_percentage(pending_input_bytes)
     }
@@ -215,7 +255,7 @@ impl CompactState {
         if self.context_window == 0 {
             return false;
         }
-        // Grok-style: compact near 85% of the window (includes unsent preflight).
+        // compact near 85% of the window (includes unsent preflight).
         let used = self.total_estimated_tokens(0);
         let pct = (used as f64 / self.context_window as f64) * 100.0;
         if pct >= f64::from(self.auto_compact_threshold_percent) {
@@ -237,13 +277,28 @@ impl CompactState {
         percentage.clamp(0.0, 100.0) as u8
     }
 
+    /// Compact context meter for the composer footer: `3.2k / 200k`.
+    /// Percentage is revealed on hover (see `usage_label_with_percent`).
     pub fn usage_label(&self, pending_input_bytes: usize) -> String {
-        let pct = self.context_percentage(pending_input_bytes);
+        self.usage_label_compact(pending_input_bytes)
+    }
+
+    /// Token counts only — default (non-hover) display.
+    pub fn usage_label_compact(&self, pending_input_bytes: usize) -> String {
         let total_tokens = self.total_estimated_tokens(pending_input_bytes);
         format!(
-            "{} / {} ({}%)",
+            "{} / {}",
             format_token_short(total_tokens),
             format_token_short(self.context_window),
+        )
+    }
+
+    /// Token counts + percent — shown while the context chip is hovered.
+    pub fn usage_label_with_percent(&self, pending_input_bytes: usize) -> String {
+        let pct = self.context_percentage(pending_input_bytes);
+        format!(
+            "{} ({}%)",
+            self.usage_label_compact(pending_input_bytes),
             pct
         )
     }
@@ -627,7 +682,7 @@ mod tests {
 
     #[test]
     fn compact_state_autocompact_at_eighty_five_percent() {
-        // Grok-style: 170k / 200k = 85% triggers even when buffer would not.
+        // 170k / 200k = 85% triggers even when buffer would not.
         let state = CompactState {
             last_input_tokens: Some(170_000),
             context_window: 200_000,
@@ -705,7 +760,33 @@ mod tests {
             context_window: 128_000,
             ..Default::default()
         };
-        assert_eq!(state.usage_label(0), "2k / 128k (1%)");
+        // Default (composer) is counts only; percent is a hover-only affordance.
+        assert_eq!(state.usage_label(0), "2k / 128k");
+        assert_eq!(state.usage_label_with_percent(0), "2k / 128k (1%)");
+    }
+
+    #[test]
+    fn context_tokens_for_meter_sums_exclusive_cache() {
+        // Charm-style undercount: tiny non-cached prompt + large cache hit.
+        assert_eq!(
+            context_tokens_for_meter(Some(430), 0, 63_570),
+            Some(64_000)
+        );
+    }
+
+    #[test]
+    fn context_tokens_for_meter_keeps_openai_inclusive() {
+        // OpenAI: prompt_tokens already includes cached_tokens.
+        assert_eq!(
+            context_tokens_for_meter(Some(64_000), 0, 63_570),
+            Some(64_000)
+        );
+    }
+
+    #[test]
+    fn format_token_short_million_window() {
+        assert_eq!(format_token_short(1_048_576), "1M");
+        assert_eq!(format_token_short(64_000), "64k");
     }
 
     #[test]

@@ -2,7 +2,7 @@ use crate::state::SetupPhase;
 use navi_sdk::{
     AgentEvent, ApprovalDecision, ApprovalRisk, BackgroundCommandSnapshot, LoadedConfig,
     ModelMessage, NaviUsageReport, available_model_options, canonical_provider_id,
-    compact_tool_observation, provider_catalog,
+    compact_tool_observation,
 };
 
 use crate::app::TuiApp;
@@ -424,7 +424,7 @@ fn handle_agent_event(app: &mut TuiApp, event: AgentEvent) {
             cache_creation_tokens,
             cache_read_tokens,
         } => {
-            // Refresh context meter every turn (Grok: contextTokensUsed updates mid-session).
+            // Refresh context meter every turn .
             app.compact_state
                 .update_usage_full(input_tokens, output_tokens);
             app.usage_state.session_input_tokens =
@@ -437,10 +437,17 @@ fn handle_agent_event(app: &mut TuiApp, event: AgentEvent) {
             app.usage_state.last_output_tokens = Some(output_tokens);
             app.usage_state.last_turn_label = app.compact_state.turn_usage_label();
 
-            // Non-OAuth / API-key billing: estimate spend from registry list prices.
-            if let Some(cost) = estimate_turn_cost_usd(app, input_tokens, output_tokens) {
+            // Session spend: list rates → USD (cache-aware); credit providers also track credits.
+            if let Some(cost) = estimate_turn_cost_usd(
+                app,
+                input_tokens,
+                output_tokens,
+                cache_read_tokens,
+                cache_creation_tokens,
+            ) {
                 app.usage_state.session_cost_usd += cost;
                 app.usage_state.session_cost_known = true;
+                apply_session_credit_fields(app);
             }
 
             // Annotate the active assistant bubble so usage is visible per turn.
@@ -717,7 +724,7 @@ fn handle_turn_completed(app: &mut TuiApp, res: std::result::Result<String, Stri
     }
 }
 
-/// Grok-style recap after a successful turn.
+/// recap after a successful turn.
 ///
 /// 1. Instant short local line (never dumps assistant prose).
 /// 2. Background model upgrades it to a true one-sentence summary when possible.
@@ -771,7 +778,7 @@ fn maybe_emit_session_recap(app: &mut TuiApp, assistant_text: &str) {
     let assistant = assistant_text.to_string();
     let tx = app.async_sender();
 
-    // Upgrade with a real model one-liner (Grok voice). On failure, keep local.
+    // Upgrade with a real model one-liner (plain voice). On failure, keep local.
     spawn_runtime_task(async move {
         let Ok(provider) =
             navi_sdk::build_provider_for_project_config(&loaded_config, &project_dir)
@@ -831,30 +838,49 @@ fn format_tokens_k(tokens: u64) -> String {
 
 /// Estimate USD cost for a turn from registry list pricing (per 1M tokens).
 ///
-/// Used for non-OAuth / API-key providers that bill per token. Returns `None`
-/// when the selected model has no known pricing.
-fn estimate_turn_cost_usd(app: &TuiApp, input_tokens: u64, output_tokens: u64) -> Option<f64> {
+/// Cache hits are billed at provider cache rates (Charm Hyper: cached input free)
+/// so a 22k-token prefix with 99% cache does not look like a full-price charge.
+fn estimate_turn_cost_usd(
+    app: &TuiApp,
+    input_tokens: u64,
+    output_tokens: u64,
+    cache_read_tokens: u64,
+    cache_create_tokens: u64,
+) -> Option<f64> {
     let provider_id = app.loaded_config.config.model.provider.as_str();
     let model_name = app.loaded_config.config.model.name.as_str();
-    let model = provider_catalog(&app.loaded_config.config)
-        .into_iter()
-        .find(|p| canonical_provider_id(&p.id) == canonical_provider_id(provider_id))
-        .and_then(|p| p.models.into_iter().find(|m| m.name == model_name))?;
+    let (in_rate, out_rate) =
+        navi_sdk::model_list_pricing(&app.loaded_config.config, provider_id, model_name)?;
+    let (cache_in, _cache_out) = navi_sdk::model_cache_list_pricing(provider_id).unwrap_or((0.0, 0.0));
+    Some(navi_sdk::estimate_token_cost_usd_with_cache(
+        input_tokens,
+        output_tokens,
+        cache_read_tokens,
+        cache_create_tokens,
+        in_rate,
+        out_rate,
+        Some(cache_in),
+        Some(in_rate), // cache write ≈ full input rate when unknown
+    ))
+}
 
-    let input_rate = model.pricing_input_per_1m;
-    let output_rate = model.pricing_output_per_1m;
-    if input_rate.is_none() && output_rate.is_none() {
-        return None;
+fn apply_session_credit_fields(app: &mut TuiApp) {
+    let provider_id = app.loaded_config.config.model.provider.as_str();
+    if !navi_sdk::provider_uses_credits(provider_id) || !app.usage_state.session_cost_known {
+        app.usage_state.session_credits_spent = None;
+        app.usage_state.session_credit_unit = None;
+        return;
     }
-
-    let mut cost = 0.0;
-    if let Some(rate) = input_rate {
-        cost += (input_tokens as f64 / 1_000_000.0) * rate;
+    let unit = navi_sdk::provider_credit_unit(provider_id).unwrap_or("credits");
+    if let Some(credits) =
+        navi_sdk::usd_to_provider_credits(provider_id, app.usage_state.session_cost_usd)
+    {
+        app.usage_state.session_credits_spent = Some(credits);
+        app.usage_state.session_credit_unit = Some(unit.to_string());
+    } else {
+        app.usage_state.session_credits_spent = None;
+        app.usage_state.session_credit_unit = Some(unit.to_string());
     }
-    if let Some(rate) = output_rate {
-        cost += (output_tokens as f64 / 1_000_000.0) * rate;
-    }
-    Some(cost)
 }
 
 #[cfg(test)]
@@ -1088,10 +1114,10 @@ mod tests {
 
         let msg = app.messages.last().unwrap();
         assert_eq!(msg.usage_label.as_deref(), Some("3k in · 1k out"));
-        // 3000→1500 formats as 3k→1k
+        // 3000→1500: turn label keeps one decimal under 10k (1.5k).
         assert_eq!(
             app.usage_state.last_turn_label.as_deref(),
-            Some("3k→1k")
+            Some("3k→1.5k")
         );
     }
 
@@ -1169,6 +1195,68 @@ mod tests {
         assert!((app.usage_state.session_cost_usd - 2.0).abs() < 1e-9);
         assert_eq!(app.usage_state.session_input_tokens, 1_000_000);
         assert_eq!(app.usage_state.session_output_tokens, 500_000);
+    }
+
+    #[test]
+    fn usage_reported_estimates_hypercredits_for_charm_hyper() {
+        let mut app = test_app("");
+        app.loaded_config.config.model.provider = "charm-hyper".into();
+        app.loaded_config.config.model.name = "glm-5.2".into();
+        // Ensure rates resolve (embedded snapshot fallback).
+        let rates = navi_sdk::model_list_pricing(&app.loaded_config.config, "charm-hyper", "glm-5.2");
+        assert!(
+            rates.is_some(),
+            "glm-5.2 should have list pricing in the registry snapshot"
+        );
+
+        handle_async_event(
+            &mut app,
+            AsyncEvent::Agent(AgentEvent::UsageReported {
+                input_tokens: 1_000_000,
+                output_tokens: 0,
+                cache_creation_tokens: 0,
+                cache_read_tokens: 0,
+            }),
+        );
+
+        assert!(app.usage_state.session_cost_known);
+        // glm-5.2: $1.40 / 1M input → $1.40; 1 hypercredit = $0.05 → 28 credits
+        assert!((app.usage_state.session_cost_usd - 1.4).abs() < 1e-9);
+        let credits = app.usage_state.session_credits_spent.expect("hypercredits");
+        assert!((credits - 28.0).abs() < 1e-6);
+        assert_eq!(
+            app.usage_state.session_credit_unit.as_deref(),
+            Some("hypercredits")
+        );
+    }
+
+    #[test]
+    fn usage_reported_cache_hit_does_not_bill_full_hyper_input() {
+        let mut app = test_app("");
+        app.loaded_config.config.model.provider = "charm-hyper".into();
+        app.loaded_config.config.model.name = "glm-5.2".into();
+
+        handle_async_event(
+            &mut app,
+            AsyncEvent::Agent(AgentEvent::UsageReported {
+                input_tokens: 22_000,
+                output_tokens: 0,
+                cache_creation_tokens: 0,
+                cache_read_tokens: 21_780,
+            }),
+        );
+
+        assert!(app.usage_state.session_cost_known);
+        // Only 220 non-cached tokens at $1.40/1M ≈ $0.000308
+        let expected = (220.0 / 1_000_000.0) * 1.4;
+        assert!(
+            (app.usage_state.session_cost_usd - expected).abs() < 1e-12,
+            "got {} expected {}",
+            app.usage_state.session_cost_usd,
+            expected
+        );
+        // Full-price 22k would be ~$0.0308 — must not overbill.
+        assert!(app.usage_state.session_cost_usd < 0.001);
     }
 
     // ── AutoCompact ───────────────────────────────────────────────────

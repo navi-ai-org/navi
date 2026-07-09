@@ -1590,6 +1590,33 @@ fn openai_chat_completions_usage_extracts_cached_tokens() {
 }
 
 #[test]
+fn parse_usage_accepts_float_and_string_token_counts() {
+    // Aggregators (incl. some Charm Hyper / OpenAI-compat paths) emit floats.
+    let usage = serde_json::json!({
+        "prompt_tokens": 430.0,
+        "completion_tokens": "12",
+        "prompt_tokens_details": { "cached_tokens": 63570.0 }
+    });
+    let behavior = crate::providers::behavior::OpenAiBehavior;
+    let normalized = behavior.parse_usage(&usage);
+    assert_eq!(normalized.input_tokens, Some(430));
+    assert_eq!(normalized.output_tokens, Some(12));
+    assert_eq!(normalized.cache_read_tokens, Some(63_570));
+}
+
+#[test]
+fn parse_usage_falls_back_to_total_tokens() {
+    let usage = serde_json::json!({
+        "total_tokens": 64100,
+        "completion_tokens": 100
+    });
+    let behavior = crate::providers::behavior::OpenAiBehavior;
+    let normalized = behavior.parse_usage(&usage);
+    assert_eq!(normalized.input_tokens, Some(64_000));
+    assert_eq!(normalized.output_tokens, Some(100));
+}
+
+#[test]
 fn anthropic_sse_message_stop() {
     let data = r#"{"type":"message_stop"}"#;
     let events = parse_anthropic_sse(data);

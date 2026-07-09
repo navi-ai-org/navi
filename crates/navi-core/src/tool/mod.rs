@@ -507,9 +507,16 @@ impl ToolExecutor {
     ) -> ToolResult {
         let event_tx = context.event_tx.clone();
         let inv_id = invocation.id.clone();
-        let tool_name = invocation.tool_name.clone();
         let started = std::time::Instant::now();
         let invocation = self.policy.normalize_invocation_paths(&invocation);
+        // Weak models sometimes emit a path or bare action as the tool name.
+        // Recover high-confidence mistakes before validation so analysis turns
+        // don't die on three consecutive unknown tools.
+        let invocation = recover_misnamed_tool_invocation(&invocation, |name| {
+            self.definition(name).is_some()
+        })
+        .unwrap_or(invocation);
+        let tool_name = invocation.tool_name.clone();
 
         // Determine tool kind and metadata before consuming the invocation.
         let tool_def = self.definition(&invocation.tool_name);
@@ -1086,10 +1093,13 @@ fn simplify_schema_object_for_model(object: &Map<String, Value>) -> Value {
 }
 
 fn suggest_tool_replacements(tool_name: &str, available_tools: &[String]) -> Vec<String> {
-    let candidates: &[&str] = match tool_name {
-        "list_files" | "ls" | "listdir" | "dir" => &["list_dir", "fs_browser", "search", "glob"],
+    let lower = tool_name.trim().to_ascii_lowercase();
+    let candidates: &[&str] = match lower.as_str() {
+        "list_files" | "ls" | "listdir" | "dir" | "list" | "list_dir" => {
+            &["list_dir", "fs_browser", "search", "glob"]
+        }
         "find" | "find_files" => &["glob", "fs_browser", "search"],
-        "cat" | "type" | "open" | "view_file" => &["read", "read_file"],
+        "cat" | "type" | "open" | "view_file" | "read" | "view" => &["read_file", "read"],
         "edit" | "patch" | "str_replace" | "search_replace" => {
             &["write", "apply_patch", "write_file"]
         }
@@ -1101,6 +1111,7 @@ fn suggest_tool_replacements(tool_name: &str, available_tools: &[String]) -> Vec
         | "insert_before_symbol"
         | "insert_after_symbol"
         | "rename_symbol" => &["code_edit"],
+        _ if looks_like_filesystem_path(tool_name) => &["read_file", "fs_browser", "grep", "bash"],
         _ => &[],
     };
     candidates
@@ -1108,6 +1119,145 @@ fn suggest_tool_replacements(tool_name: &str, available_tools: &[String]) -> Vec
         .filter(|candidate| available_tools.iter().any(|tool| tool == **candidate))
         .map(|candidate| (*candidate).to_string())
         .collect()
+}
+
+/// Heuristic: weak models often put a path (or `.`) in the tool *name* field
+/// instead of using `read_file` / `fs_browser`. Rewrite only high-confidence cases.
+fn recover_misnamed_tool_invocation(
+    inv: &ToolInvocation,
+    has_tool: impl Fn(&str) -> bool,
+) -> Option<ToolInvocation> {
+    if has_tool(&inv.tool_name) {
+        return None;
+    }
+
+    let name = inv.tool_name.trim();
+    if name.is_empty() {
+        return None;
+    }
+
+    let input = inv.input.as_object();
+    let action = input
+        .and_then(|obj| obj.get("action"))
+        .and_then(Value::as_str)
+        .map(|s| s.to_ascii_lowercase());
+    let has_path_field = input
+        .and_then(|obj| obj.get("path"))
+        .and_then(Value::as_str)
+        .is_some_and(|p| !p.is_empty());
+    let path_from_input = input
+        .and_then(|obj| obj.get("path"))
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    let path_like_name = looks_like_filesystem_path(name);
+
+    // `{ "name": ".", "arguments": { "action": "list", "path": "." } }` → fs_browser
+    // also covers list/tree/find/stat with a path-like tool name.
+    if matches!(
+        action.as_deref(),
+        Some("list" | "tree" | "find" | "stat" | "read" | "search")
+    ) && has_tool("fs_browser")
+    {
+        let mut recovered = inv.clone();
+        recovered.tool_name = "fs_browser".to_string();
+        if !has_path_field && path_like_name {
+            if let Some(obj) = recovered.input.as_object_mut() {
+                obj.insert("path".to_string(), Value::String(name.to_string()));
+            }
+        }
+        tracing::info!(
+            from = %inv.tool_name,
+            to = "fs_browser",
+            "recovered misnamed tool invocation"
+        );
+        return Some(recovered);
+    }
+
+    // `{ "name": "IDEA.md", "arguments": { "path": "IDEA.md" } }` → read_file
+    // `{ "name": "src/main.rs", "arguments": {} }` → read_file
+    if path_like_name && has_tool("read_file") {
+        let keys: Vec<&str> = input
+            .map(|obj| obj.keys().map(String::as_str).collect())
+            .unwrap_or_default();
+        let readish = keys.is_empty()
+            || keys.iter().all(|k| {
+                matches!(
+                    *k,
+                    "path"
+                        | "offset"
+                        | "limit"
+                        | "start_line"
+                        | "end_line"
+                        | "max_bytes"
+                        | "encoding"
+                )
+            });
+        // Don't rewrite obvious write/patch payloads.
+        let writeish = keys
+            .iter()
+            .any(|k| matches!(*k, "content" | "patch" | "patches" | "edits" | "new_string"));
+        if readish && !writeish {
+            let mut recovered = inv.clone();
+            recovered.tool_name = "read_file".to_string();
+            if !has_path_field {
+                let mut obj = serde_json::Map::new();
+                obj.insert("path".to_string(), Value::String(name.to_string()));
+                if let Some(input_obj) = input {
+                    for (k, v) in input_obj {
+                        if k != "path" {
+                            obj.insert(k.clone(), v.clone());
+                        }
+                    }
+                }
+                recovered.input = Value::Object(obj);
+            } else if path_from_input.as_deref() != Some(name)
+                && path_from_input.as_deref().is_some_and(|p| p == "." || p.is_empty())
+            {
+                // Prefer the path-like tool name when the path field is a placeholder.
+                if let Some(obj) = recovered.input.as_object_mut() {
+                    obj.insert("path".to_string(), Value::String(name.to_string()));
+                }
+            }
+            tracing::info!(
+                from = %inv.tool_name,
+                to = "read_file",
+                "recovered misnamed tool invocation"
+            );
+            return Some(recovered);
+        }
+    }
+
+    None
+}
+
+fn looks_like_filesystem_path(name: &str) -> bool {
+    let name = name.trim();
+    if name.is_empty() {
+        return false;
+    }
+    if name == "." || name == ".." {
+        return true;
+    }
+    if name.contains('/') || name.contains('\\') {
+        return true;
+    }
+    // Bare filenames with extensions: IDEA.md, main.rs, package.json
+    if let Some((_, ext)) = name.rsplit_once('.') {
+        let ext = ext.trim();
+        if !ext.is_empty()
+            && ext.len() <= 12
+            && ext
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '+' || c == '-')
+            && !name.starts_with('.')
+            // Avoid treating dotted tool ids like `chrome.devtools` without path separators
+            // only when they look like real extensions (mostly lowercase 1–8 chars).
+            && (ext.len() <= 8)
+        {
+            return true;
+        }
+    }
+    false
 }
 
 fn push_unique_snapshot_path(paths: &mut Vec<std::path::PathBuf>, path: std::path::PathBuf) {

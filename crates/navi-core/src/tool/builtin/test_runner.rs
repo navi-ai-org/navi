@@ -729,7 +729,7 @@ mod tests {
     fn build_test_command_go_with_path() {
         assert_eq!(
             build_test_command("go", Some("./pkg/..."), None),
-            "go test ./... ./pkg/..."
+            "go test ./.../pkg/..."
         );
     }
 

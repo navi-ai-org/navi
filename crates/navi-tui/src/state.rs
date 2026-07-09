@@ -225,10 +225,9 @@ pub struct ChatMessage {
     pub tool_invocation: Option<ToolInvocation>,
     pub tool_result: Option<ToolResult>,
     pub is_compact_summary: bool,
-    /// Post-turn recap line (Grok-style "Recap").
+    /// Post-turn recap line ("Recap").
     pub is_recap: bool,
-    /// Wall-clock time when the message was submitted/received (for Grok-style
-    /// right-aligned timestamps on user prompts).
+    /// Wall-clock time when the message was submitted/received (for /// right-aligned timestamps on user prompts).
     pub sent_at: Option<std::time::SystemTime>,
 }
 
@@ -484,10 +483,14 @@ pub(crate) struct UsageUiState {
     pub last_input_tokens: Option<u64>,
     pub last_output_tokens: Option<u64>,
     /// Estimated session spend in USD from registry list pricing × tokens.
-    /// Used for non-OAuth / API-key providers that bill per token.
+    /// Used for API-key and prepaid credit providers that publish list rates.
     pub session_cost_usd: f64,
     /// True once at least one turn had list pricing available.
     pub session_cost_known: bool,
+    /// Estimated prepaid credits spent this session (e.g. Hypercredits).
+    pub session_credits_spent: Option<f64>,
+    /// Credit unit label when `session_credits_spent` is set.
+    pub session_credit_unit: Option<String>,
     /// Last turn in→out label (e.g. `34k→1.2k`) for the footer after each UsageReported.
     pub last_turn_label: Option<String>,
 }
@@ -770,7 +773,7 @@ pub(crate) struct SelectionState {
     pub end: (usize, usize),
     pub active: bool,
     /// When set, free-form text selection stays inside this chat block
-    /// (Grok-style per-entry selection, no cross-block bleed).
+    /// (per-entry selection, no cross-block bleed).
     pub bound_source: Option<ChatLineSource>,
 }
 

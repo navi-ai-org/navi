@@ -42,7 +42,9 @@ impl crate::provider::OpenAiProvider {
             }
         }
         if !request.tools.is_empty() {
-            body["tools"] = json!(request.tools.iter().map(responses_tool_to_json).collect::<Vec<_>>());
+            let mut tools = request.tools.clone();
+            tools.sort_by(|a, b| a.name.cmp(&b.name));
+            body["tools"] = json!(tools.iter().map(responses_tool_to_json).collect::<Vec<_>>());
             body["tool_choice"] = json!("auto");
             if behavior.supports_parallel_tool_calls(crate::providers::behavior::Endpoint::Responses) {
                 body["parallel_tool_calls"] = json!(true);
@@ -119,23 +121,16 @@ impl crate::provider::OpenAiProvider {
         )?;
         let model = request.model.clone();
         tracing::info!(provider = %provider_id, model = %model, api = "chat-completions", tools = request.tools.len(), "provider stream started");
-        let mut messages_json: Vec<Value> = request.messages.iter().map(message_to_json).collect::<Vec<_>>();
-        // Chat Completions has no `instructions` field. Prepend the stable
-        // base prompt as a system message so it is cached as a stable prefix.
-        if let Some(instructions) = &request.instructions {
-            if !instructions.is_empty() {
-                messages_json.insert(0, json!({
-                    "role": "system",
-                    "content": instructions,
-                }));
-            }
-        }
+        let messages_json = chat_completions_messages(&request);
         let mut body = json!({
             "model": request.model,
             "messages": messages_json,
         });
         if !request.tools.is_empty() {
-            body["tools"] = json!(request.tools.iter().map(chat_tool_to_json).collect::<Vec<_>>());
+            // Stable tool order is required for provider prefix caching.
+            let mut tools = request.tools.clone();
+            tools.sort_by(|a, b| a.name.cmp(&b.name));
+            body["tools"] = json!(tools.iter().map(chat_tool_to_json).collect::<Vec<_>>());
             body["tool_choice"] = json!("auto");
             if behavior.supports_parallel_tool_calls(crate::providers::behavior::Endpoint::ChatCompletions) {
                 body["parallel_tool_calls"] = json!(true);
@@ -279,6 +274,48 @@ fn parse_tool_arguments(arguments: &str) -> Value {
             "raw_arguments": arguments,
         })
     })
+}
+
+/// Build Chat Completions `messages` without duplicating the base prompt.
+///
+/// The turn layer puts the same base text in both `request.instructions` and a
+/// leading System message. Chat Completions has no separate `instructions`
+/// field, so we emit the base prompt **once** as the leading system message.
+/// Duplicating it doubles prompt tokens and breaks prefix caching (severe
+/// credit burn on Charm Hyper / aggregators).
+///
+/// Developer context blocks are mapped to `system` for OpenAI-compat providers
+/// that only accept classic roles.
+pub(crate) fn chat_completions_messages(request: &ModelRequest) -> Vec<Value> {
+    let has_instructions = request
+        .instructions
+        .as_ref()
+        .is_some_and(|s| !s.is_empty());
+    let mut messages_json: Vec<Value> =
+        Vec::with_capacity(request.messages.len().saturating_add(1));
+    if has_instructions {
+        messages_json.push(json!({
+            "role": "system",
+            "content": request.instructions.as_ref().expect("checked above"),
+        }));
+    }
+    for message in &request.messages {
+        if message.role == navi_core::ModelRole::System {
+            // Already emitted via `instructions` (same text). Skip to avoid
+            // double system prefix. If instructions is empty, fall through.
+            if has_instructions {
+                continue;
+            }
+        }
+        let mut mapped = message_to_json(message);
+        if message.role == navi_core::ModelRole::Developer {
+            if let Some(obj) = mapped.as_object_mut() {
+                obj.insert("role".into(), Value::String("system".into()));
+            }
+        }
+        messages_json.push(mapped);
+    }
+    messages_json
 }
 
 #[cfg(test)]
@@ -725,4 +762,71 @@ pub(crate) fn model_supports_extended_cache(model: &str) -> bool {
 
 fn should_send_prompt_cache_retention(model: &str, retention: &str) -> bool {
     retention != "24h" || model_supports_extended_cache(model)
+}
+
+#[cfg(test)]
+mod message_build_tests {
+    use super::chat_completions_messages;
+    use navi_core::{ModelMessage, ModelRequest, ThinkingConfig};
+
+    fn bare_request(messages: Vec<ModelMessage>, instructions: Option<&str>) -> ModelRequest {
+        ModelRequest {
+            model: "test-model".into(),
+            instructions: instructions.map(str::to_string),
+            messages,
+            thinking: ThinkingConfig::Off,
+            tools: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn chat_completions_does_not_duplicate_system_when_instructions_set() {
+        let base = "You are NAVI, base instructions.";
+        let request = bare_request(
+            vec![
+                ModelMessage::system(base),
+                ModelMessage::developer("=== AGENTS.md ===\nproject rules"),
+                ModelMessage::user("hello"),
+            ],
+            Some(base),
+        );
+        let messages = chat_completions_messages(&request);
+        let systems: Vec<&str> = messages
+            .iter()
+            .filter(|m| m.get("role").and_then(|r| r.as_str()) == Some("system"))
+            .filter_map(|m| m.get("content").and_then(|c| c.as_str()))
+            .collect();
+        // Exactly one copy of the base prompt + developer mapped to system.
+        assert_eq!(
+            systems.iter().filter(|s| **s == base).count(),
+            1,
+            "base instructions must appear once, got: {systems:?}"
+        );
+        assert!(
+            systems.iter().any(|s| s.contains("AGENTS.md")),
+            "developer block should map to system: {systems:?}"
+        );
+        assert_eq!(messages.len(), 3); // system base, system agents, user
+        assert_eq!(
+            messages.last().unwrap().get("role").and_then(|r| r.as_str()),
+            Some("user")
+        );
+    }
+
+    #[test]
+    fn chat_completions_keeps_system_when_instructions_empty() {
+        let request = bare_request(
+            vec![
+                ModelMessage::system("fallback system"),
+                ModelMessage::user("hi"),
+            ],
+            None,
+        );
+        let messages = chat_completions_messages(&request);
+        assert_eq!(messages.len(), 2);
+        assert_eq!(
+            messages[0].get("content").and_then(|c| c.as_str()),
+            Some("fallback system")
+        );
+    }
 }

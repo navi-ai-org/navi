@@ -82,21 +82,25 @@ impl ToolRegistry {
             .filter(|t| matches!(t.exposure, ToolExposure::Direct | ToolExposure::ModelOnly))
             .collect();
 
-        if direct.len() >= MCP_TOOL_DEFER_THRESHOLD {
-            return direct.iter().map(|t| t.definition.clone()).collect();
-        }
-
-        // Below threshold: promote Deferred tools so the model can see them.
-        self.tools
-            .values()
-            .filter(|t| {
-                matches!(
-                    t.exposure,
-                    ToolExposure::Direct | ToolExposure::ModelOnly | ToolExposure::Deferred
-                )
-            })
-            .map(|t| t.definition.clone())
-            .collect()
+        let mut defs: Vec<ToolDefinition> = if direct.len() >= MCP_TOOL_DEFER_THRESHOLD {
+            direct.iter().map(|t| t.definition.clone()).collect()
+        } else {
+            // Below threshold: promote Deferred tools so the model can see them.
+            self.tools
+                .values()
+                .filter(|t| {
+                    matches!(
+                        t.exposure,
+                        ToolExposure::Direct | ToolExposure::ModelOnly | ToolExposure::Deferred
+                    )
+                })
+                .map(|t| t.definition.clone())
+                .collect()
+        };
+        // HashMap iteration order is process-seeded. Sort by name so the tools
+        // array in every provider request is byte-stable and prefix-cacheable.
+        defs.sort_by(|a, b| a.name.cmp(&b.name));
+        defs
     }
 
     /// Returns all visible tool names for the model (Direct + ModelOnly).
@@ -309,6 +313,24 @@ mod tests {
     fn registry_empty_by_default() {
         let reg = ToolRegistry::new();
         assert!(reg.visible_definitions().is_empty());
+    }
+
+    #[test]
+    fn visible_definitions_are_sorted_by_name() {
+        let mut reg = ToolRegistry::new();
+        // Insert out of order — HashMap would otherwise yield unstable order.
+        for name in ["write_file", "bash", "read_file", "apply_patch"] {
+            reg.register(make_def(name, ToolKind::Read, &[], &[]));
+        }
+        let names: Vec<String> = reg
+            .visible_definitions()
+            .into_iter()
+            .map(|d| d.name)
+            .collect();
+        assert_eq!(
+            names,
+            vec!["apply_patch", "bash", "read_file", "write_file"]
+        );
     }
 
     #[test]

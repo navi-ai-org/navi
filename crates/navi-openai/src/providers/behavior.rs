@@ -36,8 +36,28 @@ pub(crate) struct NormalizedUsage {
     pub output_tokens: Option<u64>,
     /// Tokens written to prompt cache (Anthropic).
     pub cache_creation_tokens: Option<u64>,
-    /// Tokens read from prompt cache (Anthropic).
+    /// Tokens read from prompt cache (Anthropic / some OpenAI-compat aggregators).
     pub cache_read_tokens: Option<u64>,
+}
+
+/// Parse a JSON number/string as u64. Aggregators often emit floats (`430.0`).
+pub(crate) fn json_u64(value: Option<&serde_json::Value>) -> Option<u64> {
+    value.and_then(json_u64_value)
+}
+
+pub(crate) fn json_u64_value(value: &serde_json::Value) -> Option<u64> {
+    if let Some(n) = value.as_u64() {
+        return Some(n);
+    }
+    if let Some(n) = value.as_i64() {
+        return u64::try_from(n).ok();
+    }
+    if let Some(f) = value.as_f64() {
+        if f.is_finite() && f >= 0.0 {
+            return Some(f.round() as u64);
+        }
+    }
+    value.as_str().and_then(|s| s.trim().parse().ok())
 }
 
 /// Per-provider behavior: auth, routing, headers, URL construction, usage parsing.
@@ -59,14 +79,18 @@ pub(crate) trait ProviderBehavior: Send + Sync {
     /// or `prompt_tokens_details.cached_tokens`.
     /// Providers with different field names should override this.
     fn parse_usage(&self, usage: &serde_json::Value) -> NormalizedUsage {
-        let input_tokens = usage
-            .get("input_tokens")
-            .or_else(|| usage.get("prompt_tokens"))
-            .and_then(serde_json::Value::as_u64);
-        let output_tokens = usage
-            .get("output_tokens")
-            .or_else(|| usage.get("completion_tokens"))
-            .and_then(serde_json::Value::as_u64);
+        let mut input_tokens = json_u64(
+            usage
+                .get("input_tokens")
+                .or_else(|| usage.get("prompt_tokens"))
+                .or_else(|| usage.get("promptTokenCount")),
+        );
+        let output_tokens = json_u64(
+            usage
+                .get("output_tokens")
+                .or_else(|| usage.get("completion_tokens"))
+                .or_else(|| usage.get("candidatesTokenCount")),
+        );
         // OpenAI reports cached tokens in nested details objects:
         // Responses: usage.input_tokens_details.cached_tokens
         // Chat Completions: usage.prompt_tokens_details.cached_tokens
@@ -74,11 +98,22 @@ pub(crate) trait ProviderBehavior: Send + Sync {
             .get("input_tokens_details")
             .or_else(|| usage.get("prompt_tokens_details"))
             .and_then(|details| details.get("cached_tokens"))
-            .and_then(serde_json::Value::as_u64);
+            .and_then(json_u64_value)
+            .or_else(|| json_u64(usage.get("cache_read_input_tokens")));
+        let cache_creation_tokens = json_u64(usage.get("cache_creation_input_tokens"));
+
+        // Some aggregators only put a usable total in `total_tokens`.
+        if input_tokens.is_none() {
+            if let Some(total) = json_u64(usage.get("total_tokens")) {
+                let out = output_tokens.unwrap_or(0);
+                input_tokens = Some(total.saturating_sub(out));
+            }
+        }
+
         NormalizedUsage {
             input_tokens,
             output_tokens,
-            cache_creation_tokens: None,
+            cache_creation_tokens,
             cache_read_tokens,
         }
     }
@@ -167,23 +202,11 @@ impl ProviderBehavior for AnthropicBehavior {
     }
 
     fn parse_usage(&self, usage: &serde_json::Value) -> NormalizedUsage {
-        let input_tokens = usage
-            .get("input_tokens")
-            .and_then(serde_json::Value::as_u64);
-        let output_tokens = usage
-            .get("output_tokens")
-            .and_then(serde_json::Value::as_u64);
-        let cache_creation_tokens = usage
-            .get("cache_creation_input_tokens")
-            .and_then(serde_json::Value::as_u64);
-        let cache_read_tokens = usage
-            .get("cache_read_input_tokens")
-            .and_then(serde_json::Value::as_u64);
         NormalizedUsage {
-            input_tokens,
-            output_tokens,
-            cache_creation_tokens,
-            cache_read_tokens,
+            input_tokens: json_u64(usage.get("input_tokens")),
+            output_tokens: json_u64(usage.get("output_tokens")),
+            cache_creation_tokens: json_u64(usage.get("cache_creation_input_tokens")),
+            cache_read_tokens: json_u64(usage.get("cache_read_input_tokens")),
         }
     }
 }
@@ -211,12 +234,8 @@ impl ProviderBehavior for GeminiBehavior {
     }
 
     fn parse_usage(&self, usage: &serde_json::Value) -> NormalizedUsage {
-        let input_tokens = usage
-            .get("promptTokenCount")
-            .and_then(serde_json::Value::as_u64);
-        let output_tokens = usage
-            .get("candidatesTokenCount")
-            .and_then(serde_json::Value::as_u64);
+        let input_tokens = json_u64(usage.get("promptTokenCount"));
+        let output_tokens = json_u64(usage.get("candidatesTokenCount"));
         NormalizedUsage {
             input_tokens,
             output_tokens,

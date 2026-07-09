@@ -1,8 +1,8 @@
-//! Grok-style keyboard shortcuts / help cheatsheet modal.
+//! Keyboard shortcuts / help cheatsheet modal.
 //!
 //! Opened with `?` (empty input), `ctrl+.`, or the command palette **Help**.
-//! Layout mirrors Grok's cheatsheet: section headers + key/description rows,
-//! scrollable list, selected row detail in the footer.
+//! Layout: section headers + key/description rows, scrollable list,
+//! selected row detail in the footer.
 
 use ratatui::layout::{Constraint, Direction, Layout, Margin, Rect};
 use ratatui::prelude::{Frame, Line, Span};
@@ -29,7 +29,7 @@ pub(crate) enum HelpRow {
     Blank,
 }
 
-/// Full cheatsheet content (sectioned like Grok's keyboard help).
+/// Full cheatsheet content (sectioned keyboard help).
 pub(crate) const HELP_ROWS: &[HelpRow] = &[
     HelpRow::Section("General"),
     HelpRow::Entry {
@@ -110,6 +110,11 @@ pub(crate) const HELP_ROWS: &[HelpRow] = &[
         key: "mouse drag",
         label: "Select text in block",
         detail: "Text selection stays constrained to the active message/tool block.",
+    },
+    HelpRow::Entry {
+        key: "shift+g  /  ctrl+end",
+        label: "Jump to latest",
+        detail: "Scroll to the last message. Same as the ↓ Latest button when scrolled up.",
     },
     HelpRow::Blank,
     HelpRow::Section("Tools & permissions"),

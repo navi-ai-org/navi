@@ -65,11 +65,13 @@ pub use config::{
     NaviConfig, PermissionMode, PluginConfig, ProviderConfig, ProviderKind, ProviderModelConfig,
     ProviderRequestOptions, SecurityConfig, ToolCallingMode, ToolPromptManifest, VoiceConfig,
     WasmPluginConfig,
-    available_model_options, canonical_provider_id, default_request_options_for,
-    effective_context_window, effective_tool_calling_mode, is_free_model_name,
-    model_can_run_publicly, model_supports_attachment, provider_catalog,
-    provider_request_model_name, resolve_provider_config, save_global_config, save_project_config,
-    set_registry_store,
+    available_model_options, billable_input_split, canonical_provider_id,
+    default_request_options_for, effective_context_window, effective_tool_calling_mode,
+    estimate_token_cost_usd, estimate_token_cost_usd_with_cache, is_free_model_name,
+    model_cache_list_pricing, model_can_run_publicly, model_list_pricing,
+    model_supports_attachment, provider_catalog, provider_credit_unit,
+    provider_request_model_name, provider_uses_credits, resolve_provider_config,
+    save_global_config, save_project_config, set_registry_store, usd_to_provider_credits,
 };
 pub use context::{ContextPacket, ContextSource};
 pub use credentials::{
@@ -140,7 +142,8 @@ pub use runtime_components::{
 };
 pub use security::{SecurityDecision, SecurityPolicy};
 pub use session::{
-    SessionId, SessionRuntime, SessionSnapshot, SessionStore, clean_session_title,
+    SessionId, SessionRuntime, SessionSnapshot, SessionStore, SessionUsageSnapshot,
+    clean_session_title,
     session_title_from_events,
 };
 pub use setup::{SETUP_INTERVIEW_COMPLETE_MARKER, SETUP_INTERVIEW_PROMPT};
