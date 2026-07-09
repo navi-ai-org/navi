@@ -25,6 +25,9 @@ navi-plugin-broker.workspace = true
 navi-plugin-api = { workspace = true, features = ["tui"] }
 base64.workspace = true
 toml.workspace = true
+# Kitty / Sixel / iTerm2 image previews (no chafa — text-only when unsupported).
+ratatui-image = { version = "11", default-features = false, features = ["image-defaults", "crossterm"] }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
 
 [dev-dependencies]
 tempfile.workspace = true

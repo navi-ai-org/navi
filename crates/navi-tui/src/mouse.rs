@@ -256,7 +256,7 @@ pub(crate) fn handle_mouse(app: &mut TuiApp, mouse: MouseEvent) {
             } else {
                 app.hover_index = None;
                 app.hovered_chat_source = None;
-                app.image_hover = None;
+                crate::view::image_preview::clear_image_hover(app);
             }
         }
         _ => {}
@@ -290,7 +290,7 @@ fn apply_hover(app: &mut TuiApp, hit: &HitRegion<HitAction>) {
         return;
     }
     // Leaving an image chip clears the floating preview.
-    app.image_hover = None;
+    crate::view::image_preview::clear_image_hover(app);
     match &hit.action {
         HitAction::QuestionOption(index) => {
             app.hover_index = Some(*index);
