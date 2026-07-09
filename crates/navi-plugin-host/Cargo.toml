@@ -17,13 +17,17 @@ navi-plugin-api = { workspace = true, features = ["tui"] }
 copland.workspace = true
 serde_json.workspace = true
 tracing.workspace = true
-landlock = { version = "0.4", optional = true }
+
+# Linux-only filesystem sandbox (must not be built on macOS/Windows).
+[target.'cfg(target_os = "linux")'.dependencies]
+landlock = "0.4"
 
 [dev-dependencies]
 tempfile.workspace = true
 tokio.workspace = true
 
 [features]
-default = ["landlock", "tui"]
-landlock = ["dep:landlock"]
+default = ["tui"]
+# Kept for backwards compatibility; landlock is always available on Linux.
+landlock = []
 tui = ["navi-plugin-api/tui"]
