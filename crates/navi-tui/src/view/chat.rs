@@ -443,14 +443,24 @@ fn apply_card_bg(
             span.style = Style::default().bg(code_const()).fg(Color::Black);
             continue;
         }
-        span.style = span.style.bg(bg);
         if block_selected {
-            // Selection box: keep readable text on selection background.
-            if span.style.fg.is_none() {
-                span.style = span.style.fg(selection_fg());
+            // Light selection bars use selection_fg for ALL ink. Tool cards ship
+            // light syntax colors (text/code_*) which vanish on selection_bg
+            // unless we override them.
+            let bold = span.style.add_modifier.contains(Modifier::BOLD);
+            span.style = Style::default()
+                .fg(selection_fg())
+                .bg(bg)
+                .add_modifier(if bold {
+                    Modifier::BOLD
+                } else {
+                    Modifier::empty()
+                });
+        } else {
+            span.style = span.style.bg(bg);
+            if emphasize && index == 0 {
+                span.style = span.style.fg(signal()).add_modifier(Modifier::BOLD);
             }
-        } else if emphasize && index == 0 {
-            span.style = span.style.fg(signal()).add_modifier(Modifier::BOLD);
         }
     }
     if used < width {
