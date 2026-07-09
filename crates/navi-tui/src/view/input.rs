@@ -248,7 +248,7 @@ fn composer_activity_line(app: &TuiApp, width: usize) -> Option<Line<'static>> {
         .loading_start
         .map(|start| start.elapsed().as_millis() as u64)
         .unwrap_or(0);
-    let (status, color) = composer_activity_status(app, elapsed_ms);
+    let (status, color) = composer_activity_status(app);
     let elapsed = format_activity_elapsed(elapsed_ms);
     let suffix = format!(" · {elapsed}");
     let dots = activity_dots(elapsed_ms);
@@ -266,7 +266,9 @@ fn composer_activity_line(app: &TuiApp, width: usize) -> Option<Line<'static>> {
     ]))
 }
 
-fn composer_activity_status(app: &TuiApp, elapsed_ms: u64) -> (String, ratatui::style::Color) {
+/// Activity label driven by real agent state (approvals, tools, stream status).
+/// Avoids time-based phase claims that don't match what the model is doing.
+fn composer_activity_status(app: &TuiApp) -> (String, ratatui::style::Color) {
     if !app.pending_approvals.is_empty() {
         let label = if app.pending_approvals.len() == 1 {
             let id = &app.pending_approvals[0].id;
@@ -284,44 +286,73 @@ fn composer_activity_status(app: &TuiApp, elapsed_ms: u64) -> (String, ratatui::
         return ("Waiting for input".to_string(), code_const());
     }
 
-    if let Some(invocation) = app.running_tools.values().next() {
-        return (
-            format!("Preparing {}", tool_status_label(&invocation.tool_name)),
-            code_operator(),
-        );
+    if !app.running_tools.is_empty() {
+        return (running_tools_status(app), code_operator());
     }
 
-    match active_assistant_status(app) {
-        Some("receiving") => (
-            rotating_status(elapsed_ms, RECEIVING_STATUSES).to_string(),
-            accent(),
-        ),
-        _ => (
-            rotating_status(elapsed_ms, THINKING_STATUSES).to_string(),
-            code_operator(),
-        ),
+    let active = active_assistant_message(app);
+    let status = active.and_then(|message| message.status.as_deref());
+    match status {
+        Some("receiving") => ("Streaming response".to_string(), accent()),
+        Some("retrying") => ("Retrying".to_string(), code_operator()),
+        Some(label) if label.starts_with("tool:") => {
+            let tool = label.trim_start_matches("tool:").trim();
+            if tool.is_empty() {
+                ("Running tool".to_string(), code_operator())
+            } else {
+                (
+                    format!("Running {}", tool_status_label(tool)),
+                    code_operator(),
+                )
+            }
+        }
+        Some(label) if label.starts_with("approval:") => {
+            ("Waiting for approval".to_string(), code_const())
+        }
+        Some(label) if label == "question" || label.starts_with("questions:") => {
+            ("Waiting for input".to_string(), code_const())
+        }
+        _ => {
+            // Prefer observed stream evidence over a generic spinner label.
+            if active.is_some_and(|message| !message.thinking_content.is_empty()) {
+                ("Thinking".to_string(), code_operator())
+            } else if active.is_some_and(|message| !message.content.trim().is_empty()) {
+                ("Streaming response".to_string(), accent())
+            } else {
+                // No tokens yet — honest wait, not false-specific "checking tools".
+                ("Waiting for model".to_string(), code_operator())
+            }
+        }
     }
 }
 
-const THINKING_STATUSES: &[&str] = &[
-    "Reading context",
-    "Planning next step",
-    "Checking available tools",
-    "Preparing response",
-];
+fn running_tools_status(app: &TuiApp) -> String {
+    if app.running_tools.len() == 1 {
+        let (id, invocation) = app
+            .running_tools
+            .iter()
+            .next()
+            .expect("running_tools non-empty");
+        if let Some(activity) = app.subagent_activity.get(id) {
+            let detail = activity.trim();
+            if !detail.is_empty() {
+                return format!("Subagent: {detail}");
+            }
+        }
+        return format!("Running {}", tool_status_label(&invocation.tool_name));
+    }
 
-const RECEIVING_STATUSES: &[&str] = &[
-    "Composing response",
-    "Streaming answer",
-    "Formatting output",
-];
+    format!("Running {} tools", app.running_tools.len())
+}
 
-fn active_assistant_status(app: &TuiApp) -> Option<&str> {
-    app.messages
-        .iter()
-        .rev()
-        .find(|message| message.role == ChatRole::Assistant)
-        .and_then(|message| message.status.as_deref())
+/// Latest in-flight model response (not a tool card / compact summary).
+fn active_assistant_message(app: &TuiApp) -> Option<&crate::state::ChatMessage> {
+    app.messages.iter().rev().find(|message| {
+        message.role == ChatRole::Assistant
+            && message.tool_invocation.is_none()
+            && message.tool_result.is_none()
+            && !message.is_compact_summary
+    })
 }
 
 fn activity_dots(elapsed_ms: u64) -> &'static str {
@@ -331,11 +362,6 @@ fn activity_dots(elapsed_ms: u64) -> &'static str {
         2 => "...",
         _ => " ..",
     }
-}
-
-fn rotating_status(elapsed_ms: u64, statuses: &'static [&'static str]) -> &'static str {
-    let index = ((elapsed_ms / 1_600) as usize) % statuses.len().max(1);
-    statuses.get(index).copied().unwrap_or("Working")
 }
 
 fn format_activity_elapsed(ms: u64) -> String {
@@ -830,7 +856,7 @@ mod tests {
         let line = composer_activity_line(&app, 80).expect("activity line");
         let text = line_text(&line);
 
-        assert!(text.contains("Reading context"));
+        assert!(text.contains("Waiting for model"));
         assert!(text.contains("0s"));
     }
 
@@ -845,7 +871,40 @@ mod tests {
         });
 
         let line = composer_activity_line(&app, 80).expect("activity line");
-        assert!(line_text(&line).contains("Composing response"));
+        assert!(line_text(&line).contains("Streaming response"));
+    }
+
+    #[test]
+    fn composer_activity_line_uses_thinking_content() {
+        let mut app = crate::tests::test_app("");
+        app.is_loading = true;
+        app.loading_start = Some(Instant::now());
+        app.messages.push(ChatMessage {
+            status: Some("thinking".to_string()),
+            thinking_content: "step by step".to_string(),
+            ..ChatMessage::new(ChatRole::Assistant, String::new())
+        });
+
+        let line = composer_activity_line(&app, 80).expect("activity line");
+        assert!(line_text(&line).contains("Thinking"));
+    }
+
+    #[test]
+    fn composer_activity_line_uses_running_tool() {
+        let mut app = crate::tests::test_app("");
+        app.is_loading = true;
+        app.loading_start = Some(Instant::now());
+        app.running_tools.insert(
+            "call-1".to_string(),
+            navi_sdk::ToolInvocation {
+                id: "call-1".to_string(),
+                tool_name: "read_file".to_string(),
+                input: serde_json::json!({}),
+            },
+        );
+
+        let line = composer_activity_line(&app, 80).expect("activity line");
+        assert!(line_text(&line).contains("Running read file"));
     }
 
     #[test]

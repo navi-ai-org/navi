@@ -1,9 +1,11 @@
+use navi_core::{AttachmentKind, model_supports_attachment};
 use navi_sdk::{
     AgentEvent, CompactState, ContentPart, ModelMessage, ModelRole, SessionStore,
     build_system_prompt, effective_context_window,
 };
 
 use crate::TuiApp;
+use crate::notifications::show_notification;
 use crate::providers::selected_provider_label;
 use crate::state::{ChatImage, ChatMessage, ChatRole, QueuedUserMessage};
 use crate::stream::start_streaming_request;
@@ -68,6 +70,10 @@ fn submit_current_message_now(app: &mut TuiApp) {
         images = has_images,
         "TUI prompt submitted"
     );
+
+    if has_images {
+        warn_if_model_cannot_view_images(app);
+    }
 
     let mut chat_msg = ChatMessage::new(ChatRole::User, text.clone());
 
@@ -207,6 +213,27 @@ fn model_response_placeholder(app: &TuiApp) -> ChatMessage {
         status: Some("thinking".to_string()),
         ..ChatMessage::new(ChatRole::Assistant, String::new())
     }
+}
+
+fn warn_if_model_cannot_view_images(app: &mut TuiApp) {
+    let config = &app.loaded_config.config;
+    let provider = config.model.provider.as_str();
+    let model = config.model.name.as_str();
+    if model_supports_attachment(config, provider, model, AttachmentKind::Image) {
+        return;
+    }
+    let has_attachment_model = config.attachment_models.image.is_some();
+    let detail = if has_attachment_model {
+        format!(
+            "{model} via {provider} cannot view images directly. NAVI will not inline image bytes into the prompt; configure analyze_attachment routing or switch to a vision model."
+        )
+    } else {
+        format!(
+            "{model} via {provider} cannot view images (supports_images=false/unknown). Switch to a vision model (ctrl+m) or set attachment_models.image for analyze_attachment."
+        )
+    };
+    tracing::warn!(%provider, %model, "image attached to non-vision chat model");
+    show_notification(app, "Image", detail);
 }
 
 pub(crate) fn ensure_tail_model_response(app: &mut TuiApp) -> &mut ChatMessage {

@@ -122,13 +122,9 @@ fn process_json_schema() -> Value {
                 "description": "Data to write to a running process's stdin. Required for the stdin action."
             }
         },
-        "anyOf": [
-            { "required": ["action", "command"], "properties": { "action": { "const": "exec" } } },
-            { "required": ["action", "process_id", "stdin_data"], "properties": { "action": { "const": "stdin" } } },
-            { "required": ["action", "process_id"], "properties": { "action": { "const": "wait" } } },
-            { "required": ["action", "process_id"], "properties": { "action": { "const": "cancel" } } },
-            { "required": ["action"], "properties": { "action": { "const": "list" } } }
-        ],
+        // Runtime validates per-action required fields. Avoid anyOf/const so
+        // model-facing schema simplification does not force `command` for wait/list.
+        "required": ["action"],
         "additionalProperties": false
     })
 }

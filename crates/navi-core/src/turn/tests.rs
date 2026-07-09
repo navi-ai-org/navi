@@ -855,7 +855,67 @@ fn rewrite_unsupported_attachments_keeps_supported_images_and_routes_audio() {
         ContentPart::Image { .. }
     ));
     let routed = rewritten[0].content_parts[2].as_text().unwrap();
-    assert!(routed.contains("\"tool\":\"analyze_attachment\""));
-    assert!(routed.contains("\"kind\":\"audio\""));
-    assert!(routed.contains("\"data\":\"audio-data\""));
+    assert!(
+        routed.contains("attachment unavailable") || routed.contains("cannot view"),
+        "unsupported attachments should become a short capability notice: {routed}"
+    );
+    assert!(routed.contains("audio"), "notice should mention kind: {routed}");
+    assert!(
+        !routed.contains("audio-data"),
+        "must not inline attachment base64 into the chat prompt: {routed}"
+    );
+}
+
+#[test]
+fn rewrite_unsupported_images_do_not_inline_base64() {
+    let tempdir = tempfile::tempdir().unwrap();
+    let ctx = build_test_ctx(tempdir.path().to_path_buf());
+    let mut config = crate::config::NaviConfig::default();
+    config.model.provider = "opencode".to_string();
+    config.model.name = "mimo-v2.5-free".to_string();
+    config.providers = vec![crate::config::ProviderConfig {
+        id: "opencode".to_string(),
+        label: "OpenCode".to_string(),
+        description: String::new(),
+        kind: crate::config::ProviderKind::OpenAiChatCompletions,
+        api_key_env: "OPENCODE_API_KEY".to_string(),
+        base_url: Some("https://example.test/v1".to_string()),
+        models: vec![crate::config::ProviderModelConfig {
+            name: "mimo-v2.5-free".to_string(),
+            task_size: Some(crate::config::ModelTaskSize::Small),
+            context_window_tokens: None,
+            max_output_tokens: None,
+            recommended_temperature: None,
+            supports_thinking: None,
+            supports_images: Some(false),
+            supports_audio: None,
+            supports_video: None,
+            supports_documents: None,
+            tool_prompt_manifest: None,
+            pricing_input_per_1m: None,
+            pricing_output_per_1m: None,
+        }],
+        ..Default::default()
+    }];
+    *ctx.config.write().unwrap() = config;
+
+    let huge = "A".repeat(50_000);
+    let messages = vec![ModelMessage::user_multimodal(
+        "analise essa imagem",
+        vec![
+            ContentPart::Text {
+                text: "analise essa imagem".to_string(),
+            },
+            ContentPart::Image {
+                media_type: "image/png".to_string(),
+                data: huge.clone(),
+            },
+        ],
+    )];
+
+    let rewritten = rewrite_unsupported_attachments(&ctx, &messages);
+    let text = rewritten[0].content_parts[1].as_text().unwrap();
+    assert!(!text.contains(&huge), "must not dump image base64 into prompt");
+    assert!(text.contains("image/png"));
+    assert!(text.contains("cannot view") || text.contains("unavailable"));
 }

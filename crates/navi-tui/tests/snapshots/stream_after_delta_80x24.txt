@@ -14,7 +14,7 @@
 
 
 
-    .   Composing response · 0s
+    .   Streaming response · 0s
 
   ▌
   ▌

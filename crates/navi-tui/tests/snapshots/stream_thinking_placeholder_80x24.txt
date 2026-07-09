@@ -14,7 +14,7 @@
 
 
 
-    .   Reading context · 0s
+    .   Waiting for model · 0s
 
   ▌
   ▌

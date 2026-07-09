@@ -306,14 +306,15 @@ fn build_system_prompt_inner(
     );
     if tools_enabled {
         prompt.push_str(
-        "Code tools:\n\
-         - symbols_overview: compact symbol tree for a file or directory. Use before broad read_file calls when navigating or refactoring.\n\
-         - find_symbol: search symbols by name/kind/path. Returns symbol id and hash for precise follow-up edits.\n\
-         - find_references: exact identifier references in source files (token-level, not compiler-semantic). Ignores comments/strings where the grammar exposes them.\n\
-         - code_diagnostics: tree-sitter parse diagnostics for a file or directory. Use before and after structural edits.\n\
-         - replace_symbol_body: replace a full symbol definition/body by symbol id or unique name. Use expected_hash from symbols_overview/find_symbol to reject stale edits.\n\
-         - insert_before_symbol / insert_after_symbol: insert source text before/after a symbol id or unique name.\n\
-         - rename_symbol: exact identifier rename across a file or directory. Prefer find_references first for review. This is token-aware, not compiler/LSP semantic rename.\n",
+            "Code tools:\n\
+             - code(action='overview'): compact symbol tree for a file or directory. Use before broad read_file calls when navigating or refactoring.\n\
+             - code(action='find'): search symbols by name/kind/path. Returns symbol id and hash for precise follow-up edits.\n\
+             - code(action='references'): exact identifier references in source files (token-level, not compiler-semantic).\n\
+             - code(action='diagnostics'): tree-sitter parse diagnostics for a file or directory.\n\
+             - code_edit(action='replace'): replace a full symbol definition/body by symbol id or unique name. Use expected_hash from code overview/find.\n\
+             - code_edit(action='insert-before'|'insert-after'): insert source text before/after a symbol id or unique name.\n\
+             - code_edit(action='rename'): exact identifier rename across a file or directory. Prefer code(action='references') first. Token-aware, not compiler/LSP semantic rename.\n\
+             - Also available: ast_search, symbol_goto, symbol_references for lighter repo-index navigation.\n",
         );
     }
     if policy.profile == HarnessProfile::LongRunning {
