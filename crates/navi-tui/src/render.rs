@@ -1,8 +1,10 @@
 pub(crate) mod layout;
 pub(crate) mod markdown;
+pub(crate) mod status;
 pub(crate) mod syntax;
 pub(crate) mod text;
 pub(crate) mod tool;
+pub(crate) mod tool_policy;
 
 pub(crate) use layout::{
     clear_modal_area, command_row, command_scroll_offset, fill_modal_scrim, fill_modal_surface,
@@ -57,16 +59,17 @@ mod tests {
 
     #[test]
     fn markdown_renderer_wraps_plain_text() {
+        // CONTENT_GUTTER (2) is reserved; wrap budget is width - 2.
         let lines = render_markdown_lines(
             "hello world from navi",
-            12,
+            14,
             test_palette().text,
             test_palette().text,
             false,
         );
         let rendered = lines.iter().map(line_text).collect::<Vec<_>>();
 
-        assert_eq!(rendered, vec!["hello world", "from navi"]);
+        assert_eq!(rendered, vec!["  hello world", "  from navi"]);
     }
 
     #[test]
@@ -82,7 +85,15 @@ mod tests {
 
         assert_eq!(
             rendered,
-            vec!["before", "│  ", "│  fn main() {}", "│  ", "after"]
+            vec![
+                "  before",
+                "",
+                "  │  ",
+                "  │  fn main() {}",
+                "  │  ",
+                "",
+                "  after"
+            ]
         );
     }
 
@@ -144,7 +155,7 @@ mod tests {
         );
         let rendered = lines.iter().map(line_text).collect::<Vec<_>>();
 
-        assert_eq!(rendered, vec!["│  ", "│    value"]);
+        assert_eq!(rendered, vec!["  │  ", "  │    value"]);
     }
 
     #[test]
@@ -160,13 +171,15 @@ mod tests {
 
         assert_eq!(
             rendered,
-            vec!["NAVI is wired and documented (https://example.test)"]
+            vec!["  NAVI is wired and documented (https://example.test)"]
         );
+        // First span is the content gutter; bold is on the NAVI span.
         assert!(
-            lines[0].spans[0]
-                .style
-                .add_modifier
-                .contains(Modifier::BOLD)
+            lines[0]
+                .spans
+                .iter()
+                .any(|span| span.content.as_ref() == "NAVI"
+                    && span.style.add_modifier.contains(Modifier::BOLD))
         );
     }
 
@@ -183,7 +196,9 @@ mod tests {
 
         assert_eq!(
             rendered,
-            vec!["NAVI uses strong emphasis, old text, diagram (image: file.png), and *literal*."]
+            vec![
+                "  NAVI uses strong emphasis, old text, diagram (image: file.png), and *literal*."
+            ]
         );
         let navi = lines[0]
             .spans
@@ -225,7 +240,10 @@ mod tests {
         );
         let rendered = lines.iter().map(line_text).collect::<Vec<_>>();
 
-        assert_eq!(rendered, vec!["1. Architecture", "▌ signal in prose"]);
+        assert_eq!(
+            rendered,
+            vec!["  1. Architecture", "", "  ◇ signal in prose"]
+        );
     }
 
     #[test]
@@ -239,18 +257,38 @@ mod tests {
         );
         let rendered = lines.iter().map(line_text).collect::<Vec<_>>();
 
-        assert_eq!(
-            rendered,
-            vec![
-                "▣ Project Overview",
-                "",
-                "Crate    │ Purpose     ",
-                "─────────┼─────────────",
-                "navi-cli │ Entry binary",
-            ]
+        // Grok-style full box frame (outer ┌┐└┘, header ┼, body │).
+        assert_eq!(rendered[0], "  ◆ Project Overview");
+        assert!(rendered[1].trim().is_empty());
+        let table = &rendered[2..];
+        assert!(
+            table.iter().any(|l| l.contains('┌') && l.contains('┐')),
+            "top border: {table:?}"
+        );
+        assert!(
+            table.iter().any(|l| l.contains('├') && l.contains('┤')),
+            "header rule: {table:?}"
+        );
+        assert!(
+            table.iter().any(|l| l.contains('└') && l.contains('┘')),
+            "bottom border: {table:?}"
+        );
+        assert!(
+            table.iter().any(|l| l.contains("Crate") && l.contains("Purpose")),
+            "header row: {table:?}"
+        );
+        assert!(
+            table
+                .iter()
+                .any(|l| l.contains("navi-cli") && l.contains("Entry binary")),
+            "body row: {table:?}"
         );
         assert!(!rendered.iter().any(|line| line.contains("##")));
+        // Markdown pipe characters are consumed; box-drawing uses │ not |.
         assert!(!rendered.iter().skip(2).any(|line| line.contains('|')));
+        // Gutter is spaces (block pad), never a bare quote-bar at column 0.
+        assert!(table[0].starts_with("  "));
+        assert!(!table[0].starts_with('│'));
     }
 
     #[test]
@@ -264,16 +302,25 @@ mod tests {
         );
         let rendered = lines.iter().map(line_text).collect::<Vec<_>>();
 
-        let text = rendered.join("\n");
-        assert!(text.contains("Problema"));
-        assert!(text.contains("OAuth Device Flow na TUI"));
-        assert!(text.contains("Onde"));
-        assert!(text.contains("navi-tui/src/runtime.rs"));
-        assert!(text.contains("Gravidade"));
-        assert!(text.contains("CRÍTICO"));
+        // Join without newlines so wrapped cells still match as contiguous substrings.
+        let flat: String = rendered.iter().map(String::as_str).collect();
+        assert!(flat.contains("Problema"), "got: {flat}");
+        assert!(
+            flat.contains("OAuth Device Flow na TUI"),
+            "expected OAuth cell content, got: {flat}"
+        );
+        assert!(flat.contains("Onde"), "got: {flat}");
+        assert!(flat.contains("navi-tui/src/runtime.rs"), "got: {flat}");
+        assert!(flat.contains("Gravidade"), "got: {flat}");
+        assert!(flat.contains("CRÍTICO"), "got: {flat}");
+        // No raw markdown pipes left.
         assert!(rendered.iter().all(|line| !line.contains('|')));
         for line in rendered.iter().filter(|line| !line.is_empty()) {
-            assert!(line.chars().count() <= 64, "line too wide: {line}");
+            assert!(
+                display_width(line) <= 64,
+                "line too wide ({}): {line}",
+                display_width(line)
+            );
         }
     }
 

@@ -9,7 +9,7 @@ use crate::theme::*;
 
 use super::syntax::{CodeHighlighter, highlight_code_line};
 use super::text::{display_width, wrap_inline_spans_to_width, wrap_spans_to_width, wrap_text};
-use super::tool::tool_compact_text;
+use super::tool::{tool_compact_text, tool_running_text};
 
 const USER_MESSAGE_VERTICAL_PADDING: usize = 0;
 
@@ -21,11 +21,10 @@ const MD_BLOCK_V_GAP: usize = 1;
 const CONTENT_GUTTER: usize = 2;
 /// Left pad for structural blocks so tables/code align under tool diamonds (`◆ `).
 const MD_BLOCK_H_PAD: usize = CONTENT_GUTTER;
-/// Inner horizontal pad inside each table cell.
+/// Inner horizontal pad inside each table cell (Grok block_pad feel).
 const TABLE_CELL_H_PAD: usize = 1;
-/// Width of the dim column separator (` │ `).
-const TABLE_COL_SEP_WIDTH: usize = 3;
-const TABLE_COL_SEP: &str = " │ ";
+/// Width of an interior vertical border glyph (`│`).
+const TABLE_BORDER_W: usize = 1;
 
 #[derive(Debug, Clone)]
 pub(crate) struct ChatRenderOutput {
@@ -71,6 +70,7 @@ pub(crate) fn build_chat_render_for_messages(
                 expanded_tool_results,
                 collapsed_tool_results,
                 tool_render_cache,
+                loading_elapsed_ms,
             );
             for (line, source) in rendered_tool {
                 rendered_lines.push(line);
@@ -111,24 +111,27 @@ pub(crate) fn build_chat_render_for_messages(
             }
             ChatRole::Assistant => {
                 if msg.is_recap {
+                    // Grok-style: "Recap" label + one short summary (hard-cap 1 wrap line).
+                    let summary = msg.content.trim();
+                    let label = "Recap ";
+                    let label_w = display_width(label);
+                    let body_width = chat_width.saturating_sub(label_w).max(16);
+                    let mut wraps = wrap_text(summary, body_width);
+                    // One visual line preferred; allow a single wrap only if terminal is narrow.
+                    wraps.truncate(1);
+                    if wraps.is_empty() {
+                        wraps.push(String::new());
+                    }
+                    let first = wraps.remove(0);
                     rendered_lines.push(Line::from(vec![
                         Span::styled(
-                            " ◈ recap ",
+                            label.to_string(),
                             Style::default().fg(signal()).add_modifier(Modifier::BOLD),
                         ),
-                        Span::styled(
-                            "─".repeat(chat_width.saturating_sub(10)),
-                            Style::default().fg(ghost()),
-                        ),
+                        Span::styled(first, Style::default().fg(muted())),
                     ]));
                     line_sources.push(ChatLineSource::Message(index));
-                    for line in wrap_text(&msg.content, chat_width.saturating_sub(2)) {
-                        rendered_lines.push(Line::from(vec![Span::styled(
-                            format!("  {line}"),
-                            Style::default().fg(muted()),
-                        )]));
-                        line_sources.push(ChatLineSource::Message(index));
-                    }
+                    index += 1;
                     continue;
                 }
                 if msg.is_compact_summary {
@@ -196,7 +199,7 @@ pub(crate) fn build_chat_render_for_messages(
         }
         index += 1;
     }
-    push_running_subagents(
+    push_running_tools(
         &mut rendered_lines,
         &mut line_sources,
         running_tools,
@@ -508,7 +511,11 @@ fn tool_result_parts(message: &ChatMessage) -> Option<(&ToolInvocation, &ToolRes
     }
 }
 
-fn push_running_subagents(
+/// In-flight tools (bash, read, subagent, …) with a pulsing diamond until they settle.
+///
+/// Previously only subagents were shown while running; bash/etc. were swallowed as
+/// empty `tool:` placeholders, so the scrollback looked frozen mid-turn.
+fn push_running_tools(
     rendered_lines: &mut Vec<Line<'static>>,
     line_sources: &mut Vec<ChatLineSource>,
     running_tools: &HashMap<String, ToolInvocation>,
@@ -516,50 +523,88 @@ fn push_running_subagents(
     chat_width: usize,
     loading_elapsed_ms: Option<u64>,
 ) {
-    let mut subagents = running_tools
-        .values()
-        .filter(|invocation| invocation.tool_name == "subagent")
-        .collect::<Vec<_>>();
-    subagents.sort_by(|left, right| left.id.cmp(&right.id));
+    if running_tools.is_empty() {
+        return;
+    }
 
-    for invocation in subagents {
+    let mut tools = running_tools.values().collect::<Vec<_>>();
+    tools.sort_by(|left, right| left.id.cmp(&right.id));
+
+    let elapsed = loading_elapsed_ms.unwrap_or_default();
+    let spinner = super::status::running_diamond_prefix(elapsed);
+    let spin_color = super::status::running_diamond_color(code_operator());
+    let elapsed_label = crate::background::format_duration_ms(elapsed);
+
+    for invocation in tools {
         push_block_gap(rendered_lines, line_sources);
-        let task = subagent_task_label(invocation);
-        let detail = subagent_activity
-            .get(&invocation.id)
-            .cloned()
-            .unwrap_or_else(|| subagent_detail_label(invocation, &task));
-        let spinner = super::status::running_diamond_prefix(loading_elapsed_ms.unwrap_or_default());
-        let width = chat_width.max(12);
-        let label_width = width.saturating_sub(display_width(spinner) + 3).max(8);
-        let detail_width = width.saturating_sub(4).max(8);
+        let is_subagent = invocation.tool_name == "subagent";
+        let source = if is_subagent {
+            ChatLineSource::Subagent(invocation.id.clone())
+        } else {
+            ChatLineSource::ToolResult(invocation.id.clone())
+        };
 
-        rendered_lines.push(Line::from(vec![
+        let label = if is_subagent {
+            let task = subagent_task_label(invocation);
+            format!("Subagent Task — {task}")
+        } else {
+            tool_running_text(invocation)
+        };
+
+        // `◆ Run cargo test · 3s` — diamond pulses via spinner frame + elapsed.
+        let width = chat_width.max(12);
+        let suffix = format!(" · {elapsed_label}");
+        let label_budget = width
+            .saturating_sub(display_width(spinner) + display_width(&suffix))
+            .max(8);
+        let truncated = truncate_chars(&label, label_budget);
+        let (action, detail) = truncated
+            .split_once(' ')
+            .map(|(a, d)| (a.to_string(), d.to_string()))
+            .unwrap_or_else(|| (truncated.clone(), String::new()));
+        let action_color = tool_color(invocation.tool_name.as_str());
+
+        let mut spans = vec![
             Span::styled(
                 spinner.to_string(),
                 Style::default()
-                    .fg(code_operator())
+                    .fg(spin_color)
                     .add_modifier(Modifier::BOLD),
             ),
-            Span::styled("Subagent Task ", Style::default().fg(muted())),
-            Span::styled("— ", Style::default().fg(ghost())),
             Span::styled(
-                truncate_chars(&task, label_width),
-                Style::default().fg(text()).add_modifier(Modifier::BOLD),
+                action,
+                Style::default()
+                    .fg(action_color)
+                    .add_modifier(Modifier::BOLD),
             ),
-        ]));
-        line_sources.push(ChatLineSource::Subagent(invocation.id.clone()));
-
+        ];
         if !detail.is_empty() {
-            // Indent under the diamond — no vertical trail/corner stroke.
-            rendered_lines.push(Line::from(vec![
-                Span::styled("  ↳ ", Style::default().fg(ghost())),
-                Span::styled(
-                    truncate_chars(&detail, detail_width),
-                    Style::default().fg(muted()),
-                ),
-            ]));
-            line_sources.push(ChatLineSource::Subagent(invocation.id.clone()));
+            spans.push(Span::styled(" ", Style::default().fg(ghost())));
+            spans.push(Span::styled(detail, Style::default().fg(muted())));
+        }
+        spans.push(Span::styled(suffix, Style::default().fg(code_number())));
+
+        rendered_lines.push(Line::from(spans));
+        line_sources.push(source.clone());
+
+        // Subagent live detail under the header.
+        if is_subagent {
+            let task = subagent_task_label(invocation);
+            let detail = subagent_activity
+                .get(&invocation.id)
+                .cloned()
+                .unwrap_or_else(|| subagent_detail_label(invocation, &task));
+            if !detail.is_empty() {
+                let detail_width = width.saturating_sub(4).max(8);
+                rendered_lines.push(Line::from(vec![
+                    Span::styled("  ↳ ", Style::default().fg(ghost())),
+                    Span::styled(
+                        truncate_chars(&detail, detail_width),
+                        Style::default().fg(muted()),
+                    ),
+                ]));
+                line_sources.push(source);
+            }
         }
     }
 }
@@ -611,6 +656,7 @@ fn render_compact_tool_result(
     expanded_tool_results: &HashSet<String>,
     collapsed_tool_results: &HashSet<String>,
     tool_render_cache: &mut HashMap<String, Vec<Line<'static>>>,
+    loading_elapsed_ms: Option<u64>,
 ) -> Vec<(Line<'static>, ChatLineSource)> {
     use super::tool_policy::{tool_auto_expand, tool_body_reason, tool_body_visible, ToolBodyReason};
 
@@ -638,7 +684,7 @@ fn render_compact_tool_result(
 
     // Always show the one-line header (Grok tool card title).
     lines.push((
-        render_compact_tool_line_with_width(invocation, result, chat_width),
+        render_compact_tool_line_with_width(invocation, result, chat_width, loading_elapsed_ms),
         source.clone(),
     ));
 
@@ -680,25 +726,57 @@ fn render_compact_tool_result(
     lines
 }
 
+fn tool_result_still_running(result: &ToolResult) -> bool {
+    result
+        .output
+        .get("status")
+        .and_then(|v| v.as_str())
+        .is_some_and(|s| s.eq_ignore_ascii_case("running") || s.eq_ignore_ascii_case("pending"))
+}
+
 fn render_compact_tool_line_with_width(
     invocation: &ToolInvocation,
     result: &ToolResult,
     chat_width: usize,
+    loading_elapsed_ms: Option<u64>,
 ) -> Line<'static> {
-    // Grok-style diamond bullet only — no left quote-bar / corner stroke.
-    let prefix = super::status::settled_diamond_prefix(result.ok);
+    // Background bash (and similar) can land a ToolCompleted with status=running
+    // while the process is still going — keep the diamond pulsing.
+    let still_running = tool_result_still_running(result);
+    let elapsed = loading_elapsed_ms
+        .or_else(|| {
+            result
+                .output
+                .get("elapsed_ms")
+                .and_then(|v| v.as_u64())
+        })
+        .unwrap_or(0);
+
+    let (prefix, status_color) = if still_running {
+        (
+            super::status::running_diamond_prefix(elapsed),
+            super::status::running_diamond_color(code_operator()),
+        )
+    } else {
+        (
+            super::status::settled_diamond_prefix(result.ok),
+            super::status::settled_diamond_color(result.ok, Color::Green, red()),
+        )
+    };
+
     let text_width = chat_width.saturating_sub(display_width(prefix)).max(12);
-    let status_color = super::status::settled_diamond_color(result.ok, Color::Green, red());
     let label = truncate_chars(&tool_compact_text(invocation, result), text_width);
     let (action, detail) = label.split_once(' ').unwrap_or((&label, ""));
-    let action_color = if result.ok {
+    let action_color = if still_running {
+        tool_color(invocation.tool_name.as_str())
+    } else if result.ok {
         tool_color(invocation.tool_name.as_str())
     } else {
         red()
     };
     let mut spans = vec![
         Span::styled(
-            prefix,
+            prefix.to_string(),
             Style::default()
                 .fg(status_color)
                 .add_modifier(Modifier::BOLD),
@@ -714,7 +792,11 @@ fn render_compact_tool_line_with_width(
         spans.push(Span::styled(" ", Style::default().fg(ghost())));
         spans.extend(semantic_plain_spans(
             detail,
-            if result.ok { muted() } else { text() },
+            if still_running || result.ok {
+                muted()
+            } else {
+                text()
+            },
         ));
     }
     Line::from(spans)
@@ -1120,13 +1202,16 @@ fn table_block_lines_at(
     lead_marker: &mut bool,
 ) -> Vec<Line<'static>> {
     const MAX_TABLE_WIDTH: usize = 140;
-    const MIN_COLUMN_WIDTH: usize = 6;
+    const MIN_COLUMN_WIDTH: usize = 4;
 
     let rows = table_rows
         .iter()
         .map(|row| table_cells(row))
         .collect::<Vec<_>>();
     let column_count = rows.iter().map(Vec::len).max().unwrap_or(0);
+    if column_count == 0 {
+        return Vec::new();
+    }
     // Content width before cell pad; pad is added to the column budget later.
     let mut content_widths = vec![0; column_count];
     for row in &rows {
@@ -1136,18 +1221,13 @@ fn table_block_lines_at(
     }
 
     // Align tables under tool diamonds: marker (`◆ `) or MD_BLOCK_H_PAD spaces.
+    // Grok-style full box needs outer left/right borders (`│` × (cols+1)).
     let gutter_width = if show_marker { 2 } else { MD_BLOCK_H_PAD };
     let available_width = max_width.saturating_sub(gutter_width).min(MAX_TABLE_WIDTH);
-    let separators_width = content_widths
-        .len()
-        .saturating_sub(1)
-        .saturating_mul(TABLE_COL_SEP_WIDTH);
-    // Each column needs room for inner cell pad on both sides.
-    let pad_budget = content_widths
-        .len()
-        .saturating_mul(TABLE_CELL_H_PAD.saturating_mul(2));
+    let border_budget = column_count.saturating_add(1).saturating_mul(TABLE_BORDER_W);
+    let pad_budget = column_count.saturating_mul(TABLE_CELL_H_PAD.saturating_mul(2));
     let columns_width = available_width
-        .saturating_sub(separators_width)
+        .saturating_sub(border_budget)
         .saturating_sub(pad_budget);
     let minimum_widths = rows
         .first()
@@ -1162,7 +1242,7 @@ fn table_block_lines_at(
                 })
                 .collect::<Vec<_>>()
         })
-        .unwrap_or_default();
+        .unwrap_or_else(|| vec![MIN_COLUMN_WIDTH; column_count]);
 
     let natural_sum: usize = content_widths.iter().sum();
     // Stack when the grid would be too cramped: either min widths don't fit, or
@@ -1176,7 +1256,22 @@ fn table_block_lines_at(
 
     shrink_table_widths(&mut content_widths, &minimum_widths, columns_width);
 
+    // Grok Build table: full box frame on a panel surface.
+    //   ┌──────┬──────┐
+    //   │ head │ head │
+    //   ├──────┼──────┤
+    //   │ cell │ cell │
+    //   └──────┴──────┘
     let mut lines = Vec::new();
+    let is_first = take_lead_marker(lead_marker, show_marker);
+    lines.push(table_border_line(
+        &content_widths,
+        TableBorderKind::Top,
+        show_marker,
+        marker_color,
+        is_first,
+    ));
+
     for (row_index, cells) in rows.iter().enumerate() {
         lines.extend(wrapped_table_row_lines_at(
             cells,
@@ -1186,16 +1281,26 @@ fn table_block_lines_at(
             marker_color,
             lead_marker,
         ));
-        if row_index == 0 {
+        if row_index == 0 && rows.len() > 1 {
             let is_first = take_lead_marker(lead_marker, show_marker);
-            lines.push(table_header_rule_at(
+            lines.push(table_border_line(
                 &content_widths,
+                TableBorderKind::HeaderRule,
                 show_marker,
                 marker_color,
                 is_first,
             ));
         }
     }
+
+    let is_first = take_lead_marker(lead_marker, show_marker);
+    lines.push(table_border_line(
+        &content_widths,
+        TableBorderKind::Bottom,
+        show_marker,
+        marker_color,
+        is_first,
+    ));
     lines
 }
 
@@ -1215,6 +1320,53 @@ fn shrink_table_widths(widths: &mut [usize], minimum_widths: &[usize], target: u
     }
 }
 
+/// Box-drawing row kinds for Grok-style tables.
+#[derive(Clone, Copy)]
+enum TableBorderKind {
+    Top,
+    HeaderRule,
+    Bottom,
+}
+
+fn table_surface_bg() -> Color {
+    // Slightly elevated surface like Grok chat cards / code panels.
+    code_block_bg()
+}
+
+fn table_border_style() -> Style {
+    Style::default().fg(ghost()).bg(table_surface_bg())
+}
+
+fn table_border_line(
+    widths: &[usize],
+    kind: TableBorderKind,
+    show_marker: bool,
+    marker_color: Color,
+    is_first_line: bool,
+) -> Line<'static> {
+    let (left, mid, right, fill) = match kind {
+        TableBorderKind::Top => ('┌', '┬', '┐', '─'),
+        TableBorderKind::HeaderRule => ('├', '┼', '┤', '─'),
+        TableBorderKind::Bottom => ('└', '┴', '┘', '─'),
+    };
+    let cell_inner = TABLE_CELL_H_PAD.saturating_mul(2);
+    let border = table_border_style();
+    let mut spans = marker_spans_at(show_marker, marker_color, is_first_line);
+    // Paint gutter with transparent/bg so the box sits on chat surface.
+    spans.push(Span::styled(left.to_string(), border));
+    for (index, width) in widths.iter().copied().enumerate() {
+        if index > 0 {
+            spans.push(Span::styled(mid.to_string(), border));
+        }
+        spans.push(Span::styled(
+            fill.to_string().repeat(width + cell_inner),
+            border,
+        ));
+    }
+    spans.push(Span::styled(right.to_string(), border));
+    Line::from(spans).style(Style::default().bg(table_surface_bg()))
+}
+
 fn wrapped_table_row_lines_at(
     cells: &[String],
     widths: &[usize],
@@ -1223,7 +1375,11 @@ fn wrapped_table_row_lines_at(
     marker_color: Color,
     lead_marker: &mut bool,
 ) -> Vec<Line<'static>> {
-    let color = if header { accent() } else { text() };
+    // Header uses muted bold (Grok table headers); body uses default text.
+    // Inline `code` keeps syntax colors via inline_text_spans.
+    let color = if header { muted() } else { text() };
+    let bg = table_surface_bg();
+    let border = table_border_style();
     let cell_pad = " ".repeat(TABLE_CELL_H_PAD);
     let wrapped_cells = widths
         .iter()
@@ -1234,27 +1390,24 @@ fn wrapped_table_row_lines_at(
                 *width,
                 color,
                 header,
+                bg,
             )
         })
         .collect::<Vec<_>>();
-    let row_height = wrapped_cells.iter().map(Vec::len).max().unwrap_or(1);
+    let row_height = wrapped_cells.iter().map(Vec::len).max().unwrap_or(1).max(1);
 
     (0..row_height)
         .map(|line_index| {
             let is_first = take_lead_marker(lead_marker, show_marker);
-            // Shared content gutter (diamond or CONTENT_GUTTER spaces).
             let mut spans = marker_spans_at(show_marker, marker_color, is_first);
+            spans.push(Span::styled("│".to_string(), border));
             for (column_index, width) in widths.iter().copied().enumerate() {
                 if column_index > 0 {
-                    spans.push(Span::styled(
-                        TABLE_COL_SEP,
-                        Style::default().fg(ghost()),
-                    ));
+                    spans.push(Span::styled("│".to_string(), border));
                 }
-                // Inner cell pad (Grok block_pad feel) without a left-edge rail.
                 spans.push(Span::styled(
                     cell_pad.clone(),
-                    Style::default().fg(color),
+                    Style::default().fg(color).bg(bg),
                 ));
                 let cell_line = wrapped_cells
                     .get(column_index)
@@ -1269,15 +1422,16 @@ fn wrapped_table_row_lines_at(
                 if used < width {
                     spans.push(Span::styled(
                         " ".repeat(width - used),
-                        Style::default().fg(color),
+                        Style::default().fg(color).bg(bg),
                     ));
                 }
                 spans.push(Span::styled(
                     cell_pad.clone(),
-                    Style::default().fg(color),
+                    Style::default().fg(color).bg(bg),
                 ));
             }
-            Line::from(spans)
+            spans.push(Span::styled("│".to_string(), border));
+            Line::from(spans).style(Style::default().bg(bg))
         })
         .collect()
 }
@@ -1287,35 +1441,17 @@ fn wrapped_table_cell(
     width: usize,
     color: Color,
     bold: bool,
+    bg: Color,
 ) -> Vec<Vec<Span<'static>>> {
     let mut spans = inline_text_spans(content, color);
-    if bold {
-        for span in &mut spans {
+    for span in &mut spans {
+        // Keep syntax/inline colors; force table surface under every cell glyph.
+        span.style = span.style.bg(bg);
+        if bold {
             span.style = span.style.add_modifier(Modifier::BOLD);
         }
     }
     wrap_inline_spans_to_width(&spans, width)
-}
-
-fn table_header_rule_at(
-    widths: &[usize],
-    show_marker: bool,
-    marker_color: Color,
-    is_first_line: bool,
-) -> Line<'static> {
-    let mut spans = marker_spans_at(show_marker, marker_color, is_first_line);
-    let cell_rule = TABLE_CELL_H_PAD.saturating_mul(2);
-    for (index, width) in widths.iter().copied().enumerate() {
-        if index > 0 {
-            // Match TABLE_COL_SEP width (` │ ` → `─┼─`).
-            spans.push(Span::styled("─┼─", Style::default().fg(ghost())));
-        }
-        spans.push(Span::styled(
-            "─".repeat(width + cell_rule),
-            Style::default().fg(ghost()),
-        ));
-    }
-    Line::from(spans)
 }
 
 fn is_thematic_break(text: &str) -> bool {
@@ -1354,27 +1490,43 @@ fn stacked_table_lines_at(
     max_width: usize,
     lead_marker: &mut bool,
 ) -> Vec<Line<'static>> {
+    // Narrow/wide fallback: bordered card with key/value rows.
     let Some(headers) = rows.first() else {
         return Vec::new();
     };
     let gutter_width = if show_marker { 2 } else { MD_BLOCK_H_PAD };
     let content_width = max_width.saturating_sub(gutter_width).max(16);
+    // Inner width between left/right `│`.
+    let inner_width = content_width.saturating_sub(2).max(12);
     let label_width = headers
         .iter()
         .map(|header| rendered_inline_width(header))
         .max()
         .unwrap_or(0)
-        .min(content_width.saturating_sub(4));
-    let value_width = content_width
+        .min(inner_width.saturating_sub(6));
+    let value_width = inner_width
         .saturating_sub(label_width)
-        .saturating_sub(2)
-        .max(8);
+        .saturating_sub(3) // ": " + spacing
+        .max(6);
+    let bg = table_surface_bg();
+    let border = table_border_style();
 
     let mut lines = Vec::new();
+    let hbar = |lead: &mut bool, left: char, right: char| -> Line<'static> {
+        let is_first = take_lead_marker(lead, show_marker);
+        let mut spans = marker_spans_at(show_marker, marker_color, is_first);
+        spans.push(Span::styled(
+            format!("{left}{}{right}", "─".repeat(inner_width)),
+            border,
+        ));
+        Line::from(spans).style(Style::default().bg(bg))
+    };
+
+    lines.push(hbar(lead_marker, '┌', '┐'));
+
     for (row_index, row) in rows.iter().enumerate().skip(1) {
         if row_index > 1 {
-            // Row gap without a vertical trail.
-            lines.push(Line::from(""));
+            lines.push(hbar(lead_marker, '├', '┤'));
         }
 
         for (cell_index, header) in headers.iter().enumerate() {
@@ -1390,24 +1542,92 @@ fn stacked_table_lines_at(
             for (line_index, value) in wrapped.into_iter().enumerate() {
                 let is_first = take_lead_marker(lead_marker, show_marker);
                 let mut spans = marker_spans_at(show_marker, marker_color, is_first);
+                spans.push(Span::styled("│".to_string(), border));
+
+                let mut body = String::new();
+                body.push(' ');
                 if line_index == 0 {
-                    spans.push(Span::styled(
-                        format!("{label:<label_width$}  "),
-                        Style::default().fg(accent()).add_modifier(Modifier::BOLD),
-                    ));
+                    body.push_str(&format!("{label:<label_width$} "));
                 } else {
-                    spans.push(Span::styled(
-                        " ".repeat(label_width + 2),
-                        Style::default().fg(ghost()),
-                    ));
+                    body.push_str(&" ".repeat(label_width + 1));
                 }
-                spans.extend(inline_text_spans(&value, text()));
-                lines.push(Line::from(spans));
+                body.push_str(&value);
+                // Pad to inner_width then close border.
+                let body_w = display_width(&body);
+                if body_w < inner_width {
+                    body.push_str(&" ".repeat(inner_width - body_w));
+                } else if body_w > inner_width {
+                    // Hard-trim by display columns.
+                    body = truncate_display(&body, inner_width);
+                }
+
+                let body_style = if line_index == 0 {
+                    Style::default()
+                        .fg(if line_index == 0 { muted() } else { text() })
+                        .bg(bg)
+                        .add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(text()).bg(bg)
+                };
+                // Split label (bold/muted) from value (text) for nicer look.
+                if line_index == 0 {
+                    let label_part = format!(" {label:<label_width$} ");
+                    let label_w = display_width(&label_part);
+                    spans.push(Span::styled(
+                        label_part,
+                        Style::default()
+                            .fg(muted())
+                            .bg(bg)
+                            .add_modifier(Modifier::BOLD),
+                    ));
+                    let mut val_spans = inline_text_spans(&value, text());
+                    for s in &mut val_spans {
+                        s.style = s.style.bg(bg);
+                    }
+                    let val_w: usize = val_spans.iter().map(|s| display_width(&s.content)).sum();
+                    spans.extend(val_spans);
+                    let fill = inner_width.saturating_sub(label_w + val_w);
+                    if fill > 0 {
+                        spans.push(Span::styled(" ".repeat(fill), Style::default().bg(bg)));
+                    }
+                } else {
+                    let indent = format!(" {}", " ".repeat(label_width + 1));
+                    spans.push(Span::styled(indent.clone(), Style::default().bg(bg)));
+                    let mut val_spans = inline_text_spans(&value, text());
+                    for s in &mut val_spans {
+                        s.style = s.style.bg(bg);
+                    }
+                    let val_w: usize = val_spans.iter().map(|s| display_width(&s.content)).sum();
+                    spans.extend(val_spans);
+                    let fill = inner_width.saturating_sub(display_width(&indent) + val_w);
+                    if fill > 0 {
+                        spans.push(Span::styled(" ".repeat(fill), Style::default().bg(bg)));
+                    }
+                }
+                let _ = body_style;
+                let _ = body;
+                spans.push(Span::styled("│".to_string(), border));
+                lines.push(Line::from(spans).style(Style::default().bg(bg)));
             }
         }
     }
 
+    lines.push(hbar(lead_marker, '└', '┘'));
     lines
+}
+
+fn truncate_display(text: &str, max_cols: usize) -> String {
+    let mut out = String::new();
+    let mut cols = 0usize;
+    for ch in text.chars() {
+        let w = display_width(&ch.to_string()).max(1);
+        if cols + w > max_cols {
+            break;
+        }
+        out.push(ch);
+        cols += w;
+    }
+    out
 }
 
 fn table_row_spans(cells: &[String], widths: &[usize]) -> Vec<Span<'static>> {
@@ -1922,6 +2142,76 @@ fn code_panel_prefix_spans() -> Vec<Span<'static>> {
 mod tests {
     use super::*;
     use crate::state::{ChatImage, ChatMessage, ChatRole};
+    use serde_json::json;
+
+    #[test]
+    fn running_bash_renders_pulsing_header_with_elapsed() {
+        let mut running = HashMap::new();
+        running.insert(
+            "call-1".into(),
+            ToolInvocation {
+                id: "call-1".into(),
+                tool_name: "bash".into(),
+                input: json!({ "command": "cargo test -p navi-core" }),
+            },
+        );
+
+        let output = build_chat_render_for_messages(
+            &[],
+            80,
+            false,
+            false,
+            0,
+            &HashSet::new(),
+            &HashSet::new(),
+            &running,
+            &HashMap::new(),
+            &mut HashMap::new(),
+            Some(3_200), // 10 pulse frames
+        );
+
+        let joined: String = output
+            .lines
+            .iter()
+            .flat_map(|l| l.spans.iter().map(|s| s.content.as_ref()))
+            .collect::<Vec<_>>()
+            .join("");
+        assert!(
+            joined.contains("Run") && joined.contains("cargo test"),
+            "expected running bash summary, got: {joined}"
+        );
+        assert!(
+            joined.contains("◆") || joined.contains("◇"),
+            "expected pulse diamond, got: {joined}"
+        );
+        assert!(joined.contains("3s") || joined.contains("3200"), "expected elapsed: {joined}");
+    }
+
+    #[test]
+    fn background_running_result_uses_running_diamond() {
+        let inv = ToolInvocation {
+            id: "bg-1".into(),
+            tool_name: "bash".into(),
+            input: json!({ "command": "sleep 30", "background": true }),
+        };
+        let result = ToolResult {
+            invocation_id: "bg-1".into(),
+            ok: true,
+            output: json!({
+                "background": true,
+                "status": "running",
+                "elapsed_ms": 1500,
+                "stdout": "…",
+            }),
+        };
+        let line = render_compact_tool_line_with_width(&inv, &result, 80, Some(1500));
+        let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+        assert!(
+            text.starts_with('◆') || text.starts_with('◇'),
+            "background running should pulse, got: {text}"
+        );
+        assert!(text.contains("Run") || text.contains("sleep"), "{text}");
+    }
 
     #[test]
     fn user_images_render_as_input_style_tags() {
@@ -2088,10 +2378,28 @@ mod tests {
                 .iter()
                 .any(|line| { line.spans.iter().any(|span| span.content.contains('│')) })
         );
+        // Full Grok box: top/header/bottom junctions.
+        assert!(
+            lines.iter().any(|line| {
+                line.spans
+                    .iter()
+                    .any(|span| span.content.contains('┌') || span.content.contains('┬'))
+            }),
+            "expected top box border"
+        );
         assert!(
             lines
                 .iter()
-                .any(|line| { line.spans.iter().any(|span| span.content.contains('┼')) })
+                .any(|line| { line.spans.iter().any(|span| span.content.contains('┼')) }),
+            "expected header rule with ┼"
+        );
+        assert!(
+            lines.iter().any(|line| {
+                line.spans
+                    .iter()
+                    .any(|span| span.content.contains('└') || span.content.contains('┴'))
+            }),
+            "expected bottom box border"
         );
         // Content is capped at 140; gutter (MD_BLOCK_H_PAD) sits outside that budget.
         let max_line = 140 + MD_BLOCK_H_PAD;
@@ -2195,8 +2503,42 @@ mod tests {
             first.starts_with(&" ".repeat(MD_BLOCK_H_PAD)),
             "expected {MD_BLOCK_H_PAD}-space gutter, got {first:?}"
         );
+        // Gutter pad then box — never a bare quote-bar at column 0.
         assert!(!first.starts_with('│'));
         assert!(!first.starts_with('┃'));
+        assert!(
+            first.contains('┌'),
+            "Grok table should open with top border, got {first:?}"
+        );
+    }
+
+    #[test]
+    fn grok_style_table_has_full_box_frame() {
+        let markdown = "| Área | Fix |\n| --- | --- |\n| Chat | running tools |\n| Cache | pulse frame |";
+        let lines = render_markdown_lines(markdown, 80, text(), text(), false);
+        let rendered: Vec<String> = lines
+            .iter()
+            .map(|line| {
+                line.spans
+                    .iter()
+                    .map(|s| s.content.as_ref())
+                    .collect::<String>()
+            })
+            .collect();
+        let joined = rendered.join("\n");
+        assert!(joined.contains('┌') && joined.contains('┐'), "{joined}");
+        assert!(joined.contains('├') && joined.contains('┤'), "{joined}");
+        assert!(joined.contains('└') && joined.contains('┘'), "{joined}");
+        assert!(joined.contains("Área") && joined.contains("Chat"), "{joined}");
+        // Column separators present on body rows.
+        assert!(
+            rendered
+                .iter()
+                .filter(|l| l.contains('│'))
+                .count()
+                >= 2,
+            "{joined}"
+        );
     }
 }
 
