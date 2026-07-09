@@ -51,5 +51,9 @@ version = "0.11"
 [dependencies.tokenizers]
 version = "0.23"
 
+# rustls only — no openssl/native-tls so we can ship portable musl Linux binaries
+# that run on Alpine, older glibc distros, and minimal containers.
 [dependencies.hf-hub]
 version = "0.5"
+default-features = false
+features = ["tokio", "ureq", "rustls-tls"]

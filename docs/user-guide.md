@@ -20,7 +20,22 @@ irm https://raw.githubusercontent.com/navi-ai-org/navi/main/scripts/install.ps1 
 
 Pin a release: `sh -s -- --version 0.1.2` (or set `NAVI_VERSION`).
 
+### Containers
+
+Linux release binaries are **musl**-built (Alpine) and run on Alpine, Debian, Ubuntu,
+Amazon Linux, Rocky/RHEL-class images, and distroless bases — useful for agent sidecars
+and CI.
+
+```dockerfile
+FROM alpine:3.20
+RUN apk add --no-cache ca-certificates curl tar
+RUN curl -fsSL https://raw.githubusercontent.com/navi-ai-org/navi/main/scripts/install.sh | sh \
+ && mv /root/.local/bin/navi /usr/local/bin/navi
+ENTRYPOINT ["navi"]
+```
+
 ### From source
+
 
 ```bash
 git clone https://github.com/navi-ai-org/navi.git

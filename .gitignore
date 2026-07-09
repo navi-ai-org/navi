@@ -16,3 +16,7 @@ mutants.out.old/
 /scratch.rs
 /test.rs
 /test_size_for.rs
+
+# local musl experiment caches
+.cargo-musl-cache/
+target/musl-portable/
