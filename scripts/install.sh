@@ -170,10 +170,7 @@ verify_sha256() {
     exit 1
   fi
 
-  # Hex-only checksum.
-  case "$expected" in
-    *[!0-9a-fA-F]*|????????????*) ;;
-  esac
+  # Hex-only 64-char checksum.
   if ! printf '%s' "$expected" | grep -Eq '^[0-9a-fA-F]{64}$'; then
     error "Malformed checksum for ${archive_name}: ${expected}"
     exit 1
