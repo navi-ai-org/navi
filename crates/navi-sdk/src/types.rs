@@ -129,7 +129,7 @@ pub struct NaviSkillInfo {
     /// True when the skill lives under user or project skill dirs (editable).
     #[serde(default)]
     pub editable: bool,
-    /// `"user"` | `"project"` | `"builtin"` | `"file"` for UI placement.
+    /// `"user"` | `"project"` | `"builtin"` for UI placement.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scope: Option<String>,
     /// Tools available while this skill is active (empty = no lock from this skill).
@@ -137,7 +137,7 @@ pub struct NaviSkillInfo {
     pub allow_tools: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub deny_tools: Vec<String>,
-    /// `"builtin"` | `"store"` | `"file"`.
+    /// `"builtin"` | `"store"`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source: Option<String>,
 }
