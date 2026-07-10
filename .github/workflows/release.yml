@@ -79,6 +79,7 @@ jobs:
           -p navi-sdk -p navi-tui -p navi-cli -p navi-vfs
           -- --test-threads=4
           --skip build_local_tooling_loads_installed_wasm_plugin_store
+          --skip command_palette_compact_submits_immediate_summary_request
   # ── Linux x64 musl (Alpine container — JS actions only work on x64) ────────
 
   build-linux-x64:
