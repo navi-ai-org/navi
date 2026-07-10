@@ -772,13 +772,54 @@ impl Drop for SudoAskpassEnv {
 }
 
 fn command_likely_needs_sudo(command: &str) -> bool {
-    // Conservative: look for a sudo token that is not part of another word.
-    for token in command.split(|c: char| c.is_whitespace() || "|&;<>()$`\"'".contains(c)) {
-        if token == "sudo" || token == "/usr/bin/sudo" || token == "/bin/sudo" {
-            return true;
+    // Match `sudo` only as a *command* word (start of a simple command or after
+    // shell control operators), not as a plain argument (`echo sudo is cool`).
+    let mut at_command_position = true;
+    for raw in command.split_whitespace() {
+        let token = raw.trim_matches(|c: char| "\"'`".contains(c));
+        if token.is_empty() {
+            continue;
+        }
+        if at_command_position {
+            // `env VAR=value sudo …` still leaves us in command position.
+            if token.contains('=') && !token.starts_with('-') && !token.starts_with("sudo") {
+                continue;
+            }
+            if is_sudo_token(token) {
+                return true;
+            }
+            at_command_position = false;
+        }
+        // Next token is a new command after a shell operator.
+        if is_shell_command_separator(token) {
+            at_command_position = true;
+            // `cmd;sudo` or `cmd|sudo` glued without spaces.
+            if let Some(rest) = token
+                .find(|c| matches!(c, '|' | ';' | '&'))
+                .map(|i| &token[i + 1..])
+            {
+                let rest = rest.trim_start_matches(['|', '&', ';']);
+                if is_sudo_token(rest) {
+                    return true;
+                }
+            }
         }
     }
     false
+}
+
+fn is_sudo_token(token: &str) -> bool {
+    matches!(token, "sudo" | "/usr/bin/sudo" | "/bin/sudo") || token.ends_with("/sudo")
+}
+
+fn is_shell_command_separator(token: &str) -> bool {
+    matches!(
+        token,
+        "|" | "||" | "&&" | ";" | "&" | "(" | ")" | "{" | "}" | "then" | "do" | "else" | "elif"
+    ) || token.ends_with('|')
+        || token.ends_with(';')
+        || token.ends_with("&&")
+        || token.ends_with("||")
 }
 
 fn summarize_command(command: &str) -> String {
