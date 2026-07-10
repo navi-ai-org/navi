@@ -120,26 +120,48 @@ Sources:
 4. **Adaptive thinking** — large `AssistantThinkingDelta` volume even when verifiers only need a fix.
 5. **Gross token sum** — Navi metrics sum every step’s full `input_tokens` (incl. cache-read volume in the input field). Still real API accounting, but multi-step loops amplify totals.
 
-### Progressive fixes shipped in `bench_cmd`
+### Corrected philosophy (do not ban plan/goal)
 
-| Phase | Change | Effect |
-|-------|--------|--------|
-| A | Auto-approve plan/questions (unblock hangs) | Quality recovered |
-| B | Deny `plan`/`set_goal`/meta tools; YOLO; tighter observations; `thinking=Low`; efficiency preamble | **−26% tokens** (1.80M→1.34M), tools 93→66, still 8/8 |
-| C | Also deny `fs_browser`/`repo_explore`/`ast_search` for bench | Head-to-head vs OC: **Navi 1.50M / 8/8 vs OC 1.72M / 7/8** |
+Aggressive “never use plan/goal” prompts and tool denylists are the **wrong**
+token shortcut: they can skip decomposition on multi-file work and hurt quality.
 
-### Round E — head-to-head after efficiency (`hard-vs-oc-v2.json`)
+| Goal | Good approach | Bad approach |
+|------|---------------|--------------|
+| Headless bench | Auto-approve plan review (done) | Ban plan in prompt/deny_tools |
+| Tokens | Stable prefix cache, compact observations, fewer re-reads | “Never plan” |
+| Product (TUI) | plan/goal when task is large/ambiguous | Force plan always or never |
+| Quality | plan/goal as scope tools, not default | Punitive anti-plan prompt |
+
+**Soft calibration** (product system prompt + light bench preamble):
+
+- Use plan / goal when multi-step, ambiguous, or multi-module.
+- Small localized bugs → inspect → edit → verify.
+- Do not open plan mode only to organize a one-line fix.
+
+### Progressive fixes (revised)
+
+| Phase | Change | Keep? |
+|-------|--------|-------|
+| A | Auto-approve plan/questions in headless bench | **Yes** — harness correctness |
+| B–C | Deny plan/goal/fs_browser + “never plan” preamble | **Reverted** — quality risk |
+| D | Soft when-to-plan guidance (system + bench preamble) | **Yes** |
+| E | YOLO headless; mild observation caps; tool-manifest `Never` for native providers | **Yes** — context engineering |
+
+### Round E — head-to-head after aggressive efficiency (`hard-vs-oc-v2.json`)
 
 | Agent | Pass | Tools | Tok Σ | Tok/success |
 |-------|-----:|------:|------:|------------:|
 | **navi** | **8/8** | **71** | **1 496 722** | ~187 k |
 | opencode | 7/8 | 92 | 1 716 876 | ~245 k |
 
-Navi wins this run on **pass rate and total tokens**. Remaining variance: some cases still higher for Navi (interval-merge, expr-lang) when the model takes a long path — not a harness regression.
+That run used the **aggressive** denylist (historical). Numbers show token
+headroom exists, but the lasting strategy is context engineering + soft
+calibration, not tool prohibition.
 
-### Further levers (not yet)
+### Further levers (right path)
 
-- Product: default “repair” tool policy that de-prioritizes plan on small repos
-- Prompt: shorter system prompt / tool list for `profile=small`
-- Metrics: report billable = input − cache_read alongside gross
-- Model: `ThinkingConfig::Off` for free-flash benches if quality holds
+1. Stable tool-definition / system prefix for provider prompt cache
+2. Compact tool observations (already present; tune carefully)
+3. Avoid re-read of files still in context (agent habit + optional harness hints)
+4. Headless plan: auto-approve only (never disable plan)
+5. Metrics: report billable = input − cache_read alongside gross totals
