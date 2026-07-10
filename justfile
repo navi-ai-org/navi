@@ -90,6 +90,31 @@ bench suite="benchmarks/suites" output="benchmarks/runs/benchmark-latest.json" p
 bench-smoke output="benchmarks/runs/smoke-latest.json" provider="opencode" model="deepseek-v4-flash-free":
     @just bench benchmarks/suites/smoke "{{output}}" "{{provider}}" "{{model}}"
 
+# ─── Multi-agent tool-quality comparison ─────────────────────────────────────
+# Agents: navi · opencode · claude-code (cc-proxy) · optional grok (manual).
+# Baseline model: DeepSeek V4 Flash free (OpenCode Zen) / flash via Command Code.
+
+# Full multi-agent tool-quality suite (token-consuming).
+bench-tool-quality out="benchmarks/runs/agent-compare/latest.json" agents="navi,opencode,claude-code":
+    mkdir -p "$(dirname "{{out}}")"
+    python3 benchmarks/scripts/run_agent_comparison.py \
+      --suite benchmarks/suites/tool-quality \
+      --agents "{{agents}}" \
+      --out "{{out}}"
+
+# Fast iteration: navi only, first two cases.
+bench-tool-quality-smoke out="benchmarks/runs/agent-compare/smoke.json":
+    mkdir -p "$(dirname "{{out}}")"
+    python3 benchmarks/scripts/run_agent_comparison.py \
+      --suite benchmarks/suites/tool-quality \
+      --agents navi \
+      --cases tq-smoke-fix,tq-tool-select-edit \
+      --out "{{out}}"
+
+# Navi-only full tool-quality suite via native bench runner.
+bench-tool-quality-navi output="benchmarks/runs/tool-quality-navi.json" provider="opencode" model="deepseek-v4-flash-free":
+    @just bench benchmarks/suites/tool-quality "{{output}}" "{{provider}}" "{{model}}"
+
 # Print the local benchmark report path.
 bench-index:
     node benchmarks/site/generate-runs-index.mjs

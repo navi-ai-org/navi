@@ -89,3 +89,31 @@ limit is kept in the trajectory, the turn is cancelled, and the case fails with 
 limit error.
 
 Use `--keep-workspaces` to inspect a failed run's temporary workspace.
+
+## Multi-agent tool-quality comparison
+
+Compare **navi**, **OpenCode**, and **Claude Code** (via **cc-proxy** so Claude
+Code can use DeepSeek V4 Flash) on the same fixtures. See
+[`suites/tool-quality/README.md`](suites/tool-quality/README.md).
+
+```bash
+# Full comparison (navi + opencode + claude-code)
+just bench-tool-quality
+
+# Navi-only smoke (2 cases)
+just bench-tool-quality-smoke
+
+# Navi-only full suite (native bench JSON)
+just bench-tool-quality-navi
+```
+
+Defaults:
+
+| Agent | Model |
+|-------|--------|
+| navi | `opencode` / `deepseek-v4-flash-free` |
+| opencode | `opencode/deepseek-v4-flash-free` |
+| claude-code | `deepseek/deepseek-v4-flash` through `http://localhost:19429` (cc-proxy) |
+
+Score weights success rate, failed-tool rate, tool efficiency, and wall time.
+Results: `benchmarks/runs/agent-compare/latest.json` + `.md`.

@@ -1,0 +1,30 @@
+version = 1
+id = "tq-config-precedence"
+title = "Tool quality: layered config precedence"
+category = "tool_quality"
+fixture = "benchmarks/fixtures/rust-config-precedence"
+task = """
+Fix layered runtime config precedence so all tests pass.
+
+Careful tool use: understand defaults → global → project → env order
+before editing. Keep semantics correct; don't weaken tests.
+"""
+timeout_ms = 600000
+max_turns = 18
+max_tool_calls = 90
+tags = ["tool-quality", "hard", "precedence"]
+
+[metadata]
+difficulty = "hard"
+focus = "careful semantics + verification loops"
+eval_axis = "careful_edits"
+
+[agent]
+mode = "parity"
+profile = "medium"
+
+[[verifiers]]
+verifier_type = "command"
+command = "cargo test --quiet"
+timeout_ms = 120000
+required = true

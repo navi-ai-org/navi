@@ -1,0 +1,34 @@
+version = 1
+id = "tq-smoke-fix"
+title = "Tool quality: fix a simple failing Rust test"
+category = "tool_quality"
+fixture = "benchmarks/fixtures/smoke-rust-bug"
+task = """
+You are evaluating tool use quality.
+
+Fix the failing Rust unit test in this crate. Prefer:
+1) read the failing test / source
+2) make a minimal edit
+3) run the test to confirm
+
+Do not rewrite unrelated files. Keep the public API.
+"""
+max_turns = 8
+max_tool_calls = 40
+timeout_ms = 600000
+tags = ["tool-quality", "smoke", "bug-fix", "rust"]
+
+[metadata]
+difficulty = "easy"
+focus = "minimal tools: read, edit, test"
+eval_axis = "tool_efficiency"
+
+[agent]
+mode = "parity"
+profile = "medium"
+
+[[verifiers]]
+verifier_type = "command"
+command = "cargo test --quiet"
+timeout_ms = 120000
+required = true
