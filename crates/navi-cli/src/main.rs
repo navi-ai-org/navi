@@ -275,8 +275,10 @@ pub enum MemoryAction {
 
 #[derive(Debug, Subcommand)]
 pub enum VoiceAction {
-    /// Show voice config and install status
+    /// Show voice config and install status (local + remote)
     Status,
+    /// List remote transcription providers from the registry catalog
+    Providers,
     /// Download a local ASR engine package into {data_dir}/voice/models/
     Init {
         /// Engine id: nemotron_streaming (default) | distil_whisper (later)
@@ -286,11 +288,11 @@ pub enum VoiceAction {
         #[arg(long)]
         force: bool,
     },
-    /// Check recorders, model files, and checksums
+    /// Check recorders, model files, checksums, or remote credentials
     Doctor,
-    /// Transcribe a WAV file with the installed Nemotron ONNX engine
+    /// Transcribe a WAV file (local ONNX or remote provider from [voice])
     Transcribe {
-        /// Path to a WAV file (any rate; resampled to 16 kHz mono)
+        /// Path to a WAV file (any rate; resampled to 16 kHz mono for local / Wispr Flow)
         path: String,
         /// Language prompt: auto | en-US | pt-BR | …
         #[arg(long, default_value = "auto")]
