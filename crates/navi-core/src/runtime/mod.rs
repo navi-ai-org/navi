@@ -926,9 +926,19 @@ impl AgentRuntime {
             }
             Err(err) => {
                 self.goal_extension.on_turn_error(&err.to_string());
+                // Coalesce streamed deltas into a durable ModelOutput so a mid-turn
+                // failure / crash does not erase what the model already produced.
+                self.flush_partial_model_output_from_events();
                 self.record_event(AgentEvent::Error {
                     message: err.to_string(),
                 });
+                // Best-effort persist immediately — Desktop/TUI also snapshot after.
+                if let Err(snap_err) = self.snapshot_session() {
+                    tracing::warn!(
+                        error = %snap_err,
+                        "failed to snapshot session after turn error"
+                    );
+                }
             }
         }
 
@@ -936,6 +946,48 @@ impl AgentRuntime {
             tracing::info!(chars = text.len(), "agent task completed");
             ModelResponse { text }
         })
+    }
+
+    /// If the current turn streamed text/thinking but never emitted `ModelOutput`
+    /// (e.g. provider error mid-stream), write a `ModelOutput` from the deltas so
+    /// session JSON reload keeps the partial answer.
+    fn flush_partial_model_output_from_events(&mut self) {
+        let events = self.session.events();
+        let mut last_user = None;
+        for (i, event) in events.iter().enumerate() {
+            if matches!(event, AgentEvent::UserTaskSubmitted { .. }) {
+                last_user = Some(i);
+            }
+        }
+        let start = last_user.map(|i| i + 1).unwrap_or(0);
+        let mut text = String::new();
+        let mut thinking = String::new();
+        let mut saw_output = false;
+        for event in &events[start..] {
+            match event {
+                AgentEvent::ModelOutput { .. } => {
+                    saw_output = true;
+                    break;
+                }
+                AgentEvent::ModelDelta { text: delta } => text.push_str(delta),
+                AgentEvent::ModelThinkingDelta { text: delta } => thinking.push_str(delta),
+                _ => {}
+            }
+        }
+        if saw_output {
+            return;
+        }
+        if text.is_empty() && thinking.is_empty() {
+            return;
+        }
+        self.record_event(AgentEvent::ModelOutput {
+            text,
+            thinking: if thinking.is_empty() {
+                None
+            } else {
+                Some(thinking)
+            },
+        });
     }
 
     pub async fn submit_task(&mut self, task: String) -> Result<ModelResponse> {
