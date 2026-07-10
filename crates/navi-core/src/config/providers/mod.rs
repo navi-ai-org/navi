@@ -1,8 +1,7 @@
 mod opencode;
 mod registry;
 
-use std::cell::RefCell;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 use crate::config::types::{
     ModelOption, ModelTaskSize, NaviConfig, ProviderConfig, ProviderKind, ProviderModelConfig,
@@ -14,18 +13,32 @@ use crate::registry::RegistryStore;
 pub use opencode::{is_free_model_name, model_can_run_publicly, provider_request_model_name};
 pub use registry::default_request_options_for;
 
-// ── Thread-local registry store for zero-API-change catalog integration ──
+// ── Process-global registry store for catalog integration ────────────
+// Must be process-global (not thread-local): N-API / Electron invoke engine
+// methods across Tokio worker threads and the Node main thread. A TLS store
+// made Sync All look fine in-process (in-memory config) while restarts fell
+// back to the embedded snapshot on threads that never called set_registry_store.
 
-thread_local! {
-    static REGISTRY_STORE: RefCell<Option<Arc<RegistryStore>>> = const { RefCell::new(None) };
-}
+static REGISTRY_STORE: RwLock<Option<Arc<RegistryStore>>> = RwLock::new(None);
 
-/// Sets the thread-local registry store used by [`provider_catalog`].
+/// Sets the process-global registry store used by [`provider_catalog`].
 /// Typically called once during engine initialization.
 pub fn set_registry_store(store: Arc<RegistryStore>) {
-    REGISTRY_STORE.with(|cell| {
-        *cell.borrow_mut() = Some(store);
-    });
+    match REGISTRY_STORE.write() {
+        Ok(mut guard) => *guard = Some(store),
+        Err(poisoned) => *poisoned.into_inner() = Some(store),
+    }
+}
+
+/// Returns the process-global registry store when the engine has initialized it.
+///
+/// Used by the transcription catalog (and similar) so STT providers can share
+/// the same SQLite cache + remote sync path as LLM providers.
+pub fn registry_store_for_catalog() -> Option<Arc<RegistryStore>> {
+    match REGISTRY_STORE.read() {
+        Ok(guard) => guard.clone(),
+        Err(poisoned) => poisoned.into_inner().clone(),
+    }
 }
 
 /// Returns the full provider catalog: SQLite registry cache merged with any
@@ -39,21 +52,23 @@ pub fn provider_catalog(config: &NaviConfig) -> Vec<ProviderConfig> {
 }
 
 pub(crate) fn base_provider_catalog() -> Vec<ProviderConfig> {
-    REGISTRY_STORE.with(|cell| {
-        cell.borrow().as_ref().map_or_else(
-            || {
-                tracing::debug!("registry store not set, falling back to embedded snapshot");
+    let store = match REGISTRY_STORE.read() {
+        Ok(guard) => guard.clone(),
+        Err(poisoned) => poisoned.into_inner().clone(),
+    };
+    match store {
+        Some(store) => match crate::registry::load_registry(&store) {
+            loaded if !loaded.providers.is_empty() => loaded.providers,
+            _ => {
+                tracing::debug!("loaded registry is empty, falling back to embedded snapshot");
                 load_embedded_or_minimal_fallback()
-            },
-            |store| match crate::registry::load_registry(store) {
-                loaded if !loaded.providers.is_empty() => loaded.providers,
-                _ => {
-                    tracing::debug!("loaded registry is empty, falling back to embedded snapshot");
-                    load_embedded_or_minimal_fallback()
-                }
-            },
-        )
-    })
+            }
+        },
+        None => {
+            tracing::debug!("registry store not set, falling back to embedded snapshot");
+            load_embedded_or_minimal_fallback()
+        }
+    }
 }
 
 fn load_embedded_or_minimal_fallback() -> Vec<ProviderConfig> {

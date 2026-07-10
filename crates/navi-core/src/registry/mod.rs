@@ -35,7 +35,8 @@ pub use types::{
 };
 pub use update::{
     LoadedRegistry, RegistryFetcherTrait, RegistrySource, apply_registry_update_atomically,
-    check_registry_manifest, download_registry_updates, load_cached_registry,
+    apply_registry_update_atomically_with_transcription, check_registry_manifest,
+    download_registry_updates, download_transcription_updates, load_cached_registry,
     load_embedded_registry, load_registry, registry_check_interval_with_jitter,
     run_registry_update_check, save_registry_metadata, should_check_registry_update,
     validate_registry_hashes, validate_registry_schema,
