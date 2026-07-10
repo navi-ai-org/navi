@@ -6,9 +6,11 @@
 
 mod engine;
 mod event_stream;
+mod surface;
 mod types;
 
 // Re-export the C ABI surface
 pub use engine::*;
 pub use event_stream::*;
+pub use surface::*;
 pub use types::*;
