@@ -206,7 +206,12 @@ pub async fn sync_registry(
     for (provider_id, entry) in &manifest.providers {
         keep_ids.insert(provider_id.as_str());
         let cached_sha = store.provider_sha256(provider_id)?;
-        if force || cached_sha.as_deref() != Some(&entry.sha256) {
+        // Providers filled by live API sync keep their model lists. Remote
+        // catalog refresh still runs on `force` and uses union-merge so new
+        // metadata can land without wiping API-discovered models.
+        let is_local_api_sync =
+            cached_sha.as_deref() == Some(crate::registry::LOCAL_API_SYNC_SHA);
+        if force || (!is_local_api_sync && cached_sha.as_deref() != Some(&entry.sha256)) {
             to_fetch.push(provider_id.as_str());
         }
     }
@@ -230,7 +235,8 @@ pub async fn sync_registry(
     for provider_id in &to_fetch {
         let provider = fetcher.fetch_provider(provider_id, &manifest).await?;
         let sha = &manifest.providers[*provider_id].sha256;
-        store.upsert_provider_with_sha256(&provider, Some(sha))?;
+        // Union-merge so remote catalog refresh cannot wipe API-synced models.
+        store.upsert_provider_union_models(&provider, Some(sha))?;
         updated += 1;
     }
 

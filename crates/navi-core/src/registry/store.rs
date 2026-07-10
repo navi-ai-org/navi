@@ -13,6 +13,12 @@ use super::types::{
     RegistryModel, RegistryProvider,
 };
 
+/// Marker written to `providers.sha256` when models were populated from a
+/// live provider API (`sync models`). Embedded/remote catalog updates must
+/// union-merge against these rows instead of treating a missing/different
+/// hash as permission to replace the list.
+pub const LOCAL_API_SYNC_SHA: &str = "local-api-sync";
+
 /// SQLite-backed registry store.
 ///
 /// Thread-safe via internal `Mutex<Connection>` — registry operations are
@@ -317,6 +323,39 @@ impl RegistryStore {
     /// Upserts a provider and its models from a [`RegistryProvider`].
     pub fn upsert_provider(&self, provider: &RegistryProvider) -> Result<()> {
         self.upsert_provider_with_sha256(provider, None)
+    }
+
+    /// Upserts a provider while **preserving** any local models that are not in
+    /// `provider.models`.
+    ///
+    /// Used by embedded/remote registry updates so a smaller catalog snapshot
+    /// cannot wipe models discovered via `sync models` / provider `/models`.
+    /// Incoming models win on name conflicts (refresh metadata); local-only
+    /// names are kept.
+    pub fn upsert_provider_union_models(
+        &self,
+        provider: &RegistryProvider,
+        sha256: Option<&str>,
+    ) -> Result<()> {
+        let existing = self.load_provider_models(&provider.id).unwrap_or_default();
+        if existing.is_empty() {
+            return self.upsert_provider_with_sha256(provider, sha256);
+        }
+
+        let mut models = provider.models.clone();
+        let incoming: std::collections::HashSet<String> = models
+            .iter()
+            .map(|m| m.name.to_ascii_lowercase())
+            .collect();
+        for (name, model) in existing {
+            if !incoming.contains(&name.to_ascii_lowercase()) {
+                models.push(model);
+            }
+        }
+
+        let mut merged = provider.clone();
+        merged.models = models;
+        self.upsert_provider_with_sha256(&merged, sha256)
     }
 
     /// Upserts a provider with its SHA-256 hash for diff-based sync.
@@ -1273,6 +1312,51 @@ mod tests {
         assert_eq!(loaded[0].models[0].context_window_tokens, Some(500_000));
         assert_eq!(loaded[0].models[0].max_output_tokens, Some(16_384));
         assert_eq!(loaded[0].models[0].recommended_temperature, Some(0.8));
+    }
+
+    #[test]
+    fn upsert_union_preserves_api_synced_extras() {
+        let store = RegistryStore::open_memory().expect("open");
+        let mut provider = sample_provider();
+        // Simulate API sync with an extra model beyond the catalog snapshot.
+        provider.models.push(RegistryModel {
+            name: "api-only-model".to_string(),
+            task_size: Some("large".to_string()),
+            context_window_tokens: Some(200_000),
+            max_output_tokens: None,
+            recommended_temperature: None,
+            supports_thinking: Some(true),
+            reasoning_levels: Vec::new(),
+            default_reasoning_effort: None,
+            supports_attachments: None,
+            supports_images: None,
+            supports_audio: None,
+            supports_video: None,
+            supports_documents: None,
+            attachments: Default::default(),
+            capabilities: Vec::new(),
+            pricing: None,
+        });
+        store
+            .upsert_provider_with_sha256(&provider, Some(LOCAL_API_SYNC_SHA))
+            .expect("api sync upsert");
+        assert_eq!(store.model_count().unwrap(), 3);
+        assert_eq!(
+            store.provider_sha256("test-provider").unwrap().as_deref(),
+            Some(LOCAL_API_SYNC_SHA)
+        );
+
+        // Smaller catalog snapshot must not wipe the API-only model.
+        let catalog = sample_provider(); // 2 models
+        store
+            .upsert_provider_union_models(&catalog, Some("catalog-sha"))
+            .expect("catalog union");
+
+        let loaded = store.load_provider_models("test-provider").expect("load");
+        assert_eq!(loaded.len(), 3, "union must keep api-only-model");
+        assert!(loaded.contains_key("api-only-model"));
+        assert!(loaded.contains_key("test-model-large"));
+        assert!(loaded.contains_key("test-model-small"));
     }
 
     #[test]
