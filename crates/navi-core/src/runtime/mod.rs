@@ -856,11 +856,13 @@ impl AgentRuntime {
         });
 
         let (response_tx, response_rx) = tokio::sync::oneshot::channel();
-        if let Err(e) = submission_tx.send(crate::session::Submission {
-            task,
-            content_parts,
-            response_tx,
-        }) {
+        if let Err(e) = submission_tx.send(crate::session::SessionCommand::Turn(
+            crate::session::Submission {
+                task,
+                content_parts,
+                response_tx,
+            },
+        )) {
             return Err(anyhow::anyhow!("failed to send submission: {}", e));
         }
 
@@ -943,6 +945,61 @@ impl AgentRuntime {
     /// Sends a plain text user turn (no images).
     pub async fn send_turn(&mut self, task: String) -> Result<ModelResponse> {
         self.send_turn_with_parts(task, Vec::new(), None).await
+    }
+
+    /// Rewind live conversation history for an edited past user message.
+    ///
+    /// Keeps the first `keep_user_turns` user turns (and their assistant/tool
+    /// follow-ups), drops everything after, and truncates recorded session
+    /// events the same way. Caller should then `send_turn` with the new text.
+    ///
+    /// `keep_user_turns = 0` keeps only system/developer preamble.
+    pub async fn rewind_to_user_turns(&mut self, keep_user_turns: usize) -> Result<usize> {
+        if !self.session.started() || self.session.runtime().is_none() {
+            // Nothing live yet — just reset seed messages/events for a clean start.
+            self.session
+                .truncate_events_to_user_turns(keep_user_turns);
+            // Seed messages for next start_session: drop user turns past keep.
+            crate::session::truncate_messages_to_user_turns(
+                &mut self.initial_messages,
+                keep_user_turns,
+            );
+            return Ok(self.initial_messages.len());
+        }
+
+        let submission_tx = self
+            .session
+            .runtime()
+            .ok_or_else(|| anyhow::anyhow!("session not started"))?
+            .submission_tx
+            .clone();
+
+        let (response_tx, response_rx) = tokio::sync::oneshot::channel();
+        if let Err(e) = submission_tx.send(crate::session::SessionCommand::TruncateToUserTurns {
+            keep_user_turns,
+            response_tx,
+        }) {
+            return Err(anyhow::anyhow!("failed to send rewind command: {}", e));
+        }
+
+        let remaining = response_rx
+            .await
+            .map_err(|_| anyhow::anyhow!("rewind cancelled or session loop exited"))??;
+
+        self.session
+            .truncate_events_to_user_turns(keep_user_turns);
+        // Keep initial_messages in sync if the session is later restarted.
+        crate::session::truncate_messages_to_user_turns(
+            &mut self.initial_messages,
+            keep_user_turns,
+        );
+
+        // Persist truncated history so reload does not resurrect dropped turns.
+        if let Err(err) = self.snapshot_session() {
+            tracing::warn!(error = %err, "failed to snapshot session after rewind");
+        }
+
+        Ok(remaining)
     }
 
     /// Creates a [`SessionSnapshot`] of the current session state for persistence.

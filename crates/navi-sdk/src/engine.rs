@@ -551,6 +551,26 @@ impl NaviEngine {
         Ok(())
     }
 
+    /// Rewind a live session so later turns are forgotten (edit-message support).
+    ///
+    /// Keeps the first `keep_user_turns` user turns and drops everything after.
+    /// The caller should then `send_turn` with the replacement user text.
+    /// Returns how many model messages remain in the live history.
+    pub async fn rewind_session(
+        &self,
+        session_id: &str,
+        keep_user_turns: usize,
+    ) -> Result<usize> {
+        let session = self.session(session_id)?;
+        // Cancel any in-flight turn so the session loop is free to process rewind.
+        session.turn_canceller.cancel();
+        let mut runtime = session.runtime.lock().await;
+        runtime
+            .rewind_to_user_turns(keep_user_turns)
+            .await
+            .map_err(NaviError::from)
+    }
+
     /// Returns the current agent mode (Default or Plan).
     pub fn agent_mode(&self, session_id: &str) -> Result<navi_core::plan_mode::AgentMode> {
         let session = self.session(session_id)?;

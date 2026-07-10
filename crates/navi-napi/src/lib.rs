@@ -380,6 +380,22 @@ impl NaviNapiEngine {
             .map_err(to_napi_error)
     }
 
+    /// Rewind live history for edit-message: keep the first `keepUserTurns`
+    /// user turns, drop everything after. Caller then sends the new text.
+    #[napi]
+    pub async fn rewind_session(
+        &self,
+        session_id: String,
+        keep_user_turns: u32,
+    ) -> Result<u32> {
+        let remaining = self
+            .inner
+            .rewind_session(&session_id, keep_user_turns as usize)
+            .await
+            .map_err(to_napi_error)?;
+        Ok(remaining as u32)
+    }
+
     #[napi]
     pub async fn resolve_approval(
         &self,

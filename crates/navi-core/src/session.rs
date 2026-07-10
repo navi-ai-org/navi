@@ -687,12 +687,50 @@ pub struct Submission {
     pub response_tx: tokio::sync::oneshot::Sender<Result<String>>,
 }
 
-/// A handle to a background session loop that accepts [`Submission`]s and
+/// Commands accepted by the session background loop.
+pub enum SessionCommand {
+    /// Run a full agent turn for a user message.
+    Turn(Submission),
+    /// Drop conversation history after `keep_user_turns` user messages
+    /// (and the assistant/tool messages belonging to those turns).
+    /// Used when the UI edits a past user message and re-sends.
+    TruncateToUserTurns {
+        keep_user_turns: usize,
+        response_tx: tokio::sync::oneshot::Sender<Result<usize>>,
+    },
+}
+
+/// Truncate model history so only the first `keep_user_turns` user turns remain.
+///
+/// System/developer preamble is always kept. The cut point is the start of the
+/// `(keep_user_turns + 1)`-th user message (0-based count of user messages kept).
+pub fn truncate_messages_to_user_turns(
+    messages: &mut Vec<crate::model::ModelMessage>,
+    keep_user_turns: usize,
+) {
+    use crate::model::ModelRole;
+    let mut seen_users = 0usize;
+    let mut cut: Option<usize> = None;
+    for (i, msg) in messages.iter().enumerate() {
+        if msg.role == ModelRole::User {
+            if seen_users == keep_user_turns {
+                cut = Some(i);
+                break;
+            }
+            seen_users += 1;
+        }
+    }
+    if let Some(i) = cut {
+        messages.truncate(i);
+    }
+}
+
+/// A handle to a background session loop that accepts [`SessionCommand`]s and
 /// runs them through the turn pipeline.
 #[derive(Clone)]
 pub struct SessionRuntime {
-    /// Channel for sending task submissions to the background loop.
-    pub submission_tx: tokio::sync::mpsc::UnboundedSender<Submission>,
+    /// Channel for sending commands to the background loop.
+    pub submission_tx: tokio::sync::mpsc::UnboundedSender<SessionCommand>,
 }
 
 impl SessionRuntime {
@@ -704,22 +742,33 @@ impl SessionRuntime {
         initial_messages: Vec<crate::model::ModelMessage>,
         _memory_injection: Option<String>,
     ) -> Self {
-        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<Submission>();
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<SessionCommand>();
 
         tokio::spawn(async move {
             let mut messages = initial_messages;
 
-            while let Some(submission) = rx.recv().await {
-                if submission.content_parts.is_empty() {
-                    messages.push(crate::model::ModelMessage::user(submission.task));
-                } else {
-                    messages.push(crate::model::ModelMessage::user_multimodal(
-                        submission.task,
-                        submission.content_parts,
-                    ));
+            while let Some(command) = rx.recv().await {
+                match command {
+                    SessionCommand::Turn(submission) => {
+                        if submission.content_parts.is_empty() {
+                            messages.push(crate::model::ModelMessage::user(submission.task));
+                        } else {
+                            messages.push(crate::model::ModelMessage::user_multimodal(
+                                submission.task,
+                                submission.content_parts,
+                            ));
+                        }
+                        let res = crate::turn::run_turn(&ctx, &mut messages, policy).await;
+                        let _ = submission.response_tx.send(res);
+                    }
+                    SessionCommand::TruncateToUserTurns {
+                        keep_user_turns,
+                        response_tx,
+                    } => {
+                        truncate_messages_to_user_turns(&mut messages, keep_user_turns);
+                        let _ = response_tx.send(Ok(messages.len()));
+                    }
                 }
-                let res = crate::turn::run_turn(&ctx, &mut messages, policy).await;
-                let _ = submission.response_tx.send(res);
             }
         });
 
@@ -950,16 +999,57 @@ mod tests {
         let runtime = SessionRuntime::spawn(ctx, policy, Vec::new(), None);
 
         let (tx, rx) = tokio::sync::oneshot::channel();
-        let submission = Submission {
+        let submission = SessionCommand::Turn(Submission {
             task: "hello world".to_string(),
             content_parts: Vec::new(),
             response_tx: tx,
-        };
+        });
 
         runtime.submission_tx.send(submission).unwrap();
 
         let result = rx.await.unwrap().unwrap();
         assert_eq!(result, "mock task response");
+    }
+
+    #[test]
+    fn truncate_messages_keeps_preamble_and_prior_turns() {
+        use crate::model::{ModelMessage, ModelRole};
+        let mut messages = vec![
+            ModelMessage::system("sys"),
+            ModelMessage::developer("dev"),
+            ModelMessage::user("u1"),
+            ModelMessage {
+                role: ModelRole::Assistant,
+                content: "a1".into(),
+                content_parts: vec![],
+                tool_call_id: None,
+                tool_name: None,
+                tool_calls: vec![],
+                created_at: None,
+                thinking_content: None,
+            },
+            ModelMessage::user("u2"),
+            ModelMessage {
+                role: ModelRole::Assistant,
+                content: "a2".into(),
+                content_parts: vec![],
+                tool_call_id: None,
+                tool_name: None,
+                tool_calls: vec![],
+                created_at: None,
+                thinking_content: None,
+            },
+            ModelMessage::user("u3"),
+        ];
+        truncate_messages_to_user_turns(&mut messages, 1);
+        assert_eq!(messages.len(), 4);
+        assert_eq!(messages[2].content, "u1");
+        assert_eq!(messages[3].content, "a1");
+
+        truncate_messages_to_user_turns(&mut messages, 0);
+        assert_eq!(messages.len(), 2);
+        assert!(matches!(messages[0].role, ModelRole::System));
+        assert!(matches!(messages[1].role, ModelRole::Developer));
     }
 
     #[test]

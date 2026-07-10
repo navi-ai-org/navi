@@ -48,6 +48,9 @@ pub trait EngineDriver: Send + Sync {
     /// Cancel the currently active turn for the given session, if any.
     async fn cancel_turn(&self, session_id: &str) -> Result<()>;
 
+    /// Rewind live history to the first `keep_user_turns` user turns (edit-message).
+    async fn rewind_session(&self, session_id: &str, keep_user_turns: usize) -> Result<usize>;
+
     /// Returns the current agent mode (Default or Plan).
     fn agent_mode(&self, session_id: &str) -> Result<navi_core::plan_mode::AgentMode>;
 
@@ -185,6 +188,10 @@ impl EngineDriver for crate::NaviEngine {
 
     async fn cancel_turn(&self, session_id: &str) -> Result<()> {
         crate::NaviEngine::cancel_turn(self, session_id).await
+    }
+
+    async fn rewind_session(&self, session_id: &str, keep_user_turns: usize) -> Result<usize> {
+        crate::NaviEngine::rewind_session(self, session_id, keep_user_turns).await
     }
 
     fn agent_mode(&self, session_id: &str) -> Result<navi_core::plan_mode::AgentMode> {
