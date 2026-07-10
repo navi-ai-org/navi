@@ -712,6 +712,18 @@ impl NaviNapiEngine {
             .map_err(to_napi_error)
     }
 
+    /// Device OAuth without a progress callback.
+    #[napi]
+    pub async fn start_device_oauth_simple(
+        &self,
+        provider_id: String,
+    ) -> Result<Option<String>> {
+        self.inner
+            .start_device_oauth_simple(&provider_id)
+            .await
+            .map_err(to_napi_error)
+    }
+
     // ── Usage ──────────────────────────────────────────────────────────
 
     #[napi]
@@ -785,6 +797,72 @@ impl NaviNapiEngine {
         self.inner
             .list_mcp_tools(&session_id)
             .map_err(to_napi_error)
+    }
+
+    /// Configured MCP servers from TOML (not live session connections).
+    #[napi]
+    pub fn list_mcp_config(&self) -> Result<JsonValue> {
+        serde_json::to_value(self.inner.list_mcp_config()).map_err(to_napi_error)
+    }
+
+    #[napi]
+    pub fn set_mcp_enabled(
+        &self,
+        enabled: bool,
+        save_target: Option<String>,
+    ) -> Result<JsonValue> {
+        let path = self
+            .inner
+            .set_mcp_enabled(enabled, parse_save_target(save_target.as_deref()))
+            .map_err(to_napi_error)?;
+        Ok(json!({ "savedTo": path.map(|p| p.display().to_string()) }))
+    }
+
+    /// Upsert MCP server. `server` is a full McpServerConfig JSON object.
+    #[napi]
+    pub fn upsert_mcp_server(
+        &self,
+        server: JsonValue,
+        save_target: Option<String>,
+    ) -> Result<JsonValue> {
+        let server: navi_core::McpServerConfig =
+            serde_json::from_value(server).map_err(to_napi_error)?;
+        let path = self
+            .inner
+            .upsert_mcp_server(server, parse_save_target(save_target.as_deref()))
+            .map_err(to_napi_error)?;
+        Ok(json!({ "savedTo": path.map(|p| p.display().to_string()) }))
+    }
+
+    #[napi]
+    pub fn remove_mcp_server(
+        &self,
+        server_id: String,
+        save_target: Option<String>,
+    ) -> Result<JsonValue> {
+        let (removed, path) = self
+            .inner
+            .remove_mcp_server(&server_id, parse_save_target(save_target.as_deref()))
+            .map_err(to_napi_error)?;
+        Ok(json!({
+            "removed": removed,
+            "savedTo": path.map(|p| p.display().to_string()),
+        }))
+    }
+
+    /// Replace the entire MCP config block.
+    #[napi]
+    pub fn set_mcp_config(
+        &self,
+        mcp: JsonValue,
+        save_target: Option<String>,
+    ) -> Result<JsonValue> {
+        let mcp: navi_core::McpConfig = serde_json::from_value(mcp).map_err(to_napi_error)?;
+        let path = self
+            .inner
+            .set_mcp_config(mcp, parse_save_target(save_target.as_deref()))
+            .map_err(to_napi_error)?;
+        Ok(json!({ "savedTo": path.map(|p| p.display().to_string()) }))
     }
 
     // ── Model Selection ────────────────────────────────────────────────
@@ -1038,6 +1116,18 @@ impl NaviNapiEngine {
     }
 
     #[napi]
+    pub async fn rename_saved_session_async(
+        &self,
+        session_id: String,
+        title: String,
+    ) -> Result<bool> {
+        self.inner
+            .rename_saved_session_async(&session_id, &title)
+            .await
+            .map_err(to_napi_error)
+    }
+
+    #[napi]
     pub async fn list_saved_sessions_async(&self) -> Result<JsonValue> {
         let sessions = self
             .inner
@@ -1230,12 +1320,39 @@ impl NaviNapiEngine {
         self.inner.memory_checkpoint().await.map_err(to_napi_error)
     }
 
+    #[napi]
+    pub fn memory_rebuild_preview(&self) -> Result<String> {
+        self.inner.memory_rebuild_preview().map_err(to_napi_error)
+    }
+
     // ── Voice / dictation ────────────────────────────────────────────────
 
     #[napi]
     pub fn voice_status(&self) -> Result<JsonValue> {
         let status = self.inner.voice_status().map_err(to_napi_error)?;
         serde_json::to_value(status).map_err(to_napi_error)
+    }
+
+    /// Registry transcription providers (OpenAI / Groq / Wispr Flow, …).
+    #[napi]
+    pub fn voice_transcription_providers(&self) -> Result<JsonValue> {
+        serde_json::to_value(self.inner.voice_transcription_providers()).map_err(to_napi_error)
+    }
+
+    /// Partial update of `[voice]` settings. `update` keys are camelCase optional fields.
+    #[napi]
+    pub fn set_voice_config(
+        &self,
+        update: JsonValue,
+        save_target: Option<String>,
+    ) -> Result<JsonValue> {
+        let update: navi_sdk::VoiceConfigUpdate =
+            serde_json::from_value(update).map_err(to_napi_error)?;
+        let path = self
+            .inner
+            .set_voice_config(update, parse_save_target(save_target.as_deref()))
+            .map_err(to_napi_error)?;
+        Ok(json!({ "savedTo": path.map(|p| p.display().to_string()) }))
     }
 
     #[napi]
@@ -1276,6 +1393,25 @@ impl NaviNapiEngine {
         .await
         .map_err(|e| to_napi_error(anyhow::anyhow!("voice_transcribe_file join: {e}")))?
         .map_err(to_napi_error)?;
+        serde_json::to_value(json!({
+            "text": result.text,
+            "tokenIds": result.token_ids,
+        }))
+        .map_err(to_napi_error)
+    }
+
+    /// Prefer async remote transcription path when `[voice].provider` is remote.
+    #[napi]
+    pub async fn voice_transcribe_file_async(
+        &self,
+        path: String,
+        language: Option<String>,
+    ) -> Result<JsonValue> {
+        let result = self
+            .inner
+            .voice_transcribe_file_async(&path, language.as_deref())
+            .await
+            .map_err(to_napi_error)?;
         serde_json::to_value(json!({
             "text": result.text,
             "tokenIds": result.token_ids,
