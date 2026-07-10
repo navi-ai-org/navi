@@ -366,15 +366,19 @@ mod tests {
         }
 
         assert!(executor.definition("test_echo").is_some());
+        // Custom/plugin tools require approval (ExternalPlugin risk).
         let result = executor
-            .invoke(ToolInvocation {
-                id: "call-1".to_string(),
-                tool_name: "test_echo".to_string(),
-                input: json!({ "text": "wired" }),
-            })
+            .invoke_approved_with_event_tx(
+                ToolInvocation {
+                    id: "call-1".to_string(),
+                    tool_name: "test_echo".to_string(),
+                    input: json!({ "text": "wired" }),
+                },
+                None,
+            )
             .await;
 
-        assert!(result.ok);
+        assert!(result.ok, "plugin tool invoke failed: {:?}", result.output);
         assert_eq!(result.output["text"], "wired");
     }
 
