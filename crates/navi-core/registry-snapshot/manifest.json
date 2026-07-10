@@ -1,6 +1,6 @@
 {
-  "version": 13,
-  "updated_at": "2026-07-09T06:13:59Z",
+  "version": 14,
+  "updated_at": "2026-07-10T16:38:55Z",
   "providers": {
     "anthropic": {
       "file": "providers/anthropic.json",
@@ -136,6 +136,23 @@
       "file": "providers/zai-coding.json",
       "sha256": "b10405ae27327dd54d5e673898b9dfd59fc0b2c4c1fd1f2f44cdcce1a0a82d41",
       "model_count": 3
+    }
+  },
+  "transcription_providers": {
+    "groq": {
+      "file": "transcription-providers/groq.json",
+      "sha256": "1421758f606104403697a77a6f8e386373868c8f846a897bd204213caa51c66d",
+      "model_count": 3
+    },
+    "openai": {
+      "file": "transcription-providers/openai.json",
+      "sha256": "441f83fe5395177f7b72f5f8103d0e66ce4965939c99dee390490de08c63f3bb",
+      "model_count": 3
+    },
+    "wispr-flow": {
+      "file": "transcription-providers/wispr-flow.json",
+      "sha256": "faa44a7a8d9d1fabc13160ebd8afeda7e6ee89098e341b4e4adff3c99cee878e",
+      "model_count": 1
     }
   }
 }

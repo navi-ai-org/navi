@@ -124,6 +124,7 @@ pub fn load_registry(store: &RegistryStore) -> LoadedRegistry {
             version: 0,
             updated_at: "1970-01-01T00:00:00Z".to_string(),
             providers: std::collections::HashMap::new(),
+            transcription_providers: Default::default(),
         },
         providers: minimal_fallback_providers(),
         source: RegistrySource::MinimalFallback,
@@ -154,34 +155,34 @@ fn merge_embedded_provider_updates(store: &RegistryStore) {
         let cached_sha = store.provider_sha256(id).ok().flatten();
 
         let needs_update = match (&cached_sha, embedded_sha) {
+            // API/model sync marker — keep local model list; do not reseed
+            // from the embedded snapshot on every catalog load.
+            (Some(cached), _) if cached == crate::registry::LOCAL_API_SYNC_SHA => false,
             (Some(cached), Some(embedded)) => cached != embedded,
-            (None, _) => true,
+            // Missing sha usually means a partial/legacy API sync. Only seed
+            // when the cache has zero models for this provider.
+            (None, Some(_)) => store
+                .load_provider_models(id)
+                .map(|m| m.is_empty())
+                .unwrap_or(true),
+            (None, None) => false,
             (Some(_), None) => false,
         };
 
-        // Don't overwrite providers that already have models in the cache.
-        // Aggregator sync (e.g. OpenRouter with 327 models) upserts with
-        // sha256=None, which would trigger a re-upsert of the embedded
-        // snapshot (5 models) on every provider_catalog() call. Skip if
-        // the cache already has models for this provider.
-        if needs_update {
-            if let Ok(existing) = store.load_provider_models(id) {
-                if !existing.is_empty() && existing.len() >= ep.models.len() {
-                    continue;
-                }
-            }
+        if !needs_update {
+            continue;
         }
 
-        if needs_update {
-            if let Err(err) = store.upsert_provider_with_sha256(ep, embedded_sha) {
-                tracing::warn!(
-                    provider = id,
-                    error = %err,
-                    "failed to upsert embedded provider update"
-                );
-            } else {
-                updated += 1;
-            }
+        // Prefer union-merge so a smaller embedded snapshot cannot wipe
+        // models discovered via provider APIs (OpenRouter etc.).
+        if let Err(err) = store.upsert_provider_union_models(ep, embedded_sha) {
+            tracing::warn!(
+                provider = id,
+                error = %err,
+                "failed to upsert embedded provider update"
+            );
+        } else {
+            updated += 1;
         }
     }
 
@@ -320,6 +321,7 @@ pub async fn check_registry_manifest(
                 version: 0,
                 updated_at: "1970-01-01T00:00:00Z".to_string(),
                 providers: std::collections::HashMap::new(),
+                transcription_providers: Default::default(),
             })
         });
 
@@ -434,6 +436,9 @@ pub fn validate_registry_hashes(
 
 /// Applies a validated update atomically: store new providers, delete removed ones, and save metadata.
 ///
+/// Model lists are **union-merged** with any local cache so a smaller remote
+/// catalog cannot wipe models previously discovered via `sync models`.
+///
 /// On failure, the previous registry contents remain intact (this function uses explicit transactions).
 pub fn apply_registry_update_atomically(
     store: &RegistryStore,
@@ -448,7 +453,7 @@ pub fn apply_registry_update_atomically(
             .providers
             .get(&provider.id)
             .map(|e| e.sha256.as_str());
-        store.upsert_provider_with_sha256(provider, sha)?;
+        store.upsert_provider_union_models(provider, sha)?;
     }
 
     store.delete_providers_not_in(&keep)?;
@@ -557,7 +562,8 @@ fn current_stored_manifest_or_embedded(store: &RegistryStore) -> RegistryManifes
                 version: 0,
                 updated_at: "1970-01-01T00:00:00Z".to_string(),
                 providers: std::collections::HashMap::new(),
-            })
+                transcription_providers: Default::default(),
+        })
         })
 }
 
@@ -695,7 +701,8 @@ mod tests {
                 version: 1,
                 updated_at: "2026-01-01T00:00:00Z".to_string(),
                 providers: std::collections::HashMap::new(),
-            },
+                transcription_providers: Default::default(),
+        },
             Some(now),
             None,
         )
@@ -710,7 +717,8 @@ mod tests {
                 version: 1,
                 updated_at: "2026-01-01T00:00:00Z".to_string(),
                 providers: std::collections::HashMap::new(),
-            },
+                transcription_providers: Default::default(),
+        },
             Some(past),
             None,
         )
@@ -770,6 +778,7 @@ mod tests {
             version: 1,
             updated_at: "2026-01-01T00:00:00Z".to_string(),
             providers: std::collections::HashMap::new(),
+            transcription_providers: Default::default(),
         };
         manifest
             .providers
@@ -789,6 +798,7 @@ mod tests {
             version: 1,
             updated_at: "2026-01-01T00:00:00Z".to_string(),
             providers: std::collections::HashMap::new(),
+            transcription_providers: Default::default(),
         };
         manifest.providers.insert(
             provider.id.clone(),
@@ -809,6 +819,7 @@ mod tests {
             version: 1,
             updated_at: "2026-01-01T00:00:00Z".to_string(),
             providers: std::collections::HashMap::new(),
+            transcription_providers: Default::default(),
         };
         manifest
             .providers
@@ -901,6 +912,7 @@ mod tests {
             version: 1,
             updated_at: "2026-01-01T00:00:00Z".to_string(),
             providers: std::collections::HashMap::new(),
+            transcription_providers: Default::default(),
         };
         manifest
             .providers
@@ -923,6 +935,7 @@ mod tests {
             version: 1,
             updated_at: "2026-01-01T00:00:00Z".to_string(),
             providers: std::collections::HashMap::new(),
+            transcription_providers: Default::default(),
         };
         manifest
             .providers
@@ -948,6 +961,7 @@ mod tests {
             version: 1,
             updated_at: "2026-01-01T00:00:00Z".to_string(),
             providers: std::collections::HashMap::new(),
+            transcription_providers: Default::default(),
         };
         old_manifest
             .providers
@@ -963,6 +977,7 @@ mod tests {
             version: 2,
             updated_at: "2026-07-03T00:00:00Z".to_string(),
             providers: std::collections::HashMap::new(),
+            transcription_providers: Default::default(),
         };
         new_manifest
             .providers
@@ -987,6 +1002,7 @@ mod tests {
             version: 1,
             updated_at: "2026-01-01T00:00:00Z".to_string(),
             providers: std::collections::HashMap::new(),
+            transcription_providers: Default::default(),
         };
         manifest
             .providers
@@ -1024,6 +1040,7 @@ mod tests {
             version: 1,
             updated_at: "2026-01-01T00:00:00Z".to_string(),
             providers: std::collections::HashMap::new(),
+            transcription_providers: Default::default(),
         };
         manifest.providers.insert(
             provider.id.clone(),
@@ -1046,6 +1063,7 @@ mod tests {
             version: 1,
             updated_at: "2026-01-01T00:00:00Z".to_string(),
             providers: std::collections::HashMap::new(),
+            transcription_providers: Default::default(),
         };
         old_manifest
             .providers
@@ -1062,6 +1080,7 @@ mod tests {
             version: 2,
             updated_at: "2026-07-03T00:00:00Z".to_string(),
             providers: std::collections::HashMap::new(),
+            transcription_providers: Default::default(),
         };
         new_manifest
             .providers
@@ -1093,6 +1112,7 @@ mod tests {
             version: 1,
             updated_at: "2026-01-01T00:00:00Z".to_string(),
             providers: std::collections::HashMap::new(),
+            transcription_providers: Default::default(),
         };
         old_manifest
             .providers
@@ -1106,6 +1126,7 @@ mod tests {
             version: 2,
             updated_at: "2026-07-03T00:00:00Z".to_string(),
             providers: std::collections::HashMap::new(),
+            transcription_providers: Default::default(),
         };
         new_manifest.providers.insert(
             new_provider.id.clone(),
@@ -1138,7 +1159,8 @@ mod tests {
                 version: 1,
                 updated_at: "2026-01-01T00:00:00Z".to_string(),
                 providers: std::collections::HashMap::new(),
-            },
+                transcription_providers: Default::default(),
+        },
             Some(now),
             None,
         )
@@ -1153,7 +1175,8 @@ mod tests {
                 version: 1,
                 updated_at: "2026-01-01T00:00:00Z".to_string(),
                 providers: std::collections::HashMap::new(),
-            },
+                transcription_providers: Default::default(),
+        },
             Some(past),
             None,
         )

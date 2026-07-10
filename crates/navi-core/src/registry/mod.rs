@@ -18,14 +18,21 @@ pub mod types;
 mod update;
 
 pub use aggregator::sync_aggregator_models;
-pub use embedded::{embedded_manifest, embedded_provider_schema, embedded_providers};
+pub use embedded::{
+    embedded_manifest, embedded_provider_schema, embedded_providers,
+    embedded_transcription_provider_schema, embedded_transcription_providers,
+};
 pub use fetcher::{RegistryFetcher, sync_local_registry, sync_registry};
 pub use inherit::{
     apply_provider_attachment_defaults_to_config_model, enrich_synced_registry_model,
     provider_registry_attachment_defaults, provider_registry_defaults,
 };
-pub use store::{RegistryStore, registry_provider_to_config};
-pub use types::{ModelCapability, ModelPricing, ModelProfileEntry, Profile, RankedModel};
+pub use store::{LOCAL_API_SYNC_SHA, RegistryStore, registry_provider_to_config};
+pub use types::{
+    ModelCapability, ModelPricing, ModelProfileEntry, Profile, RankedModel,
+    RegistryTranscriptionModel, RegistryTranscriptionProvider, TranscriptionModelPricing,
+    TranscriptionProviderKind,
+};
 pub use update::{
     LoadedRegistry, RegistryFetcherTrait, RegistrySource, apply_registry_update_atomically,
     check_registry_manifest, download_registry_updates, load_cached_registry,

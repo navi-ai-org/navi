@@ -206,6 +206,9 @@ pub struct RegistryManifest {
     pub version: u32,
     pub updated_at: String,
     pub providers: std::collections::HashMap<String, ManifestProviderEntry>,
+    /// Remote speech-to-text / dictation providers (Whisper, Wispr Flow, …).
+    #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
+    pub transcription_providers: std::collections::HashMap<String, ManifestProviderEntry>,
 }
 
 /// Per-provider entry inside the manifest.
@@ -214,4 +217,109 @@ pub struct ManifestProviderEntry {
     pub file: String,
     pub sha256: String,
     pub model_count: usize,
+}
+
+/// Protocol kind for a remote transcription provider.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum TranscriptionProviderKind {
+    /// OpenAI-compatible `POST /audio/transcriptions` (multipart).
+    OpenaiAudioTranscriptions,
+    /// Wispr Flow `POST /api` (JSON + base64 audio).
+    WisprFlow,
+}
+
+impl TranscriptionProviderKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::OpenaiAudioTranscriptions => "openai-audio-transcriptions",
+            Self::WisprFlow => "wispr-flow",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "openai-audio-transcriptions" | "openai_audio_transcriptions" => {
+                Some(Self::OpenaiAudioTranscriptions)
+            }
+            "wispr-flow" | "wispr_flow" | "whisperflow" | "whisper-flow" => Some(Self::WisprFlow),
+            _ => None,
+        }
+    }
+}
+
+/// Pricing for a transcription model (USD per audio minute by default).
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct TranscriptionModelPricing {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub per_minute: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub currency: Option<String>,
+}
+
+/// A single speech-to-text model entry.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RegistryTranscriptionModel {
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub languages: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sample_rate_hz: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_duration_seconds: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_file_bytes: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pricing: Option<TranscriptionModelPricing>,
+}
+
+/// A remote transcription / dictation provider in the registry.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RegistryTranscriptionProvider {
+    pub id: String,
+    pub label: String,
+    #[serde(default)]
+    pub description: String,
+    /// Wire kind string (`openai-audio-transcriptions` | `wispr-flow`).
+    pub kind: String,
+    pub api_key_env: String,
+    pub base_url: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transcription_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_model: Option<String>,
+    #[serde(default)]
+    pub supports_streaming: bool,
+    #[serde(default)]
+    pub models: Vec<RegistryTranscriptionModel>,
+}
+
+impl RegistryTranscriptionProvider {
+    pub fn kind_enum(&self) -> Option<TranscriptionProviderKind> {
+        TranscriptionProviderKind::parse(&self.kind)
+    }
+
+    pub fn resolved_path(&self) -> &str {
+        if let Some(p) = self.transcription_path.as_deref() {
+            if !p.is_empty() {
+                return p;
+            }
+        }
+        match self.kind_enum() {
+            Some(TranscriptionProviderKind::OpenaiAudioTranscriptions) => "/audio/transcriptions",
+            Some(TranscriptionProviderKind::WisprFlow) => "/api",
+            None => "/audio/transcriptions",
+        }
+    }
+
+    pub fn resolved_default_model(&self) -> Option<&str> {
+        self.default_model
+            .as_deref()
+            .filter(|s| !s.is_empty())
+            .or_else(|| self.models.first().map(|m| m.name.as_str()))
+    }
 }

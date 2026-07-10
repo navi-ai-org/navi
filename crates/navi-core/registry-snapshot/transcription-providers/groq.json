@@ -1,0 +1,49 @@
+{
+  "id": "groq",
+  "label": "Groq Whisper",
+  "description": "Groq-hosted Whisper models via OpenAI-compatible audio transcriptions",
+  "kind": "openai-audio-transcriptions",
+  "api_key_env": "GROQ_API_KEY",
+  "base_url": "https://api.groq.com/openai/v1",
+  "transcription_path": "/audio/transcriptions",
+  "default_model": "whisper-large-v3-turbo",
+  "supports_streaming": false,
+  "models": [
+    {
+      "name": "whisper-large-v3-turbo",
+      "label": "Whisper Large v3 Turbo",
+      "description": "Fast multilingual Whisper large-v3 turbo on Groq LPU",
+      "languages": [],
+      "sample_rate_hz": 16000,
+      "max_file_bytes": 26214400,
+      "pricing": {
+        "per_minute": 0.04,
+        "currency": "USD"
+      }
+    },
+    {
+      "name": "whisper-large-v3",
+      "label": "Whisper Large v3",
+      "description": "Full Whisper large-v3 multilingual on Groq",
+      "languages": [],
+      "sample_rate_hz": 16000,
+      "max_file_bytes": 26214400,
+      "pricing": {
+        "per_minute": 0.111,
+        "currency": "USD"
+      }
+    },
+    {
+      "name": "distil-whisper-large-v3-en",
+      "label": "Distil-Whisper Large v3 English",
+      "description": "English-only distilled Whisper large-v3",
+      "languages": ["en"],
+      "sample_rate_hz": 16000,
+      "max_file_bytes": 26214400,
+      "pricing": {
+        "per_minute": 0.02,
+        "currency": "USD"
+      }
+    }
+  ]
+}
