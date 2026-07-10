@@ -14,11 +14,15 @@ fn main() {
         PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set"));
     let snapshot_dir = manifest_dir.join("registry-snapshot");
     let providers_dir = snapshot_dir.join("providers");
+    let transcription_providers_dir = snapshot_dir.join("transcription-providers");
 
     let embedded_dir = out_dir.join("embedded_registry");
     fs::create_dir_all(&embedded_dir).expect("failed to create embedded_registry output dir");
     let embedded_providers_dir = embedded_dir.join("providers");
     fs::create_dir_all(&embedded_providers_dir).expect("failed to create embedded providers dir");
+    let embedded_transcription_dir = embedded_dir.join("transcription-providers");
+    fs::create_dir_all(&embedded_transcription_dir)
+        .expect("failed to create embedded transcription-providers dir");
 
     // Copy manifest.json
     let manifest_src = snapshot_dir.join("manifest.json");
@@ -26,7 +30,7 @@ fn main() {
     fs::copy(&manifest_src, &manifest_dst).expect("failed to copy embedded manifest");
     println!("cargo:rerun-if-changed={}", manifest_src.display());
 
-    // Collect and copy provider files, sorted for deterministic output.
+    // Collect and copy LLM provider files, sorted for deterministic output.
     let mut provider_files: Vec<_> = fs::read_dir(&providers_dir)
         .expect("failed to read registry-snapshot/providers")
         .filter_map(|e| {
@@ -57,6 +61,38 @@ fn main() {
         ));
     }
 
+    // Collect and copy transcription / dictation provider files.
+    let mut transcription_entries = Vec::new();
+    if transcription_providers_dir.is_dir() {
+        let mut files: Vec<_> = fs::read_dir(&transcription_providers_dir)
+            .expect("failed to read registry-snapshot/transcription-providers")
+            .filter_map(|e| {
+                let e = e.expect("dir entry");
+                let path = e.path();
+                if path.extension().is_some_and(|ext| ext == "json") {
+                    Some(path)
+                } else {
+                    None
+                }
+            })
+            .collect();
+        files.sort();
+        for path in &files {
+            let id = path
+                .file_stem()
+                .expect("transcription provider file has no stem")
+                .to_str()
+                .expect("transcription provider file name is not valid UTF-8");
+            let dst = embedded_transcription_dir.join(format!("{id}.json"));
+            fs::copy(path, &dst).expect("failed to copy embedded transcription provider");
+            println!("cargo:rerun-if-changed={}", path.display());
+            transcription_entries.push((
+                id.to_string(),
+                dst.to_str().expect("path is not valid UTF-8").to_string(),
+            ));
+        }
+    }
+
     // Copy schema files.
     let schema_src = snapshot_dir.join("schemas");
     if schema_src.is_dir() {
@@ -80,6 +116,11 @@ fn main() {
     src.push_str("pub const MANIFEST_JSON: &str = include_str!(\"manifest.json\");\n\n");
     src.push_str("pub const PROVIDER_FILES: &[(&str, &str)] = &[\n");
     for (id, path) in &entries {
+        src.push_str(&format!("    ({id:?}, include_str!({path:?})),\n"));
+    }
+    src.push_str("];\n\n");
+    src.push_str("pub const TRANSCRIPTION_PROVIDER_FILES: &[(&str, &str)] = &[\n");
+    for (id, path) in &transcription_entries {
         src.push_str(&format!("    ({id:?}, include_str!({path:?})),\n"));
     }
     src.push_str("];\n");

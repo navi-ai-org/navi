@@ -7,7 +7,7 @@
 
 use anyhow::{Context, Result};
 
-use super::types::{RegistryManifest, RegistryProvider};
+use super::types::{RegistryManifest, RegistryProvider, RegistryTranscriptionProvider};
 
 include!(concat!(env!("OUT_DIR"), "/embedded_registry/embedded.rs"));
 
@@ -16,7 +16,7 @@ pub fn embedded_manifest() -> Result<RegistryManifest> {
     serde_json::from_str(MANIFEST_JSON).context("failed to parse embedded manifest")
 }
 
-/// Returns all embedded providers, parsed from the snapshot.
+/// Returns all embedded LLM providers, parsed from the snapshot.
 pub fn embedded_providers() -> Result<Vec<RegistryProvider>> {
     let mut providers = Vec::with_capacity(PROVIDER_FILES.len());
     for (id, json) in PROVIDER_FILES {
@@ -27,11 +27,30 @@ pub fn embedded_providers() -> Result<Vec<RegistryProvider>> {
     Ok(providers)
 }
 
+/// Returns all embedded remote transcription / dictation providers.
+pub fn embedded_transcription_providers() -> Result<Vec<RegistryTranscriptionProvider>> {
+    let mut providers = Vec::with_capacity(TRANSCRIPTION_PROVIDER_FILES.len());
+    for (id, json) in TRANSCRIPTION_PROVIDER_FILES {
+        let provider: RegistryTranscriptionProvider = serde_json::from_str(json)
+            .with_context(|| format!("failed to parse embedded transcription provider '{id}'"))?;
+        providers.push(provider);
+    }
+    Ok(providers)
+}
+
 /// Returns the embedded provider schema JSON, if present.
 pub fn embedded_provider_schema() -> Option<&'static str> {
     Some(include_str!(concat!(
         env!("OUT_DIR"),
         "/embedded_registry/schemas/provider.schema.json"
+    )))
+}
+
+/// Returns the embedded transcription-provider schema JSON, if present.
+pub fn embedded_transcription_provider_schema() -> Option<&'static str> {
+    Some(include_str!(concat!(
+        env!("OUT_DIR"),
+        "/embedded_registry/schemas/transcription-provider.schema.json"
     )))
 }
 
@@ -79,6 +98,53 @@ mod tests {
             providers.len(),
             "manifest provider count != embedded provider file count"
         );
+    }
+
+    #[test]
+    fn embedded_transcription_providers_parse_cleanly() {
+        let providers =
+            embedded_transcription_providers().expect("transcription providers should parse");
+        assert!(
+            !providers.is_empty(),
+            "expected at least one embedded transcription provider"
+        );
+        for p in &providers {
+            assert!(
+                !p.models.is_empty(),
+                "transcription provider '{}' has no models",
+                p.id
+            );
+            assert!(
+                p.kind_enum().is_some(),
+                "transcription provider '{}' has unknown kind '{}'",
+                p.id,
+                p.kind
+            );
+            assert!(!p.api_key_env.is_empty());
+            assert!(!p.base_url.is_empty());
+            assert!(p.resolved_default_model().is_some());
+        }
+        let ids: Vec<_> = providers.iter().map(|p| p.id.as_str()).collect();
+        assert!(ids.contains(&"openai"));
+        assert!(ids.contains(&"groq"));
+        assert!(ids.contains(&"wispr-flow"));
+    }
+
+    #[test]
+    fn embedded_manifest_matches_transcription_provider_files() {
+        let manifest = embedded_manifest().expect("manifest");
+        let providers =
+            embedded_transcription_providers().expect("transcription providers");
+        assert_eq!(
+            manifest.transcription_providers.len(),
+            providers.len(),
+            "manifest transcription_providers count != embedded file count"
+        );
+    }
+
+    #[test]
+    fn embedded_transcription_schema_is_present() {
+        assert!(embedded_transcription_provider_schema().is_some());
     }
 
     #[test]

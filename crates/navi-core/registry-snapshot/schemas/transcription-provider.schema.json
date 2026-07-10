@@ -1,0 +1,112 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://navi.ai/registry/schemas/transcription-provider.schema.json",
+  "title": "NAVI Transcription Provider Definition",
+  "description": "Schema for a remote speech-to-text provider in the NAVI registry (dictation / ASR)",
+  "type": "object",
+  "required": ["id", "label", "kind", "api_key_env", "base_url", "models"],
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]*$",
+      "description": "Unique provider identifier (lowercase, hyphen-separated)"
+    },
+    "label": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Human-readable provider name"
+    },
+    "description": {
+      "type": "string",
+      "default": "",
+      "description": "Short description shown in voice / provider pickers"
+    },
+    "kind": {
+      "type": "string",
+      "enum": [
+        "openai-audio-transcriptions",
+        "wispr-flow"
+      ],
+      "description": "HTTP protocol used for transcription"
+    },
+    "api_key_env": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Environment variable name for the API key"
+    },
+    "base_url": {
+      "type": "string",
+      "minLength": 1,
+      "description": "API base URL (no trailing path for model id)"
+    },
+    "transcription_path": {
+      "type": "string",
+      "description": "Path appended to base_url for the transcription endpoint (optional; kind-specific defaults apply)"
+    },
+    "default_model": {
+      "type": "string",
+      "description": "Default model when [voice].model is empty"
+    },
+    "supports_streaming": {
+      "type": "boolean",
+      "default": false,
+      "description": "Whether the provider exposes a streaming ASR endpoint (future)"
+    },
+    "models": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/transcription_model" }
+    }
+  },
+  "$defs": {
+    "transcription_model": {
+      "type": "object",
+      "required": ["name"],
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Model identifier sent to the API (or logical id for providers without model param)"
+        },
+        "label": {
+          "type": "string",
+          "description": "Human-readable model name"
+        },
+        "description": {
+          "type": "string",
+          "description": "Short model description"
+        },
+        "languages": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "ISO language codes supported (empty = auto / multi)"
+        },
+        "sample_rate_hz": {
+          "type": "integer",
+          "minimum": 8000,
+          "description": "Preferred input sample rate (provider may resample)"
+        },
+        "max_duration_seconds": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Maximum audio duration accepted"
+        },
+        "max_file_bytes": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Maximum upload size in bytes"
+        },
+        "pricing": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "per_minute": { "type": "number" },
+            "currency": { "type": "string" }
+          }
+        }
+      }
+    }
+  }
+}
