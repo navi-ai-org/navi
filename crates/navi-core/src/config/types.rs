@@ -660,9 +660,10 @@ pub struct WasmPluginConfig {
 pub struct SkillsConfig {
     /// Whether skill discovery is enabled.
     pub enabled: bool,
-    /// Additional directories to scan for `SKILL.md` folders.
+    /// Deprecated: ignored. Skills live in `data_dir/skills.sqlite`, not scan dirs.
+    #[serde(default)]
     pub dirs: Vec<PathBuf>,
-    /// Skill names that are always active (not just discovered).
+    /// Skill ids that are always active for new sessions.
     pub active: Vec<String>,
 }
 

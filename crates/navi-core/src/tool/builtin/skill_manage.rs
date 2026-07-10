@@ -201,7 +201,7 @@ impl Tool for SkillSaveTool {
     fn definition(&self) -> ToolDefinition {
         helpers::definition(
             "skill_save",
-            "Create or update a skill in the NAVI skill database (SQLite). Prefer this over writing SKILL.md files. Include allow_tools so the skill runs with a tight tool set.",
+            "Create or update a skill in the NAVI skill database (SQLite under the data dir). Include allow_tools so the skill runs with a tight tool set.",
             ToolKind::Write,
             helpers::json_schema(
                 &[

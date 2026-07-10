@@ -1990,7 +1990,6 @@ fn skill_info_from_manifest(
             navi_core::SkillWriteScope::Project => "project".into(),
             navi_core::SkillWriteScope::User => "user".into(),
         }),
-        navi_core::SkillSource::File => Some("file".into()),
     };
     NaviSkillInfo {
         id: skill.id,

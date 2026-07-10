@@ -154,8 +154,8 @@ pub use skill_mining::{
 pub use skills::{
     CREATE_SKILL_ID, SkillManifest, SkillSource, SkillStore, SkillWriteRequest, SkillWriteResult,
     SkillWriteScope, active_skills, builtin_skills, delete_skill, discover_configured_skills,
-    load_skill_by_id, project_skill_key, render_skill_md, skill_is_editable, skill_tool_allowlist,
-    skill_write_root, slugify_skill_id, write_skill,
+    load_skill_by_id, project_skill_key, skill_is_editable, skill_tool_allowlist, slugify_skill_id,
+    write_skill,
 };
 pub use tool::background::{BackgroundCommandSnapshot, BackgroundTaskStatus};
 pub use update::{
