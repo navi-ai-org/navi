@@ -1,0 +1,35 @@
+version = 1
+id = "hard-cache-layers"
+title = "Hard: two-level cache invalidation and epoch"
+category = "tool_quality_hard"
+fixture = "benchmarks/fixtures/hard-cache-layers"
+task = """
+Fix the layered cache (L1/L2 + epoch) so invalidation semantics match the tests.
+
+Key behaviors:
+- invalidate_all must hide previously written values
+- put after invalidate_all must be visible
+- promote must not resurrect stale entries
+
+There may be more than one interacting bug. Fix the design, not just one assert.
+Run `cargo test` until all pass.
+"""
+max_turns = 20
+max_tool_calls = 100
+timeout_ms = 600000
+tags = ["tool-quality", "hard", "cache"]
+
+[metadata]
+difficulty = "hard"
+focus = "interacting invalidation bugs"
+eval_axis = "stateful_reasoning"
+
+[agent]
+mode = "parity"
+profile = "medium"
+
+[[verifiers]]
+verifier_type = "command"
+command = "cargo test --quiet"
+timeout_ms = 120000
+required = true

@@ -1,0 +1,28 @@
+version = 1
+id = "hard-rate-limiter"
+title = "Hard: token bucket + sliding window (time units)"
+category = "tool_quality_hard"
+fixture = "benchmarks/fixtures/hard-rate-limiter"
+task = """
+Fix the hybrid rate limiter. Pay attention to time units (ms vs seconds),
+window pruning boundaries, and burst capacity. Run `cargo test` until green.
+"""
+max_turns = 16
+max_tool_calls = 80
+timeout_ms = 600000
+tags = ["tool-quality", "hard", "timing"]
+
+[metadata]
+difficulty = "hard"
+focus = "ms vs sec + window edge"
+eval_axis = "units_and_edges"
+
+[agent]
+mode = "parity"
+profile = "medium"
+
+[[verifiers]]
+verifier_type = "command"
+command = "cargo test --quiet"
+timeout_ms = 120000
+required = true

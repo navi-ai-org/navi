@@ -1,8 +1,9 @@
 use anyhow::{Context, Result};
 use navi_core::{
     ApprovalDecision, BenchCase, BenchCaseMetrics, BenchCaseResult, BenchCompareConfig, BenchRun,
-    BenchSuite, HarnessProfile, LoadedConfig, RuntimeEvent, RuntimeEventKind, ToolResult,
-    VerifierResult, VerifierRunner, aggregate_bench_metrics, compare_bench_runs,
+    BenchSuite, HarnessProfile, LoadedConfig, PlanReviewDecision, PlanReviewResponse, RuntimeEvent,
+    RuntimeEventKind, ToolResult, VerifierResult, VerifierRunner, aggregate_bench_metrics,
+    compare_bench_runs,
 };
 use navi_sdk::{NaviEngineBuilder, NaviSessionRequest, NaviTurnRequest};
 use serde_json::Value;
@@ -292,17 +293,53 @@ async fn run_agent_turn(
             event = receiver.recv() => {
                 match event {
                     Ok(event) => {
-                        if auto_approve
-                            && let RuntimeEventKind::ApprovalRequired(request) = &event.kind
-                        {
-                            let _ = engine
-                                .resolve_approval(
-                                    &session.id,
-                                    ApprovalDecision::Approved {
-                                        id: request.id.clone(),
-                                    },
-                                )
-                                .await;
+                        // Headless bench has no human: auto-resolve interactive gates.
+                        if auto_approve {
+                            match &event.kind {
+                                RuntimeEventKind::ApprovalRequired(request) => {
+                                    let _ = engine
+                                        .resolve_approval(
+                                            &session.id,
+                                            ApprovalDecision::Approved {
+                                                id: request.id.clone(),
+                                            },
+                                        )
+                                        .await;
+                                }
+                                RuntimeEventKind::PlanReviewRequired(request) => {
+                                    // Models sometimes enter plan mode; approving unblocks the turn.
+                                    let _ = engine
+                                        .resolve_plan_review(
+                                            &session.id,
+                                            PlanReviewResponse {
+                                                id: request.id.clone(),
+                                                plan_id: request.plan_id.clone(),
+                                                decision: PlanReviewDecision::Approve,
+                                                comments: Vec::new(),
+                                                freeform: String::new(),
+                                            },
+                                        )
+                                        .await;
+                                }
+                                RuntimeEventKind::QuestionRequired(request) => {
+                                    use navi_core::event::QuestionResponse;
+                                    let answer = request
+                                        .options
+                                        .first()
+                                        .map(|o| o.label.clone())
+                                        .unwrap_or_else(|| "ok".to_string());
+                                    let _ = engine
+                                        .resolve_question(
+                                            &session.id,
+                                            QuestionResponse::Answered {
+                                                id: request.id.clone(),
+                                                answers: vec![answer],
+                                            },
+                                        )
+                                        .await;
+                                }
+                                _ => {}
+                            }
                         }
                         let limit_error = limits.observe(&event);
                         events_out.push(event);
