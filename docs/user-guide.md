@@ -104,7 +104,6 @@ include_payloads = false
 
 [skills]
 enabled = false
-dirs = [".navi/skills"]
 active = []
 
 [mcp]
@@ -151,9 +150,8 @@ enabled = false
 | `[logging]` | `file_enabled` | Write logs to file. |
 | `[logging]` | `stdout_enabled` | Also write logs to stdout. |
 | `[logging]` | `include_payloads` | Include raw payloads in logs (debug only). |
-| `[skills]` | `enabled` | Enable skill discovery. |
-| `[skills]` | `dirs` | Directories to scan for `SKILL.md` files. |
-| `[skills]` | `active` | Skill names to activate automatically. |
+| `[skills]` | `enabled` | Enable skill discovery (store + built-ins). |
+| `[skills]` | `active` | Skill ids to activate automatically. |
 | `[mcp]` | `enabled` | Enable MCP client. |
 | `[[mcp.servers]]` | `id`, `command`, `args`, `enabled` | MCP server definition. Global config only. |
 

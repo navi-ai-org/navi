@@ -103,22 +103,33 @@ impl Tool for SkillTool {
 mod tests {
     use super::*;
     use crate::config::SkillsConfig;
+    use crate::skills::{SkillWriteRequest, SkillWriteScope, write_skill};
 
     #[tokio::test]
     async fn load_skill_returns_instructions_for_requested_skill() {
         let tempdir = tempfile::tempdir().expect("tempdir");
-        let skill_dir = tempdir.path().join(".navi").join("skills").join("reviewer");
-        std::fs::create_dir_all(&skill_dir).expect("create skill dir");
-        std::fs::write(
-            skill_dir.join("SKILL.md"),
-            "---\nname: Reviewer\ndescription: Reviews code\n---\n# Reviewer\nReview carefully.",
+        write_skill(
+            &SkillWriteRequest {
+                id: "reviewer".into(),
+                name: "Reviewer".into(),
+                description: Some("Reviews code".into()),
+                version: None,
+                author: None,
+                tags: vec![],
+                requires: vec![],
+                allow_tools: vec![],
+                deny_tools: vec![],
+                instructions: "# Reviewer\nReview carefully.".into(),
+                scope: SkillWriteScope::User,
+            },
+            tempdir.path(),
+            tempdir.path(),
         )
         .expect("write skill");
 
         let mut config = NaviConfig::default();
         config.skills = SkillsConfig {
             enabled: true,
-            dirs: Vec::new(),
             active: Vec::new(),
         };
         let tool = SkillTool::new(

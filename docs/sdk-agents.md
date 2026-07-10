@@ -148,7 +148,7 @@ let skills = engine.list_skills()?;
 engine.set_session_skills(&session_id, vec!["planner".into(), "reviewer".into()]).await?;
 ```
 
-Skills must be configured in `[skills]` and discovered from disk. `set_session_skills` activates them for the current session's system prompt.
+Skills come from built-ins and `data_dir/skills.sqlite`. Use `list_skills` / `save_skill` / `delete_skill` to manage them. `set_session_skills` activates them for the current session's system prompt.
 
 ## MCP Servers
 

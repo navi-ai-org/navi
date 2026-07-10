@@ -111,7 +111,6 @@ mod tests {
             r#"
 [skills]
 enabled = true
-dirs = [".navi/skills"]
 active = ["socratic"]
 
 [mcp]

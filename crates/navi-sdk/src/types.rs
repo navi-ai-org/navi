@@ -106,10 +106,10 @@ pub struct NaviModelInfo {
     pub default_reasoning_effort: Option<String>,
 }
 
-/// A discovered skill (SKILL.md) available for activation.
+/// A skill available for activation (built-in or SQLite store).
 ///
-/// Skills are local prompt-injection folders discovered from configured paths.
-/// `id` is the stable identifier; `description` comes from the skill frontmatter.
+/// Skills inject prompt instructions when active and may restrict tools via
+/// `allow_tools` / `deny_tools`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NaviSkillInfo {
@@ -120,13 +120,13 @@ pub struct NaviSkillInfo {
     pub author: Option<String>,
     pub tags: Vec<String>,
     pub requires: Vec<String>,
-    /// Absolute path to `SKILL.md` (or skill directory), when known.
+    /// Store path or `builtin:…` marker, when known.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub path: Option<String>,
     /// Full instruction body when loaded via `get_skill` / save result.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub instructions: Option<String>,
-    /// True when the skill lives under user or project skill dirs (editable).
+    /// True when the skill is store-backed (editable from the UI).
     #[serde(default)]
     pub editable: bool,
     /// `"user"` | `"project"` | `"builtin"` for UI placement.

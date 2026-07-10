@@ -580,7 +580,7 @@ Plugin scope:
 
 ## Skills And MCP
 
-Skills are local `SKILL.md` folders discovered by `navi-core` and injected as active prompt instructions. Do not implement marketplace/remote install unless explicitly requested.
+Skills are built-ins plus rows in `data_dir/skills.sqlite`, managed by `navi-core` and injected as active prompt instructions. Active skills may also restrict tools via allow/deny lists. Do not implement marketplace/remote install unless explicitly requested.
 
 MCP support starts as a client only. `navi-mcp` connects to configured stdio MCP servers and maps remote tools into `ToolExecutor`; do not make NAVI an MCP server yet. MCP and skill support should flow through `navi-sdk` so NAVI Tutor can consume them without TUI dependencies.
 

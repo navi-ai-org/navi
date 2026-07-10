@@ -942,7 +942,7 @@ impl NaviEngine {
         Ok(self.credential_store().delete_api_key(provider_id)?)
     }
 
-    /// Discovers and lists configured skills from the project and global skill directories.
+    /// Lists skills from the SQLite store plus built-ins.
     pub fn list_skills(&self) -> Result<Vec<NaviSkillInfo>> {
         let loaded_config = self.loaded_config();
         Ok(discover_configured_skills(
@@ -972,10 +972,10 @@ impl NaviEngine {
         ))
     }
 
-    /// Create or update a skill as standard `SKILL.md` under user or project dirs.
+    /// Create or update a skill in the SQLite store (`data_dir/skills.sqlite`).
     ///
-    /// User scope → `data_dir/skills/<id>/SKILL.md` (shared by TUI + Desktop).
-    /// Project scope → `project/.navi/skills/<id>/SKILL.md`.
+    /// Shared by TUI and Desktop. User scope is global; project scope is keyed
+    /// by the engine project directory.
     pub fn save_skill(
         &self,
         request: navi_core::SkillWriteRequest,
