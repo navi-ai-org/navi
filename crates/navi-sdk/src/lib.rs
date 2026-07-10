@@ -6,6 +6,7 @@ mod engine_api;
 mod engine_driver;
 mod host_tool;
 mod memory_ops;
+mod notify_ops;
 mod plugins;
 mod tooling;
 mod types;
@@ -49,8 +50,8 @@ pub use navi_core::{
     CapabilityLedgerEntry, CapabilityScope, GoalStatus, GoalTask, ModelMessage, ModelRole,
     PlanReviewDecision, PlanReviewRequest, PlanReviewResponse, QuestionOption, QuestionRequest,
     QuestionResponse, RuntimeEvent, RuntimeEventKind, SessionGoal, SessionId, SessionSnapshot,
-    SessionUsageSnapshot, SubagentTranscriptItem, SubagentTranscriptKind, SudoPasswordRequest,
-    SudoPasswordResponse, TaskStatus,
+    SessionSnapshotInfo, SessionUsageSnapshot, SubagentTranscriptItem, SubagentTranscriptKind,
+    SudoPasswordRequest, SudoPasswordResponse, TaskStatus,
 };
 // Event auxiliary types
 pub use navi_core::event::RepetitionWarningKind;
@@ -63,9 +64,10 @@ pub use navi_core::{
 pub use navi_core::{
     AttachmentModelsConfig, BackgroundModelEntry, BackgroundModelsConfig, CompactState,
     CompactThreshold, CredentialStore, HarnessPolicy, HarnessProfile, LoadedConfig, ModelOption,
-    ModelTaskSize, NaviConfig, PermissionMode, ProviderConfig, ProviderKind, ProviderModelConfig,
-    SessionStore, ThinkingConfig, parse_reasoning_level, resolve_effort_label,
-    resolve_model_thinking_level, select_harness_policy, thinking_levels_for_model,
+    ModelTaskSize, NaviConfig, NotificationUrgency, NotifyRequest, PermissionMode, ProviderConfig,
+    ProviderKind, ProviderModelConfig, SessionStore, ThinkingConfig, UpdateInfo, UpdatesConfig,
+    parse_reasoning_level, resolve_effort_label, resolve_model_thinking_level,
+    select_harness_policy, thinking_levels_for_model,
 };
 // Utility functions
 pub use navi_core::{

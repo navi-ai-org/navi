@@ -184,6 +184,8 @@ fn route_mode_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyModifiers) -> K
         Mode::ConfirmPlan => self::modals::handle_confirm_plan_key(app, code),
         Mode::SudoPassword => self::modals::handle_sudo_password_key(app, code, modifiers),
         Mode::PathMentions => crate::path_mentions::handle_path_mentions_key(app, code, modifiers),
+        Mode::About => self::modals::handle_about_key(app, code),
+        Mode::UpdateAvailable => self::modals::handle_update_available_key(app, code),
     };
     if should_quit {
         KeyOutcome::Quit

@@ -64,6 +64,10 @@ pub enum HitAction {
     },
     /// Select a row in the Help cheatsheet modal.
     HelpRow(usize),
+    /// About modal link row.
+    AboutLink(usize),
+    /// Composer chip: open pending update modal.
+    OpenUpdateAvailable,
     /// Plan review: click a plan body line (0-based view line index).
     PlanReviewLine(usize),
     PlanReviewApprove,

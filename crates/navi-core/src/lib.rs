@@ -18,6 +18,7 @@ pub mod mcp_firewall;
 pub mod memory;
 pub mod model;
 pub mod model_router;
+pub mod notify;
 pub mod operational_memory;
 pub mod patch;
 pub mod plan_mode;
@@ -40,6 +41,7 @@ pub mod skills;
 pub mod tool;
 pub mod trace;
 pub mod turn;
+pub mod update;
 pub mod verifier;
 
 pub mod background_model;
@@ -57,11 +59,11 @@ pub use config::{
     AttachmentModelsConfig, BackgroundModelEntry, BackgroundModelsConfig, GoalsConfig,
     HarnessProfile, LoadedConfig, McpConfig, McpServerConfig, ModelOption, ModelTaskSize,
     NaviConfig, PermissionMode, PluginConfig, ProviderConfig, ProviderKind, ProviderModelConfig,
-    ProviderRequestOptions, SecurityConfig, ToolCallingMode, ToolPromptManifest, VoiceConfig,
-    WasmPluginConfig, available_model_options, billable_input_split, canonical_provider_id,
-    default_request_options_for, effective_context_window, effective_tool_calling_mode,
-    estimate_token_cost_usd, estimate_token_cost_usd_with_cache, is_free_model_name,
-    model_cache_list_pricing, model_can_run_publicly, model_list_pricing,
+    ProviderRequestOptions, SecurityConfig, ToolCallingMode, ToolPromptManifest, UpdatesConfig,
+    VoiceConfig, WasmPluginConfig, available_model_options, billable_input_split,
+    canonical_provider_id, default_request_options_for, effective_context_window,
+    effective_tool_calling_mode, estimate_token_cost_usd, estimate_token_cost_usd_with_cache,
+    is_free_model_name, model_cache_list_pricing, model_can_run_publicly, model_list_pricing,
     model_supports_attachment, provider_catalog, provider_credit_unit, provider_request_model_name,
     provider_uses_credits, resolve_provider_config, save_global_config, save_project_config,
     set_registry_store, usd_to_provider_credits,
@@ -104,6 +106,7 @@ pub use model::{
     thinking_levels_for_model,
 };
 pub use model_router::{ModelRoute, ModelRouteRole, ModelRouter, ModelScorecard};
+pub use notify::{NotificationUrgency, NotifyRequest, notify_desktop, open_url};
 pub use operational_memory::{MemoryScope, OperationalMemoryEntry, OperationalMemoryStore};
 pub use patch::PatchProposal;
 pub use plan_mode::{AgentMode, ProposedPlan, ProposedPlanParser, is_tool_allowed_in_plan_mode};
@@ -139,7 +142,8 @@ pub use runtime_components::{
 };
 pub use security::{SecurityDecision, SecurityPolicy};
 pub use session::{
-    SessionId, SessionRuntime, SessionSnapshot, SessionStore, SessionUsageSnapshot,
+    SessionId, SessionRuntime, SessionSnapshot, SessionSnapshotInfo, SessionStore,
+    SessionUsageSnapshot,
     clean_session_title, session_title_from_events,
 };
 pub use setup::{SETUP_INTERVIEW_COMPLETE_MARKER, SETUP_INTERVIEW_PROMPT};
@@ -148,6 +152,10 @@ pub use skill_mining::{
 };
 pub use skills::{SkillManifest, active_skills, discover_configured_skills};
 pub use tool::background::{BackgroundCommandSnapshot, BackgroundTaskStatus};
+pub use update::{
+    UpdateInfo, apply_update, check_for_update, current_version, normalize_version,
+    version_is_newer,
+};
 pub use tool::registry::{ToolRegistry, ToolSet, phases};
 pub use tool::{
     AgentProfile, ApprovalMode, ProviderBuilderFn, RepoExploreTool, SubagentTool, Tool,

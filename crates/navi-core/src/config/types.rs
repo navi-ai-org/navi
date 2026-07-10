@@ -54,6 +54,9 @@ pub struct NaviConfig {
     /// Goal system configuration.
     #[serde(default)]
     pub goals: GoalsConfig,
+    /// Self-update preferences (check interval, auto-install).
+    #[serde(default)]
+    pub updates: UpdatesConfig,
 }
 
 /// TUI-specific settings (global config).
@@ -79,6 +82,10 @@ pub struct TuiConfig {
     /// Most-recently used model keys in `provider:model` form, ordered newest first.
     /// Capped (see `navi-tui::providers::push_recent_model`).
     pub recent_model_ids: Vec<String>,
+    /// When true, upgrade the local post-turn recap with an extra LLM call.
+    /// Default is false (local recap only) to avoid a provider round-trip every turn.
+    #[serde(default)]
+    pub llm_recap: bool,
 }
 
 impl Default for TuiConfig {
@@ -92,6 +99,7 @@ impl Default for TuiConfig {
             yolo_mode: false,
             recent_provider_ids: Vec::new(),
             recent_model_ids: Vec::new(),
+            llm_recap: false,
         }
     }
 }
@@ -886,6 +894,36 @@ impl Default for GoalsConfig {
         Self {
             enabled: true,
             max_auto_continue_turns: 50,
+        }
+    }
+}
+
+/// NAVI binary self-update preferences.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct UpdatesConfig {
+    /// Whether background update checks run on startup / interval.
+    pub check_enabled: bool,
+    /// Automatically download and install a newer release when found.
+    pub auto_update: bool,
+    /// Include prerelease GitHub tags when checking for updates.
+    pub include_prerelease: bool,
+    /// Minimum hours between automatic update checks (startup always checks
+    /// if never checked, then respects this interval).
+    pub check_interval_hours: u64,
+    /// Optional GitHub `owner/repo` override (default: `navi-ai-org/navi`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repo: Option<String>,
+}
+
+impl Default for UpdatesConfig {
+    fn default() -> Self {
+        Self {
+            check_enabled: true,
+            auto_update: false,
+            include_prerelease: false,
+            check_interval_hours: 24,
+            repo: None,
         }
     }
 }

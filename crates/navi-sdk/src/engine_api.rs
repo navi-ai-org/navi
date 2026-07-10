@@ -121,6 +121,16 @@ pub const NAVI_ENGINE_API_METHODS: &[&str] = &[
     "reload_wasm_plugins",
     // Config
     "loaded_config",
+    // Notifications / self-update
+    "notify",
+    "notify_simple",
+    "open_url",
+    "app_version",
+    "check_for_update",
+    "check_for_update_with",
+    "apply_update",
+    "auto_update_enabled",
+    "set_auto_update",
 ];
 
 /// Exhaustive list of methods that the N-API binding exposes via `#[napi]`.
@@ -234,6 +244,16 @@ pub const NAVI_NAPI_BOUND_METHODS: &[&str] = &[
     "reload_wasm_plugins",
     // Config
     "loaded_config",
+    // Notifications / self-update
+    "notify",
+    "notify_simple",
+    "open_url",
+    "app_version",
+    "check_for_update",
+    "check_for_update_with",
+    "apply_update",
+    "auto_update_enabled",
+    "set_auto_update",
 ];
 
 #[cfg(test)]

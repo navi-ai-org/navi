@@ -68,6 +68,15 @@ pub enum AsyncEvent {
     PluginsReloadNeeded,
     ClearSyncMessages,
     BackgroundCommandsUpdated(Vec<BackgroundCommandSnapshot>),
+    /// Result of a GitHub Releases self-update check.
+    UpdateChecked {
+        result: std::result::Result<Option<navi_core::UpdateInfo>, String>,
+    },
+    /// Result of applying a self-update install.
+    UpdateApplied {
+        version: String,
+        result: std::result::Result<(), String>,
+    },
 }
 
 pub(crate) fn handle_async_event(app: &mut TuiApp, event: AsyncEvent) {
@@ -254,6 +263,14 @@ pub(crate) fn handle_async_event(app: &mut TuiApp, event: AsyncEvent) {
         }
         AsyncEvent::BackgroundCommandsUpdated(commands) => {
             crate::background::replace_background_commands(app, commands);
+        }
+        AsyncEvent::UpdateChecked { result } => {
+            let user_initiated = app.update_check_user_initiated;
+            app.update_check_user_initiated = false;
+            crate::update_check::handle_update_checked(app, result, user_initiated);
+        }
+        AsyncEvent::UpdateApplied { version, result } => {
+            crate::update_check::handle_update_applied(app, version, result);
         }
     }
 }
@@ -653,6 +670,36 @@ fn handle_agent_event(app: &mut TuiApp, event: AgentEvent) {
                 }
             }
         }
+        AgentEvent::NotificationRequested {
+            title,
+            body,
+            urgency: _,
+            category: _,
+        } => {
+            show_notification(app, title, body);
+        }
+        AgentEvent::UpdateAvailable {
+            current_version,
+            latest_version,
+            latest_tag,
+            release_url,
+            body,
+            prerelease,
+        } => {
+            app.available_update = Some(navi_core::UpdateInfo {
+                current_version,
+                latest_tag,
+                latest_version: latest_version.clone(),
+                release_url,
+                body,
+                prerelease,
+            });
+            show_notification(
+                app,
+                "Update available",
+                format!("NAVI {latest_version} is ready — Commands → Install Update"),
+            );
+        }
     }
 }
 
@@ -759,6 +806,12 @@ fn maybe_emit_session_recap(app: &mut TuiApp, assistant_text: &str) {
     );
 
     if suppressed {
+        return;
+    }
+
+    // LLM recap is opt-in (`tui.llm_recap = true`). Local recap is enough for
+    // the UI by default and avoids a provider call after every turn.
+    if !app.loaded_config.config.tui.llm_recap {
         return;
     }
 
