@@ -15,7 +15,7 @@ Your goal is to ask questions about:
 3. **Blocked commands**: Are there any shell commands NAVI should NEVER run (e.g., `rm`, `sudo`, `shutdown`)?
 4. **Security**: Should file access be restricted to the current project directory? Should `.git` be protected?
 5. **Plugin preferences**: Does the user want to explore WASM plugins?
-6. **Skills**: Does the user want to enable any skills (SKILL.md files in the project)?
+6. **Skills**: Does the user want to enable any skills from the skill store?
 7. **Thinking mode**: How much thinking should the model do? (max, high, medium, low, off)
 8. **Onboarding complete**: After all questions, ask the user if they're satisfied and want to save.
 

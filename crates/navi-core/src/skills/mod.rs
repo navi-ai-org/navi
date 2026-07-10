@@ -361,7 +361,6 @@ mod tests {
     fn cfg() -> SkillsConfig {
         SkillsConfig {
             enabled: true,
-            dirs: Vec::new(),
             active: Vec::new(),
         }
     }
@@ -503,7 +502,6 @@ mod tests {
         .unwrap();
         let config = SkillsConfig {
             enabled: false,
-            dirs: Vec::new(),
             active: Vec::new(),
         };
         let skills =

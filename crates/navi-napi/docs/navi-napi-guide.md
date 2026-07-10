@@ -467,7 +467,7 @@ const usage = await engine.usageReport();
 ## Skills
 
 ```ts
-// List discovered skills (SKILL.md folders)
+// List skills (built-ins + SQLite store)
 const skills = engine.listSkills();
 // skills => [{ id, name, description?, version?, tags, requires }]
 

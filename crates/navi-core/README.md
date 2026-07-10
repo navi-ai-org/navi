@@ -21,7 +21,7 @@ The engine behind [NAVI](https://github.com/navi-ai-org/navi) — a local, agent
 | `model` | `ModelProvider` trait, request/response types, and thinking config |
 | `harness` | Harness profile selection (`small` / `medium`) with observation budgets |
 | `registry` | Provider registry with embedded snapshot, SQLite cache, and remote sync |
-| `skills` | Local `SKILL.md` discovery and prompt injection |
+| `skills` | SQLite skill store, built-ins, and prompt injection |
 | `memory` | Project-scoped session memory for cross-session context |
 
 ## Quick look

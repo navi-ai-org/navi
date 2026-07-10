@@ -669,7 +669,7 @@ fn list_skills_returns_empty_when_disabled() {
 
     // Default config has skills.enabled = false, so no skills should be discovered
 
-    // (even if there are no skill dirs, this should return empty, not error)
+    // (skills disabled → empty list, not an error)
 
     let _ = skills;
 }
