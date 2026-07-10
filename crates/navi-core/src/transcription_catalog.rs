@@ -1,0 +1,90 @@
+//! Catalog of remote transcription / dictation providers.
+//!
+//! Sources (in order):
+//! 1. Embedded registry snapshot (`registry-snapshot/transcription-providers/`)
+//! 2. Optional SQLite cache (same DB as LLM providers) — future remote sync
+
+use crate::registry::{
+    RegistryTranscriptionProvider, embedded_transcription_providers,
+};
+
+/// Returns all known remote transcription providers (embedded snapshot).
+pub fn transcription_provider_catalog() -> Vec<RegistryTranscriptionProvider> {
+    embedded_transcription_providers().unwrap_or_else(|err| {
+        tracing::warn!(error = %err, "failed to load embedded transcription providers");
+        Vec::new()
+    })
+}
+
+/// Lookup a transcription provider by id (case-sensitive registry id).
+pub fn find_transcription_provider(id: &str) -> Option<RegistryTranscriptionProvider> {
+    let id = id.trim();
+    if id.is_empty() || id.eq_ignore_ascii_case("local") {
+        return None;
+    }
+    transcription_provider_catalog()
+        .into_iter()
+        .find(|p| p.id == id || p.id.eq_ignore_ascii_case(id))
+}
+
+/// Resolve model name: explicit config, else provider default, else first model.
+pub fn resolve_transcription_model(
+    provider: &RegistryTranscriptionProvider,
+    configured_model: &str,
+) -> String {
+    let configured = configured_model.trim();
+    if !configured.is_empty() {
+        // Accept exact match or case-insensitive.
+        if provider.models.iter().any(|m| m.name == configured) {
+            return configured.to_string();
+        }
+        if let Some(m) = provider
+            .models
+            .iter()
+            .find(|m| m.name.eq_ignore_ascii_case(configured))
+        {
+            return m.name.clone();
+        }
+        // Allow unknown model names (providers may add models before registry refresh).
+        return configured.to_string();
+    }
+    provider
+        .resolved_default_model()
+        .unwrap_or("whisper-1")
+        .to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn catalog_contains_openai_groq_wispr() {
+        let cat = transcription_provider_catalog();
+        let ids: Vec<_> = cat.iter().map(|p| p.id.as_str()).collect();
+        assert!(ids.contains(&"openai"));
+        assert!(ids.contains(&"groq"));
+        assert!(ids.contains(&"wispr-flow"));
+    }
+
+    #[test]
+    fn find_and_default_model() {
+        let p = find_transcription_provider("openai").expect("openai");
+        assert_eq!(resolve_transcription_model(&p, ""), "whisper-1");
+        assert_eq!(
+            resolve_transcription_model(&p, "gpt-4o-mini-transcribe"),
+            "gpt-4o-mini-transcribe"
+        );
+        let g = find_transcription_provider("groq").expect("groq");
+        assert_eq!(
+            resolve_transcription_model(&g, ""),
+            "whisper-large-v3-turbo"
+        );
+    }
+
+    #[test]
+    fn local_is_not_a_remote_provider() {
+        assert!(find_transcription_provider("local").is_none());
+        assert!(find_transcription_provider("").is_none());
+    }
+}

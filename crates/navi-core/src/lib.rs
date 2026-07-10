@@ -40,6 +40,7 @@ pub mod skill_mining;
 pub mod skills;
 pub mod tool;
 pub mod trace;
+pub mod transcription_catalog;
 pub mod turn;
 pub mod update;
 pub mod verifier;
@@ -150,7 +151,11 @@ pub use setup::{SETUP_INTERVIEW_COMPLETE_MARKER, SETUP_INTERVIEW_PROMPT};
 pub use skill_mining::{
     SkillDraft, SkillReplayReport, activate_skill_after_replay, draft_skill_from_traces,
 };
-pub use skills::{SkillManifest, active_skills, discover_configured_skills};
+pub use skills::{
+    SkillManifest, SkillWriteRequest, SkillWriteResult, SkillWriteScope, active_skills,
+    delete_skill, discover_configured_skills, load_skill_by_id, render_skill_md,
+    skill_is_editable, skill_write_root, slugify_skill_id, write_skill,
+};
 pub use tool::background::{BackgroundCommandSnapshot, BackgroundTaskStatus};
 pub use update::{
     UpdateInfo, apply_update, check_for_update, current_version, normalize_version,
@@ -174,4 +179,12 @@ pub use benchmark::{
     compare_bench_runs,
 };
 pub use memory::{HistoryStore, MemoryManager, MemoryStore, SessionCheckpoint};
+pub use registry::{
+    RegistryTranscriptionModel, RegistryTranscriptionProvider, TranscriptionModelPricing,
+    TranscriptionProviderKind, embedded_transcription_provider_schema,
+    embedded_transcription_providers,
+};
+pub use transcription_catalog::{
+    find_transcription_provider, resolve_transcription_model, transcription_provider_catalog,
+};
 pub use verifier::{VerificationStore, VerifierResult, VerifierRunner, VerifierSpec};
