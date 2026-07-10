@@ -30,6 +30,8 @@ Full changelog: https://github.com/navi-ai-org/navi/compare/v0.2.2...v0.2.3
 ### Chores
 
 - Version bump to 0.2.3
+- CI runs on push/PR/tags; Release gates on tests before multi-platform publish
+- ONNX voice is optional (`--features voice-onnx`) for portable musl/Windows builds
 
 ## [0.2.2] - 2026-07-09
 
