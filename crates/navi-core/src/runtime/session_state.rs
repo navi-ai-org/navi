@@ -178,6 +178,27 @@ impl SessionState {
         self.updated_at = current_unix_timestamp();
     }
 
+    /// Drop events from the `(keep_user_turns + 1)`-th `UserTaskSubmitted` onward.
+    ///
+    /// Used when rewinding the live session after the UI edits a past user message.
+    pub fn truncate_events_to_user_turns(&mut self, keep_user_turns: usize) {
+        let mut seen = 0usize;
+        let mut cut = self.events.len();
+        for (i, event) in self.events.iter().enumerate() {
+            if matches!(event, AgentEvent::UserTaskSubmitted { .. }) {
+                if seen == keep_user_turns {
+                    cut = i;
+                    break;
+                }
+                seen += 1;
+            }
+        }
+        self.events.truncate(cut);
+        self.turn_sequence = keep_user_turns as u64;
+        self.updated_at = current_unix_timestamp();
+        self.update_title_from_events();
+    }
+
     pub fn update_title_from_events(&mut self) {
         self.title = session_title_from_events(&self.events);
     }

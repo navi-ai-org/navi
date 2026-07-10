@@ -156,6 +156,8 @@ export class NaviNapiEngine {
   snapshotSession(sessionId: string): Promise<string>;
   closeSession(sessionId: string): Promise<boolean>;
   cancelTurn(sessionId: string): Promise<void>;
+  /** Rewind live history: keep the first `keepUserTurns` user turns, drop the rest. */
+  rewindSession(sessionId: string, keepUserTurns: number): Promise<number>;
   resolveApproval(sessionId: string, approvalId: string, approved: boolean): Promise<boolean>;
   resolveQuestion(sessionId: string, response: JsonValue): Promise<boolean>;
   /** Resolve plan review: { id, planId, decision: "approve"|"request_changes"|"quit", comments?, freeform? } */
