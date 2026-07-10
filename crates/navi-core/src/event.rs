@@ -577,6 +577,29 @@ pub enum AgentEvent {
         /// The new mode.
         mode: crate::plan_mode::AgentMode,
     },
+    /// Host should surface a user-visible notification.
+    ///
+    /// Desktop hosts call OS toasts; browser hosts map this to the Web
+    /// Notifications API. Payload mirrors [`crate::notify::NotifyRequest`].
+    NotificationRequested {
+        title: String,
+        body: String,
+        #[serde(default)]
+        urgency: crate::notify::NotificationUrgency,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        category: Option<String>,
+    },
+    /// A newer NAVI release is available (from update check).
+    UpdateAvailable {
+        current_version: String,
+        latest_version: String,
+        latest_tag: String,
+        release_url: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        body: Option<String>,
+        #[serde(default)]
+        prerelease: bool,
+    },
 }
 
 /// Kind of repetitive/degenerate output detected by the repetition detector.

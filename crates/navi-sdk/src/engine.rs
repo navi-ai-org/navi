@@ -1336,7 +1336,7 @@ impl NaviEngine {
             .clone()
     }
 
-    fn replace_loaded_config(&self, loaded_config: LoadedConfig) {
+    pub(crate) fn replace_loaded_config(&self, loaded_config: LoadedConfig) {
         *self
             .inner
             .loaded_config

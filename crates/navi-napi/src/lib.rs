@@ -1310,11 +1310,122 @@ impl NaviNapiEngine {
                 "video": config.config.attachment_models.video,
                 "document": config.config.attachment_models.document,
             },
+            "updates": {
+                "checkEnabled": config.config.updates.check_enabled,
+                "autoUpdate": config.config.updates.auto_update,
+                "includePrerelease": config.config.updates.include_prerelease,
+                "checkIntervalHours": config.config.updates.check_interval_hours,
+                "repo": config.config.updates.repo,
+            },
             "global_config_path": config.global_config_path,
             "project_config_path": config.project_config_path,
             "data_dir": config.data_dir,
             "mcp_servers": mcp_servers,
         }))
+    }
+
+    // ── Notifications / self-update ────────────────────────────────────
+    // Browser hosts: call `notify` with desktop=false and show Web
+    // Notifications from the returned payload (or listen for
+    // AgentEvent.NotificationRequested on the event stream).
+
+    /// Show a notification. When `desktop` is true, also attempt an OS toast.
+    /// Returns the payload so browser hosts can use the Web Notifications API.
+    #[napi]
+    pub fn notify(
+        &self,
+        title: String,
+        body: String,
+        desktop: Option<bool>,
+        urgency: Option<String>,
+        category: Option<String>,
+    ) -> Result<JsonValue> {
+        use navi_core::{NotificationUrgency, NotifyRequest};
+        let urgency = match urgency.as_deref() {
+            Some("low") => NotificationUrgency::Low,
+            Some("critical") => NotificationUrgency::Critical,
+            _ => NotificationUrgency::Normal,
+        };
+        let mut req = NotifyRequest::new(title, body).with_urgency(urgency);
+        if let Some(cat) = category {
+            req = req.with_category(cat);
+        }
+        let delivered = self
+            .inner
+            .notify(req, desktop.unwrap_or(true))
+            .map_err(to_napi_error)?;
+        serde_json::to_value(delivered).map_err(to_napi_error)
+    }
+
+    #[napi]
+    pub fn notify_simple(
+        &self,
+        title: String,
+        body: String,
+        desktop: Option<bool>,
+    ) -> Result<JsonValue> {
+        let delivered = self
+            .inner
+            .notify_simple(title, body, desktop.unwrap_or(true))
+            .map_err(to_napi_error)?;
+        serde_json::to_value(delivered).map_err(to_napi_error)
+    }
+
+    #[napi]
+    pub fn open_url(&self, url: String) -> Result<()> {
+        self.inner.open_url(&url).map_err(to_napi_error)
+    }
+
+    #[napi]
+    pub fn app_version(&self) -> String {
+        self.inner.app_version()
+    }
+
+    #[napi]
+    pub async fn check_for_update(&self) -> Result<Option<JsonValue>> {
+        match self.inner.check_for_update().await.map_err(to_napi_error)? {
+            Some(info) => Ok(Some(serde_json::to_value(info).map_err(to_napi_error)?)),
+            None => Ok(None),
+        }
+    }
+
+    #[napi]
+    pub async fn check_for_update_with(
+        &self,
+        current: String,
+        repo: Option<String>,
+        include_prerelease: Option<bool>,
+    ) -> Result<Option<JsonValue>> {
+        match self
+            .inner
+            .check_for_update_with(
+                &current,
+                repo.as_deref(),
+                include_prerelease.unwrap_or(false),
+            )
+            .await
+            .map_err(to_napi_error)?
+        {
+            Some(info) => Ok(Some(serde_json::to_value(info).map_err(to_napi_error)?)),
+            None => Ok(None),
+        }
+    }
+
+    #[napi]
+    pub async fn apply_update(&self, info: JsonValue) -> Result<()> {
+        let info: navi_core::UpdateInfo =
+            serde_json::from_value(info).map_err(to_napi_error)?;
+        self.inner.apply_update(&info).await.map_err(to_napi_error)
+    }
+
+    #[napi]
+    pub fn auto_update_enabled(&self) -> bool {
+        self.inner.auto_update_enabled()
+    }
+
+    #[napi]
+    pub fn set_auto_update(&self, enabled: bool) -> Result<()> {
+        self.inner.set_auto_update(enabled).map_err(to_napi_error)
     }
 }
 

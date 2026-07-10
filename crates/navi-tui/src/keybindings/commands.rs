@@ -193,6 +193,29 @@ pub(crate) fn run_selected_command(app: &mut TuiApp) -> bool {
             });
             super::close_all_modals(app);
         }
+        CommandAction::About => {
+            crate::view::about::open_about(app);
+        }
+        CommandAction::CheckForUpdates => {
+            app.update_check_user_initiated = true;
+            crate::update_check::spawn_update_check(app);
+            show_notification(app, "Updates", "Checking for a newer NAVI release…");
+            super::close_all_modals(app);
+        }
+        CommandAction::InstallUpdate => {
+            if app.available_update.is_some() {
+                super::replace_modal(app, ModalKind::UpdateAvailable);
+            } else {
+                app.update_check_user_initiated = true;
+                crate::update_check::spawn_update_check(app);
+                show_notification(
+                    app,
+                    "Updates",
+                    "Checking for updates before install…",
+                );
+                super::close_all_modals(app);
+            }
+        }
         _ => super::close_all_modals(app),
     }
 

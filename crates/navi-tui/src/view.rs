@@ -1,3 +1,4 @@
+pub(crate) mod about;
 pub(crate) mod background_commands;
 pub(crate) mod chat;
 pub(crate) mod command_palette;
@@ -13,6 +14,7 @@ pub(crate) mod provider_settings;
 pub(crate) mod sessions;
 pub(crate) mod skills;
 pub(crate) mod terminal_graphics;
+pub(crate) mod update_modal;
 pub(crate) mod welcome;
 
 use ratatui::layout::Rect;

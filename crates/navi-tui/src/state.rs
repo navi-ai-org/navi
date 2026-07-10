@@ -285,6 +285,13 @@ pub(crate) struct ChatRenderCache {
     pub line_sources: Vec<ChatLineSource>,
     pub chat_rect: Option<Rect>,
     pub tool_render_cache: HashMap<String, Vec<Line<'static>>>,
+    /// Number of finalized messages covered by `history_*` (excludes streaming tail).
+    pub history_message_count: usize,
+    /// Signature of finalized history only (cheap to recheck while streaming).
+    pub history_signature: u64,
+    /// Cached lines for finalized history prefix.
+    pub history_lines: Vec<Line<'static>>,
+    pub history_line_sources: Vec<ChatLineSource>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
@@ -391,6 +398,10 @@ pub enum Mode {
     SudoPassword,
     /// `@` path/file/folder mention palette.
     PathMentions,
+    /// About NAVI (product blurb + links).
+    About,
+    /// Confirm / install a pending self-update.
+    UpdateAvailable,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -424,6 +435,8 @@ pub(crate) enum ModalKind {
     ConfirmPlan,
     SudoPassword,
     PathMentions,
+    About,
+    UpdateAvailable,
 }
 
 impl ModalKind {
@@ -458,6 +471,8 @@ impl ModalKind {
             Self::ConfirmPlan => Mode::ConfirmPlan,
             Self::SudoPassword => Mode::SudoPassword,
             Self::PathMentions => Mode::PathMentions,
+            Self::About => Mode::About,
+            Self::UpdateAvailable => Mode::UpdateAvailable,
         }
     }
 }

@@ -28,6 +28,7 @@ mod state;
 mod stream;
 mod theme;
 mod tools;
+mod update_check;
 mod usage;
 mod view;
 

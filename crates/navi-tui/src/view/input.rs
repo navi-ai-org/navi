@@ -255,6 +255,16 @@ pub(crate) fn render_input(frame: &mut Frame<'_>, app: &mut TuiApp, area: Rect) 
                 HitAction::OpenMessageQueue,
             );
         }
+        if app.available_update.is_some() {
+            // Click anywhere on the meta strip that starts with the update chip.
+            // Precise chip geometry is approximate; whole-strip fallback is fine.
+            app.register_hit(
+                meta_area,
+                5,
+                "open update available",
+                HitAction::OpenUpdateAvailable,
+            );
+        }
         if !app.pending_questions.is_empty() {
             app.register_hit(
                 meta_area,
@@ -605,6 +615,15 @@ fn composer_meta_right(app: &TuiApp, width: usize) -> ComposerMetaBuilt {
             queued_footer_label(app),
             Style::default()
                 .fg(code_const())
+                .add_modifier(Modifier::BOLD),
+        ));
+        spans.push(Span::styled(" · ", Style::default().fg(ghost())));
+    }
+    if let Some(info) = &app.available_update {
+        spans.push(Span::styled(
+            format!("⬆ v{}", info.latest_version),
+            Style::default()
+                .fg(signal())
                 .add_modifier(Modifier::BOLD),
         ));
         spans.push(Span::styled(" · ", Style::default().fg(ghost())));

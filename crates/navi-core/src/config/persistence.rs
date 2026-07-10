@@ -49,7 +49,7 @@ impl NaviConfig {
     pub(crate) fn merge(&mut self, other: NaviConfig) {
         use crate::config::types::{
             BackgroundModelsConfig, GoalsConfig, McpConfig, ModelConfig, PluginMarketplaceConfig,
-            SkillsConfig, TuiConfig,
+            SkillsConfig, TuiConfig, UpdatesConfig,
         };
 
         if other.model != ModelConfig::default() {
@@ -77,6 +77,9 @@ impl NaviConfig {
         }
         if other.goals != GoalsConfig::default() {
             self.goals = other.goals;
+        }
+        if other.updates != UpdatesConfig::default() {
+            self.updates = other.updates;
         }
         crate::config::providers::merge_provider_configs(&mut self.providers, other.providers);
         self.plugins.extend(other.plugins);

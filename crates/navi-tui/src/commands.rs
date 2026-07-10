@@ -33,6 +33,9 @@ pub(crate) enum CommandAction {
     Dream,
     TogglePlanMode,
     Help,
+    About,
+    CheckForUpdates,
+    InstallUpdate,
 }
 
 pub(crate) const COMMANDS: &[CommandItem] = &[
@@ -130,6 +133,21 @@ pub(crate) const COMMANDS: &[CommandItem] = &[
         label: "Help",
         shortcut: Some("? / ctrl+."),
         action: CommandAction::Help,
+    },
+    CommandItem {
+        label: "About",
+        shortcut: None,
+        action: CommandAction::About,
+    },
+    CommandItem {
+        label: "Check for Updates",
+        shortcut: None,
+        action: CommandAction::CheckForUpdates,
+    },
+    CommandItem {
+        label: "Install Update",
+        shortcut: None,
+        action: CommandAction::InstallUpdate,
     },
     CommandItem {
         label: "Quit",

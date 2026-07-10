@@ -44,6 +44,7 @@ mod tests {
             background_models: BackgroundModelsConfig::default(),
             goals: GoalsConfig::default(),
             voice: VoiceConfig::default(),
+            updates: UpdatesConfig::default(),
         };
 
         let mut project = NaviConfig {
@@ -91,6 +92,7 @@ mod tests {
             background_models: BackgroundModelsConfig::default(),
             goals: GoalsConfig::default(),
             voice: VoiceConfig::default(),
+            updates: UpdatesConfig::default(),
         };
         project.plugins.clear();
         project.mcp = McpConfig::default();

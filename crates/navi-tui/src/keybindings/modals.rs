@@ -12,7 +12,7 @@ use crate::providers::{
     save_api_key_and_rebuild, selected_model_in_rows, start_provider_oauth,
     sync_scroll_to_model_index, sync_scroll_to_selection,
 };
-use crate::session::load_saved_sessions;
+use crate::session::{load_saved_sessions, load_session_snapshot};
 use crate::state::{MessageAction, ModalKind, ThinkingLevel};
 use crate::theme::filtered_theme_options;
 use crate::ui::SelectListState;
@@ -396,7 +396,7 @@ pub(crate) fn handle_thinking_key(app: &mut TuiApp, code: KeyCode) -> bool {
 }
 
 pub(crate) fn handle_settings_key(app: &mut TuiApp, code: KeyCode) -> bool {
-    const SETTINGS_COUNT: usize = 4;
+    const SETTINGS_COUNT: usize = 5;
     const COMPACT_TOOL_LIMITS: &[usize] = &[3, 5, 8, 12, 20];
     let mut list_state = SelectListState::new(app.selected_setting, 0);
     match code {
@@ -467,11 +467,81 @@ pub(crate) fn handle_settings_key(app: &mut TuiApp, code: KeyCode) -> bool {
                 app.theme_filter_cursor = 0;
                 super::replace_modal(app, ModalKind::ThemePicker);
             }
+            4 => {
+                let enabled = !app.loaded_config.config.updates.auto_update;
+                app.loaded_config.config.updates.auto_update = enabled;
+                show_notification(
+                    app,
+                    "Settings",
+                    if enabled {
+                        "Auto-update enabled — newer releases install automatically."
+                    } else {
+                        "Auto-update disabled — you'll be notified when updates are available."
+                    },
+                );
+                save_preferences(app);
+            }
             _ => {}
         },
         _ => {}
     }
     app.selected_setting = list_state.selected();
+    false
+}
+
+pub(crate) fn handle_about_key(app: &mut TuiApp, code: KeyCode) -> bool {
+    use crate::view::about::AboutLink;
+    let count = AboutLink::all().len();
+    match code {
+        KeyCode::Esc => super::close_active_modal(app),
+        KeyCode::Down | KeyCode::Tab | KeyCode::Char('j') => {
+            app.selected_about_link = (app.selected_about_link + 1) % count.max(1);
+        }
+        KeyCode::Up | KeyCode::Char('k') => {
+            app.selected_about_link = app
+                .selected_about_link
+                .checked_sub(1)
+                .unwrap_or(count.saturating_sub(1));
+        }
+        KeyCode::Enter => {
+            crate::view::about::open_selected_link(app);
+        }
+        _ => {}
+    }
+    false
+}
+
+pub(crate) fn handle_update_available_key(app: &mut TuiApp, code: KeyCode) -> bool {
+    match code {
+        KeyCode::Esc => super::close_active_modal(app),
+        KeyCode::Enter => {
+            crate::update_check::spawn_apply_update(app, None);
+        }
+        KeyCode::Char('a') | KeyCode::Char('A') => {
+            let enabled = !app.loaded_config.config.updates.auto_update;
+            app.loaded_config.config.updates.auto_update = enabled;
+            save_preferences(app);
+            show_notification(
+                app,
+                "Auto-update",
+                if enabled {
+                    "Auto-update on — future releases install automatically."
+                } else {
+                    "Auto-update off."
+                },
+            );
+        }
+        KeyCode::Char('o') | KeyCode::Char('O') => {
+            if let Some(info) = &app.available_update {
+                let url = info.release_url.clone();
+                match navi_core::open_url(&url) {
+                    Ok(()) => show_notification(app, "Release notes", "Opening in browser…"),
+                    Err(err) => show_notification(app, "Open failed", err.to_string()),
+                }
+            }
+        }
+        _ => {}
+    }
     false
 }
 
@@ -784,11 +854,15 @@ pub(crate) fn handle_sessions_key(
             list_state.sync_scroll(10);
         }
         KeyCode::Enter => {
-            let snapshot = sessions.get(app.selected_session).copied().cloned();
+            let session_id = sessions
+                .get(app.selected_session)
+                .map(|info| info.id.clone());
             drop(sessions);
-            if let Some(snapshot) = snapshot {
-                save_current_session(app);
-                load_session(app, &snapshot);
+            if let Some(session_id) = session_id {
+                if let Some(snapshot) = load_session_snapshot(&app.session_store, &session_id) {
+                    save_current_session(app);
+                    load_session(app, &snapshot);
+                }
             }
             app.session_filter.clear();
             app.session_filter_cursor = 0;

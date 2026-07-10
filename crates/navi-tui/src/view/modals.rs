@@ -1363,7 +1363,7 @@ pub(crate) fn render_settings(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
         .constraints([Constraint::Min(4), Constraint::Length(1)])
         .split(inner);
 
-    let settings_list: [(&str, String); 4] = [
+    let settings_list: [(&str, String); 5] = [
         (
             "Show Reasoning",
             if app.show_thinking {
@@ -1385,6 +1385,14 @@ pub(crate) fn render_settings(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
             app.compact_tool_visible_limit.to_string(),
         ),
         ("Theme", format!("Select Theme ({})", app.theme_id.label())),
+        (
+            "Auto-update NAVI",
+            if app.loaded_config.config.updates.auto_update {
+                "[x]".into()
+            } else {
+                "[ ]".into()
+            },
+        ),
     ];
 
     let items = settings_list
@@ -1399,7 +1407,7 @@ pub(crate) fn render_settings(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
                 inactive_item_style()
             };
 
-            let line = if index >= 2 {
+            let line = if index == 2 || index == 3 {
                 format!("{label}: {val}")
             } else {
                 format!("{val} {label}")

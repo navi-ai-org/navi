@@ -133,6 +133,22 @@ pub fn register_modal_panels(app: &mut TuiApp) {
         78,
         24,
     )));
+    // About NAVI
+    pm.add_overlay(Box::new(ModalPanel::new(
+        "about",
+        Mode::About,
+        view::about::render,
+        72,
+        16,
+    )));
+    // Self-update available
+    pm.add_overlay(Box::new(ModalPanel::new(
+        "update-available",
+        Mode::UpdateAvailable,
+        view::update_modal::render,
+        72,
+        16,
+    )));
     // Skills
     pm.add_overlay(Box::new(ModalPanel::new(
         "skills",

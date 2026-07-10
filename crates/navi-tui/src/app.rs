@@ -13,7 +13,7 @@ use navi_core::PermissionMode;
 use navi_sdk::{
     AgentEvent, AgentRunState, ApprovalRequest, BackgroundCommandSnapshot, CompactState,
     CredentialStore, EngineDriver, HarnessPolicy, LoadedConfig, ModelMessage, ModelOption,
-    NaviSkillInfo, SessionId, SessionSnapshot, SessionStore, ToolInvocation,
+    NaviSkillInfo, SessionId, SessionSnapshotInfo, SessionStore, ToolInvocation,
     available_model_options, build_system_prompt, canonical_provider_id, clean_session_title,
     effective_context_window, log_path, provider_catalog, select_harness_policy,
 };
@@ -128,7 +128,7 @@ pub struct TuiApp {
     pub(crate) session_id: SessionId,
     pub(crate) project_dir: PathBuf,
     pub(crate) git_branch: Option<String>,
-    pub(crate) saved_sessions: Vec<SessionSnapshot>,
+    pub(crate) saved_sessions: Vec<SessionSnapshotInfo>,
     pub(crate) selected_session: usize,
     pub(crate) session_scroll: usize,
     pub(crate) session_filter: String,
@@ -190,6 +190,15 @@ pub struct TuiApp {
     /// Setup wizard phase (None when not in setup mode).
     pub(crate) setup_phase: Option<crate::state::SetupPhase>,
 
+    /// Pending NAVI self-update from the last check (if any).
+    pub(crate) available_update: Option<navi_core::UpdateInfo>,
+    /// True while `apply_update` is running.
+    pub(crate) update_installing: bool,
+    /// When true, the next update-check result was user-initiated (show “up to date”).
+    pub(crate) update_check_user_initiated: bool,
+    /// Selected link row in the About modal.
+    pub(crate) selected_about_link: usize,
+
     // skills
     pub(crate) available_skills: Vec<NaviSkillInfo>,
     pub(crate) active_skills: Vec<String>,
@@ -246,6 +255,21 @@ impl TuiApp {
         project_dir: PathBuf,
         task: Option<String>,
     ) -> Result<Self> {
+        let engine: Arc<dyn EngineDriver> =
+            Arc::new(build_engine(&loaded_config, project_dir.clone())?);
+        Self::new_with_engine(loaded_config, project_dir, task, engine)
+    }
+
+    /// Construct a [`TuiApp`] with a caller-supplied engine driver.
+    ///
+    /// Used by tests to inject [`crate::testing::MockEngine`] and skip the real
+    /// [`navi_sdk::NaviEngine`] build (registry, tools, session runtime).
+    pub fn new_with_engine(
+        loaded_config: LoadedConfig,
+        project_dir: PathBuf,
+        task: Option<String>,
+        engine: Arc<dyn EngineDriver>,
+    ) -> Result<Self> {
         // Initialize the thread-local registry store from the SQLite cache before
         // calling `available_model_options()`. Without this, `provider_catalog()`
         // falls back to the embedded snapshot (which may lack registry-synced
@@ -263,8 +287,6 @@ impl TuiApp {
 
         let (async_tx, async_rx) = mpsc::unbounded_channel();
         let credential_store = CredentialStore::new(loaded_config.data_dir.clone());
-        let engine: Arc<dyn EngineDriver> =
-            Arc::new(build_engine(&loaded_config, project_dir.clone())?);
         let provider_configured =
             selected_model_runtime_available(&loaded_config, &credential_store, &project_dir);
         let session_store = SessionStore::with_redaction(
@@ -447,6 +469,10 @@ impl TuiApp {
             selected_attachment_model: 0,
             attachment_model_picker_active: false,
             setup_phase: None,
+            available_update: None,
+            update_installing: false,
+            update_check_user_initiated: false,
+            selected_about_link: 0,
         };
 
         // If a task was passed via CLI, pre-fill input
@@ -474,6 +500,9 @@ impl TuiApp {
 
         crate::panels::register_modal_panels(&mut app);
         crate::panels::regions::register_region_panels(&mut app);
+
+        // Background self-update check (non-blocking).
+        crate::update_check::spawn_update_check(&app);
 
         Ok(app)
     }
@@ -747,7 +776,7 @@ impl TuiApp {
             .collect()
     }
 
-    pub(crate) fn filtered_sessions(&self) -> Vec<&SessionSnapshot> {
+    pub(crate) fn filtered_sessions(&self) -> Vec<&SessionSnapshotInfo> {
         let filter = self.session_filter.trim().to_lowercase();
         let mut sessions = self
             .saved_sessions

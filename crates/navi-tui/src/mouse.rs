@@ -580,11 +580,19 @@ fn dispatch_hit(app: &mut TuiApp, hit: HitRegion<HitAction>) {
             }
         }
         HitAction::Session(index) => {
-            if let Some(snapshot) = app.saved_sessions.get(index).cloned() {
-                app.selected_session = index;
-                crate::persistence::save_current_session(app);
-                crate::persistence::load_session(app, &snapshot);
-                crate::keybindings::close_all_modals(app);
+            let session_id = app
+                .filtered_sessions()
+                .get(index)
+                .map(|info| info.id.clone());
+            if let Some(session_id) = session_id {
+                if let Some(snapshot) =
+                    crate::session::load_session_snapshot(&app.session_store, &session_id)
+                {
+                    app.selected_session = index;
+                    crate::persistence::save_current_session(app);
+                    crate::persistence::load_session(app, &snapshot);
+                    crate::keybindings::close_all_modals(app);
+                }
             }
         }
         HitAction::Skill(index) => {
@@ -630,6 +638,15 @@ fn dispatch_hit(app: &mut TuiApp, hit: HitRegion<HitAction>) {
         HitAction::HelpRow(index) => {
             app.selected_help = index.min(crate::view::help::help_entry_count().saturating_sub(1));
             crate::view::help::ensure_help_visible(app);
+        }
+        HitAction::AboutLink(index) => {
+            app.selected_about_link = index;
+            crate::view::about::open_selected_link(app);
+        }
+        HitAction::OpenUpdateAvailable => {
+            if app.available_update.is_some() {
+                replace_modal(app, crate::state::ModalKind::UpdateAvailable);
+            }
         }
         HitAction::ToolApprove => crate::tools::approve_pending_tool(app),
         HitAction::ToolDeny => crate::tools::deny_pending_tool(app),
@@ -867,7 +884,9 @@ fn active_scroll_target(app: &TuiApp) -> Option<ScrollTarget> {
         | Mode::OAuth
         | Mode::Usage
         | Mode::QueuedMessageEdit
-        | Mode::ConfirmCancelTurn => None,
+        | Mode::ConfirmCancelTurn
+        | Mode::About
+        | Mode::UpdateAvailable => None,
         Mode::Normal
         | Mode::ApiKeyEntry
         | Mode::Mcp
