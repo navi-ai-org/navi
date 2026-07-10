@@ -465,12 +465,64 @@ jobs:
             --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
             artifacts/SHA256SUMS.txt
 
+      - name: Build release notes body
+        id: notes
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="${{ env.RELEASE_TAG }}"
+          VER="${TAG#v}"
+          NOTES_FILE=".github/release-notes-v${VER}.md"
+          BODY=release-body.md
+
+          if [[ -f "$NOTES_FILE" ]]; then
+            echo "Using $NOTES_FILE"
+            cp "$NOTES_FILE" "$BODY"
+          else
+            echo "Extracting CHANGELOG.md section for ${VER}"
+            awk -v ver="$VER" '
+              $0 ~ ("^## \\[" ver "\\]") { grab=1; next }
+              grab && /^## \[/ { exit }
+              grab { print }
+            ' CHANGELOG.md > "$BODY"
+            if [[ ! -s "$BODY" ]]; then
+              echo "error: no .github/release-notes-v${VER}.md and no CHANGELOG section for ${VER}" >&2
+              exit 1
+            fi
+          fi
+
+          # Ensure install section exists.
+          if ! grep -q '## Install' "$BODY"; then
+            {
+              echo ""
+              echo "## Install"
+              echo ""
+              echo '```bash'
+              echo "curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/main/scripts/install.sh | sh -s -- --version ${VER}"
+              echo '```'
+            } >> "$BODY"
+          fi
+
+          # Ensure full-changelog link exists.
+          if ! grep -q 'Full [Cc]hangelog' "$BODY"; then
+            {
+              echo ""
+              echo "**Full Changelog**: https://github.com/${{ github.repository }}/releases"
+            } >> "$BODY"
+          fi
+
+          echo "----- release body preview -----"
+          head -n 80 "$BODY"
+          echo "----- end preview -----"
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.RELEASE_TAG }}
           name: NAVI ${{ env.RELEASE_TAG }}
-          generate_release_notes: true
+          # Prefer hand-written notes; do not clobber with empty GitHub auto notes.
+          generate_release_notes: false
+          body_path: release-body.md
           draft: false
           prerelease: ${{ contains(github.ref_name, '-') }}
           files: |
@@ -478,27 +530,5 @@ jobs:
             artifacts/*.zip
             artifacts/SHA256SUMS.txt
             artifacts/SHA256SUMS.txt.sigstore.json
-          # Body is replaced after publish from .github/release-notes-*.md when needed.
-          # Default stub keeps the section structure consistent.
-          body: |
-            ## New Features
-
-            _See release notes._
-
-            ## Bug Fixes
-
-            _See release notes._
-
-            ## Documentation
-
-            _See release notes._
-
-            ## Chores
-
-            _See release notes._
-
-            ## Changelog
-
-            Full changelog: https://github.com/${{ github.repository }}/compare/${{ env.RELEASE_TAG }}...${{ env.RELEASE_TAG }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
