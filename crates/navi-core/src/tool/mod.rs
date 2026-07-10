@@ -242,10 +242,29 @@ impl ToolExecutor {
         data_dir: std::path::PathBuf,
         config: std::sync::Arc<std::sync::RwLock<crate::config::NaviConfig>>,
     ) {
-        // Build the tool once with the caller-provided config and register it
-        // through the normal path so validators/metadata stay consistent.
-        let loader = crate::tool::builtin::SkillTool::new(project_dir, data_dir, config);
+        // load_skill + skill store management tools (create-skill workflow).
+        let loader = crate::tool::builtin::SkillTool::new(
+            project_dir.clone(),
+            data_dir.clone(),
+            config.clone(),
+        );
         self.register_tool(std::sync::Arc::new(loader));
+        self.register_tool(std::sync::Arc::new(crate::tool::builtin::SkillListTool::new(
+            project_dir.clone(),
+            data_dir.clone(),
+            config.clone(),
+        )));
+        self.register_tool(std::sync::Arc::new(crate::tool::builtin::SkillGetTool::new(
+            project_dir.clone(),
+            data_dir.clone(),
+            config,
+        )));
+        self.register_tool(std::sync::Arc::new(
+            crate::tool::builtin::SkillSaveTool::new(project_dir.clone(), data_dir.clone()),
+        ));
+        self.register_tool(std::sync::Arc::new(
+            crate::tool::builtin::SkillDeleteTool::new(project_dir, data_dir),
+        ));
     }
 
     pub(crate) fn new_code_exec_host(policy: SecurityPolicy) -> Self {

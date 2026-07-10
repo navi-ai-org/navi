@@ -729,6 +729,39 @@ impl NaviNapiEngine {
     }
 
     #[napi]
+    pub fn get_skill(&self, skill_id: String) -> Result<JsonValue> {
+        let skill = self.inner.get_skill(&skill_id).map_err(to_napi_error)?;
+        serde_json::to_value(skill).map_err(to_napi_error)
+    }
+
+    /// Create or update a skill as standard SKILL.md (shared with TUI/CLI).
+    ///
+    /// `params` keys (camelCase): id?, name, description?, version?, author?,
+    /// tags?, requires?, instructions, scope? ("user" | "project").
+    #[napi]
+    pub fn save_skill(&self, params: JsonValue) -> Result<JsonValue> {
+        let request: navi_core::SkillWriteRequest =
+            serde_json::from_value(params).map_err(to_napi_error)?;
+        let result = self.inner.save_skill(request).map_err(to_napi_error)?;
+        // Return a UI-friendly payload with full skill info + flags.
+        let loaded = self
+            .inner
+            .get_skill(&result.skill.id)
+            .map_err(to_napi_error)?;
+        Ok(json!({
+            "created": result.created,
+            "path": result.path.display().to_string(),
+            "skill": loaded,
+        }))
+    }
+
+    #[napi]
+    pub fn delete_skill(&self, skill_id: String) -> Result<JsonValue> {
+        let deleted = self.inner.delete_skill(&skill_id).map_err(to_napi_error)?;
+        Ok(json!({ "deleted": deleted }))
+    }
+
+    #[napi]
     pub async fn set_session_skills(&self, session_id: String, skills: Vec<String>) -> Result<()> {
         self.inner
             .set_session_skills(&session_id, skills)
@@ -936,32 +969,70 @@ impl NaviNapiEngine {
         serde_json::to_value(sessions).map_err(to_napi_error)
     }
 
+    /// Restores a saved session into the live runtime.
+    ///
+    /// Returns a **lightweight** payload (no event history) so desktop shells can
+    /// paint the UI from `load_saved_session_async` / a UI cache and restore in the
+    /// background without re-serializing multi‑MB event logs across the N-API boundary.
     #[napi]
     pub async fn load_saved_session(&self, session_id: String) -> Result<JsonValue> {
+        // Already live — free path for re-focusing a session.
+        if self.inner.session_ids().iter().any(|id| id == &session_id) {
+            return Ok(serde_json::json!({
+                "id": session_id,
+                "restored": true,
+                "already_active": true,
+            }));
+        }
+
         let snapshot = self
             .inner
             .load_saved_session_async(&session_id)
             .await
             .map_err(to_napi_error)?;
+
+        let project = snapshot.project.clone();
+        let created_at = snapshot.created_at;
+        let updated_at = snapshot.updated_at;
+        // Move events once — do not clone the full history for start + return.
+        let events = snapshot.events;
+        let initial_messages = initial_messages_from_events(&events);
+
         self.inner
             .start_session(NaviSessionRequest {
-                project_dir: Some(snapshot.project.clone()),
-                session_id: Some(session_id),
-                initial_messages: initial_messages_from_events(&snapshot.events),
-                initial_events: snapshot.events.clone(),
-                initial_created_at: Some(snapshot.created_at),
-                initial_updated_at: Some(snapshot.updated_at),
+                project_dir: Some(project.clone()),
+                session_id: Some(session_id.clone()),
+                initial_messages,
+                initial_events: events,
+                initial_created_at: Some(created_at),
+                initial_updated_at: Some(updated_at),
                 ..NaviSessionRequest::default()
             })
             .await
             .map_err(to_napi_error)?;
-        serde_json::to_value(&snapshot).map_err(to_napi_error)
+
+        Ok(serde_json::json!({
+            "id": session_id,
+            "project": project,
+            "created_at": created_at,
+            "updated_at": updated_at,
+            "restored": true,
+            "already_active": false,
+        }))
     }
 
     #[napi]
     pub async fn delete_saved_session(&self, session_id: String) -> Result<bool> {
         self.inner
             .delete_saved_session_async(&session_id)
+            .await
+            .map_err(to_napi_error)
+    }
+
+    #[napi]
+    pub async fn rename_saved_session(&self, session_id: String, title: String) -> Result<bool> {
+        self.inner
+            .rename_saved_session_async(&session_id, &title)
             .await
             .map_err(to_napi_error)
     }

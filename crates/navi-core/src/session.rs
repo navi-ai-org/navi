@@ -499,6 +499,32 @@ impl SessionStore {
         }
     }
 
+    /// Renames a saved session by updating its title field in the snapshot.
+    /// Returns `true` if the session existed and was updated.
+    pub fn rename(&self, session_id: &str, title: &str) -> Result<bool> {
+        let title = title.trim();
+        if title.is_empty() {
+            return Err(anyhow::anyhow!("session title cannot be empty"));
+        }
+        let path = self.root.join(format!("{session_id}.json"));
+        if !path.exists() {
+            return Ok(false);
+        }
+        let mut snapshot = self.load(session_id)?;
+        snapshot.title = Some(title.to_string());
+        snapshot.updated_at = current_unix_timestamp();
+        self.save(&snapshot)?;
+        Ok(true)
+    }
+
+    /// Async wrapper around [`Self::rename`].
+    pub async fn rename_async(&self, session_id: String, title: String) -> Result<bool> {
+        let store = self.clone();
+        task::spawn_blocking(move || store.rename(&session_id, &title))
+            .await
+            .map_err(|err| anyhow::anyhow!("rename_async join error: {err}"))?
+    }
+
     /// Async wrapper around [`Self::delete`] that runs the blocking filesystem
     /// operations on the Tokio blocking thread pool.
     pub async fn delete_async(&self, session_id: String) -> Result<bool> {
