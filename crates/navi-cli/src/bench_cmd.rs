@@ -2,8 +2,9 @@ use anyhow::{Context, Result};
 use navi_core::{
     ApprovalDecision, BenchCase, BenchCaseMetrics, BenchCaseResult, BenchCompareConfig, BenchRun,
     BenchSuite, HarnessProfile, LoadedConfig, PermissionMode, PlanReviewDecision,
-    PlanReviewResponse, RuntimeEvent, RuntimeEventKind, ThinkingConfig, ToolResult, VerifierResult,
-    VerifierRunner, aggregate_bench_metrics, compare_bench_runs,
+    PlanReviewResponse, ProviderConfig, ProviderKind, RuntimeEvent, RuntimeEventKind,
+    ThinkingConfig, ToolResult, VerifierResult, VerifierRunner, aggregate_bench_metrics,
+    canonical_provider_id, compare_bench_runs,
 };
 use navi_sdk::{NaviEngineBuilder, NaviSessionRequest, NaviTurnRequest};
 use serde_json::Value;
@@ -425,9 +426,9 @@ const BENCH_HEADLESS_DENY_TOOLS: &[&str] = &[
 /// plan/goal remain available when the work is multi-step or multi-module.
 const BENCH_SCOPE_PREAMBLE: &str = "\
 [navi-bench scope guidance]
-- Use plan / set_goal when the task is multi-step, ambiguous, or crosses several modules.
-- For small, localized bugs (one failing test, one obvious file), prefer: inspect → edit → verify.
-- Do not open plan mode only to organize a one-line fix.
+- Default: inspect → edit → verify. Do not plan a one-line or one-file fix.
+- Use the plan tool only when multi-module, ambiguous, or high-risk.
+- set_goal is only for long-running thread goals — not a synonym for plan.
 - Prefer apply_patch for surgical edits; re-read a file only when tests show new errors.
 ";
 
@@ -467,16 +468,23 @@ fn apply_agent_config(
     // Headless: auto-run tools; plan/goal stay enabled (auto-approved on review events).
     loaded_config.config.tui.yolo_mode = true;
     loaded_config.config.security.permission_mode = PermissionMode::Yolo;
-    for name in BENCH_HEADLESS_DENY_TOOLS {
-        let name = (*name).to_string();
-        if !loaded_config
-            .config
-            .security
-            .deny_tools
-            .iter()
-            .any(|t| t == &name)
-        {
-            loaded_config.config.security.deny_tools.push(name);
+    // Full tool-coverage audits set NAVI_BENCH_ALLOW_ALL_TOOLS=1 to exercise sleep /
+    // request_user_input (still auto-resolved / short-lived when possible).
+    let allow_all_tools = std::env::var("NAVI_BENCH_ALLOW_ALL_TOOLS")
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false);
+    if !allow_all_tools {
+        for name in BENCH_HEADLESS_DENY_TOOLS {
+            let name = (*name).to_string();
+            if !loaded_config
+                .config
+                .security
+                .deny_tools
+                .iter()
+                .any(|t| t == &name)
+            {
+                loaded_config.config.security.deny_tools.push(name);
+            }
         }
     }
     // Mild observation caps — shrink context without starving multi-file work.
@@ -487,6 +495,36 @@ fn apply_agent_config(
     // Native tool calling is on for these providers; skip duplicate tool-manifest prose.
     use navi_core::config::ToolPromptManifest;
     loaded_config.config.harness.tool_prompt_manifest = ToolPromptManifest::Never;
+
+    // Optional metrics proxy: route the selected provider through a local reverse
+    // proxy so the bench can measure cache hits / prefix breaks on every request.
+    if let Ok(base_url) = std::env::var("NAVI_BENCH_BASE_URL") {
+        let base_url = base_url.trim().to_string();
+        if !base_url.is_empty() {
+            let provider_id = loaded_config.config.model.provider.clone();
+            if let Some(provider) = loaded_config
+                .config
+                .providers
+                .iter_mut()
+                .find(|p| {
+                    p.id == provider_id
+                        || canonical_provider_id(&p.id) == canonical_provider_id(&provider_id)
+                })
+            {
+                provider.base_url = Some(base_url);
+            } else {
+                loaded_config.config.providers.push(ProviderConfig {
+                    id: provider_id,
+                    label: "bench-proxy".to_string(),
+                    description: "NAVI_BENCH_BASE_URL override".to_string(),
+                    kind: ProviderKind::OpenAiChatCompletions,
+                    api_key_env: "OPENCODE_API_KEY".to_string(),
+                    base_url: Some(base_url),
+                    ..Default::default()
+                });
+            }
+        }
+    }
 
     Ok(loaded_config)
 }
@@ -506,7 +544,6 @@ fn drain_ready_events(
 
 fn metrics_from_events(events: &[RuntimeEvent]) -> BenchCaseMetrics {
     let mut metrics = BenchCaseMetrics::default();
-    let mut cache_read_total = 0u64;
     for event in events {
         match &event.kind {
             RuntimeEventKind::TurnStarted { .. } => {
@@ -523,8 +560,8 @@ fn metrics_from_events(events: &[RuntimeEvent]) -> BenchCaseMetrics {
             RuntimeEventKind::TokensUpdated {
                 input_tokens,
                 output_tokens,
+                cache_creation_tokens,
                 cache_read_tokens,
-                ..
             } => {
                 // Gross provider input (includes cache-read volume when reported as input).
                 metrics.input_tokens = metrics.input_tokens.saturating_add(*input_tokens);
@@ -532,16 +569,15 @@ fn metrics_from_events(events: &[RuntimeEvent]) -> BenchCaseMetrics {
                 metrics.total_tokens = metrics
                     .total_tokens
                     .saturating_add(input_tokens.saturating_add(*output_tokens));
-                cache_read_total = cache_read_total.saturating_add(*cache_read_tokens);
+                metrics.cache_read_tokens =
+                    metrics.cache_read_tokens.saturating_add(*cache_read_tokens);
+                metrics.cache_write_tokens = metrics
+                    .cache_write_tokens
+                    .saturating_add(*cache_creation_tokens);
             }
             _ => {}
         }
     }
-    // Stash billable-ish non-cache input in turn_count's sibling fields is wrong;
-    // keep cache_read visible via harness by encoding in unused metric slot? Prefer
-    // storing as part of total_tokens already. Expose via files_changed? No.
-    // Use verifier_count/pass only for verifiers. Leave cache as comment in logs:
-    let _ = cache_read_total;
     metrics
 }
 
@@ -919,8 +955,8 @@ mod tests {
             RuntimeEvent::new(RuntimeEventKind::TokensUpdated {
                 input_tokens: 10,
                 output_tokens: 5,
-                cache_creation_tokens: 0,
-                cache_read_tokens: 0,
+                cache_creation_tokens: 2,
+                cache_read_tokens: 7,
             }),
         ];
 
@@ -932,6 +968,8 @@ mod tests {
         assert_eq!(metrics.input_tokens, 10);
         assert_eq!(metrics.output_tokens, 5);
         assert_eq!(metrics.total_tokens, 15);
+        assert_eq!(metrics.cache_read_tokens, 7);
+        assert_eq!(metrics.cache_write_tokens, 2);
     }
 
     #[test]

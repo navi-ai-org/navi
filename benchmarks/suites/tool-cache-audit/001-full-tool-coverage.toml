@@ -1,0 +1,72 @@
+version = 1
+id = "tool-cache-audit-full"
+title = "Builtin tool coverage + cache-hit hunt (lean)"
+category = "tool_audit"
+fixture = "benchmarks/fixtures/tool-cache-audit"
+# Keep limits tight — low-RAM hosts thrash above ~1–1.5GB agent+tools.
+max_turns = 40
+max_tool_calls = 90
+timeout_ms = 900000
+
+task = """
+LEAN TOOL + CACHE AUDIT (low memory). Call each listed tool ONCE with a minimal safe call.
+Stop after one success or one clear error. No thrash. No plan mode. No parallel subagent storms.
+Do NOT call chrome/devtools/MCP tools. Prefer builtins only.
+
+## Required (once each)
+1. tool_search query=file
+2. runtime_info
+3. current_time
+4. get_context_remaining
+5. read_file src/main.rs
+6. list_dir .
+7. glob **/*.rs
+8. fs_browser .
+9. grep pattern=greet path=src
+10. code action=overview path=src/main.rs
+11. ast_search query=greet OR symbol_goto name=greet
+12. symbol_references if available else skip
+13. test_discovery
+14. append_note content=audit-note-1
+15. apply_patch — add a one-line comment to src/main.rs
+16. write_file path=audit_out/touch.txt content=ok
+17. bash command=echo ok
+18. memory write id=audit_pref type=user name=Audit body=prefers lean audits
+19. memory search query=audit
+20. memory list
+21. history_ops action=recent limit=3
+22. plan create title=Audit steps=[summarize]
+23. plan active
+24. set_goal OR create_goal objective=Finish audit summary
+25. get_goal
+26. package_manager status OR list (no heavy installs)
+27. sandbox status if available
+28. view_image assets/dot.png
+29. load_skill audit-skill if present else skip
+30. repo_explore query=\"Where is greet?\" (ONE call only)
+31. subagent readonly: list src/*.rs (ONE short call)
+32. question one trivial MCQ
+33. sleep duration_ms=50 if allowed else skip
+34. request_user_input once if allowed else skip
+35. code_exec only if trivial/safe else skip
+36. verifier only if trivial else skip
+37. init_session / mark_feature_done only if already in sprint else skip
+38. branch_race_start only if safe else skip
+
+## Memory (agent-side only here)
+- At least one memory write + search.
+
+## Finish
+Write audit_out/COVERAGE.md with tool→ok/error/skip. Stop.
+No more explore/subagent after step 31.
+"""
+
+[agent]
+mode = "parity"
+profile = "small"
+
+[[verifiers]]
+verifier_type = "command"
+command = "test -f Cargo.toml && test -f src/main.rs"
+required = true
+timeout_ms = 15000

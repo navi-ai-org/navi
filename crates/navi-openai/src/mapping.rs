@@ -383,8 +383,10 @@ pub(crate) fn usage_from_value_with_behavior(
             .or_else(|| usage.get("prompt_tokens_details"))
             .and_then(|d| d.get("cached_tokens"))
             .and_then(crate::providers::behavior::json_u64_value)
-            .or_else(|| json_u64(usage.get("cache_read_input_tokens")));
-        let cache_creation_tokens = json_u64(usage.get("cache_creation_input_tokens"));
+            .or_else(|| json_u64(usage.get("cache_read_input_tokens")))
+            .or_else(|| json_u64(usage.get("prompt_cache_hit_tokens")));
+        let cache_creation_tokens = json_u64(usage.get("cache_creation_input_tokens"))
+            .or_else(|| json_u64(usage.get("prompt_cache_miss_tokens")));
         if input_tokens.is_none() {
             if let Some(total) = json_u64(usage.get("total_tokens")) {
                 input_tokens = Some(total.saturating_sub(output_tokens.unwrap_or(0)));

@@ -175,6 +175,12 @@ pub struct BenchCaseMetrics {
     pub input_tokens: u64,
     pub output_tokens: u64,
     pub total_tokens: u64,
+    /// Prompt-cache read tokens reported by the provider (0 if unknown).
+    #[serde(default)]
+    pub cache_read_tokens: u64,
+    /// Prompt-cache write/creation tokens reported by the provider (0 if unknown).
+    #[serde(default)]
+    pub cache_write_tokens: u64,
     pub turn_count: usize,
     pub tool_calls: usize,
     pub failed_tool_calls: usize,
@@ -196,6 +202,13 @@ pub struct BenchRunMetrics {
     pub tool_calls_per_success: Option<f64>,
     pub wall_time_ms: u64,
     pub total_tokens: u64,
+    #[serde(default)]
+    pub cache_read_tokens: u64,
+    #[serde(default)]
+    pub cache_write_tokens: u64,
+    /// cache_read / max(input, 1) when any usage reported; None if no inputs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_hit_rate: Option<f64>,
     pub tool_calls: usize,
     pub failed_tool_calls: usize,
     pub files_changed: usize,
@@ -243,6 +256,9 @@ pub fn aggregate_bench_metrics(results: &[BenchCaseResult], wall_time_ms: u64) -
         .iter()
         .map(|result| result.metrics.total_tokens)
         .sum();
+    let input_tokens: u64 = results.iter().map(|r| r.metrics.input_tokens).sum();
+    let cache_read_tokens: u64 = results.iter().map(|r| r.metrics.cache_read_tokens).sum();
+    let cache_write_tokens: u64 = results.iter().map(|r| r.metrics.cache_write_tokens).sum();
     let tool_calls = results.iter().map(|result| result.metrics.tool_calls).sum();
     let failed_tool_calls = results
         .iter()
@@ -260,6 +276,7 @@ pub fn aggregate_bench_metrics(results: &[BenchCaseResult], wall_time_ms: u64) -
         .iter()
         .map(|result| result.metrics.diff_lines_removed)
         .sum();
+    let cache_hit_rate = (input_tokens > 0).then(|| cache_read_tokens as f64 / input_tokens as f64);
 
     BenchRunMetrics {
         total_cases,
@@ -272,6 +289,9 @@ pub fn aggregate_bench_metrics(results: &[BenchCaseResult], wall_time_ms: u64) -
             .then(|| tool_calls as f64 / passed_cases as f64),
         wall_time_ms,
         total_tokens,
+        cache_read_tokens,
+        cache_write_tokens,
+        cache_hit_rate,
         tool_calls,
         failed_tool_calls,
         files_changed,

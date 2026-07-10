@@ -3511,6 +3511,7 @@ name = "navi-voice"
 version = "0.2.3"
 dependencies = [
  "anyhow",
+ "base64 0.22.1",
  "futures-util",
  "hex",
  "hound",
@@ -4851,6 +4852,7 @@ dependencies = [
  "hyper-util",
  "js-sys",
  "log",
+ "mime_guess",
  "percent-encoding",
  "pin-project-lite",
  "quinn",

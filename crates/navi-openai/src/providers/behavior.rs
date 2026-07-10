@@ -94,13 +94,16 @@ pub(crate) trait ProviderBehavior: Send + Sync {
         // OpenAI reports cached tokens in nested details objects:
         // Responses: usage.input_tokens_details.cached_tokens
         // Chat Completions: usage.prompt_tokens_details.cached_tokens
+        // OpenCode Zen: usage.prompt_cache_hit_tokens / prompt_cache_miss_tokens
         let cache_read_tokens = usage
             .get("input_tokens_details")
             .or_else(|| usage.get("prompt_tokens_details"))
             .and_then(|details| details.get("cached_tokens"))
             .and_then(json_u64_value)
-            .or_else(|| json_u64(usage.get("cache_read_input_tokens")));
-        let cache_creation_tokens = json_u64(usage.get("cache_creation_input_tokens"));
+            .or_else(|| json_u64(usage.get("cache_read_input_tokens")))
+            .or_else(|| json_u64(usage.get("prompt_cache_hit_tokens")));
+        let cache_creation_tokens = json_u64(usage.get("cache_creation_input_tokens"))
+            .or_else(|| json_u64(usage.get("prompt_cache_miss_tokens")));
 
         // Some aggregators only put a usable total in `total_tokens`.
         if input_tokens.is_none() {
