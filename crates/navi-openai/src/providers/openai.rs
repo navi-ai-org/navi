@@ -42,8 +42,19 @@ impl crate::provider::OpenAiProvider {
             }
         }
         if !request.tools.is_empty() {
-            let mut tools = request.tools.clone();
-            tools.sort_by(|a, b| a.name.cmp(&b.name));
+            // Callers (navi-core turn path) already sort tools for prefix cache.
+            // Only re-sort when out of order to avoid redundant clone+sort.
+            let tools = if request
+                .tools
+                .windows(2)
+                .any(|w| w[0].name > w[1].name)
+            {
+                let mut tools = request.tools.clone();
+                tools.sort_by(|a, b| a.name.cmp(&b.name));
+                tools
+            } else {
+                request.tools.clone()
+            };
             body["tools"] = json!(tools.iter().map(responses_tool_to_json).collect::<Vec<_>>());
             body["tool_choice"] = json!("auto");
             if behavior.supports_parallel_tool_calls(crate::providers::behavior::Endpoint::Responses) {
@@ -128,8 +139,18 @@ impl crate::provider::OpenAiProvider {
         });
         if !request.tools.is_empty() {
             // Stable tool order is required for provider prefix caching.
-            let mut tools = request.tools.clone();
-            tools.sort_by(|a, b| a.name.cmp(&b.name));
+            // Callers usually already sort; re-sort only when needed.
+            let tools = if request
+                .tools
+                .windows(2)
+                .any(|w| w[0].name > w[1].name)
+            {
+                let mut tools = request.tools.clone();
+                tools.sort_by(|a, b| a.name.cmp(&b.name));
+                tools
+            } else {
+                request.tools.clone()
+            };
             body["tools"] = json!(tools.iter().map(chat_tool_to_json).collect::<Vec<_>>());
             body["tool_choice"] = json!("auto");
             if behavior.supports_parallel_tool_calls(crate::providers::behavior::Endpoint::ChatCompletions) {

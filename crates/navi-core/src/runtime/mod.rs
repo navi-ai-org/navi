@@ -359,6 +359,8 @@ pub struct AgentRuntime {
     agent_mode: std::sync::RwLock<crate::plan_mode::AgentMode>,
     /// Parser for `<proposed_plan>` tags in streaming text.
     plan_parser: std::sync::Mutex<crate::plan_mode::ProposedPlanParser>,
+    /// Session-scoped memory manager shared with TurnContext (open once).
+    memory_manager: Arc<std::sync::Mutex<Option<Arc<crate::memory::MemoryManager>>>>,
 }
 
 impl AgentRuntime {
@@ -426,6 +428,7 @@ impl AgentRuntime {
             pending_user_input: std::sync::atomic::AtomicBool::new(false),
             agent_mode: std::sync::RwLock::new(crate::plan_mode::AgentMode::Default),
             plan_parser: std::sync::Mutex::new(crate::plan_mode::ProposedPlanParser::new()),
+            memory_manager: Arc::new(std::sync::Mutex::new(None)),
         }
     }
 
@@ -1089,27 +1092,42 @@ impl AgentRuntime {
         self.tool_executor = Some(executor);
     }
 
-    /// Runs a lightweight auto-memory consolidation (stale detection + dedup).
-    /// Called on session end. Does not require a model provider.
-    fn consolidate_auto_memory(&self) -> Result<()> {
+    /// Returns a shared [`MemoryManager`], opening SQLite stores at most once.
+    fn get_or_init_memory_manager(&self) -> Result<Option<Arc<crate::memory::MemoryManager>>> {
         let memory_config = &self.loaded_config.config.memory;
         if !memory_config.enabled {
-            return Ok(());
+            return Ok(None);
         }
-
-        let manager = crate::memory::MemoryManager::new(
+        let mut guard = self
+            .memory_manager
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        if let Some(manager) = guard.as_ref() {
+            return Ok(Some(manager.clone()));
+        }
+        let manager = Arc::new(crate::memory::MemoryManager::new(
             self.project_dir.clone(),
             self.loaded_config.data_dir.clone(),
             memory_config,
-        )?;
+        )?);
+        *guard = Some(manager.clone());
+        Ok(Some(manager))
+    }
+
+    /// Runs a lightweight auto-memory consolidation (stale detection + dedup).
+    /// Called on session end. Does not require a model provider.
+    fn consolidate_auto_memory(&self) -> Result<()> {
+        let Some(manager) = self.get_or_init_memory_manager()? else {
+            return Ok(());
+        };
 
         let db_path = manager.auto_memory.db_path.clone();
         if !db_path.exists() {
             return Ok(());
         }
 
-        let store = crate::memory::AutoMemoryStore::open(&db_path)?;
-        let report = store.consolidate(30)?;
+        // Reuse the already-open store rather than reopening the DB.
+        let report = manager.auto_memory.consolidate(30)?;
 
         if report.marked_stale > 0 || report.duplicates_merged > 0 {
             tracing::info!(
@@ -1127,23 +1145,14 @@ impl AgentRuntime {
     /// Spawns a tokio task that calls the model to extract durable memories
     /// from the completed turn. Fire-and-forget — does not block the agent loop.
     fn try_extract_memories(&self, _session_id: &str, conversation: &str) {
-        let memory_config = &self.loaded_config.config.memory;
-        if !memory_config.enabled {
-            return;
-        }
-
         // Get the model provider and name for the extraction call
         let provider = self.model_provider.clone();
         let model_name = self.loaded_config.config.model.name.clone();
         let conversation = conversation.to_string();
 
-        // Open auto-memory store
-        let manager = match crate::memory::MemoryManager::new(
-            self.project_dir.clone(),
-            self.loaded_config.data_dir.clone(),
-            memory_config,
-        ) {
-            Ok(m) => m,
+        let manager = match self.get_or_init_memory_manager() {
+            Ok(Some(m)) => m,
+            Ok(None) => return,
             Err(e) => {
                 tracing::debug!("extract-memories: failed to init memory manager: {}", e);
                 return;
@@ -1155,13 +1164,7 @@ impl AgentRuntime {
             return;
         }
 
-        let store = match crate::memory::AutoMemoryStore::open(&db_path) {
-            Ok(s) => s,
-            Err(e) => {
-                tracing::debug!("extract-memories: failed to open store: {}", e);
-                return;
-            }
-        };
+        let store = manager.auto_memory.clone();
 
         // Fire-and-forget
         tokio::spawn(async move {
@@ -1189,16 +1192,9 @@ impl AgentRuntime {
     /// Fire-and-forget — does not block the agent loop.
     fn try_auto_dream(&self) {
         let memory_config = &self.loaded_config.config.memory;
-        if !memory_config.enabled {
-            return;
-        }
-
-        let manager = match crate::memory::MemoryManager::new(
-            self.project_dir.clone(),
-            self.loaded_config.data_dir.clone(),
-            memory_config,
-        ) {
-            Ok(m) => m,
+        let manager = match self.get_or_init_memory_manager() {
+            Ok(Some(m)) => m,
+            Ok(None) => return,
             Err(e) => {
                 tracing::debug!("auto-dream: failed to init memory manager: {}", e);
                 return;
@@ -1210,13 +1206,7 @@ impl AgentRuntime {
             crate::memory::auto_dream::AutoDreamState::new(manager.store.memory_root.clone())
                 .with_interval(interval_hours.max(1));
 
-        let history = match crate::memory::HistoryStore::new(&manager.history.db_path) {
-            Ok(h) => h,
-            Err(e) => {
-                tracing::debug!("auto-dream: failed to open history: {}", e);
-                return;
-            }
-        };
+        let history = manager.history.clone();
 
         let last_dream = state.read_last_dream_at();
         if !state.should_dream(&history) {
@@ -1285,17 +1275,13 @@ impl AgentRuntime {
     /// Fire-and-forget — does not block the agent loop.
     fn try_auto_distill(&self) {
         let memory_config = &self.loaded_config.config.memory;
-        if !memory_config.enabled || memory_config.distill_interval_days == 0 {
+        if memory_config.distill_interval_days == 0 {
             return;
         }
 
-        let manager = match crate::memory::MemoryManager::new(
-            self.project_dir.clone(),
-            self.loaded_config.data_dir.clone(),
-            memory_config,
-        ) {
-            Ok(m) => m,
-            Err(_) => return,
+        let manager = match self.get_or_init_memory_manager() {
+            Ok(Some(m)) => m,
+            _ => return,
         };
 
         let interval_hours = memory_config.distill_interval_days * 24;
@@ -1305,39 +1291,28 @@ impl AgentRuntime {
         .with_interval(interval_hours)
         .with_min_sessions(3);
 
-        let history = match crate::memory::HistoryStore::new(&manager.history.db_path) {
-            Ok(h) => h,
-            Err(_) => return,
-        };
-
+        let history = manager.history.clone();
         if !state.should_dream(&history) {
             return;
         }
 
         tracing::info!("auto-distill triggered");
 
-        let memory_root = manager.store.memory_root.clone();
+        let auto_memory = manager.auto_memory.clone();
         tokio::spawn(async move {
             // Distill only does stale + dedup (no model-based SOP extraction in auto mode)
-            let db_path = memory_root.join("memories.db");
-            match crate::memory::AutoMemoryStore::open(&db_path) {
-                Ok(store) => match store.consolidate(60) {
-                    Ok(report) => {
-                        tracing::info!(
-                            "auto-distill completed: {} stale, {} duplicates, {} active",
-                            report.marked_stale,
-                            report.duplicates_merged,
-                            report.remaining_active
-                        );
-                        state.mark_completed();
-                    }
-                    Err(e) => {
-                        tracing::warn!("auto-distill failed: {}", e);
-                        state.release();
-                    }
-                },
+            match auto_memory.consolidate(60) {
+                Ok(report) => {
+                    tracing::info!(
+                        "auto-distill completed: {} stale, {} duplicates, {} active",
+                        report.marked_stale,
+                        report.duplicates_merged,
+                        report.remaining_active
+                    );
+                    state.mark_completed();
+                }
                 Err(e) => {
-                    tracing::debug!("auto-distill: store not available: {}", e);
+                    tracing::warn!("auto-distill failed: {}", e);
                     state.release();
                 }
             }
@@ -1401,6 +1376,7 @@ impl AgentRuntime {
             compaction_model_name: None,
             session_id: self.session.id().as_str().to_string(),
             allowed_tool_names: None,
+            memory_manager: self.memory_manager.clone(),
         });
 
         let policy = select_harness_policy(&self.loaded_config.config);
@@ -1528,9 +1504,14 @@ impl AgentRuntime {
         if let Some(tx) = &self.event_tx {
             let _ = tx.send(event.clone());
         }
+        // Stream deltas are live-only: keep publishing to subscribers / event bus
+        // but do not persist them in the session event log (RAM + disk blowup).
         let transient = matches!(
             event,
-            AgentEvent::SubagentActivity { .. } | AgentEvent::SubagentTranscript { .. }
+            AgentEvent::SubagentActivity { .. }
+                | AgentEvent::SubagentTranscript { .. }
+                | AgentEvent::ModelDelta { .. }
+                | AgentEvent::ModelThinkingDelta { .. }
         );
         if let Some(kind) = runtime_event_kind_from_agent_event(&event) {
             self.event_bus.publish(kind);
@@ -1716,6 +1697,8 @@ fn runtime_event_kind_from_agent_event(event: &AgentEvent) -> Option<RuntimeEven
         // Also mapped above via dedicated arms; keep fallthrough safe.
         AgentEvent::AgentModeChanged { .. } => None,
         AgentEvent::SessionRecap { .. } => None,
+        // Host-facing UI events (not replayed as runtime kinds).
+        AgentEvent::NotificationRequested { .. } | AgentEvent::UpdateAvailable { .. } => None,
     }
 }
 

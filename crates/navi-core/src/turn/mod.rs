@@ -75,6 +75,10 @@ pub struct TurnContext {
     pub session_id: String,
     /// Optional set of tool names the subagent is allowed to call.
     pub allowed_tool_names: Option<Vec<String>>,
+    /// Session-scoped memory manager. Lazily opened once and reused for history
+    /// sync, auto-memory index, checkpoints, and rebuilds (avoids reopening
+    /// three SQLite DBs every tool-loop iteration).
+    pub memory_manager: Arc<std::sync::Mutex<Option<Arc<crate::memory::MemoryManager>>>>,
 }
 
 impl TurnContext {
@@ -97,6 +101,31 @@ impl TurnContext {
             .read()
             .unwrap_or_else(|e| e.into_inner())
             .clone()
+    }
+
+    /// Returns a shared [`MemoryManager`] for this session when memory is enabled.
+    /// Opens the underlying SQLite stores at most once per slot.
+    pub fn get_or_init_memory_manager(
+        &self,
+    ) -> Result<Option<Arc<crate::memory::MemoryManager>>> {
+        let memory_config = self.active_config().memory;
+        if !memory_config.enabled {
+            return Ok(None);
+        }
+        let mut guard = self
+            .memory_manager
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        if let Some(manager) = guard.as_ref() {
+            return Ok(Some(manager.clone()));
+        }
+        let manager = Arc::new(crate::memory::MemoryManager::new(
+            self.project_dir.clone(),
+            self.data_dir.clone(),
+            &memory_config,
+        )?);
+        *guard = Some(manager.clone());
+        Ok(Some(manager))
     }
 
     pub fn cancellation_requested(&self) -> bool {
@@ -379,8 +408,15 @@ fn build_model_request(ctx: &TurnContext, messages: &[ModelMessage]) -> ModelReq
                     .components
                     .harness
                     .filter_tools(all_tools, ctx.allowed_tool_names.as_deref());
-                // Keep tool schema order stable for provider prefix caching.
-                tools.sort_by(|a, b| a.name.cmp(&b.name));
+                // definitions() already returns name-sorted tools; re-sort only
+                // when a filter may have disordered a filtered subset (no-op
+                // when already sorted — keeps prefix-cache order stable).
+                if tools
+                    .windows(2)
+                    .any(|w| w[0].name > w[1].name)
+                {
+                    tools.sort_by(|a, b| a.name.cmp(&b.name));
+                }
                 tools
             }
             crate::config::ToolCallingMode::TextExtracted
@@ -394,6 +430,15 @@ fn rewrite_unsupported_attachments(
     ctx: &TurnContext,
     messages: &[ModelMessage],
 ) -> Vec<ModelMessage> {
+    // Fast path: no user attachments → avoid walking/rewriting every message.
+    // ModelRequest still needs an owned list, so we clone once without mapping.
+    let has_user_attachments = messages
+        .iter()
+        .any(|m| m.role == ModelRole::User && !m.content_parts.is_empty());
+    if !has_user_attachments {
+        return messages.to_vec();
+    }
+
     let config = ctx.active_config();
     let provider_id = config.model.provider.clone();
     let model_name = config.model.name.clone();
@@ -1353,18 +1398,7 @@ async fn combined_memory_injection(ctx: &TurnContext) -> Option<String> {
 
 /// Loads the auto-memory index for system prompt injection.
 fn load_auto_memory_index(ctx: &TurnContext) -> Option<String> {
-    let memory_config = ctx.active_config().memory;
-    if !memory_config.enabled {
-        return None;
-    }
-
-    let manager = crate::memory::MemoryManager::new(
-        ctx.project_dir.clone(),
-        ctx.data_dir.clone(),
-        &memory_config,
-    )
-    .ok()?;
-
+    let manager = ctx.get_or_init_memory_manager().ok().flatten()?;
     let store = manager.auto_memory.clone();
     let index = store.build_prompt_context(2000);
     if index.trim().is_empty() {
@@ -1375,15 +1409,9 @@ fn load_auto_memory_index(ctx: &TurnContext) -> Option<String> {
 }
 
 pub async fn sync_messages_to_history(ctx: &TurnContext, messages: &[ModelMessage]) -> Result<()> {
-    let memory_config = ctx.active_config().memory;
-    if !memory_config.enabled {
+    let Some(manager) = ctx.get_or_init_memory_manager()? else {
         return Ok(());
-    }
-    let manager = crate::memory::MemoryManager::new(
-        ctx.project_dir.clone(),
-        ctx.data_dir.clone(),
-        &memory_config,
-    )?;
+    };
     manager
         .history
         .record_session_start(&ctx.session_id, &ctx.project_dir.to_string_lossy())?;
@@ -1461,9 +1489,9 @@ pub(crate) async fn evaluate_memory_triggers(
     messages: &mut Vec<ModelMessage>,
 ) -> Result<bool> {
     let memory_config = ctx.active_config().memory;
-    if !memory_config.enabled {
+    let Some(manager) = ctx.get_or_init_memory_manager()? else {
         return Ok(false);
-    }
+    };
 
     let (percentage, _total_tokens) = {
         let state = ctx.compact_state.lock().await;
@@ -1485,11 +1513,6 @@ pub(crate) async fn evaluate_memory_triggers(
     }
 
     if !thresholds_to_trigger.is_empty() {
-        let manager = crate::memory::MemoryManager::new(
-            ctx.project_dir.clone(),
-            ctx.data_dir.clone(),
-            &memory_config,
-        )?;
         manager
             .history
             .record_session_start(&ctx.session_id, &ctx.project_dir.to_string_lossy())?;
@@ -1529,11 +1552,6 @@ pub(crate) async fn evaluate_memory_triggers(
             percentage * 100.0,
             memory_config.rebuild_threshold * 100.0
         );
-        let manager = crate::memory::MemoryManager::new(
-            ctx.project_dir.clone(),
-            ctx.data_dir.clone(),
-            &memory_config,
-        )?;
 
         let context_window = {
             let state = ctx.compact_state.lock().await;

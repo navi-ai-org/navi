@@ -1,7 +1,28 @@
-use navi_sdk::{SessionId, SessionSnapshot, SessionStore};
+use navi_sdk::{SessionId, SessionSnapshot, SessionSnapshotInfo, SessionStore};
+use tokio::runtime::RuntimeFlavor;
 
-pub(crate) fn load_saved_sessions(store: &SessionStore) -> Vec<SessionSnapshot> {
-    tokio::task::block_in_place(|| store.list())
+/// Run a short synchronous SQLite call without panicking on `current_thread`
+/// runtimes (unit tests) or outside a runtime.
+fn with_blocking_sqlite<T>(f: impl FnOnce() -> T) -> T {
+    match tokio::runtime::Handle::try_current() {
+        Ok(handle) if handle.runtime_flavor() == RuntimeFlavor::MultiThread => {
+            tokio::task::block_in_place(f)
+        }
+        _ => f(),
+    }
+}
+
+/// Lightweight listing for the sessions picker (metadata only, no event JSON).
+pub(crate) fn load_saved_sessions(store: &SessionStore) -> Vec<SessionSnapshotInfo> {
+    with_blocking_sqlite(|| store.list_info())
+}
+
+/// Full snapshot load used only when opening a session.
+pub(crate) fn load_session_snapshot(
+    store: &SessionStore,
+    session_id: &SessionId,
+) -> Option<SessionSnapshot> {
+    with_blocking_sqlite(|| store.load(session_id.as_str()).ok())
 }
 
 pub(crate) fn session_created_at(session_id: &SessionId) -> Option<u64> {

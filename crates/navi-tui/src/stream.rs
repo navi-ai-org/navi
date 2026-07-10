@@ -61,12 +61,17 @@ pub(crate) fn start_streaming_request(app: &mut TuiApp) {
     let engine = app.engine();
     let project_dir = app.project_dir.clone();
     let session_id = app.session_id.as_str().to_string();
-    let initial_goal = tokio::task::block_in_place(|| {
-        app.session_store
-            .load(&session_id)
-            .ok()
-            .and_then(|snapshot| snapshot.goal)
-    });
+    // block_in_place only on multi_thread runtimes (unit tests may use current_thread).
+    let initial_goal = {
+        let store = &app.session_store;
+        let load = || store.load(&session_id).ok().and_then(|snapshot| snapshot.goal);
+        match tokio::runtime::Handle::try_current() {
+            Ok(h) if h.runtime_flavor() == tokio::runtime::RuntimeFlavor::MultiThread => {
+                tokio::task::block_in_place(load)
+            }
+            _ => load(),
+        }
+    };
     let active_skills = app.active_skills.clone();
     let thinking_level = app.thinking_level;
 

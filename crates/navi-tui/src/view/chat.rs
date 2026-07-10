@@ -596,6 +596,74 @@ fn pad_code_block_bg(lines: &mut [Line<'static>], width: usize) {
     }
 }
 
+fn streaming_tail_index(app: &TuiApp) -> Option<usize> {
+    if !(app.is_loading
+        || !app.running_tools.is_empty()
+        || app.background_commands.iter().any(|c| c.is_running()))
+    {
+        return None;
+    }
+    let last = app.messages.last()?;
+    if matches!(
+        last.status.as_deref(),
+        Some("receiving") | Some("thinking")
+    ) {
+        Some(app.messages.len().saturating_sub(1))
+    } else {
+        None
+    }
+}
+
+fn history_prefix_signature(app: &TuiApp, history_len: usize) -> u64 {
+    // Length-based fingerprint: finalized history is append-only during a stream
+    // tail update, so we avoid re-hashing multi-KB content every animation frame.
+    let mut hasher = DefaultHasher::new();
+    app.full_tool_view.hash(&mut hasher);
+    app.show_thinking.hash(&mut hasher);
+    app.chat_view.hash(&mut hasher);
+    app.theme_id.config_value().hash(&mut hasher);
+    app.compact_tool_visible_limit.hash(&mut hasher);
+    history_len.hash(&mut hasher);
+    for msg in app.messages.iter().take(history_len) {
+        msg.role.hash(&mut hasher);
+        msg.content.len().hash(&mut hasher);
+        msg.images.len().hash(&mut hasher);
+        msg.image_labels.hash(&mut hasher);
+        msg.thinking_content.len().hash(&mut hasher);
+        msg.status.hash(&mut hasher);
+        msg.usage_label.hash(&mut hasher);
+        msg.elapsed_ms.hash(&mut hasher);
+        msg.model_label.hash(&mut hasher);
+        msg.provider_label.hash(&mut hasher);
+        msg.is_compact_summary.hash(&mut hasher);
+        msg.is_recap.hash(&mut hasher);
+        msg.sent_at
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|d| d.as_secs())
+            .hash(&mut hasher);
+        if let Some(result) = &msg.tool_result {
+            result.invocation_id.hash(&mut hasher);
+            result.ok.hash(&mut hasher);
+        }
+    }
+    hasher.finish()
+}
+
+fn remap_tail_sources(
+    sources: Vec<crate::state::ChatLineSource>,
+    message_offset: usize,
+) -> Vec<crate::state::ChatLineSource> {
+    sources
+        .into_iter()
+        .map(|source| match source {
+            crate::state::ChatLineSource::Message(idx) => {
+                crate::state::ChatLineSource::Message(idx + message_offset)
+            }
+            other => other,
+        })
+        .collect()
+}
+
 fn ensure_chat_cache(app: &mut TuiApp, chat_width: usize) {
     let signature_hash = chat_render_signature(app);
     let expanded_signature = expanded_tool_signature(app);
@@ -625,8 +693,99 @@ fn ensure_chat_cache(app: &mut TuiApp, chat_width: usize) {
         )
     };
     if width_changed {
-        app.chat_render_cache.borrow_mut().tool_render_cache.clear();
+        let mut cache = app.chat_render_cache.borrow_mut();
+        cache.tool_render_cache.clear();
+        cache.history_lines.clear();
+        cache.history_line_sources.clear();
+        cache.history_message_count = 0;
+        cache.history_signature = 0;
     }
+
+    // Incremental path: reuse finalized history markdown while streaming tail updates.
+    if let Some(tail_idx) = streaming_tail_index(app) {
+        let history_sig = history_prefix_signature(app, tail_idx);
+        let can_reuse_history = {
+            let cache = app.chat_render_cache.borrow();
+            cache.width == chat_width
+                && cache.full_tool_view == app.full_tool_view
+                && cache.show_thinking == app.show_thinking
+                && cache.compact_tool_visible_limit == app.compact_tool_visible_limit
+                && cache.expanded_tool_signature == expanded_signature
+                && cache.history_message_count == tail_idx
+                && cache.history_signature == history_sig
+                && !cache.history_lines.is_empty()
+        };
+
+        if can_reuse_history || tail_idx > 0 {
+            let history_render = if can_reuse_history {
+                None
+            } else {
+                Some(build_chat_render_for_messages(
+                    &app.messages[..tail_idx],
+                    chat_width,
+                    app.full_tool_view,
+                    app.show_thinking,
+                    app.compact_tool_visible_limit,
+                    &app.expanded_tool_results,
+                    &app.collapsed_tool_results,
+                    &app.running_tools,
+                    &app.subagent_activity,
+                    &mut app.chat_render_cache.borrow_mut().tool_render_cache,
+                    app.loading_start
+                        .map(|start| start.elapsed().as_millis() as u64),
+                ))
+            };
+
+            let tail_render = build_chat_render_for_messages(
+                &app.messages[tail_idx..],
+                chat_width,
+                app.full_tool_view,
+                app.show_thinking,
+                app.compact_tool_visible_limit,
+                &app.expanded_tool_results,
+                &app.collapsed_tool_results,
+                &app.running_tools,
+                &app.subagent_activity,
+                &mut app.chat_render_cache.borrow_mut().tool_render_cache,
+                app.loading_start
+                    .map(|start| start.elapsed().as_millis() as u64),
+            );
+            let tail_sources = remap_tail_sources(tail_render.sources, tail_idx);
+
+            let mut cache = app.chat_render_cache.borrow_mut();
+            if let Some(history) = history_render {
+                cache.history_lines = history.lines;
+                cache.history_line_sources = history.sources;
+                cache.history_message_count = tail_idx;
+                cache.history_signature = history_sig;
+            }
+
+            let mut lines = cache.history_lines.clone();
+            let mut sources = cache.history_line_sources.clone();
+            if !lines.is_empty() && !tail_render.lines.is_empty() {
+                lines.push(Line::from(""));
+                sources.push(ChatLineSource::None);
+            }
+            lines.extend(tail_render.lines);
+            sources.extend(tail_sources);
+
+            if can_preserve_manual_scroll {
+                app.scroll_offset =
+                    anchored_scroll_offset(app.scroll_offset, previous_line_count, lines.len());
+            }
+
+            cache.width = chat_width;
+            cache.full_tool_view = app.full_tool_view;
+            cache.show_thinking = app.show_thinking;
+            cache.compact_tool_visible_limit = app.compact_tool_visible_limit;
+            cache.expanded_tool_signature = expanded_signature;
+            cache.signature_hash = signature_hash;
+            cache.lines = lines;
+            cache.line_sources = sources;
+            return;
+        }
+    }
+
     let rendered = build_chat_render(app, chat_width);
     if can_preserve_manual_scroll {
         app.scroll_offset =
@@ -640,6 +799,11 @@ fn ensure_chat_cache(app: &mut TuiApp, chat_width: usize) {
     cache.compact_tool_visible_limit = app.compact_tool_visible_limit;
     cache.expanded_tool_signature = expanded_signature;
     cache.signature_hash = signature_hash;
+    // Idle/full rebuild: treat entire transcript as history prefix.
+    cache.history_message_count = app.messages.len();
+    cache.history_signature = history_prefix_signature(app, app.messages.len());
+    cache.history_lines = rendered.lines.clone();
+    cache.history_line_sources = rendered.sources.clone();
     cache.lines = rendered.lines;
     cache.line_sources = rendered.sources;
 }
@@ -666,11 +830,11 @@ fn chat_render_signature(app: &TuiApp) -> u64 {
     app.chat_view.hash(&mut hasher);
     app.theme_id.config_value().hash(&mut hasher);
     app.compact_tool_visible_limit.hash(&mut hasher);
-    // Invalidate once per pulse frame so ◆/◇ advances while tools/commands run.
-    if app.is_loading
+    let activity_animating = app.is_loading
         || !app.running_tools.is_empty()
-        || app.background_commands.iter().any(|c| c.is_running())
-    {
+        || app.background_commands.iter().any(|c| c.is_running());
+    // Invalidate once per pulse frame so ◆/◇ advances while tools/commands run.
+    if activity_animating {
         let elapsed_ms = app
             .loading_start
             .map(|start| start.elapsed().as_millis() as u64)
@@ -692,12 +856,21 @@ fn chat_render_signature(app: &TuiApp) -> u64 {
         invocation_id.hash(&mut hasher);
         message.hash(&mut hasher);
     }
-    for msg in &app.messages {
+
+    // While streaming/loading: hash finalized history by count + lengths only,
+    // and fully hash the streaming tail. Idle/finalized: full content hash.
+    let message_count = app.messages.len();
+    message_count.hash(&mut hasher);
+    let streaming_tail = activity_animating
+        && app
+            .messages
+            .last()
+            .is_some_and(|m| matches!(m.status.as_deref(), Some("receiving") | Some("thinking")));
+    for (i, msg) in app.messages.iter().enumerate() {
+        let is_tail = streaming_tail && i + 1 == message_count;
         msg.role.hash(&mut hasher);
-        msg.content.hash(&mut hasher);
         msg.images.len().hash(&mut hasher);
         msg.image_labels.hash(&mut hasher);
-        msg.thinking_content.hash(&mut hasher);
         msg.status.hash(&mut hasher);
         msg.usage_label.hash(&mut hasher);
         msg.elapsed_ms.hash(&mut hasher);
@@ -705,13 +878,21 @@ fn chat_render_signature(app: &TuiApp) -> u64 {
         msg.provider_label.hash(&mut hasher);
         msg.is_compact_summary.hash(&mut hasher);
         msg.is_recap.hash(&mut hasher);
-        // Invalidate cache when wall-clock stamps appear (user prompt time).
         msg.sent_at
             .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
             .map(|d| d.as_secs())
             .hash(&mut hasher);
         if let Some(result) = &msg.tool_result {
             result.ok.hash(&mut hasher);
+        }
+        if is_tail || !streaming_tail {
+            // Full content for the live tail, or for every message when idle.
+            msg.content.hash(&mut hasher);
+            msg.thinking_content.hash(&mut hasher);
+        } else {
+            // Stable finalized prefix: length-only keeps signature cheap.
+            msg.content.len().hash(&mut hasher);
+            msg.thinking_content.len().hash(&mut hasher);
         }
     }
     // Include background command state so chat re-renders when they update
