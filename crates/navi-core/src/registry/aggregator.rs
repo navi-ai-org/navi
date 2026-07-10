@@ -304,7 +304,10 @@ pub async fn sync_aggregator_models(
         models: merged,
     };
 
-    store.upsert_provider_with_sha256(&registry_provider, None)?;
+    store.upsert_provider_with_sha256(
+        &registry_provider,
+        Some(super::store::LOCAL_API_SYNC_SHA),
+    )?;
 
     tracing::info!(
         provider = %provider_config.id,
