@@ -11,39 +11,21 @@ use serde::Deserialize;
 use crate::memory::{AutoMemoryStore, MemoryType, new_entry, sanitize_id};
 use crate::model::{ModelMessage, ModelProvider, ModelRequest, ThinkingConfig};
 
-/// Prompt sent to the model to extract memories from a turn.
-const EXTRACT_PROMPT: &str = r#"You are a memory extraction subagent for NAVI.
+/// System contract for memory extraction (identity + output format once).
+const EXTRACT_SYSTEM: &str = r#"You are a memory extraction subagent for NAVI.
+Extract durable memories useful in future sessions. Only facts that are durable
+(not temporary debug state), non-obvious (not derivable from code), and specific.
 
-Analyze the following conversation turn and extract durable memories that
-will be useful in future sessions. Only extract facts that are:
-- Durable (not temporary debugging state)
-- Non-obvious (not derivable from the code itself)
-- Specific (not vague preferences)
+Memory types: user, feedback, project, reference.
+Do NOT extract secrets, temporary errors, or facts obvious from the code.
 
-Memory types:
-- user: preferences, identity, working style
-- feedback: behaviors to repeat or avoid
-- project: non-derivable project context (deadlines, decisions)
-- reference: links to dashboards, external docs
+Return a JSON array of objects with: id (snake_case), type, name, description, body (1-3 sentences).
+If nothing worth remembering, return []. Output ONLY the JSON array — no markdown fences."#;
 
-DO NOT extract:
-- Secrets, tokens, passwords
-- Temporary errors or one-off debugging notes
-- Facts that are obvious from reading the code
+/// User payload template (data only; identity lives in EXTRACT_SYSTEM).
+const EXTRACT_USER: &str = r#"Conversation turn to analyze:
 
-Conversation:
-{conversation}
-
-Return a JSON array of memories. Each memory has:
-  - id: short snake_case identifier (e.g. "redis_tests")
-  - type: one of "user", "feedback", "project", "reference"
-  - name: human-readable title
-  - description: one-line summary
-  - body: detailed explanation (1-3 sentences)
-
-If nothing worth remembering, return an empty array [].
-
-Output ONLY the JSON array, no markdown fences or explanation."#;
+{conversation}"#;
 
 /// A memory extracted by the model.
 #[derive(Debug, Clone, Deserialize)]
@@ -73,14 +55,14 @@ pub async fn extract_memories(
     // Sanitize conversation to prevent prompt injection in the template
     let sanitized = conversation.replace("{conversation}", "[conversation]");
 
-    let prompt = EXTRACT_PROMPT.replace("{conversation}", &sanitized);
+    let user = EXTRACT_USER.replace("{conversation}", &sanitized);
 
     let request = ModelRequest {
         model: model_name.to_string(),
         instructions: None,
         messages: vec![
-            ModelMessage::system("You are a memory extraction bot. Return only a JSON array."),
-            ModelMessage::user(prompt),
+            ModelMessage::system(EXTRACT_SYSTEM),
+            ModelMessage::user(user),
         ],
         thinking: ThinkingConfig::Off,
         tools: vec![],
@@ -138,7 +120,8 @@ mod tests {
 
     #[test]
     fn test_extract_prompt_has_placeholder() {
-        assert!(EXTRACT_PROMPT.contains("{conversation}"));
+        assert!(EXTRACT_USER.contains("{conversation}"));
+        assert!(EXTRACT_SYSTEM.contains("JSON array"));
     }
 
     #[test]

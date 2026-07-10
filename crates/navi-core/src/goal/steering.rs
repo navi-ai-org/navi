@@ -68,6 +68,9 @@ pub fn build_continuation_prompt(goal: &SessionGoal) -> String {
 Continue working toward the active thread goal above. You are in an auto-continuation
 turn — the user expects you to make progress without additional prompting.
 
+Track progress with `update_goal_checklist` / `update_goal` only. Do not open a separate
+`plan` checklist for the same work unless the user explicitly asked for both.
+
 ### Completion Audit Rules
 Before marking this goal as complete:
 1. A checklist MUST exist and ALL tasks must be `verified` or `skipped`.

@@ -264,46 +264,47 @@ fn build_system_prompt_inner(
             "4. After writes, verify with the smallest relevant command or explain why verification was not run.\n",
             "5. If a tool fails, adapt once using the error instead of repeating the same call.\n",
             "\n",
-            "When to plan or set a goal:\n",
-            "- Use plan / set_goal when the task is multi-step, ambiguous, or crosses several modules.\n",
-            "- For small, localized bugs (one failing test, one obvious file), act directly: inspect → edit → verify.\n",
-            "- Do not open plan mode only to organize a one-line fix.\n",
+            "When to structure work (one rule set):\n",
+            "- Default: act directly — inspect → edit → verify. Do not create a plan or goal for a\n",
+            "  localized fix (one failing test, one obvious file, one-line change).\n",
+            "- `plan` tool: use when the task is multi-module, ambiguous, high-risk, or the user asks\n",
+            "  for a plan. Create with title + concrete steps (or todos). Track progress with\n",
+            "  `plan(action='complete_step')`; update on scope change; verify when all steps are done.\n",
+            "  Do not open a plan only to organize work you can finish in one short pass.\n",
+            "- `set_goal` / goal checklist: use only for long-running thread goals that need\n",
+            "  auto-continue, token budget, or verified checklist gates. Not a synonym for `plan`.\n",
+            "  Do not maintain both a plan checklist and a goal checklist for the same work unless\n",
+            "  the user explicitly wants both.\n",
+            "- Plan mode (host-restricted, read-only tools): propose work with XML only —\n",
+            "  <proposed_plan title=\"...\"> numbered steps </proposed_plan>. Do not call\n",
+            "  `plan(action='create')` while Plan mode is active; the host handles review.\n",
+            "  After approval, implement in normal mode (optionally tracking with `plan` if useful).\n",
+            "\n",
+            "Inspection decision tree (pick the cheapest tool that answers the question):\n",
+            "1. Structure/symbols: code(action='overview'|'find') or ast_search / symbol_goto.\n",
+            "2. Text/token search: grep (narrow pattern) or code(action='references') / symbol_references.\n",
+            "3. File contents: read_file with start_line/end_line after you know the range.\n",
+            "4. Directory layout: fs_browser. Avoid broad sweeps and re-reading the same region.\n",
             "\n",
             "Tool rules:\n",
-            "- Prefer ast_search, symbol_goto, code(action='overview'), read_file, fs_browser, and grep for focused inspection.\n",
-            "- Batch independent read-only inspection calls in the same assistant response when the provider supports native tool calling.\n",
-            "- Prefer apply_patch for targeted text edits; write_file is for whole-file replacement.\n",
-            "- apply_patch accepts `patch` (string), `patches` (array of strings), or `edits` (array of {{path, search, replace}}).\n",
-            "- For simple surgical edits, use `edits`: each object provides `path`, `search`, and `replace`; the tool replaces the first exact occurrence of `search`.\n",
-            "- For multiple known edits, use one apply_patch call with `patches` or `edits`.\n",
-            "- Prefer package_manager over bash for dependency management — structured install, add, remove, update.\n",
-            "- Use bash for genuinely ad-hoc commands that don't fit specialized tools.\n",
-            "- For long-running commands, call bash with background=true, wait_ms, and timeout_ms; poll or cancel the returned task_id instead of waiting indefinitely.\n",
-            "- File paths should be project-relative when possible.\n",
-            "- Writes and commands may require approval.\n",
+            "- Batch independent read-only calls in the same assistant response when native tools allow it.\n",
+            "- Edits: apply_patch for surgical text (`edits`: path/search/replace first exact match;\n",
+            "  or `patch`/`patches`). write_file only for whole-file replacement.\n",
+            "- Symbol-level edits: code_edit with id/hash from code overview/find; see tool schema.\n",
+            "- Prefer package_manager over bash for dependency management.\n",
+            "- bash for ad-hoc commands; long-running: background=true, wait_ms, timeout_ms, then poll task_id.\n",
+            "- Prefer project-relative paths. Writes and commands may require approval.\n",
             "{tool_calling_rule}\n",
-            "- Use runtime_info to inspect harness profile and project environment.\n",
+            "- Use runtime_info for harness profile and environment.\n",
             "\n",
             "Response rules:\n",
             "- Be concise.\n",
             "- Use markdown for readable summaries and fenced code blocks for code.\n",
             "- Do not claim success until the requested change is implemented or a blocker is clear.\n",
             "\n",
-            "Long-horizon task protocol:\n",
-            "- For multi-step tasks (refactors, migrations, implementations spanning 3+ files),\n",
-            "  create a plan FIRST using the `plan` tool with clear, ordered steps.\n",
-            "- Before each step, consult the active plan to understand what to do next.\n",
-            "- After completing each step, mark it done with `plan(action='complete_step')`.\n",
-            "- If a step fails or changes scope, update the plan accordingly.\n",
-            "- When all steps are done, verify the result: build, test, and review the plan.\n",
-            "\n",
             "Observation budget:\n",
-            "- Tool outputs are truncated to save context. If you need more data from a truncated\n",
-            "  result, request it explicitly: use start_line/end_line for read_file, or increase\n",
-            "  max_results for grep/fs_browser.\n",
-            "- Avoid dumping large outputs into context. Prefer targeted queries (specific grep\n",
-            "  patterns, narrow file ranges) over broad sweeps.\n",
-            "- For large file explorations, use ast_search/code overview first, then read_file with line ranges.\n"
+            "- Tool outputs are truncated. Request more explicitly (read_file ranges, higher max_results).\n",
+            "- Prefer targeted queries over dumping large outputs into context.\n"
         ),
         profile = profile,
         cwd = cwd.display(),
@@ -311,15 +312,10 @@ fn build_system_prompt_inner(
     );
     if tools_enabled {
         prompt.push_str(
-            "Code tools:\n\
-             - code(action='overview'): compact symbol tree for a file or directory. Use before broad read_file calls when navigating or refactoring.\n\
-             - code(action='find'): search symbols by name/kind/path. Returns symbol id and hash for precise follow-up edits.\n\
-             - code(action='references'): exact identifier references in source files (token-level, not compiler-semantic).\n\
-             - code(action='diagnostics'): tree-sitter parse diagnostics for a file or directory.\n\
-             - code_edit(action='replace'): replace a full symbol definition/body by symbol id or unique name. Use expected_hash from code overview/find.\n\
-             - code_edit(action='insert-before'|'insert-after'): insert source text before/after a symbol id or unique name.\n\
-             - code_edit(action='rename'): exact identifier rename across a file or directory. Prefer code(action='references') first. Token-aware, not compiler/LSP semantic rename.\n\
-             - Also available: ast_search, symbol_goto, symbol_references for lighter repo-index navigation.\n",
+            "Code tools (details in tool schemas):\n\
+             - code: overview/find/references/diagnostics for navigation before broad reads.\n\
+             - code_edit: replace/insert/rename by symbol id or unique name (use expected_hash when available).\n\
+             - Lighter index nav: ast_search, symbol_goto, symbol_references.\n",
         );
     }
     if policy.profile == HarnessProfile::LongRunning {
@@ -337,37 +333,26 @@ fn build_system_prompt_inner(
         prompt.push_str(memory);
         prompt.push('\n');
     }
-    if tools_enabled {
+    if tools_enabled && config.memory.enabled {
         prompt.push_str(
             "\nAuto-memory:\n\
-             - You have a persistent memory system via the `memory` tool.\n\
-             - Use `memory(action='write')` to save useful facts for future sessions.\n\
-             - Use `memory(action='search', query='...')` to find relevant memories when you need them.\n\
-             - Use `memory(action='list')` to see all stored memories.\n\
-             - Memory types: `user` (preferences, identity, working style), `feedback` (behaviors to\n\
-               repeat/avoid), `project` (non-derivable context like deadlines and decisions),\n\
-               `reference` (links to dashboards, external docs).\n\
-             - Write memories when you learn something durable. Do not write temporary notes,\n\
-               secrets, or one-off debugging state — use `append_note` for those.\n\
-             - Each memory has: id, name, description, body, type, confidence, and status.\n\
-             - Use `memory(action='update')` to edit existing memories or change their status.\n\
-             - Use `memory(action='delete')` to remove obsolete memories.\n\
-             - Search before writing to avoid duplicates.\n",
+             - `memory`: write/search/list/update/delete durable facts (types: user, feedback, project, reference).\n\
+             - Search before write to avoid duplicates. Skip secrets and one-off debug state.\n\
+             - Temporary scratch: `append_note` (not durable memory).\n",
         );
     }
-    if let Some(manifest) = tool_manifest {
-        let manifest_header = match tool_calling_mode {
-            crate::config::ToolCallingMode::TextExtracted
-            | crate::config::ToolCallingMode::ManifestOnly => {
-                "\nAvailable tools (text tool manifest):\n"
-            }
-            crate::config::ToolCallingMode::Native => {
-                "\nAvailable tools (compatibility manifest; still use native tool calling):\n"
-            }
-            crate::config::ToolCallingMode::Disabled => "\nAvailable tools:\n",
-        };
-        prompt.push_str(manifest_header);
-        prompt.push_str(manifest);
+    // Native tool calling already receives JSON tool schemas on the request;
+    // do not also paste a text compatibility catalog into the system prompt.
+    let embed_manifest = tool_manifest.is_some()
+        && !matches!(
+            tool_calling_mode,
+            crate::config::ToolCallingMode::Native | crate::config::ToolCallingMode::Disabled
+        );
+    if embed_manifest {
+        if let Some(manifest) = tool_manifest {
+            prompt.push_str("\nAvailable tools (text tool manifest):\n");
+            prompt.push_str(manifest);
+        }
     }
     prompt
 }
@@ -1018,7 +1003,10 @@ mod tests {
         assert!(!prompt.contains("tool_workflow"));
         assert!(!prompt.contains("top_files"));
         assert!(prompt.contains("ast_search"));
-        assert!(prompt.contains("code(action='overview')"));
+        assert!(prompt.contains("code(action='overview'"));
+        assert!(!prompt.contains("Long-horizon task protocol"));
+        assert!(prompt.contains("When to structure work"));
+        assert!(prompt.contains("Inspection decision tree"));
     }
 
     #[test]
@@ -1027,7 +1015,48 @@ mod tests {
         let prompt = build_system_prompt(&config, std::path::Path::new("/tmp"));
 
         assert!(prompt.contains("`edits`"));
-        assert!(prompt.contains("{path, search, replace}"));
-        assert!(prompt.contains("first exact occurrence"));
+        assert!(prompt.contains("path/search/replace"));
+        assert!(prompt.contains("first exact match"));
+    }
+
+    #[test]
+    fn system_prompt_distinguishes_plan_and_goal() {
+        let config = NaviConfig::default();
+        let prompt = build_system_prompt(&config, std::path::Path::new("/tmp"));
+
+        assert!(prompt.contains("`plan` tool"));
+        assert!(prompt.contains("`set_goal`"));
+        assert!(prompt.contains("Not a synonym for `plan`") || prompt.contains("Not a synonym"));
+        assert!(prompt.contains("<proposed_plan"));
+        assert!(prompt.contains("Auto-memory:"));
+    }
+
+    #[test]
+    fn system_prompt_skips_native_tool_manifest_text() {
+        let config = NaviConfig::default();
+        let tools = [ToolDefinition {
+            name: "read_file".to_string(),
+            description: "Read a file.".to_string(),
+            kind: crate::tool::ToolKind::Read,
+            input_schema: json!({
+                "type": "object",
+                "properties": { "path": { "type": "string" } },
+                "required": ["path"],
+                "additionalProperties": false
+            }),
+            ..Default::default()
+        }];
+        let prompt = build_system_prompt_with_tools(
+            &config,
+            std::path::Path::new("/tmp"),
+            None,
+            &tools,
+            true,
+        );
+        assert!(
+            !prompt.contains("Available tools (text tool manifest)"),
+            "Native mode must not paste the text tool catalog into the system prompt"
+        );
+        assert!(!prompt.contains("compatibility manifest"));
     }
 }

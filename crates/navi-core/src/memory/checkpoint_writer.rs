@@ -2,11 +2,38 @@ use crate::memory::AutoMemoryStore;
 use crate::model::{ModelMessage, ModelProvider, ModelRequest, ThinkingConfig};
 use anyhow::Result;
 
-pub const CHECKPOINT_WRITER_PROMPT: &str = r#"You are a checkpoint-writer subagent for a code agent named NAVI.
-Your job is to extract the current operational state of the coding session and summarize it into a structured session checkpoint.
-You also identify stable, verified, and architectural project-level facts that should be promoted to the project memory.
+pub const CHECKPOINT_WRITER_SYSTEM: &str = r#"You are a checkpoint-writer subagent for NAVI.
+Extract operational session state into a structured checkpoint and promote only stable,
+verified, architectural project facts. Do NOT promote temporary debug details, one-off
+task facts, or secrets.
 
-INPUTS:
+Output ONLY these XML blocks (no extra prose):
+
+<checkpoint_markdown>
+# Session Checkpoint
+
+## Current Intent
+## Next Action
+## Working Constraints
+## Task Tree
+## Current Work
+## Involved Files
+## Cross-Task Discoveries
+## Errors and Fixes
+## Runtime State
+## Design Decisions
+## Miscellaneous Notes
+</checkpoint_markdown>
+
+<promote_facts>
+[Markdown list of new stable facts, or empty]
+</promote_facts>
+
+Be precise: filenames, commands, test status, next action, intent, constraints, decisions, errors.
+Omit empty sections only if truly N/A; keep the heading structure."#;
+
+pub const CHECKPOINT_WRITER_PROMPT: &str = r#"INPUTS:
+
 1. Current notes:
 {notes_content}
 
@@ -18,54 +45,6 @@ INPUTS:
 
 4. Current Conversation History:
 {conversation_history}
-
-INSTRUCTIONS:
-Analyze the inputs and generate:
-1. An updated session checkpoint matching the layout below. Be precise and capture filenames, commands run, test status, next action, intent, constraints, decisions, and errors.
-2. Any new stable, durable, architectural facts or rules verified in this session to promote to project memory. Do NOT promote temporary debugging details, one-off task facts, or secrets.
-
-You MUST format your output exactly as follows:
-
-<checkpoint_markdown>
-# Session Checkpoint
-
-## Current Intent
-[Describe what the user is currently trying to accomplish]
-
-## Next Action
-[State the exact next concrete action or command the agent should run]
-
-## Working Constraints
-[List important constraints, instructions, coding style rules, or deadlines]
-
-## Task Tree
-[Present a checklist of completed and pending tasks]
-
-## Current Work
-[Summarize what has been investigated or changed so far]
-
-## Involved Files
-[List project-relative paths of files/modules/configs involved in the task]
-
-## Cross-Task Discoveries
-[Summarize discoveries that are useful beyond this immediate task]
-
-## Errors and Fixes
-[List errors encountered and their resolutions]
-
-## Runtime State
-[Describe branch, test status, open questions, assumptions]
-
-## Design Decisions
-[Decisions made, rationale, tradeoffs]
-
-## Miscellaneous Notes
-[Other important context]
-</checkpoint_markdown>
-
-<promote_facts>
-[Markdown list of new stable facts to add to project memory, if any. Otherwise leave empty.]
-</promote_facts>
 "#;
 
 pub(crate) fn sanitize_input(text: &str) -> String {
@@ -104,9 +83,7 @@ pub async fn run_checkpoint_writer(
         model: model_name.to_string(),
         instructions: None,
         messages: vec![
-            ModelMessage::system(
-                "You are a precise agent checkpoint writer. Output only the requested XML tags.",
-            ),
+            ModelMessage::system(CHECKPOINT_WRITER_SYSTEM),
             ModelMessage::user(prompt),
         ],
         thinking: ThinkingConfig::Off,

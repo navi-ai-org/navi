@@ -6,18 +6,24 @@ use serde::Deserialize;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-pub const DREAM_PROMPT: &str = r#"You are a memory maintenance subagent named NAVI Dream.
-Your task is to reflect on NAVI's persistent memory and recent session transcripts, then produce a separate consolidated memory store.
+pub const DREAM_SYSTEM: &str = r#"You are a memory maintenance subagent named NAVI Dream.
+Reflect on persistent memory and recent sessions, then produce a consolidated memory store.
 
-This is an offline synthesis pass:
+Offline synthesis rules:
 - Do not merely append a transcript summary.
 - Merge duplicates.
 - Resolve contradictions by preferring the newest verified session evidence.
 - Drop stale, temporary, speculative, or one-off debugging notes.
 - Preserve stable project architecture, commands, conventions, user preferences, and reusable lessons.
-- Surface new durable insights that should help future sessions.
+- Surface new durable insights for future sessions.
 
-Existing project memory index:
+Output ONLY these XML blocks:
+<updated_project_memory>...</updated_project_memory>
+<updated_global_memory>...</updated_global_memory>
+<dream_report>Briefly list what changed, what was removed, and notable unresolved contradictions.</dream_report>
+"#;
+
+pub const DREAM_PROMPT: &str = r#"Existing project memory index:
 {project_memory}
 
 Existing global memory index:
@@ -34,47 +40,30 @@ Recent sessions:
 
 Additional dream instructions:
 {instructions}
-
-INSTRUCTIONS:
-Output the dream result inside distinct XML blocks:
-<updated_project_memory>...</updated_project_memory>
-<updated_global_memory>...</updated_global_memory>
-<dream_report>Briefly list what changed, what was removed, and notable unresolved contradictions.</dream_report>
 "#;
 
-pub const DISTILL_PROMPT: &str = r#"You are a process distillation subagent named NAVI Distill.
-Your task is to analyze the recent conversation histories and extract reusable processes (SOPs, skills, checklists).
+pub const DISTILL_SYSTEM: &str = r#"You are a process distillation subagent named NAVI Distill.
+Analyze recent conversation histories and extract reusable processes (SOPs, skills, checklists).
+Identify repeated successful patterns, workflows, checklists, or setups.
+Generate a reusable SOP in Markdown.
+Output ONLY inside a `<sop_artifact filename="name.md">...</sop_artifact>` block."#;
 
-Recent Session History:
+pub const DISTILL_PROMPT: &str = r#"Recent Session History:
 {recent_history}
-
-INSTRUCTIONS:
-Identify any repeated successful patterns, workflows, checklists, or setups.
-Generate a reusable process artifact (Standard Operating Procedure - SOP) in Markdown.
-Output your generated SOP inside a `<sop_artifact filename="name.md">...</sop_artifact>` block.
 "#;
 
-pub const MEMORY_CONSOLIDATION_PROMPT: &str = r#"You are a memory consolidation subagent for NAVI.
-Your task is to review the current SQLite-stored memories and produce consolidation actions.
+pub const MEMORY_CONSOLIDATION_SYSTEM: &str = r#"You are a memory consolidation subagent for NAVI.
+Review SQLite-stored memories and produce consolidation actions:
+1. obsolete — contradicted, irrelevant, or superseded
+2. merge — duplicates; surviving id + combined body
+3. update — adjust confidence (0.0–1.0)
 
-Current memories (JSON array):
+Each action: { "action": "obsolete"|"merge"|"update", "id": "...", "merged_body"?: "...", "confidence"?: 0.0-1.0 }
+If none needed, return []. Output ONLY the JSON array — no markdown fences."#;
+
+pub const MEMORY_CONSOLIDATION_PROMPT: &str = r#"Current memories (JSON array):
 {memories_json}
-
-INSTRUCTIONS:
-Review each memory and decide:
-1. Which memories are obsolete (contradicted, no longer relevant, or superseded)?
-2. Which memories are duplicates and should be merged? For merges, specify the surviving id and the new combined body.
-3. Which memories should have their confidence adjusted (raised if confirmed by recent evidence, lowered if uncertain)?
-
-Return a JSON array of consolidation actions. Each action has:
-  - action: "obsolete" | "merge" | "update"
-  - id: the memory id to act on
-  - merged_body: (for "merge") the new combined body text
-  - confidence: (for "update") the new confidence value (0.0–1.0)
-
-If no actions are needed, return an empty array [].
-
-Output ONLY the JSON array, no markdown fences or explanation."#;
+"#;
 
 /// A consolidation action from the model.
 #[derive(Debug, Clone, Deserialize)]
@@ -173,9 +162,7 @@ pub async fn run_dream_maintenance_with_options(
         model: model_name.to_string(),
         instructions: None,
         messages: vec![
-            ModelMessage::system(
-                "You are a helpful memory maintenance bot. Return only the requested XML tags.",
-            ),
+            ModelMessage::system(DREAM_SYSTEM),
             ModelMessage::user(prompt),
         ],
         thinking: ThinkingConfig::Off,
@@ -330,9 +317,7 @@ async fn run_model_based_consolidation(
         model: model_name.to_string(),
         instructions: None,
         messages: vec![
-            ModelMessage::system(
-                "You are a memory consolidation bot. Return only a JSON array of actions.",
-            ),
+            ModelMessage::system(MEMORY_CONSOLIDATION_SYSTEM),
             ModelMessage::user(prompt),
         ],
         thinking: ThinkingConfig::Off,
@@ -404,9 +389,7 @@ pub async fn run_distill_maintenance(
         model: model_name.to_string(),
         instructions: None,
         messages: vec![
-            ModelMessage::system(
-                "You are a process distillation bot. Return only the requested XML tags.",
-            ),
+            ModelMessage::system(DISTILL_SYSTEM),
             ModelMessage::user(prompt),
         ],
         thinking: ThinkingConfig::Off,

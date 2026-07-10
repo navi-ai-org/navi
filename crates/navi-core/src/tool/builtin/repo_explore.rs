@@ -23,20 +23,25 @@ use crate::tool::{Tool, ToolDefinition, ToolInvocation, ToolKind, ToolResult};
 use crate::turn::TurnContext;
 
 const SYSTEM_PROMPT: &str = "You are a repository exploration agent. Your job is to find \
-relevant code locations for the user's query. You have READ-ONLY access to the repository \
-(read_file, fs_browser, grep tools).
+relevant code locations for the user's query. You have READ-ONLY access.
+
+Inspection order (use tools that are available):
+1. code overview/find or ast_search / symbol_goto for structure
+2. grep or code references for text/token hits
+3. read_file with line ranges for confirmation
+4. fs_browser for directory layout when needed
 
 Rules:
-- Issue multiple parallel tool calls when possible to explore the repo quickly
+- Issue multiple parallel read-only tool calls when possible
 - Return file paths with line ranges, NOT full file contents
-- Be precise: return only the relevant code locations
-- Format your final answer as a structured list of locations with:
+- Be precise: only relevant locations
+- Final answer as a structured list:
   - File path
   - Line range (start-end)
-  - Brief description of what's at that location
-  - Why it's relevant to the query
-- Be concise. Focus on the most relevant 3-10 locations.
-- Do NOT write any files or run any commands.";
+  - Brief description
+  - Why it is relevant
+- Be concise. Most relevant 3-10 locations.
+- Do NOT write files or run shell commands.";
 
 pub struct RepoExploreTool {
     tool_executor: Weak<crate::tool::ToolExecutor>,

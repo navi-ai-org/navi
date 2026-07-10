@@ -521,17 +521,18 @@ pub const COMPACT_PROMPT: &str = r#"You are summarizing a conversation between a
 ## 7. Pending Tasks
 ## 8. Current Work
 ## 9. Active Work Plan
-If the conversation has an active plan (created via the plan tool), include it here with:
-- Plan ID and title
-- All steps with their completion status
+If the conversation has an active plan (via the plan tool) or an in-progress Plan-mode proposal, include:
+- Plan ID and title (if any)
+- All steps with completion status
 - Which step to work on next
 If there is no active plan, skip this section.
+Also note any active thread goal (set_goal) separately if present — do not conflate plan and goal.
 ## 10. Next Step (Optional)
 List the next step you would take on the current task.
 
 Be thorough and specific. The summary must contain enough detail to continue the conversation seamlessly.
 
-IMPORTANT: If there is an active plan, you MUST continue working on it after reading this summary. Check the plan status, identify the next incomplete step, and proceed. Do not restart the plan or create a new one unless the active plan has been marked completed or abandoned."#;
+IMPORTANT: If there is an active plan that is not completed or abandoned, continue it after reading this summary UNLESS the user clearly redirected to a different task — in that case, note the redirect in section 8/10 and do not restart the old plan. Do not create a new plan unless the prior plan is completed, abandoned, or the user asked for a new one."#;
 
 pub const PARTIAL_COMPACT_PROMPT: &str = r#"You are extending an existing conversation summary with new content. Preserve the existing summary sections and update them with new information. Add any new user messages to section 6. Update sections 8 and 9 based on the most recent work.
 
@@ -541,9 +542,9 @@ Existing summary:
 New conversation to summarize:
 {new_conversation}
 
-Return the complete updated summary with all 10 sections (including Active Work Plan if applicable).\n\n\
-IMPORTANT: If there is an active plan, you MUST preserve all plan details including step completion status.\n\
-The assistant will continue working on the plan after reading the summary."#;
+Return the complete updated summary with all 10 sections (including Active Work Plan if applicable).
+
+IMPORTANT: If there is an active plan, preserve plan details and step completion status. Continue that plan only if the user has not redirected; note any redirect instead of forcing the old plan."#;
 
 fn current_unix_millis() -> u64 {
     SystemTime::now()
