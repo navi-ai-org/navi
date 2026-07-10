@@ -37,6 +37,7 @@ import sys
 import tempfile
 import time
 import tomllib
+import urllib.request
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -329,11 +330,21 @@ def run_navi(
             output_tokens=m.get("output_tokens"),
             total_tokens=m.get("total_tokens"),
             token_source="provider" if m.get("total_tokens") or m.get("input_tokens") else "unknown",
+            cache_read_tokens=m.get("cache_read_tokens") or None,
+            cache_write_tokens=m.get("cache_write_tokens") or None,
             turn_count=m.get("turn_count"),
             assistant_preview=(cr.get("assistant_text") or "")[:500],
             error=cr.get("error"),
             workspace=cr.get("workspace"),
-            raw={"navi_run": payload.get("run_id"), "exit": r.returncode},
+            raw={
+                "navi_run": payload.get("run_id"),
+                "exit": r.returncode,
+                "cache_hit_rate": (
+                    round(m["cache_read_tokens"] / m["input_tokens"], 4)
+                    if m.get("input_tokens") and m.get("cache_read_tokens") is not None
+                    else None
+                ),
+            },
         )
     except subprocess.TimeoutExpired:
         return CaseResult(
@@ -810,12 +821,16 @@ def score_agent(results: list[CaseResult]) -> dict[str, Any]:
         for r in results
         if r.total_tokens is not None or r.input_tokens is not None or r.output_tokens is not None
     )
+    cache_read = sum(r.cache_read_tokens or 0 for r in results)
+    cache_write = sum(r.cache_write_tokens or 0 for r in results)
     token_cases = sum(
         1
         for r in results
         if r.total_tokens is not None or r.input_tokens is not None or r.output_tokens is not None
     )
     sources = sorted({r.token_source for r in results if r.token_source})
+    cache_hit_rate = round(cache_read / tin, 4) if tin > 0 else None
+    billable_input = max(0, tin - cache_read) if tin else None
     return {
         "score": round(score, 2),
         "success_rate": round(success_rate, 4),
@@ -829,6 +844,10 @@ def score_agent(results: list[CaseResult]) -> dict[str, Any]:
         "input_tokens": tin or None,
         "output_tokens": tout or None,
         "total_tokens": ttot or None,
+        "cache_read_tokens": cache_read or None,
+        "cache_write_tokens": cache_write or None,
+        "billable_input_tokens": billable_input,
+        "cache_hit_rate": cache_hit_rate,
         "tokens_per_success": (round(ttot / passed, 1) if passed and ttot else None),
         "token_cases": token_cases,
         "token_sources": sources,
@@ -839,10 +858,17 @@ def print_table(report: dict[str, Any]) -> None:
     print("\n=== Tool-quality agent comparison ===")
     print(f"suite: {report['suite']}  model baseline: {report['baseline_model_note']}")
     print(f"started: {report['started_at']}")
+    if report.get("proxy_metrics"):
+        pm = report["proxy_metrics"]
+        print(
+            f"proxy: reqs={pm.get('requests')} cache_hit={pm.get('cache_hit_rate')} "
+            f"cache_read={pm.get('cache_read_tokens')} prefix_breaks={pm.get('prefix_breaks')} "
+            f"billable_in={pm.get('billable_input_tokens')}"
+        )
     print()
     header = (
         f"{'agent':<14} {'score':>7} {'pass':>8} {'tools':>7} {'failT':>6} "
-        f"{'avgT':>7} {'avgMs':>8} {'tokIn':>10} {'tokOut':>8} {'tokΣ':>10} {'src':>10}"
+        f"{'avgT':>7} {'avgMs':>8} {'tokIn':>10} {'cache%':>7} {'tokΣ':>10} {'src':>10}"
     )
     print(header)
     print("-" * len(header))
@@ -854,13 +880,15 @@ def print_table(report: dict[str, Any]) -> None:
         src = ",".join(s.get("token_sources") or []) or "-"
         if len(src) > 10:
             src = src[:9] + "…"
+        hit = s.get("cache_hit_rate")
+        hit_s = f"{hit*100:.1f}%" if isinstance(hit, (int, float)) else "-"
         print(
             f"{agent:<14} {s['score']:>7.1f} {pass_s:>8} "
             f"{s.get('total_tool_calls') or 0:>7} {s.get('total_failed_tool_calls') or 0:>6} "
             f"{(avg_t if avg_t is not None else '-'):>7} "
             f"{(avg_ms if avg_ms is not None else '-'):>8} "
             f"{(s.get('input_tokens') if s.get('input_tokens') is not None else '-'):>10} "
-            f"{(s.get('output_tokens') if s.get('output_tokens') is not None else '-'):>8} "
+            f"{hit_s:>7} "
             f"{(s.get('total_tokens') if s.get('total_tokens') is not None else '-'):>10} "
             f"{src:>10}"
         )
@@ -932,6 +960,24 @@ def main() -> int:
         help="Keep agent workspaces under this dir (default: temp)",
     )
     ap.add_argument("--keep-workspaces", action="store_true")
+    ap.add_argument(
+        "--metrics-proxy",
+        action="store_true",
+        help=(
+            "Start llm_metrics_proxy and route navi LLM traffic through it "
+            "(sets NAVI_BENCH_BASE_URL). Measures cache hit rate + prefix breaks."
+        ),
+    )
+    ap.add_argument(
+        "--proxy-listen",
+        default="127.0.0.1:18765",
+        help="host:port for metrics proxy (default 127.0.0.1:18765)",
+    )
+    ap.add_argument(
+        "--proxy-upstream",
+        default=os.environ.get("NAVI_BENCH_PROXY_UPSTREAM", "https://opencode.ai/zen/v1"),
+        help="Upstream OpenAI-compatible base URL for the metrics proxy",
+    )
     args = ap.parse_args()
 
     only = {c.strip() for c in args.cases.split(",") if c.strip()} or None
@@ -962,15 +1008,40 @@ def main() -> int:
         "agents": {},
     }
 
+    proxy_proc: subprocess.Popen | None = None
+    proxy_base: str | None = None
+    proxy_log = args.out.parent / f"{args.out.stem}-proxy-events.jsonl"
+
     print(f"suite={args.suite} cases={len(cases)} agents={agents}", flush=True)
     print(f"work_root={work_root}", flush=True)
 
     try:
+        if args.metrics_proxy:
+            proxy_proc, proxy_base = start_metrics_proxy(
+                listen=args.proxy_listen,
+                upstream=args.proxy_upstream,
+                log_path=proxy_log,
+            )
+            os.environ["NAVI_BENCH_BASE_URL"] = proxy_base
+            report["metrics_proxy"] = {
+                "listen": args.proxy_listen,
+                "upstream": args.proxy_upstream,
+                "base_url": proxy_base,
+                "events_log": str(proxy_log),
+            }
+            print(f"metrics proxy: {proxy_base} → {args.proxy_upstream}", flush=True)
+            # Reset counters so this run is clean
+            fetch_proxy_metrics(proxy_base, reset=True)
+
         for agent in agents:
             print(f"\n--- agent: {agent} ---", flush=True)
             results: list[CaseResult] = []
             for case in cases:
                 print(f"  case {case.id} …", flush=True)
+                # Snapshot proxy metrics per-case when enabled
+                proxy_before = (
+                    fetch_proxy_metrics(proxy_base) if proxy_base and agent == "navi" else None
+                )
                 if agent == "navi":
                     res = run_navi(
                         case, work_root, args.navi_provider, args.navi_model, args.navi_bin
@@ -1006,9 +1077,29 @@ def main() -> int:
                         wall_time_ms=0,
                         error=f"unknown agent {agent}",
                     )
+                if proxy_base and agent == "navi" and proxy_before is not None:
+                    proxy_after = fetch_proxy_metrics(proxy_base) or {}
+                    delta = proxy_delta(proxy_before, proxy_after)
+                    res.raw = {**(res.raw or {}), "proxy_delta": delta}
+                    # Prefer proxy cache numbers when navi metrics are zero/missing
+                    if not res.cache_read_tokens and delta.get("cache_read_tokens"):
+                        res.cache_read_tokens = delta["cache_read_tokens"]
+                    if not res.cache_write_tokens and delta.get("cache_write_tokens"):
+                        res.cache_write_tokens = delta["cache_write_tokens"]
+                    if not res.input_tokens and delta.get("input_tokens"):
+                        res.input_tokens = delta["input_tokens"]
+                        res.token_source = "proxy"
+                    if not res.output_tokens and delta.get("output_tokens"):
+                        res.output_tokens = delta["output_tokens"]
+                    if res.input_tokens and res.output_tokens and not res.total_tokens:
+                        res.total_tokens = res.input_tokens + res.output_tokens
                 status = "PASS" if res.passed else "FAIL"
+                hit = ""
+                if res.input_tokens and res.cache_read_tokens is not None:
+                    hit = f" cache%={100.0 * (res.cache_read_tokens or 0) / res.input_tokens:.1f}"
                 print(
                     f"    → {status} wall={res.wall_time_ms}ms tools={res.tool_calls} "
+                    f"tokIn={res.input_tokens}{hit} "
                     f"err={(res.error or '')[:80]!r}",
                     flush=True,
                 )
@@ -1019,6 +1110,48 @@ def main() -> int:
                 "results": [asdict(r) for r in results],
             }
     finally:
+        if proxy_base:
+            final_proxy = fetch_proxy_metrics(proxy_base)
+            if final_proxy:
+                report["proxy_metrics"] = final_proxy
+                print(
+                    f"\nproxy totals: reqs={final_proxy.get('requests')} "
+                    f"cache_hit={final_proxy.get('cache_hit_rate')} "
+                    f"prefix_breaks={final_proxy.get('prefix_breaks')} "
+                    f"cache_read={final_proxy.get('cache_read_tokens')} "
+                    f"input={final_proxy.get('input_tokens')}",
+                    flush=True,
+                )
+                print(
+                    f"lane_prefix_breaks={final_proxy.get('lane_prefix_breaks')} "
+                    f"(global_noise={final_proxy.get('prefix_breaks')})",
+                    flush=True,
+                )
+                by_lane = final_proxy.get("by_lane") or {}
+                if by_lane:
+                    print("by lane:", flush=True)
+                    for lane, b in sorted(by_lane.items()):
+                        print(
+                            f"  {lane:<18} reqs={b.get('requests')} hit={b.get('cache_hit_rate')} "
+                            f"breaks={b.get('lane_prefix_breaks')}",
+                            flush=True,
+                        )
+                blame = final_proxy.get("component_break_counts") or {}
+                solo = final_proxy.get("component_solo_breaks") or {}
+                if any(blame.values()) or any(solo.values()):
+                    print("within-lane break blame (component | solo):", flush=True)
+                    for comp, n in sorted(blame.items(), key=lambda kv: -kv[1]):
+                        if n or solo.get(comp):
+                            print(
+                                f"  {comp:<14} in_break={n}  solo={solo.get(comp, 0)}",
+                                flush=True,
+                            )
+        if proxy_proc is not None:
+            proxy_proc.terminate()
+            try:
+                proxy_proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                proxy_proc.kill()
         if cleanup and "td" in locals():
             td.cleanup()
 
@@ -1037,27 +1170,85 @@ def main() -> int:
         f"- Started: {report['started_at']}",
         f"- Baseline: {report['baseline_model_note']}",
         "",
-        "| Agent | Score | Pass | Tools | Avg tools | Avg ms | Tok in | Tok out | Tok Σ | Tok/success | Source |",
+        "| Agent | Score | Pass | Tools | Avg tools | Avg ms | Tok in | Cache hit | Cache read | Tok Σ | Source |",
         "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|",
     ]
     for agent, block in report["agents"].items():
         s = block["summary"]
         src = ",".join(s.get("token_sources") or []) or "-"
+        hit = s.get("cache_hit_rate")
+        hit_s = f"{hit*100:.1f}%" if isinstance(hit, (int, float)) else "-"
         lines.append(
             f"| {agent} | {s['score']} | {s['passed']}/{s['total']} | "
             f"{s.get('total_tool_calls') or 0} | "
             f"{s.get('avg_tool_calls_on_success') or '-'} | "
             f"{s.get('avg_wall_ms_on_success') or '-'} | "
             f"{s.get('input_tokens') or '-'} | "
-            f"{s.get('output_tokens') or '-'} | "
-            f"{s.get('total_tokens') or '-'} | "
-            f"{s.get('tokens_per_success') or '-'} | {src} |"
+            f"{hit_s} | "
+            f"{s.get('cache_read_tokens') or '-'} | "
+            f"{s.get('total_tokens') or '-'} | {src} |"
         )
     lines.append("")
+    if report.get("proxy_metrics"):
+        pm = report["proxy_metrics"]
+        lines.append("## Proxy metrics (all LLM traffic)")
+        lines.append("")
+        lines.append(f"- Requests: `{pm.get('requests')}`")
+        lines.append(f"- Cache hit rate: `{pm.get('cache_hit_rate')}`")
+        lines.append(f"- Cache read tokens: `{pm.get('cache_read_tokens')}`")
+        lines.append(f"- Cache write tokens: `{pm.get('cache_write_tokens')}`")
+        lines.append(f"- Billable input (input − cache_read): `{pm.get('billable_input_tokens')}`")
+        lines.append(
+            f"- Lane prefix breaks (real mid-session): `{pm.get('lane_prefix_breaks')}`"
+        )
+        lines.append(
+            f"- Global prefix breaks (includes main↔subagent noise): `{pm.get('prefix_breaks')}`"
+        )
+        lines.append(f"- Last prefix hash: `{pm.get('last_prefix_hash')}`")
+        by_lane = pm.get("by_lane") or {}
+        if by_lane:
+            lines.append("")
+            lines.append("### By request lane")
+            lines.append("")
+            lines.append("| Lane | Reqs | Cache hit | Lane breaks |")
+            lines.append("|---|---:|---:|---:|")
+            for lane, b in sorted(by_lane.items()):
+                lines.append(
+                    f"| `{lane}` | {b.get('requests')} | {b.get('cache_hit_rate')} | "
+                    f"{b.get('lane_prefix_breaks')} |"
+                )
+        blame = pm.get("component_break_counts") or {}
+        solo = pm.get("component_solo_breaks") or {}
+        if any(blame.values()) or any(solo.values()):
+            lines.append("")
+            lines.append("### Within-lane break blame by component")
+            lines.append("")
+            lines.append("| Component | In break | Solo break |")
+            lines.append("|---|---:|---:|")
+            for comp, n in sorted(blame.items(), key=lambda kv: -kv[1]):
+                lines.append(f"| `{comp}` | {n} | {solo.get(comp, 0)} |")
+            lines.append("")
+            lines.append(
+                "Components: `instructions`, `system`, `developer` (AGENTS/memory/skills), "
+                "`tools`, `tools_names`, `first_user`. Lanes separate main agent from "
+                "repo_explore / memory_extract / subagent traffic."
+            )
+        if report.get("metrics_proxy", {}).get("events_log"):
+            lines.append(f"- Events log: `{report['metrics_proxy']['events_log']}`")
+            lines.append(
+                f"- Analyze: `python3 benchmarks/scripts/llm_metrics_proxy.py "
+                f"--analyze {report['metrics_proxy']['events_log']}`"
+            )
+        lines.append("")
     lines.append("## Tokens")
     lines.append("")
     lines.append(
-        "- **navi**: provider usage from runtime `UsageReported` / bench metrics."
+        "- **navi**: provider usage from runtime `TokensUpdated` / bench metrics "
+        "(includes `cache_read_tokens` / `cache_write_tokens`)."
+    )
+    lines.append(
+        "- **metrics proxy** (optional): reverse-proxies the provider and "
+        "independently sums usage + detects prompt-prefix breaks."
     )
     lines.append(
         "- **opencode**: sum of `step_finish.part.tokens` (input/output/total per step)."
@@ -1082,6 +1273,105 @@ def main() -> int:
     md_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     print(f"Wrote {md_path}", flush=True)
     return 0
+
+
+def start_metrics_proxy(
+    listen: str,
+    upstream: str,
+    log_path: Path,
+) -> tuple[subprocess.Popen, str]:
+    script = ROOT / "benchmarks/scripts/llm_metrics_proxy.py"
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    proc = subprocess.Popen(
+        [
+            sys.executable,
+            str(script),
+            "--listen",
+            listen,
+            "--upstream",
+            upstream,
+            "--log",
+            str(log_path),
+            "-v",
+        ],
+        cwd=ROOT,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
+    host, _, port_s = listen.partition(":")
+    base = f"http://{host}:{port_s or '18765'}"
+    # Wait for health
+    deadline = time.time() + 15
+    last_err = ""
+    while time.time() < deadline:
+        if proc.poll() is not None:
+            out = ""
+            if proc.stdout:
+                out = proc.stdout.read() or ""
+            raise SystemExit(f"metrics proxy exited early: {out[-2000:]}")
+        try:
+            with urllib.request.urlopen(base + "/health", timeout=1) as r:
+                if r.status == 200:
+                    return proc, base
+        except Exception as e:
+            last_err = str(e)
+            time.sleep(0.15)
+    proc.terminate()
+    raise SystemExit(f"metrics proxy failed to become healthy: {last_err}")
+
+
+def fetch_proxy_metrics(base: str | None, reset: bool = False) -> dict[str, Any] | None:
+    if not base:
+        return None
+    url = base.rstrip("/") + "/_metrics" + ("?reset=1" if reset else "")
+    try:
+        with urllib.request.urlopen(url, timeout=5) as r:
+            return json.loads(r.read().decode("utf-8"))
+    except Exception:
+        return None
+
+
+def proxy_delta(before: dict[str, Any], after: dict[str, Any]) -> dict[str, Any]:
+    keys = (
+        "requests",
+        "errors",
+        "input_tokens",
+        "output_tokens",
+        "cache_read_tokens",
+        "cache_write_tokens",
+        "prefix_breaks",
+        "billable_input_tokens",
+    )
+    out: dict[str, Any] = {}
+    for k in keys:
+        try:
+            out[k] = int(after.get(k) or 0) - int(before.get(k) or 0)
+        except (TypeError, ValueError):
+            out[k] = after.get(k)
+    inp = out.get("input_tokens") or 0
+    cr = out.get("cache_read_tokens") or 0
+    out["cache_hit_rate"] = round(cr / inp, 4) if inp else None
+    # Per-component break deltas
+    before_c = before.get("component_break_counts") or {}
+    after_c = after.get("component_break_counts") or {}
+    before_s = before.get("component_solo_breaks") or {}
+    after_s = after.get("component_solo_breaks") or {}
+    out["component_break_counts"] = {
+        k: int(after_c.get(k) or 0) - int(before_c.get(k) or 0)
+        for k in set(before_c) | set(after_c)
+    }
+    out["component_solo_breaks"] = {
+        k: int(after_s.get(k) or 0) - int(before_s.get(k) or 0)
+        for k in set(before_s) | set(after_s)
+    }
+    try:
+        out["lane_prefix_breaks"] = int(after.get("lane_prefix_breaks") or 0) - int(
+            before.get("lane_prefix_breaks") or 0
+        )
+    except (TypeError, ValueError):
+        out["lane_prefix_breaks"] = after.get("lane_prefix_breaks")
+    return out
 
 
 if __name__ == "__main__":

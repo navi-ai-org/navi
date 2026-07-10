@@ -123,6 +123,32 @@ bench-tool-quality-hard out="benchmarks/runs/agent-compare/hard-latest.json" age
       --agents "{{agents}}" \
       --out "{{out}}"
 
+# Hard suite, navi only, with LLM metrics proxy (cache hit rate + prefix breaks).
+bench-tool-quality-hard-navi-proxy out="benchmarks/runs/agent-compare/hard-navi-proxy.json":
+    mkdir -p "$(dirname "{{out}}")"
+    python3 benchmarks/scripts/run_agent_comparison.py \
+      --suite benchmarks/suites/tool-quality-hard \
+      --agents navi \
+      --metrics-proxy \
+      --out "{{out}}"
+
+# Lean tool + memory dream + cache blame (low RAM). Uses existing binary — no cargo.
+# Do NOT cargo build -j default on 8GB hosts; release link alone can exceed 2GB.
+bench-tool-cache-audit out="benchmarks/runs/agent-compare/tool-cache-audit.json" provider="opencode" model="deepseek-v4-flash-free":
+    mkdir -p "$(dirname "{{out}}")"
+    # Prefer release binary if present, else debug, else PATH navi.
+    bin="${NAVI_BIN:-}"
+    if [ -z "$bin" ]; then
+      if [ -x target/release/navi ]; then bin=target/release/navi
+      elif [ -x target/debug/navi ]; then bin=target/debug/navi
+      else bin=navi
+      fi
+    fi
+    CARGO_BUILD_JOBS=1 NAVI_BIN="$bin" python3 benchmarks/scripts/run_tool_cache_audit.py \
+      --out "{{out}}" \
+      --provider "{{provider}}" \
+      --model "{{model}}"
+
 # Print the local benchmark report path.
 bench-index:
     node benchmarks/site/generate-runs-index.mjs
