@@ -115,6 +115,14 @@ bench-tool-quality-smoke out="benchmarks/runs/agent-compare/smoke.json":
 bench-tool-quality-navi output="benchmarks/runs/tool-quality-navi.json" provider="opencode" model="deepseek-v4-flash-free":
     @just bench benchmarks/suites/tool-quality "{{output}}" "{{provider}}" "{{model}}"
 
+# Hard multi-bug tool-quality suite (all agents). Expect model failures.
+bench-tool-quality-hard out="benchmarks/runs/agent-compare/hard-latest.json" agents="navi,opencode,claude-code":
+    mkdir -p "$(dirname "{{out}}")"
+    python3 benchmarks/scripts/run_agent_comparison.py \
+      --suite benchmarks/suites/tool-quality-hard \
+      --agents "{{agents}}" \
+      --out "{{out}}"
+
 # Print the local benchmark report path.
 bench-index:
     node benchmarks/site/generate-runs-index.mjs

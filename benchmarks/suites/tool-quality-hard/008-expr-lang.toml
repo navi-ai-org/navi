@@ -1,0 +1,34 @@
+version = 1
+id = "hard-expr-lang"
+title = "Hard: expression parser precedence and associativity"
+category = "tool_quality_hard"
+fixture = "benchmarks/fixtures/hard-expr-lang"
+task = """
+Implement a correct expression evaluator for this crate so all unit tests pass.
+
+Language: numbers, + - * / ^, parentheses, unary minus.
+Intended precedence (high → low): unary minus, ^ (right-associative), * /, + -.
+Binary + - * / are left-associative.
+
+The lexer/parser/eval are split across modules. Use the tests as the
+specification. Run `cargo test` until fully green.
+"""
+max_turns = 24
+max_tool_calls = 120
+timeout_ms = 720000
+tags = ["tool-quality", "hard", "parser"]
+
+[metadata]
+difficulty = "very-hard"
+focus = "precedence + associativity repair across modules"
+eval_axis = "parser_reasoning"
+
+[agent]
+mode = "parity"
+profile = "medium"
+
+[[verifiers]]
+verifier_type = "command"
+command = "cargo test --quiet"
+timeout_ms = 120000
+required = true

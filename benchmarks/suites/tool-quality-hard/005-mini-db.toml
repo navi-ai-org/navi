@@ -1,0 +1,35 @@
+version = 1
+id = "hard-mini-db"
+title = "Hard: multi-module mini DB (page/WAL/snapshot/CAS)"
+category = "tool_quality_hard"
+fixture = "benchmarks/fixtures/hard-mini-db"
+task = """
+Fix the in-memory mini database. Failures span multiple modules:
+
+- page revision accounting (put/delete)
+- WAL durability / recover_durable must drop unfenced ops
+- snapshot capture/restore seq
+- put_cas conflict semantics (inverted today)
+
+You must understand cross-module interactions. Run `cargo test` until all
+integration tests pass. Do not delete tests.
+"""
+max_turns = 28
+max_tool_calls = 140
+timeout_ms = 900000
+tags = ["tool-quality", "hard", "multi-module"]
+
+[metadata]
+difficulty = "very-hard"
+focus = "cross-module interacting bugs"
+eval_axis = "systems_reasoning"
+
+[agent]
+mode = "parity"
+profile = "medium"
+
+[[verifiers]]
+verifier_type = "command"
+command = "cargo test --quiet"
+timeout_ms = 180000
+required = true
