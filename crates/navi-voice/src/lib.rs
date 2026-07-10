@@ -27,5 +27,4 @@ pub use types::{
 pub use vocab::Vocab;
 pub use wav::{load_wav_16k_mono, load_wav_mono_f32, resample_linear};
 
-#[cfg(feature = "onnx")]
 pub use engine::{NemotronOnnxEngine, TranscribeResult};

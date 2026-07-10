@@ -30,9 +30,10 @@ navi-tui.workspace = true
 navi-voice = { path = "../navi-voice", default-features = false }
 
 [features]
-# ONNX Runtime dictation is on by default (downloads ORT at build time).
-default = ["voice-onnx"]
-voice-onnx = ["navi-voice/onnx"]
+# Portable release binaries default to no ORT (musl/Windows/x64 mac lack
+# prebuilt ort-sys). Opt in with `--features voice-onnx` on supported hosts.
+default = []
+voice-onnx = ["navi-voice/onnx", "navi-sdk/voice-onnx"]
 
 [dev-dependencies]
 wiremock.workspace = true

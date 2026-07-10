@@ -268,6 +268,26 @@ pub(crate) fn apply_thinking_to_body(
                     );
                 }
             }
+            // OpenCode Zen hosts Tencent Hy3 / Hunyuan family among others.
+            // Hy chat templates accept reasoning_effort via chat_template_kwargs
+            // and also top-level reasoning_effort on many OpenAI-compat gateways.
+            navi_core::ProviderId::OPENCODE
+            | navi_core::ProviderId::OPENCODE_ZEN
+            | navi_core::ProviderId::OPENCODE_GO => {
+                if let Some(effort) = thinking.effort {
+                    // Map NAVI effort labels onto Hy's no_think/low/high when possible.
+                    let hy_effort = match effort.as_str() {
+                        "off" | "none" | "minimal" => "no_think",
+                        "max" | "xhigh" | "highest" => "high",
+                        other => other,
+                    };
+                    object.insert("reasoning_effort".to_string(), json!(hy_effort));
+                    object.insert(
+                        "extra_body".to_string(),
+                        json!({ "chat_template_kwargs": { "reasoning_effort": hy_effort } }),
+                    );
+                }
+            }
             _ => {
                 if let Some(effort) = thinking.effort {
                     object.insert("reasoning_effort".to_string(), json!(effort));

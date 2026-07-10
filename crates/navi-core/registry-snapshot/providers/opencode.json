@@ -924,8 +924,10 @@
       "name": "hy3-free",
       "context_window_tokens": 200000,
       "max_output_tokens": 8192,
-      "recommended_temperature": 1.0,
+      "recommended_temperature": 0.9,
       "supports_thinking": true,
+      "default_reasoning_effort": "high",
+      "capabilities": ["tool_calling", "reasoning", "agentic"],
       "pricing": {
         "input_per_1m": 0.0,
         "output_per_1m": 0.0,

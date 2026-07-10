@@ -447,6 +447,39 @@ impl ChatToolCallAccumulator {
     }
 }
 
+/// Tencent Hy / Hunyuan family (`hy_v3`) uses tagged tool calls, e.g.:
+/// ```text
+/// <tool_calls:opensource>
+/// <tool_call:opensource>read_file<tool_sep:opensource>
+/// <arg_key:opensource>path</arg_key:opensource>
+/// <arg_value:opensource>main.rs</arg_value:opensource>
+/// </tool_call:opensource>
+/// </tool_calls:opensource>
+/// ```
+/// Also accept un-suffixed `<tool_call>…</tool_call>` JSON (MiniMax / generic).
+const TOOL_CALL_START_MARKERS: &[&str] = &[
+    "]<]minimax[>[<tool_call>",
+    "<]minimax[>[<tool_call>",
+    "]<|minimal|>[<tool_call>",
+    "<|minimal|>[<tool_call>",
+    "<tool_call:opensource>",
+    "<tool_call>",
+];
+
+const TOOL_CALL_END_MARKERS: &[&str] = &["</tool_call:opensource>", "</tool_call>"];
+
+const TOOL_CALLS_WRAPPER_OPEN: &[&str] = &["<tool_calls:opensource>", "<tool_calls>"];
+const TOOL_CALLS_WRAPPER_CLOSE: &[&str] = &["</tool_calls:opensource>", "</tool_calls>"];
+
+const HY_TOOL_SEP: &[&str] = &["<tool_sep:opensource>", "<tool_sep>"];
+const HY_ARG_KEY_OPEN: &[&str] = &["<arg_key:opensource>", "<arg_key>"];
+const HY_ARG_KEY_CLOSE: &[&str] = &["</arg_key:opensource>", "</arg_key>"];
+const HY_ARG_VALUE_OPEN: &[&str] = &["<arg_value:opensource>", "<arg_value>"];
+const HY_ARG_VALUE_CLOSE: &[&str] = &["</arg_value:opensource>", "</arg_value>"];
+
+const THINK_OPEN_TAGS: &[&str] = &["<think:opensource>", "<think>"];
+const THINK_CLOSE_TAGS: &[&str] = &["</think:opensource>", "</think>"];
+
 #[derive(Default)]
 struct TextToolCallExtractor {
     pending: String,
@@ -474,9 +507,11 @@ impl TextToolCallExtractor {
 
         loop {
             if self.in_tool_call {
-                if let Some(end) = find_ascii_case_insensitive(&self.pending, "</tool_call>") {
+                if let Some((end, end_len)) =
+                    find_first_marker(&self.pending, TOOL_CALL_END_MARKERS)
+                {
                     let block = self.pending[..end].to_string();
-                    self.pending.drain(..end + "</tool_call>".len());
+                    self.pending.drain(..end + end_len);
                     self.in_tool_call = false;
                     let calls = self.parse_tool_call_block(&block);
                     self.tool_call_events.extend(calls);
@@ -492,13 +527,37 @@ impl TextToolCallExtractor {
                 break;
             }
 
-            if let Some((start, marker_len)) = find_tool_call_start(&self.pending) {
-                if start > 0 {
-                    clean_text.push_str(&self.pending[..start]);
+            // Prefer real tool-call starts over outer Hy wrappers so
+            // `</tool_calls:opensource>` never swallows an inner call body.
+            let tool_start = find_tool_call_start(&self.pending);
+            let wrapper = find_first_marker(&self.pending, TOOL_CALLS_WRAPPER_OPEN)
+                .or_else(|| find_first_marker(&self.pending, TOOL_CALLS_WRAPPER_CLOSE));
+
+            match (tool_start, wrapper) {
+                (Some((t_pos, _)), Some((w_pos, w_len))) if w_pos < t_pos => {
+                    if w_pos > 0 {
+                        clean_text.push_str(&self.pending[..w_pos]);
+                    }
+                    // Drop wrapper tag only.
+                    self.pending.drain(..w_pos + w_len);
+                    continue;
                 }
-                self.pending.drain(..start + marker_len);
-                self.in_tool_call = true;
-                continue;
+                (Some((t_pos, t_len)), _) => {
+                    if t_pos > 0 {
+                        clean_text.push_str(&self.pending[..t_pos]);
+                    }
+                    self.pending.drain(..t_pos + t_len);
+                    self.in_tool_call = true;
+                    continue;
+                }
+                (None, Some((w_pos, w_len))) => {
+                    if w_pos > 0 {
+                        clean_text.push_str(&self.pending[..w_pos]);
+                    }
+                    self.pending.drain(..w_pos + w_len);
+                    continue;
+                }
+                (None, None) => {}
             }
 
             let keep = if final_chunk {
@@ -518,7 +577,13 @@ impl TextToolCallExtractor {
     }
 
     fn parse_tool_call_block(&mut self, block: &str) -> Vec<Result<ModelStreamEvent>> {
-        parse_tool_call_values(block)
+        // Prefer Tencent hy_v3 tagged form; fall back to JSON `<tool_call>{...}</tool_call>`.
+        let values = if let Some(value) = parse_hy_v3_tool_call(block) {
+            vec![value]
+        } else {
+            parse_tool_call_values(block)
+        };
+        values
             .into_iter()
             .filter_map(|value| self.tool_invocation_from_value(value))
             .map(|invocation| Ok(ModelStreamEvent::ToolCall(invocation)))
@@ -573,6 +638,97 @@ fn parse_tool_call_values(block: &str) -> Vec<Value> {
     stream.filter_map(std::result::Result::ok).collect()
 }
 
+/// Parse Tencent Hy3 / Hunyuan `hy_v3` tool call body (without surrounding tags).
+fn parse_hy_v3_tool_call(block: &str) -> Option<Value> {
+    let trimmed = block.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    // Require at least one hy marker so we don't steal plain JSON blocks.
+    let looks_hy = HY_TOOL_SEP
+        .iter()
+        .chain(HY_ARG_KEY_OPEN.iter())
+        .any(|m| find_ascii_case_insensitive(trimmed, m).is_some());
+    if !looks_hy {
+        return None;
+    }
+
+    let (name_raw, args_src) = if let Some((pos, len)) = find_first_marker(trimmed, HY_TOOL_SEP) {
+        (&trimmed[..pos], &trimmed[pos + len..])
+    } else {
+        // No sep — treat whole block as name if there are no args; otherwise fail.
+        if find_first_marker(trimmed, HY_ARG_KEY_OPEN).is_none() {
+            let name = trimmed.trim();
+            if name.is_empty() || name.starts_with('{') {
+                return None;
+            }
+            return Some(json!({ "name": name, "arguments": {} }));
+        }
+        // Name is text before first arg_key
+        let (pos, _) = find_first_marker(trimmed, HY_ARG_KEY_OPEN)?;
+        (&trimmed[..pos], trimmed)
+    };
+
+    let name = name_raw.trim();
+    if name.is_empty() || name.contains('<') {
+        return None;
+    }
+
+    let mut arguments = serde_json::Map::new();
+    let mut rest = args_src;
+    while let Some((key_open_pos, key_open_len)) = find_first_marker(rest, HY_ARG_KEY_OPEN) {
+        rest = &rest[key_open_pos + key_open_len..];
+        let (key_close_pos, key_close_len) = find_first_marker(rest, HY_ARG_KEY_CLOSE)?;
+        let key = rest[..key_close_pos].trim().to_string();
+        rest = &rest[key_close_pos + key_close_len..];
+
+        let (val_open_pos, val_open_len) = find_first_marker(rest, HY_ARG_VALUE_OPEN)?;
+        rest = &rest[val_open_pos + val_open_len..];
+        let (val_close_pos, val_close_len) = find_first_marker(rest, HY_ARG_VALUE_CLOSE)?;
+        let raw_value = rest[..val_close_pos].to_string();
+        rest = &rest[val_close_pos + val_close_len..];
+
+        if key.is_empty() {
+            continue;
+        }
+        let value = parse_hy_arg_value(&raw_value);
+        arguments.insert(key, value);
+    }
+
+    Some(json!({
+        "name": name,
+        "arguments": Value::Object(arguments),
+    }))
+}
+
+fn parse_hy_arg_value(raw: &str) -> Value {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Value::String(String::new());
+    }
+    // Prefer JSON for objects/arrays/numbers/bools; otherwise keep as string.
+    if (trimmed.starts_with('{') && trimmed.ends_with('}'))
+        || (trimmed.starts_with('[') && trimmed.ends_with(']'))
+        || trimmed == "true"
+        || trimmed == "false"
+        || trimmed == "null"
+        || trimmed.parse::<i64>().is_ok()
+        || trimmed.parse::<f64>().is_ok()
+    {
+        if let Ok(value) = serde_json::from_str::<Value>(trimmed) {
+            return value;
+        }
+    }
+    // Quoted JSON string
+    if trimmed.starts_with('"') && trimmed.ends_with('"') {
+        if let Ok(value) = serde_json::from_str::<Value>(trimmed) {
+            return value;
+        }
+    }
+    Value::String(raw.to_string())
+}
+
 fn normalize_tool_input(value: &Value) -> Value {
     match value {
         Value::String(text) => {
@@ -582,37 +738,39 @@ fn normalize_tool_input(value: &Value) -> Value {
     }
 }
 
-fn find_tool_call_start(text: &str) -> Option<(usize, usize)> {
-    let patterns: &[&str] = &[
-        "]<]minimax[>[<tool_call>",
-        "<]minimax[>[<tool_call>",
-        "]<|minimal|>[<tool_call>",
-        "<|minimal|>[<tool_call>",
-        "<tool_call>",
-    ];
-
-    if let Some(result) = patterns
+fn find_first_marker(text: &str, markers: &[&str]) -> Option<(usize, usize)> {
+    markers
         .iter()
         .filter_map(|marker| {
             find_ascii_case_insensitive(text, marker).map(|pos| (pos, marker.len()))
         })
         .min_by_key(|(pos, _)| *pos)
-    {
+}
+
+fn find_tool_call_start(text: &str) -> Option<(usize, usize)> {
+    if let Some(result) = find_first_marker(text, TOOL_CALL_START_MARKERS) {
         return Some(result);
     }
-
     find_generic_bracket_tool_call_prefix(text)
 }
 
 fn find_generic_bracket_tool_call_prefix(text: &str) -> Option<(usize, usize)> {
-    let tc_pos = find_ascii_case_insensitive(text, "<tool_call>")?;
+    // Prefer hy-suffixed tag if present.
+    let (tc_pos, marker_len) =
+        if let Some(pos) = find_ascii_case_insensitive(text, "<tool_call:opensource>") {
+            (pos, "<tool_call:opensource>".len())
+        } else if let Some(pos) = find_ascii_case_insensitive(text, "<tool_call>") {
+            (pos, "<tool_call>".len())
+        } else {
+            return None;
+        };
     let before = &text[..tc_pos];
     let bracket_end = before.rfind(">[")?;
     if bracket_end > before.len().saturating_sub(64) && bracket_end >= 1 {
         let candidate = &before[..bracket_end];
         let openers = [']', '<', '|'];
         if let Some(prefix_start) = candidate.rfind(|c: char| openers.contains(&c)) {
-            let full_len = tc_pos + "<tool_call>".len() - prefix_start;
+            let full_len = tc_pos + marker_len - prefix_start;
             return Some((prefix_start, full_len));
         }
     }
@@ -620,16 +778,10 @@ fn find_generic_bracket_tool_call_prefix(text: &str) -> Option<(usize, usize)> {
 }
 
 fn partial_tool_call_start_suffix_len(text: &str) -> usize {
-    let patterns: &[&str] = &[
-        "]<]minimax[>[<tool_call>",
-        "<]minimax[>[<tool_call>",
-        "]<|minimal|>[<tool_call>",
-        "<|minimal|>[<tool_call>",
-        "<tool_call>",
-    ];
-
-    let specific = patterns
+    let specific = TOOL_CALL_START_MARKERS
         .iter()
+        .chain(TOOL_CALLS_WRAPPER_OPEN.iter())
+        .chain(TOOL_CALLS_WRAPPER_CLOSE.iter())
         .map(|marker| partial_tag_suffix_len(text, marker))
         .max()
         .unwrap_or(0);
@@ -677,8 +829,12 @@ impl ThinkTagSplitter {
 
     fn drain_pending(&mut self) -> Vec<Result<ModelStreamEvent>> {
         let pending = std::mem::take(&mut self.pending);
-        let tag = if self.in_think { "</think>" } else { "<think>" };
-        if is_partial_tag_prefix(&pending, tag) {
+        let tags = if self.in_think {
+            THINK_CLOSE_TAGS
+        } else {
+            THINK_OPEN_TAGS
+        };
+        if tags.iter().any(|tag| is_partial_tag_prefix(&pending, tag)) {
             return Vec::new();
         }
         self.split(&pending, true)
@@ -689,10 +845,14 @@ impl ThinkTagSplitter {
         let mut remaining = input;
 
         while !remaining.is_empty() {
-            let tag = if self.in_think { "</think>" } else { "<think>" };
-            if let Some(pos) = find_ascii_case_insensitive(remaining, tag) {
+            let tags = if self.in_think {
+                THINK_CLOSE_TAGS
+            } else {
+                THINK_OPEN_TAGS
+            };
+            if let Some((pos, len)) = find_first_marker(remaining, tags) {
                 self.push_segment(&mut events, &remaining[..pos]);
-                remaining = &remaining[pos + tag.len()..];
+                remaining = &remaining[pos + len..];
                 self.in_think = !self.in_think;
                 continue;
             }
@@ -700,7 +860,10 @@ impl ThinkTagSplitter {
             let keep = if final_chunk {
                 0
             } else {
-                partial_tag_suffix_len(remaining, tag)
+                tags.iter()
+                    .map(|tag| partial_tag_suffix_len(remaining, tag))
+                    .max()
+                    .unwrap_or(0)
             };
             let emit_len = remaining.len().saturating_sub(keep);
             self.push_segment(&mut events, &remaining[..emit_len]);
