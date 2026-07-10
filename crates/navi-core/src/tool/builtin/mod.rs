@@ -21,6 +21,7 @@ mod repo_intelligence;
 mod runtime_info;
 mod sandbox_tool;
 mod search_tool;
+mod skill_manage;
 mod skill_tool;
 mod subagent;
 mod verifier_tool;
@@ -55,6 +56,7 @@ pub(super) use repo_intelligence::{RepoIntelligenceAction, RepoIntelligenceTool}
 pub(super) use runtime_info::RuntimeInfoTool;
 pub(super) use sandbox_tool::SandboxTool;
 pub(super) use search_tool::SearchTool;
+pub(super) use skill_manage::{SkillDeleteTool, SkillGetTool, SkillListTool, SkillSaveTool};
 pub(super) use skill_tool::SkillTool;
 pub use subagent::{AgentProfile, ApprovalMode, ProviderBuilderFn, SubagentTool};
 pub(super) use verifier_tool::VerifierTool;

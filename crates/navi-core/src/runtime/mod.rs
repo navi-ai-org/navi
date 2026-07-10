@@ -1375,7 +1375,14 @@ impl AgentRuntime {
             agent_mode: self.agent_mode(),
             compaction_model_name: None,
             session_id: self.session.id().as_str().to_string(),
-            allowed_tool_names: None,
+            // When active skills declare allow_tools, lock the turn to that set.
+            allowed_tool_names: {
+                let active = self
+                    .shared_active_skills
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner());
+                crate::skills::skill_tool_allowlist(&active)
+            },
             memory_manager: self.memory_manager.clone(),
         });
 

@@ -120,6 +120,26 @@ pub struct NaviSkillInfo {
     pub author: Option<String>,
     pub tags: Vec<String>,
     pub requires: Vec<String>,
+    /// Absolute path to `SKILL.md` (or skill directory), when known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+    /// Full instruction body when loaded via `get_skill` / save result.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub instructions: Option<String>,
+    /// True when the skill lives under user or project skill dirs (editable).
+    #[serde(default)]
+    pub editable: bool,
+    /// `"user"` | `"project"` | `"builtin"` | `"file"` for UI placement.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scope: Option<String>,
+    /// Tools available while this skill is active (empty = no lock from this skill).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub allow_tools: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub deny_tools: Vec<String>,
+    /// `"builtin"` | `"store"` | `"file"`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
 }
 
 /// Credential resolution status for a single provider.

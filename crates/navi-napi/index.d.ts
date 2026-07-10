@@ -196,6 +196,14 @@ export class NaviNapiEngine {
   usageReport(): Promise<JsonValue>;
   // Skills
   listSkills(): JsonValue;
+  /** Load one skill including full SKILL.md instructions. */
+  getSkill(skillId: string): JsonValue;
+  /**
+   * Create/update a skill as standard SKILL.md.
+   * params: { id?, name, description?, version?, author?, tags?, requires?, instructions, scope?: "user"|"project" }
+   */
+  saveSkill(params: JsonValue): JsonValue;
+  deleteSkill(skillId: string): JsonValue;
   setSessionSkills(sessionId: string, skills: string[]): Promise<void>;
   // MCP
   listMcpServers(sessionId: string): JsonValue;
@@ -217,6 +225,7 @@ export class NaviNapiEngine {
   listSavedSessions(): Promise<JsonValue>;
   loadSavedSession(sessionId: string): Promise<JsonValue>;
   deleteSavedSession(sessionId: string): Promise<boolean>;
+  renameSavedSession(sessionId: string, title: string): Promise<boolean>;
   // Auto-memory CRUD
   memoryWrite(id: string, memoryType: string, name: string, description: string, body: string): void;
   memoryRead(id: string): JsonValue;

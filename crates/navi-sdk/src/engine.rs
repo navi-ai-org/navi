@@ -951,8 +951,49 @@ impl NaviEngine {
             &loaded_config.data_dir,
         )?
         .into_iter()
-        .map(skill_info_from_manifest)
+        .map(|m| skill_info_from_manifest(m, &self.inner.project_dir, &loaded_config.data_dir, false))
         .collect())
+    }
+
+    /// Load one skill including its full instruction body.
+    pub fn get_skill(&self, skill_id: &str) -> Result<NaviSkillInfo> {
+        let loaded_config = self.loaded_config();
+        let manifest = navi_core::load_skill_by_id(
+            &loaded_config.config.skills,
+            &self.inner.project_dir,
+            &loaded_config.data_dir,
+            skill_id,
+        )?;
+        Ok(skill_info_from_manifest(
+            manifest,
+            &self.inner.project_dir,
+            &loaded_config.data_dir,
+            true,
+        ))
+    }
+
+    /// Create or update a skill as standard `SKILL.md` under user or project dirs.
+    ///
+    /// User scope → `data_dir/skills/<id>/SKILL.md` (shared by TUI + Desktop).
+    /// Project scope → `project/.navi/skills/<id>/SKILL.md`.
+    pub fn save_skill(
+        &self,
+        request: navi_core::SkillWriteRequest,
+    ) -> Result<navi_core::SkillWriteResult> {
+        let loaded_config = self.loaded_config();
+        navi_core::write_skill(
+            &request,
+            &self.inner.project_dir,
+            &loaded_config.data_dir,
+        )
+        .map_err(NaviError::from)
+    }
+
+    /// Delete a user- or project-authored skill. Returns whether something was removed.
+    pub fn delete_skill(&self, skill_id: &str) -> Result<bool> {
+        let loaded_config = self.loaded_config();
+        navi_core::delete_skill(skill_id, &self.inner.project_dir, &loaded_config.data_dir)
+            .map_err(NaviError::from)
     }
 
     /// Sets the active skills for an existing session.
@@ -1260,6 +1301,31 @@ impl NaviEngine {
         .await?)
     }
 
+    /// Renames a persisted session (updates the snapshot title).
+    pub fn rename_saved_session(&self, session_id: &str, title: &str) -> Result<bool> {
+        let loaded_config = self.loaded_config();
+        Ok(SessionStore::with_redaction(
+            loaded_config.data_dir,
+            loaded_config.config.security.redact_secrets_in_sessions,
+        )
+        .rename(session_id, title)?)
+    }
+
+    /// Renames a persisted session without blocking the async runtime.
+    pub async fn rename_saved_session_async(
+        &self,
+        session_id: &str,
+        title: &str,
+    ) -> Result<bool> {
+        let loaded_config = self.loaded_config();
+        Ok(SessionStore::with_redaction(
+            loaded_config.data_dir,
+            loaded_config.config.security.redact_secrets_in_sessions,
+        )
+        .rename_async(session_id.to_string(), title.to_string())
+        .await?)
+    }
+
     /// Reloads WASM plugin tools on every active in-memory session without restarting NAVI.
     ///
     /// Installed plugins are read from `{data_dir}/plugins/` plus configured `wasm_plugins` scan roots.
@@ -1459,9 +1525,10 @@ impl NaviEngine {
                             request_options: provider.request_options.clone().unwrap_or_default(),
                             models: merged,
                         };
-                        if let Err(err) =
-                            store.upsert_provider_with_sha256(&registry_provider, None)
-                        {
+                        if let Err(err) = store.upsert_provider_with_sha256(
+                            &registry_provider,
+                            Some(navi_core::registry::LOCAL_API_SYNC_SHA),
+                        ) {
                             tracing::warn!(provider = %provider.id, error = %err, "failed to persist synced models to registry cache");
                         }
                     }
@@ -1909,7 +1976,22 @@ fn model_info_from_option(option: ModelOption) -> NaviModelInfo {
     }
 }
 
-fn skill_info_from_manifest(skill: SkillManifest) -> NaviSkillInfo {
+fn skill_info_from_manifest(
+    skill: SkillManifest,
+    _project_dir: &std::path::Path,
+    _data_dir: &std::path::Path,
+    include_instructions: bool,
+) -> NaviSkillInfo {
+    let path_str = skill.path.display().to_string();
+    let editable = navi_core::skill_is_editable(&skill);
+    let scope = match skill.source {
+        navi_core::SkillSource::Builtin => Some("builtin".into()),
+        navi_core::SkillSource::Store => Some(match skill.scope {
+            navi_core::SkillWriteScope::Project => "project".into(),
+            navi_core::SkillWriteScope::User => "user".into(),
+        }),
+        navi_core::SkillSource::File => Some("file".into()),
+    };
     NaviSkillInfo {
         id: skill.id,
         name: skill.name,
@@ -1918,6 +2000,13 @@ fn skill_info_from_manifest(skill: SkillManifest) -> NaviSkillInfo {
         author: skill.author,
         tags: skill.tags,
         requires: skill.requires,
+        path: Some(path_str),
+        instructions: include_instructions.then_some(skill.instructions),
+        editable,
+        scope,
+        allow_tools: skill.allow_tools,
+        deny_tools: skill.deny_tools,
+        source: Some(format!("{:?}", skill.source).to_lowercase()),
     }
 }
 
