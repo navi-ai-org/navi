@@ -1,15 +1,34 @@
 //! Catalog of remote transcription / dictation providers.
 //!
-//! Sources (in order):
-//! 1. Embedded registry snapshot (`registry-snapshot/transcription-providers/`)
-//! 2. Optional SQLite cache (same DB as LLM providers) — future remote sync
+//! Sources (in order), mirroring the LLM provider catalog:
+//! 1. Process-global SQLite registry cache (seeded from embedded + remote sync)
+//! 2. Embedded registry snapshot (`registry-snapshot/transcription-providers/`)
 
+use crate::config::providers::registry_store_for_catalog;
 use crate::registry::{
     RegistryTranscriptionProvider, embedded_transcription_providers,
 };
 
-/// Returns all known remote transcription providers (embedded snapshot).
+/// Returns all known remote transcription providers.
+///
+/// Prefers the SQLite cache when the engine has set a registry store; falls
+/// back to the binary-embedded snapshot so CLI/offline paths still work.
 pub fn transcription_provider_catalog() -> Vec<RegistryTranscriptionProvider> {
+    if let Some(store) = registry_store_for_catalog() {
+        // Ensure legacy DBs get seeded without waiting for a remote sync.
+        let _ = store.seed_transcription_from_embedded_if_empty();
+        match store.load_transcription_providers() {
+            Ok(providers) if !providers.is_empty() => return providers,
+            Ok(_) => {}
+            Err(err) => {
+                tracing::warn!(
+                    error = %err,
+                    "failed to load transcription providers from cache"
+                );
+            }
+        }
+    }
+
     embedded_transcription_providers().unwrap_or_else(|err| {
         tracing::warn!(error = %err, "failed to load embedded transcription providers");
         Vec::new()

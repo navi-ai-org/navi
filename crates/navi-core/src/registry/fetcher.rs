@@ -8,7 +8,7 @@ use anyhow::{Context, Result};
 use sha2::{Digest, Sha256};
 use std::path::Path;
 
-use super::types::{RegistryManifest, RegistryProvider};
+use super::types::{RegistryManifest, RegistryProvider, RegistryTranscriptionProvider};
 
 /// Base URL for the NAVI registry database on GitHub. Uses `raw.githubusercontent.com`
 /// for direct file access without the GitHub API rate limits.
@@ -87,6 +87,50 @@ impl RegistryFetcher {
 
         serde_json::from_str::<RegistryProvider>(&text)
             .with_context(|| format!("failed to parse provider '{provider_id}' JSON"))
+    }
+
+    /// Fetches a single transcription provider JSON by id.
+    pub async fn fetch_transcription_provider(
+        &self,
+        provider_id: &str,
+        manifest: &RegistryManifest,
+    ) -> Result<RegistryTranscriptionProvider> {
+        let entry = manifest
+            .transcription_providers
+            .get(provider_id)
+            .with_context(|| format!("transcription provider '{provider_id}' not in manifest"))?;
+
+        let url = format!("{REGISTRY_BASE_URL}/{}", entry.file);
+        let resp = self
+            .client
+            .get(&url)
+            .send()
+            .await
+            .with_context(|| {
+                format!("failed to fetch transcription provider '{provider_id}' from {url}")
+            })?;
+
+        let text = resp
+            .error_for_status()
+            .with_context(|| {
+                format!("transcription provider '{provider_id}' request failed: {url}")
+            })?
+            .text()
+            .await
+            .context("failed to read transcription provider response body")?;
+
+        let hash = hex::encode(Sha256::digest(text.as_bytes()));
+        if hash != entry.sha256 {
+            anyhow::bail!(
+                "transcription provider '{provider_id}' integrity check failed: expected {}, got {}",
+                entry.sha256,
+                hash
+            );
+        }
+
+        serde_json::from_str::<RegistryTranscriptionProvider>(&text).with_context(|| {
+            format!("failed to parse transcription provider '{provider_id}' JSON")
+        })
     }
 
     /// Fetches all providers listed in the manifest.
@@ -216,9 +260,21 @@ pub async fn sync_registry(
         }
     }
 
-    if to_fetch.is_empty() {
+    // Diff transcription providers even when LLM providers are unchanged.
+    let mut tx_to_fetch = Vec::new();
+    let mut tx_keep: std::collections::HashSet<&str> = std::collections::HashSet::new();
+    for (provider_id, entry) in &manifest.transcription_providers {
+        tx_keep.insert(provider_id.as_str());
+        let cached_sha = store.transcription_provider_sha256(provider_id)?;
+        if force || cached_sha.as_deref() != Some(&entry.sha256) {
+            tx_to_fetch.push(provider_id.as_str());
+        }
+    }
+
+    if to_fetch.is_empty() && tx_to_fetch.is_empty() {
         // All hashes match — just update manifest meta and clean up stale providers.
         store.delete_providers_not_in(&keep_ids)?;
+        store.delete_transcription_providers_not_in(&tx_keep)?;
         store.save_manifest_meta(&manifest)?;
         tracing::debug!("all providers up-to-date, no fetch needed");
         return Ok(false);
@@ -242,6 +298,19 @@ pub async fn sync_registry(
 
     // Remove providers that were deleted from the remote registry.
     store.delete_providers_not_in(&keep_ids)?;
+
+    // Sync remote transcription / dictation providers (diff by sha256).
+    let mut tx_updated = 0;
+    for provider_id in &tx_to_fetch {
+        let entry = &manifest.transcription_providers[*provider_id];
+        let provider = fetcher
+            .fetch_transcription_provider(provider_id, &manifest)
+            .await?;
+        store.upsert_transcription_provider(&provider, Some(&entry.sha256))?;
+        tx_updated += 1;
+    }
+    store.delete_transcription_providers_not_in(&tx_keep)?;
+
     store.save_manifest_meta(&manifest)?;
     // Persist the full manifest JSON so load_cached_registry and
     // check_registry_manifest see the correct version and hashes.
@@ -255,6 +324,8 @@ pub async fn sync_registry(
     tracing::info!(
         updated = updated,
         total = manifest.providers.len(),
+        transcription_updated = tx_updated,
+        transcription_total = manifest.transcription_providers.len(),
         "registry cache updated"
     );
 
