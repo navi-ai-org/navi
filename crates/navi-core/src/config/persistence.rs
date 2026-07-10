@@ -49,7 +49,7 @@ impl NaviConfig {
     pub(crate) fn merge(&mut self, other: NaviConfig) {
         use crate::config::types::{
             BackgroundModelsConfig, GoalsConfig, McpConfig, ModelConfig, PluginMarketplaceConfig,
-            SkillsConfig, TuiConfig, UpdatesConfig,
+            SkillsConfig, TuiConfig, UpdatesConfig, VoiceConfig,
         };
 
         if other.model != ModelConfig::default() {
@@ -80,6 +80,11 @@ impl NaviConfig {
         }
         if other.updates != UpdatesConfig::default() {
             self.updates = other.updates;
+        }
+        // Remote dictation / local ASR — only override when the file actually
+        // customizes [voice] (serde fills defaults for missing tables).
+        if other.voice != VoiceConfig::default() {
+            self.voice = other.voice;
         }
         crate::config::providers::merge_provider_configs(&mut self.providers, other.providers);
         self.plugins.extend(other.plugins);
@@ -290,5 +295,53 @@ recent_model_ids = ["openai:gpt-5.5", "anthropic:claude-sonnet-4-20250514"]
                 "anthropic:claude-sonnet-4-20250514".to_string()
             ]
         );
+    }
+
+    #[test]
+    fn global_config_merges_voice_remote_provider() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let path = tempdir.path().join("config.toml");
+        fs::write(
+            &path,
+            r#"
+[voice]
+provider = "openai"
+model = "whisper-1"
+enabled = true
+"#,
+        )
+        .expect("write config");
+
+        let mut config = NaviConfig::default();
+        assert_eq!(config.voice.provider, "local");
+        merge_from_file(&mut config, &path, ConfigSource::Trusted).expect("merge");
+
+        assert_eq!(config.voice.provider, "openai");
+        assert_eq!(config.voice.model, "whisper-1");
+        assert!(config.voice.enabled);
+        assert!(config.voice.uses_remote_transcription());
+    }
+
+    #[test]
+    fn missing_voice_table_does_not_wipe_existing_provider() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let path = tempdir.path().join("config.toml");
+        fs::write(
+            &path,
+            r#"
+[model]
+provider = "openai"
+name = "gpt-test"
+"#,
+        )
+        .expect("write config");
+
+        let mut config = NaviConfig::default();
+        config.voice.provider = "groq".to_string();
+        config.voice.model = "whisper-large-v3-turbo".to_string();
+        merge_from_file(&mut config, &path, ConfigSource::Project).expect("merge");
+
+        assert_eq!(config.voice.provider, "groq");
+        assert_eq!(config.voice.model, "whisper-large-v3-turbo");
     }
 }
