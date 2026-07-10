@@ -49,13 +49,23 @@ pub const NAVI_ENGINE_API_METHODS: &[&str] = &[
     "delete_provider_api_key",
     "provider_supports_device_oauth",
     "start_device_oauth",
+    "start_device_oauth_simple",
     "usage_report",
     // Skills
     "list_skills",
+    "get_skill",
+    "save_skill",
+    "delete_skill",
     "set_session_skills",
-    // MCP
+    // MCP (live session)
     "list_mcp_servers",
     "list_mcp_tools",
+    // MCP (config)
+    "list_mcp_config",
+    "set_mcp_enabled",
+    "upsert_mcp_server",
+    "remove_mcp_server",
+    "set_mcp_config",
     // Events
     "subscribe_events",
     // TUI panels
@@ -82,12 +92,16 @@ pub const NAVI_ENGINE_API_METHODS: &[&str] = &[
     "memory_dream",
     "memory_distill",
     "memory_checkpoint",
+    "memory_rebuild_preview",
     // Voice / dictation
     "voice_status",
+    "voice_transcription_providers",
+    "set_voice_config",
     "voice_doctor",
     "voice_engine_installed",
     "voice_init",
     "voice_transcribe_file",
+    "voice_transcribe_file_async",
     "voice_start_stream",
     "voice_push_pcm",
     "voice_end_stream",
@@ -114,6 +128,8 @@ pub const NAVI_ENGINE_API_METHODS: &[&str] = &[
     "load_saved_session_async",
     "delete_saved_session",
     "delete_saved_session_async",
+    "rename_saved_session",
+    "rename_saved_session_async",
     // Permissions
     "get_permission_mode",
     "set_permission_mode",
@@ -172,13 +188,23 @@ pub const NAVI_NAPI_BOUND_METHODS: &[&str] = &[
     "delete_provider_api_key",
     "provider_supports_device_oauth",
     "start_device_oauth",
+    "start_device_oauth_simple",
     "usage_report",
     // Skills
     "list_skills",
+    "get_skill",
+    "save_skill",
+    "delete_skill",
     "set_session_skills",
-    // MCP
+    // MCP (live session)
     "list_mcp_servers",
     "list_mcp_tools",
+    // MCP (config)
+    "list_mcp_config",
+    "set_mcp_enabled",
+    "upsert_mcp_server",
+    "remove_mcp_server",
+    "set_mcp_config",
     // Events
     "subscribe_events",
     // TUI panels
@@ -205,12 +231,16 @@ pub const NAVI_NAPI_BOUND_METHODS: &[&str] = &[
     "memory_dream",
     "memory_distill",
     "memory_checkpoint",
+    "memory_rebuild_preview",
     // Voice / dictation
     "voice_status",
+    "voice_transcription_providers",
+    "set_voice_config",
     "voice_doctor",
     "voice_engine_installed",
     "voice_init",
     "voice_transcribe_file",
+    "voice_transcribe_file_async",
     "voice_start_stream",
     "voice_push_pcm",
     "voice_end_stream",
@@ -237,6 +267,8 @@ pub const NAVI_NAPI_BOUND_METHODS: &[&str] = &[
     "load_saved_session_async",
     "delete_saved_session",
     "delete_saved_session_async",
+    "rename_saved_session",
+    "rename_saved_session_async",
     // Permissions
     "get_permission_mode",
     "set_permission_mode",
@@ -281,24 +313,18 @@ mod tests {
     }
 
     #[test]
-    fn napi_binding_covers_all_sdk_methods() {
-        let sdk: std::collections::HashSet<&str> =
-            NAVI_ENGINE_API_METHODS.iter().copied().collect();
-        let napi: std::collections::HashSet<&str> =
-            NAVI_NAPI_BOUND_METHODS.iter().copied().collect();
-
-        let missing: Vec<&&str> = sdk.difference(&napi).collect();
+    fn napi_bound_matches_engine_api() {
+        let engine: std::collections::HashSet<_> = NAVI_ENGINE_API_METHODS.iter().copied().collect();
+        let napi: std::collections::HashSet<_> = NAVI_NAPI_BOUND_METHODS.iter().copied().collect();
+        let missing_in_napi: Vec<_> = engine.difference(&napi).copied().collect();
+        let extra_in_napi: Vec<_> = napi.difference(&engine).copied().collect();
         assert!(
-            missing.is_empty(),
-            "N-API binding is missing methods that exist in the SDK API: {missing:?}\n\
-             Add them to NAVI_NAPI_BOUND_METHODS in engine_api.rs and implement #[napi] bindings."
+            missing_in_napi.is_empty(),
+            "SDK methods missing from N-API bound list: {missing_in_napi:?}"
         );
-
-        let extra: Vec<&&str> = napi.difference(&sdk).collect();
         assert!(
-            extra.is_empty(),
-            "N-API binding has methods not in the SDK API: {extra:?}\n\
-             Remove them from NAVI_NAPI_BOUND_METHODS or add them to NAVI_ENGINE_API_METHODS."
+            extra_in_napi.is_empty(),
+            "N-API bound methods not in SDK list: {extra_in_napi:?}"
         );
     }
 }
