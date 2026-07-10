@@ -124,5 +124,5 @@ navi-plugin-runtime = { version = "0.2.3", path = "crates/navi-plugin-runtime" }
 navi-sdk = { version = "0.2.3", path = "crates/navi-sdk" }
 navi-server = { version = "0.2.3", path = "crates/navi-server" }
 navi-tui = { version = "0.2.3", path = "crates/navi-tui" }
-navi-voice = { version = "0.2.3", path = "crates/navi-voice" }
+navi-voice = { version = "0.2.3", path = "crates/navi-voice", default-features = false }
 navi-vfs = { version = "0.2.3", path = "crates/navi-vfs" }

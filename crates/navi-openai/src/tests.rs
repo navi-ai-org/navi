@@ -600,6 +600,130 @@ fn parses_chat_completions_tool_call_xml_with_generic_bracket_prefix() {
 }
 
 #[test]
+fn parses_tencent_hy_v3_tool_call_in_text() {
+    let content = concat!(
+        "I will inspect the file.\n",
+        "<tool_calls:opensource>\n",
+        "<tool_call:opensource>read_file<tool_sep:opensource>\n",
+        "<arg_key:opensource>path</arg_key:opensource>\n",
+        "<arg_value:opensource>IDEA.md</arg_value:opensource>\n",
+        "</tool_call:opensource>\n",
+        "</tool_calls:opensource>\n",
+        "after",
+    );
+    let payload = serde_json::json!({
+        "choices": [{
+            "delta": { "content": content },
+            "finish_reason": null
+        }]
+    });
+    let events = parse_chat_completions_sse(&payload.to_string());
+    let results: Vec<_> = events.into_iter().map(Result::unwrap).collect();
+    let tool_calls: Vec<_> = results
+        .iter()
+        .filter_map(|e| match e {
+            ModelStreamEvent::ToolCall(inv) => Some(inv),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        tool_calls.len(),
+        1,
+        "hy_v3 tool call extracted: {results:?}"
+    );
+    assert_eq!(tool_calls[0].tool_name, "read_file");
+    assert_eq!(tool_calls[0].input["path"], "IDEA.md");
+    let combined: String = results
+        .iter()
+        .filter_map(|e| match e {
+            ModelStreamEvent::TextDelta { text } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        combined.contains("I will inspect"),
+        "text before: {combined:?}"
+    );
+    assert!(combined.contains("after"), "text after: {combined:?}");
+    assert!(
+        !combined.contains("tool_call") && !combined.contains("tool_calls"),
+        "hy tags must not leak into text: {combined:?}"
+    );
+}
+
+#[test]
+fn parses_tencent_hy_v3_fs_browser_list() {
+    let content = concat!(
+        "<tool_call:opensource>fs_browser<tool_sep:opensource>\n",
+        "<arg_key:opensource>action</arg_key:opensource>\n",
+        "<arg_value:opensource>list</arg_value:opensource>\n",
+        "<arg_key:opensource>path</arg_key:opensource>\n",
+        "<arg_value:opensource>.</arg_value:opensource>\n",
+        "</tool_call:opensource>",
+    );
+    let payload = serde_json::json!({
+        "choices": [{ "delta": { "content": content }, "finish_reason": null }]
+    });
+    let events = parse_chat_completions_sse(&payload.to_string());
+    let results: Vec<_> = events.into_iter().map(Result::unwrap).collect();
+    let tool_calls: Vec<_> = results
+        .iter()
+        .filter_map(|e| match e {
+            ModelStreamEvent::ToolCall(inv) => Some(inv),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(tool_calls.len(), 1);
+    assert_eq!(tool_calls[0].tool_name, "fs_browser");
+    assert_eq!(tool_calls[0].input["action"], "list");
+    assert_eq!(tool_calls[0].input["path"], ".");
+}
+
+#[test]
+fn parses_tencent_hy_v3_tool_call_split_across_chunks() {
+    let mut state = ChatToolCallAccumulator::default();
+    let mut events = Vec::new();
+    for data in [
+        r#"{"choices":[{"delta":{"content":"go <tool_call:opensou"},"finish_reason":null}]}"#,
+        r#"{"choices":[{"delta":{"content":"rce>bash<tool_sep:opensource>\n<arg_key:opensource>command</arg_key:opensource>\n<arg_value:opensource>ls</arg_value:opensource>\n</tool_call:opensource> ok"},"finish_reason":null}]}"#,
+    ] {
+        events.extend(
+            parse_chat_completions_sse_with_state(data, &mut state)
+                .into_iter()
+                .map(Result::unwrap),
+        );
+    }
+    let tool_calls: Vec<_> = events
+        .iter()
+        .filter_map(|e| match e {
+            ModelStreamEvent::ToolCall(inv) => Some(inv),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(tool_calls.len(), 1);
+    assert_eq!(tool_calls[0].tool_name, "bash");
+    assert_eq!(tool_calls[0].input["command"], "ls");
+}
+
+#[test]
+fn parses_tencent_hy_think_tags() {
+    let content = "<think:opensource>planning next step</think:opensource>visible answer";
+    let payload = serde_json::json!({
+        "choices": [{ "delta": { "content": content }, "finish_reason": null }]
+    });
+    let events = parse_chat_completions_sse(&payload.to_string());
+    let results: Vec<_> = events.into_iter().map(Result::unwrap).collect();
+    assert!(results.iter().any(|e| matches!(
+        e,
+        ModelStreamEvent::ThinkingDelta { text } if text.contains("planning next step")
+    )));
+    assert!(results.iter().any(|e| matches!(
+        e,
+        ModelStreamEvent::TextDelta { text } if text.contains("visible answer")
+    )));
+}
+
+#[test]
 fn parses_chat_completions_object_reasoning_delta() {
     let events = parse_chat_completions_sse(
         r#"{"choices":[{"delta":{"reasoning_details":[{"text":"I should inspect files."}]},"finish_reason":null}]}"#,

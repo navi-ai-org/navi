@@ -30,6 +30,8 @@ copland.workspace = true
 [features]
 default = []
 wasm-plugins = ["dep:navi-plugin-orchestrator"]
+# Optional ONNX Runtime ASR (not portable to musl / all hosts).
+voice-onnx = ["navi-voice/onnx"]
 
 [dev-dependencies]
 tempfile.workspace = true
