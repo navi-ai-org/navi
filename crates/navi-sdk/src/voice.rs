@@ -1,14 +1,23 @@
-//! Local voice / dictation API on [`NaviEngine`].
+//! Voice / dictation API on [`NaviEngine`].
 //!
-//! Engine-scoped (not per-session). Desktop clients push 16 kHz mono PCM;
-//! management APIs mirror CLI `navi voice status|doctor|init|transcribe`.
+//! Engine-scoped (not per-session). Supports:
+//! - **Local** ONNX Nemotron (feature `voice-onnx`)
+//! - **Remote** registry transcription providers (OpenAI / Groq Whisper, Wispr Flow)
+//!
+//! Desktop clients push 16 kHz mono PCM for local streaming; remote path is
+//! offline file transcription (WAV) via HTTP.
 
 use std::path::{Path, PathBuf};
 
+use navi_core::{
+    CredentialStore, ProviderConfig, ProviderKind, find_transcription_provider,
+    resolve_provider_api_key, resolve_transcription_model, transcription_provider_catalog,
+};
 use navi_voice::{
-    AsrEngineId, CHUNK_SAMPLES, DoctorInput, DoctorReport, NemotronOnnxEngine, SAMPLE_RATE,
-    TranscribeResult, VoiceEvent, VoiceInstallOptions, VoiceRecorderInfo, VoiceStatus,
-    download_engine, engine_installed, list_available_recorders, resolve_model_dir, run_doctor,
+    AsrEngineId, CHUNK_SAMPLES, DoctorInput, DoctorReport, NemotronOnnxEngine,
+    RemoteTranscriptionConfig, RemoteTranscriptionKind, SAMPLE_RATE, TranscribeResult, VoiceEvent,
+    VoiceInstallOptions, VoiceRecorderInfo, VoiceStatus, download_engine, engine_installed,
+    list_available_recorders, resolve_model_dir, run_doctor, transcribe_file_remote,
 };
 use tokio::sync::broadcast;
 
@@ -64,10 +73,27 @@ impl NaviEngine {
         let loaded = self.loaded_config();
         let voice = &loaded.config.voice;
         let options = self.voice_install_options();
+        let provider = if voice.provider.trim().is_empty() {
+            "local".to_string()
+        } else {
+            voice.provider.clone()
+        };
+        let remote = voice.uses_remote_transcription();
         let engine = Self::parse_engine_id(Some(voice.engine.as_str()), "nemotron_streaming")
             .unwrap_or_default();
         let model_dir = resolve_model_dir(&loaded.data_dir, &options, engine);
-        let installed = engine_installed(&loaded.data_dir, &options, engine);
+        let installed = if remote {
+            find_transcription_provider(&provider).is_some()
+        } else {
+            engine_installed(&loaded.data_dir, &options, engine)
+        };
+        let model = if remote {
+            find_transcription_provider(&provider)
+                .map(|p| resolve_transcription_model(&p, &voice.model))
+                .unwrap_or_else(|| voice.model.clone())
+        } else {
+            voice.model.clone()
+        };
         let recorders = list_available_recorders()
             .into_iter()
             .map(|(kind, path)| VoiceRecorderInfo {
@@ -84,6 +110,8 @@ impl NaviEngine {
 
         Ok(VoiceStatus {
             enabled: voice.enabled,
+            provider,
+            model,
             engine: engine.as_str().to_string(),
             language: voice.language.clone(),
             capture: voice.capture.clone(),
@@ -95,6 +123,11 @@ impl NaviEngine {
             chunk_samples: CHUNK_SAMPLES as u32,
             recorders,
         })
+    }
+
+    /// List remote transcription providers from the embedded registry catalog.
+    pub fn voice_transcription_providers(&self) -> Vec<navi_core::RegistryTranscriptionProvider> {
+        transcription_provider_catalog()
     }
 
     /// Mic tools, model files, checksums.
@@ -161,12 +194,22 @@ impl NaviEngine {
             .subscribe()
     }
 
-    /// Transcribe a WAV (any rate; resampled to 16 kHz mono). Blocking ONNX.
+    /// Transcribe a WAV file.
+    ///
+    /// - **Remote** (`[voice].provider` = openai|groq|wispr-flow|…): HTTP call using
+    ///   registry metadata + API key (same credential resolution as LLM providers).
+    /// - **Local**: Blocking ONNX Nemotron (requires `voice-onnx` feature + installed model).
     pub fn voice_transcribe_file(
         &self,
         path: impl AsRef<Path>,
         language: Option<&str>,
     ) -> Result<TranscribeResult> {
+        let loaded = self.loaded_config();
+        let voice = &loaded.config.voice;
+        if voice.uses_remote_transcription() {
+            // Async remote call from sync API: use a small runtime if none is active.
+            return self.voice_transcribe_file_remote(path.as_ref(), language);
+        }
         let lang = self.resolve_voice_language(language);
         let mut rt = self.inner.voice.lock().unwrap_or_else(|e| e.into_inner());
         self.ensure_nemotron_locked(&mut rt, &lang)?;
@@ -178,6 +221,131 @@ impl NaviEngine {
         engine
             .transcribe_wav(path.as_ref())
             .map_err(|e| NaviError::Config(e.to_string()))
+    }
+
+    /// Async remote transcription (preferred from async contexts).
+    pub async fn voice_transcribe_file_async(
+        &self,
+        path: impl AsRef<Path>,
+        language: Option<&str>,
+    ) -> Result<TranscribeResult> {
+        let loaded = self.loaded_config();
+        let voice = &loaded.config.voice;
+        if !voice.uses_remote_transcription() {
+            // Local path is sync/ONNX — run in blocking pool.
+            let path = path.as_ref().to_path_buf();
+            let language = language.map(|s| s.to_string());
+            let this = self.clone();
+            return tokio::task::spawn_blocking(move || {
+                this.voice_transcribe_file(path, language.as_deref())
+            })
+            .await
+            .map_err(|e| NaviError::Config(format!("voice transcribe join: {e}")))?;
+        }
+        let remote_cfg = self.resolve_remote_transcription_config(language)?;
+        let result = transcribe_file_remote(&remote_cfg, path.as_ref())
+            .await
+            .map_err(|e| NaviError::Config(e.to_string()))?;
+        Ok(TranscribeResult {
+            text: result.text,
+            token_ids: Vec::new(),
+        })
+    }
+
+    fn voice_transcribe_file_remote(
+        &self,
+        path: &Path,
+        language: Option<&str>,
+    ) -> Result<TranscribeResult> {
+        let remote_cfg = self.resolve_remote_transcription_config(language)?;
+        let path = path.to_path_buf();
+        // Prefer existing tokio runtime (desktop / async CLI).
+        if let Ok(handle) = tokio::runtime::Handle::try_current() {
+            return handle.block_on(async move {
+                let result = transcribe_file_remote(&remote_cfg, &path)
+                    .await
+                    .map_err(|e| NaviError::Config(e.to_string()))?;
+                Ok(TranscribeResult {
+                    text: result.text,
+                    token_ids: Vec::new(),
+                })
+            });
+        }
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|e| NaviError::Config(format!("tokio runtime for voice: {e}")))?;
+        rt.block_on(async move {
+            let result = transcribe_file_remote(&remote_cfg, &path)
+                .await
+                .map_err(|e| NaviError::Config(e.to_string()))?;
+            Ok(TranscribeResult {
+                text: result.text,
+                token_ids: Vec::new(),
+            })
+        })
+    }
+
+    fn resolve_remote_transcription_config(
+        &self,
+        language: Option<&str>,
+    ) -> Result<RemoteTranscriptionConfig> {
+        let loaded = self.loaded_config();
+        let voice = &loaded.config.voice;
+        let provider_id = voice.provider.trim();
+        let registry = find_transcription_provider(provider_id).ok_or_else(|| {
+            NaviError::Config(format!(
+                "unknown transcription provider '{provider_id}'. Known: {}",
+                transcription_provider_catalog()
+                    .iter()
+                    .map(|p| p.id.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ))
+        })?;
+        let kind = RemoteTranscriptionKind::parse(&registry.kind).ok_or_else(|| {
+            NaviError::Config(format!(
+                "unsupported transcription kind '{}' for provider '{}'",
+                registry.kind, registry.id
+            ))
+        })?;
+        let model = resolve_transcription_model(&registry, &voice.model);
+        let path = registry.resolved_path().to_string();
+
+        // Reuse the same credential resolution as LLM providers (env → store).
+        let synthetic = ProviderConfig {
+            id: registry.id.clone(),
+            label: registry.label.clone(),
+            description: registry.description.clone(),
+            kind: ProviderKind::OpenAiChatCompletions,
+            api_key_env: registry.api_key_env.clone(),
+            base_url: Some(registry.base_url.clone()),
+            ..Default::default()
+        };
+        let store = CredentialStore::new(loaded.data_dir.clone());
+        let api_key = resolve_provider_api_key(&store, &synthetic, &registry.id).ok_or_else(|| {
+            NaviError::Config(format!(
+                "missing API key for transcription provider '{}'. Set ${} or save credentials in NAVI.",
+                registry.id, registry.api_key_env
+            ))
+        })?;
+
+        let lang = self.resolve_voice_language(language);
+        let language = if lang.eq_ignore_ascii_case("auto") || lang.is_empty() {
+            None
+        } else {
+            Some(lang)
+        };
+
+        Ok(RemoteTranscriptionConfig {
+            provider_id: registry.id,
+            kind,
+            base_url: registry.base_url,
+            transcription_path: path,
+            api_key,
+            model,
+            language,
+        })
     }
 
     /// Start a streaming recognition session (client pushes PCM).
