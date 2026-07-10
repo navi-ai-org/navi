@@ -87,6 +87,10 @@ class CaseResult:
     input_tokens: int | None = None
     output_tokens: int | None = None
     total_tokens: int | None = None
+    """Token accounting source: provider | estimated_stream | unknown."""
+    token_source: str | None = None
+    cache_read_tokens: int | None = None
+    cache_write_tokens: int | None = None
     turn_count: int | None = None
     assistant_preview: str = ""
     error: str | None = None
@@ -324,6 +328,7 @@ def run_navi(
             input_tokens=m.get("input_tokens"),
             output_tokens=m.get("output_tokens"),
             total_tokens=m.get("total_tokens"),
+            token_source="provider" if m.get("total_tokens") or m.get("input_tokens") else "unknown",
             turn_count=m.get("turn_count"),
             assistant_preview=(cr.get("assistant_text") or "")[:500],
             error=cr.get("error"),
@@ -350,11 +355,26 @@ def run_navi(
         )
 
 
-def parse_opencode_json_events(stdout: str) -> tuple[int, int, list[str], str]:
+def _chars_to_tokens(n: int) -> int:
+    """Rough token estimate when providers omit usage (≈4 chars/token)."""
+    return max(0, (n + 3) // 4)
+
+
+def parse_opencode_json_events(
+    stdout: str,
+) -> tuple[int, int, list[str], str, dict[str, Any]]:
+    """Parse OpenCode --format json events.
+
+    Token usage is reported on ``step_finish`` / ``step-finish`` parts as
+    ``part.tokens.{input,output,total,reasoning,cache}``. Multi-step runs
+    sum every finished step (billable input accumulates across steps).
+    """
     tools = 0
     failed = 0
     names: list[str] = []
     texts: list[str] = []
+    inp = out = total = reasoning = cache_read = cache_write = 0
+    steps = 0
     for line in stdout.splitlines():
         line = line.strip()
         if not line.startswith("{"):
@@ -364,29 +384,62 @@ def parse_opencode_json_events(stdout: str) -> tuple[int, int, list[str], str]:
         except json.JSONDecodeError:
             continue
         et = (ev.get("type") or ev.get("event") or "").lower()
-        if "tool" in et:
+        part = ev.get("part") if isinstance(ev.get("part"), dict) else {}
+        part_type = str(part.get("type") or "").lower()
+
+        if "tool" in et or part_type in ("tool", "tool-call", "tool_use"):
             tools += 1
             name = (
                 ev.get("name")
                 or ev.get("tool")
-                or (ev.get("part") or {}).get("tool")
-                or (ev.get("part") or {}).get("name")
+                or part.get("tool")
+                or part.get("name")
             )
             if name:
                 names.append(str(name))
-            if ev.get("error") or (ev.get("part") or {}).get("error"):
+            if ev.get("error") or part.get("error") or part.get("state") == "error":
                 failed += 1
-        if et in ("text", "message", "assistant") or "text" in et:
-            t = ev.get("text") or ev.get("content") or ""
+        if et in ("text", "message", "assistant") or "text" in et or part_type == "text":
+            t = ev.get("text") or part.get("text") or ev.get("content") or ""
             if isinstance(t, str) and t:
                 texts.append(t)
-        # opencode part events
-        part = ev.get("part") or {}
-        if isinstance(part, dict) and part.get("type") == "tool":
-            tools += 1
-            if part.get("tool"):
+
+        # step_finish carries per-step token totals
+        if et in ("step_finish", "step-finish") or part_type in (
+            "step-finish",
+            "step_finish",
+        ):
+            tok = part.get("tokens") or ev.get("tokens") or {}
+            if isinstance(tok, dict) and tok:
+                steps += 1
+                inp += int(tok.get("input") or 0)
+                out += int(tok.get("output") or 0)
+                total += int(tok.get("total") or 0)
+                reasoning += int(tok.get("reasoning") or 0)
+                cache = tok.get("cache") or {}
+                if isinstance(cache, dict):
+                    cache_read += int(cache.get("read") or 0)
+                    cache_write += int(cache.get("write") or 0)
+            # also count tool parts nested in other events
+        if part_type == "tool" and part.get("tool"):
+            # may double-count if also in type; only if not already tool event
+            if "tool" not in et:
+                tools += 1
                 names.append(str(part["tool"]))
-    return tools, failed, names, "".join(texts)[-2000:]
+
+    if total == 0 and (inp or out):
+        total = inp + out + reasoning
+    usage = {
+        "input_tokens": inp or None,
+        "output_tokens": out or None,
+        "total_tokens": total or None,
+        "reasoning_tokens": reasoning or None,
+        "cache_read_tokens": cache_read or None,
+        "cache_write_tokens": cache_write or None,
+        "token_source": "provider" if (inp or out or total) else "unknown",
+        "steps_with_usage": steps,
+    }
+    return tools, failed, names, "".join(texts)[-2000:], usage
 
 
 def run_opencode(case: CaseDef, work_root: Path, model: str) -> CaseResult:
@@ -416,7 +469,9 @@ def run_opencode(case: CaseDef, work_root: Path, model: str) -> CaseResult:
             timeout=case.timeout_ms / 1000.0,
         )
         wall = int((time.monotonic() - t0) * 1000)
-        tools, failed, names, text = parse_opencode_json_events(r.stdout + "\n" + r.stderr)
+        tools, failed, names, text, usage = parse_opencode_json_events(
+            r.stdout + "\n" + r.stderr
+        )
         files, add, rem = git_diff_stats(workspace)
         ok, vout = run_verifier(workspace, case.verifier_cmd, case.verifier_timeout_ms)
         err = None if ok else (vout or r.stderr or "verifier failed")[-2000:]
@@ -434,10 +489,16 @@ def run_opencode(case: CaseDef, work_root: Path, model: str) -> CaseResult:
             files_changed=files,
             diff_lines_added=add,
             diff_lines_removed=rem,
+            input_tokens=usage.get("input_tokens"),
+            output_tokens=usage.get("output_tokens"),
+            total_tokens=usage.get("total_tokens"),
+            token_source=usage.get("token_source"),
+            cache_read_tokens=usage.get("cache_read_tokens"),
+            cache_write_tokens=usage.get("cache_write_tokens"),
             assistant_preview=text[:500],
             error=err,
             workspace=str(workspace),
-            raw={"exit": r.returncode},
+            raw={"exit": r.returncode, "usage": usage},
         )
     except subprocess.TimeoutExpired:
         return CaseResult(
@@ -460,11 +521,52 @@ def run_opencode(case: CaseDef, work_root: Path, model: str) -> CaseResult:
         )
 
 
-def parse_claude_stream_json(stdout: str) -> tuple[int, int, list[str], str]:
+def parse_claude_stream_json(
+    stdout: str, task: str = ""
+) -> tuple[int, int, list[str], str, dict[str, Any]]:
+    """Parse Claude Code ``stream-json`` events.
+
+    Prefer provider ``usage`` on assistant/result messages. When the gateway
+    (e.g. cc-proxy) reports zeros, fall back to a multi-turn stream estimate:
+    cumulative context re-sent each API turn (chars/4), which is lower than
+    real Anthropic-style usage because system/tool schemas are not in the stream.
+    """
     tools = 0
     failed = 0
     names: list[str] = []
     texts: list[str] = []
+    reported_in = reported_out = 0
+    cache_read = cache_write = 0
+    # Stream estimate accumulators
+    context_chars = len(task)
+    est_in = 0
+    est_out = 0
+    api_turns = 0
+
+    def content_chars(blocks: Any) -> int:
+        n = 0
+        if isinstance(blocks, str):
+            return len(blocks)
+        if not isinstance(blocks, list):
+            return 0
+        for b in blocks:
+            if not isinstance(b, dict):
+                continue
+            if b.get("type") == "text":
+                n += len(str(b.get("text") or ""))
+            elif b.get("type") == "tool_use":
+                n += len(json.dumps(b.get("input") or {}, ensure_ascii=False))
+                n += len(str(b.get("name") or ""))
+            elif b.get("type") == "tool_result":
+                c = b.get("content")
+                if isinstance(c, str):
+                    n += len(c)
+                else:
+                    n += len(json.dumps(c or "", ensure_ascii=False))
+            else:
+                n += len(json.dumps(b, ensure_ascii=False))
+        return n
+
     for line in stdout.splitlines():
         line = line.strip()
         if not line.startswith("{"):
@@ -476,7 +578,8 @@ def parse_claude_stream_json(stdout: str) -> tuple[int, int, list[str], str]:
         et = ev.get("type") or ""
         if et == "assistant":
             msg = ev.get("message") or {}
-            for block in msg.get("content") or []:
+            blocks = msg.get("content") or []
+            for block in blocks if isinstance(blocks, list) else []:
                 if not isinstance(block, dict):
                     continue
                 if block.get("type") == "tool_use":
@@ -485,18 +588,89 @@ def parse_claude_stream_json(stdout: str) -> tuple[int, int, list[str], str]:
                         names.append(str(block["name"]))
                 if block.get("type") == "text" and block.get("text"):
                     texts.append(str(block["text"]))
+            u = msg.get("usage") or {}
+            if isinstance(u, dict):
+                reported_in += int(u.get("input_tokens") or 0)
+                reported_out += int(u.get("output_tokens") or 0)
+                cache_read += int(u.get("cache_read_input_tokens") or 0)
+                cache_write += int(u.get("cache_creation_input_tokens") or 0)
+            # multi-turn estimate: bill full context as input, this message as output
+            out_c = content_chars(blocks)
+            est_in += _chars_to_tokens(context_chars)
+            est_out += _chars_to_tokens(out_c)
+            context_chars += out_c
+            api_turns += 1
+        if et == "user":
+            msg = ev.get("message") or {}
+            blocks = msg.get("content") or []
+            context_chars += content_chars(blocks)
         if et == "result":
             if ev.get("is_error"):
                 failed += 1
             if ev.get("result"):
                 texts.append(str(ev["result"]))
+            u = ev.get("usage") or {}
+            if isinstance(u, dict):
+                # result usage is often cumulative; take max with sum of assistants
+                ri = int(u.get("input_tokens") or 0)
+                ro = int(u.get("output_tokens") or 0)
+                if ri or ro:
+                    reported_in = max(reported_in, ri)
+                    reported_out = max(reported_out, ro)
+                cache_read = max(
+                    cache_read, int(u.get("cache_read_input_tokens") or 0)
+                )
+                cache_write = max(
+                    cache_write, int(u.get("cache_creation_input_tokens") or 0)
+                )
+            mu = ev.get("modelUsage") or {}
+            if isinstance(mu, dict):
+                for _model, stats in mu.items():
+                    if not isinstance(stats, dict):
+                        continue
+                    ri = int(stats.get("inputTokens") or stats.get("input_tokens") or 0)
+                    ro = int(stats.get("outputTokens") or stats.get("output_tokens") or 0)
+                    if ri or ro:
+                        reported_in = max(reported_in, ri)
+                        reported_out = max(reported_out, ro)
         if et == "content_block_start":
             cb = ev.get("content_block") or {}
             if cb.get("type") == "tool_use":
                 tools += 1
                 if cb.get("name"):
                     names.append(str(cb["name"]))
-    return tools, failed, names, "".join(texts)[-2000:]
+
+    if reported_in or reported_out:
+        usage = {
+            "input_tokens": reported_in,
+            "output_tokens": reported_out,
+            "total_tokens": reported_in + reported_out,
+            "cache_read_tokens": cache_read or None,
+            "cache_write_tokens": cache_write or None,
+            "token_source": "provider",
+            "api_turns": api_turns,
+        }
+    elif est_in or est_out:
+        usage = {
+            "input_tokens": est_in,
+            "output_tokens": est_out,
+            "total_tokens": est_in + est_out,
+            "token_source": "estimated_stream",
+            "api_turns": api_turns,
+            "note": (
+                "cc-proxy/Claude reported 0 usage; estimated from stream "
+                "chars/4 with multi-turn context growth (excludes system/tool schemas)"
+            ),
+        }
+    else:
+        usage = {
+            "input_tokens": None,
+            "output_tokens": None,
+            "total_tokens": None,
+            "token_source": "unknown",
+            "api_turns": api_turns,
+        }
+    return tools, failed, names, "".join(texts)[-2000:], usage
 
 
 def run_claude_code(
@@ -547,7 +721,9 @@ def run_claude_code(
             env=env,
         )
         wall = int((time.monotonic() - t0) * 1000)
-        tools, failed, names, text = parse_claude_stream_json(r.stdout + "\n" + r.stderr)
+        tools, failed, names, text, usage = parse_claude_stream_json(
+            r.stdout + "\n" + r.stderr, task=case.task
+        )
         files, add, rem = git_diff_stats(workspace)
         ok, vout = run_verifier(workspace, case.verifier_cmd, case.verifier_timeout_ms)
         err = None if ok else (vout or r.stderr or "verifier failed")[-2000:]
@@ -565,10 +741,20 @@ def run_claude_code(
             files_changed=files,
             diff_lines_added=add,
             diff_lines_removed=rem,
+            input_tokens=usage.get("input_tokens"),
+            output_tokens=usage.get("output_tokens"),
+            total_tokens=usage.get("total_tokens"),
+            token_source=usage.get("token_source"),
+            cache_read_tokens=usage.get("cache_read_tokens"),
+            cache_write_tokens=usage.get("cache_write_tokens"),
             assistant_preview=text[:500],
             error=err,
             workspace=str(workspace),
-            raw={"exit": r.returncode, "proxy": env["ANTHROPIC_BASE_URL"]},
+            raw={
+                "exit": r.returncode,
+                "proxy": env["ANTHROPIC_BASE_URL"],
+                "usage": usage,
+            },
         )
     except subprocess.TimeoutExpired:
         return CaseResult(
@@ -617,6 +803,19 @@ def score_agent(results: list[CaseResult]) -> dict[str, Any]:
         + 0.15 * efficiency
         + 0.15 * speed
     )
+    tin = sum(r.input_tokens or 0 for r in results)
+    tout = sum(r.output_tokens or 0 for r in results)
+    ttot = sum(
+        (r.total_tokens if r.total_tokens is not None else ((r.input_tokens or 0) + (r.output_tokens or 0)))
+        for r in results
+        if r.total_tokens is not None or r.input_tokens is not None or r.output_tokens is not None
+    )
+    token_cases = sum(
+        1
+        for r in results
+        if r.total_tokens is not None or r.input_tokens is not None or r.output_tokens is not None
+    )
+    sources = sorted({r.token_source for r in results if r.token_source})
     return {
         "score": round(score, 2),
         "success_rate": round(success_rate, 4),
@@ -627,6 +826,12 @@ def score_agent(results: list[CaseResult]) -> dict[str, Any]:
         "avg_wall_ms_on_success": int(avg_wall) if walls else None,
         "total_tool_calls": total_tools,
         "total_failed_tool_calls": failed_tools,
+        "input_tokens": tin or None,
+        "output_tokens": tout or None,
+        "total_tokens": ttot or None,
+        "tokens_per_success": (round(ttot / passed, 1) if passed and ttot else None),
+        "token_cases": token_cases,
+        "token_sources": sources,
     }
 
 
@@ -635,7 +840,10 @@ def print_table(report: dict[str, Any]) -> None:
     print(f"suite: {report['suite']}  model baseline: {report['baseline_model_note']}")
     print(f"started: {report['started_at']}")
     print()
-    header = f"{'agent':<14} {'score':>7} {'pass':>8} {'tools':>7} {'failT':>6} {'avgT':>7} {'avgMs':>8}"
+    header = (
+        f"{'agent':<14} {'score':>7} {'pass':>8} {'tools':>7} {'failT':>6} "
+        f"{'avgT':>7} {'avgMs':>8} {'tokIn':>10} {'tokOut':>8} {'tokΣ':>10} {'src':>10}"
+    )
     print(header)
     print("-" * len(header))
     for agent, block in report["agents"].items():
@@ -643,31 +851,44 @@ def print_table(report: dict[str, Any]) -> None:
         pass_s = f"{s['passed']}/{s['total']}"
         avg_t = s.get("avg_tool_calls_on_success")
         avg_ms = s.get("avg_wall_ms_on_success")
+        src = ",".join(s.get("token_sources") or []) or "-"
+        if len(src) > 10:
+            src = src[:9] + "…"
         print(
             f"{agent:<14} {s['score']:>7.1f} {pass_s:>8} "
             f"{s.get('total_tool_calls') or 0:>7} {s.get('total_failed_tool_calls') or 0:>6} "
             f"{(avg_t if avg_t is not None else '-'):>7} "
-            f"{(avg_ms if avg_ms is not None else '-'):>8}"
+            f"{(avg_ms if avg_ms is not None else '-'):>8} "
+            f"{(s.get('input_tokens') if s.get('input_tokens') is not None else '-'):>10} "
+            f"{(s.get('output_tokens') if s.get('output_tokens') is not None else '-'):>8} "
+            f"{(s.get('total_tokens') if s.get('total_tokens') is not None else '-'):>10} "
+            f"{src:>10}"
         )
     print()
     # Per-case matrix
     case_ids = report["case_ids"]
     agents = list(report["agents"].keys())
-    print("per-case pass (✓/✗):")
-    print(f"{'case':<28} " + " ".join(f"{a[:10]:>10}" for a in agents))
+    print("per-case pass (✓/✗) and tokens:")
+    print(f"{'case':<28} " + " ".join(f"{a[:12]:>12}" for a in agents))
     for cid in case_ids:
-        row = [cid[:28]]
+        cells = [f"{cid[:28]:<28}"]
         for a in agents:
             found = next(
                 (r for r in report["agents"][a]["results"] if r["case_id"] == cid),
                 None,
             )
             if not found:
-                row.append(f"{'?':>10}")
+                cells.append(f"{'?':>12}")
             else:
                 mark = "✓" if found["passed"] else "✗"
-                row.append(f"{mark:>10}")
-        print(" ".join(f"{c:>10}" if i else f"{c:<28}" for i, c in enumerate(row)))
+                tok = found.get("total_tokens")
+                if tok is None and (
+                    found.get("input_tokens") is not None or found.get("output_tokens") is not None
+                ):
+                    tok = (found.get("input_tokens") or 0) + (found.get("output_tokens") or 0)
+                tok_s = f"{tok}" if tok is not None else "-"
+                cells.append(f"{mark} {tok_s:>9}"[:12].rjust(12))
+        print(" ".join(cells))
     print()
 
 
@@ -816,16 +1037,36 @@ def main() -> int:
         f"- Started: {report['started_at']}",
         f"- Baseline: {report['baseline_model_note']}",
         "",
-        "| Agent | Score | Pass | Tool calls | Failed tools | Avg tools (ok) | Avg ms (ok) |",
-        "|---|---:|---:|---:|---:|---:|---:|",
+        "| Agent | Score | Pass | Tools | Avg tools | Avg ms | Tok in | Tok out | Tok Σ | Tok/success | Source |",
+        "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|",
     ]
     for agent, block in report["agents"].items():
         s = block["summary"]
+        src = ",".join(s.get("token_sources") or []) or "-"
         lines.append(
             f"| {agent} | {s['score']} | {s['passed']}/{s['total']} | "
-            f"{s.get('total_tool_calls') or 0} | {s.get('total_failed_tool_calls') or 0} | "
-            f"{s.get('avg_tool_calls_on_success') or '-'} | {s.get('avg_wall_ms_on_success') or '-'} |"
+            f"{s.get('total_tool_calls') or 0} | "
+            f"{s.get('avg_tool_calls_on_success') or '-'} | "
+            f"{s.get('avg_wall_ms_on_success') or '-'} | "
+            f"{s.get('input_tokens') or '-'} | "
+            f"{s.get('output_tokens') or '-'} | "
+            f"{s.get('total_tokens') or '-'} | "
+            f"{s.get('tokens_per_success') or '-'} | {src} |"
         )
+    lines.append("")
+    lines.append("## Tokens")
+    lines.append("")
+    lines.append(
+        "- **navi**: provider usage from runtime `UsageReported` / bench metrics."
+    )
+    lines.append(
+        "- **opencode**: sum of `step_finish.part.tokens` (input/output/total per step)."
+    )
+    lines.append(
+        "- **claude-code**: provider usage when non-zero; if the gateway "
+        "(cc-proxy) reports zeros, **estimated_stream** = multi-turn "
+        "context growth at ~4 chars/token (excludes system/tool schemas)."
+    )
     lines.append("")
     lines.append("## Scoring")
     lines.append("")
@@ -834,8 +1075,10 @@ def main() -> int:
         "15% tool efficiency (fewer tools on successes) + 15% speed."
     )
     lines.append("")
-    lines.append("Primary axis: **quality of tool use** under a shared model tier "
-                 "(DeepSeek V4 Flash free / flash via cc-proxy).")
+    lines.append(
+        "Primary axis: **quality of tool use** under a shared model tier "
+        "(DeepSeek V4 Flash free / flash via cc-proxy)."
+    )
     md_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     print(f"Wrote {md_path}", flush=True)
     return 0
