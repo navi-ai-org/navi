@@ -649,23 +649,20 @@ async fn test_ensure_system_prompt_reads_agents_md() {
 #[tokio::test]
 async fn test_ensure_system_prompt_falls_back_without_agents_md() {
     let tempdir = tempfile::tempdir().unwrap();
-    // No AGENTS.md written — should use the default fallback.
+    // No AGENTS.md — omit the project instructions developer block entirely.
     let ctx = build_test_ctx(tempdir.path().to_path_buf());
 
     let mut messages = vec![];
     ensure_system_prompt(&ctx, &mut messages).await;
 
-    assert!(messages.len() >= 2);
+    assert!(!messages.is_empty());
     assert_eq!(messages[0].role, ModelRole::System);
     let agents_msg = messages
         .iter()
-        .find(|m| m.role == ModelRole::Developer && m.content.contains("AGENTS.md"))
-        .expect("should have a developer message for AGENTS.md");
+        .find(|m| m.role == ModelRole::Developer && m.content.contains("AGENTS.md"));
     assert!(
-        agents_msg
-            .content
-            .contains("Default NAVI base instructions"),
-        "developer message should fall back to default instructions when AGENTS.md is absent"
+        agents_msg.is_none(),
+        "should omit AGENTS.md developer block when the file is absent"
     );
 }
 
@@ -690,13 +687,10 @@ async fn test_ensure_system_prompt_updates_existing_system_message() {
     );
     let agents_msg = messages
         .iter()
-        .find(|m| m.role == ModelRole::Developer && m.content.contains("AGENTS.md"))
-        .expect("should have a developer message for AGENTS.md");
+        .find(|m| m.role == ModelRole::Developer && m.content.contains("AGENTS.md"));
     assert!(
-        agents_msg
-            .content
-            .contains("Default NAVI base instructions"),
-        "developer message should have the default fallback"
+        agents_msg.is_none(),
+        "should omit AGENTS.md developer block when the file is absent"
     );
 }
 

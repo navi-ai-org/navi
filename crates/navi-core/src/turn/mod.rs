@@ -261,14 +261,15 @@ async fn ensure_system_prompt(ctx: &TurnContext, messages: &mut Vec<ModelMessage
     // propose a plan via <proposed_plan> tags instead of executing.
     if ctx.agent_mode.restricts_tools() {
         prefix.push(ModelMessage::developer(
-            "You are in Plan mode. Only read-only tools are available. \
-             Do NOT attempt to write files or run commands. \
-             Instead, inspect the codebase and propose a plan by emitting:\n\
+            "You are in Plan mode (host-restricted).\n\
+             - Only read-only tools are available. Do NOT write files or run commands.\n\
+             - Propose work with XML only (not the `plan` tool):\n\
              <proposed_plan title=\"Plan title\">\n\
              1. Step one\n\
              2. Step two\n\
              </proposed_plan>\n\
-             The user will review the plan before implementation begins."
+             - Do not call plan(action='create') in this mode; the host presents the proposal for review.\n\
+             - After the user approves and leaves Plan mode, implement in normal mode."
                 .to_string(),
         ));
     }

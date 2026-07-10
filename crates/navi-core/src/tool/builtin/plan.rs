@@ -43,23 +43,23 @@ impl Tool for PlanTool {
         // those familiar shapes so frontier models don't bounce on empty_steps.
         helpers::definition(
             "plan",
-            "Create a concise, actionable work plan and track checklist progress.\n\
+            "Create and track a concise work plan (checklist). Not for one-line fixes. \
+             Not the same as set_goal. In Plan mode, emit <proposed_plan> XML instead of create.\n\
              \n\
              Prefer create with BOTH a short title and concrete steps (or todos). \
-             Creating a plan opens a TUI review modal for approval before execution.\n\
+             The host may show a review UI before execution depending on configuration; \
+             do not assume a blocking modal always appears.\n\
              \n\
              Actions:\n\
              - create: REQUIRED content = steps[] OR todos[] OR plan/body markdown. \
-               Title alone is not enough for a good plan.\n\
-             - update: change title/description/steps/status of an existing plan_id.\n\
-             - complete_step: mark steps[step_index] done (0-based).\n\
-             - get / list / active: read plans.\n\
+               Title alone is not enough.\n\
+             - update / complete_step / get / list / active: manage and read plans.\n\
              \n\
-             Create example (preferred):\n\
+             Preferred create:\n\
              {\"action\":\"create\",\"title\":\"Add footer meter\",\n\
               \"steps\":[\"Read usage state\",\"Wire footer label\",\"Test meter\"]}\n\
              \n\
-             CreatePlan-compatible example:\n\
+             Markdown/todos alias:\n\
              {\"action\":\"create\",\"plan\":\"# Title\\n\\nApproach...\\n\",\n\
               \"todos\":[{\"id\":\"wire-ui\",\"content\":\"Wire footer label\"}]}\n\
              \n\

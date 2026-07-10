@@ -846,21 +846,27 @@ impl SubagentTool {
             }
             ApprovalMode::Inherit => "Use tools according to the parent session policy.",
         };
+        let workflow = "\
+Workflow:\n\
+1. Inspect with the cheapest tools first (overview/search → targeted read).\n\
+2. Prefer project-relative paths; batch independent read-only calls when possible.\n\
+3. Keep edits narrow; verify with the smallest relevant command when writes are allowed.\n\
+4. If a tool fails, adapt once using the error — do not thrash the same call.\n\
+5. Observation budget: tool outputs may be truncated; request ranges/results explicitly.\n\
+6. When done, report paths, key diffs, and findings — not walls of file contents.";
         let system = if let Some(desc) = description {
             format!(
-                "You are a subagent worker. Execute the assigned task autonomously \
-                 within your assigned access policy. {access_note}\n\nContext: {desc}\n\n\
-                 When the task is complete, report your findings and any relevant output. \
-                 Be concise and focus on delivering the result."
+                "You are a subagent worker for NAVI. Execute the assigned task autonomously \
+                 within your assigned access policy. {access_note}\n\n\
+                 Context: {desc}\n\n{workflow}\n\n\
+                 Be concise and deliver the result."
             )
         } else {
-            "You are a subagent worker. Execute the assigned task autonomously \
-             within your assigned access policy. "
-                .to_string()
-                + access_note
-                + "\n\n\
-             When the task is complete, report your findings and any relevant output. \
-             Be concise and focus on delivering the result."
+            format!(
+                "You are a subagent worker for NAVI. Execute the assigned task autonomously \
+                 within your assigned access policy. {access_note}\n\n{workflow}\n\n\
+                 Be concise and deliver the result."
+            )
         };
 
         let messages = vec![

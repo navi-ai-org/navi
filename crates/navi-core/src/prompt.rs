@@ -14,8 +14,6 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::SystemTime;
 
-const DEFAULT_AGENTS_INSTRUCTIONS: &str = "Default NAVI base instructions";
-
 #[derive(Debug, Default)]
 pub struct PromptCache {
     files: Mutex<HashMap<PathBuf, CachedFile>>,
@@ -153,14 +151,14 @@ impl SystemPromptRenderer {
             }
         }
 
-        // Project-level AGENTS.md.
-        let project_agents = self
-            .cache
-            .read_file(&input.project_dir.join("AGENTS.md"))
-            .unwrap_or_else(|_| DEFAULT_AGENTS_INSTRUCTIONS.to_string());
-        developer_messages.push(ModelMessage::developer(format!(
-            "=== AGENTS.md / Project Instructions ===\n{project_agents}"
-        )));
+        // Project-level AGENTS.md (omit entirely when absent — no placeholder noise).
+        if let Ok(project_agents) = self.cache.read_file(&input.project_dir.join("AGENTS.md"))
+            && !project_agents.trim().is_empty()
+        {
+            developer_messages.push(ModelMessage::developer(format!(
+                "=== AGENTS.md / Project Instructions ===\n{project_agents}"
+            )));
+        }
 
         // Context packets (external context from clients).
         if let Some(context) = render_context_packets(&input.context_packets) {
