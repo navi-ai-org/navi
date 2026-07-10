@@ -172,9 +172,10 @@ impl SessionState {
     }
 
     pub fn push_event(&mut self, event: AgentEvent) {
+        // Title is derived lazily via `update_title_from_events` (end of turn /
+        // snapshot) rather than walking the full event list on every push.
         self.events.push(event);
         self.updated_at = current_unix_timestamp();
-        self.title = session_title_from_events(&self.events);
     }
 
     pub fn update_title_from_events(&mut self) {
@@ -242,5 +243,45 @@ impl SessionState {
             session_id: snapshot.id.as_str().to_string(),
         });
         Ok(snapshot)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::event::AgentEvent;
+
+    #[test]
+    fn push_event_does_not_recompute_title_eagerly() {
+        let mut state = SessionState::new(None);
+        state.start();
+        state.push_event(AgentEvent::UserTaskSubmitted {
+            text: "build a dashboard".to_string(),
+            content_parts: vec![],
+            submitted_at: None,
+        });
+        assert!(
+            state.title().is_none(),
+            "title should stay lazy until update_title_from_events"
+        );
+        state.update_title_from_events();
+        assert_eq!(state.title(), Some("build a dashboard"));
+    }
+
+    #[test]
+    fn update_title_prefers_model_heading_over_user_task() {
+        let mut state = SessionState::new(None);
+        state.start();
+        state.push_event(AgentEvent::UserTaskSubmitted {
+            text: "build a dashboard".to_string(),
+            content_parts: vec![],
+            submitted_at: None,
+        });
+        state.push_event(AgentEvent::ModelOutput {
+            text: "## Analytics Board\n\nDone.".to_string(),
+            thinking: None,
+        });
+        state.update_title_from_events();
+        assert_eq!(state.title(), Some("Analytics Board"));
     }
 }

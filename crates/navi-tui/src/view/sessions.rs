@@ -97,15 +97,12 @@ pub(crate) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
                     .and_then(clean_session_title)
                     .unwrap_or_else(|| project.clone());
                 let timestamp = format_session_timestamp(snapshot.updated_at);
-                let event_count = snapshot.events.len();
                 let scope = if session_belongs_to_project(&snapshot.project, &app.project_dir) {
                     "current project"
                 } else {
                     "other project"
                 };
-                let label = format!(
-                    "{timestamp}  {title}  ·  {project}  ·  {scope}  ·  {event_count} events"
-                );
+                let label = format!("{timestamp}  {title}  ·  {project}  ·  {scope}");
 
                 ListItem::new(Span::styled(label, style)).style(style)
             })

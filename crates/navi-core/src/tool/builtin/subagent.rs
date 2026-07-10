@@ -497,6 +497,7 @@ impl SubagentTool {
             compaction_model_name: None,
             session_id: "subagent".to_string(),
             allowed_tool_names,
+            memory_manager: Arc::new(std::sync::Mutex::new(None)),
         };
 
         let policy =
@@ -642,6 +643,7 @@ impl SubagentTool {
                 session_id: "subagent-bg".to_string(),
                 agent_mode: crate::plan_mode::AgentMode::Default,
                 allowed_tool_names: allowed_tool_names_clone,
+                memory_manager: Arc::new(std::sync::Mutex::new(None)),
             };
 
             let policy =
