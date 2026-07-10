@@ -67,39 +67,51 @@ fn pty_smoke_renders_welcome_then_quits_cleanly() {
 
     let mut reader = pair.master.try_clone_reader().expect("clone reader");
     let mut writer = pair.master.take_writer().expect("take writer");
-    let mut buf: Vec<u8> = Vec::with_capacity(16 * 1024);
+    // Shared buffer so the main thread can poll for first paint without a
+    // multi-second fixed sleep (was 2s, then 400ms fixed).
+    let buf = std::sync::Arc::new(std::sync::Mutex::new(Vec::with_capacity(16 * 1024)));
+    let buf_reader = buf.clone();
     let read_handle = std::thread::spawn(move || {
         let mut local = vec![0u8; 4096];
         loop {
             match reader.read(&mut local) {
                 Ok(0) => break,
                 Ok(n) => {
-                    buf.extend_from_slice(&local[..n]);
+                    buf_reader.lock().expect("buf").extend_from_slice(&local[..n]);
                 }
                 Err(_) => break,
             }
         }
-        buf
     });
 
-    // Give the TUI a moment to draw the welcome screen, then quit.
-    // We don't try to wait for a specific banner string here; we just
-    // give it enough time to initialize and render, then send ctrl+c.
-    std::thread::sleep(Duration::from_secs(2));
-
+    // Poll until welcome controls appear (or deadline). Fast on warm runs,
+    // tolerant of cold binary start without burning a fixed multi-second wait.
     use std::io::Write;
+    let deadline = std::time::Instant::now() + Duration::from_secs(2);
+    let mut saw_welcome = false;
+    while std::time::Instant::now() < deadline {
+        let snapshot = buf.lock().expect("buf").clone();
+        let text = strip_ansi(&String::from_utf8_lossy(&snapshot));
+        if text.contains("commands") && text.contains("models") && text.contains("send") {
+            saw_welcome = true;
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    }
+
     writer.write_all(b"\x03").expect("write ctrl+c");
     drop(writer);
-    // Wait for the child to exit.
     let _ = child.wait();
-    let output = read_handle.join().expect("read thread");
+    let _ = read_handle.join();
+    let output = buf.lock().expect("buf").clone();
     let text = strip_ansi(&String::from_utf8_lossy(&output));
 
     // The TUI should have rendered the welcome/chat screen. The block logo does
     // not contain a plain "NAVI" substring after ratatui layout compaction, so
     // assert on stable shortcut labels instead of the logo glyphs.
     assert!(
-        text.contains("commands") && text.contains("models") && text.contains("send"),
+        saw_welcome
+            || (text.contains("commands") && text.contains("models") && text.contains("send")),
         "expected NAVI welcome controls in PTY output, got:\n{text}"
     );
 

@@ -4,8 +4,8 @@
 
      Hi there!
 
-   ◈ recap
-   │ Hi there!
+   Recap You asked about Hello, world: Hi there!
+
 
 
 
@@ -21,4 +21,4 @@
   ╭──────────────────────────────────────────────────────────────────────────╮
   │ ›                                                                        │
   ╰──────────────────────────────────────────────────────────────────────────╯
-                               gpt-5.5 (adaptive) · 3 / 200k · restricted
+                                    gpt-5.5 (adaptive) · 3 / 200k · restricted

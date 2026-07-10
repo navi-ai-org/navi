@@ -6,7 +6,7 @@
     │ Session:  session-test                                               │
     │ Project:  /tmp/navi-test-project                                     │
     │ Model:    gpt-5.5 via OpenAI                                         │
-    │ API key:  missing                                                    │
+    │ API key:  Mock                                                       │
     │ State:    idle                                                       │
     │                                                                      │
     │ Recent diagnostics                                                   │
@@ -21,4 +21,4 @@
   ╭─╰──────────────────────────────────────────────────────────────────────╯─╮
   │ ›                                                                        │
   ╰──────────────────────────────────────────────────────────────────────────╯
-                               gpt-5.5 (adaptive) · 0 / 200k · restricted
+                                    gpt-5.5 (adaptive) · 0 / 200k · restricted

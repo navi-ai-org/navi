@@ -48,12 +48,18 @@ pub struct TestConfig {
 
 impl Default for TestConfig {
     fn default() -> Self {
+        // Stable paths so screenshot goldens match. Unit tests that need
+        // isolation use unique data_dir via `test_app` / custom TestConfig.
+        let data_dir = PathBuf::from("/tmp/navi-test-data");
+        let project_dir = PathBuf::from("/tmp/navi-test-project");
+        let _ = std::fs::create_dir_all(&data_dir);
+        let _ = std::fs::create_dir_all(&project_dir);
         Self {
             width: 80,
             height: 24,
             input: String::new(),
-            project_dir: PathBuf::from("/tmp/navi-test-project"),
-            data_dir: PathBuf::from("/tmp/navi-test-data"),
+            project_dir,
+            data_dir,
             git_branch: Some("main".to_string()),
             context_window: 200_000,
             yolo_mode: false,
@@ -62,6 +68,19 @@ impl Default for TestConfig {
             provider_configured: true,
             session_id: "session-test".to_string(),
         }
+    }
+}
+
+/// Test `LoadedConfig` with network side-effects disabled.
+fn test_loaded_config(data_dir: PathBuf) -> LoadedConfig {
+    let mut config = NaviConfig::default();
+    config.updates.check_enabled = false;
+    config.registry.update_enabled = false;
+    LoadedConfig {
+        config,
+        global_config_path: None,
+        project_config_path: None,
+        data_dir,
     }
 }
 
@@ -75,23 +94,13 @@ pub struct Harness {
 
 impl Harness {
     /// Build a harness with the given config. The terminal is sized
-    /// `config.width × config.height`. The real [`NaviEngine`] is built and
-    /// installed; tests that need to drive the engine should use
-    /// [`Harness::with_engine`] instead.
+    /// `config.width × config.height`.
+    ///
+    /// Uses a [`MockEngine`] so pure UI / screenshot tests skip the real
+    /// [`navi_sdk::NaviEngine`] build. Drive the engine via
+    /// [`Harness::with_engine`] when you need a custom mock.
     pub fn new(config: TestConfig) -> Self {
-        let app = TuiApp::new(
-            LoadedConfig {
-                config: NaviConfig::default(),
-                global_config_path: None,
-                project_config_path: None,
-                data_dir: config.data_dir.clone(),
-            },
-            config.project_dir.clone(),
-            None,
-        )
-        .expect("test app");
-        let _ = app.credential_store().delete_api_key("commandcode");
-        Self::from_app(config, app)
+        Self::with_engine(config, Arc::new(MockEngine::new()))
     }
 
     /// Build a harness with a caller-supplied [`EngineDriver`]. The real
@@ -100,19 +109,14 @@ impl Harness {
     /// point for scenario tests that drive the TUI end-to-end against a
     /// controllable engine.
     pub fn with_engine(config: TestConfig, engine: Arc<dyn EngineDriver>) -> Self {
-        let mut app = TuiApp::new(
-            LoadedConfig {
-                config: NaviConfig::default(),
-                global_config_path: None,
-                project_config_path: None,
-                data_dir: config.data_dir.clone(),
-            },
+        let app = TuiApp::new_with_engine(
+            test_loaded_config(config.data_dir.clone()),
             config.project_dir.clone(),
             None,
+            engine,
         )
         .expect("test app");
         let _ = app.credential_store().delete_api_key("commandcode");
-        app.set_engine(engine);
         Self::from_app(config, app)
     }
 
@@ -223,18 +227,37 @@ impl Harness {
 
         let expected = std::fs::read_to_string(&path)
             .unwrap_or_else(|_| panic!("missing snapshot file: {}", path.display()));
-        if actual != expected.trim_end_matches('\n') {
+        let expected_trim = expected.trim_end_matches('\n');
+        if actual != expected_trim {
+            // Cap mismatch dumps so CI logs / OOM do not hold dual full screens.
+            const MAX_DIFF_CHARS: usize = 2_000;
+            let trunc = |s: &str| -> String {
+                if s.len() <= MAX_DIFF_CHARS {
+                    s.to_string()
+                } else {
+                    format!(
+                        "{}\n… truncated {} more chars …",
+                        &s[..MAX_DIFF_CHARS],
+                        s.len() - MAX_DIFF_CHARS
+                    )
+                }
+            };
             panic!(
                 "snapshot mismatch for `{name}`\n\
                  expected file: {}\n\
+                 expected len={}, actual len={}\n\
                  \n\
-                 --- expected ---\n\
-                 {expected}\
-                 \n--- actual ---\n\
-                 {actual}\n\
+                 --- expected (truncated) ---\n\
+                 {}\n\
+                 \n--- actual (truncated) ---\n\
+                 {}\n\
                  \n\
                  run with UPDATE_SNAPSHOTS=1 to overwrite.",
                 path.display(),
+                expected_trim.len(),
+                actual.len(),
+                trunc(expected_trim),
+                trunc(&actual),
             );
         }
     }

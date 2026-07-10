@@ -21,4 +21,4 @@
   ╭─│ ↑/↓ choose  ·  connect provider ctrl+e  ·  favorite ctrl+f           │─╮
   │ ╰──────────────────────────────────────────────────────────────────────╯ │
   ╰──────────────────────────────────────────────────────────────────────────╯
-                                 model (adaptive) · 0 / 200k · restricted
+                                      model (adaptive) · 0 / 200k · restricted

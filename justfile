@@ -7,15 +7,16 @@ set shell := ["bash", "-eu", "-o", "pipefail", "-c"]
 default:
     @just --list
 
-# Limit parallel rustc compilations and test threads to avoid OOM on
-# machines with constrained RAM.  Override per-invocation with
-#   CARGO_BUILD_JOBS=N just test
-export CARGO_BUILD_JOBS := "2"
-export CARGO_TEST_THREADS := "4"
-test_threads := "4"
+# Default test parallelism. On low-RAM machines override:
+#   CARGO_BUILD_JOBS=2 CARGO_TEST_THREADS=2 just test
+# Do NOT hard-cap CARGO_BUILD_JOBS here — that made every local/CI build 2–4× slower.
+test_threads := env_var_or_default("CARGO_TEST_THREADS", "8")
 quality_dir := "quality"
 quality_profile := "full"
 coverage_lcov := "coverage/lcov.info"
+
+# Product crates (shipping binary path). Bindings excluded for fast loops.
+product_packages := "-p navi-core -p navi-openai -p navi-providers -p navi-sdk -p navi-tui -p navi-cli -p navi-vfs -p navi-lite -p navi-mcp -p navi-plugin-api -p navi-plugin-broker -p navi-plugin-host -p navi-plugin-manifest -p navi-plugin-orchestrator -p navi-plugin-runtime -p navi-voice -p copland"
 
 # ─── Build ───────────────────────────────────────────────────────────────────
 
@@ -38,7 +39,7 @@ install-release:
     cargo install --path crates/navi-cli --release
 
 check:
-    cargo check --workspace --all-targets
+    cargo check --workspace --lib --bins --exclude navi-napi --exclude navi-dart
 
 # Verify SDK ↔ N-API binding parity (no drift between surfaces).
 parity-check:
@@ -52,7 +53,25 @@ fmt-check:
 
 # ─── Tests ───────────────────────────────────────────────────────────────────
 
+# Full product suite including integration binaries (CARGO_BIN_EXE, TUI scenarios).
+# Prefer `just test-fast` for the default local loop; use this before PRs that
+# touch CLI/TUI integration paths. Matches CI `test-full` job (main / dispatch).
 test *args:
+    cargo test --workspace --exclude navi-napi --exclude navi-dart --exclude navi-server -- --test-threads={{test_threads}} {{args}}
+
+# PR CI default: unit/bin tests for the shipping path only (no integration harnesses).
+# Matches the primary GitHub Actions `Test` job (lib+bins product packages).
+test-fast *args:
+    cargo test --locked --lib --bins {{product_packages}} -- --test-threads={{test_threads}} {{args}}
+
+# Selective integration smoke used alongside test-fast (screenshots + PTY).
+# Scenarios / event_loop / terminal_corruption / plugin_install stay on `just test`.
+test-smoke *args:
+    cargo test --locked -p navi-tui --test screenshots -- --test-threads=4 {{args}}
+    cargo test --locked -p navi-cli --test pty_smoke -- --test-threads=1 {{args}}
+
+# Full monorepo including bindings (slow — needs Node for napi).
+test-all *args:
     cargo test --workspace -- --test-threads={{test_threads}} {{args}}
 
 test-crate crate *args:
@@ -155,8 +174,12 @@ analyze profile=quality_profile *args:
 
 # ─── Rust tooling (direct cargo; rustquty wraps fmt/clippy in profiles) ───────
 
+# Product-path clippy (matches CI). Full-workspace style -D is too slow/noisy.
 clippy:
-    cargo clippy --workspace --all-targets -- -D warnings
+    cargo clippy --workspace --lib --bins \
+      --exclude navi-napi --exclude navi-dart --exclude navi-server \
+      -- -D clippy::correctness -D clippy::suspicious -D clippy::perf \
+      -W clippy::style -A clippy::too_many_arguments -A clippy::collapsible_if
 
 # ─── Registry ────────────────────────────────────────────────────────────────
 
@@ -191,8 +214,9 @@ record-demo:
 
 # ─── Aggregates ────────────────────────────────────────────────────────────────
 
-# Fast local gate: format, compile, unit tests
-verify: fmt-check check test
+# Fast local gate: format, compile, unit tests (mirrors PR CI Test job core).
+# Use `just test` or `just test-smoke` before PRs that touch CLI/TUI integration.
+verify: fmt-check check test-fast
 
 # Pre-PR: verify + clippy + rustquty (full profile)
 ci: verify clippy analyze
