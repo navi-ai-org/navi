@@ -107,3 +107,39 @@ Sources:
 2. **Input dominates** for Navi/OpenCode (history + tools re-sent each step).
 3. **Claude column is not apples-to-apples** until cc-proxy exposes usage; treat as lower bound on dialog payload only.
 4. **Tool efficiency ≠ token efficiency:** fewer tools can still burn tokens if prompts/history are large.
+
+---
+
+## Why Navi lost tokens to OpenCode (analysis of Round D)
+
+### Root causes (from event traces)
+
+1. **`plan` tool spam** — worst cases had 4–6 plan + plan-review loops. Each plan step is a full model turn (~25–35k input). OpenCode uses light `todowrite` or none.
+2. **Codebase extras overused on tiny fixtures** — `fs_browser` / `repo_explore` before plain `read_file`. Useful on real monorepos; wasteful on 1-file fixtures.
+3. **Patch thrash** — many small `apply_patch` + re-read cycles instead of one coherent edit.
+4. **Adaptive thinking** — large `AssistantThinkingDelta` volume even when verifiers only need a fix.
+5. **Gross token sum** — Navi metrics sum every step’s full `input_tokens` (incl. cache-read volume in the input field). Still real API accounting, but multi-step loops amplify totals.
+
+### Progressive fixes shipped in `bench_cmd`
+
+| Phase | Change | Effect |
+|-------|--------|--------|
+| A | Auto-approve plan/questions (unblock hangs) | Quality recovered |
+| B | Deny `plan`/`set_goal`/meta tools; YOLO; tighter observations; `thinking=Low`; efficiency preamble | **−26% tokens** (1.80M→1.34M), tools 93→66, still 8/8 |
+| C | Also deny `fs_browser`/`repo_explore`/`ast_search` for bench | Head-to-head vs OC: **Navi 1.50M / 8/8 vs OC 1.72M / 7/8** |
+
+### Round E — head-to-head after efficiency (`hard-vs-oc-v2.json`)
+
+| Agent | Pass | Tools | Tok Σ | Tok/success |
+|-------|-----:|------:|------:|------------:|
+| **navi** | **8/8** | **71** | **1 496 722** | ~187 k |
+| opencode | 7/8 | 92 | 1 716 876 | ~245 k |
+
+Navi wins this run on **pass rate and total tokens**. Remaining variance: some cases still higher for Navi (interval-merge, expr-lang) when the model takes a long path — not a harness regression.
+
+### Further levers (not yet)
+
+- Product: default “repair” tool policy that de-prioritizes plan on small repos
+- Prompt: shorter system prompt / tool list for `profile=small`
+- Metrics: report billable = input − cache_read alongside gross
+- Model: `ThinkingConfig::Off` for free-flash benches if quality holds
