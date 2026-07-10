@@ -752,13 +752,24 @@ impl Default for HistoryConfig {
     }
 }
 
-/// Local voice / dictation settings (`[voice]` in config.toml).
+/// Voice / dictation settings (`[voice]` in config.toml).
+///
+/// Supports **local** ONNX engines and **remote** transcription providers from
+/// the registry (OpenAI Whisper, Groq Whisper, Wispr Flow). When
+/// [`Self::provider`] is empty or `"local"`, the local `engine` is used.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct VoiceConfig {
     /// Master switch — dictation remains opt-in.
     pub enabled: bool,
-    /// Active ASR engine id (`nemotron_streaming` | `distil_whisper`).
+    /// Transcription backend: `"local"` (default) or a registry transcription
+    /// provider id (`openai`, `groq`, `wispr-flow`, …).
+    pub provider: String,
+    /// Remote model id when `provider` is not local (e.g. `whisper-1`,
+    /// `whisper-large-v3-turbo`). Empty → provider default from registry.
+    pub model: String,
+    /// Active local ASR engine id (`nemotron_streaming` | `distil_whisper`).
+    /// Ignored when `provider` is a remote transcription provider.
     pub engine: String,
     /// Language hint (`auto`, `en-US`, `pt-BR`, …).
     pub language: String,
@@ -776,6 +787,8 @@ impl Default for VoiceConfig {
     fn default() -> Self {
         Self {
             enabled: false,
+            provider: "local".to_string(),
+            model: String::new(),
             engine: "nemotron_streaming".to_string(),
             language: "auto".to_string(),
             capture: "toggle".to_string(),
@@ -784,6 +797,14 @@ impl Default for VoiceConfig {
             hf_repo_nemotron: "navi-org/navi-voice-nemotron-3.5-asr-streaming-0.6b-onnx"
                 .to_string(),
         }
+    }
+}
+
+impl VoiceConfig {
+    /// True when dictation should call a remote transcription provider.
+    pub fn uses_remote_transcription(&self) -> bool {
+        let p = self.provider.trim();
+        !p.is_empty() && !p.eq_ignore_ascii_case("local")
     }
 }
 
