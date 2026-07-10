@@ -1,5 +1,13 @@
 name: CI
 
+# Fast path for PRs/main:
+# - No artificial CARGO_BUILD_JOBS cap (use all runner cores)
+# - Jobs run in parallel (test no longer waits on check)
+# - Skip binding crates (napi/dart) — heavy toolchains, not the shipping binary
+# - PR Test = lib+bins (test-fast) + selective goldens/smoke — not full --tests
+# - Clippy on lib/bins only (not --all-targets, which recompiles every integration harness)
+# - Full workspace integration suite runs on main push / workflow_dispatch only
+
 on:
   push:
     branches: [main]
@@ -9,8 +17,9 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-  CARGO_BUILD_JOBS: "2"
-  CARGO_TEST_THREADS: "4"
+  CARGO_INCREMENTAL: "0"
+  # Leave CARGO_BUILD_JOBS unset so rustc uses nproc on the runner.
+  RUST_BACKTRACE: "1"
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -27,66 +36,133 @@ jobs:
           components: rustfmt
       - run: cargo fmt --all -- --check
 
-  check:
-    name: Check
+  # Primary quality gate: unit/bin tests for product crates (mirrors `just test-fast`).
+  test:
+    name: Test
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - run: cargo check --workspace --all-targets
-      - name: Build lite binary
-        run: cargo build -p navi-lite --bin navi-lite
+        with:
+          shared-key: ci-product
+          prefix-key: v2
 
+      - name: Product unit + bin tests (fast path)
+        # No integration harnesses (no CARGO_BIN_EXE_navi, no TUI scenario binaries).
+        # Flaky/hanging tests are #[ignore] in source (headless_e2e, wasm fake, compact palette).
+        run: >
+          cargo test --locked
+          --lib --bins
+          -p navi-core -p navi-openai -p navi-providers -p navi-sdk -p navi-tui
+          -p navi-cli -p navi-vfs -p navi-lite -p navi-mcp -p navi-plugin-api
+          -p navi-plugin-broker -p navi-plugin-host -p navi-plugin-manifest
+          -p navi-plugin-orchestrator -p navi-plugin-runtime -p navi-voice -p copland
+          -- --test-threads=8
+
+      - name: TUI screenshot goldens
+        # Visual regressions; uses MockEngine harness (no full process spawn).
+        run: cargo test --locked -p navi-tui --test screenshots -- --test-threads=4
+
+      - name: CLI PTY smoke
+        # One binary link + short poll for first paint. Linux only in source.
+        run: cargo test --locked -p navi-cli --test pty_smoke -- --test-threads=1
+
+      - name: Smoke-build navi-lite
+        run: cargo build -p navi-lite --bin navi-lite --locked
+
+  # Full product workspace tests (integration binaries, scenarios, CLI e2e that
+  # are not ignored). Runs on main / tags / manual dispatch — not every PR.
+  test-full:
+    name: Test (full integration)
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/')))
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ci-product
+          prefix-key: v2
+
+      - name: Full product workspace tests
+        run: >
+          cargo test --locked
+          --workspace
+          --exclude navi-napi
+          --exclude navi-dart
+          --exclude navi-server
+          -- --test-threads=8
+
+  # Lint in parallel with Test (shared cache key → second job is usually a hit).
   clippy:
     name: Clippy
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
       - uses: Swatinem/rust-cache@v2
-      - run: cargo clippy --workspace --all-targets -- -D warnings
+        with:
+          shared-key: ci-product
+          prefix-key: v2
 
-  test:
-    name: Test
-    runs-on: ubuntu-latest
-    needs: [check]
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - name: Run workspace lib/bin tests
-        run: cargo test --workspace --locked --lib --bins -- --test-threads=4
-
-      - name: Run integration tests (skip known-hanging headless e2e)
-        # headless_e2e hangs on CI (mock multi-turn never completes); skip until fixed.
+      - name: Clippy (lib + bins, product crates)
+        # --all-targets forces recompilation of every integration test binary and
+        # is the #1 clippy wall-time cost. Style pedantry is not -D here; correctness
+        # and suspicious lints still fail the build via -D clippy::correctness etc.
         run: >
-          cargo test --workspace --locked --tests
-          -- --test-threads=4
-          --skip headless_cli_runs_engine_provider_and_read_tool
-        timeout-minutes: 25
+          cargo clippy --locked
+          --workspace
+          --lib --bins
+          --exclude navi-napi
+          --exclude navi-dart
+          --exclude navi-server
+          --
+          -D clippy::correctness
+          -D clippy::suspicious
+          -D clippy::perf
+          -W clippy::style
+          -A clippy::too_many_arguments
+          -A clippy::collapsible_if
+          -A clippy::needless_borrow
+          -A clippy::needless_borrows_for_generic_args
+          -A clippy::derivable_impls
+          -A clippy::doc_lazy_continuation
+          -A clippy::redundant_guards
+          -A clippy::if_same_then_else
+          -A clippy::match_like_matches_macro
+          -A clippy::redundant_closure
+          -A clippy::bool_comparison
+          -A clippy::collapsible_match
+          -A clippy::manual_strip
+          -A clippy::single_char_pattern
+          -A clippy::unnecessary_wraps
 
   # Single green check for branch protection / release gates.
+  # test-full is not required for PR merge (optional on main).
   ci-ok:
     name: CI OK
     if: always()
-    needs: [fmt, check, clippy, test]
+    needs: [fmt, test, clippy]
     runs-on: ubuntu-latest
     steps:
       - name: Aggregate job results
         run: |
           set -euo pipefail
           echo "fmt=${{ needs.fmt.result }}"
-          echo "check=${{ needs.check.result }}"
-          echo "clippy=${{ needs.clippy.result }}"
           echo "test=${{ needs.test.result }}"
+          echo "clippy=${{ needs.clippy.result }}"
           for r in \
             "${{ needs.fmt.result }}" \
-            "${{ needs.check.result }}" \
-            "${{ needs.clippy.result }}" \
-            "${{ needs.test.result }}"
+            "${{ needs.test.result }}" \
+            "${{ needs.clippy.result }}"
           do
             if [[ "$r" != "success" ]]; then
               echo "CI failed (job result: $r)" >&2

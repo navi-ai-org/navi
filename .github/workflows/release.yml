@@ -35,7 +35,7 @@ on:
 env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: "0"
-  CARGO_TEST_THREADS: "4"
+  # Do not cap CARGO_BUILD_JOBS — multi-platform builds need full runner cores.
   RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
 
 permissions:
@@ -71,15 +71,15 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: Core package tests (release gate)
-        # Gate the published navi binary on the crates it actually ships.
-        # Skip wasm-plugin load test (needs real wasm fixtures not present on CI).
+        # Gate the published binary on product crates only. Binding crates
+        # (napi/dart) and full workspace integration are covered by CI on main.
+        # Hanging/flaky cases are #[ignore] in source — no long --skip lists.
+        timeout-minutes: 20
         run: >
           cargo test --locked --lib --bins
           -p navi-core -p navi-openai -p navi-providers
-          -p navi-sdk -p navi-tui -p navi-cli -p navi-vfs
-          -- --test-threads=4
-          --skip build_local_tooling_loads_installed_wasm_plugin_store
-          --skip command_palette_compact_submits_immediate_summary_request
+          -p navi-sdk -p navi-tui -p navi-cli -p navi-vfs -p navi-lite
+          -- --test-threads=8
   # ── Linux x64 musl (Alpine container — JS actions only work on x64) ────────
 
   build-linux-x64:

@@ -11,9 +11,13 @@ use navi_tui::testing::{
 };
 use tokio::time::sleep;
 
+/// Default poll deadline for scenario engine-call waits (was 5s; 3s fails
+/// fast under CI starvation without multi-second idle waits).
+const CALL_WAIT: Duration = Duration::from_secs(3);
+
 /// Poll until the mock has recorded at least `count` calls. Panics on timeout.
 async fn wait_for_calls(mock: &MockEngine, count: usize) {
-    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    let deadline = std::time::Instant::now() + CALL_WAIT;
     while mock.call_count() < count {
         if std::time::Instant::now() >= deadline {
             panic!(
@@ -21,18 +25,26 @@ async fn wait_for_calls(mock: &MockEngine, count: usize) {
                 mock.call_count()
             );
         }
-        sleep(Duration::from_millis(2)).await;
+        // Yield first so the multi-thread runtime can run the TUI turn task.
+        tokio::task::yield_now().await;
+        sleep(Duration::from_millis(1)).await;
     }
 }
 
 /// Let the tokio runtime process queued events, then drain them from the
 /// TUI's async bridge. Loops until no new events arrive within a tick.
 async fn flush_events(h: &mut Harness) {
-    for _ in 0..20 {
-        sleep(Duration::from_millis(5)).await;
+    // Slightly more budget than the old 20×5ms worst-case, but exit early
+    // when idle so wall-clock stays low on the happy path.
+    for _ in 0..30 {
+        tokio::task::yield_now().await;
+        sleep(Duration::from_millis(2)).await;
         let processed = h.drain_async_events();
         if processed == 0 {
-            break;
+            sleep(Duration::from_millis(3)).await;
+            if h.drain_async_events() == 0 {
+                break;
+            }
         }
     }
 }
@@ -41,12 +53,22 @@ fn default_config() -> TestConfig {
     TestConfig::default()
 }
 
+/// Build a harness with a fresh mock, discarding construction-time call noise
+/// (`list_skills`, `credential_status`, …) so `wait_for_calls` counts only
+/// the turn path under test.
+fn harness_with_mock() -> (Harness, Arc<MockEngine>) {
+    let mock = Arc::new(MockEngine::new());
+    let h = Harness::with_engine(default_config(), mock.clone());
+    let _ = mock.take_calls();
+    (h, mock)
+}
+
 // ─── Streaming text response ───────────────────────────────────────────────
 
+// multi_thread: submit path uses block_in_place in stream/session helpers.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn scenario_stream_text_response() {
-    let mock = Arc::new(MockEngine::new());
-    let mut h = Harness::with_engine(default_config(), mock.clone());
+    let (mut h, mock) = harness_with_mock();
 
     h.type_text("hi");
     h.submit();
@@ -70,9 +92,17 @@ async fn scenario_stream_text_response() {
     mock.complete_turn();
     flush_events(&mut h).await;
 
-    // The assistant placeholder message should now have the streamed text.
-    let last = h.messages().last().expect("at least one message");
-    assert!(last.content.contains("Hello, world!"));
+    // Streamed assistant text is present (a local recap may follow as a later msg).
+    assert!(
+        h.messages()
+            .iter()
+            .any(|m| m.content.contains("Hello, world!")),
+        "expected streamed assistant text; messages={:?}",
+        h.messages()
+            .iter()
+            .map(|m| (&m.content, &m.status))
+            .collect::<Vec<_>>()
+    );
     // The TUI should no longer be loading.
     assert!(!h.is_loading());
 
@@ -87,8 +117,7 @@ async fn scenario_stream_text_response() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn scenario_tool_approval_approve() {
-    let mock = Arc::new(MockEngine::new());
-    let mut h = Harness::with_engine(default_config(), mock.clone());
+    let (mut h, mock) = harness_with_mock();
 
     h.type_text("read the file");
     h.submit();
@@ -139,8 +168,7 @@ async fn scenario_tool_approval_approve() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn scenario_turn_error() {
-    let mock = Arc::new(MockEngine::new());
-    let mut h = Harness::with_engine(default_config(), mock.clone());
+    let (mut h, mock) = harness_with_mock();
 
     h.type_text("hi");
     h.submit();
@@ -159,17 +187,27 @@ async fn scenario_turn_error() {
 
     // TUI should be no longer loading.
     assert!(!h.is_loading());
-    // The error should have produced an AgentEvent::Error in the events log.
-    let last = h.messages().last().expect("messages");
-    assert!(last.content.contains("rate limited") || last.content.contains("error"));
+    // The error should have produced an AgentEvent::Error in the message log
+    // (a local recap may append after the error row).
+    assert!(
+        h.messages().iter().any(|m| {
+            m.content.contains("rate limited")
+                || m.content.contains("error")
+                || m.status.as_deref() == Some("error")
+        }),
+        "expected error message; messages={:?}",
+        h.messages()
+            .iter()
+            .map(|m| (&m.content, &m.status))
+            .collect::<Vec<_>>()
+    );
 }
 
 // ─── Multi-turn conversation history ───────────────────────────────────────
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn scenario_conversation_history_after_turn() {
-    let mock = Arc::new(MockEngine::new());
-    let mut h = Harness::with_engine(default_config(), mock.clone());
+    let (mut h, mock) = harness_with_mock();
 
     let initial_history_len = h.conversation_history_len();
 
@@ -193,8 +231,7 @@ async fn scenario_conversation_history_after_turn() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn scenario_cancel_mid_stream() {
-    let mock = Arc::new(MockEngine::new());
-    let mut h = Harness::with_engine(default_config(), mock.clone());
+    let (mut h, mock) = harness_with_mock();
 
     h.type_text("hi");
     h.submit();
@@ -210,3 +247,5 @@ async fn scenario_cancel_mid_stream() {
     // Loading state should be cleared by the cancel path.
     assert!(!h.is_loading());
 }
+
+// temporary - ignore

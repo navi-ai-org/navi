@@ -80,6 +80,9 @@ struct MockState {
     loaded_config: LoadedConfig,
     skills: Vec<NaviSkillInfo>,
     usage_report: NaviUsageReport,
+    /// Default `credential_status(...).configured`. False matches a real
+    /// engine with an empty credential store (most unit tests).
+    credentials_configured: bool,
 }
 
 impl MockEngine {
@@ -102,10 +105,16 @@ impl MockEngine {
                 loaded_config,
                 skills: Vec::new(),
                 usage_report: NaviUsageReport::default(),
+                credentials_configured: false,
             }),
             events_tx,
             turn_done: Notify::new(),
         }
+    }
+
+    /// Control whether [`EngineDriver::credential_status`] reports keys present.
+    pub fn set_credentials_configured(&self, configured: bool) {
+        self.state.lock().unwrap().credentials_configured = configured;
     }
 
     /// Signal that the current in-flight `send_turn` future should resolve.
@@ -393,15 +402,19 @@ impl EngineDriver for MockEngine {
     }
 
     fn credential_status(&self, provider_id: &str) -> Result<NaviProviderCredentialStatus> {
-        self.state
-            .lock()
-            .unwrap()
+        let mut state = self.state.lock().unwrap();
+        state
             .calls
             .push(EngineCall::CredentialStatus(provider_id.to_string()));
+        let configured = state.credentials_configured;
         Ok(NaviProviderCredentialStatus {
             provider_id: provider_id.to_string(),
-            configured: true,
-            source: Some("mock".to_string()),
+            configured,
+            source: if configured {
+                Some("mock".to_string())
+            } else {
+                None
+            },
             label: "Mock".to_string(),
             detail: None,
             env_var: String::new(),
