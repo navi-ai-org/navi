@@ -83,3 +83,38 @@ pub fn load_wav_16k_mono(path: &Path) -> Result<Vec<f32>> {
     }
     Ok(resample_linear(&samples, sr, 16_000))
 }
+
+/// Encode mono f32 samples as a 16 kHz 16-bit PCM WAV in memory.
+pub fn write_wav_16k_mono_bytes(samples: &[f32]) -> Result<Vec<u8>> {
+    let mut cursor = std::io::Cursor::new(Vec::new());
+    {
+        let spec = hound::WavSpec {
+            channels: 1,
+            sample_rate: 16_000,
+            bits_per_sample: 16,
+            sample_format: SampleFormat::Int,
+        };
+        let mut writer = hound::WavWriter::new(&mut cursor, spec).context("create wav writer")?;
+        for &s in samples {
+            let clamped = s.clamp(-1.0, 1.0);
+            let i = (clamped * 32767.0).round() as i16;
+            writer.write_sample(i).context("write wav sample")?;
+        }
+        writer.finalize().context("finalize wav")?;
+    }
+    Ok(cursor.into_inner())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn roundtrip_16k_silence_header() {
+        let samples = vec![0.0f32; 1600];
+        let bytes = write_wav_16k_mono_bytes(&samples).expect("encode");
+        assert!(bytes.len() > 44);
+        assert_eq!(&bytes[0..4], b"RIFF");
+        assert_eq!(&bytes[8..12], b"WAVE");
+    }
+}

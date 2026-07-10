@@ -124,6 +124,12 @@ pub enum VoiceEvent {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VoiceStatus {
     pub enabled: bool,
+    /// `local` or remote transcription provider id (`openai`, `groq`, `wispr-flow`, …).
+    #[serde(default = "default_voice_provider")]
+    pub provider: String,
+    /// Remote model id when provider is not local.
+    #[serde(default)]
+    pub model: String,
     pub engine: String,
     pub language: String,
     pub capture: String,
@@ -134,6 +140,10 @@ pub struct VoiceStatus {
     pub sample_rate: u32,
     pub chunk_samples: u32,
     pub recorders: Vec<VoiceRecorderInfo>,
+}
+
+fn default_voice_provider() -> String {
+    "local".to_string()
 }
 
 /// A recorder binary discovered on PATH.
