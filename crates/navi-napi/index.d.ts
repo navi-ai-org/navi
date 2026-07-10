@@ -190,6 +190,8 @@ export class NaviNapiEngine {
     providerId: string,
     onStarted?: (info: { verificationUri: string; userCode: string }) => void
   ): Promise<string | null>;
+  /** Device OAuth without a progress callback. */
+  startDeviceOauthSimple(providerId: string): Promise<string | null>;
   syncProviderModels(providerId: string, saveTarget?: SaveTarget): Promise<ProviderSyncReport>;
   syncModels(saveTarget?: SaveTarget): Promise<ProviderSyncReport>;
   // Usage
@@ -208,6 +210,12 @@ export class NaviNapiEngine {
   // MCP
   listMcpServers(sessionId: string): JsonValue;
   listMcpTools(sessionId: string): string[];
+  /** Configured MCP servers from TOML (not live session connections). */
+  listMcpConfig(): JsonValue;
+  setMcpEnabled(enabled: boolean, saveTarget?: SaveTarget): JsonValue;
+  upsertMcpServer(server: JsonValue, saveTarget?: SaveTarget): JsonValue;
+  removeMcpServer(serverId: string, saveTarget?: SaveTarget): JsonValue;
+  setMcpConfig(mcp: JsonValue, saveTarget?: SaveTarget): JsonValue;
   // Registry & plugins
   syncRegistry(force?: boolean): Promise<boolean>;
   listRegistry(): JsonValue;
@@ -226,6 +234,7 @@ export class NaviNapiEngine {
   loadSavedSession(sessionId: string): Promise<JsonValue>;
   deleteSavedSession(sessionId: string): Promise<boolean>;
   renameSavedSession(sessionId: string, title: string): Promise<boolean>;
+  renameSavedSessionAsync(sessionId: string, title: string): Promise<boolean>;
   // Auto-memory CRUD
   memoryWrite(id: string, memoryType: string, name: string, description: string, body: string): void;
   memoryRead(id: string): JsonValue;
@@ -243,12 +252,16 @@ export class NaviNapiEngine {
   memoryDream(apply?: boolean, sessions?: number, instructions?: string): Promise<JsonValue>;
   memoryDistill(): Promise<void>;
   memoryCheckpoint(): Promise<string>;
-  // Voice / local dictation (16 kHz mono PCM from client; engine owns ONNX ASR)
+  memoryRebuildPreview(): string;
+  // Voice / local + remote dictation
   voiceStatus(): JsonValue;
+  voiceTranscriptionProviders(): JsonValue;
+  setVoiceConfig(update: JsonValue, saveTarget?: SaveTarget): JsonValue;
   voiceDoctor(): JsonValue;
   voiceEngineInstalled(engine?: string): boolean;
   voiceInit(engine?: string, force?: boolean): Promise<string>;
   voiceTranscribeFile(path: string, language?: string): Promise<{ text: string; tokenIds: number[] }>;
+  voiceTranscribeFileAsync(path: string, language?: string): Promise<{ text: string; tokenIds: number[] }>;
   voiceStartStream(language?: string): void;
   /** Push 16 kHz mono samples; returns text delta for this chunk (may be empty). */
   voicePushPcm(samples: number[] | Float32Array): string;
