@@ -5,6 +5,7 @@ mod engine;
 mod engine_api;
 mod engine_driver;
 mod host_tool;
+mod mcp_ops;
 mod memory_ops;
 mod notify_ops;
 mod plugins;
@@ -96,6 +97,13 @@ pub use navi_voice::{
 
 // Extended memory ops DTOs
 pub use memory_ops::{MemoryDoctorReport, MemoryDreamReport, MemoryInitReport, MemoryStatusReport};
+
+// MCP config management
+pub use mcp_ops::McpConfigSnapshot;
+pub use navi_core::{McpConfig, McpServerConfig};
+
+// Voice config updates
+pub use voice::VoiceConfigUpdate;
 
 // Plugin lifecycle DTOs
 pub use plugins::{PluginInfo, PluginInstallResult, PluginMarketplaceEntry};

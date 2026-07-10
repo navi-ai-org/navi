@@ -10,8 +10,9 @@
 use std::path::{Path, PathBuf};
 
 use navi_core::{
-    CredentialStore, ProviderConfig, ProviderKind, find_transcription_provider,
-    resolve_provider_api_key, resolve_transcription_model, transcription_provider_catalog,
+    CredentialStore, ProviderConfig, ProviderKind, VoiceConfig, find_transcription_provider,
+    resolve_provider_api_key, resolve_transcription_model, save_global_config, save_project_config,
+    transcription_provider_catalog,
 };
 use navi_voice::{
     AsrEngineId, CHUNK_SAMPLES, DoctorInput, DoctorReport, NemotronOnnxEngine,
@@ -19,10 +20,11 @@ use navi_voice::{
     VoiceInstallOptions, VoiceRecorderInfo, VoiceStatus, download_engine, engine_installed,
     list_available_recorders, resolve_model_dir, run_doctor, transcribe_file_remote,
 };
+use serde::{Deserialize, Serialize};
 use tokio::sync::broadcast;
 
 use crate::engine::NaviEngine;
-use crate::types::NaviError;
+use crate::types::{NaviConfigSaveTarget, NaviError};
 
 type Result<T> = std::result::Result<T, NaviError>;
 
@@ -125,15 +127,33 @@ impl NaviEngine {
         })
     }
 
-    /// List remote transcription providers from the embedded registry catalog.
+    /// List remote transcription providers from the embedded/cache registry catalog.
     pub fn voice_transcription_providers(&self) -> Vec<navi_core::RegistryTranscriptionProvider> {
         transcription_provider_catalog()
     }
 
-    /// Mic tools, model files, checksums.
+    /// Update in-memory `[voice]` settings and optionally persist to disk.
+    ///
+    /// Only fields present in `update` are changed. Empty `provider` is treated as `"local"`.
+    pub fn set_voice_config(
+        &self,
+        update: VoiceConfigUpdate,
+        save_target: NaviConfigSaveTarget,
+    ) -> Result<Option<PathBuf>> {
+        let mut loaded = self.loaded_config();
+        apply_voice_config_update(&mut loaded.config.voice, update)?;
+        let saved = self.persist_loaded_config(&loaded, save_target)?;
+        self.replace_loaded_config(loaded);
+        Ok(saved)
+    }
+
+    /// Mic tools, model files, checksums — or remote provider + credential checks.
     pub fn voice_doctor(&self) -> Result<DoctorReport> {
         let loaded = self.loaded_config();
         let voice = &loaded.config.voice;
+        if voice.uses_remote_transcription() {
+            return self.voice_doctor_remote(voice);
+        }
         let engine = Self::parse_engine_id(Some(voice.engine.as_str()), "nemotron_streaming")
             .unwrap_or_default();
         run_doctor(
@@ -148,6 +168,51 @@ impl NaviEngine {
             },
         )
         .map_err(|e| NaviError::Config(e.to_string()))
+    }
+
+    fn voice_doctor_remote(&self, voice: &VoiceConfig) -> Result<DoctorReport> {
+        let mut lines = Vec::new();
+        let mut ok = true;
+        let provider = voice.provider.trim();
+        lines.push(format!("Voice doctor (remote provider: {provider})"));
+        lines.push(format!("Config enabled: {}", voice.enabled));
+        match find_transcription_provider(provider) {
+            Some(reg) => {
+                lines.push(format!("  [OK] Provider found in registry: {}", reg.label));
+                lines.push(format!("  kind: {}", reg.kind));
+                lines.push(format!("  models: {}", reg.models.len()));
+                lines.push(format!(
+                    "  default model: {}",
+                    resolve_transcription_model(&reg, &voice.model)
+                ));
+                let store = CredentialStore::new(self.loaded_config().data_dir.clone());
+                let synthetic = ProviderConfig {
+                    id: reg.id.clone(),
+                    label: reg.label.clone(),
+                    description: reg.description.clone(),
+                    kind: ProviderKind::OpenAiChatCompletions,
+                    api_key_env: reg.api_key_env.clone(),
+                    base_url: Some(reg.base_url.clone()),
+                    ..Default::default()
+                };
+                if resolve_provider_api_key(&store, &synthetic, &reg.id).is_some() {
+                    lines.push(format!("  [OK] API key resolved (${})", reg.api_key_env));
+                } else {
+                    ok = false;
+                    lines.push(format!("  [FAIL] Missing API key — set ${}", reg.api_key_env));
+                }
+            }
+            None => {
+                ok = false;
+                lines.push(format!("  [FAIL] Unknown transcription provider '{provider}'"));
+                let known: Vec<_> = transcription_provider_catalog()
+                    .into_iter()
+                    .map(|p| p.id)
+                    .collect();
+                lines.push(format!("  known: {}", known.join(", ")));
+            }
+        }
+        Ok(DoctorReport { ok, lines })
     }
 
     /// Whether the given engine package is installed under data_dir.
@@ -436,6 +501,44 @@ impl NaviEngine {
         }
     }
 
+    fn persist_loaded_config(
+        &self,
+        loaded_config: &navi_core::LoadedConfig,
+        target: NaviConfigSaveTarget,
+    ) -> Result<Option<PathBuf>> {
+        match target {
+            NaviConfigSaveTarget::None => Ok(None),
+            NaviConfigSaveTarget::Project => {
+                let path = save_project_config(&self.inner.project_dir, &loaded_config.config)
+                    .map_err(NaviError::from)?;
+                Ok(Some(path))
+            }
+            NaviConfigSaveTarget::Global => {
+                let global_path = loaded_config
+                    .global_config_path
+                    .as_ref()
+                    .ok_or_else(|| NaviError::Config("global config path is unavailable".into()))?;
+                let path =
+                    save_global_config(global_path, &loaded_config.config).map_err(NaviError::from)?;
+                Ok(Some(path))
+            }
+            NaviConfigSaveTarget::Auto => {
+                if loaded_config.project_config_path.is_some() {
+                    let path = save_project_config(&self.inner.project_dir, &loaded_config.config)
+                        .map_err(NaviError::from)?;
+                    Ok(Some(path))
+                } else {
+                    let global_path = loaded_config.global_config_path.as_ref().ok_or_else(|| {
+                        NaviError::Config("global config path is unavailable".into())
+                    })?;
+                    let path = save_global_config(global_path, &loaded_config.config)
+                        .map_err(NaviError::from)?;
+                    Ok(Some(path))
+                }
+            }
+        }
+    }
+
     fn ensure_nemotron_locked(&self, rt: &mut VoiceRuntime, language: &str) -> Result<()> {
         let loaded = self.loaded_config();
         let options = self.voice_install_options();
@@ -462,4 +565,72 @@ impl NaviEngine {
         }
         Ok(())
     }
+}
+
+/// Partial update for `[voice]` settings (all fields optional).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VoiceConfigUpdate {
+    pub enabled: Option<bool>,
+    /// `"local"` or registry transcription provider id.
+    pub provider: Option<String>,
+    pub model: Option<String>,
+    pub engine: Option<String>,
+    pub language: Option<String>,
+    pub capture: Option<String>,
+    pub recorder: Option<String>,
+    pub model_dir: Option<String>,
+    pub hf_repo_nemotron: Option<String>,
+}
+
+fn apply_voice_config_update(voice: &mut VoiceConfig, update: VoiceConfigUpdate) -> Result<()> {
+    if let Some(v) = update.enabled {
+        voice.enabled = v;
+    }
+    if let Some(p) = update.provider {
+        let p = p.trim();
+        if p.is_empty() {
+            voice.provider = "local".to_string();
+        } else if p.eq_ignore_ascii_case("local") {
+            voice.provider = "local".to_string();
+        } else if find_transcription_provider(p).is_none() {
+            let known: Vec<_> = transcription_provider_catalog()
+                .into_iter()
+                .map(|x| x.id)
+                .collect();
+            return Err(NaviError::Config(format!(
+                "unknown transcription provider '{p}'. Known: local, {}",
+                known.join(", ")
+            )));
+        } else {
+            voice.provider = p.to_string();
+        }
+    }
+    if let Some(m) = update.model {
+        voice.model = m;
+    }
+    if let Some(e) = update.engine {
+        if AsrEngineId::parse(&e).is_none() {
+            return Err(NaviError::Config(format!(
+                "unknown voice engine '{e}'. Use: nemotron_streaming | distil_whisper"
+            )));
+        }
+        voice.engine = e;
+    }
+    if let Some(l) = update.language {
+        voice.language = l;
+    }
+    if let Some(c) = update.capture {
+        voice.capture = c;
+    }
+    if let Some(r) = update.recorder {
+        voice.recorder = r;
+    }
+    if let Some(d) = update.model_dir {
+        voice.model_dir = d;
+    }
+    if let Some(h) = update.hf_repo_nemotron {
+        voice.hf_repo_nemotron = h;
+    }
+    Ok(())
 }
