@@ -25,8 +25,9 @@ impl crate::provider::OpenAiProvider {
         let behavior = self.behavior.clone();
 
         Box::pin(try_stream! {
-        let headers = behavior
+        let mut headers = behavior
             .build_headers(&api_key, crate::providers::behavior::Endpoint::Responses)?;
+        behavior.apply_request_headers(&mut headers, &request)?;
         let model = request.model.clone();
         tracing::info!(provider = %provider_id, model = %model, api = "responses", tools = request.tools.len(), "provider stream started");
         let mut body = json!({
@@ -56,7 +57,11 @@ impl crate::provider::OpenAiProvider {
                 request.tools.clone()
             };
             body["tools"] = json!(tools.iter().map(responses_tool_to_json).collect::<Vec<_>>());
-            body["tool_choice"] = json!("auto");
+            body["tool_choice"] = if requires_initial_session_title(&request) {
+                json!({ "type": "function", "name": "set_session_title" })
+            } else {
+                json!("auto")
+            };
             if behavior.supports_parallel_tool_calls(crate::providers::behavior::Endpoint::Responses) {
                 body["parallel_tool_calls"] = json!(true);
             }
@@ -126,10 +131,11 @@ impl crate::provider::OpenAiProvider {
         let behavior = self.behavior.clone();
 
         Box::pin(try_stream! {
-        let headers = behavior.build_headers(
+        let mut headers = behavior.build_headers(
             &api_key,
             crate::providers::behavior::Endpoint::ChatCompletions,
         )?;
+        behavior.apply_request_headers(&mut headers, &request)?;
         let model = request.model.clone();
         tracing::info!(provider = %provider_id, model = %model, api = "chat-completions", tools = request.tools.len(), "provider stream started");
         let messages_json = chat_completions_messages(&request);
@@ -152,7 +158,14 @@ impl crate::provider::OpenAiProvider {
                 request.tools.clone()
             };
             body["tools"] = json!(tools.iter().map(chat_tool_to_json).collect::<Vec<_>>());
-            body["tool_choice"] = json!("auto");
+            body["tool_choice"] = if requires_initial_session_title(&request) {
+                json!({
+                    "type": "function",
+                    "function": { "name": "set_session_title" }
+                })
+            } else {
+                json!("auto")
+            };
             if behavior.supports_parallel_tool_calls(crate::providers::behavior::Endpoint::ChatCompletions) {
                 body["parallel_tool_calls"] = json!(true);
             }
@@ -217,6 +230,18 @@ impl crate::provider::OpenAiProvider {
         yield ModelStreamEvent::Done;
         })
     }
+}
+
+/// The session-title tool is installed only for the primary chat session. If
+/// it has not produced a tool result yet, force it as the first model action.
+/// This avoids a separate title-generation completion while making naming
+/// deterministic on OpenAI-compatible providers such as Charm Hyper.
+fn requires_initial_session_title(request: &ModelRequest) -> bool {
+    request.tools.iter().any(|tool| tool.name == "set_session_title")
+        && !request.messages.iter().any(|message| {
+            message.role == navi_core::ModelRole::Tool
+                && message.tool_name.as_deref() == Some("set_session_title")
+        })
 }
 
 pub(crate) fn parse_openai_responses_sse(data: &str) -> Vec<Result<ModelStreamEvent>> {
@@ -957,6 +982,7 @@ mod message_build_tests {
             messages,
             thinking: ThinkingConfig::Off,
             tools: Vec::new(),
+            session_id: None,
         }
     }
 

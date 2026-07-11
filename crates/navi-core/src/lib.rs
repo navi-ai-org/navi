@@ -35,6 +35,7 @@ pub mod runtime_components;
 pub mod sandbox;
 pub mod security;
 pub mod session;
+pub mod session_title;
 pub mod setup;
 pub mod skill_mining;
 pub mod skills;
@@ -132,8 +133,8 @@ pub use repo_intelligence::{
     search_symbols, search_text_matches,
 };
 pub use runtime::{
-    AgentRuntime, AgentRuntimeOptions, ApprovalResolver, PlanReviewResolver, QuestionResolver,
-    SudoPasswordResolver, TurnCanceller,
+    AgentRuntime, AgentRuntimeOptions, ApprovalResolver, MemoryExtractionModel,
+    PlanReviewResolver, QuestionResolver, SudoPasswordResolver, TurnCanceller,
 };
 pub use runtime_components::{
     CompactionStrategy, DefaultCompactionStrategy, DefaultHarnessDriver, DefaultPromptBuilder,
@@ -146,6 +147,7 @@ pub use session::{
     SessionUsageSnapshot,
     clean_session_title, session_title_from_events,
 };
+pub use session_title::{SessionTitleHandle, SessionTitleTool};
 pub use setup::{SETUP_INTERVIEW_COMPLETE_MARKER, SETUP_INTERVIEW_PROMPT};
 pub use skill_mining::{
     SkillDraft, SkillReplayReport, activate_skill_after_replay, draft_skill_from_traces,

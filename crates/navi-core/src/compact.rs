@@ -395,7 +395,8 @@ impl CompactState {
             ],
             thinking: ThinkingConfig::Off,
             tools: vec![],
-        };
+            session_id: None,
+};
 
         match model_provider.complete(request).await {
             Ok(response) => {

@@ -34,6 +34,27 @@ fn forward_runtime_event_to_tui_inner(
     tx: &mpsc::UnboundedSender<AsyncEvent>,
     session_id: Option<&str>,
 ) {
+    // Session title updates are lifecycle events (not AgentEvent) so live UIs
+    // can rename the active session as soon as `set_session_title` runs.
+    if let navi_sdk::RuntimeEventKind::SessionTitleUpdated {
+        session_id: event_session_id,
+        title,
+    } = &event.kind
+    {
+        let async_event = match session_id {
+            Some(session_id) => AsyncEvent::SessionTitleUpdatedForSession {
+                session_id: session_id.to_string(),
+                title: title.clone(),
+            },
+            None => AsyncEvent::SessionTitleUpdated {
+                session_id: event_session_id.clone(),
+                title: title.clone(),
+            },
+        };
+        let _ = tx.send(async_event);
+        return;
+    }
+
     if let Some(event) = event.into_agent_event() {
         let async_event = match session_id {
             Some(session_id) => AsyncEvent::AgentForSession {

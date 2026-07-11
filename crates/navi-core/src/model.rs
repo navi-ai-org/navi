@@ -228,6 +228,13 @@ pub struct ModelRequest {
     /// Tool definitions the model may invoke.
     #[serde(default)]
     pub tools: Vec<ToolDefinition>,
+    /// Stable session id for provider-side prompt-cache affinity.
+    ///
+    /// Providers such as Charm Hyper use this to set `x-session-id` and
+    /// `x-session-affinity` so consecutive turns of the same agent session
+    /// hit the same KV-cache shard. Not serialized to disk/transcripts.
+    #[serde(default, skip_serializing, skip_deserializing)]
+    pub session_id: Option<String>,
 }
 
 /// A single message in a model conversation.

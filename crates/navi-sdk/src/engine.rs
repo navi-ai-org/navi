@@ -4,8 +4,9 @@ type Result<T> = std::result::Result<T, NaviError>;
 use navi_core::registry::types::{RegistryModel, RegistryProvider};
 use navi_core::{
     AgentRuntime, AgentRuntimeOptions, ApprovalDecision, CredentialStore, LoadedConfig,
+    MemoryExtractionModel,
     ModelOption, ProviderConfig, QuestionResponse, RuntimeComponents, RuntimeEvent, SessionGoal,
-    SessionId, SessionSnapshot, SessionStore, SkillManifest, available_model_options,
+    SessionId, SessionSnapshot, SessionStore, SessionTitleHandle, SessionTitleTool, SkillManifest, available_model_options,
     canonical_provider_id, config::effective_context_window, discover_configured_skills,
     model_can_run_publicly, provider_catalog, registry, registry::RegistryStore,
     resolve_provider_api_key, resolve_provider_config, resolve_provider_credential_status,
@@ -261,6 +262,10 @@ impl NaviEngine {
 
         let loaded_config = self.loaded_config();
         let provider = build_provider_for_project_config(&loaded_config, &project_dir)?;
+        let memory_extraction_model = self.configured_memory_extraction_model(
+            &loaded_config,
+            &project_dir,
+        )?;
         let mut tool_executor = build_local_tooling(
             &loaded_config,
             project_dir.clone(),
@@ -309,6 +314,10 @@ impl NaviEngine {
         let mut executor = Arc::try_unwrap(tool_executor.tool_executor).map_err(|_| {
             NaviError::Config("cannot finalize cyclic tools after executor is shared".into())
         })?;
+        // The active chat model names the session through this cheap local tool;
+        // never create a second background completion merely to generate a title.
+        let session_title_handle = SessionTitleHandle::new();
+        executor.register_tool(Arc::new(SessionTitleTool::new(session_title_handle.clone())));
         let shared_provider = Arc::new(std::sync::RwLock::new(provider.clone()));
         let shared_model = Arc::new(std::sync::RwLock::new(
             loaded_config.config.model.name.clone(),
@@ -366,6 +375,8 @@ impl NaviEngine {
             session_id: request.session_id.map(SessionId::new),
             event_tx: None,
             runtime_components: Some(runtime_components),
+            session_title_handle: Some(session_title_handle),
+            memory_extraction_model,
         });
         let events = runtime.stream_events();
         let session_id = runtime.start_session()?;
@@ -401,6 +412,41 @@ impl NaviEngine {
                 }),
             );
         Ok(info)
+    }
+
+    /// Builds the opt-in model used for automatic memory extraction. This is
+    /// intentionally separate from the chat provider: leaving it unset
+    /// disables automatic extraction instead of charging the interactive model
+    /// in a hidden background request.
+    fn configured_memory_extraction_model(
+        &self,
+        loaded_config: &LoadedConfig,
+        project_dir: &std::path::Path,
+    ) -> Result<Option<MemoryExtractionModel>> {
+        let Some(entry) = loaded_config
+            .config
+            .background_models
+            .memory_extraction
+            .as_ref()
+        else {
+            return Ok(None);
+        };
+        let (Some(provider), Some(model)) = (entry.provider.as_deref(), entry.model.as_deref())
+        else {
+            return Err(NaviError::Config(
+                "background_models.memory_extraction requires an explicit provider and model"
+                    .into(),
+            ));
+        };
+
+        let mut extraction_config = loaded_config.clone();
+        extraction_config.config.model.provider = provider.to_string();
+        extraction_config.config.model.name = model.to_string();
+        let provider = build_provider_for_project_config(&extraction_config, project_dir)?;
+        Ok(Some(MemoryExtractionModel {
+            provider,
+            model_name: model.to_string(),
+        }))
     }
 
     /// Sends a user message to an active session and waits for the assistant response.
@@ -1402,6 +1448,14 @@ impl NaviEngine {
                     NaviError::Config("cannot register MCP tool during plugin reload".into())
                 })?;
                 executor.register_tool(tool.clone());
+            }
+            {
+                let executor = Arc::get_mut(&mut fresh.tool_executor).ok_or_else(|| {
+                    NaviError::Config("cannot register session title tool during plugin reload".into())
+                })?;
+                executor.register_tool(Arc::new(SessionTitleTool::new(
+                    runtime.session_title_handle(),
+                )));
             }
             runtime.set_tool_executor(fresh.tool_executor);
             warnings.extend(fresh.warnings);

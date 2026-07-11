@@ -25,6 +25,7 @@ use crate::model::{ModelMessage, ModelProvider, ModelResponse};
 use crate::runtime_components::RuntimeComponents;
 use crate::security::SecurityPolicy;
 use crate::session::{SessionId, SessionStore, current_unix_timestamp};
+use crate::session_title::SessionTitleHandle;
 use crate::skills::{SkillManifest, active_skills, discover_configured_skills};
 use crate::tool::builtin::{RepoExploreTool, SubagentTool};
 use crate::tool::{Tool, ToolExecutor};
@@ -314,6 +315,19 @@ pub struct AgentRuntimeOptions {
     pub event_tx: Option<tokio::sync::mpsc::UnboundedSender<AgentEvent>>,
     /// Replaceable runtime components. Defaults preserve NAVI's code-agent behavior.
     pub runtime_components: Option<RuntimeComponents>,
+    /// Session-local title state written by the `set_session_title` tool.
+    /// When omitted, direct runtime users simply do not get agent-managed titles.
+    pub session_title_handle: Option<SessionTitleHandle>,
+    /// Explicit model for automatic durable-memory extraction. `None` means
+    /// extraction is disabled rather than silently billing the chat model.
+    pub memory_extraction_model: Option<MemoryExtractionModel>,
+}
+
+/// Provider selection for the opt-in per-turn memory extractor.
+#[derive(Clone)]
+pub struct MemoryExtractionModel {
+    pub provider: Arc<dyn ModelProvider>,
+    pub model_name: String,
 }
 
 /// The core agent runtime that manages sessions, turns, approvals, and events.
@@ -351,8 +365,10 @@ pub struct AgentRuntime {
     turn_used_memory_write: bool,
     /// Last user task text — used for extractMemories context.
     last_user_task: String,
-    /// Model-assigned title from background naming (applied before snapshot).
-    model_title_slot: Arc<std::sync::Mutex<Option<String>>>,
+    /// Session title assigned by the chat model through `set_session_title`.
+    session_title_handle: SessionTitleHandle,
+    /// User-selected model for asynchronous automatic memory extraction.
+    memory_extraction_model: Option<MemoryExtractionModel>,
     /// Whether a user message is pending (set when send_turn is called
     /// while the runtime is busy with auto-continuation).
     pending_user_input: std::sync::atomic::AtomicBool,
@@ -427,7 +443,8 @@ impl AgentRuntime {
             goal_extension,
             turn_used_memory_write: false,
             last_user_task: String::new(),
-            model_title_slot: Arc::new(std::sync::Mutex::new(None)),
+            session_title_handle: options.session_title_handle.unwrap_or_default(),
+            memory_extraction_model: options.memory_extraction_model,
             pending_user_input: std::sync::atomic::AtomicBool::new(false),
             agent_mode: std::sync::RwLock::new(crate::plan_mode::AgentMode::Default),
             plan_parser: std::sync::Mutex::new(crate::plan_mode::ProposedPlanParser::new()),
@@ -854,9 +871,9 @@ impl AgentRuntime {
             submitted_at: Some(crate::session::current_unix_timestamp()),
         });
         self.last_user_task = task.clone();
-        // Name + persist immediately so sidebars list the session while the
-        // turn is still running (TUI + Desktop). Model naming refines later.
-        self.bootstrap_session_title_and_persist(&task);
+        // Persist immediately so sidebars list the session while the turn is
+        // still running. The chat model supplies its title through the tool.
+        self.persist_submitted_session();
         self.event_bus.publish(RuntimeEventKind::TurnStarted {
             turn_id: turn_id.clone(),
         });
@@ -884,6 +901,18 @@ impl AgentRuntime {
                 }
                 Some(event) = event_rx.recv() => {
                     self.record_event(event);
+                    // Apply + persist as soon as `set_session_title` completes so
+                    // live UIs and session lists do not wait for the whole turn.
+                    if self.apply_pending_session_title() {
+                        if let Err(err) = self.session.snapshot(
+                            &self.project_dir,
+                            &self.session_store,
+                            &self.event_bus,
+                            self.goal_runtime.get_goal(),
+                        ) {
+                            tracing::debug!(error = %err, "early title snapshot failed");
+                        }
+                    }
                 }
             }
         };
@@ -893,7 +922,7 @@ impl AgentRuntime {
         }
         drop(event_rx);
         self.session.set_updated_at(current_unix_timestamp());
-        self.session.update_title_from_events();
+        let _ = self.apply_pending_session_title();
 
         match &result {
             Ok(text) => {
@@ -1060,23 +1089,26 @@ impl AgentRuntime {
         Ok(remaining)
     }
 
-    /// Apply any background model-assigned title before persisting.
-    fn apply_pending_model_title(&mut self) {
-        let pending = self
-            .model_title_slot
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .take();
-        if let Some(title) = pending {
-            self.session.set_title(Some(title));
-        }
+    /// Applies a title set by the current chat model and informs live clients.
+    ///
+    /// Returns `true` when a new title was applied so callers can decide whether
+    /// to persist immediately (mid-turn) or fold the change into a later snapshot.
+    fn apply_pending_session_title(&mut self) -> bool {
+        let Some(title) = self.session_title_handle.take() else {
+            return false;
+        };
+        self.session.set_title(Some(title.clone()));
+        self.event_bus.publish(RuntimeEventKind::SessionTitleUpdated {
+            session_id: self.session.id().as_str().to_string(),
+            title,
+        });
+        true
     }
 
     /// Creates a [`SessionSnapshot`] of the current session state for persistence.
     pub fn snapshot_session(&mut self) -> Result<SessionSnapshot> {
         self.session.set_updated_at(current_unix_timestamp());
-        self.apply_pending_model_title();
-        self.session.update_title_from_events();
+        let _ = self.apply_pending_session_title();
         let snapshot = self.session.snapshot(
             &self.project_dir,
             &self.session_store,
@@ -1090,8 +1122,7 @@ impl AgentRuntime {
     /// Creates and persists a session snapshot without blocking the async runtime.
     pub async fn snapshot_session_async(&mut self) -> Result<SessionSnapshot> {
         self.session.set_updated_at(current_unix_timestamp());
-        self.apply_pending_model_title();
-        self.session.update_title_from_events();
+        let _ = self.apply_pending_session_title();
         let snapshot = self
             .session
             .snapshot_async(
@@ -1216,6 +1247,12 @@ impl AgentRuntime {
         self.tool_executor.clone()
     }
 
+    /// Returns the session-local handle used by the title tool. SDK tooling
+    /// reloads use this to keep the built-in title capability installed.
+    pub fn session_title_handle(&self) -> SessionTitleHandle {
+        self.session_title_handle.clone()
+    }
+
     /// Replaces the session tool executor (e.g. after installing WASM plugins).
     pub fn set_tool_executor(&mut self, executor: Arc<ToolExecutor>) {
         self.tool_executor = Some(executor);
@@ -1270,104 +1307,29 @@ impl AgentRuntime {
         Ok(())
     }
 
-    /// Assign a readable title as soon as the user sends a message, persist the
-    /// session to disk, and kick off background model naming.
-    ///
-    /// Without this, sidebars stay empty ("No sessions yet") until the turn ends
-    /// and titles often remain raw first-line user text.
-    fn bootstrap_session_title_and_persist(&mut self, user_task: &str) {
-        let needs_title = self.session.title().is_none();
-        if needs_title {
-            if let Some(title) = crate::session::clean_session_title(user_task) {
-                let session_id = self.session.id().as_str().to_string();
-                self.session.set_title(Some(title.clone()));
-                self.event_bus
-                    .publish(RuntimeEventKind::SessionTitleUpdated {
-                        session_id,
-                        title,
-                    });
-            }
-        }
-
+    /// Persist a newly submitted session so it appears in saved-session lists.
+    /// Naming is deliberately not done here: a second completion would both cost
+    /// credits and create an unrelated request that harms provider cache affinity.
+    fn persist_submitted_session(&mut self) {
         // Always snapshot on user submit so live sessions appear in list_saved
         // while the agent is still working.
         if let Err(err) = self.snapshot_session() {
             tracing::warn!(error = %err, "early session snapshot after user message failed");
         }
-
-        // Only spawn model naming when we just set (or still have) a provisional title
-        // and this looks like the first user turn.
-        if needs_title || self.session.events().iter().filter(|e| matches!(e, AgentEvent::UserTaskSubmitted { .. })).count() <= 1 {
-            self.try_name_session(user_task, "");
-        }
-    }
-
-    /// Fire-and-forget model title generation. Updates the on-disk snapshot title
-    /// and emits [`RuntimeEventKind::SessionTitleUpdated`] for live UIs.
-    fn try_name_session(&self, user_message: &str, assistant_response: &str) {
-        let user_message = user_message.to_string();
-        if user_message.trim().is_empty() {
-            return;
-        }
-        let assistant_response = assistant_response.to_string();
-        let provider = self.model_provider.clone();
-        let model_name = provider_request_model_name(
-            &self.loaded_config.config.model.provider,
-            &self.loaded_config.config.model.name,
-        );
-        let session_id = self.session.id().as_str().to_string();
-        let data_dir = self.loaded_config.data_dir.clone();
-        let redact = self
-            .loaded_config
-            .config
-            .security
-            .redact_secrets_in_sessions;
-        let event_tx = self.event_bus.sender();
-        let title_slot = self.model_title_slot.clone();
-
-        tokio::spawn(async move {
-            let Some(title) = crate::session::generate_session_title(
-                &user_message,
-                &assistant_response,
-                provider.as_ref(),
-                &model_name,
-            )
-            .await
-            else {
-                return;
-            };
-
-            // So the next snapshot does not clobber the model name with the provisional one.
-            if let Ok(mut slot) = title_slot.lock() {
-                *slot = Some(title.clone());
-            }
-
-            let store = SessionStore::with_redaction(data_dir, redact);
-            match store.rename_async(session_id.clone(), title.clone()).await {
-                Ok(true) => {
-                    tracing::info!(%session_id, %title, "session title assigned by model");
-                }
-                Ok(false) => {
-                    tracing::debug!(%session_id, "session rename skipped (not on disk yet)");
-                }
-                Err(err) => {
-                    tracing::warn!(error = %err, %session_id, "session title rename failed");
-                }
-            }
-
-            let _ = event_tx.send(crate::event::RuntimeEvent::new(
-                RuntimeEventKind::SessionTitleUpdated { session_id, title },
-            ));
-        });
     }
 
     /// extractMemories: background per-turn memory extraction.
     /// Spawns a tokio task that calls the model to extract durable memories
     /// from the completed turn. Fire-and-forget — does not block the agent loop.
     fn try_extract_memories(&self, _session_id: &str, conversation: &str) {
-        // Get the model provider and name for the extraction call
-        let provider = self.model_provider.clone();
-        let model_name = self.loaded_config.config.model.name.clone();
+        // Extraction never borrows the interactive chat model. It only runs
+        // after the user explicitly configures a dedicated background model.
+        let Some(extraction_model) = &self.memory_extraction_model else {
+            tracing::debug!("extract-memories skipped: no memory extraction model configured");
+            return;
+        };
+        let provider = extraction_model.provider.clone();
+        let model_name = extraction_model.model_name.clone();
         let conversation = conversation.to_string();
 
         let manager = match self.get_or_init_memory_manager() {
@@ -1587,6 +1549,7 @@ impl AgentRuntime {
             active_skills: self.shared_active_skills.clone(),
             prompt_cache: self.prompt_cache.clone(),
             instructions: std::sync::Arc::new(std::sync::RwLock::new(None)),
+            prompt_prefix: std::sync::Arc::new(std::sync::Mutex::new(None)),
             components: self.runtime_components.clone(),
             cancel_token: self.cancel_token.clone(),
             config: self.shared_config.clone(),

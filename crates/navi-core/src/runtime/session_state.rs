@@ -177,8 +177,9 @@ impl SessionState {
     }
 
     pub fn push_event(&mut self, event: AgentEvent) {
-        // Title is derived lazily via `update_title_from_events` (end of turn /
-        // snapshot) rather than walking the full event list on every push.
+        // Titles come from the chat model via `set_session_title` (runtime
+        // applies them through SessionTitleHandle). Fallback derivation from
+        // events is only used on rewind / when no tool title exists yet.
         self.events.push(event);
         self.updated_at = current_unix_timestamp();
     }

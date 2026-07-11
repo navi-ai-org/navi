@@ -188,6 +188,7 @@ impl Tool for RepoExploreTool {
             active_skills: Arc::new(std::sync::Mutex::new(Vec::new())),
             prompt_cache: self.prompt_cache.clone(),
             instructions: std::sync::Arc::new(std::sync::RwLock::new(None)),
+            prompt_prefix: std::sync::Arc::new(std::sync::Mutex::new(None)),
             components: self.components.clone(),
             cancel_token: CancelToken::new(),
             config: self.config.clone(),

@@ -68,6 +68,7 @@ impl BackgroundModelResolver {
         // 3. Map task to default profile and query registry.
         let default_profile = match task {
             "naming" => "naming",
+            "memory_extraction" => "cheap_general",
             "repo_search" => "repo_search",
             "compaction" => "long_context_cheap",
             "subagent_research" => "research_synthesis",

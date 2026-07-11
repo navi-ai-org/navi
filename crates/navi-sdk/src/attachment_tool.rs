@@ -144,7 +144,8 @@ impl Tool for AttachmentAnalysisTool {
             ],
             thinking: ThinkingConfig::Off,
             tools: Vec::new(),
-        };
+            session_id: None,
+};
 
         let response = provider.complete(request).await?;
         Ok(ToolResult {

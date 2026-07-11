@@ -341,6 +341,13 @@ fn build_system_prompt_inner(
              - Temporary scratch: `append_note` (not durable memory).\n",
         );
     }
+    if tools_enabled {
+        prompt.push_str(
+            "\nSession title:\n\
+             - Your first action in a new session MUST be `set_session_title` using the user's initial request.\n\
+             - Continue normally after that tool succeeds. Call it again only when the primary objective changes materially.\n",
+        );
+    }
     // Native tool calling already receives JSON tool schemas on the request;
     // do not also paste a text compatibility catalog into the system prompt.
     let embed_manifest = tool_manifest.is_some()
@@ -689,7 +696,8 @@ mod tests {
                 messages: Vec::new(),
                 thinking: ThinkingConfig::Off,
                 tools: Vec::new(),
-            },
+                session_id: None,
+},
             policy,
         );
         assert!(trace.get("max_turn_loops").is_none());

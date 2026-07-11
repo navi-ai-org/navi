@@ -55,9 +55,14 @@ pub struct TurnContext {
     pub components: RuntimeComponents,
     pub cancel_token: CancelToken,
     /// Stable base instructions for the `instructions` field of the provider
-    /// request, separated from dynamic developer messages for prompt cache
-    /// efficiency. Populated by `ensure_system_prompt` on each turn.
+    /// request, separated from developer messages for prompt cache efficiency.
+    /// It is populated once, when the session prompt prefix is frozen.
     pub instructions: Arc<RwLock<Option<String>>>,
+    /// Immutable prompt prefix for this session. Context packets, skills and
+    /// memory must not rewrite the provider-visible system/developer prefix in
+    /// the middle of a conversation: doing so fragments prompt caches and can
+    /// subtly change the model's operating instructions.
+    pub prompt_prefix: Arc<std::sync::Mutex<Option<Vec<ModelMessage>>>>,
     /// Snapshot of the active `NaviConfig` taken at turn start. Used by
     /// `ensure_system_prompt` so the model sees the user-configured harness
     /// profile, model and provider rather than the defaults.
@@ -194,6 +199,16 @@ fn ensure_not_cancelled(ctx: &TurnContext) -> Result<()> {
 }
 
 async fn ensure_system_prompt(ctx: &TurnContext, messages: &mut Vec<ModelMessage>) {
+    if let Some(prefix) = ctx
+        .prompt_prefix
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone()
+    {
+        replace_prompt_prefix(messages, prefix);
+        return;
+    }
+
     let context_packets = ctx
         .context_packets
         .lock()
@@ -245,16 +260,9 @@ async fn ensure_system_prompt(ctx: &TurnContext, messages: &mut Vec<ModelMessage
     *ctx.instructions.write().unwrap_or_else(|e| e.into_inner()) =
         Some(rendered.instructions.clone());
 
-    // Rebuild the message prefix: one system message with the base
-    // instructions, followed by developer messages for each context block.
-    // Remove any existing system or developer messages from the prefix.
-    while matches!(
-        messages.first(),
-        Some(m) if m.role == ModelRole::System || m.role == ModelRole::Developer
-    ) {
-        messages.remove(0);
-    }
-
+    // Build the prefix once. It deliberately remains unchanged for the rest
+    // of the session so provider prompt-cache keys stay stable after the first
+    // request, even if memory, skill or external-context state changes later.
     let mut prefix = Vec::with_capacity(2 + rendered.developer_messages.len());
     prefix.push(ModelMessage::system(rendered.instructions));
     // In Plan mode, inject a developer message instructing the model to
@@ -274,6 +282,20 @@ async fn ensure_system_prompt(ctx: &TurnContext, messages: &mut Vec<ModelMessage
         ));
     }
     prefix.extend(rendered.developer_messages);
+    *ctx
+        .prompt_prefix
+        .lock()
+        .unwrap_or_else(|e| e.into_inner()) = Some(prefix.clone());
+    replace_prompt_prefix(messages, prefix);
+}
+
+fn replace_prompt_prefix(messages: &mut Vec<ModelMessage>, prefix: Vec<ModelMessage>) {
+    while matches!(
+        messages.first(),
+        Some(m) if m.role == ModelRole::System || m.role == ModelRole::Developer
+    ) {
+        messages.remove(0);
+    }
     messages.splice(0..0, prefix);
 }
 
@@ -424,6 +446,8 @@ fn build_model_request(ctx: &TurnContext, messages: &[ModelMessage]) -> ModelReq
             | crate::config::ToolCallingMode::ManifestOnly
             | crate::config::ToolCallingMode::Disabled => Vec::new(),
         },
+        // Pin provider KV-cache affinity to this agent session (Charm Hyper, etc.).
+        session_id: Some(ctx.session_id.clone()),
     }
 }
 

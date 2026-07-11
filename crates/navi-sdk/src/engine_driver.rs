@@ -110,6 +110,19 @@ pub trait EngineDriver: Send + Sync {
     /// Select a model and optionally persist the change.
     fn select_model(&self, request: NaviModelSelectionRequest) -> Result<NaviModelSelectionResult>;
 
+    /// Persist a background-task model route. Active sessions retain their
+    /// route; the change is used when a subsequent session starts.
+    fn set_background_model(
+        &self,
+        task: &str,
+        provider: &str,
+        model: &str,
+        target: NaviConfigSaveTarget,
+    ) -> Result<()>;
+
+    /// Clear a background-task model route.
+    fn clear_background_model(&self, task: &str, target: NaviConfigSaveTarget) -> Result<()>;
+
     /// Current in-memory configuration snapshot.
     fn loaded_config(&self) -> LoadedConfig;
 
@@ -264,6 +277,20 @@ impl EngineDriver for crate::NaviEngine {
 
     fn select_model(&self, request: NaviModelSelectionRequest) -> Result<NaviModelSelectionResult> {
         crate::NaviEngine::select_model(self, request)
+    }
+
+    fn set_background_model(
+        &self,
+        task: &str,
+        provider: &str,
+        model: &str,
+        target: NaviConfigSaveTarget,
+    ) -> Result<()> {
+        crate::NaviEngine::set_background_model(self, task, provider, model, target).map(|_| ())
+    }
+
+    fn clear_background_model(&self, task: &str, target: NaviConfigSaveTarget) -> Result<()> {
+        crate::NaviEngine::clear_background_model(self, task, target).map(|_| ())
     }
 
     fn loaded_config(&self) -> LoadedConfig {
