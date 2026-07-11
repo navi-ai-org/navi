@@ -180,7 +180,7 @@ Some provider ids have special adapters:
 - `github-copilot` uses GitHub device OAuth bearer tokens and Copilot request headers.
 - `openai` and `xai` use Responses-style reasoning effort.
 
-The UI thinking levels are `max`, `high`, `medium`, `low`, and `off`. `ThinkingConfig::to_thinking_request` produces a normalized `ThinkingRequest` with `effort` and `budget_tokens` fields. Each provider converts these to its own wire format in the stream layer.
+The UI effort picker is labeled **Effort Level** (not "thinking mode"). Levels shown are model-specific from registry `reasoning_levels` (mapped to `max`/`high`/`medium`/`low`/`off`/`adaptive`). When a model has no configured levels, the picker is binary: **thinking on** / **thinking off**. `ThinkingConfig::to_thinking_request` produces a normalized `ThinkingRequest` with `effort` and `budget_tokens` fields. Each provider converts these to its own wire format in the stream layer.
 
 Tool transcripts must remain provider-correct. Chat Completions uses assistant `tool_calls` plus role `tool` results. Responses uses `function_call` and `function_call_output` input items.
 
@@ -546,7 +546,7 @@ Global (cross-project) memory lives at `{data_dir}/memory/global-memory.db` (SQL
 
 ### SDK API
 
-`NaviEngine` memory surface: CRUD (`memory_write` … `memory_index`) plus ops (`memory_status`, `memory_doctor`, `memory_init`, `memory_history_search`, `memory_dream`, `memory_distill`, `memory_checkpoint`). Voice: 10 methods (`voice_status` … `subscribe_voice_events`). Plugins: `plugin_list` / `plugin_info` / `plugin_search` / `plugin_install_*` / `plugin_update_*` / `plugin_remove`. Auth: `provider_supports_device_oauth`, `start_device_oauth`. Registry: `sync_registry`, `list_registry`. All are also bound in `navi-napi` for Node.js/Electron (NAV Desktop). Voice is engine-scoped (client-fed 16 kHz PCM + dedicated event stream).
+`NaviEngine` memory surface: CRUD (`memory_write` … `memory_index`) plus ops (`memory_status`, `memory_doctor`, `memory_init`, `memory_history_search`, `memory_dream`, `memory_distill`, `memory_checkpoint`). Voice: 10 methods (`voice_status` … `subscribe_voice_events`). Plugins: `plugin_list` / `plugin_info` / `plugin_search` / `plugin_install_*` / `plugin_update_*` / `plugin_remove`. Auth: `provider_supports_device_oauth`, `start_device_oauth`. Registry: `sync_registry`, `list_registry`. Effort: `list_models()` returns each `NaviModelInfo` with resolved `effort_options` + `effort_binary` (use these for pickers; do not invent a global effort list). Helpers: `effort_options_for_model`, `thinking_levels_for_model`, `is_binary_effort_model`, `effort_display_label`. All are also bound in `navi-napi` for Node.js/Electron (NAV Desktop) — `listModels()` JSON includes `effortOptions` / `effortBinary`; `sendTurn(..., { thinking })` accepts model levels plus binary `on`. Voice is engine-scoped (client-fed 16 kHz PCM + dedicated event stream).
 
 ### Events
 

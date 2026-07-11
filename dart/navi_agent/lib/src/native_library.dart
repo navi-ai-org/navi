@@ -68,15 +68,6 @@ final NaviEngineNewDart naviEngineNew = naviLib
     .lookupFunction<NaviEngineNewNative, NaviEngineNewDart>(
         'navi_engine_new');
 
-// NaviDartEngine* navi_engine_new_learning_tutor(const char*)
-typedef NaviEngineNewLearningTutorNative = Pointer<NaviDartEngine> Function(
-    Pointer<Utf8>);
-typedef NaviEngineNewLearningTutorDart = Pointer<NaviDartEngine> Function(
-    Pointer<Utf8>);
-final NaviEngineNewLearningTutorDart naviEngineNewLearningTutor = naviLib
-    .lookupFunction<NaviEngineNewLearningTutorNative,
-        NaviEngineNewLearningTutorDart>('navi_engine_new_learning_tutor');
-
 // void navi_engine_free(NaviDartEngine*)
 typedef NaviEngineFreeNative = Void Function(Pointer<NaviDartEngine>);
 typedef NaviEngineFreeDart = void Function(Pointer<NaviDartEngine>);

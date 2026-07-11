@@ -101,9 +101,10 @@ pub use harness::{
 pub use logging::{LoggingGuard, LoggingRuntimeConfig, init_logging, log_dir, log_path};
 pub use mcp_firewall::{McpFirewallDecision, McpFirewallPolicy, McpProvenance, McpTaint};
 pub use model::{
-    AttachmentKind, ContentPart, DEFAULT_REASONING_LEVELS, ModelMessage, ModelProvider,
-    ModelRequest, ModelResponse, ModelRole, ModelStream, ModelStreamEvent, ThinkingConfig,
-    ThinkingRequest, parse_reasoning_level, resolve_effort_label, resolve_model_thinking_level,
+    AttachmentKind, BINARY_REASONING_LEVELS, ContentPart, DEFAULT_REASONING_LEVELS, ModelMessage,
+    ModelProvider, ModelRequest, ModelResponse, ModelRole, ModelStream, ModelStreamEvent,
+    ThinkingConfig, ThinkingRequest, effort_display_label, is_binary_effort_model,
+    parse_reasoning_level, resolve_effort_label, resolve_model_thinking_level,
     thinking_levels_for_model,
 };
 pub use model_router::{ModelRoute, ModelRouteRole, ModelRouter, ModelScorecard};
@@ -136,10 +137,8 @@ pub use runtime::{
 };
 pub use runtime_components::{
     CompactionStrategy, DefaultCompactionStrategy, DefaultHarnessDriver, DefaultPromptBuilder,
-    DefaultToolSecurityPolicy, HarnessDriver, LearningHarness, LearningHarnessConfig,
-    NoopSessionHooks, PermissiveSecurityPolicy, PromptBuilder, RuntimeComponents, SessionHooks,
-    StudyCompactionConfig, StudyCompactionStrategy, ToolSecurityPolicy, TutorPromptBuilder,
-    TutorPromptOptions, learning_runtime_components,
+    DefaultToolSecurityPolicy, HarnessDriver, NoopSessionHooks, PermissiveSecurityPolicy,
+    PromptBuilder, RuntimeComponents, SessionHooks, ToolSecurityPolicy,
 };
 pub use security::{SecurityDecision, SecurityPolicy};
 pub use session::{

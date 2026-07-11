@@ -32,9 +32,8 @@ fn install_panic_guard() {
     }));
 }
 use navi_core::{
-    AgentEvent, ContentPart, ContextPacket, LearningHarness, LearningHarnessConfig, ModelMessage,
-    RuntimeComponents, StudyCompactionConfig, StudyCompactionStrategy, ThinkingConfig,
-    ToolInvocation, ToolKind, ToolResult, TutorPromptBuilder, TutorPromptOptions,
+    AgentEvent, ContentPart, ContextPacket, ModelMessage, RuntimeComponents, ThinkingConfig,
+    ToolInvocation, ToolKind, ToolResult,
 };
 use navi_sdk::{
     ApprovalDecision, HostToolDefinition, HostToolHandler, HostToolInvocation,
@@ -71,19 +70,6 @@ pub struct JsHostToolDefinition {
 
 #[derive(Clone, Default)]
 #[napi(object)]
-pub struct JsLearningRuntimeConfig {
-    pub max_consecutive_errors: Option<u32>,
-    pub stop_on_repeated_tool: Option<bool>,
-    pub compact_observation_max_bytes: Option<u32>,
-    pub role: Option<String>,
-    pub style: Option<String>,
-    pub language: Option<String>,
-    pub keep_all_assessments: Option<bool>,
-    pub exempt_tool_names: Option<Vec<String>>,
-}
-
-#[derive(Clone, Default)]
-#[napi(object)]
 pub struct JsTurnOptions {
     pub content_parts: Option<Vec<JsonValue>>,
     pub context_packets: Option<Vec<JsonValue>>,
@@ -108,8 +94,6 @@ pub struct NaviNapiVoiceEventStream {
 #[napi]
 pub struct NaviNapiEngineBuilder {
     project_dir: String,
-    learning_tutor: bool,
-    learning_config: Option<JsLearningRuntimeConfig>,
     hooks: JsHookCallbacks,
     host_tools: Vec<Arc<dyn navi_core::Tool>>,
 }
@@ -141,22 +125,9 @@ impl NaviNapiEngineBuilder {
     pub fn new(project_dir: String) -> Self {
         Self {
             project_dir,
-            learning_tutor: false,
-            learning_config: None,
             hooks: JsHookCallbacks::default(),
             host_tools: Vec::new(),
         }
-    }
-
-    #[napi]
-    pub fn set_learning_tutor(&mut self, enabled: Option<bool>) {
-        self.learning_tutor = enabled.unwrap_or(true);
-    }
-
-    #[napi(js_name = "configureLearning")]
-    pub fn configure_learning(&mut self, config: JsLearningRuntimeConfig) {
-        self.learning_tutor = true;
-        self.learning_config = Some(config);
     }
 
     #[napi(js_name = "onSessionStart")]
@@ -237,11 +208,7 @@ impl NaviNapiEngineBuilder {
     #[napi]
     pub fn build(&mut self) -> Result<NaviNapiEngine> {
         let mut builder = NaviEngineBuilder::from_project(self.project_dir.clone());
-        let mut components = if self.learning_tutor {
-            learning_components(self.learning_config.as_ref())
-        } else {
-            RuntimeComponents::default()
-        };
+        let mut components = RuntimeComponents::default();
         if !self.hooks.is_empty() {
             components.hooks = Arc::new(JsSessionHooks {
                 callbacks: self.hooks.clone(),
@@ -261,25 +228,10 @@ impl NaviNapiEngineBuilder {
 #[napi]
 impl NaviNapiEngine {
     #[napi(constructor)]
-    pub fn new(project_dir: String, learning_tutor: Option<bool>) -> Result<Self> {
-        let mut builder = NaviEngineBuilder::from_project(project_dir);
-        if learning_tutor.unwrap_or(false) {
-            builder = builder.learning_tutor();
-        }
+    pub fn new(project_dir: String) -> Result<Self> {
+        let builder = NaviEngineBuilder::from_project(project_dir);
         let inner = runtime()
             .block_on(async { builder.build() })
-            .map_err(to_napi_error)?;
-        Ok(Self { inner })
-    }
-
-    #[napi(factory)]
-    pub fn learning_tutor(project_dir: String) -> Result<Self> {
-        let inner = runtime()
-            .block_on(async {
-                NaviEngineBuilder::from_project(project_dir)
-                    .learning_tutor()
-                    .build()
-            })
             .map_err(to_napi_error)?;
         Ok(Self { inner })
     }
@@ -699,6 +651,56 @@ impl NaviNapiEngine {
             .map_err(to_napi_error)
     }
 
+    /// Multi-account: list stored credential accounts for a provider.
+    #[napi]
+    pub fn list_credential_accounts(&self, provider_id: String) -> Result<JsonValue> {
+        let accounts = self
+            .inner
+            .list_credential_accounts(&provider_id)
+            .map_err(to_napi_error)?;
+        serde_json::to_value(accounts).map_err(to_napi_error)
+    }
+
+    /// Multi-account: add an API key account (does not wipe siblings).
+    #[napi]
+    pub fn add_provider_account(
+        &self,
+        provider_id: String,
+        api_key: String,
+        label: Option<String>,
+    ) -> Result<JsonValue> {
+        let account_id = self
+            .inner
+            .add_provider_account(&provider_id, &api_key, label.as_deref())
+            .map_err(to_napi_error)?;
+        Ok(json!({ "accountId": account_id }))
+    }
+
+    /// Multi-account: select active account (default + project binding).
+    #[napi]
+    pub fn select_provider_account(
+        &self,
+        provider_id: String,
+        account_id: String,
+    ) -> Result<JsonValue> {
+        self.inner
+            .select_provider_account(&provider_id, &account_id)
+            .map_err(to_napi_error)?;
+        Ok(json!({ "selected": true, "accountId": account_id }))
+    }
+
+    /// Multi-account: delete one credential account.
+    #[napi]
+    pub fn delete_provider_account(
+        &self,
+        provider_id: String,
+        account_id: String,
+    ) -> Result<bool> {
+        self.inner
+            .delete_provider_account(&provider_id, &account_id)
+            .map_err(to_napi_error)
+    }
+
     #[napi]
     pub fn provider_supports_device_oauth(&self, provider_id: String) -> bool {
         self.inner.provider_supports_device_oauth(&provider_id)
@@ -903,6 +905,76 @@ impl NaviNapiEngine {
             "provider_configured": result.provider_configured,
             "saved_to": result.saved_to,
         }))
+    }
+
+    /// Set attachment fallback model for a modality (image|audio|video|document).
+    #[napi]
+    pub fn set_attachment_model(
+        &self,
+        modality: String,
+        provider: String,
+        model: String,
+        save_target: Option<String>,
+    ) -> Result<JsonValue> {
+        let path = self
+            .inner
+            .set_attachment_model(
+                &modality,
+                &provider,
+                &model,
+                parse_save_target(save_target.as_deref()),
+            )
+            .map_err(to_napi_error)?;
+        Ok(json!({ "savedTo": path.map(|p| p.display().to_string()) }))
+    }
+
+    /// Clear attachment fallback for a modality.
+    #[napi]
+    pub fn clear_attachment_model(
+        &self,
+        modality: String,
+        save_target: Option<String>,
+    ) -> Result<JsonValue> {
+        let path = self
+            .inner
+            .clear_attachment_model(&modality, parse_save_target(save_target.as_deref()))
+            .map_err(to_napi_error)?;
+        Ok(json!({ "savedTo": path.map(|p| p.display().to_string()) }))
+    }
+
+    /// Set background-task model override (naming|compaction|repo_search|…).
+    #[napi]
+    pub fn set_background_model(
+        &self,
+        task: String,
+        provider: String,
+        model: String,
+        save_target: Option<String>,
+    ) -> Result<JsonValue> {
+        let path = self
+            .inner
+            .set_background_model(
+                &task,
+                &provider,
+                &model,
+                parse_save_target(save_target.as_deref()),
+            )
+            .map_err(to_napi_error)?;
+        Ok(json!({ "savedTo": path.map(|p| p.display().to_string()) }))
+    }
+
+    /// Clear background-task model override.
+    #[napi]
+    pub fn clear_background_model(
+        &self,
+        task: String,
+        save_target: Option<String>,
+    ) -> Result<JsonValue> {
+        let path = self
+            .inner
+            .clear_background_model(&task, parse_save_target(save_target.as_deref()))
+            .map_err(to_napi_error)?;
+        Ok(json!({ "savedTo": path.map(|p| p.display().to_string()) }))
     }
 
     // ── Provider Model Sync ────────────────────────────────────────────
@@ -1533,6 +1605,14 @@ impl NaviNapiEngine {
                 "video": config.config.attachment_models.video,
                 "document": config.config.attachment_models.document,
             },
+            "backgroundModels": {
+                "default": config.config.background_models.default,
+                "naming": config.config.background_models.naming,
+                "repoSearch": config.config.background_models.repo_search,
+                "compaction": config.config.background_models.compaction,
+                "subagentResearch": config.config.background_models.subagent_research,
+                "simpleCodeEdit": config.config.background_models.simple_code_edit,
+            },
             "updates": {
                 "checkEnabled": config.config.updates.check_enabled,
                 "autoUpdate": config.config.updates.auto_update,
@@ -1797,17 +1877,13 @@ fn parse_save_target(value: Option<&str>) -> NaviConfigSaveTarget {
 }
 
 fn parse_thinking_config(value: &str) -> Result<ThinkingConfig> {
-    match value {
-        "max" => Ok(ThinkingConfig::Max),
-        "high" => Ok(ThinkingConfig::High),
-        "medium" => Ok(ThinkingConfig::Medium),
-        "low" => Ok(ThinkingConfig::Low),
-        "off" => Ok(ThinkingConfig::Off),
-        "adaptive" => Ok(ThinkingConfig::Adaptive),
-        other => Err(Error::from_reason(format!(
-            "unsupported thinking config '{other}', expected max, high, medium, low, off, or adaptive"
-        ))),
+    // Prefer shared registry/config parser (includes "on" → medium for binary effort).
+    if let Some(level) = navi_sdk::parse_reasoning_level(value) {
+        return Ok(level);
     }
+    Err(Error::from_reason(format!(
+        "unsupported effort/thinking config '{value}', expected max, high, medium, low, off, adaptive, or on"
+    )))
 }
 
 fn initial_messages_from_events(events: &[AgentEvent]) -> Vec<ModelMessage> {
@@ -1878,57 +1954,6 @@ fn emit_hook(callback: &Option<Arc<JsHookCallback>>, payload: JsonValue) {
     }
 }
 
-fn learning_components(config: Option<&JsLearningRuntimeConfig>) -> RuntimeComponents {
-    let mut components = navi_core::learning_runtime_components();
-    let Some(config) = config else {
-        return components;
-    };
-
-    let harness_defaults = LearningHarnessConfig::default();
-    components.harness = Arc::new(LearningHarness::new(LearningHarnessConfig {
-        max_consecutive_errors: config
-            .max_consecutive_errors
-            .map(|value| value as usize)
-            .unwrap_or(harness_defaults.max_consecutive_errors),
-        stop_on_repeated_tool: config
-            .stop_on_repeated_tool
-            .unwrap_or(harness_defaults.stop_on_repeated_tool),
-        compact_observation_max_bytes: config
-            .compact_observation_max_bytes
-            .map(|value| value as usize)
-            .or(harness_defaults.compact_observation_max_bytes),
-    }));
-
-    let prompt_defaults = TutorPromptOptions::default();
-    components.prompt = Arc::new(TutorPromptBuilder::new(TutorPromptOptions {
-        role: config
-            .role
-            .clone()
-            .unwrap_or_else(|| prompt_defaults.role.clone()),
-        style: config
-            .style
-            .clone()
-            .unwrap_or_else(|| prompt_defaults.style.clone()),
-        language: config
-            .language
-            .clone()
-            .unwrap_or_else(|| prompt_defaults.language.clone()),
-    }));
-
-    let compaction_defaults = StudyCompactionConfig::default();
-    components.compaction = Arc::new(StudyCompactionStrategy::new(StudyCompactionConfig {
-        keep_all_assessments: config
-            .keep_all_assessments
-            .unwrap_or(compaction_defaults.keep_all_assessments),
-        exempt_tool_names: config
-            .exempt_tool_names
-            .clone()
-            .unwrap_or(compaction_defaults.exempt_tool_names),
-    }));
-
-    components
-}
-
 fn to_napi_error(error: impl std::fmt::Display) -> Error {
     Error::from_reason(error.to_string())
 }
@@ -1995,20 +2020,6 @@ mod tests {
     }
 
     #[test]
-    fn learning_components_accept_structured_js_options() {
-        let _components = learning_components(Some(&JsLearningRuntimeConfig {
-            max_consecutive_errors: Some(7),
-            stop_on_repeated_tool: Some(true),
-            compact_observation_max_bytes: Some(4096),
-            role: Some("professor".to_string()),
-            style: Some("socratico".to_string()),
-            language: Some("pt-BR".to_string()),
-            keep_all_assessments: Some(true),
-            exempt_tool_names: Some(vec!["questionario".to_string()]),
-        }));
-    }
-
-    #[test]
     fn hook_callbacks_default_to_empty() {
         assert!(JsHookCallbacks::default().is_empty());
     }
@@ -2067,6 +2078,8 @@ mod tests {
             parse_thinking_config("adaptive").unwrap(),
             ThinkingConfig::Adaptive
         );
+        // Binary effort "thinking on" aliases to medium.
+        assert_eq!(parse_thinking_config("on").unwrap(), ThinkingConfig::Medium);
     }
 
     #[test]

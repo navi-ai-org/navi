@@ -645,7 +645,10 @@ fn composer_meta_right(app: &TuiApp, width: usize) -> ComposerMetaBuilt {
     }
 
     let model = selected_model_label(app);
-    let thinking = app.thinking_level.label();
+    let binary_effort = crate::state::ThinkingLevel::is_binary_for_model(
+        app.models.get(app.selected_model),
+    );
+    let thinking = app.thinking_level.display_label(binary_effort);
     let pending = app.input.len();
     let context = if app.hover_context_usage {
         app.compact_state.usage_label_with_percent(pending)

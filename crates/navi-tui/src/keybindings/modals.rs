@@ -22,25 +22,29 @@ use navi_sdk::QuestionResponse;
 
 use crate::runtime::spawn_runtime_task;
 
-/// Fallback full set when no model is selected / registry has no levels.
-pub(crate) const THINKING_OPTIONS: &[ThinkingLevel] = &[
-    ThinkingLevel::Adaptive,
-    ThinkingLevel::Max,
-    ThinkingLevel::High,
-    ThinkingLevel::Medium,
-    ThinkingLevel::Low,
-    ThinkingLevel::Off,
-];
+/// Fallback binary effort options (thinking on / thinking off) when no model
+/// is selected or the model has no registry effort levels.
+pub(crate) const BINARY_EFFORT_OPTIONS: &[ThinkingLevel] =
+    &[ThinkingLevel::Medium, ThinkingLevel::Off];
 
-/// Registry-aware options for the thinking picker (selected model).
+/// Registry-aware effort options for the selected model.
+///
+/// Each model only shows its own configured effort levels. Models without
+/// `reasoning_levels` get the binary off/on pair.
 pub(crate) fn thinking_options_for_app(app: &TuiApp) -> Vec<ThinkingLevel> {
     let model = app.models.get(app.selected_model);
     let options = ThinkingLevel::options_for_model(model);
     if options.is_empty() {
-        THINKING_OPTIONS.to_vec()
+        BINARY_EFFORT_OPTIONS.to_vec()
     } else {
         options
     }
+}
+
+/// Whether the effort picker for the selected model is binary off/on.
+pub(crate) fn effort_is_binary_for_app(app: &TuiApp) -> bool {
+    let model = app.models.get(app.selected_model);
+    ThinkingLevel::is_binary_for_model(model)
 }
 
 /// Clamp the app's thinking level to what the selected model supports.
@@ -382,10 +386,11 @@ pub(crate) fn handle_thinking_key(app: &mut TuiApp, code: KeyCode) -> bool {
             app.thinking_level = level;
             app.selected_thinking = level.index();
             super::close_all_modals(app);
+            let binary = ThinkingLevel::is_binary_for_model(app.models.get(app.selected_model));
             show_notification(
                 app,
-                "Thinking",
-                format!("Thinking set to {}.", level.label()),
+                "Effort",
+                format!("Effort set to {}.", level.display_label(binary)),
             );
             save_preferences(app);
         }

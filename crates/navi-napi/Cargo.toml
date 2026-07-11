@@ -11,13 +11,18 @@ readme = "README.md"
 [lib]
 crate-type = ["cdylib", "rlib"]
 
+[features]
+default = ["voice-onnx"]
+# Local Nemotron ONNX streaming ASR. Disable for musl/portable builds without ORT.
+voice-onnx = ["navi-sdk/voice-onnx"]
+
 [dependencies]
 anyhow.workspace = true
 async-trait.workspace = true
 napi.workspace = true
 napi-derive.workspace = true
 navi-core.workspace = true
-navi-sdk.workspace = true
+navi-sdk = { workspace = true }
 serde_json.workspace = true
 tokio.workspace = true
 

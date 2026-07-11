@@ -48,7 +48,6 @@ cargo test -p navi-dart -- --test-threads=1
 | Function | Returns | Description |
 |---|---|---|
 | `navi_engine_new(project_dir)` | `*mut NaviDartEngine` | Create engine |
-| `navi_engine_new_learning_tutor(project_dir)` | `*mut NaviDartEngine` | Create learning tutor engine |
 | `navi_engine_free(engine)` | `void` | Free engine handle |
 
 ### Sessions

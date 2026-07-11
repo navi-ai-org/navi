@@ -230,6 +230,10 @@ impl EngineDriver for MockEngine {
         Ok(())
     }
 
+    async fn rewind_session(&self, _session_id: &str, keep_user_turns: usize) -> Result<usize> {
+        Ok(keep_user_turns)
+    }
+
     fn agent_mode(&self, _session_id: &str) -> Result<navi_core::plan_mode::AgentMode> {
         Ok(navi_core::plan_mode::AgentMode::Default)
     }

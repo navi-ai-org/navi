@@ -152,7 +152,7 @@ The settings modal currently controls:
 
 - `Show Reasoning` — toggle thinking text visibility
 - `Verbose Tool Output` — toggle full tool input/output view
-- `Thinking Level` — select thinking effort (adaptive/max/high/medium/low/off)
+- `Effort Level` — select model-specific reasoning effort (or thinking off/on when the model has no configured levels)
 - `YOLO Mode` — auto-approve tools without confirmation
 - `Theme` — select color theme
 

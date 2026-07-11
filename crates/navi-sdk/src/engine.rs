@@ -82,15 +82,6 @@ impl NaviEngineBuilder {
         self
     }
 
-    /// Configures the engine as an autonomous tutor runtime.
-    ///
-    /// This uses permissive tool security, the learning harness, tutor prompt
-    /// builder, and study-aware compaction defaults.
-    pub fn learning_tutor(mut self) -> Self {
-        self.runtime_components = navi_core::learning_runtime_components();
-        self
-    }
-
     /// Replaces the tool security policy component.
     pub fn security(mut self, security: Arc<dyn navi_core::ToolSecurityPolicy>) -> Self {
         self.runtime_components.security = security;
@@ -181,14 +172,11 @@ fn runtime_components_for_plugin_policies(
 ) -> RuntimeComponents {
     for policy in agent_policies {
         match normalize_plugin_policy_name(policy).as_str() {
-            "learning_tutor" | "navi_learning" | "tutor" => {
-                components = navi_core::learning_runtime_components();
-            }
             "default" | "code_agent" => {
                 components = RuntimeComponents::default();
             }
             other => warnings.push(format!(
-                "plugin registered unknown agent policy `{other}`; known policies are learning_tutor, navi_learning, tutor, default, and code_agent"
+                "plugin registered unknown agent policy `{other}`; known policies are default and code_agent"
             )),
         }
     }
@@ -953,6 +941,9 @@ impl NaviEngine {
     }
 
     /// Stores an API key for the given provider in the credential store.
+    ///
+    /// Replaces the provider's accounts with a single default account.
+    /// Prefer [`Self::add_provider_account`] for multi-account setups.
     pub fn set_provider_api_key(&self, provider_id: &str, api_key: &str) -> Result<()> {
         Ok(self.credential_store().set_api_key(provider_id, api_key)?)
     }
@@ -960,6 +951,44 @@ impl NaviEngine {
     /// Deletes a stored API key. Returns `true` if a key was removed.
     pub fn delete_provider_api_key(&self, provider_id: &str) -> Result<bool> {
         Ok(self.credential_store().delete_api_key(provider_id)?)
+    }
+
+    /// List multi-account credentials for a provider.
+    pub fn list_credential_accounts(
+        &self,
+        provider_id: &str,
+    ) -> Result<Vec<navi_core::CredentialAccountInfo>> {
+        Ok(self.credential_store().list_credential_accounts(
+            provider_id,
+            Some(self.inner.project_dir.as_path()),
+        )?)
+    }
+
+    /// Add an API-key account without wiping sibling accounts. Returns account id.
+    pub fn add_provider_account(
+        &self,
+        provider_id: &str,
+        api_key: &str,
+        label: Option<&str>,
+    ) -> Result<String> {
+        Ok(self
+            .credential_store()
+            .add_api_key_account(provider_id, api_key, label, None)?)
+    }
+
+    /// Select which account is active (default + project binding).
+    pub fn select_provider_account(&self, provider_id: &str, account_id: &str) -> Result<()> {
+        let store = self.credential_store();
+        store.set_default_account(provider_id, account_id)?;
+        store.set_project_account(&self.inner.project_dir, provider_id, account_id)?;
+        Ok(())
+    }
+
+    /// Delete one credential account. Returns true if removed.
+    pub fn delete_provider_account(&self, provider_id: &str, account_id: &str) -> Result<bool> {
+        Ok(self
+            .credential_store()
+            .delete_credential_account(provider_id, account_id)?)
     }
 
     /// Lists skills from the SQLite store plus built-ins.
@@ -1605,7 +1634,7 @@ impl NaviEngine {
         })
     }
 
-    fn save_loaded_config(
+    pub(crate) fn save_loaded_config(
         &self,
         loaded_config: &LoadedConfig,
         target: NaviConfigSaveTarget,
@@ -1983,6 +2012,10 @@ fn model_info_from_option(option: ModelOption) -> NaviModelInfo {
         canonical_provider_id(&option.provider_id),
         option.name
     );
+    let (effort_options, effort_binary) = crate::types::effort_options_for_model(
+        option.supports_thinking,
+        &option.reasoning_levels,
+    );
     NaviModelInfo {
         id,
         name: option.name,
@@ -1993,6 +2026,8 @@ fn model_info_from_option(option: ModelOption) -> NaviModelInfo {
         supports_thinking: option.supports_thinking,
         reasoning_levels: option.reasoning_levels,
         default_reasoning_effort: option.default_reasoning_effort,
+        effort_options,
+        effort_binary,
     }
 }
 

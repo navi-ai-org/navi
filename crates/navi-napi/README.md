@@ -21,16 +21,15 @@ macOS (x64/arm64), and Windows (x64). No Rust toolchain required.
 import { NaviNapiEngineBuilder } from '@navi-agent/napi';
 
 const builder = new NaviNapiEngineBuilder(process.cwd());
-builder.configureLearning({ language: 'pt-BR', style: 'socratico' });
 builder.hostTool(
-  { name: 'consultar_materiais', description: 'Consulta materiais.', kind: 'read' },
+  { name: 'lookup_docs', description: 'Look up docs.', kind: 'read' },
   async ({ input }) => ({ ok: true, output: { input } }),
 );
 
 const engine = builder.build();
 
 const session = await engine.startSession();
-const response = await engine.sendTurn(session.id, 'Ola!');
+const response = await engine.sendTurn(session.id, 'Hello!');
 console.log(response.text);
 await engine.closeSession(session.id);
 ```

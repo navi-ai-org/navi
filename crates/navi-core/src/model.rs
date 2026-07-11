@@ -578,19 +578,38 @@ impl ThinkingConfig {
 /// Parse a registry / config reasoning level string.
 ///
 /// Accepts common aliases used across OpenAI, OpenRouter, Anthropic, and xAI.
+/// `"on"` / `"enabled"` / `"true"` map to [`ThinkingConfig::Medium`] (binary
+/// effort "thinking on").
 pub fn parse_reasoning_level(raw: &str) -> Option<ThinkingConfig> {
     match raw.trim().to_ascii_lowercase().as_str() {
         "adaptive" | "auto" => Some(ThinkingConfig::Adaptive),
         "max" | "xhigh" | "x-high" | "ultra" | "highest" => Some(ThinkingConfig::Max),
         "high" => Some(ThinkingConfig::High),
-        "medium" | "med" | "mid" | "default" => Some(ThinkingConfig::Medium),
+        "medium" | "med" | "mid" | "default" | "on" | "enabled" | "true" | "1" => {
+            Some(ThinkingConfig::Medium)
+        }
         "low" | "minimal" | "min" => Some(ThinkingConfig::Low),
         "off" | "none" | "disabled" | "false" | "0" => Some(ThinkingConfig::Off),
         _ => None,
     }
 }
 
-/// Default full picker when the registry does not list levels for a thinking model.
+/// User-facing effort label for a level.
+///
+/// In binary mode (no registry levels) non-off levels display as
+/// `"thinking on"` and off as `"thinking off"`.
+pub fn effort_display_label(level: ThinkingConfig, binary: bool) -> &'static str {
+    if binary {
+        match level {
+            ThinkingConfig::Off => "thinking off",
+            _ => "thinking on",
+        }
+    } else {
+        level.as_config_str()
+    }
+}
+
+/// Canonical sort order for effort levels in pickers (most → least / off last).
 pub const DEFAULT_REASONING_LEVELS: &[ThinkingConfig] = &[
     ThinkingConfig::Adaptive,
     ThinkingConfig::Max,
@@ -600,11 +619,20 @@ pub const DEFAULT_REASONING_LEVELS: &[ThinkingConfig] = &[
     ThinkingConfig::Off,
 ];
 
-/// Resolve the thinking levels the UI / runtime should offer for a model.
+/// Binary effort options when a model has no registry `reasoning_levels`.
+///
+/// UI presents these as "thinking on" / "thinking off". Internally "on" is
+/// [`ThinkingConfig::Medium`] (a sensible default effort when the model only
+/// supports enable/disable). Off is last to match the multi-level picker order.
+pub const BINARY_REASONING_LEVELS: &[ThinkingConfig] =
+    &[ThinkingConfig::Medium, ThinkingConfig::Off];
+
+/// Resolve the effort levels the UI / runtime should offer for a model.
 ///
 /// - `supports_thinking == false` → only Off
-/// - empty `reasoning_levels` + thinking supported/unknown → full default set
-/// - non-empty registry levels → those levels (+ Adaptive when any non-Off exists)
+/// - empty / unparseable `reasoning_levels` + thinking supported/unknown →
+///   binary Off / On (`Medium`)
+/// - non-empty registry levels → exactly those levels (no extra Adaptive inject)
 pub fn thinking_levels_for_model(
     supports_thinking: Option<bool>,
     reasoning_levels: &[String],
@@ -614,7 +642,7 @@ pub fn thinking_levels_for_model(
     }
 
     if reasoning_levels.is_empty() {
-        return DEFAULT_REASONING_LEVELS.to_vec();
+        return BINARY_REASONING_LEVELS.to_vec();
     }
 
     let mut out = Vec::new();
@@ -626,18 +654,29 @@ pub fn thinking_levels_for_model(
         }
     }
     if out.is_empty() {
-        return DEFAULT_REASONING_LEVELS.to_vec();
+        return BINARY_REASONING_LEVELS.to_vec();
     }
-    // Always allow Adaptive when the model can think (maps onto a concrete level later).
-    if !out.contains(&ThinkingConfig::Off) || out.len() > 1 {
-        if !out.contains(&ThinkingConfig::Adaptive) {
-            out.insert(0, ThinkingConfig::Adaptive);
-        }
-    }
-    // Stable UI order.
+    // Stable UI order (adaptive/max/high/medium/low/off).
     let order = DEFAULT_REASONING_LEVELS;
     out.sort_by_key(|l| order.iter().position(|o| o == l).unwrap_or(99));
     out
+}
+
+/// Whether the model uses the binary off/on effort picker (no registry levels).
+pub fn is_binary_effort_model(
+    supports_thinking: Option<bool>,
+    reasoning_levels: &[String],
+) -> bool {
+    if supports_thinking == Some(false) {
+        return false;
+    }
+    if reasoning_levels.is_empty() {
+        return true;
+    }
+    // Unparseable registry levels also fall back to binary.
+    !reasoning_levels
+        .iter()
+        .any(|raw| parse_reasoning_level(raw).is_some())
 }
 
 /// Pick a default thinking level for a model from registry + current preference.
@@ -846,18 +885,44 @@ mod tests {
             Some(true),
             &["none".into(), "low".into(), "high".into(), "xhigh".into()],
         );
-        assert!(levels.contains(&ThinkingConfig::Adaptive));
-        assert!(levels.contains(&ThinkingConfig::Off));
-        assert!(levels.contains(&ThinkingConfig::Low));
-        assert!(levels.contains(&ThinkingConfig::High));
-        assert!(levels.contains(&ThinkingConfig::Max));
-        assert!(!levels.contains(&ThinkingConfig::Medium));
+        // Exactly the registry levels — no Adaptive inject, no Medium fill-in.
+        assert_eq!(
+            levels,
+            vec![
+                ThinkingConfig::Max,
+                ThinkingConfig::High,
+                ThinkingConfig::Low,
+                ThinkingConfig::Off,
+            ]
+        );
+        assert!(!is_binary_effort_model(
+            Some(true),
+            &["none".into(), "low".into(), "high".into(), "xhigh".into()],
+        ));
     }
 
     #[test]
     fn thinking_levels_off_only_when_no_thinking() {
         let levels = thinking_levels_for_model(Some(false), &["high".into()]);
         assert_eq!(levels, vec![ThinkingConfig::Off]);
+        assert!(!is_binary_effort_model(Some(false), &["high".into()]));
+    }
+
+    #[test]
+    fn thinking_levels_binary_when_registry_empty() {
+        let levels = thinking_levels_for_model(Some(true), &[]);
+        assert_eq!(
+            levels,
+            vec![ThinkingConfig::Medium, ThinkingConfig::Off]
+        );
+        assert!(is_binary_effort_model(Some(true), &[]));
+        assert!(is_binary_effort_model(None, &[]));
+    }
+
+    #[test]
+    fn thinking_levels_model_specific_no_extra_options() {
+        let levels = thinking_levels_for_model(Some(true), &["low".into(), "high".into()]);
+        assert_eq!(levels, vec![ThinkingConfig::High, ThinkingConfig::Low]);
     }
 
     #[test]

@@ -737,6 +737,18 @@ impl ThinkingLevel {
         }
     }
 
+    pub(crate) fn is_off(self) -> bool {
+        matches!(self, Self::Off)
+    }
+
+    /// User-facing label for the effort picker / status bar.
+    ///
+    /// In binary mode (model has no registry effort levels) Medium is shown as
+    /// "thinking on" and Off as "thinking off".
+    pub(crate) fn display_label(self, binary_mode: bool) -> &'static str {
+        navi_sdk::effort_display_label(self.into(), binary_mode)
+    }
+
     pub(crate) fn from_config(value: &str) -> Self {
         ThinkingConfig::from_config_str(value).into()
     }
@@ -754,6 +766,15 @@ impl ThinkingLevel {
             Self::Low => 4,
             Self::Off => 5,
         }
+    }
+
+    /// Whether the given model uses binary off/on effort (no registry levels).
+    pub(crate) fn is_binary_for_model(model: Option<&navi_sdk::ModelOption>) -> bool {
+        let (supports, levels) = match model {
+            Some(m) => (m.supports_thinking, m.reasoning_levels.as_slice()),
+            None => (None, &[][..]),
+        };
+        navi_sdk::is_binary_effort_model(supports, levels)
     }
 
     /// Levels offered for the currently selected model (registry-aware).

@@ -505,25 +505,6 @@ fn navi_string_free_null_is_noop() {
 }
 
 #[test]
-fn learning_tutor_engine_creates() {
-    disable_registry_update();
-    let tmp = tempfile::tempdir().unwrap();
-    let dir = c(tmp.path().to_str().unwrap());
-    let engine = unsafe { navi_engine_new_learning_tutor(dir) };
-    assert!(!engine.is_null());
-
-    let config_ptr = unsafe { navi_engine_loaded_config(engine) };
-    assert!(!config_ptr.is_null());
-    let config_str = unsafe { CStr::from_ptr(config_ptr) }.to_str().unwrap();
-    let config: serde_json::Value = serde_json::from_str(config_str).unwrap();
-    assert!(config["model"]["name"].is_string());
-
-    unsafe { navi_string_free(config_ptr) };
-    unsafe { navi_engine_free(engine) };
-    free_c(dir);
-}
-
-#[test]
 fn async_get_goal_on_new_session_returns_null() {
     disable_registry_update();
     let tmp = tempfile::tempdir().unwrap();
