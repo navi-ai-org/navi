@@ -77,6 +77,16 @@ pub enum AsyncEvent {
         version: String,
         result: std::result::Result<(), String>,
     },
+    /// Chat model set/updated the session title via `set_session_title`.
+    SessionTitleUpdated {
+        session_id: String,
+        title: String,
+    },
+    /// Session-scoped title update (ignore if not the active session).
+    SessionTitleUpdatedForSession {
+        session_id: String,
+        title: String,
+    },
 }
 
 pub(crate) fn handle_async_event(app: &mut TuiApp, event: AsyncEvent) {
@@ -91,6 +101,20 @@ pub(crate) fn handle_async_event(app: &mut TuiApp, event: AsyncEvent) {
                     current_session = %app.session_id.as_str(),
                     "ignored stale agent event"
                 );
+            }
+        }
+        AsyncEvent::SessionTitleUpdated {
+            session_id,
+            title,
+        } => {
+            apply_session_title(app, &session_id, title);
+        }
+        AsyncEvent::SessionTitleUpdatedForSession {
+            session_id,
+            title,
+        } => {
+            if session_id == app.session_id.as_str() {
+                apply_session_title(app, &session_id, title);
             }
         }
         AsyncEvent::TurnCompleted(res) => handle_turn_completed(app, res),
@@ -272,6 +296,22 @@ pub(crate) fn handle_async_event(app: &mut TuiApp, event: AsyncEvent) {
         AsyncEvent::UpdateApplied { version, result } => {
             crate::update_check::handle_update_applied(app, version, result);
         }
+    }
+}
+
+fn apply_session_title(app: &mut TuiApp, session_id: &str, title: String) {
+    if session_id == app.session_id.as_str() {
+        app.session_title = Some(title.clone());
+    }
+    if let Some(entry) = app
+        .saved_sessions
+        .iter_mut()
+        .find(|s| s.id.as_str() == session_id)
+    {
+        entry.title = Some(title);
+    } else {
+        // Session may have been snapshot mid-turn; refresh list on next open.
+        // Keep a best-effort in-memory update only for the active session.
     }
 }
 

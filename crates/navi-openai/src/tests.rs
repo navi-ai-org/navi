@@ -1046,7 +1046,8 @@ async fn test_stream_normal() {
         }],
         thinking: navi_core::ThinkingConfig::Off,
         tools: vec![],
-    };
+        session_id: None,
+};
 
     let mut stream = provider.stream(request);
     let mut text = String::new();
@@ -1098,7 +1099,8 @@ async fn chat_completions_omits_prompt_cache_fields_by_default() {
         messages: vec![ModelMessage::user("Hi".to_string())],
         thinking: navi_core::ThinkingConfig::Off,
         tools: vec![],
-    };
+        session_id: None,
+};
 
     let mut stream = provider.stream(request);
     while let Some(event) = stream.next().await {
@@ -1160,7 +1162,8 @@ async fn opencode_zen_chat_completions_enables_parallel_tool_calls() {
             input_schema: json!({"type": "object"}),
             metadata: navi_core::ToolMetadata::default(),
         }],
-    };
+        session_id: None,
+};
 
     let mut stream = provider.stream(request);
     while let Some(event) = stream.next().await {
@@ -1215,7 +1218,8 @@ async fn chat_completions_includes_configured_openai_prompt_cache_fields() {
         messages: vec![ModelMessage::user("Hi".to_string())],
         thinking: navi_core::ThinkingConfig::Off,
         tools: vec![],
-    };
+        session_id: None,
+};
 
     let mut stream = provider.stream(request);
     while let Some(event) = stream.next().await {
@@ -1262,7 +1266,8 @@ async fn test_opencode_zen_chat_request_uses_bearer_api_key() {
         messages: vec![ModelMessage::user("Hi".to_string())],
         thinking: navi_core::ThinkingConfig::Off,
         tools: vec![],
-    };
+        session_id: None,
+};
 
     let mut stream = provider.stream(request);
     while let Some(event) = stream.next().await {
@@ -1309,7 +1314,8 @@ async fn test_opencode_zen_gpt_models_use_responses_endpoint() {
         messages: vec![ModelMessage::user("Hi".to_string())],
         thinking: navi_core::ThinkingConfig::Off,
         tools: vec![],
-    };
+        session_id: None,
+};
 
     let mut stream = provider.stream(request);
     while let Some(event) = stream.next().await {
@@ -1358,7 +1364,8 @@ async fn test_github_copilot_request_uses_oauth_headers() {
         messages: vec![ModelMessage::user("Hi".to_string())],
         thinking: navi_core::ThinkingConfig::Off,
         tools: vec![],
-    };
+        session_id: None,
+};
 
     let mut stream = provider.stream(request);
     while let Some(event) = stream.next().await {
@@ -1403,7 +1410,8 @@ async fn test_opencode_zen_claude_models_use_messages_endpoint() {
         messages: vec![ModelMessage::user("Hi".to_string())],
         thinking: navi_core::ThinkingConfig::Off,
         tools: vec![],
-    };
+        session_id: None,
+};
 
     let mut stream = provider.stream(request);
     while let Some(event) = stream.next().await {
@@ -1489,7 +1497,8 @@ async fn test_stream_idle_timeout() {
         messages: vec![],
         thinking: navi_core::ThinkingConfig::Off,
         tools: vec![],
-    };
+        session_id: None,
+};
 
     let mut stream = provider.stream(request);
     let item = stream.next().await;
@@ -1547,7 +1556,8 @@ async fn test_rate_limit_retry() {
         messages: vec![],
         thinking: navi_core::ThinkingConfig::Off,
         tools: vec![],
-    };
+        session_id: None,
+};
 
     let mut stream = provider.stream(request);
     let mut text = String::new();

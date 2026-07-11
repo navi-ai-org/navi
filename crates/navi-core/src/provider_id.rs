@@ -16,6 +16,7 @@ impl ProviderId {
     pub const OPENCODE_ZEN: &'static str = "opencode-zen";
     pub const OPENCODE_GO: &'static str = "opencode-go";
     pub const COMMANDCODE: &'static str = "commandcode";
+    pub const CHARM_HYPER: &'static str = "charm-hyper";
     pub const GROQ: &'static str = "groq";
     pub const XAI: &'static str = "xai";
     pub const MIMO_ANTHROPIC_CN: &'static str = "mimo-anthropic-cn";
@@ -45,6 +46,7 @@ impl ProviderId {
                 Self::OPENCODE_ZEN,
                 Self::OPENCODE_GO,
                 Self::COMMANDCODE,
+                Self::CHARM_HYPER,
                 Self::GROQ,
                 Self::XAI,
                 Self::MIMO_ANTHROPIC_CN,

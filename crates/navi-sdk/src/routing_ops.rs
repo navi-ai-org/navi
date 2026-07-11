@@ -15,6 +15,7 @@ const ATTACHMENT_MODALITIES: &[&str] = &["image", "audio", "video", "document"];
 const BACKGROUND_TASKS: &[&str] = &[
     "default",
     "naming",
+    "memory_extraction",
     "compaction",
     "repo_search",
     "subagent_research",
@@ -42,7 +43,7 @@ fn normalize_bg_task(task: &str) -> Result<&'static str> {
         .find(|t| *t == key)
         .ok_or_else(|| {
             NaviError::Config(format!(
-                "unknown background task '{task}' (expected default|naming|compaction|repo_search|subagent_research|simple_code_edit)"
+                "unknown background task '{task}' (expected default|naming|memory_extraction|compaction|repo_search|subagent_research|simple_code_edit)"
             ))
         })
 }
@@ -109,7 +110,7 @@ impl NaviEngine {
 
     /// Set an explicit provider:model override for a background task route.
     ///
-    /// Tasks: `default`, `naming`, `compaction`, `repo_search`,
+    /// Tasks: `default`, `naming`, `memory_extraction`, `compaction`, `repo_search`,
     /// `subagent_research`, `simple_code_edit`.
     pub fn set_background_model(
         &self,
@@ -139,6 +140,7 @@ impl NaviEngine {
         };
         match task {
             "naming" => loaded.config.background_models.naming = Some(entry),
+            "memory_extraction" => loaded.config.background_models.memory_extraction = Some(entry),
             "compaction" => loaded.config.background_models.compaction = Some(entry),
             "repo_search" => loaded.config.background_models.repo_search = Some(entry),
             "subagent_research" => loaded.config.background_models.subagent_research = Some(entry),
@@ -161,6 +163,7 @@ impl NaviEngine {
         let mut loaded = self.loaded_config();
         match task {
             "naming" => loaded.config.background_models.naming = None,
+            "memory_extraction" => loaded.config.background_models.memory_extraction = None,
             "compaction" => loaded.config.background_models.compaction = None,
             "repo_search" => loaded.config.background_models.repo_search = None,
             "subagent_research" => loaded.config.background_models.subagent_research = None,

@@ -857,6 +857,10 @@ pub struct BackgroundModelsConfig {
     pub default: Option<BackgroundModelEntry>,
     /// Model for session title generation.
     pub naming: Option<BackgroundModelEntry>,
+    /// Dedicated model for automatic durable-memory extraction after a turn.
+    /// This is opt-in: unlike other background routes it never falls back to
+    /// the active chat model, preventing invisible credit consumption.
+    pub memory_extraction: Option<BackgroundModelEntry>,
     /// Model for repository exploration subagent.
     pub repo_search: Option<BackgroundModelEntry>,
     /// Model for conversation compaction/summarization.
@@ -872,6 +876,7 @@ impl BackgroundModelsConfig {
     pub fn resolve(&self, task: &str) -> Option<&BackgroundModelEntry> {
         let entry = match task {
             "naming" => self.naming.as_ref(),
+            "memory_extraction" => self.memory_extraction.as_ref(),
             "repo_search" => self.repo_search.as_ref(),
             "compaction" => self.compaction.as_ref(),
             "subagent_research" => self.subagent_research.as_ref(),

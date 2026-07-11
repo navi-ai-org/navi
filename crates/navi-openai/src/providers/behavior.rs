@@ -1,8 +1,10 @@
 use crate::errors::ProviderError;
 use crate::types::{OpenAiApiKind, StreamRoute};
-use navi_core::ProviderId;
+use navi_core::{ModelRequest, ProviderId};
 use reqwest::header::USER_AGENT;
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE, HeaderMap, HeaderValue};
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 
 // ─── Provider base URLs ───────────────────────────────────────────────────────
 
@@ -70,6 +72,18 @@ pub(crate) trait ProviderBehavior: Send + Sync {
 
     /// Build auth + extra headers for a request to the given endpoint.
     fn build_headers(&self, api_key: &str, endpoint: Endpoint) -> Result<HeaderMap, ProviderError>;
+
+    /// Apply per-request headers (session affinity, etc.) after [`build_headers`].
+    ///
+    /// Default is a no-op. Charm Hyper sets `x-session-id` /
+    /// `x-session-affinity` so turns of the same NAVI session share KV-cache.
+    fn apply_request_headers(
+        &self,
+        _headers: &mut HeaderMap,
+        _request: &ModelRequest,
+    ) -> Result<(), ProviderError> {
+        Ok(())
+    }
 
     /// Extract normalized usage from a provider-specific usage JSON object.
     ///
@@ -506,7 +520,73 @@ impl ProviderBehavior for XaiBehavior {
     }
 }
 
-// ─── Custom (fallback) ────────────────────────────────────────────────────────
+// ─── Charm Hyper ──────────────────────────────────────────────────────────────
+
+/// Charm Hyper (`https://hyper.charm.land/v1`) — OpenAI-compatible chat
+/// completions with session-affinity headers for provider-side prompt cache.
+///
+/// Matches Crush: both `x-session-id` and `x-session-affinity` carry the same
+/// deterministic opaque token derived from the NAVI session id.
+pub(crate) struct CharmHyperBehavior;
+
+const HYPER_BASE_URL: &str = "https://hyper.charm.land/v1";
+
+/// Opaque, stable token for Hyper session affinity (Crush uses a session hash).
+pub(crate) fn hyper_session_affinity_token(session_id: &str) -> String {
+    let mut hasher = DefaultHasher::new();
+    session_id.hash(&mut hasher);
+    format!("{:016x}", hasher.finish())
+}
+
+fn insert_hyper_session_headers(
+    headers: &mut HeaderMap,
+    session_id: &str,
+) -> Result<(), ProviderError> {
+    let token = hyper_session_affinity_token(session_id);
+    let value = HeaderValue::from_str(&token).map_err(|err| {
+        ProviderError::Other(format!("invalid charm-hyper session affinity header: {err}"))
+    })?;
+    headers.insert("x-session-id", value.clone());
+    headers.insert("x-session-affinity", value);
+    Ok(())
+}
+
+impl ProviderBehavior for CharmHyperBehavior {
+    fn default_base_url(&self) -> Option<&str> {
+        Some(HYPER_BASE_URL)
+    }
+
+    fn stream_route(&self, _model: &str, configured_kind: OpenAiApiKind) -> StreamRoute {
+        // Registry pins charm-hyper to chat-completions; honor config if Responses is set.
+        match configured_kind {
+            OpenAiApiKind::Responses => StreamRoute::Responses,
+            OpenAiApiKind::ChatCompletions => StreamRoute::ChatCompletions,
+        }
+    }
+
+    fn build_headers(&self, api_key: &str, endpoint: Endpoint) -> Result<HeaderMap, ProviderError> {
+        let content_type = matches!(
+            endpoint,
+            Endpoint::ChatCompletions | Endpoint::Responses | Endpoint::AnthropicMessages
+        );
+        standard_bearer_headers(api_key, content_type)
+    }
+
+    fn apply_request_headers(
+        &self,
+        headers: &mut HeaderMap,
+        request: &ModelRequest,
+    ) -> Result<(), ProviderError> {
+        if let Some(session_id) = request.session_id.as_deref().filter(|s| !s.is_empty()) {
+            insert_hyper_session_headers(headers, session_id)?;
+        }
+        Ok(())
+    }
+
+    fn supports_parallel_tool_calls(&self, endpoint: Endpoint) -> bool {
+        matches!(endpoint, Endpoint::Responses | Endpoint::ChatCompletions)
+    }
+}
 
 // ─── Nvidia NIM ──────────────────────────────────────────────────────────────
 
@@ -574,6 +654,7 @@ pub(crate) fn behavior_for_provider(provider_id: &ProviderId) -> Box<dyn Provide
         ProviderId::OPENCODE_ZEN => Box::new(OpencodeZenBehavior),
         ProviderId::OPENCODE_GO => Box::new(OpencodeGoBehavior),
         ProviderId::COMMANDCODE => Box::new(CommandCodeBehavior),
+        ProviderId::CHARM_HYPER => Box::new(CharmHyperBehavior),
         ProviderId::GROQ => Box::new(GroqBehavior),
         ProviderId::XAI => Box::new(XaiBehavior),
         ProviderId::NVIDIA => Box::new(NvidiaBehavior),
@@ -633,5 +714,70 @@ mod tests {
             behavior.stream_route("deepseek/deepseek-v4-flash", OpenAiApiKind::ChatCompletions),
             StreamRoute::CommandCodeAlphaGenerate
         ));
+    }
+
+    #[test]
+    fn charm_hyper_sets_stable_session_affinity_headers() {
+        let behavior = behavior_for_provider(&ProviderId::from_config_id(ProviderId::CHARM_HYPER));
+        let mut headers = behavior
+            .build_headers("hk-test", Endpoint::ChatCompletions)
+            .expect("headers");
+        let request = ModelRequest {
+            model: "kimi-k2.5".into(),
+            instructions: None,
+            messages: vec![],
+            thinking: navi_core::ThinkingConfig::Off,
+            tools: vec![],
+            session_id: Some("session-abc-123".into()),
+        };
+        behavior
+            .apply_request_headers(&mut headers, &request)
+            .expect("affinity");
+
+        let expected = hyper_session_affinity_token("session-abc-123");
+        assert_eq!(
+            headers
+                .get("x-session-id")
+                .and_then(|v| v.to_str().ok()),
+            Some(expected.as_str())
+        );
+        assert_eq!(
+            headers
+                .get("x-session-affinity")
+                .and_then(|v| v.to_str().ok()),
+            Some(expected.as_str())
+        );
+
+        // Same session → same token (required for KV-cache stickiness).
+        assert_eq!(
+            hyper_session_affinity_token("session-abc-123"),
+            hyper_session_affinity_token("session-abc-123")
+        );
+        // Different session → different token.
+        assert_ne!(
+            hyper_session_affinity_token("session-abc-123"),
+            hyper_session_affinity_token("session-other")
+        );
+    }
+
+    #[test]
+    fn charm_hyper_skips_affinity_without_session_id() {
+        let behavior = behavior_for_provider(&ProviderId::from_config_id(ProviderId::CHARM_HYPER));
+        let mut headers = behavior
+            .build_headers("hk-test", Endpoint::ChatCompletions)
+            .expect("headers");
+        let request = ModelRequest {
+            model: "kimi-k2.5".into(),
+            instructions: None,
+            messages: vec![],
+            thinking: navi_core::ThinkingConfig::Off,
+            tools: vec![],
+            session_id: None,
+        };
+        behavior
+            .apply_request_headers(&mut headers, &request)
+            .expect("affinity");
+        assert!(headers.get("x-session-id").is_none());
+        assert!(headers.get("x-session-affinity").is_none());
     }
 }

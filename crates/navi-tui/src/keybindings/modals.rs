@@ -18,7 +18,7 @@ use crate::theme::filtered_theme_options;
 use crate::ui::SelectListState;
 use crate::ui::UiEffect;
 use crossterm::event::{KeyCode, KeyModifiers};
-use navi_sdk::QuestionResponse;
+use navi_sdk::{NaviConfigSaveTarget, QuestionResponse};
 
 use crate::runtime::spawn_runtime_task;
 
@@ -1687,7 +1687,7 @@ pub(crate) fn handle_background_command_output_key(app: &mut TuiApp, code: KeyCo
 }
 
 const BG_MODEL_TASKS: &[(&str, &str)] = &[
-    ("naming", "Session title generation"),
+    ("memory_extraction", "Automatic durable-memory extraction"),
     ("compaction", "Conversation summarization"),
     ("repo_search", "Repository exploration"),
     ("subagent_research", "Research subagents"),
@@ -1697,7 +1697,17 @@ const BG_MODEL_TASKS: &[(&str, &str)] = &[
 pub(crate) fn handle_background_models_key(app: &mut TuiApp, code: KeyCode) -> bool {
     let len = BG_MODEL_TASKS.len();
     match code {
-        KeyCode::Esc => super::close_active_modal(app),
+        KeyCode::Esc => {
+            if app.setup_phase == Some(crate::state::SetupPhase::MemoryModel) {
+                show_notification(
+                    app,
+                    "Setup",
+                    "Choose a memory extraction model to continue setup.",
+                );
+            } else {
+                super::close_active_modal(app);
+            }
+        }
         KeyCode::Up | KeyCode::Char('k') => {
             if app.bg_models_selected > 0 {
                 app.bg_models_selected -= 1;
@@ -1724,8 +1734,14 @@ pub(crate) fn handle_background_models_key(app: &mut TuiApp, code: KeyCode) -> b
         KeyCode::Char('d') => {
             // Reset selected task to default (remove override).
             if let Some((task_id, _)) = BG_MODEL_TASKS.get(app.bg_models_selected) {
+                if let Err(err) = app
+                    .engine()
+                    .clear_background_model(task_id, NaviConfigSaveTarget::Global)
+                {
+                    show_notification(app, "Background Agents", format!("Could not reset {task_id}: {err:#}"));
+                    return false;
+                }
                 clear_bg_model_override(app, task_id);
-                save_preferences(app);
                 show_notification(
                     app,
                     "Background Agents",
@@ -1749,6 +1765,14 @@ pub(crate) fn handle_bg_model_picker_key(
 
     match code {
         KeyCode::Esc => {
+            if app.setup_phase == Some(crate::state::SetupPhase::MemoryModel) {
+                show_notification(
+                    app,
+                    "Setup",
+                    "Choose a memory extraction model to continue setup.",
+                );
+                return false;
+            }
             let target_modal = if app.attachment_model_picker_active {
                 ModalKind::AttachmentModels
             } else {
@@ -1810,13 +1834,32 @@ pub(crate) fn handle_bg_model_picker_key(
                         format!("{} fallback → {}:{}", task_id, provider_id, model_name),
                     );
                 } else {
+                    if let Err(err) = app.engine().set_background_model(
+                        &task_id,
+                        &provider_id,
+                        &model_name,
+                        NaviConfigSaveTarget::Global,
+                    ) {
+                        show_notification(
+                            app,
+                            "Background Agents",
+                            format!("Could not save {task_id}: {err:#}"),
+                        );
+                        return false;
+                    }
                     set_bg_model_override(app, &task_id, &provider_id, &model_name);
-                    save_preferences(app);
                     show_notification(
                         app,
                         "Background Agents",
                         format!("{} → {}:{}", task_id, provider_id, model_name),
                     );
+                    if task_id == "memory_extraction"
+                        && app.setup_phase == Some(crate::state::SetupPhase::MemoryModel)
+                    {
+                        super::close_all_modals(app);
+                        crate::providers::maybe_start_setup_interview(app);
+                        return false;
+                    }
                 }
             }
             let target_modal = if app.attachment_model_picker_active {
@@ -1869,6 +1912,7 @@ fn set_bg_model_override(app: &mut TuiApp, task: &str, provider: &str, model: &s
     };
     match task {
         "naming" => bg.naming = Some(entry),
+        "memory_extraction" => bg.memory_extraction = Some(entry),
         "compaction" => bg.compaction = Some(entry),
         "repo_search" => bg.repo_search = Some(entry),
         "subagent_research" => bg.subagent_research = Some(entry),
@@ -1881,6 +1925,7 @@ fn clear_bg_model_override(app: &mut TuiApp, task: &str) {
     let bg = &mut app.loaded_config.config.background_models;
     match task {
         "naming" => bg.naming = None,
+        "memory_extraction" => bg.memory_extraction = None,
         "compaction" => bg.compaction = None,
         "repo_search" => bg.repo_search = None,
         "subagent_research" => bg.subagent_research = None,

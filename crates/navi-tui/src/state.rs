@@ -359,6 +359,8 @@ impl MessageAction {
 pub(crate) enum SetupPhase {
     /// User needs to pick/configure a provider.
     ProviderLogin,
+    /// User chooses the dedicated model used for automatic memory extraction.
+    MemoryModel,
     /// Model is interviewing the user with `question` tool.
     Interview,
 }

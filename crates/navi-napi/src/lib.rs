@@ -942,7 +942,7 @@ impl NaviNapiEngine {
         Ok(json!({ "savedTo": path.map(|p| p.display().to_string()) }))
     }
 
-    /// Set background-task model override (naming|compaction|repo_search|…).
+    /// Set background-task model override (memory_extraction|compaction|repo_search|…).
     #[napi]
     pub fn set_background_model(
         &self,
@@ -1608,6 +1608,7 @@ impl NaviNapiEngine {
             "backgroundModels": {
                 "default": config.config.background_models.default,
                 "naming": config.config.background_models.naming,
+                "memoryExtraction": config.config.background_models.memory_extraction,
                 "repoSearch": config.config.background_models.repo_search,
                 "compaction": config.config.background_models.compaction,
                 "subagentResearch": config.config.background_models.subagent_research,

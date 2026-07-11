@@ -131,6 +131,8 @@ impl LiteRuntime {
             session_id: Some(SessionId::new(mission.id.clone())),
             event_tx: None,
             runtime_components: Some(components),
+            session_title_handle: None,
+            memory_extraction_model: None,
         });
 
         let session_id = runtime.start_session()?.as_str().to_string();

@@ -242,6 +242,7 @@ async fn test_turn_loop_with_parallel_tools() {
         active_skills: Arc::new(std::sync::Mutex::new(Vec::new())),
         prompt_cache: Arc::new(crate::prompt::PromptCache::new()),
         instructions: std::sync::Arc::new(std::sync::RwLock::new(None)),
+        prompt_prefix: std::sync::Arc::new(std::sync::Mutex::new(None)),
         components: crate::RuntimeComponents::default(),
         cancel_token: CancelToken::new(),
         config: Arc::new(std::sync::RwLock::new(crate::config::NaviConfig::default())),
@@ -503,6 +504,7 @@ async fn malformed_tool_arguments_stop_the_turn() {
         active_skills: Arc::new(std::sync::Mutex::new(Vec::new())),
         prompt_cache: Arc::new(crate::prompt::PromptCache::new()),
         instructions: std::sync::Arc::new(std::sync::RwLock::new(None)),
+        prompt_prefix: std::sync::Arc::new(std::sync::Mutex::new(None)),
         components: crate::RuntimeComponents::default(),
         cancel_token: CancelToken::new(),
         config: Arc::new(std::sync::RwLock::new(crate::config::NaviConfig::default())),
@@ -601,6 +603,7 @@ fn build_test_ctx(project_dir: PathBuf) -> TurnContext {
         active_skills: Arc::new(std::sync::Mutex::new(Vec::new())),
         prompt_cache: Arc::new(crate::prompt::PromptCache::new()),
         instructions: std::sync::Arc::new(std::sync::RwLock::new(None)),
+        prompt_prefix: std::sync::Arc::new(std::sync::Mutex::new(None)),
         components: crate::RuntimeComponents::default(),
         cancel_token: CancelToken::new(),
         config: Arc::new(std::sync::RwLock::new(crate::config::NaviConfig::default())),
@@ -643,6 +646,82 @@ async fn test_ensure_system_prompt_reads_agents_md() {
             .content
             .contains("AGENTS.md / Project Instructions"),
         "developer message should have the AGENTS.md section header"
+    );
+}
+
+#[tokio::test]
+async fn ensure_system_prompt_freezes_prefix_across_context_changes() {
+    let tempdir = tempfile::tempdir().unwrap();
+    std::fs::write(tempdir.path().join("AGENTS.md"), "Stable project instructions").unwrap();
+    let ctx = build_test_ctx(tempdir.path().to_path_buf());
+
+    let mut first = vec![ModelMessage::user("hello")];
+    ensure_system_prompt(&ctx, &mut first).await;
+    let frozen: Vec<_> = first
+        .iter()
+        .take_while(|m| matches!(m.role, ModelRole::System | ModelRole::Developer))
+        .cloned()
+        .collect();
+    assert!(!frozen.is_empty(), "first call should install a prompt prefix");
+
+    // Mutating context that used to rebuild the system prefix mid-session.
+    ctx.context_packets
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .push(crate::context::ContextPacket {
+            id: Some("late".into()),
+            source: crate::context::ContextSource::Other("test".into()),
+            title: Some("late packet".into()),
+            content: "this must not rewrite the frozen prefix".into(),
+            priority: 10,
+            metadata: json!({}),
+        });
+    *ctx
+        .active_skills
+        .lock()
+        .unwrap_or_else(|e| e.into_inner()) = vec![crate::skills::SkillManifest {
+        id: "late-skill".into(),
+        name: "late-skill".into(),
+        description: Some("should not appear after freeze".into()),
+        version: None,
+        author: None,
+        tags: vec![],
+        requires: vec![],
+        allow_tools: vec![],
+        deny_tools: vec![],
+        path: std::path::PathBuf::from("builtin:late-skill"),
+        instructions: "skill body".into(),
+        source: Default::default(),
+        scope: Default::default(),
+    }];
+
+    let mut second = vec![ModelMessage::user("second turn")];
+    ensure_system_prompt(&ctx, &mut second).await;
+    let second_prefix: Vec<_> = second
+        .iter()
+        .take_while(|m| matches!(m.role, ModelRole::System | ModelRole::Developer))
+        .cloned()
+        .collect();
+
+    assert_eq!(
+        frozen.len(),
+        second_prefix.len(),
+        "prompt prefix length must stay identical after context/skill mutations"
+    );
+    for (a, b) in frozen.iter().zip(second_prefix.iter()) {
+        assert_eq!(a.role, b.role);
+        assert_eq!(
+            a.content, b.content,
+            "prompt prefix content must stay identical after context/skill mutations"
+        );
+    }
+    assert!(
+        !second.iter().any(|m| m.content.contains("late packet")),
+        "late context packets must not rewrite a frozen session prefix"
+    );
+    assert!(
+        !second.iter().any(|m| m.content.contains("late-skill")),
+        "skills activated mid-session must not rewrite a frozen session prefix"
     );
 }
 

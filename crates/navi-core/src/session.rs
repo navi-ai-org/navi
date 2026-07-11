@@ -117,68 +117,6 @@ pub fn clean_session_title(text: &str) -> Option<String> {
     )
 }
 
-/// Generates a session title using a model provider.
-///
-/// Prefer calling early with only the user message (`assistant_response` empty)
-/// so UIs can show a readable name before the first turn finishes. When both
-/// sides are provided, the model can refine the title from the exchange.
-/// Returns `None` if the model call fails or produces empty output.
-pub async fn generate_session_title(
-    user_message: &str,
-    assistant_response: &str,
-    model_provider: &dyn crate::model::ModelProvider,
-    model_name: &str,
-) -> Option<String> {
-    let prompt = if assistant_response.trim().is_empty() {
-        format!(
-            "Generate a concise session title (max 60 chars) for a coding/chat session \
-             that starts with this user message. Capture the intent clearly. \
-             Return ONLY the title, no quotes, markdown, or trailing punctuation.\n\n\
-             User: {}",
-            truncate_for_title(user_message, 800),
-        )
-    } else {
-        format!(
-            "Generate a concise session title (max 60 chars) for this conversation. \
-             Return ONLY the title, no quotes or formatting.\n\n\
-             User: {}\nAssistant: {}",
-            truncate_for_title(user_message, 500),
-            truncate_for_title(assistant_response, 500),
-        )
-    };
-
-    let request = crate::model::ModelRequest {
-        model: model_name.to_string(),
-        instructions: None,
-        messages: vec![
-            crate::model::ModelMessage::system(
-                "You are a title generator. Return only a short, descriptive title \
-                 (a few words). No quotes, no markdown headings, no trailing period.",
-            ),
-            crate::model::ModelMessage::user(prompt),
-        ],
-        thinking: crate::model::ThinkingConfig::Off,
-        tools: vec![],
-    };
-
-    match model_provider.complete(request).await {
-        Ok(response) => clean_session_title(&response.text),
-        Err(err) => {
-            tracing::warn!(error = %err, "session title generation failed");
-            None
-        }
-    }
-}
-
-fn truncate_for_title(text: &str, max_chars: usize) -> String {
-    if text.chars().count() <= max_chars {
-        text.to_string()
-    } else {
-        let truncated: String = text.chars().take(max_chars).collect();
-        format!("{truncated}...")
-    }
-}
-
 impl ProjectMemory {
     /// Returns at most `max` of the most recent memory entries.
     pub fn recent_entries(&self, max: usize) -> &[MemoryEntry] {
@@ -1010,6 +948,7 @@ mod tests {
             active_skills: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
             prompt_cache: std::sync::Arc::new(crate::prompt::PromptCache::new()),
             instructions: std::sync::Arc::new(std::sync::RwLock::new(None)),
+            prompt_prefix: std::sync::Arc::new(std::sync::Mutex::new(None)),
             components: crate::RuntimeComponents::default(),
             cancel_token: crate::cancel::CancelToken::new(),
             config: std::sync::Arc::new(std::sync::RwLock::new(
