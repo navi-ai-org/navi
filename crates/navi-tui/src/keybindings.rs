@@ -196,7 +196,6 @@ fn route_mode_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyModifiers) -> K
 
 // ─── re-exports ─────────────────────────────────────────────────────────────────
 
-pub(crate) use modals::THINKING_OPTIONS;
 pub(crate) use routing::handle_key;
 
 // Test-only re-exports: sub-modules are private, so tests need these paths.

@@ -121,6 +121,11 @@ impl SessionState {
         self.title.as_deref()
     }
 
+    /// Set an explicit session title (provisional user-derived or model-named).
+    pub fn set_title(&mut self, title: Option<String>) {
+        self.title = title.filter(|t| !t.trim().is_empty());
+    }
+
     pub fn events(&self) -> &[AgentEvent] {
         &self.events
     }
@@ -196,10 +201,22 @@ impl SessionState {
         self.events.truncate(cut);
         self.turn_sequence = keep_user_turns as u64;
         self.updated_at = current_unix_timestamp();
-        self.update_title_from_events();
+        self.force_update_title_from_events();
     }
 
+    /// Derive a title from events only when none is set yet.
+    ///
+    /// Keeps provisional / model-assigned titles stable across mid-turn updates
+    /// and end-of-turn snapshots.
     pub fn update_title_from_events(&mut self) {
+        if self.title.is_some() {
+            return;
+        }
+        self.title = session_title_from_events(&self.events);
+    }
+
+    /// Force re-derive from events (e.g. after rewind).
+    pub fn force_update_title_from_events(&mut self) {
         self.title = session_title_from_events(&self.events);
     }
 

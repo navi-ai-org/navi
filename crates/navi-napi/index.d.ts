@@ -37,17 +37,6 @@ export interface HostToolResult {
   output?: JsonValue;
 }
 
-export interface LearningRuntimeConfig {
-  maxConsecutiveErrors?: number;
-  stopOnRepeatedTool?: boolean;
-  compactObservationMaxBytes?: number;
-  role?: string;
-  style?: string;
-  language?: string;
-  keepAllAssessments?: boolean;
-  exemptToolNames?: string[];
-}
-
 export type ContextSource =
   | 'File'
   | 'Project'
@@ -95,8 +84,6 @@ export type HookHandler = (payload: HookPayload) => void;
 
 export class NaviNapiEngineBuilder {
   constructor(projectDir: string);
-  setLearningTutor(enabled?: boolean | null): void;
-  configureLearning(config: LearningRuntimeConfig): void;
   onSessionStart(handler: HookHandler): void;
   onTurnStart(handler: HookHandler): void;
   onToolCall(handler: HookHandler): void;
@@ -107,10 +94,50 @@ export class NaviNapiEngineBuilder {
   build(): NaviNapiEngine;
 }
 
+/** Effort / thinking level for a turn. Prefer model-specific `effortOptions` from `listModels()`. */
+export type EffortLevel =
+  | 'max'
+  | 'high'
+  | 'medium'
+  | 'low'
+  | 'off'
+  | 'adaptive'
+  /** Binary "thinking on" when the model has no multi-level efforts (maps to medium). */
+  | 'on';
+
+export interface EffortOption {
+  /** Config/API value (`off`, `medium`, `high`, …). */
+  value: EffortLevel | string;
+  /** User-facing label (`thinking on`, `thinking off`, or the value). */
+  label: string;
+}
+
+/** One model from `listModels()` (JSON shape; camelCase). */
+export interface ModelInfo {
+  id: string;
+  name: string;
+  providerId: string;
+  providerLabel: string;
+  taskSize: string;
+  contextWindowTokens?: number;
+  supportsThinking?: boolean;
+  /** Raw registry levels (e.g. none/low/medium/high/xhigh). */
+  reasoningLevels?: string[];
+  defaultReasoningEffort?: string;
+  /**
+   * Resolved picker options for this model.
+   * Use these instead of inventing a global effort list.
+   */
+  effortOptions: EffortOption[];
+  /** When true, options are only thinking on / thinking off. */
+  effortBinary: boolean;
+}
+
 export interface TurnOptions {
   contentParts?: ContentPart[] | JsonValue[];
   contextPackets?: JsonValue[];
-  thinking?: 'max' | 'high' | 'medium' | 'low' | 'off' | 'adaptive';
+  /** Effort level for this turn (overrides session default). */
+  thinking?: EffortLevel;
 }
 
 export type SaveTarget = 'auto' | 'project' | 'global' | 'none';
@@ -130,13 +157,33 @@ export interface ProviderSyncReport {
   skipped: JsonValue[];
 }
 
+export interface ModelRef {
+  provider: string;
+  name: string;
+}
+
+export interface BackgroundModelEntry {
+  profile?: string | null;
+  provider?: string | null;
+  model?: string | null;
+  fallback?: string | null;
+}
+
 export interface EngineConfig {
   model: { provider: string; name: string };
   attachmentModels?: {
-    image?: { provider: string; name: string } | null;
-    audio?: { provider: string; name: string } | null;
-    video?: { provider: string; name: string } | null;
-    document?: { provider: string; name: string } | null;
+    image?: ModelRef | null;
+    audio?: ModelRef | null;
+    video?: ModelRef | null;
+    document?: ModelRef | null;
+  };
+  backgroundModels?: {
+    default?: BackgroundModelEntry | null;
+    naming?: BackgroundModelEntry | null;
+    repoSearch?: BackgroundModelEntry | null;
+    compaction?: BackgroundModelEntry | null;
+    subagentResearch?: BackgroundModelEntry | null;
+    simpleCodeEdit?: BackgroundModelEntry | null;
   };
   globalConfigPath?: string;
   projectConfigPath?: string;
@@ -149,8 +196,7 @@ export interface ActiveSessions {
 }
 
 export class NaviNapiEngine {
-  constructor(projectDir: string, learningTutor?: boolean | null);
-  static learningTutor(projectDir: string): NaviNapiEngine;
+  constructor(projectDir: string);
   startSession(sessionId?: string | null, projectDir?: string | null): Promise<SessionInfo>;
   sendTurn(sessionId: string, message: string, options?: TurnOptions): Promise<TurnResponse>;
   snapshotSession(sessionId: string): Promise<string>;
@@ -165,10 +211,15 @@ export class NaviNapiEngine {
   /** Resolve sudo: { kind: "submitted", id, password } | { kind: "cancelled", id } */
   resolveSudoPassword(sessionId: string, response: JsonValue): Promise<boolean>;
   addContextPacket(sessionId: string, packet: ContextPacket): Promise<void>;
-  listModels(): JsonValue;
+  /** Available models with per-model `effortOptions` / `effortBinary`. */
+  listModels(): ModelInfo[];
   listTuiComponents(sessionId: string): string[];
   setModel(sessionId: string, provider: string, model: string): Promise<void>;
   selectModel(providerId: string, model: string, saveTarget?: SaveTarget): ModelSelectionResult;
+  setAttachmentModel(modality: string, provider: string, model: string, saveTarget?: SaveTarget): JsonValue;
+  clearAttachmentModel(modality: string, saveTarget?: SaveTarget): JsonValue;
+  setBackgroundModel(task: string, provider: string, model: string, saveTarget?: SaveTarget): JsonValue;
+  clearBackgroundModel(task: string, saveTarget?: SaveTarget): JsonValue;
   subscribeEvents(sessionId: string): NaviNapiEventStream;
   // Goals
   getGoal(sessionId: string): Promise<JsonValue>;
@@ -186,6 +237,10 @@ export class NaviNapiEngine {
   credentialStatus(providerId: string): JsonValue;
   setProviderApiKey(providerId: string, apiKey: string): void;
   deleteProviderApiKey(providerId: string): boolean;
+  listCredentialAccounts(providerId: string): JsonValue;
+  addProviderAccount(providerId: string, apiKey: string, label?: string | null): JsonValue;
+  selectProviderAccount(providerId: string, accountId: string): JsonValue;
+  deleteProviderAccount(providerId: string, accountId: string): boolean;
   providerSupportsDeviceOauth(providerId: string): boolean;
   /** Device/browser OAuth; onStarted gets { verificationUri, userCode }. Returns optional secondary token. */
   startDeviceOauth(

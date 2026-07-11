@@ -6,14 +6,13 @@ import {
 } from '../index';
 
 const builder = new NaviNapiEngineBuilder('.');
-builder.configureLearning({ language: 'pt-BR', maxConsecutiveErrors: 5 });
 builder.onToolCall((payload) => {
   console.log(payload.invocation);
 });
 builder.hostTool(
   {
-    name: 'questionario',
-    description: 'Gera questoes.',
+    name: 'lookup_docs',
+    description: 'Look up documentation.',
     kind: 'read',
     inputSchema: { type: 'object' },
   },

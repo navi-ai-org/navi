@@ -25,7 +25,10 @@ pub(super) fn welcome_text(app: &TuiApp, width: usize, height: usize) -> Text<'s
     let project = project_label();
     let model = app.loaded_config.config.model.name.clone();
     let provider = selected_provider_label(app).to_string();
-    let thinking = app.thinking_level.label();
+    let binary_effort = crate::state::ThinkingLevel::is_binary_for_model(
+        app.models.get(app.selected_model),
+    );
+    let effort = app.thinking_level.display_label(binary_effort);
     let context = app.compact_state.usage_label(0);
     let mode = format!("{:?}", app.loaded_config.config.harness.profile).to_lowercase();
     let router = "auto".to_string();
@@ -41,7 +44,7 @@ pub(super) fn welcome_text(app: &TuiApp, width: usize, height: usize) -> Text<'s
     let status_width = [
         project.chars().count() + 10,
         model.chars().count() + provider.chars().count() + 9,
-        thinking.len() + 13,
+        effort.len() + 11,
         context.len() + 9,
         mode.len() + 9,
         router.len() + 9,
@@ -77,7 +80,7 @@ pub(super) fn welcome_text(app: &TuiApp, width: usize, height: usize) -> Text<'s
         }
 
         if let Some(status) = welcome_status_line(
-            index, &project, &provider, &model, thinking, &context, &mode, &router, &tools,
+            index, &project, &provider, &model, effort, &context, &mode, &router, &tools,
             &session, &cost,
         ) {
             spans.push(Span::raw("      "));
@@ -96,7 +99,10 @@ fn compact_welcome_text(app: &TuiApp, width: usize, height: usize) -> Text<'stat
     let project = project_label();
     let model = app.loaded_config.config.model.name.clone();
     let provider = selected_provider_label(app).to_string();
-    let thinking = app.thinking_level.label();
+    let binary_effort = crate::state::ThinkingLevel::is_binary_for_model(
+        app.models.get(app.selected_model),
+    );
+    let effort = app.thinking_level.display_label(binary_effort);
     let context = app.compact_state.usage_label(0);
     let session = if app.conversation_history.len() <= 1 {
         "new"
@@ -109,7 +115,7 @@ fn compact_welcome_text(app: &TuiApp, width: usize, height: usize) -> Text<'stat
         compact_status_line("project", &project, width),
         compact_status_line("model", &model, width),
         compact_status_line("via", &provider, width),
-        compact_status_line("thinking", thinking, width),
+        compact_status_line("effort", effort, width),
         compact_status_line("context", &context, width),
         compact_status_line("session", session, width),
     ];
@@ -186,7 +192,7 @@ fn welcome_status_line(
     project: &str,
     provider: &str,
     model: &str,
-    thinking: &str,
+    effort: &str,
     context: &str,
     mode: &str,
     router: &str,
@@ -217,8 +223,8 @@ fn welcome_status_line(
             ),
         ]),
         3 => Some(vec![
-            Span::styled("thinking ", Style::default().fg(muted())),
-            Span::styled(thinking.to_string(), Style::default().fg(text())),
+            Span::styled("effort  ", Style::default().fg(muted())),
+            Span::styled(effort.to_string(), Style::default().fg(text())),
         ]),
         4 => Some(vec![
             Span::styled("context ", Style::default().fg(muted())),

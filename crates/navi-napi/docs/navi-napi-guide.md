@@ -39,8 +39,6 @@
   - [Defining a Host Tool](#defining-a-host-tool)
   - [Host Tool Input and Output](#host-tool-input-and-output)
 - [Lifecycle Hooks](#lifecycle-hooks)
-- [Learning Tutor Mode](#learning-tutor-mode)
-  - [Learning Configuration](#learning-configuration)
 - [Type Reference](#type-reference)
 - [Platform Notes](#platform-notes)
 - [Building from Source](#building-from-source)
@@ -134,26 +132,15 @@ For quick usage without host tools or hooks:
 
 ```ts
 const engine = new NaviNapiEngine('/path/to/project');
-
-// Or in learning-tutor mode:
-const engine = NaviNapiEngine.learningTutor('/path/to/project');
 ```
 
 ### Builder Pattern
 
-The builder gives you full control over host tools, lifecycle hooks, and learning configuration before the engine is created:
+The builder gives you full control over host tools and lifecycle hooks before
+the engine is created:
 
 ```ts
 const builder = new NaviNapiEngineBuilder('/path/to/project');
-
-// Configure learning mode (optional)
-builder.setLearningTutor(true);
-builder.configureLearning({
-  language: 'pt-BR',
-  style: 'socratico',
-  maxConsecutiveErrors: 6,
-  keepAllAssessments: true,
-});
 
 // Register host tools (optional, see Host Tools section)
 builder.hostTool(definition, handler);
@@ -367,7 +354,16 @@ The `source` field identifies where the context came from:
 ```ts
 // List all available models across all configured providers
 const models = engine.listModels();
-// models => JsonValue (array of provider/model entries)
+// models => ModelInfo[] with per-model effortOptions / effortBinary
+
+// Effort picker: use the selected model's resolved options (never a global list)
+const model = models.find((m) => m.id === 'openai:gpt-5.5');
+// model.effortOptions => [{ value, label }, ...]  e.g. max/high/medium/low/off
+// model.effortBinary  => true when only thinking on / thinking off
+
+// Pass an effort level on a turn (optional; overrides session default)
+await engine.sendTurn(session.id, 'Explain this', { thinking: 'high' });
+// Binary models: thinking: 'on' | 'off' (on maps to medium)
 
 // Change the model for an active session (session-level, not persisted)
 await engine.setModel(session.id, 'anthropic', 'claude-sonnet-4-20250514');
@@ -762,65 +758,6 @@ Not all fields are populated for every hook — only the fields relevant to that
 
 ---
 
-## Learning Tutor Mode
-
-NAVI can run in a specialized "learning tutor" mode designed for educational applications (e.g. NAVI Tutor). In this mode, the engine applies a learning-specific system prompt, assessment tracking, and pedagogical behavior.
-
-```ts
-// Quick way:
-const engine = NaviNapiEngine.learningTutor('/path/to/project');
-
-// Or via builder:
-const builder = new NaviNapiEngineBuilder('/path/to/project');
-builder.setLearningTutor(true);
-builder.configureLearning({ /* ... */ });
-const engine = builder.build();
-```
-
-### Learning Configuration
-
-```ts
-interface LearningRuntimeConfig {
-  // Stop the turn after this many consecutive tool errors (default: engine default)
-  maxConsecutiveErrors?: number;
-
-  // Stop if the same tool is called with the same input repeatedly
-  stopOnRepeatedTool?: boolean;
-
-  // Max bytes for tool observation content in the learning context
-  compactObservationMaxBytes?: number;
-
-  // System role description for the learning agent
-  role?: string;
-
-  // Teaching style (e.g. 'socratico', 'direct', 'collaborative')
-  style?: string;
-
-  // Language for the agent's responses (e.g. 'pt-BR', 'en', 'es')
-  language?: string;
-
-  // Keep all assessment results in context (don't compact them)
-  keepAllAssessments?: boolean;
-
-  // Tool names that are exempt from compaction/error limits
-  exemptToolNames?: string[];
-}
-```
-
-Example:
-
-```ts
-builder.configureLearning({
-  language: 'pt-BR',
-  style: 'socratico',
-  maxConsecutiveErrors: 6,
-  keepAllAssessments: true,
-  exemptToolNames: ['questionario', 'avaliacao'],
-});
-```
-
----
-
 ## Type Reference
 
 All types are exported from `@navi-agent/napi`:
@@ -828,7 +765,7 @@ All types are exported from `@navi-agent/napi`:
 ```ts
 // Engine classes
 NaviNapiEngine        // Main engine — send turns, manage sessions
-NaviNapiEngineBuilder // Builder — configure tools, hooks, learning before build
+NaviNapiEngineBuilder // Builder — configure tools and hooks before build
 NaviNapiEventStream   // Async iterator for runtime events
 
 // Data types
@@ -848,9 +785,6 @@ HostToolDefinition    // { name, description, kind?, inputSchema? }
 HostToolInvocation    // { invocationId, input }
 HostToolResult        // { ok?, output? }
 ToolKind              // 'read' | 'write' | 'command' | 'custom'
-
-// Learning types
-LearningRuntimeConfig // { maxConsecutiveErrors?, style?, language?, ... }
 
 // Hook types
 HookPayload           // { sessionId?, task?, output?, invocation?, result? }
@@ -963,13 +897,6 @@ import {
 // --- Setup ---
 
 const builder = new NaviNapiEngineBuilder(process.cwd());
-
-// Configure learning mode
-builder.configureLearning({
-  language: 'en',
-  style: 'collaborative',
-  maxConsecutiveErrors: 3,
-});
 
 // Register a custom tool
 builder.hostTool(

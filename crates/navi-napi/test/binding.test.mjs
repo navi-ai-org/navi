@@ -13,22 +13,15 @@ test('exports public NAPI classes', () => {
   assert.equal(typeof napi.NaviNapiEngine, 'function');
 });
 
-test('builder creates a learning runtime with TypeScript tools and hooks', () => {
+test('builder creates a runtime with TypeScript tools and hooks', () => {
   const workspace = mkdtempSync(join(tmpdir(), 'navi-napi-'));
   const builder = new napi.NaviNapiEngineBuilder(workspace);
 
-  builder.configureLearning({
-    language: 'pt-BR',
-    style: 'socratico',
-    maxConsecutiveErrors: 6,
-    keepAllAssessments: true,
-    exemptToolNames: ['questionario'],
-  });
   builder.onToolCall(() => {});
   builder.hostTool(
     {
-      name: 'consultar_materiais',
-      description: 'Consulta materiais didaticos.',
+      name: 'lookup_docs',
+      description: 'Look up project documentation.',
       kind: 'read',
       inputSchema: { type: 'object' },
     },
@@ -40,5 +33,13 @@ test('builder creates a learning runtime with TypeScript tools and hooks', () =>
 
   const engine = builder.build();
   assert.equal(typeof engine.listModels, 'function');
-  assert.ok(Array.isArray(engine.listModels()));
+  const models = engine.listModels();
+  assert.ok(Array.isArray(models));
+  assert.ok(models.length > 0);
+  const first = models[0];
+  assert.ok(Array.isArray(first.effortOptions), 'listModels should include effortOptions');
+  assert.equal(typeof first.effortBinary, 'boolean');
+  assert.ok(first.effortOptions.length > 0);
+  assert.equal(typeof first.effortOptions[0].value, 'string');
+  assert.equal(typeof first.effortOptions[0].label, 'string');
 });

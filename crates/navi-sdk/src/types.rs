@@ -81,11 +81,45 @@ pub struct NaviTurnResponse {
     pub text: String,
 }
 
+/// One selectable effort level for a model (UI / Tutor / N-API).
+///
+/// `value` is the config/API string (`off`, `medium`, `high`, …).
+/// `label` is what the user sees (`thinking on`, `thinking off`, or the value).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NaviEffortOption {
+    pub value: String,
+    pub label: String,
+}
+
+/// Resolve effort picker options for a model from registry fields.
+///
+/// Returns `(options, binary)` where `binary` means the model has no configured
+/// multi-level efforts and the UI should show thinking on/off only.
+pub fn effort_options_for_model(
+    supports_thinking: Option<bool>,
+    reasoning_levels: &[String],
+) -> (Vec<NaviEffortOption>, bool) {
+    let binary = navi_core::is_binary_effort_model(supports_thinking, reasoning_levels);
+    let levels = navi_core::thinking_levels_for_model(supports_thinking, reasoning_levels);
+    let options = levels
+        .into_iter()
+        .map(|level| NaviEffortOption {
+            value: level.as_config_str().to_string(),
+            label: navi_core::effort_display_label(level, binary).to_string(),
+        })
+        .collect();
+    (options, binary)
+}
+
 /// A model available in the current configuration.
 ///
 /// `id` uses the `provider:model` format (e.g. `openai:gpt-5.5`). `task_size`
 /// indicates the recommended harness budget class. `context_window_tokens` is
 /// the effective window after system-prompt overhead, if known.
+///
+/// Effort UI should use [`Self::effort_options`] (and [`Self::effort_binary`]),
+/// not the raw registry `reasoning_levels` alone.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NaviModelInfo {
@@ -98,12 +132,18 @@ pub struct NaviModelInfo {
     /// Whether the model supports extended thinking / reasoning.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub supports_thinking: Option<bool>,
-    /// Registry-supported reasoning effort levels for this model.
+    /// Registry-supported reasoning effort levels for this model (raw).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub reasoning_levels: Vec<String>,
     /// Default reasoning effort when the user has not picked one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_reasoning_effort: Option<String>,
+    /// Resolved effort levels for pickers (model-specific, or binary on/off).
+    #[serde(default)]
+    pub effort_options: Vec<NaviEffortOption>,
+    /// When true, [`Self::effort_options`] is binary thinking on/off only.
+    #[serde(default)]
+    pub effort_binary: bool,
 }
 
 /// A skill available for activation (built-in or SQLite store).
@@ -443,5 +483,26 @@ mod tests {
             NaviError::SessionNotFound(id) => assert_eq!(id, "session-1"),
             other => panic!("expected SessionNotFound, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn effort_options_binary_when_no_registry_levels() {
+        let (opts, binary) = effort_options_for_model(Some(true), &[]);
+        assert!(binary);
+        assert_eq!(opts.len(), 2);
+        assert!(opts.iter().any(|o| o.value == "medium" && o.label == "thinking on"));
+        assert!(opts.iter().any(|o| o.value == "off" && o.label == "thinking off"));
+    }
+
+    #[test]
+    fn effort_options_model_specific_from_registry() {
+        let levels = vec!["low".into(), "high".into()];
+        let (opts, binary) = effort_options_for_model(Some(true), &levels);
+        assert!(!binary);
+        assert_eq!(
+            opts.iter().map(|o| o.value.as_str()).collect::<Vec<_>>(),
+            vec!["high", "low"]
+        );
+        assert!(opts.iter().all(|o| o.label == o.value));
     }
 }

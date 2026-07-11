@@ -151,6 +151,13 @@ pub enum RuntimeEventKind {
         /// Identifier of the saved session.
         session_id: String,
     },
+    /// Session display title was assigned or updated (provisional or model-named).
+    SessionTitleUpdated {
+        /// Identifier of the session.
+        session_id: String,
+        /// New display title.
+        title: String,
+    },
     /// A turn has completed with a final text response.
     TurnCompleted {
         /// Identifier of the completed turn.

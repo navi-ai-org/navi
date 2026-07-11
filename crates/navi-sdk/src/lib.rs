@@ -9,6 +9,7 @@ mod mcp_ops;
 mod memory_ops;
 mod notify_ops;
 mod plugins;
+mod routing_ops;
 mod tooling;
 mod types;
 mod voice;
@@ -30,12 +31,13 @@ pub use navi_providers::github_copilot_device_oauth;
 pub use tooling::reload_wasm_plugins_on_executor;
 pub use tooling::{build_provider_for_config, build_provider_for_project_config};
 pub use types::{
-    NaviConfigSaveTarget, NaviError, NaviMissingCredentialError, NaviModelInfo,
+    NaviConfigSaveTarget, NaviEffortOption, NaviError, NaviMissingCredentialError, NaviModelInfo,
     NaviModelSelectionRequest, NaviModelSelectionResult, NaviProviderAccountInfo,
     NaviProviderCredentialStatus, NaviProviderSyncFailure, NaviProviderSyncReport,
     NaviProviderSyncSkipped, NaviRuntimeTooling, NaviSavedSessionInfo, NaviSessionInfo,
     NaviSessionRequest, NaviSkillInfo, NaviSyncedProvider, NaviTurnRequest, NaviTurnResponse,
     NaviUsageDetail, NaviUsageLimitSnapshot, NaviUsageReport, NaviUsageWindow,
+    effort_options_for_model,
 };
 
 // Re-export engine types so TUI/clients can import from navi_sdk instead of navi_core.
@@ -67,8 +69,9 @@ pub use navi_core::{
     CompactThreshold, CredentialStore, HarnessPolicy, HarnessProfile, LoadedConfig, ModelOption,
     ModelTaskSize, NaviConfig, NotificationUrgency, NotifyRequest, PermissionMode, ProviderConfig,
     ProviderKind, ProviderModelConfig, SessionStore, ThinkingConfig, UpdateInfo, UpdatesConfig,
-    parse_reasoning_level, resolve_effort_label, resolve_model_thinking_level,
-    select_harness_policy, thinking_levels_for_model,
+    BINARY_REASONING_LEVELS, effort_display_label, is_binary_effort_model, parse_reasoning_level,
+    resolve_effort_label, resolve_model_thinking_level, select_harness_policy,
+    thinking_levels_for_model,
 };
 // Utility functions
 pub use navi_core::{

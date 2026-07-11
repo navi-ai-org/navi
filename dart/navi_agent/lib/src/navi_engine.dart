@@ -22,7 +22,7 @@ import 'types.dart';
 
 /// The main NAVI engine handle.
 ///
-/// Create via [NaviEngine.fromProject] or [NaviEngine.learningTutor].
+/// Create via [NaviEngine.fromProject].
 /// Always call [dispose] when done.
 class NaviEngine {
   final Pointer<native.NaviDartEngine> _ptr;
@@ -38,20 +38,6 @@ class NaviEngine {
     final dirC = projectDir.toNativeUtf8();
     try {
       final ptr = native.naviEngineNew(dirC);
-      if (ptr == nullptr) {
-        throw NaviException(_lastError());
-      }
-      return NaviEngine._(ptr);
-    } finally {
-      calloc.free(dirC);
-    }
-  }
-
-  /// Creates a new engine configured as a learning tutor.
-  static Future<NaviEngine> learningTutor(String projectDir) async {
-    final dirC = projectDir.toNativeUtf8();
-    try {
-      final ptr = native.naviEngineNewLearningTutor(dirC);
       if (ptr == nullptr) {
         throw NaviException(_lastError());
       }

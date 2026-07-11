@@ -998,7 +998,7 @@ pub(crate) fn render_thinking_picker(frame: &mut Frame<'_>, app: &TuiApp, area: 
         .get(app.selected_model)
         .map(|m| m.name.as_str())
         .unwrap_or("model");
-    let title = format!("Thinking Mode · {model_label}");
+    let title = format!("Effort Level · {model_label}");
     let block = modal_block(&title);
     frame.render_widget(block, area);
 
@@ -1012,6 +1012,7 @@ pub(crate) fn render_thinking_picker(frame: &mut Frame<'_>, app: &TuiApp, area: 
         .split(inner);
 
     let options = crate::keybindings::modals::thinking_options_for_app(app);
+    let binary = crate::keybindings::modals::effort_is_binary_for_app(app);
     let selected_local = options
         .iter()
         .position(|l| l.index() == app.selected_thinking || *l == app.thinking_level)
@@ -1023,7 +1024,13 @@ pub(crate) fn render_thinking_picker(frame: &mut Frame<'_>, app: &TuiApp, area: 
         .map(|(index, level)| {
             let selected = index == selected_local;
             let hovered = app.hover_index == Some(index);
-            let current = *level == app.thinking_level;
+            let current = if binary {
+                // Binary mode collapses any non-off selection onto "thinking on".
+                (level.is_off() && app.thinking_level.is_off())
+                    || (!level.is_off() && !app.thinking_level.is_off())
+            } else {
+                *level == app.thinking_level
+            };
             let style = if hovered || selected {
                 active_item_style()
             } else {
@@ -1031,7 +1038,11 @@ pub(crate) fn render_thinking_picker(frame: &mut Frame<'_>, app: &TuiApp, area: 
             };
 
             let marker = if current { "● " } else { "  " };
-            ListItem::new(Span::styled(format!("{}{}", marker, level.label()), style)).style(style)
+            ListItem::new(Span::styled(
+                format!("{}{}", marker, level.display_label(binary)),
+                style,
+            ))
+            .style(style)
         })
         .collect::<Vec<_>>();
 
@@ -1045,7 +1056,7 @@ pub(crate) fn render_thinking_picker(frame: &mut Frame<'_>, app: &TuiApp, area: 
         app.register_hit(
             line_rect(rows[0], index),
             20,
-            format!("thinking {}", level.label()),
+            format!("effort {}", level.display_label(binary)),
             HitAction::Key {
                 code: crossterm::event::KeyCode::Enter,
                 modifiers: crossterm::event::KeyModifiers::NONE,
@@ -1055,9 +1066,13 @@ pub(crate) fn render_thinking_picker(frame: &mut Frame<'_>, app: &TuiApp, area: 
         // is handled by key/mouse handlers; click path uses current selected_thinking.
         let _ = level;
     }
+    let footer = if binary {
+        "model has no effort levels · thinking off or on"
+    } else {
+        "effort levels for this model"
+    };
     frame.render_widget(
-        Paragraph::new("levels from registry · adaptive maps to task complexity")
-            .style(Style::default().fg(muted()).bg(modal_bg())),
+        Paragraph::new(footer).style(Style::default().fg(muted()).bg(modal_bg())),
         rows[1],
     );
 }

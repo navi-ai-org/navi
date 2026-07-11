@@ -432,6 +432,9 @@ impl CredentialStore {
 
     /// Stores an API key for the given provider, creating the credentials file
     /// if needed.
+    ///
+    /// **Note:** this replaces the provider's credential map with a single
+    /// default account. Prefer [`Self::add_api_key_account`] for multi-account.
     pub fn set_api_key(&self, provider_id: &str, api_key: &str) -> Result<()> {
         let provider_id = credential_provider_key(provider_id);
         ensure_private_parent_dir(&self.path)?;
@@ -464,6 +467,104 @@ impl CredentialStore {
         self.write_content(&content)?;
 
         Ok(())
+    }
+
+    /// Add (or update) one API-key account without wiping sibling accounts.
+    ///
+    /// Returns the `account_id`. When `account_id` is `None`, a new id is generated.
+    pub fn add_api_key_account(
+        &self,
+        provider_id: &str,
+        api_key: &str,
+        label: Option<&str>,
+        account_id: Option<&str>,
+    ) -> Result<String> {
+        let provider_id = credential_provider_key(provider_id);
+        let api_key = api_key.trim();
+        if api_key.is_empty() {
+            anyhow::bail!("api key cannot be empty");
+        }
+        ensure_private_parent_dir(&self.path)?;
+
+        let mut file = self.load_file()?;
+        file.ignored_providers.retain(|p| p != &provider_id);
+
+        let credentials = file.providers.entry(provider_id.clone()).or_default();
+        let id = account_id
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+            .unwrap_or_else(|| {
+                // Stable-ish id from key suffix so re-adding the same key updates.
+                let suffix: String = api_key
+                    .chars()
+                    .rev()
+                    .take(6)
+                    .collect::<String>()
+                    .chars()
+                    .rev()
+                    .collect();
+                format!("acct-{}", suffix)
+            });
+        let display = label
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+            .unwrap_or_else(|| {
+                if id == DEFAULT_ACCOUNT_ID {
+                    "Default".to_string()
+                } else {
+                    format!("Account {id}")
+                }
+            });
+
+        credentials.accounts.insert(
+            id.clone(),
+            CredentialAccount {
+                api_key: api_key.to_string(),
+                label: Some(display),
+                commandcode: None,
+                authenticated_at: Some(current_unix_timestamp_string()),
+                oauth_api_kind: None,
+                oauth_refresh_token: None,
+                oauth_expires_at: None,
+            },
+        );
+        if credentials.default_account.is_none() {
+            credentials.default_account = Some(id.clone());
+        }
+        // Keep legacy top-level key in sync with the default account for older readers.
+        if credentials.default_account.as_deref() == Some(id.as_str())
+            || credentials.api_key.is_empty()
+        {
+            credentials.api_key = api_key.to_string();
+            if credentials.default_account.is_none() {
+                credentials.default_account = Some(id.clone());
+            }
+        }
+
+        let content = toml::to_string_pretty(&file).context("failed to serialize credentials")?;
+        self.write_content(&content)?;
+        Ok(id)
+    }
+
+    /// Set the default account for a provider (global selection).
+    pub fn set_default_account(&self, provider_id: &str, account_id: &str) -> Result<()> {
+        let provider_id = credential_provider_key(provider_id);
+        ensure_private_parent_dir(&self.path)?;
+        let mut file = self.load_file()?;
+        let Some(credentials) = file.providers.get_mut(&provider_id) else {
+            anyhow::bail!("unknown provider '{provider_id}'");
+        };
+        if credentials.account_api_key(account_id).is_none() {
+            anyhow::bail!("unknown account '{account_id}' for provider '{provider_id}'");
+        }
+        credentials.default_account = Some(account_id.to_string());
+        if let Some(key) = credentials.account_api_key(account_id) {
+            credentials.api_key = key;
+        }
+        let content = toml::to_string_pretty(&file).context("failed to serialize credentials")?;
+        self.write_content(&content)
     }
     /// Stores an API key with oauth_api_kind metadata (e.g. "chat-completions"
     /// for OAuth tokens that only work with Chat Completions API).

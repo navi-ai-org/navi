@@ -212,30 +212,20 @@ tools. They receive the tool invocation id and model-produced JSON input.
 ## TypeScript / NAPI
 
 The `navi-napi` crate exposes the SDK to Node clients without native plugin
-libraries. A host can build the learning runtime and register TypeScript tools
-before starting a session:
+libraries. A host can register TypeScript tools and lifecycle hooks before
+starting a session:
 
 ```ts
 import { NaviNapiEngineBuilder } from "@navi/napi";
 
 const builder = new NaviNapiEngineBuilder(process.cwd());
-builder.configureLearning({
-  maxConsecutiveErrors: 7,
-  stopOnRepeatedTool: false,
-  compactObservationMaxBytes: 4096,
-  role: "professor",
-  style: "socratico",
-  language: "pt-BR",
-  keepAllAssessments: true,
-  exemptToolNames: ["questionario", "grill_avaliacao", "student_progress"],
-});
 builder.onSessionStart(({ sessionId }) => analytics.track("session_started", { sessionId }));
 builder.onToolCall(({ invocation }) => analytics.track("tool_called", invocation));
 builder.onToolResult(({ result }) => db.toolResults.insert(result));
 builder.hostTool(
   {
-    name: "consultar_materiais",
-    description: "Consulta materiais didaticos do aluno",
+    name: "lookup_docs",
+    description: "Look up project documentation",
     kind: "read",
     inputSchema: {
       type: "object",
@@ -246,7 +236,7 @@ builder.hostTool(
     },
   },
   async ({ invocationId, input }) => {
-    const material = await materialDb.lookup(input.topic);
+    const material = await docsDb.lookup(input.topic);
     return {
       ok: true,
       output: { invocationId, material },
@@ -259,12 +249,12 @@ const models = engine.listModels();
 const session = await engine.startSession();
 const events = engine.subscribeEvents(session.id);
 await engine.addContextPacket(session.id, {
-  source: "StudyBlock",
-  title: "Limites",
-  content: "O aluno ja conhece derivadas.",
+  source: "File",
+  title: "README",
+  content: "Project overview...",
   priority: 5,
 });
-const response = await engine.sendTurn(session.id, "Explique limites com exemplos");
+const response = await engine.sendTurn(session.id, "Summarize the project");
 const firstEvent = await events.next();
 ```
 
@@ -273,10 +263,8 @@ The callback receives `{ invocationId, input }` and returns a promise for
 adapter used by Rust hosts, so it is visible to the model without changing
 `navi-core` or depending on `navi-tui`. `subscribeEvents(sessionId)` returns a
 stream object whose `next()` method resolves to the next serialized
-`RuntimeEvent`, or `null` when the stream closes. `configureLearning(...)`
-maps structured TypeScript options onto the Rust learning harness, tutor prompt
-builder, and study compaction strategy. The NAPI engine also exposes runtime
-control methods for `cancelTurn`, `resolveApproval`, `addContextPacket`,
+`RuntimeEvent`, or `null` when the stream closes. The NAPI engine also exposes
+runtime control methods for `cancelTurn`, `resolveApproval`, `addContextPacket`,
 `listModels`, `listTuiComponents`, and `setModel`. Lifecycle hook callbacks
 are fire-and-forget: the runtime emits JSON payloads through Node's event loop
 and does not block the agent turn waiting for asynchronous analytics or
@@ -289,7 +277,6 @@ policy names before constructing the session runtime:
 
 | Policy | Effect |
 |---|---|
-| `learning_tutor`, `navi_learning`, `tutor` | Uses `learning_runtime_components()`. |
 | `default`, `code_agent` | Uses `RuntimeComponents::default()`. |
 
 Unknown policy names are reported as plugin warnings and do not replace the
@@ -314,16 +301,6 @@ let engine = NaviEngineBuilder::from_project(".")
     .build()?;
 ```
 
-For a tutor-style learning runtime:
-
-```rust
-let engine = NaviEngineBuilder::from_project(".")
-    .learning_tutor()
-    .host_tool(Arc::new(material_lookup_tool))
-    .host_tool(Arc::new(quiz_tool))
-    .build()?;
-```
-
 Custom components can replace:
 
 | Component | Purpose |
@@ -335,12 +312,8 @@ Custom components can replace:
 | `SessionHooks` | Session, turn, and tool lifecycle callbacks. |
 
 The default composition preserves NAVI's terminal code-agent behavior. A host
-that wants full tool autonomy, such as NAVI Tutor, should opt in explicitly with
+that wants full tool autonomy should opt in explicitly with
 `PermissiveSecurityPolicy`; permissive security is never the default.
-
-`learning_tutor()` composes `PermissiveSecurityPolicy`, `LearningHarness`,
-`TutorPromptBuilder`, and `StudyCompactionStrategy`. It is intended as the Rust
-SDK preset that NAPI/TypeScript wrappers can expose to `navi-learning`.
 
 ## Context Injection
 

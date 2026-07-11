@@ -105,7 +105,7 @@ pub(crate) const COMMANDS: &[CommandItem] = &[
         action: CommandAction::RetryLast,
     },
     CommandItem {
-        label: "Thinking Mode",
+        label: "Effort Level",
         shortcut: None,
         action: CommandAction::OpenThinking,
     },

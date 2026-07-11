@@ -55,39 +55,6 @@ pub unsafe extern "C" fn navi_engine_new(project_dir: *const c_char) -> *mut Nav
     Box::into_raw(Box::new(NaviDartEngine { runtime, inner }))
 }
 
-/// Creates a new engine configured as a learning tutor.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn navi_engine_new_learning_tutor(
-    project_dir: *const c_char,
-) -> *mut NaviDartEngine {
-    let dir = match unsafe { cstr_to_str(project_dir) } {
-        Some(s) => s,
-        None => {
-            set_last_error("project_dir is null or invalid UTF-8");
-            return ptr::null_mut();
-        }
-    };
-    let runtime = match Runtime::new() {
-        Ok(rt) => rt,
-        Err(e) => {
-            set_last_error(&format!("failed to create tokio runtime: {e}"));
-            return ptr::null_mut();
-        }
-    };
-    let inner = match runtime.block_on(async {
-        NaviEngineBuilder::from_project(dir)
-            .learning_tutor()
-            .build()
-    }) {
-        Ok(engine) => engine,
-        Err(e) => {
-            set_last_error(&format!("failed to build engine: {e}"));
-            return ptr::null_mut();
-        }
-    };
-    Box::into_raw(Box::new(NaviDartEngine { runtime, inner }))
-}
-
 /// Frees an engine handle. Passing null is a safe no-op.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn navi_engine_free(engine: *mut NaviDartEngine) {

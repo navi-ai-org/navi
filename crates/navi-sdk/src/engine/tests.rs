@@ -219,22 +219,6 @@ fn builder_loads_from_project_dir() {
     assert!(result.is_ok(), "builder failed: {:?}", result.err());
 }
 
-#[test]
-
-fn builder_learning_tutor_preset_succeeds() {
-    let tempdir = tempfile::tempdir().expect("tempdir");
-
-    let result = NaviEngineBuilder::from_project(tempdir.path())
-        .learning_tutor()
-        .build();
-
-    assert!(
-        result.is_ok(),
-        "learning tutor builder failed: {:?}",
-        result.err()
-    );
-}
-
 // ── Group 2: Model listing tests ────────────────────────────────────
 
 #[test]
@@ -254,6 +238,25 @@ fn list_models_returns_default_models() {
         assert!(!model.provider_id.is_empty());
 
         assert!(model.id.contains(':'), "id should be provider:model format");
+
+        // Every model exposes resolved effort options for UI clients.
+        assert!(
+            !model.effort_options.is_empty(),
+            "model {} should have effort_options",
+            model.id
+        );
+        for opt in &model.effort_options {
+            assert!(!opt.value.is_empty());
+            assert!(!opt.label.is_empty());
+        }
+        if model.effort_binary {
+            assert!(
+                model.effort_options.iter().any(|o| o.label == "thinking on")
+                    || model.effort_options.iter().any(|o| o.label == "thinking off"),
+                "binary effort model {} should use thinking on/off labels",
+                model.id
+            );
+        }
     }
 }
 

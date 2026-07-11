@@ -119,29 +119,41 @@ pub fn clean_session_title(text: &str) -> Option<String> {
 
 /// Generates a session title using a model provider.
 ///
-/// Sends the first user message and assistant response to the model with a
-/// prompt asking for a concise title. Returns `None` if the model call fails
-/// or produces empty output.
+/// Prefer calling early with only the user message (`assistant_response` empty)
+/// so UIs can show a readable name before the first turn finishes. When both
+/// sides are provided, the model can refine the title from the exchange.
+/// Returns `None` if the model call fails or produces empty output.
 pub async fn generate_session_title(
     user_message: &str,
     assistant_response: &str,
     model_provider: &dyn crate::model::ModelProvider,
     model_name: &str,
 ) -> Option<String> {
-    let prompt = format!(
-        "Generate a concise session title (max 60 chars) for this conversation. \
-         Return ONLY the title, no quotes or formatting.\n\n\
-         User: {}\nAssistant: {}",
-        truncate_for_title(user_message, 500),
-        truncate_for_title(assistant_response, 500),
-    );
+    let prompt = if assistant_response.trim().is_empty() {
+        format!(
+            "Generate a concise session title (max 60 chars) for a coding/chat session \
+             that starts with this user message. Capture the intent clearly. \
+             Return ONLY the title, no quotes, markdown, or trailing punctuation.\n\n\
+             User: {}",
+            truncate_for_title(user_message, 800),
+        )
+    } else {
+        format!(
+            "Generate a concise session title (max 60 chars) for this conversation. \
+             Return ONLY the title, no quotes or formatting.\n\n\
+             User: {}\nAssistant: {}",
+            truncate_for_title(user_message, 500),
+            truncate_for_title(assistant_response, 500),
+        )
+    };
 
     let request = crate::model::ModelRequest {
         model: model_name.to_string(),
         instructions: None,
         messages: vec![
             crate::model::ModelMessage::system(
-                "You are a title generator. Return only a short, descriptive title.",
+                "You are a title generator. Return only a short, descriptive title \
+                 (a few words). No quotes, no markdown headings, no trailing period.",
             ),
             crate::model::ModelMessage::user(prompt),
         ],
@@ -304,6 +316,25 @@ impl SessionSnapshot {
     pub const CURRENT_VERSION: u32 = 1;
 }
 
+/// True only for persisted session snapshots (`{session_id}.json`).
+///
+/// Rejects desktop UI paint sidecars (`{session_id}.ui.json`) and other
+/// auxiliary `*.json` files that share the sessions directory. Without this,
+/// UIs list ghost sessions that fail to load.
+fn is_session_snapshot_file(path: &Path) -> bool {
+    let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+        return false;
+    };
+    if !name.ends_with(".json") || name.ends_with(".ui.json") {
+        return false;
+    }
+    // e.g. foo.json.tmp written mid-save
+    if name.contains(".tmp") || name.ends_with(".bak") {
+        return false;
+    }
+    path.extension().and_then(|e| e.to_str()) == Some("json")
+}
+
 fn read_session_info(path: &Path) -> Result<SessionSnapshotInfo> {
     const METADATA_READ_LIMIT: usize = 64 * 1024;
 
@@ -408,8 +439,12 @@ impl SessionStore {
         if let Ok(entries) = fs::read_dir(&self.root) {
             for entry in entries.flatten() {
                 let path = entry.path();
-                if path.extension().and_then(|e| e.to_str()) == Some("json")
-                    && let Ok(content) = fs::read_to_string(&path)
+                // Only real session snapshots (`{id}.json`). Desktop may write
+                // `{id}.ui.json` paint caches next to them — those must not list.
+                if !is_session_snapshot_file(&path) {
+                    continue;
+                }
+                if let Ok(content) = fs::read_to_string(&path)
                     && let Ok(snapshot) = serde_json::from_str::<SessionSnapshot>(&content)
                 {
                     sessions.push(snapshot);
@@ -430,9 +465,10 @@ impl SessionStore {
         if let Ok(entries) = fs::read_dir(&self.root) {
             for entry in entries.flatten() {
                 let path = entry.path();
-                if path.extension().and_then(|e| e.to_str()) == Some("json")
-                    && let Ok(info) = read_session_info(&path)
-                {
+                if !is_session_snapshot_file(&path) {
+                    continue;
+                }
+                if let Ok(info) = read_session_info(&path) {
                     sessions.push(info);
                 }
             }
