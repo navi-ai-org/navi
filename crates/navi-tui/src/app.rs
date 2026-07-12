@@ -169,8 +169,6 @@ pub struct TuiApp {
     /// Currently selected scrollback block (entry selection).
     pub(crate) selected_chat_source: Option<crate::state::ChatLineSource>,
     pub(crate) cancel_esc_pressed: bool,
-    pub(crate) last_click_time: Option<std::time::Instant>,
-    pub(crate) last_click_pos: Option<(u16, u16)>,
     /// Chat hit deferred until mouse-up when the gesture was a click (not a drag).
     /// Lets drag-to-select text work on lines that also register hit regions.
     pub(crate) pending_chat_click: Option<crate::ui::interaction::HitAction>,
@@ -227,6 +225,8 @@ pub struct TuiApp {
     pub(crate) background_commands: Vec<BackgroundCommandSnapshot>,
     pub(crate) bg_command_selected: usize,
     pub(crate) bg_command_scroll: usize,
+    /// How many task cards fit in the Shell Tasks list (updated on render).
+    pub(crate) bg_command_visible_cards: usize,
     pub(crate) bg_command_output_scroll: usize,
     pub(crate) bg_command_output_follow: bool,
     pub(crate) bg_poll_task: Option<JoinHandle<()>>,
@@ -438,8 +438,6 @@ impl TuiApp {
             hovered_chat_source: None,
             selected_chat_source: None,
             cancel_esc_pressed: false,
-            last_click_time: None,
-            last_click_pos: None,
             pending_chat_click: None,
             composer_anim_lines: 1.0,
             agent_mode: navi_sdk::AgentMode::Default,
@@ -464,6 +462,7 @@ impl TuiApp {
             background_commands: Vec::new(),
             bg_command_selected: 0,
             bg_command_scroll: 0,
+            bg_command_visible_cards: 4,
             bg_command_output_scroll: 0,
             bg_command_output_follow: true,
             bg_poll_task: None,

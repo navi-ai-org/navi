@@ -1889,30 +1889,41 @@ pub(crate) fn render_background_models(frame: &mut Frame<'_>, app: &TuiApp, area
         let selected = i == app.bg_models_selected;
         let resolved_label = resolve_bg_model_label(app, task_id);
         let has_override = bg_model_has_override(bg, task_id);
+        let row_bg = if selected { selection_bg() } else { modal_bg() };
 
         let task_style = if selected {
-            Style::default().fg(signal()).add_modifier(Modifier::BOLD)
+            Style::default()
+                .fg(selection_fg())
+                .bg(row_bg)
+                .add_modifier(Modifier::BOLD)
         } else {
-            Style::default().fg(text())
+            Style::default().fg(text()).bg(row_bg)
         };
         let model_style = if selected {
-            Style::default().fg(accent()).add_modifier(Modifier::BOLD)
+            Style::default()
+                .fg(selection_fg())
+                .bg(row_bg)
+                .add_modifier(Modifier::BOLD)
         } else if has_override {
-            Style::default().fg(accent())
+            Style::default().fg(accent()).bg(row_bg)
         } else {
-            Style::default().fg(muted())
+            Style::default().fg(muted()).bg(row_bg)
         };
-        let desc_style = Style::default().fg(ghost());
+        let desc_style = Style::default()
+            .fg(if selected { selection_fg() } else { ghost() })
+            .bg(row_bg);
+        let marker = if selected { "› " } else { "  " };
 
         rows.push(Line::from(vec![
-            Span::styled(format!("{:>20}", task_id), task_style),
+            Span::styled(marker, task_style),
+            Span::styled(format!("{:>18}", task_id), task_style),
             Span::styled("  →  ", desc_style),
             Span::styled(resolved_label, model_style),
         ]));
-        rows.push(Line::from(vec![Span::styled(
-            format!("  {:>20}  ", description),
-            desc_style,
-        )]));
+        rows.push(Line::from(vec![
+            Span::styled("  ", desc_style),
+            Span::styled(format!("  {:>18}  ", description), desc_style),
+        ]));
     }
 
     let list = Paragraph::new(rows).style(Style::default().bg(modal_bg()));
@@ -1923,8 +1934,10 @@ pub(crate) fn render_background_models(frame: &mut Frame<'_>, app: &TuiApp, area
     if footer_y > inner.y {
         let footer_rect = Rect::new(inner.x, footer_y, inner.width, 1);
         let hints = Line::from(vec![
-            Span::styled("  [enter]", Style::default().fg(signal())),
-            Span::styled(" pick model  ", Style::default().fg(muted())),
+            Span::styled("  [↑/↓]", Style::default().fg(signal())),
+            Span::styled(" select  ", Style::default().fg(muted())),
+            Span::styled("[enter]", Style::default().fg(signal())),
+            Span::styled(" pick  ", Style::default().fg(muted())),
             Span::styled("[d]", Style::default().fg(signal())),
             Span::styled(" reset  ", Style::default().fg(muted())),
             Span::styled("[esc]", Style::default().fg(signal())),
@@ -2029,7 +2042,7 @@ pub(crate) fn render_model_routing(frame: &mut Frame<'_>, app: &TuiApp, area: Re
         }
         crate::state::ModelRoutingTab::Agents
         | crate::state::ModelRoutingTab::Attachments => {
-            "[←/→] tabs  [enter] pick  [d] reset  [esc] close"
+            "[←/→] tabs  [↑/↓] select  [enter] pick  [d] reset  [esc] close"
         }
     };
     frame.render_widget(
@@ -2098,32 +2111,43 @@ fn render_model_routing_agents_body(frame: &mut Frame<'_>, app: &TuiApp, area: R
     ];
     let mut rows: Vec<Line> = Vec::new();
     let bg = &app.loaded_config.config.background_models;
-    for (i, (task_id, description)) in tasks.iter().enumerate() {
+    // Each task is 2 visual lines; honor bg_models_scroll so ↓/↑ stay visible.
+    let start = app.bg_models_scroll.min(tasks.len().saturating_sub(1));
+    for (i, (task_id, description)) in tasks.iter().enumerate().skip(start) {
         let selected = i == app.bg_models_selected;
         let resolved_label = resolve_bg_model_label(app, task_id);
         let has_override = bg_model_has_override(bg, task_id);
+        let row_bg = if selected { selection_bg() } else { modal_bg() };
         let task_style = if selected {
-            Style::default().fg(signal()).add_modifier(Modifier::BOLD)
+            Style::default()
+                .fg(selection_fg())
+                .bg(row_bg)
+                .add_modifier(Modifier::BOLD)
         } else {
-            Style::default().fg(text())
+            Style::default().fg(text()).bg(row_bg)
         };
         let model_style = if selected {
-            Style::default().fg(accent()).add_modifier(Modifier::BOLD)
+            Style::default()
+                .fg(selection_fg())
+                .bg(row_bg)
+                .add_modifier(Modifier::BOLD)
         } else if has_override {
-            Style::default().fg(accent())
+            Style::default().fg(accent()).bg(row_bg)
         } else {
-            Style::default().fg(muted())
+            Style::default().fg(muted()).bg(row_bg)
         };
-        let desc_style = Style::default().fg(ghost());
+        let desc_style = Style::default().fg(if selected { selection_fg() } else { ghost() }).bg(row_bg);
+        let marker = if selected { "› " } else { "  " };
         rows.push(Line::from(vec![
-            Span::styled(format!("{:>20}", task_id), task_style),
+            Span::styled(marker, task_style),
+            Span::styled(format!("{:>18}", task_id), task_style),
             Span::styled("  →  ", desc_style),
             Span::styled(resolved_label, model_style),
         ]));
-        rows.push(Line::from(vec![Span::styled(
-            format!("  {:>20}  ", description),
-            desc_style,
-        )]));
+        rows.push(Line::from(vec![
+            Span::styled("  ", desc_style),
+            Span::styled(format!("  {:>18}  ", description), desc_style),
+        ]));
     }
     frame.render_widget(Paragraph::new(rows).style(Style::default().bg(modal_bg())), area);
 }

@@ -169,16 +169,20 @@ pub(crate) fn clamp_background_selection(app: &mut TuiApp) {
     app.bg_command_selected = app
         .bg_command_selected
         .min(app.background_commands.len().saturating_sub(1));
-    // Cards are multi-line; keep a few visible cards in scroll window.
-    let visible_cards = 4;
+    // Cards are multi-line; keep the selection inside the currently visible window.
+    // `bg_command_visible_cards` is measured during render — fall back to 1 so a
+    // short terminal never leaves the selected card off-screen after ↓/↑.
+    let visible_cards = app.bg_command_visible_cards.max(1);
     if app.bg_command_selected < app.bg_command_scroll {
         app.bg_command_scroll = app.bg_command_selected;
     } else if app.bg_command_selected >= app.bg_command_scroll + visible_cards {
         app.bg_command_scroll = app.bg_command_selected.saturating_sub(visible_cards - 1);
     }
-    app.bg_command_scroll = app
-        .bg_command_scroll
-        .min(app.background_commands.len().saturating_sub(visible_cards));
+    app.bg_command_scroll = app.bg_command_scroll.min(
+        app.background_commands
+            .len()
+            .saturating_sub(visible_cards),
+    );
 }
 
 /// Stops the background poller task if running.
