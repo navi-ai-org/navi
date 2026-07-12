@@ -191,6 +191,10 @@ pub struct TuiApp {
     pub(crate) setup_phase: Option<crate::state::SetupPhase>,
     /// Selection index inside setup list steps (Approvals / MarketplaceTip).
     pub(crate) setup_list_selected: usize,
+    /// Installed plugin dir waiting for mcp.json merge confirmation.
+    pub(crate) pending_mcp_merge: Option<std::path::PathBuf>,
+    /// Palette rows from installed package `tui.json` files.
+    pub(crate) extension_palette: Vec<navi_sdk::TuiExtensionCommand>,
 
     /// Pending NAVI self-update from the last check (if any).
     pub(crate) available_update: Option<navi_core::UpdateInfo>,
@@ -256,6 +260,8 @@ pub struct TuiApp {
 
     // goals
     pub(crate) goal_state: Option<crate::state::GoalUiState>,
+    /// Active plan checklist (progress strip above the composer).
+    pub(crate) active_plan: Option<crate::state::ActivePlanUiState>,
 }
 
 impl TuiApp {
@@ -396,6 +402,7 @@ impl TuiApp {
             queued_edit_text: String::new(),
             queued_edit_cursor: 0,
             goal_state: None,
+            active_plan: None,
             session_store,
             events: Vec::new(),
             session_id,
@@ -481,6 +488,8 @@ impl TuiApp {
             selected_extensions_item: 0,
             setup_phase: None,
             setup_list_selected: 0,
+            pending_mcp_merge: None,
+            extension_palette: Vec::new(),
             available_update: None,
             update_installing: false,
             update_check_user_initiated: false,

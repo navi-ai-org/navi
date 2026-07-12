@@ -87,19 +87,22 @@ pub(crate) struct CommandItem {
 }
 
 /// Row shown in the palette list (always selectable — no section headers).
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub(crate) enum CommandRow {
     Item(CommandItem),
+    /// Host-mediated extension command from installed `tui.json`.
+    Extension { index: usize },
 }
 
 impl CommandRow {
-    pub(crate) fn is_selectable(self) -> bool {
+    pub(crate) fn is_selectable(&self) -> bool {
         true
     }
 
-    pub(crate) fn item(self) -> CommandItem {
+    pub(crate) fn item(self) -> Option<CommandItem> {
         match self {
-            Self::Item(item) => item,
+            Self::Item(item) => Some(item),
+            Self::Extension { .. } => None,
         }
     }
 }
@@ -443,24 +446,38 @@ pub(crate) fn filtered_commands(app: &TuiApp) -> Vec<CommandItem> {
 /// Rows for the palette: global search, hub list, or root menu.
 pub(crate) fn command_rows(app: &TuiApp) -> Vec<CommandRow> {
     let filter = app.command_filter.trim();
+    let filter_l = filter.to_lowercase();
 
-    // Search always spans the full catalog (submodals included).
+    // Search always spans the full catalog (submodals included) + extension cmds.
     if !filter.is_empty() {
-        return filtered_commands(app)
+        let mut rows: Vec<CommandRow> = filtered_commands(app)
             .into_iter()
             .map(CommandRow::Item)
             .collect();
+        for (index, ext) in app.extension_palette.iter().enumerate() {
+            if ext.title.to_lowercase().contains(&filter_l)
+                || ext.id.to_lowercase().contains(&filter_l)
+                || ext.description.to_lowercase().contains(&filter_l)
+            {
+                rows.push(CommandRow::Extension { index });
+            }
+        }
+        return rows;
     }
 
     if let Some(hub) = app.command_hub {
-        return COMMANDS
+        let mut rows: Vec<CommandRow> = COMMANDS
             .iter()
             .copied()
             .filter(|c| c.hub == Some(hub) && is_visible(c, app))
-            // Hide deep-link duplicates that only matter in search when browsing hub
-            // Agent/Attachment still useful in Model hub for power users — keep them last.
             .map(CommandRow::Item)
             .collect();
+        if hub == CommandHub::Extensions {
+            for index in 0..app.extension_palette.len() {
+                rows.push(CommandRow::Extension { index });
+            }
+        }
+        return rows;
     }
 
     ROOT_ENTRIES

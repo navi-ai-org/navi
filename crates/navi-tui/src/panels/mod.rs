@@ -286,6 +286,14 @@ pub fn register_modal_panels(app: &mut TuiApp) {
         62,
         9,
     )));
+    // Confirm MCP config merge after plugin install
+    pm.add_overlay(Box::new(ModalPanel::new(
+        "confirm-mcp-merge",
+        Mode::ConfirmMcpMerge,
+        modals::render_confirm_mcp_merge,
+        68,
+        10,
+    )));
     // Confirm / review plan (needs &mut for mouse hits)
     pm.add_overlay(Box::new(ModalPanelMut::new(
         "confirm-plan",

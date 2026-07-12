@@ -867,6 +867,7 @@ fn active_scroll_target(app: &TuiApp) -> Option<ScrollTarget> {
         | Mode::Usage
         | Mode::QueuedMessageEdit
         | Mode::ConfirmCancelTurn
+        | Mode::ConfirmMcpMerge
         | Mode::About
         | Mode::UpdateAvailable => None,
         Mode::BackgroundModels | Mode::ModelRouting => {

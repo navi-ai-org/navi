@@ -80,7 +80,6 @@ pub(crate) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
             .iter()
             .enumerate()
             .map(|(index, row)| {
-                let command = row.item();
                 let selected = index == selected_command;
                 let hovered = app.hover_index == Some(index);
                 let style = if hovered || selected {
@@ -88,9 +87,21 @@ pub(crate) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
                 } else {
                     inactive_item_style()
                 };
-                let shortcut = command.shortcut.unwrap_or("");
+                let (label, shortcut) = match row {
+                    crate::commands::CommandRow::Item(command) => {
+                        (command.label, command.shortcut.unwrap_or(""))
+                    }
+                    crate::commands::CommandRow::Extension { index } => {
+                        let title = app
+                            .extension_palette
+                            .get(*index)
+                            .map(|c| c.title.as_str())
+                            .unwrap_or("Extension");
+                        (title, "ext")
+                    }
+                };
                 ListItem::new(Span::styled(
-                    command_row(command.label, shortcut, command_width),
+                    command_row(label, shortcut, command_width),
                     style,
                 ))
                 .style(style)
@@ -122,11 +133,18 @@ pub(crate) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
             .take(rows[1].height as usize)
             .enumerate()
         {
-            let command = command_list[index].item();
+            let label = match &command_list[index] {
+                crate::commands::CommandRow::Item(c) => c.label.to_string(),
+                crate::commands::CommandRow::Extension { index: ei } => app
+                    .extension_palette
+                    .get(*ei)
+                    .map(|c| c.title.clone())
+                    .unwrap_or_else(|| "extension".into()),
+            };
             app.register_hit(
                 line_rect(rows[1], row_offset),
                 20,
-                format!("command {}", command.label),
+                format!("command {label}"),
                 HitAction::Command(index),
             );
         }

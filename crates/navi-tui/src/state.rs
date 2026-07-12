@@ -470,6 +470,8 @@ pub enum Mode {
     QueuedMessageEdit,
     ConfirmCancelTurn,
     ConfirmPlan,
+    /// Confirm merging mcp.json from a just-installed plugin into global config.
+    ConfirmMcpMerge,
     /// Masked sudo password (secret never enters chat/model context).
     SudoPassword,
     /// `@` path/file/folder mention palette.
@@ -967,6 +969,48 @@ impl Default for GoalUiState {
             short_description: None,
             tokens_used: 0,
             token_budget: None,
+        }
+    }
+}
+
+/// Live plan checklist shown above the composer so the user can track phases.
+#[derive(Debug, Clone)]
+pub(crate) struct ActivePlanUiState {
+    pub plan_id: String,
+    pub title: String,
+    pub steps: Vec<ActivePlanStepUi>,
+    /// `proposed` (awaiting review) | `active` | `completed` | `abandoned`
+    pub status: String,
+    /// When true, composer area shows the full checklist (not just the summary line).
+    pub expanded: bool,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct ActivePlanStepUi {
+    pub description: String,
+    pub completed: bool,
+}
+
+impl ActivePlanUiState {
+    pub(crate) fn completed_count(&self) -> usize {
+        self.steps.iter().filter(|s| s.completed).count()
+    }
+
+    pub(crate) fn total_count(&self) -> usize {
+        self.steps.len()
+    }
+
+    /// First incomplete step (current phase), if any.
+    pub(crate) fn current_step(&self) -> Option<&ActivePlanStepUi> {
+        self.steps.iter().find(|s| !s.completed)
+    }
+
+    pub(crate) fn mark_step_completed(&mut self, index: usize) {
+        if let Some(step) = self.steps.get_mut(index) {
+            step.completed = true;
+        }
+        if self.steps.iter().all(|s| s.completed) {
+            self.status = "completed".into();
         }
     }
 }

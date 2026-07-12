@@ -209,6 +209,7 @@ fn route_mode_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyModifiers) -> K
         }
         Mode::ConfirmCancelTurn => self::modals::handle_confirm_cancel_turn_key(app, code),
         Mode::ConfirmPlan => self::modals::handle_confirm_plan_key(app, code),
+        Mode::ConfirmMcpMerge => handle_confirm_mcp_merge_key(app, code),
         Mode::SudoPassword => self::modals::handle_sudo_password_key(app, code, modifiers),
         Mode::PathMentions => crate::path_mentions::handle_path_mentions_key(app, code, modifiers),
         Mode::About => self::modals::handle_about_key(app, code),
@@ -218,6 +219,30 @@ fn route_mode_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyModifiers) -> K
         KeyOutcome::Quit
     } else {
         KeyOutcome::Handled
+    }
+}
+
+fn handle_confirm_mcp_merge_key(app: &mut TuiApp, code: KeyCode) -> bool {
+    use crate::notifications::show_notification;
+    match code {
+        KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
+            if let Some(path) = app.pending_mcp_merge.take() {
+                if let Some(msg) =
+                    navi_sdk::merge_mcp_from_package(&app.loaded_config.data_dir, &path)
+                {
+                    show_notification(app, "MCP", msg);
+                }
+            }
+            app.mode = Mode::Normal;
+            false
+        }
+        KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+            app.pending_mcp_merge = None;
+            app.mode = Mode::Normal;
+            show_notification(app, "MCP", "Skipped merging mcp.json.".to_string());
+            false
+        }
+        _ => false,
     }
 }
 
