@@ -195,7 +195,13 @@ fn route_mode_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyModifiers) -> K
         Mode::BgModelPicker => self::modals::handle_bg_model_picker_key(app, code, modifiers),
         Mode::ModelRouting => self::modals::handle_model_routing_key(app, code),
         Mode::Extensions => self::modals::handle_extensions_hub_key(app, code),
-        Mode::Setup => self::input_modes::handle_normal_key(app, code, modifiers),
+        Mode::Setup => {
+            if crate::providers::handle_setup_list_key(app, code) {
+                false // handled; do not quit
+            } else {
+                self::input_modes::handle_normal_key(app, code, modifiers)
+            }
+        }
         Mode::AttachmentModels => self::modals::handle_attachment_models_key(app, code),
         Mode::MessageQueue => self::modals::handle_message_queue_key(app, code, modifiers),
         Mode::QueuedMessageEdit => {
