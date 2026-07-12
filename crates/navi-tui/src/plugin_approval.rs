@@ -6,8 +6,9 @@ use navi_plugin_broker::{
     check_update_reconsent, prepare_install_approval,
 };
 use navi_plugin_manifest::{
-    Lockfile, PluginManifest, aggregate_lockfile_path, compute_wasm_hash, installed_plugins_dir,
-    lock_entry_from_manifest, parse_manifest, upsert_aggregate_lock_entry, validate,
+    Lockfile, PluginManifest, TrustLevel, aggregate_lockfile_path, compute_wasm_hash,
+    installed_plugins_dir, lock_entry_from_manifest_with_meta, parse_manifest,
+    upsert_aggregate_lock_entry, validate, verify_plugin_signature,
 };
 use std::collections::BTreeSet;
 
@@ -27,7 +28,15 @@ fn build_install_approval(manifest: &PluginManifest) -> InstallApproval {
 }
 
 /// Load and validate a manifest from a path, returning the parsed manifest or an error.
+/// Marketplace/staged packages use Community trust (signature required).
 pub(crate) fn load_and_validate_manifest(path: &Path) -> Result<PluginManifest> {
+    load_and_validate_manifest_with_trust(path, TrustLevel::Community)
+}
+
+pub(crate) fn load_and_validate_manifest_with_trust(
+    path: &Path,
+    trust: TrustLevel,
+) -> Result<PluginManifest> {
     if !path.exists() {
         anyhow::bail!("plugin directory not found: {}", path.display());
     }
@@ -39,7 +48,7 @@ pub(crate) fn load_and_validate_manifest(path: &Path) -> Result<PluginManifest> 
         .map_err(|e| anyhow::anyhow!("failed to read plugin.toml: {}", e))?;
     let manifest = parse_manifest(&content)
         .map_err(|e| anyhow::anyhow!("failed to parse plugin.toml: {}", e))?;
-    validate(&manifest, navi_plugin_manifest::TrustLevel::Community)
+    validate(&manifest, trust)
         .map_err(|e| anyhow::anyhow!("manifest validation failed: {}", e))?;
     let wasm_path = path.join(&manifest.plugin.entry);
     if !wasm_path.exists() {
@@ -55,6 +64,8 @@ pub(crate) fn load_and_validate_manifest(path: &Path) -> Result<PluginManifest> 
             actual_hash
         );
     }
+    verify_plugin_signature(&manifest, &wasm_bytes, trust)
+        .map_err(|e| anyhow::anyhow!("signature verification failed: {e}"))?;
     Ok(manifest)
 }
 
@@ -268,7 +279,14 @@ pub(crate) fn apply_plugin_install(
 
     let plugins_root = installed_plugins_dir(data_dir);
     let approved_capabilities = approved_capabilities_for_apply(data_dir, manifest, kind)?;
-    let entry = lock_entry_from_manifest(manifest, approved_capabilities);
+    // TUI marketplace installs are Community (signed). Detect package kind for lock meta.
+    let pkg_kind = navi_sdk::detect_package_kind(source_path);
+    let entry = lock_entry_from_manifest_with_meta(
+        manifest,
+        approved_capabilities,
+        TrustLevel::Community,
+        pkg_kind,
+    );
     upsert_aggregate_lock_entry(&plugins_root, entry)
         .map_err(|e| anyhow::anyhow!("failed to save lockfile: {}", e))?;
     Ok(plugin_dir)

@@ -472,7 +472,7 @@ async fn main() -> Result<()> {
 
     // Handle plugin subcommand early
     if let Some(Commands::Plugin { action }) = cli.command {
-        return plugin_cmd::handle_plugin_command(action, &loaded_config, &cwd);
+        return plugin_cmd::handle_plugin_command(action, &loaded_config, &cwd).await;
     }
 
     // Handle mcp subcommand early

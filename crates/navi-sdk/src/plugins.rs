@@ -833,7 +833,10 @@ mod tests {
     }
 
     #[test]
-    fn marketplace_hello_echo_path_installs_as_community_when_signed() {
+    fn marketplace_hello_echo_installs_and_registers_tool() {
+        use navi_core::RuntimeComponents;
+        use crate::tooling::build_local_tooling;
+
         // Vendored signed artifact (relative to crate → workspace).
         let artifact = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("../../marketplace/artifacts/hello-echo/0.1.0");
@@ -851,7 +854,7 @@ mod tests {
             data_dir: temp.path().to_path_buf(),
         };
         let engine = crate::NaviEngineBuilder::from_project(temp.path())
-            .loaded_config(loaded)
+            .loaded_config(loaded.clone())
             .build()
             .expect("engine");
 
@@ -866,8 +869,74 @@ mod tests {
         assert_eq!(result.id, "hello-echo");
         assert_eq!(result.trust_level, "community");
         assert!(temp.path().join("plugins/hello-echo/plugin.wasm").is_file());
-        assert!(temp.path().join("plugins/hello-echo/tui.json").is_file()
-            || true /* tui.json optional if copy omitted */);
+
+        // After install, tooling load must register the namespaced echo tool.
+        let tooling = build_local_tooling(
+            &LoadedConfig {
+                config: NaviConfig {
+                    registry: {
+                        let mut r = navi_core::config::types::RegistryConfig::default();
+                        r.update_enabled = false;
+                        r
+                    },
+                    ..Default::default()
+                },
+                global_config_path: Some(temp.path().join("config.toml")),
+                project_config_path: None,
+                data_dir: temp.path().to_path_buf(),
+            },
+            temp.path().to_path_buf(),
+            &RuntimeComponents::default(),
+        )
+        .expect("tooling");
+
+        let names: Vec<String> = tooling
+            .tool_executor
+            .definitions()
+            .into_iter()
+            .map(|d| d.name)
+            .collect();
+        assert!(
+            names.iter().any(|n| n == "plugin__hello-echo__echo" || n.contains("hello-echo")),
+            "expected namespaced hello-echo tool, got {names:?}; warnings={:?}",
+            tooling.warnings
+        );
+
+        // Invoke the WASM tool — proves runtime + brokers path works.
+        let tool_name = names
+            .iter()
+            .find(|n| n.contains("hello-echo") && n.contains("echo"))
+            .cloned()
+            .expect("tool name");
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let result = rt.block_on(tooling.tool_executor.invoke_approved_with_event_tx(
+            navi_core::ToolInvocation {
+                id: "test-1".into(),
+                tool_name: tool_name.clone(),
+                input: serde_json::json!({"text": "ping"}),
+            },
+            None,
+        ));
+        assert!(
+            result.ok,
+            "tool invoke failed: {:?}",
+            result.output
+        );
+        let out = result.output.to_string();
+        assert!(
+            out.contains("ping") || out.contains("text"),
+            "unexpected tool output: {out}"
+        );
+
+        // tui.json extension commands surface
+        let cmds = engine.list_tui_extension_commands().expect("ext cmds");
+        assert!(
+            cmds.iter().any(|c| c.id.contains("hello") || c.title.contains("Echo") || c.title.contains("Ping")),
+            "expected tui.json command, got {cmds:?}"
+        );
     }
 
     #[test]

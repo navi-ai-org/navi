@@ -27,13 +27,14 @@ navi-core.workspace = true
 navi-mcp.workspace = true
 navi-plugin-broker.workspace = true
 navi-plugin-manifest.workspace = true
-navi-sdk.workspace = true
-navi-tui.workspace = true
+navi-sdk = { workspace = true, default-features = true }
+navi-tui = { workspace = true, default-features = true }
 navi-voice = { path = "../navi-voice", default-features = false }
 
 [features]
 # Portable release binaries default to no ORT (musl/Windows/x64 mac lack
 # prebuilt ort-sys). Opt in with `--features voice-onnx` on supported hosts.
+# wasm-plugins come from navi-sdk default features.
 default = []
 voice-onnx = ["navi-voice/onnx", "navi-sdk/voice-onnx"]
 # CloakBrowser Rust engine (requires local PR checkout path or git dep).
