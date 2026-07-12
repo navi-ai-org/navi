@@ -619,6 +619,8 @@ mod tests {
             tools_hash: "sha256:ghi".into(),
             approved_capabilities: vec![],
             approved_at: "2026-01-01".into(),
+            trust_level: navi_plugin_manifest::TrustLevel::Community,
+            kind: navi_plugin_manifest::PluginCatalogKind::Plugin,
         };
         let m = minimal_manifest();
         let result = check_update_reconsent(&old, &m, &m);
@@ -636,6 +638,8 @@ mod tests {
             tools_hash: "sha256:ghi".into(),
             approved_capabilities: vec![],
             approved_at: "2026-01-01".into(),
+            trust_level: navi_plugin_manifest::TrustLevel::Community,
+            kind: navi_plugin_manifest::PluginCatalogKind::Plugin,
         };
         let old_m = minimal_manifest();
         let new_m = manifest_with_fs_read();
@@ -660,6 +664,8 @@ mod tests {
             tools_hash: "sha256:ghi".into(),
             approved_capabilities: vec!["fs_read".into()],
             approved_at: "2026-01-01".into(),
+            trust_level: navi_plugin_manifest::TrustLevel::Community,
+            kind: navi_plugin_manifest::PluginCatalogKind::Plugin,
         };
         let old_m = manifest_with_fs_read();
         let new_m = minimal_manifest();
@@ -684,6 +690,8 @@ mod tests {
             tools_hash: "sha256:ghi".into(),
             approved_capabilities: vec![],
             approved_at: "2026-01-01".into(),
+            trust_level: navi_plugin_manifest::TrustLevel::Community,
+            kind: navi_plugin_manifest::PluginCatalogKind::Plugin,
         };
         let old_m = minimal_manifest();
         let mut new_m = minimal_manifest();
@@ -709,6 +717,8 @@ mod tests {
             tools_hash: "sha256:ghi".into(),
             approved_capabilities: vec![],
             approved_at: "2026-01-01".into(),
+            trust_level: navi_plugin_manifest::TrustLevel::Community,
+            kind: navi_plugin_manifest::PluginCatalogKind::Plugin,
         };
         let mut old_m = minimal_manifest();
         old_m.tools.push(ToolDef {
@@ -758,6 +768,8 @@ mod tests {
             tools_hash: "sha256:ghi".into(),
             approved_capabilities: vec![],
             approved_at: "2026-01-01".into(),
+            trust_level: navi_plugin_manifest::TrustLevel::Community,
+            kind: navi_plugin_manifest::PluginCatalogKind::Plugin,
         };
         let old_m = minimal_manifest();
         let new_m = manifest_with_fs_read();

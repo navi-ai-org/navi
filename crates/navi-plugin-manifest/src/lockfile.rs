@@ -1,6 +1,13 @@
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
+use crate::marketplace::PluginCatalogKind;
+use crate::types::TrustLevel;
+
+fn default_trust_community() -> TrustLevel {
+    TrustLevel::Community
+}
+
 /// Lockfile entry for an installed plugin.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LockEntry {
@@ -12,6 +19,12 @@ pub struct LockEntry {
     pub tools_hash: String,
     pub approved_capabilities: Vec<String>,
     pub approved_at: String,
+    /// Install trust: marketplace packages are `Community`; path installs are `LocalDev`.
+    #[serde(default = "default_trust_community")]
+    pub trust_level: TrustLevel,
+    /// Marketplace package kind (plugin / skill / mcp / integration).
+    #[serde(default)]
+    pub kind: PluginCatalogKind,
 }
 
 /// The full lockfile containing all installed plugins.
@@ -90,6 +103,8 @@ mod tests {
             tools_hash: "sha256:ghi789".into(),
             approved_capabilities: vec!["fs_read".into()],
             approved_at: "2026-06-01T00:00:00Z".into(),
+            trust_level: TrustLevel::Community,
+            kind: PluginCatalogKind::Plugin,
         });
 
         lockfile.save(&path).unwrap();
@@ -101,8 +116,15 @@ mod tests {
     #[test]
     fn find_existing_plugin() {
         let mut lockfile = Lockfile::default();
-        lockfile.upsert(LockEntry {
-            id: "my-plugin".into(),
+        lockfile.upsert(test_entry("my-plugin"));
+
+        assert!(lockfile.find("my-plugin").is_some());
+        assert!(lockfile.find("other").is_none());
+    }
+
+    fn test_entry(id: &str) -> LockEntry {
+        LockEntry {
+            id: id.into(),
             version: "0.1.0".into(),
             publisher: "gh:me".into(),
             wasm_hash: "sha256:a".into(),
@@ -110,35 +132,23 @@ mod tests {
             tools_hash: "sha256:c".into(),
             approved_capabilities: vec![],
             approved_at: "2026-06-01T00:00:00Z".into(),
-        });
-
-        assert!(lockfile.find("my-plugin").is_some());
-        assert!(lockfile.find("other").is_none());
+            trust_level: TrustLevel::Community,
+            kind: PluginCatalogKind::Plugin,
+        }
     }
 
     #[test]
     fn upsert_updates_existing() {
         let mut lockfile = Lockfile::default();
-        lockfile.upsert(LockEntry {
-            id: "p".into(),
-            version: "1.0.0".into(),
-            publisher: "gh:a".into(),
-            wasm_hash: "sha256:old".into(),
-            capabilities_hash: "sha256:old".into(),
-            tools_hash: "sha256:old".into(),
-            approved_capabilities: vec![],
-            approved_at: "2026-01-01T00:00:00Z".into(),
-        });
-        lockfile.upsert(LockEntry {
-            id: "p".into(),
-            version: "2.0.0".into(),
-            publisher: "gh:a".into(),
-            wasm_hash: "sha256:new".into(),
-            capabilities_hash: "sha256:new".into(),
-            tools_hash: "sha256:new".into(),
-            approved_capabilities: vec!["net".into()],
-            approved_at: "2026-06-01T00:00:00Z".into(),
-        });
+        let mut a = test_entry("p");
+        a.version = "1.0.0".into();
+        a.wasm_hash = "sha256:old".into();
+        lockfile.upsert(a);
+        let mut b = test_entry("p");
+        b.version = "2.0.0".into();
+        b.wasm_hash = "sha256:new".into();
+        b.approved_capabilities = vec!["net".into()];
+        lockfile.upsert(b);
 
         assert_eq!(lockfile.plugins.len(), 1);
         assert_eq!(lockfile.plugins[0].version, "2.0.0");
@@ -147,16 +157,7 @@ mod tests {
     #[test]
     fn remove_plugin() {
         let mut lockfile = Lockfile::default();
-        lockfile.upsert(LockEntry {
-            id: "p".into(),
-            version: "1.0.0".into(),
-            publisher: "gh:a".into(),
-            wasm_hash: "sha256:a".into(),
-            capabilities_hash: "sha256:b".into(),
-            tools_hash: "sha256:c".into(),
-            approved_capabilities: vec![],
-            approved_at: "2026-06-01T00:00:00Z".into(),
-        });
+        lockfile.upsert(test_entry("p"));
 
         let removed = lockfile.remove("p");
         assert!(removed.is_some());

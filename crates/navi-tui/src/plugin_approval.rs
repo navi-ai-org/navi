@@ -554,6 +554,8 @@ mod tests {
             tools_hash: navi_plugin_manifest::compute_content_hash(""),
             approved_capabilities: vec![],
             approved_at: "0".to_string(),
+            trust_level: navi_plugin_manifest::TrustLevel::Community,
+            kind: navi_plugin_manifest::PluginCatalogKind::Plugin,
         });
         lockfile
             .save(&aggregate_lockfile_path(&plugins_root))

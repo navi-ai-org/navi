@@ -8,9 +8,9 @@ use std::path::{Path, PathBuf};
 
 use navi_plugin_broker::{ReconsentAction, check_update_reconsent, prepare_install_approval};
 use navi_plugin_manifest::{
-    Lockfile, TrustLevel, aggregate_lockfile_path, compute_wasm_hash, installed_plugins_dir,
-    lock_entry_from_manifest, parse_manifest, registry_url, remove_aggregate_lock_entry,
-    search_catalog, stage_plugin_by_id, upsert_aggregate_lock_entry, validate,
+    Lockfile, PluginCatalogKind, TrustLevel, aggregate_lockfile_path, compute_wasm_hash,
+    installed_plugins_dir, lock_entry_from_manifest_with_meta, parse_manifest, registry_url,
+    remove_aggregate_lock_entry, search_catalog, upsert_aggregate_lock_entry, validate,
 };
 use serde::{Deserialize, Serialize};
 
@@ -29,6 +29,12 @@ pub struct PluginInfo {
     pub description: String,
     pub tools: Vec<String>,
     pub path: String,
+    /// Marketplace kind when known (`plugin` / `skill` / `mcp` / `integration`).
+    #[serde(default)]
+    pub kind: String,
+    /// Install trust level (`community` / `local-dev` / …).
+    #[serde(default)]
+    pub trust_level: String,
 }
 
 /// Marketplace catalog entry (search hit).
@@ -39,6 +45,10 @@ pub struct PluginMarketplaceEntry {
     pub name: String,
     pub publisher: String,
     pub description: String,
+    #[serde(default)]
+    pub kind: String,
+    #[serde(default)]
+    pub tags: Vec<String>,
 }
 
 /// Result of an install/update operation.
@@ -49,6 +59,13 @@ pub struct PluginInstallResult {
     pub path: String,
     pub tools: usize,
     pub capabilities: usize,
+    #[serde(default)]
+    pub kind: String,
+    #[serde(default)]
+    pub trust_level: String,
+    /// Human-readable note for kind-specific follow-up (MCP config, skill activation, …).
+    #[serde(default)]
+    pub kind_hint: String,
 }
 
 impl NaviEngine {
@@ -64,6 +81,7 @@ impl NaviEngine {
         if !plugin_dir.exists() {
             return Ok(Vec::new());
         }
+        let lock = Lockfile::load(&aggregate_lockfile_path(&plugin_dir)).unwrap_or_default();
         let mut out = Vec::new();
         for entry in fs::read_dir(&plugin_dir)
             .map_err(|e| NaviError::Config(format!("read plugins dir: {e}")))?
@@ -80,6 +98,7 @@ impl NaviEngine {
             let content =
                 fs::read_to_string(&manifest_path).map_err(|e| NaviError::Config(e.to_string()))?;
             if let Ok(manifest) = parse_manifest(&content) {
+                let lock_meta = lock.find(&manifest.plugin.id);
                 out.push(PluginInfo {
                     id: manifest.plugin.id.clone(),
                     version: manifest.plugin.version.clone(),
@@ -88,6 +107,12 @@ impl NaviEngine {
                     description: String::new(),
                     tools: manifest.tools.iter().map(|t| t.id.clone()).collect(),
                     path: path.display().to_string(),
+                    kind: lock_meta
+                        .map(|e| catalog_kind_label(e.kind).to_string())
+                        .unwrap_or_else(|| "plugin".into()),
+                    trust_level: lock_meta
+                        .map(|e| trust_label(e.trust_level).to_string())
+                        .unwrap_or_else(|| "community".into()),
                 });
             }
         }
@@ -106,6 +131,9 @@ impl NaviEngine {
         let content =
             fs::read_to_string(&manifest_path).map_err(|e| NaviError::Config(e.to_string()))?;
         let manifest = parse_manifest(&content).map_err(|e| NaviError::Config(e.to_string()))?;
+        let plugins_root = installed_plugins_dir(&loaded.data_dir);
+        let lock = Lockfile::load(&aggregate_lockfile_path(&plugins_root)).unwrap_or_default();
+        let lock_meta = lock.find(&manifest.plugin.id);
         Ok(PluginInfo {
             id: manifest.plugin.id.clone(),
             version: manifest.plugin.version.clone(),
@@ -114,6 +142,12 @@ impl NaviEngine {
             description: String::new(),
             tools: manifest.tools.iter().map(|t| t.id.clone()).collect(),
             path: path.display().to_string(),
+            kind: lock_meta
+                .map(|e| catalog_kind_label(e.kind).to_string())
+                .unwrap_or_else(|| "plugin".into()),
+            trust_level: lock_meta
+                .map(|e| trust_label(e.trust_level).to_string())
+                .unwrap_or_else(|| "community".into()),
         })
     }
 
@@ -132,22 +166,41 @@ impl NaviEngine {
                 name: e.name.clone(),
                 publisher: e.publisher.clone(),
                 description: e.description.clone(),
+                kind: catalog_kind_label(e.kind).to_string(),
+                tags: e.tags.clone(),
             })
             .collect())
     }
 
-    /// Install from a local plugin directory. Requires `confirm = true`.
+    /// Install from a local plugin directory (LocalDev trust — signature optional).
+    /// Requires `confirm = true`.
     pub fn plugin_install_path(&self, path: &Path, confirm: bool) -> Result<PluginInstallResult> {
+        self.plugin_install_path_with_meta(
+            path,
+            confirm,
+            TrustLevel::LocalDev,
+            PluginCatalogKind::Plugin,
+        )
+    }
+
+    /// Install from a local directory with explicit trust and marketplace kind.
+    pub fn plugin_install_path_with_meta(
+        &self,
+        path: &Path,
+        confirm: bool,
+        trust: TrustLevel,
+        kind: PluginCatalogKind,
+    ) -> Result<PluginInstallResult> {
         if !confirm {
             return Err(NaviError::Config(
                 "plugin install requires confirm=true (non-interactive approval)".into(),
             ));
         }
         let loaded = self.loaded_config();
-        let manifest = load_and_validate_manifest(path)?;
+        let manifest = load_and_validate_manifest(path, trust)?;
         let _approval = prepare_install_approval(&manifest);
         install_files(path, &manifest, &loaded.data_dir)?;
-        write_lockfile(&loaded.data_dir, &manifest)?;
+        write_lockfile_with_meta(&loaded.data_dir, &manifest, trust, kind)?;
         Ok(PluginInstallResult {
             id: manifest.plugin.id.clone(),
             version: manifest.plugin.version.clone(),
@@ -159,10 +212,14 @@ impl NaviEngine {
                 .to_string(),
             tools: manifest.tools.len(),
             capabilities: manifest.capabilities.len(),
+            kind: catalog_kind_label(kind).to_string(),
+            trust_level: trust_label(trust).to_string(),
+            kind_hint: kind_install_hint(kind).to_string(),
         })
     }
 
     /// Install from marketplace by plugin id. Requires `confirm = true`.
+    /// Marketplace packages always use Community trust (signed WASM).
     pub async fn plugin_install_marketplace(
         &self,
         plugin_id: &str,
@@ -175,10 +232,17 @@ impl NaviEngine {
         }
         let loaded = self.loaded_config();
         let registry = self.plugin_registry_url();
-        let (_, staging) = stage_plugin_by_id(&registry, plugin_id, &loaded.data_dir)
+        let catalog = navi_plugin_manifest::fetch_catalog(&registry)
             .await
             .map_err(|e| NaviError::Config(e.to_string()))?;
-        self.plugin_install_path(&staging, true)
+        let entry = navi_plugin_manifest::find_catalog_entry(&catalog, plugin_id)
+            .map_err(|e| NaviError::Config(e.to_string()))?;
+        let kind = entry.kind;
+        let staging = navi_plugin_manifest::plugin_staging_dir(&loaded.data_dir, plugin_id);
+        navi_plugin_manifest::stage_plugin_from_catalog(&registry, entry, &staging)
+            .await
+            .map_err(|e| NaviError::Config(e.to_string()))?;
+        self.plugin_install_path_with_meta(&staging, true, TrustLevel::Community, kind)
     }
 
     /// Update from a local directory. `force` overrides publisher-change block.
@@ -189,7 +253,25 @@ impl NaviEngine {
         confirm: bool,
     ) -> Result<PluginInstallResult> {
         let loaded = self.loaded_config();
-        let new_manifest = load_and_validate_manifest(path)?;
+        let plugins_root = installed_plugins_dir(&loaded.data_dir);
+        let lockfile = Lockfile::load(&aggregate_lockfile_path(&plugins_root)).unwrap_or_default();
+        // Peek id from manifest path before full validate (trust from existing lock entry).
+        let peek = {
+            let content = fs::read_to_string(path.join("plugin.toml"))
+                .map_err(|e| NaviError::Config(e.to_string()))?;
+            parse_manifest(&content).map_err(|e| NaviError::Config(e.to_string()))?
+        };
+        let old_entry = lockfile.find(&peek.plugin.id).cloned();
+        let trust = old_entry
+            .as_ref()
+            .map(|e| e.trust_level)
+            .unwrap_or(TrustLevel::LocalDev);
+        let kind = old_entry
+            .as_ref()
+            .map(|e| e.kind)
+            .unwrap_or(PluginCatalogKind::Plugin);
+
+        let new_manifest = load_and_validate_manifest(path, trust)?;
         let plugin_id = new_manifest.plugin.id.clone();
         let installed_dir = loaded.data_dir.join("plugins").join(&plugin_id);
         if !installed_dir.exists() {
@@ -203,9 +285,7 @@ impl NaviEngine {
             fs::read_to_string(&old_manifest_path).map_err(|e| NaviError::Config(e.to_string()))?;
         let old_manifest =
             parse_manifest(&old_content).map_err(|e| NaviError::Config(e.to_string()))?;
-        let plugins_root = installed_plugins_dir(&loaded.data_dir);
-        let lockfile = Lockfile::load(&aggregate_lockfile_path(&plugins_root)).unwrap_or_default();
-        let old_entry = lockfile.find(&plugin_id).cloned().ok_or_else(|| {
+        let old_entry = old_entry.ok_or_else(|| {
             NaviError::Config(format!(
                 "plugin '{plugin_id}' has no lockfile entry; reinstall"
             ))
@@ -236,6 +316,8 @@ impl NaviEngine {
             &loaded.data_dir,
             &new_manifest,
             approved_caps.into_iter().collect(),
+            trust,
+            kind,
         )?;
 
         Ok(PluginInstallResult {
@@ -244,6 +326,9 @@ impl NaviEngine {
             path: installed_dir.display().to_string(),
             tools: new_manifest.tools.len(),
             capabilities: new_manifest.capabilities.len(),
+            kind: catalog_kind_label(kind).to_string(),
+            trust_level: trust_label(trust).to_string(),
+            kind_hint: kind_install_hint(kind).to_string(),
         })
     }
 
@@ -256,10 +341,39 @@ impl NaviEngine {
     ) -> Result<PluginInstallResult> {
         let loaded = self.loaded_config();
         let registry = self.plugin_registry_url();
-        let (_, staging) = stage_plugin_by_id(&registry, plugin_id, &loaded.data_dir)
+        let catalog = navi_plugin_manifest::fetch_catalog(&registry)
             .await
             .map_err(|e| NaviError::Config(e.to_string()))?;
-        self.plugin_update_path(&staging, force, confirm)
+        let entry = navi_plugin_manifest::find_catalog_entry(&catalog, plugin_id)
+            .map_err(|e| NaviError::Config(e.to_string()))?;
+        let kind = entry.kind;
+        let staging = navi_plugin_manifest::plugin_staging_dir(&loaded.data_dir, plugin_id);
+        navi_plugin_manifest::stage_plugin_from_catalog(&registry, entry, &staging)
+            .await
+            .map_err(|e| NaviError::Config(e.to_string()))?;
+        let mut result = self.plugin_update_path(&staging, force, confirm)?;
+        // Marketplace updates keep Community trust and catalog kind.
+        result.kind = catalog_kind_label(kind).to_string();
+        result.trust_level = trust_label(TrustLevel::Community).to_string();
+        result.kind_hint = kind_install_hint(kind).to_string();
+        // Re-write lock meta with Community + catalog kind (update_path may have kept LocalDev).
+        if let Ok(content) = fs::read_to_string(staging.join("plugin.toml"))
+            && let Ok(manifest) = parse_manifest(&content)
+        {
+            let approved = manifest
+                .capabilities
+                .iter()
+                .map(|c| c.id().to_string())
+                .collect();
+            let _ = write_lockfile_with_approved(
+                &loaded.data_dir,
+                &manifest,
+                approved,
+                TrustLevel::Community,
+                kind,
+            );
+        }
+        Ok(result)
     }
 
     /// Remove an installed plugin by id.
@@ -279,7 +393,10 @@ impl NaviEngine {
     }
 }
 
-fn load_and_validate_manifest(path: &Path) -> Result<navi_plugin_manifest::PluginManifest> {
+fn load_and_validate_manifest(
+    path: &Path,
+    trust: TrustLevel,
+) -> Result<navi_plugin_manifest::PluginManifest> {
     if !path.exists() {
         return Err(NaviError::Config(format!(
             "plugin directory not found: {}",
@@ -297,7 +414,7 @@ fn load_and_validate_manifest(path: &Path) -> Result<navi_plugin_manifest::Plugi
         fs::read_to_string(&manifest_path).map_err(|e| NaviError::Config(e.to_string()))?;
     let manifest =
         parse_manifest(&manifest_content).map_err(|e| NaviError::Config(e.to_string()))?;
-    validate(&manifest, TrustLevel::Community).map_err(|e| NaviError::Config(e.to_string()))?;
+    validate(&manifest, trust).map_err(|e| NaviError::Config(e.to_string()))?;
     let wasm_path = path.join(&manifest.plugin.entry);
     if !wasm_path.exists() {
         return Err(NaviError::Config(format!(
@@ -313,7 +430,7 @@ fn load_and_validate_manifest(path: &Path) -> Result<navi_plugin_manifest::Plugi
             manifest.plugin.wasm_hash
         )));
     }
-    navi_plugin_manifest::verify_plugin_signature(&manifest, &wasm_bytes, TrustLevel::Community)
+    navi_plugin_manifest::verify_plugin_signature(&manifest, &wasm_bytes, trust)
         .map_err(|reason| NaviError::Config(format!("signature verification failed: {reason}")))?;
     Ok(manifest)
 }
@@ -333,25 +450,69 @@ fn install_files(
     Ok(plugin_dir)
 }
 
-fn write_lockfile(data_dir: &Path, manifest: &navi_plugin_manifest::PluginManifest) -> Result<()> {
+fn write_lockfile_with_meta(
+    data_dir: &Path,
+    manifest: &navi_plugin_manifest::PluginManifest,
+    trust: TrustLevel,
+    kind: PluginCatalogKind,
+) -> Result<()> {
     let approved = manifest
         .capabilities
         .iter()
         .map(|c| c.id().to_string())
         .collect();
-    write_lockfile_with_approved(data_dir, manifest, approved)
+    write_lockfile_with_approved(data_dir, manifest, approved, trust, kind)
 }
 
 fn write_lockfile_with_approved(
     data_dir: &Path,
     manifest: &navi_plugin_manifest::PluginManifest,
     approved_capabilities: Vec<String>,
+    trust: TrustLevel,
+    kind: PluginCatalogKind,
 ) -> Result<()> {
     let plugins_root = installed_plugins_dir(data_dir);
-    let entry = lock_entry_from_manifest(manifest, approved_capabilities);
+    let entry =
+        lock_entry_from_manifest_with_meta(manifest, approved_capabilities, trust, kind);
     upsert_aggregate_lock_entry(&plugins_root, entry)
         .map_err(|e| NaviError::Config(format!("save lockfile: {e}")))?;
     Ok(())
+}
+
+fn catalog_kind_label(kind: PluginCatalogKind) -> &'static str {
+    match kind {
+        PluginCatalogKind::Plugin => "plugin",
+        PluginCatalogKind::Skill => "skill",
+        PluginCatalogKind::Mcp => "mcp",
+        PluginCatalogKind::Integration => "integration",
+    }
+}
+
+fn trust_label(trust: TrustLevel) -> &'static str {
+    match trust {
+        TrustLevel::Core => "core",
+        TrustLevel::Signed => "signed",
+        TrustLevel::Community => "community",
+        TrustLevel::LocalDev => "local-dev",
+    }
+}
+
+/// Follow-up guidance after install based on marketplace package kind.
+fn kind_install_hint(kind: PluginCatalogKind) -> &'static str {
+    match kind {
+        PluginCatalogKind::Plugin => {
+            "WASM tools register on next session (or reload plugins)."
+        }
+        PluginCatalogKind::Skill => {
+            "Skill pack installed as WASM plugin; activate related skills in session if provided."
+        }
+        PluginCatalogKind::Mcp => {
+            "MCP adapter package installed as WASM. If the package ships mcp.json, merge that server into ~/.config/navi/config.toml [[mcp.servers]] (or global MCP config)."
+        }
+        PluginCatalogKind::Integration => {
+            "Integration package installed as WASM plugin (messaging bots / sidecars may need env secrets)."
+        }
+    }
 }
 
 fn copy_dir_recursive(src: &Path, dst: &Path) -> std::io::Result<()> {

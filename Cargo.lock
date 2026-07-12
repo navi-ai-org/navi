@@ -3497,7 +3497,6 @@ dependencies = [
  "navi-mcp",
  "navi-plugin-api",
  "navi-plugin-broker",
- "navi-plugin-host",
  "navi-plugin-manifest",
  "navi-plugin-orchestrator",
  "navi-providers",

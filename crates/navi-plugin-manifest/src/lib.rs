@@ -34,8 +34,9 @@ pub use signature::{
 pub use store::{
     AGGREGATE_LOCKFILE_NAME, INSTALLED_PLUGINS_SUBDIR, aggregate_lockfile_path,
     capabilities_hash_from_manifest, installed_plugin_dir, installed_plugins_dir,
-    lock_entry_from_manifest, migrate_legacy_per_plugin_lockfiles, remove_aggregate_lock_entry,
-    tools_hash_from_manifest, upsert_aggregate_lock_entry,
+    lock_entry_from_manifest, lock_entry_from_manifest_with_meta,
+    migrate_legacy_per_plugin_lockfiles, remove_aggregate_lock_entry, tools_hash_from_manifest,
+    upsert_aggregate_lock_entry,
 };
 pub use types::*;
 pub use validator::validate;

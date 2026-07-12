@@ -135,22 +135,32 @@ impl PluginOrchestrator {
         let manifest = navi_plugin_manifest::parse_manifest(&manifest_content)
             .context("failed to parse plugin.toml")?;
 
-        // 2. Validate manifest
-        navi_plugin_manifest::validate(&manifest, TrustLevel::Community)
+        // 2. Resolve trust from lockfile (path installs = LocalDev, marketplace = Community).
+        let plugin_id = &manifest.plugin.id;
+        let lock_entry = self
+            .lockfile
+            .find(plugin_id)
+            .cloned()
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "plugin '{}' is not in the lockfile; install with `navi plugin install` first",
+                    plugin_id
+                )
+            })?;
+        let trust_level = lock_entry.trust_level;
+
+        // 3. Validate manifest under that trust level
+        navi_plugin_manifest::validate(&manifest, trust_level)
             .context("manifest validation failed")?;
 
-        // 3. Load WASM binary
+        // 4. Load WASM binary
         let wasm_path = plugin_dir.join(&manifest.plugin.entry);
         let wasm_bytes = std::fs::read(&wasm_path).context("failed to read WASM binary")?;
 
-        navi_plugin_manifest::verify_plugin_signature(
-            &manifest,
-            &wasm_bytes,
-            TrustLevel::Community,
-        )
-        .map_err(|reason| anyhow::anyhow!("signature verification failed: {reason}"))?;
+        navi_plugin_manifest::verify_plugin_signature(&manifest, &wasm_bytes, trust_level)
+            .map_err(|reason| anyhow::anyhow!("signature verification failed: {reason}"))?;
 
-        // 3a. Detect WASM component kind
+        // 4a. Detect WASM component kind
         #[cfg(feature = "wasm-runtime")]
         {
             let component_kind = navi_plugin_runtime::detect_component_kind(&wasm_bytes);
@@ -161,7 +171,7 @@ impl PluginOrchestrator {
             );
         }
 
-        // 4. Verify WASM hash
+        // 5. Verify WASM hash
         let expected_hash = &manifest.plugin.wasm_hash;
         if !navi_plugin_manifest::verify_wasm_hash(&wasm_bytes, expected_hash) {
             anyhow::bail!(
@@ -171,15 +181,8 @@ impl PluginOrchestrator {
             );
         }
 
-        // 5. Require lockfile approval before loading tools
-        let plugin_id = &manifest.plugin.id;
-        let lock_entry = self.lockfile.find(plugin_id).ok_or_else(|| {
-            anyhow::anyhow!(
-                "plugin '{}' is not in the lockfile; install with `navi plugin install` first",
-                plugin_id
-            )
-        })?;
-        navi_plugin_manifest::verify_approved_capabilities(&manifest, lock_entry)
+        // 6. Require lockfile capability approval before loading tools
+        navi_plugin_manifest::verify_approved_capabilities(&manifest, &lock_entry)
             .map_err(|reason| anyhow::anyhow!("{reason}"))?;
 
         #[cfg(not(feature = "wasm-runtime"))]
@@ -311,6 +314,8 @@ mod tests {
             tools_hash: String::new(),
             approved_capabilities: approved.into_iter().map(str::to_string).collect(),
             approved_at: "0".to_string(),
+            trust_level: TrustLevel::Community,
+            kind: navi_plugin_manifest::PluginCatalogKind::Plugin,
         });
         lockfile.save(&lockfile_path).unwrap();
     }

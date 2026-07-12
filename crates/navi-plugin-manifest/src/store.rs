@@ -50,6 +50,21 @@ pub fn lock_entry_from_manifest(
     manifest: &PluginManifest,
     approved_capabilities: Vec<String>,
 ) -> LockEntry {
+    lock_entry_from_manifest_with_meta(
+        manifest,
+        approved_capabilities,
+        crate::types::TrustLevel::Community,
+        crate::marketplace::PluginCatalogKind::Plugin,
+    )
+}
+
+/// Build a lockfile entry with explicit trust level and marketplace kind.
+pub fn lock_entry_from_manifest_with_meta(
+    manifest: &PluginManifest,
+    approved_capabilities: Vec<String>,
+    trust_level: crate::types::TrustLevel,
+    kind: crate::marketplace::PluginCatalogKind,
+) -> LockEntry {
     LockEntry {
         id: manifest.plugin.id.clone(),
         version: manifest.plugin.version.clone(),
@@ -59,6 +74,8 @@ pub fn lock_entry_from_manifest(
         tools_hash: tools_hash_from_manifest(manifest),
         approved_capabilities,
         approved_at: unix_timestamp_now(),
+        trust_level,
+        kind,
     }
 }
 

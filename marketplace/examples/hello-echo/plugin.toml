@@ -1,0 +1,21 @@
+# LocalDev example skeleton (WASM-only). Not published to the marketplace.
+# Build a real plugin.wasm, set wasm_hash to sha256:<hex>, then:
+#   navi plugin install marketplace/examples/hello-echo --yes
+
+[plugin]
+id = "hello-echo"
+name = "Hello Echo"
+version = "0.1.0"
+publisher = "gh:local-dev"
+runtime = "wasm-component"
+entry = "plugin.wasm"
+# Placeholder hash of empty file — replace after building the WASM binary.
+wasm_hash = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+signature = "local-dev"
+minimum_navi = "0.1.0"
+
+[[tools]]
+id = "echo"
+summary = "Echo a string back (example tool)."
+risk = "read_only"
+capabilities = []

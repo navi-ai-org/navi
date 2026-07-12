@@ -87,6 +87,8 @@ mod tests {
             tools_hash: String::new(),
             approved_capabilities: vec![],
             approved_at: "0".into(),
+            trust_level: crate::types::TrustLevel::Community,
+            kind: crate::marketplace::PluginCatalogKind::Plugin,
         };
         let err = verify_approved_capabilities(&manifest, &entry).unwrap_err();
         assert!(err.contains("fs_read"));
@@ -104,6 +106,8 @@ mod tests {
             tools_hash: String::new(),
             approved_capabilities: vec!["fs_read".into()],
             approved_at: "0".into(),
+            trust_level: crate::types::TrustLevel::Community,
+            kind: crate::marketplace::PluginCatalogKind::Plugin,
         };
         verify_approved_capabilities(&manifest, &entry).unwrap();
     }

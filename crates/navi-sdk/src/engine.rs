@@ -13,7 +13,7 @@ use navi_core::{
     save_global_config, save_project_config,
 };
 use navi_mcp::{LoadedMcpServers, McpServerInfo, load_configured_mcp_servers};
-use navi_plugin_host::LoadedPlugin;
+
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
@@ -220,7 +220,6 @@ pub struct NaviSession {
     tui_components: Vec<String>,
     tui_panels: std::sync::Mutex<Vec<Box<dyn navi_plugin_api::TuiComponent>>>,
     mcp: LoadedMcpServers,
-    _plugins: Vec<LoadedPlugin>,
 }
 
 impl NaviEngine {
@@ -359,7 +358,6 @@ impl NaviEngine {
         let runtime_tool_executor = tool_executor.tool_executor;
         let tui_components = tool_executor.tui_components;
         let tui_panels = tool_executor.tui_panels;
-        let plugins = tool_executor._plugins;
         let mut runtime = AgentRuntime::new(AgentRuntimeOptions {
             loaded_config: loaded_config.clone(),
             model_provider: provider,
@@ -408,7 +406,6 @@ impl NaviEngine {
                     tui_components,
                     tui_panels: std::sync::Mutex::new(tui_panels),
                     mcp,
-                    _plugins: plugins,
                 }),
             );
         Ok(info)
@@ -1125,20 +1122,20 @@ impl NaviEngine {
         Ok(session.events.resubscribe())
     }
 
-    /// Lists TUI component declarations registered by native plugins for this session.
+    /// Lists TUI component declarations for this session.
     ///
-    /// The SDK preserves these names as frontend-scoped declarations. `navi-tui`
-    /// decides whether a known component name maps to an actual ratatui widget.
+    /// Native in-process panels were removed (WASM-only plugins). This remains
+    /// for a future host-mediated UI protocol and currently returns empty unless
+    /// populated by a later extension path.
     pub fn list_tui_components(&self, session_id: &str) -> Result<Vec<String>> {
         let session = self.session(session_id)?;
         Ok(session.tui_components.clone())
     }
 
-    /// Takes ownership of TUI component panels registered by native plugins.
+    /// Takes ownership of TUI component panels for this session.
     ///
-    /// Returns `Box<dyn TuiComponent>` instances that the TUI can register
-    /// with its `PanelManager`. Each component is only available once —
-    /// subsequent calls return an empty vector.
+    /// Native `libloading` panels are no longer loaded. Returns empty until a
+    /// host-mediated WASM UI protocol is implemented.
     pub fn take_tui_panels(
         &self,
         session_id: &str,

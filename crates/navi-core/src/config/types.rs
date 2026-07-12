@@ -681,12 +681,16 @@ pub struct ModelOption {
     pub default_reasoning_effort: Option<String>,
 }
 
-/// A native plugin library path with an enable toggle.
+/// Legacy native plugin library path (`.so` / `.dylib`).
+///
+/// **Deprecated:** native in-process plugins are no longer loaded. Configure
+/// WASM packages via `navi plugin install` or `[[wasm_plugins]]` scan roots.
+/// Present `[[plugins]]` entries emit a warning and are ignored.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PluginConfig {
-    /// Path to the `.so` or `.dylib` plugin library.
+    /// Path to the `.so` or `.dylib` plugin library (ignored at runtime).
     pub path: PathBuf,
-    /// Whether this plugin is loaded.
+    /// Whether this entry would have been loaded (ignored; still triggers a warn).
     #[serde(default = "default_true")]
     pub enabled: bool,
 }
