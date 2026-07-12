@@ -603,6 +603,42 @@ fn render_text_area(frame: &mut Frame<'_>, area: Rect, value: &str, cursor: usiz
     }
 }
 
+pub(crate) fn render_confirm_mcp_merge(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
+    clear_modal_area(frame, area);
+    frame.render_widget(modal_block("Merge MCP config?"), area);
+    let inner = area.inner(Margin {
+        horizontal: 2,
+        vertical: 1,
+    });
+    let path = app
+        .pending_mcp_merge
+        .as_ref()
+        .map(|p| p.join("mcp.json").display().to_string())
+        .unwrap_or_else(|| "mcp.json".into());
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(3), Constraint::Length(1)])
+        .split(inner);
+    frame.render_widget(
+        Paragraph::new(format!(
+            "Plugin install finished. Merge this server definition into your global NAVI config?\n\n{path}"
+        ))
+        .wrap(Wrap { trim: true })
+        .style(Style::default().fg(text()).bg(modal_bg())),
+        rows[0],
+    );
+    frame.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::styled("y / enter", Style::default().fg(signal()).bg(modal_bg())),
+            Span::styled(" merge  ·  ", Style::default().fg(muted()).bg(modal_bg())),
+            Span::styled("n / esc", Style::default().fg(text()).bg(modal_bg())),
+            Span::styled(" skip", Style::default().fg(muted()).bg(modal_bg())),
+        ]))
+        .style(Style::default().bg(modal_bg())),
+        rows[1],
+    );
+}
+
 pub(crate) fn render_confirm_cancel_turn(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
     clear_modal_area(frame, area);
     frame.render_widget(modal_block("Cancel Turn"), area);

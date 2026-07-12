@@ -111,8 +111,9 @@ pub use voice::VoiceConfigUpdate;
 
 // Plugin lifecycle DTOs
 pub use plugins::{
-    PluginInfo, PluginInstallResult, PluginMarketplaceEntry, apply_kind_side_effects_at,
-    detect_package_kind,
+    KindSideEffectOptions, PluginInfo, PluginInstallResult, PluginMarketplaceEntry,
+    apply_kind_side_effects_at, apply_kind_side_effects_with_options, detect_package_kind,
+    merge_mcp_from_package, package_has_mcp_json,
 };
 pub use tui_extensions::{
     InstalledTuiExtension, TuiExtensionCommand, TuiExtensionPanel, TuiExtensionSpec,

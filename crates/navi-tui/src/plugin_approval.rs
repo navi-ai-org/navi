@@ -377,14 +377,37 @@ pub(crate) fn approve_plugin_install(app: &mut crate::TuiApp, req: PluginApprova
             req.kind,
         )
     {
-        show_notification(
-            app,
-            match req.kind {
-                PluginApprovalKind::Install => "Plugin",
-                PluginApprovalKind::Update => "Plugin update",
-            },
-            format!("Installed {plugin_id} → {}", installed.display()),
-        );
+        // Skill/MCP side effects: skill auto-import; MCP requires confirm.
+        let kind = navi_sdk::detect_package_kind(&installed);
+        if let Some(hint) = navi_sdk::apply_kind_side_effects_with_options(
+            &app.loaded_config.data_dir,
+            &app.project_dir,
+            &installed,
+            kind,
+            navi_sdk::KindSideEffectOptions { apply_mcp: false },
+        ) {
+            show_notification(app, "Plugin", hint);
+        }
+        if navi_sdk::package_has_mcp_json(&installed) {
+            app.pending_mcp_merge = Some(installed.clone());
+            app.mode = crate::state::Mode::ConfirmMcpMerge;
+            show_notification(
+                app,
+                "MCP",
+                format!(
+                    "Installed {plugin_id}. Merge mcp.json into global config? [y]es / [n]o"
+                ),
+            );
+        } else {
+            show_notification(
+                app,
+                match req.kind {
+                    PluginApprovalKind::Install => "Plugin",
+                    PluginApprovalKind::Update => "Plugin update",
+                },
+                format!("Installed {plugin_id} → {}", installed.display()),
+            );
+        }
         notify_plugin_decision(app, &req, PluginApprovalDecision::Approved);
         crate::plugins::reload_engine_plugins(app);
         return;

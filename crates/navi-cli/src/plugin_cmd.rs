@@ -152,12 +152,21 @@ fn install_plugin_with_meta(
     println!("Plugin '{}' installed successfully.", manifest.plugin.id);
     println!("  Tools: {}", manifest.tools.len());
     println!("  Capabilities: {}", manifest.capabilities.len());
+    let mut apply_mcp = false;
+    if kind == PluginCatalogKind::Mcp && navi_sdk::package_has_mcp_json(&installed) {
+        println!("This package includes mcp.json (will merge into ~/.config/navi/config.toml).");
+        apply_mcp = yes || prompt_yes_no("Merge MCP server into global config? [y/N] ")?;
+        if !apply_mcp {
+            println!("Skipped MCP merge (run again later or merge manually).");
+        }
+    }
     let mut hint = kind_install_hint(kind).to_string();
-    if let Some(extra) = navi_sdk::apply_kind_side_effects_at(
+    if let Some(extra) = navi_sdk::apply_kind_side_effects_with_options(
         &config.data_dir,
         std::env::current_dir().as_deref().unwrap_or(Path::new(".")),
         &installed,
         kind,
+        navi_sdk::KindSideEffectOptions { apply_mcp },
     ) {
         hint = extra;
     }
