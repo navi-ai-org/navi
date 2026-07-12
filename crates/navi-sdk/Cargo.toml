@@ -28,7 +28,8 @@ navi-voice.workspace = true
 copland.workspace = true
 
 [features]
-default = []
+# WASM plugin runtime is on by default (marketplace + LocalDev packages).
+default = ["wasm-plugins"]
 wasm-plugins = ["dep:navi-plugin-orchestrator"]
 # Optional ONNX Runtime ASR (not portable to musl / all hosts).
 voice-onnx = ["navi-voice/onnx"]

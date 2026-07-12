@@ -19,7 +19,7 @@ tokio.workspace = true
 tracing.workspace = true
 unicode-width.workspace = true
 time = { workspace = true, features = ["formatting", "local-offset", "macros"] }
-navi-sdk.workspace = true
+navi-sdk = { workspace = true, default-features = true }
 navi-core.workspace = true
 navi-plugin-manifest.workspace = true
 navi-plugin-broker.workspace = true
@@ -29,6 +29,9 @@ toml.workspace = true
 # Kitty / Sixel / iTerm2 image previews (no chafa — text-only when unsupported).
 ratatui-image = { version = "11", default-features = false, features = ["image-defaults", "crossterm"] }
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
+
+[features]
+default = []
 
 [dev-dependencies]
 tempfile.workspace = true

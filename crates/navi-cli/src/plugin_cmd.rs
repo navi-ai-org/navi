@@ -12,7 +12,7 @@ use std::path::Path;
 
 use crate::PluginAction;
 
-pub fn handle_plugin_command(
+pub async fn handle_plugin_command(
     action: PluginAction,
     config: &LoadedConfig,
     cwd: &Path,
@@ -20,13 +20,13 @@ pub fn handle_plugin_command(
     match action {
         PluginAction::Install { path, yes } => install_plugin(&path, yes, config, cwd),
         PluginAction::InstallMarketplace { plugin_id, yes } => {
-            install_plugin_marketplace(&plugin_id, yes, config)
+            install_plugin_marketplace(&plugin_id, yes, config).await
         }
         PluginAction::Update { path, force } => update_plugin(&path, force, config, cwd),
         PluginAction::UpdateMarketplace { plugin_id, force } => {
-            update_plugin_marketplace(&plugin_id, force, config)
+            update_plugin_marketplace(&plugin_id, force, config).await
         }
-        PluginAction::Search { query } => search_marketplace(query.as_deref(), config),
+        PluginAction::Search { query } => search_marketplace(query.as_deref(), config).await,
         PluginAction::List => list_plugins(config, cwd),
         PluginAction::Remove { plugin_id } => remove_plugin(&plugin_id, config, cwd),
         PluginAction::Info { plugin_id } => show_plugin_info(&plugin_id, config, cwd),
@@ -37,12 +37,9 @@ fn registry_for_config(config: &LoadedConfig) -> &str {
     registry_url(config.config.plugin_marketplace.registry_url.as_deref())
 }
 
-fn search_marketplace(query: Option<&str>, config: &LoadedConfig) -> Result<()> {
-    let rt = tokio::runtime::Runtime::new().context("failed to start async runtime")?;
-    let catalog = rt
-        .block_on(navi_plugin_manifest::fetch_catalog(registry_for_config(
-            config,
-        )))
+async fn search_marketplace(query: Option<&str>, config: &LoadedConfig) -> Result<()> {
+    let catalog = navi_plugin_manifest::fetch_catalog(registry_for_config(config))
+        .await
         .map_err(|e| anyhow::anyhow!("{e}"))?;
     let q = query.unwrap_or("");
     let hits = search_catalog(&catalog, q);
@@ -71,38 +68,37 @@ fn search_marketplace(query: Option<&str>, config: &LoadedConfig) -> Result<()> 
     Ok(())
 }
 
-fn install_plugin_marketplace(plugin_id: &str, yes: bool, config: &LoadedConfig) -> Result<()> {
-    let rt = tokio::runtime::Runtime::new().context("failed to start async runtime")?;
+async fn install_plugin_marketplace(
+    plugin_id: &str,
+    yes: bool,
+    config: &LoadedConfig,
+) -> Result<()> {
     let registry = registry_for_config(config);
-    let catalog = rt
-        .block_on(navi_plugin_manifest::fetch_catalog(registry))
+    let catalog = navi_plugin_manifest::fetch_catalog(registry)
+        .await
         .map_err(|e| anyhow::anyhow!("{e}"))?;
     let entry = navi_plugin_manifest::find_catalog_entry(&catalog, plugin_id)
         .map_err(|e| anyhow::anyhow!("{e}"))?;
     let kind = entry.kind;
     let staging = navi_plugin_manifest::plugin_staging_dir(&config.data_dir, plugin_id);
-    rt.block_on(navi_plugin_manifest::stage_plugin_from_catalog(
-        registry, entry, &staging,
-    ))
-    .map_err(|e| anyhow::anyhow!("{e}"))?;
-    install_plugin_with_meta(
-        &staging,
-        yes,
-        config,
-        TrustLevel::Community,
-        kind,
-    )
+    navi_plugin_manifest::stage_plugin_from_catalog(registry, entry, &staging)
+        .await
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    install_plugin_with_meta(&staging, yes, config, TrustLevel::Community, kind)
 }
 
-fn update_plugin_marketplace(plugin_id: &str, force: bool, config: &LoadedConfig) -> Result<()> {
-    let rt = tokio::runtime::Runtime::new().context("failed to start async runtime")?;
-    let (_, staging) = rt
-        .block_on(stage_plugin_by_id(
-            registry_for_config(config),
-            plugin_id,
-            &config.data_dir,
-        ))
-        .map_err(|e| anyhow::anyhow!("{e}"))?;
+async fn update_plugin_marketplace(
+    plugin_id: &str,
+    force: bool,
+    config: &LoadedConfig,
+) -> Result<()> {
+    let (_, staging) = stage_plugin_by_id(
+        registry_for_config(config),
+        plugin_id,
+        &config.data_dir,
+    )
+    .await
+    .map_err(|e| anyhow::anyhow!("{e}"))?;
     update_plugin(
         &staging,
         force,

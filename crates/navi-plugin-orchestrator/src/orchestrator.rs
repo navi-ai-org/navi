@@ -4,7 +4,7 @@ use navi_core::Tool;
 use navi_core::ToolExecutor;
 #[cfg(feature = "wasm-runtime")]
 use navi_plugin_manifest::PluginManifest;
-use navi_plugin_manifest::{self, Lockfile, SecurityDefaults, TrustLevel};
+use navi_plugin_manifest::{self, Lockfile, SecurityDefaults};
 use std::path::{Path, PathBuf};
 #[cfg(feature = "wasm-runtime")]
 use std::sync::Arc;
