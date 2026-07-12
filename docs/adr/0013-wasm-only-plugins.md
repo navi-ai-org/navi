@@ -19,7 +19,7 @@ Product direction: one plugin runtime for all extension packages.
 |------|--------|
 | WASM (`wasmtime` + host brokers) | **Only** supported plugin runtime |
 | Native `.so` / `.dylib` via `libloading` | **Retired** — config ignored with warning |
-| `navi-plugin-host` | Deprecated crate; not used by `navi-sdk` load path |
+| `navi-plugin-host` | **Removed** from the workspace (ADR 0013 cleanup) |
 
 ### Trust levels (still WASM)
 
@@ -51,9 +51,9 @@ Positive:
 - Clear LocalDev escape hatch that is still sandboxed WASM
 
 Negative:
-- `navi-plugin-host` remains in the workspace until a later cleanup PR
 - Deep TUI patching requires a new UI protocol (not native frames)
 - Plugin authors must target `wasm32` / component toolchain
+- The `navi-plugin-host` crate was deleted; do not reintroduce in-process native plugins
 
 ## Supersedes
 - ADR 0012 dual-path native branch (native path removed from runtime)

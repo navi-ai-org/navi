@@ -112,7 +112,8 @@ navi/
 │   ├── navi-mcp/          # MCP client integration
 │   ├── navi-openai/       # OpenAI-compatible provider implementation
 │   ├── navi-plugin-api/   # Plugin trait and API version
-│   ├── navi-plugin-host/  # Native library loading
+│   ├── navi-plugin-runtime/  # WASM plugin runtime (wasmtime)
+│   ├── navi-plugin-orchestrator/  # Install/load orchestration
 │   ├── navi-providers/    # Provider facade
 │   ├── navi-sdk/          # Public embedding facade
 │   └── navi-tui/          # Terminal UI

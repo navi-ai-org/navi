@@ -16,7 +16,7 @@ quality_profile := "full"
 coverage_lcov := "coverage/lcov.info"
 
 # Product crates (shipping binary path). Bindings excluded for fast loops.
-product_packages := "-p navi-core -p navi-openai -p navi-providers -p navi-sdk -p navi-tui -p navi-cli -p navi-vfs -p navi-lite -p navi-mcp -p navi-plugin-api -p navi-plugin-broker -p navi-plugin-host -p navi-plugin-manifest -p navi-plugin-orchestrator -p navi-plugin-runtime -p navi-voice -p copland"
+product_packages := "-p navi-core -p navi-openai -p navi-providers -p navi-sdk -p navi-tui -p navi-cli -p navi-vfs -p navi-lite -p navi-mcp -p navi-plugin-api -p navi-plugin-broker -p navi-plugin-manifest -p navi-plugin-orchestrator -p navi-plugin-runtime -p navi-voice -p copland"
 
 # ─── Build ───────────────────────────────────────────────────────────────────
 

@@ -11,7 +11,6 @@ members = [
     "crates/navi-openai",
     "crates/navi-plugin-api",
     "crates/navi-plugin-broker",
-    "crates/navi-plugin-host",
     "crates/navi-plugin-manifest",
     "crates/navi-plugin-orchestrator",
     "crates/navi-plugin-runtime",
@@ -35,7 +34,6 @@ default-members = [
     "crates/navi-openai",
     "crates/navi-plugin-api",
     "crates/navi-plugin-broker",
-    "crates/navi-plugin-host",
     "crates/navi-plugin-manifest",
     "crates/navi-plugin-orchestrator",
     "crates/navi-plugin-runtime",
@@ -120,7 +118,6 @@ navi-openai = { version = "0.2.3", path = "crates/navi-openai" }
 navi-plugin-api = { version = "0.2.3", path = "crates/navi-plugin-api" }
 navi-plugin-broker = { version = "0.2.3", path = "crates/navi-plugin-broker" }
 navi-providers = { version = "0.2.3", path = "crates/navi-providers" }
-navi-plugin-host = { version = "0.2.3", path = "crates/navi-plugin-host" }
 navi-plugin-manifest = { version = "0.2.3", path = "crates/navi-plugin-manifest" }
 navi-plugin-orchestrator = { version = "0.2.3", path = "crates/navi-plugin-orchestrator", default-features = false }
 navi-plugin-runtime = { version = "0.2.3", path = "crates/navi-plugin-runtime" }

@@ -85,7 +85,7 @@ Counts are approximate (±5%) from attribute search. Integration = `crates/*/tes
 | **navi-plugin-runtime** | ~18 | 0 | wasmtime + wat |
 | **navi-plugin-orchestrator** | ~16 | 0 | 1 ignored wasm |
 | **navi-mcp** | ~15 | 0 | multi_thread + process spawn |
-| **navi-plugin-host** | ~9 | 0 | |
+
 | **navi-voice** | ~8 | 2 (cfg `onnx`) | Model path soft-skip |
 | **navi-lite** | ~3 | 0 | |
 | **navi-dart** | 0 | ~31 | CI excluded |

@@ -46,9 +46,9 @@ Core agent behavior belongs in engine crates, primarily `navi-core`, not in `nav
 | `navi-mcp` | MCP stdio client integration that registers remote MCP tools with the engine. |
 | `navi-napi` | N-API binding for Node.js/Electron. Wraps `navi-sdk` and exposes the full engine surface (sessions, turns, goals, credentials, skills, MCP, saved sessions, registry, plugins, events) as native TypeScript classes. Includes a panic hook for crash isolation. |
 | `navi-openai` | `ModelProvider` implementation for OpenAI-compatible APIs and provider adapters. Implementation crate behind `navi-providers` facade. |
-| `navi-plugin-api` | Plugin trait and `NAVI_PLUGIN_API_VERSION` (legacy native ABI retained for tests). |
-| `navi-plugin-host` | **Deprecated.** Former `libloading` native loader; not used by the SDK load path (WASM-only). |
+| `navi-plugin-api` | Shared plugin types (tools, metadata). Native libloading ABI removed with ADR 0013. |
 | `navi-plugin-runtime` / `navi-plugin-orchestrator` | WASM plugin runtime (`wasmtime`) and install/load orchestration. |
+| `navi-plugin-manifest` / `navi-plugin-broker` | Manifest validation, marketplace, host brokers (FS/HTTP/git). |
 | `navi-providers` | Provider facade. Re-exports `navi-openai` public API. Downstream crates should depend on this, not `navi-openai` directly. |
 | `navi-sdk` | Public embedding facade for local clients (Tutor, TUI, ACP). Wraps core runtime, provider setup, plugin loading, host tools, MCP, sessions and events. |
 | `navi-tui` | Terminal UI with chat, model picker, thinking/settings/session modals, markdown/code rendering. Drives turns through `navi-sdk::NaviEngine`. |

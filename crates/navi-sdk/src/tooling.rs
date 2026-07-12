@@ -27,7 +27,7 @@ pub(crate) fn build_local_tooling(
         loaded_config.config.effective_security_config(),
     )?;
     let mut tool_executor = ToolExecutor::with_security_policy(
-        security_policy.clone(),
+        security_policy,
         runtime_components.security.clone(),
     );
 

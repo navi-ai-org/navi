@@ -515,6 +515,74 @@ fn kind_install_hint(kind: PluginCatalogKind) -> &'static str {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use navi_core::{LoadedConfig, NaviConfig};
+    use navi_plugin_manifest::{PluginManifest, PluginMeta, RuntimeKind, ToolDef, ToolRisk};
+
+    #[test]
+    fn local_dev_install_accepts_unsigned_wasm_package() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut config = NaviConfig::default();
+        config.registry.update_enabled = false;
+        let loaded = LoadedConfig {
+            config,
+            global_config_path: Some(temp.path().join("config.toml")),
+            project_config_path: None,
+            data_dir: temp.path().to_path_buf(),
+        };
+        let engine = crate::NaviEngineBuilder::from_project(temp.path())
+            .loaded_config(loaded)
+            .build()
+            .expect("engine");
+
+        let pkg = temp.path().join("pkg");
+        fs::create_dir_all(&pkg).unwrap();
+        let wasm = b"\0asm\x01\x00\x00\x00"; // minimal wasm magic (not a valid module for load)
+        let hash = compute_wasm_hash(wasm);
+        let manifest = PluginManifest {
+            plugin: PluginMeta {
+                id: "local-echo".into(),
+                name: "Local Echo".into(),
+                version: "0.1.0".into(),
+                publisher: "gh:dev".into(),
+                runtime: RuntimeKind::WasmComponent,
+                entry: "plugin.wasm".into(),
+                wasm_hash: hash,
+                signature: "local-dev".into(),
+                public_key: None,
+                minimum_navi: "0.1.0".into(),
+            },
+            capabilities: vec![],
+            tools: vec![ToolDef {
+                id: "echo".into(),
+                summary: "echo".into(),
+                risk: ToolRisk::ReadOnly,
+                input_schema: None,
+                capabilities: vec![],
+            }],
+        };
+        fs::write(
+            pkg.join("plugin.toml"),
+            toml::to_string(&manifest).expect("toml"),
+        )
+        .unwrap();
+        fs::write(pkg.join("plugin.wasm"), wasm).unwrap();
+
+        let result = engine
+            .plugin_install_path(&pkg, true)
+            .expect("LocalDev install");
+        assert_eq!(result.id, "local-echo");
+        assert_eq!(result.trust_level, "local-dev");
+        assert!(temp.path().join("plugins/local-echo/plugin.wasm").is_file());
+
+        let list = engine.plugin_list().unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].trust_level, "local-dev");
+    }
+}
+
 fn copy_dir_recursive(src: &Path, dst: &Path) -> std::io::Result<()> {
     fs::create_dir_all(dst)?;
     for entry in fs::read_dir(src)? {
