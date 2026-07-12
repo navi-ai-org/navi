@@ -103,8 +103,30 @@ pub(crate) fn open_plan_review(app: &mut TuiApp, plan: Plan, invocation_id: Stri
         title: plan.title.clone(),
         steps: plan.steps.iter().map(|s| s.description.clone()).collect(),
     });
+    // Seed the progress strip immediately (status=proposed until approved).
+    app.active_plan = Some(active_plan_from_store_plan(&plan, "proposed"));
     replace_modal(app, ModalKind::ConfirmPlan);
     show_notification(app, "Plan Review", "Waiting for your review…");
+}
+
+pub(crate) fn active_plan_from_store_plan(
+    plan: &Plan,
+    status: &str,
+) -> crate::state::ActivePlanUiState {
+    crate::state::ActivePlanUiState {
+        plan_id: plan.id.clone(),
+        title: plan.title.clone(),
+        steps: plan
+            .steps
+            .iter()
+            .map(|s| crate::state::ActivePlanStepUi {
+                description: s.description.clone(),
+                completed: s.completed,
+            })
+            .collect(),
+        status: status.to_string(),
+        expanded: true,
+    }
 }
 
 /// Open review from PlanProposed event (tag path — non-blocking legacy).
@@ -282,6 +304,35 @@ fn finish_review(app: &mut TuiApp, decision: &str, next_status: PlanStatus, _sen
         tokio::spawn(async move {
             let _ = engine.exit_plan_mode(&session_id).await;
         });
+    }
+
+    // Update the live plan progress strip.
+    match decision {
+        "approve" => {
+            if let Some(plan) = app.active_plan.as_mut() {
+                plan.status = "active".into();
+                plan.expanded = true;
+            } else if let Some(proposed) = app.proposed_plan.as_ref() {
+                app.active_plan = Some(crate::state::ActivePlanUiState {
+                    plan_id: review.plan_id.clone(),
+                    title: review.title.clone(),
+                    steps: proposed
+                        .steps
+                        .iter()
+                        .map(|d| crate::state::ActivePlanStepUi {
+                            description: d.clone(),
+                            completed: false,
+                        })
+                        .collect(),
+                    status: "active".into(),
+                    expanded: true,
+                });
+            }
+        }
+        "quit" => {
+            app.active_plan = None;
+        }
+        _ => {}
     }
 
     show_notification(

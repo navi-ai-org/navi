@@ -82,8 +82,11 @@ pub(crate) fn tool_auto_expand(invocation: &ToolInvocation, result: &ToolResult)
         "apply_patch" | "code_edit" => true,
         "write" | "write_file" => true,
 
-        // Plan / questions — user must see them.
-        "plan" | "question" | "request_user_input" | "ask_user_question" => true,
+        // Questions need the expanded prompt in chat.
+        "question" | "request_user_input" | "ask_user_question" => true,
+        // Plan create opens a review modal — keep chat to a one-line summary
+        // (never dump the full todos JSON into the scrollback).
+        "plan" => plan_tool_auto_expand(invocation, result),
 
         // Small structured confirmations can stay compact unless error.
         // Noisy exploration — collapsed by default.
@@ -96,6 +99,29 @@ pub(crate) fn tool_auto_expand(invocation: &ToolInvocation, result: &ToolResult)
         "subagent" => false,
 
         // Everything else: open only if there is short, meaningful body text.
+        _ => short_useful_body(result),
+    }
+}
+
+/// When to auto-open a `plan` tool body in chat.
+///
+/// Create/update that open (or just opened) the review modal stay compact.
+/// Errors and short progress updates (complete_step) may expand.
+fn plan_tool_auto_expand(invocation: &ToolInvocation, result: &ToolResult) -> bool {
+    if !result.ok {
+        return true;
+    }
+    let action = invocation
+        .input
+        .get("action")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    match action {
+        // Modal is the plan UI — do not also expand raw JSON/todos in chat.
+        "create" | "update" => false,
+        // Progress updates: compact header is enough (active plan strip shows checklist).
+        "complete_step" => false,
+        "get" | "list" | "active" => false,
         _ => short_useful_body(result),
     }
 }
@@ -210,6 +236,22 @@ mod tests {
         let read = inv("read_file", "r1");
         let read_res = res("r1", true, json!({"path": "a.rs", "content": "x"}));
         assert!(!tool_auto_expand(&read, &read_res));
+    }
+
+    #[test]
+    fn plan_create_stays_collapsed_questions_expand() {
+        let mut plan = inv("plan", "pl1");
+        plan.input = json!({ "action": "create", "title": "T" });
+        let plan_res = res(
+            "pl1",
+            true,
+            json!({ "title": "T", "needs_review": true, "steps_count": 3 }),
+        );
+        assert!(!tool_auto_expand(&plan, &plan_res));
+
+        let q = inv("question", "q1");
+        let q_res = res("q1", true, json!({ "prompt": "ok?" }));
+        assert!(tool_auto_expand(&q, &q_res));
     }
 
     #[test]

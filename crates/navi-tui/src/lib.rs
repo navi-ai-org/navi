@@ -18,6 +18,7 @@ mod notifications;
 pub(crate) mod panels;
 mod path_mentions;
 mod persistence;
+mod plan_progress;
 mod plan_review;
 mod plugin_approval;
 mod plugins;
