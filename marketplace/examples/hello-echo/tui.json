@@ -1,0 +1,21 @@
+{
+  "commands": [
+    {
+      "id": "hello-echo.ping",
+      "title": "Hello Echo Ping",
+      "description": "Example command registered by a WASM plugin package.",
+      "palette_group": "Extensions"
+    }
+  ],
+  "panels": [
+    {
+      "id": "hello-echo.status",
+      "title": "Hello Echo",
+      "kind": "info",
+      "body": "This panel is declared by tui.json (host-mediated UI protocol)."
+    }
+  ],
+  "theme_tokens": {
+    "accent": "#7C5CFF"
+  }
+}

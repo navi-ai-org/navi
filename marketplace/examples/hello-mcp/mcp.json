@@ -1,0 +1,8 @@
+{
+  "id": "hello-mcp-server",
+  "command": "npx",
+  "args": ["-y", "@modelcontextprotocol/server-everything"],
+  "env": {},
+  "enabled": true,
+  "tool_prefix": "hello"
+}
