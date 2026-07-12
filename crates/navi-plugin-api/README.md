@@ -5,7 +5,7 @@
 
 Stable plugin ABI for [NAVI](https://github.com/navi-ai-org/navi) — the trait definitions and types that plugin authors implement.
 
-This crate is intentionally minimal: it has **no dependency on `navi-core`** and defines only the types needed across the plugin boundary. The host adapts `PluginTool` into `navi_core::Tool` via [`navi-plugin-host`](https://crates.io/crates/navi-plugin-host).
+This crate is intentionally minimal: it has **no dependency on `navi-core`** and defines types used across the plugin boundary. Executable plugins run as **WASM** (`navi-plugin-runtime` / `navi-plugin-orchestrator`); native `libloading` plugins were removed (ADR 0013).
 
 ## Plugin ABI
 

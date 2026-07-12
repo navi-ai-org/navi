@@ -84,7 +84,7 @@ Confirm excluded dependencies stay out of the lite graph:
 
 ```bash
 cargo tree -p navi-lite -e normal --no-default-features \
-  | rg "navi-vfs|navi-tui|copland|navi-mcp|navi-plugin-host|wasmtime|candle|tokenizers|hf-hub"
+  | rg "navi-vfs|navi-tui|copland|navi-mcp|navi-plugin-runtime|wasmtime|candle|tokenizers|hf-hub"
 ```
 
 That command should print no matches.

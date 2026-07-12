@@ -14,7 +14,7 @@ navi-sdk (NaviEngine)
     |
     +-- navi-core (runtime, tools, security, sessions)
     +-- navi-providers (navi-openai facade)
-    +-- navi-plugin-host (native plugin loading)
+    +-- navi-plugin-orchestrator / navi-plugin-runtime (WASM plugins)
     +-- navi-mcp (MCP client)
 ```
 
