@@ -1,0 +1,18 @@
+# MCP-kind package skeleton. Ships mcp.json for global config merge on install.
+
+[plugin]
+id = "hello-mcp"
+name = "Hello MCP Adapter"
+version = "0.1.0"
+publisher = "gh:navi-ai-org"
+runtime = "wasm-component"
+entry = "plugin.wasm"
+wasm_hash = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+signature = "local-dev"
+minimum_navi = "0.1.0"
+
+[[tools]]
+id = "mcp_status_hint"
+summary = "Placeholder WASM tool; real tools come from the MCP server in mcp.json."
+risk = "read_only"
+capabilities = []

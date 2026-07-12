@@ -1,6 +1,6 @@
 {
   "version": 1,
   "updated_at": "2026-07-12T00:00:00Z",
-  "description": "Official NAVI marketplace catalog. All packages install as WASM plugins (kinds: plugin, skill, mcp, integration). Native libloading packages are not supported.",
+  "description": "Official NAVI marketplace catalog. All packages install as WASM plugins (kinds: plugin, skill, mcp, integration). Native libloading packages are not supported. Example packages live under examples/ for LocalDev; publish signed artifacts under artifacts/.",
   "plugins": []
 }
