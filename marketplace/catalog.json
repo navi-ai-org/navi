@@ -1,8 +1,24 @@
 {
   "version": 1,
-  "updated_at": "2026-07-12T12:00:00Z",
+  "updated_at": "2026-07-12T18:00:00Z",
   "description": "Official NAVI marketplace catalog. All packages install as WASM plugins (kinds: plugin, skill, mcp, integration). Native libloading packages are not supported. Example packages live under examples/ for LocalDev; publish signed artifacts under artifacts/.",
   "plugins": [
+    {
+      "id": "discord",
+      "name": "Discord",
+      "description": "Discord bot via MCP (@iqai/mcp-discord). Install, set DISCORD_TOKEN, message servers.",
+      "version": "0.1.0",
+      "publisher": "gh:navi-ai-org",
+      "artifact_dir": "artifacts/discord/0.1.0",
+      "wasm_hash": "sha256:11be918691c8b527d8ea246161f5acfee24eaeb34da55ffc45bebc2f9c7f2fb8",
+      "kind": "mcp",
+      "tags": [
+        "discord",
+        "messaging",
+        "mcp",
+        "bot"
+      ]
+    },
     {
       "id": "hello-echo",
       "name": "Hello Echo",

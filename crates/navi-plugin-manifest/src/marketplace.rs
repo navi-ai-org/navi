@@ -183,7 +183,37 @@ pub async fn stage_plugin_from_catalog(
     std::fs::write(staging_dir.join("plugin.toml"), manifest_content)?;
     std::fs::write(staging_dir.join(&wasm_name), wasm_bytes)?;
 
+    // Optional package side-cars (MCP merge, skills, host UI, docs).
+    // Missing files are ignored; present files are required to download cleanly.
+    for name in OPTIONAL_PACKAGE_SIDECARS {
+        let url = join_url(&artifact_base, name);
+        match fetch_bytes(&url).await {
+            Ok(bytes) => {
+                std::fs::write(staging_dir.join(name), bytes)?;
+            }
+            // Optional sidecars: ignore missing / soft fetch failures.
+            Err(MarketplaceError::Http(msg)) if is_not_found_http(&msg) => {}
+            Err(MarketplaceError::Io(_)) => {}
+            Err(MarketplaceError::Http(_)) => {}
+            Err(_) => {}
+        }
+    }
+
     Ok((manifest, staging_dir.to_path_buf()))
+}
+
+/// Sidecar files that may ship next to plugin.toml / plugin.wasm.
+const OPTIONAL_PACKAGE_SIDECARS: &[&str] = &[
+    "mcp.json",
+    "SKILL.md",
+    "skill.toml",
+    "tui.json",
+    "INSTALL.md",
+    "README.md",
+];
+
+fn is_not_found_http(msg: &str) -> bool {
+    msg.contains("404") || msg.contains("Not Found") || msg.contains("failed: 404")
 }
 
 /// Download and stage a plugin by id from the registry.

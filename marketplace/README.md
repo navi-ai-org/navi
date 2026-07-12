@@ -38,10 +38,16 @@ artifacts/<id>/<version>/tui.json      # optional TUI protocol
 examples/…                             # LocalDev skeletons (unsigned)
 ```
 
+## Packages in catalog
+
+| Id | Kind | Notes |
+|----|------|--------|
+| `hello-echo` | `plugin` | Signed WASM echo tool |
+| `discord` | `mcp` | `@iqai/mcp-discord` + bot token setup (`INSTALL.md`) |
+
 ## Local catalog (E2E)
 
-The vendored catalog includes a signed **hello-echo** demo under
-`artifacts/hello-echo/0.1.0/`.
+Signed demos live under `artifacts/`.
 
 ```bash
 # Point NAVI at the local catalog (global config):

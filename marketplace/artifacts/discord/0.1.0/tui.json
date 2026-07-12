@@ -1,0 +1,21 @@
+{
+  "commands": [
+    {
+      "id": "discord.setup",
+      "title": "Discord setup guide",
+      "description": "How to create a bot, enable intents, invite it, and set DISCORD_TOKEN.",
+      "palette_group": "Extensions"
+    }
+  ],
+  "panels": [
+    {
+      "id": "discord.setup-panel",
+      "title": "Discord MCP",
+      "kind": "info",
+      "body": "## Discord package\n\n1. Create an application at https://discord.com/developers/applications\n2. Bot → Reset Token → copy **DISCORD_TOKEN**\n3. Enable **Message Content Intent** (and others you need) under Privileged Gateway Intents\n4. OAuth2 → URL Generator: scopes `bot`, invite the bot to your server\n5. After install, set the token in global config:\n\n```toml\n[[mcp.servers]]\nid = \"discord\"\n# ...\n[mcp.servers.env]\nDISCORD_TOKEN = \"your-bot-token\"\n```\n\n6. Restart NAVI / reload MCP. Tools appear with prefix `discord`.\n\nMCP server: `npx -y @iqai/mcp-discord` (requires Node.js 18+)."
+    }
+  ],
+  "theme_tokens": {
+    "accent": "#5865F2"
+  }
+}
