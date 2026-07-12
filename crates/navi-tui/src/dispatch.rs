@@ -911,6 +911,11 @@ fn maybe_emit_session_recap(app: &mut TuiApp, assistant_text: &str) {
 
 /// React to setup interview completion — exit setup wizard, mark onboarding done.
 fn handle_setup_interview_done(app: &mut TuiApp) {
+    complete_setup_wizard(app);
+}
+
+/// Finish the setup wizard (interview complete or user skipped interview).
+pub(crate) fn complete_setup_wizard(app: &mut TuiApp) {
     use crate::persistence::save_global_config_for_app;
 
     app.setup_phase = None;
@@ -922,7 +927,9 @@ fn handle_setup_interview_done(app: &mut TuiApp) {
     app.messages.clear();
     app.messages.push(ChatMessage::new(
         ChatRole::Assistant,
-        "Setup complete! You can now start using NAVI normally.".to_string(),
+        "Setup complete! You can now start using NAVI normally.\n\n\
+         Tip: discover WASM packages with `navi plugin search`."
+            .to_string(),
     ));
     app.events.clear();
     app.reset_run_state();

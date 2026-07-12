@@ -361,6 +361,10 @@ pub(crate) enum SetupPhase {
     ProviderLogin,
     /// User chooses the dedicated model used for automatic memory extraction.
     MemoryModel,
+    /// Choose default permission mode (restricted / accept-edits / yolo).
+    Approvals,
+    /// Optional tip about marketplace WASM plugins (skip or continue).
+    MarketplaceTip,
     /// Model is interviewing the user with `question` tool.
     Interview,
 }

@@ -606,6 +606,22 @@ Plugin scope (product):
 - TUI extension: future host-mediated UI protocol (not native ratatui panels).
 - Tutor plugins: visual blocks remain Tutor-owned; engine plugins must not depend on TUI.
 
+## Setup Wizard
+
+```bash
+navi setup                 # interactive TUI onboarding
+```
+
+Flow:
+
+1. Provider + API key (model picker)
+2. Dedicated memory-extraction model
+3. Default permission mode (`restricted` / `accept-edits` / `yolo`)
+4. Marketplace tip (WASM plugins; continue or skip interview)
+5. Optional preference interview (`question` tool → `NAVI_SETUP_COMPLETE:` JSON)
+
+Restart from Settings → Setup Wizard.
+
 ## Skills And MCP
 
 Skills are built-ins plus rows in `data_dir/skills.sqlite`, managed by `navi-core` and injected as active prompt instructions. Active skills may also restrict tools via allow/deny lists. Do not implement marketplace/remote install unless explicitly requested.

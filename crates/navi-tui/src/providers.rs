@@ -201,10 +201,58 @@ pub(crate) fn maybe_start_setup_interview(app: &mut TuiApp) {
                 .config
                 .background_models
                 .memory_extraction
-                .is_some() => {}
+                .is_some() =>
+        {
+            begin_setup_approvals(app);
+            return;
+        }
+        Some(crate::state::SetupPhase::Approvals)
+        | Some(crate::state::SetupPhase::MarketplaceTip) => {
+            // Wait for keyboard confirmation in those steps.
+            return;
+        }
+        Some(crate::state::SetupPhase::Interview) => return,
         _ => return,
     }
+}
 
+/// Start the Approvals step of the setup wizard.
+pub(crate) fn begin_setup_approvals(app: &mut TuiApp) {
+    crate::keybindings::close_all_modals(app);
+    app.setup_phase = Some(crate::state::SetupPhase::Approvals);
+    app.setup_list_selected = 1; // default: accept-edits
+    app.mode = crate::state::Mode::Setup;
+    app.messages.push(crate::state::ChatMessage::new(
+        crate::state::ChatRole::Assistant,
+        "Permission mode\n\n\
+         Choose how NAVI should treat tool calls by default:\n\
+         • Restricted — approve every tool\n\
+         • Accept edits — auto-approve reads/writes; commands need approval\n\
+         • Yolo — auto-approve tools (most permissive)\n\n\
+         Use ↑/↓ and Enter to select."
+            .to_string(),
+    ));
+    crate::notifications::show_notification(app, "Setup", "Choose a default permission mode.");
+}
+
+/// After approvals, show marketplace tip then interview.
+pub(crate) fn begin_setup_marketplace_tip(app: &mut TuiApp) {
+    app.setup_phase = Some(crate::state::SetupPhase::MarketplaceTip);
+    app.setup_list_selected = 0;
+    app.mode = crate::state::Mode::Setup;
+    app.messages.push(crate::state::ChatMessage::new(
+        crate::state::ChatRole::Assistant,
+        "Marketplace plugins (optional)\n\n\
+         NAVI extensions install as **WASM packages** from the marketplace \
+         (`navi plugin search` / `navi plugin install-marketplace <id>`).\n\n\
+         • Continue — proceed to the preference interview\n\
+         • Skip interview — finish setup with current settings\n\n\
+         Use ↑/↓ and Enter."
+            .to_string(),
+    ));
+}
+
+pub(crate) fn begin_setup_interview(app: &mut TuiApp) {
     app.setup_phase = Some(crate::state::SetupPhase::Interview);
     app.mode = crate::state::Mode::Setup;
     app.conversation_history = vec![navi_sdk::ModelMessage::system(
@@ -213,6 +261,73 @@ pub(crate) fn maybe_start_setup_interview(app: &mut TuiApp) {
     app.input = "Start the setup interview.".to_string();
     app.input_cursor = app.input.len();
     crate::chat::submit_message(app);
+}
+
+const SETUP_APPROVAL_OPTIONS: &[&str] = &["restricted", "accept-edits", "yolo"];
+
+/// Handle keys during structured setup list steps. Returns true if handled.
+pub(crate) fn handle_setup_list_key(app: &mut TuiApp, code: crossterm::event::KeyCode) -> bool {
+    use crossterm::event::KeyCode;
+    use navi_core::config::types::PermissionMode;
+
+    match app.setup_phase {
+        Some(crate::state::SetupPhase::Approvals) => {
+            let len = SETUP_APPROVAL_OPTIONS.len();
+            match code {
+                KeyCode::Up | KeyCode::Char('k') => {
+                    app.setup_list_selected = app.setup_list_selected.saturating_sub(1);
+                    true
+                }
+                KeyCode::Down | KeyCode::Char('j') => {
+                    app.setup_list_selected = (app.setup_list_selected + 1).min(len.saturating_sub(1));
+                    true
+                }
+                KeyCode::Enter => {
+                    let mode = match app.setup_list_selected {
+                        0 => PermissionMode::Restricted,
+                        2 => PermissionMode::Yolo,
+                        _ => PermissionMode::AcceptEdits,
+                    };
+                    app.loaded_config.config.security.permission_mode = mode;
+                    if mode == PermissionMode::Yolo {
+                        app.loaded_config.config.tui.yolo_mode = true;
+                    }
+                    let _ = crate::persistence::save_global_config_for_app(app);
+                    app.messages.push(crate::state::ChatMessage::new(
+                        crate::state::ChatRole::Assistant,
+                        format!(
+                            "Permission mode set to **{}**.",
+                            SETUP_APPROVAL_OPTIONS[app.setup_list_selected.min(len - 1)]
+                        ),
+                    ));
+                    begin_setup_marketplace_tip(app);
+                    true
+                }
+                _ => false,
+            }
+        }
+        Some(crate::state::SetupPhase::MarketplaceTip) => match code {
+            KeyCode::Up | KeyCode::Char('k') => {
+                app.setup_list_selected = 0;
+                true
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                app.setup_list_selected = 1;
+                true
+            }
+            KeyCode::Enter => {
+                if app.setup_list_selected == 1 {
+                    // Skip interview — finish.
+                    crate::dispatch::complete_setup_wizard(app);
+                } else {
+                    begin_setup_interview(app);
+                }
+                true
+            }
+            _ => false,
+        },
+        _ => false,
+    }
 }
 
 pub(crate) fn current_provider_env_var(app: &TuiApp) -> String {

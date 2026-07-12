@@ -189,6 +189,8 @@ pub struct TuiApp {
     pub(crate) authenticated_providers: HashSet<String>,
     /// Setup wizard phase (None when not in setup mode).
     pub(crate) setup_phase: Option<crate::state::SetupPhase>,
+    /// Selection index inside setup list steps (Approvals / MarketplaceTip).
+    pub(crate) setup_list_selected: usize,
 
     /// Pending NAVI self-update from the last check (if any).
     pub(crate) available_update: Option<navi_core::UpdateInfo>,
@@ -478,6 +480,7 @@ impl TuiApp {
             model_routing_tab: crate::state::ModelRoutingTab::Agents,
             selected_extensions_item: 0,
             setup_phase: None,
+            setup_list_selected: 0,
             available_update: None,
             update_installing: false,
             update_check_user_initiated: false,
@@ -532,8 +535,12 @@ impl TuiApp {
         app.messages.push(ChatMessage::new(
             ChatRole::Assistant,
             "Welcome to NAVI! Let's get you set up.\n\n\
-            First, choose a provider and enter your API key.\n\
-            Press ctrl+m or click the model picker above."
+             1. Provider + API key (model picker)\n\
+             2. Memory extraction model\n\
+             3. Permission mode\n\
+             4. Marketplace tip (optional)\n\
+             5. Preference interview (optional)\n\n\
+             First, choose a provider and enter your API key."
                 .to_string(),
         ));
         Ok(app)
