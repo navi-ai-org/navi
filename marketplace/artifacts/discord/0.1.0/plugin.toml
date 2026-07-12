@@ -1,0 +1,19 @@
+capabilities = []
+
+[plugin]
+id = "discord"
+name = "Discord"
+version = "0.1.0"
+publisher = "gh:navi-ai-org"
+runtime = "wasm-component"
+entry = "plugin.wasm"
+wasm_hash = "sha256:11be918691c8b527d8ea246161f5acfee24eaeb34da55ffc45bebc2f9c7f2fb8"
+signature = "ed25519:Xc5b453uQg+a++Z1HPAJj/7ESgJv3lE8Gr7khUhqSw6IZEu531lItYZoQNrevXLYeDr8ny8O+FoLaVgpfy+PBQ=="
+public_key = "ed25519:IVL40Zt5HSRFMkLhXy6rbLfP+ntqXtMAl5YOBpiB2xI="
+minimum_navi = "0.1.0"
+
+[[tools]]
+id = "echo"
+summary = "Returns setup steps for the Discord bot token and MCP server (placeholder WASM tool)."
+risk = "read_only"
+capabilities = []

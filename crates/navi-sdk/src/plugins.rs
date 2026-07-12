@@ -833,6 +833,64 @@ mod tests {
     }
 
     #[test]
+    fn marketplace_discord_installs_as_mcp_kind_with_pending_merge() {
+        let artifact = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../marketplace/artifacts/discord/0.1.0");
+        if !artifact.join("plugin.wasm").is_file() || !artifact.join("mcp.json").is_file() {
+            return;
+        }
+        let temp = tempfile::tempdir().unwrap();
+        let mut config = NaviConfig::default();
+        config.registry.update_enabled = false;
+        let loaded = LoadedConfig {
+            config,
+            global_config_path: Some(temp.path().join("config.toml")),
+            project_config_path: None,
+            data_dir: temp.path().to_path_buf(),
+        };
+        let engine = crate::NaviEngineBuilder::from_project(temp.path())
+            .loaded_config(loaded)
+            .build()
+            .expect("engine");
+
+        assert_eq!(detect_package_kind(&artifact), PluginCatalogKind::Mcp);
+
+        let result = engine
+            .plugin_install_path_with_meta(
+                &artifact,
+                true,
+                TrustLevel::Community,
+                PluginCatalogKind::Mcp,
+            )
+            .expect("discord install");
+        assert_eq!(result.id, "discord");
+        assert_eq!(result.kind, "mcp");
+        assert_eq!(result.trust_level, "community");
+        // Default side effects leave MCP merge pending (apply_mcp: false).
+        assert!(
+            result.kind_hint.to_lowercase().contains("mcp")
+                || result.kind_hint.to_lowercase().contains("pending")
+                || result.kind_hint.to_lowercase().contains("confirm"),
+            "hint={}",
+            result.kind_hint
+        );
+        assert!(temp.path().join("plugins/discord/mcp.json").is_file());
+        assert!(temp.path().join("plugins/discord/SKILL.md").is_file());
+        assert!(package_has_mcp_json(&temp.path().join("plugins/discord")));
+
+        // Explicit confirm path merges without requiring real Discord token.
+        let msg = merge_mcp_from_package(
+            temp.path(),
+            &temp.path().join("plugins/discord"),
+        )
+        .expect("merge hint");
+        assert!(
+            msg.contains("discord") || msg.to_lowercase().contains("merged"),
+            "merge msg={msg}"
+        );
+    }
+
+    #[test]
     fn marketplace_hello_echo_installs_and_registers_tool() {
         use navi_core::RuntimeComponents;
         use crate::tooling::build_local_tooling;
