@@ -1,52 +1,103 @@
+//! MCP servers modal — live status, split list/detail, light card chrome.
+
 use ratatui::Frame;
-use ratatui::layout::{Constraint, Direction, Layout, Rect};
+use ratatui::layout::{Constraint, Direction, Layout, Margin, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph, Wrap};
+use ratatui::widgets::{List, ListItem, Paragraph, Wrap};
 
 use crate::app::TuiApp;
-use crate::theme::ThemePalette;
-use crate::ui::interaction::HitAction;
+use crate::render::{clear_modal_area, fill_modal_surface, modal_block};
+use crate::state::McpLiveServer;
+use crate::theme::*;
+use crate::ui::interaction::{HitAction, line_rect};
 
-pub(crate) fn draw_mcp_modal(f: &mut Frame, area: Rect, app: &mut TuiApp, palette: &ThemePalette) {
-    let block = Block::default()
-        .title(" MCP Servers ")
-        .borders(Borders::ALL)
-        .style(Style::default().fg(palette.text).bg(palette.bg));
+pub(crate) fn draw_mcp_modal(f: &mut Frame, area: Rect, app: &mut TuiApp) {
+    clear_modal_area(f, area);
 
-    let inner_area = block.inner(area);
-    f.render_widget(block, area);
+    let title = if app.mcp_ui_state.loading {
+        "MCP Servers · checking…"
+    } else {
+        "MCP Servers"
+    };
+    f.render_widget(modal_block(title), area);
 
-    let chunks = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(40), Constraint::Percentage(60)])
-        .split(inner_area);
-
-    let left_area = chunks[0];
-    let right_area = chunks[1];
-
-    let config_servers = &app.loaded_config.config.mcp.servers;
-    let connected_servers_result = app.engine().list_mcp_servers(app.session_id.as_str());
-    let connected_servers = connected_servers_result.unwrap_or_default();
-
-    let max_visible = left_area.height as usize;
-
-    if config_servers.is_empty() {
-        let msg = Paragraph::new("No MCP servers configured.")
-            .style(Style::default().fg(palette.ghost))
-            .alignment(ratatui::layout::Alignment::Center);
-        f.render_widget(msg, left_area);
+    let inner = area.inner(Margin {
+        horizontal: 2,
+        vertical: 1,
+    });
+    if inner.width < 20 || inner.height < 4 {
         return;
     }
 
-    if app.mcp_ui_state.selected_server >= config_servers.len() {
-        app.mcp_ui_state.selected_server = config_servers.len().saturating_sub(1);
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(4), Constraint::Length(1)])
+        .split(inner);
+
+    let body = chunks[0];
+    let footer = chunks[1];
+
+    let cols = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(38), Constraint::Percentage(62)])
+        .split(body);
+
+    let left = cols[0];
+    let right = cols[1].inner(Margin {
+        horizontal: 1,
+        vertical: 0,
+    });
+
+    // Vertical rule between panes
+    if cols[1].x > 0 {
+        let rule = Rect::new(cols[1].x.saturating_sub(1), body.y, 1, body.height);
+        fill_modal_surface(f, rule);
+        f.render_widget(
+            Paragraph::new(
+                (0..body.height)
+                    .map(|_| Line::from(Span::styled("│", Style::default().fg(ghost()).bg(modal_bg()))))
+                    .collect::<Vec<_>>(),
+            )
+            .style(Style::default().bg(modal_bg())),
+            rule,
+        );
     }
 
+    let servers = effective_servers(app);
+    if servers.is_empty() {
+        f.render_widget(
+            Paragraph::new(Line::from(vec![
+                Span::styled(
+                    "No MCP servers configured.",
+                    Style::default().fg(muted()).bg(modal_bg()),
+                ),
+            ]))
+            .style(Style::default().bg(modal_bg())),
+            left,
+        );
+        f.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                "Add servers in ~/.config/navi/config.toml under [mcp]",
+                Style::default().fg(ghost()).bg(modal_bg()),
+            )))
+            .style(Style::default().bg(modal_bg())),
+            right,
+        );
+        render_footer(f, footer, false);
+        return;
+    }
+
+    if app.mcp_ui_state.selected_server >= servers.len() {
+        app.mcp_ui_state.selected_server = servers.len().saturating_sub(1);
+    }
+
+    let max_visible = left.height as usize;
     if app.mcp_ui_state.selected_server < app.mcp_ui_state.scroll {
         app.mcp_ui_state.scroll = app.mcp_ui_state.selected_server;
     }
-    if max_visible > 0 && app.mcp_ui_state.selected_server >= app.mcp_ui_state.scroll + max_visible
+    if max_visible > 0
+        && app.mcp_ui_state.selected_server >= app.mcp_ui_state.scroll + max_visible
     {
         app.mcp_ui_state.scroll = app
             .mcp_ui_state
@@ -56,150 +107,239 @@ pub(crate) fn draw_mcp_modal(f: &mut Frame, area: Rect, app: &mut TuiApp, palett
     }
 
     let mut list_items = Vec::new();
-    for i in app.mcp_ui_state.scroll..config_servers.len() {
+    for i in app.mcp_ui_state.scroll..servers.len() {
         if i >= app.mcp_ui_state.scroll + max_visible {
             break;
         }
-        let server = &config_servers[i];
-
-        let is_connected = connected_servers.iter().any(|cs| cs.id == server.id);
-
-        let status_symbol = if !server.enabled {
-            "⏸ "
-        } else if is_connected {
-            "🟢 "
+        let server = &servers[i];
+        let (dot, dot_color) = status_dot(server);
+        let selected = i == app.mcp_ui_state.selected_server && !app.mcp_ui_state.is_focused_on_tools;
+        let name_style = if selected {
+            Style::default()
+                .fg(text())
+                .bg(modal_bg())
+                .add_modifier(Modifier::BOLD)
         } else {
-            "🔴 "
+            Style::default().fg(text()).bg(modal_bg())
         };
-
-        let status_color = if !server.enabled {
-            palette.ghost
-        } else if is_connected {
-            palette.signal
-        } else {
-            palette.red
-        };
-
-        let mut style = Style::default().fg(palette.text);
-        if i == app.mcp_ui_state.selected_server && !app.mcp_ui_state.is_focused_on_tools {
-            style = style.bg(palette.bg).add_modifier(Modifier::BOLD);
-        }
-
         let line = Line::from(vec![
-            Span::styled(status_symbol, Style::default().fg(status_color)),
-            Span::styled(server.id.clone(), Style::default()),
+            Span::styled(format!("{dot} "), Style::default().fg(dot_color).bg(modal_bg())),
+            Span::styled(server.id.clone(), name_style),
         ]);
-
-        list_items.push(ListItem::new(line).style(style));
+        list_items.push(ListItem::new(line).style(Style::default().bg(modal_bg())));
 
         let visible_index = i - app.mcp_ui_state.scroll;
-        app.interaction_registry.borrow_mut().register(
-            Rect {
-                x: left_area.x,
-                y: left_area.y + visible_index as u16,
-                width: left_area.width,
-                height: 1,
-            },
-            10,
+        app.register_hit(
+            line_rect(left, visible_index),
+            20,
             format!("Select MCP {}", server.id),
             HitAction::McpServer(i),
         );
     }
 
-    let list = List::new(list_items);
-    f.render_widget(list, left_area);
+    f.render_widget(
+        List::new(list_items).style(Style::default().bg(modal_bg())),
+        left,
+    );
 
-    if let Some(server) = config_servers.get(app.mcp_ui_state.selected_server) {
-        let mut detail_lines = Vec::new();
-        detail_lines.push(Line::from(vec![
-            Span::styled("ID: ", Style::default().fg(palette.ghost)),
-            Span::styled(
-                server.id.clone(),
-                Style::default()
-                    .fg(palette.text)
-                    .add_modifier(Modifier::BOLD),
-            ),
-        ]));
-
-        if let Some(url) = &server.url {
-            detail_lines.push(Line::from(vec![
-                Span::styled("Transport: ", Style::default().fg(palette.ghost)),
-                Span::raw("HTTP/SSE"),
-            ]));
-            detail_lines.push(Line::from(vec![
-                Span::styled("URL: ", Style::default().fg(palette.ghost)),
-                Span::raw(url.clone()),
-            ]));
-        } else if let Some(cmd) = &server.command {
-            detail_lines.push(Line::from(vec![
-                Span::styled("Transport: ", Style::default().fg(palette.ghost)),
-                Span::raw("Stdio"),
-            ]));
-            detail_lines.push(Line::from(vec![
-                Span::styled("Command: ", Style::default().fg(palette.ghost)),
-                Span::raw(cmd.clone()),
-            ]));
-        }
-
-        detail_lines.push(Line::from(""));
-        detail_lines.push(Line::from(Span::styled(
-            "Tools:",
-            Style::default()
-                .fg(palette.ghost)
-                .add_modifier(Modifier::BOLD),
-        )));
-
-        if let Some(connected_info) = connected_servers.iter().find(|cs| cs.id == server.id) {
-            if connected_info.tools.is_empty() {
-                detail_lines.push(Line::from(Span::styled(
-                    "  No tools available.",
-                    Style::default().fg(palette.ghost),
-                )));
-            } else {
-                for (j, tool) in connected_info.tools.iter().enumerate() {
-                    let mut style = Style::default().fg(palette.text);
-                    if j == app.mcp_ui_state.selected_tool && app.mcp_ui_state.is_focused_on_tools {
-                        style = style.bg(palette.panel).add_modifier(Modifier::BOLD);
-                    }
-                    detail_lines.push(Line::styled(format!("  • {}", tool), style));
-
-                    app.interaction_registry.borrow_mut().register(
-                        Rect {
-                            x: right_area.x,
-                            y: right_area.y + 4 + j as u16,
-                            width: right_area.width,
-                            height: 1,
-                        },
-                        11,
-                        format!("Select tool {}", tool),
-                        HitAction::McpTool(j),
-                    );
-                }
-            }
-        } else if server.enabled {
-            detail_lines.push(Line::from(Span::styled(
-                "  Connecting or failed...",
-                Style::default().fg(palette.signal),
-            )));
-        } else {
-            detail_lines.push(Line::from(Span::styled(
-                "  Server disabled.",
-                Style::default().fg(palette.ghost),
-            )));
-        }
-
-        detail_lines.push(Line::from(""));
-        let toggle_msg = if server.enabled {
-            "Press Enter to disable server"
-        } else {
-            "Press Enter to enable server"
-        };
-        detail_lines.push(Line::from(Span::styled(
-            toggle_msg,
-            Style::default().fg(palette.accent),
-        )));
-
-        let details = Paragraph::new(detail_lines).wrap(Wrap { trim: false });
-        f.render_widget(details, right_area);
+    // Detail pane
+    if let Some(server) = servers.get(app.mcp_ui_state.selected_server) {
+        render_detail(f, app, right, server);
     }
+
+    render_footer(f, footer, true);
+}
+
+fn effective_servers(app: &TuiApp) -> Vec<McpLiveServer> {
+    if !app.mcp_ui_state.live.is_empty() {
+        return app.mcp_ui_state.live.clone();
+    }
+    // Fallback before first probe: config only, unknown connection.
+    app.loaded_config
+        .config
+        .mcp
+        .servers
+        .iter()
+        .map(|s| McpLiveServer {
+            id: s.id.clone(),
+            enabled: s.enabled,
+            connected: false,
+            tools: Vec::new(),
+            command: s.command.clone(),
+            args: s.args.clone(),
+            url: s.url.clone(),
+        })
+        .collect()
+}
+
+fn status_dot(server: &McpLiveServer) -> (&'static str, ratatui::style::Color) {
+    if !server.enabled {
+        ("○", muted())
+    } else if server.connected {
+        ("●", accent())
+    } else {
+        ("●", red())
+    }
+}
+
+fn status_label(server: &McpLiveServer) -> (&'static str, ratatui::style::Color) {
+    if !server.enabled {
+        ("disabled", muted())
+    } else if server.connected {
+        ("connected", accent())
+    } else {
+        ("failed", red())
+    }
+}
+
+fn render_detail(f: &mut Frame, app: &mut TuiApp, area: Rect, server: &McpLiveServer) {
+    let mut lines: Vec<Line> = Vec::new();
+    let (status_text, status_color) = status_label(server);
+
+    lines.push(Line::from(vec![
+        Span::styled(
+            server.id.clone(),
+            Style::default()
+                .fg(text())
+                .bg(modal_bg())
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled("  ", Style::default().bg(modal_bg())),
+        Span::styled(
+            status_text,
+            Style::default()
+                .fg(status_color)
+                .bg(modal_bg())
+                .add_modifier(Modifier::BOLD),
+        ),
+    ]));
+    lines.push(Line::from(""));
+
+    if let Some(url) = &server.url {
+        lines.push(kv("Transport", "HTTP/SSE"));
+        lines.push(kv("URL", url));
+    } else if let Some(cmd) = &server.command {
+        lines.push(kv("Transport", "stdio"));
+        let cmd_disp = if server.args.is_empty() {
+            cmd.clone()
+        } else {
+            format!("{} {}", cmd, server.args.join(" "))
+        };
+        lines.push(kv("Command", &cmd_disp));
+    }
+
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "Tools",
+        Style::default()
+            .fg(ghost())
+            .bg(modal_bg())
+            .add_modifier(Modifier::BOLD),
+    )));
+
+    if app.mcp_ui_state.loading && server.tools.is_empty() && server.enabled {
+        lines.push(Line::from(Span::styled(
+            "  checking connection…",
+            Style::default().fg(signal()).bg(modal_bg()),
+        )));
+    } else if !server.enabled {
+        lines.push(Line::from(Span::styled(
+            "  server disabled",
+            Style::default().fg(muted()).bg(modal_bg()),
+        )));
+    } else if server.connected {
+        if server.tools.is_empty() {
+            lines.push(Line::from(Span::styled(
+                "  connected · no tools advertised",
+                Style::default().fg(muted()).bg(modal_bg()),
+            )));
+        } else {
+            for (j, tool) in server.tools.iter().enumerate() {
+                let selected =
+                    j == app.mcp_ui_state.selected_tool && app.mcp_ui_state.is_focused_on_tools;
+                let style = if selected {
+                    Style::default()
+                        .fg(text())
+                        .bg(modal_bg())
+                        .add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(text()).bg(modal_bg())
+                };
+                // Show short tool name (strip server__ prefix when present).
+                let short = tool
+                    .rsplit_once("__")
+                    .map(|(_, name)| name)
+                    .unwrap_or(tool.as_str());
+                lines.push(Line::from(Span::styled(format!("  · {short}"), style)));
+                app.register_hit(
+                    Rect {
+                        x: area.x,
+                        y: area.y.saturating_add(lines.len() as u16),
+                        width: area.width,
+                        height: 1,
+                    },
+                    15,
+                    format!("Select tool {tool}"),
+                    HitAction::McpTool(j),
+                );
+            }
+        }
+    } else {
+        lines.push(Line::from(Span::styled(
+            "  could not connect (see logs · press r to retry)",
+            Style::default().fg(red()).bg(modal_bg()),
+        )));
+    }
+
+    if let Some(err) = &app.mcp_ui_state.probe_error {
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            format!("  probe error: {err}"),
+            Style::default().fg(red()).bg(modal_bg()),
+        )));
+    }
+
+    f.render_widget(
+        Paragraph::new(lines)
+            .wrap(Wrap { trim: false })
+            .style(Style::default().bg(modal_bg())),
+        area,
+    );
+}
+
+fn kv(key: &str, value: &str) -> Line<'static> {
+    Line::from(vec![
+        Span::styled(
+            format!("{key}: "),
+            Style::default().fg(ghost()).bg(modal_bg()),
+        ),
+        Span::styled(
+            value.to_string(),
+            Style::default().fg(text()).bg(modal_bg()),
+        ),
+    ])
+}
+
+fn render_footer(f: &mut Frame, area: Rect, has_servers: bool) {
+    let hints = if has_servers {
+        Line::from(vec![
+            Span::styled("[↑↓]", Style::default().fg(signal()).bg(modal_bg())),
+            Span::styled(" select  ", Style::default().fg(muted()).bg(modal_bg())),
+            Span::styled("[enter]", Style::default().fg(signal()).bg(modal_bg())),
+            Span::styled(" enable/disable  ", Style::default().fg(muted()).bg(modal_bg())),
+            Span::styled("[r]", Style::default().fg(signal()).bg(modal_bg())),
+            Span::styled(" refresh  ", Style::default().fg(muted()).bg(modal_bg())),
+            Span::styled("[esc]", Style::default().fg(signal()).bg(modal_bg())),
+            Span::styled(" close", Style::default().fg(muted()).bg(modal_bg())),
+        ])
+    } else {
+        Line::from(vec![
+            Span::styled("[esc]", Style::default().fg(signal()).bg(modal_bg())),
+            Span::styled(" close", Style::default().fg(muted()).bg(modal_bg())),
+        ])
+    };
+    f.render_widget(
+        Paragraph::new(hints).style(Style::default().bg(modal_bg())),
+        area,
+    );
 }

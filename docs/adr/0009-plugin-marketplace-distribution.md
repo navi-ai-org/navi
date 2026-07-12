@@ -36,7 +36,7 @@ The registry serves a `PluginCatalog` JSON file:
 
 ### Registry Protocol
 
-- Default registry: `https://raw.githubusercontent.com/navi-engine/plugin-registry/main/catalog.json`
+- Default registry: `https://raw.githubusercontent.com/navi-ai-org/navi-marketplace/main/catalog.json`
 - Supports `https://` (HTTP fetch) and `file://` (local filesystem) registry URLs
 - Artifact directories are resolved relative to the catalog URL or as absolute URLs
 - Each artifact directory contains `plugin.toml` (manifest) and the `.wasm` entry file

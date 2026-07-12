@@ -15,6 +15,7 @@ directories.workspace = true
 fastrand.workspace = true
 futures-util.workspace = true
 jsonschema.workspace = true
+navi-browser = { workspace = true, optional = true }
 navi-vfs = { workspace = true, optional = true }
 reqwest.workspace = true
 regex.workspace = true
@@ -36,8 +37,11 @@ tracing-subscriber.workspace = true
 tempfile.workspace = true
 
 [features]
-default = ["embeddings", "code-vfs"]
+default = ["embeddings", "code-vfs", "browser"]
 code-vfs = ["dep:navi-vfs"]
+browser = ["dep:navi-browser"]
+# Prefer CloakBrowser Rust client (playwright-rs + stealth binary).
+browser-cloak = ["browser", "navi-browser/cloakbrowser"]
 embeddings = [
     "dep:candle-core",
     "dep:candle-transformers",

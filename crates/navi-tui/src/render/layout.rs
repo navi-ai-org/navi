@@ -56,16 +56,12 @@ pub(crate) fn fill_modal_scrim(frame: &mut Frame<'_>, area: Rect) {
         return;
     }
     let buf = frame.buffer_mut();
-    let dim_fg = ghost();
     for y in area.top()..area.bottom() {
         for x in area.left()..area.right() {
             let cell = &mut buf[(x, y)];
-            // Keep symbols — only fade ink. Do not blank the cell.
+            // Keep glyphs and original colors — only apply terminal DIM so the
+            // modal card stands out without blacking out the whole TUI.
             cell.modifier.insert(Modifier::DIM);
-            // Soften bright foregrounds so the modal card reads as the focus.
-            if cell.fg != Color::Reset {
-                cell.set_fg(dim_fg);
-            }
         }
     }
 }

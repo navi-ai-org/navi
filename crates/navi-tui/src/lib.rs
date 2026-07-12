@@ -12,6 +12,7 @@ mod errors;
 mod event_loop;
 mod input;
 mod keybindings;
+mod mcp_status;
 mod mouse;
 mod notifications;
 pub(crate) mod panels;

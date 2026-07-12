@@ -1963,29 +1963,63 @@ fn is_diff_language(language: &str) -> bool {
 }
 
 fn diff_line_spans(raw_line: &str) -> Vec<Span<'static>> {
-    let (bg, marker_color, content_color, bold) = if raw_line.starts_with("@@") {
-        (diff_hunk_bg(), code_const(), code_const(), true)
-    } else if raw_line.starts_with("diff ")
+    // Hunk separators / meta headers (path chrome, … between hunks).
+    if raw_line.starts_with("@@") || raw_line.trim() == "…" || raw_line.trim() == "..." {
+        return vec![Span::styled(
+            raw_line.to_string(),
+            Style::default()
+                .fg(code_const())
+                .bg(diff_hunk_bg())
+                .add_modifier(Modifier::BOLD),
+        )];
+    }
+    if raw_line.starts_with("diff ")
         || raw_line.starts_with("index ")
         || raw_line.starts_with("*** ")
+        || raw_line.starts_with("+++")
+        || raw_line.starts_with("---")
     {
-        // Unified headers + structured patch markers (*** Update/Add/Delete File).
-        (diff_meta_bg(), code_func(), code_func(), true)
-    } else if raw_line.starts_with("+++") || raw_line.starts_with("---") {
-        (diff_meta_bg(), code_type(), code_type(), true)
-    } else if raw_line.starts_with('+') {
-        (diff_add_bg(), accent(), text(), false)
+        return vec![Span::styled(
+            raw_line.to_string(),
+            Style::default()
+                .fg(code_func())
+                .bg(diff_meta_bg())
+                .add_modifier(Modifier::BOLD),
+        )];
+    }
+
+    let (bg, number_color, content_color) = if raw_line.starts_with('+') {
+        (diff_add_bg(), diff_add_fg(), text())
     } else if raw_line.starts_with('-') {
-        (diff_remove_bg(), red(), text(), false)
+        (diff_remove_bg(), diff_remove_fg(), text())
     } else {
-        (code_block_bg(), ghost(), text(), false)
+        (code_block_bg(), ghost(), text())
     };
 
     if let Some((marker, rest)) = diff_marker_and_rest(raw_line) {
+        // Claude Code–style: when a line-number gutter is present
+        // (`+  39|content` / `-  39|content` / `  37|content`), paint the
+        // number and hide the raw +/- sign (color does the work).
+        if let Some((num, after)) = split_diff_line_number(rest) {
+            let mut spans = Vec::with_capacity(4);
+            // Number gutter only — no loud +/- glyph (bg color carries meaning).
+            spans.push(Span::styled(
+                format!("{num:>4} "),
+                Style::default().fg(number_color).bg(bg),
+            ));
+            if after.is_empty() {
+                spans.push(Span::styled(String::new(), Style::default().bg(bg)));
+            } else {
+                spans.extend(highlight_diff_code(after, content_color, bg));
+            }
+            return spans;
+        }
+
+        // Unnumbered legacy lines: keep bold +/- marker + content.
         let mut spans = vec![Span::styled(
             marker.to_string(),
             Style::default()
-                .fg(marker_color)
+                .fg(number_color)
                 .bg(bg)
                 .add_modifier(Modifier::BOLD),
         )];
@@ -1997,9 +2031,6 @@ fn diff_line_spans(raw_line: &str) -> Vec<Span<'static>> {
         .into_iter()
         .map(|mut span| {
             span.style = span.style.bg(bg);
-            if bold {
-                span.style = span.style.add_modifier(Modifier::BOLD);
-            }
             span
         })
         .collect()
@@ -2015,6 +2046,29 @@ fn diff_marker_and_rest(raw_line: &str) -> Option<(char, &str)> {
     } else {
         None
     }
+}
+
+/// Split a fixed 4-wide line-number gutter produced by `normalize_diff_for_display`.
+///
+/// Numbered form after the +/-/space marker: `{num:>4}|{content}`
+/// e.g. rest = `"  39|- Default registry: …"`.
+fn split_diff_line_number(rest: &str) -> Option<(&str, &str)> {
+    // Need at least 4-wide field + `|`.
+    if rest.len() < 5 {
+        return None;
+    }
+    let field = rest.get(..4)?;
+    if !field.chars().all(|ch| ch.is_ascii_digit() || ch == ' ') {
+        return None;
+    }
+    let digits = field.trim();
+    if digits.is_empty() || !digits.chars().all(|ch| ch.is_ascii_digit()) {
+        return None;
+    }
+    if rest.as_bytes().get(4) != Some(&b'|') {
+        return None;
+    }
+    Some((digits, rest.get(5..).unwrap_or("")))
 }
 
 fn highlight_diff_code(rest: &str, fallback: Color, bg: Color) -> Vec<Span<'static>> {
@@ -2033,12 +2087,22 @@ fn highlight_diff_code(rest: &str, fallback: Color, bg: Color) -> Vec<Span<'stat
     spans
 }
 
+/// Green wash for additions (Claude Code–like).
 fn diff_add_bg() -> Color {
-    Color::Rgb(18, 49, 43)
+    Color::Rgb(20, 58, 48)
 }
 
+fn diff_add_fg() -> Color {
+    Color::Rgb(62, 207, 142)
+}
+
+/// Red wash for removals.
 fn diff_remove_bg() -> Color {
-    Color::Rgb(54, 31, 43)
+    Color::Rgb(72, 32, 42)
+}
+
+fn diff_remove_fg() -> Color {
+    Color::Rgb(240, 113, 120)
 }
 
 fn diff_hunk_bg() -> Color {

@@ -175,6 +175,27 @@ static LOOKUP: LazyLock<std::collections::HashMap<&'static str, ToolMetadata>> =
         );
         insert(
             &mut map,
+            "browser",
+            ToolMetadata {
+                namespace: "browser".to_string(),
+                risk: crate::tool::ToolRisk::High,
+                is_read_only: false,
+                is_concurrency_safe: false,
+                exposure: crate::tool::ToolExposure::Direct,
+                capabilities: vec![
+                    "browser.navigate".to_string(),
+                    "network.external".to_string(),
+                ],
+                tags: vec!["browser", "web", "screenshot", "cdp", "cloakbrowser"]
+                    .into_iter()
+                    .map(|s| s.to_string())
+                    .collect(),
+                max_output_bytes: Some(65536),
+                ..ToolMetadata::default()
+            },
+        );
+        insert(
+            &mut map,
             "bash",
             ToolMetadata {
                 namespace: "process".to_string(),

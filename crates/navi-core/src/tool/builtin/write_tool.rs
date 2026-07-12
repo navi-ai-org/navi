@@ -276,7 +276,16 @@ pub(crate) fn build_write_display_diff(path: &str, old: Option<&str>, new: &str)
 }
 
 fn add_file_display_diff(path: &str, new: &str) -> String {
-    let mut out = format!("*** Add File: {path}\n");
+    let line_count = if new.is_empty() {
+        0
+    } else {
+        new.lines().count().max(1)
+    };
+    let mut out = if line_count == 0 {
+        format!("*** Add File: {path}\n")
+    } else {
+        format!("*** Add File: {path}\n@@ -0,0 +1,{line_count} @@\n")
+    };
     append_prefixed_content(&mut out, '+', new);
     out
 }
@@ -294,7 +303,9 @@ fn update_file_display_diff(path: &str, old: &str, new: &str) -> String {
 }
 
 fn full_rewrite_display_diff(path: &str, old_lines: &[&str], new_lines: &[&str]) -> String {
-    let mut out = format!("*** Update File: {path}\n@@\n");
+    let old_count = old_lines.len().max(1);
+    let new_count = new_lines.len().max(1);
+    let mut out = format!("*** Update File: {path}\n@@ -1,{old_count} +1,{new_count} @@\n");
     for line in old_lines {
         out.push('-');
         out.push_str(line);
@@ -352,30 +363,123 @@ fn compute_line_ops<'a>(old: &[&'a str], new: &[&'a str]) -> Vec<(DiffTag, &'a s
     ops
 }
 
-/// Emit only changed lines, split into `@@` hunks (equal runs open a new hunk).
+/// Context lines kept around each change when building a write display diff.
+const DISPLAY_DIFF_CONTEXT: usize = 3;
+
+/// Emit changed lines with surrounding context and `@@ -old +new @@` headers
+/// so the TUI can render line numbers (Claude Code–style).
 fn format_ops_as_display_diff(path: &str, ops: &[(DiffTag, &str)]) -> String {
     let has_change = ops.iter().any(|(tag, _)| *tag != DiffTag::Equal);
     if !has_change {
         return String::new();
     }
 
-    let mut out = format!("*** Update File: {path}\n");
-    let mut in_hunk = false;
-
-    for (tag, line) in ops {
+    // Annotate each op with 1-based old/new line numbers.
+    #[derive(Clone, Copy)]
+    struct Ann<'a> {
+        old: Option<u32>,
+        new: Option<u32>,
+        tag: DiffTag,
+        text: &'a str,
+    }
+    let mut ann = Vec::with_capacity(ops.len());
+    let mut old_no = 1u32;
+    let mut new_no = 1u32;
+    for &(tag, text) in ops {
         match tag {
             DiffTag::Equal => {
-                in_hunk = false;
+                ann.push(Ann {
+                    old: Some(old_no),
+                    new: Some(new_no),
+                    tag,
+                    text,
+                });
+                old_no += 1;
+                new_no += 1;
             }
-            DiffTag::Delete | DiffTag::Insert => {
-                if !in_hunk {
-                    out.push_str("@@\n");
-                    in_hunk = true;
+            DiffTag::Delete => {
+                ann.push(Ann {
+                    old: Some(old_no),
+                    new: None,
+                    tag,
+                    text,
+                });
+                old_no += 1;
+            }
+            DiffTag::Insert => {
+                ann.push(Ann {
+                    old: None,
+                    new: Some(new_no),
+                    tag,
+                    text,
+                });
+                new_no += 1;
+            }
+        }
+    }
+
+    // Mark change indices, expand by context, merge into contiguous hunks.
+    let n = ann.len();
+    let mut keep = vec![false; n];
+    for (i, a) in ann.iter().enumerate() {
+        if a.tag != DiffTag::Equal {
+            let start = i.saturating_sub(DISPLAY_DIFF_CONTEXT);
+            let end = (i + DISPLAY_DIFF_CONTEXT + 1).min(n);
+            for slot in keep.iter_mut().take(end).skip(start) {
+                *slot = true;
+            }
+        }
+    }
+
+    let mut hunks: Vec<(usize, usize)> = Vec::new();
+    let mut i = 0;
+    while i < n {
+        if !keep[i] {
+            i += 1;
+            continue;
+        }
+        let start = i;
+        while i < n && keep[i] {
+            i += 1;
+        }
+        hunks.push((start, i));
+    }
+
+    let mut out = format!("*** Update File: {path}\n");
+    for (start, end) in hunks {
+        let slice = &ann[start..end];
+        let old_start = slice.iter().find_map(|a| a.old).unwrap_or(1);
+        let new_start = slice.iter().find_map(|a| a.new).unwrap_or(1);
+        let old_count = slice
+            .iter()
+            .filter(|a| matches!(a.tag, DiffTag::Equal | DiffTag::Delete))
+            .count()
+            .max(1);
+        let new_count = slice
+            .iter()
+            .filter(|a| matches!(a.tag, DiffTag::Equal | DiffTag::Insert))
+            .count()
+            .max(1);
+        out.push_str(&format!(
+            "@@ -{old_start},{old_count} +{new_start},{new_count} @@\n"
+        ));
+        for a in slice {
+            match a.tag {
+                DiffTag::Equal => {
+                    out.push(' ');
+                    out.push_str(a.text);
+                    out.push('\n');
                 }
-                let prefix = if *tag == DiffTag::Delete { '-' } else { '+' };
-                out.push(prefix);
-                out.push_str(line);
-                out.push('\n');
+                DiffTag::Delete => {
+                    out.push('-');
+                    out.push_str(a.text);
+                    out.push('\n');
+                }
+                DiffTag::Insert => {
+                    out.push('+');
+                    out.push_str(a.text);
+                    out.push('\n');
+                }
             }
         }
     }
@@ -2133,8 +2237,9 @@ mod tests {
         assert!(update.contains("*** Update File: a.rs\n"));
         assert!(update.contains("-    1\n"));
         assert!(update.contains("+    2\n"));
-        // Unchanged lines are omitted from the display hunks.
-        assert!(!update.contains("fn a() {"));
+        // Context lines around the change are kept for readability.
+        assert!(update.contains(" fn a() {"));
+        assert!(update.contains("@@ -1,"));
 
         let identical = build_write_display_diff("a.rs", Some("same\n"), "same\n");
         assert!(identical.is_empty());

@@ -57,6 +57,53 @@ pub struct NaviConfig {
     /// Self-update preferences (check interval, auto-install).
     #[serde(default)]
     pub updates: UpdatesConfig,
+    /// Built-in headless browser tool (pluggable engine; CloakBrowser binding preferred).
+    #[serde(default)]
+    pub browser: BrowserConfig,
+}
+
+/// Headless browser tool settings.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct BrowserConfig {
+    /// When false, the `browser` tool refuses to start.
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// `auto` | `cloakbrowser` | `cdp` (aliases: chrome, chromium, cdp_url)
+    pub backend: String,
+    /// Existing CDP HTTP base (e.g. `http://127.0.0.1:9222` for cloakserve).
+    pub cdp_url: String,
+    /// Launch headless Chromium when starting a local browser process.
+    #[serde(default = "default_true")]
+    pub headless: bool,
+    /// Allow navigation to localhost / private networks (local dev servers).
+    #[serde(default = "default_true")]
+    pub allow_private_network: bool,
+    /// Optional HTTP/SOCKS proxy for the browser process.
+    pub proxy: String,
+    /// Default navigation / CDP timeout hint (ms).
+    pub timeout_ms: u64,
+    /// Optional absolute path to Chrome/CloakBrowser binary.
+    pub binary_path: String,
+    /// Use CloakBrowser humanized input (HumanPage) when the Rust engine is active.
+    #[serde(default)]
+    pub humanize: bool,
+}
+
+impl Default for BrowserConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            backend: "auto".into(),
+            cdp_url: String::new(),
+            headless: true,
+            allow_private_network: true,
+            proxy: String::new(),
+            timeout_ms: 30_000,
+            binary_path: String::new(),
+            humanize: false,
+        }
+    }
 }
 
 /// TUI-specific settings (global config).

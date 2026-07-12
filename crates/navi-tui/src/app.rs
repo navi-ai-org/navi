@@ -46,6 +46,8 @@ pub struct TuiApp {
     pub(crate) command_filter_cursor: usize,
     pub(crate) selected_command: usize,
     pub(crate) command_scroll: usize,
+    /// Nested hub inside the command palette (`None` = root menu).
+    pub(crate) command_hub: Option<crate::commands::CommandHub>,
     /// Filter text after `@` in the path-mention palette.
     pub(crate) path_filter: String,
     pub(crate) selected_path: usize,
@@ -335,6 +337,7 @@ impl TuiApp {
             command_filter_cursor: 0,
             selected_command: 0,
             command_scroll: 0,
+            command_hub: None,
             path_filter: String::new(),
             selected_path: 0,
             path_scroll: 0,

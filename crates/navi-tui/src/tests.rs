@@ -670,7 +670,14 @@ fn command_palette_new_session_uses_full_session_reset() {
             input: serde_json::json!({"command": "echo old"}),
         },
     );
+    app.mode = Mode::Commands;
+    app.command_filter = "new session".into();
     app.selected_command = 0;
+    assert!(
+        filtered_commands(&app)
+            .iter()
+            .any(|c| matches!(c.action, CommandAction::NewSession))
+    );
 
     run_selected_command(&mut app);
 
@@ -1620,6 +1627,27 @@ fn ctrl_p_opens_commands_and_tab_is_ignored_in_composer() {
 }
 
 #[test]
+fn ctrl_m_opens_model_picker_case_insensitive() {
+    let mut app = test_app("");
+
+    // Lowercase Ctrl+m
+    handle_key(&mut app, KeyCode::Char('m'), KeyModifiers::CONTROL);
+    assert_eq!(app.mode, Mode::Models);
+
+    // Uppercase Ctrl+M (common terminal encoding)
+    app.mode = Mode::Normal;
+    crate::keybindings::close_all_modals(&mut app);
+    handle_key(&mut app, KeyCode::Char('M'), KeyModifiers::CONTROL);
+    assert_eq!(app.mode, Mode::Models);
+
+    // Works even from another modal
+    app.mode = Mode::Settings;
+    app.modal_stack.open(ModalKind::Settings);
+    handle_key(&mut app, KeyCode::Char('m'), KeyModifiers::CONTROL);
+    assert_eq!(app.mode, Mode::Models);
+}
+
+#[test]
 fn ctrl_t_opens_background_tasks_and_ctrl_b_opens_background_agents() {
     let mut app = test_app("");
 
@@ -2376,32 +2404,96 @@ fn settings_opens_providers_from_accounts_section() {
 }
 
 #[test]
-fn command_palette_is_sectioned_when_unfiltered() {
+fn command_palette_root_is_short_hub_menu() {
     let app = test_app("");
     let rows = crate::commands::command_rows(&app);
+    // Root is a short hub menu (hot actions + hubs), not the full catalog.
     assert!(
-        rows.iter()
-            .any(|r| matches!(r, crate::commands::CommandRow::Section(_))),
-        "unfiltered palette should show section headers"
+        rows.len() <= 12,
+        "root menu should stay short, got {}",
+        rows.len()
     );
     assert!(
-        rows.iter()
-            .any(|r| matches!(r, crate::commands::CommandRow::Item(i) if i.action == CommandAction::SwitchModel))
+        rows.iter().any(|r| matches!(
+            r,
+            crate::commands::CommandRow::Item(i) if i.action == CommandAction::SwitchModel
+        ))
     );
-    // Install Update is hidden without a pending update.
+    assert!(
+        rows.iter().any(|r| matches!(
+            r,
+            crate::commands::CommandRow::Item(i)
+                if matches!(i.action, CommandAction::OpenHub(_))
+        )),
+        "root should include hubs"
+    );
+    // Deep actions live in hubs / search, not root.
     assert!(
         !rows.iter().any(|r| matches!(
             r,
-            crate::commands::CommandRow::Item(i) if i.action == CommandAction::InstallUpdate
+            crate::commands::CommandRow::Item(i) if i.action == CommandAction::ToggleYolo
         ))
     );
-    // Clear Goal is hidden without an active goal.
+}
+
+#[test]
+fn command_palette_search_finds_nested_commands() {
+    let mut app = test_app("");
+    // YOLO lives under Tools hub, not on root.
     assert!(
-        !rows.iter().any(|r| matches!(
+        !crate::commands::command_rows(&app).iter().any(|r| matches!(
             r,
-            crate::commands::CommandRow::Item(i) if i.action == CommandAction::ClearGoal
+            crate::commands::CommandRow::Item(i) if i.action == CommandAction::ToggleYolo
         ))
     );
+    app.command_filter = "yolo".into();
+    let rows = crate::commands::command_rows(&app);
+    assert!(
+        rows.iter().any(|r| matches!(
+            r,
+            crate::commands::CommandRow::Item(i) if i.action == CommandAction::ToggleYolo
+        )),
+        "global search must find hub actions"
+    );
+
+    app.command_filter = "skills".into();
+    let rows = crate::commands::command_rows(&app);
+    assert!(
+        rows.iter().any(|r| matches!(
+            r,
+            crate::commands::CommandRow::Item(i) if i.action == CommandAction::Skills
+        )),
+        "search finds Extensions actions"
+    );
+}
+
+#[test]
+fn command_palette_hub_enter_and_esc_back() {
+    let mut app = test_app("");
+    app.mode = Mode::Commands;
+    app.command_hub = None;
+    // Select first hub row (Session →) — find OpenHub Session
+    let rows = crate::commands::command_rows(&app);
+    let hub_idx = rows
+        .iter()
+        .position(|r| matches!(
+            r,
+            crate::commands::CommandRow::Item(i)
+                if matches!(i.action, CommandAction::OpenHub(crate::commands::CommandHub::Session))
+        ))
+        .expect("Session hub");
+    app.selected_command = hub_idx;
+    assert!(!run_selected_command(&mut app));
+    assert_eq!(app.command_hub, Some(crate::commands::CommandHub::Session));
+    assert!(crate::commands::command_rows(&app).iter().any(|r| matches!(
+        r,
+        crate::commands::CommandRow::Item(i) if i.action == CommandAction::Compact
+    )));
+
+    // Esc returns to root
+    handle_command_key(&mut app, KeyCode::Esc, KeyModifiers::NONE);
+    assert_eq!(app.command_hub, None);
+    assert_eq!(app.mode, Mode::Commands);
 }
 
 #[test]
@@ -3658,68 +3750,35 @@ fn ctrl_comma_opens_settings() {
 fn extensions_hub_opens_skills() {
     let mut app = test_app("");
     app.mode = Mode::Commands;
-    app.command_filter = "extensions".to_string();
+    // Global search finds Skills even though it lives under Extensions hub.
+    app.command_filter = "skills".to_string();
     app.selected_command = 0;
     assert!(!run_selected_command(&mut app));
-    assert_eq!(app.mode, Mode::Extensions);
-
-    app.selected_extensions_item = 0; // Skills
-    assert!(!crate::keybindings::modals::handle_extensions_hub_key(
-        &mut app,
-        KeyCode::Enter
-    ));
     assert_eq!(app.mode, Mode::Skills);
 }
 
 #[test]
 fn command_palette_model_routing_entry_exists() {
-    let app = test_app("");
+    let mut app = test_app("");
+    // Root has Model hub; search finds Model Routing action.
+    app.command_filter = "routing".into();
     let commands = filtered_commands(&app);
     assert!(
         commands
             .iter()
             .any(|c| matches!(c.action, CommandAction::ModelRouting))
     );
+    app.command_filter = "skills".into();
     assert!(
-        commands
+        filtered_commands(&app)
             .iter()
-            .any(|c| matches!(c.action, CommandAction::ExtensionsHub))
+            .any(|c| matches!(c.action, CommandAction::Skills))
     );
 }
 
 
 #[test]
-fn command_palette_hides_search_only_entries_until_filter() {
-    let mut app = test_app("");
-    let unfiltered = filtered_commands(&app);
-    assert!(
-        !unfiltered
-            .iter()
-            .any(|c| matches!(c.action, CommandAction::Skills)),
-        "Skills should be SearchOnly in default list"
-    );
-    assert!(
-        unfiltered
-            .iter()
-            .any(|c| matches!(c.action, CommandAction::ExtensionsHub)),
-        "Extensions hub stays in default list"
-    );
-    assert!(
-        unfiltered
-            .iter()
-            .any(|c| matches!(c.action, CommandAction::ModelRouting)),
-        "Model Routing hub stays in default list"
-    );
 
-    app.command_filter = "skills".to_string();
-    let filtered = filtered_commands(&app);
-    assert!(
-        filtered
-            .iter()
-            .any(|c| matches!(c.action, CommandAction::Skills)),
-        "Skills appears when searching"
-    );
-}
 
 #[test]
 fn apply_patch_body_is_clean_diff_without_protocol_chrome() {

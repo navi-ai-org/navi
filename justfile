@@ -134,20 +134,12 @@ bench-tool-quality-hard-navi-proxy out="benchmarks/runs/agent-compare/hard-navi-
 
 # Lean tool + memory dream + cache blame (low RAM). Uses existing binary — no cargo.
 # Do NOT cargo build -j default on 8GB hosts; release link alone can exceed 2GB.
+# Note: just forbids nested indent beyond the recipe indent; keep shell control flow flat.
 bench-tool-cache-audit out="benchmarks/runs/agent-compare/tool-cache-audit.json" provider="opencode" model="deepseek-v4-flash-free":
     mkdir -p "$(dirname "{{out}}")"
-    # Prefer release binary if present, else debug, else PATH navi.
     bin="${NAVI_BIN:-}"
-    if [ -z "$bin" ]; then
-      if [ -x target/release/navi ]; then bin=target/release/navi
-      elif [ -x target/debug/navi ]; then bin=target/debug/navi
-      else bin=navi
-      fi
-    fi
-    CARGO_BUILD_JOBS=1 NAVI_BIN="$bin" python3 benchmarks/scripts/run_tool_cache_audit.py \
-      --out "{{out}}" \
-      --provider "{{provider}}" \
-      --model "{{model}}"
+    if [ -z "$bin" ]; then if [ -x target/release/navi ]; then bin=target/release/navi; elif [ -x target/debug/navi ]; then bin=target/debug/navi; else bin=navi; fi; fi
+    CARGO_BUILD_JOBS=1 NAVI_BIN="$bin" python3 benchmarks/scripts/run_tool_cache_audit.py --out "{{out}}" --provider "{{provider}}" --model "{{model}}"
 
 # Print the local benchmark report path.
 bench-index:

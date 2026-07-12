@@ -45,6 +45,7 @@ mod tests {
             goals: GoalsConfig::default(),
             voice: VoiceConfig::default(),
             updates: UpdatesConfig::default(),
+            browser: BrowserConfig::default(),
         };
 
         let mut project = NaviConfig {
@@ -93,6 +94,7 @@ mod tests {
             goals: GoalsConfig::default(),
             voice: VoiceConfig::default(),
             updates: UpdatesConfig::default(),
+            browser: BrowserConfig::default(),
         };
         project.plugins.clear();
         project.mcp = McpConfig::default();

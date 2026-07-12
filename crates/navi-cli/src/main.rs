@@ -6,11 +6,13 @@ use navi_tui::TuiApp;
 use std::path::PathBuf;
 
 mod bench_cmd;
+mod browser_cmd;
 mod eval_cmd;
 mod mcp_cmd;
 mod memory_cmd;
 mod plugin_cmd;
 mod registry_cmd;
+mod server_cmd;
 mod voice_cmd;
 
 #[derive(Debug, Parser)]
@@ -103,6 +105,87 @@ enum Commands {
         #[command(subcommand)]
         action: RegistryAction,
     },
+    /// Headless browser tool backend (CloakBrowser / Chrome / CDP)
+    Browser {
+        #[command(subcommand)]
+        action: BrowserAction,
+    },
+    /// Remote HTTP/WebSocket server (`navi-server`) as a systemd service
+    Server {
+        #[command(subcommand)]
+        action: ServerAction,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum ServerAction {
+    /// Install a systemd unit for navi-server (user unit by default)
+    Install {
+        /// Listen port
+        #[arg(long, default_value = "9800")]
+        port: u16,
+        /// Bind address (`0.0.0.0` for LAN/Tailscale)
+        #[arg(long, default_value = "0.0.0.0")]
+        bind: String,
+        /// Optional default workspace on the host.
+        ///
+        /// When omitted, uses `$HOME` (agent home mode). Mobile/clients can still
+        /// open any project per session via `projectDir` on `POST /sessions`.
+        #[arg(long)]
+        project: Option<PathBuf>,
+        /// Shared secret (or set NAVI_SERVER_SECRET). Generated if omitted.
+        #[arg(long)]
+        secret: Option<String>,
+        /// Install system-wide unit under /etc/systemd/system (needs root)
+        #[arg(long)]
+        system: bool,
+        /// Overwrite existing unit/env
+        #[arg(long)]
+        force: bool,
+    },
+    /// Start the installed navi-server service
+    Start {
+        #[arg(long)]
+        system: bool,
+    },
+    /// Stop the service
+    Stop {
+        #[arg(long)]
+        system: bool,
+    },
+    /// Restart the service
+    Restart {
+        #[arg(long)]
+        system: bool,
+    },
+    /// Show install + systemd status
+    Status {
+        #[arg(long)]
+        system: bool,
+    },
+    /// Remove the systemd unit (env file kept)
+    Uninstall {
+        #[arg(long)]
+        system: bool,
+    },
+    /// Show journal logs for the service
+    Logs {
+        #[arg(long)]
+        system: bool,
+        /// Follow log output
+        #[arg(long, short = 'f')]
+        follow: bool,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum BrowserAction {
+    /// Show browser backend status
+    Status,
+    /// Diagnose binary discovery and print install hints (JSON)
+    Doctor,
+    /// Print install instructions for CloakBrowser / Chrome / cloakserve
+    Install,
 }
 
 #[derive(Debug, Subcommand)]
@@ -437,6 +520,16 @@ async fn main() -> Result<()> {
     // Handle registry subcommand early
     if let Some(Commands::Registry { action }) = cli.command {
         return registry_cmd::handle_registry_command(action, &loaded_config, &cwd).await;
+    }
+
+    // Handle browser subcommand early
+    if let Some(Commands::Browser { action }) = cli.command {
+        return browser_cmd::handle_browser_command(action, &loaded_config).await;
+    }
+
+    // Handle remote server (systemd) subcommand early
+    if let Some(Commands::Server { action }) = cli.command {
+        return server_cmd::handle_server_command(action, &loaded_config, &cwd);
     }
 
     if cli.print_log_path {

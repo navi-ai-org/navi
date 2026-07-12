@@ -614,14 +614,19 @@ fn tool_signature_hash(invocation: &ToolInvocation) -> String {
     format!("{:016x}", hasher.finish())
 }
 
+/// Truncate to at most `max_bytes` UTF-8 bytes without panicking mid-character.
+///
+/// `String::truncate` panics if `new_len` is not a char boundary; always floor
+/// to a boundary first (e.g. multi-byte tool output under observation budget).
 fn truncate_string(mut value: String, max_bytes: usize) -> String {
     if value.len() <= max_bytes {
         return value;
     }
-    value.truncate(max_bytes);
-    while !value.is_char_boundary(value.len()) {
-        value.pop();
+    let mut end = max_bytes.min(value.len());
+    while end > 0 && !value.is_char_boundary(end) {
+        end -= 1;
     }
+    value.truncate(end);
     value.push_str("\n<truncated>");
     value
 }
@@ -639,6 +644,18 @@ mod tests {
             ..HarnessConfig::default()
         };
         policy_for_profile(&config, HarnessProfile::Small)
+    }
+
+    #[test]
+    fn truncate_string_does_not_panic_on_utf8_boundary() {
+        // Panic was: String::truncate mid multi-byte char (is_char_boundary assertion).
+        let s = "olá 世界 🚀".to_string();
+        for max in 1..s.len() {
+            let out = truncate_string(s.clone(), max);
+            assert!(out.ends_with("<truncated>") || out.len() <= max);
+            // Must remain valid UTF-8 (already guaranteed by String, but no panic).
+            let _ = out.chars().count();
+        }
     }
 
     #[test]

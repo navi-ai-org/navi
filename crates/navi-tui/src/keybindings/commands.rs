@@ -17,13 +17,35 @@ use crossterm::event::{KeyCode, KeyModifiers};
 use navi_core::PermissionMode;
 use navi_sdk::{AgentEvent, session_title_from_events};
 
+pub(crate) fn open_command_palette(app: &mut TuiApp) {
+    super::replace_modal(app, ModalKind::Commands);
+    app.command_filter.clear();
+    app.command_filter_cursor = 0;
+    app.command_hub = None;
+    app.selected_command = 0;
+    app.command_scroll = 0;
+}
+
 pub(crate) fn handle_command_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyModifiers) -> bool {
     const VISIBLE_ROWS: usize = 10;
     let rows = command_rows(app);
     let mut selected = clamp_command_selection(&rows, app.selected_command);
 
     match code {
-        KeyCode::Esc => super::close_active_modal(app),
+        KeyCode::Esc => {
+            // Search → clear filter; hub → root; root → close.
+            if !app.command_filter.is_empty() {
+                app.command_filter.clear();
+                app.command_filter_cursor = 0;
+                selected = first_selectable_command_row(&command_rows(app));
+            } else if app.command_hub.is_some() {
+                app.command_hub = None;
+                selected = 0;
+            } else {
+                super::close_active_modal(app);
+                return false;
+            }
+        }
         KeyCode::Down | KeyCode::Tab => {
             selected = next_selectable_command_row(&rows, selected);
         }
@@ -45,8 +67,8 @@ pub(crate) fn handle_command_key(app: &mut TuiApp, code: KeyCode, modifiers: Key
             if handle_text_input_key(command_filter_ref(app), code, modifiers, false)
                 && app.command_filter != before
             {
-                let new_rows = command_rows(app);
-                selected = first_selectable_command_row(&new_rows);
+                // Typing always searches the full catalog (including hub actions).
+                selected = first_selectable_command_row(&command_rows(app));
                 app.selected_command = selected;
                 app.command_scroll = command_scroll_offset(app.selected_command, VISIBLE_ROWS);
                 return false;
@@ -69,6 +91,14 @@ pub(crate) fn run_selected_command(app: &mut TuiApp) -> bool {
     };
 
     match command.action {
+        CommandAction::OpenHub(hub) => {
+            app.command_hub = Some(hub);
+            app.command_filter.clear();
+            app.command_filter_cursor = 0;
+            app.selected_command = 0;
+            app.command_scroll = 0;
+            return false;
+        }
         CommandAction::Help => {
             crate::view::help::open_help(app);
         }
@@ -81,6 +111,7 @@ pub(crate) fn run_selected_command(app: &mut TuiApp) -> bool {
         }
         CommandAction::RetryLast => {
             retry_last_response(app);
+            super::close_all_modals(app);
         }
         CommandAction::OpenThinking => {
             super::open_thinking_picker(app);
@@ -95,8 +126,6 @@ pub(crate) fn run_selected_command(app: &mut TuiApp) -> bool {
                     "Not enough conversation yet to compact. Continue working first.",
                 );
             } else {
-                // Ask the model to produce a structured compact summary via the
-                // standard new_context_window tool (engine-recognized path).
                 app.input = "Compact this conversation now: write a concise multi-section summary of goals, key decisions, files changed, errors fixed, and next steps, then call the new_context_window tool with that summary. Do not wait for the context window to fill.".to_string();
                 app.input_cursor = app.input.len();
                 show_notification(app, "Compact", "Requesting conversation compaction…");
@@ -137,6 +166,9 @@ pub(crate) fn run_selected_command(app: &mut TuiApp) -> bool {
             app.mcp_ui_state.scroll = 0;
             app.mcp_ui_state.is_focused_on_tools = false;
             super::replace_modal(app, ModalKind::Mcp);
+            // Instant seed from session, then full probe like `navi mcp list`.
+            crate::mcp_status::seed_from_session(app);
+            crate::mcp_status::refresh_mcp_status(app);
         }
         CommandAction::BackgroundCommands => {
             super::replace_modal(app, ModalKind::BackgroundCommands);
@@ -151,9 +183,6 @@ pub(crate) fn run_selected_command(app: &mut TuiApp) -> bool {
         }
         CommandAction::ModelRouting => {
             super::open_model_routing(app, crate::state::ModelRoutingTab::Agents);
-        }
-        CommandAction::ExtensionsHub => {
-            super::open_extensions_hub(app);
         }
         CommandAction::MessageQueue => {
             super::replace_modal(app, ModalKind::MessageQueue);
@@ -231,28 +260,26 @@ pub(crate) fn run_selected_command(app: &mut TuiApp) -> bool {
                 super::close_all_modals(app);
             }
         }
-        CommandAction::InitializeProject => {
-            match initialize_project_config(app) {
-                Ok(path) => {
-                    show_notification(
-                        app,
-                        "Initialize Project",
-                        format!("Wrote {}", path.display()),
-                    );
-                }
-                Err(err) => {
-                    show_notification(app, "Initialize Project", format!("{err:#}"));
-                }
+        CommandAction::InitializeProject => match initialize_project_config(app) {
+            Ok(path) => {
+                show_notification(
+                    app,
+                    "Initialize Project",
+                    format!("Wrote {}", path.display()),
+                );
+                super::close_all_modals(app);
             }
-            super::close_all_modals(app);
-        }
+            Err(err) => {
+                show_notification(app, "Initialize Project", format!("{err:#}"));
+                super::close_all_modals(app);
+            }
+        },
     }
 
     false
 }
 
 /// Create user-authored project config at `.navi/config.toml` if missing.
-/// Does not write agent-owned state — only an explicit project config seed.
 fn initialize_project_config(app: &TuiApp) -> anyhow::Result<std::path::PathBuf> {
     let project = &app.project_dir;
     let navi_dir = project.join(".navi");

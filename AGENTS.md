@@ -246,6 +246,7 @@ Built-in tools:
 | `memory` | Write | Persistent auto-memory system with semantic search. Actions: `write`, `read`, `list`, `search`, `update`, `delete`. SQLite-backed with optional embedding model |
 | `append_note` | Write | Append temporary observations to the session notes scratchpad (SQLite) |
 | `history_ops` | Read | Query SQLite session history: `search`, `recent`, `get`, `summaries` |
+| `browser` | Command | Pluggable headless browser (`navi-browser`). Preferred engine: CloakBrowser Rust client ([PR #438](https://github.com/CloakHQ/CloakBrowser/pull/438)) via feature `browser-cloak`. CDP/Chrome is a temporary fallback. Actions: `status`, `open`, `goto`, `snapshot`, `screenshot`, `click`, `type`, `press`, `content`, `evaluate`, `close`, `doctor`. Artifacts under `{data_dir}/browser/`. |
 
 `ToolExecutor` validates invocations through `SecurityPolicy` before execution. Reads are allowed by default, writes and commands require approval by default, blocked commands are denied, paths are restricted to the project by default, NAVI private storage is denied, and writes to `.git` are denied.
 
@@ -516,6 +517,12 @@ navi memory dream --apply         # Run model-based dream consolidation
 navi memory distill               # Run SOP distillation
 navi memory doctor                # Validate memory system health
 navi memory history <query>       # Search session history
+navi browser status               # Browser backend discovery
+navi browser doctor               # JSON diagnostics + install hints
+navi browser install              # Print CloakBrowser / Chrome / cloakserve setup
+navi server install               # Install navi-server as systemd user unit
+navi server start                 # systemctl --user start navi-server
+navi server status / stop / logs  # Manage remote HTTP/WebSocket server
 ```
 
 ### Config
@@ -527,7 +534,21 @@ dream_interval_days = 1           # Auto-dream interval (24h)
 distill_interval_days = 30        # Auto-distill interval
 embedding_model_path = ""         # Override GGUF path (empty = default)
 embedding_tokenizer_path = ""     # Override tokenizer path (empty = default)
+
+[browser]
+enabled = true
+backend = "auto"                  # auto | cloakbrowser | cdp (chrome/chromium/cdp_url aliases)
+cdp_url = ""                      # external CDP for fallback only
+headless = true
+allow_private_network = true      # localhost / RFC1918 for local UI testing
+proxy = ""
+timeout_ms = 30000
+binary_path = ""                  # optional absolute binary path (engines that need it)
+humanize = false                  # CloakBrowser HumanPage (Bezier mouse / typing)
 ```
+
+Build with CloakBrowser Rust engine: `cargo run -p navi-cli --features browser-cloak`  
+(path dep on the PR checkout; see `crates/navi-browser/INTEGRATION.md`). Engines implement `navi_browser::{BrowserEngine, BrowserEngineFactory}`.
 
 ### Storage
 

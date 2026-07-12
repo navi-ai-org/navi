@@ -87,6 +87,10 @@ pub enum AsyncEvent {
         session_id: String,
         title: String,
     },
+    /// Live MCP probe result for the MCP Servers modal.
+    McpStatusLoaded {
+        result: std::result::Result<Vec<crate::state::McpLiveServer>, String>,
+    },
 }
 
 pub(crate) fn handle_async_event(app: &mut TuiApp, event: AsyncEvent) {
@@ -115,6 +119,18 @@ pub(crate) fn handle_async_event(app: &mut TuiApp, event: AsyncEvent) {
         } => {
             if session_id == app.session_id.as_str() {
                 apply_session_title(app, &session_id, title);
+            }
+        }
+        AsyncEvent::McpStatusLoaded { result } => {
+            app.mcp_ui_state.loading = false;
+            match result {
+                Ok(live) => {
+                    app.mcp_ui_state.live = live;
+                    app.mcp_ui_state.probe_error = None;
+                }
+                Err(err) => {
+                    app.mcp_ui_state.probe_error = Some(err);
+                }
             }
         }
         AsyncEvent::TurnCompleted(res) => handle_turn_completed(app, res),

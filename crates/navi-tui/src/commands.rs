@@ -1,46 +1,35 @@
-//! Command palette catalog: grouped actions with optional visibility gates.
+//! Hierarchical command palette: root hubs + sub-lists, with global search.
 
 use crate::app::TuiApp;
 
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct CommandItem {
-    pub label: &'static str,
-    pub shortcut: Option<&'static str>,
-    pub action: CommandAction,
-    pub group: CommandGroup,
-    pub visibility: CommandVisibility,
-}
-
+/// Top-level and hub groupings.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum CommandGroup {
+pub(crate) enum CommandHub {
     Session,
     ModelRouting,
     Tools,
     Extensions,
-    Preferences,
     HelpApp,
 }
 
-impl CommandGroup {
+impl CommandHub {
     pub(crate) fn label(self) -> &'static str {
         match self {
             Self::Session => "Session",
             Self::ModelRouting => "Model & routing",
-            Self::Tools => "Tools & permissions",
+            Self::Tools => "Tools",
             Self::Extensions => "Extensions",
-            Self::Preferences => "Preferences",
             Self::HelpApp => "Help & app",
         }
     }
 
-    fn order(self) -> u8 {
+    pub(crate) fn detail(self) -> &'static str {
         match self {
-            Self::Session => 0,
-            Self::ModelRouting => 1,
-            Self::Tools => 2,
-            Self::Extensions => 3,
-            Self::Preferences => 4,
-            Self::HelpApp => 5,
+            Self::Session => "sessions, queue, compact, export",
+            Self::ModelRouting => "models, effort, routing, usage",
+            Self::Tools => "shell tasks, permissions",
+            Self::Extensions => "skills, plugins, MCP",
+            Self::HelpApp => "shortcuts, updates, about, quit",
         }
     }
 }
@@ -48,13 +37,8 @@ impl CommandGroup {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CommandVisibility {
     Always,
-    /// Only when an active goal is set.
     WhenGoalActive,
-    /// Only when a pending self-update is known.
     WhenUpdateAvailable,
-    /// Hidden in the default list; appears when the user types a filter match.
-    /// Keeps hubs clean while preserving discoverability via search.
-    SearchOnly,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -79,7 +63,6 @@ pub(crate) enum CommandAction {
     BackgroundCommands,
     BackgroundModels,
     ModelRouting,
-    ExtensionsHub,
     ReSetup,
     ClearGoal,
     AttachmentModels,
@@ -90,383 +73,448 @@ pub(crate) enum CommandAction {
     InstallUpdate,
     MessageQueue,
     ToggleYolo,
+    /// Open a nested hub list inside the command palette.
+    OpenHub(CommandHub),
 }
 
-/// Visual row in the command palette (section headers + selectable items).
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct CommandItem {
+    pub label: &'static str,
+    pub shortcut: Option<&'static str>,
+    pub action: CommandAction,
+    pub hub: Option<CommandHub>,
+    pub visibility: CommandVisibility,
+}
+
+/// Row shown in the palette list (always selectable — no section headers).
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum CommandRow {
-    Section(&'static str),
     Item(CommandItem),
 }
 
 impl CommandRow {
     pub(crate) fn is_selectable(self) -> bool {
-        matches!(self, Self::Item(_))
+        true
     }
 
+    pub(crate) fn item(self) -> CommandItem {
+        match self {
+            Self::Item(item) => item,
+        }
+    }
 }
 
+// ── Full action catalog (hubs + global search) ───────────────────────────────
+// Order inside each hub = most used first.
+
 pub(crate) const COMMANDS: &[CommandItem] = &[
-    // ── Session ──────────────────────────────────────────────────────────
-    CommandItem {
-        label: "New Session",
-        shortcut: Some("ctrl+n"),
-        action: CommandAction::NewSession,
-        group: CommandGroup::Session,
-        visibility: CommandVisibility::Always,
-    },
+    // Session hub
     CommandItem {
         label: "Sessions…",
         shortcut: Some("ctrl+s"),
         action: CommandAction::Sessions,
-        group: CommandGroup::Session,
+        hub: Some(CommandHub::Session),
         visibility: CommandVisibility::Always,
     },
     CommandItem {
         label: "Message Queue…",
         shortcut: Some("ctrl+q"),
         action: CommandAction::MessageQueue,
-        group: CommandGroup::Session,
+        hub: Some(CommandHub::Session),
         visibility: CommandVisibility::Always,
     },
     CommandItem {
         label: "Retry Last Response",
         shortcut: None,
         action: CommandAction::RetryLast,
-        group: CommandGroup::Session,
+        hub: Some(CommandHub::Session),
         visibility: CommandVisibility::Always,
     },
     CommandItem {
         label: "Compact Conversation",
         shortcut: None,
         action: CommandAction::Compact,
-        group: CommandGroup::Session,
+        hub: Some(CommandHub::Session),
         visibility: CommandVisibility::Always,
     },
     CommandItem {
         label: "Toggle Plan Mode",
         shortcut: None,
         action: CommandAction::TogglePlanMode,
-        group: CommandGroup::Session,
+        hub: Some(CommandHub::Session),
         visibility: CommandVisibility::Always,
-    },
-    CommandItem {
-        label: "Clear Goal",
-        shortcut: None,
-        action: CommandAction::ClearGoal,
-        group: CommandGroup::Session,
-        visibility: CommandVisibility::WhenGoalActive,
     },
     CommandItem {
         label: "Copy Transcript",
         shortcut: None,
         action: CommandAction::CopySession,
-        group: CommandGroup::Session,
+        hub: Some(CommandHub::Session),
         visibility: CommandVisibility::Always,
     },
     CommandItem {
         label: "Export Session JSON",
         shortcut: None,
         action: CommandAction::ShareSession,
-        group: CommandGroup::Session,
+        hub: Some(CommandHub::Session),
         visibility: CommandVisibility::Always,
     },
-    // ── Model & routing ──────────────────────────────────────────────────
+    CommandItem {
+        label: "Clear Goal",
+        shortcut: None,
+        action: CommandAction::ClearGoal,
+        hub: Some(CommandHub::Session),
+        visibility: CommandVisibility::WhenGoalActive,
+    },
+    // Model & routing hub
     CommandItem {
         label: "Chat Model…",
         shortcut: Some("ctrl+m"),
         action: CommandAction::SwitchModel,
-        group: CommandGroup::ModelRouting,
+        hub: Some(CommandHub::ModelRouting),
         visibility: CommandVisibility::Always,
     },
     CommandItem {
         label: "Effort Level…",
         shortcut: None,
         action: CommandAction::OpenThinking,
-        group: CommandGroup::ModelRouting,
+        hub: Some(CommandHub::ModelRouting),
         visibility: CommandVisibility::Always,
     },
     CommandItem {
         label: "Model Routing…",
         shortcut: Some("ctrl+b"),
         action: CommandAction::ModelRouting,
-        group: CommandGroup::ModelRouting,
+        hub: Some(CommandHub::ModelRouting),
         visibility: CommandVisibility::Always,
-    },
-    CommandItem {
-        label: "Agent Model Routes…",
-        shortcut: None,
-        action: CommandAction::BackgroundModels,
-        group: CommandGroup::ModelRouting,
-        visibility: CommandVisibility::SearchOnly,
-    },
-    CommandItem {
-        label: "Attachment Fallbacks…",
-        shortcut: None,
-        action: CommandAction::AttachmentModels,
-        group: CommandGroup::ModelRouting,
-        visibility: CommandVisibility::SearchOnly,
     },
     CommandItem {
         label: "Sync Models",
         shortcut: None,
         action: CommandAction::SyncModels,
-        group: CommandGroup::ModelRouting,
+        hub: Some(CommandHub::ModelRouting),
         visibility: CommandVisibility::Always,
     },
     CommandItem {
         label: "Usage…",
         shortcut: None,
         action: CommandAction::Usage,
-        group: CommandGroup::ModelRouting,
-        visibility: CommandVisibility::Always,
-    },
-    // ── Tools & permissions ──────────────────────────────────────────────
-    CommandItem {
-        label: "Shell Tasks…",
-        shortcut: Some("ctrl+t"),
-        action: CommandAction::BackgroundCommands,
-        group: CommandGroup::Tools,
-        visibility: CommandVisibility::Always,
-    },
-    CommandItem {
-        label: "Toggle YOLO",
-        shortcut: Some("ctrl+g"),
-        action: CommandAction::ToggleYolo,
-        group: CommandGroup::Tools,
-        visibility: CommandVisibility::Always,
-    },
-    // ── Extensions ───────────────────────────────────────────────────────
-    CommandItem {
-        label: "Extensions…",
-        shortcut: None,
-        action: CommandAction::ExtensionsHub,
-        group: CommandGroup::Extensions,
-        visibility: CommandVisibility::Always,
-    },
-    CommandItem {
-        label: "Skills…",
-        shortcut: None,
-        action: CommandAction::Skills,
-        group: CommandGroup::Extensions,
-        visibility: CommandVisibility::SearchOnly,
-    },
-    CommandItem {
-        label: "Plugins…",
-        shortcut: None,
-        action: CommandAction::Plugins,
-        group: CommandGroup::Extensions,
-        visibility: CommandVisibility::SearchOnly,
-    },
-    CommandItem {
-        label: "MCP Servers…",
-        shortcut: None,
-        action: CommandAction::McpServers,
-        group: CommandGroup::Extensions,
-        visibility: CommandVisibility::SearchOnly,
-    },
-    // ── Preferences ──────────────────────────────────────────────────────
-    CommandItem {
-        label: "Settings…",
-        shortcut: Some("ctrl+,"),
-        action: CommandAction::Settings,
-        group: CommandGroup::Preferences,
+        hub: Some(CommandHub::ModelRouting),
         visibility: CommandVisibility::Always,
     },
     CommandItem {
         label: "Providers…",
         shortcut: None,
         action: CommandAction::Providers,
-        group: CommandGroup::Preferences,
+        hub: Some(CommandHub::ModelRouting),
+        visibility: CommandVisibility::Always,
+    },
+    // Search-only deep links into routing tabs
+    CommandItem {
+        label: "Agent Model Routes…",
+        shortcut: None,
+        action: CommandAction::BackgroundModels,
+        hub: Some(CommandHub::ModelRouting),
+        visibility: CommandVisibility::Always,
+    },
+    CommandItem {
+        label: "Attachment Fallbacks…",
+        shortcut: None,
+        action: CommandAction::AttachmentModels,
+        hub: Some(CommandHub::ModelRouting),
+        visibility: CommandVisibility::Always,
+    },
+    // Tools hub
+    CommandItem {
+        label: "Shell Tasks…",
+        shortcut: Some("ctrl+t"),
+        action: CommandAction::BackgroundCommands,
+        hub: Some(CommandHub::Tools),
+        visibility: CommandVisibility::Always,
+    },
+    CommandItem {
+        label: "Toggle YOLO",
+        shortcut: Some("ctrl+g"),
+        action: CommandAction::ToggleYolo,
+        hub: Some(CommandHub::Tools),
+        visibility: CommandVisibility::Always,
+    },
+    // Extensions hub
+    CommandItem {
+        label: "Skills…",
+        shortcut: None,
+        action: CommandAction::Skills,
+        hub: Some(CommandHub::Extensions),
+        visibility: CommandVisibility::Always,
+    },
+    CommandItem {
+        label: "Plugins…",
+        shortcut: None,
+        action: CommandAction::Plugins,
+        hub: Some(CommandHub::Extensions),
+        visibility: CommandVisibility::Always,
+    },
+    CommandItem {
+        label: "MCP Servers…",
+        shortcut: None,
+        action: CommandAction::McpServers,
+        hub: Some(CommandHub::Extensions),
+        visibility: CommandVisibility::Always,
+    },
+    // Preferences (reachable via root Settings + search)
+    CommandItem {
+        label: "Settings…",
+        shortcut: Some("ctrl+,"),
+        action: CommandAction::Settings,
+        hub: None,
         visibility: CommandVisibility::Always,
     },
     CommandItem {
         label: "Setup Wizard",
         shortcut: None,
         action: CommandAction::ReSetup,
-        group: CommandGroup::Preferences,
+        hub: Some(CommandHub::HelpApp),
         visibility: CommandVisibility::Always,
     },
     CommandItem {
         label: "Initialize Project",
         shortcut: None,
         action: CommandAction::InitializeProject,
-        group: CommandGroup::Preferences,
+        hub: Some(CommandHub::HelpApp),
         visibility: CommandVisibility::Always,
     },
-    // ── Help & app ───────────────────────────────────────────────────────
+    // Help & app hub
     CommandItem {
         label: "Keyboard Shortcuts",
         shortcut: Some("? / ctrl+."),
         action: CommandAction::Help,
-        group: CommandGroup::HelpApp,
-        visibility: CommandVisibility::Always,
-    },
-    CommandItem {
-        label: "About NAVI",
-        shortcut: None,
-        action: CommandAction::About,
-        group: CommandGroup::HelpApp,
+        hub: Some(CommandHub::HelpApp),
         visibility: CommandVisibility::Always,
     },
     CommandItem {
         label: "Check for Updates",
         shortcut: None,
         action: CommandAction::CheckForUpdates,
-        group: CommandGroup::HelpApp,
+        hub: Some(CommandHub::HelpApp),
         visibility: CommandVisibility::Always,
     },
     CommandItem {
         label: "Install Update",
         shortcut: None,
         action: CommandAction::InstallUpdate,
-        group: CommandGroup::HelpApp,
+        hub: Some(CommandHub::HelpApp),
         visibility: CommandVisibility::WhenUpdateAvailable,
+    },
+    CommandItem {
+        label: "About NAVI",
+        shortcut: None,
+        action: CommandAction::About,
+        hub: Some(CommandHub::HelpApp),
+        visibility: CommandVisibility::Always,
     },
     CommandItem {
         label: "Quit",
         shortcut: Some("ctrl+c"),
         action: CommandAction::Quit,
-        group: CommandGroup::HelpApp,
+        hub: Some(CommandHub::HelpApp),
+        visibility: CommandVisibility::Always,
+    },
+    // Hot actions also listed for search (also on root)
+    CommandItem {
+        label: "New Session",
+        shortcut: Some("ctrl+n"),
+        action: CommandAction::NewSession,
+        hub: Some(CommandHub::Session),
         visibility: CommandVisibility::Always,
     },
 ];
 
-fn is_visible(item: &CommandItem, app: &TuiApp, filtering: bool) -> bool {
+/// Root menu: hottest actions first, then hubs. Short list only.
+const ROOT_ENTRIES: &[CommandItem] = &[
+    CommandItem {
+        label: "Chat Model…",
+        shortcut: Some("ctrl+m"),
+        action: CommandAction::SwitchModel,
+        hub: None,
+        visibility: CommandVisibility::Always,
+    },
+    CommandItem {
+        label: "Sessions…",
+        shortcut: Some("ctrl+s"),
+        action: CommandAction::Sessions,
+        hub: None,
+        visibility: CommandVisibility::Always,
+    },
+    CommandItem {
+        label: "New Session",
+        shortcut: Some("ctrl+n"),
+        action: CommandAction::NewSession,
+        hub: None,
+        visibility: CommandVisibility::Always,
+    },
+    CommandItem {
+        label: "Session →",
+        shortcut: None,
+        action: CommandAction::OpenHub(CommandHub::Session),
+        hub: None,
+        visibility: CommandVisibility::Always,
+    },
+    CommandItem {
+        label: "Model & routing →",
+        shortcut: None,
+        action: CommandAction::OpenHub(CommandHub::ModelRouting),
+        hub: None,
+        visibility: CommandVisibility::Always,
+    },
+    CommandItem {
+        label: "Tools →",
+        shortcut: None,
+        action: CommandAction::OpenHub(CommandHub::Tools),
+        hub: None,
+        visibility: CommandVisibility::Always,
+    },
+    CommandItem {
+        label: "Extensions →",
+        shortcut: None,
+        action: CommandAction::OpenHub(CommandHub::Extensions),
+        hub: None,
+        visibility: CommandVisibility::Always,
+    },
+    CommandItem {
+        label: "Settings…",
+        shortcut: Some("ctrl+,"),
+        action: CommandAction::Settings,
+        hub: None,
+        visibility: CommandVisibility::Always,
+    },
+    CommandItem {
+        label: "Help & app →",
+        shortcut: None,
+        action: CommandAction::OpenHub(CommandHub::HelpApp),
+        hub: None,
+        visibility: CommandVisibility::Always,
+    },
+];
+
+fn is_visible(item: &CommandItem, app: &TuiApp) -> bool {
     match item.visibility {
         CommandVisibility::Always => true,
         CommandVisibility::WhenGoalActive => app.goal_state.is_some(),
         CommandVisibility::WhenUpdateAvailable => app.available_update.is_some(),
-        CommandVisibility::SearchOnly => filtering,
     }
 }
 
-/// Visible commands matching the current filter (no section headers).
+/// All runnable actions matching the current filter (global search — ignores hub).
 pub(crate) fn filtered_commands(app: &TuiApp) -> Vec<CommandItem> {
     let filter = app.command_filter.trim().to_lowercase();
-    let filtering = !filter.is_empty();
     let mut commands = COMMANDS
         .iter()
         .copied()
-        .filter(|command| is_visible(command, app, filtering))
-        .filter(|command| !filtering || command.label.to_lowercase().contains(&filter))
+        .filter(|command| is_visible(command, app))
+        .filter(|command| filter.is_empty() || command.label.to_lowercase().contains(&filter))
         .collect::<Vec<_>>();
 
+    // Dedup by action when search returns hub duplicates of root hot keys.
+    if !filter.is_empty() {
+        let mut seen = Vec::new();
+        commands.retain(|c| {
+            if seen.contains(&c.action) {
+                false
+            } else {
+                seen.push(c.action);
+                true
+            }
+        });
+    }
+
+    if commands.is_empty() && !filter.is_empty() {
+        // Keep empty on search miss so the UI can show "no matches".
+        return commands;
+    }
     if commands.is_empty() {
-        // Fall back to always-visible commands so the palette is never blank.
-        commands = COMMANDS
+        commands = ROOT_ENTRIES
             .iter()
             .copied()
-            .filter(|c| c.visibility == CommandVisibility::Always)
+            .filter(|c| is_visible(c, app))
             .collect();
     }
     commands
 }
 
-/// Rows for rendering: section headers when unfiltered; flat items while searching.
+/// Rows for the palette: global search, hub list, or root menu.
 pub(crate) fn command_rows(app: &TuiApp) -> Vec<CommandRow> {
     let filter = app.command_filter.trim();
-    let commands = filtered_commands(app);
 
+    // Search always spans the full catalog (submodals included).
     if !filter.is_empty() {
-        return commands.into_iter().map(CommandRow::Item).collect();
+        return filtered_commands(app)
+            .into_iter()
+            .map(CommandRow::Item)
+            .collect();
     }
 
-    let mut rows = Vec::with_capacity(commands.len() + 6);
-    let mut last_group: Option<CommandGroup> = None;
-    // Stable group order (commands are already ordered by group in COMMANDS).
-    let mut sorted = commands;
-    sorted.sort_by_key(|c| c.group.order());
-
-    for command in sorted {
-        if last_group != Some(command.group) {
-            rows.push(CommandRow::Section(command.group.label()));
-            last_group = Some(command.group);
-        }
-        rows.push(CommandRow::Item(command));
+    if let Some(hub) = app.command_hub {
+        return COMMANDS
+            .iter()
+            .copied()
+            .filter(|c| c.hub == Some(hub) && is_visible(c, app))
+            // Hide deep-link duplicates that only matter in search when browsing hub
+            // Agent/Attachment still useful in Model hub for power users — keep them last.
+            .map(CommandRow::Item)
+            .collect();
     }
-    rows
+
+    ROOT_ENTRIES
+        .iter()
+        .copied()
+        .filter(|c| is_visible(c, app))
+        .map(CommandRow::Item)
+        .collect()
 }
 
-/// Index of the first selectable row, or 0 if the list is empty.
+pub(crate) fn palette_title(app: &TuiApp) -> String {
+    if !app.command_filter.trim().is_empty() {
+        return "Commands · search".into();
+    }
+    match app.command_hub {
+        Some(hub) => format!("Commands · {}", hub.label()),
+        None => "Commands".into(),
+    }
+}
+
 pub(crate) fn first_selectable_command_row(rows: &[CommandRow]) -> usize {
-    rows.iter()
-        .position(|row| row.is_selectable())
-        .unwrap_or(0)
+    if rows.is_empty() {
+        0
+    } else {
+        0
+    }
 }
 
-/// Next selectable row after `current` (wrapping at end → stays on last selectable).
 pub(crate) fn next_selectable_command_row(rows: &[CommandRow], current: usize) -> usize {
     if rows.is_empty() {
         return 0;
     }
-    let start = current.saturating_add(1).min(rows.len());
-    for i in start..rows.len() {
-        if rows[i].is_selectable() {
-            return i;
-        }
-    }
-    // Stay on last selectable at or before current.
-    rows.iter()
-        .enumerate()
-        .rev()
-        .find_map(|(i, row)| row.is_selectable().then_some(i))
-        .unwrap_or(0)
+    (current + 1).min(rows.len().saturating_sub(1))
 }
 
-/// Previous selectable row before `current`.
 pub(crate) fn previous_selectable_command_row(rows: &[CommandRow], current: usize) -> usize {
+    current.saturating_sub(1)
+}
+
+pub(crate) fn page_next_command_row(rows: &[CommandRow], current: usize, page: usize) -> usize {
     if rows.is_empty() {
         return 0;
     }
-    let end = current.min(rows.len());
-    for i in (0..end).rev() {
-        if rows[i].is_selectable() {
-            return i;
-        }
-    }
-    first_selectable_command_row(rows)
+    (current + page).min(rows.len().saturating_sub(1))
 }
 
-/// Page down: move roughly `page` selectable steps forward.
-pub(crate) fn page_next_command_row(rows: &[CommandRow], current: usize, page: usize) -> usize {
-    let mut idx = current;
-    for _ in 0..page {
-        let next = next_selectable_command_row(rows, idx);
-        if next == idx {
-            break;
-        }
-        idx = next;
-    }
-    idx
-}
-
-/// Page up: move roughly `page` selectable steps backward.
 pub(crate) fn page_previous_command_row(rows: &[CommandRow], current: usize, page: usize) -> usize {
-    let mut idx = current;
-    for _ in 0..page {
-        let prev = previous_selectable_command_row(rows, idx);
-        if prev == idx {
-            break;
-        }
-        idx = prev;
-    }
-    idx
+    current.saturating_sub(page)
 }
 
-/// Ensure `selected` points at a selectable row.
 pub(crate) fn clamp_command_selection(rows: &[CommandRow], selected: usize) -> usize {
     if rows.is_empty() {
-        return 0;
+        0
+    } else {
+        selected.min(rows.len().saturating_sub(1))
     }
-    let selected = selected.min(rows.len().saturating_sub(1));
-    if rows.get(selected).is_some_and(|r| r.is_selectable()) {
-        return selected;
-    }
-    // Prefer next, then previous.
-    let next = next_selectable_command_row(rows, selected.saturating_sub(1));
-    if rows.get(next).is_some_and(|r| r.is_selectable()) {
-        return next;
-    }
-    previous_selectable_command_row(rows, selected)
 }

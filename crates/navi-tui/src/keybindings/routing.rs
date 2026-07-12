@@ -52,13 +52,16 @@ pub(crate) fn route_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyModifiers
         return system_global;
     }
 
-    if app.modal_stack.is_active() && app.mode != crate::state::Mode::Normal {
-        return super::route_mode_key(app, code, modifiers);
-    }
-
+    // App-wide Ctrl shortcuts (model picker, palette, sessions, …) must work
+    // even while a modal is open. Terminals also often send uppercase letters
+    // for Ctrl+key — handled inside route_global_key.
     let global = route_global_key(app, code, modifiers);
     if global.is_handled() {
         return global;
+    }
+
+    if app.modal_stack.is_active() && app.mode != crate::state::Mode::Normal {
+        return super::route_mode_key(app, code, modifiers);
     }
 
     super::route_mode_key(app, code, modifiers)

@@ -612,12 +612,29 @@ pub(crate) struct QuestionUiState {
     pub custom_cursor: usize,
 }
 
+/// Live MCP connection snapshot for the TUI modal (probed on open/refresh).
+#[derive(Debug, Clone)]
+pub(crate) struct McpLiveServer {
+    pub id: String,
+    pub enabled: bool,
+    pub connected: bool,
+    pub tools: Vec<String>,
+    pub command: Option<String>,
+    pub args: Vec<String>,
+    pub url: Option<String>,
+}
+
 #[derive(Debug, Clone, Default)]
 pub(crate) struct McpUiState {
     pub scroll: usize,
     pub selected_server: usize,
     pub selected_tool: usize,
     pub is_focused_on_tools: bool,
+    /// True while a background probe is in flight.
+    pub loading: bool,
+    /// Last probe result (config order). Empty until first probe completes.
+    pub live: Vec<McpLiveServer>,
+    pub probe_error: Option<String>,
 }
 
 impl QuestionUiState {

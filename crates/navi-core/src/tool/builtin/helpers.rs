@@ -183,10 +183,12 @@ pub(super) fn truncate_string(mut value: String, max_bytes: usize) -> String {
     if value.len() <= max_bytes {
         return value;
     }
-    value.truncate(max_bytes);
-    while !value.is_char_boundary(value.len()) {
-        value.pop();
+    // Floor to a UTF-8 char boundary before truncate — mid-byte lengths panic.
+    let mut end = max_bytes.min(value.len());
+    while end > 0 && !value.is_char_boundary(end) {
+        end -= 1;
     }
+    value.truncate(end);
     value.push_str("\n<truncated>");
     value
 }
@@ -387,12 +389,14 @@ mod tests {
 
     #[test]
     fn truncate_string_respects_char_boundaries() {
-        // 2-byte UTF-8 char: 'é' (2 bytes)
-        let s = "aébéc".to_string(); // 1+2+1+2+1 = 7 bytes, 5 chars
-        let result = truncate_string(s, 4);
-        // Truncates to 4 bytes, pops until char boundary, then appends "\n<truncated>"
+        // 2-byte UTF-8 char: 'é' (2 bytes). max_bytes=2 lands mid-character.
+        // Old code called String::truncate(2) and panicked with is_char_boundary.
+        let s = "aé".to_string(); // a=1 + é=2 → 3 bytes
+        let result = truncate_string(s, 2);
         assert!(result.ends_with("<truncated>"));
-        // Should not panic on char boundary
+        assert!(result.starts_with('a'));
+        // Must be valid UTF-8 (no panic / no mid-char slice)
+        assert!(result.is_char_boundary(result.find('\n').unwrap_or(result.len())));
     }
 
     #[test]

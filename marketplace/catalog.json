@@ -1,5 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-06-02T00:00:00Z",
+  "updated_at": "2026-07-12T00:00:00Z",
+  "description": "Official NAVI marketplace catalog. All packages install as WASM plugins (tools, skills packs, MCP adapters, messaging bots).",
   "plugins": []
 }
