@@ -13,6 +13,7 @@ use navi_plugin_manifest::{
     remove_aggregate_lock_entry, search_catalog, upsert_aggregate_lock_entry, validate,
 };
 use serde::{Deserialize, Serialize};
+use serde_json;
 
 use crate::engine::NaviEngine;
 use crate::types::NaviError;
@@ -174,13 +175,12 @@ impl NaviEngine {
 
     /// Install from a local plugin directory (LocalDev trust — signature optional).
     /// Requires `confirm = true`.
+    ///
+    /// Package kind is auto-detected from optional side-car files (`mcp.json`,
+    /// `SKILL.md` / `skill.toml`), defaulting to `plugin`.
     pub fn plugin_install_path(&self, path: &Path, confirm: bool) -> Result<PluginInstallResult> {
-        self.plugin_install_path_with_meta(
-            path,
-            confirm,
-            TrustLevel::LocalDev,
-            PluginCatalogKind::Plugin,
-        )
+        let kind = detect_package_kind(path);
+        self.plugin_install_path_with_meta(path, confirm, TrustLevel::LocalDev, kind)
     }
 
     /// Install from a local directory with explicit trust and marketplace kind.
@@ -199,22 +199,23 @@ impl NaviEngine {
         let loaded = self.loaded_config();
         let manifest = load_and_validate_manifest(path, trust)?;
         let _approval = prepare_install_approval(&manifest);
-        install_files(path, &manifest, &loaded.data_dir)?;
+        let installed = install_files(path, &manifest, &loaded.data_dir)?;
         write_lockfile_with_meta(&loaded.data_dir, &manifest, trust, kind)?;
+        let mut kind_hint = kind_install_hint(kind).to_string();
+        if let Some(extra) =
+            apply_kind_side_effects_at(&loaded.data_dir, &self.inner.project_dir, &installed, kind)
+        {
+            kind_hint = extra;
+        }
         Ok(PluginInstallResult {
             id: manifest.plugin.id.clone(),
             version: manifest.plugin.version.clone(),
-            path: loaded
-                .data_dir
-                .join("plugins")
-                .join(&manifest.plugin.id)
-                .display()
-                .to_string(),
+            path: installed.display().to_string(),
             tools: manifest.tools.len(),
             capabilities: manifest.capabilities.len(),
             kind: catalog_kind_label(kind).to_string(),
             trust_level: trust_label(trust).to_string(),
-            kind_hint: kind_install_hint(kind).to_string(),
+            kind_hint,
         })
     }
 
@@ -504,14 +505,210 @@ fn kind_install_hint(kind: PluginCatalogKind) -> &'static str {
             "WASM tools register on next session (or reload plugins)."
         }
         PluginCatalogKind::Skill => {
-            "Skill pack installed as WASM plugin; activate related skills in session if provided."
+            "Skill pack installed as WASM; SKILL.md imported when present."
         }
         PluginCatalogKind::Mcp => {
-            "MCP adapter package installed as WASM. If the package ships mcp.json, merge that server into ~/.config/navi/config.toml [[mcp.servers]] (or global MCP config)."
+            "MCP package installed as WASM; mcp.json merged into global MCP config when present."
         }
         PluginCatalogKind::Integration => {
             "Integration package installed as WASM plugin (messaging bots / sidecars may need env secrets)."
         }
+    }
+}
+
+/// Infer marketplace kind from package side-car files.
+pub fn detect_package_kind(path: &Path) -> PluginCatalogKind {
+    if path.join("mcp.json").is_file() {
+        PluginCatalogKind::Mcp
+    } else if path.join("SKILL.md").is_file() || path.join("skill.toml").is_file() {
+        PluginCatalogKind::Skill
+    } else {
+        PluginCatalogKind::Plugin
+    }
+}
+
+/// Apply kind-specific post-install actions (skill store / MCP config / etc.).
+/// Returns an updated human-readable hint when something was applied.
+pub fn apply_kind_side_effects_at(
+    data_dir: &Path,
+    project_dir: &Path,
+    installed_dir: &Path,
+    kind: PluginCatalogKind,
+) -> Option<String> {
+    match kind {
+        PluginCatalogKind::Skill => import_skill_from_package(data_dir, project_dir, installed_dir),
+        PluginCatalogKind::Mcp => import_mcp_from_package(data_dir, installed_dir),
+        PluginCatalogKind::Plugin | PluginCatalogKind::Integration => {
+            // tui.json is loaded lazily via plugin TUI extension API (phase 5).
+            None
+        }
+    }
+}
+
+fn import_skill_from_package(
+    data_dir: &Path,
+    project_dir: &Path,
+    installed_dir: &Path,
+) -> Option<String> {
+    let skill_md = installed_dir.join("SKILL.md");
+    let skill_toml = installed_dir.join("skill.toml");
+    let (name, description, version, tags, instructions) = if skill_md.is_file() {
+        let raw = fs::read_to_string(&skill_md).ok()?;
+        parse_skill_md(&raw)
+    } else if skill_toml.is_file() {
+        let raw = fs::read_to_string(&skill_toml).ok()?;
+        parse_skill_toml(&raw)?
+    } else {
+        return Some(
+            "Skill kind package installed; no SKILL.md/skill.toml found to import.".into(),
+        );
+    };
+
+    let request = navi_core::SkillWriteRequest {
+        id: String::new(),
+        name,
+        description,
+        version,
+        author: None,
+        tags,
+        requires: vec![],
+        allow_tools: vec![],
+        deny_tools: vec![],
+        instructions,
+        scope: navi_core::SkillWriteScope::User,
+    };
+    match navi_core::write_skill(&request, project_dir, data_dir) {
+        Ok(result) => Some(format!(
+            "Imported skill '{}' into skills.sqlite (id={}).",
+            result.skill.name, result.skill.id
+        )),
+        Err(e) => Some(format!("Skill package installed; skill import failed: {e}")),
+    }
+}
+
+fn parse_skill_md(raw: &str) -> (String, Option<String>, Option<String>, Vec<String>, String) {
+    let trimmed = raw.trim_start();
+    if let Some(rest) = trimmed.strip_prefix("---") {
+        if let Some(end) = rest.find("\n---") {
+            let front = &rest[..end];
+            let body = rest[end + 4..].trim_start_matches('\n').to_string();
+            let mut name = String::new();
+            let mut description = None;
+            let mut version = None;
+            let mut tags = Vec::new();
+            for line in front.lines() {
+                let line = line.trim();
+                if let Some(v) = line.strip_prefix("name:") {
+                    name = v.trim().trim_matches('"').to_string();
+                } else if let Some(v) = line.strip_prefix("description:") {
+                    description = Some(v.trim().trim_matches('"').to_string());
+                } else if let Some(v) = line.strip_prefix("version:") {
+                    version = Some(v.trim().trim_matches('"').to_string());
+                } else if let Some(v) = line.strip_prefix("tags:") {
+                    let t = v.trim();
+                    if let Some(inner) = t.strip_prefix('[').and_then(|s| s.strip_suffix(']')) {
+                        tags = inner
+                            .split(',')
+                            .map(|s| s.trim().trim_matches('"').to_string())
+                            .filter(|s| !s.is_empty())
+                            .collect();
+                    }
+                }
+            }
+            if name.is_empty() {
+                name = "Imported Skill".into();
+            }
+            return (name, description, version, tags, body);
+        }
+    }
+    (
+        "Imported Skill".into(),
+        None,
+        None,
+        vec![],
+        raw.to_string(),
+    )
+}
+
+fn parse_skill_toml(
+    raw: &str,
+) -> Option<(String, Option<String>, Option<String>, Vec<String>, String)> {
+    #[derive(Deserialize)]
+    struct SkillFile {
+        name: String,
+        #[serde(default)]
+        description: Option<String>,
+        #[serde(default)]
+        version: Option<String>,
+        #[serde(default)]
+        tags: Vec<String>,
+        #[serde(default)]
+        instructions: String,
+    }
+    let file: SkillFile = toml::from_str(raw).ok()?;
+    Some((
+        file.name,
+        file.description,
+        file.version,
+        file.tags,
+        file.instructions,
+    ))
+}
+
+fn import_mcp_from_package(data_dir: &Path, installed_dir: &Path) -> Option<String> {
+    let mcp_path = installed_dir.join("mcp.json");
+    if !mcp_path.is_file() {
+        return Some("MCP kind package installed; no mcp.json found to merge.".into());
+    }
+    let raw = match fs::read_to_string(&mcp_path) {
+        Ok(s) => s,
+        Err(e) => return Some(format!("MCP package installed; failed to read mcp.json: {e}")),
+    };
+    let server: navi_core::McpServerConfig = match serde_json::from_str(&raw) {
+        Ok(s) => s,
+        Err(e) => {
+            return Some(format!("MCP package installed; invalid mcp.json: {e}"));
+        }
+    };
+    // Merge into the global user config TOML when present; otherwise write a
+    // minimal global config with this MCP server.
+    let global_path = std::env::var_os("XDG_CONFIG_HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))
+        .map(|base| base.join("navi").join("config.toml"));
+    let Some(global_path) = global_path else {
+        return Some(format!(
+            "MCP package installed under {}; could not resolve global config path.",
+            data_dir.display()
+        ));
+    };
+    let mut config = if global_path.is_file() {
+        match std::fs::read_to_string(&global_path)
+            .ok()
+            .and_then(|s| toml::from_str::<navi_core::NaviConfig>(&s).ok())
+        {
+            Some(c) => c,
+            None => navi_core::NaviConfig::default(),
+        }
+    } else {
+        navi_core::NaviConfig::default()
+    };
+    config.mcp.enabled = true;
+    if let Some(existing) = config.mcp.servers.iter_mut().find(|s| s.id == server.id) {
+        *existing = server.clone();
+    } else {
+        config.mcp.servers.push(server.clone());
+    }
+    match navi_core::save_global_config(&global_path, &config) {
+        Ok(path) => Some(format!(
+            "Merged MCP server '{}' into global config ({}).",
+            server.id,
+            path.display()
+        )),
+        Err(e) => Some(format!(
+            "MCP package installed under {}; config merge failed: {e}",
+            data_dir.display()
+        )),
     }
 }
 
@@ -580,6 +777,65 @@ mod tests {
         let list = engine.plugin_list().unwrap();
         assert_eq!(list.len(), 1);
         assert_eq!(list[0].trust_level, "local-dev");
+    }
+
+    #[test]
+    fn skill_package_install_imports_skill_md() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut config = NaviConfig::default();
+        config.registry.update_enabled = false;
+        config.skills.enabled = true;
+        let loaded = LoadedConfig {
+            config,
+            global_config_path: Some(temp.path().join("config.toml")),
+            project_config_path: None,
+            data_dir: temp.path().to_path_buf(),
+        };
+        let engine = crate::NaviEngineBuilder::from_project(temp.path())
+            .loaded_config(loaded)
+            .build()
+            .expect("engine");
+
+        let pkg = temp.path().join("skill-pkg");
+        fs::create_dir_all(&pkg).unwrap();
+        let wasm = b"\0asm\x01\x00\x00\x00";
+        let hash = compute_wasm_hash(wasm);
+        let manifest = PluginManifest {
+            plugin: PluginMeta {
+                id: "hello-skill".into(),
+                name: "Hello Skill Pack".into(),
+                version: "0.1.0".into(),
+                publisher: "gh:test".into(),
+                runtime: RuntimeKind::WasmComponent,
+                entry: "plugin.wasm".into(),
+                wasm_hash: hash,
+                signature: "local-dev".into(),
+                public_key: None,
+                minimum_navi: "0.1.0".into(),
+            },
+            capabilities: vec![],
+            tools: vec![],
+        };
+        fs::write(pkg.join("plugin.toml"), toml::to_string(&manifest).unwrap()).unwrap();
+        fs::write(pkg.join("plugin.wasm"), wasm).unwrap();
+        fs::write(
+            pkg.join("SKILL.md"),
+            "---\nname: Hello Skill\ndescription: test\nversion: 0.1.0\ntags: [example]\n---\n\n# Body\nBe helpful.\n",
+        )
+        .unwrap();
+
+        let result = engine.plugin_install_path(&pkg, true).expect("install");
+        assert_eq!(result.kind, "skill");
+        assert!(
+            result.kind_hint.contains("Imported skill") || result.kind_hint.contains("skills.sqlite"),
+            "hint={}",
+            result.kind_hint
+        );
+        let skills = engine.list_skills().expect("list skills");
+        assert!(
+            skills.iter().any(|s| s.name.contains("Hello") || s.id.contains("hello")),
+            "skills={skills:?}"
+        );
     }
 }
 

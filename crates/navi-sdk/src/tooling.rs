@@ -26,10 +26,9 @@ pub(crate) fn build_local_tooling(
         loaded_config.data_dir.clone(),
         loaded_config.config.effective_security_config(),
     )?;
-    let mut tool_executor = ToolExecutor::with_security_policy(
-        security_policy,
-        runtime_components.security.clone(),
-    );
+    #[allow(unused_mut)] // mut when feature `wasm-plugins` loads into the executor
+    let mut tool_executor =
+        ToolExecutor::with_security_policy(security_policy, runtime_components.security.clone());
 
     let mut warnings = Vec::new();
 
