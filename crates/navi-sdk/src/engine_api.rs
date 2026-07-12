@@ -80,6 +80,8 @@ pub const NAVI_ENGINE_API_METHODS: &[&str] = &[
     // TUI panels
     "list_tui_components",
     "take_tui_panels",
+    "list_tui_extensions",
+    "list_tui_extension_commands",
     // Background commands
     "list_background_commands",
     "poll_background_command",
@@ -228,6 +230,8 @@ pub const NAVI_NAPI_BOUND_METHODS: &[&str] = &[
     // TUI panels
     "list_tui_components",
     "take_tui_panels",
+    "list_tui_extensions",
+    "list_tui_extension_commands",
     // Background commands
     "list_background_commands",
     "poll_background_command",

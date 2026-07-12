@@ -41,8 +41,9 @@ All kinds install as WASM plugin packages under `{data_dir}/plugins/`:
 | `mcp` | WASM package; optional `mcp.json` merged by user into global MCP config |
 | `integration` | WASM package (bots/sidecars may need env secrets) |
 
-Native TUI panels (`TuiComponent` via libloading) are not loaded. Future TUI
-extension must use a host-mediated protocol, not in-process widgets.
+Native TUI panels (`TuiComponent` via libloading) are not loaded. Host-mediated
+UI uses optional `tui.json` in each package (`commands`, `panels`,
+`theme_tokens`), loaded via `NaviEngine::list_tui_extensions()`.
 
 ## Consequences
 Positive:
