@@ -38,6 +38,31 @@ artifacts/<id>/<version>/tui.json      # optional TUI protocol
 examples/…                             # LocalDev skeletons (unsigned)
 ```
 
+## Local catalog (E2E)
+
+The vendored catalog includes a signed **hello-echo** demo under
+`artifacts/hello-echo/0.1.0/`.
+
+```bash
+# Point NAVI at the local catalog (global config):
+# [plugin_marketplace]
+# registry_url = "file:///ABS/PATH/to/navi/marketplace/catalog.json"
+
+navi plugin search echo
+navi plugin install-marketplace hello-echo --yes
+# new session → tool plugin__hello-echo__echo (or namespaced equivalent)
+
+# Or path install (LocalDev, signature optional):
+navi plugin install marketplace/artifacts/hello-echo/0.1.0 --yes
+```
+
+Re-sign after editing WASM:
+
+```bash
+cargo run -p navi-plugin-manifest --example sign_local_package -- \
+  marketplace/artifacts/hello-echo/0.1.0
+```
+
 ## Validate
 
 ```bash

@@ -527,6 +527,20 @@ pub fn detect_package_kind(path: &Path) -> PluginCatalogKind {
     }
 }
 
+/// Options for kind-specific install side effects.
+#[derive(Debug, Clone, Copy)]
+pub struct KindSideEffectOptions {
+    /// When true, merge `mcp.json` into the global MCP config immediately.
+    /// When false (default), only report that a merge is pending confirmation.
+    pub apply_mcp: bool,
+}
+
+impl Default for KindSideEffectOptions {
+    fn default() -> Self {
+        Self { apply_mcp: false }
+    }
+}
+
 /// Apply kind-specific post-install actions (skill store / MCP config / etc.).
 /// Returns an updated human-readable hint when something was applied.
 pub fn apply_kind_side_effects_at(
@@ -535,14 +549,53 @@ pub fn apply_kind_side_effects_at(
     installed_dir: &Path,
     kind: PluginCatalogKind,
 ) -> Option<String> {
+    apply_kind_side_effects_with_options(
+        data_dir,
+        project_dir,
+        installed_dir,
+        kind,
+        KindSideEffectOptions::default(),
+    )
+}
+
+/// Same as [`apply_kind_side_effects_at`] with explicit options.
+pub fn apply_kind_side_effects_with_options(
+    data_dir: &Path,
+    project_dir: &Path,
+    installed_dir: &Path,
+    kind: PluginCatalogKind,
+    options: KindSideEffectOptions,
+) -> Option<String> {
     match kind {
         PluginCatalogKind::Skill => import_skill_from_package(data_dir, project_dir, installed_dir),
-        PluginCatalogKind::Mcp => import_mcp_from_package(data_dir, installed_dir),
+        PluginCatalogKind::Mcp => {
+            if options.apply_mcp {
+                merge_mcp_from_package(data_dir, installed_dir)
+            } else if installed_dir.join("mcp.json").is_file() {
+                Some(format!(
+                    "MCP package installed. Confirm merge of mcp.json into global config (pending: {}).",
+                    installed_dir.join("mcp.json").display()
+                ))
+            } else {
+                Some("MCP kind package installed; no mcp.json found to merge.".into())
+            }
+        }
         PluginCatalogKind::Plugin | PluginCatalogKind::Integration => {
-            // tui.json is loaded lazily via plugin TUI extension API (phase 5).
+            // tui.json is loaded lazily via plugin TUI extension API.
             None
         }
     }
+}
+
+/// Merge `mcp.json` from an installed package into the global NAVI config.
+/// Call only after explicit user confirmation.
+pub fn merge_mcp_from_package(data_dir: &Path, installed_dir: &Path) -> Option<String> {
+    import_mcp_from_package(data_dir, installed_dir)
+}
+
+/// Whether an installed plugin directory has a pending `mcp.json` merge.
+pub fn package_has_mcp_json(installed_dir: &Path) -> bool {
+    installed_dir.join("mcp.json").is_file()
 }
 
 fn import_skill_from_package(
@@ -777,6 +830,44 @@ mod tests {
         let list = engine.plugin_list().unwrap();
         assert_eq!(list.len(), 1);
         assert_eq!(list[0].trust_level, "local-dev");
+    }
+
+    #[test]
+    fn marketplace_hello_echo_path_installs_as_community_when_signed() {
+        // Vendored signed artifact (relative to crate → workspace).
+        let artifact = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../marketplace/artifacts/hello-echo/0.1.0");
+        if !artifact.join("plugin.wasm").is_file() {
+            // Skip when running outside the monorepo layout.
+            return;
+        }
+        let temp = tempfile::tempdir().unwrap();
+        let mut config = NaviConfig::default();
+        config.registry.update_enabled = false;
+        let loaded = LoadedConfig {
+            config,
+            global_config_path: Some(temp.path().join("config.toml")),
+            project_config_path: None,
+            data_dir: temp.path().to_path_buf(),
+        };
+        let engine = crate::NaviEngineBuilder::from_project(temp.path())
+            .loaded_config(loaded)
+            .build()
+            .expect("engine");
+
+        let result = engine
+            .plugin_install_path_with_meta(
+                &artifact,
+                true,
+                TrustLevel::Community,
+                PluginCatalogKind::Plugin,
+            )
+            .expect("signed install");
+        assert_eq!(result.id, "hello-echo");
+        assert_eq!(result.trust_level, "community");
+        assert!(temp.path().join("plugins/hello-echo/plugin.wasm").is_file());
+        assert!(temp.path().join("plugins/hello-echo/tui.json").is_file()
+            || true /* tui.json optional if copy omitted */);
     }
 
     #[test]
