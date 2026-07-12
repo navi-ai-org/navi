@@ -53,7 +53,7 @@ fn surface_style() -> Style {
     Style::default().fg(text()).bg(solid_surface())
 }
 
-pub(crate) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
+pub(crate) fn render(frame: &mut Frame<'_>, app: &mut TuiApp, area: Rect) {
     clear_modal_area(frame, area);
     opaque_fill(frame, area, surface_style());
 
@@ -136,6 +136,10 @@ pub(crate) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
     let list_area = rows[1];
     opaque_fill(frame, list_area, surface_style());
     let visible_cards = (list_area.height as usize / CARD_STRIDE).max(1);
+    // Keep keyboard clamp in sync with the real list height so ↓/↑ never
+    // leave the selected card off-screen.
+    app.bg_command_visible_cards = visible_cards;
+    crate::background::clamp_background_selection(app);
     let start = app
         .bg_command_scroll
         .min(app.background_commands.len().saturating_sub(visible_cards));

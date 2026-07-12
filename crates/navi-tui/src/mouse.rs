@@ -13,7 +13,6 @@ use crate::providers::{
 use crate::render::text::display_width;
 use crate::runtime::provider_supports_oauth;
 use crate::state::{Mode, SelectionState};
-use crate::tools::cancel_stream;
 use crate::ui::SelectListState;
 use crate::ui::interaction::{HitAction, HitRegion, ScrollTarget};
 
@@ -134,15 +133,6 @@ pub(crate) fn finish_selection(app: &mut TuiApp, end: Option<(usize, usize)>) ->
     selected_text(app).is_some()
 }
 
-fn cancel_active_turn(app: &mut TuiApp) {
-    cancel_stream(app);
-    show_notification(
-        app,
-        "Cancelled",
-        "Turn cancelled by double-click.".to_string(),
-    );
-}
-
 /// Hits that belong to a selectable chat block (message / tool / subagent).
 fn is_chat_block_hit(action: &HitAction) -> bool {
     matches!(
@@ -207,27 +197,7 @@ pub(crate) fn handle_mouse(app: &mut TuiApp, mouse: MouseEvent) {
             app.scroll_offset = app.scroll_offset.saturating_add(3);
         }
         MouseEventKind::Down(MouseButton::Left) => {
-            // Double-click detection: if the model is running and the user
-            // clicks twice quickly in the same spot, cancel the turn directly
-            // without opening the confirmation modal.
-            let now = std::time::Instant::now();
-            let is_double_click = app
-                .last_click_time
-                .map(|t| now.duration_since(t).as_millis() < 400)
-                .unwrap_or(false)
-                && app.last_click_pos == Some((mouse.column, mouse.row));
-
-            app.last_click_time = Some(now);
-            app.last_click_pos = Some((mouse.column, mouse.row));
             app.pending_chat_click = None;
-
-            if is_double_click
-                && app.mode == Mode::Normal
-                && (app.is_loading || app.has_async_task())
-            {
-                cancel_active_turn(app);
-                return;
-            }
 
             if let Some(hit) = app.hit_test(mouse.column, mouse.row) {
                 if matches!(hit.action, HitAction::ScrollTo { .. }) {
@@ -899,12 +869,14 @@ fn active_scroll_target(app: &TuiApp) -> Option<ScrollTarget> {
         | Mode::ConfirmCancelTurn
         | Mode::About
         | Mode::UpdateAvailable => None,
+        Mode::BackgroundModels | Mode::ModelRouting => {
+            // Agents tab list (and legacy agent routes modal) — wheel moves selection.
+            Some(ScrollTarget::BackgroundModels)
+        }
         Mode::Normal
         | Mode::ApiKeyEntry
         | Mode::Mcp
-        | Mode::BackgroundModels
         | Mode::BgModelPicker
-        | Mode::ModelRouting
         | Mode::Extensions
         | Mode::AttachmentModels => None,
         Mode::Setup => None,
@@ -987,15 +959,41 @@ fn scroll_by(app: &mut TuiApp, target: ScrollTarget, delta: isize) {
         }
         ScrollTarget::BackgroundCommands => {
             let len = app.background_commands.len();
+            let visible = app.bg_command_visible_cards.max(1);
             let (selected, scroll) = shifted_select_state(
                 app.bg_command_selected,
                 app.bg_command_scroll,
                 len,
                 delta,
-                12,
+                visible,
             );
             app.bg_command_selected = selected;
             app.bg_command_scroll = scroll;
+            crate::background::clamp_background_selection(app);
+        }
+        ScrollTarget::BackgroundModels => {
+            // Only navigate the Agents list when that tab is active (or legacy modal).
+            if app.mode == Mode::ModelRouting
+                && app.model_routing_tab != crate::state::ModelRoutingTab::Agents
+            {
+                return;
+            }
+            let len = 5usize; // BG_MODEL_TASKS length
+            if delta.is_positive() {
+                app.bg_models_selected = (app.bg_models_selected + delta as usize).min(len - 1);
+            } else {
+                app.bg_models_selected = app
+                    .bg_models_selected
+                    .saturating_sub(delta.unsigned_abs());
+            }
+            // Keep selection in view (same window size as keyboard clamp).
+            let visible_tasks = 4usize;
+            if app.bg_models_selected < app.bg_models_scroll {
+                app.bg_models_scroll = app.bg_models_selected;
+            } else if app.bg_models_selected >= app.bg_models_scroll + visible_tasks {
+                app.bg_models_scroll = app.bg_models_selected.saturating_sub(visible_tasks - 1);
+            }
+            app.bg_models_scroll = app.bg_models_scroll.min(len.saturating_sub(visible_tasks));
         }
         ScrollTarget::BackgroundCommandOutput => {
             app.bg_command_output_follow = false;
@@ -1086,6 +1084,12 @@ fn scroll_to(app: &mut TuiApp, target: ScrollTarget, offset: usize) {
             let len = app.background_commands.len();
             app.bg_command_selected = offset.min(len.saturating_sub(1));
             app.bg_command_scroll = app.bg_command_selected;
+            crate::background::clamp_background_selection(app);
+        }
+        ScrollTarget::BackgroundModels => {
+            let len = 5usize;
+            app.bg_models_selected = offset.min(len.saturating_sub(1));
+            app.bg_models_scroll = app.bg_models_selected.saturating_sub(3);
         }
         ScrollTarget::BackgroundCommandOutput => {
             app.bg_command_output_follow = false;

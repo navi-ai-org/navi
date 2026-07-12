@@ -3803,3 +3803,37 @@ fn apply_patch_body_is_clean_diff_without_protocol_chrome() {
     assert!(!content.contains("*** End Patch"));
     assert!(!content.contains("Patch:"));
 }
+
+#[test]
+fn model_routing_agents_down_arrow_moves_selection() {
+    let mut app = test_app("");
+    handle_key(&mut app, KeyCode::Char('b'), KeyModifiers::CONTROL);
+    assert_eq!(app.mode, Mode::ModelRouting);
+    assert_eq!(app.model_routing_tab, crate::state::ModelRoutingTab::Agents);
+    assert_eq!(app.bg_models_selected, 0);
+
+    assert!(!handle_key(&mut app, KeyCode::Down, KeyModifiers::NONE));
+    assert_eq!(app.bg_models_selected, 1);
+    assert!(!handle_key(&mut app, KeyCode::Down, KeyModifiers::NONE));
+    assert_eq!(app.bg_models_selected, 2);
+    assert!(!handle_key(&mut app, KeyCode::Up, KeyModifiers::NONE));
+    assert_eq!(app.bg_models_selected, 1);
+}
+
+#[test]
+fn background_commands_down_arrow_moves_selection() {
+    let mut app = test_app("");
+    app.mode = Mode::BackgroundCommands;
+    app.modal_stack.replace(Some(ModalKind::BackgroundCommands));
+    app.background_commands = vec![
+        sample_background_command("bg_1"),
+        sample_background_command("bg_2"),
+        sample_background_command("bg_3"),
+    ];
+    app.bg_command_selected = 0;
+
+    assert!(!handle_key(&mut app, KeyCode::Down, KeyModifiers::NONE));
+    assert_eq!(app.bg_command_selected, 1);
+    assert!(!handle_key(&mut app, KeyCode::Down, KeyModifiers::NONE));
+    assert_eq!(app.bg_command_selected, 2);
+}

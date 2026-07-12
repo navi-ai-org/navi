@@ -1832,11 +1832,29 @@ fn handle_background_models_list_key(app: &mut TuiApp, code: KeyCode) {
             if app.bg_models_selected > 0 {
                 app.bg_models_selected -= 1;
             }
+            clamp_bg_models_selection(app, len);
         }
         KeyCode::Down | KeyCode::Char('j') => {
             if app.bg_models_selected + 1 < len {
                 app.bg_models_selected += 1;
             }
+            clamp_bg_models_selection(app, len);
+        }
+        KeyCode::PageUp => {
+            app.bg_models_selected = app.bg_models_selected.saturating_sub(3);
+            clamp_bg_models_selection(app, len);
+        }
+        KeyCode::PageDown => {
+            app.bg_models_selected = (app.bg_models_selected + 3).min(len.saturating_sub(1));
+            clamp_bg_models_selection(app, len);
+        }
+        KeyCode::Home => {
+            app.bg_models_selected = 0;
+            clamp_bg_models_selection(app, len);
+        }
+        KeyCode::End => {
+            app.bg_models_selected = len.saturating_sub(1);
+            clamp_bg_models_selection(app, len);
         }
         KeyCode::Enter => {
             if let Some((task_id, _)) = BG_MODEL_TASKS.get(app.bg_models_selected) {
@@ -1874,6 +1892,24 @@ fn handle_background_models_list_key(app: &mut TuiApp, code: KeyCode) {
         }
         _ => {}
     }
+}
+
+/// Keep Agents selection in range and scroll the list so the row is visible.
+fn clamp_bg_models_selection(app: &mut TuiApp, len: usize) {
+    if len == 0 {
+        app.bg_models_selected = 0;
+        app.bg_models_scroll = 0;
+        return;
+    }
+    app.bg_models_selected = app.bg_models_selected.min(len - 1);
+    // Each task renders as 2 lines; keep ~4 tasks in the window.
+    let visible_tasks = 4usize;
+    if app.bg_models_selected < app.bg_models_scroll {
+        app.bg_models_scroll = app.bg_models_selected;
+    } else if app.bg_models_selected >= app.bg_models_scroll + visible_tasks {
+        app.bg_models_scroll = app.bg_models_selected.saturating_sub(visible_tasks - 1);
+    }
+    app.bg_models_scroll = app.bg_models_scroll.min(len.saturating_sub(visible_tasks));
 }
 
 /// List navigation for Attachments tab (no Esc).
@@ -1976,7 +2012,6 @@ const BG_MODEL_TASKS: &[(&str, &str)] = &[
 ];
 
 pub(crate) fn handle_background_models_key(app: &mut TuiApp, code: KeyCode) -> bool {
-    let len = BG_MODEL_TASKS.len();
     match code {
         KeyCode::Esc => {
             if app.setup_phase == Some(crate::state::SetupPhase::MemoryModel) {
@@ -1989,48 +2024,8 @@ pub(crate) fn handle_background_models_key(app: &mut TuiApp, code: KeyCode) -> b
                 super::close_active_modal(app);
             }
         }
-        KeyCode::Up | KeyCode::Char('k') => {
-            if app.bg_models_selected > 0 {
-                app.bg_models_selected -= 1;
-            }
-        }
-        KeyCode::Down | KeyCode::Char('j') => {
-            if app.bg_models_selected + 1 < len {
-                app.bg_models_selected += 1;
-            }
-        }
-        KeyCode::Enter => {
-            // Open model picker sub-modal for the selected task.
-            if let Some((task_id, _)) = BG_MODEL_TASKS.get(app.bg_models_selected) {
-                app.bg_model_picker_active = true;
-                app.bg_model_picker_task = Some(task_id.to_string());
-                app.bg_model_picker_selected = 0;
-                app.model_scroll = 0;
-                app.model_filter.clear();
-                app.model_filter_cursor = 0;
-                super::replace_modal(app, ModalKind::BgModelPicker);
-                app.refresh_authenticated_providers();
-            }
-        }
-        KeyCode::Char('d') => {
-            // Reset selected task to default (remove override).
-            if let Some((task_id, _)) = BG_MODEL_TASKS.get(app.bg_models_selected) {
-                if let Err(err) = app
-                    .engine()
-                    .clear_background_model(task_id, NaviConfigSaveTarget::Global)
-                {
-                    show_notification(app, "Agent Model Routes", format!("Could not reset {task_id}: {err:#}"));
-                    return false;
-                }
-                clear_bg_model_override(app, task_id);
-                show_notification(
-                    app,
-                    "Agent Model Routes",
-                    format!("{task_id} reset to default."),
-                );
-            }
-        }
-        _ => {}
+        // Reuse the same list navigation as the Model Routing → Agents tab.
+        other => handle_background_models_list_key(app, other),
     }
     false
 }

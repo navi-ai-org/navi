@@ -205,8 +205,8 @@ pub fn register_modal_panels(app: &mut TuiApp) {
         78,
         12,
     )));
-    // Background commands
-    pm.add_overlay(Box::new(ModalPanel::new(
+    // Background commands (mut: updates visible card count for ↓/↑ clamp)
+    pm.add_overlay(Box::new(ModalPanelMut::new(
         "background-commands",
         Mode::BackgroundCommands,
         background_commands::render,
