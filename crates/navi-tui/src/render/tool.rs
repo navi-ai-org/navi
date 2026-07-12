@@ -924,13 +924,22 @@ fn write_display_diff(invocation: &ToolInvocation, result: &ToolResult) -> Optio
 
 /// Clean structured/unified patch text for chat display.
 ///
-/// Strips protocol chrome (`*** Begin/End Patch`) and inserts `…` between
-/// hunks. Keeps `*** Update/Add/Delete File:` headers and `+/-`/`@@` lines.
+/// Claude Code–style body:
+/// - strips protocol chrome (`*** Begin/End Patch`, bare `@@`, unified `---/+++`)
+/// - emits a line-number gutter when `@@ -old +new @@` is present:
+///   `  37 context`, `-  39 removed`, `+  39 added`
+/// - keeps `*** Update/Add/Delete File:` path headers (tool card may also summarize)
+/// - inserts `…` between hunks of the same file
 fn normalize_diff_for_display(patch: &str) -> String {
-    let mut out = String::with_capacity(patch.len().saturating_add(16));
+    let mut out = String::with_capacity(patch.len().saturating_add(64));
+    let mut old_line: Option<u32> = None;
+    let mut new_line: Option<u32> = None;
     let mut last_was_hunk = false;
+    let mut saw_file_header = false;
+
     for line in patch.lines() {
         let trimmed = line.trim_end();
+
         // Protocol wrappers — never show in the chat body.
         if trimmed == "*** Begin Patch"
             || trimmed == "*** End Patch"
@@ -939,21 +948,193 @@ fn normalize_diff_for_display(patch: &str) -> String {
         {
             continue;
         }
-        if line.starts_with("@@") {
+
+        // Environment ID preamble from Codex-style patches.
+        if trimmed.starts_with("*** Environment ID:") {
+            continue;
+        }
+
+        if let Some(path) = strip_patch_file_header(trimmed) {
+            // Path header labels the file (needed for multi-file / multi-patch bodies;
+            // the tool card also summarizes the first path).
+            if saw_file_header && !out.is_empty() && !out.ends_with("\n\n") {
+                out.push('\n');
+            }
+            out.push_str(path.header);
+            out.push_str(path.path);
+            out.push('\n');
+            old_line = None;
+            new_line = if path.is_add { Some(1) } else { None };
+            if path.is_delete {
+                old_line = Some(1);
+            }
+            last_was_hunk = false;
+            saw_file_header = true;
+            continue;
+        }
+
+        // Unified diff file headers — prefer path from +++ b/ when no structured header.
+        if let Some(path) = trimmed.strip_prefix("+++ b/") {
+            if !saw_file_header {
+                out.push_str("*** Update File: ");
+                out.push_str(path);
+                out.push('\n');
+                saw_file_header = true;
+            }
+            old_line = None;
+            new_line = None;
+            last_was_hunk = false;
+            continue;
+        }
+        if trimmed.starts_with("+++ ")
+            || trimmed.starts_with("--- ")
+            || trimmed.starts_with("diff ")
+            || trimmed.starts_with("index ")
+        {
+            continue;
+        }
+
+        if trimmed.starts_with("@@") {
             if last_was_hunk {
                 out.push_str("…\n");
             }
+            let (old, new) = parse_hunk_line_numbers(trimmed);
+            old_line = old;
+            new_line = new;
+            // Bare `@@` (no numbers): leave counters unset so body stays `+/-content`.
             last_was_hunk = true;
-        } else if line.starts_with("*** Update File:")
-            || line.starts_with("*** Add File:")
-            || line.starts_with("*** Delete File:")
-        {
-            last_was_hunk = false;
+            continue;
         }
-        out.push_str(line);
-        out.push('\n');
+
+        // Move-to markers stay as meta.
+        if trimmed.starts_with("*** Move to:") {
+            out.push_str(trimmed);
+            out.push('\n');
+            continue;
+        }
+
+        let (sign, content) = match line.chars().next() {
+            Some('-') if !line.starts_with("---") => ('-', &line[1..]),
+            Some('+') if !line.starts_with("+++") => ('+', &line[1..]),
+            Some(' ') => (' ', &line[1..]),
+            // Context without leading space (structured patch style).
+            _ if !line.is_empty()
+                && !line.starts_with('*')
+                && !line.starts_with('@')
+                && !line.starts_with('\\') =>
+            {
+                (' ', line)
+            }
+            _ => {
+                // Unknown meta — pass through.
+                out.push_str(line);
+                out.push('\n');
+                continue;
+            }
+        };
+
+        match sign {
+            '-' => {
+                push_numbered_diff_line(&mut out, '-', old_line, content);
+                if let Some(n) = old_line.as_mut() {
+                    *n = n.saturating_add(1);
+                }
+            }
+            '+' => {
+                push_numbered_diff_line(&mut out, '+', new_line, content);
+                if let Some(n) = new_line.as_mut() {
+                    *n = n.saturating_add(1);
+                }
+            }
+            _ => {
+                let num = new_line.or(old_line);
+                push_numbered_diff_line(&mut out, ' ', num, content);
+                if let Some(n) = old_line.as_mut() {
+                    *n = n.saturating_add(1);
+                }
+                if let Some(n) = new_line.as_mut() {
+                    *n = n.saturating_add(1);
+                }
+            }
+        }
     }
     out
+}
+
+struct PatchFileHeader<'a> {
+    header: &'static str,
+    path: &'a str,
+    is_add: bool,
+    is_delete: bool,
+}
+
+fn strip_patch_file_header(trimmed: &str) -> Option<PatchFileHeader<'_>> {
+    if let Some(path) = trimmed.strip_prefix("*** Update File: ") {
+        return Some(PatchFileHeader {
+            header: "*** Update File: ",
+            path,
+            is_add: false,
+            is_delete: false,
+        });
+    }
+    if let Some(path) = trimmed.strip_prefix("*** Add File: ") {
+        return Some(PatchFileHeader {
+            header: "*** Add File: ",
+            path,
+            is_add: true,
+            is_delete: false,
+        });
+    }
+    if let Some(path) = trimmed.strip_prefix("*** Delete File: ") {
+        return Some(PatchFileHeader {
+            header: "*** Delete File: ",
+            path,
+            is_add: false,
+            is_delete: true,
+        });
+    }
+    None
+}
+
+/// Parse `@@ -12,3 +14,4 @@` → (Some(12), Some(14)). Bare `@@` → (None, None).
+fn parse_hunk_line_numbers(hunk: &str) -> (Option<u32>, Option<u32>) {
+    let rest = hunk.strip_prefix("@@").unwrap_or(hunk).trim();
+    // Expect `-old[,count] +new[,count]` optionally followed by context.
+    let mut old = None;
+    let mut new = None;
+    for token in rest.split_whitespace() {
+        if let Some(num) = token.strip_prefix('-') {
+            old = num
+                .split(',')
+                .next()
+                .and_then(|s| s.parse::<u32>().ok())
+                .filter(|&n| n > 0);
+        } else if let Some(num) = token.strip_prefix('+') {
+            new = num
+                .split(',')
+                .next()
+                .and_then(|s| s.parse::<u32>().ok())
+                .filter(|&n| n > 0);
+        }
+        if old.is_some() && new.is_some() {
+            break;
+        }
+    }
+    (old, new)
+}
+
+/// Emit `{sign}{num:>4}|{content}` when line numbers are known, else `{sign}{content}`.
+///
+/// The `|` separator avoids false positives when unnumbered content happens to
+/// start with digits (e.g. `+  39 bottles`).
+fn push_numbered_diff_line(out: &mut String, sign: char, num: Option<u32>, content: &str) {
+    out.push(sign);
+    if let Some(n) = num {
+        // Fixed 4-wide gutter + pipe so the markdown renderer can detect numbers.
+        out.push_str(&format!("{n:>4}|"));
+    }
+    out.push_str(content);
+    out.push('\n');
 }
 
 fn patch_inputs(invocation: &ToolInvocation) -> Vec<String> {
@@ -2767,6 +2948,8 @@ mod tests {
         assert!(!content.contains("*** End Patch"));
         assert!(content.contains("*** Update File: src/lib.rs"));
         assert!(content.contains("-old\n+new"));
+        // Bare @@ has no line numbers — body must not invent a gutter.
+        assert!(!content.contains("|old"));
         assert!(content.contains("```"));
         // Summary lives in the header only, not repeated as body chrome.
         let body_start = content.find("```diff").unwrap_or(0);
@@ -2774,6 +2957,63 @@ mod tests {
             !content[body_start..].contains("Edited src/lib.rs"),
             "body should not repeat Edited summary"
         );
+    }
+
+    #[test]
+    fn numbered_hunk_headers_render_line_number_gutter() {
+        let patch = "*** Begin Patch\n*** Update File: docs/adr/0009.md\n\
+@@ -37,6 +37,6 @@\n \
+#### Registry Protocol\n \
+\n\
+-Default registry: old\n\
++Default registry: new\n \
+- Supports https\n\
+*** End Patch";
+        let content = tool_full_content(
+            &invocation("apply_patch", json!({ "patch": patch })),
+            &ok_result(json!({})),
+        );
+
+        assert!(content.contains("```diff\n"));
+        // No raw @@ chrome in the body.
+        assert!(!content.contains("@@ -37"));
+        // Line-number gutter: `{sign}{num:>4}|{content}`
+        assert!(
+            content.contains("  37|#### Registry Protocol")
+                || content.contains("  37| #### Registry Protocol"),
+            "expected line 37 context, got:\n{content}"
+        );
+        assert!(
+            content.contains("-  39|Default registry: old"),
+            "expected numbered delete, got:\n{content}"
+        );
+        assert!(
+            content.contains("+  39|Default registry: new"),
+            "expected numbered add, got:\n{content}"
+        );
+        assert!(
+            content.contains("  40|- Supports https")
+                || content.contains("  40| - Supports https"),
+            "expected line 40 context, got:\n{content}"
+        );
+    }
+
+    #[test]
+    fn normalize_diff_for_display_strips_begin_end_and_numbers_hunks() {
+        let raw = "*** Begin Patch\n*** Update File: a.rs\n@@ -10,3 +10,4 @@\n \
+ctx\n\
+-old\n\
++new\n\
++added\n*** End Patch\n";
+        let out = normalize_diff_for_display(raw);
+        assert!(!out.contains("*** Begin Patch"));
+        assert!(!out.contains("*** End Patch"));
+        assert!(!out.contains("@@ -10"));
+        assert!(out.contains("*** Update File: a.rs\n"));
+        assert!(out.contains("  10|ctx\n") || out.contains("  10| ctx\n"));
+        assert!(out.contains("-  11|old\n"));
+        assert!(out.contains("+  11|new\n"));
+        assert!(out.contains("+  12|added\n"));
     }
 
     #[test]
@@ -2801,6 +3041,8 @@ mod tests {
         assert!(!content.contains("*** Begin Patch"));
         assert!(content.contains("*** Add File: one.txt"));
         assert!(content.contains("*** Add File: two.txt"));
+        assert!(content.contains("+   1|one"));
+        assert!(content.contains("+   1|two"));
     }
 
     #[test]
@@ -2826,7 +3068,11 @@ mod tests {
         assert!(!content.contains("Edited src/main.rs"));
         assert!(content.contains("```diff\n"));
         assert!(content.contains("*** Add File: src/main.rs"));
-        assert!(content.contains("+fn main() {}"));
+        // Add File numbers from line 1 (Claude Code–style gutter).
+        assert!(
+            content.contains("+   1|fn main() {}"),
+            "expected numbered add line, got:\n{content}"
+        );
     }
 
     #[test]
@@ -2850,7 +3096,10 @@ mod tests {
         assert!(!content.contains("Edited hello.txt"));
         assert!(content.contains("```diff\n"));
         assert!(content.contains("*** Add File: hello.txt"));
-        assert!(content.contains("+a\n+b\n"));
+        assert!(
+            content.contains("+   1|a\n+   2|b\n"),
+            "expected numbered add lines, got:\n{content}"
+        );
     }
 
     #[test]

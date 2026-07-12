@@ -1,83 +1,39 @@
+//! HTTP/WebSocket server core: session lifecycle, turns, and route wiring.
+
+use crate::routes;
+use crate::state::{
+    AppState, NaviServerConfig, SharedState, err_resp, handle_rejection, ok_json, with_auth,
+    with_state,
+};
 use anyhow::Result;
 use futures_util::{SinkExt, StreamExt};
-use navi_sdk::{ApprovalDecision, NaviEngine, NaviEngineBuilder, NaviTurnRequest, RuntimeEvent};
-use serde::{Deserialize, Serialize};
+use navi_sdk::{ApprovalDecision, NaviEngineBuilder, NaviTurnRequest};
+use serde::Deserialize;
 use std::convert::Infallible;
 use std::path::PathBuf;
 use std::sync::Arc;
-use tokio::sync::{RwLock, broadcast};
 use tracing::{info, warn};
 use warp::Filter;
 use warp::Reply;
 use warp::http::StatusCode;
 use warp::ws::{Message, WebSocket};
 
-// ── Server config ────────────────────────────────────────────────────────
-
-#[derive(Debug, Clone)]
-pub struct NaviServerConfig {
-    pub bind: String,
-    pub port: u16,
-    pub shared_secret: String,
-    pub project_dir: String,
-}
-
-// ── Shared state ─────────────────────────────────────────────────────────
-
-type Engine = Arc<RwLock<NaviEngine>>;
-
-struct AppState {
-    engine: Engine,
-    secret: String,
-    /// Per-session broadcast senders for event streaming.
-    event_senders: RwLock<std::collections::HashMap<String, broadcast::Sender<RuntimeEvent>>>,
-}
-
-impl AppState {
-    fn new(engine: NaviEngine, secret: String) -> Self {
-        Self {
-            engine: Arc::new(RwLock::new(engine)),
-            secret,
-            event_senders: RwLock::new(std::collections::HashMap::new()),
-        }
-    }
-
-    async fn register_sender(&self, session_id: &str) -> broadcast::Sender<RuntimeEvent> {
-        let (tx, _) = broadcast::channel(2048);
-        self.event_senders
-            .write()
-            .await
-            .insert(session_id.to_string(), tx.clone());
-        tx
-    }
-
-    async fn get_sender(&self, session_id: &str) -> Option<broadcast::Sender<RuntimeEvent>> {
-        self.event_senders.read().await.get(session_id).cloned()
-    }
-
-    async fn remove_sender(&self, session_id: &str) {
-        self.event_senders.write().await.remove(session_id);
-    }
-}
-
-type SharedState = Arc<AppState>;
-
-// ── Request/Response DTOs ────────────────────────────────────────────────
+// ── Request DTOs (core session surface) ──────────────────────────────────
 
 #[derive(Deserialize)]
 struct StartSessionBody {
-    #[serde(default)]
+    #[serde(default, alias = "projectDir")]
     project_dir: Option<PathBuf>,
-    #[serde(default)]
+    #[serde(default, alias = "sessionId")]
     session_id: Option<String>,
-    #[serde(default)]
+    #[serde(default, alias = "activeSkills")]
     active_skills: Vec<String>,
 }
 
 #[derive(Deserialize)]
 struct TurnBody {
     message: String,
-    #[serde(default)]
+    #[serde(default, alias = "contentParts")]
     content_parts: Vec<navi_core::ContentPart>,
     #[serde(default)]
     thinking: Option<navi_core::ThinkingConfig>,
@@ -85,6 +41,7 @@ struct TurnBody {
 
 #[derive(Deserialize)]
 struct ApprovalBody {
+    #[serde(alias = "requestId")]
     request_id: String,
     approved: bool,
     #[serde(default)]
@@ -93,6 +50,7 @@ struct ApprovalBody {
 
 #[derive(Deserialize)]
 struct QuestionBody {
+    #[serde(alias = "questionId")]
     question_id: String,
     answer: String,
     #[serde(default)]
@@ -101,23 +59,25 @@ struct QuestionBody {
 
 #[derive(Deserialize)]
 struct SelectModelBody {
+    #[serde(alias = "providerId")]
     provider_id: String,
     model: String,
-    #[serde(default)]
-    save_target: String, // "auto" | "project" | "global" | "none"
+    #[serde(default, alias = "saveTarget")]
+    save_target: String,
 }
 
 #[derive(Deserialize)]
 struct SyncModelsBody {
+    #[serde(alias = "providerId")]
     provider_id: String,
-    #[serde(default)]
+    #[serde(default, alias = "saveTarget")]
     save_target: String,
 }
 
 #[derive(Deserialize)]
 struct SetGoalBody {
     objective: String,
-    #[serde(default)]
+    #[serde(default, alias = "tokenBudget")]
     token_budget: Option<i64>,
 }
 
@@ -127,33 +87,11 @@ struct SetSkillsBody {
 }
 
 #[derive(Deserialize)]
-#[allow(dead_code)]
-struct AddContextBody {
-    source: String,
-    payload: serde_json::Value,
-}
-
-#[derive(Deserialize)]
 struct SetModelBody {
+    /// Provider id (accept camelCase aliases from mobile clients).
+    #[serde(alias = "providerId", alias = "provider_id")]
     provider: String,
     model: String,
-}
-
-#[derive(Serialize)]
-struct ErrorResp {
-    error: String,
-}
-
-// ── Auth filter ──────────────────────────────────────────────────────────
-
-fn with_auth(secret: &'static str) -> impl Filter<Extract = (), Error = warp::Rejection> + Clone {
-    warp::header::exact("x-navi-secret", secret)
-}
-
-fn with_state(
-    state: SharedState,
-) -> impl Filter<Extract = (SharedState,), Error = Infallible> + Clone {
-    warp::any().map(move || state.clone())
 }
 
 // ── Server ───────────────────────────────────────────────────────────────
@@ -179,7 +117,11 @@ impl NaviServer {
 
         let engine = NaviEngineBuilder::from_project(&project_dir).build()?;
         let secret: &'static str = Box::leak(self.config.shared_secret.clone().into_boxed_str());
-        let state = Arc::new(AppState::new(engine, self.config.shared_secret.clone()));
+        let state = Arc::new(AppState::new(
+            engine,
+            self.config.shared_secret.clone(),
+            project_dir.clone(),
+        ));
 
         let sf = with_state(state.clone());
         let af = with_auth(secret);
@@ -214,15 +156,19 @@ impl NaviServer {
                             "provider": lc.config.model.provider,
                             "name": lc.config.model.name,
                         },
-                        "project_dir": lc.project_config_path,
+                        "projectDir": s.home_project,
+                        "project_dir": s.home_project,
+                        "projectConfigPath": lc.project_config_path,
+                        "dataDir": lc.data_dir,
                         "data_dir": lc.data_dir,
                     }))
                     .into_response(),
                 )
             });
 
-        // ── Skills ───────────────────────────────────────────────────────
+        // ── Skills list (also expanded in skills_mcp module) ─────────────
         let skills = warp::path("skills")
+            .and(warp::path::end())
             .and(warp::get())
             .and(sf.clone())
             .and(af.clone())
@@ -234,23 +180,9 @@ impl NaviServer {
                 }
             });
 
-        // ── Credentials ──��───────────────────────────────────────────────
-        let credentials = warp::path("credentials")
-            .and(warp::get())
-            .and(sf.clone())
-            .and(af.clone())
-            .and_then(|s: SharedState| async move {
-                let engine = s.engine.read().await;
-                match engine.list_provider_accounts() {
-                    Ok(accounts) => {
-                        Ok::<_, Infallible>(warp::reply::json(&accounts).into_response())
-                    }
-                    Err(e) => Ok(err_resp(e.to_string(), StatusCode::INTERNAL_SERVER_ERROR)),
-                }
-            });
-
         // ── Sessions list ────────────────────────────────────────────────
         let list_sessions = warp::path("sessions")
+            .and(warp::path::end())
             .and(warp::get())
             .and(sf.clone())
             .and(af.clone())
@@ -262,6 +194,7 @@ impl NaviServer {
 
         // ── Start session ────────────────────────────────────────────────
         let start_session = warp::path("sessions")
+            .and(warp::path::end())
             .and(warp::post())
             .and(warp::body::json())
             .and(sf.clone())
@@ -276,7 +209,6 @@ impl NaviServer {
                 };
                 match engine.start_session(req).await {
                     Ok(info) => {
-                        // Forward events from engine to our broadcast channel
                         let tx = s.register_sender(&info.id).await;
                         let engine_clone = s.engine.clone();
                         let session_id_clone = info.id.clone();
@@ -309,8 +241,7 @@ impl NaviServer {
             });
 
         // ── Saved sessions ───────────────────────────────────────────────
-        let list_saved = warp::path("sessions")
-            .and(warp::path("saved"))
+        let list_saved = warp::path!("sessions" / "saved")
             .and(warp::get())
             .and(sf.clone())
             .and(af.clone())
@@ -322,22 +253,59 @@ impl NaviServer {
                 }
             });
 
-        // ── Load saved session ───────────────────────────────────────────
         let load_saved = warp::path!("sessions" / "load" / String)
             .and(warp::post())
             .and(sf.clone())
             .and(af.clone())
             .and_then(|session_id: String, s: SharedState| async move {
                 let engine = s.engine.read().await;
-                match engine.load_saved_session(&session_id) {
-                    Ok(snapshot) => {
-                        Ok::<_, Infallible>(warp::reply::json(&snapshot).into_response())
+                let snapshot = match engine.load_saved_session(&session_id) {
+                    Ok(snap) => snap,
+                    Err(e) => {
+                        return Ok::<_, Infallible>(err_resp(e.to_string(), StatusCode::NOT_FOUND));
                     }
-                    Err(e) => Ok(err_resp(e.to_string(), StatusCode::NOT_FOUND)),
+                };
+
+                let req = navi_sdk::NaviSessionRequest {
+                    project_dir: Some(snapshot.project.clone()),
+                    session_id: Some(snapshot.id.as_str().to_string()),
+                    initial_events: snapshot.events.clone(),
+                    initial_created_at: (snapshot.created_at > 0).then_some(snapshot.created_at),
+                    initial_updated_at: (snapshot.updated_at > 0).then_some(snapshot.updated_at),
+                    initial_goal: snapshot.goal.clone(),
+                    ..Default::default()
+                };
+
+                match engine.start_session(req).await {
+                    Ok(info) => {
+                        let tx = s.register_sender(&info.id).await;
+                        let engine_clone = s.engine.clone();
+                        let session_id_clone = info.id.clone();
+                        tokio::spawn(async move {
+                            let rx = {
+                                let eng = engine_clone.read().await;
+                                eng.subscribe_events(&session_id_clone)
+                            };
+                            if let Ok(mut rx) = rx {
+                                while let Ok(event) = rx.recv().await {
+                                    let _ = tx.send(event);
+                                }
+                            }
+                        });
+                        Ok(warp::reply::json(&serde_json::json!({
+                            "id": info.id,
+                            "projectDir": info.project_dir,
+                            "model": info.model,
+                            "provider": info.provider,
+                            "title": snapshot.title,
+                            "snapshot": snapshot,
+                        }))
+                        .into_response())
+                    }
+                    Err(e) => Ok(err_resp(e.to_string(), StatusCode::INTERNAL_SERVER_ERROR)),
                 }
             });
 
-        // ── Session info ─────────────────────────────────────────────────
         let session_info = warp::path!("sessions" / String)
             .and(warp::get())
             .and(sf.clone())
@@ -363,14 +331,16 @@ impl NaviServer {
                 }
             });
 
-        // ── Send turn ────────────────────────────────────────────────────
         let send_turn = warp::path!("sessions" / String / "turns")
             .and(warp::post())
             .and(warp::body::json())
             .and(sf.clone())
             .and(af.clone())
             .and_then(|sid: String, body: TurnBody, s: SharedState| async move {
-                let engine = s.engine.read().await;
+                // Clone engine and run the turn on a detached task so dropping the
+                // HTTP connection (phone app backgrounded/killed) does NOT cancel
+                // the agent mid-turn. Events still flow over the session WebSocket.
+                let engine = s.engine.read().await.clone();
                 let req = NaviTurnRequest {
                     session_id: sid,
                     message: body.message,
@@ -378,19 +348,25 @@ impl NaviServer {
                     context_packets: Vec::new(),
                     thinking: body.thinking,
                 };
-                match engine.send_turn(req).await {
-                    Ok(resp) => Ok::<_, Infallible>(
+                let join = tokio::spawn(async move { engine.send_turn(req).await });
+                match join.await {
+                    Ok(Ok(resp)) => Ok::<_, Infallible>(
                         warp::reply::json(&serde_json::json!({
                             "sessionId": resp.session_id,
                             "text": resp.text,
                         }))
                         .into_response(),
                     ),
-                    Err(e) => Ok(err_resp(e.to_string(), StatusCode::INTERNAL_SERVER_ERROR)),
+                    Ok(Err(e)) => {
+                        Ok(err_resp(e.to_string(), StatusCode::INTERNAL_SERVER_ERROR))
+                    }
+                    Err(e) => Ok(err_resp(
+                        format!("turn task failed: {e}"),
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                    )),
                 }
             });
 
-        // ── Close session ────────────────────────────────────────────────
         let close_session = warp::path!("sessions" / String / "close")
             .and(warp::post())
             .and(sf.clone())
@@ -406,7 +382,6 @@ impl NaviServer {
                 }
             });
 
-        // ── Cancel turn ──────────────────────────────────────────────────
         let cancel_turn = warp::path!("sessions" / String / "cancel")
             .and(warp::post())
             .and(sf.clone())
@@ -419,7 +394,6 @@ impl NaviServer {
                 }
             });
 
-        // ── Approve ──────────────────────────────────────────────────────
         let approve = warp::path!("sessions" / String / "approve")
             .and(warp::post())
             .and(warp::body::json())
@@ -431,22 +405,28 @@ impl NaviServer {
                     if let Some(ref msg) = body.message {
                         tracing::info!(session = %sid, request = %body.request_id, "approval approved: {msg}");
                     }
-                    ApprovalDecision::Approved { id: body.request_id.clone() }
+                    ApprovalDecision::Approved {
+                        id: body.request_id.clone(),
+                    }
                 } else {
                     if let Some(ref msg) = body.message {
                         tracing::info!(session = %sid, request = %body.request_id, "approval denied: {msg}");
                     }
-                    ApprovalDecision::Denied { id: body.request_id }
+                    ApprovalDecision::Denied {
+                        id: body.request_id,
+                    }
                 };
                 match engine.resolve_approval(&sid, decision).await {
-                    Ok(consumed) => Ok::<_, Infallible>(warp::reply::json(&serde_json::json!({
-                        "consumed": consumed
-                    })).into_response()),
+                    Ok(consumed) => Ok::<_, Infallible>(
+                        warp::reply::json(&serde_json::json!({
+                            "consumed": consumed
+                        }))
+                        .into_response(),
+                    ),
                     Err(e) => Ok(err_resp(e.to_string(), StatusCode::BAD_REQUEST)),
                 }
             });
 
-        // ── Deny ─────────────────────────────────────────────────────────
         let deny = warp::path!("sessions" / String / "deny")
             .and(warp::post())
             .and(warp::body::json())
@@ -470,7 +450,6 @@ impl NaviServer {
                 },
             );
 
-        // ── Question ─────────────────────────────────────────────────────
         let question = warp::path!("sessions" / String / "question")
             .and(warp::post())
             .and(warp::body::json())
@@ -507,7 +486,6 @@ impl NaviServer {
                 },
             );
 
-        // ── Set goal ─────────────────────────────────────────────────────
         let set_goal = warp::path!("sessions" / String / "goal")
             .and(warp::post())
             .and(warp::body::json())
@@ -526,7 +504,6 @@ impl NaviServer {
                 },
             );
 
-        // ── Get goal ─────────────────────────────────────────────────────
         let get_goal = warp::path!("sessions" / String / "goal")
             .and(warp::get())
             .and(sf.clone())
@@ -539,7 +516,6 @@ impl NaviServer {
                 }
             });
 
-        // ── Clear goal ───────────────────────────────────────────────────
         let clear_goal = warp::path!("sessions" / String / "goal")
             .and(warp::delete())
             .and(sf.clone())
@@ -552,7 +528,6 @@ impl NaviServer {
                 }
             });
 
-        // ── Snapshot session ─────────────────────────────────────────────
         let snapshot = warp::path!("sessions" / String / "snapshot")
             .and(warp::get())
             .and(sf.clone())
@@ -565,7 +540,6 @@ impl NaviServer {
                 }
             });
 
-        // ── Set session model ────────────────────────────────────────────
         let set_session_model = warp::path!("sessions" / String / "model")
             .and(warp::post())
             .and(warp::body::json())
@@ -581,7 +555,6 @@ impl NaviServer {
                 },
             );
 
-        // ── Set session skills ─────────────────────────────────────────���─
         let set_session_skills = warp::path!("sessions" / String / "skills")
             .and(warp::post())
             .and(warp::body::json())
@@ -597,7 +570,6 @@ impl NaviServer {
                 },
             );
 
-        // ── MCP servers ──────────────────────────────────────────────────
         let mcp_servers = warp::path!("sessions" / String / "mcp")
             .and(warp::get())
             .and(sf.clone())
@@ -610,8 +582,8 @@ impl NaviServer {
                 }
             });
 
-        // ── Background commands ──────────────────────────────────────────
         let bg_commands = warp::path!("sessions" / String / "background")
+            .and(warp::path::end())
             .and(warp::get())
             .and(sf.clone())
             .and(af.clone())
@@ -623,7 +595,6 @@ impl NaviServer {
                 }
             });
 
-        // ── Delete saved session ─────────────────────────────────────────
         let delete_saved = warp::path!("sessions" / String / "delete")
             .and(warp::post())
             .and(sf.clone())
@@ -641,21 +612,14 @@ impl NaviServer {
                 }
             });
 
-        // ── Global model select ──────────────────────────────────────────
-        let select_model = warp::path("model")
-            .and(warp::path("select"))
+        let select_model = warp::path!("model" / "select")
             .and(warp::post())
             .and(warp::body::json())
             .and(sf.clone())
             .and(af.clone())
             .and_then(|body: SelectModelBody, s: SharedState| async move {
                 let engine = s.engine.read().await;
-                let save = match body.save_target.as_str() {
-                    "project" => navi_sdk::NaviConfigSaveTarget::Project,
-                    "global" => navi_sdk::NaviConfigSaveTarget::Global,
-                    "none" => navi_sdk::NaviConfigSaveTarget::None,
-                    _ => navi_sdk::NaviConfigSaveTarget::Auto,
-                };
+                let save = crate::state::parse_save_target(&body.save_target);
                 let req = navi_sdk::NaviModelSelectionRequest {
                     provider_id: body.provider_id,
                     model: body.model,
@@ -675,21 +639,14 @@ impl NaviServer {
                 }
             });
 
-        // ── Sync provider models ─────────────────────────────────────────
-        let sync_models = warp::path("providers")
-            .and(warp::path("sync"))
+        let sync_models = warp::path!("providers" / "sync")
             .and(warp::post())
             .and(warp::body::json())
             .and(sf.clone())
             .and(af.clone())
             .and_then(|body: SyncModelsBody, s: SharedState| async move {
                 let engine = s.engine.read().await;
-                let save = match body.save_target.as_str() {
-                    "project" => navi_sdk::NaviConfigSaveTarget::Project,
-                    "global" => navi_sdk::NaviConfigSaveTarget::Global,
-                    "none" => navi_sdk::NaviConfigSaveTarget::None,
-                    _ => navi_sdk::NaviConfigSaveTarget::Auto,
-                };
+                let save = crate::state::parse_save_target(&body.save_target);
                 match engine.sync_provider_models(&body.provider_id, save).await {
                     Ok(report) => Ok::<_, Infallible>(
                         warp::reply::json(&serde_json::json!({
@@ -712,9 +669,7 @@ impl NaviServer {
                 }
             });
 
-        // ── Sync all models ──────────────────────────────────────────────
-        let sync_all = warp::path("providers")
-            .and(warp::path("sync-all"))
+        let sync_all = warp::path!("providers" / "sync-all")
             .and(warp::post())
             .and(warp::query::<std::collections::HashMap<String, String>>())
             .and(sf.clone())
@@ -722,12 +677,9 @@ impl NaviServer {
             .and_then(
                 |params: std::collections::HashMap<String, String>, s: SharedState| async move {
                     let engine = s.engine.read().await;
-                    let save = match params.get("save").map(|s| s.as_str()) {
-                        Some("project") => navi_sdk::NaviConfigSaveTarget::Project,
-                        Some("global") => navi_sdk::NaviConfigSaveTarget::Global,
-                        Some("none") => navi_sdk::NaviConfigSaveTarget::None,
-                        _ => navi_sdk::NaviConfigSaveTarget::Auto,
-                    };
+                    let save = crate::state::parse_save_target(
+                        params.get("save").map(|s| s.as_str()).unwrap_or("auto"),
+                    );
                     match engine.sync_models(save).await {
                         Ok(report) => Ok::<_, Infallible>(
                             warp::reply::json(&serde_json::json!({
@@ -742,7 +694,6 @@ impl NaviServer {
                 },
             );
 
-        // ── Usage report ─────────────────────────────────────────────────
         let usage = warp::path("usage")
             .and(warp::get())
             .and(sf.clone())
@@ -755,7 +706,6 @@ impl NaviServer {
                 }
             });
 
-        // ── WebSocket events ─────────────────────────────────────────────
         let ws_events = warp::path!("sessions" / String / "events")
             .and(warp::ws())
             .and(warp::query::<std::collections::HashMap<String, String>>())
@@ -769,12 +719,13 @@ impl NaviServer {
                 },
             );
 
-        // ── Combine all routes ───────────────────────────────────────────
+        // Domain modules (memory, voice, plugins, auth, session_ops, skills_mcp, registry)
+        let domain = routes::all_routes(state.clone(), secret);
+
         let routes = health
             .or(models)
             .or(get_config)
             .or(skills)
-            .or(credentials)
             .or(list_sessions)
             .or(start_session)
             .or(list_saved)
@@ -800,6 +751,7 @@ impl NaviServer {
             .or(sync_all)
             .or(usage)
             .or(ws_events)
+            .or(domain)
             .recover(handle_rejection);
 
         let addr: std::net::IpAddr = self.config.bind.parse().unwrap_or([0, 0, 0, 0].into());
@@ -828,7 +780,6 @@ async fn handle_ws(
 
     let (mut ws_tx, mut ws_rx) = ws.split();
 
-    // Get or create broadcast channel for this session
     let tx = match state.get_sender(&session_id).await {
         Some(tx) => tx,
         None => state.register_sender(&session_id).await,
@@ -854,44 +805,4 @@ async fn handle_ws(
 
     forward.abort();
     info!("WS disconnected for session {}", session_id);
-}
-
-// ── Helpers ──────────────────────────────────────────────────────────────
-
-fn ok_json(message: &str) -> warp::reply::Response {
-    warp::reply::json(&serde_json::json!({"status": message})).into_response()
-}
-
-fn err_resp(message: String, code: StatusCode) -> warp::reply::Response {
-    warp::reply::with_status(warp::reply::json(&ErrorResp { error: message }), code).into_response()
-}
-
-async fn handle_rejection(err: warp::Rejection) -> Result<impl warp::Reply, Infallible> {
-    let (code, msg) = if err.is_not_found() {
-        (StatusCode::NOT_FOUND, "not found".to_string())
-    } else if err.find::<warp::reject::MethodNotAllowed>().is_some() {
-        (
-            StatusCode::METHOD_NOT_ALLOWED,
-            "method not allowed".to_string(),
-        )
-    } else if err.find::<warp::reject::MissingHeader>().is_some() {
-        (
-            StatusCode::UNAUTHORIZED,
-            "unauthorized: missing X-Navi-Secret".to_string(),
-        )
-    } else if err
-        .find::<warp::filters::body::BodyDeserializeError>()
-        .is_some()
-    {
-        (StatusCode::BAD_REQUEST, "invalid request body".to_string())
-    } else {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "internal server error".to_string(),
-        )
-    };
-    Ok(warp::reply::with_status(
-        warp::reply::json(&ErrorResp { error: msg }),
-        code,
-    ))
 }

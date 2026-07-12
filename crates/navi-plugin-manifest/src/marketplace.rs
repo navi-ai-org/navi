@@ -6,9 +6,12 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-/// Default registry catalog URL (Git repository raw `catalog.json`).
+/// Default registry catalog URL (official NAVI marketplace on GitHub).
+///
+/// All marketplace packages (tools, skills, MCP adapters, messaging bots)
+/// install as WASM plugin packages — nothing is hardcoded in the binary.
 pub const DEFAULT_REGISTRY_URL: &str =
-    "https://raw.githubusercontent.com/navi-engine/plugin-registry/main/catalog.json";
+    "https://raw.githubusercontent.com/navi-ai-org/navi-marketplace/main/catalog.json";
 
 /// Top-level marketplace catalog served from a registry repository.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -16,7 +19,21 @@ pub struct PluginCatalog {
     pub version: u32,
     #[serde(default)]
     pub updated_at: Option<String>,
+    /// Optional human description of this catalog snapshot.
+    #[serde(default)]
+    pub description: Option<String>,
     pub plugins: Vec<PluginCatalogEntry>,
+}
+
+/// Package kind for marketplace UX (all kinds install as WASM plugins).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PluginCatalogKind {
+    #[default]
+    Plugin,
+    Skill,
+    Mcp,
+    Integration,
 }
 
 /// One installable plugin published in the registry.
@@ -32,6 +49,12 @@ pub struct PluginCatalogEntry {
     pub artifact_dir: String,
     #[serde(default)]
     pub wasm_hash: Option<String>,
+    /// Marketplace category: `plugin` | `skill` | `mcp` | `integration`.
+    #[serde(default)]
+    pub kind: PluginCatalogKind,
+    /// Discovery tags (e.g. `discord`, `search`, `mcp`).
+    #[serde(default)]
+    pub tags: Vec<String>,
 }
 
 /// Errors from marketplace operations.
@@ -79,7 +102,8 @@ pub fn find_catalog_entry<'a>(
         .ok_or_else(|| MarketplaceError::NotFound(plugin_id.to_string()))
 }
 
-/// Search catalog entries (case-insensitive substring on id, name, description).
+/// Search catalog entries (case-insensitive substring on id, name, description,
+/// kind, and tags — so "mcp", "discord", "skill" find the right packages).
 pub fn search_catalog<'a>(catalog: &'a PluginCatalog, query: &str) -> Vec<&'a PluginCatalogEntry> {
     let q = query.trim().to_lowercase();
     if q.is_empty() {
@@ -89,9 +113,17 @@ pub fn search_catalog<'a>(catalog: &'a PluginCatalog, query: &str) -> Vec<&'a Pl
         .plugins
         .iter()
         .filter(|p| {
+            let kind = match p.kind {
+                PluginCatalogKind::Plugin => "plugin",
+                PluginCatalogKind::Skill => "skill",
+                PluginCatalogKind::Mcp => "mcp",
+                PluginCatalogKind::Integration => "integration",
+            };
             p.id.to_lowercase().contains(&q)
                 || p.name.to_lowercase().contains(&q)
                 || p.description.to_lowercase().contains(&q)
+                || kind.contains(&q)
+                || p.tags.iter().any(|t| t.to_lowercase().contains(&q))
         })
         .collect()
 }

@@ -1,7 +1,8 @@
-/// Remote NAVI engine client.
+/// Remote NAVI engine client — full navi-server (gateway) binding.
 ///
-/// Connects to a navi-server instance over HTTP/WebSocket and provides
-/// the same API surface as the local NaviEngine from navi_agent.
+/// Connects over HTTP/WebSocket and covers the complete gateway surface:
+/// sessions, session ops, memory, voice, plugins, credentials/OAuth,
+/// skills/MCP/routing, registry.
 import 'dart:async';
 import 'dart:convert';
 
@@ -10,117 +11,168 @@ import 'package:web_socket_channel/web_socket_channel.dart';
 
 import 'types.dart';
 
-/// Remote connection to a NAVI server.
+part 'engine_session_ops.dart';
+part 'engine_memory.dart';
+part 'engine_voice.dart';
+part 'engine_plugins.dart';
+part 'engine_auth.dart';
+part 'engine_skills_mcp.dart';
+part 'engine_registry.dart';
+
+/// Remote connection to a NAVI gateway (`navi-server`).
 ///
 /// Use [NaviRemoteEngine.connect] to create an instance. Always call
-/// [dispose] when done to clean up HTTP clients and WebSocket connections.
+/// [dispose] when done.
 class NaviRemoteEngine {
   final String _baseUrl;
   final String _secret;
   final http.Client _httpClient;
   bool _disposed = false;
 
+  /// Open WebSocket channels owned by this client (closed on [dispose]).
+  final List<WebSocketChannel> _channels = [];
+
   NaviRemoteEngine._(this._baseUrl, this._secret, this._httpClient);
 
-  /// Connects to a NAVI server at the given [host] and [port].
+  /// Base URL including scheme and port, e.g. `http://100.x.y.z:9800`.
+  String get baseUrl => _baseUrl;
+
+  /// Test / advanced constructor that injects an [http.Client].
   ///
-  /// [secret] is the shared secret for authentication (X-Navi-Secret header).
-  /// Set [useTls] to true if the server uses HTTPS.
+  /// Does not perform a health check. Prefer [connect] for production.
+  factory NaviRemoteEngine.forTesting({
+    required String baseUrl,
+    required String secret,
+    required http.Client client,
+  }) {
+    return NaviRemoteEngine._(baseUrl, secret, client);
+  }
+
+  /// Connects to a NAVI server at the given [host] and [port].
   static Future<NaviRemoteEngine> connect({
     required String host,
     int port = 9800,
     required String secret,
     bool useTls = false,
+    bool skipHealthCheck = false,
   }) async {
     final scheme = useTls ? 'https' : 'http';
     final baseUrl = '$scheme://$host:$port';
     final client = http.Client();
-
     final engine = NaviRemoteEngine._(baseUrl, secret, client);
 
-    // Verify connectivity with a health check.
-    try {
-      final response = await client.get(Uri.parse('$baseUrl/health'));
-      if (response.statusCode != 200) {
-        throw NaviRemoteException(
-          'Server health check failed: ${response.statusCode}',
-        );
+    if (!skipHealthCheck) {
+      try {
+        final response = await client.get(Uri.parse('$baseUrl/health'));
+        if (response.statusCode != 200) {
+          throw NaviRemoteException(
+            'Server health check failed: ${response.statusCode}',
+            statusCode: response.statusCode,
+          );
+        }
+      } catch (e) {
+        client.close();
+        if (e is NaviRemoteException) rethrow;
+        throw NaviRemoteException('Cannot reach NAVI server at $baseUrl: $e');
       }
-    } catch (e) {
-      client.close();
-      if (e is NaviRemoteException) rethrow;
-      throw NaviRemoteException('Cannot reach NAVI server at $baseUrl: $e');
     }
 
     return engine;
   }
 
-  /// Releases all resources (HTTP client, WebSocket connections).
+  /// Releases HTTP client and WebSocket connections.
   void dispose() {
-    if (!_disposed) {
-      _disposed = true;
-      _httpClient.close();
+    if (_disposed) return;
+    _disposed = true;
+    for (final ch in _channels) {
+      try {
+        ch.sink.close();
+      } catch (_) {}
     }
+    _channels.clear();
+    _httpClient.close();
   }
+
+  // ── Health / config ──────────────────────────────────────────
+
+  /// `GET /health` (no auth).
+  Future<JsonMap> health() async {
+    final response = await _httpClient.get(Uri.parse('$_baseUrl/health'));
+    return _decodeResponse(response, method: 'GET', path: '/health');
+  }
+
+  /// `GET /config`.
+  Future<EngineConfig> loadedConfig() async {
+    final json = await _get('/config');
+    return EngineConfig.fromJson(json);
+  }
+
+  /// `GET /usage`.
+  Future<JsonMap> usageReport() => _get('/usage');
 
   // ── Sessions ─────────────────────────────────────────────────
 
-  /// Starts a new agent session on the server.
+  /// `POST /sessions`.
+  ///
+  /// **Important:** send each field only once. serde rejects JSON that contains
+  /// both `project_dir` and `projectDir` (duplicate field) → "invalid request body".
   Future<SessionInfo> startSession({
     String? sessionId,
     String? projectDir,
     List<String>? activeSkills,
   }) async {
     final body = <String, dynamic>{};
-    if (sessionId != null) body['sessionId'] = sessionId;
-    if (projectDir != null) body['projectDir'] = projectDir;
+    // Prefer camelCase only (server aliases accept these).
+    if (sessionId != null && sessionId.isNotEmpty) {
+      body['sessionId'] = sessionId;
+    }
+    if (projectDir != null && projectDir.isNotEmpty) {
+      body['projectDir'] = projectDir;
+    }
     if (activeSkills != null && activeSkills.isNotEmpty) {
       body['activeSkills'] = activeSkills;
     }
-
     final json = await _post('/sessions', body);
     return SessionInfo.fromJson(json);
   }
 
-  /// Returns the IDs of all active sessions on the server.
+  /// `GET /sessions`.
   Future<List<String>> sessionIds() async {
     final json = await _get('/sessions');
-    return (json['value'] as List<dynamic>? ?? json as List<dynamic>)
-        .map((e) => e as String)
+    return asStringList(json['value'] ?? json);
+  }
+
+  /// `GET /sessions/:id`.
+  Future<JsonMap> sessionInfo(String sessionId) =>
+      _get('/sessions/$sessionId');
+
+  /// `POST /sessions/:id/close`.
+  Future<bool> closeSession(String sessionId) async {
+    final json = await _post('/sessions/$sessionId/close', {});
+    if (json['removed'] == true) return true;
+    final status = json['status']?.toString();
+    return status == 'closed';
+  }
+
+  /// `GET /sessions/:id/snapshot`.
+  Future<JsonMap> snapshotSession(String sessionId) =>
+      _get('/sessions/$sessionId/snapshot');
+
+  /// `GET /sessions/saved`.
+  Future<List<SavedSessionInfo>> listSavedSessions() async {
+    final json = await _get('/sessions/saved');
+    return asJsonMapList(json['value'] ?? json)
+        .map(SavedSessionInfo.fromJson)
         .toList();
   }
 
-  /// Gets info about a specific active session.
-  Future<Map<String, dynamic>> sessionInfo(String sessionId) async {
-    return _get('/sessions/$sessionId');
+  /// `POST /sessions/load/:id` — load + resume live session.
+  Future<LoadedSession> loadSavedSession(String sessionId) async {
+    final json = await _post('/sessions/load/$sessionId', {});
+    return LoadedSession.fromJson(json);
   }
 
-  /// Closes an active session on the server.
-  Future<bool> closeSession(String sessionId) async {
-    final json = await _post('/sessions/$sessionId/close', {});
-    return json['removed'] as bool? ?? json['status'] == 'closed';
-  }
-
-  /// Takes a point-in-time snapshot of a session.
-  Future<Map<String, dynamic>> snapshotSession(String sessionId) async {
-    return _get('/sessions/$sessionId/snapshot');
-  }
-
-  // ── Saved sessions ───────────────────────────────────────────
-
-  /// Lists all persisted sessions with titles and timestamps.
-  Future<List<Map<String, dynamic>>> listSavedSessions() async {
-    final json = await _get('/sessions/saved');
-    final list = json['value'] as List<dynamic>? ?? json as List<dynamic>;
-    return list.cast<Map<String, dynamic>>();
-  }
-
-  /// Loads a persisted session snapshot by ID.
-  Future<Map<String, dynamic>> loadSavedSession(String sessionId) async {
-    return _post('/sessions/load/$sessionId', {});
-  }
-
-  /// Deletes a persisted session. Returns true if a session was removed.
+  /// `POST /sessions/:id/delete`.
   Future<bool> deleteSavedSession(String sessionId) async {
     final json = await _post('/sessions/$sessionId/delete', {});
     return json['deleted'] as bool? ?? false;
@@ -128,31 +180,31 @@ class NaviRemoteEngine {
 
   // ── Turns ────────────────────────────────────────────────────
 
-  /// Sends a user message to an active session and waits for the response.
+  /// `POST /sessions/:id/turns`.
   Future<TurnResponse> sendTurn(
     String sessionId,
     String message, {
-    List<Map<String, dynamic>>? contentParts,
-    Map<String, dynamic>? thinking,
+    List<JsonMap>? contentParts,
+    JsonMap? thinking,
   }) async {
     final body = <String, dynamic>{'message': message};
+    // Single key only — dual snake/camel breaks serde with "duplicate field".
     if (contentParts != null && contentParts.isNotEmpty) {
       body['contentParts'] = contentParts;
     }
     if (thinking != null) body['thinking'] = thinking;
-
     final json = await _post('/sessions/$sessionId/turns', body);
     return TurnResponse.fromJson(json);
   }
 
-  /// Cancels the currently active turn for the given session.
+  /// `POST /sessions/:id/cancel`.
   Future<void> cancelTurn(String sessionId) async {
     await _post('/sessions/$sessionId/cancel', {});
   }
 
   // ── Approvals ────────────────────────────────────────────────
 
-  /// Approves a pending tool approval request.
+  /// `POST /sessions/:id/approve`.
   Future<bool> approve(
     String sessionId,
     String requestId, {
@@ -167,7 +219,7 @@ class NaviRemoteEngine {
     return json['consumed'] as bool? ?? false;
   }
 
-  /// Denies a pending tool approval request.
+  /// `POST /sessions/:id/deny`.
   Future<bool> deny(
     String sessionId,
     String requestId, {
@@ -184,32 +236,30 @@ class NaviRemoteEngine {
 
   // ── Questions ────────────────────────────────────────────────
 
-  /// Resolves a pending interactive question with an answer.
+  /// `POST /sessions/:id/question` with answer.
   Future<bool> resolveQuestion(
     String sessionId,
     String questionId,
-    String answer,
-  ) async {
-    final json = await _post('/sessions/$sessionId/question', {
+    String answer, {
+    String? custom,
+  }) async {
+    final body = <String, dynamic>{
       'questionId': questionId,
       'answer': answer,
-    });
+    };
+    if (custom != null) body['custom'] = custom;
+    final json = await _post('/sessions/$sessionId/question', body);
     return json['consumed'] as bool? ?? false;
   }
 
-  /// Dismisses a pending interactive question without answering.
-  Future<bool> dismissQuestion(String sessionId, String questionId) async {
-    final json = await _post('/sessions/$sessionId/question', {
-      'questionId': questionId,
-      'answer': '',
-    });
-    return json['consumed'] as bool? ?? false;
-  }
+  /// Dismiss question (empty answer).
+  Future<bool> dismissQuestion(String sessionId, String questionId) =>
+      resolveQuestion(sessionId, questionId, '');
 
-  // ── Goals ────────────────────────────────────────────────────
+  // ── Goals (basic) ────────────────────────────────────────────
 
-  /// Sets a goal for a session that guides the agent across turns.
-  Future<Map<String, dynamic>> setGoal(
+  /// `POST /sessions/:id/goal`.
+  Future<JsonMap> setGoal(
     String sessionId,
     String objective, {
     int? tokenBudget,
@@ -219,44 +269,41 @@ class NaviRemoteEngine {
     return _post('/sessions/$sessionId/goal', body);
   }
 
-  /// Gets the current goal for a session.
-  Future<Map<String, dynamic>?> getGoal(String sessionId) async {
+  /// `GET /sessions/:id/goal`.
+  Future<JsonMap?> getGoal(String sessionId) async {
     final json = await _get('/sessions/$sessionId/goal');
     if (json.containsKey('value') && json['value'] == null) return null;
     if (json.isEmpty) return null;
     return json;
   }
 
-  /// Clears the goal for a session.
+  /// `DELETE /sessions/:id/goal`.
   Future<void> clearGoal(String sessionId) async {
     await _delete('/sessions/$sessionId/goal');
   }
 
-  // ── Skills ───────────────────────────────────────────────────
+  // ── Skills (session bind + list) ─────────────────────────────
 
-  /// Lists all discovered skills (project + global).
-  Future<List<Map<String, dynamic>>> listSkills() async {
+  /// `GET /skills`.
+  Future<List<SkillInfo>> listSkills() async {
     final json = await _get('/skills');
-    final list = json['value'] as List<dynamic>? ?? json as List<dynamic>;
-    return list.cast<Map<String, dynamic>>();
+    return asJsonMapList(json['value'] ?? json).map(SkillInfo.fromJson).toList();
   }
 
-  /// Sets the active skills for a session.
-  Future<void> setSessionSkills(
-    String sessionId,
-    List<String> skills,
-  ) async {
+  /// `POST /sessions/:id/skills`.
+  Future<void> setSessionSkills(String sessionId, List<String> skills) async {
     await _post('/sessions/$sessionId/skills', {'skills': skills});
   }
 
   // ── Session model ────────────────────────────────────────────
 
-  /// Changes the model used by an active session.
+  /// `POST /sessions/:id/model`.
   Future<void> setSessionModel(
     String sessionId,
     String provider,
     String model,
   ) async {
+    // Single keys only — dual camel/snake duplicates break serde.
     await _post('/sessions/$sessionId/model', {
       'provider': provider,
       'model': model,
@@ -265,17 +312,14 @@ class NaviRemoteEngine {
 
   // ── Models ───────────────────────────────────────────────────
 
-  /// Lists all available models on the server.
+  /// `GET /models`.
   Future<List<ModelInfo>> listModels() async {
     final json = await _get('/models');
-    final list = json['value'] as List<dynamic>? ?? json as List<dynamic>;
-    return list
-        .map((e) => ModelInfo.fromJson(e as Map<String, dynamic>))
-        .toList();
+    return asJsonMapList(json['value'] ?? json).map(ModelInfo.fromJson).toList();
   }
 
-  /// Selects a model globally and optionally persists the config change.
-  Future<Map<String, dynamic>> selectModel({
+  /// `POST /model/select`.
+  Future<JsonMap> selectModel({
     required String providerId,
     required String model,
     String saveTarget = 'auto',
@@ -287,8 +331,8 @@ class NaviRemoteEngine {
     });
   }
 
-  /// Syncs the model list from a specific provider.
-  Future<Map<String, dynamic>> syncProviderModels({
+  /// `POST /providers/sync`.
+  Future<JsonMap> syncProviderModels({
     required String providerId,
     String saveTarget = 'auto',
   }) async {
@@ -298,158 +342,193 @@ class NaviRemoteEngine {
     });
   }
 
-  /// Syncs model lists from all providers.
-  Future<Map<String, dynamic>> syncAllModels({
-    String saveTarget = 'auto',
-  }) async {
+  /// `POST /providers/sync-all?save=`.
+  Future<JsonMap> syncAllModels({String saveTarget = 'auto'}) async {
     return _post('/providers/sync-all?save=$saveTarget', {});
   }
 
-  // ── Config ───────────────────────────────────────────────────
+  // ── MCP (session live) ───────────────────────────────────────
 
-  /// Returns the current server configuration.
-  Future<EngineConfig> loadedConfig() async {
-    final json = await _get('/config');
-    return EngineConfig.fromJson(json);
-  }
-
-  // ── Credentials ──────────────────────────────────────────────
-
-  /// Lists all providers with their credential status.
-  Future<List<Map<String, dynamic>>> listCredentials() async {
-    final json = await _get('/credentials');
-    final list = json['value'] as List<dynamic>? ?? json as List<dynamic>;
-    return list.cast<Map<String, dynamic>>();
-  }
-
-  // ── MCP ──────────────────────────────────────────────────────
-
-  /// Lists MCP servers connected to a session.
-  Future<List<Map<String, dynamic>>> listMcpServers(String sessionId) async {
+  /// `GET /sessions/:id/mcp`.
+  Future<List<JsonMap>> listMcpServers(String sessionId) async {
     final json = await _get('/sessions/$sessionId/mcp');
-    final list = json['value'] as List<dynamic>? ?? json as List<dynamic>;
-    return list.cast<Map<String, dynamic>>();
+    return asJsonMapList(json['value'] ?? json);
   }
 
-  // ── Background commands ──────────────────────────────────────
+  // ── Background ───────────────────────────────────────────────
 
-  /// Lists all active background bash commands for a session.
-  Future<List<Map<String, dynamic>>> listBackgroundCommands(
-    String sessionId,
-  ) async {
+  /// `GET /sessions/:id/background`.
+  Future<List<JsonMap>> listBackgroundCommands(String sessionId) async {
     final json = await _get('/sessions/$sessionId/background');
-    final list = json['value'] as List<dynamic>? ?? json as List<dynamic>;
-    return list.cast<Map<String, dynamic>>();
-  }
-
-  // ── Usage ────────────────────────────────────────────────────
-
-  /// Fetches usage report (currently OpenAI only).
-  Future<Map<String, dynamic>> usageReport() async {
-    return _get('/usage');
+    return asJsonMapList(json['value'] ?? json);
   }
 
   // ── Events ───────────────────────────────────────────────────
 
-  /// Subscribes to the event stream for a session via WebSocket.
+  /// `WS /sessions/:id/events?secret=`.
   ///
-  /// Returns a [Stream] of [RuntimeEvent]s. Events include assistant deltas,
-  /// tool calls, approval requests, and completion signals.
+  /// Cancelling the subscription closes the underlying WebSocket.
+  /// Prefer [subscribeEventsReady] before [sendTurn] so early deltas are not lost.
   Stream<RuntimeEvent> subscribeEvents(String sessionId) {
-    final wsScheme = _baseUrl.startsWith('https') ? 'wss' : 'ws';
-    final httpBase = _baseUrl.replaceFirst(RegExp(r'^https?://'), '');
-    final url =
-        '$wsScheme://$httpBase/sessions/$sessionId/events?secret=$_secret';
+    final channel = _connectWs('/sessions/$sessionId/events');
+    return _eventStreamFromChannel(channel);
+  }
 
-    final channel = WebSocketChannel.connect(Uri.parse(url));
+  /// Like [subscribeEvents], but waits until the WebSocket is fully open.
+  ///
+  /// Call this (and await it) before [sendTurn] for reliable streaming on mobile.
+  Future<Stream<RuntimeEvent>> subscribeEventsReady(String sessionId) async {
+    final channel = _connectWs('/sessions/$sessionId/events');
+    await channel.ready.timeout(
+      const Duration(seconds: 10),
+      onTimeout: () =>
+          throw NaviRemoteException('WebSocket connect timeout for session events'),
+    );
+    return _eventStreamFromChannel(channel);
+  }
 
-    return channel.stream.map((data) {
-      try {
-        final parsed = json.decode(data as String);
-        if (parsed is Map<String, dynamic>) {
-          return RuntimeEvent.fromJson(parsed);
-        }
-      } catch (_) {}
-      return RuntimeEvent(version: 1, kind: {});
-    });
+  Stream<RuntimeEvent> _eventStreamFromChannel(WebSocketChannel channel) {
+    late final StreamController<RuntimeEvent> controller;
+    StreamSubscription? sub;
+
+    controller = StreamController<RuntimeEvent>(
+      onListen: () {
+        sub = channel.stream.listen(
+          (data) {
+            try {
+              final parsed = json.decode(data as String);
+              if (parsed is Map) {
+                final event = RuntimeEvent.fromJson(JsonMap.from(parsed));
+                if (event.kind.isEmpty) return;
+                if (!controller.isClosed) controller.add(event);
+              }
+            } catch (_) {
+              // ignore malformed frames
+            }
+          },
+          onError: (Object e, StackTrace st) {
+            if (!controller.isClosed) controller.addError(e, st);
+          },
+          onDone: () {
+            if (!controller.isClosed) controller.close();
+          },
+          cancelOnError: false,
+        );
+      },
+      onCancel: () async {
+        await sub?.cancel();
+        try {
+          await channel.sink.close();
+        } catch (_) {}
+        _channels.remove(channel);
+      },
+    );
+
+    return controller.stream;
   }
 
   // ── HTTP helpers ─────────────────────────────────────────────
-
-  Future<Map<String, dynamic>> _get(String path) async {
-    final uri = Uri.parse('$_baseUrl$path');
-    final response = await _httpClient.get(uri, headers: _headers());
-
-    if (response.statusCode == 401) {
-      throw NaviRemoteException('Authentication failed: invalid secret');
-    }
-    if (response.statusCode != 200) {
-      throw NaviRemoteException(
-        'GET $path failed: ${response.statusCode} ${response.body}',
-      );
-    }
-
-    final decoded = json.decode(response.body);
-    if (decoded is Map<String, dynamic> && decoded.containsKey('error')) {
-      throw NaviRemoteException(decoded['error'] as String);
-    }
-    return decoded is Map<String, dynamic> ? decoded : {'value': decoded};
-  }
-
-  Future<Map<String, dynamic>> _post(
-    String path,
-    Map<String, dynamic> body,
-  ) async {
-    final uri = Uri.parse('$_baseUrl$path');
-    final response = await _httpClient.post(
-      uri,
-      headers: _headers(),
-      body: json.encode(body),
-    );
-
-    if (response.statusCode == 401) {
-      throw NaviRemoteException('Authentication failed: invalid secret');
-    }
-    if (response.statusCode >= 400) {
-      try {
-        final decoded = json.decode(response.body);
-        if (decoded is Map<String, dynamic> && decoded.containsKey('error')) {
-          throw NaviRemoteException(decoded['error'] as String);
-        }
-      } catch (e) {
-        if (e is NaviRemoteException) rethrow;
-      }
-      throw NaviRemoteException(
-        'POST $path failed: ${response.statusCode} ${response.body}',
-      );
-    }
-
-    final decoded = json.decode(response.body);
-    if (decoded is Map<String, dynamic> && decoded.containsKey('error')) {
-      throw NaviRemoteException(decoded['error'] as String);
-    }
-    return decoded as Map<String, dynamic>;
-  }
-
-  Future<Map<String, dynamic>> _delete(String path) async {
-    final uri = Uri.parse('$_baseUrl$path');
-    final response = await _httpClient.delete(uri, headers: _headers());
-
-    if (response.statusCode == 401) {
-      throw NaviRemoteException('Authentication failed: invalid secret');
-    }
-    if (response.statusCode >= 400) {
-      throw NaviRemoteException(
-        'DELETE $path failed: ${response.statusCode} ${response.body}',
-      );
-    }
-
-    final decoded = json.decode(response.body);
-    return decoded as Map<String, dynamic>;
-  }
 
   Map<String, String> _headers() => {
         'Content-Type': 'application/json',
         'X-Navi-Secret': _secret,
       };
+
+  String _query(Map<String, String?> params) {
+    final entries = params.entries
+        .where((e) => e.value != null && e.value!.isNotEmpty)
+        .toList();
+    if (entries.isEmpty) return '';
+    return '?${entries.map((e) => '${Uri.encodeQueryComponent(e.key)}='
+        '${Uri.encodeQueryComponent(e.value!)}').join('&')}';
+  }
+
+  WebSocketChannel _connectWs(String path) {
+    final wsScheme = _baseUrl.startsWith('https') ? 'wss' : 'ws';
+    final httpBase = _baseUrl.replaceFirst(RegExp(r'^https?://'), '');
+    final sep = path.contains('?') ? '&' : '?';
+    final url = '$wsScheme://$httpBase$path${sep}secret=$_secret';
+    final channel = WebSocketChannel.connect(Uri.parse(url));
+    _channels.add(channel);
+    return channel;
+  }
+
+  Future<JsonMap> _get(String path) async {
+    final response =
+        await _httpClient.get(Uri.parse('$_baseUrl$path'), headers: _headers());
+    return _decodeResponse(response, method: 'GET', path: path);
+  }
+
+  Future<JsonMap> _post(String path, [JsonMap? body]) async {
+    final response = await _httpClient.post(
+      Uri.parse('$_baseUrl$path'),
+      headers: _headers(),
+      body: json.encode(body ?? {}),
+    );
+    return _decodeResponse(response, method: 'POST', path: path);
+  }
+
+  Future<JsonMap> _put(String path, [JsonMap? body]) async {
+    final response = await _httpClient.put(
+      Uri.parse('$_baseUrl$path'),
+      headers: _headers(),
+      body: json.encode(body ?? {}),
+    );
+    return _decodeResponse(response, method: 'PUT', path: path);
+  }
+
+  Future<JsonMap> _patch(String path, [JsonMap? body]) async {
+    final response = await _httpClient.patch(
+      Uri.parse('$_baseUrl$path'),
+      headers: _headers(),
+      body: json.encode(body ?? {}),
+    );
+    return _decodeResponse(response, method: 'PATCH', path: path);
+  }
+
+  Future<JsonMap> _delete(String path, {JsonMap? body}) async {
+    final request = http.Request('DELETE', Uri.parse('$_baseUrl$path'));
+    request.headers.addAll(_headers());
+    if (body != null) request.body = json.encode(body);
+    final streamed = await _httpClient.send(request);
+    final response = await http.Response.fromStream(streamed);
+    return _decodeResponse(response, method: 'DELETE', path: path);
+  }
+
+  JsonMap _decodeResponse(
+    http.Response response, {
+    required String method,
+    required String path,
+  }) {
+    if (response.statusCode == 401) {
+      throw NaviRemoteException(
+        'Authentication failed: invalid secret',
+        statusCode: 401,
+      );
+    }
+    if (response.statusCode >= 400) {
+      String msg = '$method $path failed: ${response.statusCode}';
+      try {
+        final decoded = json.decode(response.body);
+        if (decoded is Map && decoded['error'] != null) {
+          msg = decoded['error'].toString();
+        } else if (response.body.isNotEmpty) {
+          msg = '$msg ${response.body}';
+        }
+      } catch (_) {
+        if (response.body.isNotEmpty) msg = '$msg ${response.body}';
+      }
+      throw NaviRemoteException(msg, statusCode: response.statusCode);
+    }
+    if (response.body.isEmpty) return <String, dynamic>{};
+    final decoded = json.decode(response.body);
+    if (decoded is Map) {
+      final map = JsonMap.from(decoded);
+      if (map.containsKey('error') && map.length == 1) {
+        throw NaviRemoteException(map['error'].toString());
+      }
+      return map;
+    }
+    return {'value': decoded};
+  }
 }

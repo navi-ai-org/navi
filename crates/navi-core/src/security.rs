@@ -244,6 +244,12 @@ impl SecurityPolicy {
                         || invocation.input.get("action").and_then(Value::as_str) == Some("list"))
                 {
                     SecurityDecision::Allow
+                } else if definition.name == "browser" {
+                    // status/doctor are local probes; navigation needs approval by default.
+                    match invocation.input.get("action").and_then(Value::as_str) {
+                        Some("status" | "doctor") => SecurityDecision::Allow,
+                        _ => SecurityDecision::NeedsApproval(SecurityRisk::Command),
+                    }
                 } else if definition.name == "mark_feature_done" {
                     self.validate_verification_steps(invocation)
                 } else {
@@ -335,6 +341,11 @@ impl SecurityPolicy {
                         || invocation.input.get("action").and_then(Value::as_str) == Some("list"))
                 {
                     SecurityDecision::Allow
+                } else if definition.name == "browser" {
+                    match invocation.input.get("action").and_then(Value::as_str) {
+                        Some("status" | "doctor") => SecurityDecision::Allow,
+                        _ => SecurityDecision::NeedsApproval(SecurityRisk::Command),
+                    }
                 } else if definition.name == "mark_feature_done" {
                     self.validate_verification_steps(invocation)
                 } else {

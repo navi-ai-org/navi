@@ -15,12 +15,14 @@ path = "src/main.rs"
 [dependencies]
 anyhow.workspace = true
 clap.workspace = true
+fastrand.workspace = true
 reqwest.workspace = true
 serde_json.workspace = true
 tempfile.workspace = true
 tokio.workspace = true
 toml.workspace = true
 tracing.workspace = true
+navi-browser.workspace = true
 navi-core.workspace = true
 navi-mcp.workspace = true
 navi-plugin-broker.workspace = true
@@ -34,6 +36,8 @@ navi-voice = { path = "../navi-voice", default-features = false }
 # prebuilt ort-sys). Opt in with `--features voice-onnx` on supported hosts.
 default = []
 voice-onnx = ["navi-voice/onnx", "navi-sdk/voice-onnx"]
+# CloakBrowser Rust engine (requires local PR checkout path or git dep).
+browser-cloak = ["navi-core/browser-cloak"]
 
 [dev-dependencies]
 wiremock.workspace = true

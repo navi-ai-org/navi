@@ -1628,7 +1628,11 @@ pub(crate) fn handle_theme_picker_key(
 }
 
 pub(super) fn handle_mcp_key(app: &mut TuiApp, code: KeyCode, _modifiers: KeyModifiers) -> bool {
-    let len = app.loaded_config.config.mcp.servers.len();
+    let len = app
+        .mcp_ui_state
+        .live
+        .len()
+        .max(app.loaded_config.config.mcp.servers.len());
 
     match code {
         KeyCode::Esc => {
@@ -1641,14 +1645,23 @@ pub(super) fn handle_mcp_key(app: &mut TuiApp, code: KeyCode, _modifiers: KeyMod
         KeyCode::Down | KeyCode::Char('j') => {
             if len > 0 {
                 if app.mcp_ui_state.is_focused_on_tools {
-                    app.mcp_ui_state.selected_tool =
-                        app.mcp_ui_state.selected_tool.saturating_add(1);
+                    let tool_len = app
+                        .mcp_ui_state
+                        .live
+                        .get(app.mcp_ui_state.selected_server)
+                        .map(|s| s.tools.len())
+                        .unwrap_or(0);
+                    if tool_len > 0 {
+                        app.mcp_ui_state.selected_tool =
+                            (app.mcp_ui_state.selected_tool + 1).min(tool_len - 1);
+                    }
                 } else {
                     app.mcp_ui_state.selected_server = app
                         .mcp_ui_state
                         .selected_server
                         .saturating_add(1)
                         .min(len - 1);
+                    app.mcp_ui_state.selected_tool = 0;
                 }
             }
         }
@@ -1660,6 +1673,7 @@ pub(super) fn handle_mcp_key(app: &mut TuiApp, code: KeyCode, _modifiers: KeyMod
                 } else {
                     app.mcp_ui_state.selected_server =
                         app.mcp_ui_state.selected_server.saturating_sub(1);
+                    app.mcp_ui_state.selected_tool = 0;
                 }
             }
         }
@@ -1670,11 +1684,22 @@ pub(super) fn handle_mcp_key(app: &mut TuiApp, code: KeyCode, _modifiers: KeyMod
         KeyCode::Left | KeyCode::Char('h') => {
             app.mcp_ui_state.is_focused_on_tools = false;
         }
+        KeyCode::Char('r') | KeyCode::Char('R') => {
+            crate::mcp_status::refresh_mcp_status(app);
+        }
         KeyCode::Enter => {
             if !app.mcp_ui_state.is_focused_on_tools && len > 0 {
                 let idx = app.mcp_ui_state.selected_server;
                 if let Some(server) = app.loaded_config.config.mcp.servers.get_mut(idx) {
                     server.enabled = !server.enabled;
+                    // Mirror into live view immediately.
+                    if let Some(live) = app.mcp_ui_state.live.get_mut(idx) {
+                        live.enabled = server.enabled;
+                        if !server.enabled {
+                            live.connected = false;
+                            live.tools.clear();
+                        }
+                    }
                 }
             }
         }

@@ -1,8 +1,19 @@
-# NAVI Plugin Registry
+# NAVI marketplace (vendored layout)
 
-This directory is the layout for the **plugin marketplace repository**. Publish it as a Git repo; NAVI fetches `catalog.json` from the raw URL.
+This directory mirrors the official marketplace repository:
 
-## Layout
+**https://github.com/navi-ai-org/navi-marketplace**
+
+NAVI’s default catalog URL:
+
+```text
+https://raw.githubusercontent.com/navi-ai-org/navi-marketplace/main/catalog.json
+```
+
+All marketplace packages (plugins, skills, MCP adapters, messaging bots) install
+as **WASM plugin packages**. They are **not** hardcoded in the NAVI binary.
+
+## Local layout
 
 ```txt
 catalog.json
@@ -10,31 +21,14 @@ artifacts/<plugin-id>/<version>/plugin.toml
 artifacts/<plugin-id>/<version>/plugin.wasm
 ```
 
-## Catalog entry
+Publish changes to **navi-ai-org/navi-marketplace**, not only this vendored copy.
 
-Each plugin in `catalog.json`:
-
-```json
-{
-  "id": "my-plugin",
-  "name": "My Plugin",
-  "description": "Short summary",
-  "version": "1.0.0",
-  "publisher": "gh:your-org",
-  "artifact_dir": "artifacts/my-plugin/1.0.0",
-  "wasm_hash": "sha256:..."
-}
-```
-
-`artifact_dir` is relative to the catalog URL. Optional `wasm_hash` must match the manifest when set.
-
-## NAVI config
-
-Override the registry in global `~/.config/navi/config.toml`:
+## Config override
 
 ```toml
 [plugin_marketplace]
-registry_url = "https://raw.githubusercontent.com/your-org/your-registry/main/catalog.json"
+registry_url = "https://raw.githubusercontent.com/navi-ai-org/navi-marketplace/main/catalog.json"
 ```
 
-Default: `navi-plugin-manifest::DEFAULT_REGISTRY_URL`.
+See the marketplace repo README for publish guidelines and package kinds
+(`plugin` | `skill` | `mcp` | `integration`).

@@ -141,10 +141,11 @@ fn truncate_output(output: Value) -> (Value, bool) {
         return (output, false);
     }
     let mut content = serialized;
-    content.truncate(MAX_OUTPUT_BYTES);
-    while !content.is_char_boundary(content.len()) {
-        content.pop();
+    let mut end = MAX_OUTPUT_BYTES.min(content.len());
+    while end > 0 && !content.is_char_boundary(end) {
+        end -= 1;
     }
+    content.truncate(end);
     content.push_str("\n<truncated>");
     (json!({ "truncated": true, "content": content }), true)
 }

@@ -1,4 +1,10 @@
 #![recursion_limit = "512"]
+mod routes;
 mod server;
+mod state;
 
-pub use server::{NaviServer, NaviServerConfig};
+#[cfg(test)]
+mod http_tests;
+
+pub use server::NaviServer;
+pub use state::NaviServerConfig;

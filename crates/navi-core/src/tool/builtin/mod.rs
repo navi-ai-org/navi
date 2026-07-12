@@ -1,4 +1,6 @@
 mod bash;
+#[cfg(feature = "browser")]
+mod browser;
 mod branch_race;
 #[cfg(feature = "code-vfs")]
 mod code_edit_tool;
@@ -37,6 +39,8 @@ pub(super) use extra_tools::{
 };
 
 pub(super) use bash::BashTool;
+#[cfg(feature = "browser")]
+pub(super) use browser::BrowserTool;
 pub(super) use branch_race::BranchRaceTool;
 #[cfg(feature = "code-vfs")]
 pub(super) use code_edit_tool::CodeEditTool;

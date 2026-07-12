@@ -1,0 +1,51 @@
+[package]
+name = "navi-browser"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Pluggable browser backend for NAVI (CloakBrowser-first engine contract)."
+repository.workspace = true
+homepage.workspace = true
+readme = "README.md"
+
+[features]
+default = ["cdp-fallback"]
+# Temporary CDP/Chrome process backend.
+cdp-fallback = [
+    "dep:base64",
+    "dep:futures-util",
+    "dep:reqwest",
+    "dep:tokio-tungstenite",
+]
+# CloakBrowser Rust client (PR https://github.com/CloakHQ/CloakBrowser/pull/438).
+# Path points at a local checkout of the PR branch; switch to git/crates.io after merge.
+cloakbrowser = ["dep:cloakbrowser", "dep:playwright-rs"]
+
+[dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+url = "2"
+
+# Optional CDP fallback stack
+base64 = { workspace = true, optional = true }
+futures-util = { workspace = true, optional = true }
+reqwest = { workspace = true, optional = true }
+tokio-tungstenite = { version = "0.28", default-features = false, optional = true, features = [
+    "connect",
+    "rustls-tls-webpki-roots",
+] }
+
+# CloakBrowser Rust client (community PR #438). Override path via:
+#   [patch] or CARGO_HOME path, or change this path after merge.
+# Local PR checkout (enrell lab). After upstream merge, switch to git/crates.io.
+cloakbrowser = { path = "../../../../lab/CloakBrowser-rust/rust/cloakbrowser", optional = true }
+playwright-rs = { version = "0.14", optional = true }
+
+[dev-dependencies]
+tempfile.workspace = true
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

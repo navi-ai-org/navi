@@ -29,6 +29,8 @@ use builtin::{
     RequestUserInputTool, RuntimeInfoTool, SandboxTool, SearchTool, SetGoalTool, SleepTool,
     ToolSearchTool, VerifierTool, ViewImageTool, WriteTool, builtin_metadata, truncate_tool_result,
 };
+#[cfg(feature = "browser")]
+use builtin::BrowserTool;
 #[cfg(feature = "code-vfs")]
 use builtin::{CodeEditTool, CodeReadTool};
 
@@ -1001,6 +1003,8 @@ impl ToolExecutor {
         self.register(SandboxTool::new(pr.clone()));
         self.register(ViewImageTool::new(pr.clone()));
         self.register(ViewImageTool::inspect_image(pr.clone()));
+        #[cfg(feature = "browser")]
+        self.register(BrowserTool::new(pr.clone()));
         self.register(NewContextWindowTool::new());
         self.register(ToolSearchTool::new(Arc::new(self.registry.clone())));
         self.register(VerifierTool::new(pr));

@@ -50,8 +50,8 @@ pub fn register_modal_panels(app: &mut TuiApp) {
         "command-palette",
         Mode::Commands,
         command_palette::render,
-        68,
-        15,
+        64,
+        14,
     )));
     // @ path mentions
     pm.add_overlay(Box::new(ModalPanel::new(
@@ -309,11 +309,10 @@ pub fn register_modal_panels(app: &mut TuiApp) {
         "mcp",
         Mode::Mcp,
         |frame, app, area| {
-            let palette = app.theme_palette();
-            crate::ui::mcp::draw_mcp_modal(frame, area, app, &palette);
+            crate::ui::mcp::draw_mcp_modal(frame, area, app);
         },
-        90,
-        22,
+        86,
+        20,
     )));
     // Setup modal needs &mut TuiApp and full content area.
     pm.add_overlay(Box::new(ModalPanelMut::new_with_area(

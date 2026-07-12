@@ -20,9 +20,9 @@ pub use error::{ManifestError, ValidationError};
 pub use hash::{compute_content_hash, compute_wasm_hash, verify_wasm_hash};
 pub use lockfile::{LockEntry, Lockfile};
 pub use marketplace::{
-    DEFAULT_REGISTRY_URL, MarketplaceError, PluginCatalog, PluginCatalogEntry, fetch_catalog,
-    find_catalog_entry, parse_catalog, plugin_staging_dir, registry_url, search_catalog,
-    stage_plugin_by_id, stage_plugin_from_catalog,
+    DEFAULT_REGISTRY_URL, MarketplaceError, PluginCatalog, PluginCatalogEntry, PluginCatalogKind,
+    fetch_catalog, find_catalog_entry, parse_catalog, plugin_staging_dir, registry_url,
+    search_catalog, stage_plugin_by_id, stage_plugin_from_catalog,
 };
 pub use parser::parse_manifest;
 pub use registry::{RegisteredTool, RegistryError, ToolRegistry, sanitize_description};
