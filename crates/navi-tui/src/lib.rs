@@ -24,6 +24,7 @@ mod providers;
 mod render;
 mod runtime;
 mod session;
+mod settings;
 mod state;
 mod stream;
 mod theme;

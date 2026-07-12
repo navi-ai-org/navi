@@ -1628,7 +1628,7 @@ fn ctrl_t_opens_background_tasks_and_ctrl_b_opens_background_agents() {
 
     app.mode = Mode::Normal;
     handle_key(&mut app, KeyCode::Char('b'), KeyModifiers::CONTROL);
-    assert_eq!(app.mode, Mode::BackgroundModels);
+    assert_eq!(app.mode, Mode::ModelRouting);
 }
 
 #[test]
@@ -2023,18 +2023,24 @@ fn command_palette_scroll_offset_keeps_selection_visible() {
 
     let mut app = test_app("");
     app.mode = Mode::Commands;
-    app.selected_command = 0;
-    let cmd_count = filtered_commands(&app).len();
-    for _ in 0..cmd_count {
+    app.selected_command = crate::commands::first_selectable_command_row(&crate::commands::command_rows(&app));
+    let rows = crate::commands::command_rows(&app);
+    let selectable: Vec<usize> = rows
+        .iter()
+        .enumerate()
+        .filter_map(|(i, r)| r.is_selectable().then_some(i))
+        .collect();
+    assert!(!selectable.is_empty());
+    for _ in 0..selectable.len() {
         handle_command_key(&mut app, KeyCode::Down, KeyModifiers::NONE);
     }
-    assert_eq!(app.selected_command, cmd_count - 1);
+    assert_eq!(app.selected_command, *selectable.last().unwrap());
 
     handle_command_key(&mut app, KeyCode::PageUp, KeyModifiers::NONE);
-    assert_eq!(
-        app.selected_command,
-        filtered_commands(&app).len().saturating_sub(9)
-    );
+    // PageUp moves up ~8 selectable steps from the last item.
+    let last = selectable.len().saturating_sub(1);
+    let expected_idx = selectable[last.saturating_sub(8)];
+    assert_eq!(app.selected_command, expected_idx);
 }
 
 #[test]
@@ -2289,7 +2295,7 @@ fn notification_expires_after_ttl() {
 fn settings_toggles_thinking_visibility() {
     let mut app = test_app("");
     app.mode = Mode::Settings;
-    app.selected_setting = 0;
+    app.selected_setting = crate::settings::index_of_action(crate::settings::SettingAction::ShowReasoning);
     assert!(app.show_thinking);
 
     handle_settings_key(&mut app, KeyCode::Enter);
@@ -2337,7 +2343,8 @@ fn tui_preferences_load_from_config() {
 fn settings_does_not_open_provider_accounts() {
     let mut app = test_app("");
     app.mode = Mode::Settings;
-    app.selected_setting = 0;
+    app.selected_setting =
+        crate::settings::index_of_action(crate::settings::SettingAction::ShowReasoning);
 
     handle_settings_key(&mut app, KeyCode::Enter);
     assert_eq!(app.mode, Mode::Settings);
@@ -2348,12 +2355,53 @@ fn settings_does_not_open_provider_accounts() {
 fn settings_opens_theme_picker() {
     let mut app = test_app("");
     app.mode = Mode::Settings;
-    app.selected_setting = 3;
+    app.selected_setting =
+        crate::settings::index_of_action(crate::settings::SettingAction::Theme);
     assert_eq!(app.theme_id, crate::theme::ThemeId::Default);
 
     handle_settings_key(&mut app, KeyCode::Enter);
     assert_eq!(app.mode, Mode::ThemePicker);
     assert_eq!(app.theme_id, crate::theme::ThemeId::Default);
+}
+
+#[test]
+fn settings_opens_providers_from_accounts_section() {
+    let mut app = test_app("");
+    app.mode = Mode::Settings;
+    app.selected_setting =
+        crate::settings::index_of_action(crate::settings::SettingAction::Providers);
+
+    handle_settings_key(&mut app, KeyCode::Enter);
+    assert_eq!(app.mode, Mode::Providers);
+}
+
+#[test]
+fn command_palette_is_sectioned_when_unfiltered() {
+    let app = test_app("");
+    let rows = crate::commands::command_rows(&app);
+    assert!(
+        rows.iter()
+            .any(|r| matches!(r, crate::commands::CommandRow::Section(_))),
+        "unfiltered palette should show section headers"
+    );
+    assert!(
+        rows.iter()
+            .any(|r| matches!(r, crate::commands::CommandRow::Item(i) if i.action == CommandAction::SwitchModel))
+    );
+    // Install Update is hidden without a pending update.
+    assert!(
+        !rows.iter().any(|r| matches!(
+            r,
+            crate::commands::CommandRow::Item(i) if i.action == CommandAction::InstallUpdate
+        ))
+    );
+    // Clear Goal is hidden without an active goal.
+    assert!(
+        !rows.iter().any(|r| matches!(
+            r,
+            crate::commands::CommandRow::Item(i) if i.action == CommandAction::ClearGoal
+        ))
+    );
 }
 
 #[test]
@@ -3054,8 +3102,11 @@ fn apply_patch_tool_full_content_uses_edit_summary() {
     let content = tool_full_content(&invocation, &result);
 
     assert!(content.contains("Edited crates/navi-tui/src/lib.rs (+2 -1)"));
-    assert!(content.contains("Patch:\n```diff\n"));
-    assert!(content.contains("*** Begin Patch"));
+    assert!(content.contains("```diff\n"));
+    assert!(!content.contains("Patch:"));
+    assert!(!content.contains("*** Begin Patch"));
+    assert!(!content.contains("*** End Patch"));
+    assert!(content.contains("*** Update File: crates/navi-tui/src/lib.rs"));
     assert!(content.contains("-    old\n+    new\n+    added"));
     assert!(!content.contains("Input"));
     assert!(!content.contains("Output"));
@@ -3569,4 +3620,127 @@ fn build_model_rows_prepends_recent_section() {
         has_recent_header,
         "expected a Recent header in the rendered model rows"
     );
+}
+
+
+#[test]
+fn model_routing_opens_from_ctrl_b_and_tabs() {
+    let mut app = test_app("");
+    assert!(!handle_key(
+        &mut app,
+        KeyCode::Char('b'),
+        KeyModifiers::CONTROL
+    ));
+    assert_eq!(app.mode, Mode::ModelRouting);
+    assert_eq!(app.model_routing_tab, crate::state::ModelRoutingTab::Agents);
+
+    // Right arrow advances tabs: Agents -> Attachments -> Chat -> Agents
+    assert!(!handle_key(&mut app, KeyCode::Right, KeyModifiers::NONE));
+    assert_eq!(app.model_routing_tab, crate::state::ModelRoutingTab::Attachments);
+    assert!(!handle_key(&mut app, KeyCode::Right, KeyModifiers::NONE));
+    assert_eq!(app.model_routing_tab, crate::state::ModelRoutingTab::Chat);
+    assert!(!handle_key(&mut app, KeyCode::Right, KeyModifiers::NONE));
+    assert_eq!(app.model_routing_tab, crate::state::ModelRoutingTab::Agents);
+}
+
+#[test]
+fn ctrl_comma_opens_settings() {
+    let mut app = test_app("");
+    assert!(!handle_key(
+        &mut app,
+        KeyCode::Char(','),
+        KeyModifiers::CONTROL
+    ));
+    assert_eq!(app.mode, Mode::Settings);
+}
+
+#[test]
+fn extensions_hub_opens_skills() {
+    let mut app = test_app("");
+    app.mode = Mode::Commands;
+    app.command_filter = "extensions".to_string();
+    app.selected_command = 0;
+    assert!(!run_selected_command(&mut app));
+    assert_eq!(app.mode, Mode::Extensions);
+
+    app.selected_extensions_item = 0; // Skills
+    assert!(!crate::keybindings::modals::handle_extensions_hub_key(
+        &mut app,
+        KeyCode::Enter
+    ));
+    assert_eq!(app.mode, Mode::Skills);
+}
+
+#[test]
+fn command_palette_model_routing_entry_exists() {
+    let app = test_app("");
+    let commands = filtered_commands(&app);
+    assert!(
+        commands
+            .iter()
+            .any(|c| matches!(c.action, CommandAction::ModelRouting))
+    );
+    assert!(
+        commands
+            .iter()
+            .any(|c| matches!(c.action, CommandAction::ExtensionsHub))
+    );
+}
+
+
+#[test]
+fn command_palette_hides_search_only_entries_until_filter() {
+    let mut app = test_app("");
+    let unfiltered = filtered_commands(&app);
+    assert!(
+        !unfiltered
+            .iter()
+            .any(|c| matches!(c.action, CommandAction::Skills)),
+        "Skills should be SearchOnly in default list"
+    );
+    assert!(
+        unfiltered
+            .iter()
+            .any(|c| matches!(c.action, CommandAction::ExtensionsHub)),
+        "Extensions hub stays in default list"
+    );
+    assert!(
+        unfiltered
+            .iter()
+            .any(|c| matches!(c.action, CommandAction::ModelRouting)),
+        "Model Routing hub stays in default list"
+    );
+
+    app.command_filter = "skills".to_string();
+    let filtered = filtered_commands(&app);
+    assert!(
+        filtered
+            .iter()
+            .any(|c| matches!(c.action, CommandAction::Skills)),
+        "Skills appears when searching"
+    );
+}
+
+#[test]
+fn apply_patch_body_is_clean_diff_without_protocol_chrome() {
+    let invocation = ToolInvocation {
+        id: "p1".into(),
+        tool_name: "apply_patch".into(),
+        input: serde_json::json!({
+            "patch": "*** Begin Patch\n*** Update File: src/a.rs\n@@\n-old\n+new\n*** End Patch\n"
+        }),
+    };
+    let result = ToolResult {
+        invocation_id: "p1".into(),
+        ok: true,
+        output: serde_json::json!({}),
+    };
+    let content = tool_full_content(&invocation, &result);
+    assert!(content.contains("Edited src/a.rs"));
+    assert!(content.contains("```diff\n"));
+    assert!(content.contains("*** Update File: src/a.rs"));
+    assert!(content.contains("-old\n+new"));
+    assert!(!content.contains("*** Begin Patch"));
+    assert!(!content.contains("*** End Patch"));
+    assert!(!content.contains("Patch:"));
 }

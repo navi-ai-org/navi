@@ -738,11 +738,13 @@ fn queued_footer_label(app: &TuiApp) -> String {
 
 fn permission_mode_spans(app: &TuiApp) -> Vec<Span<'static>> {
     let mode = current_permission_mode(app);
+    // YOLO is loud (red caps); other modes stay compact lowercase.
     let label = permission_mode_label(mode);
-    let label_color = if mode == PermissionMode::Yolo {
-        red()
-    } else {
-        signal()
+    let label_color = match mode {
+        PermissionMode::Yolo => red(),
+        PermissionMode::Restricted => code_const(),
+        PermissionMode::AcceptEdits => signal(),
+        PermissionMode::Auto => accent(),
     };
     let mut spans = vec![Span::styled(
         label,
@@ -775,7 +777,7 @@ fn permission_mode_label(mode: PermissionMode) -> &'static str {
         PermissionMode::Restricted => "restricted",
         PermissionMode::AcceptEdits => "accept-edits",
         PermissionMode::Auto => "auto",
-        PermissionMode::Yolo => "yolo",
+        PermissionMode::Yolo => "YOLO",
     }
 }
 
@@ -995,8 +997,8 @@ mod tests {
             .line
             .spans
             .iter()
-            .find(|span| span.content.as_ref() == "yolo")
-            .expect("yolo permission label");
+            .find(|span| span.content.as_ref() == "YOLO")
+            .expect("YOLO permission label");
 
         assert_eq!(yolo.style.fg, Some(red()));
     }

@@ -405,6 +405,47 @@ impl EngineDriver for MockEngine {
         Ok(())
     }
 
+    fn set_attachment_model(
+        &self,
+        modality: &str,
+        provider: &str,
+        model: &str,
+        _target: NaviConfigSaveTarget,
+    ) -> Result<()> {
+        use navi_core::config::types::ModelConfig;
+        let entry = ModelConfig {
+            provider: provider.to_string(),
+            name: model.to_string(),
+        };
+        let mut guard = self.state.lock().unwrap();
+        let am = &mut guard.loaded_config.config.attachment_models;
+        match modality {
+            "image" => am.image = Some(entry),
+            "audio" => am.audio = Some(entry),
+            "video" => am.video = Some(entry),
+            "document" => am.document = Some(entry),
+            _ => {}
+        }
+        Ok(())
+    }
+
+    fn clear_attachment_model(
+        &self,
+        modality: &str,
+        _target: NaviConfigSaveTarget,
+    ) -> Result<()> {
+        let mut guard = self.state.lock().unwrap();
+        let am = &mut guard.loaded_config.config.attachment_models;
+        match modality {
+            "image" => am.image = None,
+            "audio" => am.audio = None,
+            "video" => am.video = None,
+            "document" => am.document = None,
+            _ => {}
+        }
+        Ok(())
+    }
+
     fn loaded_config(&self) -> LoadedConfig {
         self.state
             .lock()
@@ -412,6 +453,10 @@ impl EngineDriver for MockEngine {
             .calls
             .push(EngineCall::LoadedConfig);
         self.state.lock().unwrap().loaded_config.clone()
+    }
+
+    fn memory_quick_status(&self) -> Result<String> {
+        Ok("on · 0 active · embeddings missing".into())
     }
 
     async fn usage_report(&self) -> Result<NaviUsageReport> {

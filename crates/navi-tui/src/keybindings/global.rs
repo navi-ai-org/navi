@@ -47,7 +47,9 @@ pub(super) fn route_global_key(
                     super::apply_ui_effect(app, UiEffect::ReplaceModal(ModalKind::Commands));
                 app.command_filter.clear();
                 app.command_filter_cursor = 0;
-                app.selected_command = 0;
+                app.selected_command = crate::commands::first_selectable_command_row(
+                    &crate::commands::command_rows(app),
+                );
                 app.command_scroll = 0;
                 return outcome;
             }
@@ -120,11 +122,13 @@ pub(super) fn route_global_key(
                 return KeyOutcome::Handled;
             }
             KeyCode::Char('b') => {
-                super::replace_modal(app, ModalKind::BackgroundModels);
+                super::open_model_routing(app, crate::state::ModelRoutingTab::Agents);
                 app.bg_models_selected = 0;
                 app.bg_models_scroll = 0;
-                app.bg_model_picker_active = false;
-                app.bg_model_picker_task = None;
+                return KeyOutcome::Handled;
+            }
+            KeyCode::Char(',') => {
+                super::open_settings(app);
                 return KeyOutcome::Handled;
             }
             KeyCode::Enter => {
@@ -200,15 +204,12 @@ fn cycle_permission_mode(app: &mut TuiApp) {
     set_permission_mode(app, next);
 }
 
-fn current_permission_mode(app: &TuiApp) -> PermissionMode {
-    if app.yolo_mode {
-        PermissionMode::Yolo
-    } else {
-        app.loaded_config.config.security.permission_mode
-    }
+fn set_permission_mode(app: &mut TuiApp, mode: PermissionMode) {
+    set_permission_mode_for_command(app, mode);
 }
 
-fn set_permission_mode(app: &mut TuiApp, mode: PermissionMode) {
+/// Public to command palette / settings (same side effects as ctrl+g / shift+tab).
+pub(super) fn set_permission_mode_for_command(app: &mut TuiApp, mode: PermissionMode) {
     app.loaded_config.config.security.permission_mode = mode;
     app.yolo_mode = matches!(mode, PermissionMode::Yolo);
     tracing::info!(
@@ -226,11 +227,23 @@ fn set_permission_mode(app: &mut TuiApp, mode: PermissionMode) {
     }
 }
 
-fn permission_mode_label(mode: PermissionMode) -> &'static str {
+pub(super) fn cycle_permission_mode_for_command(app: &mut TuiApp) {
+    cycle_permission_mode(app);
+}
+
+pub(crate) fn permission_mode_label(mode: PermissionMode) -> &'static str {
     match mode {
         PermissionMode::Restricted => "restricted",
         PermissionMode::AcceptEdits => "accept-edits",
         PermissionMode::Auto => "auto",
         PermissionMode::Yolo => "yolo",
+    }
+}
+
+pub(crate) fn current_permission_mode(app: &TuiApp) -> PermissionMode {
+    if app.yolo_mode {
+        PermissionMode::Yolo
+    } else {
+        app.loaded_config.config.security.permission_mode
     }
 }

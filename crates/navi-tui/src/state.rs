@@ -365,6 +365,72 @@ pub(crate) enum SetupPhase {
     Interview,
 }
 
+
+/// Tab inside the unified Model Routing modal.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) enum ModelRoutingTab {
+    Chat,
+    #[default]
+    Agents,
+    Attachments,
+}
+
+impl ModelRoutingTab {
+    pub(crate) const ALL: [Self; 3] = [Self::Chat, Self::Agents, Self::Attachments];
+
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::Chat => "Chat",
+            Self::Agents => "Agents",
+            Self::Attachments => "Attachments",
+        }
+    }
+
+    pub(crate) fn next(self) -> Self {
+        match self {
+            Self::Chat => Self::Agents,
+            Self::Agents => Self::Attachments,
+            Self::Attachments => Self::Chat,
+        }
+    }
+
+    pub(crate) fn previous(self) -> Self {
+        match self {
+            Self::Chat => Self::Attachments,
+            Self::Agents => Self::Chat,
+            Self::Attachments => Self::Agents,
+        }
+    }
+}
+
+/// Row in the Extensions hub modal.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ExtensionsHubItem {
+    Skills,
+    Plugins,
+    McpServers,
+}
+
+impl ExtensionsHubItem {
+    pub(crate) const ALL: [Self; 3] = [Self::Skills, Self::Plugins, Self::McpServers];
+
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::Skills => "Skills…",
+            Self::Plugins => "Plugins…",
+            Self::McpServers => "MCP Servers…",
+        }
+    }
+
+    pub(crate) fn description(self) -> &'static str {
+        match self {
+            Self::Skills => "Activate prompt skills for this session",
+            Self::Plugins => "Browse and manage installed plugins",
+            Self::McpServers => "Configure Model Context Protocol servers",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Mode {
     Normal,
@@ -390,6 +456,10 @@ pub enum Mode {
     BackgroundCommandOutput,
     BackgroundModels,
     BgModelPicker,
+    /// Unified model routing (Chat / Agents / Attachments).
+    ModelRouting,
+    /// Extensions hub (Skills / Plugins / MCP).
+    Extensions,
     Setup,
     AttachmentModels,
     MessageQueue,
@@ -428,8 +498,14 @@ pub(crate) enum ModalKind {
     OAuth,
     BackgroundCommands,
     BackgroundCommandOutput,
+    /// Legacy standalone agent-routes modal (superseded by [`Self::ModelRouting`]).
+    #[allow(dead_code)]
     BackgroundModels,
     BgModelPicker,
+    ModelRouting,
+    Extensions,
+    /// Legacy standalone attachment modal (superseded by [`Self::ModelRouting`]).
+    #[allow(dead_code)]
     AttachmentModels,
     MessageQueue,
     QueuedMessageEdit,
@@ -466,6 +542,8 @@ impl ModalKind {
             Self::BackgroundCommandOutput => Mode::BackgroundCommandOutput,
             Self::BackgroundModels => Mode::BackgroundModels,
             Self::BgModelPicker => Mode::BgModelPicker,
+            Self::ModelRouting => Mode::ModelRouting,
+            Self::Extensions => Mode::Extensions,
             Self::AttachmentModels => Mode::AttachmentModels,
             Self::MessageQueue => Mode::MessageQueue,
             Self::QueuedMessageEdit => Mode::QueuedMessageEdit,

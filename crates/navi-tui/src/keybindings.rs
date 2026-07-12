@@ -1,5 +1,5 @@
 mod commands;
-mod global;
+pub(crate) mod global;
 mod input_modes;
 pub(crate) mod modals;
 mod provider_sync;
@@ -145,6 +145,25 @@ fn open_plugins_picker(app: &mut TuiApp) {
     crate::plugins::refresh_plugin_catalog(app);
 }
 
+
+pub(crate) fn open_model_routing(app: &mut TuiApp, tab: crate::state::ModelRoutingTab) {
+    app.model_routing_tab = tab;
+    app.bg_model_picker_active = false;
+    app.bg_model_picker_task = None;
+    app.attachment_model_picker_active = false;
+    replace_modal(app, ModalKind::ModelRouting);
+}
+
+pub(crate) fn open_extensions_hub(app: &mut TuiApp) {
+    app.selected_extensions_item = 0;
+    replace_modal(app, ModalKind::Extensions);
+}
+
+pub(crate) fn open_settings(app: &mut TuiApp) {
+    replace_modal(app, ModalKind::Settings);
+    app.selected_setting = crate::settings::first_selectable_setting_row();
+}
+
 // ─── routing dispatch ───────────────────────────────────────────────────────────
 
 fn route_mode_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyModifiers) -> KeyOutcome {
@@ -174,6 +193,8 @@ fn route_mode_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyModifiers) -> K
         }
         Mode::BackgroundModels => self::modals::handle_background_models_key(app, code),
         Mode::BgModelPicker => self::modals::handle_bg_model_picker_key(app, code, modifiers),
+        Mode::ModelRouting => self::modals::handle_model_routing_key(app, code),
+        Mode::Extensions => self::modals::handle_extensions_hub_key(app, code),
         Mode::Setup => self::input_modes::handle_normal_key(app, code, modifiers),
         Mode::AttachmentModels => self::modals::handle_attachment_models_key(app, code),
         Mode::MessageQueue => self::modals::handle_message_queue_key(app, code, modifiers),

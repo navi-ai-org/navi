@@ -1365,6 +1365,11 @@ fn question_preview_line(question: &crate::state::QuestionUiState) -> Line<'stat
 }
 
 pub(crate) fn render_settings(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
+    use crate::settings::{
+        SettingAction, SettingRow, SETTINGS_ROWS, is_checkbox, setting_display,
+    };
+    use ratatui::style::Modifier;
+
     clear_modal_area(frame, area);
     let block = modal_block("Settings");
     frame.render_widget(block, area);
@@ -1378,82 +1383,78 @@ pub(crate) fn render_settings(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
         .constraints([Constraint::Min(4), Constraint::Length(1)])
         .split(inner);
 
-    let settings_list: [(&str, String); 5] = [
-        (
-            "Show Reasoning",
-            if app.show_thinking {
-                "[x]".into()
-            } else {
-                "[ ]".into()
-            },
-        ),
-        (
-            "Compact Tool View",
-            if !app.full_tool_view {
-                "[x]".into()
-            } else {
-                "[ ]".into()
-            },
-        ),
-        (
-            "Compact Tool Rows",
-            app.compact_tool_visible_limit.to_string(),
-        ),
-        ("Theme", format!("Select Theme ({})", app.theme_id.label())),
-        (
-            "Auto-update NAVI",
-            if app.loaded_config.config.updates.auto_update {
-                "[x]".into()
-            } else {
-                "[ ]".into()
-            },
-        ),
-    ];
-
-    let items = settings_list
+    let selected = app
+        .selected_setting
+        .min(SETTINGS_ROWS.len().saturating_sub(1));
+    let items = SETTINGS_ROWS
         .iter()
         .enumerate()
-        .map(|(index, (label, val))| {
-            let selected = index == app.selected_setting;
-            let hovered = app.hover_index == Some(index);
-            let style = if hovered || selected {
-                active_item_style()
-            } else {
-                inactive_item_style()
-            };
-
-            let line = if index == 2 || index == 3 {
-                format!("{label}: {val}")
-            } else {
-                format!("{val} {label}")
-            };
-            ListItem::new(Span::styled(line, style)).style(style)
+        .map(|(index, row)| match row {
+            SettingRow::Section(title) => {
+                let style = Style::default()
+                    .fg(ghost())
+                    .bg(modal_bg())
+                    .add_modifier(Modifier::BOLD);
+                ListItem::new(Span::styled(format!("— {title} —"), style)).style(style)
+            }
+            SettingRow::Action(action) => {
+                let (label, val) = setting_display(app, *action);
+                let is_selected = index == selected;
+                let hovered = app.hover_index == Some(index);
+                let style = if hovered || is_selected {
+                    active_item_style()
+                } else {
+                    inactive_item_style()
+                };
+                let line = if is_checkbox(*action) {
+                    format!("{val} {label}")
+                } else {
+                    format!("{label}: {val}")
+                };
+                ListItem::new(Span::styled(line, style)).style(style)
+            }
         })
         .collect::<Vec<_>>();
 
-    frame.render_widget(
-        List::new(items).style(Style::default().bg(modal_bg())),
+    let visible = rows[0].height as usize;
+    let total = SETTINGS_ROWS.len();
+    let selected = selected.min(total.saturating_sub(1));
+    // Keep selection in view (simple sticky scroll).
+    let mut offset = 0usize;
+    if selected >= visible {
+        offset = selected + 1 - visible;
+    }
+    let mut list_state = ListState::default()
+        .with_offset(offset)
+        .with_selected(Some(selected));
+    frame.render_stateful_widget(
+        List::new(items)
+            .style(Style::default().bg(modal_bg()))
+            .highlight_style(active_item_style()),
         rows[0],
+        &mut list_state,
     );
-    for (index, setting) in settings_list
-        .iter()
-        .enumerate()
-        .take(rows[0].height as usize)
-    {
-        let action = if index == 3 {
-            HitAction::ThemePicker
-        } else {
-            HitAction::Setting(index)
+    for (row_offset, index) in (offset..total).take(visible).enumerate() {
+        let row = &SETTINGS_ROWS[index];
+        let hit = match row {
+            SettingRow::Section(_) => continue,
+            SettingRow::Action(SettingAction::Theme) => HitAction::ThemePicker,
+            SettingRow::Action(_) => HitAction::Setting(index),
         };
-        app.register_hit(
-            line_rect(rows[0], index),
-            20,
-            format!("setting {}", setting.0),
-            action,
-        );
+        let label = match row {
+            SettingRow::Section(t) => format!("section {t}"),
+            SettingRow::Action(a) => format!("setting {:?}", a),
+        };
+        app.register_hit(line_rect(rows[0], row_offset), 20, label, hit);
     }
     frame.render_widget(
-        Paragraph::new("").style(Style::default().fg(muted()).bg(modal_bg())),
+        Paragraph::new(Line::from(vec![
+            Span::styled("[enter]", Style::default().fg(signal())),
+            Span::styled(" activate  ", Style::default().fg(muted())),
+            Span::styled("[esc]", Style::default().fg(signal())),
+            Span::styled(" close", Style::default().fg(muted())),
+        ]))
+        .style(Style::default().bg(modal_bg())),
         rows[1],
     );
     app.register_hit(
@@ -1865,7 +1866,7 @@ fn wrap_plain(text: &str, width: usize) -> Vec<String> {
 
 pub(crate) fn render_background_models(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
     clear_modal_area(frame, area);
-    let block = modal_block("Background Agents");
+    let block = modal_block("Agent Model Routes");
     frame.render_widget(block, area);
 
     let inner = area.inner(Margin {
@@ -1961,6 +1962,265 @@ fn bg_model_has_override(bg: &navi_sdk::BackgroundModelsConfig, task: &str) -> b
         "simple_code_edit" => bg.simple_code_edit.is_some(),
         _ => bg.default.is_some(),
     }
+}
+
+
+pub(crate) fn render_model_routing(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
+    clear_modal_area(frame, area);
+    let block = modal_block("Model Routing");
+    frame.render_widget(block, area);
+
+    let inner = area.inner(Margin {
+        horizontal: 2,
+        vertical: 1,
+    });
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(1), // tabs
+            Constraint::Length(1), // blank
+            Constraint::Min(6),    // content
+            Constraint::Length(1), // footer
+        ])
+        .split(inner);
+
+    // Tab bar
+    let mut tab_spans: Vec<Span> = Vec::new();
+    for (i, tab) in crate::state::ModelRoutingTab::ALL.iter().enumerate() {
+        if i > 0 {
+            tab_spans.push(Span::styled("  ", Style::default().fg(muted()).bg(modal_bg())));
+        }
+        let active = *tab == app.model_routing_tab;
+        let style = if active {
+            Style::default()
+                .fg(signal())
+                .bg(modal_bg())
+                .add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
+        } else {
+            Style::default().fg(muted()).bg(modal_bg())
+        };
+        let label = if active {
+            format!("[{}]", tab.label())
+        } else {
+            format!(" {} ", tab.label())
+        };
+        tab_spans.push(Span::styled(label, style));
+    }
+    frame.render_widget(
+        Paragraph::new(Line::from(tab_spans)).style(Style::default().bg(modal_bg())),
+        chunks[0],
+    );
+
+    match app.model_routing_tab {
+        crate::state::ModelRoutingTab::Chat => {
+            render_model_routing_chat_body(frame, app, chunks[2]);
+        }
+        crate::state::ModelRoutingTab::Agents => {
+            render_model_routing_agents_body(frame, app, chunks[2]);
+        }
+        crate::state::ModelRoutingTab::Attachments => {
+            render_model_routing_attachments_body(frame, app, chunks[2]);
+        }
+    }
+
+    let footer = match app.model_routing_tab {
+        crate::state::ModelRoutingTab::Chat => {
+            "[←/→] tabs  [enter] open chat model picker  [esc] close"
+        }
+        crate::state::ModelRoutingTab::Agents
+        | crate::state::ModelRoutingTab::Attachments => {
+            "[←/→] tabs  [enter] pick  [d] reset  [esc] close"
+        }
+    };
+    frame.render_widget(
+        Paragraph::new(Span::styled(footer, Style::default().fg(muted()).bg(modal_bg())))
+            .style(Style::default().bg(modal_bg())),
+        chunks[3],
+    );
+}
+
+fn render_model_routing_chat_body(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
+    let model = &app.loaded_config.config.model;
+    let effort = app.thinking_level.label();
+    let lines = vec![
+        Line::from(Span::styled(
+            "Session chat model",
+            Style::default().fg(ghost()).bg(modal_bg()),
+        )),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled("Provider  ", Style::default().fg(muted()).bg(modal_bg())),
+            Span::styled(
+                model.provider.clone(),
+                Style::default()
+                    .fg(text())
+                    .bg(modal_bg())
+                    .add_modifier(Modifier::BOLD),
+            ),
+        ]),
+        Line::from(vec![
+            Span::styled("Model     ", Style::default().fg(muted()).bg(modal_bg())),
+            Span::styled(
+                model.name.clone(),
+                Style::default()
+                    .fg(accent())
+                    .bg(modal_bg())
+                    .add_modifier(Modifier::BOLD),
+            ),
+        ]),
+        Line::from(vec![
+            Span::styled("Effort    ", Style::default().fg(muted()).bg(modal_bg())),
+            Span::styled(effort, Style::default().fg(text()).bg(modal_bg())),
+        ]),
+        Line::from(""),
+        Line::from(Span::styled(
+            "Press enter to open the full model picker (ctrl+m).",
+            Style::default().fg(ghost()).bg(modal_bg()),
+        )),
+        Line::from(Span::styled(
+            "Agents and Attachments tabs set specialized fallbacks.",
+            Style::default().fg(ghost()).bg(modal_bg()),
+        )),
+    ];
+    frame.render_widget(
+        Paragraph::new(lines).style(Style::default().bg(modal_bg())),
+        area,
+    );
+}
+
+fn render_model_routing_agents_body(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
+    let tasks: &[(&str, &str)] = &[
+        ("memory_extraction", "Automatic durable-memory extraction"),
+        ("compaction", "Conversation summarization"),
+        ("repo_search", "Repository exploration"),
+        ("subagent_research", "Research subagents"),
+        ("simple_code_edit", "Code edit subagents"),
+    ];
+    let mut rows: Vec<Line> = Vec::new();
+    let bg = &app.loaded_config.config.background_models;
+    for (i, (task_id, description)) in tasks.iter().enumerate() {
+        let selected = i == app.bg_models_selected;
+        let resolved_label = resolve_bg_model_label(app, task_id);
+        let has_override = bg_model_has_override(bg, task_id);
+        let task_style = if selected {
+            Style::default().fg(signal()).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(text())
+        };
+        let model_style = if selected {
+            Style::default().fg(accent()).add_modifier(Modifier::BOLD)
+        } else if has_override {
+            Style::default().fg(accent())
+        } else {
+            Style::default().fg(muted())
+        };
+        let desc_style = Style::default().fg(ghost());
+        rows.push(Line::from(vec![
+            Span::styled(format!("{:>20}", task_id), task_style),
+            Span::styled("  →  ", desc_style),
+            Span::styled(resolved_label, model_style),
+        ]));
+        rows.push(Line::from(vec![Span::styled(
+            format!("  {:>20}  ", description),
+            desc_style,
+        )]));
+    }
+    frame.render_widget(Paragraph::new(rows).style(Style::default().bg(modal_bg())), area);
+}
+
+fn render_model_routing_attachments_body(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
+    let modalities: &[(&str, &str)] = &[
+        ("image", "Image analysis fallback"),
+        ("audio", "Audio analysis fallback"),
+        ("video", "Video analysis fallback"),
+        ("document", "Document analysis fallback"),
+    ];
+    let mut rows: Vec<Line> = Vec::new();
+    let config = &app.loaded_config.config.attachment_models;
+    for (i, (modality, description)) in modalities.iter().enumerate() {
+        let selected = i == app.selected_attachment_model;
+        let resolved_label =
+            crate::keybindings::modals::resolve_attachment_model_label(app, modality);
+        let has_override =
+            crate::keybindings::modals::attachment_model_has_override(config, modality);
+        let task_style = if selected {
+            Style::default().fg(signal()).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(text())
+        };
+        let model_style = if selected {
+            Style::default().fg(accent()).add_modifier(Modifier::BOLD)
+        } else if has_override {
+            Style::default().fg(accent())
+        } else {
+            Style::default().fg(muted())
+        };
+        let desc_style = Style::default().fg(ghost());
+        rows.push(Line::from(vec![
+            Span::styled(format!("{:>20}", modality), task_style),
+            Span::styled("  →  ", desc_style),
+            Span::styled(resolved_label, model_style),
+        ]));
+        rows.push(Line::from(vec![Span::styled(
+            format!("  {:>20}  ", description),
+            desc_style,
+        )]));
+    }
+    frame.render_widget(Paragraph::new(rows).style(Style::default().bg(modal_bg())), area);
+}
+
+pub(crate) fn render_extensions_hub(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
+    clear_modal_area(frame, area);
+    let block = modal_block("Extensions");
+    frame.render_widget(block, area);
+
+    let inner = area.inner(Margin {
+        horizontal: 2,
+        vertical: 1,
+    });
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(6), Constraint::Length(1)])
+        .split(inner);
+
+    let items: Vec<ListItem> = crate::state::ExtensionsHubItem::ALL
+        .iter()
+        .enumerate()
+        .map(|(index, item)| {
+            let selected = index == app.selected_extensions_item;
+            let hovered = app.hover_index == Some(index);
+            let style = if hovered || selected {
+                active_item_style()
+            } else {
+                inactive_item_style()
+            };
+            let line = format!("{}  —  {}", item.label(), item.description());
+            ListItem::new(Span::styled(line, style)).style(style)
+        })
+        .collect();
+
+    frame.render_widget(
+        List::new(items).style(Style::default().bg(modal_bg())),
+        chunks[0],
+    );
+    for (index, item) in crate::state::ExtensionsHubItem::ALL.iter().enumerate() {
+        app.register_hit(
+            line_rect(chunks[0], index),
+            20,
+            format!("extension {}", item.label()),
+            HitAction::ExtensionsItem(index),
+        );
+    }
+    frame.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::styled("[enter]", Style::default().fg(signal())),
+            Span::styled(" open  ", Style::default().fg(muted())),
+            Span::styled("[esc]", Style::default().fg(signal())),
+            Span::styled(" close", Style::default().fg(muted())),
+        ]))
+        .style(Style::default().bg(modal_bg())),
+        chunks[1],
+    );
 }
 
 pub(crate) fn render_usage(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {

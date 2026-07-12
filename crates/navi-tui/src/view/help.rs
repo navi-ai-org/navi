@@ -135,13 +135,18 @@ pub(crate) const HELP_ROWS: &[HelpRow] = &[
     },
     HelpRow::Entry {
         key: "ctrl+t",
-        label: "Background tasks",
-        detail: "Open running/finished shell tasks — ▸ open output, ✕ cancel.",
+        label: "Shell tasks",
+        detail: "Open running/finished bash background jobs — ▸ open output, ✕ cancel.",
     },
     HelpRow::Entry {
         key: "ctrl+b",
-        label: "Background agents",
-        detail: "Configure background model routing for long-running agents.",
+        label: "Model routing",
+        detail: "Unified Chat / Agents / Attachments model routing (tabs with ←/→).",
+    },
+    HelpRow::Entry {
+        key: "ctrl+,",
+        label: "Settings",
+        detail: "Open the settings hub (appearance, routing, accounts, updates).",
     },
     HelpRow::Blank,
     HelpRow::Section("Sessions & models"),
