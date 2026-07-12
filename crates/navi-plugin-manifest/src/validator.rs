@@ -71,19 +71,19 @@ fn validate_plugin_meta(
         });
     }
 
-    // signature format
-    if !meta.signature.starts_with("ed25519:") {
+    // signature format (required for Community/Signed; LocalDev may use a placeholder)
+    if trust_level != TrustLevel::LocalDev && !meta.signature.starts_with("ed25519:") {
         errors.push(ValidationError {
             field: "plugin.signature".into(),
             message: "must start with 'ed25519:'".into(),
         });
     }
 
-    if trust_level == TrustLevel::Community {
+    if trust_level == TrustLevel::Community || trust_level == TrustLevel::Signed {
         match &meta.public_key {
             None => errors.push(ValidationError {
                 field: "plugin.public_key".into(),
-                message: "required for community plugins (ed25519:<base64>)".into(),
+                message: "required for community/signed plugins (ed25519:<base64>)".into(),
             }),
             Some(key) if !key.starts_with("ed25519:") => errors.push(ValidationError {
                 field: "plugin.public_key".into(),
@@ -440,6 +440,31 @@ capabilities = ["net"]
             }
             _ => panic!("expected validation error"),
         }
+    }
+
+    #[test]
+    fn local_dev_allows_placeholder_signature() {
+        let toml = r#"
+[plugin]
+id = "local-dev-plugin"
+name = "Local"
+version = "0.1.0"
+publisher = "gh:dev"
+runtime = "wasm-component"
+entry = "plugin.wasm"
+wasm_hash = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+signature = "local-dev"
+minimum_navi = "0.1.0"
+
+[[tools]]
+id = "echo"
+summary = "Echo"
+risk = "read_only"
+capabilities = []
+"#;
+        let manifest = parse_manifest(toml).unwrap();
+        assert!(validate(&manifest, TrustLevel::LocalDev).is_ok());
+        assert!(validate(&manifest, TrustLevel::Community).is_err());
     }
 
     #[test]

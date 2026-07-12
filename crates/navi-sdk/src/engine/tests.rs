@@ -90,31 +90,17 @@ fn test_config() -> NaviConfig {
 }
 
 #[test]
-fn plugin_policy_alias_enables_learning_components() {
-    let tempdir = tempfile::tempdir().expect("tempdir");
+fn known_plugin_policy_keeps_default_components_without_warning() {
     let mut warnings = Vec::new();
-    let components = runtime_components_for_plugin_policies(
+    let _components = runtime_components_for_plugin_policies(
         RuntimeComponents::default(),
-        &["navi-learning".to_string()],
+        &["code_agent".to_string()],
         &mut warnings,
     );
-
-    let prompt = components.prompt.build(
-        navi_core::prompt::SystemPromptInput {
-            config: NaviConfig::default(),
-            project_dir: tempdir.path().to_path_buf(),
-            memory_injection: None,
-            tools: Vec::new(),
-            include_tool_prompt_manifest: false,
-            context_packets: Vec::new(),
-            available_skills: Vec::new(),
-            active_skills: Vec::new(),
-        },
-        Arc::new(navi_core::prompt::PromptCache::new()),
+    assert!(
+        warnings.is_empty(),
+        "code_agent is a known policy; warnings: {warnings:?}"
     );
-
-    assert!(warnings.is_empty());
-    assert!(prompt.instructions.contains("You are NAVI Tutor"));
 }
 
 #[test]

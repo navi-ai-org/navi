@@ -2,9 +2,10 @@ use anyhow::{Context, Result};
 use navi_core::LoadedConfig;
 use navi_plugin_broker::{ReconsentAction, check_update_reconsent, prepare_install_approval};
 use navi_plugin_manifest::{
-    Lockfile, TrustLevel, aggregate_lockfile_path, compute_wasm_hash, installed_plugins_dir,
-    lock_entry_from_manifest, parse_manifest, registry_url, remove_aggregate_lock_entry,
-    search_catalog, stage_plugin_by_id, upsert_aggregate_lock_entry, validate,
+    Lockfile, PluginCatalogKind, TrustLevel, aggregate_lockfile_path, compute_wasm_hash,
+    installed_plugins_dir, lock_entry_from_manifest_with_meta, parse_manifest, registry_url,
+    remove_aggregate_lock_entry, search_catalog, stage_plugin_by_id, upsert_aggregate_lock_entry,
+    validate,
 };
 use std::fs;
 use std::path::Path;
@@ -50,12 +51,21 @@ fn search_marketplace(query: Option<&str>, config: &LoadedConfig) -> Result<()> 
         return Ok(());
     }
     for entry in hits {
+        let kind = match entry.kind {
+            PluginCatalogKind::Plugin => "plugin",
+            PluginCatalogKind::Skill => "skill",
+            PluginCatalogKind::Mcp => "mcp",
+            PluginCatalogKind::Integration => "integration",
+        };
         println!(
-            "  {} v{} — {} ({})",
-            entry.id, entry.version, entry.name, entry.publisher
+            "  [{}] {} v{} — {} ({})",
+            kind, entry.id, entry.version, entry.name, entry.publisher
         );
         if !entry.description.is_empty() {
             println!("    {}", entry.description);
+        }
+        if !entry.tags.is_empty() {
+            println!("    tags: {}", entry.tags.join(", "));
         }
     }
     Ok(())
@@ -63,14 +73,25 @@ fn search_marketplace(query: Option<&str>, config: &LoadedConfig) -> Result<()> 
 
 fn install_plugin_marketplace(plugin_id: &str, yes: bool, config: &LoadedConfig) -> Result<()> {
     let rt = tokio::runtime::Runtime::new().context("failed to start async runtime")?;
-    let (_, staging) = rt
-        .block_on(stage_plugin_by_id(
-            registry_for_config(config),
-            plugin_id,
-            &config.data_dir,
-        ))
+    let registry = registry_for_config(config);
+    let catalog = rt
+        .block_on(navi_plugin_manifest::fetch_catalog(registry))
         .map_err(|e| anyhow::anyhow!("{e}"))?;
-    install_plugin(&staging, yes, config, staging.parent().unwrap_or(&staging))
+    let entry = navi_plugin_manifest::find_catalog_entry(&catalog, plugin_id)
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    let kind = entry.kind;
+    let staging = navi_plugin_manifest::plugin_staging_dir(&config.data_dir, plugin_id);
+    rt.block_on(navi_plugin_manifest::stage_plugin_from_catalog(
+        registry, entry, &staging,
+    ))
+    .map_err(|e| anyhow::anyhow!("{e}"))?;
+    install_plugin_with_meta(
+        &staging,
+        yes,
+        config,
+        TrustLevel::Community,
+        kind,
+    )
 }
 
 fn update_plugin_marketplace(plugin_id: &str, force: bool, config: &LoadedConfig) -> Result<()> {
@@ -91,11 +112,27 @@ fn update_plugin_marketplace(plugin_id: &str, force: bool, config: &LoadedConfig
 }
 
 fn install_plugin(path: &Path, yes: bool, config: &LoadedConfig, _cwd: &Path) -> Result<()> {
-    let manifest = load_and_validate_manifest(path)?;
+    // Local path installs are LocalDev (WASM only; signature optional).
+    install_plugin_with_meta(path, yes, config, TrustLevel::LocalDev, PluginCatalogKind::Plugin)
+}
+
+fn install_plugin_with_meta(
+    path: &Path,
+    yes: bool,
+    config: &LoadedConfig,
+    trust: TrustLevel,
+    kind: PluginCatalogKind,
+) -> Result<()> {
+    let manifest = load_and_validate_manifest(path, trust)?;
 
     // Display install approval
     let approval = prepare_install_approval(&manifest);
     println!("{}", navi_plugin_broker::format_install_approval(&approval));
+    println!(
+        "Trust: {} | Kind: {}",
+        trust_label(trust),
+        kind_label(kind)
+    );
 
     if !yes && !prompt_yes_no("Install this plugin? [y/N] ")? {
         println!("Install cancelled.");
@@ -108,17 +145,66 @@ fn install_plugin(path: &Path, yes: bool, config: &LoadedConfig, _cwd: &Path) ->
     );
 
     install_files(path, &manifest, &config.data_dir)?;
-    write_lockfile(&config.data_dir, &manifest)?;
+    write_lockfile_with_meta(&config.data_dir, &manifest, trust, kind)?;
 
     println!("Plugin '{}' installed successfully.", manifest.plugin.id);
     println!("  Tools: {}", manifest.tools.len());
     println!("  Capabilities: {}", manifest.capabilities.len());
+    println!("  {}", kind_install_hint(kind));
 
     Ok(())
 }
 
+fn kind_label(kind: PluginCatalogKind) -> &'static str {
+    match kind {
+        PluginCatalogKind::Plugin => "plugin",
+        PluginCatalogKind::Skill => "skill",
+        PluginCatalogKind::Mcp => "mcp",
+        PluginCatalogKind::Integration => "integration",
+    }
+}
+
+fn trust_label(trust: TrustLevel) -> &'static str {
+    match trust {
+        TrustLevel::Core => "core",
+        TrustLevel::Signed => "signed",
+        TrustLevel::Community => "community",
+        TrustLevel::LocalDev => "local-dev",
+    }
+}
+
+fn kind_install_hint(kind: PluginCatalogKind) -> &'static str {
+    match kind {
+        PluginCatalogKind::Plugin => "WASM tools register on next session.",
+        PluginCatalogKind::Skill => {
+            "Skill pack installed as WASM; activate related skills in the session if needed."
+        }
+        PluginCatalogKind::Mcp => {
+            "MCP package installed as WASM. Merge any mcp.json into global MCP config if present."
+        }
+        PluginCatalogKind::Integration => {
+            "Integration installed as WASM (set env secrets if the package requires them)."
+        }
+    }
+}
+
 fn update_plugin(path: &Path, force: bool, config: &LoadedConfig, _cwd: &Path) -> Result<()> {
-    let new_manifest = load_and_validate_manifest(path)?;
+    let plugins_root = installed_plugins_dir(&config.data_dir);
+    let lockfile = Lockfile::load(&aggregate_lockfile_path(&plugins_root)).unwrap_or_default();
+    let peek = parse_manifest(
+        &fs::read_to_string(path.join("plugin.toml")).context("failed to read plugin.toml")?,
+    )
+    .context("failed to parse plugin.toml")?;
+    let trust = lockfile
+        .find(&peek.plugin.id)
+        .map(|e| e.trust_level)
+        .unwrap_or(TrustLevel::LocalDev);
+    let kind = lockfile
+        .find(&peek.plugin.id)
+        .map(|e| e.kind)
+        .unwrap_or(PluginCatalogKind::Plugin);
+
+    let new_manifest = load_and_validate_manifest(path, trust)?;
     let plugin_id = new_manifest.plugin.id.clone();
     let installed_dir = config.data_dir.join("plugins").join(&plugin_id);
     if !installed_dir.exists() {
@@ -135,8 +221,6 @@ fn update_plugin(path: &Path, force: bool, config: &LoadedConfig, _cwd: &Path) -
         old_manifest_path.display()
     ))?)
     .context("failed to parse installed manifest")?;
-    let plugins_root = installed_plugins_dir(&config.data_dir);
-    let lockfile = Lockfile::load(&aggregate_lockfile_path(&plugins_root)).unwrap_or_default();
     let old_entry = lockfile
         .find(&plugin_id)
         .ok_or_else(|| {
@@ -189,6 +273,8 @@ fn update_plugin(path: &Path, force: bool, config: &LoadedConfig, _cwd: &Path) -
         &config.data_dir,
         &new_manifest,
         approved_caps.into_iter().collect(),
+        trust,
+        kind,
     )?;
 
     println!("Plugin '{}' updated successfully.", plugin_id);
@@ -197,7 +283,10 @@ fn update_plugin(path: &Path, force: bool, config: &LoadedConfig, _cwd: &Path) -
     Ok(())
 }
 
-fn load_and_validate_manifest(path: &Path) -> Result<navi_plugin_manifest::PluginManifest> {
+fn load_and_validate_manifest(
+    path: &Path,
+    trust: TrustLevel,
+) -> Result<navi_plugin_manifest::PluginManifest> {
     if !path.exists() {
         anyhow::bail!("plugin directory not found: {}", path.display());
     }
@@ -208,7 +297,7 @@ fn load_and_validate_manifest(path: &Path) -> Result<navi_plugin_manifest::Plugi
     let manifest_content =
         fs::read_to_string(&manifest_path).context("failed to read plugin.toml")?;
     let manifest = parse_manifest(&manifest_content).context("failed to parse plugin.toml")?;
-    validate(&manifest, TrustLevel::Community).context("manifest validation failed")?;
+    validate(&manifest, trust).context("manifest validation failed")?;
 
     let wasm_path = path.join(&manifest.plugin.entry);
     if !wasm_path.exists() {
@@ -223,7 +312,7 @@ fn load_and_validate_manifest(path: &Path) -> Result<navi_plugin_manifest::Plugi
             actual_hash
         );
     }
-    navi_plugin_manifest::verify_plugin_signature(&manifest, &wasm_bytes, TrustLevel::Community)
+    navi_plugin_manifest::verify_plugin_signature(&manifest, &wasm_bytes, trust)
         .map_err(|reason| anyhow::anyhow!("signature verification failed: {reason}"))?;
     Ok(manifest)
 }
@@ -241,22 +330,30 @@ fn install_files(
     Ok(plugin_dir)
 }
 
-fn write_lockfile(data_dir: &Path, manifest: &navi_plugin_manifest::PluginManifest) -> Result<()> {
+fn write_lockfile_with_meta(
+    data_dir: &Path,
+    manifest: &navi_plugin_manifest::PluginManifest,
+    trust: TrustLevel,
+    kind: PluginCatalogKind,
+) -> Result<()> {
     let approved = manifest
         .capabilities
         .iter()
         .map(|c| c.id().to_string())
         .collect();
-    write_lockfile_with_approved(data_dir, manifest, approved)
+    write_lockfile_with_approved(data_dir, manifest, approved, trust, kind)
 }
 
 fn write_lockfile_with_approved(
     data_dir: &Path,
     manifest: &navi_plugin_manifest::PluginManifest,
     approved_capabilities: Vec<String>,
+    trust: TrustLevel,
+    kind: PluginCatalogKind,
 ) -> Result<()> {
     let plugins_root = installed_plugins_dir(data_dir);
-    let entry = lock_entry_from_manifest(manifest, approved_capabilities);
+    let entry =
+        lock_entry_from_manifest_with_meta(manifest, approved_capabilities, trust, kind);
     upsert_aggregate_lock_entry(&plugins_root, entry)
         .map_err(|e| anyhow::anyhow!("failed to save lockfile: {}", e))?;
     Ok(())

@@ -1,5 +1,5 @@
 use navi_core::{AgentEvent, ContentPart, ContextPacket, LoadedConfig, ModelMessage, ToolExecutor};
-use navi_plugin_host::LoadedPlugin;
+
 use serde::{Deserialize, Serialize};
 use std::error::Error;
 use std::fmt;
@@ -353,10 +353,12 @@ pub struct NaviSavedSessionInfo {
 pub struct NaviRuntimeTooling {
     pub tool_executor: Arc<ToolExecutor>,
     pub warnings: Vec<String>,
+    /// Reserved for future WASM-declared agent policies (native plugin policies removed).
     pub agent_policies: Vec<String>,
+    /// Reserved for future host-mediated TUI extension names (native panels removed).
     pub tui_components: Vec<String>,
+    /// Reserved for future host-mediated TUI panels (native `TuiComponent` load removed).
     pub tui_panels: Vec<Box<dyn navi_plugin_api::TuiComponent>>,
-    pub(crate) _plugins: Vec<LoadedPlugin>,
 }
 
 /// Structured error when a provider's API key cannot be resolved.

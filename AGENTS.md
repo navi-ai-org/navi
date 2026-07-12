@@ -46,8 +46,9 @@ Core agent behavior belongs in engine crates, primarily `navi-core`, not in `nav
 | `navi-mcp` | MCP stdio client integration that registers remote MCP tools with the engine. |
 | `navi-napi` | N-API binding for Node.js/Electron. Wraps `navi-sdk` and exposes the full engine surface (sessions, turns, goals, credentials, skills, MCP, saved sessions, registry, plugins, events) as native TypeScript classes. Includes a panic hook for crash isolation. |
 | `navi-openai` | `ModelProvider` implementation for OpenAI-compatible APIs and provider adapters. Implementation crate behind `navi-providers` facade. |
-| `navi-plugin-api` | Plugin trait and `NAVI_PLUGIN_API_VERSION = 1`. |
-| `navi-plugin-host` | Dynamic `.so`/`.dylib` loading via `libloading`. |
+| `navi-plugin-api` | Plugin trait and `NAVI_PLUGIN_API_VERSION` (legacy native ABI retained for tests). |
+| `navi-plugin-host` | **Deprecated.** Former `libloading` native loader; not used by the SDK load path (WASM-only). |
+| `navi-plugin-runtime` / `navi-plugin-orchestrator` | WASM plugin runtime (`wasmtime`) and install/load orchestration. |
 | `navi-providers` | Provider facade. Re-exports `navi-openai` public API. Downstream crates should depend on this, not `navi-openai` directly. |
 | `navi-sdk` | Public embedding facade for local clients (Tutor, TUI, ACP). Wraps core runtime, provider setup, plugin loading, host tools, MCP, sessions and events. |
 | `navi-tui` | Terminal UI with chat, model picker, thinking/settings/session modals, markdown/code rendering. Drives turns through `navi-sdk::NaviEngine`. |
@@ -589,15 +590,21 @@ When adding event types:
 
 ## Plugins
 
-Plugins are native libraries exporting `navi_plugin_entrypoint`. The host loads them with `libloading`, rejects incompatible `api_version` values, and registers executable plugin tools into the same `ToolExecutor` used by built-in tools.
+**Plugins are WASM-only** (ADR 0013). Install with `navi plugin install` / marketplace;
+artifacts live under `{data_dir}/plugins/` and load through `navi-plugin-orchestrator`
++ `wasmtime`. Host brokers mediate FS/HTTP/git. Signature verification applies to
+`Community` / `Signed`; path installs use `LocalDev` (signature optional).
 
-Trusted plugin locations are enforced by `SecurityPolicy` unless `allow_external_plugins = true`. Failed plugins are reported as warnings and skipped.
+Legacy `[[plugins]]` native `.so`/`.dylib` paths in config are **ignored** with a warning.
 
-Plugin scope:
+Marketplace package `kind` values (`plugin` | `skill` | `mcp` | `integration`) all
+install as WASM packages; kind only changes post-install guidance (e.g. MCP config merge).
 
-- Engine plugins: providers, tools, context processors, routing, memory/session hooks, approval policies. Usable by TUI and Tutor.
-- TUI plugins: terminal UI widgets, ratatui panels, keybindings, terminal commands, themes. Usable only by NAVI TUI.
-- Tutor plugins: visual blocks, canvas tools, study behaviors, tutor widgets. Usable only by NAVI Tutor.
+Plugin scope (product):
+
+- Engine plugins: tools and capabilities via WASM + brokers. Usable by TUI and Tutor.
+- TUI extension: future host-mediated UI protocol (not native ratatui panels).
+- Tutor plugins: visual blocks remain Tutor-owned; engine plugins must not depend on TUI.
 
 ## Skills And MCP
 

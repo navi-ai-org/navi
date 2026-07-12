@@ -1,7 +1,7 @@
 # ADR 0012 — Dual Plugin Execution Paths
 
 ## Status
-Accepted
+Superseded by [ADR 0013](0013-wasm-only-plugins.md) — native path retired; WASM-only
 
 ## Context
 NAVI supports two fundamentally different plugin execution models: native in-process

@@ -22,7 +22,6 @@ navi-plugin-broker.workspace = true
 navi-plugin-manifest.workspace = true
 navi-plugin-orchestrator = { workspace = true, optional = true, features = ["wasm-runtime"] }
 navi-providers.workspace = true
-navi-plugin-host.workspace = true
 navi-plugin-api = { workspace = true, features = ["tui"] }
 navi-voice.workspace = true
 copland.workspace = true

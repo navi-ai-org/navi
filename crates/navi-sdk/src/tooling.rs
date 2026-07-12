@@ -4,7 +4,6 @@ use navi_core::{
     SecurityPolicy, ToolExecutor, model_can_run_publicly, resolve_provider_api_key,
     resolve_provider_api_key_for_project, resolve_provider_config,
 };
-use navi_plugin_host::{LoadOptions, load_configured_plugins_with_options};
 #[cfg(feature = "wasm-plugins")]
 use navi_plugin_manifest::{SecurityDefaults, aggregate_lockfile_path, installed_plugins_dir};
 #[cfg(feature = "wasm-plugins")]
@@ -32,27 +31,13 @@ pub(crate) fn build_local_tooling(
         runtime_components.security.clone(),
     );
 
-    // Load native .so plugins (optional Landlock sandbox on Linux when enabled).
-    let mut sandbox_paths = vec![project_dir.clone(), loaded_config.data_dir.clone()];
-    for plugin in loaded_config.config.plugins.iter().filter(|p| p.enabled) {
-        sandbox_paths.push(plugin.path.clone());
-        if let Some(parent) = plugin.path.parent() {
-            sandbox_paths.push(parent.to_path_buf());
-        }
-    }
-    let load_options = LoadOptions {
-        sandbox_paths: (!loaded_config.config.plugins.is_empty()).then_some(sandbox_paths),
-    };
-    let plugin_report = load_configured_plugins_with_options(
-        &loaded_config.config.plugins,
-        &security_policy,
-        &mut tool_executor,
-        &load_options,
-    );
+    let mut warnings = Vec::new();
 
-    let mut warnings = plugin_report.warnings;
-    let agent_policies = plugin_report.agent_policies;
-    let tui_components = plugin_report.tui_components;
+    // Native .so/.dylib plugins (libloading) are retired. WASM is the only runtime.
+    if let Some(warning) = native_plugins_deprecated_warning(&loaded_config.config.plugins) {
+        tracing::warn!(warning = %warning, "native plugins ignored");
+        warnings.push(warning);
+    }
 
     // Load WASM plugins from the data-dir store and any configured scan roots.
     #[cfg(feature = "wasm-plugins")]
@@ -84,11 +69,26 @@ pub(crate) fn build_local_tooling(
     Ok(NaviRuntimeTooling {
         tool_executor: Arc::new(tool_executor),
         warnings,
-        agent_policies,
-        tui_components,
-        tui_panels: plugin_report.tui_panels,
-        _plugins: plugin_report.loaded_plugins,
+        agent_policies: Vec::new(),
+        tui_components: Vec::new(),
+        tui_panels: Vec::new(),
     })
+}
+
+/// Warn when legacy `[[plugins]]` native library paths are present in config.
+fn native_plugins_deprecated_warning(plugins: &[navi_core::PluginConfig]) -> Option<String> {
+    let enabled: Vec<String> = plugins
+        .iter()
+        .filter(|p| p.enabled)
+        .map(|p| p.path.display().to_string())
+        .collect();
+    if enabled.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "native plugins are no longer loaded (WASM-only); ignoring [[plugins]] paths: {}",
+        enabled.join(", ")
+    ))
 }
 
 /// Directories to scan for installed WASM plugin subfolders.
@@ -472,6 +472,44 @@ mod tests {
             tooling.warnings.is_empty(),
             "no warnings expected with default config"
         );
+    }
+
+    #[test]
+    fn build_local_tooling_warns_and_ignores_native_plugin_config() {
+        use navi_core::PluginConfig;
+        use std::path::PathBuf;
+
+        let tempdir = tempfile::tempdir().unwrap();
+        let loaded_config = LoadedConfig {
+            config: NaviConfig {
+                plugins: vec![PluginConfig {
+                    path: PathBuf::from("/tmp/fake-native-plugin.so"),
+                    enabled: true,
+                }],
+                ..Default::default()
+            },
+            global_config_path: None,
+            project_config_path: None,
+            data_dir: tempdir.path().to_path_buf(),
+        };
+
+        let tooling = build_local_tooling(
+            &loaded_config,
+            tempdir.path().to_path_buf(),
+            &RuntimeComponents::default(),
+        )
+        .unwrap();
+
+        assert!(
+            tooling
+                .warnings
+                .iter()
+                .any(|w| w.contains("native plugins are no longer loaded")),
+            "expected deprecation warning, got: {:?}",
+            tooling.warnings
+        );
+        assert!(tooling.tui_panels.is_empty());
+        assert!(tooling.agent_policies.is_empty());
     }
 
     #[test]
