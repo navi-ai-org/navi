@@ -11,6 +11,7 @@ mod notify_ops;
 mod plugins;
 mod routing_ops;
 mod tooling;
+mod tui_extensions;
 mod types;
 mod voice;
 
@@ -112,6 +113,10 @@ pub use voice::VoiceConfigUpdate;
 pub use plugins::{
     PluginInfo, PluginInstallResult, PluginMarketplaceEntry, apply_kind_side_effects_at,
     detect_package_kind,
+};
+pub use tui_extensions::{
+    InstalledTuiExtension, TuiExtensionCommand, TuiExtensionPanel, TuiExtensionSpec,
+    list_installed_tui_extensions, load_tui_extension_from_dir, parse_tui_extension_spec,
 };
 
 // OAuth / registry DTOs

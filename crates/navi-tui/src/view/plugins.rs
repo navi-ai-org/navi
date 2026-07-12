@@ -30,14 +30,18 @@ pub(crate) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
         ])
         .split(inner);
 
+    let ext_cmds = navi_sdk::list_installed_tui_extensions(&app.loaded_config.data_dir)
+        .map(|exts| exts.iter().map(|e| e.spec.commands.len()).sum::<usize>())
+        .unwrap_or(0);
     let status = if app.plugin_catalog_loading {
         "Loading marketplace catalog…".to_string()
     } else if !app.plugin_catalog_error.is_empty() {
         format!("Catalog error: {}", app.plugin_catalog_error)
     } else {
         format!(
-            "Marketplace: {} plugin(s) • install dir: {}",
+            "Marketplace: {} • UI cmds: {} • dir: {}",
             app.plugin_catalog.len(),
+            ext_cmds,
             app.loaded_config.data_dir.join("plugins").display()
         )
     };
