@@ -113,7 +113,9 @@ fn update_plugin_marketplace(plugin_id: &str, force: bool, config: &LoadedConfig
 
 fn install_plugin(path: &Path, yes: bool, config: &LoadedConfig, _cwd: &Path) -> Result<()> {
     // Local path installs are LocalDev (WASM only; signature optional).
-    install_plugin_with_meta(path, yes, config, TrustLevel::LocalDev, PluginCatalogKind::Plugin)
+    // Kind is auto-detected from mcp.json / SKILL.md when present.
+    let kind = navi_sdk::detect_package_kind(path);
+    install_plugin_with_meta(path, yes, config, TrustLevel::LocalDev, kind)
 }
 
 fn install_plugin_with_meta(
@@ -144,13 +146,22 @@ fn install_plugin_with_meta(
         manifest.plugin.id, manifest.plugin.version
     );
 
-    install_files(path, &manifest, &config.data_dir)?;
+    let installed = install_files(path, &manifest, &config.data_dir)?;
     write_lockfile_with_meta(&config.data_dir, &manifest, trust, kind)?;
 
     println!("Plugin '{}' installed successfully.", manifest.plugin.id);
     println!("  Tools: {}", manifest.tools.len());
     println!("  Capabilities: {}", manifest.capabilities.len());
-    println!("  {}", kind_install_hint(kind));
+    let mut hint = kind_install_hint(kind).to_string();
+    if let Some(extra) = navi_sdk::apply_kind_side_effects_at(
+        &config.data_dir,
+        std::env::current_dir().as_deref().unwrap_or(Path::new(".")),
+        &installed,
+        kind,
+    ) {
+        hint = extra;
+    }
+    println!("  {hint}");
 
     Ok(())
 }

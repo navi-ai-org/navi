@@ -109,7 +109,10 @@ pub use navi_core::{McpConfig, McpServerConfig};
 pub use voice::VoiceConfigUpdate;
 
 // Plugin lifecycle DTOs
-pub use plugins::{PluginInfo, PluginInstallResult, PluginMarketplaceEntry};
+pub use plugins::{
+    PluginInfo, PluginInstallResult, PluginMarketplaceEntry, apply_kind_side_effects_at,
+    detect_package_kind,
+};
 
 // OAuth / registry DTOs
 pub use auth_ops::{DeviceOAuthStartedInfo, RegistryProviderSummary};
