@@ -2180,6 +2180,46 @@ mod tests {
     use serde_json::json;
 
     #[test]
+    fn split_diff_line_number_parses_fixed_gutter() {
+        assert_eq!(
+            split_diff_line_number("  39|- Default registry"),
+            Some(("39", "- Default registry"))
+        );
+        assert_eq!(split_diff_line_number("   1|fn main() {}"), Some(("1", "fn main() {}")));
+        assert_eq!(split_diff_line_number("1234|x"), Some(("1234", "x")));
+        // Unnumbered / ambiguous content must not match.
+        assert_eq!(split_diff_line_number("old line"), None);
+        assert_eq!(split_diff_line_number("  39 bottles"), None);
+        assert_eq!(split_diff_line_number("  39 old"), None);
+    }
+
+    #[test]
+    fn numbered_diff_lines_render_gutter_without_plus_minus_glyph() {
+        let md = "```diff\n-  39|old line\n+  39|new line\n  40|context\n```\n";
+        let lines = render_markdown_lines(md, 80, muted(), text(), false);
+        let joined: Vec<String> = lines
+            .iter()
+            .map(|line| {
+                line.spans
+                    .iter()
+                    .map(|s| s.content.as_ref())
+                    .collect::<String>()
+            })
+            .collect();
+        let body = joined.join("\n");
+        assert!(
+            body.contains("39") && body.contains("old line") && body.contains("new line"),
+            "expected numbered diff body, got:\n{body}"
+        );
+        // Color rail hides the raw +/- sign when a gutter is present.
+        assert!(
+            !body.contains("-  39") && !body.contains("+  39"),
+            "raw +/- gutter chrome should be hidden, got:\n{body}"
+        );
+        assert!(body.contains("40") && body.contains("context"));
+    }
+
+    #[test]
     fn running_bash_renders_pulsing_header_with_elapsed() {
         let mut running = HashMap::new();
         running.insert(
