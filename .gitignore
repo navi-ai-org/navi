@@ -5,10 +5,14 @@ mutants.out.old/
 /coverage/
 /quality/metricsSummary.json
 /quality/qualityReport.json
-/benchmarks/runs/*.json
-/benchmarks/runs/index.js
+
+# Benchmark local run outputs (keep .gitkeep + curated RESULTS.md only)
+/benchmarks/runs/**
+!/benchmarks/runs/.gitkeep
+!/benchmarks/runs/**/RESULTS.md
 /benchmarks/fixtures/**/Cargo.lock
 /benchmarks/fixtures/**/target/
+
 # Scratch files
 /expanded.rs
 /libtest.rlib
@@ -28,3 +32,28 @@ npm/navi/**/*.tgz
 
 # Local HF voice packaging staging (do not commit weights)
 .cache-voice-staging/
+
+# Language/tooling caches (never push)
+**/__pycache__/
+**/*.py[cod]
+**/.pytest_cache/
+**/.ruff_cache/
+**/.mypy_cache/
+**/.dart_tool/
+**/.pub-cache/
+**/node_modules/
+**/.turbo/
+**/.next/
+**/.cache/
+*.tsbuildinfo
+
+# Editor / OS noise
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
+!.vscode/extensions.json
+!.vscode/settings.json
