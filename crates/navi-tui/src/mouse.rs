@@ -2,7 +2,7 @@ use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
 
 use crate::app::TuiApp;
 use crate::chat::{fork_from_user_message, revert_to_user_message};
-use crate::commands::filtered_commands;
+
 use crate::keybindings::{close_active_modal, handle_key, replace_modal};
 use crate::notifications::{push_diagnostic, show_notification};
 use crate::plugins::{install_or_update_from_marketplace, plugin_picker_rows};
@@ -450,6 +450,7 @@ fn apply_hover(app: &mut TuiApp, hit: &HitRegion<HitAction>) {
         HitAction::Session(index) => app.hover_index = Some(*index),
         HitAction::Skill(index) => app.hover_index = Some(*index),
         HitAction::Setting(index) => app.hover_index = Some(*index),
+        HitAction::ExtensionsItem(index) => app.hover_index = Some(*index),
         HitAction::MessageAction(index) => app.hover_index = Some(*index),
         HitAction::PluginInstallOrUpdate(index) => {
             app.hover_index = Some(*index);
@@ -523,8 +524,11 @@ fn dispatch_hit(app: &mut TuiApp, hit: HitRegion<HitAction>) {
             );
         }
         HitAction::Command(index) => {
-            app.selected_command = index;
-            let _ = crate::keybindings::run_selected_command(app);
+            let rows = crate::commands::command_rows(app);
+            if rows.get(index).is_some_and(|r| r.is_selectable()) {
+                app.selected_command = index;
+                let _ = crate::keybindings::run_selected_command(app);
+            }
         }
         HitAction::Model(index) => {
             app.selected_model = index;
@@ -605,6 +609,14 @@ fn dispatch_hit(app: &mut TuiApp, hit: HitRegion<HitAction>) {
         }
         HitAction::Setting(index) => {
             app.selected_setting = index;
+            let _ = handle_key(
+                app,
+                crossterm::event::KeyCode::Enter,
+                crossterm::event::KeyModifiers::NONE,
+            );
+        }
+        HitAction::ExtensionsItem(index) => {
+            app.selected_extensions_item = index;
             let _ = handle_key(
                 app,
                 crossterm::event::KeyCode::Enter,
@@ -892,6 +904,8 @@ fn active_scroll_target(app: &TuiApp) -> Option<ScrollTarget> {
         | Mode::Mcp
         | Mode::BackgroundModels
         | Mode::BgModelPicker
+        | Mode::ModelRouting
+        | Mode::Extensions
         | Mode::AttachmentModels => None,
         Mode::Setup => None,
         Mode::ConfirmPlan | Mode::SudoPassword => None,
@@ -901,11 +915,13 @@ fn active_scroll_target(app: &TuiApp) -> Option<ScrollTarget> {
 fn scroll_by(app: &mut TuiApp, target: ScrollTarget, delta: isize) {
     match target {
         ScrollTarget::Commands => {
-            let len = filtered_commands(app).len();
+            let len = crate::commands::command_rows(app).len();
             app.command_scroll = shifted_scroll(app.command_scroll, len, 10, delta);
-            app.selected_command = app
-                .selected_command
-                .clamp(app.command_scroll, app.command_scroll + 9);
+            app.selected_command = crate::commands::clamp_command_selection(
+                &crate::commands::command_rows(app),
+                app.selected_command
+                    .clamp(app.command_scroll, app.command_scroll + 9),
+            );
         }
         ScrollTarget::Models => scroll_models_by(app, delta),
         ScrollTarget::Providers => {
@@ -1028,11 +1044,13 @@ fn scroll_by(app: &mut TuiApp, target: ScrollTarget, delta: isize) {
 fn scroll_to(app: &mut TuiApp, target: ScrollTarget, offset: usize) {
     match target {
         ScrollTarget::Commands => {
-            let len = filtered_commands(app).len();
+            let len = crate::commands::command_rows(app).len();
             app.command_scroll = offset.min(len.saturating_sub(10));
-            app.selected_command = app
-                .selected_command
-                .clamp(app.command_scroll, app.command_scroll + 9);
+            app.selected_command = crate::commands::clamp_command_selection(
+                &crate::commands::command_rows(app),
+                app.selected_command
+                    .clamp(app.command_scroll, app.command_scroll + 9),
+            );
         }
         ScrollTarget::Models => scroll_models_to(app, offset),
         ScrollTarget::Providers => {

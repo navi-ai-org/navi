@@ -1,10 +1,10 @@
 use ratatui::layout::{Constraint, Direction, Layout, Margin, Rect};
 use ratatui::prelude::{Frame, Span};
-use ratatui::style::Style;
+use ratatui::style::{Modifier, Style};
 use ratatui::widgets::{List, ListItem, ListState, Paragraph};
 
 use crate::TuiApp;
-use crate::commands::filtered_commands;
+use crate::commands::{CommandRow, command_rows};
 use crate::render::{
     clear_modal_area, command_row, fill_modal_surface, modal_block, modal_list_highlight_style,
 };
@@ -52,35 +52,45 @@ pub(crate) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
         },
     );
 
-    let commands = filtered_commands(app);
-    let selected_command = app.selected_command.min(commands.len().saturating_sub(1));
+    let command_list = command_rows(app);
+    let selected_command = app
+        .selected_command
+        .min(command_list.len().saturating_sub(1));
     let command_width = rows[1].width as usize;
-    let items = commands
+    let items = command_list
         .iter()
         .enumerate()
-        .map(|(index, command)| {
-            let selected = index == selected_command;
-            let hovered = app.hover_index == Some(index);
-            let style = if hovered || selected {
-                active_item_style()
-            } else {
-                inactive_item_style()
-            };
-
-            let shortcut = command.shortcut.unwrap_or("");
-            ListItem::new(Span::styled(
-                command_row(command.label, shortcut, command_width),
-                style,
-            ))
-            .style(style)
+        .map(|(index, row)| match row {
+            CommandRow::Section(title) => {
+                let style = Style::default()
+                    .fg(ghost())
+                    .bg(modal_bg())
+                    .add_modifier(Modifier::BOLD);
+                ListItem::new(Span::styled(format!("— {title} —"), style)).style(style)
+            }
+            CommandRow::Item(command) => {
+                let selected = index == selected_command;
+                let hovered = app.hover_index == Some(index);
+                let style = if hovered || selected {
+                    active_item_style()
+                } else {
+                    inactive_item_style()
+                };
+                let shortcut = command.shortcut.unwrap_or("");
+                ListItem::new(Span::styled(
+                    command_row(command.label, shortcut, command_width),
+                    style,
+                ))
+                .style(style)
+            }
         })
         .collect::<Vec<_>>();
 
     let offset = app
         .command_scroll
-        .min(commands.len().saturating_sub(rows[1].height as usize));
+        .min(command_list.len().saturating_sub(rows[1].height as usize));
     let mut list_state = ListState::default().with_offset(offset).with_selected(
-        (!commands.is_empty()).then_some(app.hover_index.unwrap_or(selected_command)),
+        (!command_list.is_empty()).then_some(app.hover_index.unwrap_or(selected_command)),
     );
     frame.render_stateful_widget(
         List::new(items)
@@ -93,18 +103,22 @@ pub(crate) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
         frame,
         app,
         rows[1],
-        commands.len(),
+        command_list.len(),
         offset,
         crate::ui::interaction::ScrollTarget::Commands,
     );
-    for (row_offset, index) in (offset..commands.len())
+    for (row_offset, index) in (offset..command_list.len())
         .take(rows[1].height as usize)
         .enumerate()
     {
+        let label = match &command_list[index] {
+            CommandRow::Section(title) => format!("section {title}"),
+            CommandRow::Item(command) => format!("command {}", command.label),
+        };
         app.register_hit(
             line_rect(rows[1], row_offset),
             20,
-            format!("command {}", commands[index].label),
+            label,
             HitAction::Command(index),
         );
     }

@@ -48,12 +48,18 @@ impl NaviConfig {
 
     pub(crate) fn merge(&mut self, other: NaviConfig) {
         use crate::config::types::{
-            BackgroundModelsConfig, GoalsConfig, McpConfig, ModelConfig, PluginMarketplaceConfig,
-            SkillsConfig, TuiConfig, UpdatesConfig, VoiceConfig,
+            AttachmentModelsConfig, BackgroundModelsConfig, BrowserConfig, GoalsConfig, McpConfig,
+            ModelConfig, PluginMarketplaceConfig, SkillsConfig, TuiConfig, UpdatesConfig,
+            VoiceConfig,
         };
 
         if other.model != ModelConfig::default() {
             self.model = other.model;
+        }
+        // Attachment fallback models (image/audio/video/document) must survive
+        // global + project merge; without this, TUI/API overrides are lost on reload.
+        if other.attachment_models != AttachmentModelsConfig::default() {
+            self.attachment_models = other.attachment_models;
         }
         self.harness = other.harness;
         self.approvals = other.approvals;
@@ -85,6 +91,9 @@ impl NaviConfig {
         // customizes [voice] (serde fills defaults for missing tables).
         if other.voice != VoiceConfig::default() {
             self.voice = other.voice;
+        }
+        if other.browser != BrowserConfig::default() {
+            self.browser = other.browser;
         }
         crate::config::providers::merge_provider_configs(&mut self.providers, other.providers);
         self.plugins.extend(other.plugins);
@@ -343,5 +352,90 @@ name = "gpt-test"
 
         assert_eq!(config.voice.provider, "groq");
         assert_eq!(config.voice.model, "whisper-large-v3-turbo");
+    }
+
+    #[test]
+    fn global_config_merges_attachment_models() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let path = tempdir.path().join("config.toml");
+        fs::write(
+            &path,
+            r#"
+[attachment_models.image]
+provider = "openai"
+name = "gpt-4o"
+
+[attachment_models.document]
+provider = "anthropic"
+name = "claude-sonnet-4-20250514"
+"#,
+        )
+        .expect("write config");
+
+        let mut config = NaviConfig::default();
+        assert!(config.attachment_models.image.is_none());
+        merge_from_file(&mut config, &path, ConfigSource::Trusted).expect("merge");
+
+        let image = config.attachment_models.image.expect("image override");
+        assert_eq!(image.provider, "openai");
+        assert_eq!(image.name, "gpt-4o");
+        let document = config.attachment_models.document.expect("document override");
+        assert_eq!(document.provider, "anthropic");
+        assert_eq!(document.name, "claude-sonnet-4-20250514");
+        assert!(config.attachment_models.audio.is_none());
+        assert!(config.attachment_models.video.is_none());
+    }
+
+    #[test]
+    fn missing_attachment_models_table_does_not_wipe_existing() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let path = tempdir.path().join("config.toml");
+        fs::write(
+            &path,
+            r#"
+[model]
+provider = "openai"
+name = "gpt-test"
+"#,
+        )
+        .expect("write config");
+
+        let mut config = NaviConfig::default();
+        config.attachment_models.image = Some(crate::config::types::ModelConfig {
+            provider: "xai".to_string(),
+            name: "grok-2-vision".to_string(),
+        });
+        merge_from_file(&mut config, &path, ConfigSource::Project).expect("merge");
+
+        let image = config.attachment_models.image.expect("preserved image override");
+        assert_eq!(image.provider, "xai");
+        assert_eq!(image.name, "grok-2-vision");
+    }
+
+    #[test]
+    fn save_and_reload_preserves_attachment_models() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let path = tempdir.path().join("config.toml");
+
+        let mut config = NaviConfig::default();
+        config.attachment_models.image = Some(crate::config::types::ModelConfig {
+            provider: "google-gemini".to_string(),
+            name: "gemini-2.5-flash".to_string(),
+        });
+        config.attachment_models.audio = Some(crate::config::types::ModelConfig {
+            provider: "openai".to_string(),
+            name: "gpt-4o-audio-preview".to_string(),
+        });
+        save_global_config(&path, &config).expect("save");
+
+        let mut reloaded = NaviConfig::default();
+        merge_from_file(&mut reloaded, &path, ConfigSource::Trusted).expect("merge");
+
+        let image = reloaded.attachment_models.image.expect("image");
+        assert_eq!(image.provider, "google-gemini");
+        assert_eq!(image.name, "gemini-2.5-flash");
+        let audio = reloaded.attachment_models.audio.expect("audio");
+        assert_eq!(audio.provider, "openai");
+        assert_eq!(audio.name, "gpt-4o-audio-preview");
     }
 }

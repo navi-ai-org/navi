@@ -401,96 +401,161 @@ pub(crate) fn handle_thinking_key(app: &mut TuiApp, code: KeyCode) -> bool {
 }
 
 pub(crate) fn handle_settings_key(app: &mut TuiApp, code: KeyCode) -> bool {
-    const SETTINGS_COUNT: usize = 5;
+    use crate::settings::{
+        SettingAction, SettingRow, SETTINGS_ROWS, clamp_setting_selection,
+        next_selectable_setting, previous_selectable_setting,
+    };
     const COMPACT_TOOL_LIMITS: &[usize] = &[3, 5, 8, 12, 20];
-    let mut list_state = SelectListState::new(app.selected_setting, 0);
+
+    let mut selected = clamp_setting_selection(app.selected_setting);
     match code {
         KeyCode::Esc => super::close_active_modal(app),
-        KeyCode::Down => {
-            list_state.select_next(SETTINGS_COUNT);
+        KeyCode::Down | KeyCode::Char('j') => {
+            selected = next_selectable_setting(selected);
         }
-        KeyCode::Up => {
-            list_state.select_previous();
+        KeyCode::Up | KeyCode::Char('k') => {
+            selected = previous_selectable_setting(selected);
         }
-        KeyCode::Char(' ') | KeyCode::Enter => match app.selected_setting {
-            0 => {
-                app.show_thinking = !app.show_thinking;
-                show_notification(
-                    app,
-                    "Settings",
-                    if app.show_thinking {
-                        "Thinking text visible."
-                    } else {
-                        "Thinking text hidden."
-                    },
-                );
-                save_preferences(app);
+        KeyCode::Char(' ') | KeyCode::Enter => {
+            let Some(SettingRow::Action(action)) = SETTINGS_ROWS.get(selected).copied() else {
+                app.selected_setting = selected;
+                return false;
+            };
+            match action {
+                SettingAction::ShowReasoning => {
+                    app.show_thinking = !app.show_thinking;
+                    show_notification(
+                        app,
+                        "Settings",
+                        if app.show_thinking {
+                            "Thinking text visible."
+                        } else {
+                            "Thinking text hidden."
+                        },
+                    );
+                    save_preferences(app);
+                }
+                SettingAction::CompactToolView => {
+                    let pin = app
+                        .selected_chat_source
+                        .as_ref()
+                        .and_then(crate::render::tool_policy::selected_tool_id)
+                        .map(str::to_string);
+                    crate::render::tool_policy::toggle_expand_all_mode(
+                        &mut app.full_tool_view,
+                        &mut app.expanded_tool_results,
+                        &mut app.collapsed_tool_results,
+                        pin.as_deref(),
+                    );
+                    app.chat_render_cache.borrow_mut().signature_hash = 0;
+                    show_notification(
+                        app,
+                        "Settings",
+                        if !app.full_tool_view {
+                            "Tool output compacted."
+                        } else {
+                            "Full tool output visible."
+                        },
+                    );
+                    save_preferences(app);
+                }
+                SettingAction::CompactToolRows => {
+                    let current = COMPACT_TOOL_LIMITS
+                        .iter()
+                        .position(|limit| *limit >= app.compact_tool_visible_limit)
+                        .unwrap_or(0);
+                    app.compact_tool_visible_limit =
+                        COMPACT_TOOL_LIMITS[(current + 1) % COMPACT_TOOL_LIMITS.len()];
+                    show_notification(
+                        app,
+                        "Settings",
+                        format!(
+                            "Compact tool rows set to {}.",
+                            app.compact_tool_visible_limit
+                        ),
+                    );
+                    save_preferences(app);
+                }
+                SettingAction::Theme => {
+                    app.theme_filter.clear();
+                    app.theme_filter_cursor = 0;
+                    super::replace_modal(app, ModalKind::ThemePicker);
+                }
+                SettingAction::ChatModel => {
+                    super::open_model_routing(app, crate::state::ModelRoutingTab::Chat);
+                }
+                SettingAction::Effort => {
+                    super::open_thinking_picker(app);
+                }
+                SettingAction::AgentRoutes => {
+                    super::open_model_routing(app, crate::state::ModelRoutingTab::Agents);
+                    app.bg_models_selected = 0;
+                    app.bg_models_scroll = 0;
+                }
+                SettingAction::AttachmentFallbacks => {
+                    super::open_model_routing(app, crate::state::ModelRoutingTab::Attachments);
+                    app.selected_attachment_model = 0;
+                }
+                SettingAction::Providers => {
+                    super::open_provider_settings(app);
+                }
+                SettingAction::PermissionMode => {
+                    super::global::cycle_permission_mode_for_command(app);
+                }
+                SettingAction::AutoUpdate => {
+                    let enabled = !app.loaded_config.config.updates.auto_update;
+                    app.loaded_config.config.updates.auto_update = enabled;
+                    show_notification(
+                        app,
+                        "Settings",
+                        if enabled {
+                            "Auto-update enabled — newer releases install automatically."
+                        } else {
+                            "Auto-update disabled — you'll be notified when updates are available."
+                        },
+                    );
+                    save_preferences(app);
+                }
+                SettingAction::CheckUpdates => {
+                    app.update_check_user_initiated = true;
+                    crate::update_check::spawn_update_check(app);
+                    show_notification(app, "Updates", "Checking for a newer NAVI release…");
+                    super::close_active_modal(app);
+                }
+                SettingAction::Debug => {
+                    super::replace_modal(app, ModalKind::Debug);
+                }
+                SettingAction::SetupWizard => {
+                    app.setup_phase = Some(crate::state::SetupPhase::ProviderLogin);
+                    app.mode = crate::state::Mode::Setup;
+                    super::close_all_modals(app);
+                    app.modal_stack.open(ModalKind::Models);
+                    app.model_filter.clear();
+                    app.model_filter_cursor = 0;
+                    app.model_scroll = 0;
+                    app.refresh_authenticated_providers();
+                    app.messages.push(crate::state::ChatMessage::new(
+                        crate::state::ChatRole::Assistant,
+                        "Setting up again. Choose your provider.".to_string(),
+                    ));
+                }
+                SettingAction::MemoryHint => {
+                    let detail = app.engine().memory_quick_status().unwrap_or_else(|err| {
+                        format!("status unavailable ({err:#})")
+                    });
+                    show_notification(
+                        app,
+                        "Memory",
+                        format!(
+                            "{detail}\nTool: memory in chat · CLI: navi memory list · navi memory dream --apply"
+                        ),
+                    );
+                }
             }
-            1 => {
-                let pin = app
-                    .selected_chat_source
-                    .as_ref()
-                    .and_then(crate::render::tool_policy::selected_tool_id)
-                    .map(str::to_string);
-                crate::render::tool_policy::toggle_expand_all_mode(
-                    &mut app.full_tool_view,
-                    &mut app.expanded_tool_results,
-                    &mut app.collapsed_tool_results,
-                    pin.as_deref(),
-                );
-                app.chat_render_cache.borrow_mut().signature_hash = 0;
-                show_notification(
-                    app,
-                    "Settings",
-                    if !app.full_tool_view {
-                        "Tool output compacted."
-                    } else {
-                        "Full tool output visible."
-                    },
-                );
-                save_preferences(app);
-            }
-            2 => {
-                let current = COMPACT_TOOL_LIMITS
-                    .iter()
-                    .position(|limit| *limit >= app.compact_tool_visible_limit)
-                    .unwrap_or(0);
-                app.compact_tool_visible_limit =
-                    COMPACT_TOOL_LIMITS[(current + 1) % COMPACT_TOOL_LIMITS.len()];
-                show_notification(
-                    app,
-                    "Settings",
-                    format!(
-                        "Compact tool rows set to {}.",
-                        app.compact_tool_visible_limit
-                    ),
-                );
-                save_preferences(app);
-            }
-            3 => {
-                app.theme_filter.clear();
-                app.theme_filter_cursor = 0;
-                super::replace_modal(app, ModalKind::ThemePicker);
-            }
-            4 => {
-                let enabled = !app.loaded_config.config.updates.auto_update;
-                app.loaded_config.config.updates.auto_update = enabled;
-                show_notification(
-                    app,
-                    "Settings",
-                    if enabled {
-                        "Auto-update enabled — newer releases install automatically."
-                    } else {
-                        "Auto-update disabled — you'll be notified when updates are available."
-                    },
-                );
-                save_preferences(app);
-            }
-            _ => {}
-        },
+        }
         _ => {}
     }
-    app.selected_setting = list_state.selected();
+    app.selected_setting = selected;
     false
 }
 
@@ -1686,6 +1751,197 @@ pub(crate) fn handle_background_command_output_key(app: &mut TuiApp, code: KeyCo
     false
 }
 
+
+pub(crate) fn handle_model_routing_key(app: &mut TuiApp, code: KeyCode) -> bool {
+    use crate::state::ModelRoutingTab;
+    match code {
+        KeyCode::Esc => {
+            if app.setup_phase == Some(crate::state::SetupPhase::MemoryModel)
+                && app.model_routing_tab == ModelRoutingTab::Agents
+            {
+                show_notification(
+                    app,
+                    "Setup",
+                    "Choose a memory extraction model to continue setup.",
+                );
+            } else {
+                super::close_active_modal(app);
+            }
+        }
+        KeyCode::Left | KeyCode::Char('h') => {
+            app.model_routing_tab = app.model_routing_tab.previous();
+        }
+        KeyCode::Right | KeyCode::Char('l') | KeyCode::Tab => {
+            app.model_routing_tab = app.model_routing_tab.next();
+        }
+        KeyCode::BackTab => {
+            app.model_routing_tab = app.model_routing_tab.previous();
+        }
+        other => match app.model_routing_tab {
+            ModelRoutingTab::Chat => match other {
+                KeyCode::Enter => {
+                    super::open_model_picker(app);
+                }
+                KeyCode::Char('e') => {
+                    super::open_thinking_picker(app);
+                }
+                _ => {}
+            },
+            ModelRoutingTab::Agents => {
+                // Reuse agent-list handling without Esc (already handled).
+                handle_background_models_list_key(app, other);
+            }
+            ModelRoutingTab::Attachments => {
+                handle_attachment_models_list_key(app, other);
+            }
+        },
+    }
+    false
+}
+
+/// List navigation for Agents tab (no Esc / no modal close).
+fn handle_background_models_list_key(app: &mut TuiApp, code: KeyCode) {
+    let len = BG_MODEL_TASKS.len();
+    match code {
+        KeyCode::Up | KeyCode::Char('k') => {
+            if app.bg_models_selected > 0 {
+                app.bg_models_selected -= 1;
+            }
+        }
+        KeyCode::Down | KeyCode::Char('j') => {
+            if app.bg_models_selected + 1 < len {
+                app.bg_models_selected += 1;
+            }
+        }
+        KeyCode::Enter => {
+            if let Some((task_id, _)) = BG_MODEL_TASKS.get(app.bg_models_selected) {
+                app.bg_model_picker_active = true;
+                app.attachment_model_picker_active = false;
+                app.bg_model_picker_task = Some(task_id.to_string());
+                app.bg_model_picker_selected = 0;
+                app.model_scroll = 0;
+                app.model_filter.clear();
+                app.model_filter_cursor = 0;
+                super::replace_modal(app, ModalKind::BgModelPicker);
+                app.refresh_authenticated_providers();
+            }
+        }
+        KeyCode::Char('d') => {
+            if let Some((task_id, _)) = BG_MODEL_TASKS.get(app.bg_models_selected) {
+                if let Err(err) = app
+                    .engine()
+                    .clear_background_model(task_id, NaviConfigSaveTarget::Global)
+                {
+                    show_notification(
+                        app,
+                        "Agent Model Routes",
+                        format!("Could not reset {task_id}: {err:#}"),
+                    );
+                    return;
+                }
+                clear_bg_model_override(app, task_id);
+                show_notification(
+                    app,
+                    "Agent Model Routes",
+                    format!("{task_id} reset to default."),
+                );
+            }
+        }
+        _ => {}
+    }
+}
+
+/// List navigation for Attachments tab (no Esc).
+fn handle_attachment_models_list_key(app: &mut TuiApp, code: KeyCode) {
+    const ATTACHMENT_MODALITIES: &[(&str, &str)] = &[
+        ("image", "Image analysis fallback"),
+        ("audio", "Audio analysis fallback"),
+        ("video", "Video analysis fallback"),
+        ("document", "Document analysis fallback"),
+    ];
+    let count = ATTACHMENT_MODALITIES.len();
+    match code {
+        KeyCode::Down | KeyCode::Char('j') => {
+            if app.selected_attachment_model + 1 < count {
+                app.selected_attachment_model += 1;
+            }
+        }
+        KeyCode::Up | KeyCode::Char('k') => {
+            if app.selected_attachment_model > 0 {
+                app.selected_attachment_model -= 1;
+            }
+        }
+        KeyCode::Enter => {
+            if let Some((modality, _)) = ATTACHMENT_MODALITIES.get(app.selected_attachment_model) {
+                app.attachment_model_picker_active = true;
+                app.bg_model_picker_active = false;
+                app.bg_model_picker_task = Some(modality.to_string());
+                app.bg_model_picker_selected = 0;
+                app.model_scroll = 0;
+                app.model_filter.clear();
+                app.model_filter_cursor = 0;
+                super::replace_modal(app, ModalKind::BgModelPicker);
+                app.refresh_authenticated_providers();
+            }
+        }
+        KeyCode::Char('d') => {
+            if let Some((modality, _)) = ATTACHMENT_MODALITIES.get(app.selected_attachment_model) {
+                if let Err(err) = app
+                    .engine()
+                    .clear_attachment_model(modality, NaviConfigSaveTarget::Global)
+                {
+                    show_notification(
+                        app,
+                        "Attachment Fallbacks",
+                        format!("Could not reset {modality}: {err:#}"),
+                    );
+                    return;
+                }
+                clear_attachment_model_override(app, modality);
+                show_notification(
+                    app,
+                    "Attachment Fallbacks",
+                    format!("{} fallback reset to default.", modality),
+                );
+            }
+        }
+        _ => {}
+    }
+}
+
+pub(crate) fn handle_extensions_hub_key(app: &mut TuiApp, code: KeyCode) -> bool {
+    use crate::state::ExtensionsHubItem;
+    let count = ExtensionsHubItem::ALL.len();
+    match code {
+        KeyCode::Esc => super::close_active_modal(app),
+        KeyCode::Down | KeyCode::Char('j') | KeyCode::Tab => {
+            app.selected_extensions_item = (app.selected_extensions_item + 1) % count.max(1);
+        }
+        KeyCode::Up | KeyCode::Char('k') | KeyCode::BackTab => {
+            app.selected_extensions_item = app
+                .selected_extensions_item
+                .checked_sub(1)
+                .unwrap_or(count.saturating_sub(1));
+        }
+        KeyCode::Enter => {
+            match ExtensionsHubItem::ALL.get(app.selected_extensions_item).copied() {
+                Some(ExtensionsHubItem::Skills) => super::open_skills_picker(app),
+                Some(ExtensionsHubItem::Plugins) => super::open_plugins_picker(app),
+                Some(ExtensionsHubItem::McpServers) => {
+                    app.mcp_ui_state.selected_server = 0;
+                    app.mcp_ui_state.selected_tool = 0;
+                    app.mcp_ui_state.scroll = 0;
+                    app.mcp_ui_state.is_focused_on_tools = false;
+                    super::replace_modal(app, ModalKind::Mcp);
+                }
+                None => {}
+            }
+        }
+        _ => {}
+    }
+    false
+}
+
 const BG_MODEL_TASKS: &[(&str, &str)] = &[
     ("memory_extraction", "Automatic durable-memory extraction"),
     ("compaction", "Conversation summarization"),
@@ -1738,13 +1994,13 @@ pub(crate) fn handle_background_models_key(app: &mut TuiApp, code: KeyCode) -> b
                     .engine()
                     .clear_background_model(task_id, NaviConfigSaveTarget::Global)
                 {
-                    show_notification(app, "Background Agents", format!("Could not reset {task_id}: {err:#}"));
+                    show_notification(app, "Agent Model Routes", format!("Could not reset {task_id}: {err:#}"));
                     return false;
                 }
                 clear_bg_model_override(app, task_id);
                 show_notification(
                     app,
-                    "Background Agents",
+                    "Agent Model Routes",
                     format!("{task_id} reset to default."),
                 );
             }
@@ -1773,15 +2029,15 @@ pub(crate) fn handle_bg_model_picker_key(
                 );
                 return false;
             }
-            let target_modal = if app.attachment_model_picker_active {
-                ModalKind::AttachmentModels
+            if app.attachment_model_picker_active {
+                app.model_routing_tab = crate::state::ModelRoutingTab::Attachments;
             } else {
-                ModalKind::BackgroundModels
-            };
+                app.model_routing_tab = crate::state::ModelRoutingTab::Agents;
+            }
             app.attachment_model_picker_active = false;
             app.bg_model_picker_active = false;
             app.bg_model_picker_task = None;
-            super::replace_modal(app, target_modal);
+            super::replace_modal(app, ModalKind::ModelRouting);
         }
         KeyCode::Up | KeyCode::Char('k') => {
             if let Some(current) = rows.iter().position(|row| match row {
@@ -1826,11 +2082,23 @@ pub(crate) fn handle_bg_model_picker_key(
                 let provider_id = model.provider_id.clone();
                 let model_name = model.name.clone();
                 if app.attachment_model_picker_active {
+                    if let Err(err) = app.engine().set_attachment_model(
+                        &task_id,
+                        &provider_id,
+                        &model_name,
+                        NaviConfigSaveTarget::Global,
+                    ) {
+                        show_notification(
+                            app,
+                            "Attachment Fallbacks",
+                            format!("Could not save {task_id}: {err:#}"),
+                        );
+                        return false;
+                    }
                     set_attachment_model_override(app, &task_id, &provider_id, &model_name);
-                    save_preferences(app);
                     show_notification(
                         app,
-                        "Attachment Models",
+                        "Attachment Fallbacks",
                         format!("{} fallback → {}:{}", task_id, provider_id, model_name),
                     );
                 } else {
@@ -1842,7 +2110,7 @@ pub(crate) fn handle_bg_model_picker_key(
                     ) {
                         show_notification(
                             app,
-                            "Background Agents",
+                            "Agent Model Routes",
                             format!("Could not save {task_id}: {err:#}"),
                         );
                         return false;
@@ -1850,7 +2118,7 @@ pub(crate) fn handle_bg_model_picker_key(
                     set_bg_model_override(app, &task_id, &provider_id, &model_name);
                     show_notification(
                         app,
-                        "Background Agents",
+                        "Agent Model Routes",
                         format!("{} → {}:{}", task_id, provider_id, model_name),
                     );
                     if task_id == "memory_extraction"
@@ -1862,15 +2130,15 @@ pub(crate) fn handle_bg_model_picker_key(
                     }
                 }
             }
-            let target_modal = if app.attachment_model_picker_active {
-                ModalKind::AttachmentModels
+            if app.attachment_model_picker_active {
+                app.model_routing_tab = crate::state::ModelRoutingTab::Attachments;
             } else {
-                ModalKind::BackgroundModels
-            };
+                app.model_routing_tab = crate::state::ModelRoutingTab::Agents;
+            }
             app.attachment_model_picker_active = false;
             app.bg_model_picker_active = false;
             app.bg_model_picker_task = None;
-            super::replace_modal(app, target_modal);
+            super::replace_modal(app, ModalKind::ModelRouting);
         }
         KeyCode::Backspace => {
             let before = app.model_filter.clone();
@@ -1967,11 +2235,21 @@ pub(crate) fn handle_attachment_models_key(app: &mut TuiApp, code: KeyCode) -> b
         }
         KeyCode::Char('d') => {
             if let Some((modality, _)) = ATTACHMENT_MODALITIES.get(app.selected_attachment_model) {
+                if let Err(err) = app
+                    .engine()
+                    .clear_attachment_model(modality, NaviConfigSaveTarget::Global)
+                {
+                    show_notification(
+                        app,
+                        "Attachment Fallbacks",
+                        format!("Could not reset {modality}: {err:#}"),
+                    );
+                    return false;
+                }
                 clear_attachment_model_override(app, modality);
-                save_preferences(app);
                 show_notification(
                     app,
-                    "Attachment Models",
+                    "Attachment Fallbacks",
                     format!("{} fallback reset to default.", modality),
                 );
             }

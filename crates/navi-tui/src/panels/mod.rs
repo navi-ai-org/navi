@@ -93,13 +93,13 @@ pub fn register_modal_panels(app: &mut TuiApp) {
         72,
         16,
     )));
-    // Settings
+    // Settings hub (sectioned list of toggles + deep-links)
     pm.add_overlay(Box::new(ModalPanel::new(
         "settings",
         Mode::Settings,
         modals::render_settings,
-        52,
-        12,
+        76,
+        28,
     )));
     // Providers
     pm.add_overlay(Box::new(ModalPanel::new(
@@ -220,6 +220,23 @@ pub fn register_modal_panels(app: &mut TuiApp) {
         background_commands::render_output,
         110,
         30,
+    )));
+
+    // Unified model routing (Chat / Agents / Attachments)
+    pm.add_overlay(Box::new(ModalPanel::new(
+        "model-routing",
+        Mode::ModelRouting,
+        modals::render_model_routing,
+        78,
+        18,
+    )));
+    // Extensions hub
+    pm.add_overlay(Box::new(ModalPanel::new(
+        "extensions",
+        Mode::Extensions,
+        modals::render_extensions_hub,
+        72,
+        12,
     )));
     // Background models
     pm.add_overlay(Box::new(ModalPanel::new(

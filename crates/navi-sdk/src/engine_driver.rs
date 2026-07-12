@@ -123,8 +123,23 @@ pub trait EngineDriver: Send + Sync {
     /// Clear a background-task model route.
     fn clear_background_model(&self, task: &str, target: NaviConfigSaveTarget) -> Result<()>;
 
+    /// Persist an attachment fallback model for a modality (`image`/`audio`/`video`/`document`).
+    fn set_attachment_model(
+        &self,
+        modality: &str,
+        provider: &str,
+        model: &str,
+        target: NaviConfigSaveTarget,
+    ) -> Result<()>;
+
+    /// Clear an attachment fallback model for a modality.
+    fn clear_attachment_model(&self, modality: &str, target: NaviConfigSaveTarget) -> Result<()>;
+
     /// Current in-memory configuration snapshot.
     fn loaded_config(&self) -> LoadedConfig;
+
+    /// One-line memory system status for settings/TUI (best-effort).
+    fn memory_quick_status(&self) -> Result<String>;
 
     /// Fetch current provider usage and rate-limit windows.
     async fn usage_report(&self) -> Result<NaviUsageReport>;
@@ -293,8 +308,34 @@ impl EngineDriver for crate::NaviEngine {
         crate::NaviEngine::clear_background_model(self, task, target).map(|_| ())
     }
 
+    fn set_attachment_model(
+        &self,
+        modality: &str,
+        provider: &str,
+        model: &str,
+        target: NaviConfigSaveTarget,
+    ) -> Result<()> {
+        crate::NaviEngine::set_attachment_model(self, modality, provider, model, target).map(|_| ())
+    }
+
+    fn clear_attachment_model(&self, modality: &str, target: NaviConfigSaveTarget) -> Result<()> {
+        crate::NaviEngine::clear_attachment_model(self, modality, target).map(|_| ())
+    }
+
     fn loaded_config(&self) -> LoadedConfig {
         crate::NaviEngine::loaded_config(self)
+    }
+
+    fn memory_quick_status(&self) -> Result<String> {
+        match crate::NaviEngine::memory_status(self) {
+            Ok(s) => Ok(format!(
+                "{} · {} active · embeddings {}",
+                if s.enabled { "on" } else { "off" },
+                s.active_memories,
+                if s.embeddings_available { "ready" } else { "missing" }
+            )),
+            Err(err) => Err(err),
+        }
     }
 
     async fn usage_report(&self) -> Result<NaviUsageReport> {

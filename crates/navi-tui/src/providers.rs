@@ -187,7 +187,7 @@ pub(crate) fn maybe_start_setup_interview(app: &mut TuiApp) {
             // onboarding decision before the interview begins.
             app.setup_phase = Some(crate::state::SetupPhase::MemoryModel);
             app.bg_models_selected = 0;
-            crate::keybindings::replace_modal(app, crate::state::ModalKind::BackgroundModels);
+            crate::keybindings::open_model_routing(app, crate::state::ModelRoutingTab::Agents);
             crate::notifications::show_notification(
                 app,
                 "Setup",

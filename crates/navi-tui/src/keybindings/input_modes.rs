@@ -77,7 +77,9 @@ pub(crate) fn handle_normal_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyM
             super::replace_modal(app, ModalKind::Commands);
             app.command_filter.clear();
             app.command_filter_cursor = 0;
-            app.selected_command = 0;
+            app.selected_command = crate::commands::first_selectable_command_row(
+                &crate::commands::command_rows(app),
+            );
             app.command_scroll = 0;
         }
         KeyCode::Char('?') if app.input.is_empty() => {

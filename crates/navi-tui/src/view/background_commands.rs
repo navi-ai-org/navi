@@ -59,9 +59,9 @@ pub(crate) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
 
     let total = app.background_commands.len();
     let title = if total == 0 {
-        "Background Tasks".to_string()
+        "Shell Tasks".to_string()
     } else {
-        format!("Background Tasks  ·  {total}")
+        format!("Shell Tasks  ·  {total}")
     };
     frame.render_widget(
         Block::new()

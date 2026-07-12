@@ -263,20 +263,14 @@ fn formatted_tool_output(invocation: &ToolInvocation, result: &ToolResult) -> Op
             content.push_str("```\n");
         }
     } else if is_patch_invocation(invocation) {
+        // Header card already has "Edited path (+N -M)". Body is clean ```diff only
+        // (no "Edited…" chrome, no "Patch:" label, no *** Begin/End Patch).
         let patches = patch_inputs(invocation);
-        let summaries: Vec<String> = patches
-            .iter()
-            .flat_map(|patch| patch_edit_summaries(patch))
-            .collect();
-        if summaries.is_empty() {
+        if patches.is_empty() {
             content.push_str("Applied patch successfully\n");
         } else {
-            for summary in summaries {
-                content.push_str(&summary);
-                content.push('\n');
-            }
+            append_patch_bodies(&patches, &mut content);
         }
-        append_patch_bodies(&patches, &mut content);
         // Any apply_patch tool stdout/stderr: plain streams, no Stdout:/``` chrome.
         if obj.contains_key("stdout") || obj.contains_key("stderr") {
             append_shell_streams(obj, &mut content);
@@ -380,16 +374,87 @@ fn generic_tool_summary(invocation: &ToolInvocation, result: &ToolResult) -> Str
     if result.ok {
         content.push_str(&format!(
             "{} completed successfully\n",
-            invocation.tool_name
+            humanize_tool_name(&invocation.tool_name)
         ));
     } else if let Some(error) = result.output.get("error").and_then(|v| v.as_str()) {
         content.push_str(&format!("Error: {error}\n"));
     } else {
-        content.push_str(&format!("{} failed\n", invocation.tool_name));
+        content.push_str(&format!("{} failed\n", humanize_tool_name(&invocation.tool_name)));
     }
-    append_json_section(&mut content, "Input", &invocation.input);
-    append_json_section(&mut content, "Output", &result.output);
+
+    // Prefer a short human summary of common keys over raw JSON dumps.
+    if let Some(summary) = human_output_summary(&result.output) {
+        content.push('\n');
+        content.push_str(&summary);
+        if !summary.ends_with('\n') {
+            content.push('\n');
+        }
+        // Only dump full JSON when the summary is incomplete (large/nested payload).
+        if output_needs_json_fallback(&result.output) {
+            content.push('\n');
+            append_json_section(&mut content, "Details", &result.output);
+        }
+    } else {
+        append_json_section(&mut content, "Input", &invocation.input);
+        append_json_section(&mut content, "Output", &result.output);
+    }
     content
+}
+
+/// Pull common string/number fields into plain lines for readability.
+fn human_output_summary(output: &Value) -> Option<String> {
+    let obj = output.as_object()?;
+    if obj.is_empty() {
+        return None;
+    }
+    const KEYS: &[&str] = &[
+        "path",
+        "message",
+        "status",
+        "action",
+        "id",
+        "name",
+        "count",
+        "files_patched",
+        "patches_applied",
+        "bytes",
+        "lines_added",
+        "lines_removed",
+        "exit_code",
+        "command",
+        "query",
+        "result",
+        "summary",
+    ];
+    let mut lines = Vec::new();
+    for key in KEYS {
+        if let Some(val) = obj.get(*key) {
+            match val {
+                Value::String(s) if !s.is_empty() && s.len() < 400 && !s.contains('\n') => {
+                    lines.push(format!("{key}: {s}"));
+                }
+                Value::Number(n) => lines.push(format!("{key}: {n}")),
+                Value::Bool(b) => lines.push(format!("{key}: {b}")),
+                _ => {}
+            }
+        }
+    }
+    if lines.is_empty() {
+        None
+    } else {
+        Some(lines.join("\n"))
+    }
+}
+
+fn output_needs_json_fallback(output: &Value) -> bool {
+    let Some(obj) = output.as_object() else {
+        return true;
+    };
+    // Nested objects/arrays or many keys → keep Details JSON.
+    if obj.len() > 8 {
+        return true;
+    }
+    obj.values().any(|v| v.is_object() || v.is_array())
 }
 
 fn render_search_output(invocation: &ToolInvocation, result: &ToolResult, content: &mut String) {
@@ -785,32 +850,33 @@ fn append_patch_bodies(patches: &[String], content: &mut String) {
     }
 
     for (index, patch) in patches.iter().enumerate() {
-        if patches.len() == 1 {
-            content.push_str("\nPatch:\n");
-        } else {
-            content.push_str(&format!("\nPatch {}:\n", index + 1));
+        if patches.len() > 1 {
+            // Multi-file: light separator before each fence (not "Patch:" chrome).
+            if index > 0 {
+                content.push('\n');
+            }
         }
         append_diff_fence(patch, content);
     }
 }
 
 /// Fence a display/unified/structured diff as ```diff so markdown colors +/− lines.
-/// Caller supplies any leading blank line / label (`Patch:\n`, etc.).
 fn append_diff_fence(diff: &str, content: &mut String) {
     if diff.is_empty() {
         return;
     }
     content.push_str("```diff\n");
     let normalized = normalize_diff_for_display(diff);
+    let total_lines = normalized.lines().count();
     let truncated = truncate_to_lines(&normalized, MAX_TOOL_RENDER_LINES);
     content.push_str(truncated);
     if !truncated.ends_with('\n') {
         content.push('\n');
     }
     if truncated.len() < normalized.len() {
+        let shown = truncated.lines().count();
         content.push_str(&format!(
-            "… (truncated, {} lines total)\n",
-            normalized.lines().count()
+            "… (showing {shown} of {total_lines} lines — expand tool or use ctrl+o for full view)\n"
         ));
     }
     content.push_str("```\n");
@@ -856,11 +922,23 @@ fn write_display_diff(invocation: &ToolInvocation, result: &ToolResult) -> Optio
     Some(out)
 }
 
-/// Insert hunk separators (`…`) between `@@` hunks; keep path markers.
+/// Clean structured/unified patch text for chat display.
+///
+/// Strips protocol chrome (`*** Begin/End Patch`) and inserts `…` between
+/// hunks. Keeps `*** Update/Add/Delete File:` headers and `+/-`/`@@` lines.
 fn normalize_diff_for_display(patch: &str) -> String {
     let mut out = String::with_capacity(patch.len().saturating_add(16));
     let mut last_was_hunk = false;
     for line in patch.lines() {
+        let trimmed = line.trim_end();
+        // Protocol wrappers — never show in the chat body.
+        if trimmed == "*** Begin Patch"
+            || trimmed == "*** End Patch"
+            || trimmed.eq_ignore_ascii_case("*** begin patch")
+            || trimmed.eq_ignore_ascii_case("*** end patch")
+        {
+            continue;
+        }
         if line.starts_with("@@") {
             if last_was_hunk {
                 out.push_str("…\n");
@@ -2646,11 +2724,12 @@ mod tests {
             })),
         );
 
-        assert!(content.contains("plugin__demo__lookup completed successfully"));
-        assert!(content.contains("Input:\n```json"));
-        assert!(content.contains("\"query\": \"abc\""));
-        assert!(content.contains("Output:\n```json"));
+        // Humanized name + key fields first; nested payload stays under Details.
+        assert!(content.contains("completed successfully"));
+        assert!(content.contains("count: 1"));
+        assert!(content.contains("Details:\n```json"));
         assert!(content.contains("\"count\": 1"));
+        assert!(content.contains("\"title\": \"Result\""));
     }
 
     #[test]
@@ -2681,9 +2760,20 @@ mod tests {
             })),
         );
 
-        assert!(content.contains("Patch:\n```diff\n"));
+        // Clean body: fenced diff only — no "Patch:" chrome, no Begin/End protocol.
+        assert!(content.contains("```diff\n"));
+        assert!(!content.contains("Patch:"));
+        assert!(!content.contains("*** Begin Patch"));
+        assert!(!content.contains("*** End Patch"));
+        assert!(content.contains("*** Update File: src/lib.rs"));
         assert!(content.contains("-old\n+new"));
         assert!(content.contains("```"));
+        // Summary lives in the header only, not repeated as body chrome.
+        let body_start = content.find("```diff").unwrap_or(0);
+        assert!(
+            !content[body_start..].contains("Edited src/lib.rs"),
+            "body should not repeat Edited summary"
+        );
     }
 
     #[test]
@@ -2705,8 +2795,10 @@ mod tests {
             })),
         );
 
-        assert!(content.contains("Patch 1:\n```diff\n"));
-        assert!(content.contains("Patch 2:\n```diff\n"));
+        assert!(content.contains("```diff\n"));
+        assert!(!content.contains("Patch 1:"));
+        assert!(!content.contains("Patch 2:"));
+        assert!(!content.contains("*** Begin Patch"));
         assert!(content.contains("*** Add File: one.txt"));
         assert!(content.contains("*** Add File: two.txt"));
     }
