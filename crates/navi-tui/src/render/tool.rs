@@ -332,11 +332,13 @@ fn formatted_tool_output(invocation: &ToolInvocation, result: &ToolResult) -> Op
             | "ownership_churn_query"
     ) {
         render_named_structured_output("Code output", result, &mut content);
+    } else if invocation.tool_name == "plan" {
+        // Human checklist — never dump the full plan JSON into chat.
+        content.push_str(&plan_body_content(invocation, result));
     } else if matches!(
         invocation.tool_name.as_str(),
         "repo_explore"
             | "subagent"
-            | "plan"
             | "init_session"
             | "mark_feature_done"
             | "question"
@@ -1896,34 +1898,46 @@ fn plan_summary(invocation: &ToolInvocation, result: &ToolResult) -> String {
                 .get("steps_count")
                 .and_then(|v| v.as_u64())
                 .unwrap_or(0);
-            format!("Plan create \"{title}\" ({steps} steps)")
+            if result.output.get("needs_review").and_then(|v| v.as_bool()) == Some(true) {
+                format!("Plan \"{title}\" ({steps} steps) · awaiting review")
+            } else {
+                format!("Plan create \"{title}\" ({steps} steps)")
+            }
         }
         "update" => {
-            let plan_id = result
+            let title = result
                 .output
-                .get("plan_id")
+                .get("title")
                 .and_then(|v| v.as_str())
-                .unwrap_or("?");
+                .unwrap_or("plan");
             let status = result
                 .output
                 .get("status")
                 .and_then(|v| v.as_str())
                 .unwrap_or("updated");
-            format!("Plan update {plan_id} ({status})")
+            format!("Plan update \"{title}\" ({status})")
         }
         "complete_step" => {
-            let plan_id = result
+            let desc = result
                 .output
-                .get("plan_id")
+                .get("step_description")
                 .and_then(|v| v.as_str())
-                .unwrap_or("?");
-            let step = result
+                .unwrap_or("step");
+            let done = result
                 .output
-                .get("step_index")
+                .get("completed_steps")
                 .and_then(|v| v.as_u64())
-                .map(|i| format!("#{i}"))
-                .unwrap_or_else(|| "done".to_string());
-            format!("Plan {plan_id} step {step} completed")
+                .unwrap_or(0);
+            let total = result
+                .output
+                .get("total_steps")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0);
+            if result.output.get("all_complete").and_then(|v| v.as_bool()) == Some(true) {
+                format!("Plan complete ({done}/{total})")
+            } else {
+                format!("Plan step done ({done}/{total}) · {desc}")
+            }
         }
         "get" => {
             if let Some(plan) = result.output.get("plan").and_then(|v| v.as_object()) {
@@ -1957,6 +1971,103 @@ fn plan_summary(invocation: &ToolInvocation, result: &ToolResult) -> String {
             }
         }
         _ => "Plan".to_string(),
+    }
+}
+
+/// Clean checklist body for plan tools (never pretty-printed JSON).
+fn plan_body_content(invocation: &ToolInvocation, result: &ToolResult) -> String {
+    if !result.ok {
+        if let Some(error) = result.output.get("error").and_then(|v| v.as_str()) {
+            return format!("Error: {error}\n");
+        }
+        return "Plan tool failed\n".into();
+    }
+
+    let action = invocation
+        .input
+        .get("action")
+        .and_then(|v| v.as_str())
+        .unwrap_or("?");
+
+    match action {
+        "create" | "update" | "get" | "active" => {
+            let mut out = String::new();
+            if let Some(msg) = result.output.get("message").and_then(|v| v.as_str()) {
+                out.push_str(msg);
+                out.push('\n');
+            }
+            // Prefer nested plan object (get/active), else top-level create fields.
+            let plan_obj = result
+                .output
+                .get("plan")
+                .and_then(|v| v.as_object())
+                .or_else(|| result.output.as_object());
+            if let Some(plan) = plan_obj {
+                let title = plan
+                    .get("title")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("Plan");
+                if !out.contains(title) {
+                    out.push_str(&format!("# {title}\n"));
+                }
+                if let Some(steps) = plan.get("steps").and_then(|v| v.as_array()) {
+                    out.push('\n');
+                    for (i, step) in steps.iter().enumerate() {
+                        let desc = step
+                            .get("description")
+                            .or_else(|| step.get("content"))
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("…");
+                        let done = step
+                            .get("completed")
+                            .and_then(|v| v.as_bool())
+                            .unwrap_or(false);
+                        let mark = if done { "x" } else { " " };
+                        out.push_str(&format!("{}. [{}] {}\n", i + 1, mark, desc));
+                    }
+                }
+            }
+            if out.is_empty() {
+                out.push_str("Plan updated.\n");
+            }
+            out
+        }
+        "complete_step" => {
+            let desc = result
+                .output
+                .get("step_description")
+                .and_then(|v| v.as_str())
+                .unwrap_or("step");
+            let done = result
+                .output
+                .get("completed_steps")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0);
+            let total = result
+                .output
+                .get("total_steps")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0);
+            format!("✓ {desc}\nProgress: {done}/{total}\n")
+        }
+        "list" => {
+            let mut out = String::from("Plans:\n");
+            if let Some(plans) = result.output.get("plans").and_then(|v| v.as_array()) {
+                for p in plans {
+                    let title = p.get("title").and_then(|v| v.as_str()).unwrap_or("?");
+                    let status = p.get("status").and_then(|v| v.as_str()).unwrap_or("?");
+                    let id = p.get("id").and_then(|v| v.as_str()).unwrap_or("?");
+                    out.push_str(&format!("- [{status}] {title} ({id})\n"));
+                }
+            }
+            out
+        }
+        _ => result
+            .output
+            .get("message")
+            .and_then(|v| v.as_str())
+            .map(|m| format!("{m}\n"))
+            .unwrap_or_else(|| "Plan.\n".into()),
     }
 }
 
@@ -3126,5 +3237,53 @@ ctx\n\
         assert!(content.contains("*** Update File: lib.rs"));
         assert!(content.contains("-fn old() {}"));
         assert!(content.contains("+fn new() {}"));
+    }
+
+    #[test]
+    fn plan_create_body_is_checklist_not_json() {
+        let inv = invocation(
+            "plan",
+            json!({
+                "action": "create",
+                "title": "Ship vault",
+                "steps": ["Build UI", "Wire API"]
+            }),
+        );
+        let res = ok_result(json!({
+            "plan_id": "plan-1",
+            "title": "Ship vault",
+            "steps": [
+                {"description": "Build UI", "completed": false, "notes": ""},
+                {"description": "Wire API", "completed": false, "notes": ""}
+            ],
+            "steps_count": 2,
+            "needs_review": true,
+            "message": "Plan 'Ship vault' created with 2 steps. Awaiting user review."
+        }));
+        let content = tool_full_content(&inv, &res);
+        assert!(
+            content.contains("awaiting review") || content.contains("Ship vault"),
+            "summary should mention plan: {content}"
+        );
+        assert!(
+            content.contains("Build UI") && content.contains("Wire API"),
+            "body should list steps: {content}"
+        );
+        assert!(
+            !content.contains("\"steps_count\"") && !content.contains("```json"),
+            "plan body must not be raw JSON: {content}"
+        );
+    }
+
+    #[test]
+    fn plan_create_does_not_auto_expand() {
+        use super::super::tool_policy::tool_auto_expand;
+        let inv = invocation("plan", json!({ "action": "create", "title": "T" }));
+        let res = ok_result(json!({
+            "title": "T",
+            "steps_count": 1,
+            "needs_review": true
+        }));
+        assert!(!tool_auto_expand(&inv, &res));
     }
 }

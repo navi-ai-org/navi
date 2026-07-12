@@ -288,9 +288,20 @@ pub(crate) fn composer_height(app: &TuiApp, input_width: usize) -> u16 {
 }
 
 pub(crate) fn composer_hint_height(app: &TuiApp) -> u16 {
-    // No permanent keyboard-hint row .
-    // Only reserve space for an active goal line.
-    if app.goal_state.is_some() { 1 } else { 0 }
+    // Goal line + optional expanded plan checklist above the composer.
+    let mut h = 0u16;
+    if app.goal_state.is_some() {
+        h = h.saturating_add(1);
+    }
+    if let Some(plan) = app.active_plan.as_ref() {
+        h = h.saturating_add(1); // summary line
+        if plan.expanded {
+            // Cap checklist height so a huge plan doesn't eat the chat.
+            let steps = plan.steps.len().min(8) as u16;
+            h = h.saturating_add(steps);
+        }
+    }
+    h
 }
 
 pub(crate) fn composer_activity_height(app: &TuiApp) -> u16 {
@@ -332,14 +343,102 @@ pub(crate) fn render_input_hint(frame: &mut Frame<'_>, app: &TuiApp, area: Rect)
     }
 
     // Permanent shortcut hints were removed — they cluttered every frame.
-    // Shortcuts live in Help (`?` / ctrl+.). Only goal status stays here.
-    if let Some(goal_line) = composer_goal_line(app, area.width as usize) {
-        let goal_area = Rect::new(area.x, area.y, area.width, 1);
+    // Shortcuts live in Help (`?` / ctrl+.). Goal + active plan progress stay here.
+    let mut y = area.y;
+    let mut remaining = area.height;
+
+    if let Some(goal_line) = composer_goal_line(app, area.width as usize)
+        && remaining > 0
+    {
+        let goal_area = Rect::new(area.x, y, area.width, 1);
         frame.render_widget(
             Paragraph::new(goal_line).style(Style::default().bg(bg())),
             goal_area,
         );
+        y = y.saturating_add(1);
+        remaining = remaining.saturating_sub(1);
     }
+
+    if let Some(plan_lines) = composer_plan_lines(app, area.width as usize, remaining as usize)
+        && !plan_lines.is_empty()
+        && remaining > 0
+    {
+        let h = (plan_lines.len() as u16).min(remaining);
+        let plan_area = Rect::new(area.x, y, area.width, h);
+        frame.render_widget(
+            Paragraph::new(Text::from(plan_lines)).style(Style::default().bg(bg())),
+            plan_area,
+        );
+    }
+}
+
+/// Active plan progress for the user (summary + optional checklist).
+fn composer_plan_lines(app: &TuiApp, width: usize, max_lines: usize) -> Option<Vec<Line<'static>>> {
+    let plan = app.active_plan.as_ref()?;
+    if max_lines == 0 {
+        return None;
+    }
+    let done = plan.completed_count();
+    let total = plan.total_count();
+    let status_tag = match plan.status.as_str() {
+        "proposed" => "review",
+        "completed" => "done",
+        "abandoned" => "abandoned",
+        _ => "active",
+    };
+    let current = plan
+        .current_step()
+        .map(|s| s.description.as_str())
+        .unwrap_or(if plan.status == "completed" {
+            "all steps done"
+        } else {
+            "…"
+        });
+    let available = width.saturating_sub(4).max(1);
+    let summary = format!(
+        "plan · {}  [{done}/{total}] · {status_tag} · {current}",
+        plan.title
+    );
+    let mut lines = vec![Line::from(Span::styled(
+        format!("  {}", fit_display_width(&summary, available)),
+        Style::default()
+            .fg(accent())
+            .bg(bg())
+            .add_modifier(Modifier::BOLD),
+    ))];
+
+    if plan.expanded && max_lines > 1 {
+        let show_n = plan.steps.len().min(max_lines.saturating_sub(1).min(8));
+        let current_idx = plan.steps.iter().position(|s| !s.completed);
+        for (i, step) in plan.steps.iter().enumerate().take(show_n) {
+            let mark = if step.completed { "✓" } else { "○" };
+            let is_current = current_idx == Some(i);
+            let prefix = if is_current { "›" } else { " " };
+            let color = if step.completed {
+                signal()
+            } else if is_current {
+                accent()
+            } else {
+                muted()
+            };
+            let row = format!(
+                "  {prefix} {mark} {}. {}",
+                i + 1,
+                step.description
+            );
+            lines.push(Line::from(Span::styled(
+                fit_display_width(&row, available),
+                Style::default().fg(color).bg(bg()),
+            )));
+        }
+        if plan.steps.len() > show_n {
+            lines.push(Line::from(Span::styled(
+                format!("     … +{} more", plan.steps.len() - show_n),
+                Style::default().fg(ghost()).bg(bg()),
+            )));
+        }
+    }
+    Some(lines)
 }
 
 fn composer_goal_line(app: &TuiApp, width: usize) -> Option<Line<'static>> {

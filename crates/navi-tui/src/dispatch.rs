@@ -391,6 +391,10 @@ fn handle_agent_event(app: &mut TuiApp, event: AgentEvent) {
                 }
                 // Plan review modal is opened by PlanReviewRequested (blocks the
                 // turn until the user resolves it) — not on ToolCompleted.
+                // Keep the live plan progress strip in sync with plan tool results.
+                if invocation.tool_name == "plan" {
+                    crate::plan_progress::sync_from_plan_tool(app, &invocation, &result);
+                }
             }
             app.events.push(AgentEvent::ToolCompleted(result));
             update_active_assistant_status(app);
