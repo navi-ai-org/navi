@@ -141,10 +141,13 @@ fn is_chat_block_hit(action: &HitAction) -> bool {
             | HitAction::ToolResult(_)
             | HitAction::ToolGroup(_)
             | HitAction::Subagent(_)
-            | HitAction::PreviewChatImage { .. }
+            // PreviewChatImage is handled as a lightbox open/toggle, not as
+            // drag-select chat block chrome (see image click path below).
             | HitAction::MessageAction(_)
     )
 }
+
+
 
 /// Second-click actions on an already-selected chat block (expand tool, menu, …).
 /// Kept separate from [`dispatch_hit`] so first-click can select without firing them.
@@ -182,19 +185,22 @@ fn run_secondary_chat_click(app: &mut TuiApp, action: &HitAction) {
     }
 }
 
-pub(crate) fn handle_mouse(app: &mut TuiApp, mouse: MouseEvent) {
+/// Handle a mouse event. Returns `true` when the UI needs a redraw.
+pub(crate) fn handle_mouse(app: &mut TuiApp, mouse: MouseEvent) -> bool {
     match mouse.kind {
         MouseEventKind::ScrollDown => {
             if scroll_active_list(app, 3) {
-                return;
+                return true;
             }
             app.scroll_offset = app.scroll_offset.saturating_sub(3);
+            true
         }
         MouseEventKind::ScrollUp => {
             if scroll_active_list(app, -3) {
-                return;
+                return true;
             }
             app.scroll_offset = app.scroll_offset.saturating_add(3);
+            true
         }
         MouseEventKind::Down(MouseButton::Left) => {
             app.pending_chat_click = None;
@@ -202,7 +208,25 @@ pub(crate) fn handle_mouse(app: &mut TuiApp, mouse: MouseEvent) {
             if let Some(hit) = app.hit_test(mouse.column, mouse.row) {
                 if matches!(hit.action, HitAction::ScrollTo { .. }) {
                     dispatch_hit(app, hit);
-                    return;
+                    return true;
+                }
+
+                // Chip: open (hover is primary; click is a fallback without motion).
+                // Do not toggle-close while still on the chip — that fights hover UX.
+                if crate::view::image_preview::is_image_chip_action(&hit.action) {
+                    let _ = crate::view::image_preview::set_hover_from_action(app, &hit.action);
+                    return true;
+                }
+
+                // Cursor on the lightbox body: keep it open (don't dismiss).
+                if matches!(hit.action, HitAction::ImageLightboxKeep) {
+                    crate::view::image_preview::keep_image_hover(app);
+                    return false;
+                }
+
+                // Click outside sticky zones dismisses immediately.
+                if app.image_hover.is_some() {
+                    crate::view::image_preview::clear_image_hover(app);
                 }
 
                 // Chat lines always register hit regions. If we dispatch + return
@@ -241,7 +265,7 @@ pub(crate) fn handle_mouse(app: &mut TuiApp, mouse: MouseEvent) {
                         run_secondary_chat_click(app, &hit.action);
                     }
                     // First click with no map: block is selected; nothing else.
-                    return;
+                    return true;
                 }
 
                 app.hover_index = None;
@@ -253,7 +277,11 @@ pub(crate) fn handle_mouse(app: &mut TuiApp, mouse: MouseEvent) {
                     app.selection = None;
                 }
                 dispatch_hit(app, hit);
-                return;
+                return true;
+            }
+            // Empty space click closes lightbox immediately.
+            if app.image_hover.is_some() {
+                crate::view::image_preview::clear_image_hover(app);
             }
             app.hover_index = None;
             app.hovered_chat_source = None;
@@ -277,6 +305,7 @@ pub(crate) fn handle_mouse(app: &mut TuiApp, mouse: MouseEvent) {
                 app.selection = None;
                 crate::chat_blocks::clear_selected_block(app);
             }
+            true
         }
         MouseEventKind::Drag(MouseButton::Left) => {
             if let Some(hit) = app.hit_test(mouse.column, mouse.row)
@@ -284,7 +313,7 @@ pub(crate) fn handle_mouse(app: &mut TuiApp, mouse: MouseEvent) {
             {
                 dispatch_hit(app, hit);
                 app.selection = None;
-                return;
+                return true;
             }
             if app.selection.as_ref().map(|s| s.active).unwrap_or(false)
                 && let Some(inner) = app.chat_render_cache.borrow().chat_rect
@@ -309,6 +338,7 @@ pub(crate) fn handle_mouse(app: &mut TuiApp, mouse: MouseEvent) {
                     }
                 }
             }
+            true
         }
         MouseEventKind::Up(MouseButton::Left) => {
             if app
@@ -344,12 +374,12 @@ pub(crate) fn handle_mouse(app: &mut TuiApp, mouse: MouseEvent) {
                     // Clear zero-width selection so the highlight doesn't linger.
                     app.selection = None;
                 }
-                return;
+                return true;
             }
             app.pending_chat_click = None;
             if app.hit_test(mouse.column, mouse.row).is_some() {
                 app.selection = None;
-                return;
+                return true;
             }
             let pos = map_mouse_to_text(app, mouse.column, mouse.row);
             if finish_selection(app, pos) {
@@ -357,18 +387,10 @@ pub(crate) fn handle_mouse(app: &mut TuiApp, mouse: MouseEvent) {
                     copy_text_to_clipboard(app, &text);
                 }
             }
+            true
         }
-        MouseEventKind::Moved => {
-            if let Some(hit) = app.hit_test(mouse.column, mouse.row) {
-                apply_hover(app, &hit);
-            } else {
-                app.hover_index = None;
-                app.hovered_chat_source = None;
-                app.hover_context_usage = false;
-                crate::view::image_preview::clear_image_hover(app);
-            }
-        }
-        _ => {}
+        MouseEventKind::Moved => handle_mouse_moved(app, mouse.column, mouse.row),
+        _ => false,
     }
 }
 
@@ -392,15 +414,84 @@ fn slice_display_columns(text: &str, start_col: usize, end_col: usize) -> String
     out
 }
 
-fn apply_hover(app: &mut TuiApp, hit: &HitRegion<HitAction>) {
-    app.hovered_chat_source = chat_source_for_action(&hit.action);
-    if crate::view::image_preview::set_hover_from_action(app, &hit.action) {
+/// Free-motion hover: open on `[Image N]`, keep on lightbox body, grace-close on leave.
+fn handle_mouse_moved(app: &mut TuiApp, col: u16, row: u16) -> bool {
+    let drag_active = app.selection.as_ref().is_some_and(|s| s.active);
+    let hit = app.hit_test(col, row);
+
+    let mut needs_redraw = false;
+
+    // Image sticky zone (chip / lightbox). Skip opening while text-dragging.
+    if !drag_active && !app.modal_stack.is_active() {
+        needs_redraw |= update_image_hover_on_move(app, hit.as_ref());
+    } else if app.image_hover.is_some() && drag_active {
+        // Dragging text: don't open new images; leave-close is OK if they leave.
+        if !hit
+            .as_ref()
+            .is_some_and(|h| image_hover_sticky_action(&h.action))
+        {
+            let _ = crate::view::image_preview::schedule_image_hover_close(app);
+        }
+    }
+
+    // Non-image hover chrome (list rows, etc.).
+    if let Some(hit) = hit.as_ref() {
+        needs_redraw |= apply_non_image_hover(app, hit);
+    } else {
+        if app.hover_index.take().is_some()
+            || app.hovered_chat_source.take().is_some()
+            || app.hover_context_usage
+        {
+            app.hover_context_usage = false;
+            needs_redraw = true;
+        }
+    }
+
+    needs_redraw
+}
+
+fn image_hover_sticky_action(action: &HitAction) -> bool {
+    matches!(
+        action,
+        HitAction::PreviewPendingImage(_)
+            | HitAction::PreviewChatImage { .. }
+            | HitAction::ImageLightboxKeep
+    )
+}
+
+/// Returns true when the image lightbox open/identity state changed.
+fn update_image_hover_on_move(app: &mut TuiApp, hit: Option<&HitRegion<HitAction>>) -> bool {
+    match hit.map(|h| &h.action) {
+        Some(action) if crate::view::image_preview::is_image_chip_action(action) => {
+            crate::view::image_preview::set_hover_from_action(app, action)
+        }
+        Some(HitAction::ImageLightboxKeep) => {
+            crate::view::image_preview::keep_image_hover(app);
+            false
+        }
+        _ => {
+            // Left sticky zone — grace close (not immediate) so chip→modal travel works.
+            let _ = crate::view::image_preview::schedule_image_hover_close(app);
+            false
+        }
+    }
+}
+
+/// List/modal hover highlighting. Does **not** clear the image lightbox
+/// (that is handled only by sticky-zone leave + grace / Esc / click outside).
+fn apply_non_image_hover(app: &mut TuiApp, hit: &HitRegion<HitAction>) -> bool {
+    if image_hover_sticky_action(&hit.action) {
+        // Image chip / lightbox: chat source hover is irrelevant; avoid churn.
         app.hover_index = None;
         app.hover_context_usage = false;
-        return;
+        return false;
     }
-    // Leaving an image chip clears the floating preview.
-    crate::view::image_preview::clear_image_hover(app);
+
+    let prev_source = app.hovered_chat_source.clone();
+    let prev_index = app.hover_index;
+    let prev_usage = app.hover_context_usage;
+
+    app.hovered_chat_source = chat_source_for_action(&hit.action);
     app.hover_context_usage = matches!(hit.action, HitAction::ContextUsage);
     match &hit.action {
         HitAction::QuestionOption(index) => {
@@ -433,6 +524,10 @@ fn apply_hover(app: &mut TuiApp, hit: &HitRegion<HitAction>) {
             app.hover_index = None;
         }
     }
+
+    prev_source != app.hovered_chat_source
+        || prev_index != app.hover_index
+        || prev_usage != app.hover_context_usage
 }
 
 fn chat_source_for_action(action: &HitAction) -> Option<crate::state::ChatLineSource> {
@@ -742,9 +837,13 @@ fn dispatch_hit(app: &mut TuiApp, hit: HitRegion<HitAction>) {
                 app.pending_images.remove(index);
             }
         }
-        // Hover-only preview targets; click keeps the floating card open.
+        // Image chips / lightbox keep are hover-primary; click open is handled
+        // in the Down path. Dispatch no-ops keep accidental routes safe.
         HitAction::PreviewPendingImage(_) | HitAction::PreviewChatImage { .. } => {
             let _ = crate::view::image_preview::set_hover_from_action(app, &hit.action);
+        }
+        HitAction::ImageLightboxKeep => {
+            crate::view::image_preview::keep_image_hover(app);
         }
         HitAction::PlanReviewLine(line) => {
             if let Some(r) = app.plan_review.as_mut() {
@@ -888,13 +987,19 @@ fn active_scroll_target(app: &TuiApp) -> Option<ScrollTarget> {
 fn scroll_by(app: &mut TuiApp, target: ScrollTarget, delta: isize) {
     match target {
         ScrollTarget::Commands => {
-            let len = crate::commands::command_rows(app).len();
-            app.command_scroll = shifted_scroll(app.command_scroll, len, 10, delta);
-            app.selected_command = crate::commands::clamp_command_selection(
-                &crate::commands::command_rows(app),
-                app.selected_command
-                    .clamp(app.command_scroll, app.command_scroll + 9),
+            // Move selection (and scroll) like other lists — wheel on a short
+            // root palette must still change selected_command when max_scroll is 0.
+            let rows = crate::commands::command_rows(app);
+            let len = rows.len();
+            let (selected, scroll) = shifted_select_state(
+                app.selected_command,
+                app.command_scroll,
+                len,
+                delta,
+                10,
             );
+            app.selected_command = crate::commands::clamp_command_selection(&rows, selected);
+            app.command_scroll = scroll;
         }
         ScrollTarget::Models => scroll_models_by(app, delta),
         ScrollTarget::Providers => {
@@ -1359,9 +1464,15 @@ mod tests {
 
         handle_mouse(&mut app, mouse_scroll_down(4, 3));
 
-        assert!(app.selected_command > 0);
-        assert!(app.command_scroll > 0);
-        assert_eq!(app.scroll_offset, 12);
+        // Root palette is short (fits one page): selection still moves; scroll may stay 0.
+        assert!(
+            app.selected_command > 0,
+            "wheel over Commands must move selection"
+        );
+        assert_eq!(
+            app.scroll_offset, 12,
+            "chat scroll must not move while a modal list is active"
+        );
     }
 
     #[test]
@@ -1481,9 +1592,13 @@ mod tests {
         handle_mouse(&mut app, mouse_scroll_down(4, 3));
         let scrolled = app.command_scroll;
         let selected_after_scroll = app.selected_command;
+        assert!(
+            selected_after_scroll > 0,
+            "wheel must move selection before hover"
+        );
         handle_mouse(&mut app, mouse_moved(4, 3));
 
-        assert!(scrolled > 0);
+        // Hover highlighting must not snap selection/scroll back to the row under the cursor.
         assert_eq!(app.command_scroll, scrolled);
         assert_eq!(app.selected_command, selected_after_scroll);
     }
@@ -1624,5 +1739,109 @@ mod tests {
         );
 
         assert_eq!(app.mode, Mode::Help);
+    }
+
+    fn seed_pending_image_chip(app: &mut crate::app::TuiApp) {
+        app.pending_images.push(crate::state::PendingImage {
+            media_type: "image/png".into(),
+            data: "AAAA".into(),
+            width: Some(10),
+            height: Some(10),
+        });
+        app.register_hit(
+            Rect::new(0, 0, 10, 1),
+            20,
+            "preview pending",
+            HitAction::PreviewPendingImage(0),
+        );
+    }
+
+    #[test]
+    fn image_chip_hover_opens_lightbox() {
+        let mut app = test_app("");
+        seed_pending_image_chip(&mut app);
+
+        assert!(handle_mouse(&mut app, mouse_moved(1, 0)));
+        assert!(
+            app.image_hover.is_some(),
+            "hovering [Image N] must open the lightbox"
+        );
+        // Second move on same chip must not thrash / force unnecessary work.
+        assert!(!handle_mouse(&mut app, mouse_moved(2, 0)));
+        assert!(app.image_hover.is_some());
+        assert!(app.image_hover_close_deadline.is_none());
+    }
+
+    #[test]
+    fn image_lightbox_keep_cancels_leave_close() {
+        let mut app = test_app("");
+        seed_pending_image_chip(&mut app);
+        handle_mouse(&mut app, mouse_moved(1, 0));
+        assert!(app.image_hover.is_some());
+
+        // Leave sticky zone → arm grace close.
+        handle_mouse(&mut app, mouse_moved(50, 20));
+        assert!(app.image_hover.is_some(), "grace: still open after leave");
+        assert!(app.image_hover_close_deadline.is_some());
+
+        // Enter lightbox body before grace expires → cancel close.
+        app.register_hit(
+            Rect::new(40, 10, 20, 10),
+            100,
+            "lightbox",
+            HitAction::ImageLightboxKeep,
+        );
+        handle_mouse(&mut app, mouse_moved(45, 12));
+        assert!(app.image_hover.is_some());
+        assert!(
+            app.image_hover_close_deadline.is_none(),
+            "resting on the lightbox must cancel leave-close"
+        );
+    }
+
+    #[test]
+    fn image_hover_leave_grace_then_poll_closes() {
+        let mut app = test_app("");
+        seed_pending_image_chip(&mut app);
+        handle_mouse(&mut app, mouse_moved(1, 0));
+        handle_mouse(&mut app, mouse_moved(50, 20));
+        assert!(app.image_hover_close_deadline.is_some());
+
+        // Force deadline into the past.
+        app.image_hover_close_deadline =
+            Some(std::time::Instant::now() - std::time::Duration::from_millis(1));
+        assert!(crate::view::image_preview::poll_image_hover_close(&mut app));
+        assert!(app.image_hover.is_none());
+        assert!(app.image_hover_close_deadline.is_none());
+    }
+
+    #[test]
+    fn click_outside_image_lightbox_closes_it() {
+        let mut app = test_app("");
+        seed_pending_image_chip(&mut app);
+        handle_mouse(&mut app, mouse_moved(1, 0));
+        assert!(app.image_hover.is_some());
+
+        handle_mouse(&mut app, mouse_down(50, 20));
+        assert!(
+            app.image_hover.is_none(),
+            "click outside must close the image lightbox"
+        );
+    }
+
+    #[test]
+    fn esc_closes_image_lightbox() {
+        use crossterm::event::KeyCode;
+        let mut app = test_app("");
+        seed_pending_image_chip(&mut app);
+        handle_mouse(&mut app, mouse_moved(1, 0));
+        assert!(app.image_hover.is_some());
+
+        let should_quit = handle_key(&mut app, KeyCode::Esc, KeyModifiers::NONE);
+        assert!(!should_quit);
+        assert!(
+            app.image_hover.is_none(),
+            "Esc must close the image lightbox"
+        );
     }
 }

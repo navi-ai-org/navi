@@ -21,7 +21,7 @@ pub use navi_openai::OpenAiUsageReport;
 pub use navi_openai::OpenAiUsageWindow;
 pub use navi_openai::OpenRouterUsageReport;
 pub use navi_openai::ProviderError;
-pub use navi_openai::XAI_GROK_CLI_BASE_URL;
+pub use navi_openai::{XAI_GROK_CLI_BASE_URL, XAI_GROK_CLI_CLIENT_VERSION};
 pub use navi_openai::XaiProductUsage;
 pub use navi_openai::XaiUsageReport;
 pub use navi_openai::charm_hyper_credits_report;

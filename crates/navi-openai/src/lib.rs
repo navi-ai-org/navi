@@ -13,7 +13,8 @@ pub use navi_core::ProviderId;
 pub use oauth::{
     CharmHyperCreditsReport, CommandCodeUsageData, DeviceOAuthStarted, HYPERCREDIT_USD,
     OpenAiUsageLimitSnapshot, OpenAiUsageReport, OpenAiUsageWindow, OpenRouterUsageReport,
-    XAI_GROK_CLI_BASE_URL, XaiProductUsage, XaiUsageReport, charm_hyper_credits_report,
+    XAI_GROK_CLI_BASE_URL, XAI_GROK_CLI_CLIENT_VERSION, XaiProductUsage, XaiUsageReport,
+    charm_hyper_credits_report,
     commandcode_browser_oauth, commandcode_fetch_usage_data, commandcode_list_models,
     ensure_xai_access_token, github_copilot_device_oauth, hypercredits_to_usd,
     is_xai_oauth_access_token, openai_browser_oauth, openai_usage_report, openrouter_usage_report,

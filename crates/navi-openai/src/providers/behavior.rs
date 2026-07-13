@@ -483,6 +483,7 @@ impl ProviderBehavior for GroqBehavior {
 /// OAuth session token (not a Platform API key).
 const XAI_TOKEN_AUTH_HEADER: &str = "X-XAI-Token-Auth";
 const XAI_TOKEN_AUTH_VALUE: &str = "xai-grok-cli";
+const XAI_CLIENT_VERSION_HEADER: &str = "x-grok-client-version";
 
 pub(crate) struct XaiBehavior;
 
@@ -504,12 +505,18 @@ impl ProviderBehavior for XaiBehavior {
         _endpoint: Endpoint,
     ) -> Result<HeaderMap, ProviderError> {
         let mut headers = standard_bearer_headers(api_key, true)?;
-        // OAuth access JWTs need the CLI token auth header.
+        // OAuth access JWTs need Grok CLI / Grok Build headers so the proxy
+        // bills the subscription plan (not Platform API). Without
+        // `x-grok-client-version`, cli-chat-proxy returns HTTP 426.
         // Platform keys start with `xai-` and use normal Bearer only.
         if crate::oauth::is_xai_oauth_access_token(api_key) {
             headers.insert(
                 XAI_TOKEN_AUTH_HEADER,
                 HeaderValue::from_static(XAI_TOKEN_AUTH_VALUE),
+            );
+            headers.insert(
+                XAI_CLIENT_VERSION_HEADER,
+                HeaderValue::from_static(crate::oauth::XAI_GROK_CLI_CLIENT_VERSION),
             );
         }
         Ok(headers)
@@ -681,6 +688,12 @@ mod tests {
                 .and_then(|v| v.to_str().ok()),
             Some("xai-grok-cli")
         );
+        assert_eq!(
+            headers
+                .get("x-grok-client-version")
+                .and_then(|v| v.to_str().ok()),
+            Some(crate::oauth::XAI_GROK_CLI_CLIENT_VERSION)
+        );
         assert!(
             headers
                 .get(AUTHORIZATION)
@@ -696,6 +709,7 @@ mod tests {
             .build_headers("xai-platform-key-abc", Endpoint::Responses)
             .expect("headers");
         assert!(headers.get("X-XAI-Token-Auth").is_none());
+        assert!(headers.get("x-grok-client-version").is_none());
     }
 
     #[test]
