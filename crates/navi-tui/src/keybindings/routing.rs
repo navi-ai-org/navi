@@ -59,9 +59,11 @@ pub(crate) fn route_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyModifiers
         return system_global;
     }
 
-    // App-wide Ctrl shortcuts (model picker, palette, sessions, …) must work
-    // even while a modal is open. Terminals also often send uppercase letters
-    // for Ctrl+key — handled inside route_global_key.
+    // App-wide Ctrl shortcuts (model picker, palette, sessions, …) run before
+    // modal handlers so they still work with a modal open. Individual globals
+    // that conflict with modal actions (e.g. Ctrl+O tool expand vs Providers
+    // OAuth, Ctrl+D debug vs Providers delete) must return Ignored for those
+    // modes so the modal handler below receives them.
     let global = route_global_key(app, code, modifiers);
     if global.is_handled() {
         return global;
