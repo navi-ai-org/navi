@@ -7,8 +7,8 @@ use navi_sdk::{
 
 use crate::app::TuiApp;
 use crate::chat::{
-    drain_next_queued_message, ensure_tail_model_response, finalize_active_assistant,
-    remove_active_tool_placeholder, update_active_assistant_status,
+    active_assistant_message, drain_next_queued_message, ensure_tail_model_response,
+    finalize_active_assistant, remove_active_tool_placeholder, update_active_assistant_status,
 };
 use crate::errors::handle_model_error;
 use crate::notifications::{push_diagnostic, show_notification};
@@ -793,6 +793,11 @@ fn subagent_title(invocation: &navi_sdk::ToolInvocation) -> String {
         .unwrap_or_else(|| "Subagent".to_string())
 }
 
+fn is_turn_cancelled_error(message: &str) -> bool {
+    let lower = message.to_ascii_lowercase();
+    lower.contains("turn cancelled") || lower.contains("turn cancelled or panicked")
+}
+
 fn handle_turn_completed(app: &mut TuiApp, res: std::result::Result<String, String>) {
     let elapsed_ms = app
         .loading_start
@@ -819,7 +824,20 @@ fn handle_turn_completed(app: &mut TuiApp, res: std::result::Result<String, Stri
             recap_text = Some(text);
         }
         Err(err) => {
-            handle_model_error(app, err);
+            // Esc-cancel already finalized the UI; late "turn cancelled" must not
+            // surface as a model error or kick off retry logic.
+            if is_turn_cancelled_error(&err) {
+                if let Some(active) = active_assistant_message(app) {
+                    if active.status.as_deref() != Some("cancelled") {
+                        active.status = Some("cancelled".to_string());
+                        if active.content.is_empty() {
+                            active.content = "Cancelled.".to_string();
+                        }
+                    }
+                }
+            } else {
+                handle_model_error(app, err);
+            }
         }
     }
     app.is_loading = false;

@@ -603,7 +603,22 @@ async fn collect_model_output(ctx: &TurnContext, request: ModelRequest) -> Resul
     let mut think_tags = ThinkTagSplitter::default();
     let mut repetition_detector = crate::repetition::RepetitionDetector::default();
 
-    while let Some(event) = stream.next().await {
+    // Race the provider stream against cancel. Checking only *after* each
+    // `stream.next()` leaves the session loop parked on a hung/slow HTTP body
+    // after Esc-cancel; the next user turn then queues forever and the TUI
+    // shows "Waiting for model" until process restart.
+    loop {
+        let event = tokio::select! {
+            biased;
+            _ = ctx.cancel_token.notified() => {
+                return Err(anyhow::anyhow!("turn cancelled"));
+            }
+            event = stream.next() => event,
+        };
+
+        let Some(event) = event else {
+            break;
+        };
         ensure_not_cancelled(ctx)?;
         match event? {
             ModelStreamEvent::TextDelta { text } => {
@@ -694,6 +709,7 @@ async fn collect_model_output(ctx: &TurnContext, request: ModelRequest) -> Resul
         }
     }
 
+    ensure_not_cancelled(ctx)?;
     Ok(output)
 }
 

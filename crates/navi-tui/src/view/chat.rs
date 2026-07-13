@@ -20,7 +20,7 @@ use crate::ui::interaction::{HitAction, line_rect};
 use super::welcome::welcome_text;
 
 /// Jump scrollback to the latest message (follow the tail).
-/// Same as Grok “Go to bottom” / Shift+G.
+/// Same as Grok “Go to bottom” / Shift+G / Ctrl+Down.
 pub(crate) fn jump_to_latest(app: &mut TuiApp) {
     app.scroll_offset = 0;
     // Clear block selection so composer focus returns to the live end.
@@ -147,7 +147,7 @@ pub(crate) fn render_chat_area(frame: &mut Frame<'_>, app: &mut TuiApp, area: Re
 }
 
 /// Floating pill above the composer when the user has scrolled up in history.
-/// Click (or Shift+G) jumps to the last message.
+/// Click (or Ctrl+↓ / Shift+G) jumps to the last message.
 fn render_jump_to_latest_button(frame: &mut Frame<'_>, app: &mut TuiApp, chat_area: Rect) {
     if app.scroll_offset == 0 || chat_area.width < 12 || chat_area.height < 3 {
         return;
@@ -157,8 +157,14 @@ fn render_jump_to_latest_button(frame: &mut Frame<'_>, app: &mut TuiApp, chat_ar
         return;
     }
 
-    // Label mirrors Grok “Go to bottom” affordance.
-    let label = " ↓ Latest ";
+    // Show the keyboard shortcut beside the label so the affordance is discoverable.
+    let label = if chat_area.width >= 28 {
+        " ↓ Latest  ctrl+↓ "
+    } else if chat_area.width >= 20 {
+        " ↓ Latest ^↓ "
+    } else {
+        " ↓ Latest "
+    };
     let label_w = display_width(label) as u16;
     let width = (label_w.saturating_add(2))
         .min(chat_area.width.saturating_sub(2))

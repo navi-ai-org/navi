@@ -341,7 +341,7 @@ pub async fn xai_usage_report(access_token: &str) -> std::result::Result<XaiUsag
         .header("Accept", "application/json")
         .header("User-Agent", "navi/0.1.0")
         .header("X-XAI-Token-Auth", "xai-grok-cli")
-        .header("x-grok-client-version", "0.2.91")
+        .header("x-grok-client-version", "0.2.99")
         .send()
         .await
         .map_err(|err| err.to_string())?;
