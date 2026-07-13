@@ -34,6 +34,7 @@ pub struct PlanReviewState {
     pub comment_cursor: usize,
     pub prompt_draft: String,
     pub prompt_cursor: usize,
+    #[allow(dead_code)]
     pub project_id: String,
 }
 

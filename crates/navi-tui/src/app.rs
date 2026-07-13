@@ -169,6 +169,10 @@ pub struct TuiApp {
     /// Currently selected scrollback block (entry selection).
     pub(crate) selected_chat_source: Option<crate::state::ChatLineSource>,
     pub(crate) cancel_esc_pressed: bool,
+    /// Instant of the last mouse event (down/up/drag/move).
+    /// Used to swallow spurious Esc key events that some terminals emit
+    /// as part of mouse sequence parsing during rapid clicks.
+    pub(crate) last_mouse_event: Option<std::time::Instant>,
     /// Chat hit deferred until mouse-up when the gesture was a click (not a drag).
     /// Lets drag-to-select text work on lines that also register hit regions.
     pub(crate) pending_chat_click: Option<crate::ui::interaction::HitAction>,
@@ -447,6 +451,7 @@ impl TuiApp {
             hovered_chat_source: None,
             selected_chat_source: None,
             cancel_esc_pressed: false,
+            last_mouse_event: None,
             pending_chat_click: None,
             composer_anim_lines: 1.0,
             agent_mode: navi_sdk::AgentMode::Default,

@@ -463,6 +463,7 @@ pub enum Mode {
     /// Unified model routing (Chat / Agents / Attachments).
     ModelRouting,
     /// Extensions hub (Skills / Plugins / MCP).
+    #[allow(dead_code)]
     Extensions,
     Setup,
     AttachmentModels,
@@ -620,7 +621,8 @@ pub(crate) struct QuestionUiState {
 
 /// Live MCP connection snapshot for the TUI modal (probed on open/refresh).
 #[derive(Debug, Clone)]
-pub(crate) struct McpLiveServer {
+#[allow(dead_code)]
+pub struct McpLiveServer {
     pub id: String,
     pub enabled: bool,
     pub connected: bool,

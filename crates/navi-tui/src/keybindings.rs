@@ -154,6 +154,7 @@ pub(crate) fn open_model_routing(app: &mut TuiApp, tab: crate::state::ModelRouti
     replace_modal(app, ModalKind::ModelRouting);
 }
 
+#[allow(dead_code)]
 pub(crate) fn open_extensions_hub(app: &mut TuiApp) {
     app.selected_extensions_item = 0;
     replace_modal(app, ModalKind::Extensions);

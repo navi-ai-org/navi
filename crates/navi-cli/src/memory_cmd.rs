@@ -4,7 +4,7 @@ use navi_core::memory::{
     run_distill_maintenance, run_dream_maintenance_with_options,
 };
 use navi_core::{LoadedConfig, ModelMessage, ModelRole, effective_context_window};
-use navi_sdk::build_provider_for_config;
+use navi_sdk::build_provider_for_project_config;
 use std::path::Path;
 
 pub async fn handle_memory_command(
@@ -81,7 +81,7 @@ pub async fn handle_memory_command(
             let events = manager.history.get_recent_events(&session_id, None)?;
             let messages = to_model_messages(&events);
 
-            let provider = build_provider_for_config(loaded_config)?;
+            let provider = build_provider_for_project_config(loaded_config, cwd)?;
             let model_name = &loaded_config.config.model.name;
 
             println!(
@@ -160,7 +160,7 @@ pub async fn handle_memory_command(
             sessions,
             instructions,
         } => {
-            let provider = build_provider_for_config(loaded_config)?;
+            let provider = build_provider_for_project_config(loaded_config, cwd)?;
             let model_name = &loaded_config.config.model.name;
             println!(
                 "Running memory dream maintenance using model '{}'...",
@@ -203,7 +203,7 @@ pub async fn handle_memory_command(
             }
         }
         crate::MemoryAction::Distill => {
-            let provider = build_provider_for_config(loaded_config)?;
+            let provider = build_provider_for_project_config(loaded_config, cwd)?;
             let model_name = &loaded_config.config.model.name;
             println!(
                 "Running process distillation maintenance using model '{}'...",

@@ -445,6 +445,17 @@ where
                     if matches!(key.kind, KeyEventKind::Press | KeyEventKind::Repeat) =>
                 {
                     needs_draw = true;
+                    // Some terminals emit spurious KeyCode::Esc as part of
+                    // mouse sequence parsing during rapid clicks (especially
+                    // double-clicks). If an Esc arrives within 150ms of a
+                    // mouse event, swallow it so it doesn't open the
+                    // ConfirmCancelTurn modal and cancel the active turn.
+                    if key.code == crossterm::event::KeyCode::Esc
+                        && app.last_mouse_event.is_some_and(|t| t.elapsed() < std::time::Duration::from_millis(150))
+                    {
+                        app.last_mouse_event = None;
+                        continue;
+                    }
                     if leaked_terminal_sequence_filter.should_drop(&key.code) {
                         continue;
                     }
@@ -454,6 +465,7 @@ where
                 }
                 Event::Mouse(mouse_event) => {
                     needs_draw = true;
+                    app.last_mouse_event = Some(std::time::Instant::now());
                     handle_mouse(app, mouse_event);
                 }
                 Event::Paste(content) => {

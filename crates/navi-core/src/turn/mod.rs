@@ -681,7 +681,16 @@ async fn collect_model_output(ctx: &TurnContext, request: ModelRequest) -> Resul
                 emit_split_text(ctx, &mut output, think_tags.drain_pending());
                 break;
             }
-            ModelStreamEvent::Status { .. } => {}
+            ModelStreamEvent::Status { label } => {
+                if label == "resuming" {
+                    if let Some(ref tx) = ctx.event_tx {
+                        let _ = tx.send(AgentEvent::StreamResuming {
+                            accumulated_chars: output.text.len(),
+                            attempt: 0,
+                        });
+                    }
+                }
+            }
         }
     }
 

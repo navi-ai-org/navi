@@ -12,6 +12,7 @@ pub enum BrowserBackendKind {
     CloakBrowser,
     Chrome,
     Chromium,
+    #[allow(dead_code)]
     Custom,
 }
 
@@ -34,7 +35,9 @@ pub struct LaunchOptions {
 pub struct LaunchedBrowser {
     pub child: Child,
     pub debug_port: u16,
+    #[allow(dead_code)]
     pub binary: BrowserBinary,
+    #[allow(dead_code)]
     pub user_data_dir: PathBuf,
 }
 

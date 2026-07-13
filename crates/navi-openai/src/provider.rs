@@ -189,6 +189,36 @@ impl OpenAiProvider {
     }
 }
 
+/// Builds a request for a mid-stream prefill resume attempt.
+///
+/// When `accumulated_text` is non-empty, appends an assistant message so the
+/// provider continues from the already-generated prefix instead of restarting.
+fn request_with_prefill(request: &ModelRequest, accumulated_text: &str) -> ModelRequest {
+    let mut req = request.clone();
+    if !accumulated_text.is_empty() {
+        req.messages
+            .push(navi_core::ModelMessage::assistant(accumulated_text.to_string()));
+    }
+    req
+}
+
+/// Whether a mid-stream error can be recovered via prefill resumption.
+fn can_resume_with_prefill(
+    attempt_text: &str,
+    attempt_yielded_tool_call: bool,
+    yielded_tool_call: bool,
+    attempt: u32,
+    max_attempts: u32,
+    provider_err: &ProviderError,
+    retry_429: bool,
+) -> bool {
+    !attempt_text.is_empty()
+        && !attempt_yielded_tool_call
+        && !yielded_tool_call
+        && attempt < max_attempts
+        && should_retry_error(provider_err, retry_429)
+}
+
 #[async_trait]
 impl ModelProvider for OpenAiProvider {
     fn stream(&self, request: ModelRequest) -> ModelStream {
@@ -198,22 +228,54 @@ impl ModelProvider for OpenAiProvider {
             let retry_429 = provider.config.retry_429();
             let mut attempt = 0;
             let mut content_yielded = false;
+            // Accumulated text from the current attempt — used for prefill
+            // resumption when the stream breaks mid-generation.
+            let mut accumulated_text = String::new();
+            // Whether any tool calls were yielded in the current attempt.
+            // If so, we cannot safely resume via prefill because the model
+            // may have started a tool invocation whose JSON is incomplete.
+            let mut yielded_tool_call = false;
 
             loop {
                 attempt += 1;
                 tracing::debug!(attempt, max_attempts, "starting stream attempt");
 
-                let mut inner_stream = provider.stream_inner(request.clone());
+                // Build the request, optionally with a prefill assistant message
+                // containing text accumulated before a mid-stream break.
+                let req = request_with_prefill(&request, &accumulated_text);
+                let resuming = attempt > 1 && !accumulated_text.is_empty() && !yielded_tool_call;
+                if resuming {
+                    tracing::info!(
+                        chars = accumulated_text.len(),
+                        attempt,
+                        "resuming stream with prefill",
+                    );
+                    yield ModelStreamEvent::Status {
+                        label: "resuming".to_string(),
+                    };
+                }
+
+                let mut inner_stream = provider.stream_inner(req);
                 let mut failed = false;
+                // Track what was accumulated *this* attempt so we can combine
+                // it with prior accumulation on retry.
+                let mut attempt_text = String::new();
+                let mut attempt_yielded_tool_call = false;
 
                 while let Some(item) = inner_stream.next().await {
                     match item {
                         Ok(event) => {
                             match &event {
-                                ModelStreamEvent::TextDelta { .. } |
-                                ModelStreamEvent::ThinkingDelta { .. } |
+                                ModelStreamEvent::TextDelta { text } => {
+                                    content_yielded = true;
+                                    attempt_text.push_str(text);
+                                }
+                                ModelStreamEvent::ThinkingDelta { .. } => {
+                                    content_yielded = true;
+                                }
                                 ModelStreamEvent::ToolCall(_) => {
                                     content_yielded = true;
+                                    attempt_yielded_tool_call = true;
                                 }
                                 _ => {}
                             }
@@ -223,6 +285,42 @@ impl ModelProvider for OpenAiProvider {
                             tracing::warn!(?err, attempt, "stream chunk error occurred");
 
                             if content_yielded {
+                                // Mid-stream break. Try prefill resumption if:
+                                // - The error is retryable.
+                                // - We have accumulated text (not just thinking).
+                                // - No tool calls were yielded (incomplete tool
+                                //   JSON cannot be safely resumed).
+                                let provider_err = if let Some(pe) = err.downcast_ref::<ProviderError>() {
+                                    pe
+                                } else {
+                                    &ProviderError::Other(err.to_string())
+                                };
+
+                                let can_resume = can_resume_with_prefill(
+                                    &attempt_text,
+                                    attempt_yielded_tool_call,
+                                    yielded_tool_call,
+                                    attempt,
+                                    max_attempts,
+                                    provider_err,
+                                    retry_429,
+                                );
+
+                                if can_resume {
+                                    accumulated_text.push_str(&attempt_text);
+                                    yielded_tool_call = false;
+                                    let delay = retry_delay_for_error(provider_err, attempt);
+                                    tracing::info!(
+                                        ?delay,
+                                        attempt,
+                                        accumulated_chars = accumulated_text.len(),
+                                        "retrying stream with prefill after mid-stream error",
+                                    );
+                                    tokio::time::sleep(delay).await;
+                                    failed = true;
+                                    break;
+                                }
+
                                 Err(err)?;
                                 failed = true;
                                 break;
@@ -313,5 +411,79 @@ impl ModelProvider for OpenAiProvider {
         let models = unique_sorted_model_ids(list.data.into_iter().map(|item| item.id));
         tracing::info!(provider = %self.provider_id, models = models.len(), "provider model list completed");
         Ok(models)
+    }
+}
+
+#[cfg(test)]
+mod prefill_tests {
+    use super::*;
+    use navi_core::{ModelMessage, ModelRole, ThinkingConfig};
+    use reqwest::StatusCode;
+
+    fn sample_request() -> ModelRequest {
+        ModelRequest {
+            model: "test-model".into(),
+            instructions: None,
+            messages: vec![ModelMessage::user("hello")],
+            thinking: ThinkingConfig::Off,
+            tools: Vec::new(),
+            session_id: None,
+        }
+    }
+
+    #[test]
+    fn request_with_prefill_appends_assistant_prefix() {
+        let req = request_with_prefill(&sample_request(), "partial answer");
+        assert_eq!(req.messages.len(), 2);
+        assert_eq!(req.messages[1].role, ModelRole::Assistant);
+        assert_eq!(req.messages[1].content, "partial answer");
+    }
+
+    #[test]
+    fn request_with_prefill_skips_empty_prefix() {
+        let req = request_with_prefill(&sample_request(), "");
+        assert_eq!(req.messages.len(), 1);
+        assert_eq!(req.messages[0].role, ModelRole::User);
+    }
+
+    #[test]
+    fn can_resume_with_prefill_allows_transport_after_text() {
+        let err = ProviderError::StreamIdleTimeout(Duration::from_secs(1));
+        assert!(can_resume_with_prefill(
+            "hello", false, false, 1, 5, &err, true
+        ));
+    }
+
+    #[test]
+    fn can_resume_with_prefill_blocks_after_tool_call() {
+        let err = ProviderError::StreamIdleTimeout(Duration::from_secs(1));
+        assert!(!can_resume_with_prefill(
+            "hello", true, false, 1, 5, &err, true
+        ));
+        assert!(!can_resume_with_prefill(
+            "hello", false, true, 1, 5, &err, true
+        ));
+    }
+
+    #[test]
+    fn can_resume_with_prefill_blocks_empty_text_and_exhausted_attempts() {
+        let err = ProviderError::StreamIdleTimeout(Duration::from_secs(1));
+        assert!(!can_resume_with_prefill("", false, false, 1, 5, &err, true));
+        assert!(!can_resume_with_prefill(
+            "hello", false, false, 5, 5, &err, true
+        ));
+    }
+
+    #[test]
+    fn can_resume_with_prefill_blocks_non_retryable_error() {
+        let err = ProviderError::Api {
+            status: StatusCode::BAD_REQUEST,
+            body: "bad".into(),
+            requested_delay: None,
+            body_read_error: None,
+        };
+        assert!(!can_resume_with_prefill(
+            "hello", false, false, 1, 5, &err, true
+        ));
     }
 }

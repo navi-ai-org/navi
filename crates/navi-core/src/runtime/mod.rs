@@ -1702,6 +1702,7 @@ impl AgentRuntime {
                 | AgentEvent::SubagentTranscript { .. }
                 | AgentEvent::ModelDelta { .. }
                 | AgentEvent::ModelThinkingDelta { .. }
+                | AgentEvent::StreamResuming { .. }
         );
         if let Some(kind) = runtime_event_kind_from_agent_event(&event) {
             self.event_bus.publish(kind);
@@ -1887,6 +1888,8 @@ fn runtime_event_kind_from_agent_event(event: &AgentEvent) -> Option<RuntimeEven
         // Also mapped above via dedicated arms; keep fallthrough safe.
         AgentEvent::AgentModeChanged { .. } => None,
         AgentEvent::SessionRecap { .. } => None,
+        // Transient mid-stream resume signal; live UI only, not a runtime kind.
+        AgentEvent::StreamResuming { .. } => None,
         // Host-facing UI events (not replayed as runtime kinds).
         AgentEvent::NotificationRequested { .. } | AgentEvent::UpdateAvailable { .. } => None,
     }
