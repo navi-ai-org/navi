@@ -86,8 +86,12 @@ pub(super) fn route_global_key(
     }
 
     if ctrl_letter(code, 'i') || ctrl_letter(code, 'v') {
-        // Paste image only from normal chat composer.
-        if app.mode == crate::state::Mode::Normal && !app.is_loading {
+        // Paste image only from normal chat composer. In other modes (OAuth
+        // paste, text fields, …) yield so the modal/mode handler can run.
+        if app.mode != crate::state::Mode::Normal {
+            return KeyOutcome::Ignored;
+        }
+        if !app.is_loading {
             match try_read_clipboard_image() {
                 Some(image) => {
                     app.pending_images.push(image);
@@ -104,6 +108,14 @@ pub(super) fn route_global_key(
     }
 
     if ctrl_letter(code, 'o') {
+        // Providers: start OAuth. OAuth modal: reopen browser. Do not steal
+        // those for the chat-wide tool-output expand toggle.
+        if matches!(
+            app.mode,
+            crate::state::Mode::Providers | crate::state::Mode::OAuth
+        ) {
+            return KeyOutcome::Ignored;
+        }
         let pin = app
             .selected_chat_source
             .as_ref()

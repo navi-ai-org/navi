@@ -1457,11 +1457,35 @@ fn ctrl_o_in_provider_modal_does_not_toggle_full_tool_view() {
 
     handle_key(&mut app, KeyCode::Char('o'), KeyModifiers::CONTROL);
     assert_eq!(app.mode, Mode::Providers);
-    assert!(!app.full_tool_view);
+    assert!(
+        !app.full_tool_view,
+        "Ctrl+O in Providers must start OAuth, not toggle tool expand"
+    );
 
     handle_key(&mut app, KeyCode::Char('O'), KeyModifiers::CONTROL);
     assert_eq!(app.mode, Mode::Providers);
     assert!(!app.full_tool_view);
+}
+
+#[test]
+fn ctrl_o_in_oauth_modal_does_not_toggle_full_tool_view() {
+    let mut app = test_app("");
+    app.mode = Mode::OAuth;
+    app.oauth_state = Some(crate::state::OAuthUiState {
+        provider_id: "xai".into(),
+        verification_uri: "https://accounts.x.ai/oauth2/device?user_code=AB12-CD34".into(),
+        user_code: "AB12-CD34".into(),
+        paste_slot: None,
+        paste_status: None,
+    });
+    assert!(!app.full_tool_view);
+
+    handle_key(&mut app, KeyCode::Char('o'), KeyModifiers::CONTROL);
+    assert_eq!(app.mode, Mode::OAuth);
+    assert!(
+        !app.full_tool_view,
+        "Ctrl+O in OAuth modal must reopen browser, not toggle tool expand"
+    );
 }
 
 #[test]
