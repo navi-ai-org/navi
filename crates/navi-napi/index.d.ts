@@ -169,6 +169,14 @@ export interface BackgroundModelEntry {
   fallback?: string | null;
 }
 
+export interface UpdateInfo {
+  version: string;
+  repo?: string | null;
+  downloadUrl?: string | null;
+  releaseNotes?: string | null;
+  prerelease?: boolean;
+}
+
 export interface EngineConfig {
   model: { provider: string; name: string };
   attachmentModels?: {
@@ -186,9 +194,17 @@ export interface EngineConfig {
     subagentResearch?: BackgroundModelEntry | null;
     simpleCodeEdit?: BackgroundModelEntry | null;
   };
+  updates?: {
+    checkEnabled: boolean;
+    autoUpdate: boolean;
+    includePrerelease: boolean;
+    checkIntervalHours: number;
+    repo: string;
+  };
   globalConfigPath?: string;
   projectConfigPath?: string;
   dataDir: string;
+  mcpServers?: JsonValue[];
 }
 
 export interface ActiveSessions {
@@ -332,6 +348,22 @@ export class NaviNapiEngine {
   // Session management
   sessionIds(): string[];
   loadedConfig(): EngineConfig;
+  // TUI panels
+  takeTuiPanels(sessionId: string): JsonValue[];
+  // Saved sessions (async variants)
+  listSavedSessionsAsync(): Promise<JsonValue>;
+  loadSavedSessionAsync(sessionId: string): Promise<JsonValue>;
+  deleteSavedSessionAsync(sessionId: string): Promise<boolean>;
+  // Notifications / self-update
+  notify(title: string, body: string, desktop?: boolean, urgency?: string, category?: string): JsonValue;
+  notifySimple(title: string, body: string, desktop?: boolean): JsonValue;
+  openUrl(url: string): void;
+  appVersion(): string;
+  checkForUpdate(): Promise<UpdateInfo | null>;
+  checkForUpdateWith(current: string, repo?: string, includePrerelease?: boolean): Promise<UpdateInfo | null>;
+  applyUpdate(info: UpdateInfo): Promise<void>;
+  autoUpdateEnabled(): boolean;
+  setAutoUpdate(enabled: boolean): void;
 }
 
 export class NaviNapiEventStream {
