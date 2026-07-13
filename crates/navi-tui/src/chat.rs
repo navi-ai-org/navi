@@ -345,13 +345,23 @@ pub(crate) fn finalize_active_assistant(app: &mut TuiApp, elapsed_ms: u64, fallb
     app.model_retry_attempts = 0;
     let (text, thinking) = {
         let active = if fallback_text.trim().is_empty() {
+            // The turn returned no final text. Try the tail model response
+            // first (the common case when the model emitted deltas but no
+            // tool calls). If the tail is a tool-result message, fall back to
+            // the last assistant model-response message — it may contain text
+            // the model streamed before making tool calls. Only create a new
+            // placeholder with "No response." when there truly is no prior
+            // model response at all.
             match tail_model_response(app) {
                 Some(active) => active,
-                None => {
-                    let active = ensure_tail_model_response(app);
-                    active.content = "No response.".to_string();
-                    active
-                }
+                None => match active_assistant_message(app) {
+                    Some(active) if !active.content.trim().is_empty() => active,
+                    _ => {
+                        let active = ensure_tail_model_response(app);
+                        active.content = "No response.".to_string();
+                        active
+                    }
+                },
             }
         } else {
             ensure_tail_model_response(app)

@@ -529,6 +529,14 @@ pub enum AgentEvent {
         /// When true, the recap was generated but should not be shown (long-tail).
         suppressed: bool,
     },
+    /// The provider stream broke mid-generation and is being resumed via
+    /// prefill (assistant continuation). The UI can show a transient hint.
+    StreamResuming {
+        /// Characters of text accumulated before the break.
+        accumulated_chars: usize,
+        /// Retry attempt number (1-based).
+        attempt: u32,
+    },
     /// The agent requested to set a goal via natural language.
     SetGoalRequested {
         /// The objective text.

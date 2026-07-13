@@ -548,6 +548,20 @@ fn handle_agent_event(app: &mut TuiApp, event: AgentEvent) {
                 cache_read_tokens,
             });
         }
+        AgentEvent::StreamResuming {
+            accumulated_chars,
+            attempt: _,
+        } => {
+            if let Some(message) = crate::chat::tail_model_response(app) {
+                message.status = Some("resuming".to_string());
+            }
+            push_diagnostic(
+                app,
+                format!(
+                    "Stream interrupted — resuming from {accumulated_chars} chars of generated text."
+                ),
+            );
+        }
         AgentEvent::SessionRecap {
             summary,
             suppressed,

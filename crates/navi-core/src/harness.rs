@@ -407,8 +407,17 @@ pub fn record_tool_call(
     invocation: &ToolInvocation,
 ) -> ToolLoopDecision {
     let signature = tool_signature_hash(invocation);
+
+    // Background task polling (e.g. `bash({"task_id": "bg_1"})`) is a
+    // legitimate repeated call pattern — the model polls a long-running
+    // command until it finishes. Exempt these from the repetition guard so
+    // that a command taking more than ~20 poll cycles doesn't get killed.
+    let is_background_poll = is_background_poll_call(invocation);
+
     if state.last_tool_signature.as_deref() == Some(signature.as_str()) {
-        state.repeated_tool_calls += 1;
+        if !is_background_poll {
+            state.repeated_tool_calls += 1;
+        }
     } else {
         state.repeated_tool_calls = 0;
     }
@@ -599,6 +608,29 @@ pub fn trace_request_summary(request: &ModelRequest, policy: HarnessPolicy) -> V
         "tool_call_limit": "disabled",
         "max_parallel_tool_calls": policy.max_parallel_tool_calls,
     })
+}
+
+/// Returns true when this invocation is a background task poll call.
+///
+/// Covers:
+/// - `bash` with a `task_id` field and **no** `command` field
+/// - `process` with `action: wait` (and no fresh `command`)
+///
+/// These calls are intentionally identical across poll cycles and should
+/// not trigger the repetition guard.
+fn is_background_poll_call(invocation: &ToolInvocation) -> bool {
+    let Some(obj) = invocation.input.as_object() else {
+        return false;
+    };
+
+    match invocation.tool_name.as_str() {
+        "bash" => obj.contains_key("task_id") && !obj.contains_key("command"),
+        "process" => {
+            obj.get("action").and_then(|v| v.as_str()) == Some("wait")
+                && !obj.contains_key("command")
+        }
+        _ => false,
+    }
 }
 
 fn tool_signature_hash(invocation: &ToolInvocation) -> String {
@@ -837,6 +869,77 @@ mod tests {
             ToolLoopDecision::Continue,
         );
 
+        assert_eq!(state.repeated_tool_calls, 0);
+    }
+
+    #[test]
+    fn background_bash_poll_calls_are_exempt_from_repetition_guard() {
+        let policy = test_policy(100);
+        let poll = ToolInvocation {
+            id: "poll-1".to_string(),
+            tool_name: "bash".to_string(),
+            input: json!({ "task_id": "bg_1" }),
+        };
+        let mut state = AgentRunState::default();
+
+        // Many identical background poll calls must never trip the guard.
+        for i in 0..40 {
+            let mut inv = poll.clone();
+            inv.id = format!("poll-{i}");
+            assert_eq!(
+                record_tool_call(&mut state, policy, &inv),
+                ToolLoopDecision::Continue,
+                "background poll call {i} should continue"
+            );
+        }
+        assert_eq!(state.repeated_tool_calls, 0);
+        assert_eq!(state.total_tool_calls, 40);
+    }
+
+    #[test]
+    fn bash_with_command_is_not_treated_as_background_poll() {
+        let policy = test_policy(100);
+        let invocation = ToolInvocation {
+            id: "call-1".to_string(),
+            tool_name: "bash".to_string(),
+            input: json!({ "command": "sleep 1", "background": true }),
+        };
+        let mut state = AgentRunState::default();
+
+        for i in 0..20 {
+            let mut inv = invocation.clone();
+            inv.id = format!("call-{i}");
+            assert_eq!(
+                record_tool_call(&mut state, policy, &inv),
+                ToolLoopDecision::Continue,
+                "call {i} should continue"
+            );
+        }
+        assert!(matches!(
+            record_tool_call(&mut state, policy, &invocation),
+            ToolLoopDecision::Stop(_)
+        ));
+    }
+
+    #[test]
+    fn process_wait_poll_calls_are_exempt_from_repetition_guard() {
+        let policy = test_policy(100);
+        let poll = ToolInvocation {
+            id: "wait-1".to_string(),
+            tool_name: "process".to_string(),
+            input: json!({ "action": "wait", "process_id": "proc_1" }),
+        };
+        let mut state = AgentRunState::default();
+
+        for i in 0..40 {
+            let mut inv = poll.clone();
+            inv.id = format!("wait-{i}");
+            assert_eq!(
+                record_tool_call(&mut state, policy, &inv),
+                ToolLoopDecision::Continue,
+                "process wait call {i} should continue"
+            );
+        }
         assert_eq!(state.repeated_tool_calls, 0);
     }
 

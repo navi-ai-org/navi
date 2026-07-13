@@ -23,6 +23,7 @@ impl CommandHub {
         }
     }
 
+    #[allow(dead_code)]
     pub(crate) fn detail(self) -> &'static str {
         match self {
             Self::Session => "sessions, queue, compact, export",
@@ -99,6 +100,7 @@ impl CommandRow {
         true
     }
 
+    #[allow(dead_code)]
     pub(crate) fn item(self) -> Option<CommandItem> {
         match self {
             Self::Item(item) => Some(item),
@@ -513,7 +515,7 @@ pub(crate) fn next_selectable_command_row(rows: &[CommandRow], current: usize) -
     (current + 1).min(rows.len().saturating_sub(1))
 }
 
-pub(crate) fn previous_selectable_command_row(rows: &[CommandRow], current: usize) -> usize {
+pub(crate) fn previous_selectable_command_row(_rows: &[CommandRow], current: usize) -> usize {
     current.saturating_sub(1)
 }
 
@@ -524,7 +526,7 @@ pub(crate) fn page_next_command_row(rows: &[CommandRow], current: usize, page: u
     (current + page).min(rows.len().saturating_sub(1))
 }
 
-pub(crate) fn page_previous_command_row(rows: &[CommandRow], current: usize, page: usize) -> usize {
+pub(crate) fn page_previous_command_row(_rows: &[CommandRow], current: usize, page: usize) -> usize {
     current.saturating_sub(page)
 }
 

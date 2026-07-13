@@ -119,6 +119,7 @@ fn plan_ui_from_tool_output(result: &ToolResult) -> Option<ActivePlanUiState> {
 }
 
 /// Toggle expanded checklist under the composer.
+#[allow(dead_code)]
 pub(crate) fn toggle_plan_expanded(app: &mut TuiApp) {
     if let Some(plan) = app.active_plan.as_mut() {
         plan.expanded = !plan.expanded;

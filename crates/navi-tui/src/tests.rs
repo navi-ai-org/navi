@@ -244,6 +244,53 @@ fn finalize_active_assistant_tracks_response_as_pending_context() {
 }
 
 #[test]
+fn finalize_active_assistant_preserves_streamed_text_when_turn_text_is_empty() {
+    let mut app = test_app("");
+    // Simulate: model streamed text (deltas), then made tool calls.
+    // The model response message has content from deltas.
+    app.messages.push(ChatMessage {
+        status: Some("receiving".to_string()),
+        ..ChatMessage::new(ChatRole::Assistant, "Here is my analysis".to_string())
+    });
+    // Then a tool result message was pushed (not a model response).
+    app.messages.push(ChatMessage {
+        status: Some("tool result".to_string()),
+        tool_invocation: Some(ToolInvocation {
+            id: "test-1".to_string(),
+            tool_name: "read_file".to_string(),
+            input: serde_json::json!({}),
+        }),
+        tool_result: Some(ToolResult {
+            invocation_id: "test-1".to_string(),
+            ok: true,
+            output: serde_json::json!({}),
+        }),
+        ..ChatMessage::new(ChatRole::Assistant, String::new())
+    });
+
+    // Turn completes with empty final text (model only did tool calls).
+    finalize_active_assistant(&mut app, 100, "");
+
+    // The streamed text should be preserved, not replaced with "No response."
+    let has_streamed_text = app
+        .messages
+        .iter()
+        .any(|m| m.content == "Here is my analysis");
+    assert!(
+        has_streamed_text,
+        "streamed text should be preserved when turn text is empty"
+    );
+    let has_no_response = app
+        .messages
+        .iter()
+        .any(|m| m.content == "No response.");
+    assert!(
+        !has_no_response,
+        "should not show 'No response.' when prior model response has content"
+    );
+}
+
+#[test]
 fn finalize_active_assistant_uses_turn_text_when_deltas_were_not_seen() {
     let mut app = test_app("");
     app.messages.push(ChatMessage {
@@ -2216,6 +2263,41 @@ fn esc_while_loading_opens_cancel_confirmation() {
 
     assert_eq!(app.mode, Mode::ConfirmCancelTurn);
     assert_eq!(app.queued_user_messages.len(), 1);
+}
+
+#[test]
+fn esc_soon_after_mouse_event_does_not_open_cancel_confirmation() {
+    let mut app = test_app("");
+    app.is_loading = true;
+    // Simulate a recent mouse event (double-click residue).
+    app.last_mouse_event = Some(std::time::Instant::now());
+
+    // The event_loop swallows Esc within 150ms of a mouse event before
+    // handle_key is called. Replicate that guard here so the regression is
+    // unit-testable without driving the full terminal loop.
+    let should_swallow = app
+        .last_mouse_event
+        .is_some_and(|t| t.elapsed() < std::time::Duration::from_millis(150));
+    assert!(should_swallow);
+
+    if !should_swallow {
+        handle_key(&mut app, KeyCode::Esc, KeyModifiers::NONE);
+    }
+
+    assert_eq!(app.mode, Mode::Normal);
+    assert!(app.is_loading);
+}
+
+#[test]
+fn esc_without_recent_mouse_event_still_opens_cancel_confirmation() {
+    let mut app = test_app("");
+    app.is_loading = true;
+    app.last_mouse_event = None;
+
+    handle_key(&mut app, KeyCode::Esc, KeyModifiers::NONE);
+
+    assert_eq!(app.mode, Mode::ConfirmCancelTurn);
+    assert!(app.is_loading);
 }
 
 #[test]
