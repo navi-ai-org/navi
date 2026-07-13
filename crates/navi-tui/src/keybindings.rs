@@ -38,12 +38,14 @@ fn apply_ui_effect(app: &mut TuiApp, effect: UiEffect<ModalKind>) -> KeyOutcome 
 }
 
 pub(crate) fn open_modal(app: &mut TuiApp, modal: ModalKind) {
+    crate::view::image_preview::clear_image_hover(app);
     app.modal_stack.open(modal);
     app.mode = modal.mode();
     app.hover_index = None;
 }
 
 pub(crate) fn replace_modal(app: &mut TuiApp, modal: ModalKind) {
+    crate::view::image_preview::clear_image_hover(app);
     app.modal_stack.replace(Some(modal));
     app.mode = modal.mode();
     app.hover_index = None;

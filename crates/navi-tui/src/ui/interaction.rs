@@ -64,6 +64,9 @@ pub enum HitAction {
         message_index: usize,
         image_index: usize,
     },
+    /// Full lightbox body: keep the image preview open while the cursor is on it.
+    /// Registered above chat hits so content under the modal does not steal hover.
+    ImageLightboxKeep,
     /// Select a row in the Help cheatsheet modal.
     HelpRow(usize),
     /// About modal link row.

@@ -305,9 +305,8 @@ fn provider_config_for_api_key(
         return openai_chatgpt_codex_config(provider_config);
     }
 
-    // xAI OAuth JWTs work against Platform api.x.ai (same base URL as API keys).
-    // Do NOT route them to cli-chat-proxy: that endpoint requires xAI CLI
-    // version headers and returns HTTP 426 without them.
+    // xAI OAuth JWTs → Grok Build (cli-chat-proxy). OpenAiProvider also rewrites
+    // base_url for OAuth JWTs; this keeps list/config paths consistent.
     inferred_provider_config_for_api_key(provider_config, api_key)
 }
 
@@ -318,8 +317,18 @@ fn inferred_provider_config_for_api_key(
     if provider_config.id == "openai" && is_probably_chatgpt_oauth_token(api_key) {
         return openai_chatgpt_codex_config(provider_config);
     }
+    if provider_config.id == "xai" && navi_providers::is_xai_oauth_access_token(api_key) {
+        return xai_grok_build_config(provider_config);
+    }
 
     provider_config.clone()
+}
+
+/// Grok Build / official CLI chat proxy (subscription quota, not Platform API).
+fn xai_grok_build_config(provider_config: &ProviderConfig) -> ProviderConfig {
+    let mut config = provider_config.clone();
+    config.base_url = Some(navi_providers::XAI_GROK_CLI_BASE_URL.to_string());
+    config
 }
 
 fn uses_stored_openai_oauth(
@@ -350,6 +359,28 @@ mod tests {
     use super::*;
     use navi_core::config::ModelConfig;
     use navi_core::{NaviConfig, ProviderConfig, ProviderKind};
+
+    #[test]
+    fn xai_oauth_jwt_config_routes_to_grok_build_proxy() {
+        let provider = ProviderConfig {
+            id: "xai".into(),
+            kind: ProviderKind::OpenAiResponses,
+            api_key_env: "XAI_API_KEY".into(),
+            base_url: Some("https://api.x.ai/v1".into()),
+            ..ProviderConfig::default()
+        };
+        let rewritten = inferred_provider_config_for_api_key(
+            &provider,
+            "eyJhbGciOiJFUzI1NiIsInR5cCI6ImF0K2p3dCJ9.payload.sig",
+        );
+        assert_eq!(
+            rewritten.base_url.as_deref(),
+            Some(navi_providers::XAI_GROK_CLI_BASE_URL)
+        );
+
+        let platform = inferred_provider_config_for_api_key(&provider, "xai-platform-key");
+        assert_eq!(platform.base_url.as_deref(), Some("https://api.x.ai/v1"));
+    }
 
     #[test]
     fn build_local_tooling_succeeds_with_default_config() {

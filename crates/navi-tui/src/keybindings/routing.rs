@@ -16,6 +16,13 @@ pub(crate) fn route_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyModifiers
         app.cancel_esc_pressed = false;
     }
 
+    // Image lightbox is not a ModalKind — close it before other Esc handling.
+    // (Mouse free-motion is disabled in the terminal, so hover-leave rarely fires.)
+    let image_lightbox = route_image_lightbox_key(app, code, modifiers);
+    if image_lightbox.is_handled() {
+        return image_lightbox;
+    }
+
     let approval = route_approval_key(app, code);
     if approval.is_handled() {
         return approval;
@@ -65,6 +72,27 @@ pub(crate) fn route_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyModifiers
     }
 
     super::route_mode_key(app, code, modifiers)
+}
+
+fn route_image_lightbox_key(
+    app: &mut TuiApp,
+    code: KeyCode,
+    modifiers: KeyModifiers,
+) -> KeyOutcome {
+    if app.image_hover.is_none() {
+        return KeyOutcome::Ignored;
+    }
+    // Esc / q close. Ctrl+C still quits via system global (checked later only if we ignore).
+    if modifiers.is_empty()
+        && matches!(
+            code,
+            KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('Q') | KeyCode::Enter
+        )
+    {
+        crate::view::image_preview::clear_image_hover(app);
+        return KeyOutcome::Handled;
+    }
+    KeyOutcome::Ignored
 }
 
 fn route_approval_key(app: &mut TuiApp, code: KeyCode) -> KeyOutcome {

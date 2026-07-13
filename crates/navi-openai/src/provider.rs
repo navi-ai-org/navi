@@ -66,6 +66,17 @@ impl OpenAiProvider {
                 })?
                 .to_string(),
         };
+        // Grok Build / official `grok` CLI: OAuth session JWTs must hit
+        // cli-chat-proxy (subscription quota). Platform `xai-…` keys stay on
+        // api.x.ai (pay-as-you-go). Honor an explicit non-platform base_url.
+        let base_url = if identity.as_str() == ProviderId::XAI
+            && crate::oauth::is_xai_oauth_access_token(&api_key)
+            && is_xai_platform_or_default_base_url(&base_url)
+        {
+            crate::oauth::XAI_GROK_CLI_BASE_URL.to_string()
+        } else {
+            base_url
+        };
         let api_kind = match provider.kind {
             ProviderKind::OpenAiResponses => OpenAiApiKind::Responses,
             ProviderKind::OpenAiChatCompletions => OpenAiApiKind::ChatCompletions,
@@ -128,6 +139,12 @@ impl OpenAiProvider {
     pub fn with_config(mut self, config: ProviderConfig) -> Self {
         self.config = config;
         self
+    }
+
+    /// Returns the effective HTTP base URL (after OAuth → Grok Build rewrite).
+    #[cfg(test)]
+    pub(crate) fn base_url_for_tests(&self) -> &str {
+        &self.base_url
     }
 
     fn stream_inner(&self, request: ModelRequest) -> ModelStream {
@@ -193,6 +210,16 @@ impl OpenAiProvider {
 ///
 /// When `accumulated_text` is non-empty, appends an assistant message so the
 /// provider continues from the already-generated prefix instead of restarting.
+/// True when `base_url` is the stock Platform endpoint (or empty), so OAuth
+/// traffic may safely rewrite to cli-chat-proxy. Custom/self-hosted URLs are left alone.
+fn is_xai_platform_or_default_base_url(base_url: &str) -> bool {
+    let trimmed = base_url.trim().trim_end_matches('/');
+    trimmed.is_empty()
+        || trimmed == "https://api.x.ai/v1"
+        || trimmed == "https://api.x.ai"
+        || trimmed.starts_with("https://api.x.ai/")
+}
+
 fn request_with_prefill(request: &ModelRequest, accumulated_text: &str) -> ModelRequest {
     let mut req = request.clone();
     if !accumulated_text.is_empty() {
@@ -411,6 +438,73 @@ impl ModelProvider for OpenAiProvider {
         let models = unique_sorted_model_ids(list.data.into_iter().map(|item| item.id));
         tracing::info!(provider = %self.provider_id, models = models.len(), "provider model list completed");
         Ok(models)
+    }
+}
+
+#[cfg(test)]
+mod xai_oauth_routing_tests {
+    use super::*;
+    use crate::oauth::XAI_GROK_CLI_BASE_URL;
+
+    #[test]
+    fn oauth_jwt_rewrites_platform_base_url_to_cli_chat_proxy() {
+        let config = ProviderConfig {
+            id: "xai".into(),
+            kind: ProviderKind::OpenAiResponses,
+            api_key_env: "XAI_API_KEY".into(),
+            base_url: Some("https://api.x.ai/v1".into()),
+            ..ProviderConfig::default()
+        };
+        let provider = OpenAiProvider::from_provider_config_with_key(
+            &config,
+            "eyJhbGciOiJFUzI1NiIsInR5cCI6ImF0K2p3dCJ9.payload.sig".into(),
+        )
+        .expect("provider");
+        assert_eq!(provider.base_url_for_tests(), XAI_GROK_CLI_BASE_URL);
+    }
+
+    #[test]
+    fn platform_api_key_keeps_api_x_ai_base_url() {
+        let config = ProviderConfig {
+            id: "xai".into(),
+            kind: ProviderKind::OpenAiResponses,
+            api_key_env: "XAI_API_KEY".into(),
+            base_url: Some("https://api.x.ai/v1".into()),
+            ..ProviderConfig::default()
+        };
+        let provider =
+            OpenAiProvider::from_provider_config_with_key(&config, "xai-platform-key-abc".into())
+                .expect("provider");
+        assert_eq!(provider.base_url_for_tests(), "https://api.x.ai/v1");
+    }
+
+    #[test]
+    fn oauth_jwt_preserves_custom_base_url() {
+        let config = ProviderConfig {
+            id: "xai".into(),
+            kind: ProviderKind::OpenAiResponses,
+            api_key_env: "XAI_API_KEY".into(),
+            base_url: Some("https://custom-proxy.example.com/v1".into()),
+            ..ProviderConfig::default()
+        };
+        let provider = OpenAiProvider::from_provider_config_with_key(
+            &config,
+            "eyJhbGciOiJFUzI1NiIsInR5cCI6ImF0K2p3dCJ9.payload.sig".into(),
+        )
+        .expect("provider");
+        assert_eq!(
+            provider.base_url_for_tests(),
+            "https://custom-proxy.example.com/v1"
+        );
+    }
+
+    #[test]
+    fn is_xai_platform_url_detects_api_host() {
+        assert!(is_xai_platform_or_default_base_url("https://api.x.ai/v1"));
+        assert!(is_xai_platform_or_default_base_url("https://api.x.ai/v1/"));
+        assert!(!is_xai_platform_or_default_base_url(
+            "https://cli-chat-proxy.grok.com/v1"
+        ));
     }
 }
 

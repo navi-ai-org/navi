@@ -149,15 +149,16 @@ fn reset_terminal_input_modes(w: &mut impl io::Write) -> io::Result<()> {
     disable_extended_keyboard_protocols(w)
 }
 
-/// Enable mouse clicks/scroll/drag with SGR coordinates, but without free
-/// hover-motion tracking. Drag events are needed for live text selection.
+/// Enable mouse clicks/scroll/drag and free motion for image-chip hover.
 fn enable_mouse_capture(w: &mut impl io::Write) -> io::Result<()> {
     // Normal tracking: report button press/release (?1000h)
     // Button-event tracking: report drag while a button is held (?1002h)
+    // Any-event tracking: free mouse-motion for image hover open/leave (?1003h)
     // SGR extended coordinates: supports >223 columns/rows (?1006h)
-    // Intentionally omitting ?1003h because the TUI does not need free
-    // mouse-motion events.
-    write!(w, "\x1B[?1000h\x1B[?1002h\x1B[?1006h")?;
+    //
+    // ?1003 is required so leaving `[Image N]` can close the lightbox. Motion
+    // handlers must stay cheap (only redraw when hover state actually changes).
+    write!(w, "\x1B[?1000h\x1B[?1002h\x1B[?1003h\x1B[?1006h")?;
     w.flush()
 }
 
@@ -215,7 +216,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn mouse_capture_enables_drag_without_free_motion_tracking() {
+    fn mouse_capture_enables_drag_and_free_motion_for_hover() {
         let mut out = Vec::new();
 
         enable_mouse_capture(&mut out).expect("enable mouse capture");
@@ -223,8 +224,8 @@ mod tests {
 
         assert!(text.contains("\x1B[?1000h"));
         assert!(text.contains("\x1B[?1002h"));
+        assert!(text.contains("\x1B[?1003h"));
         assert!(text.contains("\x1B[?1006h"));
-        assert!(!text.contains("\x1B[?1003h"));
     }
 
     #[test]
@@ -424,13 +425,17 @@ where
             needs_draw = true;
         }
 
+        if crate::view::image_preview::poll_image_hover_close(app) {
+            needs_draw = true;
+        }
+
         // Check for async model stream events (non-blocking)
         while let Some(event) = app.try_recv_async_event() {
             needs_draw = true;
             handle_async_event(app, event);
         }
 
-        let timeout = if activity_animating || composer_animating {
+        let mut timeout = if activity_animating || composer_animating {
             // ~30fps is enough for a 320ms pulse frame and keeps CPU low.
             Duration::from_millis(33)
         } else if app.messages.is_empty() || visible_notification(app).is_some() {
@@ -438,6 +443,13 @@ where
         } else {
             Duration::from_millis(250)
         };
+        // Wake promptly to apply the image-hover leave grace period.
+        if let Some(deadline) = app.image_hover_close_deadline {
+            let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+            if remaining < timeout {
+                timeout = remaining.max(Duration::from_millis(16));
+            }
+        }
 
         if input.poll(timeout)? {
             match input.read()? {
@@ -464,9 +476,11 @@ where
                     }
                 }
                 Event::Mouse(mouse_event) => {
-                    needs_draw = true;
                     app.last_mouse_event = Some(std::time::Instant::now());
-                    handle_mouse(app, mouse_event);
+                    // Free-motion (?1003) can fire often; only redraw when UI state changes.
+                    if handle_mouse(app, mouse_event) {
+                        needs_draw = true;
+                    }
                 }
                 Event::Paste(content) => {
                     needs_draw = true;

@@ -28,8 +28,15 @@ const XAI_DEFAULT_ISSUER: &str = "https://auth.x.ai";
 const XAI_DEFAULT_CLIENT_ID: &str = "b1a00492-073a-47ea-816f-4c329264a828";
 const XAI_CALLBACK_PATH: &str = "/callback";
 const XAI_DEFAULT_SCOPES: &str = "openid profile email offline_access grok-cli:access api:access conversations:read conversations:write";
-/// Base URL for Grok CLI session tokens (OAuth), not Platform API keys.
+/// Base URL for Grok CLI / Grok Build session tokens (OAuth), not Platform API keys.
+///
+/// Official `grok` bills subscription quota here (`cli-chat-proxy`), while
+/// Platform keys use `https://api.x.ai/v1` (pay-as-you-go).
 pub const XAI_GROK_CLI_BASE_URL: &str = "https://cli-chat-proxy.grok.com/v1";
+/// Client version sent as `x-grok-client-version`. The proxy returns HTTP 426
+/// without this header (or with an outdated value). Keep in sync with a recent
+/// official Grok CLI release.
+pub const XAI_GROK_CLI_CLIENT_VERSION: &str = "0.2.99";
 /// Early refresh buffer: refresh when fewer than this many seconds remain.
 const XAI_REFRESH_SKEW_SECS: i64 = 300;
 
@@ -341,7 +348,7 @@ pub async fn xai_usage_report(access_token: &str) -> std::result::Result<XaiUsag
         .header("Accept", "application/json")
         .header("User-Agent", "navi/0.1.0")
         .header("X-XAI-Token-Auth", "xai-grok-cli")
-        .header("x-grok-client-version", "0.2.99")
+        .header("x-grok-client-version", XAI_GROK_CLI_CLIENT_VERSION)
         .send()
         .await
         .map_err(|err| err.to_string())?;
@@ -595,7 +602,12 @@ where
     Err("xAI device authorization timed out".to_string())
 }
 
-/// Default xAI OAuth entry point used by the TUI: browser loopback PKCE.
+/// Default xAI OAuth entry point used by the TUI.
+///
+/// Matches official `grok login`: **device-code** by default (user opens
+/// `https://accounts.x.ai/oauth2/device?user_code=…`). Set
+/// `NAVI_XAI_OAUTH_BROWSER=1` for loopback Authorization Code + PKCE.
+/// Legacy: `NAVI_XAI_OAUTH_DEVICE=0` also forces browser.
 pub async fn xai_oauth<F>(
     credential_store: CredentialStore,
     provider_id: &str,
@@ -604,13 +616,22 @@ pub async fn xai_oauth<F>(
 where
     F: FnMut(DeviceOAuthStarted) + Send,
 {
-    if std::env::var("NAVI_XAI_OAUTH_DEVICE")
-        .map(|value| value == "1" || value.eq_ignore_ascii_case("true"))
-        .unwrap_or(false)
-    {
-        return xai_device_oauth(credential_store, provider_id, on_started).await;
+    let force_browser = env_flag_true("NAVI_XAI_OAUTH_BROWSER")
+        || std::env::var("NAVI_XAI_OAUTH_DEVICE")
+            .map(|value| {
+                value == "0" || value.eq_ignore_ascii_case("false") || value.eq_ignore_ascii_case("no")
+            })
+            .unwrap_or(false);
+    if force_browser {
+        return xai_browser_oauth(credential_store, provider_id, on_started).await;
     }
-    xai_browser_oauth(credential_store, provider_id, on_started).await
+    xai_device_oauth(credential_store, provider_id, on_started).await
+}
+
+fn env_flag_true(name: &str) -> bool {
+    std::env::var(name)
+        .map(|value| value == "1" || value.eq_ignore_ascii_case("true") || value.eq_ignore_ascii_case("yes"))
+        .unwrap_or(false)
 }
 
 /// Refresh a stored xAI access token when it is near expiry.

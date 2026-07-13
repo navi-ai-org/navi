@@ -117,6 +117,11 @@ pub struct TuiApp {
     pub(crate) image_hover: Option<crate::state::ImageHoverPreview>,
     /// Kitty/Sixel/iTerm2 stateful protocol for the lightbox hover (None = text-only).
     pub(crate) image_hover_protocol: Option<ratatui_image::protocol::StatefulProtocol>,
+    /// Last rendered lightbox rect (for tests / debugging; keep-open uses hit region).
+    pub(crate) image_hover_modal_rect: Option<ratatui::layout::Rect>,
+    /// When set, close the lightbox after this instant if the cursor stays outside
+    /// the chip + lightbox sticky zone (grace while moving chip → modal).
+    pub(crate) image_hover_close_deadline: Option<std::time::Instant>,
     pub(crate) queued_user_messages: VecDeque<QueuedUserMessage>,
     pub(crate) queued_message_selected: usize,
     pub(crate) queued_message_scroll: usize,
@@ -399,6 +404,8 @@ impl TuiApp {
             pending_images: Vec::new(),
             image_hover: None,
             image_hover_protocol: None,
+            image_hover_modal_rect: None,
+            image_hover_close_deadline: None,
             queued_user_messages: VecDeque::new(),
             queued_message_selected: 0,
             queued_message_scroll: 0,

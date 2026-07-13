@@ -1,3 +1,5 @@
+use std::time::{Duration, Instant};
+
 use ratatui::layout::{Alignment, Rect};
 use ratatui::prelude::{Frame, Line, Span};
 use ratatui::style::{Modifier, Style};
@@ -12,6 +14,11 @@ use crate::state::ImageHoverPreview;
 use crate::theme::*;
 use crate::ui::interaction::HitAction;
 use crate::view::terminal_graphics::{self, lightbox_cells};
+
+/// Grace period after the cursor leaves the chip / lightbox before closing.
+/// Covers the empty gap between an `[Image N]` chip and the centered modal so
+/// the user can move onto the image without the preview vanishing mid-path.
+pub(crate) const IMAGE_HOVER_CLOSE_GRACE: Duration = Duration::from_millis(180);
 
 /// Height of the legacy attachment strip (kept for layout callers that still reserve space).
 #[allow(dead_code)]
@@ -29,11 +36,16 @@ pub(crate) fn render_image_previews(frame: &mut Frame<'_>, app: &mut TuiApp, are
 /// - **Kitty / Sixel / iTerm2:** large lightbox (~90%×80% of the content area)
 ///   with metadata title and the image scaled to fill the body.
 /// - **Other terminals:** compact text-only metadata card.
+///
+/// Registers a high-z [`HitAction::ImageLightboxKeep`] over the modal so the
+/// cursor can rest on the image without chat hits underneath clearing hover.
 pub(crate) fn render_image_hover_modal(frame: &mut Frame<'_>, app: &mut TuiApp, area: Rect) {
     let Some(preview) = app.image_hover.clone() else {
+        app.image_hover_modal_rect = None;
         return;
     };
     if area.width < 20 || area.height < 3 {
+        app.image_hover_modal_rect = None;
         return;
     }
 
@@ -66,6 +78,9 @@ pub(crate) fn render_image_hover_modal(frame: &mut Frame<'_>, app: &mut TuiApp, 
         width: modal_width,
         height: modal_height,
     };
+    app.image_hover_modal_rect = Some(modal);
+    // z=100: above chat lines / chips so content under the modal cannot steal hover.
+    app.register_hit(modal, 100, "image_lightbox_keep", HitAction::ImageLightboxKeep);
 
     // Solid underlay — Kitty skips cells; without this, chat bleeds through.
     opaque_fill(frame, modal, fill);
@@ -208,6 +223,8 @@ pub(crate) fn register_pending_image_hits(
     }
 }
 
+/// Open or refresh the hover preview for an image chip action.
+/// Returns `true` when the visible hover state changed (needs redraw).
 pub(crate) fn set_hover_from_action(app: &mut TuiApp, action: &HitAction) -> bool {
     let preview = match action {
         HitAction::PreviewPendingImage(index) => app
@@ -232,6 +249,8 @@ pub(crate) fn set_hover_from_action(app: &mut TuiApp, action: &HitAction) -> boo
         _ => false,
     };
 
+    // Cursor is on a chip: cancel any pending leave-close.
+    cancel_image_hover_close(app);
     app.image_hover = preview;
     if !same {
         app.image_hover_protocol = None;
@@ -251,11 +270,56 @@ pub(crate) fn set_hover_from_action(app: &mut TuiApp, action: &HitAction) -> boo
                 app.image_hover_protocol = Some(encoded.protocol);
             }
         }
+        return true;
     }
+    false
+}
+
+/// Cursor is still inside the sticky zone (chip or lightbox body).
+pub(crate) fn keep_image_hover(app: &mut TuiApp) {
+    cancel_image_hover_close(app);
+}
+
+/// Cursor left chip + lightbox: schedule close after [`IMAGE_HOVER_CLOSE_GRACE`].
+/// Returns `true` when a new deadline was armed (caller may not need a redraw).
+pub(crate) fn schedule_image_hover_close(app: &mut TuiApp) -> bool {
+    if app.image_hover.is_none() {
+        return false;
+    }
+    if app.image_hover_close_deadline.is_some() {
+        return false;
+    }
+    app.image_hover_close_deadline = Some(Instant::now() + IMAGE_HOVER_CLOSE_GRACE);
+    false
+}
+
+pub(crate) fn cancel_image_hover_close(app: &mut TuiApp) {
+    app.image_hover_close_deadline = None;
+}
+
+/// Apply a pending leave-close if the grace period elapsed. Returns true if closed.
+pub(crate) fn poll_image_hover_close(app: &mut TuiApp) -> bool {
+    let Some(deadline) = app.image_hover_close_deadline else {
+        return false;
+    };
+    if Instant::now() < deadline {
+        return false;
+    }
+    clear_image_hover(app);
     true
 }
 
 pub(crate) fn clear_image_hover(app: &mut TuiApp) {
     app.image_hover = None;
     app.image_hover_protocol = None;
+    app.image_hover_modal_rect = None;
+    app.image_hover_close_deadline = None;
+}
+
+/// Whether `action` is an image chip that should open the lightbox on hover.
+pub(crate) fn is_image_chip_action(action: &HitAction) -> bool {
+    matches!(
+        action,
+        HitAction::PreviewPendingImage(_) | HitAction::PreviewChatImage { .. }
+    )
 }
