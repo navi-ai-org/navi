@@ -477,7 +477,12 @@ where
     Ok(())
 }
 
-/// Device-code OIDC login for xAI Grok (headless / remote environments).
+/// Device-code OIDC login for xAI Grok Build (same path as `grok login --device-auth`).
+///
+/// Shows a short `user_code` (e.g. `WWG6-9PSY`) and opens
+/// `https://accounts.x.ai/oauth2/device?user_code=…`. Polls `auth.x.ai` until
+/// the user confirms. This is **not** Platform API-key OAuth and **not** the
+/// browser loopback/paste-code flow.
 pub async fn xai_device_oauth<F>(
     credential_store: CredentialStore,
     provider_id: &str,
@@ -505,6 +510,12 @@ where
             issuer.trim_end_matches('/')
         ))
         .header("Content-Type", "application/x-www-form-urlencoded")
+        .header("Accept", "application/json")
+        // Match official Grok CLI / Grok Build surface so the IdP issues a
+        // short user_code (AAAA-BBBB) rather than a platform-style flow.
+        .header("x-grok-client-version", XAI_GROK_CLI_CLIENT_VERSION)
+        .header("x-grok-client-surface", "grok-build")
+        .header("User-Agent", "navi/0.1.0")
         .body(device_body)
         .send()
         .await
@@ -512,7 +523,8 @@ where
 
     if device_response.status().as_u16() == 404 {
         return Err(
-            "xAI device-code endpoint unavailable (404); use browser OAuth instead".to_string(),
+            "xAI device-code endpoint unavailable (404). Set NAVI_XAI_OAUTH_BROWSER=1 for loopback PKCE, or update NAVI."
+                .to_string(),
         );
     }
     if !device_response.status().is_success() {
@@ -525,17 +537,44 @@ where
         .json()
         .await
         .map_err(|err| err.to_string())?;
-    let verification_uri = device_data
-        .get("verification_uri_complete")
-        .or_else(|| device_data.get("verification_uri"))
-        .and_then(|value| value.as_str())
-        .ok_or_else(|| "missing verification URL".to_string())?
-        .to_string();
     let user_code = device_data
         .get("user_code")
         .and_then(|value| value.as_str())
         .unwrap_or("")
+        .trim()
         .to_string();
+    if user_code.is_empty()
+        || !user_code
+            .chars()
+            .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '-')
+    {
+        return Err(format!(
+            "xAI device login returned invalid user_code {user_code:?} (expected AAAA-BBBB like grok login). Not using browser paste-code."
+        ));
+    }
+    // Prefer complete URI so the browser lands with the code pre-filled.
+    let verification_uri = device_data
+        .get("verification_uri_complete")
+        .and_then(|value| value.as_str())
+        .map(str::to_string)
+        .or_else(|| {
+            device_data
+                .get("verification_uri")
+                .and_then(|value| value.as_str())
+                .map(|base| {
+                    if base.contains("user_code=") {
+                        base.to_string()
+                    } else {
+                        format!(
+                            "{}{}user_code={}",
+                            base,
+                            if base.contains('?') { "&" } else { "?" },
+                            url_encode_component(&user_code)
+                        )
+                    }
+                })
+        })
+        .ok_or_else(|| "missing verification URL".to_string())?;
     let device_code = device_data
         .get("device_code")
         .and_then(|value| value.as_str())
@@ -568,6 +607,10 @@ where
         let token_response = client
             .post(format!("{}/oauth2/token", issuer.trim_end_matches('/')))
             .header("Content-Type", "application/x-www-form-urlencoded")
+            .header("Accept", "application/json")
+            .header("x-grok-client-version", XAI_GROK_CLI_CLIENT_VERSION)
+            .header("x-grok-client-surface", "grok-build")
+            .header("User-Agent", "navi/0.1.0")
             .body(token_body)
             .send()
             .await
