@@ -235,6 +235,9 @@ pub(crate) fn render_oauth(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
         return;
     };
 
+    // Device-code (Grok Build): short user_code like WWG6-9PSY, no paste_slot.
+    // Browser PKCE: empty user_code + paste_slot for long authorize codes.
+    let is_device = !state.user_code.trim().is_empty() && state.paste_slot.is_none();
     let show_code = !state.user_code.trim().is_empty();
     let rows = Layout::default()
         .direction(Direction::Vertical)
@@ -255,12 +258,22 @@ pub(crate) fn render_oauth(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
                 state.provider_id.clone(),
                 Style::default().fg(text()).add_modifier(Modifier::BOLD),
             ),
+            if is_device {
+                Span::styled(
+                    "  ·  Grok Build device",
+                    Style::default().fg(muted()).bg(modal_bg()),
+                )
+            } else {
+                Span::raw("")
+            },
         ]))
         .style(Style::default().bg(modal_bg())),
         rows[0],
     );
-    let instruction = if state.paste_slot.is_some() {
-        "Complete login in your browser. If it shows a code, copy it and press p / Ctrl+V here."
+    let instruction = if is_device {
+        "Confirm this code in your browser (accounts.x.ai). Do not paste long codes."
+    } else if state.paste_slot.is_some() {
+        "Browser PKCE: if the page shows a long code, copy it and press p / Ctrl+V here."
     } else {
         "Complete login in your browser."
     };
@@ -272,7 +285,14 @@ pub(crate) fn render_oauth(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
     if show_code {
         frame.render_widget(
             Paragraph::new(Line::from(vec![
-                Span::styled("Code: ", Style::default().fg(muted())),
+                Span::styled(
+                    if is_device {
+                        "Confirm code: "
+                    } else {
+                        "Code: "
+                    },
+                    Style::default().fg(muted()),
+                ),
                 Span::styled(
                     state.user_code.clone(),
                     Style::default()
@@ -308,6 +328,8 @@ pub(crate) fn render_oauth(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
 
     let help = if let Some(status) = state.paste_status.as_deref() {
         format!("{status}     c copy link     ctrl+o open     p paste code     esc close")
+    } else if is_device {
+        "c copy link     ctrl+o reopen browser     esc close · waiting for confirmation…".to_string()
     } else if state.paste_slot.is_some() {
         "c copy link     ctrl+o open browser     p/ctrl+v paste code     esc close".to_string()
     } else {

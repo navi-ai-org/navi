@@ -248,10 +248,11 @@ pub(crate) fn handle_async_event(app: &mut TuiApp, event: AsyncEvent) {
             user_code,
             paste_slot,
         } => {
+            let is_device_code = !user_code.trim().is_empty() && paste_slot.is_none();
             app.oauth_state = Some(OAuthUiState {
                 provider_id,
                 verification_uri: verification_uri.clone(),
-                user_code,
+                user_code: user_code.clone(),
                 paste_slot,
                 paste_status: None,
             });
@@ -261,11 +262,21 @@ pub(crate) fn handle_async_event(app: &mut TuiApp, event: AsyncEvent) {
             if !verification_uri.is_empty() {
                 crate::browser::open_url(app, verification_uri);
             }
-            show_notification(
-                app,
-                "OAuth",
-                "Browser opened — finish login. If a code is shown, press p/Ctrl+V to paste it.",
-            );
+            if is_device_code {
+                show_notification(
+                    app,
+                    "OAuth",
+                    format!(
+                        "Confirm code {user_code} in the browser (Grok Build device login)."
+                    ),
+                );
+            } else {
+                show_notification(
+                    app,
+                    "OAuth",
+                    "Browser opened — finish login. If a code is shown, press p/Ctrl+V to paste it.",
+                );
+            }
         }
         AsyncEvent::OAuthCompleted {
             provider_id,
