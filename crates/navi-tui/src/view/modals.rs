@@ -2493,6 +2493,44 @@ fn render_usage_report(lines: &mut Vec<Line<'_>>, report: &NaviUsageReport) {
         )));
     }
 
+    // Limit bars first — these are the main account metrics (weekly % etc.).
+    if !report.limits.is_empty() {
+        lines.push(Line::from(""));
+        for (i, limit) in report.limits.iter().enumerate() {
+            let name = limit
+                .limit_name
+                .as_deref()
+                .or(limit.metered_feature.as_deref())
+                .unwrap_or("Limit");
+
+            let status_icon = if limit.limit_reached { "●" } else { "○" };
+            let status_color = if limit.limit_reached { red() } else { signal() };
+            lines.push(Line::from(vec![
+                Span::styled(format!("{status_icon} "), Style::default().fg(status_color)),
+                Span::styled(
+                    name.to_string(),
+                    Style::default().fg(text()).add_modifier(Modifier::BOLD),
+                ),
+            ]));
+
+            if let Some(ref primary) = limit.primary {
+                let label = if primary.limit_window_seconds > 0 {
+                    "primary"
+                } else {
+                    "usage"
+                };
+                render_window_line(lines, label, primary);
+            }
+            if let Some(ref secondary) = limit.secondary {
+                render_window_line(lines, "secondary", secondary);
+            }
+
+            if i < report.limits.len() - 1 {
+                lines.push(Line::from(""));
+            }
+        }
+    }
+
     if !report.details.is_empty() {
         lines.push(Line::from(""));
         for detail in &report.details {
@@ -2509,47 +2547,6 @@ fn render_usage_report(lines: &mut Vec<Line<'_>>, report: &NaviUsageReport) {
                 ),
                 Span::styled(value, Style::default().fg(text())),
             ]));
-        }
-    }
-
-    if report.limits.is_empty() {
-        return;
-    }
-
-    lines.push(Line::from(""));
-
-    // Render each limit snapshot
-    for (i, limit) in report.limits.iter().enumerate() {
-        let name = limit
-            .limit_name
-            .as_deref()
-            .or(limit.metered_feature.as_deref())
-            .unwrap_or("Limit");
-
-        let status_icon = if limit.limit_reached { "●" } else { "○" };
-        let status_color = if limit.limit_reached { red() } else { signal() };
-        lines.push(Line::from(vec![
-            Span::styled(format!("{status_icon} "), Style::default().fg(status_color)),
-            Span::styled(
-                name.to_string(),
-                Style::default().fg(text()).add_modifier(Modifier::BOLD),
-            ),
-        ]));
-
-        if let Some(ref primary) = limit.primary {
-            let label = if primary.limit_window_seconds > 0 {
-                "primary"
-            } else {
-                "usage"
-            };
-            render_window_line(lines, label, primary);
-        }
-        if let Some(ref secondary) = limit.secondary {
-            render_window_line(lines, "secondary", secondary);
-        }
-
-        if i < report.limits.len() - 1 {
-            lines.push(Line::from(""));
         }
     }
 }

@@ -880,6 +880,48 @@ fn test_cancellation_token_reflects_cancel() {
     assert!(token.is_requested());
 }
 
+/// Provider whose stream never yields — models a hung SSE body after cancel.
+struct HangingStreamProvider;
+
+#[async_trait]
+impl ModelProvider for HangingStreamProvider {
+    fn stream(&self, _request: ModelRequest) -> ModelStream {
+        Box::pin(futures_util::stream::pending())
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn collect_model_output_aborts_hanging_stream_on_cancel() {
+    let tempdir = tempfile::tempdir().unwrap();
+    let mut ctx = build_test_ctx(tempdir.path().to_path_buf());
+    ctx.model_provider = Arc::new(std::sync::RwLock::new(Arc::new(HangingStreamProvider)));
+    let cancel = ctx.cancel_token.clone();
+
+    let turn = tokio::spawn(async move {
+        let mut messages = vec![ModelMessage::user("hello")];
+        let policy = crate::harness::policy_for_profile(
+            &crate::config::HarnessConfig::default(),
+            crate::config::HarnessProfile::Small,
+        );
+        run_turn(&ctx, &mut messages, policy).await
+    });
+
+    // Let the turn reach `stream.next()` before cancelling.
+    tokio::task::yield_now().await;
+    tokio::time::sleep(Duration::from_millis(20)).await;
+    cancel.cancel();
+
+    let result = tokio::time::timeout(Duration::from_secs(2), turn)
+        .await
+        .expect("cancelled turn must not hang on stream.next()")
+        .expect("join turn task");
+    let err = result.expect_err("cancelled hanging stream should error");
+    assert!(
+        err.to_string().contains("turn cancelled"),
+        "expected turn cancelled, got: {err}"
+    );
+}
+
 #[test]
 fn rewrite_unsupported_attachments_keeps_supported_images_and_routes_audio() {
     let tempdir = tempfile::tempdir().unwrap();

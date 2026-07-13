@@ -112,7 +112,7 @@ pub(crate) const HELP_ROWS: &[HelpRow] = &[
         detail: "Text selection stays constrained to the active message/tool block.",
     },
     HelpRow::Entry {
-        key: "shift+g  /  ctrl+end",
+        key: "ctrl+↓  /  shift+g  /  ctrl+end",
         label: "Jump to latest",
         detail: "Scroll to the last message. Same as the ↓ Latest button when scrolled up.",
     },

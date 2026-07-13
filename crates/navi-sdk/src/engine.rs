@@ -1813,6 +1813,131 @@ fn percent_window(used_percent: f64) -> NaviUsageWindow {
     }
 }
 
+fn percent_window_with_period(
+    used_percent: f64,
+    period_start: Option<&str>,
+    period_end: Option<&str>,
+) -> NaviUsageWindow {
+    let used = used_percent.clamp(0.0, 100.0).round() as i32;
+    let (limit_window_seconds, reset_after_seconds, reset_at) =
+        period_window_timing(period_start, period_end);
+    NaviUsageWindow {
+        used_percent: used,
+        limit_window_seconds,
+        reset_after_seconds,
+        reset_at,
+    }
+}
+
+fn period_window_timing(
+    period_start: Option<&str>,
+    period_end: Option<&str>,
+) -> (i32, i32, i32) {
+    let Some(end) = period_end.and_then(parse_rfc3339_unix) else {
+        return (0, 0, 0);
+    };
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    let reset_after = (end - now).max(0) as i32;
+    let window = match period_start.and_then(parse_rfc3339_unix) {
+        Some(start) if end > start => (end - start) as i32,
+        _ => 0,
+    };
+    (window, reset_after, end.min(i32::MAX as i64) as i32)
+}
+
+fn parse_rfc3339_unix(value: &str) -> Option<i64> {
+    // Prefer chrono-less parsing for common RFC3339 forms returned by xAI.
+    // Examples:
+    // - 2026-07-18T15:39:11.601812+00:00
+    // - 2026-07-18T15:39:11Z
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    // Use `time` crate if available via transitive deps? Keep a small parser
+    // based on `DateTime` from the standard library is not available; use
+    // a lightweight approach via `httpdate` is not ideal for RFC3339 with
+    // offsets. Fall back to splitting.
+    // Format: YYYY-MM-DDTHH:MM:SS[.frac](Z|+HH:MM|-HH:MM)
+    let (datetime, offset_secs) = if let Some(rest) = trimmed.strip_suffix('Z') {
+        (rest, 0i64)
+    } else if let Some(idx) = trimmed.rfind('+') {
+        let (dt, off) = trimmed.split_at(idx);
+        (dt, parse_offset(off)?)
+    } else if let Some(idx) = trimmed.rfind('-') {
+        // Distinguish date dashes from timezone minus: timezone appears after time 'T'.
+        let t_pos = trimmed.find('T')?;
+        if idx > t_pos {
+            let (dt, off) = trimmed.split_at(idx);
+            (dt, -parse_offset(&format!("+{}", &off[1..]))?)
+        } else {
+            return None;
+        }
+    } else {
+        return None;
+    };
+    let datetime = datetime.split('.').next().unwrap_or(datetime);
+    let mut parts = datetime.split('T');
+    let date = parts.next()?;
+    let time = parts.next()?;
+    let mut d = date.split('-');
+    let year: i64 = d.next()?.parse().ok()?;
+    let month: i64 = d.next()?.parse().ok()?;
+    let day: i64 = d.next()?.parse().ok()?;
+    let mut t = time.split(':');
+    let hour: i64 = t.next()?.parse().ok()?;
+    let minute: i64 = t.next()?.parse().ok()?;
+    let second: i64 = t.next()?.parse().ok()?;
+    if !(1..=12).contains(&month) || !(1..=31).contains(&day) {
+        return None;
+    }
+    // Days from civil date (Howard Hinnant algorithm).
+    let y = if month <= 2 { year - 1 } else { year };
+    let era = y.div_euclid(400);
+    let yoe = y.rem_euclid(400);
+    let mp = if month > 2 { month - 3 } else { month + 9 };
+    let doy = (153 * mp + 2) / 5 + day - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    let days = era * 146097 + doe - 719468; // days since 1970-01-01
+    Some(days * 86_400 + hour * 3600 + minute * 60 + second - offset_secs)
+}
+
+fn parse_offset(offset: &str) -> Option<i64> {
+    // +HH:MM or +HHMM
+    let s = offset.trim().trim_start_matches('+');
+    if let Some((h, m)) = s.split_once(':') {
+        let hours: i64 = h.parse().ok()?;
+        let mins: i64 = m.parse().ok()?;
+        return Some(hours * 3600 + mins * 60);
+    }
+    if s.len() == 4 {
+        let hours: i64 = s[..2].parse().ok()?;
+        let mins: i64 = s[2..].parse().ok()?;
+        return Some(hours * 3600 + mins * 60);
+    }
+    None
+}
+
+fn friendly_period_type(period_type: Option<&str>) -> Option<String> {
+    match period_type {
+        Some("USAGE_PERIOD_TYPE_WEEKLY") => Some("weekly".into()),
+        Some("USAGE_PERIOD_TYPE_MONTHLY") => Some("monthly".into()),
+        Some(other) => Some(other.to_ascii_lowercase()),
+        None => None,
+    }
+}
+
+fn friendly_product_name(product: &str) -> String {
+    match product {
+        "GrokBuild" => "Grok Build".into(),
+        "Api" => "API".into(),
+        other => other.to_string(),
+    }
+}
+
 fn xai_report_to_sdk(
     provider: &navi_core::ProviderConfig,
     report: navi_providers::XaiUsageReport,
@@ -1821,54 +1946,70 @@ fn xai_report_to_sdk(
     if let Some(credit) = report.credit_usage_percent {
         limits.push(NaviUsageLimitSnapshot {
             limit_id: Some("credits".into()),
-            limit_name: Some("Weekly credits".into()),
+            limit_name: Some("Weekly limit".into()),
             metered_feature: Some("credits".into()),
             limit_reached: credit >= 100.0,
-            primary: Some(percent_window(credit)),
+            primary: Some(percent_window_with_period(
+                credit,
+                report.period_start.as_deref(),
+                report.period_end.as_deref(),
+            )),
             secondary: None,
         });
     }
-    for product in report.product_usage {
+    for product in &report.product_usage {
         limits.push(NaviUsageLimitSnapshot {
             limit_id: Some(product.product.to_ascii_lowercase()),
-            limit_name: Some(product.product.clone()),
+            limit_name: Some(friendly_product_name(&product.product)),
             metered_feature: Some(product.product.clone()),
             limit_reached: product.usage_percent >= 100.0,
-            primary: Some(percent_window(product.usage_percent)),
+            primary: Some(percent_window_with_period(
+                product.usage_percent,
+                report.period_start.as_deref(),
+                report.period_end.as_deref(),
+            )),
             secondary: None,
         });
     }
 
     let mut details = Vec::new();
+    if let Some(period) = friendly_period_type(report.period_type.as_deref()) {
+        details.push(NaviUsageDetail {
+            label: "Period".into(),
+            value: period,
+        });
+    }
+    if let Some(end) = report.period_end.as_ref() {
+        details.push(NaviUsageDetail {
+            label: "Next reset".into(),
+            value: end.clone(),
+        });
+    }
     if let Some(start) = report.period_start.as_ref() {
         details.push(NaviUsageDetail {
             label: "Period start".into(),
             value: start.clone(),
         });
     }
-    if let Some(end) = report.period_end.as_ref() {
-        details.push(NaviUsageDetail {
-            label: "Period end".into(),
-            value: end.clone(),
-        });
-    }
-    if let Some(bal) = report.prepaid_balance {
+    if let Some(bal) = report.prepaid_balance.filter(|v| *v > 0.0) {
         details.push(NaviUsageDetail {
             label: "Prepaid balance".into(),
             value: format!("{bal}"),
         });
     }
     if let (Some(used), Some(cap)) = (report.on_demand_used, report.on_demand_cap) {
-        details.push(NaviUsageDetail {
-            label: "On-demand".into(),
-            value: format!("{used} / {cap}"),
-        });
+        if used > 0.0 || cap > 0.0 {
+            details.push(NaviUsageDetail {
+                label: "On-demand".into(),
+                value: format!("{used} / {cap}"),
+            });
+        }
     }
 
     let plan = if report.is_unified_billing == Some(true) {
         Some("unified".into())
     } else {
-        report.period_type
+        friendly_period_type(report.period_type.as_deref())
     };
 
     NaviUsageReport {

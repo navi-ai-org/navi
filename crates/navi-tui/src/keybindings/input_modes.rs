@@ -33,8 +33,8 @@ pub(crate) fn handle_normal_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyM
             | KeyCode::Char('w')
             | KeyCode::Char('\u{7f}') => delete_input_previous_hump(app),
             KeyCode::Delete => delete_input_next_hump(app),
-            // Grok-style jump to last message (also works while typing).
-            KeyCode::End => crate::view::chat::jump_to_latest(app),
+            // Jump to last message (also works while typing).
+            KeyCode::End | KeyCode::Down => crate::view::chat::jump_to_latest(app),
             KeyCode::Char('a') => select_all_input(app),
             KeyCode::Char('e') => {
                 app.input_cursor = app.input.len();
