@@ -1203,18 +1203,8 @@ impl AgentRuntime {
                 self.runtime_components.clone(),
             );
             executor.register_tool(Arc::new(subagent));
-            let repo_explore = RepoExploreTool::new(
-                executor_weak.clone(),
-                self.shared_model_provider.clone(),
-                self.project_dir.clone(),
-                self.loaded_config.data_dir.clone(),
-                self.shared_model_name.clone(),
-                self.loaded_config.config.harness.clone(),
-                self.shared_config.clone(),
-                self.prompt_cache.clone(),
-                self.runtime_components.clone(),
-            );
-            executor.register_tool(Arc::new(repo_explore));
+            // BM25 + symbol index — cheap, no nested agent.
+            executor.register_tool(Arc::new(RepoExploreTool::new(self.project_dir.clone())));
             executor
         });
         self.tool_executor = Some(executor.clone());
