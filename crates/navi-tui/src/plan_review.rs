@@ -126,7 +126,7 @@ pub(crate) fn active_plan_from_store_plan(
             })
             .collect(),
         status: status.to_string(),
-        expanded: true,
+        expanded: false,
     }
 }
 
@@ -312,7 +312,7 @@ fn finish_review(app: &mut TuiApp, decision: &str, next_status: PlanStatus, _sen
         "approve" => {
             if let Some(plan) = app.active_plan.as_mut() {
                 plan.status = "active".into();
-                plan.expanded = true;
+                plan.expanded = false;
             } else if let Some(proposed) = app.proposed_plan.as_ref() {
                 app.active_plan = Some(crate::state::ActivePlanUiState {
                     plan_id: review.plan_id.clone(),
@@ -326,7 +326,7 @@ fn finish_review(app: &mut TuiApp, decision: &str, next_status: PlanStatus, _sen
                         })
                         .collect(),
                     status: "active".into(),
-                    expanded: true,
+                    expanded: false,
                 });
             }
         }

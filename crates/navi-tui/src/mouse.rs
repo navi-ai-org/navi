@@ -867,6 +867,9 @@ fn dispatch_hit(app: &mut TuiApp, hit: HitRegion<HitAction>) {
         }
         HitAction::PlanReviewComment => crate::plan_review::begin_comment(app),
         HitAction::PlanReviewQuit => crate::plan_review::quit_plan(app),
+        HitAction::TogglePlanTopbar => {
+            crate::plan_progress::toggle_plan_expanded(app);
+        }
     }
 }
 
@@ -1842,6 +1845,37 @@ mod tests {
         assert!(
             app.image_hover.is_none(),
             "Esc must close the image lightbox"
+        );
+    }
+
+    #[test]
+    fn click_plan_topbar_toggles_expanded() {
+        let mut app = test_app("");
+        app.active_plan = Some(crate::state::ActivePlanUiState {
+            plan_id: "p1".into(),
+            title: "Demo".into(),
+            steps: vec![crate::state::ActivePlanStepUi {
+                description: "step one".into(),
+                completed: false,
+            }],
+            status: "active".into(),
+            expanded: false,
+        });
+        app.register_hit(
+            Rect::new(0, 0, 40, 3),
+            40,
+            "plan topbar",
+            HitAction::TogglePlanTopbar,
+        );
+        handle_mouse(&mut app, mouse_down(2, 1));
+        assert!(
+            app.active_plan.as_ref().is_some_and(|p| p.expanded),
+            "click must expand plan topbar"
+        );
+        handle_mouse(&mut app, mouse_down(2, 1));
+        assert!(
+            app.active_plan.as_ref().is_some_and(|p| !p.expanded),
+            "second click must collapse plan topbar"
         );
     }
 }

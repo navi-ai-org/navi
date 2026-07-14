@@ -1,8 +1,8 @@
 use crate::errors::ProviderError;
 use crate::mapping::{
     apply_thinking_to_body, chat_tool_to_json, message_to_json, reasoning_text,
-    responses_input_item_to_json, responses_tool_to_json, text_delta, thinking_request_for_api,
-    usage_from_value,
+    responses_input_item_to_json, responses_tool_to_json, text_delta,
+    thinking_request_for_api_with_levels, usage_from_value,
 };
 use crate::sse::SseDecoder;
 use crate::transport::ensure_success;
@@ -23,6 +23,7 @@ impl crate::provider::OpenAiProvider {
         let stream_idle_timeout_ms = self.config.stream_idle_timeout_ms();
         let request_options = self.config.request_options.clone().unwrap_or_default();
         let behavior = self.behavior.clone();
+        let reasoning_levels = reasoning_levels_for_model(&self.config, &request.model);
 
         Box::pin(try_stream! {
         let mut headers = behavior
@@ -68,7 +69,12 @@ impl crate::provider::OpenAiProvider {
         }
         apply_thinking_to_body(
             &mut body,
-            thinking_request_for_api(request.thinking, OpenAiApiKind::Responses, &provider_id),
+            thinking_request_for_api_with_levels(
+                request.thinking,
+                OpenAiApiKind::Responses,
+                &provider_id,
+                &reasoning_levels,
+            ),
             OpenAiApiKind::Responses,
             &provider_id,
         );
@@ -137,6 +143,7 @@ impl crate::provider::OpenAiProvider {
         let stream_idle_timeout_ms = self.config.stream_idle_timeout_ms();
         let request_options = self.config.request_options.clone().unwrap_or_default();
         let behavior = self.behavior.clone();
+        let reasoning_levels = reasoning_levels_for_model(&self.config, &request.model);
 
         Box::pin(try_stream! {
         let mut headers = behavior.build_headers(
@@ -180,7 +187,12 @@ impl crate::provider::OpenAiProvider {
         }
         apply_thinking_to_body(
             &mut body,
-            thinking_request_for_api(request.thinking, OpenAiApiKind::ChatCompletions, &provider_id),
+            thinking_request_for_api_with_levels(
+                request.thinking,
+                OpenAiApiKind::ChatCompletions,
+                &provider_id,
+                &reasoning_levels,
+            ),
             OpenAiApiKind::ChatCompletions,
             &provider_id,
         );
@@ -246,6 +258,19 @@ impl crate::provider::OpenAiProvider {
         yield ModelStreamEvent::Done;
         })
     }
+}
+
+/// Look up registry `reasoning_levels` for the active model on this provider.
+fn reasoning_levels_for_model(
+    config: &navi_core::ProviderConfig,
+    model_name: &str,
+) -> Vec<String> {
+    config
+        .models
+        .iter()
+        .find(|model| model.name == model_name || model.name.eq_ignore_ascii_case(model_name))
+        .map(|model| model.reasoning_levels.clone())
+        .unwrap_or_default()
 }
 
 /// The session-title tool is installed only for the primary chat session. If

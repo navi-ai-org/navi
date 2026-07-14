@@ -44,6 +44,28 @@ impl Panel for HeaderPanel {
 }
 
 // ---------------------------------------------------------------------------
+// Plan topbar (under header, above chat — Grok-style N/M chip)
+// ---------------------------------------------------------------------------
+
+pub struct PlanTopbarPanel;
+
+impl Panel for PlanTopbarPanel {
+    fn id(&self) -> &str {
+        "plan-topbar"
+    }
+
+    fn render(&mut self, frame: &mut Frame, area: Rect, ctx: &dyn PanelContext) {
+        let (_, app) = app_refs(ctx);
+        view::plan_topbar::render_plan_topbar(frame, app, area);
+    }
+
+    fn preferred_size_in_context(&self, ctx: &dyn PanelContext) -> PanelSize {
+        let (app, _) = app_refs(ctx);
+        PanelSize::Fixed(view::plan_topbar::plan_topbar_height(app))
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Chat
 // ---------------------------------------------------------------------------
 
@@ -147,6 +169,7 @@ impl Panel for InputHintPanel {
 pub fn register_region_panels(app: &mut TuiApp) {
     let pm = &mut app.panel_manager;
     pm.add_region(Box::new(HeaderPanel));
+    pm.add_region(Box::new(PlanTopbarPanel));
     pm.add_region(Box::new(ChatPanel));
     pm.add_region(Box::new(InputActivityPanel));
     pm.add_region(Box::new(InputPanel));
