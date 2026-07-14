@@ -4,6 +4,7 @@ use crate::clipboard::try_read_clipboard_image;
 use crate::mouse::{copy_text_to_clipboard, selected_text};
 use crate::notifications::show_notification;
 use crate::persistence::save_preferences;
+use crate::runtime::spawn_runtime_task;
 use crate::state::ModalKind;
 use crate::ui::KeyOutcome;
 use crate::ui::UiEffect;
@@ -31,7 +32,10 @@ pub(super) fn route_global_key(
     }
 
     if is_copy_selection_key(code, modifiers) {
-        if let Some(text) = selected_text(app) {
+        // Prefer the selected chat cell (full block). Fall back to drag selection.
+        if app.selected_chat_source.is_some() {
+            crate::chat_blocks::copy_selected_block(app);
+        } else if let Some(text) = selected_text(app) {
             copy_text_to_clipboard(app, &text);
         }
         return KeyOutcome::Handled;
@@ -202,7 +206,10 @@ pub(super) fn route_system_global_key(
     }
 
     if is_copy_selection_key(code, modifiers) {
-        if let Some(text) = selected_text(app) {
+        // Prefer the selected chat cell (full block). Fall back to drag selection.
+        if app.selected_chat_source.is_some() {
+            crate::chat_blocks::copy_selected_block(app);
+        } else if let Some(text) = selected_text(app) {
             copy_text_to_clipboard(app, &text);
         }
         return KeyOutcome::Handled;
@@ -245,6 +252,7 @@ fn set_permission_mode(app: &mut TuiApp, mode: PermissionMode) {
 /// Public to command palette / settings (same side effects as ctrl+g / shift+tab).
 pub(super) fn set_permission_mode_for_command(app: &mut TuiApp, mode: PermissionMode) {
     app.loaded_config.config.security.permission_mode = mode;
+    app.loaded_config.config.tui.yolo_mode = matches!(mode, PermissionMode::Yolo);
     app.yolo_mode = matches!(mode, PermissionMode::Yolo);
     tracing::info!(
         mode = permission_mode_label(mode),
@@ -256,9 +264,15 @@ pub(super) fn set_permission_mode_for_command(app: &mut TuiApp, mode: Permission
         format!("Mode: {}.", permission_mode_label(mode)),
     );
     save_preferences(app);
-    if !app.is_loading {
-        crate::providers::rebuild_provider(app);
-    }
+
+    // Update the live engine + active session tool policies without dropping
+    // the current session (rebuild_provider would create a fresh engine).
+    let engine = app.engine();
+    spawn_runtime_task(async move {
+        if let Err(err) = engine.set_permission_mode(mode).await {
+            tracing::warn!(error = %err, "failed to apply permission mode to engine");
+        }
+    });
 }
 
 pub(super) fn cycle_permission_mode_for_command(app: &mut TuiApp) {

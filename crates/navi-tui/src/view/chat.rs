@@ -446,38 +446,19 @@ fn style_interactive_lines(
     lines: &mut [Line<'static>],
     sources: &[ChatLineSource],
     app: &TuiApp,
-    width: usize,
+    _width: usize,
 ) {
     for (line, source) in lines.iter_mut().zip(sources.iter()) {
-        let Some((hovered, block_selected, action_selected, soft_card)) =
+        let Some((_hovered, block_selected, _action_selected, _soft_card)) =
             interactive_state(app, source)
         else {
             continue;
         };
 
-        // Block selection: Recap-style left rail only — no solid fill, no fg wipe.
+        // Block selection: Recap-style left rail only — no solid fill, no hover wash.
+        // Diamonds already mark tools; message hover fill is intentionally disabled.
         if block_selected {
             apply_selection_rail(line);
-            continue;
-        }
-
-        // Soft tool cards only paint when hovered/expanded.
-        if soft_card {
-            if !hovered && !action_selected {
-                continue;
-            }
-            let bg = if hovered {
-                interactive_hover_bg()
-            } else {
-                interactive_bg()
-            };
-            apply_card_bg(line, width, bg, hovered || action_selected);
-            continue;
-        }
-
-        // Messages: hover only (user sticky panel stays from markdown render).
-        if hovered {
-            apply_card_bg(line, width, interactive_hover_bg(), true);
         }
     }
 }
@@ -563,35 +544,28 @@ fn apply_selection_rail(line: &mut Line<'static>) {
         .insert(0, Span::styled(RAIL.to_string(), rail_style));
 }
 
-fn apply_card_bg(line: &mut Line<'static>, width: usize, bg: Color, emphasize: bool) {
-    let mut used = 0usize;
-    for (index, span) in line.spans.iter_mut().enumerate() {
-        used = used.saturating_add(display_width(&span.content));
-        // Keep composer-style image chips highlighted on hover/select.
-        if crate::render::markdown::is_image_tag(&span.content) {
-            span.style = Style::default().bg(code_const()).fg(Color::Black);
-            continue;
-        }
-        span.style = span.style.bg(bg);
-        if emphasize && index == 0 {
-            span.style = span.style.fg(signal()).add_modifier(Modifier::BOLD);
-        }
-    }
-    if used < width {
-        line.spans.push(Span::styled(
-            " ".repeat(width - used),
-            Style::default().fg(text()).bg(bg),
-        ));
-    }
-}
 
+
+/// Extend any intentional line background (diff add/remove, etc.) to the full
+/// viewport width so color does not stop at the end of the text string.
 fn pad_code_block_bg(lines: &mut [Line<'static>], width: usize) {
-    let bg = code_block_bg();
     for line in lines.iter_mut() {
-        let is_code = line.spans.iter().any(|span| span.style.bg == Some(bg));
-        if !is_code {
+        // Prefer the rightmost non-default span bg (diff tint, not chat default).
+        let line_bg = line
+            .spans
+            .iter()
+            .rev()
+            .find_map(|span| {
+                let bg = span.style.bg?;
+                if bg == crate::theme::bg() || bg == Color::Reset {
+                    None
+                } else {
+                    Some(bg)
+                }
+            });
+        let Some(bg) = line_bg else {
             continue;
-        }
+        };
         let used: usize = line.spans.iter().map(|s| display_width(&s.content)).sum();
         if used < width {
             line.spans.push(Span::styled(

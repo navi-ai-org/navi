@@ -2423,9 +2423,17 @@ fn render_session_usage(lines: &mut Vec<Line<'_>>, app: &TuiApp) {
             app.usage_state.session_credits_spent,
             app.usage_state.session_credit_unit.as_deref(),
         ) {
+            let credit_label = if unit.eq_ignore_ascii_case("hypercredits") {
+                format!(
+                    " ◆ {} Hypercredits",
+                    format_credit_count(credits)
+                )
+            } else {
+                format!(" {credits:.2} {unit}")
+            };
             lines.push(Line::from(vec![
                 Span::styled("  Est. credits", Style::default().fg(muted())),
-                Span::styled(format!(" {credits:.2} {unit}"), Style::default().fg(text())),
+                Span::styled(credit_label, Style::default().fg(text())),
             ]));
         }
     } else if let Some((in_rate, out_rate)) = rates {
@@ -2445,6 +2453,25 @@ fn render_session_usage(lines: &mut Vec<Line<'_>>, app: &TuiApp) {
             Span::styled(
                 " unknown (no list pricing for this model)".to_string(),
                 Style::default().fg(ghost()),
+            ),
+        ]));
+    }
+
+    // Remaining prepaid balance (Charm Hyper), shown even before account report loads.
+    if let (Some(remaining), Some(unit)) = (
+        app.usage_state.remaining_credits,
+        app.usage_state.remaining_credit_unit.as_deref(),
+    ) {
+        let remaining_label = if unit.eq_ignore_ascii_case("hypercredits") {
+            format!(" ◆ {} Hypercredits", format_credit_count(remaining))
+        } else {
+            format!(" {remaining:.2} {unit}")
+        };
+        lines.push(Line::from(vec![
+            Span::styled("  Remaining ", Style::default().fg(muted())),
+            Span::styled(
+                remaining_label,
+                Style::default().fg(text()).add_modifier(Modifier::BOLD),
             ),
         ]));
     }
@@ -2476,6 +2503,15 @@ fn format_usd(amount: f64) -> String {
         format!("${amount:.4}")
     } else {
         "$0.00".to_string()
+    }
+}
+
+fn format_credit_count(amount: f64) -> String {
+    // Prefer whole credits with thousands separators for Hyper-style balances.
+    if (amount - amount.round()).abs() < 0.005 {
+        navi_sdk::format_hypercredits(amount)
+    } else {
+        format!("{amount:.2}")
     }
 }
 

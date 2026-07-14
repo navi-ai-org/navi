@@ -441,8 +441,10 @@ fn handle_mouse_moved(app: &mut TuiApp, col: u16, row: u16) -> bool {
         if app.hover_index.take().is_some()
             || app.hovered_chat_source.take().is_some()
             || app.hover_context_usage
+            || app.hover_plan_more
         {
             app.hover_context_usage = false;
+            app.hover_plan_more = false;
             needs_redraw = true;
         }
     }
@@ -484,15 +486,18 @@ fn apply_non_image_hover(app: &mut TuiApp, hit: &HitRegion<HitAction>) -> bool {
         // Image chip / lightbox: chat source hover is irrelevant; avoid churn.
         app.hover_index = None;
         app.hover_context_usage = false;
+        app.hover_plan_more = false;
         return false;
     }
 
     let prev_source = app.hovered_chat_source.clone();
     let prev_index = app.hover_index;
     let prev_usage = app.hover_context_usage;
+    let prev_plan_more = app.hover_plan_more;
 
     app.hovered_chat_source = chat_source_for_action(&hit.action);
     app.hover_context_usage = matches!(hit.action, HitAction::ContextUsage);
+    app.hover_plan_more = matches!(hit.action, HitAction::ExpandPlanMore);
     match &hit.action {
         HitAction::QuestionOption(index) => {
             app.hover_index = Some(*index);
@@ -517,7 +522,7 @@ fn apply_non_image_hover(app: &mut TuiApp, hit: &HitRegion<HitAction>) -> bool {
             app.hover_index = Some(*index);
         }
         HitAction::ThemeSelect(index) => app.hover_index = Some(*index),
-        HitAction::ContextUsage => {
+        HitAction::ContextUsage | HitAction::ExpandPlanMore => {
             app.hover_index = None;
         }
         _ => {
@@ -528,6 +533,7 @@ fn apply_non_image_hover(app: &mut TuiApp, hit: &HitRegion<HitAction>) -> bool {
     prev_source != app.hovered_chat_source
         || prev_index != app.hover_index
         || prev_usage != app.hover_context_usage
+        || prev_plan_more != app.hover_plan_more
 }
 
 fn chat_source_for_action(action: &HitAction) -> Option<crate::state::ChatLineSource> {
@@ -869,6 +875,10 @@ fn dispatch_hit(app: &mut TuiApp, hit: HitRegion<HitAction>) {
         HitAction::PlanReviewQuit => crate::plan_review::quit_plan(app),
         HitAction::TogglePlanTopbar => {
             crate::plan_progress::toggle_plan_expanded(app);
+        }
+        HitAction::ExpandPlanMore => {
+            crate::plan_progress::expand_plan_all_steps(app);
+            app.hover_plan_more = false;
         }
     }
 }
@@ -1860,6 +1870,8 @@ mod tests {
             }],
             status: "active".into(),
             expanded: false,
+            show_all_steps: false,
+            completed_at: None,
         });
         app.register_hit(
             Rect::new(0, 0, 40, 3),
@@ -1877,5 +1889,42 @@ mod tests {
             app.active_plan.as_ref().is_some_and(|p| !p.expanded),
             "second click must collapse plan topbar"
         );
+    }
+
+    #[test]
+    fn click_plan_more_expands_all_steps() {
+        let mut app = test_app("");
+        let steps = (1..=10)
+            .map(|i| crate::state::ActivePlanStepUi {
+                description: format!("step {i}"),
+                completed: true,
+            })
+            .collect();
+        app.active_plan = Some(crate::state::ActivePlanUiState {
+            plan_id: "p1".into(),
+            title: "Big".into(),
+            steps,
+            status: "completed".into(),
+            expanded: true,
+            show_all_steps: false,
+            completed_at: None,
+        });
+        // Higher-z "+N more" hit wins over the whole-bar toggle.
+        app.register_hit(
+            Rect::new(0, 0, 40, 12),
+            40,
+            "plan topbar",
+            HitAction::TogglePlanTopbar,
+        );
+        app.register_hit(
+            Rect::new(0, 10, 40, 1),
+            50,
+            "expand more",
+            HitAction::ExpandPlanMore,
+        );
+        handle_mouse(&mut app, mouse_down(2, 10));
+        let plan = app.active_plan.as_ref().expect("plan");
+        assert!(plan.expanded, "must stay expanded");
+        assert!(plan.show_all_steps, "must show all steps after +N more click");
     }
 }

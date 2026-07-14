@@ -1,6 +1,6 @@
 use crate::state::SetupPhase;
 use navi_sdk::{
-    AgentEvent, ApprovalDecision, ApprovalRisk, BackgroundCommandSnapshot, LoadedConfig,
+    AgentEvent, ApprovalDecision, BackgroundCommandSnapshot, LoadedConfig,
     ModelMessage, NaviUsageReport, available_model_options, canonical_provider_id,
     compact_tool_observation,
 };
@@ -156,12 +156,17 @@ pub(crate) fn handle_async_event(app: &mut TuiApp, event: AsyncEvent) {
             match result {
                 Ok(report) => {
                     app.usage_state.error = None;
+                    apply_remaining_credits_from_report(app, &report);
                     app.usage_state.report = Some(report);
                 }
                 Err(error) => {
                     app.usage_state.report = None;
                     app.usage_state.error = Some(error.clone());
-                    show_notification(app, "Usage", error);
+                    // Quiet background refreshes (Crush-style after-turn fetch)
+                    // should not spam notifications; only alert when Usage is open.
+                    if app.mode == Mode::Usage {
+                        show_notification(app, "Usage", error);
+                    }
                 }
             }
         }
@@ -442,8 +447,9 @@ fn handle_agent_event(app: &mut TuiApp, event: AgentEvent) {
             app.chat_render_cache.borrow_mut().signature_hash = 0;
         }
         AgentEvent::ApprovalRequested(request) => {
-            let is_guarded = matches!(request.risk, ApprovalRisk::Guarded);
-            if app.yolo_mode && !is_guarded {
+            // YOLO auto-approves every approval prompt, including formerly
+            // guarded commands. Non-YOLO modes still surface Guarded risks.
+            if app.yolo_mode {
                 let engine = app.engine();
                 let session_id = app.session_id.as_str().to_string();
                 let decision = ApprovalDecision::Approved {
@@ -885,8 +891,29 @@ fn handle_turn_completed(app: &mut TuiApp, res: std::result::Result<String, Stri
         if let Some(assistant) = recap_text {
             maybe_emit_session_recap(app, &assistant);
         }
+        // Crush: refresh Hyper remaining credits after each successful prompt.
+        maybe_refresh_account_usage_after_turn(app);
         drain_next_queued_message(app);
     }
+}
+
+/// Background-refresh account usage for providers that expose a credits API.
+///
+/// Charm Hyper (and similar prepaid providers) embed remaining balance in stream
+/// usage or `GET /v1/credits`. Fetch after each turn so the footer/modal stay current
+/// without opening the Usage modal.
+fn maybe_refresh_account_usage_after_turn(app: &mut TuiApp) {
+    let provider_id = app.loaded_config.config.model.provider.as_str();
+    let canonical = navi_sdk::canonical_provider_id(provider_id);
+    // Keep this list tight: only providers with a cheap credits/balance endpoint.
+    if !matches!(canonical, "charm-hyper" | "openrouter" | "xai" | "openai" | "commandcode") {
+        return;
+    }
+    // Avoid stacking refreshes if the modal is already loading.
+    if app.usage_state.loading {
+        return;
+    }
+    crate::usage::refresh_usage_quiet(app);
 }
 
 /// recap after a successful turn.
@@ -1059,6 +1086,85 @@ fn apply_session_credit_fields(app: &mut TuiApp) {
         app.usage_state.session_credits_spent = None;
         app.usage_state.session_credit_unit = Some(unit.to_string());
     }
+}
+
+/// Pull remaining prepaid balance out of a usage report into `usage_state`.
+///
+/// Prefer structured Hyper details (`Balance` / Hypercredits); also accept a
+/// process-wide stream cache peek when the report source is stream-usage.
+fn apply_remaining_credits_from_report(app: &mut TuiApp, report: &NaviUsageReport) {
+    let provider = report.provider_id.as_str();
+    let canonical = navi_sdk::canonical_provider_id(provider);
+
+    if canonical == "charm-hyper" {
+        if let Some(balance) = parse_hypercredit_balance_from_report(report) {
+            app.usage_state.remaining_credits = Some(balance);
+            app.usage_state.remaining_credit_unit = Some("hypercredits".into());
+            return;
+        }
+        if let Some(balance) = navi_sdk::peek_hypercredit_balance() {
+            app.usage_state.remaining_credits = Some(balance);
+            app.usage_state.remaining_credit_unit = Some("hypercredits".into());
+            return;
+        }
+    }
+
+    // Generic: look for a "Balance" / "Credits" detail with a leading number.
+    for detail in &report.details {
+        let label = detail.label.to_ascii_lowercase();
+        if !(label.contains("balance") || label == "credits" || label.contains("credit")) {
+            continue;
+        }
+        if let Some(n) = parse_leading_number(&detail.value) {
+            app.usage_state.remaining_credits = Some(n);
+            let unit = navi_sdk::provider_credit_unit(provider)
+                .unwrap_or("credits")
+                .to_string();
+            app.usage_state.remaining_credit_unit = Some(unit);
+            return;
+        }
+    }
+}
+
+fn parse_hypercredit_balance_from_report(report: &NaviUsageReport) -> Option<f64> {
+    for detail in &report.details {
+        if detail.label.eq_ignore_ascii_case("Balance") {
+            if let Some(n) = parse_leading_number(&detail.value) {
+                return Some(n);
+            }
+        }
+    }
+    None
+}
+
+/// Extract the first number from strings like `◆ 12,345 Hypercredits` or `42.5`.
+fn parse_leading_number(text: &str) -> Option<f64> {
+    let mut num = String::new();
+    let mut started = false;
+    let mut saw_dot = false;
+    for ch in text.chars() {
+        if ch.is_ascii_digit() {
+            started = true;
+            num.push(ch);
+            continue;
+        }
+        if started && ch == ',' {
+            // thousands separator — skip
+            continue;
+        }
+        if started && ch == '.' && !saw_dot {
+            saw_dot = true;
+            num.push(ch);
+            continue;
+        }
+        if started {
+            break;
+        }
+    }
+    if num.is_empty() {
+        return None;
+    }
+    num.parse().ok()
 }
 
 #[cfg(test)]
@@ -1436,6 +1542,43 @@ mod tests {
         );
         // Full-price 22k would be ~$0.0308 — must not overbill.
         assert!(app.usage_state.session_cost_usd < 0.001);
+    }
+
+    #[test]
+    fn usage_loaded_parses_hypercredit_balance_from_report() {
+        let mut app = test_app("");
+        app.loaded_config.config.model.provider = "charm-hyper".into();
+
+        let report = NaviUsageReport {
+            provider_id: "charm-hyper".into(),
+            provider_label: "Charm Hyper".into(),
+            plan_type: Some("hypercredits".into()),
+            limit_reached_kind: None,
+            limits: Vec::new(),
+            source: "charm-hyper-credits-api".into(),
+            notes: None,
+            details: vec![navi_sdk::NaviUsageDetail {
+                label: "Balance".into(),
+                value: "◆ 12,345 Hypercredits".into(),
+            }],
+        };
+
+        handle_async_event(&mut app, AsyncEvent::UsageLoaded { result: Ok(report) });
+
+        assert!(!app.usage_state.loading);
+        assert_eq!(app.usage_state.remaining_credits, Some(12345.0));
+        assert_eq!(
+            app.usage_state.remaining_credit_unit.as_deref(),
+            Some("hypercredits")
+        );
+    }
+
+    #[test]
+    fn parse_leading_number_skips_icon_and_commas() {
+        assert_eq!(parse_leading_number("◆ 12,345 Hypercredits"), Some(12345.0));
+        assert_eq!(parse_leading_number("42"), Some(42.0));
+        assert_eq!(parse_leading_number("≈ $1.50"), Some(1.5));
+        assert_eq!(parse_leading_number("no digits"), None);
     }
 
     // ── AutoCompact ───────────────────────────────────────────────────

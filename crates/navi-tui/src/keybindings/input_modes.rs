@@ -25,6 +25,13 @@ pub(crate) fn handle_normal_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyM
     }
 
     if modifiers.contains(KeyModifiers::CONTROL) {
+        // Ctrl+Shift+C: copy selected chat cell (full block), even while typing.
+        if super::global::is_copy_selection_key(code, modifiers)
+            && app.selected_chat_source.is_some()
+        {
+            crate::chat_blocks::copy_selected_block(app);
+            return false;
+        }
         match code {
             KeyCode::Left | KeyCode::Char('b') => move_input_previous_control_stop(app),
             KeyCode::Right | KeyCode::Char('f') => move_input_next_control_stop(app),

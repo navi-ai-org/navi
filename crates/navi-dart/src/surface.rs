@@ -1180,8 +1180,13 @@ pub unsafe extern "C" fn navi_engine_set_permission_mode(
             return -1;
         }
     };
-    engine.inner.set_permission_mode(pm);
-    0
+    engine.runtime.block_on(async {
+        if let Err(e) = engine.inner.set_permission_mode(pm).await {
+            set_last_error(&e.to_string());
+            return -1;
+        }
+        0
+    })
 }
 
 #[unsafe(no_mangle)]

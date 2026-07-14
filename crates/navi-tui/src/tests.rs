@@ -2656,7 +2656,10 @@ fn write_file_tool_full_content_uses_edit_summary() {
     // Body is the fenced diff only (no redundant "Edited …" chrome).
     assert!(!content.contains("Edited src/index.html"));
     assert!(content.contains("```diff\n"));
-    assert!(content.contains("*** Update File: src/index.html"));
+    assert!(
+        !content.contains("*** Update File:"),
+        "path chrome belongs on the card only"
+    );
     assert!(content.contains("-old\n"));
     assert!(content.contains("+<!doctype html>\n"));
     assert!(!content.contains("Input"));
@@ -3381,7 +3384,10 @@ fn apply_patch_tool_full_content_uses_edit_summary() {
     assert!(!content.contains("Patch:"));
     assert!(!content.contains("*** Begin Patch"));
     assert!(!content.contains("*** End Patch"));
-    assert!(content.contains("*** Update File: crates/navi-tui/src/lib.rs"));
+    assert!(
+        !content.contains("*** Update File:"),
+        "path chrome belongs on the card only"
+    );
     assert!(content.contains("-    old\n+    new\n+    added"));
     assert!(!content.contains("Input"));
     assert!(!content.contains("Output"));
@@ -3980,7 +3986,10 @@ fn apply_patch_body_is_clean_diff_without_protocol_chrome() {
     let content = tool_full_content(&invocation, &result);
     assert!(content.contains("Edited src/a.rs"));
     assert!(content.contains("```diff\n"));
-    assert!(content.contains("*** Update File: src/a.rs"));
+    assert!(
+        !content.contains("*** Update File:"),
+        "path chrome belongs on the card only"
+    );
     assert!(content.contains("-old\n+new"));
     assert!(!content.contains("*** Begin Patch"));
     assert!(!content.contains("*** End Patch"));

@@ -702,12 +702,16 @@ fn composer_meta_right(app: &TuiApp, width: usize) -> ComposerMetaBuilt {
     let permission = permission_mode_spans(app);
     let permission_w = spans_display_width(&permission);
 
-    // Wide: `model (thinking) · context · permission`
+    // Wide: `model (thinking) · [◆ credits] · context · permission`
     // Medium: `model · permission`
     // Narrow: permission only (or model if no permission room).
     if width >= 56 {
         let model_label = format!("{model} ({thinking})");
         spans.push(Span::styled(model_label, Style::default().fg(muted())));
+        if let Some(hc) = hypercredit_footer_label(app) {
+            spans.push(Span::styled(" · ", Style::default().fg(ghost())));
+            spans.push(Span::styled(hc, Style::default().fg(signal())));
+        }
         spans.push(Span::styled(" · ", Style::default().fg(ghost())));
         let start = spans_display_width(&spans);
         let chip_w = display_width(&context);
@@ -777,6 +781,24 @@ fn context_usage_color(app: &TuiApp, pending: usize) -> ratatui::style::Color {
 
 fn queued_footer_label(app: &TuiApp) -> String {
     format!("{} queued", app.queued_user_messages.len())
+}
+
+/// Crush-style remaining Hypercredits chip for the composer meta strip.
+fn hypercredit_footer_label(app: &TuiApp) -> Option<String> {
+    let remaining = app.usage_state.remaining_credits?;
+    let unit = app.usage_state.remaining_credit_unit.as_deref()?;
+    if !unit.eq_ignore_ascii_case("hypercredits") {
+        return None;
+    }
+    // Only show for Charm Hyper (or while remaining unit is hypercredits).
+    let provider = app.loaded_config.config.model.provider.as_str();
+    if navi_sdk::canonical_provider_id(provider) != "charm-hyper" {
+        // Still show if we have an explicit hypercredits unit from a report.
+    }
+    Some(format!(
+        "◆ {}",
+        navi_sdk::format_hypercredits(remaining)
+    ))
 }
 
 fn permission_mode_spans(app: &TuiApp) -> Vec<Span<'static>> {

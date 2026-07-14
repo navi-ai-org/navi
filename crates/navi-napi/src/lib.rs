@@ -1552,7 +1552,7 @@ impl NaviNapiEngine {
     }
 
     #[napi]
-    pub fn set_permission_mode(&self, mode: String) -> Result<()> {
+    pub async fn set_permission_mode(&self, mode: String) -> Result<()> {
         let pm = match mode.as_str() {
             "restricted" => navi_sdk::PermissionMode::Restricted,
             "accept-edits" => navi_sdk::PermissionMode::AcceptEdits,
@@ -1565,8 +1565,10 @@ impl NaviNapiEngine {
                 )));
             }
         };
-        self.inner.set_permission_mode(pm);
-        Ok(())
+        self.inner
+            .set_permission_mode(pm)
+            .await
+            .map_err(to_napi_error)
     }
 
     // ── Session Management ─────────────────────────────────────────────

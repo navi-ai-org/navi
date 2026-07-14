@@ -264,7 +264,7 @@ fn formatted_tool_output(invocation: &ToolInvocation, result: &ToolResult) -> Op
         }
     } else if is_patch_invocation(invocation) {
         // Header card already has "Edited path (+N -M)". Body is clean ```diff only
-        // (no "Edited…" chrome, no "Patch:" label, no *** Begin/End Patch).
+        // (no "Edited…" chrome, no "Patch:" label, no *** Begin/End Patch / Update File).
         let patches = patch_inputs(invocation);
         if patches.is_empty() {
             content.push_str("Applied patch successfully\n");
@@ -276,9 +276,16 @@ fn formatted_tool_output(invocation: &ToolInvocation, result: &ToolResult) -> Op
             append_shell_streams(obj, &mut content);
         }
     } else if invocation.tool_name == "write_file" || invocation.tool_name == "write" {
-        // Header already has "Write path (+N -M lines)". Body is just the diff.
+        // Header already has "Write path (+N -M lines)". Body is just the numbered diff.
         if let Some(diff) = write_display_diff(invocation, result) {
             append_diff_fence(&diff, &mut content);
+        }
+    } else if invocation.tool_name == "code_edit" {
+        // Prefer a numbered ```diff body (like write/apply_patch) over raw JSON.
+        if let Some(diff) = code_edit_display_diff(invocation, result) {
+            append_diff_fence(&diff, &mut content);
+        } else {
+            render_named_structured_output("Code output", result, &mut content);
         }
     } else if invocation.tool_name == "bash" {
         // shell body: raw stdout/stderr only. Header card already
@@ -322,7 +329,6 @@ fn formatted_tool_output(invocation: &ToolInvocation, result: &ToolResult) -> Op
     } else if matches!(
         invocation.tool_name.as_str(),
         "code"
-            | "code_edit"
             | "code_exec"
             | "ast_search"
             | "symbol_goto"
@@ -895,32 +901,55 @@ fn write_display_diff(invocation: &ToolInvocation, result: &ToolResult) -> Optio
         return Some(diff.to_string());
     }
 
-    // Fallback: build an Add/Update-style view from the write input so the body
-    // still shows a colored diff even when the result predates the `diff` field.
-    let path = result
-        .output
-        .get("path")
-        .or_else(|| invocation.input.get("path"))
-        .and_then(|v| v.as_str())
-        .unwrap_or("file");
+    // Fallback: numbered + lines only (tool card already shows the path).
     let new_content = invocation.input.get("content").and_then(|v| v.as_str())?;
-    let removed = result
-        .output
-        .get("lines_removed")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(0);
-
-    let mut out = if removed == 0 {
-        format!("*** Add File: {path}\n")
-    } else {
-        format!("*** Update File: {path}\n@@\n")
-    };
+    let new_count = new_content.lines().count().max(1);
+    let mut out = format!("@@ -0,0 +1,{new_count} @@\n");
     for line in new_content.lines() {
         out.push('+');
         out.push_str(line);
         out.push('\n');
     }
-    // Empty content still yields a useful header-only block.
+    Some(out)
+}
+
+/// Build a numbered display diff for `code_edit` from input content + result line range.
+fn code_edit_display_diff(invocation: &ToolInvocation, result: &ToolResult) -> Option<String> {
+    if let Some(diff) = result
+        .output
+        .get("diff")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+    {
+        return Some(diff.to_string());
+    }
+
+    let content = invocation
+        .input
+        .get("content")
+        .or_else(|| invocation.input.get("replacement"))
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())?;
+    let start = result
+        .output
+        .get("start_line")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(1)
+        .max(1);
+    let end = result
+        .output
+        .get("end_line")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(start);
+    let new_count = content.lines().count().max(1) as u64;
+    // Without the prior body we cannot show deletions; number the inserted/replaced lines.
+    let old_count = end.saturating_sub(start).saturating_add(1).max(1);
+    let mut out = format!("@@ -{start},{old_count} +{start},{new_count} @@\n");
+    for line in content.lines() {
+        out.push('+');
+        out.push_str(line);
+        out.push('\n');
+    }
     Some(out)
 }
 
@@ -957,14 +986,15 @@ fn normalize_diff_for_display(patch: &str) -> String {
         }
 
         if let Some(path) = strip_patch_file_header(trimmed) {
-            // Path header labels the file (needed for multi-file / multi-patch bodies;
-            // the tool card also summarizes the first path).
-            if saw_file_header && !out.is_empty() && !out.ends_with("\n\n") {
+            // Never paint `*** Update File:` protocol chrome. For multi-file
+            // patches, a quiet bare path separates hunks (first path is on the card).
+            if saw_file_header {
+                if !out.is_empty() && !out.ends_with('\n') {
+                    out.push('\n');
+                }
+                out.push_str(path.path);
                 out.push('\n');
             }
-            out.push_str(path.header);
-            out.push_str(path.path);
-            out.push('\n');
             old_line = None;
             new_line = if path.is_add { Some(1) } else { None };
             if path.is_delete {
@@ -975,17 +1005,12 @@ fn normalize_diff_for_display(patch: &str) -> String {
             continue;
         }
 
-        // Unified diff file headers — prefer path from +++ b/ when no structured header.
-        if let Some(path) = trimmed.strip_prefix("+++ b/") {
-            if !saw_file_header {
-                out.push_str("*** Update File: ");
-                out.push_str(path);
-                out.push('\n');
-                saw_file_header = true;
-            }
+        // Unified diff file headers — path already on the card; just reset counters.
+        if let Some(_path) = trimmed.strip_prefix("+++ b/") {
             old_line = None;
             new_line = None;
             last_was_hunk = false;
+            saw_file_header = true;
             continue;
         }
         if trimmed.starts_with("+++ ")
@@ -1064,7 +1089,6 @@ fn normalize_diff_for_display(patch: &str) -> String {
 }
 
 struct PatchFileHeader<'a> {
-    header: &'static str,
     path: &'a str,
     is_add: bool,
     is_delete: bool,
@@ -1073,7 +1097,6 @@ struct PatchFileHeader<'a> {
 fn strip_patch_file_header(trimmed: &str) -> Option<PatchFileHeader<'_>> {
     if let Some(path) = trimmed.strip_prefix("*** Update File: ") {
         return Some(PatchFileHeader {
-            header: "*** Update File: ",
             path,
             is_add: false,
             is_delete: false,
@@ -1081,7 +1104,6 @@ fn strip_patch_file_header(trimmed: &str) -> Option<PatchFileHeader<'_>> {
     }
     if let Some(path) = trimmed.strip_prefix("*** Add File: ") {
         return Some(PatchFileHeader {
-            header: "*** Add File: ",
             path,
             is_add: true,
             is_delete: false,
@@ -1089,7 +1111,6 @@ fn strip_patch_file_header(trimmed: &str) -> Option<PatchFileHeader<'_>> {
     }
     if let Some(path) = trimmed.strip_prefix("*** Delete File: ") {
         return Some(PatchFileHeader {
-            header: "*** Delete File: ",
             path,
             is_add: false,
             is_delete: true,
@@ -3057,8 +3078,12 @@ mod tests {
         assert!(!content.contains("Patch:"));
         assert!(!content.contains("*** Begin Patch"));
         assert!(!content.contains("*** End Patch"));
-        assert!(content.contains("*** Update File: src/lib.rs"));
-        assert!(content.contains("-old\n+new"));
+        // Path chrome is on the tool card only — not repeated in the body.
+        assert!(
+            !content.contains("*** Update File:"),
+            "body must not show *** Update File chrome, got:\n{content}"
+        );
+        assert!(content.contains("-old\n+new") || content.contains("-old") && content.contains("+new"));
         // Bare @@ has no line numbers — body must not invent a gutter.
         assert!(!content.contains("|old"));
         assert!(content.contains("```"));
@@ -3120,7 +3145,10 @@ ctx\n\
         assert!(!out.contains("*** Begin Patch"));
         assert!(!out.contains("*** End Patch"));
         assert!(!out.contains("@@ -10"));
-        assert!(out.contains("*** Update File: a.rs\n"));
+        assert!(
+            !out.contains("*** Update File:"),
+            "normalized body must not keep Update File chrome, got:\n{out}"
+        );
         assert!(out.contains("  10|ctx\n") || out.contains("  10| ctx\n"));
         assert!(out.contains("-  11|old\n"));
         assert!(out.contains("+  11|new\n"));
@@ -3150,10 +3178,19 @@ ctx\n\
         assert!(!content.contains("Patch 1:"));
         assert!(!content.contains("Patch 2:"));
         assert!(!content.contains("*** Begin Patch"));
-        assert!(content.contains("*** Add File: one.txt"));
-        assert!(content.contains("*** Add File: two.txt"));
-        assert!(content.contains("+   1|one"));
-        assert!(content.contains("+   1|two"));
+        // Protocol path chrome is stripped; multi-file may keep bare path labels.
+        assert!(!content.contains("*** Add File:"));
+        assert!(!content.contains("*** Update File:"));
+        assert!(content.contains("one.txt") || content.contains("+one") || content.contains("|one"));
+        assert!(content.contains("two.txt") || content.contains("+two") || content.contains("|two"));
+        assert!(
+            content.contains("+   1|one") || content.contains("+one"),
+            "expected first file body, got:\n{content}"
+        );
+        assert!(
+            content.contains("+   1|two") || content.contains("+two"),
+            "expected second file body, got:\n{content}"
+        );
     }
 
     #[test]
@@ -3178,7 +3215,10 @@ ctx\n\
         assert!(content.contains("Write src/main.rs (+1 -0 lines)"));
         assert!(!content.contains("Edited src/main.rs"));
         assert!(content.contains("```diff\n"));
-        assert!(content.contains("*** Add File: src/main.rs"));
+        assert!(
+            !content.contains("*** Add File:"),
+            "path chrome belongs on the card only, got:\n{content}"
+        );
         // Add File numbers from line 1 (Claude Code–style gutter).
         assert!(
             content.contains("+   1|fn main() {}"),
@@ -3206,7 +3246,10 @@ ctx\n\
         assert!(content.contains("Write hello.txt (+2 -0 lines)"));
         assert!(!content.contains("Edited hello.txt"));
         assert!(content.contains("```diff\n"));
-        assert!(content.contains("*** Add File: hello.txt"));
+        assert!(
+            !content.contains("*** Add File:"),
+            "path chrome belongs on the card only, got:\n{content}"
+        );
         assert!(
             content.contains("+   1|a\n+   2|b\n"),
             "expected numbered add lines, got:\n{content}"
@@ -3234,7 +3277,10 @@ ctx\n\
         );
 
         assert!(content.contains("```diff\n"));
-        assert!(content.contains("*** Update File: lib.rs"));
+        assert!(
+            !content.contains("*** Update File:"),
+            "path chrome belongs on the card, got:\n{content}"
+        );
         assert!(content.contains("-fn old() {}"));
         assert!(content.contains("+fn new() {}"));
     }

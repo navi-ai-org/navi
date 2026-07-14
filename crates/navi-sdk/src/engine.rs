@@ -708,17 +708,44 @@ impl NaviEngine {
 
     /// Returns the current permission mode for tool execution.
     pub fn get_permission_mode(&self) -> navi_core::PermissionMode {
-        self.loaded_config().config.security.permission_mode
+        self.loaded_config()
+            .config
+            .effective_security_config()
+            .permission_mode
     }
 
-    /// Sets the permission mode for tool execution. Applies to all sessions.
-    pub fn set_permission_mode(&self, mode: navi_core::PermissionMode) {
-        let mut config = self
+    /// Sets the permission mode for tool execution.
+    ///
+    /// Updates the engine config and every active session's tool security
+    /// policy so the change takes effect without restarting sessions.
+    pub async fn set_permission_mode(&self, mode: navi_core::PermissionMode) -> Result<()> {
+        let security = {
+            let mut config = self
+                .inner
+                .loaded_config
+                .write()
+                .unwrap_or_else(|e| e.into_inner());
+            config.config.security.permission_mode = mode;
+            config.config.tui.yolo_mode = matches!(mode, navi_core::PermissionMode::Yolo);
+            config.config.effective_security_config()
+        };
+
+        let sessions = self
             .inner
-            .loaded_config
-            .write()
-            .unwrap_or_else(|e| e.into_inner());
-        config.config.security.permission_mode = mode;
+            .sessions
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .values()
+            .cloned()
+            .collect::<Vec<_>>();
+
+        for session in sessions {
+            let mut runtime = session.runtime.lock().await;
+            runtime
+                .set_security_config(security.clone())
+                .map_err(|err| NaviError::Config(err.to_string()))?;
+        }
+        Ok(())
     }
 
     /// Closes an active in-memory session. Returns `true` when a session was removed.
@@ -2112,14 +2139,19 @@ fn charm_hyper_report_to_sdk(
 ) -> NaviUsageReport {
     let balance = report.balance;
     let usd = navi_providers::hypercredits_to_usd(balance);
+    let formatted = navi_providers::format_hypercredits(balance);
+    let source = report
+        .source
+        .as_deref()
+        .unwrap_or("credits-api");
     let details = vec![
         NaviUsageDetail {
             label: "Balance".into(),
-            value: format!("{balance:.0} hypercredits"),
+            value: format!("◆ {formatted} Hypercredits"),
         },
         NaviUsageDetail {
             label: "Balance (USD)".into(),
-            value: format!("≈ ${usd:.2}  (1 hypercredit = $0.05)"),
+            value: format!("≈ ${usd:.2}  (1 Hypercredit = $0.05)"),
         },
         NaviUsageDetail {
             label: "Billing".into(),
@@ -2136,10 +2168,17 @@ fn charm_hyper_report_to_sdk(
             None
         },
         limits: Vec::new(),
-        source: "charm-hyper-credits".into(),
-        notes: Some(
-            "Charm Hyper prepaid balance (GET /v1/credits). Token list rates are USD; credits = USD ÷ $0.05.".into(),
-        ),
+        source: format!("charm-hyper-{source}"),
+        notes: Some(match source {
+            "stream-usage" => {
+                "Charm Hyper remaining Hypercredits from the last stream usage payload (usage.remaining.hypercredits)."
+                    .into()
+            }
+            _ => {
+                "Charm Hyper prepaid balance (GET /v1/credits). Token list rates are USD; credits = USD ÷ $0.05."
+                    .into()
+            }
+        }),
         details,
     }
 }

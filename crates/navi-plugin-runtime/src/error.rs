@@ -3,7 +3,7 @@ use thiserror::Error;
 #[derive(Debug, Error)]
 pub enum RuntimeError {
     #[error("WASM engine error: {0}")]
-    Engine(#[from] wasmtime::Error),
+    Engine(String),
 
     #[error("tool '{tool_name}' not found in plugin")]
     ToolNotFound { tool_name: String },
@@ -28,4 +28,16 @@ pub enum RuntimeError {
 
     #[error("plugin returned error: {0}")]
     PluginError(String),
+}
+
+impl From<wasmtime::Error> for RuntimeError {
+    fn from(err: wasmtime::Error) -> Self {
+        RuntimeError::Engine(err.to_string())
+    }
+}
+
+impl From<anyhow::Error> for RuntimeError {
+    fn from(err: anyhow::Error) -> Self {
+        RuntimeError::Engine(err.to_string())
+    }
 }

@@ -549,6 +549,10 @@ pub(crate) fn start_new_session(app: &mut TuiApp) {
     app.usage_state.session_cost_known = false;
     app.usage_state.session_credits_spent = None;
     app.usage_state.session_credit_unit = None;
+    app.usage_state.remaining_credits = None;
+    app.usage_state.remaining_credit_unit = None;
+    app.usage_state.report = None;
+    app.usage_state.error = None;
     app.usage_state.last_input_tokens = None;
     app.usage_state.last_output_tokens = None;
     app.usage_state.last_turn_label = None;

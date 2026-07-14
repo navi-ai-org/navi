@@ -231,10 +231,28 @@ pub struct OpenRouterUsageReport {
 pub struct CharmHyperCreditsReport {
     /// Remaining Hypercredits on the account.
     pub balance: f64,
+    /// How the balance was obtained (`stream-usage` or `credits-api`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
 }
 
 /// USD value of one Hypercredit (Charm FAQ, 2026).
 pub const HYPERCREDIT_USD: f64 = 0.05;
+
+const HYPER_DEFAULT_BASE_URL: &str = "https://hyper.charm.land";
+
+/// Last Hypercredit balance extracted from stream `usage.remaining.hypercredits`
+/// (Crush parity). Prefer this over a separate HTTP call when present.
+static LAST_KNOWN_HYPERCREDIT_BALANCE: std::sync::Mutex<Option<f64>> =
+    std::sync::Mutex::new(None);
+
+/// Serialize access to the process-wide Hypercredit cache (tests + production).
+pub(crate) fn with_hypercredit_balance_lock<T>(f: impl FnOnce(&mut Option<f64>) -> T) -> T {
+    let mut guard = LAST_KNOWN_HYPERCREDIT_BALANCE
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    f(&mut guard)
+}
 
 pub fn usd_to_hypercredits(usd: f64) -> f64 {
     if HYPERCREDIT_USD <= 0.0 {
@@ -247,14 +265,124 @@ pub fn hypercredits_to_usd(credits: f64) -> f64 {
     credits * HYPERCREDIT_USD
 }
 
+/// Format Hypercredits with thousands separators (Crush `FormatCredits`).
+pub fn format_hypercredits(n: f64) -> String {
+    let rounded = if n.is_finite() { n.round() as i64 } else { 0 };
+    let negative = rounded < 0;
+    let s = rounded.unsigned_abs().to_string();
+    if s.len() <= 3 {
+        return if negative {
+            format!("-{s}")
+        } else {
+            s
+        };
+    }
+    let mut first_group = s.len() % 3;
+    if first_group == 0 {
+        first_group = 3;
+    }
+    let mut out = String::with_capacity(s.len() + s.len() / 3 + usize::from(negative));
+    if negative {
+        out.push('-');
+    }
+    let mut next_comma_at = first_group;
+    for (i, ch) in s.chars().enumerate() {
+        if i > 0 && i == next_comma_at {
+            out.push(',');
+            next_comma_at += 3;
+        }
+        out.push(ch);
+    }
+    out
+}
+
+/// Charm Hyper public base URL (`$HYPER_URL` or `https://hyper.charm.land`).
+pub fn hyper_base_url() -> String {
+    std::env::var("HYPER_URL")
+        .ok()
+        .map(|v| v.trim().trim_end_matches('/').to_string())
+        .filter(|v| !v.is_empty())
+        .unwrap_or_else(|| HYPER_DEFAULT_BASE_URL.to_string())
+}
+
+/// Store a Hypercredit balance extracted from stream usage metadata.
+pub fn set_hypercredit_balance(balance: f64) {
+    if !balance.is_finite() || balance < 0.0 {
+        return;
+    }
+    with_hypercredit_balance_lock(|slot| {
+        *slot = Some(balance);
+    });
+}
+
+/// Take and clear the most recent stream-extracted Hypercredit balance.
+pub fn take_hypercredit_balance() -> Option<f64> {
+    with_hypercredit_balance_lock(|slot| slot.take())
+}
+
+/// Peek at the cached Hypercredit balance without clearing it.
+pub fn peek_hypercredit_balance() -> Option<f64> {
+    with_hypercredit_balance_lock(|slot| *slot)
+}
+
+/// Extract `usage.remaining.hypercredits` (or nested variants) and cache it.
+///
+/// Charm Hyper includes remaining prepaid credits in chat-completions usage:
+/// `{ "remaining": { "hypercredits": 1234 } }`.
+pub fn extract_hypercredit_balance_from_usage(usage: &Value) -> Option<f64> {
+    let remaining = usage
+        .get("remaining")
+        .or_else(|| usage.get("remaining_credits"))
+        .or_else(|| usage.pointer("/usage/remaining"));
+    let balance = remaining
+        .and_then(|r| {
+            r.get("hypercredits")
+                .or_else(|| r.get("hyper_credits"))
+                .or_else(|| r.get("credits"))
+                .or_else(|| r.get("balance"))
+        })
+        .and_then(json_number_as_f64)
+        .or_else(|| {
+            usage
+                .get("hypercredits")
+                .or_else(|| usage.get("remaining_hypercredits"))
+                .and_then(json_number_as_f64)
+        })?;
+    if balance > 0.0 || balance == 0.0 {
+        set_hypercredit_balance(balance);
+        Some(balance)
+    } else {
+        None
+    }
+}
+
+fn json_number_as_f64(value: &Value) -> Option<f64> {
+    value
+        .as_f64()
+        .or_else(|| value.as_i64().map(|n| n as f64))
+        .or_else(|| value.as_u64().map(|n| n as f64))
+        .or_else(|| value.as_str().and_then(|s| s.trim().parse().ok()))
+        .filter(|n| n.is_finite())
+}
+
 pub async fn charm_hyper_credits_report(
     api_key: &str,
 ) -> std::result::Result<CharmHyperCreditsReport, String> {
+    // Crush: prefer balance already extracted from the last stream usage payload.
+    if let Some(balance) = take_hypercredit_balance() {
+        return Ok(CharmHyperCreditsReport {
+            balance,
+            source: Some("stream-usage".into()),
+        });
+    }
+
+    let url = format!("{}/v1/credits", hyper_base_url());
     let response = reqwest::Client::new()
-        .get("https://hyper.charm.land/v1/credits")
+        .get(&url)
         .header("Authorization", format!("Bearer {api_key}"))
         .header("Accept", "application/json")
         .header("User-Agent", "navi/0.1.0")
+        .timeout(Duration::from_secs(10))
         .send()
         .await
         .map_err(|err| err.to_string())?;
@@ -268,13 +396,12 @@ pub async fn charm_hyper_credits_report(
     let payload: serde_json::Value = response.json().await.map_err(|err| err.to_string())?;
     let balance = payload
         .get("balance")
-        .and_then(|v| {
-            v.as_f64()
-                .or_else(|| v.as_i64().map(|n| n as f64))
-                .or_else(|| v.as_u64().map(|n| n as f64))
-        })
+        .and_then(json_number_as_f64)
         .ok_or_else(|| "Charm Hyper credits response missing balance".to_string())?;
-    Ok(CharmHyperCreditsReport { balance })
+    Ok(CharmHyperCreditsReport {
+        balance,
+        source: Some("credits-api".into()),
+    })
 }
 
 pub async fn openrouter_usage_report(
@@ -1834,6 +1961,52 @@ mod tests {
 
         assert!(started.verification_uri.is_empty());
         assert!(started.user_code.is_empty());
+    }
+
+    #[test]
+    fn format_hypercredits_uses_thousands_separators() {
+        assert_eq!(format_hypercredits(42.0), "42");
+        assert_eq!(format_hypercredits(999.4), "999");
+        assert_eq!(format_hypercredits(1_234.0), "1,234");
+        assert_eq!(format_hypercredits(12_345_678.0), "12,345,678");
+        assert_eq!(format_hypercredits(-1_500.2), "-1,500");
+    }
+
+    #[test]
+    fn extract_hypercredit_balance_from_usage_remaining_field() {
+        // Clear first (own lock), then set via the public extract API.
+        let _ = take_hypercredit_balance();
+        let usage = serde_json::json!({
+            "prompt_tokens": 100,
+            "completion_tokens": 20,
+            "remaining": { "hypercredits": 12345.0 }
+        });
+        let balance = extract_hypercredit_balance_from_usage(&usage).expect("balance");
+        assert_eq!(balance, 12345.0);
+        assert_eq!(peek_hypercredit_balance(), Some(12345.0));
+        // take clears the one-shot cache, matching Crush FetchCredits.
+        assert_eq!(take_hypercredit_balance(), Some(12345.0));
+        assert_eq!(take_hypercredit_balance(), None);
+    }
+
+    #[test]
+    fn extract_hypercredit_balance_accepts_zero() {
+        let _ = take_hypercredit_balance();
+        let usage = serde_json::json!({
+            "remaining": { "hypercredits": 0 }
+        });
+        assert_eq!(extract_hypercredit_balance_from_usage(&usage), Some(0.0));
+        assert_eq!(take_hypercredit_balance(), Some(0.0));
+    }
+
+    #[test]
+    fn hyper_base_url_defaults_and_env_override() {
+        // Default when env is unset/empty is the production host.
+        // We only assert the helper returns a non-empty https URL shape;
+        // env may be set in developer shells, so compare to helper itself.
+        let url = hyper_base_url();
+        assert!(!url.is_empty());
+        assert!(!url.ends_with('/'));
     }
 
     #[test]

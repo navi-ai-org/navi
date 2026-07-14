@@ -552,4 +552,8 @@ impl EngineDriver for MockEngine {
     ) -> Result<navi_sdk::BackgroundCommandSnapshot> {
         Err(NaviError::Config("mock engine: no background tasks".into()))
     }
+
+    async fn set_permission_mode(&self, _mode: navi_core::PermissionMode) -> Result<()> {
+        Ok(())
+    }
 }

@@ -286,10 +286,10 @@ Approval flow:
 Permission modes:
 - `Restricted` — every tool call requires approval
 - `AcceptEdits` — reads and writes auto-approved; commands require approval
-- `Auto` — reads, writes, and commands auto-approved; `guarded_commands` (default: `git`) still require approval
+- `Auto` — reads, writes, and commands auto-approved; destructive commands matching `guarded_commands` still require approval
 - `Yolo` — everything auto-approved, no exceptions (most permissive)
 
-`guarded_commands` (default: `["git"]`) — commands that always require approval in `Restricted`, `AcceptEdits`, and `Auto` modes. In `Yolo` mode, guarded commands are allowed like everything else.
+`guarded_commands` (default: `["git"]`) — for `git`, only destructive subcommands (`push`, `rm`, `reset`, `clean`, `rebase`, force-delete branch/tag, etc.) require approval in `Restricted`, `AcceptEdits`, and `Auto`. Common ops like `status` / `add` / `commit` / `diff` are not guarded. In `Yolo` mode, guarded commands are allowed like everything else.
 
 Secret redaction:
 - session persistence redacts likely secrets when `redact_secrets_in_sessions = true`

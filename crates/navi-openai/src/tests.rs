@@ -1751,6 +1751,27 @@ fn parse_usage_falls_back_to_total_tokens() {
 }
 
 #[test]
+fn usage_from_value_caches_hypercredit_remaining() {
+    let _ = crate::oauth::take_hypercredit_balance();
+    let usage = serde_json::json!({
+        "prompt_tokens": 430,
+        "completion_tokens": 12,
+        "remaining": { "hypercredits": 9876 }
+    });
+    let events = crate::mapping::usage_from_value(Some(&usage));
+    assert_eq!(events.len(), 1);
+    assert!(matches!(
+        events[0].as_ref().unwrap(),
+        ModelStreamEvent::Usage {
+            input_tokens: Some(430),
+            output_tokens: Some(12),
+            ..
+        }
+    ));
+    assert_eq!(crate::oauth::take_hypercredit_balance(), Some(9876.0));
+}
+
+#[test]
 fn anthropic_sse_message_stop() {
     let data = r#"{"type":"message_stop"}"#;
     let events = parse_anthropic_sse(data);

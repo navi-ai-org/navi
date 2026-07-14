@@ -90,6 +90,10 @@ impl Default for ApprovalMode {
 }
 
 const MAX_BACKGROUND_SUBAGENTS: usize = 8;
+/// Nested agent spawners must not be available inside subagents. Without this,
+/// explorers/verifiers recursively call `repo_explore`/`subagent` and create
+/// multi-minute tool storms (see logs: hundreds of parallel nested explores).
+const NESTED_AGENT_TOOLS: &[&str] = &["subagent", "repo_explore", "branch_race"];
 /// Tool names considered to be "write" operations for ReadOnly mode.
 const READONLY_DENIED_TOOLS: &[&str] = &[
     "write",
@@ -103,6 +107,8 @@ const READONLY_DENIED_TOOLS: &[&str] = &[
     "package_manager",
     "mark_feature_done",
     "append_note",
+    "question",
+    "plan",
 ];
 const WRITE_DENIED_TOOLS: &[&str] = &[
     "write",
@@ -127,6 +133,9 @@ pub struct SubagentTool {
     model_name: Arc<RwLock<String>>,
     harness_config: HarnessConfig,
     config: Arc<RwLock<NaviConfig>>,
+    /// Kept for constructor API stability. Nested turns use a fresh cache so
+    /// parent session prefix-cache keys are not poisoned by subagent prompts.
+    #[allow(dead_code)]
     prompt_cache: Arc<PromptCache>,
     components: RuntimeComponents,
     background_tasks: tokio::sync::Mutex<HashMap<String, Arc<SubagentBackgroundTask>>>,
@@ -464,6 +473,10 @@ impl SubagentTool {
         );
 
         let include_tool_prompt = self.include_tool_prompt_manifest();
+        // Freeze the specialized subagent system prompt. `run_turn` always
+        // calls `ensure_system_prompt`, which would otherwise rebuild the full
+        // parent-agent identity and erase explorer/verifier instructions.
+        let (instructions, prompt_prefix) = freeze_specialized_prompt(&messages);
 
         let sub_ctx = TurnContext {
             model_provider: Arc::new(RwLock::new(provider)),
@@ -486,9 +499,10 @@ impl SubagentTool {
             context_packets: Arc::new(std::sync::Mutex::new(Vec::new())),
             available_skills: Arc::new(std::sync::Mutex::new(Vec::new())),
             active_skills: Arc::new(std::sync::Mutex::new(Vec::new())),
-            prompt_cache: self.prompt_cache.clone(),
-            instructions: std::sync::Arc::new(std::sync::RwLock::new(None)),
-            prompt_prefix: std::sync::Arc::new(std::sync::Mutex::new(None)),
+            // Fresh cache: do not share parent session prefix-cache keys.
+            prompt_cache: Arc::new(PromptCache::new()),
+            instructions,
+            prompt_prefix,
             components: self.components.clone(),
             cancel_token: CancelToken::new(),
             config: self.config.clone(),
@@ -587,7 +601,6 @@ impl SubagentTool {
             self.resolve_model_for_profile(profile.as_deref());
         let model_provider = Arc::new(RwLock::new(resolved_provider));
         let model_name = Arc::new(RwLock::new(resolved_model));
-        let prompt_cache = self.prompt_cache.clone();
         let components = self.components.clone();
         let harness_config = self.harness_config.clone();
         let config = self.config.clone();
@@ -611,6 +624,7 @@ impl SubagentTool {
                 );
 
             let config_snapshot = config.read().unwrap_or_else(|e| e.into_inner()).clone();
+            let (instructions, prompt_prefix) = freeze_specialized_prompt(&messages);
 
             let sub_ctx = TurnContext {
                 model_provider,
@@ -633,9 +647,9 @@ impl SubagentTool {
                 context_packets: Arc::new(std::sync::Mutex::new(Vec::new())),
                 available_skills: Arc::new(std::sync::Mutex::new(Vec::new())),
                 active_skills: Arc::new(std::sync::Mutex::new(Vec::new())),
-                prompt_cache,
-                instructions: std::sync::Arc::new(std::sync::RwLock::new(None)),
-                prompt_prefix: std::sync::Arc::new(std::sync::Mutex::new(None)),
+                prompt_cache: Arc::new(PromptCache::new()),
+                instructions,
+                prompt_prefix,
                 components,
                 cancel_token,
                 config: Arc::new(std::sync::RwLock::new(config_snapshot)),
@@ -1118,9 +1132,33 @@ fn resolve_approval_mode(options: &SubagentOptions) -> ApprovalMode {
     }
 }
 
-/// Returns the set of tool names allowed for read-only subagents.
-/// This is the complement of READONLY_DENIED_TOOLS, derived from the
-/// provided executor's full tool list.
+/// Freeze specialized system/developer messages so `ensure_system_prompt`
+/// reuses them instead of rebuilding the full parent-agent prompt.
+fn freeze_specialized_prompt(
+    messages: &[ModelMessage],
+) -> (
+    Arc<RwLock<Option<String>>>,
+    Arc<std::sync::Mutex<Option<Vec<ModelMessage>>>>,
+) {
+    let prefix: Vec<ModelMessage> = messages
+        .iter()
+        .take_while(|m| matches!(m.role, ModelRole::System | ModelRole::Developer))
+        .cloned()
+        .collect();
+    let instructions = prefix
+        .iter()
+        .find(|m| m.role == ModelRole::System)
+        .map(|m| m.content.clone());
+    (
+        Arc::new(RwLock::new(instructions)),
+        Arc::new(std::sync::Mutex::new(Some(prefix))),
+    )
+}
+
+/// Returns the set of tool names allowed for this subagent.
+///
+/// Always strips nested agent tools to prevent recursive spawn storms.
+/// ReadOnly/DenyWrite additionally strip write-oriented tools.
 fn resolve_allowed_tool_names(
     executor: &crate::tool::ToolExecutor,
     options: &SubagentOptions,
@@ -1130,6 +1168,8 @@ fn resolve_allowed_tool_names(
         .tools
         .clone()
         .unwrap_or_else(|| executor.tool_names());
+    // Always block nested agent spawning (depth = 1).
+    allowed.retain(|name| !NESTED_AGENT_TOOLS.contains(&name.as_str()));
     match approval_mode {
         ApprovalMode::ReadOnly => {
             allowed.retain(|name| !READONLY_DENIED_TOOLS.contains(&name.as_str()));
@@ -1139,16 +1179,8 @@ fn resolve_allowed_tool_names(
         }
         ApprovalMode::Inherit | ApprovalMode::Escalate => {}
     }
-    if options.tools.is_some()
-        || matches!(
-            approval_mode,
-            ApprovalMode::ReadOnly | ApprovalMode::DenyWrite
-        )
-    {
-        Some(allowed)
-    } else {
-        None
-    }
+    // Always return Some so nested agent tools stay filtered even for Inherit.
+    Some(allowed)
 }
 
 #[cfg(test)]
@@ -1331,6 +1363,82 @@ mod tests {
         assert!(allowed.contains(&"read".to_string()));
         assert!(allowed.contains(&"bash".to_string()));
         assert!(!allowed.contains(&"write_file".to_string()));
+    }
+
+    #[test]
+    fn nested_agent_tools_always_stripped_even_for_inherit() {
+        let temp = tempfile::tempdir().unwrap();
+        let policy = crate::security::SecurityPolicy::new(
+            temp.path().to_path_buf(),
+            temp.path()
+                .parent()
+                .unwrap_or(temp.path())
+                .join("navi-test-data-subagent"),
+            crate::config::SecurityConfig::default(),
+        )
+        .unwrap();
+        let executor = crate::tool::ToolExecutor::new(policy);
+        let opts = SubagentOptions {
+            tools: Some(vec![
+                "read_file".to_string(),
+                "subagent".to_string(),
+                "repo_explore".to_string(),
+                "branch_race".to_string(),
+                "bash".to_string(),
+            ]),
+            ..Default::default()
+        };
+
+        let allowed = resolve_allowed_tool_names(&executor, &opts, ApprovalMode::Inherit)
+            .expect("always filtered");
+
+        assert!(allowed.contains(&"read_file".to_string()));
+        assert!(allowed.contains(&"bash".to_string()));
+        assert!(!allowed.contains(&"subagent".to_string()));
+        assert!(!allowed.contains(&"repo_explore".to_string()));
+        assert!(!allowed.contains(&"branch_race".to_string()));
+    }
+
+    #[test]
+    fn freeze_specialized_prompt_keeps_system_instructions() {
+        let messages = vec![
+            ModelMessage {
+                role: ModelRole::System,
+                content: "You are a focused explorer.".into(),
+                content_parts: Vec::new(),
+                tool_call_id: None,
+                tool_name: None,
+                tool_calls: vec![],
+                created_at: None,
+                thinking_content: None,
+            },
+            ModelMessage {
+                role: ModelRole::User,
+                content: "Find the auth module.".into(),
+                content_parts: Vec::new(),
+                tool_call_id: None,
+                tool_name: None,
+                tool_calls: vec![],
+                created_at: None,
+                thinking_content: None,
+            },
+        ];
+        let (instructions, prefix) = freeze_specialized_prompt(&messages);
+        assert_eq!(
+            instructions
+                .read()
+                .unwrap_or_else(|e| e.into_inner())
+                .as_deref(),
+            Some("You are a focused explorer.")
+        );
+        let frozen = prefix
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+            .expect("prefix");
+        assert_eq!(frozen.len(), 1);
+        assert_eq!(frozen[0].role, ModelRole::System);
+        assert_eq!(frozen[0].content, "You are a focused explorer.");
     }
 
     #[test]

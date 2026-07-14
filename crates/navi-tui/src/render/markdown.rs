@@ -859,6 +859,7 @@ pub(crate) fn render_markdown_lines(
             if opening {
                 ensure_md_block_gap(&mut lines, last_block, MdBlockKind::Code);
             }
+            let previous_language = language.clone();
             in_code = opening;
             language = if opening {
                 rest.split_whitespace()
@@ -870,24 +871,47 @@ pub(crate) fn render_markdown_lines(
             };
             if opening {
                 code_highlighter = Some(CodeHighlighter::new(&language));
+                // DSL fences get a language badge line (mermaid / latex / charts).
+                if let Some(label) = dsl_language_label(&language) {
+                    let is_first = take_lead_marker(&mut lead_marker, show_marker);
+                    let mut spans = marker_spans_at(show_marker, marker_color, is_first);
+                    spans.push(Span::styled(
+                        format!("▸ {label}"),
+                        Style::default()
+                            .fg(accent())
+                            .add_modifier(Modifier::BOLD),
+                    ));
+                    lines.push(Line::from(spans));
+                } else {
+                    let is_first = take_lead_marker(&mut lead_marker, show_marker);
+                    lines.push(code_panel_padding_line_at(
+                        show_marker,
+                        marker_color,
+                        is_first,
+                    ));
+                }
             } else {
                 code_highlighter = None;
+                // Closing fence: rail padding only for normal code (not DSLs).
+                if !is_dsl_language(&previous_language) {
+                    let is_first = take_lead_marker(&mut lead_marker, show_marker);
+                    lines.push(code_panel_padding_line_at(
+                        show_marker,
+                        marker_color,
+                        is_first,
+                    ));
+                }
             }
-            let is_first = take_lead_marker(&mut lead_marker, show_marker);
-            lines.push(code_panel_padding_line_at(
-                show_marker,
-                marker_color,
-                is_first,
-            ));
             last_block = MdBlockKind::Code;
             index += 1;
             continue;
         }
 
         if in_code {
-            let bg = code_block_bg();
             let spans = if is_diff_language(&language) {
                 diff_line_spans(raw_line)
+            } else if is_dsl_language(&language) {
+                dsl_line_spans(raw_line, &language)
             } else if language.is_empty() {
                 terminal_output_spans(raw_line)
             } else if let Some(ref mut hl) = code_highlighter {
@@ -896,7 +920,11 @@ pub(crate) fn render_markdown_lines(
                 highlight_code_line(raw_line, &language)
             };
             let marker_width = if show_marker { 2 } else { CONTENT_GUTTER };
-            let panel_prefix_width = code_panel_prefix_width();
+            let panel_prefix_width = if is_dsl_language(&language) {
+                0
+            } else {
+                code_panel_prefix_width()
+            };
             let content_width = max_width
                 .saturating_sub(marker_width + panel_prefix_width + 1)
                 .max(1);
@@ -906,20 +934,36 @@ pub(crate) fn render_markdown_lines(
             } else {
                 wrapped
             };
+            // Diff body tint (add/remove wash). Numbers keep fg-only color and
+            // must not inherit this bg — the paint starts after the gutter.
+            let line_tint = spans.iter().find_map(|s| s.style.bg);
+            let is_diff = is_diff_language(&language);
             for content_spans in wrapped {
                 let is_first = take_lead_marker(&mut lead_marker, show_marker);
                 let mut line_spans = marker_spans_at(show_marker, marker_color, is_first);
-                for span in &mut line_spans {
-                    span.style = span.style.bg(bg);
+                if !is_dsl_language(&language) {
+                    line_spans.extend(code_panel_prefix_spans());
                 }
-                line_spans.extend(code_panel_prefix_spans());
-                for mut span in content_spans {
-                    if span.style.bg.is_none() {
-                        span.style = span.style.bg(bg);
-                    }
+                for span in content_spans {
                     line_spans.push(span);
                 }
-                lines.push(Line::from(line_spans).style(Style::default().bg(bg)));
+                if let Some(bg) = line_tint {
+                    if is_diff {
+                        // Leave number gutter / left pad unpainted; only fill
+                        // spans that already carry the tint (code body).
+                        // Trailing pad to viewport is handled by pad_code_block_bg.
+                        lines.push(Line::from(line_spans));
+                    } else {
+                        for span in &mut line_spans {
+                            if span.style.bg.is_none() {
+                                span.style = span.style.bg(bg);
+                            }
+                        }
+                        lines.push(Line::from(line_spans));
+                    }
+                } else {
+                    lines.push(Line::from(line_spans));
+                }
             }
             last_block = MdBlockKind::Code;
             index += 1;
@@ -1103,33 +1147,49 @@ fn markdown_prose_line(text: &str, fallback: Color) -> Option<Vec<Span<'static>>
 
     let heading = trimmed.chars().take_while(|ch| *ch == '#').count();
     if (1..=6).contains(&heading) && trimmed.chars().nth(heading) == Some(' ') {
-        // Diamond family for headings (no vertical quote-bar).
-        let prefix = match heading {
-            1 | 2 | 3 => format!("{} ", super::status::DIAMOND),
-            _ => format!("{} ", super::status::DIAMOND_HOLLOW),
+        // Real markdown headings — diamonds are reserved for NAVI tool ops only.
+        // Terminals cannot change point size; hierarchy uses weight + color + underline cue.
+        let title = &trimmed[heading + 1..];
+        let (fg, mods) = match heading {
+            1 => (signal(), Modifier::BOLD),
+            2 => (accent(), Modifier::BOLD),
+            3 => (code_type(), Modifier::BOLD),
+            _ => (crate::theme::text(), Modifier::BOLD),
         };
-        spans.push(Span::styled(
-            prefix,
-            Style::default().fg(accent()).add_modifier(Modifier::BOLD),
-        ));
-        spans.extend(
-            inline_text_spans(&trimmed[heading + 1..], crate::theme::text())
-                .into_iter()
-                .map(|mut span| {
-                    span.style = span.style.add_modifier(Modifier::BOLD);
-                    span
-                }),
-        );
+        // Visual "size": H1/H2 get a leading weight mark + bold; deeper levels are quieter.
+        if heading == 1 {
+            spans.push(Span::styled(
+                "# ".to_string(),
+                Style::default().fg(fg).add_modifier(mods),
+            ));
+        } else if heading == 2 {
+            spans.push(Span::styled(
+                "## ".to_string(),
+                Style::default().fg(fg).add_modifier(mods),
+            ));
+        } else {
+            spans.push(Span::styled(
+                format!("{} ", "#".repeat(heading)),
+                Style::default().fg(muted()).add_modifier(Modifier::BOLD),
+            ));
+        }
+        spans.extend(inline_text_spans(title, fg).into_iter().map(|mut span| {
+            span.style = span.style.fg(fg).add_modifier(mods);
+            span
+        }));
         return Some(spans);
     }
 
     if let Some(rest) = trimmed.strip_prefix("> ") {
-        // Indent quote body — no continuous left rail.
+        // Blockquote: vertical bar, not a diamond.
         spans.push(Span::styled(
-            format!("{} ", super::status::DIAMOND_HOLLOW),
-            Style::default().fg(accent()).add_modifier(Modifier::BOLD),
+            "│ ".to_string(),
+            Style::default().fg(ghost()),
         ));
-        spans.extend(inline_text_spans(rest, muted()));
+        spans.extend(inline_text_spans(rest, muted()).into_iter().map(|mut s| {
+            s.style = s.style.add_modifier(Modifier::ITALIC);
+            s
+        }));
         return Some(spans);
     }
 
@@ -1139,10 +1199,10 @@ fn markdown_prose_line(text: &str, fallback: Color) -> Option<Vec<Span<'static>>
     }
 
     if trimmed.starts_with("- ") || trimmed.starts_with("* ") {
-        // Hollow diamond list bullet — same family as status diamonds, no trail.
+        // Standard list bullet — not a status diamond.
         spans.push(Span::styled(
-            format!("{} ", super::status::DIAMOND_HOLLOW),
-            Style::default().fg(accent()).add_modifier(Modifier::BOLD),
+            "• ".to_string(),
+            Style::default().fg(accent()),
         ));
         spans.extend(inline_text_spans(&trimmed[2..], fallback));
         return Some(spans);
@@ -1319,13 +1379,9 @@ enum TableBorderKind {
     Bottom,
 }
 
-fn table_surface_bg() -> Color {
-    // Slightly elevated surface  chat cards / code panels.
-    code_block_bg()
-}
-
 fn table_border_style() -> Style {
-    Style::default().fg(ghost()).bg(table_surface_bg())
+    // Tables sit on the chat background — no elevated panel fill.
+    Style::default().fg(ghost())
 }
 
 fn table_border_line(
@@ -1355,7 +1411,7 @@ fn table_border_line(
         ));
     }
     spans.push(Span::styled(right.to_string(), border));
-    Line::from(spans).style(Style::default().bg(table_surface_bg()))
+    Line::from(spans)
 }
 
 fn wrapped_table_row_lines_at(
@@ -1367,9 +1423,8 @@ fn wrapped_table_row_lines_at(
     lead_marker: &mut bool,
 ) -> Vec<Line<'static>> {
     // Header uses muted bold (table headers); body uses default text.
-    // Inline `code` keeps syntax colors via inline_text_spans.
+    // Inline `code` keeps syntax colors via inline_text_spans. No panel fill.
     let color = if header { muted() } else { text() };
-    let bg = table_surface_bg();
     let border = table_border_style();
     let cell_pad = " ".repeat(TABLE_CELL_H_PAD);
     let wrapped_cells = widths
@@ -1381,7 +1436,6 @@ fn wrapped_table_row_lines_at(
                 *width,
                 color,
                 header,
-                bg,
             )
         })
         .collect::<Vec<_>>();
@@ -1398,7 +1452,7 @@ fn wrapped_table_row_lines_at(
                 }
                 spans.push(Span::styled(
                     cell_pad.clone(),
-                    Style::default().fg(color).bg(bg),
+                    Style::default().fg(color),
                 ));
                 let cell_line = wrapped_cells
                     .get(column_index)
@@ -1413,16 +1467,16 @@ fn wrapped_table_row_lines_at(
                 if used < width {
                     spans.push(Span::styled(
                         " ".repeat(width - used),
-                        Style::default().fg(color).bg(bg),
+                        Style::default().fg(color),
                     ));
                 }
                 spans.push(Span::styled(
                     cell_pad.clone(),
-                    Style::default().fg(color).bg(bg),
+                    Style::default().fg(color),
                 ));
             }
             spans.push(Span::styled("│".to_string(), border));
-            Line::from(spans).style(Style::default().bg(bg))
+            Line::from(spans)
         })
         .collect()
 }
@@ -1432,12 +1486,9 @@ fn wrapped_table_cell(
     width: usize,
     color: Color,
     bold: bool,
-    bg: Color,
 ) -> Vec<Vec<Span<'static>>> {
     let mut spans = inline_text_spans(content, color);
     for span in &mut spans {
-        // Keep syntax/inline colors; force table surface under every cell glyph.
-        span.style = span.style.bg(bg);
         if bold {
             span.style = span.style.add_modifier(Modifier::BOLD);
         }
@@ -1499,7 +1550,6 @@ fn stacked_table_lines_at(
         .saturating_sub(label_width)
         .saturating_sub(3) // ": " + spacing
         .max(6);
-    let bg = table_surface_bg();
     let border = table_border_style();
 
     let mut lines = Vec::new();
@@ -1510,7 +1560,7 @@ fn stacked_table_lines_at(
             format!("{left}{}{right}", "─".repeat(inner_width)),
             border,
         ));
-        Line::from(spans).style(Style::default().bg(bg))
+        Line::from(spans)
     };
 
     lines.push(hbar(lead_marker, '┌', '┐'));
@@ -1552,14 +1602,6 @@ fn stacked_table_lines_at(
                     body = truncate_display(&body, inner_width);
                 }
 
-                let body_style = if line_index == 0 {
-                    Style::default()
-                        .fg(if line_index == 0 { muted() } else { text() })
-                        .bg(bg)
-                        .add_modifier(Modifier::BOLD)
-                } else {
-                    Style::default().fg(text()).bg(bg)
-                };
                 // Split label (bold/muted) from value (text) for nicer look.
                 if line_index == 0 {
                     let label_part = format!(" {label:<label_width$} ");
@@ -1568,37 +1610,29 @@ fn stacked_table_lines_at(
                         label_part,
                         Style::default()
                             .fg(muted())
-                            .bg(bg)
                             .add_modifier(Modifier::BOLD),
                     ));
-                    let mut val_spans = inline_text_spans(&value, text());
-                    for s in &mut val_spans {
-                        s.style = s.style.bg(bg);
-                    }
+                    let val_spans = inline_text_spans(&value, text());
                     let val_w: usize = val_spans.iter().map(|s| display_width(&s.content)).sum();
                     spans.extend(val_spans);
                     let fill = inner_width.saturating_sub(label_w + val_w);
                     if fill > 0 {
-                        spans.push(Span::styled(" ".repeat(fill), Style::default().bg(bg)));
+                        spans.push(Span::styled(" ".repeat(fill), Style::default().fg(text())));
                     }
                 } else {
                     let indent = format!(" {}", " ".repeat(label_width + 1));
-                    spans.push(Span::styled(indent.clone(), Style::default().bg(bg)));
-                    let mut val_spans = inline_text_spans(&value, text());
-                    for s in &mut val_spans {
-                        s.style = s.style.bg(bg);
-                    }
+                    spans.push(Span::styled(indent.clone(), Style::default().fg(text())));
+                    let val_spans = inline_text_spans(&value, text());
                     let val_w: usize = val_spans.iter().map(|s| display_width(&s.content)).sum();
                     spans.extend(val_spans);
                     let fill = inner_width.saturating_sub(display_width(&indent) + val_w);
                     if fill > 0 {
-                        spans.push(Span::styled(" ".repeat(fill), Style::default().bg(bg)));
+                        spans.push(Span::styled(" ".repeat(fill), Style::default().fg(text())));
                     }
                 }
-                let _ = body_style;
                 let _ = body;
                 spans.push(Span::styled("│".to_string(), border));
-                lines.push(Line::from(spans).style(Style::default().bg(bg)));
+                lines.push(Line::from(spans));
             }
         }
     }
@@ -1972,14 +2006,8 @@ fn semantic_token_style(token: &str, fallback: Color) -> Style {
 }
 
 fn terminal_output_spans(raw_line: &str) -> Vec<Span<'static>> {
-    let bg = code_block_bg();
+    // No solid code-panel wash — syntax colors only.
     semantic_plain_spans(raw_line, text())
-        .into_iter()
-        .map(|mut span| {
-            span.style = span.style.bg(bg);
-            span
-        })
-        .collect()
 }
 
 fn is_diff_language(language: &str) -> bool {
@@ -2013,38 +2041,42 @@ fn diff_line_spans(raw_line: &str) -> Vec<Span<'static>> {
     }
 
     let (bg, number_color, content_color) = if raw_line.starts_with('+') {
-        (diff_add_bg(), diff_add_fg(), text())
+        (Some(diff_add_bg()), diff_add_fg(), text())
     } else if raw_line.starts_with('-') {
-        (diff_remove_bg(), diff_remove_fg(), text())
+        (Some(diff_remove_bg()), diff_remove_fg(), text())
     } else {
-        (code_block_bg(), ghost(), text())
+        // Context lines: no panel fill — only gutter number color.
+        (None, ghost(), text())
     };
 
     if let Some((marker, rest)) = diff_marker_and_rest(raw_line) {
-        // Claude Code–style: when a line-number gutter is present
-        // (`+  39|content` / `-  39|content` / `  37|content`), paint the
-        // number and hide the raw +/- sign (color does the work).
+        // Numbered form (`+  39|content`): numbers are green/red fg only —
+        // never covered by the line wash. The tint starts on the code body.
         if let Some((num, after)) = split_diff_line_number(rest) {
             let mut spans = Vec::with_capacity(4);
-            // Number gutter only — no loud +/- glyph (bg color carries meaning).
+            // Gutter: colored digits, transparent background (no line paint).
             spans.push(Span::styled(
                 format!("{num:>4} "),
-                Style::default().fg(number_color).bg(bg),
+                Style::default()
+                    .fg(number_color)
+                    .add_modifier(Modifier::BOLD),
             ));
             if after.is_empty() {
-                spans.push(Span::styled(String::new(), Style::default().bg(bg)));
+                // Keep a zero-width content holder so the row still tints when padded.
+                if let Some(bg) = bg {
+                    spans.push(Span::styled(" ", Style::default().bg(bg)));
+                }
             } else {
                 spans.extend(highlight_diff_code(after, content_color, bg));
             }
             return spans;
         }
 
-        // Unnumbered legacy lines: keep bold +/- marker + content.
+        // Unnumbered legacy lines: +/- marker is colored fg only; body gets the wash.
         let mut spans = vec![Span::styled(
             marker.to_string(),
             Style::default()
                 .fg(number_color)
-                .bg(bg)
                 .add_modifier(Modifier::BOLD),
         )];
         spans.extend(highlight_diff_code(rest, content_color, bg));
@@ -2054,7 +2086,9 @@ fn diff_line_spans(raw_line: &str) -> Vec<Span<'static>> {
     semantic_plain_spans(raw_line, content_color)
         .into_iter()
         .map(|mut span| {
-            span.style = span.style.bg(bg);
+            if let Some(bg) = bg {
+                span.style = span.style.bg(bg);
+            }
             span
         })
         .collect()
@@ -2095,7 +2129,7 @@ fn split_diff_line_number(rest: &str) -> Option<(&str, &str)> {
     Some((digits, rest.get(5..).unwrap_or("")))
 }
 
-fn highlight_diff_code(rest: &str, fallback: Color, bg: Color) -> Vec<Span<'static>> {
+fn highlight_diff_code(rest: &str, fallback: Color, bg: Option<Color>) -> Vec<Span<'static>> {
     let highlighted = highlight_code_line(rest, "rust");
     let mut spans = if highlighted.len() == 1 && highlighted[0].style.fg == Some(text()) {
         semantic_plain_spans(rest, fallback)
@@ -2103,12 +2137,200 @@ fn highlight_diff_code(rest: &str, fallback: Color, bg: Color) -> Vec<Span<'stat
         highlighted
     };
     for span in &mut spans {
-        span.style = span.style.bg(bg);
+        if let Some(bg) = bg {
+            span.style = span.style.bg(bg);
+        }
         if span.style.fg.is_none() {
             span.style = span.style.fg(fallback);
         }
     }
     spans
+}
+
+fn is_dsl_language(language: &str) -> bool {
+    dsl_language_label(language).is_some()
+}
+
+fn dsl_language_label(language: &str) -> Option<&'static str> {
+    match language.to_ascii_lowercase().as_str() {
+        "mermaid" => Some("mermaid"),
+        "latex" | "tex" | "math" | "katex" => Some("math / latex"),
+        "chart" | "vega" | "vegalite" | "vega-lite" | "plotly" | "graphviz" | "dot" => {
+            Some("chart")
+        }
+        _ => None,
+    }
+}
+
+fn dsl_line_spans(raw_line: &str, language: &str) -> Vec<Span<'static>> {
+    let lang = language.to_ascii_lowercase();
+    if matches!(lang.as_str(), "latex" | "tex" | "math" | "katex") {
+        let rendered = latex_to_unicode(raw_line);
+        return vec![Span::styled(
+            rendered,
+            Style::default()
+                .fg(code_const())
+                .add_modifier(Modifier::ITALIC),
+        )];
+    }
+    if lang == "mermaid" {
+        // Soft keyword highlight for common mermaid tokens.
+        return mermaid_line_spans(raw_line);
+    }
+    // Generic chart / graph DSL: muted mono body.
+    semantic_plain_spans(raw_line, muted())
+}
+
+fn mermaid_line_spans(raw_line: &str) -> Vec<Span<'static>> {
+    let keywords = [
+        "graph",
+        "flowchart",
+        "sequenceDiagram",
+        "classDiagram",
+        "stateDiagram",
+        "erDiagram",
+        "gantt",
+        "pie",
+        "subgraph",
+        "end",
+        "participant",
+        "Note",
+        "loop",
+        "alt",
+        "else",
+        "opt",
+        "par",
+        "and",
+        "critical",
+        "break",
+        "rect",
+        "activate",
+        "deactivate",
+        "direction",
+        "TB",
+        "TD",
+        "BT",
+        "RL",
+        "LR",
+    ];
+    let mut spans = Vec::new();
+    let mut rest = raw_line;
+    while !rest.is_empty() {
+        let leading = rest.chars().take_while(|c| c.is_whitespace()).count();
+        if leading > 0 {
+            spans.push(Span::styled(
+                rest[..leading].to_string(),
+                Style::default().fg(text()),
+            ));
+            rest = &rest[leading..];
+            continue;
+        }
+        let token_len = rest
+            .chars()
+            .take_while(|c| c.is_alphanumeric() || *c == '_' || *c == '-')
+            .map(|c| c.len_utf8())
+            .sum::<usize>();
+        if token_len == 0 {
+            let ch = rest.chars().next().unwrap();
+            let w = ch.len_utf8();
+            spans.push(Span::styled(
+                rest[..w].to_string(),
+                Style::default().fg(code_punct()),
+            ));
+            rest = &rest[w..];
+            continue;
+        }
+        let token = &rest[..token_len];
+        let is_kw = keywords.iter().any(|k| k.eq_ignore_ascii_case(token));
+        spans.push(Span::styled(
+            token.to_string(),
+            Style::default().fg(if is_kw { code_keyword() } else { text() }).add_modifier(
+                if is_kw {
+                    Modifier::BOLD
+                } else {
+                    Modifier::empty()
+                },
+            ),
+        ));
+        rest = &rest[token_len..];
+    }
+    spans
+}
+
+/// Lightweight LaTeX → Unicode for common math tokens in the TUI.
+fn latex_to_unicode(input: &str) -> String {
+    let mut out = input.to_string();
+    // Strip display/inline math delimiters for cleaner reading.
+    for delim in ["$$", "$", "\\[", "\\]", "\\(", "\\)"] {
+        out = out.replace(delim, "");
+    }
+    let replacements = [
+        ("\\alpha", "α"),
+        ("\\beta", "β"),
+        ("\\gamma", "γ"),
+        ("\\delta", "δ"),
+        ("\\epsilon", "ε"),
+        ("\\theta", "θ"),
+        ("\\lambda", "λ"),
+        ("\\mu", "μ"),
+        ("\\pi", "π"),
+        ("\\sigma", "σ"),
+        ("\\phi", "φ"),
+        ("\\omega", "ω"),
+        ("\\times", "×"),
+        ("\\cdot", "·"),
+        ("\\pm", "±"),
+        ("\\mp", "∓"),
+        ("\\leq", "≤"),
+        ("\\geq", "≥"),
+        ("\\neq", "≠"),
+        ("\\approx", "≈"),
+        ("\\infty", "∞"),
+        ("\\sum", "∑"),
+        ("\\prod", "∏"),
+        ("\\int", "∫"),
+        ("\\sqrt", "√"),
+        ("\\partial", "∂"),
+        ("\\nabla", "∇"),
+        ("\\rightarrow", "→"),
+        ("\\leftarrow", "←"),
+        ("\\Rightarrow", "⇒"),
+        ("\\Leftarrow", "⇐"),
+        ("\\leftrightarrow", "↔"),
+        ("\\in", "∈"),
+        ("\\notin", "∉"),
+        ("\\subset", "⊂"),
+        ("\\subseteq", "⊆"),
+        ("\\cup", "∪"),
+        ("\\cap", "∩"),
+        ("\\forall", "∀"),
+        ("\\exists", "∃"),
+        ("\\emptyset", "∅"),
+        ("\\mathbb{R}", "ℝ"),
+        ("\\mathbb{N}", "ℕ"),
+        ("\\mathbb{Z}", "ℤ"),
+        ("\\mathbb{Q}", "ℚ"),
+        ("\\mathbb{C}", "ℂ"),
+        ("\\frac", "/"),
+        ("\\left", ""),
+        ("\\right", ""),
+        ("\\{", "{"),
+        ("\\}", "}"),
+        ("\\\\", " "),
+    ];
+    for (from, to) in replacements {
+        out = out.replace(from, to);
+    }
+    // Collapse common brace groups: {x} → x
+    while let Some(start) = out.find('{') {
+        if let Some(end) = out[start..].find('}') {
+            let inner = out[start + 1..start + end].to_string();
+            out.replace_range(start..start + end + 1, &inner);
+        } else {
+            break;
+        }
+    }
+    out
 }
 
 /// Green wash for additions (Claude Code–like).
@@ -2180,20 +2402,16 @@ fn code_panel_padding_line_at(
     marker_color: Color,
     is_first_line: bool,
 ) -> Line<'static> {
+    // Fence padding: gutter rail only — no solid code-panel background.
     let mut spans = marker_spans_at(show_marker, marker_color, is_first_line);
-    let bg = code_block_bg();
-    for span in &mut spans {
-        span.style = span.style.bg(bg);
-    }
     spans.extend(code_panel_prefix_spans());
-    Line::from(spans).style(Style::default().bg(bg))
+    Line::from(spans)
 }
 
 fn code_panel_prefix_spans() -> Vec<Span<'static>> {
-    let bg = code_block_bg();
     vec![
-        Span::styled("│", Style::default().fg(ghost()).bg(bg)),
-        Span::styled("  ", Style::default().fg(text()).bg(bg)),
+        Span::styled("│", Style::default().fg(ghost())),
+        Span::styled("  ", Style::default().fg(text())),
     ]
 }
 
@@ -2202,6 +2420,40 @@ mod tests {
     use super::*;
     use crate::state::{ChatImage, ChatMessage, ChatRole};
     use serde_json::json;
+
+    #[test]
+    fn headings_use_markdown_hashes_not_tool_diamonds() {
+        let lines = render_markdown_lines("# Title\n## Section\n### Detail", 80, text(), text(), false);
+        let joined: String = lines
+            .iter()
+            .flat_map(|l| l.spans.iter().map(|s| s.content.as_ref()))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(joined.contains("# Title") || joined.contains("Title"));
+        assert!(joined.contains("##") || joined.contains("Section"));
+        assert!(!joined.contains('◆') && !joined.contains('◇'), "got:\n{joined}");
+    }
+
+    #[test]
+    fn latex_and_mermaid_fences_render_as_dsl_blocks() {
+        let md = "```latex\n\\alpha + \\beta = \\gamma\n```\n\n```mermaid\ngraph TD\n  A-->B\n```\n";
+        let lines = render_markdown_lines(md, 80, text(), text(), false);
+        let joined: String = lines
+            .iter()
+            .flat_map(|l| l.spans.iter().map(|s| s.content.as_ref()))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            joined.contains("math") || joined.contains("latex") || joined.contains("α"),
+            "expected math dsl, got:\n{joined}"
+        );
+        assert!(
+            joined.contains("mermaid") || joined.contains("graph"),
+            "expected mermaid dsl, got:\n{joined}"
+        );
+        assert!(joined.contains("α") || joined.contains("beta") || joined.contains("γ") || joined.contains("α + β"), 
+            "expected latex unicode, got:\n{joined}");
+    }
 
     #[test]
     fn split_diff_line_number_parses_fixed_gutter() {
@@ -2241,6 +2493,45 @@ mod tests {
             "raw +/- gutter chrome should be hidden, got:\n{body}"
         );
         assert!(body.contains("40") && body.contains("context"));
+    }
+
+    #[test]
+    fn numbered_diff_gutter_is_colored_without_line_wash() {
+        let md = "```diff\n-  12|removed\n+  12|added\n```\n";
+        let lines = render_markdown_lines(md, 80, text(), text(), false);
+        let mut saw_num = false;
+        let mut saw_body_tint = false;
+        for line in &lines {
+            for span in &line.spans {
+                let text = span.content.as_ref().trim();
+                if text == "12" || text.ends_with("12") && text.chars().all(|c| c.is_ascii_digit() || c == ' ') {
+                    saw_num = true;
+                    // Number gutter: green/red fg, never the add/remove wash bg.
+                    assert!(
+                        span.style.bg.is_none(),
+                        "number gutter must not be painted, span={text:?} bg={:?}",
+                        span.style.bg
+                    );
+                    assert!(
+                        span.style.fg == Some(diff_add_fg())
+                            || span.style.fg == Some(diff_remove_fg())
+                            || span.style.fg == Some(ghost()),
+                        "number should be add/remove/context color, got {:?}",
+                        span.style.fg
+                    );
+                }
+                if span.content.as_ref().contains("removed")
+                    || span.content.as_ref().contains("added")
+                {
+                    if span.style.bg == Some(diff_add_bg()) || span.style.bg == Some(diff_remove_bg())
+                    {
+                        saw_body_tint = true;
+                    }
+                }
+            }
+        }
+        assert!(saw_num, "expected numbered gutter");
+        assert!(saw_body_tint, "expected body line wash on content");
     }
 
     #[test]

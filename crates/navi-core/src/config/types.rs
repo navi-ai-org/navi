@@ -330,10 +330,11 @@ pub enum PermissionMode {
     Restricted,
     /// Reads and edits are allowed; commands and custom tools still require approval.
     AcceptEdits,
-    /// Reads, edits, and commands are allowed. Commands in `guarded_commands`
-    /// (e.g. `git`) still require approval.
+    /// Reads, edits, and commands are allowed. Destructive commands matching
+    /// `guarded_commands` (e.g. destructive `git` ops) still require approval.
     Auto,
     /// Reads, edits, and commands are allowed unless blocked by safety checks/rules.
+    /// Guarded commands are also auto-approved in this mode.
     Yolo,
 }
 
@@ -369,7 +370,9 @@ pub struct SecurityConfig {
     pub allow_external_plugins: bool,
     /// Commands that are always denied (e.g. `"rm -rf /"`).
     pub blocked_commands: Vec<String>,
-    /// Commands that always require approval even in Auto/YOLO mode (e.g. `"git"`).
+    /// Commands that require approval outside YOLO mode. For `git`, only
+    /// destructive subcommands (push/rm/reset/rebase/...) are guarded;
+    /// common operations like add/commit/status are not.
     #[serde(default = "default_guarded_commands")]
     pub guarded_commands: Vec<String>,
     /// Paths that are always denied for reads. Supports glob patterns and
