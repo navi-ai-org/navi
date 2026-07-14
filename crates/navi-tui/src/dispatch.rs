@@ -367,12 +367,15 @@ fn handle_agent_event(app: &mut TuiApp, event: AgentEvent) {
         }
         AgentEvent::ToolCompleted(result) => {
             app.running_tools.remove(&result.invocation_id);
-            app.subagent_activity.remove(&result.invocation_id);
+            let still_running_background = tool_result_is_background_running(&result);
+            // Background subagents keep emitting activity after the spawn tool returns.
+            if !still_running_background {
+                app.subagent_activity.remove(&result.invocation_id);
+            }
             if let Some(invocation) = app.tool_invocations.get(&result.invocation_id).cloned() {
                 // Check if this is a background bash command that's still running
                 let is_background_running = invocation.tool_name == "bash"
-                    && result.output.get("background").and_then(|v| v.as_bool()) == Some(true)
-                    && result.output.get("status").and_then(|v| v.as_str()) == Some("running");
+                    && still_running_background;
                 if invocation.tool_name == "bash"
                     && result.output.get("background").and_then(|v| v.as_bool()) == Some(true)
                     && let Some(snapshot) = BackgroundCommandSnapshot::from_json(&result.output)
@@ -409,13 +412,19 @@ fn handle_agent_event(app: &mut TuiApp, event: AgentEvent) {
             }
             app.events.push(AgentEvent::ToolCompleted(result));
             update_active_assistant_status(app);
+            app.chat_render_cache.borrow_mut().signature_hash = 0;
         }
         AgentEvent::SubagentActivity {
             invocation_id,
             message,
         } => {
-            if app.running_tools.contains_key(&invocation_id) {
+            // Accept live progress for in-flight and background-spawned subagents.
+            if app.running_tools.contains_key(&invocation_id)
+                || app.tool_invocations.contains_key(&invocation_id)
+                || app.subagent_transcripts.contains_key(&invocation_id)
+            {
                 app.subagent_activity.insert(invocation_id, message);
+                app.chat_render_cache.borrow_mut().signature_hash = 0;
             }
         }
         AgentEvent::SubagentTranscript {
@@ -802,6 +811,17 @@ fn subagent_title(invocation: &navi_sdk::ToolInvocation) -> String {
         .map(|text| text.split_whitespace().collect::<Vec<_>>().join(" "))
         .filter(|text| !text.is_empty())
         .unwrap_or_else(|| "Subagent".to_string())
+}
+
+fn tool_result_is_background_running(result: &navi_sdk::ToolResult) -> bool {
+    result.output.get("background").and_then(|v| v.as_bool()) == Some(true)
+        && result
+            .output
+            .get("status")
+            .and_then(|v| v.as_str())
+            .is_some_and(|status| {
+                status.eq_ignore_ascii_case("running") || status.eq_ignore_ascii_case("pending")
+            })
 }
 
 fn is_turn_cancelled_error(message: &str) -> bool {

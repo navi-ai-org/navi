@@ -2996,6 +2996,83 @@ fn subagent_activity_replaces_single_status_without_context_leak() {
 }
 
 #[test]
+fn background_subagent_keeps_activity_after_spawn_completes() {
+    let mut app = test_app("");
+    handle_async_event(
+        &mut app,
+        AsyncEvent::Agent(AgentEvent::ToolRequested(ToolInvocation {
+            id: "subagent-bg-1".to_string(),
+            tool_name: "subagent".to_string(),
+            input: serde_json::json!({
+                "description": "Explore runtime events",
+                "prompt": "Inspect subagent progress wiring",
+                "background": true,
+            }),
+        })),
+    );
+    handle_async_event(
+        &mut app,
+        AsyncEvent::Agent(AgentEvent::ToolCompleted(ToolResult {
+            invocation_id: "subagent-bg-1".to_string(),
+            ok: true,
+            output: serde_json::json!({
+                "task_id": "bg_1",
+                "background": true,
+                "status": "running",
+                "action": "poll",
+                "elapsed_ms": 12,
+                "message": "Subagent spawned in background.",
+            }),
+        })),
+    );
+
+    assert!(!app.running_tools.contains_key("subagent-bg-1"));
+
+    handle_async_event(
+        &mut app,
+        AsyncEvent::Agent(AgentEvent::SubagentActivity {
+            invocation_id: "subagent-bg-1".to_string(),
+            message: "Read crates/navi-core/src/event.rs".to_string(),
+        }),
+    );
+    handle_async_event(
+        &mut app,
+        AsyncEvent::Agent(AgentEvent::SubagentTranscript {
+            invocation_id: "subagent-bg-1".to_string(),
+            item: SubagentTranscriptItem {
+                kind: SubagentTranscriptKind::ToolRequested,
+                title: "Read crates/navi-core/src/event.rs".to_string(),
+                detail: None,
+                ok: None,
+            },
+        }),
+    );
+
+    assert_eq!(
+        app.subagent_activity.get("subagent-bg-1").map(String::as_str),
+        Some("Read crates/navi-core/src/event.rs")
+    );
+
+    let text = build_chat_lines(&mut app, 96)
+        .iter()
+        .map(line_text)
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(text.contains("Read crates/navi-core/src/event.rs"));
+    assert!(text.contains("bg_1") || text.contains("Subagent"));
+
+    app.open_subagent_view("subagent-bg-1");
+    let backend = TestBackend::new(96, 24);
+    let mut terminal = Terminal::new(backend).expect("terminal");
+    terminal
+        .draw(|frame| crate::view::render(frame, &mut app))
+        .expect("draw");
+    let view = terminal_buffer_text(&terminal);
+    assert!(view.contains("Read crates/navi-core/src/event.rs"));
+    assert!(view.contains("Parent up"));
+}
+
+#[test]
 fn subagent_view_renders_transcript_and_footer() {
     let mut app = test_app("");
     handle_async_event(
