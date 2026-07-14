@@ -341,16 +341,9 @@ impl NaviEngine {
                 runtime_components.clone(),
             );
             executor.register_tool(Arc::new(subagent));
+            // Deterministic BM25+symbol search — no nested model turn.
             executor.register_tool(Arc::new(navi_core::RepoExploreTool::new(
-                weak_exec.clone(),
-                shared_provider.clone(),
                 project_dir.clone(),
-                loaded_config.data_dir.clone(),
-                shared_model.clone(),
-                loaded_config.config.harness.clone(),
-                shared_config.clone(),
-                prompt_cache.clone(),
-                runtime_components.clone(),
             )));
             executor
         });

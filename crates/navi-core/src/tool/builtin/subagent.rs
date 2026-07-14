@@ -90,10 +90,9 @@ impl Default for ApprovalMode {
 }
 
 const MAX_BACKGROUND_SUBAGENTS: usize = 8;
-/// Nested agent spawners must not be available inside subagents. Without this,
-/// explorers/verifiers recursively call `repo_explore`/`subagent` and create
-/// multi-minute tool storms (see logs: hundreds of parallel nested explores).
-const NESTED_AGENT_TOOLS: &[&str] = &["subagent", "repo_explore", "branch_race"];
+/// Nested agent spawners must not be available inside subagents.
+/// `repo_explore` is now BM25+symbols (cheap) and is allowed for subagents.
+const NESTED_AGENT_TOOLS: &[&str] = &["subagent", "branch_race"];
 /// Tool names considered to be "write" operations for ReadOnly mode.
 const READONLY_DENIED_TOOLS: &[&str] = &[
     "write",
@@ -1394,8 +1393,9 @@ mod tests {
 
         assert!(allowed.contains(&"read_file".to_string()));
         assert!(allowed.contains(&"bash".to_string()));
+        // repo_explore is BM25 (cheap) — allowed inside subagents.
+        assert!(allowed.contains(&"repo_explore".to_string()));
         assert!(!allowed.contains(&"subagent".to_string()));
-        assert!(!allowed.contains(&"repo_explore".to_string()));
         assert!(!allowed.contains(&"branch_race".to_string()));
     }
 

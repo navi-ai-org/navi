@@ -486,13 +486,17 @@ static LOOKUP: LazyLock<std::collections::HashMap<&'static str, ToolMetadata>> =
             ToolMetadata {
                 namespace: "repo".to_string(),
                 risk: crate::tool::ToolRisk::Low,
-                // Nested model turn — treat as exclusive so the parent cannot
-                // launch parallel explore storms that thrash provider quotas.
+                // Deterministic BM25 + symbol index (no nested model).
+                // Shared-safe: read-only index walk.
                 is_read_only: true,
-                is_concurrency_safe: false,
-                exposure: crate::tool::ToolExposure::Deferred,
-                capabilities: vec!["repo.read".to_string(), "explore.structure".to_string()],
-                tags: vec!["explore", "structure"]
+                is_concurrency_safe: true,
+                exposure: crate::tool::ToolExposure::Direct,
+                capabilities: vec![
+                    "repo.read".to_string(),
+                    "explore.structure".to_string(),
+                    "search.bm25".to_string(),
+                ],
+                tags: vec!["explore", "search", "bm25", "structure"]
                     .into_iter()
                     .map(|s| s.to_string())
                     .collect(),
@@ -666,8 +670,11 @@ mod tests {
         let meta = builtin_metadata("sleep", ToolKind::Command);
         assert_eq!(meta.exposure, crate::tool::ToolExposure::Deferred);
 
+        // repo_explore is a first-class BM25 search tool (Direct).
         let meta2 = builtin_metadata("repo_explore", ToolKind::Read);
-        assert_eq!(meta2.exposure, crate::tool::ToolExposure::Deferred);
+        assert_eq!(meta2.exposure, crate::tool::ToolExposure::Direct);
+        assert!(meta2.is_read_only);
+        assert!(meta2.is_concurrency_safe);
 
         let meta3 = builtin_metadata("wait", ToolKind::Read);
         assert_eq!(meta3.exposure, crate::tool::ToolExposure::Deferred);
