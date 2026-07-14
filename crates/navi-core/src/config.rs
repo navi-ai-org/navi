@@ -427,8 +427,8 @@ deny_tool_regex = ["^danger_"]
 
         assert!(default_request_options_for("nvidia").is_none());
 
-        let hyper = default_request_options_for("charm-hyper").expect("charm-hyper defaults");
-        assert_eq!(hyper.prompt_cache_key.as_deref(), Some("charm-hyper"));
+        // Crush-compatible: no body-level prompt_cache_key for Hyper.
+        assert!(default_request_options_for("charm-hyper").is_none());
     }
 
     #[test]

@@ -3,8 +3,7 @@ use crate::types::{OpenAiApiKind, StreamRoute};
 use navi_core::{ModelRequest, ProviderId};
 use reqwest::header::USER_AGENT;
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE, HeaderMap, HeaderValue};
-use std::collections::hash_map::DefaultHasher;
-use std::hash::{Hash, Hasher};
+use sha2::{Digest, Sha256};
 
 // ─── Provider base URLs ───────────────────────────────────────────────────────
 
@@ -538,12 +537,22 @@ pub(crate) struct CharmHyperBehavior;
 
 const HYPER_BASE_URL: &str = "https://hyper.charm.land/v1";
 
-/// Opaque, stable token for Hyper session affinity (Crush uses a session hash).
+/// Opaque, process-stable token for Hyper session affinity.
+///
+/// Crush uses XXH3 of the session UUID. We use SHA-256 of the session id and
+/// emit the first 16 bytes as hex so the value is deterministic across NAVI
+/// restarts (unlike `DefaultHasher`, which is not stable across processes).
 pub(crate) fn hyper_session_affinity_token(session_id: &str) -> String {
-    let mut hasher = DefaultHasher::new();
-    session_id.hash(&mut hasher);
-    format!("{:016x}", hasher.finish())
+    let digest = Sha256::digest(session_id.as_bytes());
+    let mut out = String::with_capacity(32);
+    for byte in digest.iter().take(16) {
+        out.push(HEX[(byte >> 4) as usize] as char);
+        out.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+    out
 }
+
+const HEX: &[u8; 16] = b"0123456789abcdef";
 
 fn insert_hyper_session_headers(
     headers: &mut HeaderMap,
@@ -771,6 +780,16 @@ mod tests {
         assert_ne!(
             hyper_session_affinity_token("session-abc-123"),
             hyper_session_affinity_token("session-other")
+        );
+        // Token is process-stable (SHA-256 prefix), not DefaultHasher.
+        assert_eq!(
+            hyper_session_affinity_token("session-abc-123").len(),
+            32
+        );
+        assert!(
+            hyper_session_affinity_token("session-abc-123")
+                .chars()
+                .all(|c| c.is_ascii_hexdigit())
         );
     }
 
