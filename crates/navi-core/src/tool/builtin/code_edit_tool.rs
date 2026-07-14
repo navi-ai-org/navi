@@ -105,14 +105,17 @@ fn run_replace(policy: &SecurityPolicy, input: &Value) -> Result<Value> {
     fs::write(&target.path, &edit.content)
         .with_context(|| format!("failed to write {}", target.path.display()))?;
 
-    Ok(json!({
+    let path = relative_path(policy, &target.path);
+    let mut output = json!({
         "schema_version": helpers::SPECIALIZED_SCHEMA_VERSION,
         "action": "replace",
-        "path": relative_path(policy, &target.path),
+        "path": path,
         "edits": edit.edits,
         "start_line": edit.start_line,
         "end_line": edit.end_line,
-    }))
+    });
+    attach_code_edit_display_diff(&mut output, &path, &target.source, &edit.content);
+    Ok(output)
 }
 
 fn run_insert(policy: &SecurityPolicy, input: &Value, position: InsertPosition) -> Result<Value> {
@@ -139,14 +142,17 @@ fn run_insert(policy: &SecurityPolicy, input: &Value, position: InsertPosition) 
         InsertPosition::After => "insert-after",
     };
 
-    Ok(json!({
+    let path = relative_path(policy, &target.path);
+    let mut output = json!({
         "schema_version": helpers::SPECIALIZED_SCHEMA_VERSION,
         "action": action_label,
-        "path": relative_path(policy, &target.path),
+        "path": path,
         "edits": edit.edits,
         "start_line": edit.start_line,
         "end_line": edit.end_line,
-    }))
+    });
+    attach_code_edit_display_diff(&mut output, &path, &target.source, &edit.content);
+    Ok(output)
 }
 
 struct SymbolTarget {
@@ -303,6 +309,20 @@ fn run_rename(policy: &SecurityPolicy, input: &Value) -> Result<Value> {
 // ---------------------------------------------------------------------------
 // Helper functions — copied from code.rs
 // ---------------------------------------------------------------------------
+
+/// Attach a numbered display diff (real file line numbers) for TUI rendering.
+fn attach_code_edit_display_diff(output: &mut Value, path: &str, old: &str, new: &str) {
+    let diff = super::write_tool::build_write_display_diff(path, Some(old), new);
+    let (added, removed) = super::write_tool::count_diff_add_remove(&diff);
+    let Value::Object(obj) = output else {
+        return;
+    };
+    obj.insert("lines_added".into(), json!(added));
+    obj.insert("lines_removed".into(), json!(removed));
+    if !diff.is_empty() {
+        obj.insert("diff".into(), Value::String(diff));
+    }
+}
 
 fn write_all_with_rollback(planned: &[(PathBuf, String, SourceEdit)]) -> Result<()> {
     let mut written = Vec::new();

@@ -9,7 +9,9 @@ use navi_sdk::{
 use crate::chat::refresh_system_context;
 use crate::dispatch::AsyncEvent;
 use crate::keybindings::{close_active_modal, close_all_modals};
-use crate::runtime::{build_engine, provider_supports_oauth, selected_model_runtime_available};
+use crate::runtime::{
+    build_engine, provider_supports_oauth, selected_model_runtime_available, spawn_runtime_task,
+};
 use crate::ui::SelectListState;
 use crate::{
     TuiApp,
@@ -114,6 +116,17 @@ pub(crate) fn apply_model_selection(app: &mut TuiApp, model_index: usize) {
                     "Free model selected. NAVI will use your Zen key when configured.",
                 );
             }
+            // Best-effort: pin the live session onto the new model before we
+            // rebuild the engine. If rebuild succeeds the session is recreated
+            // on first turn with the new model; if rebuild fails, this keeps
+            // the existing runtime from answering under the old model.
+            let session_id = app.session_id.as_str().to_string();
+            let provider_id = model.provider_id.clone();
+            let model_name = model.name.clone();
+            let engine = app.engine();
+            spawn_runtime_task(async move {
+                let _ = engine.set_model(&session_id, &provider_id, &model_name).await;
+            });
             rebuild_provider(app);
         }
         Err(err) => show_notification(app, "Model", format!("Failed to select model: {err:#}")),

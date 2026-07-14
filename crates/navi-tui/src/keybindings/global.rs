@@ -174,16 +174,19 @@ pub(super) fn route_global_key(
     }
 
     if matches!(code, KeyCode::Enter) {
-        // Ctrl+Enter: reopen question or send prompt (chat only when not in a
-        // text-entry modal that would want the binding for itself).
+        // Ctrl+Enter: reopen question or send prompt — only in chat modes.
+        // Leave other modes (e.g. QueuedMessageEdit saves with Ctrl+Enter)
+        // to their own handlers.
+        if !matches!(
+            app.mode,
+            crate::state::Mode::Normal | crate::state::Mode::Setup
+        ) {
+            return KeyOutcome::Ignored;
+        }
         if !app.pending_questions.is_empty() {
             return super::apply_ui_effect(app, UiEffect::ReplaceModal(ModalKind::Question));
         }
-        if matches!(
-            app.mode,
-            crate::state::Mode::Normal | crate::state::Mode::Setup
-        ) && (!app.input.trim().is_empty() || !app.pending_images.is_empty())
-        {
+        if !app.input.trim().is_empty() || !app.pending_images.is_empty() {
             crate::chat::submit_message(app);
         }
         return KeyOutcome::Handled;

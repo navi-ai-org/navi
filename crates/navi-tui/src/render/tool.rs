@@ -127,8 +127,8 @@ pub(crate) fn tool_compact_text(invocation: &ToolInvocation, result: &ToolResult
         // ── Existing (kept) ──────────────────────────────────────────────
         "read" | "read_file" | "view_file" => read_file_summary(invocation, result),
         "write_file" => write_file_summary(invocation, result),
-        "apply_patch" => apply_patch_summary(invocation),
-        "write" if has_patch_input(invocation) => apply_patch_summary(invocation),
+        "apply_patch" => apply_patch_summary(invocation, result),
+        "write" if has_patch_input(invocation) => apply_patch_summary(invocation, result),
         // Direct write (path + content)
         "write" => write_file_summary(invocation, result),
         "bash" => bash_summary(invocation, result),
@@ -265,11 +265,22 @@ fn formatted_tool_output(invocation: &ToolInvocation, result: &ToolResult) -> Op
     } else if is_patch_invocation(invocation) {
         // Header card already has "Edited path (+N -M)". Body is clean ```diff only
         // (no "Edited…" chrome, no "Patch:" label, no *** Begin/End Patch / Update File).
-        let patches = patch_inputs(invocation);
-        if patches.is_empty() {
-            content.push_str("Applied patch successfully\n");
+        // Prefer the engine-provided numbered display diff (real file line numbers)
+        // over the raw model patch (often bare `@@` with no numbers).
+        if let Some(diff) = result
+            .output
+            .get("diff")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+        {
+            append_diff_fence(diff, &mut content);
         } else {
-            append_patch_bodies(&patches, &mut content);
+            let patches = patch_inputs(invocation);
+            if patches.is_empty() {
+                content.push_str("Applied patch successfully\n");
+            } else {
+                append_patch_bodies(&patches, &mut content);
+            }
         }
         // Any apply_patch tool stdout/stderr: plain streams, no Stdout:/``` chrome.
         if obj.contains_key("stdout") || obj.contains_key("stderr") {
@@ -341,6 +352,10 @@ fn formatted_tool_output(invocation: &ToolInvocation, result: &ToolResult) -> Op
     } else if invocation.tool_name == "plan" {
         // Human checklist — never dump the full plan JSON into chat.
         content.push_str(&plan_body_content(invocation, result));
+    } else if invocation.tool_name == "verifier" {
+        // Header card already has "Verify <summary>". Body is plain command output
+        // (real newlines), not a ```json dump of stdout with escaped \n.
+        render_verifier_output(invocation, result, &mut content);
     } else if matches!(
         invocation.tool_name.as_str(),
         "repo_explore"
@@ -359,7 +374,6 @@ fn formatted_tool_output(invocation: &ToolInvocation, result: &ToolResult) -> Op
             | "inspect_image"
             | "new_context_window"
             | "tool_search"
-            | "verifier"
             | "runtime_info"
             | "branch_race_start"
             | "history_ops"
@@ -575,7 +589,86 @@ fn render_build_runner_output(result: &ToolResult, content: &mut String) {
     }
     render_diagnostic_list("Errors", result.output.get("errors"), content);
     render_diagnostic_list("Warnings", result.output.get("warnings"), content);
+    // Prefer plain log streams over dumping the full structured payload as JSON.
+    if let Some(obj) = result.output.as_object() {
+        if obj.contains_key("stdout") || obj.contains_key("stderr") || obj.contains_key("raw_output")
+        {
+            if let Some(raw) = obj.get("raw_output").and_then(|v| v.as_str()) {
+                append_plain_stream(content, raw);
+            } else {
+                append_shell_streams(obj, content);
+            }
+            return;
+        }
+    }
+    // No stream body — keep a compact JSON fallback for unexpected shapes.
     append_json_section(content, "Output", &result.output);
+}
+
+/// Verifier body: real multi-line stdout/stderr (like bash), never ```json with `\n`.
+fn render_verifier_output(
+    invocation: &ToolInvocation,
+    result: &ToolResult,
+    content: &mut String,
+) {
+    let action = invocation
+        .input
+        .get("action")
+        .and_then(|v| v.as_str())
+        .unwrap_or("run");
+
+    match action {
+        "list" => {
+            if let Some(results) = result.output.get("results").and_then(|v| v.as_array()) {
+                for item in results {
+                    let key = item.get("key").and_then(|v| v.as_str()).unwrap_or("?");
+                    let status = item
+                        .get("status")
+                        .or_else(|| item.get("result").and_then(|r| r.get("status")))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("?");
+                    content.push_str(&format!("- {key}: {status}\n"));
+                }
+            } else if let Some(keys) = result.output.get("keys").and_then(|v| v.as_array()) {
+                for key in keys {
+                    if let Some(k) = key.as_str() {
+                        content.push_str(&format!("- {k}\n"));
+                    }
+                }
+            } else {
+                append_json_section(content, "Output", &result.output);
+            }
+        }
+        "status" | "run" | _ => {
+            // Card already shows the pass/fail summary. Body = command streams only.
+            if let Some(obj) = result.output.as_object() {
+                let has_streams = obj
+                    .get("stdout")
+                    .and_then(|v| v.as_str())
+                    .is_some_and(|s| !s.is_empty())
+                    || obj
+                        .get("stderr")
+                        .and_then(|v| v.as_str())
+                        .is_some_and(|s| !s.is_empty());
+                if has_streams || obj.contains_key("exit_code") {
+                    append_shell_streams(obj, content);
+                    return;
+                }
+            }
+            // Status-only / empty streams: one plain line, no JSON chrome.
+            if let Some(summary) = result.output.get("summary").and_then(|v| v.as_str()) {
+                content.push_str(summary);
+                content.push('\n');
+            } else if let Some(status) = result.output.get("status").and_then(|v| v.as_str()) {
+                content.push_str(status);
+                content.push('\n');
+            } else if let Some(error) = result.output.get("error").and_then(|v| v.as_str()) {
+                content.push_str(&format!("Error: {error}\n"));
+            } else {
+                append_json_section(content, "Output", &result.output);
+            }
+        }
+    }
 }
 
 fn render_named_structured_output(title: &str, result: &ToolResult, content: &mut String) {
@@ -585,6 +678,13 @@ fn render_named_structured_output(title: &str, result: &ToolResult, content: &mu
     } else if let Some(summary) = result.output.get("summary").and_then(|v| v.as_str()) {
         content.push_str(summary);
         content.push_str("\n\n");
+    }
+    // Tools that carry command streams should never dump them as escaped JSON.
+    if let Some(obj) = result.output.as_object()
+        && (obj.contains_key("stdout") || obj.contains_key("stderr"))
+    {
+        append_shell_streams(obj, content);
+        return;
     }
     append_json_section(content, title, &result.output);
 }
@@ -834,7 +934,18 @@ fn is_patch_invocation(invocation: &ToolInvocation) -> bool {
         || (invocation.tool_name == "write" && has_patch_input(invocation))
 }
 
-fn apply_patch_summary(invocation: &ToolInvocation) -> String {
+fn apply_patch_summary(invocation: &ToolInvocation, result: &ToolResult) -> String {
+    // Prefer engine display diff for path + line counts (edits / post-apply snapshot).
+    if let Some(diff) = result
+        .output
+        .get("diff")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+    {
+        if let Some(summary) = patch_edit_summaries(diff).into_iter().next() {
+            return summary;
+        }
+    }
     let Some(patch) = first_patch_input(invocation) else {
         return if invocation.tool_name == "write" {
             "Write patch".to_string()
@@ -3028,6 +3139,60 @@ mod tests {
     }
 
     #[test]
+    fn verifier_body_renders_plain_stdout_not_json_escape() {
+        // Regression: verifier used to dump the whole VerifierResult as ```json
+        // with stdout as a single string full of literal `\n` escapes.
+        let content = tool_full_content(
+            &invocation(
+                "verifier",
+                json!({
+                    "action": "run",
+                    "verifier": "test",
+                    "command": "nimble test 2>&1 | tail -30"
+                }),
+            ),
+            &ok_result(json!({
+                "command": "nimble test 2>&1 | tail -30",
+                "duration_ms": 2138,
+                "exit_code": 0,
+                "key": "test:nimble test 2>&1 | tail -30",
+                "schema_version": 1,
+                "status": "pass",
+                "stderr": "",
+                "stdout": "   Info: using nim for compilation\n Compiling tests\n[OK] AST node construction\n[OK] JSON DSL parser\nExecution finished\n",
+                "summary": "nimble test 2>&1 | tail -30 passed (2138 ms)"
+            })),
+        );
+
+        // Header card still has the verify summary.
+        assert!(
+            content.contains("Verify") || content.contains("passed"),
+            "expected verify summary on card, got:\n{content}"
+        );
+        // Body must be real multi-line text, not a JSON blob.
+        assert!(
+            content.contains("[OK] AST node construction\n"),
+            "expected real newlines in stdout body, got:\n{content}"
+        );
+        assert!(
+            content.contains("Execution finished\n"),
+            "expected trailing stdout lines, got:\n{content}"
+        );
+        assert!(
+            !content.contains("```json"),
+            "verifier body must not dump ```json, got:\n{content}"
+        );
+        assert!(
+            !content.contains("\\n Compiling") && !content.contains("\"stdout\":"),
+            "stdout must not appear as a JSON-escaped string, got:\n{content}"
+        );
+        assert!(
+            !content.contains("schema_version") && !content.contains("\"duration_ms\""),
+            "metadata chrome belongs out of the body, got:\n{content}"
+        );
+    }
+
+    #[test]
     fn unknown_tool_full_view_includes_input_and_output_json() {
         let content = tool_full_content(
             &invocation("plugin__demo__lookup", json!({ "query": "abc" })),
@@ -3258,6 +3423,7 @@ ctx\n\
 
     #[test]
     fn write_edits_render_as_diff_body() {
+        // Without engine `diff`, fall back to synthesised bare search/replace body.
         let content = tool_full_content(
             &invocation(
                 "write",
@@ -3283,6 +3449,90 @@ ctx\n\
         );
         assert!(content.contains("-fn old() {}"));
         assert!(content.contains("+fn new() {}"));
+    }
+
+    #[test]
+    fn write_edits_prefer_engine_numbered_display_diff() {
+        // Engine attaches a real-line-number display diff after applying edits.
+        let content = tool_full_content(
+            &invocation(
+                "write",
+                json!({
+                    "edits": [{
+                        "path": "AGENTS.md",
+                        "search": "Pedido",
+                        "replace": "Primary"
+                    }]
+                }),
+            ),
+            &ok_result(json!({
+                "method": "search_replace",
+                "files_changed": ["AGENTS.md"],
+                "edits_applied": 1,
+                "lines_added": 2,
+                "lines_removed": 2,
+                "diff": "*** Update File: AGENTS.md\n\
+@@ -46,2 +46,2 @@\n\
+-1. **Pedido e Intenção Primária** – all explicit user requests\n\
+-2. **Conceitos Técnicos-Chave** – technologies and frameworks discussed\n\
++1. **Primary Request and Intent** – all explicit user requests\n\
++2. **Key Technical Concepts** – technologies and frameworks discussed\n"
+            })),
+        );
+
+        assert!(content.contains("```diff\n"));
+        assert!(
+            !content.contains("*** Update File:"),
+            "path chrome belongs on the card, got:\n{content}"
+        );
+        // Claude Code–style gutter: `{sign}{num:>4}|{content}`
+        assert!(
+            content.contains("-  46|1. **Pedido e Intenção Primária**"),
+            "expected numbered delete line 46, got:\n{content}"
+        );
+        assert!(
+            content.contains("+  46|1. **Primary Request and Intent**"),
+            "expected numbered add line 46, got:\n{content}"
+        );
+        assert!(
+            content.contains("-  47|2. **Conceitos Técnicos-Chave**"),
+            "expected numbered delete line 47, got:\n{content}"
+        );
+        assert!(
+            content.contains("+  47|2. **Key Technical Concepts**"),
+            "expected numbered add line 47, got:\n{content}"
+        );
+    }
+
+    #[test]
+    fn apply_patch_prefers_engine_numbered_display_diff() {
+        let content = tool_full_content(
+            &invocation(
+                "apply_patch",
+                json!({
+                    "patch": "*** Begin Patch\n*** Update File: a.rs\n@@\n-old\n+new\n*** End Patch"
+                }),
+            ),
+            &ok_result(json!({
+                "method": "structured",
+                "patches_applied": 1,
+                "files_patched": 1,
+                "lines_added": 1,
+                "lines_removed": 1,
+                "diff": "*** Update File: a.rs\n@@ -10,1 +10,1 @@\n-old line\n+new line\n"
+            })),
+        );
+
+        assert!(content.contains("```diff\n"));
+        // Prefer engine display diff (numbered) over bare model patch.
+        assert!(
+            content.contains("-  10|old line") && content.contains("+  10|new line"),
+            "expected engine-numbered body, got:\n{content}"
+        );
+        assert!(
+            !content.contains("-old\n+new") || content.contains("|old line"),
+            "should not fall back to bare unnumbered model patch when diff is present"
+        );
     }
 
     #[test]

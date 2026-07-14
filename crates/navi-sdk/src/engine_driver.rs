@@ -83,6 +83,9 @@ pub trait EngineDriver: Send + Sync {
     /// Take a persistence snapshot of the session.
     async fn snapshot_session(&self, session_id: &str) -> Result<SessionSnapshot>;
 
+    /// Change the model/provider used by an active session for subsequent turns.
+    async fn set_model(&self, session_id: &str, provider: &str, model: &str) -> Result<()>;
+
     /// Close an active in-memory session. Returns `true` when a session was removed.
     async fn close_session(&self, session_id: &str) -> Result<bool>;
 
@@ -264,6 +267,10 @@ impl EngineDriver for crate::NaviEngine {
 
     async fn snapshot_session(&self, session_id: &str) -> Result<SessionSnapshot> {
         crate::NaviEngine::snapshot_session(self, session_id).await
+    }
+
+    async fn set_model(&self, session_id: &str, provider: &str, model: &str) -> Result<()> {
+        crate::NaviEngine::set_model(self, session_id, provider, model).await
     }
 
     async fn close_session(&self, session_id: &str) -> Result<bool> {

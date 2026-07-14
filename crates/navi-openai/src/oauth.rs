@@ -241,8 +241,12 @@ pub const HYPERCREDIT_USD: f64 = 0.05;
 
 const HYPER_DEFAULT_BASE_URL: &str = "https://hyper.charm.land";
 
-/// Last Hypercredit balance extracted from stream `usage.remaining.hypercredits`
-/// (Crush parity). Prefer this over a separate HTTP call when present.
+/// Last known Hypercredit balance (process-wide).
+///
+/// Updated from stream `usage.remaining.hypercredits` and from successful
+/// `GET /v1/credits` responses. Kept until a newer value arrives so the Usage
+/// modal / footer stay correct across multiple refreshes (do **not** clear on
+/// read — concurrent open + after-turn fetch used to race on a one-shot take).
 static LAST_KNOWN_HYPERCREDIT_BALANCE: std::sync::Mutex<Option<f64>> =
     std::sync::Mutex::new(None);
 
@@ -306,16 +310,44 @@ pub fn hyper_base_url() -> String {
 }
 
 /// Store a Hypercredit balance extracted from stream usage metadata.
+///
+/// Non-authoritative (default): never clobber a known **positive** balance with
+/// `0`. Charm Hyper often emits intermediate usage chunks with
+/// `remaining.hypercredits: 0` (or empty remaining) before the final sample;
+/// treating those as truth made the footer flash `◆ 0` every few turns.
 pub fn set_hypercredit_balance(balance: f64) {
+    set_hypercredit_balance_inner(balance, /*authoritative*/ false);
+}
+
+/// Store a Hypercredit balance from a trusted source (`GET /v1/credits`).
+///
+/// Unlike [`set_hypercredit_balance`], this **may** set the balance to `0`
+/// (account truly depleted).
+pub fn set_hypercredit_balance_authoritative(balance: f64) {
+    set_hypercredit_balance_inner(balance, /*authoritative*/ true);
+}
+
+fn set_hypercredit_balance_inner(balance: f64, authoritative: bool) {
     if !balance.is_finite() || balance < 0.0 {
         return;
     }
     with_hypercredit_balance_lock(|slot| {
+        if !authoritative && balance == 0.0 {
+            if let Some(prev) = *slot
+                && prev > 0.0
+            {
+                // Keep last known positive; ignore stream zero.
+                return;
+            }
+        }
         *slot = Some(balance);
     });
 }
 
-/// Take and clear the most recent stream-extracted Hypercredit balance.
+/// Take and clear the cached Hypercredit balance (tests / rare reset paths).
+///
+/// Production usage reporting should prefer [`peek_hypercredit_balance`] so
+/// concurrent modal/after-turn refreshes keep seeing the last known balance.
 pub fn take_hypercredit_balance() -> Option<f64> {
     with_hypercredit_balance_lock(|slot| slot.take())
 }
@@ -329,6 +361,9 @@ pub fn peek_hypercredit_balance() -> Option<f64> {
 ///
 /// Charm Hyper includes remaining prepaid credits in chat-completions usage:
 /// `{ "remaining": { "hypercredits": 1234 } }`.
+///
+/// Prefer the Hyper-specific keys first. A bare `credits` field is only used
+/// when no hypercredits key is present (some gateways alias the name).
 pub fn extract_hypercredit_balance_from_usage(usage: &Value) -> Option<f64> {
     let remaining = usage
         .get("remaining")
@@ -338,8 +373,11 @@ pub fn extract_hypercredit_balance_from_usage(usage: &Value) -> Option<f64> {
         .and_then(|r| {
             r.get("hypercredits")
                 .or_else(|| r.get("hyper_credits"))
-                .or_else(|| r.get("credits"))
+                // Prefer explicit remaining keys over a bare "credits" which
+                // some payloads use for "credits spent this request" (= 0 mid-stream).
                 .or_else(|| r.get("balance"))
+                .or_else(|| r.get("remaining"))
+                .or_else(|| r.get("credits"))
         })
         .and_then(json_number_as_f64)
         .or_else(|| {
@@ -348,12 +386,13 @@ pub fn extract_hypercredit_balance_from_usage(usage: &Value) -> Option<f64> {
                 .or_else(|| usage.get("remaining_hypercredits"))
                 .and_then(json_number_as_f64)
         })?;
-    if balance > 0.0 || balance == 0.0 {
-        set_hypercredit_balance(balance);
-        Some(balance)
-    } else {
-        None
+    if !balance.is_finite() || balance < 0.0 {
+        return None;
     }
+    // Stream path is non-authoritative (sticky against zero clobber).
+    set_hypercredit_balance(balance);
+    // Return what is actually cached after sticky policy (may keep previous >0).
+    peek_hypercredit_balance()
 }
 
 fn json_number_as_f64(value: &Value) -> Option<f64> {
@@ -368,14 +407,31 @@ fn json_number_as_f64(value: &Value) -> Option<f64> {
 pub async fn charm_hyper_credits_report(
     api_key: &str,
 ) -> std::result::Result<CharmHyperCreditsReport, String> {
-    // Crush: prefer balance already extracted from the last stream usage payload.
-    if let Some(balance) = take_hypercredit_balance() {
-        return Ok(CharmHyperCreditsReport {
-            balance,
-            source: Some("stream-usage".into()),
-        });
+    // Prefer live HTTP so open/R/after-turn always refresh the true balance.
+    // On network/API failure, fall back to the last stream/HTTP sample so the
+    // Usage modal never flashes "no credits" when we already know a balance.
+    match fetch_hyper_credits_http(api_key).await {
+        Ok(balance) => {
+            // HTTP is authoritative — including a real zero balance.
+            set_hypercredit_balance_authoritative(balance);
+            Ok(CharmHyperCreditsReport {
+                balance,
+                source: Some("credits-api".into()),
+            })
+        }
+        Err(http_err) => {
+            if let Some(balance) = peek_hypercredit_balance() {
+                return Ok(CharmHyperCreditsReport {
+                    balance,
+                    source: Some("stream-usage".into()),
+                });
+            }
+            Err(http_err)
+        }
     }
+}
 
+async fn fetch_hyper_credits_http(api_key: &str) -> std::result::Result<f64, String> {
     let url = format!("{}/v1/credits", hyper_base_url());
     let response = reqwest::Client::new()
         .get(&url)
@@ -394,14 +450,37 @@ pub async fn charm_hyper_credits_report(
         ));
     }
     let payload: serde_json::Value = response.json().await.map_err(|err| err.to_string())?;
-    let balance = payload
+    parse_hyper_credits_api_balance(&payload)
+        .ok_or_else(|| "Charm Hyper credits response missing balance".to_string())
+}
+
+/// Parse `balance` from Hyper `GET /v1/credits` payload (several shapes).
+fn parse_hyper_credits_api_balance(payload: &Value) -> Option<f64> {
+    payload
         .get("balance")
         .and_then(json_number_as_f64)
-        .ok_or_else(|| "Charm Hyper credits response missing balance".to_string())?;
-    Ok(CharmHyperCreditsReport {
-        balance,
-        source: Some("credits-api".into()),
-    })
+        .or_else(|| {
+            payload
+                .get("data")
+                .and_then(|d| d.get("balance"))
+                .and_then(json_number_as_f64)
+        })
+        .or_else(|| {
+            payload
+                .get("credits")
+                .and_then(json_number_as_f64)
+        })
+        .or_else(|| {
+            payload
+                .get("remaining")
+                .and_then(|r| {
+                    r.get("hypercredits")
+                        .or_else(|| r.get("hyper_credits"))
+                        .or_else(|| r.get("balance"))
+                        .or_else(|| r.get("credits"))
+                })
+                .and_then(json_number_as_f64)
+        })
 }
 
 pub async fn openrouter_usage_report(
@@ -1963,6 +2042,12 @@ mod tests {
         assert!(started.user_code.is_empty());
     }
 
+    /// Process-wide Hypercredit cache is shared — serialize tests that touch it.
+    fn hypercredit_test_lock() -> std::sync::MutexGuard<'static, ()> {
+        static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        LOCK.lock().unwrap_or_else(|p| p.into_inner())
+    }
+
     #[test]
     fn format_hypercredits_uses_thousands_separators() {
         assert_eq!(format_hypercredits(42.0), "42");
@@ -1974,7 +2059,7 @@ mod tests {
 
     #[test]
     fn extract_hypercredit_balance_from_usage_remaining_field() {
-        // Clear first (own lock), then set via the public extract API.
+        let _guard = hypercredit_test_lock();
         let _ = take_hypercredit_balance();
         let usage = serde_json::json!({
             "prompt_tokens": 100,
@@ -1983,20 +2068,67 @@ mod tests {
         });
         let balance = extract_hypercredit_balance_from_usage(&usage).expect("balance");
         assert_eq!(balance, 12345.0);
+        // Cache is durable across peeks so concurrent modal refreshes keep working.
         assert_eq!(peek_hypercredit_balance(), Some(12345.0));
-        // take clears the one-shot cache, matching Crush FetchCredits.
+        assert_eq!(peek_hypercredit_balance(), Some(12345.0));
+        // take is reserved for explicit reset (tests / rare paths).
         assert_eq!(take_hypercredit_balance(), Some(12345.0));
-        assert_eq!(take_hypercredit_balance(), None);
+        assert_eq!(peek_hypercredit_balance(), None);
+    }
+
+    #[test]
+    fn parse_hyper_credits_api_balance_accepts_nested_shapes() {
+        assert_eq!(
+            parse_hyper_credits_api_balance(&serde_json::json!({ "balance": 42.0 })),
+            Some(42.0)
+        );
+        assert_eq!(
+            parse_hyper_credits_api_balance(&serde_json::json!({ "data": { "balance": 99 } })),
+            Some(99.0)
+        );
+        assert_eq!(
+            parse_hyper_credits_api_balance(&serde_json::json!({ "credits": 7 })),
+            Some(7.0)
+        );
+        assert_eq!(
+            parse_hyper_credits_api_balance(&serde_json::json!({
+                "remaining": { "hypercredits": 1234 }
+            })),
+            Some(1234.0)
+        );
     }
 
     #[test]
     fn extract_hypercredit_balance_accepts_zero() {
+        let _guard = hypercredit_test_lock();
         let _ = take_hypercredit_balance();
         let usage = serde_json::json!({
             "remaining": { "hypercredits": 0 }
         });
+        // With empty cache, 0 is allowed (first sample).
         assert_eq!(extract_hypercredit_balance_from_usage(&usage), Some(0.0));
+        assert_eq!(peek_hypercredit_balance(), Some(0.0));
         assert_eq!(take_hypercredit_balance(), Some(0.0));
+    }
+
+    #[test]
+    fn stream_zero_does_not_clobber_positive_hypercredit_balance() {
+        let _guard = hypercredit_test_lock();
+        let _ = take_hypercredit_balance();
+        let positive = serde_json::json!({
+            "remaining": { "hypercredits": 101.0 }
+        });
+        assert_eq!(extract_hypercredit_balance_from_usage(&positive), Some(101.0));
+        // Intermediate stream chunk with 0 must not wipe the footer to ◆ 0.
+        let zero = serde_json::json!({
+            "remaining": { "hypercredits": 0 }
+        });
+        assert_eq!(extract_hypercredit_balance_from_usage(&zero), Some(101.0));
+        assert_eq!(peek_hypercredit_balance(), Some(101.0));
+        // Authoritative HTTP may set a real zero.
+        set_hypercredit_balance_authoritative(0.0);
+        assert_eq!(peek_hypercredit_balance(), Some(0.0));
+        let _ = take_hypercredit_balance();
     }
 
     #[test]

@@ -112,7 +112,7 @@ pub(crate) fn draw_mcp_modal(f: &mut Frame, area: Rect, app: &mut TuiApp) {
             break;
         }
         let server = &servers[i];
-        let (dot, dot_color) = status_dot(server);
+        let (dot, dot_color) = status_dot(server, app.mcp_ui_state.loading);
         let selected = i == app.mcp_ui_state.selected_server && !app.mcp_ui_state.is_focused_on_tools;
         let name_style = if selected {
             Style::default()
@@ -154,7 +154,7 @@ fn effective_servers(app: &TuiApp) -> Vec<McpLiveServer> {
     if !app.mcp_ui_state.live.is_empty() {
         return app.mcp_ui_state.live.clone();
     }
-    // Fallback before first probe: config only, unknown connection.
+    // Fallback before seed/probe: config only, unknown connection (not failed).
     app.loaded_config
         .config
         .mcp
@@ -164,6 +164,7 @@ fn effective_servers(app: &TuiApp) -> Vec<McpLiveServer> {
             id: s.id.clone(),
             enabled: s.enabled,
             connected: false,
+            known: !s.enabled, // disabled is a known state
             tools: Vec::new(),
             command: s.command.clone(),
             args: s.args.clone(),
@@ -172,21 +173,26 @@ fn effective_servers(app: &TuiApp) -> Vec<McpLiveServer> {
         .collect()
 }
 
-fn status_dot(server: &McpLiveServer) -> (&'static str, ratatui::style::Color) {
+fn status_dot(server: &McpLiveServer, loading: bool) -> (&'static str, ratatui::style::Color) {
     if !server.enabled {
         ("○", muted())
     } else if server.connected {
         ("●", accent())
+    } else if !server.known || loading {
+        // Pending — never paint red "failed" before we know.
+        ("●", signal())
     } else {
         ("●", red())
     }
 }
 
-fn status_label(server: &McpLiveServer) -> (&'static str, ratatui::style::Color) {
+fn status_label(server: &McpLiveServer, loading: bool) -> (&'static str, ratatui::style::Color) {
     if !server.enabled {
         ("disabled", muted())
     } else if server.connected {
         ("connected", accent())
+    } else if !server.known || loading {
+        ("checking…", signal())
     } else {
         ("failed", red())
     }
@@ -194,7 +200,8 @@ fn status_label(server: &McpLiveServer) -> (&'static str, ratatui::style::Color)
 
 fn render_detail(f: &mut Frame, app: &mut TuiApp, area: Rect, server: &McpLiveServer) {
     let mut lines: Vec<Line> = Vec::new();
-    let (status_text, status_color) = status_label(server);
+    let loading = app.mcp_ui_state.loading;
+    let (status_text, status_color) = status_label(server, loading);
 
     lines.push(Line::from(vec![
         Span::styled(
@@ -237,7 +244,7 @@ fn render_detail(f: &mut Frame, app: &mut TuiApp, area: Rect, server: &McpLiveSe
             .add_modifier(Modifier::BOLD),
     )));
 
-    if app.mcp_ui_state.loading && server.tools.is_empty() && server.enabled {
+    if (!server.known || loading) && server.tools.is_empty() && server.enabled {
         lines.push(Line::from(Span::styled(
             "  checking connection…",
             Style::default().fg(signal()).bg(modal_bg()),

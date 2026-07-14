@@ -577,6 +577,9 @@ pub(crate) struct SudoPasswordUiState {
 #[derive(Debug, Clone, Default)]
 pub(crate) struct UsageUiState {
     pub loading: bool,
+    /// When true, kick another refresh after the in-flight one finishes
+    /// (coalesces open-modal + R while a fetch is already running).
+    pub refresh_pending: bool,
     pub report: Option<NaviUsageReport>,
     pub error: Option<String>,
     /// Cumulative tokens for the current TUI session (all providers).
@@ -630,7 +633,11 @@ pub(crate) struct QuestionUiState {
 pub struct McpLiveServer {
     pub id: String,
     pub enabled: bool,
+    /// True when connected to the MCP process/server.
     pub connected: bool,
+    /// False until session seed or a probe confirms status. Unknown must not
+    /// render as "failed" (red) — that flash made every open look broken.
+    pub known: bool,
     pub tools: Vec<String>,
     pub command: Option<String>,
     pub args: Vec<String>,

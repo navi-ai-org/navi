@@ -40,6 +40,7 @@ pub use navi_openai::openai_usage_report;
 pub use navi_openai::openrouter_usage_report;
 pub use navi_openai::peek_hypercredit_balance;
 pub use navi_openai::set_hypercredit_balance;
+pub use navi_openai::set_hypercredit_balance_authoritative;
 pub use navi_openai::take_hypercredit_balance;
 pub use navi_openai::usd_to_hypercredits;
 pub use navi_openai::xai_browser_oauth;

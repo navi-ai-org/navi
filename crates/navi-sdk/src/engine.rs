@@ -250,6 +250,30 @@ impl NaviEngine {
                 let mut runtime = session.runtime.lock().await;
                 runtime.set_active_skills(request.active_skills.clone());
                 let loaded_config = self.loaded_config();
+                // Keep the live runtime on the engine's current model/provider.
+                // Without this, `select_model` (or a failed TUI rebuild) can leave
+                // the session on the previous model while the footer shows the new
+                // one — next turn may 400/empty ("No response.") on the old wire.
+                let (runtime_provider, runtime_model) = runtime.model_selection();
+                let desired_provider = loaded_config.config.model.provider.as_str();
+                let desired_model = loaded_config.config.model.name.as_str();
+                if runtime_provider != desired_provider || runtime_model != desired_model {
+                    match build_provider_for_project_config(&loaded_config, &project_dir) {
+                        Ok(model_provider) => {
+                            runtime.set_model_provider(loaded_config.clone(), model_provider);
+                        }
+                        Err(err) => {
+                            tracing::warn!(
+                                error = %err,
+                                from_provider = %runtime_provider,
+                                from_model = %runtime_model,
+                                to_provider = %desired_provider,
+                                to_model = %desired_model,
+                                "failed to sync model onto existing session; turn may use stale provider"
+                            );
+                        }
+                    }
+                }
                 return Ok(NaviSessionInfo {
                     id: session_id.clone(),
                     project_dir,

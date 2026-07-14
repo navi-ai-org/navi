@@ -343,24 +343,25 @@ pub(crate) fn update_active_assistant_status(app: &mut TuiApp) {
 
 pub(crate) fn finalize_active_assistant(app: &mut TuiApp, elapsed_ms: u64, fallback_text: &str) {
     app.model_retry_attempts = 0;
+    let model_name = app.loaded_config.config.model.name.clone();
+    let provider_id = app.loaded_config.config.model.provider.clone();
     let (text, thinking) = {
         let active = if fallback_text.trim().is_empty() {
             // The turn returned no final text. Try the tail model response
             // first (the common case when the model emitted deltas but no
             // tool calls). If the tail is a tool-result message, fall back to
             // the last assistant model-response message — it may contain text
-            // the model streamed before making tool calls. Only create a new
-            // placeholder with "No response." when there truly is no prior
-            // model response at all.
+            // the model streamed before making tool calls.
             match tail_model_response(app) {
                 Some(active) => active,
                 None => match active_assistant_message(app) {
-                    Some(active) if !active.content.trim().is_empty() => active,
-                    _ => {
-                        let active = ensure_tail_model_response(app);
-                        active.content = "No response.".to_string();
+                    Some(active)
+                        if !active.content.trim().is_empty()
+                            || !active.thinking_content.trim().is_empty() =>
+                    {
                         active
                     }
+                    _ => ensure_tail_model_response(app),
                 },
             }
         } else {
@@ -368,6 +369,27 @@ pub(crate) fn finalize_active_assistant(app: &mut TuiApp, elapsed_ms: u64, fallb
         };
         if active.content.trim().is_empty() && !fallback_text.trim().is_empty() {
             active.content = fallback_text.to_string();
+        }
+        // Some models (esp. after a mid-session model switch with thinking on)
+        // stream only into the reasoning channel and leave content empty. Prefer
+        // promoting that thinking over painting a useless "No response."
+        if active.content.trim().is_empty() && !active.thinking_content.trim().is_empty() {
+            active.content = std::mem::take(&mut active.thinking_content);
+            tracing::info!(
+                elapsed_ms,
+                "promoted thinking-only stream to assistant content (empty final text)"
+            );
+        }
+        if active.content.trim().is_empty() {
+            active.content = format!(
+                "No response from `{model_name}` ({provider_id}). The model returned empty content — try again, turn thinking off, or switch models."
+            );
+            tracing::warn!(
+                model = %model_name,
+                provider = %provider_id,
+                elapsed_ms,
+                "turn finalized with empty assistant content"
+            );
         }
         active.elapsed_ms = Some(elapsed_ms);
         active.status = None;
@@ -381,9 +403,7 @@ pub(crate) fn finalize_active_assistant(app: &mut TuiApp, elapsed_ms: u64, fallb
         )
     };
     if text.trim().is_empty() {
-        if let Some(active) = active_assistant_message(app) {
-            active.content = "No response.".to_string();
-        }
+        // Should be unreachable after the empty-content fallback above.
         return;
     }
 

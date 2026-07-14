@@ -19,7 +19,8 @@ pub use oauth::{
     ensure_xai_access_token, extract_hypercredit_balance_from_usage, format_hypercredits,
     github_copilot_device_oauth, hyper_base_url, hypercredits_to_usd, is_xai_oauth_access_token,
     openai_browser_oauth, openai_usage_report, openrouter_usage_report, peek_hypercredit_balance,
-    set_hypercredit_balance, take_hypercredit_balance, usd_to_hypercredits, xai_browser_oauth,
+    set_hypercredit_balance, set_hypercredit_balance_authoritative, take_hypercredit_balance,
+    usd_to_hypercredits, xai_browser_oauth,
     xai_device_oauth, xai_oauth, xai_usage_report,
 };
 pub use provider::OpenAiProvider;
