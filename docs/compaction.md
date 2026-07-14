@@ -43,15 +43,15 @@ The conversation (excluding system messages) is serialized to text via `build_co
 
 The 9 summary sections are:
 
-1. **Pedido e Intenção Primária** — all explicit user requests
-2. **Conceitos Técnicos-Chave** — technologies and frameworks discussed
-3. **Arquivos e Trechos de Código** — files examined, modified, or created
-4. **Erros e Correções** — errors encountered and how they were fixed
-5. **Resolução de Problemas** — problems solved and ongoing investigations
-6. **Todas as Mensagens do Usuário** — verbatim user messages (prefixed with `> `)
-7. **Tarefas Pendentes** — explicitly requested pending tasks
-8. **Trabalho Atual** — what was being worked on immediately before compaction
-9. **Próximo Passo Opcional** — suggested next step
+1. **Primary Request and Intent** — all explicit user requests
+2. **Key Technical Concepts** — technologies and frameworks discussed
+3. **Files and Code Snippets** — files examined, modified, or created
+4. **Errors and Fixes** — errors encountered and how they were fixed
+5. **Problem Resolution** — problems solved and ongoing investigations
+6. **All User Messages** — verbatim user messages (prefixed with `> `)
+7. **Pending Tasks** — explicitly requested pending tasks
+8. **Current Work** — what was being worked on immediately before compaction
+9. **Next Step (Optional)** — suggested next step
 
 After a successful summary, the message list is replaced with:
 - The original system message
