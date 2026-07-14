@@ -155,19 +155,44 @@ pub(crate) fn handle_async_event(app: &mut TuiApp, event: AsyncEvent) {
             app.usage_state.loading = false;
             match result {
                 Ok(report) => {
-                    app.usage_state.error = None;
-                    apply_remaining_credits_from_report(app, &report);
-                    app.usage_state.report = Some(report);
+                    // Never clobber a useful report with an empty error/session-only
+                    // shell — that was the "no credits until I press R" flash when a
+                    // concurrent refresh lost the race.
+                    let is_hollow = report.details.is_empty()
+                        && report.limits.is_empty()
+                        && (report.source.contains("error")
+                            || report.source == "session"
+                            || report.notes.as_deref().is_some_and(|n| {
+                                n.contains("unavailable") || n.contains("No ")
+                            }));
+                    if is_hollow && app.usage_state.report.is_some() {
+                        if let Some(notes) = report.notes.filter(|n| !n.is_empty()) {
+                            // Keep previous report; surface a soft error only in modal.
+                            if app.mode == Mode::Usage {
+                                app.usage_state.error = Some(notes);
+                            }
+                        }
+                    } else {
+                        app.usage_state.error = None;
+                        apply_remaining_credits_from_report(app, &report);
+                        app.usage_state.report = Some(report);
+                    }
+                    // Always re-sync live stream/HTTP cache into footer + modal.
+                    crate::usage::apply_live_account_balance(app);
                 }
                 Err(error) => {
-                    app.usage_state.report = None;
+                    // Keep last-known report/remaining on network failure.
                     app.usage_state.error = Some(error.clone());
-                    // Quiet background refreshes (Crush-style after-turn fetch)
-                    // should not spam notifications; only alert when Usage is open.
-                    if app.mode == Mode::Usage {
+                    crate::usage::apply_live_account_balance(app);
+                    if app.mode == Mode::Usage && app.usage_state.report.is_none() {
                         show_notification(app, "Usage", error);
                     }
                 }
+            }
+            // Drain coalesced R / open requests that arrived while loading.
+            if app.usage_state.refresh_pending {
+                app.usage_state.refresh_pending = false;
+                crate::usage::refresh_usage(app);
             }
         }
         AsyncEvent::PluginCatalogLoaded { entries, error } => {
@@ -554,6 +579,11 @@ fn handle_agent_event(app: &mut TuiApp, event: AgentEvent) {
                 app.usage_state.session_cost_known = true;
                 apply_session_credit_fields(app);
             }
+
+            // Live Hyper remaining credits from stream usage.remaining.hypercredits
+            // (cached in navi-openai during parse). Update footer/modal immediately —
+            // do not wait for the post-turn HTTP usage_report round-trip.
+            crate::usage::apply_live_account_balance(app);
 
             // Annotate the active assistant bubble so usage is visible per turn.
             if let Some(msg) = app.messages.last_mut()
@@ -1098,11 +1128,36 @@ fn apply_remaining_credits_from_report(app: &mut TuiApp, report: &NaviUsageRepor
 
     if canonical == "charm-hyper" {
         if let Some(balance) = parse_hypercredit_balance_from_report(report) {
+            let from_credits_api = report.source.contains("credits-api");
+            // HTTP is authoritative (may be 0). Stream-derived reports must not
+            // clobber a positive remaining with a zero flash.
+            if balance == 0.0
+                && !from_credits_api
+                && app
+                    .usage_state
+                    .remaining_credits
+                    .is_some_and(|prev| prev > 0.0)
+            {
+                return;
+            }
             app.usage_state.remaining_credits = Some(balance);
             app.usage_state.remaining_credit_unit = Some("hypercredits".into());
+            if from_credits_api {
+                navi_sdk::set_hypercredit_balance_authoritative(balance);
+            } else {
+                navi_sdk::set_hypercredit_balance(balance);
+            }
             return;
         }
         if let Some(balance) = navi_sdk::peek_hypercredit_balance() {
+            if balance == 0.0
+                && app
+                    .usage_state
+                    .remaining_credits
+                    .is_some_and(|prev| prev > 0.0)
+            {
+                return;
+            }
             app.usage_state.remaining_credits = Some(balance);
             app.usage_state.remaining_credit_unit = Some("hypercredits".into());
             return;
@@ -1546,6 +1601,7 @@ mod tests {
 
     #[test]
     fn usage_loaded_parses_hypercredit_balance_from_report() {
+        let _ = navi_sdk::take_hypercredit_balance();
         let mut app = test_app("");
         app.loaded_config.config.model.provider = "charm-hyper".into();
 
@@ -1571,6 +1627,116 @@ mod tests {
             app.usage_state.remaining_credit_unit.as_deref(),
             Some("hypercredits")
         );
+        let _ = navi_sdk::take_hypercredit_balance();
+    }
+
+    #[test]
+    fn usage_reported_applies_live_hypercredit_balance_from_stream_cache() {
+        let _ = navi_sdk::take_hypercredit_balance();
+        let mut app = test_app("");
+        app.loaded_config.config.model.provider = "charm-hyper".into();
+        navi_sdk::set_hypercredit_balance(54_321.0);
+
+        handle_async_event(
+            &mut app,
+            AsyncEvent::Agent(AgentEvent::UsageReported {
+                input_tokens: 100,
+                output_tokens: 10,
+                cache_creation_tokens: 0,
+                cache_read_tokens: 0,
+            }),
+        );
+
+        assert_eq!(app.usage_state.remaining_credits, Some(54_321.0));
+        assert_eq!(
+            app.usage_state.remaining_credit_unit.as_deref(),
+            Some("hypercredits")
+        );
+        let report = app.usage_state.report.as_ref().expect("synthetic report");
+        assert!(
+            report
+                .details
+                .iter()
+                .any(|d| d.label == "Balance" && d.value.contains("54,321")),
+            "expected Balance detail, got {:?}",
+            report.details
+        );
+        // Leave a clean process cache for other tests.
+        let _ = navi_sdk::take_hypercredit_balance();
+    }
+
+    #[test]
+    fn usage_reported_stream_zero_does_not_wipe_positive_remaining() {
+        let _ = navi_sdk::take_hypercredit_balance();
+        let mut app = test_app("");
+        app.loaded_config.config.model.provider = "charm-hyper".into();
+        app.usage_state.remaining_credits = Some(101.0);
+        app.usage_state.remaining_credit_unit = Some("hypercredits".into());
+        // Stale/mid-stream cache zero must not paint ◆ 0 over a known balance.
+        navi_sdk::set_hypercredit_balance_authoritative(0.0);
+
+        handle_async_event(
+            &mut app,
+            AsyncEvent::Agent(AgentEvent::UsageReported {
+                input_tokens: 10,
+                output_tokens: 1,
+                cache_creation_tokens: 0,
+                cache_read_tokens: 0,
+            }),
+        );
+
+        assert_eq!(app.usage_state.remaining_credits, Some(101.0));
+        let _ = navi_sdk::take_hypercredit_balance();
+    }
+
+    #[test]
+    fn usage_loaded_hollow_error_does_not_clobber_good_report() {
+        let _ = navi_sdk::take_hypercredit_balance();
+        // Seed cache to the same value as the good report so live apply keeps it.
+        navi_sdk::set_hypercredit_balance_authoritative(9999.0);
+        let mut app = test_app("");
+        app.loaded_config.config.model.provider = "charm-hyper".into();
+        app.usage_state.report = Some(NaviUsageReport {
+            provider_id: "charm-hyper".into(),
+            provider_label: "Charm Hyper".into(),
+            plan_type: Some("hypercredits".into()),
+            limit_reached_kind: None,
+            limits: Vec::new(),
+            source: "charm-hyper-credits-api".into(),
+            notes: None,
+            details: vec![navi_sdk::NaviUsageDetail {
+                label: "Balance".into(),
+                value: "◆ 9,999 Hypercredits".into(),
+            }],
+        });
+        app.usage_state.remaining_credits = Some(9999.0);
+        app.usage_state.remaining_credit_unit = Some("hypercredits".into());
+        app.usage_state.loading = true;
+
+        let hollow = NaviUsageReport {
+            provider_id: "charm-hyper".into(),
+            provider_label: "Charm Hyper".into(),
+            plan_type: None,
+            limit_reached_kind: None,
+            limits: Vec::new(),
+            source: "charm-hyper-error".into(),
+            notes: Some("Charm Hyper credits unavailable: timeout".into()),
+            details: Vec::new(),
+        };
+        handle_async_event(&mut app, AsyncEvent::UsageLoaded { result: Ok(hollow) });
+
+        assert!(!app.usage_state.loading);
+        let report = app.usage_state.report.as_ref().expect("kept report");
+        assert!(
+            report
+                .details
+                .iter()
+                .any(|d| d.value.contains("9,999")),
+            "hollow error must not wipe previous balance, got {:?}",
+            report.details
+        );
+        assert_eq!(app.usage_state.remaining_credits, Some(9999.0));
+        let _ = navi_sdk::take_hypercredit_balance();
     }
 
     #[test]

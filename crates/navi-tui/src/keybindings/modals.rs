@@ -1697,7 +1697,12 @@ pub(super) fn handle_mcp_key(app: &mut TuiApp, code: KeyCode, _modifiers: KeyMod
                         live.enabled = server.enabled;
                         if !server.enabled {
                             live.connected = false;
+                            live.known = true;
                             live.tools.clear();
+                        } else {
+                            // Re-enabled: status unknown until next probe.
+                            live.known = false;
+                            live.connected = false;
                         }
                     }
                 }
@@ -1989,11 +1994,7 @@ pub(crate) fn handle_extensions_hub_key(app: &mut TuiApp, code: KeyCode) -> bool
                 Some(ExtensionsHubItem::Skills) => super::open_skills_picker(app),
                 Some(ExtensionsHubItem::Plugins) => super::open_plugins_picker(app),
                 Some(ExtensionsHubItem::McpServers) => {
-                    app.mcp_ui_state.selected_server = 0;
-                    app.mcp_ui_state.selected_tool = 0;
-                    app.mcp_ui_state.scroll = 0;
-                    app.mcp_ui_state.is_focused_on_tools = false;
-                    super::replace_modal(app, ModalKind::Mcp);
+                    crate::mcp_status::open_mcp_modal(app);
                 }
                 None => {}
             }

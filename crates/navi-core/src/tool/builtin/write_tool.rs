@@ -516,6 +516,65 @@ pub(crate) fn count_diff_add_remove(diff: &str) -> (usize, usize) {
     (added, removed)
 }
 
+/// Snapshot UTF-8 project files before a patch so success paths can build a
+/// numbered display diff. Missing files are recorded as `None` (new-file adds).
+fn snapshot_project_files(
+    project_root: &Path,
+    paths: &[String],
+) -> std::collections::BTreeMap<String, Option<String>> {
+    let mut out = std::collections::BTreeMap::new();
+    for path in paths {
+        let full = project_root.join(path);
+        let content = fs::read_to_string(&full).ok();
+        out.insert(path.clone(), content);
+    }
+    out
+}
+
+/// After a successful patch, attach a Claude Code–style numbered `diff` (and
+/// line counts) built from before/after file contents.
+fn attach_patch_display_diff(
+    output: &mut Value,
+    project_root: &Path,
+    paths: &[String],
+    before: &std::collections::BTreeMap<String, Option<String>>,
+) {
+    let mut display = String::new();
+    let mut total_added = 0usize;
+    let mut total_removed = 0usize;
+
+    for path in paths {
+        let old = before.get(path).and_then(|v| v.as_deref());
+        let new = fs::read_to_string(project_root.join(path)).ok();
+        let new_str = new.as_deref().unwrap_or("");
+        // Skip untouched files (e.g. listed but not actually changed).
+        match old {
+            Some(old_s) if old_s == new_str => continue,
+            None if new_str.is_empty() => continue,
+            _ => {}
+        }
+        let file_diff = build_write_display_diff(path, old, new_str);
+        let (added, removed) = count_diff_add_remove(&file_diff);
+        total_added += added;
+        total_removed += removed;
+        if !file_diff.is_empty() {
+            if !display.is_empty() {
+                display.push('\n');
+            }
+            display.push_str(&file_diff);
+        }
+    }
+
+    let Value::Object(obj) = output else {
+        return;
+    };
+    obj.insert("lines_added".into(), json!(total_added));
+    obj.insert("lines_removed".into(), json!(total_removed));
+    if !display.is_empty() {
+        obj.insert("diff".into(), Value::String(display));
+    }
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // Mode 2: Patch mode
 // ═══════════════════════════════════════════════════════════════════════════
@@ -564,16 +623,28 @@ impl WriteTool {
 
         let mut files_changed = Vec::new();
         let mut errors = Vec::new();
+        // Per-path before/after snapshots so we can emit a Claude Code–style
+        // numbered display diff (real file line numbers) for the TUI.
+        let mut before_by_path: std::collections::BTreeMap<String, String> =
+            std::collections::BTreeMap::new();
+        let mut after_by_path: std::collections::BTreeMap<String, String> =
+            std::collections::BTreeMap::new();
 
         for (path, search, replace) in &parsed_edits {
             let full = checked_project_path(&self.project_root, path)?;
-            let content = match fs::read_to_string(&full) {
-                Ok(c) => c,
-                Err(e) => {
-                    errors.push(format!("{path}: failed to read file: {e}"));
-                    continue;
-                }
+            let content = match after_by_path.get(path) {
+                Some(c) => c.clone(),
+                None => match fs::read_to_string(&full) {
+                    Ok(c) => c,
+                    Err(e) => {
+                        errors.push(format!("{path}: failed to read file: {e}"));
+                        continue;
+                    }
+                },
             };
+            if !before_by_path.contains_key(path) {
+                before_by_path.insert(path.clone(), content.clone());
+            }
             let new_content = match apply_search_replace(&content, search, replace) {
                 Some(c) => c,
                 None => {
@@ -591,7 +662,10 @@ impl WriteTool {
                     errors.push(format!("{path}: failed to write file: {e}"));
                     continue;
                 }
-                files_changed.push(path.clone());
+                after_by_path.insert(path.clone(), new_content);
+                if !files_changed.iter().any(|p| p == path) {
+                    files_changed.push(path.clone());
+                }
             }
         }
 
@@ -608,12 +682,40 @@ impl WriteTool {
             });
         }
 
+        let mut display_diff = String::new();
+        let mut total_added = 0usize;
+        let mut total_removed = 0usize;
+        for path in &files_changed {
+            let old = before_by_path.get(path).map(String::as_str);
+            let new = after_by_path
+                .get(path)
+                .map(String::as_str)
+                .unwrap_or("");
+            let file_diff = build_write_display_diff(path, old, new);
+            let (added, removed) = count_diff_add_remove(&file_diff);
+            total_added += added;
+            total_removed += removed;
+            if !file_diff.is_empty() {
+                if !display_diff.is_empty() {
+                    display_diff.push('\n');
+                }
+                display_diff.push_str(&file_diff);
+            }
+        }
+
         let mut output = json!({
             "method": "search_replace",
             "status": 0,
             "files_changed": files_changed,
             "edits_applied": files_changed.len(),
+            "lines_added": total_added,
+            "lines_removed": total_removed,
         });
+        if !display_diff.is_empty() {
+            if let Value::Object(ref mut obj) = output {
+                obj.insert("diff".to_string(), Value::String(display_diff));
+            }
+        }
         if !errors.is_empty() {
             if let Value::Object(ref mut obj) = output {
                 obj.insert(
@@ -712,6 +814,9 @@ impl WriteTool {
             .collect();
 
         let affected = patch_affected_files(&patches)?;
+        // Snapshot pre-apply content so success paths can emit a numbered
+        // display diff (real file line numbers) even when the model used bare `@@`.
+        let before_snapshot = snapshot_project_files(&self.project_root, &affected);
 
         // Phase 1: Parse and verify (Codex verification phase).
         // For structured patches, read target files and attempt context match BEFORE applying.
@@ -728,18 +833,25 @@ impl WriteTool {
         if !verification_errors.is_empty() {
             match apply_structured_symbol_replacement_fallback(&self.project_root, &patches) {
                 Ok(Some(files_patched)) => {
+                    let mut output = json!({
+                        "method": "structured_symbol_replacement_fallback",
+                        "status": 0,
+                        "patches_applied": patches.len(),
+                        "files_patched": files_patched,
+                        "recovered_from": "verification_failed",
+                        "warnings": verification_errors,
+                        "affected_paths": affected,
+                    });
+                    attach_patch_display_diff(
+                        &mut output,
+                        &self.project_root,
+                        &affected,
+                        &before_snapshot,
+                    );
                     return Ok(ToolResult {
                         invocation_id: invocation.id,
                         ok: true,
-                        output: json!({
-                            "method": "structured_symbol_replacement_fallback",
-                            "status": 0,
-                            "patches_applied": patches.len(),
-                            "files_patched": files_patched,
-                            "recovered_from": "verification_failed",
-                            "warnings": verification_errors,
-                            "affected_paths": affected,
-                        }),
+                        output,
                     });
                 }
                 Ok(None) => {}
@@ -766,17 +878,26 @@ impl WriteTool {
         // Phase 2: Apply.
         if patch_is_structured || patches.iter().all(|p| is_structured_patch(p)) {
             return match apply_structured_patches(&self.project_root, &patches) {
-                Ok(files_patched) => Ok(ToolResult {
-                    invocation_id: invocation.id,
-                    ok: true,
-                    output: json!({
+                Ok(files_patched) => {
+                    let mut output = json!({
                         "method": "structured",
                         "status": 0,
                         "patches_applied": patches.len(),
                         "files_patched": files_patched,
                         "affected_paths": affected,
-                    }),
-                }),
+                    });
+                    attach_patch_display_diff(
+                        &mut output,
+                        &self.project_root,
+                        &affected,
+                        &before_snapshot,
+                    );
+                    Ok(ToolResult {
+                        invocation_id: invocation.id,
+                        ok: true,
+                        output,
+                    })
+                }
                 Err(err) => Ok(ToolResult {
                     invocation_id: invocation.id,
                     ok: false,
@@ -803,18 +924,25 @@ impl WriteTool {
 
         let git_result = run_git_apply(&self.project_root, &patch).await?;
         if git_result.status.success() {
+            let mut output = json!({
+                "method": "git_apply",
+                "status": git_result.status.code(),
+                "patches_applied": patches.len(),
+                "stdout": String::from_utf8_lossy(&git_result.stdout),
+                "stderr": String::from_utf8_lossy(&git_result.stderr),
+                "files_patched": affected.len(),
+                "affected_paths": affected,
+            });
+            attach_patch_display_diff(
+                &mut output,
+                &self.project_root,
+                &affected,
+                &before_snapshot,
+            );
             return Ok(ToolResult {
                 invocation_id: invocation.id,
                 ok: true,
-                output: json!({
-                    "method": "git_apply",
-                    "status": git_result.status.code(),
-                    "patches_applied": patches.len(),
-                    "stdout": String::from_utf8_lossy(&git_result.stdout),
-                    "stderr": String::from_utf8_lossy(&git_result.stderr),
-                    "files_patched": affected.len(),
-                    "affected_paths": affected,
-                }),
+                output,
             });
         }
 
@@ -823,35 +951,49 @@ impl WriteTool {
         // Try again with relaxed whitespace rules if the first git apply failed.
         let relaxed_git_result = run_git_apply_relaxed(&self.project_root, &patch).await?;
         if relaxed_git_result.status.success() {
+            let mut output = json!({
+                "method": "git_apply_relaxed",
+                "status": relaxed_git_result.status.code(),
+                "patches_applied": patches.len(),
+                "stdout": String::from_utf8_lossy(&relaxed_git_result.stdout),
+                "stderr": String::from_utf8_lossy(&relaxed_git_result.stderr),
+                "files_patched": affected.len(),
+                "affected_paths": affected,
+            });
+            attach_patch_display_diff(
+                &mut output,
+                &self.project_root,
+                &affected,
+                &before_snapshot,
+            );
             return Ok(ToolResult {
                 invocation_id: invocation.id,
                 ok: true,
-                output: json!({
-                    "method": "git_apply_relaxed",
-                    "status": relaxed_git_result.status.code(),
-                    "patches_applied": patches.len(),
-                    "stdout": String::from_utf8_lossy(&relaxed_git_result.stdout),
-                    "stderr": String::from_utf8_lossy(&relaxed_git_result.stderr),
-                    "files_patched": affected.len(),
-                    "affected_paths": affected,
-                }),
+                output,
             });
         }
 
         let patch_result = run_patch_command(&self.project_root, &patch).await?;
         if patch_result.status.success() {
+            let mut output = json!({
+                "method": "patch_fallback",
+                "status": patch_result.status.code(),
+                "patches_applied": patches.len(),
+                "stdout": String::from_utf8_lossy(&patch_result.stdout),
+                "stderr": String::from_utf8_lossy(&patch_result.stderr),
+                "files_patched": affected.len(),
+                "affected_paths": affected,
+            });
+            attach_patch_display_diff(
+                &mut output,
+                &self.project_root,
+                &affected,
+                &before_snapshot,
+            );
             return Ok(ToolResult {
                 invocation_id: invocation.id,
                 ok: true,
-                output: json!({
-                    "method": "patch_fallback",
-                    "status": patch_result.status.code(),
-                    "patches_applied": patches.len(),
-                    "stdout": String::from_utf8_lossy(&patch_result.stdout),
-                    "stderr": String::from_utf8_lossy(&patch_result.stderr),
-                    "files_patched": affected.len(),
-                    "affected_paths": affected,
-                }),
+                output,
             });
         }
 
@@ -2271,6 +2413,20 @@ mod tests {
             fs::read_to_string(&path).unwrap(),
             "fn new() -> i32 {\n    2\n}\n"
         );
+        // Numbered display diff for TUI (real file line numbers).
+        let diff = result.output["diff"].as_str().unwrap_or("");
+        assert!(
+            diff.contains("*** Update File: lib.rs"),
+            "expected update-file display diff, got:\n{diff}"
+        );
+        assert!(
+            diff.contains("@@ -1,") || diff.contains("@@ -1 "),
+            "expected numbered hunk header, got:\n{diff}"
+        );
+        assert!(diff.contains("-fn old() -> i32 {") || diff.contains("-    1"));
+        assert!(diff.contains("+fn new() -> i32 {") || diff.contains("+    2"));
+        assert!(result.output["lines_added"].as_u64().unwrap_or(0) > 0);
+        assert!(result.output["lines_removed"].as_u64().unwrap_or(0) > 0);
     }
 
     #[tokio::test]

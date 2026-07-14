@@ -31,7 +31,8 @@ pub use host_tool::{
 pub use navi_providers::github_copilot_device_oauth;
 pub use navi_providers::{
     format_hypercredits, hyper_base_url, hypercredits_to_usd, peek_hypercredit_balance,
-    set_hypercredit_balance, take_hypercredit_balance, usd_to_hypercredits,
+    set_hypercredit_balance, set_hypercredit_balance_authoritative, take_hypercredit_balance,
+    usd_to_hypercredits,
 };
 pub use tooling::reload_wasm_plugins_on_executor;
 pub use tooling::{build_provider_for_config, build_provider_for_project_config};

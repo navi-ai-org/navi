@@ -291,6 +291,34 @@ fn finalize_active_assistant_preserves_streamed_text_when_turn_text_is_empty() {
 }
 
 #[test]
+fn finalize_active_assistant_promotes_thinking_when_content_empty() {
+    let mut app = test_app("");
+    app.loaded_config.config.model.provider = "charm-hyper".into();
+    app.loaded_config.config.model.name = "glm-5.2".into();
+    let mut msg = ChatMessage::new(ChatRole::Assistant, String::new());
+    msg.status = Some("thinking".to_string());
+    msg.thinking_content = "I should rewrite the layout without flex.".into();
+    app.messages.push(msg);
+
+    finalize_active_assistant(&mut app, 50, "");
+
+    let last = app.messages.last().expect("assistant message");
+    assert_eq!(
+        last.content, "I should rewrite the layout without flex.",
+        "thinking-only streams must surface as content, got: {}",
+        last.content
+    );
+    assert!(
+        last.thinking_content.is_empty(),
+        "thinking should be promoted out of the private channel"
+    );
+    assert!(
+        !last.content.contains("No response"),
+        "must not paint No response when thinking had text"
+    );
+}
+
+#[test]
 fn finalize_active_assistant_uses_turn_text_when_deltas_were_not_seen() {
     let mut app = test_app("");
     app.messages.push(ChatMessage {
@@ -1861,10 +1889,11 @@ fn ctrl_dot_and_ctrl_s_open_help_and_sessions() {
     handle_key(&mut app, KeyCode::Char('.'), KeyModifiers::CONTROL);
     assert_eq!(app.mode, Mode::Help);
 
+    // Global shortcuts still work from Help (don't trap ctrl+s inside the modal).
     handle_key(&mut app, KeyCode::Char('s'), KeyModifiers::CONTROL);
-    assert_eq!(app.mode, Mode::Help);
+    assert_eq!(app.mode, Mode::Sessions);
 
-    handle_help_key(&mut app, KeyCode::Esc);
+    handle_key(&mut app, KeyCode::Esc, KeyModifiers::NONE);
     assert_eq!(app.mode, Mode::Normal);
 
     handle_key(&mut app, KeyCode::Char('s'), KeyModifiers::CONTROL);

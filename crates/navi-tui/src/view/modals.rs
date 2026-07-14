@@ -1424,7 +1424,8 @@ fn question_preview_line(question: &crate::state::QuestionUiState) -> Line<'stat
 
 pub(crate) fn render_settings(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
     use crate::settings::{
-        SettingAction, SettingRow, SETTINGS_ROWS, is_checkbox, setting_display,
+        SettingAction, SettingRow, SETTINGS_ROWS, SettingValueKind, format_setting_line,
+        setting_display,
     };
     use ratatui::style::Modifier;
 
@@ -1444,32 +1445,60 @@ pub(crate) fn render_settings(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
     let selected = app
         .selected_setting
         .min(SETTINGS_ROWS.len().saturating_sub(1));
+    // Leave room for values; keep labels aligned across rows.
+    let label_col = ((inner.width as usize).saturating_sub(4) / 2).clamp(12, 18);
+
     let items = SETTINGS_ROWS
         .iter()
         .enumerate()
         .map(|(index, row)| match row {
             SettingRow::Section(title) => {
+                // Quiet section header — no decorative dashes.
                 let style = Style::default()
-                    .fg(ghost())
+                    .fg(muted())
                     .bg(modal_bg())
                     .add_modifier(Modifier::BOLD);
-                ListItem::new(Span::styled(format!("— {title} —"), style)).style(style)
+                ListItem::new(Span::styled(format!(" {title}"), style)).style(style)
             }
             SettingRow::Action(action) => {
-                let (label, val) = setting_display(app, *action);
+                let (label, val, kind) = setting_display(app, *action);
                 let is_selected = index == selected;
                 let hovered = app.hover_index == Some(index);
-                let style = if hovered || is_selected {
+                let base = if hovered || is_selected {
                     active_item_style()
                 } else {
                     inactive_item_style()
                 };
-                let line = if is_checkbox(*action) {
-                    format!("{val} {label}")
+                let line = format_setting_line(label, &val, kind, label_col);
+                // Dim the trailing › so the label/value stay primary.
+                if kind == SettingValueKind::Link && line.contains('›') {
+                    let (main, _) = line.rsplit_once('›').unwrap_or((line.as_str(), ""));
+                    ListItem::new(Line::from(vec![
+                        Span::styled(main.to_string(), base),
+                        Span::styled("›", Style::default().fg(ghost()).bg(base.bg.unwrap_or(modal_bg()))),
+                    ]))
+                    .style(base)
+                } else if kind == SettingValueKind::Toggle {
+                    // On = accent dot, off = muted ring.
+                    let on = val == "on";
+                    let mark = if on { "●" } else { "○" };
+                    let mark_style = if on {
+                        Style::default()
+                            .fg(signal())
+                            .bg(base.bg.unwrap_or(modal_bg()))
+                    } else {
+                        Style::default()
+                            .fg(ghost())
+                            .bg(base.bg.unwrap_or(modal_bg()))
+                    };
+                    ListItem::new(Line::from(vec![
+                        Span::styled(format!("{mark}  "), mark_style),
+                        Span::styled(label.to_string(), base),
+                    ]))
+                    .style(base)
                 } else {
-                    format!("{label}: {val}")
-                };
-                ListItem::new(Span::styled(line, style)).style(style)
+                    ListItem::new(Span::styled(line, base)).style(base)
+                }
             }
         })
         .collect::<Vec<_>>();
@@ -1508,7 +1537,7 @@ pub(crate) fn render_settings(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
     frame.render_widget(
         Paragraph::new(Line::from(vec![
             Span::styled("[enter]", Style::default().fg(signal())),
-            Span::styled(" activate  ", Style::default().fg(muted())),
+            Span::styled("  ", Style::default().fg(muted())),
             Span::styled("[esc]", Style::default().fg(signal())),
             Span::styled(" close", Style::default().fg(muted())),
         ]))
@@ -2326,16 +2355,33 @@ pub(crate) fn render_usage(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
 
     if app.usage_state.loading {
         lines.push(Line::from(Span::styled(
-            "Loading account usage…",
+            if app.usage_state.report.is_some() || app.usage_state.remaining_credits.is_some() {
+                "Refreshing account usage…"
+            } else {
+                "Loading account usage…"
+            },
             Style::default().fg(signal()),
         )));
+        // Keep last-known account report visible while refreshing so Hyper
+        // balance never disappears between turns.
+        if let Some(ref report) = app.usage_state.report {
+            lines.push(Line::from(""));
+            render_usage_report(&mut lines, report);
+        }
+    } else if let Some(ref report) = app.usage_state.report {
+        render_usage_report(&mut lines, report);
+        if let Some(ref error) = app.usage_state.error {
+            lines.push(Line::from(""));
+            lines.push(Line::from(Span::styled(
+                format!("Last refresh note: {error}"),
+                Style::default().fg(muted()),
+            )));
+        }
     } else if let Some(ref error) = app.usage_state.error {
         lines.push(Line::from(Span::styled(
             format!("Account usage error: {error}"),
             Style::default().fg(red()),
         )));
-    } else if let Some(ref report) = app.usage_state.report {
-        render_usage_report(&mut lines, report);
     } else {
         lines.push(Line::from(Span::styled(
             "No account usage data yet — press r to refresh.",

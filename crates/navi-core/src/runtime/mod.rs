@@ -644,6 +644,14 @@ impl AgentRuntime {
         available_model_options(&self.loaded_config.config)
     }
 
+    /// Current `(provider_id, model_name)` selection for this runtime.
+    pub fn model_selection(&self) -> (&str, &str) {
+        (
+            self.loaded_config.config.model.provider.as_str(),
+            self.loaded_config.config.model.name.as_str(),
+        )
+    }
+
     /// Changes the selected model and emits a `ContextUpdated` event.
     pub fn set_model(&mut self, provider: impl Into<String>, model: impl Into<String>) {
         self.loaded_config.config.model.provider =

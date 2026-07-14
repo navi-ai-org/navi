@@ -206,14 +206,7 @@ pub(crate) fn run_selected_command(app: &mut TuiApp) -> bool {
             super::open_plugins_picker(app);
         }
         CommandAction::McpServers => {
-            app.mcp_ui_state.selected_server = 0;
-            app.mcp_ui_state.selected_tool = 0;
-            app.mcp_ui_state.scroll = 0;
-            app.mcp_ui_state.is_focused_on_tools = false;
-            super::replace_modal(app, ModalKind::Mcp);
-            // Instant seed from session, then full probe like `navi mcp list`.
-            crate::mcp_status::seed_from_session(app);
-            crate::mcp_status::refresh_mcp_status(app);
+            crate::mcp_status::open_mcp_modal(app);
         }
         CommandAction::BackgroundCommands => {
             super::replace_modal(app, ModalKind::BackgroundCommands);
@@ -318,6 +311,32 @@ pub(crate) fn run_selected_command(app: &mut TuiApp) -> bool {
                 show_notification(app, "Initialize Project", format!("{err:#}"));
                 super::close_all_modals(app);
             }
+        },
+        CommandAction::Theme => {
+            app.theme_filter.clear();
+            app.theme_filter_cursor = 0;
+            super::replace_modal(app, ModalKind::ThemePicker);
+        }
+        CommandAction::Debug => {
+            super::replace_modal(app, ModalKind::Debug);
+        }
+        CommandAction::ToggleShowReasoning => {
+            app.show_thinking = !app.show_thinking;
+            show_notification(
+                app,
+                "Reasoning",
+                if app.show_thinking {
+                    "Thinking text visible."
+                } else {
+                    "Thinking text hidden."
+                },
+            );
+            crate::persistence::save_preferences(app);
+            super::close_all_modals(app);
+        }
+        CommandAction::CyclePermissionMode => {
+            super::global::cycle_permission_mode_for_command(app);
+            super::close_all_modals(app);
         },
     }
 

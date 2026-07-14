@@ -2040,27 +2040,28 @@ fn diff_line_spans(raw_line: &str) -> Vec<Span<'static>> {
         )];
     }
 
+    // Claude Code–style: full-row red/green wash (including line-number gutter),
+    // add/remove fg on body text, no raw +/- glyphs when numbers are present.
     let (bg, number_color, content_color) = if raw_line.starts_with('+') {
-        (Some(diff_add_bg()), diff_add_fg(), text())
+        (Some(diff_add_bg()), diff_add_fg(), diff_add_fg())
     } else if raw_line.starts_with('-') {
-        (Some(diff_remove_bg()), diff_remove_fg(), text())
+        (Some(diff_remove_bg()), diff_remove_fg(), diff_remove_fg())
     } else {
         // Context lines: no panel fill — only gutter number color.
         (None, ghost(), text())
     };
 
     if let Some((marker, rest)) = diff_marker_and_rest(raw_line) {
-        // Numbered form (`+  39|content`): numbers are green/red fg only —
-        // never covered by the line wash. The tint starts on the code body.
+        // Numbered form (`+  39|content`): line number + body share the full-row wash.
         if let Some((num, after)) = split_diff_line_number(rest) {
             let mut spans = Vec::with_capacity(4);
-            // Gutter: colored digits, transparent background (no line paint).
-            spans.push(Span::styled(
-                format!("{num:>4} "),
-                Style::default()
-                    .fg(number_color)
-                    .add_modifier(Modifier::BOLD),
-            ));
+            let mut num_style = Style::default()
+                .fg(number_color)
+                .add_modifier(Modifier::BOLD);
+            if let Some(bg) = bg {
+                num_style = num_style.bg(bg);
+            }
+            spans.push(Span::styled(format!("{num:>4} "), num_style));
             if after.is_empty() {
                 // Keep a zero-width content holder so the row still tints when padded.
                 if let Some(bg) = bg {
@@ -2496,22 +2497,21 @@ mod tests {
     }
 
     #[test]
-    fn numbered_diff_gutter_is_colored_without_line_wash() {
+    fn numbered_diff_gutter_shares_full_row_wash() {
+        // Claude Code–style: line numbers sit inside the same red/green row wash.
         let md = "```diff\n-  12|removed\n+  12|added\n```\n";
         let lines = render_markdown_lines(md, 80, text(), text(), false);
         let mut saw_num = false;
         let mut saw_body_tint = false;
+        let mut saw_num_wash = false;
         for line in &lines {
             for span in &line.spans {
                 let text = span.content.as_ref().trim();
-                if text == "12" || text.ends_with("12") && text.chars().all(|c| c.is_ascii_digit() || c == ' ') {
+                if text == "12"
+                    || (text.ends_with("12")
+                        && text.chars().all(|c| c.is_ascii_digit() || c == ' '))
+                {
                     saw_num = true;
-                    // Number gutter: green/red fg, never the add/remove wash bg.
-                    assert!(
-                        span.style.bg.is_none(),
-                        "number gutter must not be painted, span={text:?} bg={:?}",
-                        span.style.bg
-                    );
                     assert!(
                         span.style.fg == Some(diff_add_fg())
                             || span.style.fg == Some(diff_remove_fg())
@@ -2519,6 +2519,11 @@ mod tests {
                         "number should be add/remove/context color, got {:?}",
                         span.style.fg
                     );
+                    if span.style.bg == Some(diff_add_bg())
+                        || span.style.bg == Some(diff_remove_bg())
+                    {
+                        saw_num_wash = true;
+                    }
                 }
                 if span.content.as_ref().contains("removed")
                     || span.content.as_ref().contains("added")
@@ -2531,6 +2536,7 @@ mod tests {
             }
         }
         assert!(saw_num, "expected numbered gutter");
+        assert!(saw_num_wash, "expected full-row wash on line-number gutter");
         assert!(saw_body_tint, "expected body line wash on content");
     }
 

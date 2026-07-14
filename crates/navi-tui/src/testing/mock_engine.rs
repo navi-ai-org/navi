@@ -314,6 +314,10 @@ impl EngineDriver for MockEngine {
         Err(NaviError::SessionNotFound(session_id.to_string()))
     }
 
+    async fn set_model(&self, _session_id: &str, _provider: &str, _model: &str) -> Result<()> {
+        Ok(())
+    }
+
     async fn close_session(&self, _session_id: &str) -> Result<bool> {
         Ok(false)
     }
