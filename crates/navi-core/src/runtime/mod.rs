@@ -821,14 +821,7 @@ impl AgentRuntime {
         // Apply per-turn thinking override before the turn runs so
         // build_model_request picks it up from the shared config.
         if let Some(thinking) = thinking_override {
-            let level_str = match thinking {
-                crate::model::ThinkingConfig::Adaptive => "adaptive",
-                crate::model::ThinkingConfig::Max => "max",
-                crate::model::ThinkingConfig::High => "high",
-                crate::model::ThinkingConfig::Medium => "medium",
-                crate::model::ThinkingConfig::Low => "low",
-                crate::model::ThinkingConfig::Off => "off",
-            };
+            let level_str = thinking.as_config_str();
             // NOTE: we only update shared_config, NOT loaded_config. Mutating
             // loaded_config would permanently corrupt the original config and
             // leak the last override into future turns that pass thinking: None.

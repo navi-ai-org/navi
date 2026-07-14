@@ -23,9 +23,9 @@ Only ask one question at a time. Keep options short. Do not claim that anything 
 
 DO NOT generate config files or tool calls that aren't `question`. When the user confirms the final review, output exactly one final line beginning with `NAVI_SETUP_COMPLETE:` followed by a compact JSON object with these fields:
 
-{"permission_mode":"restricted","allow_tools":[],"allow_tool_regex":[],"ask_tools":[],"ask_tool_regex":[],"deny_tools":[],"deny_tool_regex":[],"require_for_writes":true,"require_for_commands":true,"yolo_mode":false,"blocked_commands":["rm","sudo"],"restrict_paths_to_project":true,"protect_git_metadata":true,"explore_wasm_plugins":false,"enable_project_skills":false,"thinking_level":"adaptive"}
+{"permission_mode":"restricted","allow_tools":[],"allow_tool_regex":[],"ask_tools":[],"ask_tool_regex":[],"deny_tools":[],"deny_tool_regex":[],"require_for_writes":true,"require_for_commands":true,"yolo_mode":false,"blocked_commands":["rm","sudo"],"restrict_paths_to_project":true,"protect_git_metadata":true,"explore_wasm_plugins":false,"enable_project_skills":false,"thinking_level":"max"}
 
-Use only booleans, strings, arrays of strings, one of `restricted`, `accept-edits`, or `yolo` for permission_mode, and one of `adaptive`, `max`, `high`, `medium`, `low`, or `off` for thinking_level. Do not wrap the final line in a Markdown code fence.
+Use only booleans, strings, arrays of strings, one of `restricted`, `accept-edits`, or `yolo` for permission_mode, and one of `max`, `high`, `medium`, `low`, or `off` for thinking_level. Do not wrap the final line in a Markdown code fence.
 "#;
 
 #[cfg(test)]

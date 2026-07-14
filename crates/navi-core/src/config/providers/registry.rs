@@ -19,6 +19,12 @@ pub fn default_request_options_for(provider_id: &str) -> Option<ProviderRequestO
             anthropic_cache_control: Some(serde_json::json!({ "type": "ephemeral" })),
             ..Default::default()
         }),
+        // Charm Hyper: pin a stable prompt_cache_key for prefix routing. Session
+        // affinity still comes from x-session-id / x-session-affinity headers.
+        "charm-hyper" => Some(ProviderRequestOptions {
+            prompt_cache_key: Some("charm-hyper".to_string()),
+            ..Default::default()
+        }),
         _ => None,
     }
 }

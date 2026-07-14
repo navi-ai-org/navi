@@ -272,9 +272,9 @@ async fn run_agent_turn(
         message: bench_task_message(case),
         content_parts: Vec::new(),
         context_packets: Vec::new(),
-        // Keep adaptive reasoning available; token wins come from context engineering,
+        // Keep maximum reasoning available; token wins come from context engineering,
         // not from disabling structured thinking.
-        thinking: Some(ThinkingConfig::Adaptive),
+        thinking: Some(ThinkingConfig::Max),
     };
     let send_engine = Arc::clone(&engine);
     let mut send_task = tokio::spawn(async move { send_engine.send_turn(request).await });

@@ -220,7 +220,7 @@ const response = await engine.sendTurn(session.id, 'Analyze this image.', {
 });
 ```
 
-The `thinking` field accepts `'max' | 'high' | 'medium' | 'low' | 'off' | 'adaptive'` and overrides the session-level thinking setting for this turn only.
+The `thinking` field accepts `'max' | 'high' | 'medium' | 'low' | 'off'` and overrides the session-level thinking setting for this turn only.
 
 `sendTurn` is **async and blocking** — it waits for the full turn to complete (including all tool-call iterations) before returning. For streaming updates during the turn, use [Event Streaming](#event-streaming).
 

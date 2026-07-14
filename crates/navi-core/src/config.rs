@@ -426,6 +426,9 @@ deny_tool_regex = ["^danger_"]
         assert!(anthropic.prompt_cache_key.is_none());
 
         assert!(default_request_options_for("nvidia").is_none());
+
+        let hyper = default_request_options_for("charm-hyper").expect("charm-hyper defaults");
+        assert_eq!(hyper.prompt_cache_key.as_deref(), Some("charm-hyper"));
     }
 
     #[test]

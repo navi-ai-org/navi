@@ -75,7 +75,15 @@ impl crate::provider::OpenAiProvider {
         body["stream"] = json!(true);
         body["stream_options"] = json!({ "include_usage": true });
         if let Some(prompt_cache_key) = &request_options.prompt_cache_key {
-            body["prompt_cache_key"] = json!(prompt_cache_key);
+            // Scope the cache key by session when available so consecutive tool
+            // steps of the same agent session share prefix routing.
+            let key = match request.session_id.as_deref() {
+                Some(session_id) if !session_id.is_empty() => {
+                    format!("{prompt_cache_key}:{session_id}")
+                }
+                _ => prompt_cache_key.clone(),
+            };
+            body["prompt_cache_key"] = json!(key);
         }
         if let Some(retention) = &request_options.prompt_cache_retention
             && should_send_prompt_cache_retention(&model, retention)
@@ -179,7 +187,15 @@ impl crate::provider::OpenAiProvider {
         body["stream"] = json!(true);
         body["stream_options"] = json!({ "include_usage": true });
         if let Some(prompt_cache_key) = &request_options.prompt_cache_key {
-            body["prompt_cache_key"] = json!(prompt_cache_key);
+            // Scope the cache key by session when available so consecutive tool
+            // steps of the same agent session share prefix routing.
+            let key = match request.session_id.as_deref() {
+                Some(session_id) if !session_id.is_empty() => {
+                    format!("{prompt_cache_key}:{session_id}")
+                }
+                _ => prompt_cache_key.clone(),
+            };
+            body["prompt_cache_key"] = json!(key);
         }
         if let Some(retention) = &request_options.prompt_cache_retention
             && should_send_prompt_cache_retention(&model, retention)

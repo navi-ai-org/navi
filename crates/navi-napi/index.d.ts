@@ -101,8 +101,7 @@ export type EffortLevel =
   | 'medium'
   | 'low'
   | 'off'
-  | 'adaptive'
-  /** Binary "thinking on" when the model has no multi-level efforts (maps to medium). */
+  /** Binary "thinking on" when the model has no multi-level efforts (maps to max). */
   | 'on';
 
 export interface EffortOption {

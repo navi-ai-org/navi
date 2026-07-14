@@ -452,10 +452,18 @@ fn current_unix_millis() -> u64 {
 /// The thinking/reasoning effort level requested from the model.
 ///
 /// Maps to provider-specific parameters via [`ThinkingConfig::to_thinking_request`].
+///
+/// Effort is fixed for a session preference (no adaptive re-scoring). Registry
+/// `reasoning_levels` drive the picker; models without levels get binary
+/// thinking on/off. Models that do not support reasoning are forced to [`Off`].
+/// Default preference is [`Max`] (highest available effort).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ThinkingConfig {
-    /// Maximum reasoning effort.
+    /// Maximum reasoning effort (default).
+    ///
+    /// Legacy config/session values `"adaptive"` / `"auto"` deserialize as Max.
+    #[serde(alias = "adaptive", alias = "auto")]
     Max,
     /// High reasoning effort.
     High,
@@ -465,9 +473,6 @@ pub enum ThinkingConfig {
     Low,
     /// Thinking/reasoning disabled.
     Off,
-    /// Adaptive: automatically selects effort based on task complexity.
-    /// Simple tasks (read, grep) → Low. Complex tasks (refactor, multi-file) → High.
-    Adaptive,
 }
 
 /// Normalized thinking/reasoning request produced by [`ThinkingConfig::to_thinking_request`].
@@ -521,16 +526,12 @@ impl ThinkingConfig {
                 effort: None,
                 budget_tokens: None,
             },
-            // Adaptive should be resolved before calling to_thinking_request.
-            // Fallback to Medium if called directly.
-            Self::Adaptive => Self::Medium.to_thinking_request(),
         }
     }
 
     /// Config key used in `tui.thinking_level` / UI labels.
     pub fn as_config_str(self) -> &'static str {
         match self {
-            Self::Adaptive => "adaptive",
             Self::Max => "max",
             Self::High => "high",
             Self::Medium => "medium",
@@ -540,40 +541,22 @@ impl ThinkingConfig {
     }
 
     /// Parse a config / registry effort string into a [`ThinkingConfig`].
-    pub fn from_config_str(value: &str) -> Self {
-        parse_reasoning_level(value).unwrap_or(Self::Adaptive)
-    }
-
-    /// Resolve an adaptive thinking level based on task context heuristics.
     ///
-    /// Returns a concrete `ThinkingConfig` (never `Adaptive`).
-    pub fn resolve_adaptive(
-        messages: &[ModelMessage],
-        tool_names: &[String],
-        _iteration: usize,
-    ) -> Self {
-        let complexity = TaskComplexity::classify(messages, tool_names);
-        match complexity {
-            TaskComplexity::Simple => Self::Low,
-            TaskComplexity::Medium => Self::Medium,
-            TaskComplexity::Complex => Self::High,
-        }
+    /// Unknown values (including legacy `"adaptive"`) fall back to [`Max`].
+    pub fn from_config_str(value: &str) -> Self {
+        parse_reasoning_level(value).unwrap_or(Self::Max)
     }
 
     /// Clamp this level to one supported by the model (registry reasoning_levels).
+    ///
+    /// Prefers the highest remaining effort; `Off` is last. Empty `supported`
+    /// leaves the value unchanged.
     pub fn clamp_to_supported(self, supported: &[ThinkingConfig]) -> Self {
         if supported.is_empty() || supported.contains(&self) {
             return self;
         }
-        // Prefer keeping "on" if possible; Off last.
-        for candidate in [
-            Self::Adaptive,
-            Self::Medium,
-            Self::High,
-            Self::Low,
-            Self::Max,
-            Self::Off,
-        ] {
+        // Prefer maximum effort when the requested level is unavailable.
+        for candidate in [Self::Max, Self::High, Self::Medium, Self::Low, Self::Off] {
             if supported.contains(&candidate) {
                 return candidate;
             }
@@ -589,12 +572,14 @@ impl ThinkingConfig {
 /// effort "thinking on").
 pub fn parse_reasoning_level(raw: &str) -> Option<ThinkingConfig> {
     match raw.trim().to_ascii_lowercase().as_str() {
-        "adaptive" | "auto" => Some(ThinkingConfig::Adaptive),
-        "max" | "xhigh" | "x-high" | "ultra" | "highest" => Some(ThinkingConfig::Max),
-        "high" => Some(ThinkingConfig::High),
-        "medium" | "med" | "mid" | "default" | "on" | "enabled" | "true" | "1" => {
-            Some(ThinkingConfig::Medium)
+        // Legacy adaptive/auto maps to Max (highest fixed effort).
+        "adaptive" | "auto" | "max" | "xhigh" | "x-high" | "ultra" | "highest" => {
+            Some(ThinkingConfig::Max)
         }
+        "high" => Some(ThinkingConfig::High),
+        // Binary "thinking on" uses Max so the default highest effort is stable.
+        "medium" | "med" | "mid" | "default" => Some(ThinkingConfig::Medium),
+        "on" | "enabled" | "true" | "1" => Some(ThinkingConfig::Max),
         "low" | "minimal" | "min" => Some(ThinkingConfig::Low),
         "off" | "none" | "disabled" | "false" | "0" => Some(ThinkingConfig::Off),
         _ => None,
@@ -618,7 +603,6 @@ pub fn effort_display_label(level: ThinkingConfig, binary: bool) -> &'static str
 
 /// Canonical sort order for effort levels in pickers (most → least / off last).
 pub const DEFAULT_REASONING_LEVELS: &[ThinkingConfig] = &[
-    ThinkingConfig::Adaptive,
     ThinkingConfig::Max,
     ThinkingConfig::High,
     ThinkingConfig::Medium,
@@ -629,17 +613,16 @@ pub const DEFAULT_REASONING_LEVELS: &[ThinkingConfig] = &[
 /// Binary effort options when a model has no registry `reasoning_levels`.
 ///
 /// UI presents these as "thinking on" / "thinking off". Internally "on" is
-/// [`ThinkingConfig::Medium`] (a sensible default effort when the model only
-/// supports enable/disable). Off is last to match the multi-level picker order.
+/// [`ThinkingConfig::Max`] so the highest fixed effort is the default.
 pub const BINARY_REASONING_LEVELS: &[ThinkingConfig] =
-    &[ThinkingConfig::Medium, ThinkingConfig::Off];
+    &[ThinkingConfig::Max, ThinkingConfig::Off];
 
 /// Resolve the effort levels the UI / runtime should offer for a model.
 ///
-/// - `supports_thinking == false` → only Off
+/// - `supports_thinking == false` → only Off (reasoning unsupported)
 /// - empty / unparseable `reasoning_levels` + thinking supported/unknown →
-///   binary Off / On (`Medium`)
-/// - non-empty registry levels → exactly those levels (no extra Adaptive inject)
+///   binary thinking on (`Max`) / thinking off
+/// - non-empty registry levels → exactly those levels
 pub fn thinking_levels_for_model(
     supports_thinking: Option<bool>,
     reasoning_levels: &[String],
@@ -663,7 +646,7 @@ pub fn thinking_levels_for_model(
     if out.is_empty() {
         return BINARY_REASONING_LEVELS.to_vec();
     }
-    // Stable UI order (adaptive/max/high/medium/low/off).
+    // Stable UI order (max/high/medium/low/off).
     let order = DEFAULT_REASONING_LEVELS;
     out.sort_by_key(|l| order.iter().position(|o| o == l).unwrap_or(99));
     out
@@ -686,7 +669,12 @@ pub fn is_binary_effort_model(
         .any(|raw| parse_reasoning_level(raw).is_some())
 }
 
-/// Pick a default thinking level for a model from registry + current preference.
+/// Pick a thinking level for a model from registry + current preference.
+///
+/// - Models without reasoning support always resolve to [`ThinkingConfig::Off`].
+/// - Supported preference is kept when valid.
+/// - Otherwise uses registry `default_reasoning_effort`, then highest supported
+///   (typically [`ThinkingConfig::Max`]).
 pub fn resolve_model_thinking_level(
     current: ThinkingConfig,
     supports_thinking: Option<bool>,
@@ -694,13 +682,17 @@ pub fn resolve_model_thinking_level(
     default_reasoning_effort: Option<&str>,
 ) -> ThinkingConfig {
     let supported = thinking_levels_for_model(supports_thinking, reasoning_levels);
+    if supports_thinking == Some(false) {
+        return ThinkingConfig::Off;
+    }
     if supported.contains(&current) {
         return current;
     }
     if let Some(def) = default_reasoning_effort.and_then(parse_reasoning_level) {
         return def.clamp_to_supported(&supported);
     }
-    current.clamp_to_supported(&supported)
+    // Default: maximum supported effort (stable across tool-loop iterations).
+    ThinkingConfig::Max.clamp_to_supported(&supported)
 }
 
 /// Map a [`ThinkingConfig`] to a provider effort label, preferring registry strings.
@@ -714,10 +706,7 @@ pub fn resolve_effort_label(
     if matches!(thinking, ThinkingConfig::Off) {
         return None;
     }
-    let concrete = match thinking {
-        ThinkingConfig::Adaptive => ThinkingConfig::Medium,
-        other => other,
-    };
+    let concrete = thinking;
 
     // Prefer an exact registry string that maps to this level.
     for raw in reasoning_levels {
@@ -735,7 +724,7 @@ pub fn resolve_effort_label(
                 ThinkingConfig::High => "high",
                 ThinkingConfig::Medium => "medium",
                 ThinkingConfig::Low => "low",
-                ThinkingConfig::Off | ThinkingConfig::Adaptive => "medium",
+                ThinkingConfig::Off => "medium",
             }
             .to_string(),
         );
@@ -755,89 +744,12 @@ pub fn resolve_effort_label(
                 }
             }
             ThinkingConfig::High => "high",
-            ThinkingConfig::Medium | ThinkingConfig::Adaptive => "medium",
+            ThinkingConfig::Medium => "medium",
             ThinkingConfig::Low => "low",
             ThinkingConfig::Off => return None,
         }
         .to_string(),
     )
-}
-
-/// Task complexity classification for adaptive thinking.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum TaskComplexity {
-    Simple,
-    Medium,
-    Complex,
-}
-
-impl TaskComplexity {
-    fn classify(messages: &[ModelMessage], tool_names: &[String]) -> Self {
-        let mut score: u32 = 0;
-
-        // More messages → more complex conversation context.
-        let msg_count = messages.len() as u32;
-        if msg_count > 20 {
-            score += 2;
-        } else if msg_count > 8 {
-            score += 1;
-        }
-
-        // Check recent tool calls for complexity signals.
-        let has_write_tools = tool_names.iter().any(|t| {
-            matches!(
-                t.as_str(),
-                "write_file" | "apply_patch" | "write" | "code_edit"
-            )
-        });
-        let has_complex_tools = tool_names.iter().any(|t| matches!(t.as_str(), "bash"));
-        let has_read_only = tool_names.iter().any(|t| {
-            matches!(
-                t.as_str(),
-                "read_file" | "grep" | "fs_browser" | "read" | "search" | "code"
-            )
-        });
-
-        if has_write_tools {
-            score += 2;
-        }
-        if has_complex_tools {
-            score += 1;
-        }
-        // If only read-only tools and nothing else → simpler.
-        if has_read_only && !has_write_tools && !has_complex_tools {
-            score = score.saturating_sub(1);
-        }
-
-        // Check for error patterns in recent messages (retries = complex).
-        let recent_errors = messages
-            .iter()
-            .rev()
-            .take(6)
-            .filter(|m| {
-                m.role == ModelRole::Tool
-                    && m.content.contains("\"error\"")
-                    && !m.content.contains("[Old tool result content cleared]")
-            })
-            .count();
-        if recent_errors > 1 {
-            score += 1;
-        }
-
-        // User messages with long content → likely complex instructions.
-        let last_user = messages.iter().rev().find(|m| m.role == ModelRole::User);
-        if let Some(user_msg) = last_user
-            && user_msg.content.len() > 500
-        {
-            score += 1;
-        }
-
-        match score {
-            0..=1 => Self::Simple,
-            2..=3 => Self::Medium,
-            _ => Self::Complex,
-        }
-    }
 }
 
 #[cfg(test)]
@@ -920,7 +832,7 @@ mod tests {
         let levels = thinking_levels_for_model(Some(true), &[]);
         assert_eq!(
             levels,
-            vec![ThinkingConfig::Medium, ThinkingConfig::Off]
+            vec![ThinkingConfig::Max, ThinkingConfig::Off]
         );
         assert!(is_binary_effort_model(Some(true), &[]));
         assert!(is_binary_effort_model(None, &[]));
@@ -1025,76 +937,49 @@ mod tests {
         assert!(deserialized.created_at.is_none());
     }
 
-    // ── Adaptive thinking ──────────────────────────────────────────────────────
+    // ── Effort resolution (no adaptive) ────────────────────────────────────────
 
     #[test]
-    fn adaptive_thinking_simple_read_only_gives_low() {
-        let messages = vec![
-            ModelMessage::user("read this file"),
-            ModelMessage::assistant("ok"),
-        ];
-        let tools = vec!["read_file".to_string()];
-        let result = ThinkingConfig::resolve_adaptive(&messages, &tools, 0);
-        assert_eq!(result, ThinkingConfig::Low);
+    fn legacy_adaptive_string_maps_to_max() {
+        assert_eq!(
+            ThinkingConfig::from_config_str("adaptive"),
+            ThinkingConfig::Max
+        );
+        assert_eq!(parse_reasoning_level("auto"), Some(ThinkingConfig::Max));
+        assert_eq!(parse_reasoning_level("on"), Some(ThinkingConfig::Max));
+        let deserialized: ThinkingConfig = serde_json::from_str("\"adaptive\"").unwrap();
+        assert_eq!(deserialized, ThinkingConfig::Max);
     }
 
     #[test]
-    fn adaptive_thinking_write_tools_gives_medium_or_high() {
-        let messages = vec![
-            ModelMessage::user("refactor this module"),
-            ModelMessage::assistant("ok"),
-        ];
-        let tools = vec!["write_file".to_string(), "read_file".to_string()];
-        let result = ThinkingConfig::resolve_adaptive(&messages, &tools, 0);
-        assert!(matches!(
-            result,
-            ThinkingConfig::Medium | ThinkingConfig::High
-        ));
+    fn resolve_forces_off_when_model_lacks_reasoning() {
+        let resolved = resolve_model_thinking_level(
+            ThinkingConfig::Max,
+            Some(false),
+            &["high".into()],
+            None,
+        );
+        assert_eq!(resolved, ThinkingConfig::Off);
     }
 
     #[test]
-    fn adaptive_thinking_long_conversation_gives_higher() {
-        let mut messages = Vec::new();
-        for i in 0..25 {
-            messages.push(ModelMessage::user(format!("message {i}")));
-            messages.push(ModelMessage::assistant(format!("response {i}")));
-        }
-        let tools = vec!["bash".to_string(), "write_file".to_string()];
-        let result = ThinkingConfig::resolve_adaptive(&messages, &tools, 0);
-        assert!(matches!(
-            result,
-            ThinkingConfig::Medium | ThinkingConfig::High
-        ));
+    fn resolve_defaults_to_max_when_preference_unsupported() {
+        let resolved = resolve_model_thinking_level(
+            ThinkingConfig::Low,
+            Some(true),
+            &["high".into(), "xhigh".into()],
+            None,
+        );
+        assert_eq!(resolved, ThinkingConfig::Max);
     }
 
     #[test]
-    fn adaptive_thinking_errors_increase_complexity() {
-        let messages = vec![
-            ModelMessage::user("fix this"),
-            ModelMessage::tool_result("c1", "bash", "{\"error\": \"failed\"}"),
-            ModelMessage::tool_result("c2", "bash", "{\"error\": \"failed again\"}"),
-        ];
-        let tools = vec!["bash".to_string()];
-        let result = ThinkingConfig::resolve_adaptive(&messages, &tools, 0);
-        assert!(matches!(
-            result,
-            ThinkingConfig::Medium | ThinkingConfig::High
-        ));
-    }
-
-    #[test]
-    fn adaptive_falls_back_to_medium_in_to_thinking_request() {
-        let request = ThinkingConfig::Adaptive.to_thinking_request();
-        assert!(request.enabled);
-        assert_eq!(request.effort.as_deref(), Some("medium"));
-    }
-
-    #[test]
-    fn adaptive_serde_roundtrip() {
-        let config = ThinkingConfig::Adaptive;
-        let json = serde_json::to_string(&config).unwrap();
-        assert_eq!(json, "\"adaptive\"");
-        let deserialized: ThinkingConfig = serde_json::from_str(&json).unwrap();
-        assert_eq!(deserialized, ThinkingConfig::Adaptive);
+    fn binary_on_is_max() {
+        assert_eq!(
+            BINARY_REASONING_LEVELS,
+            &[ThinkingConfig::Max, ThinkingConfig::Off]
+        );
+        assert_eq!(effort_display_label(ThinkingConfig::Max, true), "thinking on");
+        assert_eq!(effort_display_label(ThinkingConfig::Off, true), "thinking off");
     }
 }

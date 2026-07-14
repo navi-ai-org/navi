@@ -1883,7 +1883,7 @@ fn parse_thinking_config(value: &str) -> Result<ThinkingConfig> {
         return Ok(level);
     }
     Err(Error::from_reason(format!(
-        "unsupported effort/thinking config '{value}', expected max, high, medium, low, off, adaptive, or on"
+        "unsupported effort/thinking config '{value}', expected max, high, medium, low, off, or on (legacy adaptive maps to max)"
     )))
 }
 
@@ -2075,12 +2075,13 @@ mod tests {
         );
         assert_eq!(parse_thinking_config("low").unwrap(), ThinkingConfig::Low);
         assert_eq!(parse_thinking_config("off").unwrap(), ThinkingConfig::Off);
+        // Legacy adaptive maps to max (highest fixed effort).
         assert_eq!(
             parse_thinking_config("adaptive").unwrap(),
-            ThinkingConfig::Adaptive
+            ThinkingConfig::Max
         );
-        // Binary effort "thinking on" aliases to medium.
-        assert_eq!(parse_thinking_config("on").unwrap(), ThinkingConfig::Medium);
+        // Binary effort "thinking on" aliases to max.
+        assert_eq!(parse_thinking_config("on").unwrap(), ThinkingConfig::Max);
     }
 
     #[test]
