@@ -372,22 +372,12 @@ async fn maintain_context_budget(ctx: &TurnContext, messages: &mut Vec<ModelMess
 
 fn build_model_request(ctx: &TurnContext, messages: &[ModelMessage]) -> ModelRequest {
     let config = ctx.active_config();
-    let thinking_level = config.tui.thinking_level.trim().to_lowercase();
-
-    let mut thinking = match thinking_level.as_str() {
-        "adaptive" => {
-            let tool_names: Vec<String> = ctx.tool_executor.tool_names();
-            ThinkingConfig::resolve_adaptive(messages, &tool_names, 0)
-        }
-        "max" => ThinkingConfig::Max,
-        "high" => ThinkingConfig::High,
-        "medium" => ThinkingConfig::Medium,
-        "low" => ThinkingConfig::Low,
-        "off" => ThinkingConfig::Off,
-        _ => ThinkingConfig::Adaptive,
-    };
+    // Fixed effort from config/session preference — never re-scored mid-turn so
+    // provider prefix/KV cache stays stable across tool-loop iterations.
+    let mut thinking = ThinkingConfig::from_config_str(&config.tui.thinking_level);
 
     // Clamp to registry reasoning_levels for the active model when available.
+    // Models without reasoning support are forced to Off automatically.
     let model_name = ctx.active_model_name();
     let provider_id = config.model.provider.clone();
     if let Some(provider) = crate::config::resolve_provider_config(&config, &provider_id) {
@@ -402,16 +392,6 @@ fn build_model_request(ctx: &TurnContext, messages: &[ModelMessage]) -> ModelReq
                 &model.reasoning_levels,
                 model.default_reasoning_effort.as_deref(),
             );
-            // Adaptive already resolved above when config said adaptive; if registry
-            // forced Adaptive again (shouldn't), leave as-is.
-            if matches!(thinking, ThinkingConfig::Adaptive) {
-                let tool_names: Vec<String> = ctx.tool_executor.tool_names();
-                thinking = ThinkingConfig::resolve_adaptive(messages, &tool_names, 0);
-                thinking = thinking.clamp_to_supported(&crate::thinking_levels_for_model(
-                    model.supports_thinking,
-                    &model.reasoning_levels,
-                ));
-            }
         }
     }
 

@@ -119,7 +119,9 @@ pub struct TuiConfig {
     pub full_tool_view: bool,
     /// Number of most-recent tool rows shown in compact tool groups.
     pub compact_tool_visible_limit: usize,
-    /// Thinking effort: `max`, `high`, `medium`, `low`, `off`.
+    /// Thinking effort: `max`, `high`, `medium`, `low`, `off` (default `max`).
+    ///
+    /// Legacy value `adaptive` is accepted and treated as `max`.
     pub thinking_level: String,
     /// Auto-approve tools without confirmation (YOLO mode).
     pub yolo_mode: bool,
@@ -142,7 +144,7 @@ impl Default for TuiConfig {
             show_thinking: true,
             full_tool_view: false,
             compact_tool_visible_limit: 5,
-            thinking_level: "adaptive".to_string(),
+            thinking_level: "max".to_string(),
             yolo_mode: false,
             recent_provider_ids: Vec::new(),
             recent_model_ids: Vec::new(),

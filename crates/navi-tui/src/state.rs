@@ -796,7 +796,6 @@ fn next_boundary(value: &str, index: usize) -> usize {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ThinkingLevel {
-    Adaptive,
     Max,
     High,
     Medium,
@@ -807,7 +806,6 @@ pub(crate) enum ThinkingLevel {
 impl From<ThinkingLevel> for ThinkingConfig {
     fn from(value: ThinkingLevel) -> Self {
         match value {
-            ThinkingLevel::Adaptive => Self::Adaptive,
             ThinkingLevel::Max => Self::Max,
             ThinkingLevel::High => Self::High,
             ThinkingLevel::Medium => Self::Medium,
@@ -820,7 +818,6 @@ impl From<ThinkingLevel> for ThinkingConfig {
 impl From<ThinkingConfig> for ThinkingLevel {
     fn from(value: ThinkingConfig) -> Self {
         match value {
-            ThinkingConfig::Adaptive => Self::Adaptive,
             ThinkingConfig::Max => Self::Max,
             ThinkingConfig::High => Self::High,
             ThinkingConfig::Medium => Self::Medium,
@@ -833,7 +830,6 @@ impl From<ThinkingConfig> for ThinkingLevel {
 impl ThinkingLevel {
     pub(crate) fn label(self) -> &'static str {
         match self {
-            Self::Adaptive => "adaptive",
             Self::Max => "max",
             Self::High => "high",
             Self::Medium => "medium",
@@ -848,8 +844,8 @@ impl ThinkingLevel {
 
     /// User-facing label for the effort picker / status bar.
     ///
-    /// In binary mode (model has no registry effort levels) Medium is shown as
-    /// "thinking on" and Off as "thinking off".
+    /// In binary mode (model has no registry effort levels) non-off levels are
+    /// shown as "thinking on" and Off as "thinking off".
     pub(crate) fn display_label(self, binary_mode: bool) -> &'static str {
         navi_sdk::effort_display_label(self.into(), binary_mode)
     }
@@ -864,12 +860,11 @@ impl ThinkingLevel {
 
     pub(crate) fn index(self) -> usize {
         match self {
-            Self::Adaptive => 0,
-            Self::Max => 1,
-            Self::High => 2,
-            Self::Medium => 3,
-            Self::Low => 4,
-            Self::Off => 5,
+            Self::Max => 0,
+            Self::High => 1,
+            Self::Medium => 2,
+            Self::Low => 3,
+            Self::Off => 4,
         }
     }
 
@@ -975,7 +970,7 @@ impl Default for GoalUiState {
     }
 }
 
-/// Live plan checklist shown above the composer so the user can track phases.
+/// Live plan checklist shown in the topbar above the chat.
 #[derive(Debug, Clone)]
 pub(crate) struct ActivePlanUiState {
     pub plan_id: String,
@@ -983,7 +978,7 @@ pub(crate) struct ActivePlanUiState {
     pub steps: Vec<ActivePlanStepUi>,
     /// `proposed` (awaiting review) | `active` | `completed` | `abandoned`
     pub status: String,
-    /// When true, composer area shows the full checklist (not just the summary line).
+    /// When true, topbar expands to show the full checklist (click N/M to toggle).
     pub expanded: bool,
 }
 

@@ -492,7 +492,7 @@ mod tests {
         let (opts, binary) = effort_options_for_model(Some(true), &[]);
         assert!(binary);
         assert_eq!(opts.len(), 2);
-        assert!(opts.iter().any(|o| o.value == "medium" && o.label == "thinking on"));
+        assert!(opts.iter().any(|o| o.value == "max" && o.label == "thinking on"));
         assert!(opts.iter().any(|o| o.value == "off" && o.label == "thinking off"));
     }
 

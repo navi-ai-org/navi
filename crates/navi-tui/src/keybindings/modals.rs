@@ -25,7 +25,7 @@ use crate::runtime::spawn_runtime_task;
 /// Fallback binary effort options (thinking on / thinking off) when no model
 /// is selected or the model has no registry effort levels.
 pub(crate) const BINARY_EFFORT_OPTIONS: &[ThinkingLevel] =
-    &[ThinkingLevel::Medium, ThinkingLevel::Off];
+    &[ThinkingLevel::Max, ThinkingLevel::Off];
 
 /// Registry-aware effort options for the selected model.
 ///

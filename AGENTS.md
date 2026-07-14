@@ -182,7 +182,7 @@ Some provider ids have special adapters:
 - `openai` and `xai` use Responses-style reasoning effort.
 - `xai` OAuth (device code like `grok login`, or browser PKCE via `NAVI_XAI_OAUTH_BROWSER=1`) uses Grok Build / CLI subscription billing at `cli-chat-proxy.grok.com` with `X-XAI-Token-Auth: xai-grok-cli` + `x-grok-client-version`. Platform `XAI_API_KEY` (`xai-…`) stays on `api.x.ai` pay-as-you-go.
 
-The UI effort picker is labeled **Effort Level** (not "thinking mode"). Levels shown are model-specific from registry `reasoning_levels` (mapped to `max`/`high`/`medium`/`low`/`off`/`adaptive`). When a model has no configured levels, the picker is binary: **thinking on** / **thinking off**. `ThinkingConfig::to_thinking_request` produces a normalized `ThinkingRequest` with `effort` and `budget_tokens` fields. Each provider converts these to its own wire format in the stream layer.
+The UI effort picker is labeled **Effort Level** (not "thinking mode"). Levels shown are model-specific from registry `reasoning_levels` (mapped to `max`/`high`/`medium`/`low`/`off`). When a model has no configured levels, the picker is binary: **thinking on** / **thinking off**. `ThinkingConfig::to_thinking_request` produces a normalized `ThinkingRequest` with `effort` and `budget_tokens` fields. Each provider converts these to its own wire format in the stream layer.
 
 Tool transcripts must remain provider-correct. Chat Completions uses assistant `tool_calls` plus role `tool` results. Responses uses `function_call` and `function_call_output` input items.
 
