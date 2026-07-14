@@ -677,6 +677,8 @@ impl SubagentTool {
                     "Subagent spawned in background. Poll with subagent({{\"task_id\":\"{task_id}\"}}) or cancel with subagent({{\"task_id\":\"{task_id}\",\"action\":\"cancel\"}})."
                 ),
                 "action": "poll",
+                "background": true,
+                "status": "running",
                 "elapsed_ms": started.elapsed().as_millis() as u64,
             }),
         ))

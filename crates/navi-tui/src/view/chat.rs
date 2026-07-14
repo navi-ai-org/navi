@@ -838,6 +838,7 @@ fn chat_render_signature(app: &TuiApp) -> u64 {
     app.compact_tool_visible_limit.hash(&mut hasher);
     let activity_animating = app.is_loading
         || !app.running_tools.is_empty()
+        || !app.subagent_activity.is_empty()
         || app.background_commands.iter().any(|c| c.is_running());
     // Invalidate once per pulse frame so ◆/◇ advances while tools/commands run.
     if activity_animating {

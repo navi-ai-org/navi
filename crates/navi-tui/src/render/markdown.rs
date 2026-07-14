@@ -71,6 +71,7 @@ pub(crate) fn build_chat_render_for_messages(
                 collapsed_tool_results,
                 tool_render_cache,
                 loading_elapsed_ms,
+                subagent_activity,
             );
             for (line, source) in rendered_tool {
                 rendered_lines.push(line);
@@ -645,6 +646,7 @@ fn render_compact_tool_result(
     collapsed_tool_results: &HashSet<String>,
     tool_render_cache: &mut HashMap<String, Vec<Line<'static>>>,
     loading_elapsed_ms: Option<u64>,
+    subagent_activity: &HashMap<String, String>,
 ) -> Vec<(Line<'static>, ChatLineSource)> {
     use super::tool_policy::{tool_auto_expand, tool_body_visible};
 
@@ -668,6 +670,28 @@ fn render_compact_tool_result(
         render_compact_tool_line_with_width(invocation, result, chat_width, loading_elapsed_ms),
         source.clone(),
     ));
+
+    // Background-spawned subagents keep publishing activity after ToolCompleted.
+    // Surface the latest status under the card so progress is still visible.
+    if invocation.tool_name == "subagent"
+        && tool_result_still_running(result)
+        && let Some(detail) = subagent_activity.get(&result.invocation_id)
+    {
+        let detail = detail.trim();
+        if !detail.is_empty() {
+            let detail_width = chat_width.saturating_sub(4).max(8);
+            lines.push((
+                Line::from(vec![
+                    Span::styled("  ↳ ".to_string(), Style::default().fg(ghost())),
+                    Span::styled(
+                        truncate_chars(detail, detail_width),
+                        Style::default().fg(muted()),
+                    ),
+                ]),
+                source.clone(),
+            ));
+        }
+    }
 
     if show_body {
         let cache_key = format!(
