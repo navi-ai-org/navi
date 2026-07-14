@@ -2290,6 +2290,44 @@ fn esc_while_loading_opens_cancel_confirmation() {
 }
 
 #[test]
+fn paste_text_and_image_tags_work_while_streaming() {
+    let mut app = test_app("");
+    app.is_loading = true;
+    app.mode = Mode::Normal;
+
+    // Bracketed paste of plain text must land in the composer mid-stream.
+    crate::event_loop::handle_paste(&mut app, "follow-up while streaming");
+    assert_eq!(app.input, "follow-up while streaming");
+    assert!(app.is_loading, "paste must not cancel the active turn");
+
+    // Stage an image attachment while streaming (submit will queue it).
+    app.pending_images.push(PendingImage {
+        data: "iVBORw0KGgo=".to_string(),
+        media_type: "image/png".to_string(),
+        width: Some(1),
+        height: Some(1),
+    });
+    crate::input::insert_input_text(&mut app, " [Image 1]");
+    assert!(app.input.contains("[Image 1]"));
+    assert_eq!(app.pending_images.len(), 1);
+
+    submit_message(&mut app);
+    assert!(
+        app.is_loading,
+        "submit while streaming must queue, not drop loading"
+    );
+    assert_eq!(app.queued_user_messages.len(), 1);
+    assert!(
+        app.queued_user_messages[0]
+            .text
+            .contains("follow-up while streaming")
+    );
+    assert_eq!(app.queued_user_messages[0].images.len(), 1);
+    assert!(app.input.is_empty());
+    assert!(app.pending_images.is_empty());
+}
+
+#[test]
 fn esc_soon_after_mouse_event_does_not_open_cancel_confirmation() {
     let mut app = test_app("");
     app.is_loading = true;

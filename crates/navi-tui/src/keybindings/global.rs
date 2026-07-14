@@ -90,21 +90,29 @@ pub(super) fn route_global_key(
     }
 
     if ctrl_letter(code, 'i') || ctrl_letter(code, 'v') {
-        // Paste image only from normal chat composer. In other modes (OAuth
+        // Paste into the normal chat composer only. In other modes (OAuth
         // paste, text fields, …) yield so the modal/mode handler can run.
+        // Allowed while streaming — drafts queue on submit behind the active turn.
         if app.mode != crate::state::Mode::Normal {
             return KeyOutcome::Ignored;
         }
-        if !app.is_loading {
-            match try_read_clipboard_image() {
-                Some(image) => {
-                    app.pending_images.push(image);
-                    let tag = format!("[Image {}]", app.pending_images.len());
-                    crate::input::insert_input_text(app, &tag);
-                    show_notification(app, "Image", format!("Attached as {}", tag));
-                }
-                None => {
-                    show_notification(app, "Image", "No image found in clipboard.");
+        let want_image_only = ctrl_letter(code, 'i');
+        match try_read_clipboard_image() {
+            Some(image) => {
+                app.pending_images.push(image);
+                let tag = format!("[Image {}]", app.pending_images.len());
+                crate::input::insert_input_text(app, &tag);
+                show_notification(app, "Image", format!("Attached as {}", tag));
+            }
+            None if want_image_only => {
+                show_notification(app, "Image", "No image found in clipboard.");
+            }
+            None => {
+                // Ctrl+V with no image: paste clipboard text into the composer.
+                if let Some(text) = crate::clipboard::try_read_clipboard_text() {
+                    if !text.is_empty() {
+                        crate::input::insert_input_text(app, &text);
+                    }
                 }
             }
         }

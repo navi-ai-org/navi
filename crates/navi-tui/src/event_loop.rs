@@ -646,34 +646,40 @@ impl LeakedTerminalSequenceFilter {
     }
 }
 
-/// Handle a bracketed paste event. In normal mode, tries to read an image
-/// from the clipboard first (Ctrl+V paste); falls back to inserting text.
-fn handle_paste(app: &mut TuiApp, content: &str) {
+/// Handle a bracketed paste event.
+///
+/// Normal-mode rules (also apply while the model is streaming — drafts queue
+/// on submit behind the active turn):
+/// 1. If `content` is a filesystem path to an image → attach that file.
+/// 2. If `content` is empty/whitespace → try system clipboard image (some
+///    terminals deliver image paste as an empty bracketed paste).
+/// 3. Otherwise insert `content` as text. Never steal a text paste just because
+///    the clipboard also holds an image.
+pub(crate) fn handle_paste(app: &mut TuiApp, content: &str) {
     use crate::clipboard::try_read_clipboard_image;
     use crate::notifications::show_notification;
 
     match app.mode {
         Mode::Normal => {
-            if !app.is_loading {
-                if let Some(image) = crate::clipboard::try_read_image_from_path(content) {
-                    app.pending_images.push(image);
-                    let tag = format!("[Image {}]", app.pending_images.len());
-                    insert_input_text(app, &tag);
-                    show_notification(app, "Image", format!("Attached as {}", tag));
-                    return;
-                }
+            if let Some(image) = crate::clipboard::try_read_image_from_path(content) {
+                app.pending_images.push(image);
+                let tag = format!("[Image {}]", app.pending_images.len());
+                insert_input_text(app, &tag);
+                show_notification(app, "Image", format!("Attached as {}", tag));
+                return;
+            }
 
+            if content.trim().is_empty() {
                 if let Some(image) = try_read_clipboard_image() {
                     app.pending_images.push(image);
                     let tag = format!("[Image {}]", app.pending_images.len());
                     insert_input_text(app, &tag);
                     show_notification(app, "Image", format!("Attached as {}", tag));
-                    return;
                 }
+                return;
             }
-            if !content.is_empty() {
-                insert_input_text(app, content);
-            }
+
+            insert_input_text(app, content);
         }
         Mode::ApiKeyEntry => insert_api_key_text(app, content),
         Mode::QueuedMessageEdit => crate::input::insert_queued_edit_text(app, content),
