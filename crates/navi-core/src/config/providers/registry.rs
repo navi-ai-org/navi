@@ -19,12 +19,12 @@ pub fn default_request_options_for(provider_id: &str) -> Option<ProviderRequestO
             anthropic_cache_control: Some(serde_json::json!({ "type": "ephemeral" })),
             ..Default::default()
         }),
-        // Charm Hyper: pin a stable prompt_cache_key for prefix routing. Session
-        // affinity still comes from x-session-id / x-session-affinity headers.
-        "charm-hyper" => Some(ProviderRequestOptions {
-            prompt_cache_key: Some("charm-hyper".to_string()),
-            ..Default::default()
-        }),
+        // Charm Hyper: do NOT set prompt_cache_key.
+        // Crush relies on content-prefix matching + x-session-id / x-session-affinity.
+        // A body-level prompt_cache_key (especially when session-scoped) isolates the
+        // shared NAVI system/tool prefix across concurrent NAVI instances and burns
+        // Hypercredits on repeated uncached input.
+        "charm-hyper" => None,
         _ => None,
     }
 }

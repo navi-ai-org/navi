@@ -80,22 +80,13 @@ impl crate::provider::OpenAiProvider {
         );
         body["stream"] = json!(true);
         body["stream_options"] = json!({ "include_usage": true });
-        if let Some(prompt_cache_key) = &request_options.prompt_cache_key {
-            // Scope the cache key by session when available so consecutive tool
-            // steps of the same agent session share prefix routing.
-            let key = match request.session_id.as_deref() {
-                Some(session_id) if !session_id.is_empty() => {
-                    format!("{prompt_cache_key}:{session_id}")
-                }
-                _ => prompt_cache_key.clone(),
-            };
-            body["prompt_cache_key"] = json!(key);
-        }
-        if let Some(retention) = &request_options.prompt_cache_retention
-            && should_send_prompt_cache_retention(&model, retention)
-        {
-            body["prompt_cache_retention"] = json!(retention);
-        }
+        apply_prompt_cache_fields(
+            &mut body,
+            &provider_id,
+            &model,
+            &request_options,
+            request.session_id.as_deref(),
+        );
 
         let response = client
             .post(format!("{}/responses", base_url.trim_end_matches('/')))
@@ -198,22 +189,13 @@ impl crate::provider::OpenAiProvider {
         );
         body["stream"] = json!(true);
         body["stream_options"] = json!({ "include_usage": true });
-        if let Some(prompt_cache_key) = &request_options.prompt_cache_key {
-            // Scope the cache key by session when available so consecutive tool
-            // steps of the same agent session share prefix routing.
-            let key = match request.session_id.as_deref() {
-                Some(session_id) if !session_id.is_empty() => {
-                    format!("{prompt_cache_key}:{session_id}")
-                }
-                _ => prompt_cache_key.clone(),
-            };
-            body["prompt_cache_key"] = json!(key);
-        }
-        if let Some(retention) = &request_options.prompt_cache_retention
-            && should_send_prompt_cache_retention(&model, retention)
-        {
-            body["prompt_cache_retention"] = json!(retention);
-        }
+        apply_prompt_cache_fields(
+            &mut body,
+            &provider_id,
+            &model,
+            &request_options,
+            request.session_id.as_deref(),
+        );
 
         let req = client
             .post(format!(
@@ -1009,6 +991,99 @@ pub(crate) fn model_supports_extended_cache(model: &str) -> bool {
 
 fn should_send_prompt_cache_retention(model: &str, retention: &str) -> bool {
     retention != "24h" || model_supports_extended_cache(model)
+}
+
+/// Apply OpenAI-style prompt-cache body fields.
+///
+/// - OpenAI / providers that benefit from explicit keys: optional session
+///   suffix keeps consecutive tool steps of one agent session together.
+/// - Charm Hyper: never emit `prompt_cache_key`. Hyper (like Crush) shares the
+///   common system/tool prefix by content hash and sticks a conversation with
+///   `x-session-id` / `x-session-affinity` only. Session-scoping the key caused
+///   multi-instance cache isolation and large Hypercredit burns.
+fn apply_prompt_cache_fields(
+    body: &mut Value,
+    provider_id: &str,
+    model: &str,
+    request_options: &navi_core::ProviderRequestOptions,
+    session_id: Option<&str>,
+) {
+    let is_charm_hyper = navi_core::ProviderId::from_config_id(provider_id).as_str()
+        == navi_core::ProviderId::CHARM_HYPER;
+
+    if is_charm_hyper {
+        // Affinity headers carry session stickiness; body key would isolate
+        // the shared NAVI prefix across concurrent instances.
+        return;
+    }
+
+    if let Some(prompt_cache_key) = &request_options.prompt_cache_key {
+        // Scope the cache key by session when available so consecutive tool
+        // steps of the same agent session share prefix routing (OpenAI).
+        let key = match session_id {
+            Some(session_id) if !session_id.is_empty() => {
+                format!("{prompt_cache_key}:{session_id}")
+            }
+            _ => prompt_cache_key.clone(),
+        };
+        body["prompt_cache_key"] = json!(key);
+    }
+    if let Some(retention) = &request_options.prompt_cache_retention
+        && should_send_prompt_cache_retention(model, retention)
+    {
+        body["prompt_cache_retention"] = json!(retention);
+    }
+}
+
+#[cfg(test)]
+mod prompt_cache_field_tests {
+    use super::apply_prompt_cache_fields;
+    use navi_core::ProviderRequestOptions;
+    use serde_json::json;
+
+    #[test]
+    fn openai_scopes_prompt_cache_key_by_session() {
+        let mut body = json!({});
+        let opts = ProviderRequestOptions {
+            prompt_cache_key: Some("openai".into()),
+            prompt_cache_retention: Some("24h".into()),
+            ..Default::default()
+        };
+        apply_prompt_cache_fields(&mut body, "openai", "gpt-5", &opts, Some("sess-1"));
+        assert_eq!(body["prompt_cache_key"], json!("openai:sess-1"));
+        assert_eq!(body["prompt_cache_retention"], json!("24h"));
+    }
+
+    #[test]
+    fn charm_hyper_never_emits_prompt_cache_key_even_if_configured() {
+        let mut body = json!({});
+        let opts = ProviderRequestOptions {
+            prompt_cache_key: Some("charm-hyper".into()),
+            prompt_cache_retention: Some("24h".into()),
+            ..Default::default()
+        };
+        apply_prompt_cache_fields(
+            &mut body,
+            "charm-hyper",
+            "glm-5.2",
+            &opts,
+            Some("session-a"),
+        );
+        assert!(body.get("prompt_cache_key").is_none());
+        assert!(body.get("prompt_cache_retention").is_none());
+
+        // Different sessions must not create different body cache keys either.
+        let mut body_b = json!({});
+        apply_prompt_cache_fields(
+            &mut body_b,
+            "charm-hyper",
+            "glm-5.2",
+            &opts,
+            Some("session-b"),
+        );
+        assert!(body_b.get("prompt_cache_key").is_none());
+        assert_eq!(body, body_b);
+    }
 }
 
 #[cfg(test)]
