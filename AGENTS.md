@@ -436,15 +436,15 @@ NAVI implements a three-level conversation compaction system:
 
 The conversation is serialized to text and sent to the model with a prompt that produces a 9-section summary:
 
-1. Pedido e Intenção Primária
-2. Conceitos Técnicos-Chave
-3. Arquivos e Trechos de Código
-4. Erros e Correções
-5. Resolução de Problemas
-6. Todas as Mensagens do Usuário
-7. Tarefas Pendentes
-8. Trabalho Atual
-9. Próximo Passo Opcional
+1. Primary Request and Intent
+2. Key Technical Concepts
+3. Files and Code Snippets
+4. Errors and Fixes
+5. Problem Resolution
+6. All User Messages
+7. Pending Tasks
+8. Current Work
+9. Next Step (Optional)
 
 After 3 consecutive failures, the circuit breaker opens. No further auto-compact attempts are made.
 

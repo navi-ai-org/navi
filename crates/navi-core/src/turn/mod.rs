@@ -559,14 +559,16 @@ fn emit_harness_stop(ctx: &TurnContext, stop: &HarnessStop) {
 
 fn persist_harness_stop_output(messages: &mut Vec<ModelMessage>, stop: &HarnessStop) -> String {
     let mut text = format!(
-        "Interrompi a execução porque o harness detectou `{}`.\n\n{}",
+        "Stopped the run because the harness detected `{}`.\n\n{}",
         stop.reason.as_str(),
         stop.message
     );
     if let Some(tool_name) = &stop.tool_name {
-        text.push_str(&format!("\n\nÚltima ferramenta: `{tool_name}`."));
+        text.push_str(&format!("\n\nLast tool: `{tool_name}`."));
     }
-    text.push_str("\n\nTente novamente com uma instrução menor ou troque para um modelo/provider com tool calling mais estável.");
+    text.push_str(
+        "\n\nTry again with a smaller instruction, or switch to a model/provider with more stable tool calling.",
+    );
     messages.push(ModelMessage::assistant(text.clone()));
     text
 }
