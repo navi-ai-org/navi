@@ -114,12 +114,12 @@ fn plan_ui_from_tool_output(result: &ToolResult) -> Option<ActivePlanUiState> {
         title,
         steps,
         status,
-        expanded: true,
+        // Compact topbar by default (Grok-style N/M); click expands checklist.
+        expanded: false,
     })
 }
 
-/// Toggle expanded checklist under the composer.
-#[allow(dead_code)]
+/// Toggle expanded checklist in the plan topbar.
 pub(crate) fn toggle_plan_expanded(app: &mut TuiApp) {
     if let Some(plan) = app.active_plan.as_mut() {
         plan.expanded = !plan.expanded;

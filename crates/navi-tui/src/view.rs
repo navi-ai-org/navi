@@ -9,6 +9,7 @@ pub(crate) mod input;
 pub(crate) mod modals;
 pub(crate) mod model_picker;
 pub(crate) mod notification;
+pub(crate) mod plan_topbar;
 pub(crate) mod plugins;
 pub(crate) mod provider_settings;
 pub(crate) mod sessions;

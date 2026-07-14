@@ -79,6 +79,8 @@ pub enum HitAction {
     PlanReviewChanges,
     PlanReviewComment,
     PlanReviewQuit,
+    /// Toggle the plan progress topbar (compact N/M ↔ expanded checklist).
+    TogglePlanTopbar,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
