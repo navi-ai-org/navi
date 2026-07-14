@@ -2,7 +2,6 @@
 //!
 //! Uses a cheap model to find relevant code locations. Issues parallel
 //! read-only tool calls (read_file, fs_browser, grep) and returns
-//! read-only tool calls (read_file, fs_browser, grep) and returns
 //! compact file paths with line ranges as focused context.
 
 use std::sync::{Arc, RwLock, Weak};
@@ -10,11 +9,13 @@ use std::sync::{Arc, RwLock, Weak};
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use serde_json::json;
+use tokio::sync::mpsc;
 
 use super::helpers;
 use crate::cancel::CancelToken;
 use crate::compact::CompactState;
 use crate::config::{HarnessConfig, NaviConfig};
+use crate::event::{AgentEvent, ApprovalDecision};
 use crate::model::{ModelMessage, ModelProvider, ModelRole};
 use crate::prompt::PromptCache;
 use crate::runtime::ApprovalResolver;
@@ -41,7 +42,32 @@ Rules:
   - Brief description
   - Why it is relevant
 - Be concise. Most relevant 3-10 locations.
-- Do NOT write files or run shell commands.";
+- Do NOT write files or run shell commands.
+- Do NOT spawn other agents (subagent/repo_explore).";
+
+/// Tools that must never be available to the explore subagent.
+const EXPLORE_DENIED_TOOLS: &[&str] = &[
+    "write",
+    "write_file",
+    "apply_patch",
+    "code_edit",
+    "code_exec",
+    "bash",
+    "process",
+    "sandbox",
+    "package_manager",
+    "mark_feature_done",
+    "append_note",
+    "question",
+    "plan",
+    // Nested agent spawners — prevent recursive explore storms.
+    "subagent",
+    "repo_explore",
+    "branch_race",
+    "verifier",
+    "test_runner",
+    "build_runner",
+];
 
 pub struct RepoExploreTool {
     tool_executor: Weak<crate::tool::ToolExecutor>,
@@ -51,6 +77,7 @@ pub struct RepoExploreTool {
     model_name: Arc<RwLock<String>>,
     harness_config: HarnessConfig,
     config: Arc<RwLock<NaviConfig>>,
+    #[allow(dead_code)]
     prompt_cache: Arc<PromptCache>,
     components: RuntimeComponents,
 }
@@ -128,12 +155,15 @@ impl Tool for RepoExploreTool {
             format!("Query: {query}")
         };
 
-        // Build a restricted tool executor with only read-only tools.
-        // We use the same executor but the system prompt restricts the agent
-        // to read-only operations. The security policy already handles this.
-        let include_tool_prompt = crate::config::effective_tool_prompt_manifest(
-            &self.config.read().unwrap_or_else(|e| e.into_inner()),
-        );
+        // Restrict to read-only inspection tools. Without this filter the nested
+        // turn inherits every host tool; after a full system-prompt rebuild it
+        // would request bash/write approvals that hang forever (standalone
+        // resolver with no listener).
+        let allowed_tool_names: Vec<String> = executor
+            .tool_names()
+            .into_iter()
+            .filter(|name| !EXPLORE_DENIED_TOOLS.contains(&name.as_str()))
+            .collect();
 
         let messages = vec![
             ModelMessage {
@@ -158,12 +188,29 @@ impl Tool for RepoExploreTool {
             },
         ];
 
-        let (event_tx, _event_rx) = tokio::sync::mpsc::unbounded_channel();
+        // Auto-deny unexpected approval requests. Read-only tools should not
+        // need approval; if something slips through, fail fast instead of hang.
+        let (event_tx, mut event_rx) = mpsc::unbounded_channel::<AgentEvent>();
         let resolver = ApprovalResolver::new_standalone();
+        let resolver_bg = resolver.clone();
+        let _approval_handle = tokio::spawn(async move {
+            while let Some(event) = event_rx.recv().await {
+                if let AgentEvent::ApprovalRequested(req) = event {
+                    resolver_bg.resolve(ApprovalDecision::Denied { id: req.id });
+                }
+            }
+        });
 
         // Use a small harness profile for fast exploration.
         let mut explore_harness = self.harness_config.clone();
         explore_harness.profile = crate::config::HarnessProfile::Small;
+
+        // Freeze the explore system prompt so `ensure_system_prompt` does not
+        // replace it with the full parent-agent identity.
+        let instructions = Arc::new(RwLock::new(Some(SYSTEM_PROMPT.to_string())));
+        let prompt_prefix = Arc::new(std::sync::Mutex::new(Some(vec![ModelMessage::system(
+            SYSTEM_PROMPT.to_string(),
+        )])));
 
         let sub_ctx = TurnContext {
             model_provider: self.model_provider.clone(),
@@ -182,13 +229,14 @@ impl Tool for RepoExploreTool {
                 ),
             ))),
             harness_config: explore_harness.clone(),
-            include_tool_prompt_manifest: include_tool_prompt,
+            // Keep tool prompt lean; explore is short-lived.
+            include_tool_prompt_manifest: false,
             context_packets: Arc::new(std::sync::Mutex::new(Vec::new())),
             available_skills: Arc::new(std::sync::Mutex::new(Vec::new())),
             active_skills: Arc::new(std::sync::Mutex::new(Vec::new())),
-            prompt_cache: self.prompt_cache.clone(),
-            instructions: std::sync::Arc::new(std::sync::RwLock::new(None)),
-            prompt_prefix: std::sync::Arc::new(std::sync::Mutex::new(None)),
+            prompt_cache: Arc::new(PromptCache::new()),
+            instructions,
+            prompt_prefix,
             components: self.components.clone(),
             cancel_token: CancelToken::new(),
             config: self.config.clone(),
@@ -197,7 +245,7 @@ impl Tool for RepoExploreTool {
             agent_mode: crate::plan_mode::AgentMode::Default,
             compaction_model_name: None,
             session_id: "repo-explore-subagent".to_string(),
-            allowed_tool_names: None,
+            allowed_tool_names: Some(allowed_tool_names),
             memory_manager: Arc::new(std::sync::Mutex::new(None)),
         };
 
@@ -206,18 +254,19 @@ impl Tool for RepoExploreTool {
         let result = crate::turn::run_turn(&sub_ctx, &mut mut_messages(messages), policy).await;
         let elapsed = started.elapsed();
 
-        let text = match result {
-            Ok(output) => output,
-            Err(err) => format!("repo_explore failed: {err:#}"),
+        let (ok, text) = match result {
+            Ok(output) => (true, output),
+            Err(err) => (false, format!("repo_explore failed: {err:#}")),
         };
 
-        Ok(helpers::ok(
-            invocation.id,
-            json!({
+        Ok(ToolResult {
+            invocation_id: invocation.id,
+            ok,
+            output: json!({
                 "locations": text,
                 "elapsed_ms": elapsed.as_millis() as u64,
             }),
-        ))
+        })
     }
 }
 
@@ -256,6 +305,29 @@ mod tests {
         let def = tool.definition();
         assert_eq!(def.name, "repo_explore");
         assert_eq!(def.kind, ToolKind::Read);
+    }
+
+    #[test]
+    fn explore_denied_tools_block_nested_agents_and_writes() {
+        for name in [
+            "subagent",
+            "repo_explore",
+            "branch_race",
+            "write_file",
+            "bash",
+            "verifier",
+        ] {
+            assert!(
+                EXPLORE_DENIED_TOOLS.contains(&name),
+                "{name} must be denied for repo_explore"
+            );
+        }
+        for name in ["read_file", "grep", "fs_browser"] {
+            assert!(
+                !EXPLORE_DENIED_TOOLS.contains(&name),
+                "{name} must remain available for repo_explore"
+            );
+        }
     }
 
     struct MockProvider;

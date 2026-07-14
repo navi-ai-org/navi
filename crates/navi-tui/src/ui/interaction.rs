@@ -81,6 +81,8 @@ pub enum HitAction {
     PlanReviewQuit,
     /// Toggle the plan progress topbar (compact N/M ↔ expanded checklist).
     TogglePlanTopbar,
+    /// Expand remaining plan steps after "+N more" in the plan topbar.
+    ExpandPlanMore,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

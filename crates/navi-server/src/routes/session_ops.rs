@@ -356,7 +356,9 @@ pub fn routes(state: SharedState, secret: &'static str) -> BoxedFilter<(impl Rep
                 }
             };
             let engine = s.engine.read().await;
-            engine.set_permission_mode(mode);
+            if let Err(e) = engine.set_permission_mode(mode).await {
+                return Ok(err_resp(e.to_string(), StatusCode::INTERNAL_SERVER_ERROR));
+            }
             Ok(warp::reply::json(&serde_json::json!({
                 "mode": permission_mode_str(mode)
             }))

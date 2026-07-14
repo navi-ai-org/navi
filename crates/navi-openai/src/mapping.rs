@@ -402,6 +402,10 @@ pub(crate) fn usage_from_value_with_behavior(
         }
     };
 
+    // Crush: Hyper embeds remaining prepaid credits in usage metadata.
+    // Cache them so the usage modal can show balance without an extra HTTP call.
+    let _ = crate::oauth::extract_hypercredit_balance_from_usage(usage);
+
     if normalized.input_tokens.is_some()
         || normalized.output_tokens.is_some()
         || normalized.cache_read_tokens.is_some()

@@ -35,7 +35,7 @@ url = "2"
 base64 = { workspace = true, optional = true }
 futures-util = { workspace = true, optional = true }
 reqwest = { workspace = true, optional = true }
-tokio-tungstenite = { version = "0.28", default-features = false, optional = true, features = [
+tokio-tungstenite = { version = "0.30", default-features = false, optional = true, features = [
     "connect",
     "rustls-tls-webpki-roots",
 ] }

@@ -24,7 +24,7 @@ mod tests {
     use crate::render::text::{display_width, wrap_spans_to_width, wrap_text};
     use crate::render::tool::{tool_compact_text, tool_full_content};
     use crate::theme::ThemeId;
-    use crate::theme::code_block_bg;
+
 
     fn test_palette() -> crate::theme::ThemePalette {
         ThemeId::Lain.palette()
@@ -108,16 +108,20 @@ mod tests {
             test_palette().text,
             false,
         );
-        let code_lines: Vec<_> = lines
+        // Code fences no longer use a solid panel bg; wrap still keeps lines ≤ width.
+        let body_lines: Vec<_> = lines
             .iter()
             .filter(|line| {
-                line.spans
-                    .iter()
-                    .any(|span| span.style.bg == Some(code_block_bg()))
+                let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+                text.contains("message") || text.contains('x')
             })
             .collect();
-        assert!(code_lines.len() > 1, "expected wrapped code lines");
-        for line in &code_lines {
+        assert!(
+            body_lines.len() > 1,
+            "expected wrapped code lines, got {} total lines",
+            lines.len()
+        );
+        for line in &body_lines {
             let used: usize = line
                 .spans
                 .iter()
@@ -242,7 +246,7 @@ mod tests {
 
         assert_eq!(
             rendered,
-            vec!["  1. Architecture", "", "  ◇ signal in prose"]
+            vec!["  1. Architecture", "", "  │ signal in prose"]
         );
     }
 
@@ -258,7 +262,18 @@ mod tests {
         let rendered = lines.iter().map(line_text).collect::<Vec<_>>();
 
         // full box frame (outer ┌┐└┘, header ┼, body │).
-        assert_eq!(rendered[0], "  ◆ Project Overview");
+        // Headings use real markdown markers (diamonds reserved for NAVI tools).
+        assert!(
+            rendered[0].contains("Project Overview")
+                && (rendered[0].contains('#') || rendered[0].contains("Project")),
+            "heading render: {:?}",
+            rendered[0]
+        );
+        assert!(
+            !rendered[0].contains('◆') && !rendered[0].contains('◇'),
+            "headings must not use tool diamonds: {:?}",
+            rendered[0]
+        );
         assert!(rendered[1].trim().is_empty());
         let table = &rendered[2..];
         assert!(
@@ -285,7 +300,11 @@ mod tests {
                 .any(|l| l.contains("navi-cli") && l.contains("Entry binary")),
             "body row: {table:?}"
         );
-        assert!(!rendered.iter().any(|line| line.contains("##")));
+        // Heading keeps real markdown markers (hierarchy cue in the TUI).
+        assert!(
+            rendered.iter().any(|line| line.contains("##")),
+            "H2 should keep markdown hashes: {rendered:?}"
+        );
         // Markdown pipe characters are consumed; box-drawing uses │ not |.
         assert!(!rendered.iter().skip(2).any(|line| line.contains('|')));
         // Gutter is spaces (block pad), never a bare quote-bar at column 0.

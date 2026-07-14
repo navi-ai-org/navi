@@ -425,6 +425,11 @@ where
             needs_draw = true;
         }
 
+        // Finished plans leave the topbar after 1 minute (or when replaced by create).
+        if crate::plan_progress::maybe_dismiss_completed_plan(app) {
+            needs_draw = true;
+        }
+
         if crate::view::image_preview::poll_image_hover_close(app) {
             needs_draw = true;
         }
@@ -435,11 +440,18 @@ where
             handle_async_event(app, event);
         }
 
+        let done_plan_pending = app
+            .active_plan
+            .as_ref()
+            .is_some_and(|p| p.is_done() && p.completed_at.is_some());
         let mut timeout = if activity_animating || composer_animating {
             // ~30fps is enough for a 320ms pulse frame and keeps CPU low.
             Duration::from_millis(33)
         } else if app.messages.is_empty() || visible_notification(app).is_some() {
             Duration::from_millis(80)
+        } else if done_plan_pending {
+            // Wake often enough to dismiss a finished plan near the 60s mark.
+            Duration::from_millis(500)
         } else {
             Duration::from_millis(250)
         };

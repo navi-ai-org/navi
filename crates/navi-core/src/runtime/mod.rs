@@ -10,7 +10,7 @@ use std::sync::{Arc, RwLock};
 use tokio::sync::{broadcast, mpsc, oneshot};
 
 use crate::cancel::CancelToken;
-use crate::config::LoadedConfig;
+use crate::config::{LoadedConfig, PermissionMode, SecurityConfig};
 use crate::context::ContextPacket;
 use crate::event::{
     AgentEvent, ApprovalDecision, PlanReviewResponse, QuestionResponse, RuntimeEvent,
@@ -1249,6 +1249,27 @@ impl AgentRuntime {
     /// Replaces the session tool executor (e.g. after installing WASM plugins).
     pub fn set_tool_executor(&mut self, executor: Arc<ToolExecutor>) {
         self.tool_executor = Some(executor);
+    }
+
+    /// Updates the security configuration used by the tool executor and the
+    /// runtime's loaded config. No-op when no executor has been created yet.
+    pub fn set_security_config(&mut self, security: SecurityConfig) -> Result<()> {
+        self.loaded_config.config.security = security.clone();
+        self.loaded_config.config.tui.yolo_mode =
+            matches!(security.permission_mode, PermissionMode::Yolo);
+
+        let Some(executor) = self.tool_executor.as_mut() else {
+            return Ok(());
+        };
+        let Some(executor) = Arc::get_mut(executor) else {
+            return Err(anyhow::anyhow!(
+                "cannot update security policy while tool executor is shared"
+            ));
+        };
+        let mut policy = executor.security_policy().clone();
+        policy.set_config(security);
+        executor.set_security_policy(policy);
+        Ok(())
     }
 
     /// Returns a shared [`MemoryManager`], opening SQLite stores at most once.

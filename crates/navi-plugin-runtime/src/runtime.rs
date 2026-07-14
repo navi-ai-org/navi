@@ -241,7 +241,7 @@ impl PluginRuntime {
                     });
                 }
 
-                Err(RuntimeError::Engine(e))
+                Err(RuntimeError::Engine(e.to_string()))
             }
         }
     }
@@ -268,7 +268,7 @@ fn write_wasm_string(mem: &mut [u8], content: &str, offset: usize) -> i32 {
 }
 
 /// Register host imports with real implementations backed by HostCallbacks.
-fn add_host_imports(linker: &mut Linker<StoreData>) -> anyhow::Result<()> {
+fn add_host_imports(linker: &mut Linker<StoreData>) -> Result<(), RuntimeError> {
     // fs.read-project-file(path_ptr, path_len) -> result_ptr
     linker.func_wrap(
         "fs",

@@ -37,8 +37,8 @@ pub enum SecurityRisk {
     Write,
     /// A shell command execution.
     Command,
-    /// A guarded command that requires explicit approval even in YOLO mode
-    /// (e.g. `git push`, force-destructive operations).
+    /// A guarded command that requires explicit approval outside YOLO mode
+    /// (e.g. destructive `git` operations such as `git push` / `git rebase`).
     GuardedCommand,
     /// Loading an external native plugin.
     ExternalPlugin,
@@ -132,12 +132,7 @@ impl SecurityPolicy {
             return SecurityDecision::Deny(format!("command `{command}` is blocked"));
         }
 
-        if self
-            .config
-            .guarded_commands
-            .iter()
-            .any(|guarded| guarded == command)
-        {
+        if self.is_guarded_command(program, command) {
             return SecurityDecision::NeedsApproval(SecurityRisk::GuardedCommand);
         }
 
@@ -528,6 +523,11 @@ impl SecurityPolicy {
         &self.config
     }
 
+    /// Replaces the security configuration used by subsequent validations.
+    pub fn set_config(&mut self, config: SecurityConfig) {
+        self.config = config;
+    }
+
     /// Returns the NAVI data directory used for persistent storage (sessions,
     /// memory, plans, credentials, logs).
     pub fn data_dir(&self) -> &Path {
@@ -536,6 +536,27 @@ impl SecurityPolicy {
 
     fn is_data_dir_private_path(&self, path: &Path) -> bool {
         path.starts_with(&self.data_dir) && !path.starts_with(self.data_dir.join("plugins"))
+    }
+
+    /// Whether `program` should be treated as a guarded command.
+    ///
+    /// For `git`, only destructive subcommands (push/rm/reset/rebase/...) are
+    /// guarded. Common operations like `status` / `add` / `commit` are not.
+    fn is_guarded_command(&self, program: &str, command: &str) -> bool {
+        if !self
+            .config
+            .guarded_commands
+            .iter()
+            .any(|guarded| guarded == command)
+        {
+            return false;
+        }
+
+        if command == "git" {
+            return is_destructive_git_command(program);
+        }
+
+        true
     }
 
     /// Resolves relative tool paths against the project root instead of the
@@ -879,6 +900,110 @@ fn command_name(program: &str) -> &str {
         .file_name()
         .and_then(|name| name.to_str())
         .unwrap_or(program)
+}
+
+/// Returns true when the command line is a destructive `git` operation that
+/// should require explicit approval outside YOLO mode.
+fn is_destructive_git_command(program: &str) -> bool {
+    let Some(subcommand) = git_primary_subcommand(program) else {
+        // Unknown / bare `git` — treat as guarded to be safe.
+        return true;
+    };
+
+    match subcommand.as_str() {
+        // Network / history rewrites / force-delete style operations.
+        "push"
+        | "rm"
+        | "reset"
+        | "clean"
+        | "rebase"
+        | "filter-branch"
+        | "filter-repo"
+        | "update-ref"
+        | "replace"
+        | "gc"
+        | "prune"
+        | "notes"
+        | "am" => true,
+        // Subcommands that are only destructive with certain arguments.
+        "branch" => git_has_delete_flag(program),
+        "tag" => git_has_delete_flag(program),
+        "stash" => git_subcommand_is(program, &["drop", "clear"]),
+        "worktree" => git_subcommand_is(program, &["remove", "prune"]),
+        "remote" => git_subcommand_is(program, &["remove", "rm", "prune"]),
+        "reflog" => git_subcommand_is(program, &["delete", "expire"]),
+        // Common non-destructive operations (status/add/commit/log/diff/...).
+        _ => false,
+    }
+}
+
+/// Extracts the primary git subcommand, skipping global options such as
+/// `-C <path>`, `--git-dir=<path>`, and `-c name=value`.
+fn git_primary_subcommand(program: &str) -> Option<String> {
+    let tokens = shell_tokens(program);
+    let mut index = 0;
+
+    // First token should be git (possibly a path to git).
+    if tokens
+        .first()
+        .map(|token| command_token_name(token) != "git")
+        .unwrap_or(true)
+    {
+        return None;
+    }
+    index += 1;
+
+    while index < tokens.len() {
+        let token = tokens[index].as_str();
+        if token == "--" {
+            index += 1;
+            break;
+        }
+        if !token.starts_with('-') {
+            return Some(token.to_string());
+        }
+
+        // Options that take a following argument.
+        match token {
+            "-C" | "-c" | "--git-dir" | "--work-tree" | "--namespace" | "--config-env" => {
+                index += 2;
+            }
+            _ if token.starts_with("--git-dir=")
+                || token.starts_with("--work-tree=")
+                || token.starts_with("--namespace=")
+                || token.starts_with("--config-env=")
+                || token.starts_with("-c") =>
+            {
+                index += 1;
+            }
+            _ => index += 1,
+        }
+    }
+
+    tokens.get(index).cloned()
+}
+
+fn git_has_delete_flag(program: &str) -> bool {
+    shell_tokens(program).iter().any(|token| {
+        matches!(token.as_str(), "-d" | "-D" | "--delete" | "--delete-tag")
+            || token.starts_with("--delete=")
+    })
+}
+
+fn git_subcommand_is(program: &str, candidates: &[&str]) -> bool {
+    let tokens = shell_tokens(program);
+    // Find primary subcommand, then look at the next non-option token.
+    let Some(primary) = git_primary_subcommand(program) else {
+        return false;
+    };
+    let Some(primary_idx) = tokens.iter().position(|token| token == &primary) else {
+        return false;
+    };
+    tokens
+        .iter()
+        .skip(primary_idx + 1)
+        .find(|token| !token.starts_with('-') && *token != "--")
+        .is_some_and(|token| candidates.iter().any(|candidate| candidate == token))
 }
 
 fn contains_component(path: &Path, needle: &str) -> bool {
@@ -1553,6 +1678,45 @@ mod tests {
     }
 
     #[test]
+    fn auto_mode_allows_non_destructive_git_commands() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let project = tempdir.path().join("project");
+        let data = tempdir.path().join("data");
+        std::fs::create_dir_all(&project).expect("project");
+        std::fs::create_dir_all(&data).expect("data");
+        let config = SecurityConfig {
+            permission_mode: PermissionMode::Auto,
+            ..SecurityConfig::default()
+        };
+        let policy = policy_with_config(project, data, config);
+
+        for command in [
+            "git status",
+            "git add .",
+            "git commit -m test",
+            "git diff",
+            "git log --oneline",
+            "git branch",
+            "git checkout -b feature",
+            "git switch main",
+            "git restore src/main.rs",
+            "git stash push -m wip",
+            "git pull --ff-only",
+            "git fetch origin",
+        ] {
+            let decision = policy.validate_tool_invocation(
+                &tool_def("bash", ToolKind::Command),
+                &tool_invocation("bash", serde_json::json!({ "command": command })),
+            );
+            assert_eq!(
+                decision,
+                SecurityDecision::Allow,
+                "expected non-destructive git command to be allowed: {command}"
+            );
+        }
+    }
+
+    #[test]
     fn auto_mode_requires_approval_for_guarded_commands() {
         let tempdir = tempfile::tempdir().expect("tempdir");
         let project = tempdir.path().join("project");
@@ -1565,18 +1729,30 @@ mod tests {
         };
         let policy = policy_with_config(project, data, config);
 
-        let decision = policy.validate_tool_invocation(
-            &tool_def("bash", ToolKind::Command),
-            &tool_invocation(
-                "bash",
-                serde_json::json!({ "command": "git commit -m test" }),
-            ),
-        );
-
-        assert_eq!(
-            decision,
-            SecurityDecision::NeedsApproval(SecurityRisk::GuardedCommand)
-        );
+        for command in [
+            "git push origin main",
+            "git rm -r src",
+            "git reset --hard HEAD~1",
+            "git clean -fd",
+            "git rebase origin/main",
+            "git branch -D old-feature",
+            "git tag -d v1.0.0",
+            "git stash drop",
+            "git worktree remove ../wt",
+            "git remote remove origin",
+            "git reflog delete HEAD@{1}",
+            "git -C /tmp/repo push origin main",
+        ] {
+            let decision = policy.validate_tool_invocation(
+                &tool_def("bash", ToolKind::Command),
+                &tool_invocation("bash", serde_json::json!({ "command": command })),
+            );
+            assert_eq!(
+                decision,
+                SecurityDecision::NeedsApproval(SecurityRisk::GuardedCommand),
+                "expected destructive git command to require approval: {command}"
+            );
+        }
     }
 
     #[test]
@@ -1617,15 +1793,22 @@ mod tests {
         };
         let policy = policy_with_config(project, data, config);
 
-        let decision = policy.validate_tool_invocation(
-            &tool_def("bash", ToolKind::Command),
-            &tool_invocation(
-                "bash",
-                serde_json::json!({ "command": "git commit -m test" }),
-            ),
-        );
-
-        assert_eq!(decision, SecurityDecision::Allow);
+        for command in [
+            "git commit -m test",
+            "git push origin main",
+            "git rm -r src",
+            "git rebase origin/main",
+        ] {
+            let decision = policy.validate_tool_invocation(
+                &tool_def("bash", ToolKind::Command),
+                &tool_invocation("bash", serde_json::json!({ "command": command })),
+            );
+            assert_eq!(
+                decision,
+                SecurityDecision::Allow,
+                "expected YOLO to allow guarded/non-guarded git command: {command}"
+            );
+        }
     }
 
     #[test]

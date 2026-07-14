@@ -794,7 +794,7 @@ pub enum ApprovalRisk {
     Write,
     /// A shell command execution.
     Command,
-    /// A guarded command that requires explicit approval even in YOLO mode.
+    /// A guarded command that requires explicit approval outside YOLO mode.
     Guarded,
     /// Loading or executing an external plugin.
     ExternalPlugin,

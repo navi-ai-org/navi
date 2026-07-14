@@ -101,7 +101,8 @@ fn flush_token(spans: &mut Vec<Span<'static>>, token: &mut String) {
 }
 
 fn code_style(color: ratatui::style::Color) -> Style {
-    Style::default().fg(color).bg(code_block_bg())
+    // Foreground syntax color only — no panel background fill.
+    Style::default().fg(color)
 }
 
 fn comment_marker(language: &str) -> &'static str {

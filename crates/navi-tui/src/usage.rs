@@ -9,8 +9,20 @@ pub(crate) fn open_usage_modal(app: &mut TuiApp) {
 }
 
 pub(crate) fn refresh_usage(app: &mut TuiApp) {
+    refresh_usage_inner(app, /*quiet*/ false);
+}
+
+/// Background refresh used after turns (Crush Hyper credits). Does not clear
+/// an existing report while loading, so the UI keeps showing last-known data.
+pub(crate) fn refresh_usage_quiet(app: &mut TuiApp) {
+    refresh_usage_inner(app, /*quiet*/ true);
+}
+
+fn refresh_usage_inner(app: &mut TuiApp, quiet: bool) {
     app.usage_state.loading = true;
-    app.usage_state.error = None;
+    if !quiet {
+        app.usage_state.error = None;
+    }
     let engine = app.engine();
     let tx = app.async_sender();
     spawn_runtime_task(async move {

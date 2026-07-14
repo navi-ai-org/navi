@@ -127,6 +127,8 @@ pub(crate) fn active_plan_from_store_plan(
             .collect(),
         status: status.to_string(),
         expanded: false,
+        show_all_steps: false,
+        completed_at: None,
     }
 }
 
@@ -327,6 +329,8 @@ fn finish_review(app: &mut TuiApp, decision: &str, next_status: PlanStatus, _sen
                         .collect(),
                     status: "active".into(),
                     expanded: false,
+                    show_all_steps: false,
+                    completed_at: None,
                 });
             }
         }

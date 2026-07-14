@@ -182,7 +182,15 @@ pub enum ToolCallInvalid {
     },
 }
 
-const EXCLUSIVE_BATCH_TOOL_NAMES: &[&str] = &["branch_race_start", "plan", "question"];
+const EXCLUSIVE_BATCH_TOOL_NAMES: &[&str] = &[
+    "branch_race_start",
+    "plan",
+    "question",
+    // Nested model turns: serialize so parallel spawn storms cannot hang the
+    // parent batch or thrash provider quotas.
+    "subagent",
+    "repo_explore",
+];
 
 impl ToolExecutor {
     pub fn new(policy: SecurityPolicy) -> Self {
@@ -236,6 +244,20 @@ impl ToolExecutor {
             self.policy.clone(),
             self.harness_profile.clone(),
         ));
+    }
+
+    /// Replaces the security policy used for subsequent tool validations.
+    pub fn set_security_policy(&mut self, policy: SecurityPolicy) {
+        self.policy = policy;
+        self.register(RuntimeInfoTool::new(
+            self.policy.clone(),
+            self.harness_profile.clone(),
+        ));
+    }
+
+    /// Returns a reference to the active security policy.
+    pub fn security_policy(&self) -> &SecurityPolicy {
+        &self.policy
     }
 
     pub fn register_skill_loader(

@@ -483,11 +483,21 @@ static LOOKUP: LazyLock<std::collections::HashMap<&'static str, ToolMetadata>> =
         insert(
             &mut map,
             "repo_explore",
-            ToolMetadata::deferred(
-                "repo",
-                crate::tool::ToolRisk::Low,
-                &["explore", "structure"],
-            ),
+            ToolMetadata {
+                namespace: "repo".to_string(),
+                risk: crate::tool::ToolRisk::Low,
+                // Nested model turn — treat as exclusive so the parent cannot
+                // launch parallel explore storms that thrash provider quotas.
+                is_read_only: true,
+                is_concurrency_safe: false,
+                exposure: crate::tool::ToolExposure::Deferred,
+                capabilities: vec!["repo.read".to_string(), "explore.structure".to_string()],
+                tags: vec!["explore", "structure"]
+                    .into_iter()
+                    .map(|s| s.to_string())
+                    .collect(),
+                ..ToolMetadata::default()
+            },
         );
         insert(
             &mut map,
@@ -496,6 +506,8 @@ static LOOKUP: LazyLock<std::collections::HashMap<&'static str, ToolMetadata>> =
                 namespace: "agent".to_string(),
                 risk: crate::tool::ToolRisk::High,
                 is_read_only: false,
+                // Nested agent turns are exclusive: parallel subagent storms
+                // hang approvals and burn provider credits.
                 is_concurrency_safe: false,
                 capabilities: vec!["agent.spawn".to_string()],
                 tags: vec!["agent", "subprocess"]

@@ -193,6 +193,10 @@ pub trait EngineDriver: Send + Sync {
         &self,
         session_id: &str,
     ) -> Result<Vec<Box<dyn navi_plugin_api::TuiComponent>>>;
+
+    /// Sets the permission mode for tool execution across the engine and any
+    /// active sessions.
+    async fn set_permission_mode(&self, mode: navi_core::PermissionMode) -> Result<()>;
 }
 
 // Blanket impl delegating to the inherent methods on `NaviEngine`.
@@ -390,5 +394,9 @@ impl EngineDriver for crate::NaviEngine {
         task_id: &str,
     ) -> Result<BackgroundCommandSnapshot> {
         crate::NaviEngine::cancel_background_command(self, session_id, task_id).await
+    }
+
+    async fn set_permission_mode(&self, mode: navi_core::PermissionMode) -> Result<()> {
+        crate::NaviEngine::set_permission_mode(self, mode).await
     }
 }

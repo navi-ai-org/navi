@@ -593,6 +593,11 @@ pub(crate) struct UsageUiState {
     pub session_credits_spent: Option<f64>,
     /// Credit unit label when `session_credits_spent` is set.
     pub session_credit_unit: Option<String>,
+    /// Remaining account Hypercredits (or other prepaid balance) from the last
+    /// usage fetch. Crush shows this in the header/sidebar after each turn.
+    pub remaining_credits: Option<f64>,
+    /// Unit for `remaining_credits` (e.g. `hypercredits`).
+    pub remaining_credit_unit: Option<String>,
     /// Last turn in→out label (e.g. `34k→1.2k`) for the footer after each UsageReported.
     pub last_turn_label: Option<String>,
 }
@@ -978,8 +983,12 @@ pub(crate) struct ActivePlanUiState {
     pub steps: Vec<ActivePlanStepUi>,
     /// `proposed` (awaiting review) | `active` | `completed` | `abandoned`
     pub status: String,
-    /// When true, topbar expands to show the full checklist (click N/M to toggle).
+    /// When true, topbar expands to show the checklist (click summary to toggle).
     pub expanded: bool,
+    /// When true (and expanded), show every step instead of the first N + "+more".
+    pub show_all_steps: bool,
+    /// When the plan first became fully done. Used to auto-dismiss after 1 minute.
+    pub completed_at: Option<std::time::Instant>,
 }
 
 #[derive(Debug, Clone)]
@@ -989,12 +998,30 @@ pub(crate) struct ActivePlanStepUi {
 }
 
 impl ActivePlanUiState {
+    /// How long a finished plan stays in the topbar before auto-dismiss.
+    pub(crate) const DONE_DISMISS_AFTER: std::time::Duration =
+        std::time::Duration::from_secs(60);
+
     pub(crate) fn completed_count(&self) -> usize {
         self.steps.iter().filter(|s| s.completed).count()
     }
 
     pub(crate) fn total_count(&self) -> usize {
         self.steps.len()
+    }
+
+    /// Fully done (status completed, or every step checked).
+    pub(crate) fn is_done(&self) -> bool {
+        self.status == "completed"
+            || (self.total_count() > 0 && self.completed_count() >= self.total_count())
+    }
+
+    /// Stamp `completed_at` the first time the plan becomes done.
+    pub(crate) fn note_completed_if_needed(&mut self) {
+        if self.is_done() && self.completed_at.is_none() {
+            self.status = "completed".into();
+            self.completed_at = Some(std::time::Instant::now());
+        }
     }
 
     /// First incomplete step (current phase), if any.
@@ -1006,8 +1033,15 @@ impl ActivePlanUiState {
         if let Some(step) = self.steps.get_mut(index) {
             step.completed = true;
         }
-        if self.steps.iter().all(|s| s.completed) {
+        if self.steps.iter().all(|s| s.completed) && !self.steps.is_empty() {
             self.status = "completed".into();
+            self.note_completed_if_needed();
         }
+    }
+
+    /// True when a finished plan has been showing long enough to hide.
+    pub(crate) fn should_auto_dismiss(&self) -> bool {
+        self.completed_at
+            .is_some_and(|t| t.elapsed() >= Self::DONE_DISMISS_AFTER)
     }
 }
