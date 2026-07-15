@@ -272,7 +272,7 @@ Full map: [AGENTS.md](AGENTS.md).
 ## Contributing
 
 ```bash
-just setup-tools   # first time
+just setup-tools   # optional tooling
 just verify        # fmt + check + test
 just ci            # full pre-PR gate
 ```

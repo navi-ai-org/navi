@@ -657,7 +657,7 @@ When testing, keep `--test-threads=4` unless debugging a single test. Use broade
 
 The root [`justfile`](justfile) provides convenient human-facing recipes and full-product gates.
 
-First time on a machine: `just setup-tools` (installs rustquty collectors; see `just quality-doctor`).
+First time on a machine: `just setup-tools` (optional cargo helpers: llvm-cov, nextest, audit, deny).
 
 | Task | Use |
 |------|-----|
@@ -670,8 +670,6 @@ First time on a machine: `just setup-tools` (installs rustquty collectors; see `
 | Clippy | `just clippy` |
 | Fast gate (fmt + check + test) | `just verify` |
 | Pre-PR gate | `just ci` |
-| Quality (rustquty full) | `just analyze` or `just quality` |
-| Quick quality (fmt + clippy) | `just quality-fast` |
 | Coverage LCOV | `just coverage` |
 | Coverage HTML | `just coverage-html` |
 | Sync registry snapshot | `just sync-registry-snapshot` |
