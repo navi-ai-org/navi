@@ -74,9 +74,8 @@ jobs:
         # Gate the published binary on product crates only. Binding crates
         # (napi/dart) and full workspace integration are covered by CI on main.
         # Hanging/flaky cases are #[ignore] in source — no long --skip lists.
-        # Cold cargo+cache restore on ubuntu-latest often exceeds 20m (candle
-        # deps + multi-crate link); keep the same suite as CI test-fast.
-        timeout-minutes: 45
+        # No step timeout: cold compile/link of product crates (candle, etc.)
+        # regularly exceeds fixed budgets and aborts a healthy gate.
         run: >
           cargo test --locked --lib --bins
           -p navi-core -p navi-openai -p navi-providers
