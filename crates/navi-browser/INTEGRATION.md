@@ -13,7 +13,10 @@ With `navi-browser` feature `cloakbrowser` enabled, NAVI ships
 
 ```toml
 # crates/navi-browser/Cargo.toml (already wired)
-cloakbrowser = { path = "../../../lab/CloakBrowser-rust/rust/cloakbrowser", optional = true }
+cloakbrowser = { path = "vendor/cloakbrowser", optional = true }
+# For a real CloakBrowser PR checkout, patch in root Cargo.toml:
+# [patch.crates-io]  # or path override:
+# cloakbrowser = { path = "../../../lab/CloakBrowser-rust/rust/cloakbrowser" }
 ```
 
 Enable from the binary:

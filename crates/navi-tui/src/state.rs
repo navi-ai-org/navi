@@ -369,7 +369,6 @@ pub(crate) enum SetupPhase {
     Interview,
 }
 
-
 /// Tab inside the unified Model Routing modal.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(crate) enum ModelRoutingTab {
@@ -1006,8 +1005,7 @@ pub(crate) struct ActivePlanStepUi {
 
 impl ActivePlanUiState {
     /// How long a finished plan stays in the topbar before auto-dismiss.
-    pub(crate) const DONE_DISMISS_AFTER: std::time::Duration =
-        std::time::Duration::from_secs(60);
+    pub(crate) const DONE_DISMISS_AFTER: std::time::Duration = std::time::Duration::from_secs(60);
 
     pub(crate) fn completed_count(&self) -> usize {
         self.steps.iter().filter(|s| s.completed).count()

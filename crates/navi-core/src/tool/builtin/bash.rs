@@ -24,7 +24,6 @@ const BASH_MAX_WAIT_MS: u64 = 60_000;
 const BASH_OUTPUT_LIMIT_BYTES: usize = 64 * 1024;
 const BASH_MAX_BACKGROUND_TASKS: usize = 8;
 
-
 /// Put the child in its own process group so timeout kills the whole tree
 /// (pipelines, subshells, grandchildren), not just the top-level bash.
 #[cfg(unix)]
@@ -76,7 +75,6 @@ unsafe fn libc_setpgid_raw(pid: i32, pgid: i32) -> i32 {
         unsafe { setpgid(pid, pgid) }
     }
 }
-
 
 pub(crate) struct BashTool {
     background: Arc<BashBackgroundRegistry>,

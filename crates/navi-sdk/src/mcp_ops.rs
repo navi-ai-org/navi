@@ -82,11 +82,7 @@ impl NaviEngine {
     ) -> Result<(bool, Option<PathBuf>)> {
         let mut loaded = self.loaded_config();
         let before = loaded.config.mcp.servers.len();
-        loaded
-            .config
-            .mcp
-            .servers
-            .retain(|s| s.id != server_id);
+        loaded.config.mcp.servers.retain(|s| s.id != server_id);
         let removed = loaded.config.mcp.servers.len() != before;
         let saved = if removed {
             self.persist_mcp_config(&loaded, save_target)?
@@ -129,8 +125,8 @@ impl NaviEngine {
                     .global_config_path
                     .as_ref()
                     .ok_or_else(|| NaviError::Config("global config path is unavailable".into()))?;
-                let path =
-                    save_global_config(global_path, &loaded_config.config).map_err(NaviError::from)?;
+                let path = save_global_config(global_path, &loaded_config.config)
+                    .map_err(NaviError::from)?;
                 Ok(Some(path))
             }
             NaviConfigSaveTarget::Auto => {

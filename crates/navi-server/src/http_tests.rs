@@ -158,21 +158,23 @@ async fn memory_crud_roundtrip() {
     );
 
     // Write with camelCase type alias
-    let res = authed(
-        warp::test::request()
-            .method("POST")
-            .path("/memory")
-            .json(&serde_json::json!({
-                "id": "mem-1",
-                "memoryType": "project",
-                "name": "Deadline",
-                "description": "Ship gateway",
-                "body": "Due Friday"
-            })),
-    )
+    let res = authed(warp::test::request().method("POST").path("/memory").json(
+        &serde_json::json!({
+            "id": "mem-1",
+            "memoryType": "project",
+            "name": "Deadline",
+            "description": "Ship gateway",
+            "body": "Due Friday"
+        }),
+    ))
     .reply(&api)
     .await;
-    assert_eq!(res.status(), StatusCode::OK, "write: {}", String::from_utf8_lossy(res.body()));
+    assert_eq!(
+        res.status(),
+        StatusCode::OK,
+        "write: {}",
+        String::from_utf8_lossy(res.body())
+    );
 
     // List
     let res = authed(warp::test::request().method("GET").path("/memory"))
@@ -180,7 +182,10 @@ async fn memory_crud_roundtrip() {
         .await;
     assert_eq!(res.status(), StatusCode::OK);
     let list = body_json(&res).await;
-    assert!(list.as_array().map(|a| !a.is_empty()).unwrap_or(false), "{list}");
+    assert!(
+        list.as_array().map(|a| !a.is_empty()).unwrap_or(false),
+        "{list}"
+    );
 
     // Read
     let res = authed(warp::test::request().method("GET").path("/memory/mem-1"))
@@ -197,16 +202,13 @@ async fn memory_crud_roundtrip() {
     assert_eq!(res.status(), StatusCode::NOT_FOUND);
 
     // Invalid type → 400
-    let res = authed(
-        warp::test::request()
-            .method("POST")
-            .path("/memory")
-            .json(&serde_json::json!({
-                "id": "x",
-                "type": "not-a-type",
-                "name": "x"
-            })),
-    )
+    let res = authed(warp::test::request().method("POST").path("/memory").json(
+        &serde_json::json!({
+            "id": "x",
+            "type": "not-a-type",
+            "name": "x"
+        }),
+    ))
     .reply(&api)
     .await;
     assert_eq!(res.status(), StatusCode::BAD_REQUEST);
@@ -265,7 +267,10 @@ async fn memory_crud_roundtrip() {
         .await;
     assert_eq!(res.status(), StatusCode::OK);
     let status = body_json(&res).await;
-    assert!(status.get("active_memories").is_some() || status.get("enabled").is_some(), "{status}");
+    assert!(
+        status.get("active_memories").is_some() || status.get("enabled").is_some(),
+        "{status}"
+    );
 
     // Delete
     let res = authed(warp::test::request().method("DELETE").path("/memory/mem-1"))
@@ -505,11 +510,9 @@ async fn credentials_set_list_delete() {
         .unwrap()
         .to_string();
 
-    let res = authed(
-        warp::test::request().method("POST").path(&format!(
-            "/credentials/test-provider/accounts/{account_id}/select"
-        )),
-    )
+    let res = authed(warp::test::request().method("POST").path(&format!(
+        "/credentials/test-provider/accounts/{account_id}/select"
+    )))
     .reply(&api)
     .await;
     assert_eq!(res.status(), StatusCode::OK);
@@ -546,18 +549,15 @@ async fn skills_crud_and_path_specificity() {
         .await;
     assert_eq!(res.status(), StatusCode::OK);
 
-    let res = authed(
-        warp::test::request()
-            .method("POST")
-            .path("/skills")
-            .json(&serde_json::json!({
-                "id": "gateway-tester",
-                "name": "Gateway Tester",
-                "instructions": "Always run the HTTP integration tests.",
-                "description": "test skill",
-                "tags": ["test"]
-            })),
-    )
+    let res = authed(warp::test::request().method("POST").path("/skills").json(
+        &serde_json::json!({
+            "id": "gateway-tester",
+            "name": "Gateway Tester",
+            "instructions": "Always run the HTTP integration tests.",
+            "description": "test skill",
+            "tags": ["test"]
+        }),
+    ))
     .reply(&api)
     .await;
     assert_eq!(
@@ -772,7 +772,10 @@ async fn registry_list_and_sync_query_force() {
         .await;
     assert_eq!(res.status(), StatusCode::OK);
     let v = body_json(&res).await;
-    assert!(v.get("providers").is_some() || v.get("provider_count").is_some(), "{v}");
+    assert!(
+        v.get("providers").is_some() || v.get("provider_count").is_some(),
+        "{v}"
+    );
 
     // No body + query force=false — must not 400 on missing body
     let res = authed(

@@ -71,11 +71,11 @@ pub use navi_core::{
 };
 // Config/provider types
 pub use navi_core::{
-    AttachmentModelsConfig, BackgroundModelEntry, BackgroundModelsConfig, CompactState,
-    CompactThreshold, CredentialStore, HarnessPolicy, HarnessProfile, LoadedConfig, ModelOption,
-    ModelTaskSize, NaviConfig, NotificationUrgency, NotifyRequest, PermissionMode, ProviderConfig,
-    ProviderKind, ProviderModelConfig, SessionStore, ThinkingConfig, UpdateInfo, UpdatesConfig,
-    BINARY_REASONING_LEVELS, effort_display_label, is_binary_effort_model, parse_reasoning_level,
+    AttachmentModelsConfig, BINARY_REASONING_LEVELS, BackgroundModelEntry, BackgroundModelsConfig,
+    CompactState, CompactThreshold, CredentialStore, HarnessPolicy, HarnessProfile, LoadedConfig,
+    ModelOption, ModelTaskSize, NaviConfig, NotificationUrgency, NotifyRequest, PermissionMode,
+    ProviderConfig, ProviderKind, ProviderModelConfig, SessionStore, ThinkingConfig, UpdateInfo,
+    UpdatesConfig, effort_display_label, is_binary_effort_model, parse_reasoning_level,
     resolve_effort_label, resolve_model_thinking_level, select_harness_policy,
     thinking_levels_for_model,
 };

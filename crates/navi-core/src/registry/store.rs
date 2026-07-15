@@ -70,10 +70,7 @@ impl RegistryStore {
                 // manifest so remote sync can skip unchanged models.
                 if let Ok(catalog) = super::embedded::embedded_model_catalog() {
                     for (id, model) in catalog {
-                        let sha = manifest
-                            .models
-                            .get(&id)
-                            .map(|e| e.sha256.as_str());
+                        let sha = manifest.models.get(&id).map(|e| e.sha256.as_str());
                         let _ = store.upsert_canonical_model(&id, &model, sha);
                     }
                 }
@@ -381,9 +378,7 @@ impl RegistryStore {
     /// SHA-256 of a cached transcription provider, if known.
     pub fn transcription_provider_sha256(&self, id: &str) -> Result<Option<String>> {
         let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
-        let mut stmt = conn.prepare(
-            "SELECT sha256 FROM transcription_providers WHERE id = ?1",
-        )?;
+        let mut stmt = conn.prepare("SELECT sha256 FROM transcription_providers WHERE id = ?1")?;
         let mut rows = stmt.query_map(params![id], |row| row.get::<_, Option<String>>(0))?;
         match rows.next() {
             Some(Ok(v)) => Ok(v),
@@ -394,9 +389,7 @@ impl RegistryStore {
     /// Loads all cached transcription providers.
     pub fn load_transcription_providers(&self) -> Result<Vec<RegistryTranscriptionProvider>> {
         let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
-        let mut stmt = conn.prepare(
-            "SELECT json FROM transcription_providers ORDER BY id",
-        )?;
+        let mut stmt = conn.prepare("SELECT json FROM transcription_providers ORDER BY id")?;
         let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
         let mut out = Vec::new();
         for row in rows {
@@ -510,21 +503,20 @@ impl RegistryStore {
     /// Number of cached canonical models.
     pub fn canonical_model_count(&self) -> Result<usize> {
         let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
-        let count: i64 =
-            conn.query_row("SELECT COUNT(*) FROM canonical_models", [], |row| row.get(0))?;
+        let count: i64 = conn.query_row("SELECT COUNT(*) FROM canonical_models", [], |row| {
+            row.get(0)
+        })?;
         Ok(count as usize)
     }
 
     pub fn transcription_provider_count(&self) -> Result<usize> {
         let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
-        let count: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM transcription_providers",
-            [],
-            |row| row.get(0),
-        )?;
+        let count: i64 =
+            conn.query_row("SELECT COUNT(*) FROM transcription_providers", [], |row| {
+                row.get(0)
+            })?;
         Ok(count as usize)
     }
-
 
     /// Seeds the canonical model catalog from the embedded snapshot when empty.
     fn seed_canonical_models_from_embedded_if_empty(&self) -> Result<()> {
@@ -588,10 +580,8 @@ impl RegistryStore {
         }
 
         let mut models = provider.models.clone();
-        let incoming: std::collections::HashSet<String> = models
-            .iter()
-            .map(|m| m.name.to_ascii_lowercase())
-            .collect();
+        let incoming: std::collections::HashSet<String> =
+            models.iter().map(|m| m.name.to_ascii_lowercase()).collect();
         for (name, model) in existing {
             if !incoming.contains(&name.to_ascii_lowercase()) {
                 models.push(model);
@@ -1520,7 +1510,10 @@ mod tests {
         );
         let catalog = store.load_canonical_model_catalog().expect("load");
         assert_eq!(catalog["gpt-test"].context_window_tokens, Some(128_000));
-        assert_eq!(catalog["gpt-test"].aliases, vec!["gpt-test-alias".to_string()]);
+        assert_eq!(
+            catalog["gpt-test"].aliases,
+            vec!["gpt-test-alias".to_string()]
+        );
 
         let mut keep = std::collections::HashSet::new();
         keep.insert("other");

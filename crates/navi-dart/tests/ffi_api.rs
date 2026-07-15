@@ -716,7 +716,6 @@ fn callback_ctx_success_str() {
     }
 }
 
-
 // ── Surface gap-fill coverage ──────────────────────────────────────
 
 #[test]
@@ -793,9 +792,8 @@ fn voice_subscribe_and_rewind_session_surface() {
     seed_test_api_key(engine);
 
     // Voice event subscription should return a handle even with no mic.
-    let sub = unsafe {
-        navi_engine_subscribe_voice_events(engine, test_event_callback, ptr::null_mut())
-    };
+    let sub =
+        unsafe { navi_engine_subscribe_voice_events(engine, test_event_callback, ptr::null_mut()) };
     assert!(!sub.is_null());
     unsafe { navi_event_subscription_free(sub) };
 

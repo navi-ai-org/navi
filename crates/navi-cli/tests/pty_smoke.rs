@@ -77,7 +77,10 @@ fn pty_smoke_renders_welcome_then_quits_cleanly() {
             match reader.read(&mut local) {
                 Ok(0) => break,
                 Ok(n) => {
-                    buf_reader.lock().expect("buf").extend_from_slice(&local[..n]);
+                    buf_reader
+                        .lock()
+                        .expect("buf")
+                        .extend_from_slice(&local[..n]);
                 }
                 Err(_) => break,
             }

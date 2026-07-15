@@ -483,18 +483,13 @@ fn background_subagent_status(app: &TuiApp) -> Option<String> {
         let Some(result) = message.tool_result.as_ref() else {
             continue;
         };
-        let still_running = result
-            .output
-            .get("background")
-            .and_then(|v| v.as_bool())
-            == Some(true)
+        let still_running = result.output.get("background").and_then(|v| v.as_bool()) == Some(true)
             && result
                 .output
                 .get("status")
                 .and_then(|v| v.as_str())
                 .is_some_and(|status| {
-                    status.eq_ignore_ascii_case("running")
-                        || status.eq_ignore_ascii_case("pending")
+                    status.eq_ignore_ascii_case("running") || status.eq_ignore_ascii_case("pending")
                 });
         if !still_running {
             continue;
@@ -665,9 +660,7 @@ fn composer_meta_right(app: &TuiApp, width: usize) -> ComposerMetaBuilt {
     if let Some(info) = &app.available_update {
         spans.push(Span::styled(
             format!("⬆ v{}", info.latest_version),
-            Style::default()
-                .fg(signal())
-                .add_modifier(Modifier::BOLD),
+            Style::default().fg(signal()).add_modifier(Modifier::BOLD),
         ));
         spans.push(Span::styled(" · ", Style::default().fg(ghost())));
     }
@@ -688,9 +681,8 @@ fn composer_meta_right(app: &TuiApp, width: usize) -> ComposerMetaBuilt {
     }
 
     let model = selected_model_label(app);
-    let binary_effort = crate::state::ThinkingLevel::is_binary_for_model(
-        app.models.get(app.selected_model),
-    );
+    let binary_effort =
+        crate::state::ThinkingLevel::is_binary_for_model(app.models.get(app.selected_model));
     let thinking = app.thinking_level.display_label(binary_effort);
     let pending = app.input.len();
     let context = if app.hover_context_usage {
@@ -795,10 +787,7 @@ fn hypercredit_footer_label(app: &TuiApp) -> Option<String> {
     if navi_sdk::canonical_provider_id(provider) != "charm-hyper" {
         // Still show if we have an explicit hypercredits unit from a report.
     }
-    Some(format!(
-        "◆ {}",
-        navi_sdk::format_hypercredits(remaining)
-    ))
+    Some(format!("◆ {}", navi_sdk::format_hypercredits(remaining)))
 }
 
 fn permission_mode_spans(app: &TuiApp) -> Vec<Span<'static>> {

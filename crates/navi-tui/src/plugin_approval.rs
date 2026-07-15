@@ -48,8 +48,7 @@ pub(crate) fn load_and_validate_manifest_with_trust(
         .map_err(|e| anyhow::anyhow!("failed to read plugin.toml: {}", e))?;
     let manifest = parse_manifest(&content)
         .map_err(|e| anyhow::anyhow!("failed to parse plugin.toml: {}", e))?;
-    validate(&manifest, trust)
-        .map_err(|e| anyhow::anyhow!("manifest validation failed: {}", e))?;
+    validate(&manifest, trust).map_err(|e| anyhow::anyhow!("manifest validation failed: {}", e))?;
     let wasm_path = path.join(&manifest.plugin.entry);
     if !wasm_path.exists() {
         anyhow::bail!("WASM binary not found: {}", wasm_path.display());
@@ -412,9 +411,7 @@ pub(crate) fn approve_plugin_install(app: &mut crate::TuiApp, req: PluginApprova
             show_notification(
                 app,
                 "MCP",
-                format!(
-                    "Installed {plugin_id}. Merge mcp.json into global config? [y]es / [n]o"
-                ),
+                format!("Installed {plugin_id}. Merge mcp.json into global config? [y]es / [n]o"),
             );
         } else {
             show_notification(

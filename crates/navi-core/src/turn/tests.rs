@@ -652,7 +652,11 @@ async fn test_ensure_system_prompt_reads_agents_md() {
 #[tokio::test]
 async fn ensure_system_prompt_freezes_prefix_across_context_changes() {
     let tempdir = tempfile::tempdir().unwrap();
-    std::fs::write(tempdir.path().join("AGENTS.md"), "Stable project instructions").unwrap();
+    std::fs::write(
+        tempdir.path().join("AGENTS.md"),
+        "Stable project instructions",
+    )
+    .unwrap();
     let ctx = build_test_ctx(tempdir.path().to_path_buf());
 
     let mut first = vec![ModelMessage::user("hello")];
@@ -662,7 +666,10 @@ async fn ensure_system_prompt_freezes_prefix_across_context_changes() {
         .take_while(|m| matches!(m.role, ModelRole::System | ModelRole::Developer))
         .cloned()
         .collect();
-    assert!(!frozen.is_empty(), "first call should install a prompt prefix");
+    assert!(
+        !frozen.is_empty(),
+        "first call should install a prompt prefix"
+    );
 
     // Mutating context that used to rebuild the system prefix mid-session.
     ctx.context_packets
@@ -676,24 +683,22 @@ async fn ensure_system_prompt_freezes_prefix_across_context_changes() {
             priority: 10,
             metadata: json!({}),
         });
-    *ctx
-        .active_skills
-        .lock()
-        .unwrap_or_else(|e| e.into_inner()) = vec![crate::skills::SkillManifest {
-        id: "late-skill".into(),
-        name: "late-skill".into(),
-        description: Some("should not appear after freeze".into()),
-        version: None,
-        author: None,
-        tags: vec![],
-        requires: vec![],
-        allow_tools: vec![],
-        deny_tools: vec![],
-        path: std::path::PathBuf::from("builtin:late-skill"),
-        instructions: "skill body".into(),
-        source: Default::default(),
-        scope: Default::default(),
-    }];
+    *ctx.active_skills.lock().unwrap_or_else(|e| e.into_inner()) =
+        vec![crate::skills::SkillManifest {
+            id: "late-skill".into(),
+            name: "late-skill".into(),
+            description: Some("should not appear after freeze".into()),
+            version: None,
+            author: None,
+            tags: vec![],
+            requires: vec![],
+            allow_tools: vec![],
+            deny_tools: vec![],
+            path: std::path::PathBuf::from("builtin:late-skill"),
+            instructions: "skill body".into(),
+            source: Default::default(),
+            scope: Default::default(),
+        }];
 
     let mut second = vec![ModelMessage::user("second turn")];
     ensure_system_prompt(&ctx, &mut second).await;

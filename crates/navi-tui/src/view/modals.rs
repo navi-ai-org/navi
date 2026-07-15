@@ -329,7 +329,8 @@ pub(crate) fn render_oauth(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
     let help = if let Some(status) = state.paste_status.as_deref() {
         format!("{status}     c copy link     ctrl+o open     p paste code     esc close")
     } else if is_device {
-        "c copy link     ctrl+o reopen browser     esc close · waiting for confirmation…".to_string()
+        "c copy link     ctrl+o reopen browser     esc close · waiting for confirmation…"
+            .to_string()
     } else if state.paste_slot.is_some() {
         "c copy link     ctrl+o open browser     p/ctrl+v paste code     esc close".to_string()
     } else {
@@ -1424,7 +1425,7 @@ fn question_preview_line(question: &crate::state::QuestionUiState) -> Line<'stat
 
 pub(crate) fn render_settings(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
     use crate::settings::{
-        SettingAction, SettingRow, SETTINGS_ROWS, SettingValueKind, format_setting_line,
+        SETTINGS_ROWS, SettingAction, SettingRow, SettingValueKind, format_setting_line,
         setting_display,
     };
     use ratatui::style::Modifier;
@@ -1475,7 +1476,12 @@ pub(crate) fn render_settings(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
                     let (main, _) = line.rsplit_once('›').unwrap_or((line.as_str(), ""));
                     ListItem::new(Line::from(vec![
                         Span::styled(main.to_string(), base),
-                        Span::styled("›", Style::default().fg(ghost()).bg(base.bg.unwrap_or(modal_bg()))),
+                        Span::styled(
+                            "›",
+                            Style::default()
+                                .fg(ghost())
+                                .bg(base.bg.unwrap_or(modal_bg())),
+                        ),
                     ]))
                     .style(base)
                 } else if kind == SettingValueKind::Toggle {
@@ -2064,7 +2070,6 @@ fn bg_model_has_override(bg: &navi_sdk::BackgroundModelsConfig, task: &str) -> b
     }
 }
 
-
 pub(crate) fn render_model_routing(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
     clear_modal_area(frame, area);
     let block = modal_block("Model Routing");
@@ -2088,7 +2093,10 @@ pub(crate) fn render_model_routing(frame: &mut Frame<'_>, app: &TuiApp, area: Re
     let mut tab_spans: Vec<Span> = Vec::new();
     for (i, tab) in crate::state::ModelRoutingTab::ALL.iter().enumerate() {
         if i > 0 {
-            tab_spans.push(Span::styled("  ", Style::default().fg(muted()).bg(modal_bg())));
+            tab_spans.push(Span::styled(
+                "  ",
+                Style::default().fg(muted()).bg(modal_bg()),
+            ));
         }
         let active = *tab == app.model_routing_tab;
         let style = if active {
@@ -2127,14 +2135,16 @@ pub(crate) fn render_model_routing(frame: &mut Frame<'_>, app: &TuiApp, area: Re
         crate::state::ModelRoutingTab::Chat => {
             "[←/→] tabs  [enter] open chat model picker  [esc] close"
         }
-        crate::state::ModelRoutingTab::Agents
-        | crate::state::ModelRoutingTab::Attachments => {
+        crate::state::ModelRoutingTab::Agents | crate::state::ModelRoutingTab::Attachments => {
             "[←/→] tabs  [↑/↓] select  [enter] pick  [d] reset  [esc] close"
         }
     };
     frame.render_widget(
-        Paragraph::new(Span::styled(footer, Style::default().fg(muted()).bg(modal_bg())))
-            .style(Style::default().bg(modal_bg())),
+        Paragraph::new(Span::styled(
+            footer,
+            Style::default().fg(muted()).bg(modal_bg()),
+        ))
+        .style(Style::default().bg(modal_bg())),
         chunks[3],
     );
 }
@@ -2223,7 +2233,9 @@ fn render_model_routing_agents_body(frame: &mut Frame<'_>, app: &TuiApp, area: R
         } else {
             Style::default().fg(muted()).bg(row_bg)
         };
-        let desc_style = Style::default().fg(if selected { selection_fg() } else { ghost() }).bg(row_bg);
+        let desc_style = Style::default()
+            .fg(if selected { selection_fg() } else { ghost() })
+            .bg(row_bg);
         let marker = if selected { "› " } else { "  " };
         rows.push(Line::from(vec![
             Span::styled(marker, task_style),
@@ -2236,7 +2248,10 @@ fn render_model_routing_agents_body(frame: &mut Frame<'_>, app: &TuiApp, area: R
             Span::styled(format!("  {:>18}  ", description), desc_style),
         ]));
     }
-    frame.render_widget(Paragraph::new(rows).style(Style::default().bg(modal_bg())), area);
+    frame.render_widget(
+        Paragraph::new(rows).style(Style::default().bg(modal_bg())),
+        area,
+    );
 }
 
 fn render_model_routing_attachments_body(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
@@ -2277,7 +2292,10 @@ fn render_model_routing_attachments_body(frame: &mut Frame<'_>, app: &TuiApp, ar
             desc_style,
         )]));
     }
-    frame.render_widget(Paragraph::new(rows).style(Style::default().bg(modal_bg())), area);
+    frame.render_widget(
+        Paragraph::new(rows).style(Style::default().bg(modal_bg())),
+        area,
+    );
 }
 
 pub(crate) fn render_extensions_hub(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
@@ -2470,10 +2488,7 @@ fn render_session_usage(lines: &mut Vec<Line<'_>>, app: &TuiApp) {
             app.usage_state.session_credit_unit.as_deref(),
         ) {
             let credit_label = if unit.eq_ignore_ascii_case("hypercredits") {
-                format!(
-                    " ◆ {} Hypercredits",
-                    format_credit_count(credits)
-                )
+                format!(" ◆ {} Hypercredits", format_credit_count(credits))
             } else {
                 format!(" {credits:.2} {unit}")
             };

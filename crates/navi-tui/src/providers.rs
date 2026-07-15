@@ -125,7 +125,9 @@ pub(crate) fn apply_model_selection(app: &mut TuiApp, model_index: usize) {
             let model_name = model.name.clone();
             let engine = app.engine();
             spawn_runtime_task(async move {
-                let _ = engine.set_model(&session_id, &provider_id, &model_name).await;
+                let _ = engine
+                    .set_model(&session_id, &provider_id, &model_name)
+                    .await;
             });
             rebuild_provider(app);
         }
@@ -292,7 +294,8 @@ pub(crate) fn handle_setup_list_key(app: &mut TuiApp, code: crossterm::event::Ke
                     true
                 }
                 KeyCode::Down | KeyCode::Char('j') => {
-                    app.setup_list_selected = (app.setup_list_selected + 1).min(len.saturating_sub(1));
+                    app.setup_list_selected =
+                        (app.setup_list_selected + 1).min(len.saturating_sub(1));
                     true
                 }
                 KeyCode::Enter => {

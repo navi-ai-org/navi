@@ -25,7 +25,6 @@ mod tests {
     use crate::render::tool::{tool_compact_text, tool_full_content};
     use crate::theme::ThemeId;
 
-
     fn test_palette() -> crate::theme::ThemePalette {
         ThemeId::Lain.palette()
     }

@@ -89,7 +89,7 @@ pub async fn run_checkpoint_writer(
         thinking: ThinkingConfig::Off,
         tools: vec![],
         session_id: None,
-};
+    };
 
     let response = model_provider.complete(request).await?;
     let response_text = response.text;

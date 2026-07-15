@@ -614,8 +614,7 @@ pub const DEFAULT_REASONING_LEVELS: &[ThinkingConfig] = &[
 ///
 /// UI presents these as "thinking on" / "thinking off". Internally "on" is
 /// [`ThinkingConfig::Max`] so the highest fixed effort is the default.
-pub const BINARY_REASONING_LEVELS: &[ThinkingConfig] =
-    &[ThinkingConfig::Max, ThinkingConfig::Off];
+pub const BINARY_REASONING_LEVELS: &[ThinkingConfig] = &[ThinkingConfig::Max, ThinkingConfig::Off];
 
 /// Resolve the effort levels the UI / runtime should offer for a model.
 ///
@@ -830,10 +829,7 @@ mod tests {
     #[test]
     fn thinking_levels_binary_when_registry_empty() {
         let levels = thinking_levels_for_model(Some(true), &[]);
-        assert_eq!(
-            levels,
-            vec![ThinkingConfig::Max, ThinkingConfig::Off]
-        );
+        assert_eq!(levels, vec![ThinkingConfig::Max, ThinkingConfig::Off]);
         assert!(is_binary_effort_model(Some(true), &[]));
         assert!(is_binary_effort_model(None, &[]));
     }
@@ -953,12 +949,8 @@ mod tests {
 
     #[test]
     fn resolve_forces_off_when_model_lacks_reasoning() {
-        let resolved = resolve_model_thinking_level(
-            ThinkingConfig::Max,
-            Some(false),
-            &["high".into()],
-            None,
-        );
+        let resolved =
+            resolve_model_thinking_level(ThinkingConfig::Max, Some(false), &["high".into()], None);
         assert_eq!(resolved, ThinkingConfig::Off);
     }
 
@@ -979,7 +971,13 @@ mod tests {
             BINARY_REASONING_LEVELS,
             &[ThinkingConfig::Max, ThinkingConfig::Off]
         );
-        assert_eq!(effort_display_label(ThinkingConfig::Max, true), "thinking on");
-        assert_eq!(effort_display_label(ThinkingConfig::Off, true), "thinking off");
+        assert_eq!(
+            effort_display_label(ThinkingConfig::Max, true),
+            "thinking on"
+        );
+        assert_eq!(
+            effort_display_label(ThinkingConfig::Off, true),
+            "thinking off"
+        );
     }
 }

@@ -5,9 +5,7 @@
 //! 2. Embedded registry snapshot (`registry-snapshot/transcription-providers/`)
 
 use crate::config::providers::registry_store_for_catalog;
-use crate::registry::{
-    RegistryTranscriptionProvider, embedded_transcription_providers,
-};
+use crate::registry::{RegistryTranscriptionProvider, embedded_transcription_providers};
 
 /// Returns all known remote transcription providers.
 ///

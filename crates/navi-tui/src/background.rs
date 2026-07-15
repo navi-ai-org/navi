@@ -178,11 +178,9 @@ pub(crate) fn clamp_background_selection(app: &mut TuiApp) {
     } else if app.bg_command_selected >= app.bg_command_scroll + visible_cards {
         app.bg_command_scroll = app.bg_command_selected.saturating_sub(visible_cards - 1);
     }
-    app.bg_command_scroll = app.bg_command_scroll.min(
-        app.background_commands
-            .len()
-            .saturating_sub(visible_cards),
-    );
+    app.bg_command_scroll = app
+        .bg_command_scroll
+        .min(app.background_commands.len().saturating_sub(visible_cards));
 }
 
 /// Stops the background poller task if running.

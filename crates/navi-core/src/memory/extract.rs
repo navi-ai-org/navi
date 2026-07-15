@@ -67,7 +67,7 @@ pub async fn extract_memories(
         thinking: ThinkingConfig::Off,
         tools: vec![],
         session_id: None,
-};
+    };
 
     let response = model_provider.complete(request).await?;
     let text = response.text.trim();

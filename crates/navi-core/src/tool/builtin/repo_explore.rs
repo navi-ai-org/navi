@@ -95,7 +95,12 @@ impl Tool for RepoExploreTool {
 
         // Index + search are CPU-bound; keep the runtime free.
         let result = tokio::task::spawn_blocking(move || {
-            explore_repo(&project_dir, &search_query, kind_filter.as_deref(), max_results)
+            explore_repo(
+                &project_dir,
+                &search_query,
+                kind_filter.as_deref(),
+                max_results,
+            )
         })
         .await;
 
@@ -342,11 +347,12 @@ mod tests {
         );
 
         let report = explore_repo(dir.path(), "tool approval guarded", None, 10).unwrap();
-        assert!(report.files_indexed >= 2, "indexed: {}", report.files_indexed);
         assert!(
-            !report.locations.is_empty(),
-            "expected locations, got none"
+            report.files_indexed >= 2,
+            "indexed: {}",
+            report.files_indexed
         );
+        assert!(!report.locations.is_empty(), "expected locations, got none");
 
         let blob = serde_json::to_string(&report.locations).unwrap();
         assert!(

@@ -877,9 +877,7 @@ pub(crate) fn render_markdown_lines(
                     let mut spans = marker_spans_at(show_marker, marker_color, is_first);
                     spans.push(Span::styled(
                         format!("▸ {label}"),
-                        Style::default()
-                            .fg(accent())
-                            .add_modifier(Modifier::BOLD),
+                        Style::default().fg(accent()).add_modifier(Modifier::BOLD),
                     ));
                     lines.push(Line::from(spans));
                 } else {
@@ -1182,10 +1180,7 @@ fn markdown_prose_line(text: &str, fallback: Color) -> Option<Vec<Span<'static>>
 
     if let Some(rest) = trimmed.strip_prefix("> ") {
         // Blockquote: vertical bar, not a diamond.
-        spans.push(Span::styled(
-            "│ ".to_string(),
-            Style::default().fg(ghost()),
-        ));
+        spans.push(Span::styled("│ ".to_string(), Style::default().fg(ghost())));
         spans.extend(inline_text_spans(rest, muted()).into_iter().map(|mut s| {
             s.style = s.style.add_modifier(Modifier::ITALIC);
             s
@@ -1450,10 +1445,7 @@ fn wrapped_table_row_lines_at(
                 if column_index > 0 {
                     spans.push(Span::styled("│".to_string(), border));
                 }
-                spans.push(Span::styled(
-                    cell_pad.clone(),
-                    Style::default().fg(color),
-                ));
+                spans.push(Span::styled(cell_pad.clone(), Style::default().fg(color)));
                 let cell_line = wrapped_cells
                     .get(column_index)
                     .and_then(|lines| lines.get(line_index))
@@ -1470,10 +1462,7 @@ fn wrapped_table_row_lines_at(
                         Style::default().fg(color),
                     ));
                 }
-                spans.push(Span::styled(
-                    cell_pad.clone(),
-                    Style::default().fg(color),
-                ));
+                spans.push(Span::styled(cell_pad.clone(), Style::default().fg(color)));
             }
             spans.push(Span::styled("│".to_string(), border));
             Line::from(spans)
@@ -1608,9 +1597,7 @@ fn stacked_table_lines_at(
                     let label_w = display_width(&label_part);
                     spans.push(Span::styled(
                         label_part,
-                        Style::default()
-                            .fg(muted())
-                            .add_modifier(Modifier::BOLD),
+                        Style::default().fg(muted()).add_modifier(Modifier::BOLD),
                     ));
                     let val_spans = inline_text_spans(&value, text());
                     let val_w: usize = val_spans.iter().map(|s| display_width(&s.content)).sum();
@@ -2245,13 +2232,13 @@ fn mermaid_line_spans(raw_line: &str) -> Vec<Span<'static>> {
         let is_kw = keywords.iter().any(|k| k.eq_ignore_ascii_case(token));
         spans.push(Span::styled(
             token.to_string(),
-            Style::default().fg(if is_kw { code_keyword() } else { text() }).add_modifier(
-                if is_kw {
+            Style::default()
+                .fg(if is_kw { code_keyword() } else { text() })
+                .add_modifier(if is_kw {
                     Modifier::BOLD
                 } else {
                     Modifier::empty()
-                },
-            ),
+                }),
         ));
         rest = &rest[token_len..];
     }
@@ -2424,7 +2411,8 @@ mod tests {
 
     #[test]
     fn headings_use_markdown_hashes_not_tool_diamonds() {
-        let lines = render_markdown_lines("# Title\n## Section\n### Detail", 80, text(), text(), false);
+        let lines =
+            render_markdown_lines("# Title\n## Section\n### Detail", 80, text(), text(), false);
         let joined: String = lines
             .iter()
             .flat_map(|l| l.spans.iter().map(|s| s.content.as_ref()))
@@ -2432,12 +2420,16 @@ mod tests {
             .join("\n");
         assert!(joined.contains("# Title") || joined.contains("Title"));
         assert!(joined.contains("##") || joined.contains("Section"));
-        assert!(!joined.contains('◆') && !joined.contains('◇'), "got:\n{joined}");
+        assert!(
+            !joined.contains('◆') && !joined.contains('◇'),
+            "got:\n{joined}"
+        );
     }
 
     #[test]
     fn latex_and_mermaid_fences_render_as_dsl_blocks() {
-        let md = "```latex\n\\alpha + \\beta = \\gamma\n```\n\n```mermaid\ngraph TD\n  A-->B\n```\n";
+        let md =
+            "```latex\n\\alpha + \\beta = \\gamma\n```\n\n```mermaid\ngraph TD\n  A-->B\n```\n";
         let lines = render_markdown_lines(md, 80, text(), text(), false);
         let joined: String = lines
             .iter()
@@ -2452,8 +2444,13 @@ mod tests {
             joined.contains("mermaid") || joined.contains("graph"),
             "expected mermaid dsl, got:\n{joined}"
         );
-        assert!(joined.contains("α") || joined.contains("beta") || joined.contains("γ") || joined.contains("α + β"), 
-            "expected latex unicode, got:\n{joined}");
+        assert!(
+            joined.contains("α")
+                || joined.contains("beta")
+                || joined.contains("γ")
+                || joined.contains("α + β"),
+            "expected latex unicode, got:\n{joined}"
+        );
     }
 
     #[test]
@@ -2462,7 +2459,10 @@ mod tests {
             split_diff_line_number("  39|- Default registry"),
             Some(("39", "- Default registry"))
         );
-        assert_eq!(split_diff_line_number("   1|fn main() {}"), Some(("1", "fn main() {}")));
+        assert_eq!(
+            split_diff_line_number("   1|fn main() {}"),
+            Some(("1", "fn main() {}"))
+        );
         assert_eq!(split_diff_line_number("1234|x"), Some(("1234", "x")));
         // Unnumbered / ambiguous content must not match.
         assert_eq!(split_diff_line_number("old line"), None);
@@ -2528,7 +2528,8 @@ mod tests {
                 if span.content.as_ref().contains("removed")
                     || span.content.as_ref().contains("added")
                 {
-                    if span.style.bg == Some(diff_add_bg()) || span.style.bg == Some(diff_remove_bg())
+                    if span.style.bg == Some(diff_add_bg())
+                        || span.style.bg == Some(diff_remove_bg())
                     {
                         saw_body_tint = true;
                     }

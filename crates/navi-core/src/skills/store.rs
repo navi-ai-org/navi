@@ -3,7 +3,7 @@
 //! User-authored and agent-created skills live here so Desktop and TUI share
 //! one source of truth without scattering SKILL.md under config dirs.
 
-use super::{SkillManifest, SkillSource, SkillWriteRequest, SkillWriteScope, SkillWriteResult};
+use super::{SkillManifest, SkillSource, SkillWriteRequest, SkillWriteResult, SkillWriteScope};
 use anyhow::{Context, Result};
 use rusqlite::{Connection, OptionalExtension, params};
 use std::path::{Path, PathBuf};
@@ -187,11 +187,9 @@ impl SkillStore {
 
         let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
         let created = conn
-            .query_row(
-                "SELECT 1 FROM skills WHERE id = ?1",
-                params![id],
-                |_| Ok(1i32),
-            )
+            .query_row("SELECT 1 FROM skills WHERE id = ?1", params![id], |_| {
+                Ok(1i32)
+            })
             .optional()?
             .is_none();
 

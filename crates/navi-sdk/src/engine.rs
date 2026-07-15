@@ -4,13 +4,13 @@ type Result<T> = std::result::Result<T, NaviError>;
 use navi_core::registry::types::{RegistryModel, RegistryProvider};
 use navi_core::{
     AgentRuntime, AgentRuntimeOptions, ApprovalDecision, CredentialStore, LoadedConfig,
-    MemoryExtractionModel,
-    ModelOption, ProviderConfig, QuestionResponse, RuntimeComponents, RuntimeEvent, SessionGoal,
-    SessionId, SessionSnapshot, SessionStore, SessionTitleHandle, SessionTitleTool, SkillManifest, available_model_options,
-    canonical_provider_id, config::effective_context_window, discover_configured_skills,
-    model_can_run_publicly, provider_catalog, registry, registry::RegistryStore,
-    resolve_provider_api_key, resolve_provider_config, resolve_provider_credential_status,
-    save_global_config, save_project_config,
+    MemoryExtractionModel, ModelOption, ProviderConfig, QuestionResponse, RuntimeComponents,
+    RuntimeEvent, SessionGoal, SessionId, SessionSnapshot, SessionStore, SessionTitleHandle,
+    SessionTitleTool, SkillManifest, available_model_options, canonical_provider_id,
+    config::effective_context_window, discover_configured_skills, model_can_run_publicly,
+    provider_catalog, registry, registry::RegistryStore, resolve_provider_api_key,
+    resolve_provider_config, resolve_provider_credential_status, save_global_config,
+    save_project_config,
 };
 use navi_mcp::{LoadedMcpServers, McpServerInfo, load_configured_mcp_servers};
 
@@ -285,10 +285,8 @@ impl NaviEngine {
 
         let loaded_config = self.loaded_config();
         let provider = build_provider_for_project_config(&loaded_config, &project_dir)?;
-        let memory_extraction_model = self.configured_memory_extraction_model(
-            &loaded_config,
-            &project_dir,
-        )?;
+        let memory_extraction_model =
+            self.configured_memory_extraction_model(&loaded_config, &project_dir)?;
         let mut tool_executor = build_local_tooling(
             &loaded_config,
             project_dir.clone(),
@@ -340,7 +338,9 @@ impl NaviEngine {
         // The active chat model names the session through this cheap local tool;
         // never create a second background completion merely to generate a title.
         let session_title_handle = SessionTitleHandle::new();
-        executor.register_tool(Arc::new(SessionTitleTool::new(session_title_handle.clone())));
+        executor.register_tool(Arc::new(SessionTitleTool::new(
+            session_title_handle.clone(),
+        )));
         let shared_provider = Arc::new(std::sync::RwLock::new(provider.clone()));
         let shared_model = Arc::new(std::sync::RwLock::new(
             loaded_config.config.model.name.clone(),
@@ -604,11 +604,7 @@ impl NaviEngine {
     /// Keeps the first `keep_user_turns` user turns and drops everything after.
     /// The caller should then `send_turn` with the replacement user text.
     /// Returns how many model messages remain in the live history.
-    pub async fn rewind_session(
-        &self,
-        session_id: &str,
-        keep_user_turns: usize,
-    ) -> Result<usize> {
+    pub async fn rewind_session(&self, session_id: &str, keep_user_turns: usize) -> Result<usize> {
         let session = self.session(session_id)?;
         // Cancel any in-flight turn so the session loop is free to process rewind.
         session.turn_canceller.cancel();
@@ -1045,10 +1041,9 @@ impl NaviEngine {
         &self,
         provider_id: &str,
     ) -> Result<Vec<navi_core::CredentialAccountInfo>> {
-        Ok(self.credential_store().list_credential_accounts(
-            provider_id,
-            Some(self.inner.project_dir.as_path()),
-        )?)
+        Ok(self
+            .credential_store()
+            .list_credential_accounts(provider_id, Some(self.inner.project_dir.as_path()))?)
     }
 
     /// Add an API-key account without wiping sibling accounts. Returns account id.
@@ -1087,7 +1082,9 @@ impl NaviEngine {
             &loaded_config.data_dir,
         )?
         .into_iter()
-        .map(|m| skill_info_from_manifest(m, &self.inner.project_dir, &loaded_config.data_dir, false))
+        .map(|m| {
+            skill_info_from_manifest(m, &self.inner.project_dir, &loaded_config.data_dir, false)
+        })
         .collect())
     }
 
@@ -1117,12 +1114,8 @@ impl NaviEngine {
         request: navi_core::SkillWriteRequest,
     ) -> Result<navi_core::SkillWriteResult> {
         let loaded_config = self.loaded_config();
-        navi_core::write_skill(
-            &request,
-            &self.inner.project_dir,
-            &loaded_config.data_dir,
-        )
-        .map_err(NaviError::from)
+        navi_core::write_skill(&request, &self.inner.project_dir, &loaded_config.data_dir)
+            .map_err(NaviError::from)
     }
 
     /// Delete a user- or project-authored skill. Returns whether something was removed.
@@ -1448,11 +1441,7 @@ impl NaviEngine {
     }
 
     /// Renames a persisted session without blocking the async runtime.
-    pub async fn rename_saved_session_async(
-        &self,
-        session_id: &str,
-        title: &str,
-    ) -> Result<bool> {
+    pub async fn rename_saved_session_async(&self, session_id: &str, title: &str) -> Result<bool> {
         let loaded_config = self.loaded_config();
         Ok(SessionStore::with_redaction(
             loaded_config.data_dir,
@@ -1492,7 +1481,9 @@ impl NaviEngine {
             }
             {
                 let executor = Arc::get_mut(&mut fresh.tool_executor).ok_or_else(|| {
-                    NaviError::Config("cannot register session title tool during plugin reload".into())
+                    NaviError::Config(
+                        "cannot register session title tool during plugin reload".into(),
+                    )
                 })?;
                 executor.register_tool(Arc::new(SessionTitleTool::new(
                     runtime.session_title_handle(),
@@ -1874,10 +1865,7 @@ fn percent_window_with_period(
     }
 }
 
-fn period_window_timing(
-    period_start: Option<&str>,
-    period_end: Option<&str>,
-) -> (i32, i32, i32) {
+fn period_window_timing(period_start: Option<&str>, period_end: Option<&str>) -> (i32, i32, i32) {
     let Some(end) = period_end.and_then(parse_rfc3339_unix) else {
         return (0, 0, 0);
     };
@@ -2158,10 +2146,7 @@ fn charm_hyper_report_to_sdk(
     let balance = report.balance;
     let usd = navi_providers::hypercredits_to_usd(balance);
     let formatted = navi_providers::format_hypercredits(balance);
-    let source = report
-        .source
-        .as_deref()
-        .unwrap_or("credits-api");
+    let source = report.source.as_deref().unwrap_or("credits-api");
     let details = vec![
         NaviUsageDetail {
             label: "Balance".into(),
@@ -2261,10 +2246,8 @@ fn model_info_from_option(option: ModelOption) -> NaviModelInfo {
         canonical_provider_id(&option.provider_id),
         option.name
     );
-    let (effort_options, effort_binary) = crate::types::effort_options_for_model(
-        option.supports_thinking,
-        &option.reasoning_levels,
-    );
+    let (effort_options, effort_binary) =
+        crate::types::effort_options_for_model(option.supports_thinking, &option.reasoning_levels);
     NaviModelInfo {
         id,
         name: option.name,

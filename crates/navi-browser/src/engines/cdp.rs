@@ -18,7 +18,10 @@ use anyhow::{Context, Result, bail};
 use async_trait::async_trait;
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as B64;
-use launch::{BrowserBackendKind, LaunchOptions, LaunchedBrowser, cdp_http_ready, discover_browser, launch_browser};
+use launch::{
+    BrowserBackendKind, LaunchOptions, LaunchedBrowser, cdp_http_ready, discover_browser,
+    launch_browser,
+};
 use protocol::{CdpConnection, new_page_ws};
 use serde_json::{Value, json};
 use std::path::Path;
@@ -36,11 +39,7 @@ impl BrowserEngineFactory for CdpEngineFactory {
         if !config.cdp_url.trim().is_empty() {
             return true;
         }
-        discover_browser(
-            non_empty_path(&config.binary_path),
-            &config.backend,
-        )
-        .is_some()
+        discover_browser(non_empty_path(&config.binary_path), &config.backend).is_some()
     }
 
     fn doctor(&self, config: &BrowserRuntimeConfig) -> DoctorReport {
@@ -293,9 +292,9 @@ impl BrowserEngine for CdpEngine {
             ContentKind::Html => format!(
                 "(document.documentElement && document.documentElement.outerHTML || '').slice(0, {max_chars})"
             ),
-            ContentKind::Text => format!(
-                "(document.body && document.body.innerText || '').slice(0, {max_chars})"
-            ),
+            ContentKind::Text => {
+                format!("(document.body && document.body.innerText || '').slice(0, {max_chars})")
+            }
         };
         Ok(live
             .cdp
@@ -349,36 +348,35 @@ impl BrowserEngine for CdpEngine {
 impl CdpEngine {
     async fn start(&self) -> Result<Live> {
         std::fs::create_dir_all(&self.ctx.profile_dir)?;
-        let (cdp_http_base, launched, binary_label) =
-            if !self.config.cdp_url.trim().is_empty() {
-                let base = self.config.cdp_url.trim().to_string();
-                if !cdp_http_ready(&base).await {
-                    bail!("CDP endpoint not ready: {base}");
-                }
-                (base, None, "external-cdp".into())
-            } else {
-                let binary = discover_browser(
-                    non_empty_path(&self.config.binary_path),
-                    &self.config.backend,
-                )
-                .context(
-                    "no browser binary for CDP fallback — register CloakBrowser Rust binding \
+        let (cdp_http_base, launched, binary_label) = if !self.config.cdp_url.trim().is_empty() {
+            let base = self.config.cdp_url.trim().to_string();
+            if !cdp_http_ready(&base).await {
+                bail!("CDP endpoint not ready: {base}");
+            }
+            (base, None, "external-cdp".into())
+        } else {
+            let binary = discover_browser(
+                non_empty_path(&self.config.binary_path),
+                &self.config.backend,
+            )
+            .context(
+                "no browser binary for CDP fallback — register CloakBrowser Rust binding \
                      via navi_browser::set_engine_factory, or install Chrome/Chromium",
-                )?;
-                let launched = launch_browser(
-                    &binary,
-                    LaunchOptions {
-                        headless: self.config.headless,
-                        user_data_dir: self.ctx.profile_dir.clone(),
-                        proxy: non_empty(&self.config.proxy).map(|s| s.to_string()),
-                        extra_args: Vec::new(),
-                    },
-                )
-                .await?;
-                let base = format!("http://127.0.0.1:{}", launched.debug_port);
-                let label = binary.path.display().to_string();
-                (base, Some(launched), label)
-            };
+            )?;
+            let launched = launch_browser(
+                &binary,
+                LaunchOptions {
+                    headless: self.config.headless,
+                    user_data_dir: self.ctx.profile_dir.clone(),
+                    proxy: non_empty(&self.config.proxy).map(|s| s.to_string()),
+                    extra_args: Vec::new(),
+                },
+            )
+            .await?;
+            let base = format!("http://127.0.0.1:{}", launched.debug_port);
+            let label = binary.path.display().to_string();
+            (base, Some(launched), label)
+        };
 
         let (page_id, page_ws) = new_page_ws(&cdp_http_base, "about:blank").await?;
         let cdp = CdpConnection::connect(&page_ws).await?;

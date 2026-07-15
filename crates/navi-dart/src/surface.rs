@@ -624,7 +624,9 @@ pub unsafe extern "C" fn navi_engine_memory_write(
         Some(s) => s,
         None => return -1,
     };
-    let description = unsafe { cstr_to_str(description) }.unwrap_or("").to_string();
+    let description = unsafe { cstr_to_str(description) }
+        .unwrap_or("")
+        .to_string();
     let body = unsafe { cstr_to_str(body) }.unwrap_or("").to_string();
     match engine
         .inner
@@ -803,17 +805,10 @@ pub unsafe extern "C" fn navi_engine_memory_dream(
     let engine = unsafe { &*engine };
     let ctx = CallbackCtx::new(callback, user_data);
     let instructions = unsafe { cstr_to_str(instructions) }.map(|s| s.to_string());
-    let sessions = if sessions > 0 {
-        sessions as usize
-    } else {
-        10
-    };
+    let sessions = if sessions > 0 { sessions as usize } else { 10 };
     let inner = engine.inner.clone();
     engine.runtime.spawn(async move {
-        match inner
-            .memory_dream(apply != 0, sessions, instructions)
-            .await
-        {
+        match inner.memory_dream(apply != 0, sessions, instructions).await {
             Ok(r) => ctx.success(&r),
             Err(e) => ctx.error(&e.to_string()),
         }
@@ -1332,7 +1327,6 @@ fn _save_target_default() -> NaviConfigSaveTarget {
     NaviConfigSaveTarget::Auto
 }
 
-
 // ── Surface gap-fill (SDK parity) ──────────────────────────────────
 
 #[unsafe(no_mangle)]
@@ -1381,10 +1375,7 @@ pub unsafe extern "C" fn navi_engine_notify_simple(
         None => return ptr::null_mut(),
     };
     let body = unsafe { cstr_to_str(body) }.unwrap_or("").to_string();
-    match engine
-        .inner
-        .notify_simple(title, body, desktop != 0)
-    {
+    match engine.inner.notify_simple(title, body, desktop != 0) {
         Ok(r) => to_json_ptr(&r),
         Err(e) => {
             set_last_error(&e.to_string());
@@ -1666,11 +1657,10 @@ pub unsafe extern "C" fn navi_engine_plugin_update_path(
         Some(s) => s,
         None => return ptr::null_mut(),
     };
-    match engine.inner.plugin_update_path(
-        std::path::Path::new(&path),
-        force != 0,
-        confirm != 0,
-    ) {
+    match engine
+        .inner
+        .plugin_update_path(std::path::Path::new(&path), force != 0, confirm != 0)
+    {
         Ok(v) => to_json_ptr(&v),
         Err(e) => {
             set_last_error(&e.to_string());

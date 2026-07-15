@@ -92,13 +92,9 @@ async fn update_plugin_marketplace(
     force: bool,
     config: &LoadedConfig,
 ) -> Result<()> {
-    let (_, staging) = stage_plugin_by_id(
-        registry_for_config(config),
-        plugin_id,
-        &config.data_dir,
-    )
-    .await
-    .map_err(|e| anyhow::anyhow!("{e}"))?;
+    let (_, staging) = stage_plugin_by_id(registry_for_config(config), plugin_id, &config.data_dir)
+        .await
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
     update_plugin(
         &staging,
         force,
@@ -126,11 +122,7 @@ fn install_plugin_with_meta(
     // Display install approval
     let approval = prepare_install_approval(&manifest);
     println!("{}", navi_plugin_broker::format_install_approval(&approval));
-    println!(
-        "Trust: {} | Kind: {}",
-        trust_label(trust),
-        kind_label(kind)
-    );
+    println!("Trust: {} | Kind: {}", trust_label(trust), kind_label(kind));
 
     if !yes && !prompt_yes_no("Install this plugin? [y/N] ")? {
         println!("Install cancelled.");
@@ -368,8 +360,7 @@ fn write_lockfile_with_approved(
     kind: PluginCatalogKind,
 ) -> Result<()> {
     let plugins_root = installed_plugins_dir(data_dir);
-    let entry =
-        lock_entry_from_manifest_with_meta(manifest, approved_capabilities, trust, kind);
+    let entry = lock_entry_from_manifest_with_meta(manifest, approved_capabilities, trust, kind);
     upsert_aggregate_lock_entry(&plugins_root, entry)
         .map_err(|e| anyhow::anyhow!("failed to save lockfile: {}", e))?;
     Ok(())

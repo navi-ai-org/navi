@@ -1,7 +1,7 @@
 //! Background update check + install helpers for the TUI.
 
-use navi_core::{UpdateInfo, apply_update, check_for_update, current_version, notify_desktop};
 use navi_core::{NotificationUrgency, NotifyRequest};
+use navi_core::{UpdateInfo, apply_update, check_for_update, current_version, notify_desktop};
 
 use crate::app::TuiApp;
 use crate::dispatch::AsyncEvent;
@@ -103,11 +103,7 @@ pub(crate) fn handle_update_checked(
     }
 }
 
-pub(crate) fn handle_update_applied(
-    app: &mut TuiApp,
-    version: String,
-    result: Result<(), String>,
-) {
+pub(crate) fn handle_update_applied(app: &mut TuiApp, version: String, result: Result<(), String>) {
     app.update_installing = false;
     match result {
         Ok(()) => {
@@ -115,9 +111,7 @@ pub(crate) fn handle_update_applied(
             show_notification(
                 app,
                 "Update installed",
-                format!(
-                    "NAVI {version} is on disk. Restart NAVI to use the new version."
-                ),
+                format!("NAVI {version} is on disk. Restart NAVI to use the new version."),
             );
             let _ = notify_desktop(&NotifyRequest::new(
                 "NAVI updated",

@@ -21,7 +21,10 @@ pub enum UrlPolicyError {
 /// - Only `http` / `https`
 /// - Blocks `file:`, `javascript:`, etc.
 /// - When `allow_private_network` is false, blocks localhost, link-local, and RFC1918
-pub fn validate_navigation_url(raw: &str, allow_private_network: bool) -> Result<Url, UrlPolicyError> {
+pub fn validate_navigation_url(
+    raw: &str,
+    allow_private_network: bool,
+) -> Result<Url, UrlPolicyError> {
     let url = Url::parse(raw.trim()).map_err(|e| UrlPolicyError::Invalid(e.to_string()))?;
     match url.scheme() {
         "http" | "https" => {}

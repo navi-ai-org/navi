@@ -141,7 +141,8 @@ Use to test local web UIs, research pages, and capture screenshots. Screenshots 
 
         #[cfg(feature = "browser")]
         {
-            let action = helpers::required_string(&invocation.input, "action")?.to_ascii_lowercase();
+            let action =
+                helpers::required_string(&invocation.input, "action")?.to_ascii_lowercase();
             let max_chars = invocation
                 .input
                 .get("max_chars")
@@ -231,7 +232,11 @@ mod tests {
             .await
             .expect("doctor");
         assert!(result.ok);
-        assert!(result.output.get("enabled").is_some() || result.output.get("backend").is_some() || result.output.get("hints").is_some());
+        assert!(
+            result.output.get("enabled").is_some()
+                || result.output.get("backend").is_some()
+                || result.output.get("hints").is_some()
+        );
     }
 
     #[tokio::test]

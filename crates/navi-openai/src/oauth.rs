@@ -254,8 +254,7 @@ const HYPER_DEFAULT_BASE_URL: &str = "https://hyper.charm.land";
 /// `GET /v1/credits` responses. Kept until a newer value arrives so the Usage
 /// modal / footer stay correct across multiple refreshes (do **not** clear on
 /// read — concurrent open + after-turn fetch used to race on a one-shot take).
-static LAST_KNOWN_HYPERCREDIT_BALANCE: std::sync::Mutex<Option<f64>> =
-    std::sync::Mutex::new(None);
+static LAST_KNOWN_HYPERCREDIT_BALANCE: std::sync::Mutex<Option<f64>> = std::sync::Mutex::new(None);
 
 /// Serialize access to the process-wide Hypercredit cache (tests + production).
 pub(crate) fn with_hypercredit_balance_lock<T>(f: impl FnOnce(&mut Option<f64>) -> T) -> T {
@@ -282,11 +281,7 @@ pub fn format_hypercredits(n: f64) -> String {
     let negative = rounded < 0;
     let s = rounded.unsigned_abs().to_string();
     if s.len() <= 3 {
-        return if negative {
-            format!("-{s}")
-        } else {
-            s
-        };
+        return if negative { format!("-{s}") } else { s };
     }
     let mut first_group = s.len() % 3;
     if first_group == 0 {
@@ -472,11 +467,7 @@ fn parse_hyper_credits_api_balance(payload: &Value) -> Option<f64> {
                 .and_then(|d| d.get("balance"))
                 .and_then(json_number_as_f64)
         })
-        .or_else(|| {
-            payload
-                .get("credits")
-                .and_then(json_number_as_f64)
-        })
+        .or_else(|| payload.get("credits").and_then(json_number_as_f64))
         .or_else(|| {
             payload
                 .get("remaining")
@@ -882,7 +873,9 @@ where
     let force_browser = env_flag_true("NAVI_XAI_OAUTH_BROWSER")
         || std::env::var("NAVI_XAI_OAUTH_DEVICE")
             .map(|value| {
-                value == "0" || value.eq_ignore_ascii_case("false") || value.eq_ignore_ascii_case("no")
+                value == "0"
+                    || value.eq_ignore_ascii_case("false")
+                    || value.eq_ignore_ascii_case("no")
             })
             .unwrap_or(false);
     if force_browser {
@@ -893,7 +886,9 @@ where
 
 fn env_flag_true(name: &str) -> bool {
     std::env::var(name)
-        .map(|value| value == "1" || value.eq_ignore_ascii_case("true") || value.eq_ignore_ascii_case("yes"))
+        .map(|value| {
+            value == "1" || value.eq_ignore_ascii_case("true") || value.eq_ignore_ascii_case("yes")
+        })
         .unwrap_or(false)
 }
 
@@ -1075,7 +1070,9 @@ pub fn xai_grok_cli_client_version() -> String {
 
 fn discover_installed_grok_cli_version() -> Option<String> {
     let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE"))?;
-    let downloads = std::path::PathBuf::from(home).join(".grok").join("downloads");
+    let downloads = std::path::PathBuf::from(home)
+        .join(".grok")
+        .join("downloads");
     let entries = std::fs::read_dir(downloads).ok()?;
     let mut best: Option<(u64, u64, u64, String)> = None;
     for entry in entries.flatten() {
@@ -1138,7 +1135,9 @@ fn load_or_create_xai_client_identifier() -> String {
 
     // Prefer Grok's own agent_id when present so NAVI and `grok` share identity.
     if let Some(home) = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")) {
-        let grok_agent = std::path::PathBuf::from(&home).join(".grok").join("agent_id");
+        let grok_agent = std::path::PathBuf::from(&home)
+            .join(".grok")
+            .join("agent_id");
         if let Ok(raw) = std::fs::read_to_string(&grok_agent) {
             let id = raw.trim();
             if !id.is_empty() {
@@ -2311,7 +2310,10 @@ mod tests {
         let positive = serde_json::json!({
             "remaining": { "hypercredits": 101.0 }
         });
-        assert_eq!(extract_hypercredit_balance_from_usage(&positive), Some(101.0));
+        assert_eq!(
+            extract_hypercredit_balance_from_usage(&positive),
+            Some(101.0)
+        );
         // Intermediate stream chunk with 0 must not wipe the footer to ◆ 0.
         let zero = serde_json::json!({
             "remaining": { "hypercredits": 0 }

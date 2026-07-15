@@ -1,8 +1,7 @@
 use crate::state::SetupPhase;
 use navi_sdk::{
-    AgentEvent, ApprovalDecision, BackgroundCommandSnapshot, LoadedConfig,
-    ModelMessage, NaviUsageReport, available_model_options, canonical_provider_id,
-    compact_tool_observation,
+    AgentEvent, ApprovalDecision, BackgroundCommandSnapshot, LoadedConfig, ModelMessage,
+    NaviUsageReport, available_model_options, canonical_provider_id, compact_tool_observation,
 };
 
 use crate::app::TuiApp;
@@ -107,16 +106,10 @@ pub(crate) fn handle_async_event(app: &mut TuiApp, event: AsyncEvent) {
                 );
             }
         }
-        AsyncEvent::SessionTitleUpdated {
-            session_id,
-            title,
-        } => {
+        AsyncEvent::SessionTitleUpdated { session_id, title } => {
             apply_session_title(app, &session_id, title);
         }
-        AsyncEvent::SessionTitleUpdatedForSession {
-            session_id,
-            title,
-        } => {
+        AsyncEvent::SessionTitleUpdatedForSession { session_id, title } => {
             if session_id == app.session_id.as_str() {
                 apply_session_title(app, &session_id, title);
             }
@@ -162,9 +155,10 @@ pub(crate) fn handle_async_event(app: &mut TuiApp, event: AsyncEvent) {
                         && report.limits.is_empty()
                         && (report.source.contains("error")
                             || report.source == "session"
-                            || report.notes.as_deref().is_some_and(|n| {
-                                n.contains("unavailable") || n.contains("No ")
-                            }));
+                            || report
+                                .notes
+                                .as_deref()
+                                .is_some_and(|n| n.contains("unavailable") || n.contains("No ")));
                     if is_hollow && app.usage_state.report.is_some() {
                         if let Some(notes) = report.notes.filter(|n| !n.is_empty()) {
                             // Keep previous report; surface a soft error only in modal.
@@ -296,9 +290,7 @@ pub(crate) fn handle_async_event(app: &mut TuiApp, event: AsyncEvent) {
                 show_notification(
                     app,
                     "OAuth",
-                    format!(
-                        "Confirm code {user_code} in the browser (Grok Build device login)."
-                    ),
+                    format!("Confirm code {user_code} in the browser (Grok Build device login)."),
                 );
             } else {
                 show_notification(
@@ -404,8 +396,8 @@ fn handle_agent_event(app: &mut TuiApp, event: AgentEvent) {
             }
             if let Some(invocation) = app.tool_invocations.get(&result.invocation_id).cloned() {
                 // Check if this is a background bash command that's still running
-                let is_background_running = invocation.tool_name == "bash"
-                    && still_running_background;
+                let is_background_running =
+                    invocation.tool_name == "bash" && still_running_background;
                 if invocation.tool_name == "bash"
                     && result.output.get("background").and_then(|v| v.as_bool()) == Some(true)
                     && let Some(snapshot) = BackgroundCommandSnapshot::from_json(&result.output)
@@ -975,7 +967,10 @@ fn maybe_refresh_account_usage_after_turn(app: &mut TuiApp) {
     let provider_id = app.loaded_config.config.model.provider.as_str();
     let canonical = navi_sdk::canonical_provider_id(provider_id);
     // Keep this list tight: only providers with a cheap credits/balance endpoint.
-    if !matches!(canonical, "charm-hyper" | "openrouter" | "xai" | "openai" | "commandcode") {
+    if !matches!(
+        canonical,
+        "charm-hyper" | "openrouter" | "xai" | "openai" | "commandcode"
+    ) {
         return;
     }
     // Avoid stacking refreshes if the modal is already loading.
@@ -1767,10 +1762,7 @@ mod tests {
         assert!(!app.usage_state.loading);
         let report = app.usage_state.report.as_ref().expect("kept report");
         assert!(
-            report
-                .details
-                .iter()
-                .any(|d| d.value.contains("9,999")),
+            report.details.iter().any(|d| d.value.contains("9,999")),
             "hollow error must not wipe previous balance, got {:?}",
             report.details
         );
@@ -1835,7 +1827,6 @@ mod tests {
 
         assert_eq!(app.compact_state.consecutive_failures, u32::MAX);
     }
-
 
     #[test]
     fn maybe_notify_turn_completed_skips_when_focused() {

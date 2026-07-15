@@ -610,12 +610,10 @@ fn insert_header(
     value: &str,
     label: &str,
 ) -> Result<(), ProviderError> {
-    let header_name = HeaderName::from_bytes(name.as_bytes()).map_err(|err| {
-        ProviderError::Other(format!("invalid {label} header name: {err}"))
-    })?;
-    let hv = HeaderValue::from_str(value).map_err(|err| {
-        ProviderError::Other(format!("invalid {label} header value: {err}"))
-    })?;
+    let header_name = HeaderName::from_bytes(name.as_bytes())
+        .map_err(|err| ProviderError::Other(format!("invalid {label} header name: {err}")))?;
+    let hv = HeaderValue::from_str(value)
+        .map_err(|err| ProviderError::Other(format!("invalid {label} header value: {err}")))?;
     headers.insert(header_name, hv);
     Ok(())
 }
@@ -654,7 +652,9 @@ fn insert_hyper_session_headers(
 ) -> Result<(), ProviderError> {
     let token = hyper_session_affinity_token(session_id);
     let value = HeaderValue::from_str(&token).map_err(|err| {
-        ProviderError::Other(format!("invalid charm-hyper session affinity header: {err}"))
+        ProviderError::Other(format!(
+            "invalid charm-hyper session affinity header: {err}"
+        ))
     })?;
     headers.insert("x-session-id", value.clone());
     headers.insert("x-session-affinity", value);
@@ -820,9 +820,7 @@ mod tests {
             Some(client_id.as_str())
         );
         assert_eq!(
-            headers
-                .get("x-grok-agent-id")
-                .and_then(|v| v.to_str().ok()),
+            headers.get("x-grok-agent-id").and_then(|v| v.to_str().ok()),
             Some(agent_id.as_str())
         );
         assert_eq!(
@@ -949,9 +947,7 @@ mod tests {
 
         let expected = hyper_session_affinity_token("session-abc-123");
         assert_eq!(
-            headers
-                .get("x-session-id")
-                .and_then(|v| v.to_str().ok()),
+            headers.get("x-session-id").and_then(|v| v.to_str().ok()),
             Some(expected.as_str())
         );
         assert_eq!(
@@ -972,10 +968,7 @@ mod tests {
             hyper_session_affinity_token("session-other")
         );
         // Token is process-stable (SHA-256 prefix), not DefaultHasher.
-        assert_eq!(
-            hyper_session_affinity_token("session-abc-123").len(),
-            32
-        );
+        assert_eq!(hyper_session_affinity_token("session-abc-123").len(), 32);
         assert!(
             hyper_session_affinity_token("session-abc-123")
                 .chars()

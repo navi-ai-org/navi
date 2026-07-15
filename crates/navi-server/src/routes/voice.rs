@@ -2,9 +2,7 @@
 //!
 //! Engine-scoped (not per-session). Mirrors `NaviEngine` voice APIs.
 
-use crate::state::{
-    SharedState, err_resp, ok_json, optional_json_body, with_auth, with_state,
-};
+use crate::state::{SharedState, err_resp, ok_json, optional_json_body, with_auth, with_state};
 use futures_util::{SinkExt, StreamExt};
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -262,11 +260,7 @@ pub fn routes(state: SharedState, secret: &'static str) -> BoxedFilter<(impl Rep
 
 // ── WebSocket handler ────────────────────────────────────────────────────
 
-async fn handle_voice_ws(
-    ws: WebSocket,
-    state: SharedState,
-    params: HashMap<String, String>,
-) {
+async fn handle_voice_ws(ws: WebSocket, state: SharedState, params: HashMap<String, String>) {
     let provided = params.get("secret").map(|s| s.as_str()).unwrap_or("");
     if provided != state.secret {
         warn!("WS auth failed for /voice/events");

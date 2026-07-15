@@ -603,7 +603,6 @@ async fn bash_timeout_returns_structured_error() {
     );
 }
 
-
 #[tokio::test]
 async fn bash_timeout_kills_child_process() {
     let tempdir = tempfile::tempdir().expect("tempdir");
@@ -667,7 +666,11 @@ async fn bash_background_timeout_marks_result_not_ok() {
             }),
         })
         .await;
-    assert!(started.ok || started.output["status"] == "running" || started.output["status"] == "timed_out");
+    assert!(
+        started.ok
+            || started.output["status"] == "running"
+            || started.output["status"] == "timed_out"
+    );
     let task_id = started.output["task_id"].as_str().unwrap().to_string();
 
     // Wait long enough for the background timeout to fire.

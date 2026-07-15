@@ -1045,8 +1045,7 @@ impl AgentRuntime {
     pub async fn rewind_to_user_turns(&mut self, keep_user_turns: usize) -> Result<usize> {
         if !self.session.started() || self.session.runtime().is_none() {
             // Nothing live yet — just reset seed messages/events for a clean start.
-            self.session
-                .truncate_events_to_user_turns(keep_user_turns);
+            self.session.truncate_events_to_user_turns(keep_user_turns);
             // Seed messages for next start_session: drop user turns past keep.
             crate::session::truncate_messages_to_user_turns(
                 &mut self.initial_messages,
@@ -1074,8 +1073,7 @@ impl AgentRuntime {
             .await
             .map_err(|_| anyhow::anyhow!("rewind cancelled or session loop exited"))??;
 
-        self.session
-            .truncate_events_to_user_turns(keep_user_turns);
+        self.session.truncate_events_to_user_turns(keep_user_turns);
         // Keep initial_messages in sync if the session is later restarted.
         crate::session::truncate_messages_to_user_turns(
             &mut self.initial_messages,
@@ -1099,10 +1097,11 @@ impl AgentRuntime {
             return false;
         };
         self.session.set_title(Some(title.clone()));
-        self.event_bus.publish(RuntimeEventKind::SessionTitleUpdated {
-            session_id: self.session.id().as_str().to_string(),
-            title,
-        });
+        self.event_bus
+            .publish(RuntimeEventKind::SessionTitleUpdated {
+                session_id: self.session.id().as_str().to_string(),
+                title,
+            });
         true
     }
 

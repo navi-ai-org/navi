@@ -28,10 +28,7 @@ pub(crate) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
 
     let (title, body) = match &app.available_update {
         Some(info) => (
-            format!(
-                "NAVI {} → {}",
-                info.current_version, info.latest_version
-            ),
+            format!("NAVI {} → {}", info.current_version, info.latest_version),
             info.body
                 .as_deref()
                 .unwrap_or("A newer release is ready to install via the official installer.")
@@ -73,10 +70,7 @@ pub(crate) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
         Paragraph::new(Line::from(vec![
             Span::styled(installing, Style::default().fg(code_const()).bg(modal_bg())),
             Span::styled("enter", Style::default().fg(red()).bg(modal_bg())),
-            Span::styled(
-                " install  ·  ",
-                Style::default().fg(muted()).bg(modal_bg()),
-            ),
+            Span::styled(" install  ·  ", Style::default().fg(muted()).bg(modal_bg())),
             Span::styled("a", Style::default().fg(text()).bg(modal_bg())),
             Span::styled(
                 " auto-update  ·  ",

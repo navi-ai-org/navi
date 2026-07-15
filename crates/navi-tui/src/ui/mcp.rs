@@ -56,7 +56,12 @@ pub(crate) fn draw_mcp_modal(f: &mut Frame, area: Rect, app: &mut TuiApp) {
         f.render_widget(
             Paragraph::new(
                 (0..body.height)
-                    .map(|_| Line::from(Span::styled("│", Style::default().fg(ghost()).bg(modal_bg()))))
+                    .map(|_| {
+                        Line::from(Span::styled(
+                            "│",
+                            Style::default().fg(ghost()).bg(modal_bg()),
+                        ))
+                    })
                     .collect::<Vec<_>>(),
             )
             .style(Style::default().bg(modal_bg())),
@@ -67,12 +72,10 @@ pub(crate) fn draw_mcp_modal(f: &mut Frame, area: Rect, app: &mut TuiApp) {
     let servers = effective_servers(app);
     if servers.is_empty() {
         f.render_widget(
-            Paragraph::new(Line::from(vec![
-                Span::styled(
-                    "No MCP servers configured.",
-                    Style::default().fg(muted()).bg(modal_bg()),
-                ),
-            ]))
+            Paragraph::new(Line::from(vec![Span::styled(
+                "No MCP servers configured.",
+                Style::default().fg(muted()).bg(modal_bg()),
+            )]))
             .style(Style::default().bg(modal_bg())),
             left,
         );
@@ -96,8 +99,7 @@ pub(crate) fn draw_mcp_modal(f: &mut Frame, area: Rect, app: &mut TuiApp) {
     if app.mcp_ui_state.selected_server < app.mcp_ui_state.scroll {
         app.mcp_ui_state.scroll = app.mcp_ui_state.selected_server;
     }
-    if max_visible > 0
-        && app.mcp_ui_state.selected_server >= app.mcp_ui_state.scroll + max_visible
+    if max_visible > 0 && app.mcp_ui_state.selected_server >= app.mcp_ui_state.scroll + max_visible
     {
         app.mcp_ui_state.scroll = app
             .mcp_ui_state
@@ -113,7 +115,8 @@ pub(crate) fn draw_mcp_modal(f: &mut Frame, area: Rect, app: &mut TuiApp) {
         }
         let server = &servers[i];
         let (dot, dot_color) = status_dot(server, app.mcp_ui_state.loading);
-        let selected = i == app.mcp_ui_state.selected_server && !app.mcp_ui_state.is_focused_on_tools;
+        let selected =
+            i == app.mcp_ui_state.selected_server && !app.mcp_ui_state.is_focused_on_tools;
         let name_style = if selected {
             Style::default()
                 .fg(text())
@@ -123,7 +126,10 @@ pub(crate) fn draw_mcp_modal(f: &mut Frame, area: Rect, app: &mut TuiApp) {
             Style::default().fg(text()).bg(modal_bg())
         };
         let line = Line::from(vec![
-            Span::styled(format!("{dot} "), Style::default().fg(dot_color).bg(modal_bg())),
+            Span::styled(
+                format!("{dot} "),
+                Style::default().fg(dot_color).bg(modal_bg()),
+            ),
             Span::styled(server.id.clone(), name_style),
         ]);
         list_items.push(ListItem::new(line).style(Style::default().bg(modal_bg())));
@@ -333,7 +339,10 @@ fn render_footer(f: &mut Frame, area: Rect, has_servers: bool) {
             Span::styled("[↑↓]", Style::default().fg(signal()).bg(modal_bg())),
             Span::styled(" select  ", Style::default().fg(muted()).bg(modal_bg())),
             Span::styled("[enter]", Style::default().fg(signal()).bg(modal_bg())),
-            Span::styled(" enable/disable  ", Style::default().fg(muted()).bg(modal_bg())),
+            Span::styled(
+                " enable/disable  ",
+                Style::default().fg(muted()).bg(modal_bg()),
+            ),
             Span::styled("[r]", Style::default().fg(signal()).bg(modal_bg())),
             Span::styled(" refresh  ", Style::default().fg(muted()).bg(modal_bg())),
             Span::styled("[esc]", Style::default().fg(signal()).bg(modal_bg())),

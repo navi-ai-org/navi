@@ -152,8 +152,7 @@ mod tests {
     #[test]
     fn embedded_manifest_matches_transcription_provider_files() {
         let manifest = embedded_manifest().expect("manifest");
-        let providers =
-            embedded_transcription_providers().expect("transcription providers");
+        let providers = embedded_transcription_providers().expect("transcription providers");
         assert_eq!(
             manifest.transcription_providers.len(),
             providers.len(),

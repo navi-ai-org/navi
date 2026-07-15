@@ -206,12 +206,10 @@ pub fn routes(state: SharedState, secret: &'static str) -> BoxedFilter<(impl Rep
         .and_then(|sid: String, body: SudoBody, s: SharedState| async move {
             // Empty / whitespace password is treated as cancel (not submit empty secret).
             let response = match body.password {
-                Some(password) if !password.trim().is_empty() => {
-                    SudoPasswordResponse::Submitted {
-                        id: body.id,
-                        password,
-                    }
-                }
+                Some(password) if !password.trim().is_empty() => SudoPasswordResponse::Submitted {
+                    id: body.id,
+                    password,
+                },
                 _ => SudoPasswordResponse::Cancelled { id: body.id },
             };
             let engine = s.engine.read().await;
@@ -314,10 +312,7 @@ pub fn routes(state: SharedState, secret: &'static str) -> BoxedFilter<(impl Rep
                     }
                 };
                 let engine = s.engine.read().await;
-                match engine
-                    .update_goal_task_status(&sid, task_id, status)
-                    .await
-                {
+                match engine.update_goal_task_status(&sid, task_id, status).await {
                     Ok(goal) => Ok(warp::reply::json(&goal).into_response()),
                     Err(e) => Ok(err_resp(e.to_string(), StatusCode::BAD_REQUEST)),
                 }

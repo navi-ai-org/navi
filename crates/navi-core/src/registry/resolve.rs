@@ -45,10 +45,7 @@ fn resolve_model_ref(model: &mut RegistryModel, catalog: &ModelCatalog) {
         );
         // Set name from ref so the model is at least usable.
         if model.name.is_empty() {
-            model.name = model
-                .api_name
-                .clone()
-                .unwrap_or_else(|| model_ref.clone());
+            model.name = model.api_name.clone().unwrap_or_else(|| model_ref.clone());
         }
         return;
     };
@@ -75,7 +72,9 @@ fn resolve_model_ref(model: &mut RegistryModel, catalog: &ModelCatalog) {
         model.supports_thinking = canonical.supports_thinking;
     }
     if model.reasoning_levels.is_empty() {
-        model.reasoning_levels.clone_from(&canonical.reasoning_levels);
+        model
+            .reasoning_levels
+            .clone_from(&canonical.reasoning_levels);
     }
     if model.default_reasoning_effort.is_none() {
         model
@@ -134,7 +133,9 @@ pub fn build_alias_index(catalog: &ModelCatalog) -> HashMap<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::registry::types::{CanonicalModel, RegistryAttachments, RegistryModel, RegistryProvider};
+    use crate::registry::types::{
+        CanonicalModel, RegistryAttachments, RegistryModel, RegistryProvider,
+    };
 
     fn catalog_with(id: &str, ctx: u64, images: bool) -> ModelCatalog {
         let mut catalog = ModelCatalog::new();
@@ -244,7 +245,10 @@ mod tests {
         assert_eq!(provider.models[0].name, "gpt-5");
         assert_eq!(provider.models[0].context_window_tokens, Some(400_000));
         let aliases = build_alias_index(&catalog);
-        assert_eq!(aliases.get("gpt-5-alias").map(String::as_str), Some("gpt-5"));
+        assert_eq!(
+            aliases.get("gpt-5-alias").map(String::as_str),
+            Some("gpt-5")
+        );
     }
 
     #[test]

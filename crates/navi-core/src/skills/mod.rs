@@ -296,11 +296,7 @@ pub fn slugify_skill_id(raw: &str) -> String {
     while out.ends_with('-') {
         out.pop();
     }
-    if out.is_empty() {
-        "skill".into()
-    } else {
-        out
-    }
+    if out.is_empty() { "skill".into() } else { out }
 }
 
 /// Create or update a skill in the SQLite skill store (shared Desktop + TUI).
@@ -332,11 +328,7 @@ pub fn load_skill_by_id(
 }
 
 /// Delete a skill from the SQLite store (never deletes builtins).
-pub fn delete_skill(
-    skill_id: &str,
-    _project_dir: &Path,
-    data_dir: &Path,
-) -> Result<bool> {
+pub fn delete_skill(skill_id: &str, _project_dir: &Path, data_dir: &Path) -> Result<bool> {
     let id = slugify_skill_id(skill_id);
     if id.is_empty() {
         return Err(anyhow::anyhow!("invalid skill id"));
@@ -352,7 +344,6 @@ pub fn delete_skill(
 pub fn skill_is_editable(skill: &SkillManifest) -> bool {
     matches!(skill.source, SkillSource::Store)
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -431,7 +422,8 @@ mod tests {
             tempdir.path(),
         )
         .expect("write");
-        let loaded = load_skill_by_id(&cfg(), tempdir.path(), tempdir.path(), "reviewer").expect("load");
+        let loaded =
+            load_skill_by_id(&cfg(), tempdir.path(), tempdir.path(), "reviewer").expect("load");
         assert_eq!(loaded.name, "Code Reviewer");
         assert_eq!(loaded.allow_tools, vec!["read_file", "bash"]);
         assert_eq!(loaded.requires, vec!["socratic"]);

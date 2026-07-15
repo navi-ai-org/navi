@@ -1,7 +1,7 @@
 use ratatui::layout::Rect;
-use ratatui::prelude::{Frame, Line, Modifier, Span, Style};
 #[cfg(test)]
 use ratatui::prelude::Color;
+use ratatui::prelude::{Frame, Line, Modifier, Span, Style};
 use ratatui::widgets::{Block, BorderType, Borders};
 
 use crate::theme::*;

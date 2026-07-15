@@ -167,9 +167,7 @@ impl BrowserSession {
         } else {
             ContentKind::Text
         };
-        let content = engine
-            .content(kind, max_chars.clamp(200, 100_000))
-            .await?;
+        let content = engine.content(kind, max_chars.clamp(200, 100_000)).await?;
         Ok(json!({
             "kind": match kind { ContentKind::Html => "html", ContentKind::Text => "text" },
             "content": content,
@@ -192,4 +190,3 @@ impl BrowserSession {
         }
     }
 }
-

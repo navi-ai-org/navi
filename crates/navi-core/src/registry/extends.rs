@@ -16,10 +16,7 @@ use super::types::RegistryProvider;
 /// `bases` maps base/provider id → raw JSON object. Lookups prefer this map;
 /// when missing, the original value is returned unchanged (aside from removing
 /// a dangling `extends` key is NOT done — unresolved extends leave models empty).
-pub fn resolve_extends_value(
-    data: &Value,
-    bases: &HashMap<String, Value>,
-) -> Result<Value> {
+pub fn resolve_extends_value(data: &Value, bases: &HashMap<String, Value>) -> Result<Value> {
     resolve_extends_value_inner(data, bases, &mut Vec::new())
 }
 
@@ -48,9 +45,9 @@ fn resolve_extends_value_inner(
         );
     }
 
-    let base = bases.get(extends).with_context(|| {
-        format!("extends: base '{extends}' not found in bases/ or providers/")
-    })?;
+    let base = bases
+        .get(extends)
+        .with_context(|| format!("extends: base '{extends}' not found in bases/ or providers/"))?;
 
     stack.push(extends.to_string());
     let resolved_base = resolve_extends_value_inner(base, bases, stack)?;
@@ -103,8 +100,8 @@ pub fn load_local_base_map(registry_dir: &Path) -> Result<HashMap<String, Value>
         if !dir.is_dir() {
             continue;
         }
-        for entry in std::fs::read_dir(&dir)
-            .with_context(|| format!("failed to read {}", dir.display()))?
+        for entry in
+            std::fs::read_dir(&dir).with_context(|| format!("failed to read {}", dir.display()))?
         {
             let entry = entry?;
             let path = entry.path();
@@ -190,14 +187,10 @@ mod tests {
             "base_url": "https://example.com"
         });
         let flat = resolve_extends_value(&child, &bases).expect("resolve");
-        let provider: RegistryProvider =
-            serde_json::from_value(flat).expect("deserialize");
+        let provider: RegistryProvider = serde_json::from_value(flat).expect("deserialize");
         assert_eq!(provider.id, "mimo-anthropic-ams");
         assert_eq!(provider.label, "MiMo Europe");
-        assert_eq!(
-            provider.base_url.as_deref(),
-            Some("https://example.com")
-        );
+        assert_eq!(provider.base_url.as_deref(), Some("https://example.com"));
         assert_eq!(provider.models.len(), 2);
         assert_eq!(provider.models[0].model_ref.as_deref(), Some("mimo-v2.5"));
         assert!(provider.extends.is_none());

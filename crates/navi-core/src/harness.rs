@@ -746,7 +746,7 @@ mod tests {
                 thinking: ThinkingConfig::Off,
                 tools: Vec::new(),
                 session_id: None,
-},
+            },
             policy,
         );
         assert!(trace.get("max_turn_loops").is_none());

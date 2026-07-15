@@ -46,9 +46,7 @@ pub async fn handle_browser_command(
             println!("     See crates/navi-browser/INTEGRATION.md\n");
             println!("  2) CDP fallback (feature cdp-fallback, default without browser-cloak)");
             println!("     - Google Chrome / Chromium, or:");
-            println!(
-                "       docker run -d -p 127.0.0.1:9222:9222 cloakhq/cloakbrowser cloakserve"
-            );
+            println!("       docker run -d -p 127.0.0.1:9222:9222 cloakhq/cloakbrowser cloakserve");
             println!("       # [browser] backend = \"cdp\", cdp_url = \"http://127.0.0.1:9222\"");
             println!();
             println!("  Then run: navi browser doctor");
@@ -59,19 +57,14 @@ pub async fn handle_browser_command(
             println!("  enabled: {}", runtime.enabled);
             println!("  backend: {}", runtime.backend);
             println!("  headless: {}", runtime.headless);
-            println!(
-                "  allow_private_network: {}",
-                runtime.allow_private_network
-            );
+            println!("  allow_private_network: {}", runtime.allow_private_network);
             if !runtime.cdp_url.is_empty() {
                 println!("  cdp_url: {}", runtime.cdp_url);
             }
             if let Some(bin) = report.get("binary") {
                 println!(
                     "  binary: {}",
-                    bin.get("path")
-                        .and_then(|p| p.as_str())
-                        .unwrap_or("(none)")
+                    bin.get("path").and_then(|p| p.as_str()).unwrap_or("(none)")
                 );
                 println!(
                     "  kind: {}",

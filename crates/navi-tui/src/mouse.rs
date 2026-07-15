@@ -147,8 +147,6 @@ fn is_chat_block_hit(action: &HitAction) -> bool {
     )
 }
 
-
-
 /// Second-click actions on an already-selected chat block (expand tool, menu, …).
 /// Kept separate from [`dispatch_hit`] so first-click can select without firing them.
 fn run_secondary_chat_click(app: &mut TuiApp, action: &HitAction) {
@@ -1004,13 +1002,8 @@ fn scroll_by(app: &mut TuiApp, target: ScrollTarget, delta: isize) {
             // root palette must still change selected_command when max_scroll is 0.
             let rows = crate::commands::command_rows(app);
             let len = rows.len();
-            let (selected, scroll) = shifted_select_state(
-                app.selected_command,
-                app.command_scroll,
-                len,
-                delta,
-                10,
-            );
+            let (selected, scroll) =
+                shifted_select_state(app.selected_command, app.command_scroll, len, delta, 10);
             app.selected_command = crate::commands::clamp_command_selection(&rows, selected);
             app.command_scroll = scroll;
         }
@@ -1101,9 +1094,8 @@ fn scroll_by(app: &mut TuiApp, target: ScrollTarget, delta: isize) {
             if delta.is_positive() {
                 app.bg_models_selected = (app.bg_models_selected + delta as usize).min(len - 1);
             } else {
-                app.bg_models_selected = app
-                    .bg_models_selected
-                    .saturating_sub(delta.unsigned_abs());
+                app.bg_models_selected =
+                    app.bg_models_selected.saturating_sub(delta.unsigned_abs());
             }
             // Keep selection in view (same window size as keyboard clamp).
             let visible_tasks = 4usize;
@@ -1925,6 +1917,9 @@ mod tests {
         handle_mouse(&mut app, mouse_down(2, 10));
         let plan = app.active_plan.as_ref().expect("plan");
         assert!(plan.expanded, "must stay expanded");
-        assert!(plan.show_all_steps, "must show all steps after +N more click");
+        assert!(
+            plan.show_all_steps,
+            "must show all steps after +N more click"
+        );
     }
 }

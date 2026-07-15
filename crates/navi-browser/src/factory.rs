@@ -50,7 +50,10 @@ fn all_factories() -> Vec<Arc<dyn BrowserEngineFactory>> {
     }
     #[cfg(feature = "cloakbrowser")]
     {
-        if !out.iter().any(|f| f.id() == crate::engines::cloakbrowser::FACTORY_ID) {
+        if !out
+            .iter()
+            .any(|f| f.id() == crate::engines::cloakbrowser::FACTORY_ID)
+        {
             out.push(Arc::new(
                 crate::engines::cloakbrowser::CloakBrowserEngineFactory,
             ));

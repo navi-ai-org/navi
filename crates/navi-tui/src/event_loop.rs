@@ -475,7 +475,9 @@ where
                     // mouse event, swallow it so it doesn't open the
                     // ConfirmCancelTurn modal and cancel the active turn.
                     if key.code == crossterm::event::KeyCode::Esc
-                        && app.last_mouse_event.is_some_and(|t| t.elapsed() < std::time::Duration::from_millis(150))
+                        && app
+                            .last_mouse_event
+                            .is_some_and(|t| t.elapsed() < std::time::Duration::from_millis(150))
                     {
                         app.last_mouse_event = None;
                         continue;

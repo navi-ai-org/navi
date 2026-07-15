@@ -199,12 +199,17 @@ impl NaviEngine {
                     lines.push(format!("  [OK] API key resolved (${})", reg.api_key_env));
                 } else {
                     ok = false;
-                    lines.push(format!("  [FAIL] Missing API key — set ${}", reg.api_key_env));
+                    lines.push(format!(
+                        "  [FAIL] Missing API key — set ${}",
+                        reg.api_key_env
+                    ));
                 }
             }
             None => {
                 ok = false;
-                lines.push(format!("  [FAIL] Unknown transcription provider '{provider}'"));
+                lines.push(format!(
+                    "  [FAIL] Unknown transcription provider '{provider}'"
+                ));
                 let known: Vec<_> = transcription_provider_catalog()
                     .into_iter()
                     .map(|p| p.id)
@@ -518,8 +523,8 @@ impl NaviEngine {
                     .global_config_path
                     .as_ref()
                     .ok_or_else(|| NaviError::Config("global config path is unavailable".into()))?;
-                let path =
-                    save_global_config(global_path, &loaded_config.config).map_err(NaviError::from)?;
+                let path = save_global_config(global_path, &loaded_config.config)
+                    .map_err(NaviError::from)?;
                 Ok(Some(path))
             }
             NaviConfigSaveTarget::Auto => {
@@ -528,9 +533,10 @@ impl NaviEngine {
                         .map_err(NaviError::from)?;
                     Ok(Some(path))
                 } else {
-                    let global_path = loaded_config.global_config_path.as_ref().ok_or_else(|| {
-                        NaviError::Config("global config path is unavailable".into())
-                    })?;
+                    let global_path =
+                        loaded_config.global_config_path.as_ref().ok_or_else(|| {
+                            NaviError::Config("global config path is unavailable".into())
+                        })?;
                     let path = save_global_config(global_path, &loaded_config.config)
                         .map_err(NaviError::from)?;
                     Ok(Some(path))

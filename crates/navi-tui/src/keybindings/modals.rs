@@ -402,8 +402,8 @@ pub(crate) fn handle_thinking_key(app: &mut TuiApp, code: KeyCode) -> bool {
 
 pub(crate) fn handle_settings_key(app: &mut TuiApp, code: KeyCode) -> bool {
     use crate::settings::{
-        SettingAction, SettingRow, SETTINGS_ROWS, clamp_setting_selection,
-        next_selectable_setting, previous_selectable_setting,
+        SETTINGS_ROWS, SettingAction, SettingRow, clamp_setting_selection, next_selectable_setting,
+        previous_selectable_setting,
     };
     const COMPACT_TOOL_LIMITS: &[usize] = &[3, 5, 8, 12, 20];
 
@@ -554,9 +554,10 @@ pub(crate) fn handle_settings_key(app: &mut TuiApp, code: KeyCode) -> bool {
                     ));
                 }
                 SettingAction::MemoryHint => {
-                    let detail = app.engine().memory_quick_status().unwrap_or_else(|err| {
-                        format!("status unavailable ({err:#})")
-                    });
+                    let detail = app
+                        .engine()
+                        .memory_quick_status()
+                        .unwrap_or_else(|err| format!("status unavailable ({err:#})"));
                     show_notification(
                         app,
                         "Memory",
@@ -1795,7 +1796,6 @@ pub(crate) fn handle_background_command_output_key(app: &mut TuiApp, code: KeyCo
     false
 }
 
-
 pub(crate) fn handle_model_routing_key(app: &mut TuiApp, code: KeyCode) -> bool {
     use crate::state::ModelRoutingTab;
     match code {
@@ -2004,7 +2004,10 @@ pub(crate) fn handle_extensions_hub_key(app: &mut TuiApp, code: KeyCode) -> bool
                 .unwrap_or(count.saturating_sub(1));
         }
         KeyCode::Enter => {
-            match ExtensionsHubItem::ALL.get(app.selected_extensions_item).copied() {
+            match ExtensionsHubItem::ALL
+                .get(app.selected_extensions_item)
+                .copied()
+            {
                 Some(ExtensionsHubItem::Skills) => super::open_skills_picker(app),
                 Some(ExtensionsHubItem::Plugins) => super::open_plugins_picker(app),
                 Some(ExtensionsHubItem::McpServers) => {

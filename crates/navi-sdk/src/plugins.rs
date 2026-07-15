@@ -473,8 +473,7 @@ fn write_lockfile_with_approved(
     kind: PluginCatalogKind,
 ) -> Result<()> {
     let plugins_root = installed_plugins_dir(data_dir);
-    let entry =
-        lock_entry_from_manifest_with_meta(manifest, approved_capabilities, trust, kind);
+    let entry = lock_entry_from_manifest_with_meta(manifest, approved_capabilities, trust, kind);
     upsert_aggregate_lock_entry(&plugins_root, entry)
         .map_err(|e| NaviError::Config(format!("save lockfile: {e}")))?;
     Ok(())
@@ -501,12 +500,8 @@ fn trust_label(trust: TrustLevel) -> &'static str {
 /// Follow-up guidance after install based on marketplace package kind.
 fn kind_install_hint(kind: PluginCatalogKind) -> &'static str {
     match kind {
-        PluginCatalogKind::Plugin => {
-            "WASM tools register on next session (or reload plugins)."
-        }
-        PluginCatalogKind::Skill => {
-            "Skill pack installed as WASM; SKILL.md imported when present."
-        }
+        PluginCatalogKind::Plugin => "WASM tools register on next session (or reload plugins).",
+        PluginCatalogKind::Skill => "Skill pack installed as WASM; SKILL.md imported when present.",
         PluginCatalogKind::Mcp => {
             "MCP package installed as WASM; mcp.json merged into global MCP config when present."
         }
@@ -674,13 +669,7 @@ fn parse_skill_md(raw: &str) -> (String, Option<String>, Option<String>, Vec<Str
             return (name, description, version, tags, body);
         }
     }
-    (
-        "Imported Skill".into(),
-        None,
-        None,
-        vec![],
-        raw.to_string(),
-    )
+    ("Imported Skill".into(), None, None, vec![], raw.to_string())
 }
 
 fn parse_skill_toml(
@@ -715,7 +704,11 @@ fn import_mcp_from_package(data_dir: &Path, installed_dir: &Path) -> Option<Stri
     }
     let raw = match fs::read_to_string(&mcp_path) {
         Ok(s) => s,
-        Err(e) => return Some(format!("MCP package installed; failed to read mcp.json: {e}")),
+        Err(e) => {
+            return Some(format!(
+                "MCP package installed; failed to read mcp.json: {e}"
+            ));
+        }
     };
     let server: navi_core::McpServerConfig = match serde_json::from_str(&raw) {
         Ok(s) => s,
@@ -879,11 +872,8 @@ mod tests {
         assert!(package_has_mcp_json(&temp.path().join("plugins/discord")));
 
         // Explicit confirm path merges without requiring real Discord token.
-        let msg = merge_mcp_from_package(
-            temp.path(),
-            &temp.path().join("plugins/discord"),
-        )
-        .expect("merge hint");
+        let msg = merge_mcp_from_package(temp.path(), &temp.path().join("plugins/discord"))
+            .expect("merge hint");
         assert!(
             msg.contains("discord") || msg.to_lowercase().contains("merged"),
             "merge msg={msg}"
@@ -892,8 +882,8 @@ mod tests {
 
     #[test]
     fn marketplace_hello_echo_installs_and_registers_tool() {
-        use navi_core::RuntimeComponents;
         use crate::tooling::build_local_tooling;
+        use navi_core::RuntimeComponents;
 
         // Vendored signed artifact (relative to crate → workspace).
         let artifact = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -955,7 +945,9 @@ mod tests {
             .map(|d| d.name)
             .collect();
         assert!(
-            names.iter().any(|n| n == "plugin__hello-echo__echo" || n.contains("hello-echo")),
+            names
+                .iter()
+                .any(|n| n == "plugin__hello-echo__echo" || n.contains("hello-echo")),
             "expected namespaced hello-echo tool, got {names:?}; warnings={:?}",
             tooling.warnings
         );
@@ -978,11 +970,7 @@ mod tests {
             },
             None,
         ));
-        assert!(
-            result.ok,
-            "tool invoke failed: {:?}",
-            result.output
-        );
+        assert!(result.ok, "tool invoke failed: {:?}", result.output);
         let out = result.output.to_string();
         assert!(
             out.contains("ping") || out.contains("text"),
@@ -992,7 +980,9 @@ mod tests {
         // tui.json extension commands surface
         let cmds = engine.list_tui_extension_commands().expect("ext cmds");
         assert!(
-            cmds.iter().any(|c| c.id.contains("hello") || c.title.contains("Echo") || c.title.contains("Ping")),
+            cmds.iter().any(|c| c.id.contains("hello")
+                || c.title.contains("Echo")
+                || c.title.contains("Ping")),
             "expected tui.json command, got {cmds:?}"
         );
     }
@@ -1045,13 +1035,16 @@ mod tests {
         let result = engine.plugin_install_path(&pkg, true).expect("install");
         assert_eq!(result.kind, "skill");
         assert!(
-            result.kind_hint.contains("Imported skill") || result.kind_hint.contains("skills.sqlite"),
+            result.kind_hint.contains("Imported skill")
+                || result.kind_hint.contains("skills.sqlite"),
             "hint={}",
             result.kind_hint
         );
         let skills = engine.list_skills().expect("list skills");
         assert!(
-            skills.iter().any(|s| s.name.contains("Hello") || s.id.contains("hello")),
+            skills
+                .iter()
+                .any(|s| s.name.contains("Hello") || s.id.contains("hello")),
             "skills={skills:?}"
         );
     }

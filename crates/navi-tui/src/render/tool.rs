@@ -233,7 +233,12 @@ fn formatted_tool_output(invocation: &ToolInvocation, result: &ToolResult) -> Op
                 .get("stderr")
                 .and_then(|v| v.as_str())
                 .is_some_and(|s| !s.trim().is_empty())
-            || obj.keys().any(|k| !matches!(k.as_str(), "error" | "stdout" | "stderr" | "status" | "exit_code" | "schema_version"));
+            || obj.keys().any(|k| {
+                !matches!(
+                    k.as_str(),
+                    "error" | "stdout" | "stderr" | "status" | "exit_code" | "schema_version"
+                )
+            });
 
         if has_extra {
             // Keep a short label only when streams/details follow.
@@ -422,7 +427,10 @@ fn generic_tool_summary(invocation: &ToolInvocation, result: &ToolResult) -> Str
     } else if let Some(error) = result.output.get("error").and_then(|v| v.as_str()) {
         content.push_str(&format!("Error: {error}\n"));
     } else {
-        content.push_str(&format!("{} failed\n", humanize_tool_name(&invocation.tool_name)));
+        content.push_str(&format!(
+            "{} failed\n",
+            humanize_tool_name(&invocation.tool_name)
+        ));
     }
 
     // Prefer a short human summary of common keys over raw JSON dumps.
@@ -612,7 +620,9 @@ fn render_build_runner_output(result: &ToolResult, content: &mut String) {
     render_diagnostic_list("Warnings", result.output.get("warnings"), content);
     // Prefer plain log streams over dumping the full structured payload as JSON.
     if let Some(obj) = result.output.as_object() {
-        if obj.contains_key("stdout") || obj.contains_key("stderr") || obj.contains_key("raw_output")
+        if obj.contains_key("stdout")
+            || obj.contains_key("stderr")
+            || obj.contains_key("raw_output")
         {
             if let Some(raw) = obj.get("raw_output").and_then(|v| v.as_str()) {
                 append_plain_stream(content, raw);
@@ -627,11 +637,7 @@ fn render_build_runner_output(result: &ToolResult, content: &mut String) {
 }
 
 /// Verifier body: real multi-line stdout/stderr (like bash), never ```json with `\n`.
-fn render_verifier_output(
-    invocation: &ToolInvocation,
-    result: &ToolResult,
-    content: &mut String,
-) {
+fn render_verifier_output(invocation: &ToolInvocation, result: &ToolResult, content: &mut String) {
     let action = invocation
         .input
         .get("action")
@@ -2156,10 +2162,7 @@ fn plan_body_content(invocation: &ToolInvocation, result: &ToolResult) -> String
                 .and_then(|v| v.as_object())
                 .or_else(|| result.output.as_object());
             if let Some(plan) = plan_obj {
-                let title = plan
-                    .get("title")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("Plan");
+                let title = plan.get("title").and_then(|v| v.as_str()).unwrap_or("Plan");
                 if !out.contains(title) {
                     out.push_str(&format!("# {title}\n"));
                 }
@@ -3288,7 +3291,9 @@ mod tests {
             !content.contains("*** Update File:"),
             "body must not show *** Update File chrome, got:\n{content}"
         );
-        assert!(content.contains("-old\n+new") || content.contains("-old") && content.contains("+new"));
+        assert!(
+            content.contains("-old\n+new") || content.contains("-old") && content.contains("+new")
+        );
         // Bare @@ has no line numbers — body must not invent a gutter.
         assert!(!content.contains("|old"));
         assert!(content.contains("```"));
@@ -3333,8 +3338,7 @@ mod tests {
             "expected numbered add, got:\n{content}"
         );
         assert!(
-            content.contains("  40|- Supports https")
-                || content.contains("  40| - Supports https"),
+            content.contains("  40|- Supports https") || content.contains("  40| - Supports https"),
             "expected line 40 context, got:\n{content}"
         );
     }
@@ -3386,8 +3390,12 @@ ctx\n\
         // Protocol path chrome is stripped; multi-file may keep bare path labels.
         assert!(!content.contains("*** Add File:"));
         assert!(!content.contains("*** Update File:"));
-        assert!(content.contains("one.txt") || content.contains("+one") || content.contains("|one"));
-        assert!(content.contains("two.txt") || content.contains("+two") || content.contains("|two"));
+        assert!(
+            content.contains("one.txt") || content.contains("+one") || content.contains("|one")
+        );
+        assert!(
+            content.contains("two.txt") || content.contains("+two") || content.contains("|two")
+        );
         assert!(
             content.contains("+   1|one") || content.contains("+one"),
             "expected first file body, got:\n{content}"
@@ -3512,11 +3520,11 @@ ctx\n\
                 "lines_added": 2,
                 "lines_removed": 2,
                 "diff": "*** Update File: AGENTS.md\n\
-@@ -46,2 +46,2 @@\n\
--1. **Pedido e Intenção Primária** – all explicit user requests\n\
--2. **Conceitos Técnicos-Chave** – technologies and frameworks discussed\n\
-+1. **Primary Request and Intent** – all explicit user requests\n\
-+2. **Key Technical Concepts** – technologies and frameworks discussed\n"
+            @@ -46,2 +46,2 @@\n\
+            -1. **Pedido e Intenção Primária** – all explicit user requests\n\
+            -2. **Conceitos Técnicos-Chave** – technologies and frameworks discussed\n\
+            +1. **Primary Request and Intent** – all explicit user requests\n\
+            +2. **Key Technical Concepts** – technologies and frameworks discussed\n"
             })),
         );
 

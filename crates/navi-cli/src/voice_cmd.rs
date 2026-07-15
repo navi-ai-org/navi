@@ -54,11 +54,7 @@ pub async fn handle_voice_command(
                     let has_key = resolve_provider_api_key(&store, &synthetic, &reg.id).is_some();
                     println!(
                         "  Credentials: {}",
-                        if has_key {
-                            "configured"
-                        } else {
-                            "missing"
-                        }
+                        if has_key { "configured" } else { "missing" }
                     );
                 } else {
                     println!("  Remote model: {} (unknown provider)", voice.model);
@@ -210,9 +206,8 @@ pub async fn handle_voice_command(
 
             if voice.uses_remote_transcription() {
                 let provider_id = voice.provider.trim();
-                let reg = find_transcription_provider(provider_id).with_context(|| {
-                    format!("unknown transcription provider '{provider_id}'")
-                })?;
+                let reg = find_transcription_provider(provider_id)
+                    .with_context(|| format!("unknown transcription provider '{provider_id}'"))?;
                 let kind = RemoteTranscriptionKind::parse(&reg.kind)
                     .with_context(|| format!("unsupported kind '{}'", reg.kind))?;
                 let model = resolve_transcription_model(&reg, &voice.model);
@@ -226,12 +221,9 @@ pub async fn handle_voice_command(
                     base_url: Some(reg.base_url.clone()),
                     ..Default::default()
                 };
-                let api_key = resolve_provider_api_key(&store, &synthetic, &reg.id)
-                    .with_context(|| {
-                        format!(
-                            "missing API key for '{}'. Set ${}",
-                            reg.id, reg.api_key_env
-                        )
+                let api_key =
+                    resolve_provider_api_key(&store, &synthetic, &reg.id).with_context(|| {
+                        format!("missing API key for '{}'. Set ${}", reg.id, reg.api_key_env)
                     })?;
                 let language = if lang.eq_ignore_ascii_case("auto") || lang.is_empty() {
                     None

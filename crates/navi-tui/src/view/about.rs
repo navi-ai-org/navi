@@ -115,10 +115,7 @@ pub(crate) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
                 Style::default().fg(muted()).bg(modal_bg()),
             ),
             Span::styled("↑↓", Style::default().fg(text()).bg(modal_bg())),
-            Span::styled(
-                " select  ·  ",
-                Style::default().fg(muted()).bg(modal_bg()),
-            ),
+            Span::styled(" select  ·  ", Style::default().fg(muted()).bg(modal_bg())),
             Span::styled("esc", Style::default().fg(text()).bg(modal_bg())),
             Span::styled(" close", Style::default().fg(muted()).bg(modal_bg())),
         ]))

@@ -335,11 +335,7 @@ impl NaviNapiEngine {
     /// Rewind live history for edit-message: keep the first `keepUserTurns`
     /// user turns, drop everything after. Caller then sends the new text.
     #[napi]
-    pub async fn rewind_session(
-        &self,
-        session_id: String,
-        keep_user_turns: u32,
-    ) -> Result<u32> {
+    pub async fn rewind_session(&self, session_id: String, keep_user_turns: u32) -> Result<u32> {
         let remaining = self
             .inner
             .rewind_session(&session_id, keep_user_turns as usize)
@@ -389,10 +385,7 @@ impl NaviNapiEngine {
     /// Installed plugin packages that ship a `tui.json` extension spec.
     #[napi]
     pub fn list_tui_extensions(&self) -> Result<JsonValue> {
-        let list = self
-            .inner
-            .list_tui_extensions()
-            .map_err(to_napi_error)?;
+        let list = self.inner.list_tui_extensions().map_err(to_napi_error)?;
         serde_json::to_value(list).map_err(to_napi_error)
     }
 
@@ -711,11 +704,7 @@ impl NaviNapiEngine {
 
     /// Multi-account: delete one credential account.
     #[napi]
-    pub fn delete_provider_account(
-        &self,
-        provider_id: String,
-        account_id: String,
-    ) -> Result<bool> {
+    pub fn delete_provider_account(&self, provider_id: String, account_id: String) -> Result<bool> {
         self.inner
             .delete_provider_account(&provider_id, &account_id)
             .map_err(to_napi_error)
@@ -752,10 +741,7 @@ impl NaviNapiEngine {
 
     /// Device OAuth without a progress callback.
     #[napi]
-    pub async fn start_device_oauth_simple(
-        &self,
-        provider_id: String,
-    ) -> Result<Option<String>> {
+    pub async fn start_device_oauth_simple(&self, provider_id: String) -> Result<Option<String>> {
         self.inner
             .start_device_oauth_simple(&provider_id)
             .await
@@ -844,11 +830,7 @@ impl NaviNapiEngine {
     }
 
     #[napi]
-    pub fn set_mcp_enabled(
-        &self,
-        enabled: bool,
-        save_target: Option<String>,
-    ) -> Result<JsonValue> {
+    pub fn set_mcp_enabled(&self, enabled: bool, save_target: Option<String>) -> Result<JsonValue> {
         let path = self
             .inner
             .set_mcp_enabled(enabled, parse_save_target(save_target.as_deref()))
@@ -890,11 +872,7 @@ impl NaviNapiEngine {
 
     /// Replace the entire MCP config block.
     #[napi]
-    pub fn set_mcp_config(
-        &self,
-        mcp: JsonValue,
-        save_target: Option<String>,
-    ) -> Result<JsonValue> {
+    pub fn set_mcp_config(&self, mcp: JsonValue, save_target: Option<String>) -> Result<JsonValue> {
         let mcp: navi_core::McpConfig = serde_json::from_value(mcp).map_err(to_napi_error)?;
         let path = self
             .inner
@@ -1118,12 +1096,7 @@ impl NaviNapiEngine {
         };
         let result = self
             .inner
-            .plugin_install_path_with_meta(
-                std::path::Path::new(&path),
-                confirm,
-                trust,
-                kind,
-            )
+            .plugin_install_path_with_meta(std::path::Path::new(&path), confirm, trust, kind)
             .map_err(to_napi_error)?;
         serde_json::to_value(result).map_err(to_napi_error)
     }
@@ -1796,8 +1769,7 @@ impl NaviNapiEngine {
 
     #[napi]
     pub async fn apply_update(&self, info: JsonValue) -> Result<()> {
-        let info: navi_core::UpdateInfo =
-            serde_json::from_value(info).map_err(to_napi_error)?;
+        let info: navi_core::UpdateInfo = serde_json::from_value(info).map_err(to_napi_error)?;
         self.inner.apply_update(&info).await.map_err(to_napi_error)
     }
 
