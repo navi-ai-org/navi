@@ -2339,7 +2339,6 @@ fn queued_message_remove_via_helper_closes_when_empty() {
     assert!(app.queued_user_messages.is_empty());
 }
 
-
 #[test]
 fn queued_message_editor_saves_terminal_newline_enter_variant() {
     let mut app = test_app("");

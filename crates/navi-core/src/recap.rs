@@ -168,26 +168,31 @@ fn looks_like_file_dump(lines: &[String]) -> bool {
     if lines.len() > RECAP_MAX_LINES {
         return true;
     }
-    let joined = lines.join("
-");
+    let joined = lines.join(
+        "
+",
+    );
     let chars = joined.chars().count();
     if chars > RECAP_MAX_DISPLAY_CHARS.saturating_mul(2) {
         return true;
     }
     // Code / patch / fence markers ⇒ dump, not a recap.
-    let codeish = lines.iter().filter(|l| {
-        let t = l.trim_start();
-        t.starts_with("```")
-            || t.starts_with("diff --git")
-            || t.starts_with("@@")
-            || t.starts_with("*** ")
-            || t.starts_with("fn ")
-            || t.starts_with("pub ")
-            || t.starts_with("use ")
-            || t.starts_with("impl ")
-            || t.starts_with("#include")
-            || t.starts_with("package ")
-    }).count();
+    let codeish = lines
+        .iter()
+        .filter(|l| {
+            let t = l.trim_start();
+            t.starts_with("```")
+                || t.starts_with("diff --git")
+                || t.starts_with("@@")
+                || t.starts_with("*** ")
+                || t.starts_with("fn ")
+                || t.starts_with("pub ")
+                || t.starts_with("use ")
+                || t.starts_with("impl ")
+                || t.starts_with("#include")
+                || t.starts_with("package ")
+        })
+        .count();
     codeish >= 1 && lines.len() >= 2
 }
 
@@ -514,7 +519,9 @@ mod tests {
         let cleaned = clean_recap_text(raw);
         let final_ = finalize_recap(&cleaned);
         assert!(final_.chars().count() <= RECAP_MAX_DISPLAY_CHARS);
-        assert!(!final_.contains("architecture that must be dropped") || final_.chars().count() <= RECAP_MAX_DISPLAY_CHARS);
+        assert!(
+            !final_.contains("architecture that must be dropped")
+                || final_.chars().count() <= RECAP_MAX_DISPLAY_CHARS
+        );
     }
-
 }

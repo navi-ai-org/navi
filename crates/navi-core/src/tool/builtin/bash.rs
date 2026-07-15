@@ -679,7 +679,11 @@ fn strip_leading_env_assignments(argv: &[String]) -> Option<(&str, &[String])> {
         let tok = &argv[idx];
         if tok.contains('=') && !tok.starts_with('-') && !tok.contains('/') {
             // FOO=bar style assignment
-            if tok.chars().next().is_some_and(|c| c.is_ascii_alphabetic() || c == '_') {
+            if tok
+                .chars()
+                .next()
+                .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+            {
                 idx += 1;
                 continue;
             }
@@ -831,10 +835,7 @@ fn suggest_head_tail_read(program: &str, args: &[String]) -> Option<NativeSugges
             }
         }
         // head -20 file / tail -20 file
-        if arg.starts_with('-')
-            && arg.len() > 1
-            && arg[1..].chars().all(|c| c.is_ascii_digit())
-        {
+        if arg.starts_with('-') && arg.len() > 1 && arg[1..].chars().all(|c| c.is_ascii_digit()) {
             n = arg[1..].parse().ok();
             i += 1;
             continue;
@@ -887,10 +888,7 @@ fn suggest_awk_read(args: &[String]) -> Option<NativeSuggestion> {
     let script = script?;
     let path = path?;
     let compact: String = script.chars().filter(|c| !c.is_whitespace()).collect();
-    if matches!(
-        compact.as_str(),
-        "{print}" | "{print$0}" | "1" | "{print;}"
-    ) {
+    if matches!(compact.as_str(), "{print}" | "{print$0}" | "1" | "{print;}") {
         return Some(NativeSuggestion {
             tool: "read_file",
             input: json!({ "path": path }),
@@ -1463,7 +1461,8 @@ mod native_redirect_tests {
 
     #[test]
     fn head_n_redirects_to_read_file_range() {
-        let out = native_tool_suggestion("head -n 40 crates/navi-core/src/lib.rs").expect("redirect");
+        let out =
+            native_tool_suggestion("head -n 40 crates/navi-core/src/lib.rs").expect("redirect");
         assert_eq!(out["native_tool"], "read_file");
         assert_eq!(out["native_input"]["start_line"], 1);
         assert_eq!(out["native_input"]["end_line"], 40);

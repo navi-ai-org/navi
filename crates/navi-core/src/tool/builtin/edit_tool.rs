@@ -65,7 +65,12 @@ impl Tool for EditTool {
         };
 
         // Multi-edit mode: `edits` array (Crush multiedit absorbed into edit).
-        if invocation.input.get("edits").and_then(Value::as_array).is_some() {
+        if invocation
+            .input
+            .get("edits")
+            .and_then(Value::as_array)
+            .is_some()
+        {
             return invoke_multiedit_on_path(&self.project_root, &invocation, path).await;
         }
 
@@ -89,11 +94,7 @@ impl Tool for EditTool {
         let full = match checked_project_path(&self.project_root, path) {
             Ok(p) => p,
             Err(e) => {
-                return Ok(error_result(
-                    &invocation,
-                    "invalid_path",
-                    &e.to_string(),
-                ));
+                return Ok(error_result(&invocation, "invalid_path", &e.to_string()));
             }
         };
 
@@ -106,7 +107,9 @@ impl Tool for EditTool {
                     return Ok(error_result(
                         &invocation,
                         "file_not_found",
-                        &format!("file not found: {path}. Use empty old_string to create, or write_file."),
+                        &format!(
+                            "file not found: {path}. Use empty old_string to create, or write_file."
+                        ),
                     ));
                 }
                 Err(e) => {
@@ -117,23 +120,17 @@ impl Tool for EditTool {
                     ));
                 }
             };
-            apply_one_edit(&existing, old_string, new_string, replace_all)
-                .and_then(|new_content| write_if_changed(&full, &existing, &new_content).map(|_| {
-                    EditOutcome {
-                        created: false,
-                        old_content: Some(existing),
-                        new_content,
-                    }
-                }))
+            apply_one_edit(&existing, old_string, new_string, replace_all).and_then(|new_content| {
+                write_if_changed(&full, &existing, &new_content).map(|_| EditOutcome {
+                    created: false,
+                    old_content: Some(existing),
+                    new_content,
+                })
+            })
         };
 
         match outcome {
-            Ok(result) => Ok(success_result(
-                &invocation,
-                path,
-                result,
-                1,
-            )),
+            Ok(result) => Ok(success_result(&invocation, path, result, 1)),
             Err(msg) => Ok(error_result(&invocation, "edit_failed", &msg)),
         }
     }
@@ -167,7 +164,6 @@ impl Tool for MultiEditTool {
         };
         invoke_multiedit_on_path(&self.project_root, &invocation, path).await
     }
-
 }
 
 async fn invoke_multiedit_on_path(
@@ -175,139 +171,135 @@ async fn invoke_multiedit_on_path(
     invocation: &ToolInvocation,
     path: &str,
 ) -> Result<ToolResult> {
-        let Some(edits) = invocation.input.get("edits").and_then(Value::as_array) else {
+    let Some(edits) = invocation.input.get("edits").and_then(Value::as_array) else {
+        return Ok(error_result(
+            &invocation,
+            "invalid_arguments",
+            "`edits` must be a non-empty array of {old_string, new_string, replace_all?} objects",
+        ));
+    };
+    if edits.is_empty() {
+        return Ok(error_result(
+            &invocation,
+            "invalid_arguments",
+            "`edits` array must contain at least one edit",
+        ));
+    }
+
+    let full = match checked_project_path(project_root, path) {
+        Ok(p) => p,
+        Err(e) => {
+            return Ok(error_result(&invocation, "invalid_path", &e.to_string()));
+        }
+    };
+
+    let mut current = match fs::read_to_string(&full) {
+        Ok(c) => Some(c),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+        Err(e) => {
             return Ok(error_result(
                 &invocation,
-                "invalid_arguments",
-                "`edits` must be a non-empty array of {old_string, new_string, replace_all?} objects",
-            ));
-        };
-        if edits.is_empty() {
-            return Ok(error_result(
-                &invocation,
-                "invalid_arguments",
-                "`edits` array must contain at least one edit",
+                "io_error",
+                &format!("failed to read {path}: {e}"),
             ));
         }
+    };
+    let original = current.clone();
+    let mut applied = 0usize;
 
-        let full = match checked_project_path(project_root, path) {
-            Ok(p) => p,
-            Err(e) => {
-                return Ok(error_result(
-                    &invocation,
-                    "invalid_path",
-                    &e.to_string(),
-                ));
-            }
-        };
+    for (idx, edit) in edits.iter().enumerate() {
+        let old_string = string_arg(edit, &["old_string", "search"]).unwrap_or("");
+        let new_string = string_arg(edit, &["new_string", "replace"]).unwrap_or("");
+        let replace_all = bool_arg(edit, "replace_all").unwrap_or(false);
 
-        let mut current = match fs::read_to_string(&full) {
-            Ok(c) => Some(c),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
-            Err(e) => {
-                return Ok(error_result(
-                    &invocation,
-                    "io_error",
-                    &format!("failed to read {path}: {e}"),
-                ));
-            }
-        };
-        let original = current.clone();
-        let mut applied = 0usize;
-
-        for (idx, edit) in edits.iter().enumerate() {
-            let old_string = string_arg(edit, &["old_string", "search"]).unwrap_or("");
-            let new_string = string_arg(edit, &["new_string", "replace"]).unwrap_or("");
-            let replace_all = bool_arg(edit, "replace_all").unwrap_or(false);
-
-            if old_string.is_empty() {
-                if idx != 0 {
-                    return Ok(error_result(
-                        &invocation,
-                        "edit_failed",
-                        &format!(
-                            "edit {}: only the first edit can have empty old_string (for file creation)",
-                            idx + 1
-                        ),
-                    ));
-                }
-                if current.is_some() {
-                    return Ok(error_result(
-                        &invocation,
-                        "edit_failed",
-                        &format!("edit {}: file already exists: {path}", idx + 1),
-                    ));
-                }
-                current = Some(new_string.to_string());
-                applied += 1;
-                continue;
-            }
-
-            let Some(content) = current.as_deref() else {
+        if old_string.is_empty() {
+            if idx != 0 {
                 return Ok(error_result(
                     &invocation,
                     "edit_failed",
                     &format!(
-                        "edit {}: file does not exist. Use empty old_string on the first edit to create it.",
+                        "edit {}: only the first edit can have empty old_string (for file creation)",
                         idx + 1
                     ),
                 ));
-            };
-
-            match apply_one_edit(content, old_string, new_string, replace_all) {
-                Ok(next) => {
-                    if next != content {
-                        applied += 1;
-                    }
-                    current = Some(next);
-                }
-                Err(msg) => {
-                    return Ok(error_result(
-                        &invocation,
-                        "edit_failed",
-                        &format!("edit {}: {msg}", idx + 1),
-                    ));
-                }
             }
+            if current.is_some() {
+                return Ok(error_result(
+                    &invocation,
+                    "edit_failed",
+                    &format!("edit {}: file already exists: {path}", idx + 1),
+                ));
+            }
+            current = Some(new_string.to_string());
+            applied += 1;
+            continue;
         }
 
-        let Some(new_content) = current else {
+        let Some(content) = current.as_deref() else {
             return Ok(error_result(
                 &invocation,
                 "edit_failed",
-                "no content produced",
+                &format!(
+                    "edit {}: file does not exist. Use empty old_string on the first edit to create it.",
+                    idx + 1
+                ),
             ));
         };
 
-        if original.as_deref() == Some(new_content.as_str()) {
-            return Ok(error_result(
-                &invocation,
-                "edit_failed",
-                "new content is the same as old content. No changes made.",
-            ));
+        match apply_one_edit(content, old_string, new_string, replace_all) {
+            Ok(next) => {
+                if next != content {
+                    applied += 1;
+                }
+                current = Some(next);
+            }
+            Err(msg) => {
+                return Ok(error_result(
+                    &invocation,
+                    "edit_failed",
+                    &format!("edit {}: {msg}", idx + 1),
+                ));
+            }
         }
+    }
 
-        if let Some(parent) = full.parent() {
-            let _ = fs::create_dir_all(parent);
-        }
-        if let Err(e) = fs::write(&full, &new_content) {
-            return Ok(error_result(
-                &invocation,
-                "io_error",
-                &format!("failed to write {path}: {e}"),
-            ));
-        }
-
-        Ok(success_result(
+    let Some(new_content) = current else {
+        return Ok(error_result(
             &invocation,
-            path,
-            EditOutcome {
-                created: original.is_none(),
-                old_content: original,
-                new_content,
-            },
-            applied,
-        ))
+            "edit_failed",
+            "no content produced",
+        ));
+    };
+
+    if original.as_deref() == Some(new_content.as_str()) {
+        return Ok(error_result(
+            &invocation,
+            "edit_failed",
+            "new content is the same as old content. No changes made.",
+        ));
+    }
+
+    if let Some(parent) = full.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    if let Err(e) = fs::write(&full, &new_content) {
+        return Ok(error_result(
+            &invocation,
+            "io_error",
+            &format!("failed to write {path}: {e}"),
+        ));
+    }
+
+    Ok(success_result(
+        &invocation,
+        path,
+        EditOutcome {
+            created: original.is_none(),
+            old_content: original,
+            new_content,
+        },
+        applied,
+    ))
 }
 
 struct EditOutcome {
@@ -339,9 +331,7 @@ fn apply_one_edit(
                     content.replacen(old_norm, new_string, 1)
                 };
                 if next == content {
-                    return Err(
-                        "new content is the same as old content. No changes made.".into(),
-                    );
+                    return Err("new content is the same as old content. No changes made.".into());
                 }
                 return Ok(next);
             }
@@ -391,13 +381,15 @@ fn count_non_overlapping(haystack: &str, needle: &str) -> usize {
 fn create_new_file(full: &Path, content: &str) -> std::result::Result<EditOutcome, String> {
     if full.exists() {
         if full.is_dir() {
-            return Err(format!("path is a directory, not a file: {}", full.display()));
+            return Err(format!(
+                "path is a directory, not a file: {}",
+                full.display()
+            ));
         }
         return Err(format!("file already exists: {}", full.display()));
     }
     if let Some(parent) = full.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|e| format!("failed to create parent dirs: {e}"))?;
+        fs::create_dir_all(parent).map_err(|e| format!("failed to create parent dirs: {e}"))?;
     }
     fs::write(full, content).map_err(|e| format!("failed to write file: {e}"))?;
     Ok(EditOutcome {
@@ -407,11 +399,7 @@ fn create_new_file(full: &Path, content: &str) -> std::result::Result<EditOutcom
     })
 }
 
-fn write_if_changed(
-    full: &Path,
-    old: &str,
-    new: &str,
-) -> std::result::Result<(), String> {
+fn write_if_changed(full: &Path, old: &str, new: &str) -> std::result::Result<(), String> {
     if old == new {
         return Err("new content is the same as old content. No changes made.".into());
     }
@@ -476,12 +464,13 @@ fn string_arg<'a>(input: &'a Value, keys: &[&str]) -> Option<&'a str> {
 
 fn bool_arg(input: &Value, key: &str) -> Option<bool> {
     input.get(key).and_then(|v| {
-        v.as_bool()
-            .or_else(|| v.as_str().and_then(|s| match s {
+        v.as_bool().or_else(|| {
+            v.as_str().and_then(|s| match s {
                 "true" | "1" | "yes" => Some(true),
                 "false" | "0" | "no" => Some(false),
                 _ => None,
-            }))
+            })
+        })
     })
 }
 
@@ -703,7 +692,10 @@ mod tests {
             .await
             .unwrap();
         assert!(result.ok, "{:?}", result.output);
-        assert_eq!(fs::read_to_string(root.join("a.rs")).unwrap(), "y = 1\ny = 2\n");
+        assert_eq!(
+            fs::read_to_string(root.join("a.rs")).unwrap(),
+            "y = 1\ny = 2\n"
+        );
     }
 
     #[tokio::test]
@@ -807,7 +799,6 @@ mod tests {
         );
     }
 
-    
     #[tokio::test]
     async fn edit_accepts_edits_array_for_multiedit() {
         let dir = tempdir().unwrap();
@@ -835,7 +826,7 @@ mod tests {
         assert_eq!(result.output["edits_applied"], 2);
     }
 
-#[tokio::test]
+    #[tokio::test]
     async fn edit_rejects_path_escape() {
         let dir = tempdir().unwrap();
         let tool = EditTool::new(dir.path().to_path_buf());

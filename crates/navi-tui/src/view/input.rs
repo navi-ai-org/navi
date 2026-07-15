@@ -1136,8 +1136,18 @@ mod tests {
         assert!(built_idle.queued_range.is_some());
         assert!(built_hover.queued_range.is_some());
         // Hover path still includes the queued label text.
-        let idle_text: String = built_idle.line.spans.iter().map(|s| s.content.as_ref()).collect();
-        let hover_text: String = built_hover.line.spans.iter().map(|s| s.content.as_ref()).collect();
+        let idle_text: String = built_idle
+            .line
+            .spans
+            .iter()
+            .map(|s| s.content.as_ref())
+            .collect();
+        let hover_text: String = built_hover
+            .line
+            .spans
+            .iter()
+            .map(|s| s.content.as_ref())
+            .collect();
         assert!(idle_text.contains("queued"));
         assert!(hover_text.contains("queued"));
         // Style should differ (underlined/accent on hover).
