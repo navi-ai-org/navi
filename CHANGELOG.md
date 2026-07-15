@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.4] - 2026-07-15
+
+Full changelog: https://github.com/navi-ai-org/navi/compare/v0.2.3...v0.2.4
+
+### New Features
+
+- Desktop notifications for finished unfocused jobs
+- SDK / NAPI / Dart surface sync (remaining NaviEngine methods)
+- Registry remote canonical model catalog + provider base resolution
+- `repo_explore` BM25+symbol tool
+- Model-specific effort options on list_models
+
+### Bug Fixes
+
+- Kill timed-out bash/process trees; background timeouts return ok=false (no hung “Waiting for model”)
+- Stop duplicating tool error strings in TUI cards
+- Grok CLI routing headers for xAI OAuth
+- Charm Hyper: stop isolating prompt cache per session
+- CI: do not run on bare main pushes
+- TUI polish: usage, palette, settings, MCP status, diffs, streaming paste, subagent progress
+
+### Bindings
+
+- `@navi-agent/napi` 0.2.4 and platform packages
+- `navi-dart` 0.2.4 C ABI gap-fill
+- `scripts/test-bindings-docker.sh` Docker binding verifier
+
+### Chores
+
+- Version bump to 0.2.4
+
 ## [0.2.3] - 2026-07-09
 
 Full changelog: https://github.com/navi-ai-org/navi/compare/v0.2.2...v0.2.3
@@ -114,7 +145,8 @@ Full changelog: https://github.com/navi-ai-org/navi/releases/tag/v0.1.0
 
 - Initial open-source scaffold of the NAVI agent engine and TUI
 
-[Unreleased]: https://github.com/navi-ai-org/navi/compare/v0.2.3...HEAD
+[Unreleased]: https://github.com/navi-ai-org/navi/compare/v0.2.4...HEAD
+[0.2.4]: https://github.com/navi-ai-org/navi/compare/v0.2.3...v0.2.4
 [0.2.3]: https://github.com/navi-ai-org/navi/compare/v0.2.2...v0.2.3
 [0.2.2]: https://github.com/navi-ai-org/navi/compare/v0.2.0...v0.2.2
 [0.2.0]: https://github.com/navi-ai-org/navi/compare/v0.1.2...v0.2.0
