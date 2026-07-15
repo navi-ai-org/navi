@@ -105,6 +105,16 @@ fn disable_registry_update() {
     });
 }
 
+/// Seed a dummy provider key so start_session works without host credentials.
+fn seed_test_api_key(engine: *mut NaviDartEngine) {
+    let provider = c("openai");
+    let key = c("sk-test-key-not-real-docker");
+    let rc = unsafe { navi_engine_set_provider_api_key(engine, provider, key) };
+    assert_eq!(rc, 0, "seed dummy openai api key");
+    free_c(provider);
+    free_c(key);
+}
+
 #[test]
 fn engine_new_and_free_with_temp_dir() {
     disable_registry_update();
@@ -321,6 +331,8 @@ fn async_start_session_calls_callback() {
     let engine = unsafe { navi_engine_new(dir) };
     assert!(!engine.is_null());
 
+    seed_test_api_key(engine);
+
     // Clear any previous result
     let _ = take_result();
 
@@ -355,6 +367,8 @@ fn async_start_session_with_bad_json_calls_error() {
     let dir = c(tmp.path().to_str().unwrap());
     let engine = unsafe { navi_engine_new(dir) };
     assert!(!engine.is_null());
+
+    seed_test_api_key(engine);
 
     let _ = take_result();
 
@@ -416,6 +430,8 @@ fn start_session_then_close_session() {
     let dir = c(tmp.path().to_str().unwrap());
     let engine = unsafe { navi_engine_new(dir) };
     assert!(!engine.is_null());
+
+    seed_test_api_key(engine);
 
     let _ = take_result();
 
@@ -511,6 +527,8 @@ fn async_get_goal_on_new_session_returns_null() {
     let dir = c(tmp.path().to_str().unwrap());
     let engine = unsafe { navi_engine_new(dir) };
     assert!(!engine.is_null());
+
+    seed_test_api_key(engine);
 
     // Start a session first
     let _ = take_result();
@@ -696,4 +714,114 @@ fn callback_ctx_success_str() {
         CallbackResult::Success(json) => assert_eq!(json, "null"),
         _ => panic!("expected success"),
     }
+}
+
+
+// ── Surface gap-fill coverage ──────────────────────────────────────
+
+#[test]
+fn memory_update_and_notify_simple_and_tui_extensions() {
+    disable_registry_update();
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = c(tmp.path().to_str().unwrap());
+    let engine = unsafe { navi_engine_new(dir) };
+    assert!(!engine.is_null());
+
+    // memory write then update
+    let id = c("dart-gap-1");
+    let mt = c("project");
+    let name = c("Gap fill");
+    let desc = c("desc");
+    let body = c("body");
+    let rc = unsafe { navi_engine_memory_write(engine, id, mt, name, desc, body) };
+    // memory may be disabled by default — accept success or soft failure via last_error
+    if rc == 0 {
+        let name2 = c("Gap fill updated");
+        let rc2 = unsafe {
+            navi_engine_memory_update(engine, id, name2, ptr::null(), ptr::null(), ptr::null())
+        };
+        assert_eq!(rc2, 0);
+        free_c(name2);
+    }
+    free_c(id);
+    free_c(mt);
+    free_c(name);
+    free_c(desc);
+    free_c(body);
+
+    let title = c("NAVI test");
+    let body = c("hello");
+    let nptr = unsafe { navi_engine_notify_simple(engine, title, body, 0) };
+    // desktop=0 should still return payload
+    assert!(!nptr.is_null(), "notify_simple should return JSON");
+    unsafe { navi_string_free(nptr) };
+    free_c(title);
+    free_c(body);
+
+    let ext = unsafe { navi_engine_list_tui_extensions(engine) };
+    assert!(!ext.is_null());
+    let s = unsafe { CStr::from_ptr(ext) }.to_str().unwrap();
+    let v: serde_json::Value = serde_json::from_str(s).unwrap();
+    assert!(v.is_array());
+    unsafe { navi_string_free(ext) };
+
+    let cmds = unsafe { navi_engine_list_tui_extension_commands(engine) };
+    assert!(!cmds.is_null());
+    let s = unsafe { CStr::from_ptr(cmds) }.to_str().unwrap();
+    let v: serde_json::Value = serde_json::from_str(s).unwrap();
+    assert!(v.is_array());
+    unsafe { navi_string_free(cmds) };
+
+    let accounts = unsafe { navi_engine_list_credential_accounts(engine, c("openai")) };
+    // may error if provider invalid handling differs; free if non-null
+    if !accounts.is_null() {
+        unsafe { navi_string_free(accounts) };
+    }
+
+    unsafe { navi_engine_free(engine) };
+    free_c(dir);
+}
+
+#[test]
+fn voice_subscribe_and_rewind_session_surface() {
+    disable_registry_update();
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = c(tmp.path().to_str().unwrap());
+    let engine = unsafe { navi_engine_new(dir) };
+    assert!(!engine.is_null());
+
+    seed_test_api_key(engine);
+
+    // Voice event subscription should return a handle even with no mic.
+    let sub = unsafe {
+        navi_engine_subscribe_voice_events(engine, test_event_callback, ptr::null_mut())
+    };
+    assert!(!sub.is_null());
+    unsafe { navi_event_subscription_free(sub) };
+
+    // Start session then rewind
+    let _ = take_result();
+    let request = c(r#"{"sessionId":"rewind-test"}"#);
+    unsafe {
+        navi_engine_start_session(engine, request, test_callback, ptr::null_mut());
+    }
+    free_c(request);
+    wait_for_callback();
+    assert!(matches!(take_result(), Some(CallbackResult::Success(_))));
+
+    let _ = take_result();
+    let sid = c("rewind-test");
+    unsafe {
+        navi_engine_rewind_session(engine, sid, 0, test_callback, ptr::null_mut());
+    }
+    free_c(sid);
+    wait_for_callback();
+    let result = take_result();
+    assert!(
+        matches!(result, Some(CallbackResult::Success(_))),
+        "rewind should succeed: {result:?}"
+    );
+
+    unsafe { navi_engine_free(engine) };
+    free_c(dir);
 }

@@ -461,6 +461,24 @@ pub unsafe extern "C" fn navi_event_subscription_free(sub: *mut NaviEventSubscri
     }
 }
 
+/// Subscribes to engine-global voice events (partial/final/error).
+/// Return 0 from callback to continue, non-zero to stop.
+/// Free returned handle with `navi_event_subscription_free`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn navi_engine_subscribe_voice_events(
+    engine: *mut NaviDartEngine,
+    callback: NaviEventCallback,
+    user_data: *mut c_void,
+) -> *mut NaviEventSubscription {
+    let engine = unsafe { &*engine };
+    let receiver = engine.inner.subscribe_voice_events();
+    let event_ctx = EventCtx::new(callback, user_data);
+    let task = engine
+        .runtime
+        .spawn(async move { voice_event_loop(receiver, event_ctx).await });
+    Box::into_raw(Box::new(NaviEventSubscription { _task: task }))
+}
+
 // ── Goals ──────────────────────────────────────────────────────────
 
 /// Returns the current goal for a session as JSON.
@@ -1048,6 +1066,26 @@ pub unsafe extern "C" fn navi_engine_loaded_config(engine: *mut NaviDartEngine) 
 // ── Internal helpers ───────────────────────────────────────────────
 
 async fn event_loop(mut receiver: broadcast::Receiver<RuntimeEvent>, ctx: EventCtx) {
+    loop {
+        match receiver.recv().await {
+            Ok(event) => match serde_json::to_string(&event) {
+                Ok(json) => {
+                    if ctx.emit(&json) {
+                        break;
+                    }
+                }
+                Err(_) => continue,
+            },
+            Err(broadcast::error::RecvError::Lagged(_)) => continue,
+            Err(broadcast::error::RecvError::Closed) => break,
+        }
+    }
+}
+
+async fn voice_event_loop(
+    mut receiver: broadcast::Receiver<navi_sdk::VoiceEvent>,
+    ctx: EventCtx,
+) {
     loop {
         match receiver.recv().await {
             Ok(event) => match serde_json::to_string(&event) {
