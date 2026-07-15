@@ -17,6 +17,13 @@ Full changelog: https://github.com/navi-ai-org/navi/compare/v0.2.5...v0.2.6
 - **Tool error TUI** — structured errors (`error` / `error_code` / `hint`) render as plain Code/Hint text instead of raw ` ```json ` dumps
 - **Global shortcuts** — Ctrl+M and other Ctrl+letter chords work across terminal encodings (ASCII control bytes / empty Ctrl+Enter → model picker)
 
+### Performance
+
+- **Faster unit/CI graphs** — `navi-core` defaults no longer pull candle embeddings; product binaries (`navi-cli`, `navi-napi`) opt in explicitly
+- **`navi-voice` default off onnx** — avoids ort-sys download/compile on ordinary test builds
+- **Release/CI test gate** — drop full `navi-cli` bin link and `navi-voice` from unit gate; no step timeout on release tests
+- **Package manager tests** — real cargo/npm/go/bun dispatch tests ignored on gate; `run_pkg` hard-caps at 30s
+
 ### Bindings
 
 - `@navi-agent/napi` 0.2.6 and platform packages

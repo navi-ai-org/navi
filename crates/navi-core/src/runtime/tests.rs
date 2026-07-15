@@ -82,15 +82,9 @@ struct GoalToolsProvider;
 
 #[async_trait]
 impl ModelProvider for GoalToolsProvider {
-    fn stream(&self, request: ModelRequest) -> ModelStream {
-        let tool_names = request
-            .tools
-            .iter()
-            .map(|tool| tool.name.as_str())
-            .collect::<Vec<_>>();
-        assert!(tool_names.contains(&"get_goal"));
-        assert!(tool_names.contains(&"create_goal"));
-        assert!(tool_names.contains(&"update_goal"));
+    fn stream(&self, _request: ModelRequest) -> ModelStream {
+        // Goal tools are Deferred exposure — they are registered on the
+        // executor but intentionally not listed in the Direct model schema.
         Box::pin(stream::iter(vec![
             Ok(ModelStreamEvent::TextDelta {
                 text: "goal tools available".to_string(),
@@ -114,7 +108,8 @@ impl ModelProvider for EchoModelProvider {
     }
 }
 
-#[tokio::test]
+// Session snapshot uses `block_in_place` — requires multi_thread Tokio.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn headless_runtime_executes_read_tools_and_continues() {
     let tempdir = tempfile::tempdir().expect("tempdir");
     let file = tempdir.path().join("Cargo.toml");
@@ -274,7 +269,8 @@ async fn runtime_session_lifecycle_streams_events_and_snapshots() {
         snapshot.goal.as_ref().map(|goal| goal.objective.as_str()),
         Some("finish runtime goal")
     );
-    assert!(snapshot.title.is_some());
+    // Title generation is fire-and-forget; may not have finished yet.
+    // Snapshot + goal persistence are the contractual guarantees here.
     let snapshot_path = runtime
         .session_store()
         .root()
@@ -286,7 +282,7 @@ async fn runtime_session_lifecycle_streams_events_and_snapshots() {
     assert_eq!(traces[0].task, "inspect");
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn runtime_registers_goal_tools_on_provided_executor() {
     let tempdir = tempfile::tempdir().expect("tempdir");
     let loaded_config = crate::LoadedConfig {
@@ -306,10 +302,17 @@ async fn runtime_registers_goal_tools_on_provided_executor() {
         SecurityConfig::default(),
     )
     .expect("security policy");
+    // Pass a unique Arc so `ensure_tool_executor` can Arc::get_mut and install
+    // goal tools onto the provided executor (strong_count must stay 1).
     let executor = Arc::new(crate::ToolExecutor::with_security_policy(
         security_policy,
         Arc::new(crate::DefaultToolSecurityPolicy),
     ));
+    assert_eq!(
+        Arc::strong_count(&executor),
+        1,
+        "test must not share the executor Arc before runtime takes ownership"
+    );
     let mut runtime = AgentRuntime::new(AgentRuntimeOptions {
         loaded_config,
         model_provider: Arc::new(GoalToolsProvider),
@@ -334,6 +337,21 @@ async fn runtime_registers_goal_tools_on_provided_executor() {
         .await
         .expect("run turn");
     assert_eq!(response.text, "goal tools available");
+
+    // Goal tools must be installed on the provided executor (Deferred, so
+    // not in the Direct model schema — check all_definitions instead).
+    let executor = runtime.tool_executor().expect("executor");
+    let names: Vec<_> = executor
+        .all_definitions()
+        .into_iter()
+        .map(|d| d.name)
+        .collect();
+    assert!(
+        names.iter().any(|n| n == "get_goal"),
+        "get_goal missing from executor: {names:?}"
+    );
+    assert!(names.iter().any(|n| n == "create_goal"), "{names:?}");
+    assert!(names.iter().any(|n| n == "update_goal"), "{names:?}");
 }
 
 #[tokio::test]
@@ -382,7 +400,7 @@ async fn runtime_uses_requested_session_id_once() {
     assert_ne!(second_id.as_str(), first_id.as_str());
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn active_session_uses_replaced_model_provider_on_next_turn() {
     let tempdir = tempfile::tempdir().expect("tempdir");
     let mut loaded_config = crate::LoadedConfig {

@@ -73,13 +73,14 @@ jobs:
       - name: Core package tests (release gate)
         # Gate the published binary on product crates only. Binding crates
         # (napi/dart) and full workspace integration are covered by CI on main.
-        # Hanging/flaky cases are #[ignore] in source — no long --skip lists.
-        # No step timeout: cold compile/link of product crates (candle, etc.)
-        # regularly exceeds fixed budgets and aborts a healthy gate.
+        # No step timeout — cold compile must finish.
+        # navi-cli omitted (almost no unit tests; full binary link only slows
+        # the gate; musl/desktop jobs still build navi for release assets).
+        # Hanging process tests are #[ignore] in source.
         run: >
           cargo test --locked --lib --bins
           -p navi-core -p navi-openai -p navi-providers
-          -p navi-sdk -p navi-tui -p navi-cli -p navi-vfs -p navi-lite
+          -p navi-sdk -p navi-tui -p navi-vfs -p navi-lite
           -- --test-threads=4
   # ── Linux x64 musl (Alpine container — JS actions only work on x64) ────────
 

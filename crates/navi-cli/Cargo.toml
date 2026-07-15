@@ -23,7 +23,8 @@ tokio.workspace = true
 toml.workspace = true
 tracing.workspace = true
 navi-browser.workspace = true
-navi-core.workspace = true
+# Product binary enables local embedding model stack (opt-in at navi-core).
+navi-core = { workspace = true, features = ["embeddings"] }
 navi-mcp.workspace = true
 navi-plugin-broker.workspace = true
 navi-plugin-manifest.workspace = true
@@ -35,6 +36,7 @@ navi-voice = { path = "../navi-voice", default-features = false }
 # Portable release binaries default to no ORT (musl/Windows/x64 mac lack
 # prebuilt ort-sys). Opt in with `--features voice-onnx` on supported hosts.
 # wasm-plugins come from navi-sdk default features.
+# embeddings come from navi-core dep features above (not a cargo feature flag).
 default = []
 voice-onnx = ["navi-voice/onnx", "navi-sdk/voice-onnx"]
 # CloakBrowser Rust engine (requires local PR checkout path or git dep).

@@ -37,7 +37,10 @@ tracing-subscriber.workspace = true
 tempfile.workspace = true
 
 [features]
-default = ["embeddings", "code-vfs", "browser"]
+# embeddings (candle/tokenizers) is opt-in: default-off keeps CI/local unit
+# tests and `cargo check -p navi-core` off the ML stack. Product binaries
+# enable it via navi-cli / navi-napi features.
+default = ["code-vfs", "browser"]
 code-vfs = ["dep:navi-vfs"]
 browser = ["dep:navi-browser"]
 # Prefer CloakBrowser Rust client (playwright-rs + stealth binary).

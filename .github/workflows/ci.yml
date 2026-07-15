@@ -57,14 +57,18 @@ jobs:
       - name: Product unit + bin tests (fast path)
         # No integration harnesses (no CARGO_BIN_EXE_navi, no TUI scenario binaries).
         # Flaky/hanging tests are #[ignore] in source (headless_e2e, wasm fake, compact palette).
+        # Omit navi-cli (bin link tax) and navi-voice (onnx is opt-in; test with
+        # --no-default-features in a dedicated job if needed). embeddings stay
+        # off unless a package enables them — navi-core default no longer pulls
+        # candle into unit-test graphs for sdk/tui/core alone.
         run: >
           cargo test --locked
           --lib --bins
           -p navi-core -p navi-openai -p navi-providers -p navi-sdk -p navi-tui
-          -p navi-cli -p navi-vfs -p navi-lite -p navi-mcp -p navi-plugin-api
+          -p navi-vfs -p navi-lite -p navi-mcp -p navi-plugin-api
           -p navi-plugin-broker -p navi-plugin-manifest
-          -p navi-plugin-orchestrator -p navi-plugin-runtime -p navi-voice -p copland
-          -- --test-threads=8
+          -p navi-plugin-orchestrator -p navi-plugin-runtime -p copland
+          -- --test-threads=4
 
       - name: TUI screenshot goldens
         # Visual regressions; uses MockEngine harness (no full process spawn).

@@ -9,7 +9,9 @@ homepage.workspace = true
 readme = "README.md"
 
 [features]
-default = ["onnx"]
+# Default off: ONNX downloads/compiles ort-sys and is not needed for most
+# crates or CI unit tests. Opt in with `--features onnx` / `voice-onnx`.
+default = []
 # ONNX Runtime Nemotron streaming engine (downloads ORT libs at build time).
 onnx = ["dep:ort", "dep:ndarray"]
 

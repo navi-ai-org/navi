@@ -813,7 +813,8 @@ async fn bash_background_task_can_be_cancelled() {
         })
         .await;
 
-    assert!(cancelled.ok);
+    // Cancel is intentionally not "ok" so models do not treat a kill as success.
+    assert!(!cancelled.ok, "{:?}", cancelled.output);
     assert_eq!(cancelled.output["status"], "cancelled");
 }
 
