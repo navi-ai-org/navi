@@ -71,17 +71,21 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: Core package tests (release gate)
-        # Gate the published binary on product crates only. Binding crates
-        # (napi/dart) and full workspace integration are covered by CI on main.
-        # No step timeout — cold compile must finish.
-        # navi-cli omitted (almost no unit tests; full binary link only slows
-        # the gate; musl/desktop jobs still build navi for release assets).
-        # Hanging process tests are #[ignore] in source.
-        run: >
-          cargo test --locked --lib --bins
-          -p navi-core -p navi-openai -p navi-providers
-          -p navi-sdk -p navi-tui -p navi-vfs -p navi-lite
-          -- --test-threads=4
+        # Lean unit gate: no navi-sdk/tui/cli here (those pull wasmtime + full
+        # TUI graph and OOM/cold-compile the runner). Full product binary is
+        # still compiled and smoke-tested in the multi-platform build jobs.
+        # Binding crates covered by CI. No step timeout.
+        # Run packages sequentially so peak RAM stays bounded.
+        run: |
+          set -euo pipefail
+          for p in navi-core navi-openai navi-providers navi-vfs navi-lite; do
+            echo "::group::cargo test -p $p"
+            cargo test --locked --lib --bins -p "$p" -- --test-threads=4
+            echo "::endgroup::"
+          done
+          echo "::group::cargo check product surfaces"
+          cargo check --locked -p navi-sdk -p navi-tui -p navi-cli
+          echo "::endgroup::"
   # ── Linux x64 musl (Alpine container — JS actions only work on x64) ────────
 
   build-linux-x64:
