@@ -603,6 +603,93 @@ async fn bash_timeout_returns_structured_error() {
     );
 }
 
+
+#[tokio::test]
+async fn bash_timeout_kills_child_process() {
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let marker = tempdir.path().join("still-running");
+    let marker_s = marker.display().to_string();
+    let executor = executor(tempdir.path());
+
+    // Write a pid file then sleep past the timeout. After the tool returns,
+    // the process must be gone (not left running under kill_on_drop only).
+    let result = executor
+        .invoke(ToolInvocation {
+            id: "bash-timeout-kill".to_string(),
+            tool_name: "bash".to_string(),
+            input: json!({
+                "command": format!(
+                    "echo $$ > '{marker}'; sleep 30",
+                    marker = marker_s
+                ),
+                "timeout_ms": 200
+            }),
+        })
+        .await;
+
+    assert!(!result.ok, "timeout must fail: {result:?}");
+    assert_eq!(
+        result.output["error"],
+        "command timed out: deadline has elapsed"
+    );
+
+    // Give the reaper a moment, then ensure the recorded pid is not alive.
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    if marker.exists() {
+        let pid_txt = std::fs::read_to_string(&marker).expect("pid file");
+        let pid: i32 = pid_txt.trim().parse().expect("pid");
+        // kill -0 returns non-zero when process is gone.
+        let status = std::process::Command::new("kill")
+            .args(["-0", &pid.to_string()])
+            .status()
+            .expect("kill -0");
+        assert!(
+            !status.success(),
+            "timed-out bash child pid {pid} is still running"
+        );
+    }
+}
+
+#[tokio::test]
+async fn bash_background_timeout_marks_result_not_ok() {
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let executor = executor(tempdir.path());
+
+    let started = executor
+        .invoke(ToolInvocation {
+            id: "bash-bg-timeout-start".to_string(),
+            tool_name: "bash".to_string(),
+            input: json!({
+                "command": "sleep 5",
+                "background": true,
+                "wait_ms": 1,
+                "timeout_ms": 50
+            }),
+        })
+        .await;
+    assert!(started.ok || started.output["status"] == "running" || started.output["status"] == "timed_out");
+    let task_id = started.output["task_id"].as_str().unwrap().to_string();
+
+    // Wait long enough for the background timeout to fire.
+    let polled = executor
+        .invoke(ToolInvocation {
+            id: "bash-bg-timeout-poll".to_string(),
+            tool_name: "bash".to_string(),
+            input: json!({ "task_id": task_id, "wait_ms": 1000 }),
+        })
+        .await;
+
+    assert_eq!(polled.output["status"], "timed_out");
+    assert!(
+        !polled.ok,
+        "timed-out background bash must set ok=false so the agent continues: {polled:?}"
+    );
+    assert_eq!(
+        polled.output["error"],
+        "command timed out: deadline has elapsed"
+    );
+}
+
 #[tokio::test]
 async fn bash_background_task_can_be_polled() {
     let tempdir = tempfile::tempdir().expect("tempdir");

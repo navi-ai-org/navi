@@ -222,13 +222,34 @@ fn formatted_tool_output(invocation: &ToolInvocation, result: &ToolResult) -> Op
     let mut content = String::new();
 
     if let Some(error) = obj.get("error").and_then(|v| v.as_str()) {
-        content.push_str(&format!("Error: {error}\n"));
-        if invocation.tool_name == "bash" {
+        // Header card already shows `· error: …`. Only repeat the message in the
+        // body when there is additional stream/output context; otherwise the same
+        // string appears twice (compact line + expanded body).
+        let has_extra = obj
+            .get("stdout")
+            .and_then(|v| v.as_str())
+            .is_some_and(|s| !s.trim().is_empty())
+            || obj
+                .get("stderr")
+                .and_then(|v| v.as_str())
+                .is_some_and(|s| !s.trim().is_empty())
+            || obj.keys().any(|k| !matches!(k.as_str(), "error" | "stdout" | "stderr" | "status" | "exit_code" | "schema_version"));
+
+        if has_extra {
+            // Keep a short label only when streams/details follow.
+            content.push_str(&format!("Error: {error}\n"));
+        }
+        if invocation.tool_name == "bash" || invocation.tool_name == "process" {
             // plain streams only — no Stdout:/``` fences or raw JSON dump.
             append_shell_streams(obj, &mut content);
+            // Empty body is fine: the compact header already carries the error.
             return Some(content);
         }
-        append_json_section(&mut content, "Output", &result.output);
+        if has_extra {
+            append_json_section(&mut content, "Output", &result.output);
+            return Some(content);
+        }
+        // Error-only payload: body empty; header has the message.
         return Some(content);
     }
 
@@ -3224,6 +3245,25 @@ mod tests {
         assert!(content.contains("Error: test command failed"));
         assert!(content.contains("Output:\n```json"));
         assert!(content.contains("\"framework\": \"cargo\""));
+    }
+
+    #[test]
+    fn error_only_tool_body_does_not_repeat_header_message() {
+        // Compact header already includes `· error: …`. Body should stay empty
+        // when there is no stream/detail payload (avoids the double-error UI).
+        let content = tool_body_content(
+            &invocation("bash", json!({ "command": "sleep 1" })),
+            &err_result(json!({
+                "error": "command timed out: deadline has elapsed",
+                "stdout": "",
+                "stderr": ""
+            })),
+        );
+        assert!(
+            !content.contains("Error: command timed out"),
+            "body should not repeat the header error: {content:?}"
+        );
+        assert!(content.trim().is_empty() || !content.contains("deadline has elapsed"));
     }
 
     #[test]

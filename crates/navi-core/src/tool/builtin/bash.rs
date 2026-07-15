@@ -24,6 +24,60 @@ const BASH_MAX_WAIT_MS: u64 = 60_000;
 const BASH_OUTPUT_LIMIT_BYTES: usize = 64 * 1024;
 const BASH_MAX_BACKGROUND_TASKS: usize = 8;
 
+
+/// Put the child in its own process group so timeout kills the whole tree
+/// (pipelines, subshells, grandchildren), not just the top-level bash.
+#[cfg(unix)]
+fn configure_process_group(cmd: &mut tokio::process::Command) {
+    // SAFETY: called before spawn; setpgid(0,0) makes the child a group leader.
+    // tokio::process::Command re-exports the same pre_exec hook as std.
+    unsafe {
+        cmd.pre_exec(|| {
+            let _ = libc_setpgid(0, 0);
+            Ok(())
+        });
+    }
+}
+
+#[cfg(not(unix))]
+fn configure_process_group(_cmd: &mut tokio::process::Command) {}
+
+/// Kill a timed-out child. On Unix, signal the whole process group first.
+async fn kill_timed_out_child(child: &mut tokio::process::Child) {
+    #[cfg(unix)]
+    {
+        if let Some(pid) = child.id() {
+            // Negative pid => kill process group. SIGKILL so stuck tools cannot ignore it.
+            let _ = std::process::Command::new("kill")
+                .args(["-KILL", &format!("-{pid}")])
+                .status();
+        }
+    }
+    let _ = child.start_kill();
+    // Bound the wait so a wedged reaper cannot stall the tool loop forever.
+    let _ = tokio::time::timeout(Duration::from_secs(2), child.wait()).await;
+}
+
+#[cfg(unix)]
+fn libc_setpgid(pid: i32, pgid: i32) -> i32 {
+    // Thin wrapper so we do not take a libc crate dependency.
+    // SAFETY: direct setpgid syscall for the current process at pre_exec time.
+    unsafe { libc_setpgid_raw(pid, pgid) }
+}
+
+#[cfg(unix)]
+unsafe fn libc_setpgid_raw(pid: i32, pgid: i32) -> i32 {
+    // Use the libc crate if linked transitively; otherwise fall back to 0 (no-op).
+    #[allow(unused_unsafe)]
+    {
+        unsafe extern "C" {
+            fn setpgid(pid: i32, pgid: i32) -> i32;
+        }
+        unsafe { setpgid(pid, pgid) }
+    }
+}
+
+
 pub(crate) struct BashTool {
     background: Arc<BashBackgroundRegistry>,
     project_root: PathBuf,
@@ -119,16 +173,16 @@ impl BashBackgroundTask {
         sudo_env: Option<SudoAskpassEnv>,
     ) -> Result<Self> {
         let (shell_cmd, _guard) = wrap_command_for_sudo(&command, sudo_env.as_ref())?;
-        let mut child = tokio::process::Command::new("bash")
-            .arg("-lc")
+        let mut cmd = tokio::process::Command::new("bash");
+        cmd.arg("-lc")
             .arg(&shell_cmd)
             .current_dir(&project_root)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .stdin(Stdio::null())
-            .kill_on_drop(true)
-            .spawn()
-            .context("failed to spawn bash")?;
+            .kill_on_drop(true);
+        configure_process_group(&mut cmd);
+        let mut child = cmd.spawn().context("failed to spawn bash")?;
 
         let stdout = Arc::new(tokio::sync::Mutex::new(Vec::new()));
         let stderr = Arc::new(tokio::sync::Mutex::new(Vec::new()));
@@ -167,7 +221,20 @@ impl BashBackgroundTask {
             }
             tokio::time::sleep(Duration::from_millis(25)).await;
         }
-        helpers::ok(invocation_id, self.observation_json().await)
+        let output = self.observation_json().await;
+        let state = self.snapshot_state();
+        // Timed-out / failed / cancelled background tasks must not report ok:true,
+        // otherwise the agent loop treats them as success and can stall waiting
+        // for a follow-up that never comes.
+        let ok = match state.status {
+            BashTaskStatus::Completed | BashTaskStatus::Running => true,
+            BashTaskStatus::Failed | BashTaskStatus::TimedOut | BashTaskStatus::Cancelled => false,
+        };
+        ToolResult {
+            invocation_id,
+            ok,
+            output,
+        }
     }
 
     async fn cancel(&self, invocation_id: String) -> ToolResult {
@@ -176,8 +243,7 @@ impl BashBackgroundTask {
 
         let mut child = self.child.lock().await;
         if let Some(child) = child.as_mut() {
-            let _ = child.kill().await;
-            let _ = child.wait().await;
+            kill_timed_out_child(child).await;
         }
         *child = None;
         {
@@ -186,7 +252,11 @@ impl BashBackgroundTask {
                 *state = BashBackgroundState::cancelled();
             }
         }
-        helpers::ok(invocation_id, self.observation_json().await)
+        ToolResult {
+            invocation_id,
+            ok: false,
+            output: self.observation_json().await,
+        }
     }
 
     async fn refresh_status(&self) {
@@ -207,8 +277,7 @@ impl BashBackgroundTask {
                 *state = BashBackgroundState::completed(status.success(), status.code());
             }
             Ok(None) if timed_out => {
-                let _ = child_ref.kill().await;
-                let _ = child_ref.wait().await;
+                kill_timed_out_child(child_ref).await;
                 *child = None;
                 let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
                 *state = BashBackgroundState::timed_out();
@@ -682,16 +751,16 @@ impl BashTool {
         sudo_env: Option<SudoAskpassEnv>,
     ) -> Result<ToolResult> {
         let (shell_cmd, _guard) = wrap_command_for_sudo(command, sudo_env.as_ref())?;
-        let mut child = tokio::process::Command::new("bash")
-            .arg("-lc")
+        let mut cmd = tokio::process::Command::new("bash");
+        cmd.arg("-lc")
             .arg(&shell_cmd)
             .current_dir(&self.project_root)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .stdin(Stdio::null())
-            .kill_on_drop(true)
-            .spawn()
-            .context("failed to spawn bash")?;
+            .kill_on_drop(true);
+        configure_process_group(&mut cmd);
+        let mut child = cmd.spawn().context("failed to spawn bash")?;
 
         let stdout_data = Arc::new(tokio::sync::Mutex::new(Vec::new()));
         let stderr_data = Arc::new(tokio::sync::Mutex::new(Vec::new()));
@@ -711,11 +780,15 @@ impl BashTool {
                 None,
                 Some(format!("failed to wait for command: {e}")),
             ),
-            Err(_) => (
-                false,
-                None,
-                Some("command timed out: deadline has elapsed".to_string()),
-            ),
+            Err(_) => {
+                // Explicitly kill the process group; do not rely only on Drop.
+                kill_timed_out_child(&mut child).await;
+                (
+                    false,
+                    None,
+                    Some("command timed out: deadline has elapsed".to_string()),
+                )
+            }
         };
 
         // Give readers a moment to drain remaining output.
