@@ -6,13 +6,30 @@
   "api_key_env": "LLAMACPP_API_KEY",
   "base_url": "http://localhost:8080/v1",
   "models": [
-    { "name": "local-model", "context_window_tokens": 128000 },
-    { "name": "qwen2.5-coder", "context_window_tokens": 128000 },
-    { "name": "deepseek-coder", "context_window_tokens": 1000000 },
-    { "name": "starcoder2", "context_window_tokens": 16000 },
-    { "name": "granite-code", "context_window_tokens": 128000 },
-    { "name": "llama3", "context_window_tokens": 128000 },
-    { "name": "mistral", "context_window_tokens": 32000 },
-    { "name": "tinyllama", "context_window_tokens": 2048 }
+    {
+      "ref": "local-model"
+    },
+    {
+      "ref": "qwen2.5-coder"
+    },
+    {
+      "ref": "deepseek-coder",
+      "context_window_tokens": 1000000
+    },
+    {
+      "ref": "starcoder2"
+    },
+    {
+      "ref": "granite-code"
+    },
+    {
+      "ref": "llama3"
+    },
+    {
+      "ref": "mistral"
+    },
+    {
+      "ref": "tinyllama"
+    }
   ]
 }

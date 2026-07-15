@@ -1,0 +1,11 @@
+{
+  "id": "tinyllama",
+  "vendor": "local",
+  "context_window_tokens": 2048,
+  "attachments": {
+    "images": false,
+    "audio": false,
+    "video": false,
+    "documents": false
+  }
+}

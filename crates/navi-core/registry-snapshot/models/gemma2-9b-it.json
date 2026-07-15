@@ -1,0 +1,27 @@
+{
+  "id": "gemma2-9b-it",
+  "vendor": "groq",
+  "context_window_tokens": 8192,
+  "max_output_tokens": 8192,
+  "recommended_temperature": 0.7,
+  "supports_thinking": false,
+  "status": "removed",
+  "sources": {
+    "context_window_tokens": {
+      "url": "https://huggingface.co/google/gemma-2-9b-it",
+      "verified_at": "2026-07-14",
+      "note": "from official Hugging Face model card"
+    },
+    "max_output_tokens": {
+      "url": "https://huggingface.co/google/gemma-2-9b-it",
+      "verified_at": "2026-07-14",
+      "note": "from official Hugging Face model card config.json"
+    }
+  },
+  "attachments": {
+    "images": false,
+    "audio": false,
+    "video": false,
+    "documents": false
+  }
+}

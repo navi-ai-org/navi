@@ -7,193 +7,97 @@
   "base_url": "https://api.mistral.ai/v1",
   "models": [
     {
-      "name": "mistral-large-latest",
-      "context_window_tokens": 128000,
-      "max_output_tokens": 32768,
-      "recommended_temperature": 0.7,
-      "supports_thinking": false
+      "ref": "mistral-large-latest"
     },
     {
-      "name": "mistral-large-2411",
-      "context_window_tokens": 128000,
-      "max_output_tokens": 32768,
-      "recommended_temperature": 0.7,
-      "supports_thinking": false
+      "ref": "mistral-large-2411"
     },
     {
-      "name": "mistral-large-2407",
-      "context_window_tokens": 128000,
-      "max_output_tokens": 32768,
-      "recommended_temperature": 0.7,
-      "supports_thinking": false
+      "ref": "mistral-large-2407",
+      "pricing": {
+        "input_per_1m": 2.0,
+        "output_per_1m": 6.0,
+        "currency": "USD",
+        "cached_input_per_1m": 0.2
+      }
     },
     {
-      "name": "mistral-medium-latest",
-      "context_window_tokens": 128000,
-      "max_output_tokens": 32768,
-      "recommended_temperature": 0.7,
-      "supports_thinking": false
+      "ref": "mistral-medium-latest"
     },
     {
-      "name": "mistral-medium-2508",
-      "context_window_tokens": 262144,
-      "max_output_tokens": 32768,
-      "recommended_temperature": 0.7,
-      "supports_thinking": true
+      "ref": "mistral-medium-2508"
     },
     {
-      "name": "mistral-small-latest",
-      "context_window_tokens": 256000,
-      "max_output_tokens": 32768,
-      "recommended_temperature": 0.7,
-      "supports_thinking": true
+      "ref": "mistral-small-latest"
     },
     {
-      "name": "mistral-small-2506",
-      "context_window_tokens": 256000,
-      "max_output_tokens": 32768,
-      "recommended_temperature": 0.7,
-      "supports_thinking": true
+      "ref": "mistral-small-2506"
     },
     {
-      "name": "mistral-small-2503",
-      "context_window_tokens": 128000,
-      "max_output_tokens": 32768,
-      "recommended_temperature": 0.7,
-      "supports_thinking": true
+      "ref": "mistral-small-2503"
     },
     {
-      "name": "codestral-latest",
-      "context_window_tokens": 256000,
-      "max_output_tokens": 32768,
-      "recommended_temperature": 0.0,
-      "supports_thinking": false
+      "ref": "codestral-latest"
     },
     {
-      "name": "codestral-2508",
-      "context_window_tokens": 128000,
-      "max_output_tokens": 32768,
-      "recommended_temperature": 0.0,
-      "supports_thinking": false
+      "ref": "codestral-2508",
+      "pricing": {
+        "input_per_1m": 0.3,
+        "output_per_1m": 0.9,
+        "currency": "USD",
+        "cached_input_per_1m": 0.03
+      }
     },
     {
-      "name": "codestral-2501",
-      "context_window_tokens": 256000,
-      "max_output_tokens": 32768,
-      "recommended_temperature": 0.0,
-      "supports_thinking": false
+      "ref": "codestral-2501"
     },
     {
-      "name": "codestral-2405",
-      "context_window_tokens": 32000,
-      "max_output_tokens": 32768,
-      "recommended_temperature": 0.0,
-      "supports_thinking": false
+      "ref": "codestral-2405"
     },
     {
-      "name": "devstral-medium-latest",
-      "context_window_tokens": 256000,
-      "max_output_tokens": 32768,
-      "recommended_temperature": 0.3,
-      "supports_thinking": false
+      "ref": "devstral-medium-latest"
     },
     {
-      "name": "devstral-medium-2507",
-      "context_window_tokens": 256000,
-      "max_output_tokens": 32768,
-      "recommended_temperature": 0.3,
-      "supports_thinking": false
+      "ref": "devstral-medium-2507"
     },
     {
-      "name": "devstral-small-latest",
-      "context_window_tokens": 256000,
-      "max_output_tokens": 32768,
-      "recommended_temperature": 0.3,
-      "supports_thinking": false
+      "ref": "devstral-small-latest"
     },
     {
-      "name": "devstral-small-2507",
-      "context_window_tokens": 256000,
-      "max_output_tokens": 32768,
-      "recommended_temperature": 0.3,
-      "supports_thinking": false
+      "ref": "devstral-small-2507"
     },
     {
-      "name": "devstral-small-2505",
-      "context_window_tokens": 256000,
-      "max_output_tokens": 32768,
-      "recommended_temperature": 0.3,
-      "supports_thinking": false
+      "ref": "devstral-small-2505"
     },
     {
-      "name": "magistral-medium-latest",
-      "context_window_tokens": 128000,
-      "max_output_tokens": 32768,
-      "recommended_temperature": 0.7,
-      "supports_thinking": true
+      "ref": "magistral-medium-latest"
     },
     {
-      "name": "magistral-small-latest",
-      "context_window_tokens": 128000,
-      "max_output_tokens": 32768,
-      "recommended_temperature": 0.7,
-      "supports_thinking": true
+      "ref": "magistral-small-latest"
     },
     {
-      "name": "pixtral-large-latest",
-      "context_window_tokens": 128000,
-      "max_output_tokens": 32768,
-      "recommended_temperature": 0.7,
-      "supports_thinking": false
+      "ref": "pixtral-large-latest"
     },
     {
-      "name": "pixtral-12b-2409",
-      "context_window_tokens": 128000,
-      "max_output_tokens": 32768,
-      "recommended_temperature": 0.7,
-      "supports_thinking": false
+      "ref": "pixtral-12b-2409"
     },
     {
-      "name": "open-mistral-nemo",
-      "context_window_tokens": 128000,
-      "max_output_tokens": 32768,
-      "recommended_temperature": 0.7,
-      "supports_thinking": false
+      "ref": "open-mistral-nemo"
     },
     {
-      "name": "open-mixtral-8x22b",
-      "context_window_tokens": 65536,
-      "max_output_tokens": 32768,
-      "recommended_temperature": 0.7,
-      "supports_thinking": false
+      "ref": "open-mixtral-8x22b"
     },
     {
-      "name": "open-mixtral-8x7b",
-      "context_window_tokens": 32768,
-      "max_output_tokens": 32768,
-      "recommended_temperature": 0.7,
-      "supports_thinking": false
+      "ref": "open-mixtral-8x7b"
     },
     {
-      "name": "open-mistral-7b",
-      "context_window_tokens": 32768,
-      "max_output_tokens": 32768,
-      "recommended_temperature": 0.7,
-      "supports_thinking": false
+      "ref": "open-mistral-7b"
     },
     {
-      "name": "ministral-8b-latest",
-      "context_window_tokens": 128000,
-      "max_output_tokens": 32768,
-      "recommended_temperature": 0.7,
-      "supports_thinking": false
+      "ref": "ministral-8b-latest"
     },
     {
-      "name": "ministral-3b-latest",
-      "context_window_tokens": 128000,
-      "max_output_tokens": 32768,
-      "recommended_temperature": 0.7,
-      "supports_thinking": false
+      "ref": "ministral-3b-latest"
     }
   ]
 }

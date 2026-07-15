@@ -1,0 +1,35 @@
+{
+  "id": "gemma-4-26b-a4b-it",
+  "vendor": "aggregator",
+  "context_window_tokens": 256000,
+  "max_output_tokens": 25600,
+  "recommended_temperature": 1.0,
+  "supports_thinking": true,
+  "attachments": {
+    "images": true,
+    "video": true
+  },
+  "sources": {
+    "context_window_tokens": {
+      "url": "https://openrouter.ai/api/v1/models/google/gemma-4-26b-a4b-it",
+      "verified_at": "2026-07-14",
+      "note": "from OpenRouter specs"
+    },
+    "max_output_tokens": {
+      "url": "https://openrouter.ai/api/v1/models/google/gemma-4-26b-a4b-it",
+      "verified_at": "2026-07-14",
+      "note": "from OpenRouter specs"
+    },
+    "attachments": {
+      "url": "https://openrouter.ai/api/v1/models/google/gemma-4-26b-a4b-it",
+      "verified_at": "2026-07-14",
+      "note": "auto-filled by probe from OpenRouter /api/v1/models"
+    }
+  },
+  "reasoning_levels": [
+    "low",
+    "medium",
+    "high"
+  ],
+  "default_reasoning_effort": "medium"
+}

@@ -4,8 +4,29 @@
   "title": "NAVI Provider Definition",
   "description": "Schema for a provider entry in the NAVI registry database",
   "type": "object",
-  "required": ["id", "label", "kind", "api_key_env", "models"],
+  "required": [
+    "id",
+    "label",
+    "kind",
+    "api_key_env"
+  ],
   "additionalProperties": false,
+  "allOf": [
+    {
+      "if": {
+        "not": {
+          "required": [
+            "extends"
+          ]
+        }
+      },
+      "then": {
+        "required": [
+          "models"
+        ]
+      }
+    }
+  ],
   "properties": {
     "id": {
       "type": "string",
@@ -38,18 +59,26 @@
       "description": "Environment variable name for the API key"
     },
     "base_url": {
-      "type": ["string", "null"],
+      "type": [
+        "string",
+        "null"
+      ],
       "description": "API base URL, or null for providers resolved at runtime"
+    },
+    "extends": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Optional base definition id under bases/ (or another provider id). Resolved and flattened by validate.py before publishing."
     },
     "tool_calling_mode": {
       "type": "string",
-      "enum": ["native", "text-extracted", "manifest-only", "disabled"],
+      "enum": [
+        "native",
+        "text-extracted",
+        "manifest-only",
+        "disabled"
+      ],
       "description": "How NAVI should expose tools to this provider (optional)"
-    },
-    "aggregator": {
-      "type": "boolean",
-      "default": false,
-      "description": "When true, the model list is fetched dynamically from the provider's /models API at sync time"
     },
     "default_large_model": {
       "type": "string",
@@ -67,14 +96,29 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "attachments": { "$ref": "#/$defs/attachments" }
+        "attachments": {
+          "$ref": "#/$defs/attachments"
+        }
       },
       "description": "Provider-level defaults inherited by models unless overridden"
     },
     "models": {
       "type": "array",
       "minItems": 1,
-      "items": { "$ref": "#/$defs/model" }
+      "items": {
+        "oneOf": [
+          {
+            "$ref": "#/$defs/model_ref"
+          },
+          {
+            "$ref": "#/$defs/model"
+          }
+        ]
+      }
+    },
+    "aggregator": {
+      "type": "boolean",
+      "description": "Whether this provider is an aggregator that exposes a models API (optional)"
     }
   },
   "$defs": {
@@ -100,9 +144,33 @@
         }
       }
     },
+    "field_source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "url"
+      ],
+      "properties": {
+        "url": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Primary source URL for this field value"
+        },
+        "verified_at": {
+          "type": "string",
+          "description": "ISO date (YYYY-MM-DD) when the value was verified"
+        },
+        "note": {
+          "type": "string",
+          "description": "Optional note about how the value was obtained"
+        }
+      }
+    },
     "model": {
       "type": "object",
-      "required": ["name"],
+      "required": [
+        "name"
+      ],
       "additionalProperties": false,
       "properties": {
         "name": {
@@ -114,15 +182,21 @@
           "type": "string",
           "description": "Human-readable model name (optional)"
         },
-        "task_size": {
+        "status": {
           "type": "string",
-          "enum": ["small", "large"],
-          "description": "Deprecated. Ignored at runtime — harness profile is inferred from context_window_tokens."
+          "enum": [
+            "active",
+            "deprecated",
+            "removed",
+            "preview"
+          ],
+          "default": "active",
+          "description": "Lifecycle status. Omit for active (default)."
         },
         "context_window_tokens": {
           "type": "integer",
           "minimum": 1,
-          "description": "Total context window in tokens (optional but recommended)"
+          "description": "Total context window in tokens (optional but recommended; never invent)"
         },
         "max_output_tokens": {
           "type": "integer",
@@ -141,19 +215,19 @@
         },
         "supports_attachments": {
           "type": "boolean",
-          "description": "Whether the model supports file/image attachments (optional)"
+          "description": "Legacy coarse field. Prefer attachments."
         },
         "supports_images": {
           "type": "boolean",
-          "description": "Whether the model supports image attachments (optional)"
+          "description": "Legacy field. Prefer attachments.images."
         },
         "supports_audio": {
           "type": "boolean",
-          "description": "Whether the model supports audio attachments (optional)"
+          "description": "Legacy field. Prefer attachments.audio."
         },
         "supports_video": {
           "type": "boolean",
-          "description": "Whether the model supports video attachments (optional)"
+          "description": "Legacy field. Prefer attachments.video."
         },
         "supports_documents": {
           "type": "boolean",
@@ -165,7 +239,9 @@
         },
         "reasoning_levels": {
           "type": "array",
-          "items": { "type": "string" },
+          "items": {
+            "type": "string"
+          },
           "description": "Supported reasoning effort levels (optional)"
         },
         "default_reasoning_effort": {
@@ -176,18 +252,161 @@
           "type": "object",
           "additionalProperties": false,
           "properties": {
-            "input_per_1m": { "type": "number", "minimum": 0 },
-            "output_per_1m": { "type": "number", "minimum": 0 },
-            "cached_input_per_1m": { "type": "number", "minimum": 0 },
-            "cached_output_per_1m": { "type": "number", "minimum": 0 },
-            "currency": { "type": "string", "default": "USD" }
+            "input_per_1m": {
+              "type": "number",
+              "minimum": 0
+            },
+            "output_per_1m": {
+              "type": "number",
+              "minimum": 0
+            },
+            "cached_input_per_1m": {
+              "type": "number",
+              "minimum": 0
+            },
+            "cached_output_per_1m": {
+              "type": "number",
+              "minimum": 0
+            },
+            "currency": {
+              "type": "string",
+              "default": "USD"
+            }
           },
           "description": "Token pricing per 1M tokens (optional)"
         },
         "capabilities": {
           "type": "array",
-          "items": { "type": "string" },
+          "items": {
+            "type": "string"
+          },
           "description": "Capability tags: tool_calling, vision, reasoning, etc. (optional)"
+        },
+        "sources": {
+          "type": "object",
+          "description": "Provenance map: field name -> source metadata. Prefer recording sources for context_window_tokens, pricing, and attachments.",
+          "additionalProperties": {
+            "$ref": "#/$defs/field_source"
+          }
+        }
+      }
+    },
+    "model_ref": {
+      "type": "object",
+      "required": [
+        "ref"
+      ],
+      "additionalProperties": false,
+      "description": "Reference to a canonical model in models/<id>.json with optional provider-specific overrides",
+      "properties": {
+        "ref": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Canonical model id under models/"
+        },
+        "api_name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Name sent to the provider API if different from ref (e.g. openai/gpt-4o)"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Alias for api_name (legacy-friendly). Prefer api_name."
+        },
+        "label": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "active",
+            "deprecated",
+            "removed",
+            "preview"
+          ]
+        },
+        "context_window_tokens": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "max_output_tokens": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "recommended_temperature": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 2
+        },
+        "supports_thinking": {
+          "type": "boolean"
+        },
+        "supports_attachments": {
+          "type": "boolean"
+        },
+        "supports_images": {
+          "type": "boolean"
+        },
+        "supports_audio": {
+          "type": "boolean"
+        },
+        "supports_video": {
+          "type": "boolean"
+        },
+        "supports_documents": {
+          "type": "boolean"
+        },
+        "attachments": {
+          "$ref": "#/$defs/attachments"
+        },
+        "reasoning_levels": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "default_reasoning_effort": {
+          "type": "string"
+        },
+        "pricing": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "input_per_1m": {
+              "type": "number",
+              "minimum": 0
+            },
+            "output_per_1m": {
+              "type": "number",
+              "minimum": 0
+            },
+            "cached_input_per_1m": {
+              "type": "number",
+              "minimum": 0
+            },
+            "cached_output_per_1m": {
+              "type": "number",
+              "minimum": 0
+            },
+            "currency": {
+              "type": "string",
+              "default": "USD"
+            }
+          },
+          "description": "Token pricing per 1M tokens (optional)"
+        },
+        "capabilities": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "sources": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/field_source"
+          }
         }
       }
     }

@@ -16,26 +16,10 @@
   },
   "models": [
     {
-      "name": "claude-sonnet-4-6",
-      "context_window_tokens": 1000000,
-      "supports_thinking": true,
-      "attachments": {
-        "images": true,
-        "documents": true
-      },
-      "supports_images": true,
-      "supports_documents": true
+      "ref": "claude-sonnet-4-6"
     },
     {
-      "name": "claude-fable-5",
-      "context_window_tokens": 1000000,
-      "supports_thinking": true,
-      "attachments": {
-        "images": true,
-        "documents": true
-      },
-      "supports_images": true,
-      "supports_documents": true,
+      "ref": "claude-fable-5",
       "pricing": {
         "input_per_1m": 10.0,
         "output_per_1m": 50.0,
@@ -43,49 +27,22 @@
       }
     },
     {
-      "name": "claude-opus-4-8",
-      "context_window_tokens": 1000000,
-      "supports_thinking": true,
-      "attachments": {
-        "images": true,
-        "documents": true
-      },
-      "supports_images": true,
-      "supports_documents": true
+      "ref": "claude-opus-4-8"
     },
     {
-      "name": "claude-opus-4-7",
-      "context_window_tokens": 1000000,
-      "supports_thinking": true,
-      "attachments": {
-        "images": true,
-        "documents": true
-      },
-      "supports_images": true,
-      "supports_documents": true
+      "ref": "claude-opus-4-7"
     },
     {
-      "name": "claude-haiku-4-5-20251001",
+      "ref": "claude-haiku-4-5-20251001"
+    },
+    {
+      "ref": "gpt-5.5",
       "context_window_tokens": 200000,
-      "supports_thinking": true,
-      "attachments": {
-        "images": true,
-        "documents": true
-      },
-      "supports_images": true,
-      "supports_documents": true
-    },
-    {
-      "name": "gpt-5.5",
-      "context_window_tokens": 200000,
-      "supports_thinking": true,
       "attachments": {
         "images": true,
         "audio": true,
         "documents": true
       },
-      "supports_images": true,
-      "supports_documents": true,
       "pricing": {
         "input_per_1m": 5.0,
         "output_per_1m": 30.0,
@@ -93,16 +50,13 @@
       }
     },
     {
-      "name": "gpt-5.4",
+      "ref": "gpt-5.4",
       "context_window_tokens": 400000,
-      "supports_thinking": true,
       "attachments": {
         "images": true,
         "audio": true,
         "documents": true
       },
-      "supports_images": true,
-      "supports_documents": true,
       "pricing": {
         "input_per_1m": 2.5,
         "output_per_1m": 15.0,
@@ -110,16 +64,12 @@
       }
     },
     {
-      "name": "gpt-5.3-codex",
-      "context_window_tokens": 400000,
-      "supports_thinking": true,
+      "ref": "gpt-5.3-codex",
       "attachments": {
         "images": true,
         "audio": true,
         "documents": true
       },
-      "supports_images": true,
-      "supports_documents": true,
       "pricing": {
         "input_per_1m": 1.75,
         "output_per_1m": 14.0,
@@ -127,16 +77,12 @@
       }
     },
     {
-      "name": "gpt-5.4-mini",
-      "context_window_tokens": 400000,
-      "supports_thinking": true,
+      "ref": "gpt-5.4-mini",
       "attachments": {
         "images": true,
         "audio": true,
         "documents": true
       },
-      "supports_images": true,
-      "supports_documents": true,
       "pricing": {
         "input_per_1m": 0.75,
         "output_per_1m": 4.5,
@@ -144,18 +90,12 @@
       }
     },
     {
-      "name": "MiniMaxAI/MiniMax-M3",
-      "context_window_tokens": 1000000,
-      "supports_thinking": true,
-      "supports_images": true,
-      "attachments": {
-        "images": true
-      }
+      "ref": "minimax-m3",
+      "api_name": "MiniMaxAI/MiniMax-M3"
     },
     {
-      "name": "deepseek/deepseek-v4-pro",
-      "context_window_tokens": 1000000,
-      "supports_thinking": true,
+      "ref": "deepseek-v4-pro",
+      "api_name": "deepseek/deepseek-v4-pro",
       "pricing": {
         "input_per_1m": 0.435,
         "output_per_1m": 0.87,
@@ -163,9 +103,9 @@
       }
     },
     {
-      "name": "deepseek/deepseek-v4-flash",
-      "context_window_tokens": 1000000,
-      "supports_thinking": true,
+      "ref": "deepseek-v4-flash",
+      "api_name": "deepseek/deepseek-v4-flash",
+      "max_output_tokens": 65536,
       "pricing": {
         "input_per_1m": 0.09,
         "output_per_1m": 0.18,
@@ -173,84 +113,49 @@
       }
     },
     {
-      "name": "moonshotai/Kimi-K2.7-Code",
-      "context_window_tokens": 256000,
-      "supports_thinking": true,
-      "attachments": {
-        "images": true,
-        "documents": true
-      }
+      "ref": "kimi-k2.7-code",
+      "api_name": "moonshotai/Kimi-K2.7-Code"
     },
     {
-      "name": "moonshotai/Kimi-K2.6",
-      "context_window_tokens": 256000,
-      "supports_thinking": true,
-      "attachments": {
-        "images": true,
-        "documents": true
-      }
+      "ref": "kimi-k2.6",
+      "api_name": "moonshotai/Kimi-K2.6"
     },
     {
-      "name": "moonshotai/Kimi-K2.5",
-      "context_window_tokens": 256000,
-      "supports_thinking": true,
-      "attachments": {
-        "images": true,
-        "documents": true
-      }
+      "ref": "kimi-k2.5",
+      "api_name": "moonshotai/Kimi-K2.5"
     },
     {
-      "name": "zai-org/GLM-5.1",
-      "context_window_tokens": 200000,
-      "supports_thinking": true,
-      "attachments": {
-        "images": true
-      }
+      "ref": "glm-5.1",
+      "api_name": "zai-org/GLM-5.1"
     },
     {
-      "name": "zai-org/GLM-5",
-      "context_window_tokens": 200000,
-      "supports_thinking": true,
-      "attachments": {
-        "images": true
-      }
+      "ref": "glm-5",
+      "api_name": "zai-org/GLM-5"
     },
     {
-      "name": "MiniMaxAI/MiniMax-M2.7",
-      "context_window_tokens": 200000,
-      "supports_thinking": true
+      "ref": "minimax-m2.7",
+      "api_name": "MiniMaxAI/MiniMax-M2.7",
+      "context_window_tokens": 200000
     },
     {
-      "name": "MiniMaxAI/MiniMax-M2.5",
-      "context_window_tokens": 200000,
-      "supports_thinking": true
+      "ref": "minimax-m2.5",
+      "api_name": "MiniMaxAI/MiniMax-M2.5",
+      "context_window_tokens": 200000
     },
     {
-      "name": "xiaomi/mimo-v2.5-pro",
+      "ref": "mimo-v2.5-pro",
+      "api_name": "xiaomi/mimo-v2.5-pro",
       "context_window_tokens": 1000000,
-      "supports_thinking": true,
-      "attachments": {
-        "images": true,
-        "documents": true
-      },
       "pricing": {
         "input_per_1m": 0.435,
         "output_per_1m": 0.87,
         "currency": "USD"
-      },
-      "supports_images": true
+      }
     },
     {
-      "name": "xiaomi/mimo-v2.5",
+      "ref": "mimo-v2.5",
+      "api_name": "xiaomi/mimo-v2.5",
       "context_window_tokens": 1000000,
-      "supports_thinking": false,
-      "attachments": {
-        "images": true,
-        "documents": true
-      },
-      "supports_images": true,
-      "supports_audio": true,
-      "supports_video": true,
       "pricing": {
         "input_per_1m": 0.105,
         "output_per_1m": 0.28,
@@ -258,49 +163,32 @@
       }
     },
     {
-      "name": "Qwen/Qwen3.6-Max-Preview",
-      "context_window_tokens": 200000,
-      "supports_thinking": true
+      "ref": "qwen3.6-max-preview",
+      "api_name": "Qwen/Qwen3.6-Max-Preview"
     },
     {
-      "name": "Qwen/Qwen3.6-Plus",
-      "context_window_tokens": 200000,
-      "supports_thinking": true
+      "ref": "qwen3.6-plus",
+      "api_name": "Qwen/Qwen3.6-Plus"
     },
     {
-      "name": "Qwen/Qwen3.7-Max",
-      "context_window_tokens": 1000000,
-      "supports_thinking": true
+      "ref": "qwen3.7-max",
+      "api_name": "Qwen/Qwen3.7-Max"
     },
     {
-      "name": "Qwen/Qwen3.7-Plus",
-      "context_window_tokens": 1000000,
-      "supports_thinking": true
+      "ref": "qwen3.7-plus",
+      "api_name": "Qwen/Qwen3.7-Plus"
     },
     {
-      "name": "stepfun/Step-3.7-Flash",
-      "context_window_tokens": 256000,
-      "supports_thinking": true
+      "ref": "step-3.7-flash",
+      "api_name": "stepfun/Step-3.7-Flash"
     },
     {
-      "name": "stepfun/Step-3.5-Flash",
-      "context_window_tokens": 1000000,
-      "supports_thinking": true
+      "ref": "step-3.5-flash",
+      "api_name": "stepfun/Step-3.5-Flash"
     },
     {
-      "name": "google/gemini-3.5-flash",
-      "context_window_tokens": 1000000,
-      "supports_thinking": true,
-      "attachments": {
-        "images": true,
-        "audio": true,
-        "video": true,
-        "documents": true
-      },
-      "supports_images": true,
-      "supports_audio": true,
-      "supports_video": true,
-      "supports_documents": true,
+      "ref": "gemini-3.5-flash",
+      "api_name": "google/gemini-3.5-flash",
       "pricing": {
         "input_per_1m": 1.5,
         "output_per_1m": 9.0,
@@ -308,19 +196,8 @@
       }
     },
     {
-      "name": "google/gemini-3.1-flash-lite",
-      "context_window_tokens": 1000000,
-      "supports_thinking": true,
-      "attachments": {
-        "images": true,
-        "audio": true,
-        "video": true,
-        "documents": true
-      },
-      "supports_images": true,
-      "supports_audio": true,
-      "supports_video": true,
-      "supports_documents": true,
+      "ref": "gemini-3.1-flash-lite",
+      "api_name": "google/gemini-3.1-flash-lite",
       "pricing": {
         "input_per_1m": 0.25,
         "output_per_1m": 1.5,
@@ -328,9 +205,8 @@
       }
     },
     {
-      "name": "nvidia/nemotron-3-ultra-550b-a55b",
-      "context_window_tokens": 1000000,
-      "supports_thinking": true,
+      "ref": "nemotron-3-ultra-550b-a55b",
+      "api_name": "nvidia/nemotron-3-ultra-550b-a55b",
       "pricing": {
         "input_per_1m": 0.5,
         "output_per_1m": 2.2,

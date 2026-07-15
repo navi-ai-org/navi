@@ -1,0 +1,38 @@
+{
+  "id": "gpt-4.5-preview",
+  "vendor": "openai",
+  "family": "gpt",
+  "context_window_tokens": 128000,
+  "max_output_tokens": 16384,
+  "recommended_temperature": 1.0,
+  "supports_thinking": false,
+  "attachments": {
+    "images": true,
+    "audio": false,
+    "video": false,
+    "documents": false
+  },
+  "sources": {
+    "attachments": {
+      "url": "scripts/model_rules.json",
+      "verified_at": "2026-07-14",
+      "note": "matched model_rules entry for gpt-4.5-preview"
+    },
+    "context_window_tokens": {
+      "url": "https://platform.openai.com/docs/models",
+      "verified_at": "2026-07-14",
+      "note": "verified context window of 128k from official documentation"
+    },
+    "max_output_tokens": {
+      "url": "https://platform.openai.com/docs/models",
+      "verified_at": "2026-07-14",
+      "note": "verified output token limit of 16k"
+    },
+    "status": {
+      "url": "https://platform.openai.com/docs/models",
+      "verified_at": "2026-07-14",
+      "note": "removed from API on July 14, 2025"
+    }
+  },
+  "status": "removed"
+}

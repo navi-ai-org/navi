@@ -1,0 +1,22 @@
+{
+  "id": "llama-4-maverick-17b-128e-instruct-fp8",
+  "vendor": "aggregator",
+  "family": "llama",
+  "context_window_tokens": 131072,
+  "max_output_tokens": 16384,
+  "recommended_temperature": 0.7,
+  "supports_thinking": false,
+  "attachments": {
+    "images": true,
+    "audio": false,
+    "video": false,
+    "documents": false
+  },
+  "sources": {
+    "context_window_tokens": {
+      "url": "https://github.com/meta-llama/llama-models",
+      "verified_at": "2026-07-14",
+      "note": "from official specifications"
+    }
+  }
+}

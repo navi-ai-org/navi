@@ -93,6 +93,8 @@ pub fn apply_provider_attachment_defaults_to_config_model(
 
 fn bare_model(name: &str) -> RegistryModel {
     RegistryModel {
+        model_ref: None,
+        api_name: None,
         name: name.to_string(),
         task_size: None,
         context_window_tokens: None,

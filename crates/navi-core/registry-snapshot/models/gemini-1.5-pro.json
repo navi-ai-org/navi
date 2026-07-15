@@ -1,0 +1,27 @@
+{
+  "id": "gemini-1.5-pro",
+  "vendor": "google",
+  "family": "gemini",
+  "context_window_tokens": 2097152,
+  "max_output_tokens": 8192,
+  "recommended_temperature": 1.0,
+  "supports_thinking": false,
+  "attachments": {
+    "images": true,
+    "audio": true,
+    "video": true,
+    "documents": true
+  },
+  "sources": {
+    "context_window_tokens": {
+      "url": "https://ai.google.dev/gemini-api/docs/models/gemini",
+      "verified_at": "2026-07-14",
+      "note": "from official Google documentation"
+    },
+    "max_output_tokens": {
+      "url": "https://ai.google.dev/gemini-api/docs/models/gemini",
+      "verified_at": "2026-07-14",
+      "note": "from official Google documentation"
+    }
+  }
+}

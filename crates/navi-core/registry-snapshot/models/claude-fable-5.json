@@ -1,0 +1,32 @@
+{
+  "id": "claude-fable-5",
+  "vendor": "aggregator",
+  "family": "claude",
+  "context_window_tokens": 1000000,
+  "max_output_tokens": 128000,
+  "supports_thinking": true,
+  "attachments": {
+    "images": true,
+    "documents": true
+  },
+  "sources": {
+    "max_output_tokens": {
+      "url": "https://openrouter.ai/api/v1/models/anthropic/claude-fable-5",
+      "verified_at": "2026-07-14",
+      "note": "from OpenRouter spec"
+    },
+    "context_window_tokens": {
+      "url": "https://openrouter.ai/api/v1/models/anthropic/claude-fable-5",
+      "verified_at": "2026-07-14",
+      "note": "from OpenRouter spec"
+    }
+  },
+  "recommended_temperature": 1.0,
+  "reasoning_levels": [
+    "low",
+    "medium",
+    "high",
+    "xhigh"
+  ],
+  "default_reasoning_effort": "high"
+}

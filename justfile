@@ -252,8 +252,8 @@ dart-test:
 # After running this, rebuild navi to embed the updated snapshot.
 sync-registry-snapshot:
     @echo "Fetching latest registry from navi-ai-org/navi-registry..."
-    git archive --remote=https://github.com/navi-ai-org/navi-registry.git main manifest.json providers | tar -x -C crates/navi-core/registry-snapshot/
-    @echo "Registry snapshot updated. Rebuild navi to embed it."
+    git archive --remote=https://github.com/navi-ai-org/navi-registry.git main manifest.json providers models bases schemas transcription-providers | tar -x -C crates/navi-core/registry-snapshot/
+    @echo "Registry snapshot updated (providers + canonical models + schemas). Rebuild navi to embed it."
     @echo "  cargo check -p navi-core"
 
 # ─── Brand / demo GIF ─────────────────────────────────────────────────────────

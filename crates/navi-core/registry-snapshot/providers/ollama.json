@@ -15,21 +15,19 @@
   },
   "models": [
     {
-      "name": "llama3.1",
-      "context_window_tokens": 128000
+      "ref": "llama3.1"
     },
     {
-      "name": "llama3.2",
-      "context_window_tokens": 128000
+      "ref": "llama3.2"
     },
     {
-      "name": "llama3.3",
-      "context_window_tokens": 128000
+      "ref": "llama3.3"
     },
     {
-      "name": "deepseek-r1",
+      "ref": "deepseek-r1",
       "context_window_tokens": 1000000,
-      "supports_thinking": true,
+      "max_output_tokens": 16000,
+      "status": "removed",
       "pricing": {
         "input_per_1m": 0.7,
         "output_per_1m": 2.5,
@@ -37,76 +35,49 @@
       }
     },
     {
-      "name": "qwen3",
-      "context_window_tokens": 128000
+      "ref": "qwen3"
     },
     {
-      "name": "qwen2.5-coder",
-      "context_window_tokens": 128000
+      "ref": "qwen2.5-coder"
     },
     {
-      "name": "qwen2.5-coder:32b",
-      "context_window_tokens": 128000
+      "ref": "qwen2.5-coder:32b"
     },
     {
-      "name": "qwen2.5-coder:14b",
-      "context_window_tokens": 32000
+      "ref": "qwen2.5-coder:14b"
     },
     {
-      "name": "qwen2.5-coder:7b",
-      "context_window_tokens": 32000
+      "ref": "qwen2.5-coder:7b"
     },
     {
-      "name": "codellama",
-      "context_window_tokens": 16000
+      "ref": "codellama"
     },
     {
-      "name": "starcoder2",
-      "context_window_tokens": 16000
+      "ref": "starcoder2"
     },
     {
-      "name": "granite-code",
-      "context_window_tokens": 128000
+      "ref": "granite-code"
     },
     {
-      "name": "gemma3",
-      "context_window_tokens": 128000,
-      "attachments": {
-        "images": true
-      },
-      "supports_images": true
+      "ref": "gemma3"
     },
     {
-      "name": "gemma3:27b",
-      "context_window_tokens": 128000,
-      "attachments": {
-        "images": true
-      },
-      "supports_images": true
+      "ref": "gemma3:27b"
     },
     {
-      "name": "gemma3:12b",
-      "context_window_tokens": 128000,
-      "attachments": {
-        "images": true
-      },
-      "supports_images": true
+      "ref": "gemma3:12b"
     },
     {
-      "name": "mistral",
-      "context_window_tokens": 32000
+      "ref": "mistral"
     },
     {
-      "name": "devstral",
-      "context_window_tokens": 32000
+      "ref": "devstral"
     },
     {
-      "name": "phi4",
-      "context_window_tokens": 16000
+      "ref": "phi4"
     },
     {
-      "name": "phi4-mini",
-      "context_window_tokens": 16000
+      "ref": "phi4-mini"
     }
   ]
 }

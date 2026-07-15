@@ -1,0 +1,30 @@
+{
+  "id": "deepseek-v4-pro",
+  "vendor": "deepseek",
+  "family": "deepseek",
+  "context_window_tokens": 1000000,
+  "max_output_tokens": 384000,
+  "recommended_temperature": 1.0,
+  "supports_thinking": true,
+  "aliases": [
+    "deepseek/deepseek-v4-pro"
+  ],
+  "reasoning_levels": [
+    "high",
+    "max"
+  ],
+  "default_reasoning_effort": "high",
+  "sources": {
+    "context_window_tokens": {
+      "url": "https://api-docs.deepseek.com",
+      "verified_at": "2026-07-14",
+      "note": "Official DeepSeek API documentation."
+    }
+  },
+  "attachments": {
+    "images": false,
+    "audio": false,
+    "video": false,
+    "documents": false
+  }
+}

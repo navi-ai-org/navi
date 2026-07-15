@@ -1,0 +1,26 @@
+{
+  "id": "llama-3.3-70b",
+  "vendor": "aggregator",
+  "family": "llama",
+  "context_window_tokens": 131072,
+  "max_output_tokens": 16384,
+  "recommended_temperature": 0.7,
+  "supports_thinking": false,
+  "attachments": {
+    "images": false,
+    "audio": false,
+    "video": false,
+    "documents": false
+  },
+  "status": "removed",
+  "aliases": [
+    "meta-llama/llama-3.3-70b"
+  ],
+  "sources": {
+    "context_window_tokens": {
+      "url": "https://github.com/meta-llama/llama-models/blob/main/models/llama3_3/MODEL_CARD.md",
+      "verified_at": "2026-07-14",
+      "note": "from Meta's official model card"
+    }
+  }
+}

@@ -124,8 +124,19 @@ impl RegistryModelPricing {
 }
 
 /// A single model entry in the remote registry JSON.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct RegistryModel {
+    /// Reference to a canonical model in `models/<ref>.json`.
+    /// When present, the model metadata is resolved from the canonical catalog
+    /// and `name` is derived from this ref (or from `api_name` if set).
+    #[serde(default, rename = "ref", skip_serializing_if = "Option::is_none")]
+    pub model_ref: Option<String>,
+    /// Provider-specific API model name when it differs from the canonical ref.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub api_name: Option<String>,
+    /// Model name. Required for legacy inline entries; derived from `ref`
+    /// (or `api_name`) during ref resolution.
+    #[serde(default)]
     pub name: String,
     /// Deprecated: task size is no longer part of the registry. Kept as optional
     /// for backward compatibility with older JSON snapshots — ignored at runtime.
@@ -174,6 +185,41 @@ pub struct RegistryModel {
     pub pricing: Option<RegistryModelPricing>,
 }
 
+/// A canonical model entry from `models/<id>.json`.
+/// Contains intrinsic model metadata shared across all providers.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CanonicalModel {
+    pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vendor: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub family: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_window_tokens: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_output_tokens: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recommended_temperature: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub supports_thinking: Option<bool>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub reasoning_levels: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_reasoning_effort: Option<String>,
+    #[serde(default, skip_serializing_if = "RegistryAttachments::is_empty")]
+    pub attachments: RegistryAttachments,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub capabilities: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub aliases: Vec<String>,
+}
+
 /// A full provider entry as stored in `registry/providers/<id>.json`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RegistryProvider {
@@ -184,6 +230,10 @@ pub struct RegistryProvider {
     pub kind: String,
     pub api_key_env: String,
     pub base_url: Option<String>,
+    /// Optional base definition id under `bases/` (or another provider id).
+    /// Resolved and flattened before models/`ref` resolution.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub extends: Option<String>,
     #[serde(default)]
     pub tool_calling_mode: Option<String>,
     /// When `true`, this provider is an aggregator whose model list is fetched
@@ -201,7 +251,7 @@ pub struct RegistryProvider {
 }
 
 /// Top-level manifest file at `registry/manifest.json`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct RegistryManifest {
     pub version: u32,
     pub updated_at: String,
@@ -209,6 +259,12 @@ pub struct RegistryManifest {
     /// Remote speech-to-text / dictation providers (Whisper, Wispr Flow, …).
     #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
     pub transcription_providers: std::collections::HashMap<String, ManifestProviderEntry>,
+    /// Coverage statistics (ignored at runtime, present in manifest v33+).
+    #[serde(default)]
+    pub coverage: serde_json::Value,
+    /// Canonical model catalog index keyed by model id.
+    #[serde(default)]
+    pub models: serde_json::Value,
 }
 
 /// Per-provider entry inside the manifest.

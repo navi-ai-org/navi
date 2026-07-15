@@ -1,0 +1,22 @@
+{
+  "id": "nemotron-3-ultra-free",
+  "vendor": "aggregator",
+  "family": "nemotron",
+  "context_window_tokens": 1000000,
+  "max_output_tokens": 8192,
+  "recommended_temperature": 1.0,
+  "supports_thinking": false,
+  "sources": {
+    "context_window_tokens": {
+      "url": "https://build.nvidia.com/nvidia/nemotron-3-ultra-550b-a55b",
+      "verified_at": "2026-07-14",
+      "note": "from official NVIDIA Build docs"
+    }
+  },
+  "attachments": {
+    "images": false,
+    "audio": false,
+    "video": false,
+    "documents": false
+  }
+}

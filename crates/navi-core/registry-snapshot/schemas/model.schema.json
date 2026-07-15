@@ -1,0 +1,99 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://navi.ai/registry/schemas/model.schema.json",
+  "title": "NAVI Canonical Model Definition",
+  "description": "Canonical model catalog entry under models/. Capabilities live here once; providers reference via ref.",
+  "type": "object",
+  "required": ["id"],
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Stable model id (usually the bare API name). Referenced by providers as models[].ref"
+    },
+    "label": {
+      "type": "string",
+      "description": "Human-readable display name"
+    },
+    "description": {
+      "type": "string"
+    },
+    "family": {
+      "type": "string",
+      "description": "Model family tag (e.g. gpt-5, claude-4, glm-5)"
+    },
+    "vendor": {
+      "type": "string",
+      "description": "Upstream model vendor / creator (openai, anthropic, google, ...)"
+    },
+    "status": {
+      "type": "string",
+      "enum": ["active", "deprecated", "removed", "preview"],
+      "default": "active"
+    },
+    "context_window_tokens": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Canonical total context window. Never invent. Providers may override if they cap lower."
+    },
+    "max_output_tokens": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "recommended_temperature": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 2
+    },
+    "supports_thinking": {
+      "type": "boolean"
+    },
+    "attachments": {
+      "$ref": "#/$defs/attachments"
+    },
+    "reasoning_levels": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "default_reasoning_effort": {
+      "type": "string"
+    },
+    "capabilities": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "aliases": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Alternate API ids (e.g. openai/gpt-4o, provider-prefixed names) that map to this model"
+    },
+    "sources": {
+      "type": "object",
+      "additionalProperties": { "$ref": "#/$defs/field_source" },
+      "description": "Provenance for critical fields"
+    }
+  },
+  "$defs": {
+    "attachments": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "images": { "type": "boolean" },
+        "audio": { "type": "boolean" },
+        "video": { "type": "boolean" },
+        "documents": { "type": "boolean" }
+      }
+    },
+    "field_source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["url"],
+      "properties": {
+        "url": { "type": "string", "minLength": 1 },
+        "verified_at": { "type": "string" },
+        "note": { "type": "string" }
+      }
+    }
+  }
+}

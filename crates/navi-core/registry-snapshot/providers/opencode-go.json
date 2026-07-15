@@ -15,10 +15,7 @@
   },
   "models": [
     {
-      "name": "deepseek-v4-flash",
-      "context_window_tokens": 1000000,
-      "max_output_tokens": 384000,
-      "recommended_temperature": 1.0,
+      "ref": "deepseek-v4-flash",
       "supports_thinking": false,
       "pricing": {
         "input_per_1m": 0.09,
@@ -27,11 +24,7 @@
       }
     },
     {
-      "name": "deepseek-v4-pro",
-      "context_window_tokens": 1000000,
-      "max_output_tokens": 384000,
-      "recommended_temperature": 1.0,
-      "supports_thinking": true,
+      "ref": "deepseek-v4-pro",
       "pricing": {
         "input_per_1m": 0.435,
         "output_per_1m": 0.87,
@@ -39,13 +32,9 @@
       }
     },
     {
-      "name": "qwen3.6-plus",
-      "context_window_tokens": 1000000,
+      "ref": "qwen3.6-plus",
       "max_output_tokens": 65536,
-      "recommended_temperature": 1.0,
       "supports_thinking": false,
-      "supports_images": true,
-      "supports_video": true,
       "pricing": {
         "input_per_1m": 0.325,
         "output_per_1m": 1.95,
@@ -53,14 +42,10 @@
       }
     },
     {
-      "name": "glm-5",
+      "ref": "glm-5",
       "context_window_tokens": 202752,
       "max_output_tokens": 32768,
-      "recommended_temperature": 1.0,
       "supports_thinking": false,
-      "attachments": {
-        "images": true
-      },
       "pricing": {
         "input_per_1m": 0.6,
         "output_per_1m": 1.92,
@@ -68,16 +53,12 @@
       }
     },
     {
-      "name": "kimi-k2.5",
-      "context_window_tokens": 262144,
-      "max_output_tokens": 65536,
-      "recommended_temperature": 1.0,
+      "ref": "kimi-k2.5",
       "supports_thinking": false,
       "attachments": {
         "images": true,
         "documents": true
       },
-      "supports_images": true,
       "pricing": {
         "input_per_1m": 0.375,
         "output_per_1m": 2.025,
@@ -85,10 +66,8 @@
       }
     },
     {
-      "name": "minimax-m2.5",
-      "context_window_tokens": 204800,
+      "ref": "minimax-m2.5",
       "max_output_tokens": 131072,
-      "recommended_temperature": 1.0,
       "supports_thinking": false,
       "pricing": {
         "input_per_1m": 0.12,

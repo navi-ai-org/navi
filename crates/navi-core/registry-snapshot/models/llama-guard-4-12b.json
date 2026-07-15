@@ -1,0 +1,26 @@
+{
+  "id": "llama-guard-4-12b",
+  "vendor": "groq",
+  "family": "llama",
+  "context_window_tokens": 131072,
+  "max_output_tokens": 4096,
+  "recommended_temperature": 0.0,
+  "supports_thinking": false,
+  "attachments": {
+    "images": true,
+    "audio": false,
+    "video": false,
+    "documents": false
+  },
+  "status": "removed",
+  "aliases": [
+    "meta-llama/llama-guard-4-12b"
+  ],
+  "sources": {
+    "context_window_tokens": {
+      "url": "https://github.com/meta-llama/llama-models/blob/main/models/llama_guard/MODEL_CARD.md",
+      "verified_at": "2026-07-14",
+      "note": "from Meta Llama Guard 4 model card"
+    }
+  }
+}

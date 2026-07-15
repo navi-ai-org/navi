@@ -1,0 +1,23 @@
+{
+  "id": "qwen2.5-coder:32b",
+  "vendor": "local",
+  "family": "qwen",
+  "context_window_tokens": 131072,
+  "status": "removed",
+  "max_output_tokens": 8192,
+  "recommended_temperature": 0.7,
+  "supports_thinking": false,
+  "sources": {
+    "context_window_tokens": {
+      "url": "https://github.com/QwenLM/Qwen2.5-Coder",
+      "verified_at": "2026-07-14",
+      "note": "Official Qwen2.5-Coder repository."
+    }
+  },
+  "attachments": {
+    "images": false,
+    "audio": false,
+    "video": false,
+    "documents": false
+  }
+}

@@ -1,0 +1,32 @@
+{
+  "id": "claude-opus-4-20250514",
+  "vendor": "anthropic",
+  "family": "claude",
+  "context_window_tokens": 200000,
+  "max_output_tokens": 32000,
+  "recommended_temperature": 1.0,
+  "supports_thinking": true,
+  "attachments": {
+    "images": true,
+    "documents": true
+  },
+  "reasoning_levels": [
+    "low",
+    "medium",
+    "high",
+    "xhigh"
+  ],
+  "default_reasoning_effort": "high",
+  "sources": {
+    "context_window_tokens": {
+      "url": "https://docs.anthropic.com/en/docs/about-claude/models",
+      "verified_at": "2026-07-14",
+      "note": "from official docs"
+    },
+    "max_output_tokens": {
+      "url": "https://docs.anthropic.com/en/docs/about-claude/models",
+      "verified_at": "2026-07-14",
+      "note": "from official docs"
+    }
+  }
+}

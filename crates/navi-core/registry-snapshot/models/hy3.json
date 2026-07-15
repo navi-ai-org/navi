@@ -1,0 +1,24 @@
+{
+  "id": "hy3",
+  "vendor": "aggregator",
+  "context_window_tokens": 262144,
+  "max_output_tokens": 65536,
+  "recommended_temperature": 1.0,
+  "supports_thinking": false,
+  "attachments": {
+    "images": true,
+    "audio": true,
+    "video": true,
+    "documents": true
+  },
+  "aliases": [
+    "tencent/hy3"
+  ],
+  "sources": {
+    "context_window_tokens": {
+      "url": "https://openrouter.ai/models/tencent/hy3",
+      "verified_at": "2026-07-14",
+      "note": "from OpenRouter Hunyuan 3 model page"
+    }
+  }
+}

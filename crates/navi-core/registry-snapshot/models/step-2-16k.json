@@ -1,0 +1,22 @@
+{
+  "id": "step-2-16k",
+  "vendor": "stepfun",
+  "family": "step",
+  "context_window_tokens": 16384,
+  "max_output_tokens": 8192,
+  "recommended_temperature": 0.7,
+  "supports_thinking": false,
+  "sources": {
+    "context_window_tokens": {
+      "url": "https://platform.stepfun.com/",
+      "verified_at": "2026-07-14",
+      "note": "from official platform docs"
+    }
+  },
+  "attachments": {
+    "images": false,
+    "audio": false,
+    "video": false,
+    "documents": false
+  }
+}

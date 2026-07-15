@@ -4,8 +4,14 @@
   "title": "NAVI Transcription Provider Definition",
   "description": "Schema for a remote speech-to-text provider in the NAVI registry (dictation / ASR)",
   "type": "object",
-  "required": ["id", "label", "kind", "api_key_env", "base_url", "models"],
+  "required": ["id", "label", "kind", "api_key_env", "base_url"],
   "additionalProperties": false,
+  "allOf": [
+    {
+      "if": { "not": { "required": ["extends"] } },
+      "then": { "required": ["models"] }
+    }
+  ],
   "properties": {
     "id": {
       "type": "string",
@@ -40,6 +46,11 @@
       "minLength": 1,
       "description": "API base URL (no trailing path for model id)"
     },
+    "extends": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Optional base definition id under bases/ (or another provider id)"
+    },
     "transcription_path": {
       "type": "string",
       "description": "Path appended to base_url for the transcription endpoint (optional; kind-specific defaults apply)"
@@ -60,6 +71,23 @@
     }
   },
   "$defs": {
+    "field_source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["url"],
+      "properties": {
+        "url": {
+          "type": "string",
+          "minLength": 1
+        },
+        "verified_at": {
+          "type": "string"
+        },
+        "note": {
+          "type": "string"
+        }
+      }
+    },
     "transcription_model": {
       "type": "object",
       "required": ["name"],
@@ -77,6 +105,12 @@
         "description": {
           "type": "string",
           "description": "Short model description"
+        },
+        "status": {
+          "type": "string",
+          "enum": ["active", "deprecated", "removed", "preview"],
+          "default": "active",
+          "description": "Lifecycle status. Omit for active (default)."
         },
         "languages": {
           "type": "array",
@@ -105,6 +139,11 @@
             "per_minute": { "type": "number" },
             "currency": { "type": "string" }
           }
+        },
+        "sources": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/field_source" },
+          "description": "Provenance map for model fields"
         }
       }
     }

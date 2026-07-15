@@ -8,192 +8,58 @@
   "request_options": {},
   "models": [
     {
-      "name": "gemini-2.5-pro",
-      "context_window_tokens": 1048576,
-      "max_output_tokens": 65536,
-      "recommended_temperature": 1.0,
-      "supports_thinking": true,
-      "supports_images": true,
-      "supports_audio": true,
-      "supports_video": true,
-      "supports_documents": true,
+      "ref": "gemini-2.5-pro",
       "pricing": {
         "input_per_1m": 1.25,
         "output_per_1m": 10.0,
         "currency": "USD"
-      },
-      "reasoning_levels": [
-        "low",
-        "medium",
-        "high"
-      ],
-      "default_reasoning_effort": "medium"
+      }
     },
     {
-      "name": "gemini-2.5-pro-preview-06-05",
-      "context_window_tokens": 1048576,
-      "max_output_tokens": 65536,
-      "recommended_temperature": 1.0,
-      "supports_thinking": true,
-      "supports_images": true,
-      "supports_audio": true,
-      "supports_video": true,
-      "supports_documents": true,
-      "reasoning_levels": [
-        "low",
-        "medium",
-        "high"
-      ],
-      "default_reasoning_effort": "medium"
+      "ref": "gemini-2.5-pro-preview-06-05"
     },
     {
-      "name": "gemini-2.5-flash",
-      "context_window_tokens": 1048576,
-      "max_output_tokens": 65536,
-      "recommended_temperature": 1.0,
-      "supports_thinking": true,
-      "supports_images": true,
-      "supports_audio": true,
-      "supports_video": true,
-      "supports_documents": true,
+      "ref": "gemini-2.5-flash",
       "pricing": {
         "input_per_1m": 0.3,
         "output_per_1m": 2.5,
         "currency": "USD"
-      },
-      "reasoning_levels": [
-        "low",
-        "medium",
-        "high"
-      ],
-      "default_reasoning_effort": "medium"
+      }
     },
     {
-      "name": "gemini-2.5-flash-preview-05-20",
-      "context_window_tokens": 1048576,
-      "max_output_tokens": 65536,
-      "recommended_temperature": 1.0,
-      "supports_thinking": true,
-      "supports_images": true,
-      "supports_audio": true,
-      "supports_video": true,
-      "supports_documents": true,
-      "reasoning_levels": [
-        "low",
-        "medium",
-        "high"
-      ],
-      "default_reasoning_effort": "medium"
+      "ref": "gemini-2.5-flash-preview-05-20"
     },
     {
-      "name": "gemini-2.5-flash-lite",
-      "context_window_tokens": 1048576,
-      "max_output_tokens": 65536,
-      "recommended_temperature": 1.0,
-      "supports_thinking": true,
-      "supports_images": true,
-      "supports_audio": true,
-      "supports_video": true,
-      "supports_documents": true,
+      "ref": "gemini-2.5-flash-lite",
       "pricing": {
         "input_per_1m": 0.1,
         "output_per_1m": 0.4,
         "currency": "USD"
-      },
-      "reasoning_levels": [
-        "low",
-        "medium",
-        "high"
-      ],
-      "default_reasoning_effort": "medium"
+      }
     },
     {
-      "name": "gemini-2.0-flash",
-      "context_window_tokens": 1048576,
-      "max_output_tokens": 8192,
-      "recommended_temperature": 1.0,
-      "supports_thinking": false,
-      "supports_images": true,
-      "supports_audio": true,
-      "supports_video": true,
-      "supports_documents": true
+      "ref": "gemini-2.0-flash"
     },
     {
-      "name": "gemini-2.0-flash-001",
-      "context_window_tokens": 1048576,
-      "max_output_tokens": 8192,
-      "recommended_temperature": 1.0,
-      "supports_thinking": false,
-      "supports_images": true,
-      "supports_audio": true,
-      "supports_video": true,
-      "supports_documents": true
+      "ref": "gemini-2.0-flash-001"
     },
     {
-      "name": "gemini-2.0-flash-lite",
-      "context_window_tokens": 1048576,
-      "max_output_tokens": 8192,
-      "recommended_temperature": 1.0,
-      "supports_thinking": false,
-      "supports_images": true,
-      "supports_audio": true,
-      "supports_video": true,
-      "supports_documents": true
+      "ref": "gemini-2.0-flash-lite"
     },
     {
-      "name": "gemini-1.5-pro",
-      "context_window_tokens": 1048576,
-      "max_output_tokens": 8192,
-      "recommended_temperature": 1.0,
-      "supports_thinking": false,
-      "supports_images": true,
-      "supports_audio": true,
-      "supports_video": true,
-      "supports_documents": true
+      "ref": "gemini-1.5-pro"
     },
     {
-      "name": "gemini-1.5-pro-002",
-      "context_window_tokens": 1048576,
-      "max_output_tokens": 8192,
-      "recommended_temperature": 1.0,
-      "supports_thinking": false,
-      "supports_images": true,
-      "supports_audio": true,
-      "supports_video": true,
-      "supports_documents": true
+      "ref": "gemini-1.5-pro-002"
     },
     {
-      "name": "gemini-1.5-flash",
-      "context_window_tokens": 1048576,
-      "max_output_tokens": 8192,
-      "recommended_temperature": 1.0,
-      "supports_thinking": false,
-      "supports_images": true,
-      "supports_audio": true,
-      "supports_video": true,
-      "supports_documents": true
+      "ref": "gemini-1.5-flash"
     },
     {
-      "name": "gemini-1.5-flash-002",
-      "context_window_tokens": 1048576,
-      "max_output_tokens": 8192,
-      "recommended_temperature": 1.0,
-      "supports_thinking": false,
-      "supports_images": true,
-      "supports_audio": true,
-      "supports_video": true,
-      "supports_documents": true
+      "ref": "gemini-1.5-flash-002"
     },
     {
-      "name": "gemini-1.5-flash-8b",
-      "context_window_tokens": 1048576,
-      "max_output_tokens": 8192,
-      "recommended_temperature": 1.0,
-      "supports_thinking": false,
-      "supports_images": true,
-      "supports_audio": true,
-      "supports_video": true,
-      "supports_documents": true
+      "ref": "gemini-1.5-flash-8b"
     }
   ],
   "defaults": {

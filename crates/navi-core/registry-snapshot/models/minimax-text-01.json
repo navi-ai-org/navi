@@ -1,0 +1,21 @@
+{
+  "id": "minimax-text-01",
+  "vendor": "minimax",
+  "context_window_tokens": 1000000,
+  "max_output_tokens": 128000,
+  "recommended_temperature": 1.0,
+  "supports_thinking": false,
+  "sources": {
+    "context_window_tokens": {
+      "url": "https://huggingface.co/MiniMaxAI/MiniMax-Text-01",
+      "verified_at": "2026-07-14",
+      "note": "from official model card"
+    }
+  },
+  "attachments": {
+    "images": false,
+    "audio": false,
+    "video": false,
+    "documents": false
+  }
+}

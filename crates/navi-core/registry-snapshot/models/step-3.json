@@ -1,0 +1,22 @@
+{
+  "id": "step-3",
+  "vendor": "stepfun",
+  "family": "step",
+  "context_window_tokens": 262144,
+  "max_output_tokens": 16384,
+  "recommended_temperature": 1.0,
+  "supports_thinking": false,
+  "sources": {
+    "context_window_tokens": {
+      "url": "https://platform.stepfun.com/",
+      "verified_at": "2026-07-14",
+      "note": "from official platform docs"
+    }
+  },
+  "attachments": {
+    "images": false,
+    "audio": false,
+    "video": false,
+    "documents": false
+  }
+}

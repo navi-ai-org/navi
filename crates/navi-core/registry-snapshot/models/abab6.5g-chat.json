@@ -1,0 +1,22 @@
+{
+  "id": "abab6.5g-chat",
+  "vendor": "minimax",
+  "family": "abab",
+  "context_window_tokens": 200000,
+  "max_output_tokens": 8192,
+  "recommended_temperature": 0.7,
+  "supports_thinking": false,
+  "attachments": {
+    "images": false,
+    "audio": false,
+    "video": false,
+    "documents": false
+  },
+  "sources": {
+    "context_window_tokens": {
+      "url": "https://platform.minimaxi.com/document/",
+      "verified_at": "2026-07-14",
+      "note": "from official docs"
+    }
+  }
+}

@@ -1,0 +1,27 @@
+{
+  "id": "grok-build-0.1",
+  "vendor": "xai",
+  "family": "grok",
+  "context_window_tokens": 256000,
+  "max_output_tokens": 16384,
+  "recommended_temperature": 1.0,
+  "supports_thinking": false,
+  "attachments": {
+    "images": true,
+    "documents": true,
+    "audio": false,
+    "video": false
+  },
+  "sources": {
+    "attachments": {
+      "url": "https://openrouter.ai/api/v1/models/x-ai/grok-build-0.1",
+      "verified_at": "2026-07-14",
+      "note": "auto-filled by probe from OpenRouter /api/v1/models"
+    },
+    "context_window_tokens": {
+      "url": "https://docs.x.ai/api/models",
+      "verified_at": "2026-07-14",
+      "note": "from official docs"
+    }
+  }
+}

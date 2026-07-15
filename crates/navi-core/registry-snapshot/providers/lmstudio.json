@@ -6,14 +6,32 @@
   "api_key_env": "LMSTUDIO_API_KEY",
   "base_url": "http://localhost:1234/v1",
   "models": [
-    { "name": "local-model", "context_window_tokens": 128000 },
-    { "name": "qwen2.5-coder-14b", "context_window_tokens": 32000 },
-    { "name": "qwen2.5-coder-7b", "context_window_tokens": 32000 },
-    { "name": "qwen2.5-coder-32b", "context_window_tokens": 128000 },
-    { "name": "deepseek-r1-distill-qwen-32b", "context_window_tokens": 128000, "supports_thinking": true },
-    { "name": "deepseek-r1-distill-llama-8b", "context_window_tokens": 32000, "supports_thinking": true },
-    { "name": "mistral-small-instruct", "context_window_tokens": 32000 },
-    { "name": "gemma-3-27b-it", "context_window_tokens": 128000 },
-    { "name": "llama-3.2-3b-instruct", "context_window_tokens": 128000 }
+    {
+      "ref": "local-model"
+    },
+    {
+      "ref": "qwen2.5-coder-14b"
+    },
+    {
+      "ref": "qwen2.5-coder-7b"
+    },
+    {
+      "ref": "qwen2.5-coder-32b"
+    },
+    {
+      "ref": "deepseek-r1-distill-qwen-32b"
+    },
+    {
+      "ref": "deepseek-r1-distill-llama-8b"
+    },
+    {
+      "ref": "mistral-small-instruct"
+    },
+    {
+      "ref": "gemma-3-27b-it"
+    },
+    {
+      "ref": "llama-3.2-3b-instruct"
+    }
   ]
 }

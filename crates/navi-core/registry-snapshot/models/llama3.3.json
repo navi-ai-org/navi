@@ -1,0 +1,21 @@
+{
+  "id": "llama3.3",
+  "vendor": "local",
+  "family": "llama",
+  "context_window_tokens": 128000,
+  "status": "removed",
+  "supports_thinking": false,
+  "attachments": {
+    "images": false,
+    "audio": false,
+    "video": false,
+    "documents": false
+  },
+  "sources": {
+    "context_window_tokens": {
+      "url": "https://github.com/meta-llama/llama-models",
+      "verified_at": "2026-07-14",
+      "note": "local model baseline"
+    }
+  }
+}
