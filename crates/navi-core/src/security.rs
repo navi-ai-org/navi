@@ -402,6 +402,7 @@ impl SecurityPolicy {
             .input
             .get("path")
             .or_else(|| invocation.input.get("file"))
+            .or_else(|| invocation.input.get("file_path"))
             .and_then(Value::as_str)
             .map(|path| self.resolve_project_path(Path::new(path)))
     }
@@ -575,7 +576,7 @@ impl SecurityPolicy {
     pub fn normalize_invocation_paths(&self, invocation: &ToolInvocation) -> ToolInvocation {
         let mut invocation = invocation.clone();
         if let Value::Object(ref mut map) = invocation.input {
-            for key in ["path", "file"] {
+            for key in ["path", "file", "file_path"] {
                 if let Some(Value::String(value)) = map.get_mut(key) {
                     let resolved = self.resolve_project_path(Path::new(value));
                     *value = resolved.display().to_string();

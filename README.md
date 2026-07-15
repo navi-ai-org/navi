@@ -190,7 +190,7 @@ More: [SDK Agents Guide](docs/sdk-agents.md).
 
 | Capability | What it does |
 | --- | --- |
-| **Built-in tools** | `read_file`, `write_file`, `apply_patch`, `grep`, `bash`, `test_runner`, `build_runner`, `package_manager`, `fs_browser` |
+| **Built-in tools** | Core: `read_file`, `search`, `edit`, `write_file`, `bash`, `plan`, `question`, `tool_search`, `memory` — plus deferred power tools (`code`, `browser`, `package_manager`, `apply_patch`, …) |
 | **Sub-agents** | Isolated agents for explore / verify / implement in parallel |
 | **Compaction** | Micro-compact, auto-compact, session memory for long repos |
 | **Plan & execute** | Plan tool → approve steps → watch execution |

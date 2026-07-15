@@ -244,14 +244,27 @@ pub fn extract_paths(
         }
     }
 
-    // Invocation input: "file" or "path".
-    for key in &["file", "path"] {
+    // Invocation input: "file", "path", or Crush-compatible "file_path".
+    for key in &["file", "path", "file_path"] {
         if let Some(p) = invocation
             .input
             .get(*key)
             .and_then(serde_json::Value::as_str)
         {
             push_unique_path(&mut paths, PathBuf::from(p));
+        }
+    }
+
+    // Result output: files_changed from edit/multiedit/search-replace.
+    if let Some(changed) = result
+        .output
+        .get("files_changed")
+        .and_then(serde_json::Value::as_array)
+    {
+        for v in changed {
+            if let Some(p) = v.as_str() {
+                push_unique_path(&mut paths, PathBuf::from(p));
+            }
         }
     }
 

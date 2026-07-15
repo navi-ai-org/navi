@@ -6,14 +6,23 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 const READ_ONLY_TOOLS: &[&str] = &[
     "read_file",
-    "fs_browser",
-    "grep",
     "read",
     "search",
+    "fs_browser",
+    "grep",
+    "list_dir",
+    "glob",
+    "tool_search",
     "code",
+    "ast_search",
+    "symbol_goto",
+    "symbol_references",
+    "repo_explore",
     "current_time",
     "get_context_remaining",
     "view_image",
+    "question",
+    "plan",
 ];
 
 /// Removes read-only tool results from older messages when idle time exceeds

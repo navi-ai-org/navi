@@ -76,7 +76,7 @@ You help the user design and **save** a durable skill into NAVI’s skill databa
 
 1. Clarify the job: when should this skill activate? What must the agent do / not do?
 2. Draft a **template** (below) with the user.
-3. Choose a **minimal** `allow_tools` list from real tool names (e.g. `read_file`, `bash`, `apply_patch`, `skill_save`).
+3. Choose a **minimal** `allow_tools` list from real tool names (e.g. `read_file`, `search`, `edit`, `bash`, `skill_save`).
 4. Call `skill_save` with the structured fields.
 5. Call `skill_get` to verify; offer to refine.
 
@@ -126,6 +126,6 @@ Use **`skill_delete`** only if the user confirms removing a skill.
 ## Anti-patterns
 
 - Do **not** write `SKILL.md` into the user’s config tree.
-- Do **not** grant `bash` / `apply_patch` unless the skill truly needs them.
+- Do **not** grant `bash` / `edit` / `write_file` unless the skill truly needs them.
 - Do **not** save empty instructions or empty names.
 "#;

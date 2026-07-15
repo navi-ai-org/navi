@@ -91,7 +91,7 @@ pub(crate) fn tool_auto_expand(invocation: &ToolInvocation, result: &ToolResult)
         // Small structured confirmations can stay compact unless error.
         // Noisy exploration — collapsed by default.
         "read" | "read_file" | "view_file" | "grep" | "fs_browser" | "search" | "list_dir"
-        | "glob" | "bash" | "process" | "test_runner" | "build_runner" | "ast_search"
+        | "glob" | "bash" | "test_runner" | "build_runner" | "ast_search"
         | "symbol_goto" | "symbol_references" | "repo_explore" | "history_ops"
         | "package_manager" | "code" | "code_exec" => false,
 

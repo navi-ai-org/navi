@@ -614,6 +614,9 @@ fn handle_agent_event(app: &mut TuiApp, event: AgentEvent) {
             summary,
             suppressed,
         } => {
+            // Models occasionally ignore the recap prompt and dump essays/files.
+            // Clamp again at the UI boundary (≤3 lines / hard char cap).
+            let summary = navi_core::clamp_recap_summary(&summary);
             if !suppressed && !summary.trim().is_empty() {
                 // Upgrade in place when a later LLM recap arrives (same turn).
                 if let Some(existing) = app.messages.iter_mut().rev().find(|m| m.is_recap) {
@@ -1007,8 +1010,11 @@ fn maybe_emit_session_recap(app: &mut TuiApp, assistant_text: &str) {
     let tool_calls = tool_names.len();
     let suppressed = navi_core::should_suppress_recap(assistant_text.chars().count(), tool_calls);
 
-    let local_summary =
-        navi_core::local_recap_with_tools(&user_prompt, assistant_text, &tool_names);
+    let local_summary = navi_core::clamp_recap_summary(&navi_core::local_recap_with_tools(
+        &user_prompt,
+        assistant_text,
+        &tool_names,
+    ));
 
     // Always emit local immediately (UI + tests); long-tail stays suppressed.
     handle_async_event(
@@ -1057,6 +1063,7 @@ fn maybe_emit_session_recap(app: &mut TuiApp, assistant_text: &str) {
         else {
             return;
         };
+        let text = navi_core::clamp_recap_summary(&text);
         if text.trim().is_empty() {
             return;
         }
@@ -1950,6 +1957,41 @@ mod tests {
             ModelRole::User
         ) && message.content
             == "queued follow-up"));
+    }
+
+    #[test]
+    fn draining_queued_message_preserves_input_draft() {
+        let mut app = test_app("");
+        app.provider_configured = false;
+        app.is_loading = true;
+
+        // Queue a follow-up while a turn is active.
+        app.input = "queued follow-up".to_string();
+        app.input_cursor = app.input.len();
+        crate::chat::submit_message(&mut app);
+        assert!(app.input.is_empty());
+        assert_eq!(app.queued_user_messages.len(), 1);
+
+        // User starts typing the *next* draft while still waiting.
+        app.input = "draft still typing".to_string();
+        app.input_cursor = app.input.len();
+
+        handle_async_event(
+            &mut app,
+            AsyncEvent::TurnCompleted(Ok("first done".to_string())),
+        );
+
+        // Queued message was sent…
+        assert!(app.queued_user_messages.is_empty());
+        assert!(
+            app.messages
+                .iter()
+                .any(|message| message.role == ChatRole::User
+                    && message.content == "queued follow-up")
+        );
+        // …but the in-progress draft must remain in the input box.
+        assert_eq!(app.input, "draft still typing");
+        assert_eq!(app.input_cursor, "draft still typing".len());
     }
 
     #[test]

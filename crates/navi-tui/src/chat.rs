@@ -53,11 +53,28 @@ pub(crate) fn drain_next_queued_message(app: &mut TuiApp) {
     let Some(next) = app.queued_user_messages.pop_front() else {
         return;
     };
+
+    // Preserve any draft the user typed into the input while the previous turn
+    // was still running. Submitting the queued message must not wipe that draft.
+    let draft_text = std::mem::take(&mut app.input);
+    let draft_cursor = app.input_cursor;
+    let draft_selection = app.input_selection.take();
+    let draft_images = std::mem::take(&mut app.pending_images);
+
     app.input = next.text;
     app.input_cursor = app.input.len();
     app.input_selection = None;
     app.pending_images = next.images;
     submit_current_message_now(app);
+
+    // `submit_current_message_now` clears input/images for the sent message.
+    // Restore the in-progress draft afterward.
+    app.input = draft_text;
+    app.input_cursor = draft_cursor.min(app.input.len());
+    app.input_selection = draft_selection;
+    // Only restore draft images if submit didn't leave residual pending images
+    // (it clears them when submitting). Safe to assign back.
+    app.pending_images = draft_images;
 }
 
 fn submit_current_message_now(app: &mut TuiApp) {

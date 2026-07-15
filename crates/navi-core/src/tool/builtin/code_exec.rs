@@ -77,7 +77,7 @@ impl Tool for CodeExecTool {
     fn definition(&self) -> ToolDefinition {
         helpers::definition(
             "code_exec",
-            "Execute a typed code-mode plan with controlled nested tools. Supported ops: repo-read, repo-search, repo-patch, ast-search, verify-run, trace-note.",
+            "Execute a typed code-mode plan with controlled nested tools. Supported ops: repo-read, repo-search, repo-patch, ast-search, verify-run (via bash), trace-note.",
             ToolKind::Write,
             json!({
                 "type": "object",
@@ -239,20 +239,17 @@ fn nested_invocation(index: usize, op: &CodeExecOp) -> Result<ToolInvocation> {
         }
         CodeExecOp::VerifyRun {
             command,
-            verifier,
+            verifier: _,
             timeout_ms,
         } => {
-            let mut input = json!({
-                "action": "run",
-                "verifier": verifier,
-                "command": command,
-            });
+            // `verifier` tool was removed; run verification commands via bash.
+            let mut input = json!({ "command": command });
             if let Some(value) = timeout_ms
                 && let Value::Object(ref mut map) = input
             {
                 map.insert("timeout_ms".to_string(), json!(value));
             }
-            ("verifier".to_string(), input)
+            ("bash".to_string(), input)
         }
         CodeExecOp::TraceNote { .. } => bail!("trace-note is handled internally"),
     };

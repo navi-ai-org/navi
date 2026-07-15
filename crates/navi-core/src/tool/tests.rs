@@ -229,6 +229,8 @@ async fn legacy_file_tool_aliases_remain_registered_and_invokable() {
         "read_file",
         "write_file",
         "apply_patch",
+        "edit",
+        "multiedit",
         "grep",
         "fs_browser",
         "list_dir",
@@ -845,7 +847,7 @@ fn model_definitions_use_simplified_tool_schemas() {
     }
 
     let grep = executor
-        .definitions()
+        .all_definitions()
         .into_iter()
         .find(|definition| definition.name == "grep")
         .expect("grep definition");
@@ -2046,7 +2048,7 @@ fn model_facing_write_schema_allows_patch_mode() {
     let tempdir = tempfile::tempdir().expect("tempdir");
     let executor = executor(tempdir.path());
     let write = executor
-        .definitions()
+        .all_definitions()
         .into_iter()
         .find(|definition| definition.name == "write")
         .expect("write");
@@ -2064,3 +2066,105 @@ fn model_facing_write_schema_allows_patch_mode() {
     assert!(write.input_schema["properties"]["patch"].is_object());
     assert!(write.input_schema["properties"]["edits"].is_object());
 }
+
+
+#[test]
+fn visible_definitions_hide_aliases_and_keep_core_edit_loop() {
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let executor = executor(tempdir.path());
+    let names: Vec<String> = executor
+        .definitions()
+        .into_iter()
+        .map(|d| d.name)
+        .collect();
+
+    for core in [
+        "read_file",
+        "search",
+        "edit",
+        "write_file",
+        "bash",
+        "plan",
+        "question",
+        "tool_search",
+        "memory",
+    ] {
+        assert!(
+            names.iter().any(|n| n == core),
+            "missing core tool {core} in visible set: {names:?}"
+        );
+    }
+    for hidden in [
+        "read",
+        "view_file",
+        "grep",
+        "fs_browser",
+        "list_dir",
+        "glob",
+        "write",
+        "multiedit",
+        "apply_patch",
+        "request_user_input",
+    ] {
+        assert!(
+            !names.iter().any(|n| n == hidden),
+            "hidden alias {hidden} still visible: {names:?}"
+        );
+    }
+    for deferred in [
+        "code",
+        "code_edit",
+        "ast_search",
+        "package_manager",
+        "set_goal",
+        "sandbox",
+        "append_note",
+        "history_ops",
+        "current_time",
+        "sleep",
+    ] {
+        assert!(
+            !names.iter().any(|n| n == deferred),
+            "deferred tool {deferred} still visible: {names:?}"
+        );
+        // Still registered and invokable / searchable.
+        assert!(
+            executor.definition(deferred).is_some(),
+            "deferred tool {deferred} should remain registered"
+        );
+    }
+    // Runtime-only tools (registered by AgentRuntime, not bare ToolExecutor).
+    assert!(!names.iter().any(|n| n == "repo_explore"));
+    // Still invokable by name even if hidden from schema.
+    assert!(executor.definition("grep").is_some());
+    assert!(executor.definition("multiedit").is_some());
+    assert!(executor.definition("apply_patch").is_some());
+
+    // Core coding surface stays small for the model.
+    assert!(
+        names.len() <= 15,
+        "visible tool count too large ({}): {names:?}",
+        names.len()
+    );
+}
+
+#[test]
+fn tool_search_discovers_deferred_power_tools() {
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let executor = executor(tempdir.path());
+    let results = executor.search_tools("code symbols", 10);
+    let names: Vec<&str> = results.iter().map(|d| d.name.as_str()).collect();
+    assert!(
+        names
+            .iter()
+            .any(|n| *n == "code" || n.contains("symbol") || *n == "ast_search"),
+        "expected code/symbol tools from tool_search, got {names:?}"
+    );
+    let pkg = executor.search_tools("package dependency", 10);
+    assert!(
+        pkg.iter().any(|d| d.name == "package_manager"),
+        "package_manager should be discoverable: {:?}",
+        pkg.iter().map(|d| &d.name).collect::<Vec<_>>()
+    );
+}
+

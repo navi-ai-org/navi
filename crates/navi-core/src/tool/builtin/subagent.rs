@@ -92,7 +92,7 @@ impl Default for ApprovalMode {
 const MAX_BACKGROUND_SUBAGENTS: usize = 8;
 /// Nested agent spawners must not be available inside subagents.
 /// `repo_explore` is now BM25+symbols (cheap) and is allowed for subagents.
-const NESTED_AGENT_TOOLS: &[&str] = &["subagent", "branch_race"];
+const NESTED_AGENT_TOOLS: &[&str] = &["subagent"];
 /// Tool names considered to be "write" operations for ReadOnly mode.
 const READONLY_DENIED_TOOLS: &[&str] = &[
     "write",
@@ -101,7 +101,6 @@ const READONLY_DENIED_TOOLS: &[&str] = &[
     "code_edit",
     "code_exec",
     "bash",
-    "process",
     "sandbox",
     "package_manager",
     "mark_feature_done",
@@ -1382,7 +1381,6 @@ mod tests {
                 "read_file".to_string(),
                 "subagent".to_string(),
                 "repo_explore".to_string(),
-                "branch_race".to_string(),
                 "bash".to_string(),
             ]),
             ..Default::default()

@@ -56,6 +56,7 @@ impl GetGoalTool {
             metadata: ToolMetadata {
                 tags: vec!["goal".to_string(), "session".to_string()],
                 capabilities: vec!["goal.read".to_string()],
+                exposure: crate::tool::ToolExposure::Deferred,
                 ..ToolMetadata::default()
             },
         }
@@ -152,6 +153,7 @@ impl CreateGoalTool {
             metadata: ToolMetadata {
                 tags: vec!["goal".to_string(), "session".to_string()],
                 capabilities: vec!["goal.create".to_string()],
+                exposure: crate::tool::ToolExposure::Deferred,
                 ..ToolMetadata::default()
             },
         }
@@ -255,6 +257,7 @@ impl UpdateGoalTool {
             metadata: ToolMetadata {
                 tags: vec!["goal".to_string(), "session".to_string()],
                 capabilities: vec!["goal.update".to_string()],
+                exposure: crate::tool::ToolExposure::Deferred,
                 ..ToolMetadata::default()
             },
         }
@@ -471,6 +474,7 @@ impl UpdateGoalChecklistTool {
             metadata: ToolMetadata {
                 tags: vec!["goal".to_string(), "session".to_string()],
                 capabilities: vec!["goal.update".to_string()],
+                exposure: crate::tool::ToolExposure::Deferred,
                 ..ToolMetadata::default()
             },
         }

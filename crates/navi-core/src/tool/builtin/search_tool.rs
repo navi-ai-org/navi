@@ -76,7 +76,7 @@ impl Tool for SearchTool {
             self.name,
             match self.mode {
                 SearchToolMode::Unified => {
-                    "Search the project filesystem with action-based dispatch. Actions: grep (text search), list (recursive file listing), tree (directory tree), find (search by filename pattern), stat (file metadata). Paths in results are project-relative."
+                    "Preferred project search/navigation tool. Actions: grep (literal text search), list (recursive file listing), tree (directory tree), find/glob (filename pattern), stat (file metadata). Prefer this over separate grep/list_dir/glob/fs_browser aliases. Paths in results are project-relative."
                 }
                 SearchToolMode::Grep => {
                     "Search project files for literal text. Special characters are matched literally."

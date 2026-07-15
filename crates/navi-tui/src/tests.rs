@@ -2279,6 +2279,68 @@ fn queued_message_modal_edits_and_removes_items() {
 }
 
 #[test]
+fn queued_message_can_be_removed_with_d_key() {
+    let mut app = test_app("");
+    app.queued_user_messages
+        .push_back(crate::state::QueuedUserMessage {
+            text: "keep me".to_string(),
+            images: Vec::new(),
+        });
+    app.queued_user_messages
+        .push_back(crate::state::QueuedUserMessage {
+            text: "remove me".to_string(),
+            images: Vec::new(),
+        });
+    app.mode = Mode::MessageQueue;
+    app.modal_stack.open(ModalKind::MessageQueue);
+    app.queued_message_selected = 1;
+
+    handle_key(&mut app, KeyCode::Char('d'), KeyModifiers::NONE);
+
+    assert_eq!(app.queued_user_messages.len(), 1);
+    assert_eq!(app.queued_user_messages[0].text, "keep me");
+    assert_eq!(app.mode, Mode::MessageQueue);
+}
+
+#[test]
+fn queued_message_clear_all_with_shift_d() {
+    let mut app = test_app("");
+    app.queued_user_messages
+        .push_back(crate::state::QueuedUserMessage {
+            text: "a".to_string(),
+            images: Vec::new(),
+        });
+    app.queued_user_messages
+        .push_back(crate::state::QueuedUserMessage {
+            text: "b".to_string(),
+            images: Vec::new(),
+        });
+    app.mode = Mode::MessageQueue;
+    app.modal_stack.open(ModalKind::MessageQueue);
+
+    handle_key(&mut app, KeyCode::Char('D'), KeyModifiers::SHIFT);
+
+    assert!(app.queued_user_messages.is_empty());
+}
+
+#[test]
+fn queued_message_remove_via_helper_closes_when_empty() {
+    let mut app = test_app("");
+    app.queued_user_messages
+        .push_back(crate::state::QueuedUserMessage {
+            text: "only".to_string(),
+            images: Vec::new(),
+        });
+    app.mode = Mode::MessageQueue;
+    app.modal_stack.open(ModalKind::MessageQueue);
+
+    crate::keybindings::modals::remove_queued_message_at(&mut app, 0);
+
+    assert!(app.queued_user_messages.is_empty());
+}
+
+
+#[test]
 fn queued_message_editor_saves_terminal_newline_enter_variant() {
     let mut app = test_app("");
     app.queued_user_messages

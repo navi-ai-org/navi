@@ -18,7 +18,7 @@ impl ReadTool {
     pub(crate) fn new(project_root: PathBuf) -> Self {
         Self {
             project_root,
-            name: "read",
+            name: "read_file",
         }
     }
 
@@ -150,7 +150,7 @@ mod tests {
     fn definition_has_correct_name() {
         let tool = ReadTool::new(PathBuf::from("/tmp"));
         let def: ToolDefinition = tool.definition();
-        assert_eq!(def.name, "read");
+        assert_eq!(def.name, "read_file");
         assert!(def.description.contains("UTF-8 text file"));
         assert!(matches!(def.kind, ToolKind::Read));
     }
@@ -185,7 +185,7 @@ mod tests {
         let result = tool
             .invoke(ToolInvocation {
                 id: "t1".into(),
-                tool_name: "read".into(),
+                tool_name: "read_file".into(),
                 input: json!({ "path": "test.txt" }),
             })
             .await
@@ -210,7 +210,7 @@ mod tests {
         let result = tool
             .invoke(ToolInvocation {
                 id: "t2".into(),
-                tool_name: "read".into(),
+                tool_name: "read_file".into(),
                 input: json!({ "path": "test.txt", "start_line": 2, "end_line": 4 }),
             })
             .await
@@ -234,7 +234,7 @@ mod tests {
         let result = tool
             .invoke(ToolInvocation {
                 id: "t3".into(),
-                tool_name: "read".into(),
+                tool_name: "read_file".into(),
                 input: json!({ "path": "empty.txt" }),
             })
             .await
@@ -256,7 +256,7 @@ mod tests {
         let result = tool
             .invoke(ToolInvocation {
                 id: "t4".into(),
-                tool_name: "read".into(),
+                tool_name: "read_file".into(),
                 input: json!({ "path": "long.txt" }),
             })
             .await
@@ -281,7 +281,7 @@ mod tests {
         let result = tool
             .invoke(ToolInvocation {
                 id: "t5".into(),
-                tool_name: "read".into(),
+                tool_name: "read_file".into(),
                 input: json!({ "path": file_path.to_string_lossy() }),
             })
             .await
@@ -302,7 +302,7 @@ mod tests {
         let result = tool
             .invoke(ToolInvocation {
                 id: "t6".into(),
-                tool_name: "read".into(),
+                tool_name: "read_file".into(),
                 input: json!({ "path": "partial.txt" }),
             })
             .await
@@ -325,7 +325,7 @@ mod tests {
         let result = tool
             .invoke(ToolInvocation {
                 id: "t7".into(),
-                tool_name: "read".into(),
+                tool_name: "read_file".into(),
                 input: json!({ "path": "single.txt" }),
             })
             .await
@@ -348,7 +348,7 @@ mod tests {
         let result = tool
             .invoke(ToolInvocation {
                 id: "t8".into(),
-                tool_name: "read".into(),
+                tool_name: "read_file".into(),
                 input: json!({ "path": "nonexistent.txt" }),
             })
             .await;
@@ -366,7 +366,7 @@ mod tests {
         let result = tool
             .invoke(ToolInvocation {
                 id: "t9".into(),
-                tool_name: "read".into(),
+                tool_name: "read_file".into(),
                 input: json!({ "path": "short.txt", "start_line": 10 }),
             })
             .await
@@ -390,7 +390,7 @@ mod tests {
         let result = tool
             .invoke(ToolInvocation {
                 id: "t10".into(),
-                tool_name: "read".into(),
+                tool_name: "read_file".into(),
                 input: json!({ "path": "med.txt", "start_line": 5, "end_line": 999 }),
             })
             .await
@@ -412,7 +412,7 @@ mod tests {
         let result = tool
             .invoke(ToolInvocation {
                 id: "t11".into(),
-                tool_name: "read".into(),
+                tool_name: "read_file".into(),
                 input: json!({ "path": "notrail.txt" }),
             })
             .await

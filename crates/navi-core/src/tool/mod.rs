@@ -21,15 +21,15 @@ pub mod registry;
 #[cfg(test)]
 mod tests;
 
-use builtin::BranchRaceTool;
 #[cfg(feature = "browser")]
 use builtin::BrowserTool;
 use builtin::{
-    AppendNoteTool, BashTool, CodeExecTool, ContextRemainingTool, CurrentTimeTool, HistoryOpsTool,
-    InitSessionTool, MarkFeatureDoneTool, MemoryTool, NewContextWindowTool, PackageManagerTool,
-    PlanTool, ProcessTool, QuestionTool, ReadTool, RepoIntelligenceAction, RepoIntelligenceTool,
-    RequestUserInputTool, RuntimeInfoTool, SandboxTool, SearchTool, SetGoalTool, SleepTool,
-    ToolSearchTool, VerifierTool, ViewImageTool, WriteTool, builtin_metadata, truncate_tool_result,
+    AppendNoteTool, BashTool, CodeExecTool, ContextRemainingTool, CurrentTimeTool, EditTool,
+    HistoryOpsTool, InitSessionTool, MarkFeatureDoneTool, MemoryTool, MultiEditTool,
+    NewContextWindowTool, PackageManagerTool, PlanTool, QuestionTool, ReadTool,
+    RepoIntelligenceAction, RepoIntelligenceTool, RequestUserInputTool, RuntimeInfoTool,
+    SandboxTool, SearchTool, SetGoalTool, SleepTool, ToolSearchTool, ViewImageTool,
+    WriteTool, builtin_metadata, truncate_tool_result,
 };
 #[cfg(feature = "code-vfs")]
 use builtin::{CodeEditTool, CodeReadTool};
@@ -183,7 +183,6 @@ pub enum ToolCallInvalid {
 }
 
 const EXCLUSIVE_BATCH_TOOL_NAMES: &[&str] = &[
-    "branch_race_start",
     "plan",
     "question",
     // Nested model turns: serialize so parallel spawn storms cannot hang the
@@ -303,12 +302,12 @@ impl ToolExecutor {
             registry: ToolRegistry::new(),
         };
         executor.register(ReadTool::new(pr.clone()));
-        executor.register(ReadTool::alias(pr.clone(), "read_file"));
+        executor.register(ReadTool::alias(pr.clone(), "read"));
         executor.register(SearchTool::new(pr.clone()));
         executor.register(SearchTool::grep(pr.clone()));
         executor.register(SearchTool::fs_browser(pr.clone()));
         executor.register(WriteTool::apply_patch(pr.clone()));
-        executor.register(VerifierTool::new(pr));
+        executor.register(BashTool::new(pr.clone()));
         executor.register(RepoIntelligenceTool::new(
             policy.clone(),
             RepoIntelligenceAction::AstSearch,
@@ -846,10 +845,18 @@ impl ToolExecutor {
                 "results": results,
                 "total": results.len(),
                 "hint": if results.is_empty() {
-                    "No tools found. Try a different query."
+                    "No tools found. Try broader terms like: code, browser, package, memory, subagent, sandbox, goal."
                 } else {
-                    "Call a returned tool by its `name` with arguments matching `input_schema`."
+                    "These tools may be deferred (not always in the schema). Call a returned tool by its `name` with arguments matching `input_schema`."
                 },
+                "power_catalog": [
+                    "code / code_edit / ast_search / symbol_*: symbols and structured code nav",
+                    "repo_explore: BM25 semantic search",
+                    "package_manager: dependency install/add/update",
+                    "browser: headless UI testing",
+                    "subagent: nested agent",
+                    "apply_patch / sandbox / set_goal / history_ops: advanced workflows",
+                ],
             }),
         }
     }
@@ -859,7 +866,7 @@ impl ToolExecutor {
         invocation: &ToolInvocation,
     ) -> Vec<std::path::PathBuf> {
         let mut paths = Vec::new();
-        for key in ["path", "file"] {
+        for key in ["path", "file", "file_path"] {
             if let Some(path) = invocation.input.get(key).and_then(Value::as_str) {
                 push_unique_snapshot_path(
                     &mut paths,
@@ -962,18 +969,19 @@ impl ToolExecutor {
 
     fn register_builtin_tools(&mut self) {
         let pr = self.policy.project_root().to_path_buf();
-        self.register(ReadTool::new(pr.clone()));
-        self.register(ReadTool::alias(pr.clone(), "read_file"));
+        self.register(ReadTool::new(pr.clone())); // read_file (Direct)
+        self.register(ReadTool::alias(pr.clone(), "read")); // Hidden alias
         self.register(SearchTool::new(pr.clone()));
         self.register(SearchTool::grep(pr.clone()));
         self.register(SearchTool::fs_browser(pr.clone()));
         self.register(SearchTool::list_dir(pr.clone()));
         self.register(SearchTool::glob(pr.clone()));
+        self.register(EditTool::new(pr.clone()));
+        self.register(MultiEditTool::new(pr.clone()));
         self.register(WriteTool::new(pr.clone()));
         self.register(WriteTool::write_file(pr.clone()));
         self.register(WriteTool::apply_patch(pr.clone()));
         self.register(BashTool::new(pr.clone()));
-        self.register(ProcessTool::new(pr.clone()));
         self.register(QuestionTool);
         self.register(PlanTool::new(self.policy.clone()));
         self.register(PackageManagerTool::new(pr.clone()));
@@ -1011,7 +1019,6 @@ impl ToolExecutor {
             self.policy.clone(),
             RepoIntelligenceAction::OwnershipChurn,
         ));
-        self.register(BranchRaceTool);
         self.register(InitSessionTool::new(self.policy.clone()));
         self.register(MarkFeatureDoneTool::new(self.policy.clone()));
         self.register(AppendNoteTool::new(pr.clone()));
@@ -1029,7 +1036,6 @@ impl ToolExecutor {
         self.register(BrowserTool::new(pr.clone()));
         self.register(NewContextWindowTool::new());
         self.register(ToolSearchTool::new(Arc::new(self.registry.clone())));
-        self.register(VerifierTool::new(pr));
     }
 }
 
@@ -1139,16 +1145,14 @@ fn simplify_schema_object_for_model(object: &Map<String, Value>) -> Value {
 fn suggest_tool_replacements(tool_name: &str, available_tools: &[String]) -> Vec<String> {
     let lower = tool_name.trim().to_ascii_lowercase();
     let candidates: &[&str] = match lower.as_str() {
-        "list_files" | "ls" | "listdir" | "dir" | "list" | "list_dir" => {
-            &["list_dir", "fs_browser", "search", "glob"]
-        }
-        "find" | "find_files" => &["glob", "fs_browser", "search"],
-        "cat" | "type" | "open" | "view_file" | "read" | "view" => &["read_file", "read"],
-        "edit" | "patch" | "str_replace" | "search_replace" => {
-            &["write", "apply_patch", "write_file"]
-        }
-        "shell" | "run" | "terminal" | "exec" | "sh" | "cmd" => &["bash", "process"],
-        "rg" | "ripgrep" | "search_code" => &["grep", "search", "ast_search"],
+        "list_files" | "ls" | "listdir" | "dir" | "list" | "list_dir" | "find" | "find_files"
+        | "grep" | "glob" | "fs_browser" => &["search"],
+        "cat" | "type" | "open" | "view_file" | "read" | "view" => &["read_file"],
+        "patch" | "str_replace" | "search_replace" | "searchreplace" | "multiedit" | "multi_edit"
+        | "multi-edit" | "batched_edit" | "apply_patch" => &["edit", "write_file"],
+        "request_user_input" | "ask_user" | "ask" => &["question"],
+        "shell" | "run" | "terminal" | "exec" | "sh" | "cmd" | "process" => &["bash"],
+        "rg" | "ripgrep" | "search_code" => &["search", "code"],
         "symbols" | "symbol" | "symbols_overview" | "find_symbol" | "find_references"
         | "code_diagnostics" => &["code", "ast_search", "symbol_goto"],
         "replace_symbol_body"

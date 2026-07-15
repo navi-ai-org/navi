@@ -219,13 +219,14 @@ pub(crate) fn render_input(frame: &mut Frame<'_>, app: &mut TuiApp, area: Rect) 
             meta_area,
         );
 
+        // Meta line is right-aligned: hit boxes must use the same origin as paint.
+        let line_origin_x = meta_area
+            .x
+            .saturating_add(meta_area.width.saturating_sub(built.display_width as u16));
+
         // Context chip: hover reveals window %; click opens usage modal.
         if let Some((offset_cols, chip_w)) = built.context_range {
-            let full_w = built.display_width;
-            let start_x = meta_area
-                .x
-                .saturating_add(meta_area.width.saturating_sub(full_w as u16))
-                .saturating_add(offset_cols as u16);
+            let start_x = line_origin_x.saturating_add(offset_cols as u16);
             let hit_w = (chip_w as u16).min(
                 meta_area
                     .width
@@ -241,19 +242,22 @@ pub(crate) fn render_input(frame: &mut Frame<'_>, app: &mut TuiApp, area: Rect) 
             }
         }
 
-        if !app.queued_user_messages.is_empty() {
-            let queued_width = queued_footer_label(app).len() as u16;
-            app.register_hit(
-                Rect::new(
-                    meta_area.x,
-                    meta_area.y,
-                    queued_width.min(meta_area.width),
-                    1,
-                ),
-                4,
-                "open message queue",
-                HitAction::OpenMessageQueue,
+        // Queue chip: click opens the message queue. Geometry matches painted text.
+        if let Some((offset_cols, chip_w)) = built.queued_range {
+            let start_x = line_origin_x.saturating_add(offset_cols as u16);
+            let hit_w = (chip_w as u16).min(
+                meta_area
+                    .width
+                    .saturating_sub(start_x.saturating_sub(meta_area.x)),
             );
+            if hit_w > 0 {
+                app.register_hit(
+                    Rect::new(start_x, meta_area.y, hit_w, 1),
+                    22,
+                    "open message queue",
+                    HitAction::OpenMessageQueue,
+                );
+            }
         }
         if app.available_update.is_some() {
             // Click anywhere on the meta strip that starts with the update chip.
@@ -620,6 +624,8 @@ struct ComposerMetaBuilt {
     display_width: usize,
     /// `(start_col_in_line, chip_display_width)` for the context token meter.
     context_range: Option<(usize, usize)>,
+    /// `(start_col_in_line, chip_display_width)` for the "N queued" chip.
+    queued_range: Option<(usize, usize)>,
 }
 
 /// Right-side composer chrome.
@@ -642,19 +648,28 @@ fn composer_meta_right(app: &TuiApp, width: usize) -> ComposerMetaBuilt {
             line,
             display_width,
             context_range: None,
+            queued_range: None,
         };
     }
 
     let mut spans: Vec<Span<'static>> = Vec::new();
     let mut context_range: Option<(usize, usize)> = None;
+    let mut queued_range: Option<(usize, usize)> = None;
 
     if !app.queued_user_messages.is_empty() {
+        let label = queued_footer_label(app);
+        let start = spans_display_width(&spans);
+        let chip_w = display_width(&label);
+        let (fg, modifier) = if app.hover_queued_messages {
+            (accent(), Modifier::BOLD | Modifier::UNDERLINED)
+        } else {
+            (code_const(), Modifier::BOLD)
+        };
         spans.push(Span::styled(
-            queued_footer_label(app),
-            Style::default()
-                .fg(code_const())
-                .add_modifier(Modifier::BOLD),
+            label,
+            Style::default().fg(fg).add_modifier(modifier),
         ));
+        queued_range = Some((start, chip_w));
         spans.push(Span::styled(" · ", Style::default().fg(ghost())));
     }
     if let Some(info) = &app.available_update {
@@ -747,12 +762,14 @@ fn composer_meta_right(app: &TuiApp, width: usize) -> ComposerMetaBuilt {
             line: Line::from(vec![Span::styled(trimmed, Style::default().fg(muted()))]),
             display_width,
             context_range: None,
+            queued_range: None,
         };
     }
     ComposerMetaBuilt {
         line: Line::from(spans),
         display_width: total,
         context_range,
+        queued_range,
     }
 }
 
@@ -1089,14 +1106,47 @@ mod tests {
             .expect("draw");
 
         // Meta row is the last row of the input area (y = 0 + 5 - 1 = 4).
-        let hit = app
-            .hit_test(2, 4)
-            .or_else(|| app.hit_test(4, 4))
-            .expect("queued label hit on meta row");
-        assert!(matches!(
-            hit.action,
-            crate::ui::interaction::HitAction::OpenMessageQueue
-        ));
+        // Label is right-aligned on that row — scan the row for the hit.
+        let mut found = false;
+        for x in 0..72u16 {
+            if let Some(hit) = app.hit_test(x, 4) {
+                if matches!(
+                    hit.action,
+                    crate::ui::interaction::HitAction::OpenMessageQueue
+                ) {
+                    found = true;
+                    break;
+                }
+            }
+        }
+        assert!(found, "queued label hit should be registered on meta row");
+    }
+
+    #[test]
+    fn queued_footer_hover_changes_style_flag() {
+        let mut app = crate::tests::test_app("");
+        app.queued_user_messages
+            .push_back(crate::state::QueuedUserMessage {
+                text: "queued task".to_string(),
+                images: Vec::new(),
+            });
+        let built_idle = composer_meta_right(&app, 80);
+        app.hover_queued_messages = true;
+        let built_hover = composer_meta_right(&app, 80);
+        assert!(built_idle.queued_range.is_some());
+        assert!(built_hover.queued_range.is_some());
+        // Hover path still includes the queued label text.
+        let idle_text: String = built_idle.line.spans.iter().map(|s| s.content.as_ref()).collect();
+        let hover_text: String = built_hover.line.spans.iter().map(|s| s.content.as_ref()).collect();
+        assert!(idle_text.contains("queued"));
+        assert!(hover_text.contains("queued"));
+        // Style should differ (underlined/accent on hover).
+        let idle_style = built_idle.line.spans[0].style;
+        let hover_style = built_hover.line.spans[0].style;
+        assert_ne!(
+            idle_style, hover_style,
+            "hover should change style on queued chip"
+        );
     }
 
     #[test]

@@ -237,18 +237,23 @@ Built-in tools:
 | Tool | Kind | Purpose |
 |---|---|---|
 | `read_file` | Read | Read UTF-8 project files, optionally by line range |
-| `write_file` | Write | Write full UTF-8 file contents |
-| `apply_patch` | Write | Apply a unified diff with `git apply` |
-| `grep` | Read | Literal text search over project files |
-| `bash` | Command | Run a shell command with timeout, background tasks, and truncation |
-| `test_runner` | Command | Run project tests with structured output. Auto-detects cargo/jest/vitest/bun/pytest/go |
-| `build_runner` | Command | Build/compile with caching. Returns structured warnings/errors. Skips rebuild if no source changed |
-| `fs_browser` | Read | Browse filesystem: `list`, `tree`, `find`, `stat`. Replaces `list_files` |
-| `package_manager` | Write | Manage deps: `install`, `add`, `remove`, `update`, `check`. Auto-detects npm/bun/cargo/go |
-| `memory` | Write | Persistent auto-memory system with semantic search. Actions: `write`, `read`, `list`, `search`, `update`, `delete`. SQLite-backed with optional embedding model |
-| `append_note` | Write | Append temporary observations to the session notes scratchpad (SQLite) |
-| `history_ops` | Read | Query SQLite session history: `search`, `recent`, `get`, `summaries` |
-| `browser` | Command | Pluggable headless browser (`navi-browser`). Preferred engine: CloakBrowser Rust client ([PR #438](https://github.com/CloakHQ/CloakBrowser/pull/438)) via feature `browser-cloak`. CDP/Chrome is a temporary fallback. Actions: `status`, `open`, `goto`, `snapshot`, `screenshot`, `click`, `type`, `press`, `content`, `evaluate`, `close`, `doctor`. Artifacts under `{data_dir}/browser/`. |
+| `search` | Read | Preferred repo nav: `grep` / `list` / `tree` / `find` / `stat` (aliases `grep`, `fs_browser`, `list_dir`, `glob` remain invokable but Hidden) |
+| `edit` | Write | Exact string find-and-replace; supports `edits[]` multi-replace in one file (`multiedit` is a Hidden alias) |
+| `write_file` | Write | Create or overwrite full UTF-8 file contents |
+| `bash` | Command | Ad-hoc shell (timeout, background). Common readers (`sed`/`cat`/`rg`/`ls`) redirect to native tools |
+| `plan` | Custom | Work checklist (create/update/complete steps) |
+| `question` | Custom | Ask the user (choice or freeform) |
+| `tool_search` | Read | Discover Deferred power tools and return their schemas |
+| `memory` | Write | Durable auto-memory CRUD/search (SQLite; optional embeddings) |
+| `set_session_title` | Read | Set a short session title |
+| `apply_patch` | Write | Optional structured/unified patch (Hidden/power; prefer `edit`) |
+| `package_manager` | Write | Deps: `install` / `add` / `remove` / `update` / `check` (Deferred; also via bash native redirect) |
+| `browser` | Command | Headless browser (Deferred when not core; Cloak/CDP). Artifacts under `{data_dir}/browser/` |
+| `code` / `code_edit` | Read/Write | Symbol/AST navigation and symbol edits (Deferred; discover via `tool_search`) |
+| `subagent` | Command | Nested agent (Deferred) |
+| `append_note` / `history_ops` | Write/Read | Session notes and history search (Deferred) |
+
+**Exposure model:** only a small **Direct** core is listed in the model schema. Power tools are **Deferred** (discover with `tool_search`, still invokable by name). Aliases may be **Hidden** (not listed, still invokable).
 
 `ToolExecutor` validates invocations through `SecurityPolicy` before execution. Reads are allowed by default, writes and commands require approval by default, blocked commands are denied, paths are restricted to the project by default, NAVI private storage is denied, and writes to `.git` are denied.
 
@@ -428,7 +433,7 @@ NAVI implements a three-level conversation compaction system:
 
 ### Micro-Compact
 
-`micro_compact(messages, gap_threshold_minutes)` clears the `content` of tool result messages whose `tool_name` is in the read-only set (`read_file`, `fs_browser`, `grep`, `bash`). Write tools are never cleared. Cleared content is replaced with `[Old tool result content cleared]`.
+`micro_compact(messages, gap_threshold_minutes)` clears the `content` of tool result messages whose `tool_name` is in the read-only set (`read_file`, `search`, `fs_browser`, `grep`, `bash`, `tool_search`). Write tools (`edit`, `write_file`, `apply_patch`, …) are never cleared. Cleared content is replaced with `[Old tool result content cleared]`.
 
 ### Auto-Compact
 

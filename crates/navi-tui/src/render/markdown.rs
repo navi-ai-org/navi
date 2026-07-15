@@ -110,26 +110,34 @@ pub(crate) fn build_chat_render_for_messages(
             }
             ChatRole::Assistant => {
                 if msg.is_recap {
-                    // "Recap" label + one short summary (hard-cap 1 wrap line).
+                    // "Recap" label + short summary (hard-cap 3 visual lines).
                     let summary = msg.content.trim();
                     let label = "Recap ";
                     let label_w = display_width(label);
                     let body_width = chat_width.saturating_sub(label_w).max(16);
                     let mut wraps = wrap_text(summary, body_width);
-                    // One visual line preferred; allow a single wrap only if terminal is narrow.
-                    wraps.truncate(1);
+                    wraps.truncate(navi_core::RECAP_MAX_LINES.max(1));
                     if wraps.is_empty() {
                         wraps.push(String::new());
                     }
-                    let first = wraps.remove(0);
-                    rendered_lines.push(Line::from(vec![
-                        Span::styled(
-                            label.to_string(),
-                            Style::default().fg(signal()).add_modifier(Modifier::BOLD),
-                        ),
-                        Span::styled(first, Style::default().fg(muted())),
-                    ]));
-                    line_sources.push(ChatLineSource::Message(index));
+                    for (line_i, line) in wraps.into_iter().enumerate() {
+                        if line_i == 0 {
+                            rendered_lines.push(Line::from(vec![
+                                Span::styled(
+                                    label.to_string(),
+                                    Style::default().fg(signal()).add_modifier(Modifier::BOLD),
+                                ),
+                                Span::styled(line, Style::default().fg(muted())),
+                            ]));
+                        } else {
+                            // Indent continuation under the label.
+                            rendered_lines.push(Line::from(vec![
+                                Span::raw(" ".repeat(label_w)),
+                                Span::styled(line, Style::default().fg(muted())),
+                            ]));
+                        }
+                        line_sources.push(ChatLineSource::Message(index));
+                    }
                     index += 1;
                     continue;
                 }
@@ -776,7 +784,7 @@ fn render_compact_tool_line_with_width(
 fn tool_color(tool_name: &str) -> Color {
     match tool_name {
         "read_file" | "view_file" | "grep" | "fs_browser" => code_type(),
-        "write_file" | "apply_patch" => code_const(),
+        "write_file" | "apply_patch" | "edit" | "multiedit" | "write" => code_const(),
         "bash" => code_operator(),
         _ => accent(),
     }
