@@ -1023,4 +1023,3 @@ async fn invoke_check_dispatches_to_go() {
     assert!(result.ok);
     assert_eq!(result.output["manager"], "go");
 }
-
