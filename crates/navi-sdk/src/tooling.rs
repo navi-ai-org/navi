@@ -91,7 +91,6 @@ fn native_plugins_deprecated_warning(plugins: &[navi_core::PluginConfig]) -> Opt
 }
 
 /// Directories to scan for installed WASM plugin subfolders.
-
 #[cfg(feature = "wasm-plugins")]
 fn wasm_plugin_scan_roots(
     data_dir: &Path,

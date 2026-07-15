@@ -729,13 +729,10 @@ fn import_mcp_from_package(data_dir: &Path, installed_dir: &Path) -> Option<Stri
         ));
     };
     let mut config = if global_path.is_file() {
-        match std::fs::read_to_string(&global_path)
+        std::fs::read_to_string(&global_path)
             .ok()
             .and_then(|s| toml::from_str::<navi_core::NaviConfig>(&s).ok())
-        {
-            Some(c) => c,
-            None => navi_core::NaviConfig::default(),
-        }
+            .unwrap_or_default()
     } else {
         navi_core::NaviConfig::default()
     };
