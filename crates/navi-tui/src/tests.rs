@@ -4046,10 +4046,6 @@ fn command_palette_model_routing_entry_exists() {
     );
 }
 
-
-#[test]
-
-
 #[test]
 fn apply_patch_body_is_clean_diff_without_protocol_chrome() {
     let invocation = ToolInvocation {
