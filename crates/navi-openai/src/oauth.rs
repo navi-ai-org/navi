@@ -37,6 +37,10 @@ pub const XAI_GROK_CLI_BASE_URL: &str = "https://cli-chat-proxy.grok.com/v1";
 /// without this header (or with an outdated value). Keep in sync with a recent
 /// official Grok CLI release.
 pub const XAI_GROK_CLI_CLIENT_VERSION: &str = "0.2.99";
+/// Client mode used by the official Grok CLI surface.
+pub const XAI_GROK_CLI_CLIENT_MODE: &str = "chat";
+/// Client surface used for Grok Build / CLI subscription billing.
+pub const XAI_GROK_CLI_CLIENT_SURFACE: &str = "grok-build";
 /// Early refresh buffer: refresh when fewer than this many seconds remain.
 const XAI_REFRESH_SKEW_SECS: i64 = 300;
 
@@ -552,9 +556,13 @@ pub async fn xai_usage_report(access_token: &str) -> std::result::Result<XaiUsag
         ))
         .header("Authorization", format!("Bearer {access_token}"))
         .header("Accept", "application/json")
-        .header("User-Agent", "navi/0.1.0")
+        .header("User-Agent", format!("grok/{XAI_GROK_CLI_CLIENT_VERSION}"))
         .header("X-XAI-Token-Auth", "xai-grok-cli")
         .header("x-grok-client-version", XAI_GROK_CLI_CLIENT_VERSION)
+        .header("x-grok-client-mode", XAI_GROK_CLI_CLIENT_MODE)
+        .header("x-grok-client-surface", XAI_GROK_CLI_CLIENT_SURFACE)
+        .header("x-grok-client-identifier", xai_client_identifier())
+        .header("x-grok-agent-id", xai_client_identifier())
         .send()
         .await
         .map_err(|err| err.to_string())?;
@@ -1032,6 +1040,16 @@ fn xai_issuer() -> String {
         .unwrap_or_else(|| XAI_DEFAULT_ISSUER.to_string())
         .trim_end_matches('/')
         .to_string()
+}
+
+fn xai_client_identifier() -> String {
+    // Stable-enough id for Grok CLI-compatible billing headers.
+    std::env::var("HOSTNAME")
+        .or_else(|_| std::env::var("COMPUTERNAME"))
+        .ok()
+        .filter(|s| !s.is_empty())
+        .map(|host| format!("navi-{host}"))
+        .unwrap_or_else(|| "navi".to_string())
 }
 
 fn xai_client_id() -> String {
