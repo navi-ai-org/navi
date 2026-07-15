@@ -455,7 +455,10 @@ pub(crate) fn render_message_queue(frame: &mut Frame<'_>, app: &TuiApp, area: Re
             Span::styled("d/del", Style::default().fg(text()).bg(modal_bg())),
             Span::styled(" remove  ·  ", Style::default().fg(muted()).bg(modal_bg())),
             Span::styled("D", Style::default().fg(text()).bg(modal_bg())),
-            Span::styled(" clear all  ·  ", Style::default().fg(muted()).bg(modal_bg())),
+            Span::styled(
+                " clear all  ·  ",
+                Style::default().fg(muted()).bg(modal_bg()),
+            ),
             Span::styled("ctrl+↑/↓", Style::default().fg(text()).bg(modal_bg())),
             Span::styled(" move  ·  ", Style::default().fg(muted()).bg(modal_bg())),
             Span::styled("esc", Style::default().fg(text()).bg(modal_bg())),

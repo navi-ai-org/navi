@@ -28,8 +28,8 @@ use builtin::{
     HistoryOpsTool, InitSessionTool, MarkFeatureDoneTool, MemoryTool, MultiEditTool,
     NewContextWindowTool, PackageManagerTool, PlanTool, QuestionTool, ReadTool,
     RepoIntelligenceAction, RepoIntelligenceTool, RequestUserInputTool, RuntimeInfoTool,
-    SandboxTool, SearchTool, SetGoalTool, SleepTool, ToolSearchTool, ViewImageTool,
-    WriteTool, builtin_metadata, truncate_tool_result,
+    SandboxTool, SearchTool, SetGoalTool, SleepTool, ToolSearchTool, ViewImageTool, WriteTool,
+    builtin_metadata, truncate_tool_result,
 };
 #[cfg(feature = "code-vfs")]
 use builtin::{CodeEditTool, CodeReadTool};
@@ -183,8 +183,7 @@ pub enum ToolCallInvalid {
 }
 
 const EXCLUSIVE_BATCH_TOOL_NAMES: &[&str] = &[
-    "plan",
-    "question",
+    "plan", "question",
     // Nested model turns: serialize so parallel spawn storms cannot hang the
     // parent batch or thrash provider quotas.
     "subagent",
@@ -1148,8 +1147,8 @@ fn suggest_tool_replacements(tool_name: &str, available_tools: &[String]) -> Vec
         "list_files" | "ls" | "listdir" | "dir" | "list" | "list_dir" | "find" | "find_files"
         | "grep" | "glob" | "fs_browser" => &["search"],
         "cat" | "type" | "open" | "view_file" | "read" | "view" => &["read_file"],
-        "patch" | "str_replace" | "search_replace" | "searchreplace" | "multiedit" | "multi_edit"
-        | "multi-edit" | "batched_edit" | "apply_patch" => &["edit", "write_file"],
+        "patch" | "str_replace" | "search_replace" | "searchreplace" | "multiedit"
+        | "multi_edit" | "multi-edit" | "batched_edit" | "apply_patch" => &["edit", "write_file"],
         "request_user_input" | "ask_user" | "ask" => &["question"],
         "shell" | "run" | "terminal" | "exec" | "sh" | "cmd" | "process" => &["bash"],
         "rg" | "ripgrep" | "search_code" => &["search", "code"],

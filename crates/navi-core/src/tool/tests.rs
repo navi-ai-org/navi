@@ -2067,16 +2067,11 @@ fn model_facing_write_schema_allows_patch_mode() {
     assert!(write.input_schema["properties"]["edits"].is_object());
 }
 
-
 #[test]
 fn visible_definitions_hide_aliases_and_keep_core_edit_loop() {
     let tempdir = tempfile::tempdir().expect("tempdir");
     let executor = executor(tempdir.path());
-    let names: Vec<String> = executor
-        .definitions()
-        .into_iter()
-        .map(|d| d.name)
-        .collect();
+    let names: Vec<String> = executor.definitions().into_iter().map(|d| d.name).collect();
 
     for core in [
         "read_file",
@@ -2167,4 +2162,3 @@ fn tool_search_discovers_deferred_power_tools() {
         pkg.iter().map(|d| &d.name).collect::<Vec<_>>()
     );
 }
-

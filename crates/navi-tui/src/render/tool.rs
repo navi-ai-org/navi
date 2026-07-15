@@ -411,7 +411,7 @@ fn formatted_tool_output(invocation: &ToolInvocation, result: &ToolResult) -> Op
             | "new_context_window"
             | "tool_search"
             | "runtime_info"
-                        | "history_ops"
+            | "history_ops"
             | "sandbox"
             | "package_manager"
     ) {
@@ -557,8 +557,6 @@ fn render_search_output(invocation: &ToolInvocation, result: &ToolResult, conten
     }
 }
 
-
-
 fn render_test_runner_output(result: &ToolResult, content: &mut String) {
     if let Some(summary) = result.output.get("summary").and_then(|v| v.as_str()) {
         content.push_str(summary);
@@ -615,7 +613,6 @@ fn render_build_runner_output(result: &ToolResult, content: &mut String) {
 }
 
 /// Verifier body: real multi-line stdout/stderr (like bash), never ```json with `\n`.
-
 
 fn render_named_structured_output(title: &str, result: &ToolResult, content: &mut String) {
     if let Some(message) = result.output.get("message").and_then(|v| v.as_str()) {
@@ -1395,8 +1392,6 @@ fn fs_browser_summary(invocation: &ToolInvocation, result: &ToolResult) -> Strin
 // ═══════════════════════════════════════════════════════════════════════════
 // New: Process & Command tools
 // ═══════════════════════════════════════════════════════════════════════════
-
-
 
 fn test_runner_summary(_invocation: &ToolInvocation, result: &ToolResult) -> String {
     let framework = result
@@ -2299,8 +2294,6 @@ fn tool_search_summary(invocation: &ToolInvocation, result: &ToolResult) -> Stri
     format!("Tool search \"{query}\" ({count} results)")
 }
 
-
-
 fn runtime_info_summary(result: &ToolResult) -> String {
     let profile = result
         .output
@@ -2309,8 +2302,6 @@ fn runtime_info_summary(result: &ToolResult) -> String {
         .unwrap_or("?");
     format!("Runtime info: {profile} profile")
 }
-
-
 
 // ═══════════════════════════════════════════════════════════════════════════
 // New: History, Sandbox, Package Manager
