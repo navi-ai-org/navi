@@ -33,11 +33,14 @@ const XAI_DEFAULT_SCOPES: &str = "openid profile email offline_access grok-cli:a
 /// Official `grok` bills subscription quota here (`cli-chat-proxy`), while
 /// Platform keys use `https://api.x.ai/v1` (pay-as-you-go).
 pub const XAI_GROK_CLI_BASE_URL: &str = "https://cli-chat-proxy.grok.com/v1";
-/// Client version sent as `x-grok-client-version`. The proxy returns HTTP 426
-/// without this header (or with an outdated value). Keep in sync with a recent
-/// official Grok CLI release.
-pub const XAI_GROK_CLI_CLIENT_VERSION: &str = "0.2.99";
-/// Client mode used by the official Grok CLI surface.
+/// Fallback client version sent as `x-grok-client-version` when no installed
+/// Grok CLI binary can be discovered. The proxy returns HTTP 426 without this
+/// header (or with an outdated value).
+///
+/// Prefer [`xai_grok_cli_client_version`], which can pick up a newer installed
+/// `grok` binary under `~/.grok/downloads/`.
+pub const XAI_GROK_CLI_CLIENT_VERSION: &str = "0.2.101";
+/// Client mode used by the official Grok CLI surface for interactive chat.
 pub const XAI_GROK_CLI_CLIENT_MODE: &str = "chat";
 /// Client surface used for Grok Build / CLI subscription billing.
 pub const XAI_GROK_CLI_CLIENT_SURFACE: &str = "grok-build";
@@ -556,13 +559,16 @@ pub async fn xai_usage_report(access_token: &str) -> std::result::Result<XaiUsag
         ))
         .header("Authorization", format!("Bearer {access_token}"))
         .header("Accept", "application/json")
-        .header("User-Agent", format!("grok/{XAI_GROK_CLI_CLIENT_VERSION}"))
+        .header(
+            "User-Agent",
+            format!("grok/{}", xai_grok_cli_client_version()),
+        )
         .header("X-XAI-Token-Auth", "xai-grok-cli")
-        .header("x-grok-client-version", XAI_GROK_CLI_CLIENT_VERSION)
+        .header("x-grok-client-version", xai_grok_cli_client_version())
         .header("x-grok-client-mode", XAI_GROK_CLI_CLIENT_MODE)
         .header("x-grok-client-surface", XAI_GROK_CLI_CLIENT_SURFACE)
         .header("x-grok-client-identifier", xai_client_identifier())
-        .header("x-grok-agent-id", xai_client_identifier())
+        .header("x-grok-agent-id", xai_agent_id())
         .send()
         .await
         .map_err(|err| err.to_string())?;
@@ -727,7 +733,7 @@ where
         .header("Accept", "application/json")
         // Match official Grok CLI / Grok Build surface so the IdP issues a
         // short user_code (AAAA-BBBB) rather than a platform-style flow.
-        .header("x-grok-client-version", XAI_GROK_CLI_CLIENT_VERSION)
+        .header("x-grok-client-version", xai_grok_cli_client_version())
         .header("x-grok-client-surface", "grok-build")
         .header("User-Agent", "navi/0.1.0")
         .body(device_body)
@@ -822,7 +828,7 @@ where
             .post(format!("{}/oauth2/token", issuer.trim_end_matches('/')))
             .header("Content-Type", "application/x-www-form-urlencoded")
             .header("Accept", "application/json")
-            .header("x-grok-client-version", XAI_GROK_CLI_CLIENT_VERSION)
+            .header("x-grok-client-version", xai_grok_cli_client_version())
             .header("x-grok-client-surface", "grok-build")
             .header("User-Agent", "navi/0.1.0")
             .body(token_body)
@@ -1042,14 +1048,183 @@ fn xai_issuer() -> String {
         .to_string()
 }
 
-fn xai_client_identifier() -> String {
-    // Stable-enough id for Grok CLI-compatible billing headers.
-    std::env::var("HOSTNAME")
-        .or_else(|_| std::env::var("COMPUTERNAME"))
-        .ok()
-        .filter(|s| !s.is_empty())
-        .map(|host| format!("navi-{host}"))
-        .unwrap_or_else(|| "navi".to_string())
+/// Resolve the Grok CLI client version used for `x-grok-client-version`.
+///
+/// Order:
+/// 1. `NAVI_XAI_GROK_CLI_VERSION` override
+/// 2. Newest `grok-<semver>-*` binary under `~/.grok/downloads/`
+/// 3. [`XAI_GROK_CLI_CLIENT_VERSION`] compile-time fallback
+pub fn xai_grok_cli_client_version() -> String {
+    use std::sync::OnceLock;
+    static VERSION: OnceLock<String> = OnceLock::new();
+    VERSION
+        .get_or_init(|| {
+            if let Ok(v) = std::env::var("NAVI_XAI_GROK_CLI_VERSION") {
+                let v = v.trim();
+                if !v.is_empty() {
+                    return v.to_string();
+                }
+            }
+            if let Some(v) = discover_installed_grok_cli_version() {
+                return v;
+            }
+            XAI_GROK_CLI_CLIENT_VERSION.to_string()
+        })
+        .clone()
+}
+
+fn discover_installed_grok_cli_version() -> Option<String> {
+    let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE"))?;
+    let downloads = std::path::PathBuf::from(home).join(".grok").join("downloads");
+    let entries = std::fs::read_dir(downloads).ok()?;
+    let mut best: Option<(u64, u64, u64, String)> = None;
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        // grok-0.2.101-linux-x86_64 / grok-0.2.101
+        let Some(rest) = name.strip_prefix("grok-") else {
+            continue;
+        };
+        let ver = rest.split('-').next().unwrap_or(rest);
+        let mut parts = ver.split('.');
+        let (Some(major_s), Some(minor_s), Some(patch_s)) =
+            (parts.next(), parts.next(), parts.next())
+        else {
+            continue;
+        };
+        let (Ok(major), Ok(minor), Ok(patch)) = (
+            major_s.parse::<u64>(),
+            minor_s.parse::<u64>(),
+            patch_s.parse::<u64>(),
+        ) else {
+            continue;
+        };
+        let candidate = (major, minor, patch, ver.to_string());
+        if best.as_ref().is_none_or(|cur| candidate > *cur) {
+            best = Some(candidate);
+        }
+    }
+    best.map(|(_, _, _, v)| v)
+}
+
+/// Stable machine-scoped client identifier for Grok CLI headers
+/// (`x-grok-client-identifier`).
+///
+/// Prefer a durable id under NAVI's data dir (like Grok's `~/.grok/agent_id`).
+/// Falls back to a deterministic hash of machine-id / hostname so multi-instance
+/// NAVI processes on the same host share one fingerprint.
+pub fn xai_client_identifier() -> String {
+    use std::sync::OnceLock;
+    static ID: OnceLock<String> = OnceLock::new();
+    ID.get_or_init(load_or_create_xai_client_identifier).clone()
+}
+
+/// Stable agent id for Grok CLI headers (`x-grok-agent-id`).
+///
+/// Uses the same durable id as [`xai_client_identifier`] so multi-instance
+/// NAVI processes look like one Grok client machine, matching official CLI
+/// multi-window behavior.
+pub fn xai_agent_id() -> String {
+    xai_client_identifier()
+}
+
+fn load_or_create_xai_client_identifier() -> String {
+    if let Ok(v) = std::env::var("NAVI_XAI_CLIENT_IDENTIFIER") {
+        let v = v.trim();
+        if !v.is_empty() {
+            return v.to_string();
+        }
+    }
+
+    // Prefer Grok's own agent_id when present so NAVI and `grok` share identity.
+    if let Some(home) = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")) {
+        let grok_agent = std::path::PathBuf::from(&home).join(".grok").join("agent_id");
+        if let Ok(raw) = std::fs::read_to_string(&grok_agent) {
+            let id = raw.trim();
+            if !id.is_empty() {
+                return id.to_string();
+            }
+        }
+    }
+
+    if let Some(data_dir) = navi_data_dir() {
+        let path = data_dir.join("xai-client-id");
+        if let Ok(raw) = std::fs::read_to_string(&path) {
+            let id = raw.trim();
+            if !id.is_empty() {
+                return id.to_string();
+            }
+        }
+        let id = generate_xai_client_identifier();
+        if std::fs::create_dir_all(&data_dir).is_ok() {
+            let _ = std::fs::write(&path, format!("{id}\n"));
+        }
+        return id;
+    }
+
+    generate_xai_client_identifier()
+}
+
+fn navi_data_dir() -> Option<std::path::PathBuf> {
+    if let Ok(v) = std::env::var("NAVI_DATA_DIR") {
+        let v = v.trim();
+        if !v.is_empty() {
+            return Some(std::path::PathBuf::from(v));
+        }
+    }
+    if let Some(home) = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")) {
+        return Some(
+            std::path::PathBuf::from(home)
+                .join(".local")
+                .join("share")
+                .join("navi"),
+        );
+    }
+    None
+}
+
+fn generate_xai_client_identifier() -> String {
+    // Deterministic UUID-shaped id from machine fingerprint (no random dep).
+    let mut material = String::from("navi-xai-client");
+    if let Ok(mid) = std::fs::read_to_string("/etc/machine-id") {
+        material.push(':');
+        material.push_str(mid.trim());
+    } else if let Ok(host) = std::env::var("HOSTNAME").or_else(|_| std::env::var("COMPUTERNAME")) {
+        material.push(':');
+        material.push_str(&host);
+    }
+    let digest = Sha256::digest(material.as_bytes());
+    // Format first 16 bytes as 8-4-4-4-12 hex (UUID-like).
+    let mut hex = String::with_capacity(32);
+    for b in digest.iter().take(16) {
+        hex.push(b"0123456789abcdef"[(b >> 4) as usize] as char);
+        hex.push(b"0123456789abcdef"[(b & 0x0f) as usize] as char);
+    }
+    format!(
+        "{}-{}-{}-{}-{}",
+        &hex[0..8],
+        &hex[8..12],
+        &hex[12..16],
+        &hex[16..20],
+        &hex[20..32]
+    )
+}
+
+/// Opaque request id for `x-grok-req-id` / correlation headers.
+pub fn xai_new_request_id() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let pid = std::process::id();
+    let digest = Sha256::digest(format!("navi-req:{pid}:{nanos}").as_bytes());
+    let mut hex = String::with_capacity(32);
+    for b in digest.iter().take(16) {
+        hex.push(b"0123456789abcdef"[(b >> 4) as usize] as char);
+        hex.push(b"0123456789abcdef"[(b & 0x0f) as usize] as char);
+    }
+    hex
 }
 
 fn xai_client_id() -> String {
