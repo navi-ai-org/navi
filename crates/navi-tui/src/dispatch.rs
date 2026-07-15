@@ -11,7 +11,7 @@ use crate::chat::{
     finalize_active_assistant, remove_active_tool_placeholder, update_active_assistant_status,
 };
 use crate::errors::handle_model_error;
-use crate::notifications::{push_diagnostic, show_notification};
+use crate::notifications::{notify_job_done_if_unfocused, push_diagnostic, show_notification};
 use crate::providers::rebuild_provider;
 use crate::runtime::spawn_runtime_task;
 use crate::state::{
@@ -728,8 +728,10 @@ fn handle_agent_event(app: &mut TuiApp, event: AgentEvent) {
             });
             if status == GoalStatus::Complete {
                 show_notification(app, "Goal Completed", &objective);
+                notify_job_done_if_unfocused(app, "NAVI goal completed", &objective);
             } else if status == GoalStatus::Blocked {
                 show_notification(app, "Goal Blocked", &objective);
+                notify_job_done_if_unfocused(app, "NAVI goal blocked", &objective);
             }
         }
         AgentEvent::SetGoalRequested { .. } => {}
@@ -919,12 +921,49 @@ fn handle_turn_completed(app: &mut TuiApp, res: std::result::Result<String, Stri
     }
     if completed_ok {
         if let Some(assistant) = recap_text {
+            maybe_notify_turn_completed(app, &assistant);
             maybe_emit_session_recap(app, &assistant);
         }
         // Crush: refresh Hyper remaining credits after each successful prompt.
         maybe_refresh_account_usage_after_turn(app);
         drain_next_queued_message(app);
     }
+}
+
+/// OS toast when a turn finished and the user is not looking at the TUI.
+fn maybe_notify_turn_completed(app: &TuiApp, assistant_text: &str) {
+    // Still draining a queue — not idle yet; wait for the last turn.
+    if !app.queued_user_messages.is_empty() {
+        return;
+    }
+    let project = app
+        .project_dir
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .filter(|n| !n.is_empty())
+        .unwrap_or_else(|| "project".to_string());
+    let title = app
+        .session_title
+        .as_deref()
+        .map(str::trim)
+        .filter(|t| !t.is_empty())
+        .map(|t| format!("NAVI · {t}"))
+        .unwrap_or_else(|| format!("NAVI · {project}"));
+    let user_prompt = app
+        .messages
+        .iter()
+        .rev()
+        .find(|m| m.role == ChatRole::User)
+        .map(|m| m.content.as_str())
+        .unwrap_or("");
+    let body = if !user_prompt.trim().is_empty() {
+        user_prompt
+    } else if !assistant_text.trim().is_empty() {
+        assistant_text
+    } else {
+        "Turn completed."
+    };
+    notify_job_done_if_unfocused(app, title, body);
 }
 
 /// Background-refresh account usage for providers that expose a credits API.
@@ -1795,6 +1834,40 @@ mod tests {
         );
 
         assert_eq!(app.compact_state.consecutive_failures, u32::MAX);
+    }
+
+
+    #[test]
+    fn maybe_notify_turn_completed_skips_when_focused() {
+        let mut app = test_app("");
+        app.terminal_focused = true;
+        app.loaded_config.config.tui.desktop_notifications = true;
+        // Should not panic; focused => no OS toast attempt required.
+        super::maybe_notify_turn_completed(&app, "done");
+        assert!(app.terminal_focused);
+    }
+
+    #[test]
+    fn maybe_notify_turn_completed_skips_when_disabled() {
+        let mut app = test_app("");
+        app.terminal_focused = false;
+        app.loaded_config.config.tui.desktop_notifications = false;
+        super::maybe_notify_turn_completed(&app, "done");
+        assert!(!app.loaded_config.config.tui.desktop_notifications);
+    }
+
+    #[test]
+    fn maybe_notify_turn_completed_skips_while_queue_pending() {
+        let mut app = test_app("");
+        app.terminal_focused = false;
+        app.loaded_config.config.tui.desktop_notifications = true;
+        app.queued_user_messages
+            .push_back(crate::state::QueuedUserMessage {
+                text: "next".into(),
+                images: Vec::new(),
+            });
+        super::maybe_notify_turn_completed(&app, "done");
+        assert_eq!(app.queued_user_messages.len(), 1);
     }
 
     // ── TurnCompleted ─────────────────────────────────────────────────

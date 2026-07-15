@@ -144,6 +144,9 @@ pub struct TuiApp {
     pub(crate) full_tool_view: bool,
     pub(crate) compact_tool_visible_limit: usize,
     pub(crate) show_thinking: bool,
+    /// Whether the terminal reports focus (DEC 1004). Used to suppress OS
+    /// toasts when the user is already looking at NAVI.
+    pub(crate) terminal_focused: bool,
     pub(crate) selected_setting: usize,
     pub(crate) selected_theme: usize,
     pub(crate) theme_filter: String,
@@ -429,6 +432,9 @@ impl TuiApp {
             full_tool_view,
             compact_tool_visible_limit,
             show_thinking,
+            // Assume focused until FocusLost; terminals without focus tracking
+            // never emit FocusLost, so we keep the default and avoid noisy toasts.
+            terminal_focused: true,
             selected_setting: 0,
             selected_theme: ThemeId::ALL
                 .iter()

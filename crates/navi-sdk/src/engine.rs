@@ -1665,6 +1665,7 @@ impl NaviEngine {
                                 .tool_calling_mode
                                 .map(|m| format!("{:?}", m).to_lowercase()),
                             aggregator: provider.aggregator,
+                            extends: None,
                             defaults: navi_core::registry::provider_registry_defaults(&provider.id),
                             request_options: provider.request_options.clone().unwrap_or_default(),
                             models: merged,

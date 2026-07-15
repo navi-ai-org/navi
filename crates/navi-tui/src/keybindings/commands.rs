@@ -334,6 +334,21 @@ pub(crate) fn run_selected_command(app: &mut TuiApp) -> bool {
             crate::persistence::save_preferences(app);
             super::close_all_modals(app);
         }
+        CommandAction::ToggleDesktopNotifications => {
+            let enabled = !app.loaded_config.config.tui.desktop_notifications;
+            app.loaded_config.config.tui.desktop_notifications = enabled;
+            show_notification(
+                app,
+                "Desktop notifications",
+                if enabled {
+                    "Notify when a job finishes while unfocused."
+                } else {
+                    "Desktop notifications disabled."
+                },
+            );
+            crate::persistence::save_preferences(app);
+            super::close_all_modals(app);
+        }
         CommandAction::CyclePermissionMode => {
             super::global::cycle_permission_mode_for_command(app);
             super::close_all_modals(app);

@@ -507,11 +507,13 @@ where
                     // that happened while we were away (alternate screen
                     // may have been partially overwritten, cursor position
                     // may be wrong, etc).
+                    app.terminal_focused = true;
                     leaked_terminal_sequence_filter.reset();
                     terminal.clear()?;
                     needs_draw = true;
                 }
                 Event::FocusLost => {
+                    app.terminal_focused = false;
                     leaked_terminal_sequence_filter.reset();
                 }
                 _ => {}
