@@ -365,6 +365,9 @@ impl NaviPanelContext {
 
     /// Get mutable access to TuiApp. Safe within the single-threaded render loop.
     #[allow(dead_code)]
+    // Intentional: context holds `*mut TuiApp` so panels can mutate app state from
+    // an immutable PanelContext borrow during the single-threaded render/event loop.
+    #[allow(clippy::mut_from_ref)]
     pub fn app_mut(&self) -> &mut TuiApp {
         unsafe { &mut *self.app }
     }

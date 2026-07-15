@@ -11,8 +11,6 @@ use super::syntax::{CodeHighlighter, highlight_code_line};
 use super::text::{display_width, wrap_inline_spans_to_width, wrap_spans_to_width, wrap_text};
 use super::tool::{tool_compact_text, tool_running_text};
 
-const USER_MESSAGE_VERTICAL_PADDING: usize = 0;
-
 /// Blank line between structural markdown blocks (prose ↔ table/code/heading).
 /// outer_vpad / block breathing room.
 const MD_BLOCK_V_GAP: usize = 1;
@@ -313,10 +311,6 @@ fn render_user_message_lines(
     let wrapped = wrap_text(display, content_width);
     let mut lines = Vec::new();
 
-    for _ in 0..USER_MESSAGE_VERTICAL_PADDING {
-        lines.push(user_blank_card_line(width));
-    }
-
     for (i, line) in wrapped.into_iter().enumerate() {
         let is_first = i == 0;
         let mut spans = vec![Span::styled(
@@ -375,9 +369,6 @@ fn render_user_message_lines(
         lines.push(Line::from(spans));
     }
 
-    for _ in 0..USER_MESSAGE_VERTICAL_PADDING {
-        lines.push(user_blank_card_line(width));
-    }
     lines
 }
 
@@ -462,13 +453,6 @@ fn style_user_line_with_image_tags(line: &str, fallback: Color) -> Vec<Span<'sta
 }
 
 /// Full-width blank strip of the user sticky bar (panel background).
-fn user_blank_card_line(width: usize) -> Line<'static> {
-    Line::from(Span::styled(
-        " ".repeat(width.max(1)),
-        Style::default().fg(muted()).bg(panel()),
-    ))
-}
-
 fn text_color_for_user() -> Color {
     text()
 }
