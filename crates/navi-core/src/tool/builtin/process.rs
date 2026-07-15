@@ -24,6 +24,51 @@ const MAX_WAIT_MS: u64 = 60_000;
 const OUTPUT_LIMIT_BYTES: usize = 64 * 1024;
 const MAX_PROCESSES: usize = 8;
 
+
+/// Put the child in its own process group so timeout kills the whole tree.
+#[cfg(unix)]
+fn configure_process_group(cmd: &mut tokio::process::Command) {
+    // SAFETY: called before spawn; setpgid(0,0) makes the child a group leader.
+    // tokio::process::Command re-exports the same pre_exec hook as std.
+    unsafe {
+        cmd.pre_exec(|| {
+            let _ = libc_setpgid(0, 0);
+            Ok(())
+        });
+    }
+}
+
+#[cfg(not(unix))]
+fn configure_process_group(_cmd: &mut tokio::process::Command) {}
+
+async fn kill_timed_out_child(child: &mut tokio::process::Child) {
+    #[cfg(unix)]
+    {
+        if let Some(pid) = child.id() {
+            let _ = std::process::Command::new("kill")
+                .args(["-KILL", &format!("-{pid}")])
+                .status();
+        }
+    }
+    let _ = child.start_kill();
+    let _ = tokio::time::timeout(Duration::from_secs(2), child.wait()).await;
+}
+
+#[cfg(unix)]
+fn libc_setpgid(pid: i32, pgid: i32) -> i32 {
+    unsafe { libc_setpgid_raw(pid, pgid) }
+}
+
+#[cfg(unix)]
+unsafe fn libc_setpgid_raw(pid: i32, pgid: i32) -> i32 {
+    unsafe extern "C" {
+        fn setpgid(pid: i32, pgid: i32) -> i32;
+    }
+    unsafe { setpgid(pid, pgid) }
+}
+
+
+
 // ── ProcessManager (quota config) ─────────────────────────────────────────────
 
 /// Quota and configuration for process execution.
@@ -298,13 +343,15 @@ impl ManagedProcess {
         max_output_bytes: usize,
     ) -> Result<Self> {
         let (program, args) = split_command(&command);
-        let mut child = tokio::process::Command::new(&program)
-            .args(&args)
+        let mut cmd = tokio::process::Command::new(&program);
+        cmd.args(&args)
             .current_dir(&project_root)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
-            .kill_on_drop(true)
+            .kill_on_drop(true);
+        configure_process_group(&mut cmd);
+        let mut child = cmd
             .spawn()
             .with_context(|| format!("failed to spawn process: {command}"))?;
 
@@ -353,8 +400,7 @@ impl ManagedProcess {
         self.refresh_status().await;
         let mut child = self.child.lock().await;
         if let Some(child_ref) = child.as_mut() {
-            let _ = child_ref.kill().await;
-            let _ = child_ref.wait().await;
+            kill_timed_out_child(child_ref).await;
         }
         *child = None;
         {
@@ -367,7 +413,11 @@ impl ManagedProcess {
 
     async fn cancel(&self, invocation_id: String) -> ToolResult {
         self.cancel_inner().await;
-        helpers::ok(invocation_id, self.observation_json().await)
+        ToolResult {
+            invocation_id,
+            ok: false,
+            output: self.observation_json().await,
+        }
     }
 
     async fn observe(&self, wait_ms: u64, invocation_id: String) -> ToolResult {
@@ -379,7 +429,17 @@ impl ManagedProcess {
             }
             tokio::time::sleep(Duration::from_millis(25)).await;
         }
-        helpers::ok(invocation_id, self.observation_json().await)
+        let output = self.observation_json().await;
+        let state = self.snapshot_state();
+        let ok = match state.status {
+            ProcStatus::Completed | ProcStatus::Running => true,
+            ProcStatus::Failed | ProcStatus::TimedOut | ProcStatus::Cancelled => false,
+        };
+        ToolResult {
+            invocation_id,
+            ok,
+            output,
+        }
     }
 
     async fn refresh_status(&self) {
@@ -400,8 +460,7 @@ impl ManagedProcess {
                 *state = ProcState::completed(status.success(), status.code());
             }
             Ok(None) if timed_out => {
-                let _ = child_ref.kill().await;
-                let _ = child_ref.wait().await;
+                kill_timed_out_child(child_ref).await;
                 *child = None;
                 let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
                 *state = ProcState::timed_out();
@@ -560,12 +619,14 @@ async fn run_foreground(
         });
     }
 
-    let mut child = tokio::process::Command::new(&program)
-        .args(&args)
+    let mut cmd = tokio::process::Command::new(&program);
+    cmd.args(&args)
         .current_dir(project_root)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .kill_on_drop(true)
+        .kill_on_drop(true);
+    configure_process_group(&mut cmd);
+    let mut child = cmd
         .spawn()
         .with_context(|| format!("failed to spawn process: {command}"))?;
 
@@ -587,11 +648,14 @@ async fn run_foreground(
             None,
             Some(format!("failed to wait for process: {e}")),
         ),
-        Err(_) => (
-            false,
-            None,
-            Some("process timed out: deadline has elapsed".to_string()),
-        ),
+        Err(_) => {
+            kill_timed_out_child(&mut child).await;
+            (
+                false,
+                None,
+                Some("process timed out: deadline has elapsed".to_string()),
+            )
+        }
     };
 
     // Give readers a moment to drain remaining output.
