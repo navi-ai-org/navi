@@ -524,8 +524,6 @@ impl NaviEngine {
         })
     }
 
-    /// Cancels the currently active turn for the given session.
-
     /// Returns the current goal for a session.
     pub async fn get_goal(&self, session_id: &str) -> Result<Option<SessionGoal>> {
         let session = self.session(session_id)?;
@@ -593,6 +591,7 @@ impl NaviEngine {
         Ok(runtime.update_goal_task_status(task_id, status))
     }
 
+    /// Cancels the currently active turn for the given session.
     pub async fn cancel_turn(&self, session_id: &str) -> Result<()> {
         let session = self.session(session_id)?;
         session.turn_canceller.cancel();
