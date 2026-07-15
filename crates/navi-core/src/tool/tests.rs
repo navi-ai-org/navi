@@ -2162,3 +2162,98 @@ fn tool_search_discovers_deferred_power_tools() {
         pkg.iter().map(|d| &d.name).collect::<Vec<_>>()
     );
 }
+
+#[tokio::test]
+async fn edit_accepts_absolute_path_through_executor() {
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let executor = executor(tempdir.path());
+    let target = tempdir.path().join("notes.rs");
+    std::fs::write(&target, "fn old() {}\n").unwrap();
+
+    let result = executor
+        .invoke(ToolInvocation {
+            id: "edit-abs".to_string(),
+            tool_name: "edit".to_string(),
+            input: json!({
+                "path": target.display().to_string(),
+                "old_string": "old",
+                "new_string": "new"
+            }),
+        })
+        .await;
+
+    assert!(result.ok, "{:?}", result.output);
+    assert_eq!(std::fs::read_to_string(&target).unwrap(), "fn new() {}\n");
+}
+
+#[tokio::test]
+async fn restricted_executor_denies_edit_outside_project() {
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let project = tempdir.path().join("project");
+    let outside = tempdir.path().join("outside.txt");
+    std::fs::create_dir_all(&project).unwrap();
+    std::fs::write(&outside, "secret\n").unwrap();
+    let policy = SecurityPolicy::new(
+        project,
+        tempdir.path().join(".navi-data"),
+        SecurityConfig {
+            permission_mode: PermissionMode::Restricted,
+            ..SecurityConfig::default()
+        },
+    )
+    .expect("policy");
+    let executor = ToolExecutor::new(policy);
+
+    let result = executor
+        .invoke(ToolInvocation {
+            id: "edit-out".to_string(),
+            tool_name: "edit".to_string(),
+            input: json!({
+                "path": outside.display().to_string(),
+                "old_string": "secret",
+                "new_string": "leaked"
+            }),
+        })
+        .await;
+
+    assert!(
+        !result.ok,
+        "restricted mode must deny outside-project edits"
+    );
+    assert_eq!(std::fs::read_to_string(&outside).unwrap(), "secret\n");
+}
+
+#[tokio::test]
+async fn yolo_executor_allows_edit_outside_project() {
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let project = tempdir.path().join("project");
+    let outside = tempdir.path().join("outside.txt");
+    std::fs::create_dir_all(&project).unwrap();
+    std::fs::write(&outside, "secret\n").unwrap();
+    let policy = SecurityPolicy::new(
+        project,
+        tempdir.path().join(".navi-data"),
+        SecurityConfig {
+            permission_mode: PermissionMode::Yolo,
+            restrict_paths_to_project: false,
+            ..SecurityConfig::default()
+        },
+    )
+    .expect("policy");
+    let executor = ToolExecutor::new(policy);
+
+    let result = executor
+        .invoke(ToolInvocation {
+            id: "edit-out-yolo".to_string(),
+            tool_name: "edit".to_string(),
+            input: json!({
+                "path": outside.display().to_string(),
+                "old_string": "secret",
+                "new_string": "changed"
+            }),
+        })
+        .await;
+
+    assert!(result.ok, "{:?}", result.output);
+    assert_eq!(std::fs::read_to_string(&outside).unwrap(), "changed\n");
+}

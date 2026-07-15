@@ -46,7 +46,7 @@ default-members = [
 ]
 
 [workspace.package]
-version = "0.2.5"
+version = "0.2.6"
 edition = "2024"
 license = "Apache-2.0"
 description = "Local agentic engine and terminal-first coding agent."
@@ -107,22 +107,22 @@ tree-sitter-rust = "0.24.2"
 tree-sitter-typescript = "0.23.2"
 tempfile = "3"
 wiremock = "0.6"
-navi-browser = { version = "0.2.5", path = "crates/navi-browser" }
-navi-core = { version = "0.2.5", path = "crates/navi-core" }
-navi-dart = { version = "0.2.5", path = "crates/navi-dart" }
-navi-mcp = { version = "0.2.5", path = "crates/navi-mcp" }
+navi-browser = { version = "0.2.6", path = "crates/navi-browser" }
+navi-core = { version = "0.2.6", path = "crates/navi-core" }
+navi-dart = { version = "0.2.6", path = "crates/navi-dart" }
+navi-mcp = { version = "0.2.6", path = "crates/navi-mcp" }
 napi = { version = "3.9.4", features = ["async", "serde-json"] }
 napi-build = "2.3.2"
 napi-derive = "3.5.7"
-navi-openai = { version = "0.2.5", path = "crates/navi-openai" }
-navi-plugin-api = { version = "0.2.5", path = "crates/navi-plugin-api" }
-navi-plugin-broker = { version = "0.2.5", path = "crates/navi-plugin-broker" }
-navi-providers = { version = "0.2.5", path = "crates/navi-providers" }
-navi-plugin-manifest = { version = "0.2.5", path = "crates/navi-plugin-manifest" }
-navi-plugin-orchestrator = { version = "0.2.5", path = "crates/navi-plugin-orchestrator", default-features = false }
-navi-plugin-runtime = { version = "0.2.5", path = "crates/navi-plugin-runtime" }
-navi-sdk = { version = "0.2.5", path = "crates/navi-sdk" }
-navi-server = { version = "0.2.5", path = "crates/navi-server" }
-navi-tui = { version = "0.2.5", path = "crates/navi-tui" }
-navi-voice = { version = "0.2.5", path = "crates/navi-voice", default-features = false }
-navi-vfs = { version = "0.2.5", path = "crates/navi-vfs" }
+navi-openai = { version = "0.2.6", path = "crates/navi-openai" }
+navi-plugin-api = { version = "0.2.6", path = "crates/navi-plugin-api" }
+navi-plugin-broker = { version = "0.2.6", path = "crates/navi-plugin-broker" }
+navi-providers = { version = "0.2.6", path = "crates/navi-providers" }
+navi-plugin-manifest = { version = "0.2.6", path = "crates/navi-plugin-manifest" }
+navi-plugin-orchestrator = { version = "0.2.6", path = "crates/navi-plugin-orchestrator", default-features = false }
+navi-plugin-runtime = { version = "0.2.6", path = "crates/navi-plugin-runtime" }
+navi-sdk = { version = "0.2.6", path = "crates/navi-sdk" }
+navi-server = { version = "0.2.6", path = "crates/navi-server" }
+navi-tui = { version = "0.2.6", path = "crates/navi-tui" }
+navi-voice = { version = "0.2.6", path = "crates/navi-voice", default-features = false }
+navi-vfs = { version = "0.2.6", path = "crates/navi-vfs" }

@@ -200,7 +200,7 @@ pub(crate) fn tool_compact_text(invocation: &ToolInvocation, result: &ToolResult
     };
 
     if !result.ok {
-        if let Some(error) = result.output.get("error").and_then(|v| v.as_str()) {
+        if let Some(error) = tool_error_message(&result.output) {
             text.push_str(&format!(" · error: {}", one_line(error)));
         } else {
             text.push_str(" · error");
@@ -233,45 +233,11 @@ fn formatted_tool_output(invocation: &ToolInvocation, result: &ToolResult) -> Op
     let obj = result.output.as_object()?;
     let mut content = String::new();
 
-    if let Some(error) = obj.get("error").and_then(|v| v.as_str()) {
-        // Header card already shows `· error: …`. Only repeat the message in the
-        // body when there is additional stream/output context; otherwise the same
-        // string appears twice (compact line + expanded body).
-        let has_extra = obj
-            .get("stdout")
-            .and_then(|v| v.as_str())
-            .is_some_and(|s| !s.trim().is_empty())
-            || obj
-                .get("stderr")
-                .and_then(|v| v.as_str())
-                .is_some_and(|s| !s.trim().is_empty())
-            || obj.keys().any(|k| {
-                !matches!(
-                    k.as_str(),
-                    "error" | "stdout" | "stderr" | "status" | "exit_code" | "schema_version"
-                )
-            });
-
-        if has_extra {
-            // Keep a short label only when streams/details follow.
-            content.push_str(&format!("Error: {error}\n"));
-        }
-        if invocation.tool_name == "bash" {
-            // plain streams only — no Stdout:/``` fences or raw JSON dump.
-            append_shell_streams(obj, &mut content);
-            // Empty body is fine: the compact header already carries the error.
-            return Some(content);
-        }
-        if has_extra {
-            append_json_section(&mut content, "Output", &result.output);
-            return Some(content);
-        }
-        // Error-only payload: body empty; header has the message.
-        return Some(content);
-    }
-
-    if !result.ok && invocation.tool_name != "bash" {
-        return None;
+    // Prefer structured error rendering for any failed tool (or success payloads
+    // that still carry an `error` field). Never dump the full error envelope as
+    // raw ```json — that is what made edit failures look unprofessional.
+    if !result.ok || obj.get("error").and_then(|v| v.as_str()).is_some() {
+        return Some(render_tool_error_body(invocation, result, obj));
     }
 
     if matches!(
@@ -416,6 +382,24 @@ fn formatted_tool_output(invocation: &ToolInvocation, result: &ToolResult) -> Op
             | "package_manager"
     ) {
         render_named_structured_output("Output", result, &mut content);
+    } else if obj.contains_key("stdout")
+        || obj.contains_key("stderr")
+        || obj.contains_key("raw_output")
+    {
+        // process / verifier / any stream-bearing tool not listed above:
+        // plain streams, never dump the whole result as ```json.
+        if let Some(summary) = obj.get("summary").and_then(|v| v.as_str()) {
+            content.push_str(summary);
+            content.push_str("\n\n");
+        } else if let Some(message) = obj.get("message").and_then(|v| v.as_str()) {
+            content.push_str(message);
+            content.push_str("\n\n");
+        }
+        if let Some(raw) = obj.get("raw_output").and_then(|v| v.as_str()) {
+            append_plain_stream(&mut content, raw);
+        } else {
+            append_shell_streams(obj, &mut content);
+        }
     } else {
         return None;
     }
@@ -427,20 +411,36 @@ fn formatted_tool_output(invocation: &ToolInvocation, result: &ToolResult) -> Op
 }
 
 fn generic_tool_summary(invocation: &ToolInvocation, result: &ToolResult) -> String {
-    let mut content = String::new();
-    if result.ok {
-        content.push_str(&format!(
-            "{} completed successfully\n",
-            humanize_tool_name(&invocation.tool_name)
-        ));
-    } else if let Some(error) = result.output.get("error").and_then(|v| v.as_str()) {
-        content.push_str(&format!("Error: {error}\n"));
-    } else {
-        content.push_str(&format!(
-            "{} failed\n",
-            humanize_tool_name(&invocation.tool_name)
-        ));
+    if !result.ok {
+        if let Some(obj) = result.output.as_object() {
+            return render_tool_error_body(invocation, result, obj);
+        }
+        return format!("{} failed\n", humanize_tool_name(&invocation.tool_name));
     }
+
+    let mut content = String::new();
+    // Stream-bearing successes: plain text only (process/verifier fallback path).
+    if let Some(obj) = result.output.as_object()
+        && (obj.contains_key("stdout")
+            || obj.contains_key("stderr")
+            || obj.contains_key("raw_output"))
+    {
+        if let Some(summary) = obj.get("summary").and_then(|v| v.as_str()) {
+            content.push_str(summary);
+            content.push_str("\n\n");
+        }
+        if let Some(raw) = obj.get("raw_output").and_then(|v| v.as_str()) {
+            append_plain_stream(&mut content, raw);
+        } else {
+            append_shell_streams(obj, &mut content);
+        }
+        return content;
+    }
+
+    content.push_str(&format!(
+        "{} completed successfully\n",
+        humanize_tool_name(&invocation.tool_name)
+    ));
 
     // Prefer a short human summary of common keys over raw JSON dumps.
     if let Some(summary) = human_output_summary(&result.output) {
@@ -458,6 +458,144 @@ fn generic_tool_summary(invocation: &ToolInvocation, result: &ToolResult) -> Str
         append_json_section(&mut content, "Input", &invocation.input);
         append_json_section(&mut content, "Output", &result.output);
     }
+    content
+}
+
+/// Extract the human-facing failure message from a tool result payload.
+///
+/// Tools use either `error` (common) or `message` (`helpers::tool_error` contract).
+fn tool_error_message(output: &Value) -> Option<&str> {
+    output
+        .get("error")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .or_else(|| {
+            output
+                .get("message")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty())
+        })
+}
+
+/// Keys that form the standard tool-error envelope. These must never force a
+/// raw JSON dump by themselves — the UI should render them as plain fields.
+const ERROR_ENVELOPE_KEYS: &[&str] = &[
+    "error",
+    "error_code",
+    "error_kind",
+    "hint",
+    "recoverable",
+    "retryable",
+    "message",
+    "status",
+    "stdout",
+    "stderr",
+    "exit_code",
+    "schema_version",
+    "raw_output",
+    "duration_ms",
+    "elapsed_ms",
+    "tool",
+];
+
+fn is_error_envelope_key(key: &str) -> bool {
+    ERROR_ENVELOPE_KEYS.contains(&key)
+}
+
+/// Professional error body for tool cards.
+///
+/// Header already carries `· error: <message>`. Body adds actionable context
+/// (hint, code, streams, simple fields) and only falls back to JSON for nested
+/// leftovers the model/human still need to inspect.
+fn render_tool_error_body(
+    invocation: &ToolInvocation,
+    result: &ToolResult,
+    obj: &serde_json::Map<String, Value>,
+) -> String {
+    let mut content = String::new();
+    let error = tool_error_message(&result.output);
+    let hint = obj
+        .get("hint")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty() && *s != "null");
+    let error_code = obj
+        .get("error_code")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty());
+
+    let has_stdout = obj
+        .get("stdout")
+        .and_then(|v| v.as_str())
+        .is_some_and(|s| !s.trim().is_empty());
+    let has_stderr = obj
+        .get("stderr")
+        .and_then(|v| v.as_str())
+        .is_some_and(|s| !s.trim().is_empty());
+    let has_streams = has_stdout || has_stderr;
+
+    // Extra non-envelope keys (framework, path, suggestions, problems, …).
+    let extra_keys: Vec<&str> = obj
+        .keys()
+        .filter(|k| !is_error_envelope_key(k.as_str()))
+        .map(|k| k.as_str())
+        .collect();
+    let has_extra = !extra_keys.is_empty();
+
+    // Repeat Error: only when the body has more context below it. Pure
+    // envelope errors stay header-only to avoid double-printing the message.
+    let should_repeat_error = has_streams || has_extra;
+    if should_repeat_error {
+        if let Some(error) = error {
+            content.push_str(&format!("Error: {error}\n"));
+        } else {
+            content.push_str(&format!(
+                "Error: {} failed\n",
+                humanize_tool_name(&invocation.tool_name)
+            ));
+        }
+    }
+
+    if let Some(code) = error_code {
+        // Always surface the stable code — models and users use it to recover.
+        content.push_str(&format!("Code: {code}\n"));
+    }
+    if let Some(hint) = hint {
+        content.push_str(&format!("Hint: {hint}\n"));
+    }
+
+    if invocation.tool_name == "bash" || has_streams {
+        append_shell_streams(obj, &mut content);
+    }
+
+    if has_extra {
+        // Humanize simple extra fields first.
+        let mut leftover = serde_json::Map::new();
+        for key in &extra_keys {
+            if let Some(val) = obj.get(*key) {
+                match val {
+                    Value::String(s)
+                        if !s.is_empty()
+                            && s.len() < 400
+                            && !s.contains('\n')
+                            && *key != "error" =>
+                    {
+                        content.push_str(&format!("{key}: {s}\n"));
+                    }
+                    Value::Number(n) => content.push_str(&format!("{key}: {n}\n")),
+                    Value::Bool(b) => content.push_str(&format!("{key}: {b}\n")),
+                    Value::Null => {}
+                    other => {
+                        leftover.insert((*key).to_string(), other.clone());
+                    }
+                }
+            }
+        }
+        // Nested / multi-line leftovers only — never re-dump the error envelope.
+        if !leftover.is_empty() {
+            append_json_section(&mut content, "Details", &Value::Object(leftover));
+        }
+    }
+
     content
 }
 
@@ -485,6 +623,9 @@ fn human_output_summary(output: &Value) -> Option<String> {
         "query",
         "result",
         "summary",
+        "hint",
+        "error_code",
+        "framework",
     ];
     let mut lines = Vec::new();
     for key in KEYS {
@@ -611,8 +752,6 @@ fn render_build_runner_output(result: &ToolResult, content: &mut String) {
     // No stream body — keep a compact JSON fallback for unexpected shapes.
     append_json_section(content, "Output", &result.output);
 }
-
-/// Verifier body: real multi-line stdout/stderr (like bash), never ```json with `\n`.
 
 fn render_named_structured_output(title: &str, result: &ToolResult, content: &mut String) {
     if let Some(message) = result.output.get("message").and_then(|v| v.as_str()) {
@@ -3010,25 +3149,88 @@ mod tests {
     }
 
     #[test]
-    fn non_bash_error_preserves_structured_output() {
+    fn non_bash_error_humanizes_structured_fields_without_json_dump() {
         let content = tool_full_content(
             &invocation("test_runner", json!({ "test_path": "bad" })),
             &err_result(json!({
                 "error": "test command failed",
+                "error_code": "test_failed",
                 "framework": "cargo",
                 "stdout": "running 1 test"
             })),
         );
 
         assert!(content.contains("Error: test command failed"));
-        assert!(content.contains("Output:\n```json"));
-        assert!(content.contains("\"framework\": \"cargo\""));
+        assert!(content.contains("Code: test_failed"));
+        assert!(content.contains("framework: cargo"));
+        assert!(content.contains("running 1 test"));
+        // Must not dump the whole error envelope as raw JSON.
+        assert!(
+            !content.contains("Output:\n```json"),
+            "error envelope must not be dumped as JSON, got:\n{content}"
+        );
+        assert!(
+            !content.contains("\"error_code\""),
+            "raw error_code JSON field must not appear, got:\n{content}"
+        );
+    }
+
+    #[test]
+    fn edit_error_with_hint_renders_professionally() {
+        // Regression: invalid_path used to dump {error, error_code, hint, recoverable}
+        // as a ```json block under "Output:".
+        let content = tool_body_content(
+            &invocation(
+                "edit",
+                json!({
+                    "path": "/tmp/x.rs",
+                    "old_string": "a",
+                    "new_string": "b"
+                }),
+            ),
+            &err_result(json!({
+                "error": "path must stay inside the project: /tmp/x.rs",
+                "error_code": "invalid_path",
+                "hint": "Use a project-relative path, or an absolute path.",
+                "recoverable": true
+            })),
+        );
+
+        assert!(content.contains("Code: invalid_path"), "{content}");
+        assert!(
+            content.contains("Hint: Use a project-relative path"),
+            "{content}"
+        );
+        // Header already has the message — body should not dump JSON.
+        assert!(!content.contains("```json"), "got:\n{content}");
+        assert!(!content.contains("\"recoverable\""), "got:\n{content}");
+        assert!(
+            !content.contains("Error: path must stay"),
+            "do not double-print error when only envelope fields: {content:?}"
+        );
+    }
+
+    #[test]
+    fn message_only_error_contract_surfaces_in_compact_header() {
+        // helpers::tool_error historically used `message` without `error`.
+        let text = tool_compact_text(
+            &invocation("plan", json!({ "action": "create" })),
+            &err_result(json!({
+                "error_code": "empty_steps",
+                "message": "Plan steps must not be empty",
+                "hint": "Provide at least one step."
+            })),
+        );
+        assert!(
+            text.contains("error: Plan steps must not be empty"),
+            "compact header must read message when error is absent: {text}"
+        );
     }
 
     #[test]
     fn error_only_tool_body_does_not_repeat_header_message() {
         // Compact header already includes `· error: …`. Body should stay empty
-        // when there is no stream/detail payload (avoids the double-error UI).
+        // when there is no stream/detail/code/hint payload (avoids the double-error UI).
         let content = tool_body_content(
             &invocation("bash", json!({ "command": "sleep 1" })),
             &err_result(json!({

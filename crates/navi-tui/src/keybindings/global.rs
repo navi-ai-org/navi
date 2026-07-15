@@ -22,6 +22,28 @@ fn ctrl_letter(code: KeyCode, letter: char) -> bool {
     matches!(code, KeyCode::Char(c) if c.eq_ignore_ascii_case(&letter))
 }
 
+/// Match a Ctrl+letter chord across the encodings terminals actually emit.
+///
+/// Besides `Char('x') + CONTROL`, many terminals deliver the classic ASCII
+/// control byte for that letter (e.g. `'\r'` for Ctrl+M, `'\n'` for Ctrl+J,
+/// `'\t'` for Ctrl+I) with the CONTROL modifier set. Without this, shortcuts
+/// like Ctrl+M never reach their handlers and fall through as newlines.
+fn is_ctrl_chord(code: KeyCode, modifiers: KeyModifiers, letter: char) -> bool {
+    if !has_control(modifiers) {
+        return false;
+    }
+    if ctrl_letter(code, letter) {
+        return true;
+    }
+    // ASCII Ctrl+A..=Ctrl+Z → bytes 1..=26.
+    let upper = letter.to_ascii_uppercase();
+    if !upper.is_ascii_uppercase() {
+        return false;
+    }
+    let ctrl_byte = (upper as u8).wrapping_sub(b'@');
+    matches!(code, KeyCode::Char(c) if c as u8 == ctrl_byte)
+}
+
 pub(super) fn route_global_key(
     app: &mut TuiApp,
     code: KeyCode,
@@ -42,11 +64,14 @@ pub(super) fn route_global_key(
     }
 
     // Plain Ctrl+C quits (not Ctrl+Shift+C — that's copy above).
-    if matches!(code, KeyCode::Char('c')) && !modifiers.contains(KeyModifiers::SHIFT) {
+    // Also accept ASCII ETX (0x03) which some terminals emit for Ctrl+C.
+    if (matches!(code, KeyCode::Char('c')) || matches!(code, KeyCode::Char('\u{3}')))
+        && !modifiers.contains(KeyModifiers::SHIFT)
+    {
         return super::apply_ui_effect(app, UiEffect::Quit);
     }
 
-    if ctrl_letter(code, 'd') {
+    if is_ctrl_chord(code, modifiers, 'd') {
         if app.mode == crate::state::Mode::Providers {
             return KeyOutcome::Ignored;
         }
@@ -55,7 +80,7 @@ pub(super) fn route_global_key(
         return outcome;
     }
 
-    if ctrl_letter(code, 'g') {
+    if is_ctrl_chord(code, modifiers, 'g') {
         let mode = if app.yolo_mode {
             PermissionMode::Restricted
         } else {
@@ -65,12 +90,12 @@ pub(super) fn route_global_key(
         return KeyOutcome::Handled;
     }
 
-    if ctrl_letter(code, 'p') {
+    if is_ctrl_chord(code, modifiers, 'p') {
         super::commands::open_command_palette(app);
         return KeyOutcome::Handled;
     }
 
-    if ctrl_letter(code, 'q') {
+    if is_ctrl_chord(code, modifiers, 'q') {
         return super::apply_ui_effect(app, UiEffect::ReplaceModal(ModalKind::MessageQueue));
     }
 
@@ -79,24 +104,28 @@ pub(super) fn route_global_key(
         return KeyOutcome::Handled;
     }
 
-    if ctrl_letter(code, 'm') {
+    // Ctrl+M — model picker. Terminals frequently encode this as:
+    //   Char('m'|'M')+CONTROL, Char('\r')+CONTROL, or Enter+CONTROL.
+    // Enter+CONTROL with non-empty input is "send" (handled below); empty
+    // composer falls through to the model picker as Ctrl+M compatibility.
+    if is_ctrl_chord(code, modifiers, 'm') {
         super::open_model_picker(app);
         return KeyOutcome::Handled;
     }
 
-    if ctrl_letter(code, 's') {
+    if is_ctrl_chord(code, modifiers, 's') {
         super::open_sessions_picker(app);
         return KeyOutcome::Handled;
     }
 
-    if ctrl_letter(code, 'i') || ctrl_letter(code, 'v') {
+    if is_ctrl_chord(code, modifiers, 'i') || is_ctrl_chord(code, modifiers, 'v') {
         // Paste into the normal chat composer only. In other modes (OAuth
         // paste, text fields, …) yield so the modal/mode handler can run.
         // Allowed while streaming — drafts queue on submit behind the active turn.
         if app.mode != crate::state::Mode::Normal {
             return KeyOutcome::Ignored;
         }
-        let want_image_only = ctrl_letter(code, 'i');
+        let want_image_only = is_ctrl_chord(code, modifiers, 'i');
         match try_read_clipboard_image() {
             Some(image) => {
                 app.pending_images.push(image);
@@ -119,7 +148,7 @@ pub(super) fn route_global_key(
         return KeyOutcome::Handled;
     }
 
-    if ctrl_letter(code, 'o') {
+    if is_ctrl_chord(code, modifiers, 'o') {
         // Providers: start OAuth. OAuth modal: reopen browser. Do not steal
         // those for the chat-wide tool-output expand toggle.
         if matches!(
@@ -153,7 +182,7 @@ pub(super) fn route_global_key(
         return KeyOutcome::Handled;
     }
 
-    if ctrl_letter(code, 't') {
+    if is_ctrl_chord(code, modifiers, 't') {
         super::replace_modal(app, ModalKind::BackgroundCommands);
         app.bg_command_selected = 0;
         app.bg_command_scroll = 0;
@@ -161,7 +190,7 @@ pub(super) fn route_global_key(
         return KeyOutcome::Handled;
     }
 
-    if ctrl_letter(code, 'b') {
+    if is_ctrl_chord(code, modifiers, 'b') {
         super::open_model_routing(app, crate::state::ModelRoutingTab::Agents);
         app.bg_models_selected = 0;
         app.bg_models_scroll = 0;
@@ -188,11 +217,15 @@ pub(super) fn route_global_key(
         }
         if !app.input.trim().is_empty() || !app.pending_images.is_empty() {
             crate::chat::submit_message(app);
+            return KeyOutcome::Handled;
         }
+        // Empty composer: many terminals encode Ctrl+M as Enter+CONTROL.
+        // Treat that as open model picker rather than a silent no-op.
+        super::open_model_picker(app);
         return KeyOutcome::Handled;
     }
 
-    if ctrl_letter(code, 'n') {
+    if is_ctrl_chord(code, modifiers, 'n') {
         start_new_session(app);
         let outcome = super::apply_ui_effect(app, UiEffect::CloseAllModals);
         show_notification(app, "Layer", "New layer started.");

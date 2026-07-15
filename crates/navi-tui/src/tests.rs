@@ -1424,10 +1424,12 @@ fn ctrl_enter_sends_non_empty_message() {
     assert_eq!(app.input, "three\n");
     assert!(app.messages.is_empty());
 
+    // Char('\r')+CONTROL is Ctrl+M (model picker), not a newline insert.
     let mut app = test_app("four");
     app.provider_configured = false;
     handle_key(&mut app, KeyCode::Char('\r'), KeyModifiers::CONTROL);
-    assert_eq!(app.input, "four\n");
+    assert_eq!(app.mode, Mode::Models);
+    assert_eq!(app.input, "four", "composer must be unchanged");
     assert!(app.messages.is_empty());
 }
 
@@ -1735,11 +1737,64 @@ fn ctrl_m_opens_model_picker_case_insensitive() {
     handle_key(&mut app, KeyCode::Char('M'), KeyModifiers::CONTROL);
     assert_eq!(app.mode, Mode::Models);
 
+    // ASCII CR (0x0D) — what many terminals emit for Ctrl+M
+    app.mode = Mode::Normal;
+    crate::keybindings::close_all_modals(&mut app);
+    handle_key(&mut app, KeyCode::Char('\r'), KeyModifiers::CONTROL);
+    assert_eq!(
+        app.mode,
+        Mode::Models,
+        "Ctrl+M as Char('\\r') must open models, not insert a newline"
+    );
+
+    // Enter+CONTROL with empty composer (another common Ctrl+M encoding)
+    app.mode = Mode::Normal;
+    crate::keybindings::close_all_modals(&mut app);
+    app.input.clear();
+    handle_key(&mut app, KeyCode::Enter, KeyModifiers::CONTROL);
+    assert_eq!(
+        app.mode,
+        Mode::Models,
+        "empty Ctrl+Enter must open models (Ctrl+M compatibility)"
+    );
+
     // Works even from another modal
     app.mode = Mode::Settings;
     app.modal_stack.open(ModalKind::Settings);
     handle_key(&mut app, KeyCode::Char('m'), KeyModifiers::CONTROL);
     assert_eq!(app.mode, Mode::Models);
+}
+
+#[test]
+fn global_ctrl_shortcuts_open_from_normal_mode() {
+    // Regression: only ctrl+s appeared to work when terminals remapped chords.
+    // Every documented global shortcut must fire from Normal mode.
+    let cases: &[(KeyCode, Mode)] = &[
+        (KeyCode::Char('p'), Mode::Commands),
+        (KeyCode::Char('m'), Mode::Models),
+        (KeyCode::Char('s'), Mode::Sessions),
+        (KeyCode::Char('d'), Mode::Debug),
+        (KeyCode::Char('t'), Mode::BackgroundCommands),
+        (KeyCode::Char('b'), Mode::ModelRouting),
+        (KeyCode::Char('q'), Mode::MessageQueue),
+        (KeyCode::Char('.'), Mode::Help),
+        (KeyCode::Char(','), Mode::Settings),
+    ];
+    for &(code, expected) in cases {
+        let mut app = test_app("");
+        handle_key(&mut app, code, KeyModifiers::CONTROL);
+        assert_eq!(
+            app.mode, expected,
+            "Ctrl+{code:?} should open {expected:?}, got {:?}",
+            app.mode
+        );
+    }
+
+    // Ctrl+N starts a new session and returns to Normal (closes modals).
+    let mut app = test_app("draft");
+    handle_key(&mut app, KeyCode::Char('n'), KeyModifiers::CONTROL);
+    assert_eq!(app.mode, Mode::Normal);
+    assert!(app.input.is_empty(), "new session clears the composer");
 }
 
 #[test]

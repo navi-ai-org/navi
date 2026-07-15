@@ -597,7 +597,13 @@ impl ToolExecutor {
                 return ToolResult {
                     invocation_id: inv_id,
                     ok: false,
-                    output: json!({"error": message}),
+                    output: json!({
+                        "error_code": "approval_required",
+                        "error": message,
+                        "message": message,
+                        "recoverable": true,
+                        "hint": "Approve the tool request or switch permission mode (AcceptEdits/Auto/Yolo) if this should not require approval.",
+                    }),
                 };
             }
             SecurityDecision::Deny(r) => {
@@ -611,15 +617,28 @@ impl ToolExecutor {
                 return ToolResult {
                     invocation_id: inv_id,
                     ok: false,
-                    output: json!({"error": r}),
+                    output: json!({
+                        "error_code": "security_denied",
+                        "error": r,
+                        "message": r,
+                        "recoverable": true,
+                        "hint": "Adjust the path/command or permission mode. Restricted mode keeps a project path jail; YOLO/AcceptEdits allow broader agency.",
+                    }),
                 };
             }
         }
         let Some(tool) = self.tools.get(&invocation.tool_name).cloned() else {
+            let message = format!("unknown `{}`", invocation.tool_name);
             return ToolResult {
                 invocation_id: inv_id,
                 ok: false,
-                output: json!({"error": format!("unknown `{}`", invocation.tool_name)}),
+                output: json!({
+                    "error_code": "unknown_tool",
+                    "error": message,
+                    "message": message,
+                    "recoverable": true,
+                    "hint": "Use a registered tool name, or call tool_search to discover tools.",
+                }),
             };
         };
         if invocation.tool_name == "tool_search" {
@@ -1039,50 +1058,73 @@ impl ToolExecutor {
 }
 
 fn tool_call_advice(err: ToolCallInvalid) -> Value {
+    // Always include both `error` (TUI header) and `message` (structured contract).
     match err {
         ToolCallInvalid::UnknownTool {
             tool_name,
             available_tools,
-        } => json!({
-            "error_code": "unknown_tool",
-            "error_kind": "unknown_tool",
-            "tool": tool_name,
-            "message": "Requested tool is not registered. Use one of the available tool names.",
-            "suggestions": suggest_tool_replacements(&tool_name, &available_tools),
-            "available_tools": available_tools.into_iter().take(20).collect::<Vec<_>>(),
-        }),
+        } => {
+            let message = "Requested tool is not registered. Use one of the available tool names."
+                .to_string();
+            json!({
+                "error_code": "unknown_tool",
+                "error_kind": "unknown_tool",
+                "tool": tool_name,
+                "error": message,
+                "message": message,
+                "hint": "Call tool_search or use a name from available_tools.",
+                "recoverable": true,
+                "suggestions": suggest_tool_replacements(&tool_name, &available_tools),
+                "available_tools": available_tools.into_iter().take(20).collect::<Vec<_>>(),
+            })
+        }
         ToolCallInvalid::InvalidSchema { tool_name, message } => {
+            let message = format!("Tool schema is invalid: {message}");
             json!({
                 "error_code": "invalid_schema",
                 "error_kind": "invalid_schema",
                 "tool": tool_name,
-                "message": format!("Tool schema is invalid: {message}"),
+                "error": message,
+                "message": message,
+                "recoverable": false,
             })
         }
         ToolCallInvalid::MalformedArguments {
             tool_name,
             raw_arguments_preview,
             example,
-        } => json!({
-            "error_code": "invalid_arguments",
-            "error_kind": "malformed_arguments",
-            "tool": tool_name,
-            "message": "Tool arguments were not valid JSON. Emit one complete JSON object matching the schema before calling the tool again.",
-            "raw_arguments_preview": raw_arguments_preview,
-            "example": example,
-        }),
+        } => {
+            let message = "Tool arguments were not valid JSON. Emit one complete JSON object matching the schema before calling the tool again.".to_string();
+            json!({
+                "error_code": "invalid_arguments",
+                "error_kind": "malformed_arguments",
+                "tool": tool_name,
+                "error": message,
+                "message": message,
+                "hint": "Emit a single complete JSON object; do not wrap arguments in markdown fences.",
+                "recoverable": true,
+                "raw_arguments_preview": raw_arguments_preview,
+                "example": example,
+            })
+        }
         ToolCallInvalid::InvalidArguments {
             tool_name,
             problems,
             example,
-        } => json!({
-            "error_code": "invalid_arguments",
-            "error_kind": "invalid_arguments",
-            "tool": tool_name,
-            "message": "Tool arguments do not match the JSON schema. Fix the arguments and call the tool again.",
-            "problems": problems,
-            "example": example,
-        }),
+        } => {
+            let message = "Tool arguments do not match the JSON schema. Fix the arguments and call the tool again.".to_string();
+            json!({
+                "error_code": "invalid_arguments",
+                "error_kind": "invalid_arguments",
+                "tool": tool_name,
+                "error": message,
+                "message": message,
+                "hint": "Compare your arguments to the tool schema and the example.",
+                "recoverable": true,
+                "problems": problems,
+                "example": example,
+            })
+        }
     }
 }
 
