@@ -54,7 +54,7 @@ irm https://raw.githubusercontent.com/navi-ai-org/navi/main/scripts/install.ps1 
 **Pin a version**
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/navi-ai-org/navi/main/scripts/install.sh | sh -s -- --version 0.2.3
+curl -fsSL https://raw.githubusercontent.com/navi-ai-org/navi/main/scripts/install.sh | sh -s -- --version 0.2.4
 ```
 
 **Homebrew**
@@ -91,7 +91,7 @@ ENTRYPOINT ["navi"]
 ```bash
 # high-assurance: pin script commit + release + require cosign
 curl -fsSL https://raw.githubusercontent.com/navi-ai-org/navi/<commit-sha>/scripts/install.sh \
-  | sh -s -- --version 0.2.3 --require-cosign
+  | sh -s -- --version 0.2.4 --require-cosign
 ```
 
 </details>
