@@ -2,7 +2,7 @@ use crate::errors::ProviderError;
 use crate::types::{OpenAiApiKind, StreamRoute};
 use navi_core::{ModelRequest, ProviderId};
 use reqwest::header::USER_AGENT;
-use reqwest::header::{AUTHORIZATION, CONTENT_TYPE, HeaderMap, HeaderValue};
+use reqwest::header::{AUTHORIZATION, CONTENT_TYPE, HeaderMap, HeaderName, HeaderValue};
 use sha2::{Digest, Sha256};
 
 // ─── Provider base URLs ───────────────────────────────────────────────────────
@@ -483,6 +483,15 @@ impl ProviderBehavior for GroqBehavior {
 const XAI_TOKEN_AUTH_HEADER: &str = "X-XAI-Token-Auth";
 const XAI_TOKEN_AUTH_VALUE: &str = "xai-grok-cli";
 const XAI_CLIENT_VERSION_HEADER: &str = "x-grok-client-version";
+const XAI_CLIENT_IDENTIFIER_HEADER: &str = "x-grok-client-identifier";
+const XAI_CLIENT_MODE_HEADER: &str = "x-grok-client-mode";
+const XAI_CLIENT_SURFACE_HEADER: &str = "x-grok-client-surface";
+const XAI_AGENT_ID_HEADER: &str = "x-grok-agent-id";
+const XAI_MODEL_OVERRIDE_HEADER: &str = "x-grok-model-override";
+const XAI_SESSION_ID_HEADER: &str = "x-grok-session-id";
+const XAI_CONV_ID_HEADER: &str = "x-grok-conv-id";
+const XAI_REQ_ID_HEADER: &str = "x-grok-req-id";
+const XAI_TURN_ID_HEADER: &str = "x-grok-turn-id";
 
 pub(crate) struct XaiBehavior;
 
@@ -509,21 +518,106 @@ impl ProviderBehavior for XaiBehavior {
         // `x-grok-client-version`, cli-chat-proxy returns HTTP 426.
         // Platform keys start with `xai-` and use normal Bearer only.
         if crate::oauth::is_xai_oauth_access_token(api_key) {
-            headers.insert(
-                XAI_TOKEN_AUTH_HEADER,
-                HeaderValue::from_static(XAI_TOKEN_AUTH_VALUE),
-            );
-            headers.insert(
-                XAI_CLIENT_VERSION_HEADER,
-                HeaderValue::from_static(crate::oauth::XAI_GROK_CLI_CLIENT_VERSION),
-            );
+            insert_xai_cli_identity_headers(&mut headers)?;
         }
         Ok(headers)
+    }
+
+    fn apply_request_headers(
+        &self,
+        headers: &mut HeaderMap,
+        request: &ModelRequest,
+    ) -> Result<(), ProviderError> {
+        // Only decorate Grok CLI / subscription proxy traffic. Platform keys
+        // (or non-CLI headers) skip model routing + session correlation.
+        if headers.get(XAI_TOKEN_AUTH_HEADER).is_none() {
+            return Ok(());
+        }
+
+        // Required by cli-chat-proxy to route the correct inference cluster.
+        // Official docs: proxy uses this header, not only the JSON body model.
+        insert_header(
+            headers,
+            XAI_MODEL_OVERRIDE_HEADER,
+            &request.model,
+            "x-grok-model-override",
+        )?;
+
+        // Per-conversation stickiness + request correlation (Grok sampler
+        // headers). Session id doubles as conv id when NAVI has one.
+        let session = request
+            .session_id
+            .as_deref()
+            .filter(|s| !s.is_empty())
+            .unwrap_or("navi");
+        insert_header(headers, XAI_SESSION_ID_HEADER, session, "x-grok-session-id")?;
+        insert_header(headers, XAI_CONV_ID_HEADER, session, "x-grok-conv-id")?;
+        insert_header(headers, XAI_TURN_ID_HEADER, session, "x-grok-turn-id")?;
+
+        let req_id = crate::oauth::xai_new_request_id();
+        insert_header(headers, XAI_REQ_ID_HEADER, &req_id, "x-grok-req-id")?;
+        Ok(())
     }
 
     fn supports_parallel_tool_calls(&self, endpoint: Endpoint) -> bool {
         matches!(endpoint, Endpoint::Responses | Endpoint::ChatCompletions)
     }
+}
+
+fn insert_xai_cli_identity_headers(headers: &mut HeaderMap) -> Result<(), ProviderError> {
+    headers.insert(
+        XAI_TOKEN_AUTH_HEADER,
+        HeaderValue::from_static(XAI_TOKEN_AUTH_VALUE),
+    );
+
+    let version = crate::oauth::xai_grok_cli_client_version();
+    insert_header(
+        headers,
+        XAI_CLIENT_VERSION_HEADER,
+        &version,
+        "x-grok-client-version",
+    )?;
+
+    // Match official grok User-Agent fingerprint (`grok/<version>`).
+    let ua = format!("grok/{version}");
+    insert_header(headers, USER_AGENT.as_str(), &ua, "User-Agent")?;
+
+    headers.insert(
+        XAI_CLIENT_MODE_HEADER,
+        HeaderValue::from_static(crate::oauth::XAI_GROK_CLI_CLIENT_MODE),
+    );
+    headers.insert(
+        XAI_CLIENT_SURFACE_HEADER,
+        HeaderValue::from_static(crate::oauth::XAI_GROK_CLI_CLIENT_SURFACE),
+    );
+
+    let client_id = crate::oauth::xai_client_identifier();
+    insert_header(
+        headers,
+        XAI_CLIENT_IDENTIFIER_HEADER,
+        &client_id,
+        "x-grok-client-identifier",
+    )?;
+
+    let agent_id = crate::oauth::xai_agent_id();
+    insert_header(headers, XAI_AGENT_ID_HEADER, &agent_id, "x-grok-agent-id")?;
+    Ok(())
+}
+
+fn insert_header(
+    headers: &mut HeaderMap,
+    name: &str,
+    value: &str,
+    label: &str,
+) -> Result<(), ProviderError> {
+    let header_name = HeaderName::from_bytes(name.as_bytes()).map_err(|err| {
+        ProviderError::Other(format!("invalid {label} header name: {err}"))
+    })?;
+    let hv = HeaderValue::from_str(value).map_err(|err| {
+        ProviderError::Other(format!("invalid {label} header value: {err}"))
+    })?;
+    headers.insert(header_name, hv);
+    Ok(())
 }
 
 // ─── Charm Hyper ──────────────────────────────────────────────────────────────
@@ -697,11 +791,43 @@ mod tests {
                 .and_then(|v| v.to_str().ok()),
             Some("xai-grok-cli")
         );
+        let version = crate::oauth::xai_grok_cli_client_version();
         assert_eq!(
             headers
                 .get("x-grok-client-version")
                 .and_then(|v| v.to_str().ok()),
-            Some(crate::oauth::XAI_GROK_CLI_CLIENT_VERSION)
+            Some(version.as_str())
+        );
+        assert_eq!(
+            headers
+                .get("x-grok-client-mode")
+                .and_then(|v| v.to_str().ok()),
+            Some(crate::oauth::XAI_GROK_CLI_CLIENT_MODE)
+        );
+        assert_eq!(
+            headers
+                .get("x-grok-client-surface")
+                .and_then(|v| v.to_str().ok()),
+            Some(crate::oauth::XAI_GROK_CLI_CLIENT_SURFACE)
+        );
+        let client_id = crate::oauth::xai_client_identifier();
+        let agent_id = crate::oauth::xai_agent_id();
+        let ua = format!("grok/{version}");
+        assert_eq!(
+            headers
+                .get("x-grok-client-identifier")
+                .and_then(|v| v.to_str().ok()),
+            Some(client_id.as_str())
+        );
+        assert_eq!(
+            headers
+                .get("x-grok-agent-id")
+                .and_then(|v| v.to_str().ok()),
+            Some(agent_id.as_str())
+        );
+        assert_eq!(
+            headers.get(USER_AGENT).and_then(|v| v.to_str().ok()),
+            Some(ua.as_str())
         );
         assert!(
             headers
@@ -712,13 +838,77 @@ mod tests {
     }
 
     #[test]
+    fn xai_oauth_request_headers_set_model_override_and_session_ids() {
+        let behavior = behavior_for_provider(&ProviderId::from_config_id(ProviderId::XAI));
+        let mut headers = behavior
+            .build_headers(
+                "eyJhbGciOiJFUzI1NiIsInR5cCI6ImF0K2p3dCJ9.payload.sig",
+                Endpoint::Responses,
+            )
+            .expect("headers");
+        let request = ModelRequest {
+            model: "grok-4.5".into(),
+            instructions: None,
+            messages: vec![],
+            thinking: navi_core::ThinkingConfig::Off,
+            tools: vec![],
+            session_id: Some("sess-xyz".into()),
+        };
+        behavior
+            .apply_request_headers(&mut headers, &request)
+            .expect("request headers");
+
+        assert_eq!(
+            headers
+                .get("x-grok-model-override")
+                .and_then(|v| v.to_str().ok()),
+            Some("grok-4.5")
+        );
+        assert_eq!(
+            headers
+                .get("x-grok-session-id")
+                .and_then(|v| v.to_str().ok()),
+            Some("sess-xyz")
+        );
+        assert_eq!(
+            headers.get("x-grok-conv-id").and_then(|v| v.to_str().ok()),
+            Some("sess-xyz")
+        );
+        assert_eq!(
+            headers.get("x-grok-turn-id").and_then(|v| v.to_str().ok()),
+            Some("sess-xyz")
+        );
+        assert!(
+            headers
+                .get("x-grok-req-id")
+                .and_then(|v| v.to_str().ok())
+                .is_some_and(|v| !v.is_empty())
+        );
+    }
+
+    #[test]
     fn xai_platform_key_skips_cli_token_auth_header() {
         let behavior = behavior_for_provider(&ProviderId::from_config_id(ProviderId::XAI));
-        let headers = behavior
+        let mut headers = behavior
             .build_headers("xai-platform-key-abc", Endpoint::Responses)
             .expect("headers");
         assert!(headers.get("X-XAI-Token-Auth").is_none());
         assert!(headers.get("x-grok-client-version").is_none());
+
+        // Platform keys must not get Grok routing headers either.
+        let request = ModelRequest {
+            model: "grok-4.5".into(),
+            instructions: None,
+            messages: vec![],
+            thinking: navi_core::ThinkingConfig::Off,
+            tools: vec![],
+            session_id: Some("sess".into()),
+        };
+        behavior
+            .apply_request_headers(&mut headers, &request)
+            .expect("request headers");
+        assert!(headers.get("x-grok-model-override").is_none());
+        assert!(headers.get("x-grok-session-id").is_none());
     }
 
     #[test]
