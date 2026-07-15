@@ -262,9 +262,9 @@ pub struct RegistryManifest {
     /// Coverage statistics (ignored at runtime, present in manifest v33+).
     #[serde(default)]
     pub coverage: serde_json::Value,
-    /// Canonical model catalog index keyed by model id.
+    /// Canonical model catalog index keyed by model id (`models/<id>.json`).
     #[serde(default)]
-    pub models: serde_json::Value,
+    pub models: std::collections::HashMap<String, ManifestModelEntry>,
 }
 
 /// Per-provider entry inside the manifest.
@@ -272,7 +272,15 @@ pub struct RegistryManifest {
 pub struct ManifestProviderEntry {
     pub file: String,
     pub sha256: String,
+    #[serde(default)]
     pub model_count: usize,
+}
+
+/// Per-canonical-model entry inside the manifest (`models` map).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ManifestModelEntry {
+    pub file: String,
+    pub sha256: String,
 }
 
 /// Protocol kind for a remote transcription provider.

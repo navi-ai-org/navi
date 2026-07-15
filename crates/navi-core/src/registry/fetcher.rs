@@ -8,7 +8,7 @@ use anyhow::{Context, Result};
 use sha2::{Digest, Sha256};
 use std::path::Path;
 
-use super::types::{RegistryManifest, RegistryProvider, RegistryTranscriptionProvider};
+use super::types::{CanonicalModel, RegistryManifest, RegistryProvider, RegistryTranscriptionProvider};
 
 /// Base URL for the NAVI registry database on GitHub. Uses `raw.githubusercontent.com`
 /// for direct file access without the GitHub API rate limits.
@@ -95,6 +95,45 @@ impl RegistryFetcher {
         .unwrap_or_default();
         super::extends::parse_provider_json(&text, &bases)
             .with_context(|| format!("failed to parse provider '{provider_id}' JSON"))
+    }
+
+    /// Fetches a single canonical model JSON by id from `models/`.
+    pub async fn fetch_canonical_model(
+        &self,
+        model_id: &str,
+        manifest: &RegistryManifest,
+    ) -> Result<CanonicalModel> {
+        let entry = manifest
+            .models
+            .get(model_id)
+            .with_context(|| format!("canonical model '{model_id}' not in manifest"))?;
+
+        let url = format!("{REGISTRY_BASE_URL}/{}", entry.file);
+        let resp = self
+            .client
+            .get(&url)
+            .send()
+            .await
+            .with_context(|| format!("failed to fetch canonical model '{model_id}' from {url}"))?;
+
+        let text = resp
+            .error_for_status()
+            .with_context(|| format!("canonical model '{model_id}' request failed: {url}"))?
+            .text()
+            .await
+            .context("failed to read canonical model response body")?;
+
+        let hash = hex::encode(Sha256::digest(text.as_bytes()));
+        if hash != entry.sha256 {
+            anyhow::bail!(
+                "canonical model '{model_id}' integrity check failed: expected {}, got {}",
+                entry.sha256,
+                hash
+            );
+        }
+
+        serde_json::from_str::<CanonicalModel>(&text)
+            .with_context(|| format!("failed to parse canonical model '{model_id}' JSON"))
     }
 
     /// Fetches a single transcription provider JSON by id.
@@ -315,10 +354,22 @@ pub async fn sync_registry(
         }
     }
 
-    if to_fetch.is_empty() && tx_to_fetch.is_empty() {
+    // Diff canonical model catalog (models/<id>.json).
+    let mut model_to_fetch = Vec::new();
+    let mut model_keep: std::collections::HashSet<&str> = std::collections::HashSet::new();
+    for (model_id, entry) in &manifest.models {
+        model_keep.insert(model_id.as_str());
+        let cached_sha = store.canonical_model_sha256(model_id)?;
+        if force || cached_sha.as_deref() != Some(&entry.sha256) {
+            model_to_fetch.push(model_id.as_str());
+        }
+    }
+
+    if to_fetch.is_empty() && tx_to_fetch.is_empty() && model_to_fetch.is_empty() {
         // All hashes match — just update manifest meta and clean up stale providers.
         store.delete_providers_not_in(&keep_ids)?;
         store.delete_transcription_providers_not_in(&tx_keep)?;
+        store.delete_canonical_models_not_in(&model_keep)?;
         store.save_manifest_meta(&manifest)?;
         tracing::debug!("all providers up-to-date, no fetch needed");
         return Ok(false);
@@ -328,11 +379,27 @@ pub async fn sync_registry(
         version = manifest.version,
         providers = manifest.providers.len(),
         changed = to_fetch.len(),
-        "fetching changed provider definitions"
+        models_changed = model_to_fetch.len(),
+        "fetching changed provider/model definitions"
     );
 
-    // Load the embedded canonical model catalog for resolving ref-based models.
-    let catalog = super::embedded::embedded_model_catalog().unwrap_or_default();
+    // Sync canonical models first so provider ref resolution sees the latest catalog.
+    let mut models_updated = 0;
+    for model_id in &model_to_fetch {
+        let model = fetcher.fetch_canonical_model(model_id, &manifest).await?;
+        let sha = &manifest.models[*model_id].sha256;
+        store.upsert_canonical_model(model_id, &model, Some(sha))?;
+        models_updated += 1;
+    }
+    store.delete_canonical_models_not_in(&model_keep)?;
+
+    // Prefer cached catalog (now refreshed); fall back to embedded snapshot.
+    let mut catalog = store
+        .load_canonical_model_catalog()
+        .unwrap_or_default();
+    if catalog.is_empty() {
+        catalog = super::embedded::embedded_model_catalog().unwrap_or_default();
+    }
 
     let mut updated = 0;
     for provider_id in &to_fetch {
@@ -368,6 +435,14 @@ pub async fn sync_registry(
         Some(super::update::current_timestamp_secs()),
         Some(super::update::current_timestamp_secs()),
     )?;
+    tracing::info!(
+        version = manifest.version,
+        providers_updated = updated,
+        models_updated = models_updated,
+        transcription_updated = tx_updated,
+        "registry sync complete"
+    );
+
 
     tracing::info!(
         updated = updated,

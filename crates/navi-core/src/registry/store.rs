@@ -66,12 +66,24 @@ impl RegistryStore {
                 if let Some(json) = manifest_json {
                     let _ = store.meta_set("registry_manifest_json", &json);
                 }
+                // Seed canonical model catalog with hashes from the embedded
+                // manifest so remote sync can skip unchanged models.
+                if let Ok(catalog) = super::embedded::embedded_model_catalog() {
+                    for (id, model) in catalog {
+                        let sha = manifest
+                            .models
+                            .get(&id)
+                            .map(|e| e.sha256.as_str());
+                        let _ = store.upsert_canonical_model(&id, &model, sha);
+                    }
+                }
             }
         }
 
         // Always ensure transcription providers are seeded (may be empty on
         // DBs created before STT catalog support).
         store.seed_transcription_from_embedded_if_empty()?;
+        store.seed_canonical_models_from_embedded_if_empty()?;
 
         Ok(store)
     }
@@ -171,6 +183,14 @@ impl RegistryStore {
                 json        TEXT NOT NULL,
                 sha256      TEXT,
                 updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+
+            -- Canonical model catalog (models/<id>.json), used for ref resolution.
+            CREATE TABLE IF NOT EXISTS canonical_models (
+                id         TEXT PRIMARY KEY,
+                json       TEXT NOT NULL,
+                sha256     TEXT,
+                updated_at TEXT NOT NULL DEFAULT (datetime('now'))
             );
             ",
         )?;
@@ -414,6 +434,87 @@ impl RegistryStore {
     }
 
     /// Number of cached transcription providers.
+
+    // ── Canonical model catalog ─────────────────────────────────────────
+
+    /// Upserts a canonical model JSON blob with its integrity hash.
+    pub fn upsert_canonical_model(
+        &self,
+        id: &str,
+        model: &super::types::CanonicalModel,
+        sha256: Option<&str>,
+    ) -> Result<()> {
+        let json = serde_json::to_string(model).context("serialize canonical model")?;
+        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+        conn.execute(
+            "INSERT OR REPLACE INTO canonical_models (id, json, sha256, updated_at)
+             VALUES (?1, ?2, ?3, datetime('now'))",
+            params![id, json, sha256],
+        )?;
+        Ok(())
+    }
+
+    /// Returns the SHA-256 of a cached canonical model, if any.
+    pub fn canonical_model_sha256(&self, id: &str) -> Result<Option<String>> {
+        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let mut stmt = conn.prepare("SELECT sha256 FROM canonical_models WHERE id = ?1")?;
+        let mut rows = stmt.query_map(params![id], |row| row.get::<_, Option<String>>(0))?;
+        match rows.next() {
+            Some(Ok(v)) => Ok(v),
+            _ => Ok(None),
+        }
+    }
+
+    /// Loads the full canonical model catalog from the cache.
+    pub fn load_canonical_model_catalog(&self) -> Result<super::resolve::ModelCatalog> {
+        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let mut stmt = conn.prepare("SELECT id, json FROM canonical_models ORDER BY id")?;
+        let rows = stmt.query_map([], |row| {
+            let id: String = row.get(0)?;
+            let json: String = row.get(1)?;
+            Ok((id, json))
+        })?;
+        let mut catalog = std::collections::HashMap::new();
+        for row in rows {
+            let (id, json) = row?;
+            match serde_json::from_str::<super::types::CanonicalModel>(&json) {
+                Ok(model) => {
+                    catalog.insert(id, model);
+                }
+                Err(err) => {
+                    tracing::warn!(id = %id, error = %err, "skipping corrupt canonical model row");
+                }
+            }
+        }
+        Ok(catalog)
+    }
+
+    /// Deletes canonical models not present in `keep`.
+    pub fn delete_canonical_models_not_in(
+        &self,
+        keep: &std::collections::HashSet<&str>,
+    ) -> Result<()> {
+        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let mut stmt = conn.prepare("SELECT id FROM canonical_models")?;
+        let to_delete: Vec<String> = stmt
+            .query_map([], |row| row.get::<_, String>(0))?
+            .filter_map(|r| r.ok())
+            .filter(|id| !keep.contains(id.as_str()))
+            .collect();
+        for id in to_delete {
+            conn.execute("DELETE FROM canonical_models WHERE id = ?1", params![id])?;
+        }
+        Ok(())
+    }
+
+    /// Number of cached canonical models.
+    pub fn canonical_model_count(&self) -> Result<usize> {
+        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let count: i64 =
+            conn.query_row("SELECT COUNT(*) FROM canonical_models", [], |row| row.get(0))?;
+        Ok(count as usize)
+    }
+
     pub fn transcription_provider_count(&self) -> Result<usize> {
         let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
         let count: i64 = conn.query_row(
@@ -422,6 +523,27 @@ impl RegistryStore {
             |row| row.get(0),
         )?;
         Ok(count as usize)
+    }
+
+
+    /// Seeds the canonical model catalog from the embedded snapshot when empty.
+    fn seed_canonical_models_from_embedded_if_empty(&self) -> Result<()> {
+        if self.canonical_model_count().unwrap_or(0) > 0 {
+            return Ok(());
+        }
+        let catalog = match super::embedded::embedded_model_catalog() {
+            Ok(c) if !c.is_empty() => c,
+            _ => return Ok(()),
+        };
+        let manifest = super::embedded::embedded_manifest().ok();
+        for (id, model) in catalog {
+            let sha = manifest
+                .as_ref()
+                .and_then(|m| m.models.get(&id))
+                .map(|e| e.sha256.as_str());
+            self.upsert_canonical_model(&id, &model, sha)?;
+        }
+        Ok(())
     }
 
     /// Seeds the transcription cache from the embedded snapshot when empty.
@@ -1366,6 +1488,44 @@ mod tests {
     fn open_and_init_schema() {
         let store = RegistryStore::open_memory().expect("open");
         assert!(store.is_empty().unwrap());
+    }
+
+    #[test]
+    fn canonical_model_roundtrip() {
+        let store = RegistryStore::open_memory().expect("open");
+        let model = super::super::types::CanonicalModel {
+            id: "gpt-test".into(),
+            vendor: Some("openai".into()),
+            family: None,
+            label: None,
+            description: None,
+            context_window_tokens: Some(128_000),
+            max_output_tokens: Some(8_192),
+            recommended_temperature: None,
+            supports_thinking: Some(true),
+            reasoning_levels: vec!["low".into(), "high".into()],
+            default_reasoning_effort: Some("low".into()),
+            attachments: Default::default(),
+            capabilities: Vec::new(),
+            status: Some("active".into()),
+            aliases: vec!["gpt-test-alias".into()],
+        };
+        store
+            .upsert_canonical_model("gpt-test", &model, Some("abc123"))
+            .expect("upsert");
+        assert_eq!(store.canonical_model_count().unwrap(), 1);
+        assert_eq!(
+            store.canonical_model_sha256("gpt-test").unwrap().as_deref(),
+            Some("abc123")
+        );
+        let catalog = store.load_canonical_model_catalog().expect("load");
+        assert_eq!(catalog["gpt-test"].context_window_tokens, Some(128_000));
+        assert_eq!(catalog["gpt-test"].aliases, vec!["gpt-test-alias".to_string()]);
+
+        let mut keep = std::collections::HashSet::new();
+        keep.insert("other");
+        store.delete_canonical_models_not_in(&keep).expect("delete");
+        assert_eq!(store.canonical_model_count().unwrap(), 0);
     }
 
     #[test]
