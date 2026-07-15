@@ -120,7 +120,8 @@ fn resolve_model_ref(model: &mut RegistryModel, catalog: &ModelCatalog) {
 }
 
 /// Builds an alias index from the catalog for quick lookups.
-pub fn build_alias_index(catalog: &ModelCatalog) -> HashMap<String, String> {
+#[cfg(test)]
+fn build_alias_index(catalog: &ModelCatalog) -> HashMap<String, String> {
     let mut index = HashMap::new();
     for (id, model) in catalog {
         for alias in &model.aliases {
