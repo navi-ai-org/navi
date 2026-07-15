@@ -530,7 +530,8 @@ mod tests {
         assert!(executor.tool_names().is_empty());
     }
 
-    #[tokio::test]
+    // Session snapshot uses block_in_place — needs multi_thread Tokio.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn health_mission_returns_report_from_emit_tool() {
         let config = test_config();
         let runtime = LiteRuntime::with_provider(
