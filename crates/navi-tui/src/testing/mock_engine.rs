@@ -21,7 +21,7 @@ use navi_sdk::{
 /// A recorded call to a method on the engine.
 #[derive(Debug, Clone)]
 pub enum EngineCall {
-    StartSession(NaviSessionRequest),
+    StartSession(Box<NaviSessionRequest>),
     SubscribeEvents(String),
     SendTurn(NaviTurnRequest),
     CancelTurn(String),
@@ -178,7 +178,7 @@ impl EngineDriver for MockEngine {
             .lock()
             .unwrap()
             .calls
-            .push(EngineCall::StartSession(request));
+            .push(EngineCall::StartSession(Box::new(request)));
         let session_id = req.session_id.unwrap_or_else(|| "mock-session".to_string());
         Ok(NaviSessionInfo {
             id: session_id,

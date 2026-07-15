@@ -406,14 +406,8 @@ where
         // Without this the event loop only redraws on input/events, so the
         // running diamond freezes on the first frame.
         let bg_running = app.background_commands.iter().any(|c| c.is_running());
-        let activity_animating = app.is_loading
-            || !app.running_tools.is_empty()
-            || bg_running
-            || (matches!(
-                app.mode,
-                crate::state::Mode::BackgroundCommands
-                    | crate::state::Mode::BackgroundCommandOutput
-            ) && bg_running);
+        let activity_animating =
+            app.is_loading || !app.running_tools.is_empty() || bg_running;
 
         if needs_draw || composer_animating || activity_animating {
             terminal.draw(|frame| render(frame, app))?;

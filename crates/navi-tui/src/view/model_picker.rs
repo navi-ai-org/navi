@@ -367,7 +367,7 @@ fn fit_display_width(value: &str, width: usize) -> String {
 
 fn display_model_name(name: &str) -> String {
     name.split('/')
-        .last()
+        .next_back()
         .unwrap_or(name)
         .split('-')
         .map(|part| {
