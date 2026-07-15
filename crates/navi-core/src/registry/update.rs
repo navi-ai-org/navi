@@ -458,7 +458,7 @@ pub fn validate_registry_schema(
         let provider_value = serde_json::to_value(provider)
             .context("failed to serialize provider for validation")?;
         if let Err(error) = validator.validate(&provider_value) {
-            anyhow::bail!("provider schema validation failed: {}", error.to_string());
+            anyhow::bail!("provider schema validation failed: {}", error);
         }
     }
     Ok(())
