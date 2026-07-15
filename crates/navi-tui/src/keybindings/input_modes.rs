@@ -47,9 +47,10 @@ pub(crate) fn handle_normal_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyM
                 app.input_cursor = app.input.len();
                 app.input_selection = None;
             }
-            KeyCode::Char('j') | KeyCode::Char('\n') | KeyCode::Char('\r') => {
-                insert_input_char(app, '\n')
-            }
+            // Ctrl+J (and ASCII LF) insert a newline. Do NOT treat Ctrl+M /
+            // ASCII CR (`\r`) as newline — that chord is the model picker
+            // (see global::is_ctrl_chord) and must not be swallowed here.
+            KeyCode::Char('j') | KeyCode::Char('\n') => insert_input_char(app, '\n'),
             KeyCode::Char('u') => {
                 app.input.drain(..app.input_cursor);
                 app.input_cursor = 0;

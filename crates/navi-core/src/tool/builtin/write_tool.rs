@@ -631,7 +631,7 @@ impl WriteTool {
             std::collections::BTreeMap::new();
 
         for (path, search, replace) in &parsed_edits {
-            let full = checked_project_path(&self.project_root, path)?;
+            let full = resolve_tool_path(&self.project_root, path);
             let content = match after_by_path.get(path) {
                 Some(c) => c.clone(),
                 None => match fs::read_to_string(&full) {
@@ -1086,7 +1086,7 @@ fn verify_structured_patch(project_root: &Path, patch: &str) -> Result<()> {
     for op in &ops {
         match op {
             StructuredOp::Update { path, hunks, .. } => {
-                let full = checked_project_path(project_root, path)?;
+                let full = resolve_tool_path(project_root, path);
                 let content = match fs::read_to_string(&full) {
                     Ok(c) => c,
                     Err(e) => {
@@ -1122,7 +1122,7 @@ fn verify_structured_patch(project_root: &Path, patch: &str) -> Result<()> {
                 }
             }
             StructuredOp::Delete { path } => {
-                let full = checked_project_path(project_root, path)?;
+                let full = resolve_tool_path(project_root, path);
                 if !full.exists() {
                     bail!("Cannot delete {path}: file does not exist");
                 }
@@ -1223,7 +1223,7 @@ fn symbol_replacements_from_hunks(
 
     #[cfg(feature = "code-vfs")]
     {
-        let path = checked_project_path(project_root, relative_path)?;
+        let path = resolve_tool_path(project_root, relative_path);
         let source =
             fs::read_to_string(&path).with_context(|| format!("failed to read {relative_path}"))?;
         let mut candidates = Vec::new();
@@ -1671,7 +1671,7 @@ fn plan_structured_changes(
     for op in ops {
         match op {
             StructuredOp::Add { path, lines } => {
-                let full = checked_project_path(project_root, path)?;
+                let full = resolve_tool_path(project_root, path);
                 if full.exists() {
                     bail!("file already exists: {path}");
                 }
@@ -1682,7 +1682,7 @@ fn plan_structured_changes(
                 });
             }
             StructuredOp::Delete { path } => {
-                let full = checked_project_path(project_root, path)?;
+                let full = resolve_tool_path(project_root, path);
                 if !full.exists() {
                     bail!("file does not exist: {path}");
                 }
@@ -1711,13 +1711,13 @@ fn plan_structured_update(
     move_to: Option<&str>,
     hunks: &[Vec<HunkLine>],
 ) -> Result<PlannedChange> {
-    let source = checked_project_path(project_root, path)?;
+    let source = resolve_tool_path(project_root, path);
     let content = fs::read_to_string(&source).with_context(|| format!("failed to read {path}"))?;
     let had_trailing_newline = content.ends_with('\n');
     let old_lines: Vec<String> = content.lines().map(str::to_string).collect();
     let new_lines = apply_hunks(&old_lines, hunks)?;
     let target = if let Some(move_to) = move_to {
-        checked_project_path(project_root, move_to)?
+        resolve_tool_path(project_root, move_to)
     } else {
         source.clone()
     };
@@ -1849,12 +1849,12 @@ fn structured_backup_paths(project_root: &Path, ops: &[StructuredOp]) -> Result<
     for op in ops {
         match op {
             StructuredOp::Add { path, .. } | StructuredOp::Delete { path } => {
-                push_unique_path(&mut paths, checked_project_path(project_root, path)?);
+                push_unique_path(&mut paths, resolve_tool_path(project_root, path));
             }
             StructuredOp::Update { path, move_to, .. } => {
-                push_unique_path(&mut paths, checked_project_path(project_root, path)?);
+                push_unique_path(&mut paths, resolve_tool_path(project_root, path));
                 if let Some(move_to) = move_to {
-                    push_unique_path(&mut paths, checked_project_path(project_root, move_to)?);
+                    push_unique_path(&mut paths, resolve_tool_path(project_root, move_to));
                 }
             }
         }
@@ -1929,16 +1929,19 @@ fn rollback_backups(backups: Vec<(PathBuf, Option<Vec<u8>>)>) {
     }
 }
 
-fn checked_project_path(project_root: &Path, path: &str) -> Result<PathBuf> {
-    let relative = Path::new(path);
-    if relative.is_absolute()
-        || relative
-            .components()
-            .any(|component| matches!(component, std::path::Component::ParentDir))
-    {
-        bail!("path must stay inside the project: {path}");
+/// Resolve a tool path against the project root.
+///
+/// Absolute paths are accepted as-is. Relative paths (including `..`) are joined
+/// to `project_root`. Project-boundary enforcement belongs to [`SecurityPolicy`],
+/// not the write tool — otherwise absolute in-project paths (after path
+/// normalization) are incorrectly rejected.
+fn resolve_tool_path(project_root: &Path, path: &str) -> PathBuf {
+    let p = Path::new(path);
+    if p.is_absolute() {
+        p.to_path_buf()
+    } else {
+        project_root.join(p)
     }
-    Ok(project_root.join(relative))
 }
 
 fn write_lines(path: &Path, lines: &[String], trailing_newline: bool) -> Result<()> {
@@ -2137,9 +2140,7 @@ fn extract_structured_patch_paths(patch: &str) -> Vec<String> {
 }
 
 fn preferred_structured_hunk_line(project_root: &Path, path: &str, hunk: &[HunkLine]) -> usize {
-    let Ok(full_path) = checked_project_path(project_root, path) else {
-        return 1;
-    };
+    let full_path = resolve_tool_path(project_root, path);
     let Ok(content) = fs::read_to_string(full_path) else {
         return 1;
     };
@@ -2214,7 +2215,7 @@ fn parse_unified_old_start(hunk_header: &str) -> Option<usize> {
 }
 
 fn file_context_window(project_root: &Path, path: &str, preferred_line: usize) -> Option<Value> {
-    let full_path = checked_project_path(project_root, path).ok()?;
+    let full_path = resolve_tool_path(project_root, path);
     let content = fs::read_to_string(full_path).ok()?;
     let lines: Vec<&str> = content.lines().collect();
     if lines.is_empty() {

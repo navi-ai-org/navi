@@ -34,6 +34,8 @@ impl Tool for RuntimeInfoTool {
     async fn invoke(&self, invocation: ToolInvocation) -> Result<ToolResult> {
         let project_root = self.policy.project_root().display().to_string();
         let security = self.policy.config();
+        // Effective jail status (Restricted always true, even if config flag is false).
+        let restrict_paths_to_project = self.policy.paths_restricted_to_project();
 
         Ok(helpers::ok(
             invocation.id,
@@ -47,7 +49,7 @@ impl Tool for RuntimeInfoTool {
                 "ask_tool_regex": security.ask_tool_regex,
                 "deny_tools": security.deny_tools,
                 "deny_tool_regex": security.deny_tool_regex,
-                "restrict_paths_to_project": security.restrict_paths_to_project,
+                "restrict_paths_to_project": restrict_paths_to_project,
                 "protect_git_metadata": security.protect_git_metadata,
                 "redact_secrets_in_sessions": security.redact_secrets_in_sessions,
                 "blocked_commands": security.blocked_commands,

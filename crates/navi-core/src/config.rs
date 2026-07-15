@@ -180,10 +180,29 @@ deny_tool_regex = ["^danger_"]
         config.approvals.require_for_writes = true;
         config.approvals.require_for_commands = true;
         config.approvals.allow_reads = false;
-        assert_eq!(
-            config.effective_security_config().permission_mode,
-            PermissionMode::Restricted
-        );
+        let effective = config.effective_security_config();
+        assert_eq!(effective.permission_mode, PermissionMode::Restricted);
+        // Restricted always forces a project path jail.
+        assert!(effective.restrict_paths_to_project);
+    }
+
+    #[test]
+    fn effective_security_config_forces_path_jail_only_in_restricted() {
+        let mut config = NaviConfig::default();
+        config.security.permission_mode = PermissionMode::Restricted;
+        config.security.restrict_paths_to_project = false;
+        assert!(config.effective_security_config().restrict_paths_to_project);
+
+        config.security.permission_mode = PermissionMode::Yolo;
+        config.security.restrict_paths_to_project = false;
+        assert!(!config.effective_security_config().restrict_paths_to_project);
+
+        config.tui.yolo_mode = true;
+        config.security.permission_mode = PermissionMode::Restricted;
+        config.security.restrict_paths_to_project = false;
+        let yolo = config.effective_security_config();
+        assert_eq!(yolo.permission_mode, PermissionMode::Yolo);
+        assert!(!yolo.restrict_paths_to_project);
     }
 
     #[test]

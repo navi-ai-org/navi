@@ -153,11 +153,15 @@ pub(super) fn tool_error(
     hint: Option<&str>,
     stderr: Option<String>,
 ) -> Value {
+    let message = message.into();
+    // Emit both `error` (TUI compact header / body) and `message` (structured
+    // contract consumed by models and SDK clients). Keep them identical.
     json!({
         "schema_version": SPECIALIZED_SCHEMA_VERSION,
         "status": "error",
         "error_code": error_code,
-        "message": message.into(),
+        "error": message,
+        "message": message,
         "recoverable": recoverable,
         "retryable": recoverable,
         "hint": hint,
@@ -449,6 +453,7 @@ mod tests {
         assert_eq!(output["schema_version"], SPECIALIZED_SCHEMA_VERSION);
         assert_eq!(output["status"], "error");
         assert_eq!(output["error_code"], "missing_input");
+        assert_eq!(output["error"], "Missing input");
         assert_eq!(output["message"], "Missing input");
         assert_eq!(output["recoverable"], true);
         assert_eq!(output["hint"], "Provide input.");

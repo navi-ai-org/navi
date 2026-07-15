@@ -366,6 +366,13 @@ pub struct SecurityConfig {
     #[serde(alias = "rejected_tool_regex")]
     pub deny_tool_regex: Vec<String>,
     /// Restrict file tool paths to the project directory.
+    ///
+    /// When `permission_mode` is `restricted`, project path jail is always
+    /// enforced regardless of this flag. Outside Restricted, set this `true`
+    /// to opt into a project path jail while keeping AcceptEdits/Auto/Yolo
+    /// approval semantics. Default is `false` so non-Restricted modes keep
+    /// full agent agency over the filesystem (still subject to private storage
+    /// and `.git` write protection).
     pub restrict_paths_to_project: bool,
     /// Deny writes to `.git` and other version-control metadata.
     pub protect_git_metadata: bool,
@@ -409,6 +416,9 @@ impl NaviConfig {
 
         if self.tui.yolo_mode {
             security.permission_mode = PermissionMode::Yolo;
+            // YOLO is full agency: do not inherit a path jail from earlier modes.
+            // Users who still want a project jail in YOLO set the flag explicitly
+            // after mode resolution below is skipped — honor explicit config only.
             return security;
         }
 
@@ -418,6 +428,11 @@ impl NaviConfig {
             security.permission_mode = PermissionMode::AcceptEdits;
         } else if !self.approvals.allow_reads {
             security.permission_mode = PermissionMode::Restricted;
+        }
+
+        // Restricted always jails file paths to the project root.
+        if security.permission_mode == PermissionMode::Restricted {
+            security.restrict_paths_to_project = true;
         }
 
         security

@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.6] - 2026-07-15
+
+Full changelog: https://github.com/navi-ai-org/navi/compare/v0.2.5...v0.2.6
+
+### Bug Fixes
+
+- **Edit/write path agency** — accept absolute paths (and stop hard-rejecting after path normalization); project path jail is forced only in Restricted mode (optional elsewhere via `restrict_paths_to_project`)
+- **Tool error TUI** — structured errors (`error` / `error_code` / `hint`) render as plain Code/Hint text instead of raw ` ```json ` dumps
+- **Global shortcuts** — Ctrl+M and other Ctrl+letter chords work across terminal encodings (ASCII control bytes / empty Ctrl+Enter → model picker)
+
+### Bindings
+
+- `@navi-agent/napi` 0.2.6 and platform packages
+- Workspace crate versions bumped to 0.2.6
+
+### Chores
+
+- Version bump to 0.2.6
+
 ## [0.2.5] - 2026-07-15
 
 Full changelog: https://github.com/navi-ai-org/navi/compare/v0.2.4...v0.2.5
@@ -171,7 +190,8 @@ Full changelog: https://github.com/navi-ai-org/navi/releases/tag/v0.1.0
 
 - Initial open-source scaffold of the NAVI agent engine and TUI
 
-[Unreleased]: https://github.com/navi-ai-org/navi/compare/v0.2.5...HEAD
+[Unreleased]: https://github.com/navi-ai-org/navi/compare/v0.2.6...HEAD
+[0.2.6]: https://github.com/navi-ai-org/navi/compare/v0.2.5...v0.2.6
 [0.2.5]: https://github.com/navi-ai-org/navi/compare/v0.2.4...v0.2.5
 [0.2.4]: https://github.com/navi-ai-org/navi/compare/v0.2.3...v0.2.4
 [0.2.3]: https://github.com/navi-ai-org/navi/compare/v0.2.2...v0.2.3

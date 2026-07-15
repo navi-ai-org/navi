@@ -64,7 +64,10 @@ impl SecurityPolicy {
             return SecurityDecision::Deny(format!("failed to resolve {}", path.display()));
         };
 
-        if self.config.restrict_paths_to_project && !path.starts_with(&self.project_root) {
+        if self.paths_restricted_to_project()
+            && !path.starts_with(&self.project_root)
+            && !path.starts_with(self.data_dir.join("plugins"))
+        {
             return SecurityDecision::Deny(format!(
                 "path {} is outside project {}",
                 path.display(),
@@ -517,6 +520,17 @@ impl SecurityPolicy {
     /// Returns the normalized project root used as the execution sandbox.
     pub fn project_root(&self) -> &Path {
         &self.project_root
+    }
+
+    /// Whether file-tool paths must stay inside the project root.
+    ///
+    /// Always enforced in [`PermissionMode::Restricted`]. Outside Restricted,
+    /// only the explicit `restrict_paths_to_project` config flag applies (default
+    /// off), so AcceptEdits / Auto / YOLO keep agent agency unless the user
+    /// opts into a project jail.
+    pub fn paths_restricted_to_project(&self) -> bool {
+        matches!(self.config.permission_mode, PermissionMode::Restricted)
+            || self.config.restrict_paths_to_project
     }
 
     /// Returns a reference to the security configuration.
@@ -1473,15 +1487,57 @@ mod tests {
     }
 
     #[test]
-    fn allows_paths_outside_project() {
+    fn allows_paths_outside_project_outside_restricted() {
         let tempdir = tempfile::tempdir().expect("tempdir");
         let project = tempdir.path().join("project");
         let data = tempdir.path().join("data");
         std::fs::create_dir_all(&project).expect("project");
         std::fs::create_dir_all(&data).expect("data");
+        // AcceptEdits / Auto / YOLO keep agency: no project path jail by default.
+        let policy = policy_with_config(
+            project,
+            data,
+            SecurityConfig {
+                permission_mode: PermissionMode::Yolo,
+                restrict_paths_to_project: false,
+                ..SecurityConfig::default()
+            },
+        );
+
+        let decision = policy.validate_path(tempdir.path().join("outside.txt").as_path(), false);
+
+        assert_eq!(decision, SecurityDecision::Allow);
+    }
+
+    #[test]
+    fn restricted_mode_denies_paths_outside_project() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let project = tempdir.path().join("project");
+        let data = tempdir.path().join("data");
+        std::fs::create_dir_all(&project).expect("project");
+        std::fs::create_dir_all(&data).expect("data");
+        // Default permission mode is Restricted — path jail always applies.
         let policy = policy(project, data);
 
         let decision = policy.validate_path(tempdir.path().join("outside.txt").as_path(), false);
+
+        assert!(
+            matches!(decision, SecurityDecision::Deny(ref reason) if reason.contains("outside project")),
+            "expected Deny(outside project), got {decision:?}"
+        );
+    }
+
+    #[test]
+    fn absolute_path_inside_project_is_allowed() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let project = tempdir.path().join("project");
+        let data = tempdir.path().join("data");
+        std::fs::create_dir_all(project.join("src")).expect("project");
+        std::fs::create_dir_all(&data).expect("data");
+        let policy = policy(project.clone(), data);
+        let absolute = project.join("src/lib.rs");
+
+        let decision = policy.validate_path(&absolute, false);
 
         assert_eq!(decision, SecurityDecision::Allow);
     }
@@ -2254,6 +2310,18 @@ mod tests {
 
     // ── Regression tests ──────────────────────────────────────────────────────
 
+    fn non_restricted_policy(project_root: PathBuf, data_dir: PathBuf) -> SecurityPolicy {
+        policy_with_config(
+            project_root,
+            data_dir,
+            SecurityConfig {
+                permission_mode: PermissionMode::Yolo,
+                restrict_paths_to_project: false,
+                ..SecurityConfig::default()
+            },
+        )
+    }
+
     #[cfg(unix)]
     #[test]
     fn regression_symlink_attack_allowed_when_not_restricted() {
@@ -2272,14 +2340,55 @@ mod tests {
         let link = project.join("link.txt");
         symlink(outside.join("secret.txt"), &link).expect("symlink");
 
-        let policy = policy(project.clone(), data);
+        let policy = non_restricted_policy(project.clone(), data);
         let decision = policy.validate_path(&link, false);
 
         assert_eq!(decision, SecurityDecision::Allow);
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn regression_symlink_attack_denied_in_restricted() {
+        use std::os::unix::fs::symlink;
+
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let project = tempdir.path().join("project");
+        let data = tempdir.path().join("data");
+        let outside = tempdir.path().join("outside");
+        std::fs::create_dir_all(&project).expect("project");
+        std::fs::create_dir_all(&data).expect("data");
+        std::fs::create_dir_all(&outside).expect("outside");
+        std::fs::write(outside.join("secret.txt"), "secret").expect("write");
+
+        let link = project.join("link.txt");
+        symlink(outside.join("secret.txt"), &link).expect("symlink");
+
+        let policy = policy(project, data);
+        let decision = policy.validate_path(&link, false);
+
+        assert!(
+            matches!(decision, SecurityDecision::Deny(_)),
+            "Restricted must deny symlink escape, got {decision:?}"
+        );
+    }
+
     #[test]
     fn regression_path_traversal_allowed_when_not_restricted() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let project = tempdir.path().join("project");
+        let data = tempdir.path().join("data");
+        std::fs::create_dir_all(&project).expect("project");
+        std::fs::create_dir_all(&data).expect("data");
+        let policy = non_restricted_policy(project.clone(), data);
+
+        let traversal = project.join("../../../etc/passwd");
+        let decision = policy.validate_path(&traversal, false);
+
+        assert_eq!(decision, SecurityDecision::Allow);
+    }
+
+    #[test]
+    fn regression_path_traversal_denied_in_restricted() {
         let tempdir = tempfile::tempdir().expect("tempdir");
         let project = tempdir.path().join("project");
         let data = tempdir.path().join("data");
@@ -2290,7 +2399,10 @@ mod tests {
         let traversal = project.join("../../../etc/passwd");
         let decision = policy.validate_path(&traversal, false);
 
-        assert_eq!(decision, SecurityDecision::Allow);
+        assert!(
+            matches!(decision, SecurityDecision::Deny(_)),
+            "Restricted must deny traversal, got {decision:?}"
+        );
     }
 
     #[test]
@@ -2349,7 +2461,7 @@ mod tests {
         let data = tempdir.path().join("data");
         std::fs::create_dir_all(&project).expect("project");
         std::fs::create_dir_all(&data).expect("data");
-        let policy = policy(project.clone(), data);
+        let policy = non_restricted_policy(project.clone(), data);
 
         // One valid file, one outside file - both allowed when not restricted
         let patch = PatchProposal {
@@ -2365,6 +2477,31 @@ mod tests {
         assert_eq!(
             policy.validate_patch(&patch),
             SecurityDecision::NeedsApproval(SecurityRisk::Write)
+        );
+    }
+
+    #[test]
+    fn regression_validate_patch_mixed_files_denied_in_restricted() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let project = tempdir.path().join("project");
+        let data = tempdir.path().join("data");
+        std::fs::create_dir_all(&project).expect("project");
+        std::fs::create_dir_all(&data).expect("data");
+        let policy = policy(project.clone(), data);
+
+        let patch = PatchProposal {
+            id: "p1".to_string(),
+            summary: "edit".to_string(),
+            files: vec![
+                project.join("src/lib.rs"),
+                tempdir.path().join("outside.txt"),
+            ],
+            unified_diff: String::new(),
+        };
+
+        assert!(
+            matches!(policy.validate_patch(&patch), SecurityDecision::Deny(_)),
+            "Restricted must deny patches that touch outside-project files"
         );
     }
 
@@ -2556,6 +2693,37 @@ mod tests {
         let data = tempdir.path().join("data");
         std::fs::create_dir_all(&project).expect("project");
         std::fs::create_dir_all(&data).expect("data");
+        let policy = non_restricted_policy(project, data);
+
+        let decision = policy.validate_tool_invocation(
+            &ToolDefinition {
+                name: "apply_patch".to_string(),
+                description: String::new(),
+                kind: ToolKind::Write,
+                input_schema: serde_json::json!({}),
+                ..Default::default()
+            },
+            &ToolInvocation {
+                id: "patch".to_string(),
+                tool_name: "apply_patch".to_string(),
+                input: serde_json::json!({
+                    "patch": "*** Begin Patch\n*** Add File: ../outside.txt\n+bad\n*** End Patch\n"
+                }),
+            },
+        );
+
+        // YOLO auto-approves writes; the important check is that path jail does
+        // not Deny traversal outside Restricted mode.
+        assert_eq!(decision, SecurityDecision::Allow);
+    }
+
+    #[test]
+    fn regression_apply_patch_structured_traversal_denied_in_restricted() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let project = tempdir.path().join("project");
+        let data = tempdir.path().join("data");
+        std::fs::create_dir_all(&project).expect("project");
+        std::fs::create_dir_all(&data).expect("data");
         let policy = policy(project, data);
 
         let decision = policy.validate_tool_invocation(
@@ -2575,9 +2743,9 @@ mod tests {
             },
         );
 
-        assert_eq!(
-            decision,
-            SecurityDecision::NeedsApproval(SecurityRisk::Write)
+        assert!(
+            matches!(decision, SecurityDecision::Deny(_)),
+            "Restricted must deny apply_patch traversal, got {decision:?}"
         );
     }
 

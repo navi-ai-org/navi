@@ -6,7 +6,7 @@
 //! These are the preferred surgical-edit tools. `apply_patch` remains available as a
 //! power tool for multi-file/git-style patches.
 
-use anyhow::{Result, bail};
+use anyhow::Result;
 use async_trait::async_trait;
 use serde_json::{Value, json};
 use std::fs;
@@ -91,12 +91,7 @@ impl Tool for EditTool {
             ));
         }
 
-        let full = match checked_project_path(&self.project_root, path) {
-            Ok(p) => p,
-            Err(e) => {
-                return Ok(error_result(&invocation, "invalid_path", &e.to_string()));
-            }
-        };
+        let full = resolve_tool_path(&self.project_root, path);
 
         let outcome = if old_string.is_empty() {
             create_new_file(&full, new_string)
@@ -186,12 +181,7 @@ async fn invoke_multiedit_on_path(
         ));
     }
 
-    let full = match checked_project_path(project_root, path) {
-        Ok(p) => p,
-        Err(e) => {
-            return Ok(error_result(&invocation, "invalid_path", &e.to_string()));
-        }
-    };
+    let full = resolve_tool_path(project_root, path);
 
     let mut current = match fs::read_to_string(&full) {
         Ok(c) => Some(c),
@@ -437,14 +427,30 @@ fn success_result(
 }
 
 fn error_result(invocation: &ToolInvocation, code: &str, message: &str) -> ToolResult {
+    let hint = match code {
+        "invalid_path" => {
+            "Use a project-relative path, or an absolute path. Outside Restricted mode absolute paths anywhere on disk are allowed (subject to security policy)."
+        }
+        "file_not_found" => {
+            "Use empty old_string to create a new file, or call write_file. Re-read the parent directory if the path may be wrong."
+        }
+        "invalid_arguments" => {
+            "Provide path + old_string/new_string (or search/replace), or edits[] for multiple replacements on one file."
+        }
+        "io_error" => "Check file permissions and that the path is readable/writable.",
+        _ => {
+            "Ensure old_string matches the file exactly (whitespace/newlines). Use read_file if the file may have changed. Prefer edits[] for multiple changes in one file."
+        }
+    };
     ToolResult {
         invocation_id: invocation.id.clone(),
         ok: false,
         output: json!({
             "error_code": code,
             "error": message,
+            "message": message,
             "recoverable": true,
-            "hint": "Ensure old_string matches the file exactly (whitespace/newlines). Use read_file if the file may have changed. Prefer multiedit for multiple changes in one file."
+            "hint": hint,
         }),
     }
 }
@@ -474,16 +480,19 @@ fn bool_arg(input: &Value, key: &str) -> Option<bool> {
     })
 }
 
-fn checked_project_path(project_root: &Path, path: &str) -> Result<PathBuf> {
-    let relative = Path::new(path);
-    if relative.is_absolute()
-        || relative
-            .components()
-            .any(|component| matches!(component, std::path::Component::ParentDir))
-    {
-        bail!("path must stay inside the project: {path}");
+/// Resolve a tool path against the project root.
+///
+/// Absolute paths are accepted as-is (models and `SecurityPolicy::normalize_invocation_paths`
+/// often pass them). Relative paths are joined to `project_root`, including `..` components.
+/// Project-boundary enforcement lives in [`SecurityPolicy`] (Restricted mode / config flag),
+/// not in the tool itself — write tools must not re-jail paths that security already allowed.
+fn resolve_tool_path(project_root: &Path, path: &str) -> PathBuf {
+    let p = Path::new(path);
+    if p.is_absolute() {
+        p.to_path_buf()
+    } else {
+        project_root.join(p)
     }
-    Ok(project_root.join(relative))
 }
 
 fn edit_json_schema() -> Value {
@@ -492,7 +501,7 @@ fn edit_json_schema() -> Value {
         "properties": {
             "path": {
                 "type": "string",
-                "description": "Project-relative file path to edit (preferred)."
+                "description": "File path to edit. Prefer project-relative; absolute paths are also accepted."
             },
             "file_path": {
                 "type": "string",
@@ -552,7 +561,7 @@ fn multiedit_json_schema() -> Value {
         "properties": {
             "path": {
                 "type": "string",
-                "description": "Project-relative file path to edit (preferred)."
+                "description": "File path to edit. Prefer project-relative; absolute paths are also accepted."
             },
             "file_path": {
                 "type": "string",
@@ -827,9 +836,36 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn edit_rejects_path_escape() {
+    async fn edit_accepts_absolute_path_inside_project() {
         let dir = tempdir().unwrap();
-        let tool = EditTool::new(dir.path().to_path_buf());
+        let root = dir.path().to_path_buf();
+        let file = root.join("a.rs");
+        fs::write(&file, "hello world\n").unwrap();
+        let tool = EditTool::new(root.clone());
+        let result = tool
+            .invoke(inv(
+                "edit",
+                json!({
+                    "path": file.display().to_string(),
+                    "old_string": "hello",
+                    "new_string": "hi"
+                }),
+            ))
+            .await
+            .unwrap();
+        assert!(result.ok, "{:?}", result.output);
+        assert_eq!(fs::read_to_string(&file).unwrap(), "hi world\n");
+    }
+
+    #[tokio::test]
+    async fn edit_resolves_parent_dir_components() {
+        // Tool layer resolves paths; SecurityPolicy enforces project jail when active.
+        let dir = tempdir().unwrap();
+        let root = dir.path().join("project");
+        fs::create_dir_all(&root).unwrap();
+        let outside = dir.path().join("outside.txt");
+        fs::write(&outside, "a\n").unwrap();
+        let tool = EditTool::new(root);
         let result = tool
             .invoke(inv(
                 "edit",
@@ -841,6 +877,7 @@ mod tests {
             ))
             .await
             .unwrap();
-        assert!(!result.ok);
+        assert!(result.ok, "{:?}", result.output);
+        assert_eq!(fs::read_to_string(&outside).unwrap(), "b\n");
     }
 }
