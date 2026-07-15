@@ -1,10 +1,16 @@
 {
   "name": "@navi-agent/napi-linux-x64",
-  "version": "0.2.4",
+  "version": "0.2.5",
   "description": "Linux x64 prebuilt binary for @navi-agent/napi.",
   "license": "Apache-2.0",
-  "os": ["linux"],
-  "cpu": ["x64"],
+  "os": [
+    "linux"
+  ],
+  "cpu": [
+    "x64"
+  ],
   "main": "navi.linux-x64.node",
-  "files": ["navi.linux-x64.node"]
+  "files": [
+    "navi.linux-x64.node"
+  ]
 }

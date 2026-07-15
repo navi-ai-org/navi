@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.5] - 2026-07-15
+
+Full changelog: https://github.com/navi-ai-org/navi/compare/v0.2.4...v0.2.5
+
+### New Features
+
+- String-replace `edit` tool (with multi-edit) as the preferred coding edit path
+- Lean Direct tool schema with deferred discovery via `tool_search`
+- Message queue: remove items, clickable/hoverable `N queued` chip, preserve input draft on drain
+- Session recap hard-capped to 3 lines
+
+### Changes
+
+- Remove `process`, `verifier`, and `branch_race_start` agent tools
+- Redirect common bash file dumps (`sed`/`cat`/`rg`/`ls`) to native tools
+- Drop rustquty quality metrics tooling from the repo
+
+### Bindings
+
+- `@navi-agent/napi` 0.2.5 and platform packages
+- Workspace crate versions bumped to 0.2.5
+
+### Chores
+
+- Version bump to 0.2.5
+
 ## [0.2.4] - 2026-07-15
 
 Full changelog: https://github.com/navi-ai-org/navi/compare/v0.2.3...v0.2.4
@@ -145,7 +171,8 @@ Full changelog: https://github.com/navi-ai-org/navi/releases/tag/v0.1.0
 
 - Initial open-source scaffold of the NAVI agent engine and TUI
 
-[Unreleased]: https://github.com/navi-ai-org/navi/compare/v0.2.4...HEAD
+[Unreleased]: https://github.com/navi-ai-org/navi/compare/v0.2.5...HEAD
+[0.2.5]: https://github.com/navi-ai-org/navi/compare/v0.2.4...v0.2.5
 [0.2.4]: https://github.com/navi-ai-org/navi/compare/v0.2.3...v0.2.4
 [0.2.3]: https://github.com/navi-ai-org/navi/compare/v0.2.2...v0.2.3
 [0.2.2]: https://github.com/navi-ai-org/navi/compare/v0.2.0...v0.2.2

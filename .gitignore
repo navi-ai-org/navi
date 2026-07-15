@@ -3,8 +3,6 @@
 mutants.out/
 mutants.out.old/
 /coverage/
-/quality/metricsSummary.json
-/quality/qualityReport.json
 
 # Benchmark local run outputs (keep .gitkeep + curated RESULTS.md only)
 /benchmarks/runs/**

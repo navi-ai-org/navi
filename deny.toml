@@ -1,5 +1,5 @@
 # cargo-deny — https://embarkstudios.github.io/cargo-deny/
-# Run: cargo deny check · just quality-doctor
+# Run: cargo deny check
 
 [advisories]
 version = 2
