@@ -1073,13 +1073,10 @@ fn normalize_structured_patch_hunk_prefixes(patch: &str) -> String {
 /// Normalise punctuation characters that differ between what the model emits
 /// and what the file contains (e.g. EN DASH → ASCII hyphen).
 fn normalise_line(s: &str) -> String {
-    s.replace('\u{2013}', "-") // EN DASH
+    s.replace(['\u{2013}', '\u{2011}'], "-") // EN DASH / NON-BREAKING HYPHEN
         .replace('\u{2014}', "--") // EM DASH
-        .replace('\u{2011}', "-") // NON-BREAKING HYPHEN
-        .replace('\u{2018}', "'") // LEFT SINGLE QUOTATION MARK
-        .replace('\u{2019}', "'") // RIGHT SINGLE QUOTATION MARK
-        .replace('\u{201c}', "\"") // LEFT DOUBLE QUOTATION MARK
-        .replace('\u{201d}', "\"") // RIGHT DOUBLE QUOTATION MARK
+        .replace(['\u{2018}', '\u{2019}'], "'") // SINGLE QUOTATION MARKS
+        .replace(['\u{201c}', '\u{201d}'], "\"") // DOUBLE QUOTATION MARKS
 }
 
 // ── Verification phase (Codex feature) ───────────────────────────────────

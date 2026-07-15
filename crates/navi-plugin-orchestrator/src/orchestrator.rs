@@ -289,7 +289,7 @@ fn compute_tools_hash(manifest: &PluginManifest) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use navi_plugin_manifest::LockEntry;
+    use navi_plugin_manifest::{LockEntry, TrustLevel};
     use std::fs;
 
     fn setup() -> (tempfile::TempDir, SecurityDefaults) {

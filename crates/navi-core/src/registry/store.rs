@@ -426,8 +426,6 @@ impl RegistryStore {
         Ok(())
     }
 
-    /// Number of cached transcription providers.
-
     // ── Canonical model catalog ─────────────────────────────────────────
 
     /// Upserts a canonical model JSON blob with its integrity hash.
@@ -509,6 +507,7 @@ impl RegistryStore {
         Ok(count as usize)
     }
 
+    /// Number of cached transcription providers.
     pub fn transcription_provider_count(&self) -> Result<usize> {
         let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
         let count: i64 =
