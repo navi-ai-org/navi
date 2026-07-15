@@ -1,9 +1,9 @@
 //! Session recap — short post-turn summary after each successful turn.
 //!
-//! Shows a compact one-liner under a "Recap" label:
+//! Shows a compact blurb under a "Recap" label (hard cap: **3 lines**):
 //! - You asked … : <concrete specifics>
 //! - We <past-tense verb> … : <concrete specifics>
-//! ~25–40 words, never a wall of assistant prose.
+//! Never a wall of assistant prose or a file dump.
 
 use crate::model::{ModelMessage, ModelProvider, ModelRequest, ThinkingConfig};
 use anyhow::Result;
@@ -12,10 +12,12 @@ use anyhow::Result;
 pub const RECAP_LONG_TAIL_CHARS: usize = 4_000;
 /// Max tool calls before treating a turn as long-tail (display suppressed).
 pub const RECAP_LONG_TAIL_TOOL_CALLS: usize = 40;
-/// Soft max length for a displayed recap (one short sentence).
-pub const RECAP_MAX_DISPLAY_CHARS: usize = 160;
-/// Prefer staying under this word count (~25–40 words).
-const RECAP_TARGET_WORDS: usize = 40;
+/// Hard max length for a displayed recap (≈3 short lines).
+pub const RECAP_MAX_DISPLAY_CHARS: usize = 240;
+/// Hard max lines for a displayed recap.
+pub const RECAP_MAX_LINES: usize = 3;
+/// Prefer staying under this word count (very short blurb).
+const RECAP_TARGET_WORDS: usize = 45;
 
 /// Whether the recap should be hidden in the chat (artifact may still be saved).
 pub fn should_suppress_recap(assistant_chars: usize, tool_call_count: usize) -> bool {
@@ -62,17 +64,18 @@ pub async fn llm_recap(
     let assistant = truncate_chars(&collapse_ws(assistant_text), 520);
 
     let prompt = format!(
-        "Write ONE sentence recap body for this coding-agent turn. \
-         Output ONLY the body (the UI adds the \"Recap\" label).\n\n\
+        "Write a tiny recap body for this coding-agent turn.\n\
+         HARD LIMITS (non-negotiable):\n\
+         - At most 3 short lines (prefer 1).\n\
+         - At most ~45 words / ~240 characters.\n\
+         - Output ONLY the body (the UI adds the \"Recap\" label).\n\
+         - No markdown, no bullets, no code, no file contents, no quotes, no preamble.\n\
+         - Never paste assistant prose, patches, or file dumps.\n\n\
          Lead with agency:\n\
-         - \"You asked …\" if the turn was mainly questions, walkthroughs, planning, \
-           or review with no landed change.\n\
-         - \"We <past-tense verb> …\" if the agent implemented, fixed, installed, \
-           merged, or changed code/config/docs (e.g. \"We fixed\", \"We wired\" — \
-           not \"We did fix\").\n\
+         - \"You asked …\" if the turn was mainly questions/planning/review with no landed change.\n\
+         - \"We <past-tense verb> …\" if code/config/docs changed (e.g. \"We fixed\", \"We wired\").\n\
          - If almost nothing happened: \"You had just begun this session.\"\n\n\
-         Shape: <lead>: <concrete specifics — file/crate/flag/behavior>. \
-         ~25–40 words. One sentence. No markdown, no bullets, no quotes, no preamble.\n\n\
+         Shape: <lead>: <concrete specifics — file/crate/flag/behavior>.\n\n\
          User: {user}\n\
          Assistant: {assistant}\n\
          Tools: {tools}\n"
@@ -84,8 +87,8 @@ pub async fn llm_recap(
         messages: vec![
             ModelMessage::system(
                 "You write ultra-short session recaps for a coding CLI. \
-                 Exactly one concise sentence. Past-tense outcomes preferred when work landed. \
-                 Never invent work not reflected in the turn. Never dump the assistant message.",
+                 At most 3 lines, usually one sentence. Past-tense when work landed. \
+                 Never invent work. Never dump the assistant message or any file contents.",
             ),
             ModelMessage::user(prompt),
         ],
@@ -108,7 +111,28 @@ pub async fn llm_recap(
 }
 
 fn clean_recap_text(raw: &str) -> String {
-    let mut text = collapse_ws(raw);
+    // Preserve line breaks only long enough to enforce the 3-line cap, then
+    // collapse each kept line. Reject obvious file dumps early.
+    let mut lines: Vec<String> = raw
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .map(|l| l.to_string())
+        .collect();
+
+    // If the model dumped a wall of text / code, keep only the first short line.
+    if looks_like_file_dump(&lines) {
+        lines.truncate(1);
+    }
+    lines.truncate(RECAP_MAX_LINES);
+
+    let mut text = lines
+        .iter()
+        .map(|l| collapse_ws(l))
+        .filter(|l| !l.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ");
+
     for prefix in [
         "Recap:",
         "Recap",
@@ -136,8 +160,35 @@ fn clean_recap_text(raw: &str) -> String {
             .take(text.chars().count().saturating_sub(2))
             .collect();
     }
-    // Keep a single sentence.
+    // Prefer a single sentence when the model still rambled in one line.
     first_sentence(&text)
+}
+
+fn looks_like_file_dump(lines: &[String]) -> bool {
+    if lines.len() > RECAP_MAX_LINES {
+        return true;
+    }
+    let joined = lines.join("
+");
+    let chars = joined.chars().count();
+    if chars > RECAP_MAX_DISPLAY_CHARS.saturating_mul(2) {
+        return true;
+    }
+    // Code / patch / fence markers ⇒ dump, not a recap.
+    let codeish = lines.iter().filter(|l| {
+        let t = l.trim_start();
+        t.starts_with("```")
+            || t.starts_with("diff --git")
+            || t.starts_with("@@")
+            || t.starts_with("*** ")
+            || t.starts_with("fn ")
+            || t.starts_with("pub ")
+            || t.starts_with("use ")
+            || t.starts_with("impl ")
+            || t.starts_with("#include")
+            || t.starts_with("package ")
+    }).count();
+    codeish >= 1 && lines.len() >= 2
 }
 
 /// Synthesize a short short line without calling a model.
@@ -294,7 +345,29 @@ fn first_sentence(text: &str) -> String {
 }
 
 fn finalize_recap(body: &str) -> String {
-    let mut text = collapse_ws(body);
+    // Enforce line cap first (models sometimes emit multi-line essays).
+    let mut lines: Vec<String> = body
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .map(|l| collapse_ws(l))
+        .filter(|l| !l.is_empty())
+        .take(RECAP_MAX_LINES)
+        .collect();
+    if lines.is_empty() {
+        let collapsed = collapse_ws(body);
+        if !collapsed.is_empty() {
+            lines.push(collapsed);
+        }
+    }
+    if looks_like_file_dump(&lines) {
+        lines.truncate(1);
+    }
+
+    // Single display string: keep at most RECAP_MAX_LINES by rejoining with spaces
+    // for chat compactness (TUI may re-wrap to ≤3 visual lines).
+    let mut text = lines.join(" ");
+
     // Soft word cap, then hard char cap.
     let words: Vec<&str> = text.split_whitespace().collect();
     if words.len() > RECAP_TARGET_WORDS {
@@ -304,6 +377,11 @@ fn finalize_recap(body: &str) -> String {
         }
     }
     truncate_chars(&text, RECAP_MAX_DISPLAY_CHARS)
+}
+
+/// Public clamp used by UIs when accepting recap text from any source (local/LLM).
+pub fn clamp_recap_summary(summary: &str) -> String {
+    finalize_recap(&clean_recap_text(summary))
 }
 
 fn truncate_at_word(text: &str, max: usize) -> String {
@@ -402,4 +480,41 @@ mod tests {
         let cleaned = clean_recap_text("Recap: We fixed the footer meter.");
         assert!(cleaned.starts_with("We fixed"));
     }
+
+    #[test]
+    fn finalize_hard_caps_multiline_essay() {
+        let essay = "Line one is fine.\nLine two still ok.\nLine three ok.\nLine four must die.\nfn dump() {\n  everything()\n}\n";
+        let recap = finalize_recap(essay);
+        assert!(
+            recap.lines().count() <= RECAP_MAX_LINES,
+            "too many lines: {recap:?}"
+        );
+        assert!(
+            recap.chars().count() <= RECAP_MAX_DISPLAY_CHARS,
+            "too many chars: {} — {recap:?}",
+            recap.chars().count()
+        );
+        assert!(
+            !recap.contains("must die") && !recap.contains("fn dump"),
+            "file dump leaked into recap: {recap}"
+        );
+    }
+
+    #[test]
+    fn clamp_recap_summary_rejects_file_dump() {
+        let dump = "```rust\npub fn main() {\n    println!(\"hi\");\n}\n```\nAnd more explanation that should not appear in full.";
+        let recap = clamp_recap_summary(dump);
+        assert!(recap.chars().count() <= RECAP_MAX_DISPLAY_CHARS);
+        assert!(!recap.contains("println"));
+    }
+
+    #[test]
+    fn llm_clean_keeps_at_most_three_lines_worth() {
+        let raw = "We fixed the footer meter.\nAlso touched theme.rs.\nAnd tests.\nAnd then wrote an essay about architecture that must be dropped.";
+        let cleaned = clean_recap_text(raw);
+        let final_ = finalize_recap(&cleaned);
+        assert!(final_.chars().count() <= RECAP_MAX_DISPLAY_CHARS);
+        assert!(!final_.contains("architecture that must be dropped") || final_.chars().count() <= RECAP_MAX_DISPLAY_CHARS);
+    }
+
 }

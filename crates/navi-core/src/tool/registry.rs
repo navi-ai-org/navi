@@ -25,11 +25,9 @@ pub struct RegisteredTool {
     pub phases: Vec<String>,
 }
 
-/// Threshold below which Deferred tools are promoted to Direct visibility.
-/// Mirrors Codex's DIRECT_MCP_TOOL_EXPOSURE_THRESHOLD (100). When the total
-/// number of Direct + ModelOnly tools is below this, Deferred tools (e.g. MCP
-/// tools) are included in the visible tool list so the model can use them
-/// without needing tool_search.
+/// Historical Codex-style threshold kept for compatibility with older tests and
+/// docs. Deferred tools are **never** auto-promoted into the model schema; they
+/// stay discoverable via `tool_search` regardless of Direct tool count.
 pub const MCP_TOOL_DEFER_THRESHOLD: usize = 100;
 
 impl ToolRegistry {
@@ -70,33 +68,18 @@ impl ToolRegistry {
         );
     }
 
-    /// Returns all visible tool definitions for the model (Direct + ModelOnly).
-    /// If the number of Direct+ModelOnly tools is below the promotion threshold,
-    /// Deferred tools are also included (promoted to Direct) so the model can
-    /// see them without needing tool_search. This mirrors the Codex behavior
-    /// where MCP tools are only deferred when the total tool count is high.
+    /// Returns tool definitions visible in the model schema.
+    ///
+    /// Only `Direct` and `ModelOnly` tools are included. `Deferred` tools stay
+    /// out of the request schema and must be discovered via `tool_search`
+    /// (or called by name after discovery). Hidden/Internal tools never appear.
     pub fn visible_definitions(&self) -> Vec<ToolDefinition> {
-        let direct: Vec<&RegisteredTool> = self
+        let mut defs: Vec<ToolDefinition> = self
             .tools
             .values()
             .filter(|t| matches!(t.exposure, ToolExposure::Direct | ToolExposure::ModelOnly))
+            .map(|t| t.definition.clone())
             .collect();
-
-        let mut defs: Vec<ToolDefinition> = if direct.len() >= MCP_TOOL_DEFER_THRESHOLD {
-            direct.iter().map(|t| t.definition.clone()).collect()
-        } else {
-            // Below threshold: promote Deferred tools so the model can see them.
-            self.tools
-                .values()
-                .filter(|t| {
-                    matches!(
-                        t.exposure,
-                        ToolExposure::Direct | ToolExposure::ModelOnly | ToolExposure::Deferred
-                    )
-                })
-                .map(|t| t.definition.clone())
-                .collect()
-        };
         // HashMap iteration order is process-seeded. Sort by name so the tools
         // array in every provider request is byte-stable and prefix-cacheable.
         defs.sort_by(|a, b| a.name.cmp(&b.name));
@@ -350,17 +333,42 @@ mod tests {
     #[test]
     fn registry_deferred_tools_not_visible() {
         let mut reg = ToolRegistry::new();
-        // Fill with enough Direct tools to exceed the threshold so Deferred
-        // tools are not promoted.
-        for i in 0..MCP_TOOL_DEFER_THRESHOLD {
-            let def = make_def(&format!("direct_tool_{i}"), ToolKind::Read, &["tool"], &[]);
-            reg.register(def);
-        }
-        let mut def = make_def("secret_tool", ToolKind::Custom, &["internal"], &[]);
+        // Even with a tiny Direct set, Deferred must stay out of the schema.
+        reg.register(make_def("read_file", ToolKind::Read, &["tool"], &[]));
+        let mut def = make_def("secret_tool", ToolKind::Custom, &["power"], &[]);
         def.metadata.exposure = ToolExposure::Deferred;
         reg.register(def);
-        assert_eq!(reg.visible_definitions().len(), MCP_TOOL_DEFER_THRESHOLD);
+        let visible: Vec<String> = reg
+            .visible_definitions()
+            .into_iter()
+            .map(|d| d.name)
+            .collect();
+        assert_eq!(visible, vec!["read_file".to_string()]);
         assert_eq!(reg.deferred_definitions().len(), 1);
+        // Deferred tools remain discoverable via search.
+        let found = reg.search("secret", 5);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].name, "secret_tool");
+    }
+
+    #[test]
+    fn registry_never_auto_promotes_deferred_tools() {
+        let mut reg = ToolRegistry::new();
+        for name in ["bash", "edit", "read_file"] {
+            reg.register(make_def(name, ToolKind::Read, &["core"], &[]));
+        }
+        for name in ["code", "package_manager", "browser"] {
+            let mut def = make_def(name, ToolKind::Custom, &["power"], &[]);
+            def.metadata.exposure = ToolExposure::Deferred;
+            reg.register(def);
+        }
+        let visible = reg.visible_tool_names();
+        assert_eq!(visible.len(), 3);
+        assert!(!visible.iter().any(|n| n == "code"));
+        assert!(!visible.iter().any(|n| n == "package_manager"));
+        assert!(!visible.iter().any(|n| n == "browser"));
+        // Threshold constant remains available for compatibility callers.
+        assert_eq!(MCP_TOOL_DEFER_THRESHOLD, 100);
     }
 
     #[test]

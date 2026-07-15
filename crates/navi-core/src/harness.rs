@@ -280,22 +280,37 @@ fn build_system_prompt_inner(
             "  `plan(action='create')` while Plan mode is active; the host handles review.\n",
             "  After approval, implement in normal mode (optionally tracking with `plan` if useful).\n",
             "\n",
+            "Core tools (always available in the schema):\n",
+            "- search, read_file, edit, write_file, bash, plan, question, tool_search, memory,\n",
+            "  set_session_title\n",
+            "\n",
             "Inspection decision tree (pick the cheapest tool that answers the question):\n",
-            "1. Structure/symbols: code(action='overview'|'find') or ast_search / symbol_goto.\n",
-            "2. Text/token search: grep (narrow pattern) or code(action='references') / symbol_references.\n",
-            "3. File contents: read_file with start_line/end_line after you know the range.\n",
-            "4. Directory layout: fs_browser. Avoid broad sweeps and re-reading the same region.\n",
+            "1. Text/nav: `search` (action=grep|list|tree|find|stat). Prefer over grep/list_dir/glob aliases.\n",
+            "2. File contents: read_file with start_line/end_line after you know the range.\n",
+            "3. Structure/symbols: if needed, discover `code` / symbol tools via tool_search first.\n",
+            "4. Avoid broad sweeps and re-reading the same region.\n",
+            "\n",
+            "Power tools (not always in the schema — discover with tool_search, then call by name):\n",
+            "- code / code_edit / ast_search / symbol_*: symbols, AST, overview, rename\n",
+            "- repo_explore: BM25 semantic repo search\n",
+            "- package_manager: add/install/update deps\n",
+            "- browser: headless UI testing\n",
+            "- subagent: nested agent\n",
+            "- apply_patch / sandbox / history_ops / set_goal: advanced workflows\n",
+            "- If a capability is missing from core, call tool_search(query=...) before approximating\n",
+            "  with bash. Then invoke the returned tool name with its input_schema.\n",
             "\n",
             "Tool rules:\n",
             "- Batch independent read-only calls in the same assistant response when native tools allow it.\n",
-            "- Edits: apply_patch for surgical text (`edits`: path/search/replace first exact match;\n",
-            "  or `patch`/`patches`). write_file only for whole-file replacement.\n",
-            "- Symbol-level edits: code_edit with id/hash from code overview/find; see tool schema.\n",
-            "- Prefer package_manager over bash for dependency management.\n",
+            "- Edits: prefer `edit` (old_string→new_string; use `edits`[] for multiple replaces in one\n",
+            "  file). Use `write_file` for whole-file create/overwrite. Prefer `search` for repo nav.\n",
+            "  Do not use bash/python to edit files. Do not dump files with sed/cat/head/rg via bash —\n",
+            "  use read_file/search. Power tools (apply_patch, code, …) are deferred.\n",
+            "- Symbol-level edits: discover code_edit via tool_search when needed.\n",
+            "- Prefer package_manager (via tool_search) over bash for dependency management.\n",
             "- bash for ad-hoc commands; long-running: background=true, wait_ms, timeout_ms, then poll task_id.\n",
             "- Prefer project-relative paths. Writes and commands may require approval.\n",
             "{tool_calling_rule}\n",
-            "- Use runtime_info for harness profile and environment.\n",
             "\n",
             "Response rules:\n",
             "- Be concise.\n",
@@ -312,10 +327,10 @@ fn build_system_prompt_inner(
     );
     if tools_enabled {
         prompt.push_str(
-            "Code tools (details in tool schemas):\n\
-             - code: overview/find/references/diagnostics for navigation before broad reads.\n\
-             - code_edit: replace/insert/rename by symbol id or unique name (use expected_hash when available).\n\
-             - Lighter index nav: ast_search, symbol_goto, symbol_references.\n",
+            "Discovery:\
+             - Use `tool_search` to load schemas for deferred power tools (code, browser, package_manager, …).\
+             - After tool_search, call the returned tool by name with matching arguments.\
+             - Unknown-tool errors include suggestions; prefer those over inventing bash workarounds.\n",
         );
     }
     if policy.profile == HarnessProfile::LongRunning {
@@ -501,7 +516,7 @@ pub fn record_tool_result(
         return ToolLoopDecision::Stop(stop_for_failure(
             HarnessStopReason::ConsecutiveUnknownTools,
             invocation,
-            "unknown tools (use registered names like read_file, fs_browser, bash, grep — not file paths as tool names)",
+            "unknown tools (use registered names like read_file, search, edit, bash — not file paths as tool names)",
             state.consecutive_unknown_tools,
         ));
     }
@@ -625,10 +640,6 @@ fn is_background_poll_call(invocation: &ToolInvocation) -> bool {
 
     match invocation.tool_name.as_str() {
         "bash" => obj.contains_key("task_id") && !obj.contains_key("command"),
-        "process" => {
-            obj.get("action").and_then(|v| v.as_str()) == Some("wait")
-                && !obj.contains_key("command")
-        }
         _ => false,
     }
 }
@@ -922,28 +933,6 @@ mod tests {
     }
 
     #[test]
-    fn process_wait_poll_calls_are_exempt_from_repetition_guard() {
-        let policy = test_policy(100);
-        let poll = ToolInvocation {
-            id: "wait-1".to_string(),
-            tool_name: "process".to_string(),
-            input: json!({ "action": "wait", "process_id": "proc_1" }),
-        };
-        let mut state = AgentRunState::default();
-
-        for i in 0..40 {
-            let mut inv = poll.clone();
-            inv.id = format!("wait-{i}");
-            assert_eq!(
-                record_tool_call(&mut state, policy, &inv),
-                ToolLoopDecision::Continue,
-                "process wait call {i} should continue"
-            );
-        }
-        assert_eq!(state.repeated_tool_calls, 0);
-    }
-
-    #[test]
     fn compact_observation_is_bounded() {
         let mut policy = test_policy(100);
         policy.observation_max_bytes = 16;
@@ -1130,21 +1119,25 @@ mod tests {
 
         assert!(!prompt.contains("tool_workflow"));
         assert!(!prompt.contains("top_files"));
-        assert!(prompt.contains("ast_search"));
-        assert!(prompt.contains("code(action='overview'"));
+        assert!(prompt.contains("tool_search"));
+        assert!(prompt.contains("Power tools"));
+        assert!(prompt.contains("Core tools"));
+        assert!(prompt.contains("ast_search") || prompt.contains("code / code_edit"));
         assert!(!prompt.contains("Long-horizon task protocol"));
         assert!(prompt.contains("When to structure work"));
         assert!(prompt.contains("Inspection decision tree"));
     }
 
     #[test]
-    fn system_prompt_includes_apply_patch_guidance() {
+    fn system_prompt_includes_edit_guidance() {
         let config = NaviConfig::default();
         let prompt = build_system_prompt(&config, std::path::Path::new("/tmp"));
 
-        assert!(prompt.contains("`edits`"));
-        assert!(prompt.contains("path/search/replace"));
-        assert!(prompt.contains("first exact match"));
+        assert!(prompt.contains("`edit`"));
+        assert!(prompt.contains("`search`"));
+        assert!(prompt.contains("old_string") || prompt.contains("edits"));
+        assert!(prompt.contains("bash/python"));
+        assert!(prompt.contains("tool_search"));
     }
 
     #[test]

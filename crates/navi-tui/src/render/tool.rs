@@ -70,6 +70,20 @@ pub(crate) fn tool_running_text(invocation: &ToolInvocation) -> String {
                 .unwrap_or("file");
             format!("Write {}", display_path(path))
         }
+        "edit" | "multiedit" => {
+            let path = invocation
+                .input
+                .get("path")
+                .or_else(|| invocation.input.get("file_path"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("file");
+            let label = if invocation.tool_name == "multiedit" {
+                "MultiEdit"
+            } else {
+                "Edit"
+            };
+            format!("{label} {}", display_path(path))
+        }
         "grep" => {
             let pattern = invocation
                 .input
@@ -128,6 +142,7 @@ pub(crate) fn tool_compact_text(invocation: &ToolInvocation, result: &ToolResult
         "read" | "read_file" | "view_file" => read_file_summary(invocation, result),
         "write_file" => write_file_summary(invocation, result),
         "apply_patch" => apply_patch_summary(invocation, result),
+        "edit" | "multiedit" => edit_summary(invocation, result),
         "write" if has_patch_input(invocation) => apply_patch_summary(invocation, result),
         // Direct write (path + content)
         "write" => write_file_summary(invocation, result),
@@ -136,7 +151,6 @@ pub(crate) fn tool_compact_text(invocation: &ToolInvocation, result: &ToolResult
         "fs_browser" => fs_browser_summary(invocation, result),
 
         // ── Process & Command ─────────────────────────────────────────────
-        "process" => process_summary(invocation, result),
         "test_runner" => test_runner_summary(invocation, result),
         "build_runner" => build_runner_summary(invocation, result),
 
@@ -177,9 +191,7 @@ pub(crate) fn tool_compact_text(invocation: &ToolInvocation, result: &ToolResult
         "view_image" | "inspect_image" => view_image_summary(invocation, result),
         "new_context_window" => new_context_window_summary(result),
         "tool_search" => tool_search_summary(invocation, result),
-        "verifier" => verifier_summary(invocation, result),
         "runtime_info" => runtime_info_summary(result),
-        "branch_race_start" => branch_race_summary(result),
         "history_ops" => history_ops_summary(invocation, result),
         "sandbox" => sandbox_summary(invocation, result),
         "package_manager" => package_manager_summary(invocation, result),
@@ -244,7 +256,7 @@ fn formatted_tool_output(invocation: &ToolInvocation, result: &ToolResult) -> Op
             // Keep a short label only when streams/details follow.
             content.push_str(&format!("Error: {error}\n"));
         }
-        if invocation.tool_name == "bash" || invocation.tool_name == "process" {
+        if invocation.tool_name == "bash" {
             // plain streams only — no Stdout:/``` fences or raw JSON dump.
             append_shell_streams(obj, &mut content);
             // Empty body is fine: the compact header already carries the error.
@@ -317,6 +329,10 @@ fn formatted_tool_output(invocation: &ToolInvocation, result: &ToolResult) -> Op
         if let Some(diff) = write_display_diff(invocation, result) {
             append_diff_fence(&diff, &mut content);
         }
+    } else if invocation.tool_name == "edit" || invocation.tool_name == "multiedit" {
+        if let Some(diff) = write_display_diff(invocation, result) {
+            append_diff_fence(&diff, &mut content);
+        }
     } else if invocation.tool_name == "code_edit" {
         // Prefer a numbered ```diff body (like write/apply_patch) over raw JSON.
         if let Some(diff) = code_edit_display_diff(invocation, result) {
@@ -357,8 +373,6 @@ fn formatted_tool_output(invocation: &ToolInvocation, result: &ToolResult) -> Op
         "search" | "list_dir" | "glob"
     ) {
         render_search_output(invocation, result, &mut content);
-    } else if invocation.tool_name == "process" {
-        render_process_output(result, &mut content);
     } else if invocation.tool_name == "test_runner" {
         render_test_runner_output(result, &mut content);
     } else if invocation.tool_name == "build_runner" {
@@ -378,10 +392,6 @@ fn formatted_tool_output(invocation: &ToolInvocation, result: &ToolResult) -> Op
     } else if invocation.tool_name == "plan" {
         // Human checklist — never dump the full plan JSON into chat.
         content.push_str(&plan_body_content(invocation, result));
-    } else if invocation.tool_name == "verifier" {
-        // Header card already has "Verify <summary>". Body is plain command output
-        // (real newlines), not a ```json dump of stdout with escaped \n.
-        render_verifier_output(invocation, result, &mut content);
     } else if matches!(
         invocation.tool_name.as_str(),
         "repo_explore"
@@ -401,8 +411,7 @@ fn formatted_tool_output(invocation: &ToolInvocation, result: &ToolResult) -> Op
             | "new_context_window"
             | "tool_search"
             | "runtime_info"
-            | "branch_race_start"
-            | "history_ops"
+                        | "history_ops"
             | "sandbox"
             | "package_manager"
     ) {
@@ -548,38 +557,7 @@ fn render_search_output(invocation: &ToolInvocation, result: &ToolResult, conten
     }
 }
 
-fn render_process_output(result: &ToolResult, content: &mut String) {
-    if let Some(processes) = result.output.get("processes").and_then(|v| v.as_array()) {
-        content.push_str("Processes:\n\n");
-        for process in processes {
-            let id = process
-                .get("process_id")
-                .or_else(|| process.get("id"))
-                .and_then(|v| v.as_str())
-                .unwrap_or("?");
-            let status = process
-                .get("status")
-                .and_then(|v| v.as_str())
-                .unwrap_or("?");
-            let command = process
-                .get("command")
-                .and_then(|v| v.as_str())
-                .unwrap_or("process");
-            content.push_str(&format!("- {id} [{status}] {}\n", one_line(command)));
-        }
-    }
 
-    if let Some(process_id) = result.output.get("process_id").and_then(|v| v.as_str()) {
-        content.push_str(&format!("Process: {process_id}\n"));
-    }
-    if let Some(status) = result.output.get("status").and_then(|v| v.as_str()) {
-        content.push_str(&format!("Status: {status}\n"));
-    }
-    // Streams first (plain, like bash); skip Exit code line when streams imply success.
-    if let Some(obj) = result.output.as_object() {
-        append_shell_streams(obj, content);
-    }
-}
 
 fn render_test_runner_output(result: &ToolResult, content: &mut String) {
     if let Some(summary) = result.output.get("summary").and_then(|v| v.as_str()) {
@@ -637,66 +615,7 @@ fn render_build_runner_output(result: &ToolResult, content: &mut String) {
 }
 
 /// Verifier body: real multi-line stdout/stderr (like bash), never ```json with `\n`.
-fn render_verifier_output(invocation: &ToolInvocation, result: &ToolResult, content: &mut String) {
-    let action = invocation
-        .input
-        .get("action")
-        .and_then(|v| v.as_str())
-        .unwrap_or("run");
 
-    match action {
-        "list" => {
-            if let Some(results) = result.output.get("results").and_then(|v| v.as_array()) {
-                for item in results {
-                    let key = item.get("key").and_then(|v| v.as_str()).unwrap_or("?");
-                    let status = item
-                        .get("status")
-                        .or_else(|| item.get("result").and_then(|r| r.get("status")))
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("?");
-                    content.push_str(&format!("- {key}: {status}\n"));
-                }
-            } else if let Some(keys) = result.output.get("keys").and_then(|v| v.as_array()) {
-                for key in keys {
-                    if let Some(k) = key.as_str() {
-                        content.push_str(&format!("- {k}\n"));
-                    }
-                }
-            } else {
-                append_json_section(content, "Output", &result.output);
-            }
-        }
-        "status" | "run" | _ => {
-            // Card already shows the pass/fail summary. Body = command streams only.
-            if let Some(obj) = result.output.as_object() {
-                let has_streams = obj
-                    .get("stdout")
-                    .and_then(|v| v.as_str())
-                    .is_some_and(|s| !s.is_empty())
-                    || obj
-                        .get("stderr")
-                        .and_then(|v| v.as_str())
-                        .is_some_and(|s| !s.is_empty());
-                if has_streams || obj.contains_key("exit_code") {
-                    append_shell_streams(obj, content);
-                    return;
-                }
-            }
-            // Status-only / empty streams: one plain line, no JSON chrome.
-            if let Some(summary) = result.output.get("summary").and_then(|v| v.as_str()) {
-                content.push_str(summary);
-                content.push('\n');
-            } else if let Some(status) = result.output.get("status").and_then(|v| v.as_str()) {
-                content.push_str(status);
-                content.push('\n');
-            } else if let Some(error) = result.output.get("error").and_then(|v| v.as_str()) {
-                content.push_str(&format!("Error: {error}\n"));
-            } else {
-                append_json_section(content, "Output", &result.output);
-            }
-        }
-    }
-}
 
 fn render_named_structured_output(title: &str, result: &ToolResult, content: &mut String) {
     if let Some(message) = result.output.get("message").and_then(|v| v.as_str()) {
@@ -921,10 +840,28 @@ fn write_file_summary(invocation: &ToolInvocation, result: &ToolResult) -> Strin
         .output
         .get("path")
         .or_else(|| invocation.input.get("path"))
+        .or_else(|| invocation.input.get("file_path"))
         .and_then(|v| v.as_str())
         .unwrap_or("file");
     let (added, removed) = write_file_line_counts(invocation, result);
     format!("Write {} (+{added} -{removed} lines)", display_path(path))
+}
+
+fn edit_summary(invocation: &ToolInvocation, result: &ToolResult) -> String {
+    let path = result
+        .output
+        .get("path")
+        .or_else(|| invocation.input.get("path"))
+        .or_else(|| invocation.input.get("file_path"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("file");
+    let (added, removed) = write_file_line_counts(invocation, result);
+    let label = if invocation.tool_name == "multiedit" {
+        "MultiEdit"
+    } else {
+        "Edit"
+    };
+    format!("{label} {} (+{added} -{removed} lines)", display_path(path))
 }
 
 fn write_file_line_counts(invocation: &ToolInvocation, result: &ToolResult) -> (usize, usize) {
@@ -1459,91 +1396,7 @@ fn fs_browser_summary(invocation: &ToolInvocation, result: &ToolResult) -> Strin
 // New: Process & Command tools
 // ═══════════════════════════════════════════════════════════════════════════
 
-fn process_summary(invocation: &ToolInvocation, result: &ToolResult) -> String {
-    let action = invocation
-        .input
-        .get("action")
-        .and_then(|v| v.as_str())
-        .unwrap_or("exec");
 
-    match action {
-        "list" => {
-            let count = result
-                .output
-                .get("processes")
-                .and_then(|v| v.as_array())
-                .map(|a| a.len())
-                .unwrap_or(0);
-            format!("List processes ({count} running)")
-        }
-        "cancel" => {
-            let pid = invocation
-                .input
-                .get("process_id")
-                .and_then(|v| v.as_str())
-                .unwrap_or("?");
-            format!("Cancel process {pid}")
-        }
-        "wait" => {
-            let pid = invocation
-                .input
-                .get("process_id")
-                .and_then(|v| v.as_str())
-                .unwrap_or("?");
-            if let Some(exit_code) = result.output.get("exit_code").and_then(|v| v.as_i64()) {
-                format!("Wait process {pid} (exit {exit_code})")
-            } else {
-                format!("Wait process {pid}")
-            }
-        }
-        "stdin" => {
-            let pid = invocation
-                .input
-                .get("process_id")
-                .and_then(|v| v.as_str())
-                .unwrap_or("?");
-            let bytes = result
-                .output
-                .get("bytes_written")
-                .and_then(|v| v.as_u64())
-                .unwrap_or(0);
-            format!("Write stdin to {pid} ({bytes} bytes)")
-        }
-        _ => {
-            // "exec" action (default)
-            let command = invocation
-                .input
-                .get("command")
-                .and_then(|v| v.as_str())
-                .unwrap_or("command");
-            let is_background =
-                invocation.input.get("background").and_then(|v| v.as_bool()) == Some(true);
-            if is_background {
-                let pid = result
-                    .output
-                    .get("process_id")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("?");
-                let elapsed = result
-                    .output
-                    .get("elapsed_ms")
-                    .and_then(|v| v.as_u64())
-                    .unwrap_or(0);
-                format!(
-                    "Run {} (bg pid={} · {})",
-                    one_line(command),
-                    pid,
-                    crate::background::format_duration_ms(elapsed)
-                )
-            } else if let Some(exit_code) = result.output.get("exit_code").and_then(|v| v.as_i64())
-            {
-                format!("Run {} (exit {exit_code})", one_line(command))
-            } else {
-                format!("Run {}", one_line(command))
-            }
-        }
-    }
-}
 
 fn test_runner_summary(_invocation: &ToolInvocation, result: &ToolResult) -> String {
     let framework = result
@@ -2446,60 +2299,7 @@ fn tool_search_summary(invocation: &ToolInvocation, result: &ToolResult) -> Stri
     format!("Tool search \"{query}\" ({count} results)")
 }
 
-fn verifier_summary(invocation: &ToolInvocation, result: &ToolResult) -> String {
-    let action = invocation
-        .input
-        .get("action")
-        .and_then(|v| v.as_str())
-        .unwrap_or("run");
 
-    match action {
-        "list" => {
-            let total = result
-                .output
-                .get("total")
-                .and_then(|v| v.as_u64())
-                .unwrap_or(0);
-            format!("Verifier list ({total} results)")
-        }
-        "status" => {
-            let key = invocation
-                .input
-                .get("key")
-                .and_then(|v| v.as_str())
-                .unwrap_or("?");
-            let status = result
-                .output
-                .get("status")
-                .and_then(|v| v.as_str())
-                .unwrap_or("?");
-            format!("Verifier status {key} ({status})")
-        }
-        _ => {
-            // run
-            let summary = result
-                .output
-                .get("summary")
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
-            if !summary.is_empty() {
-                format!("Verify {}", one_line(summary))
-            } else {
-                let status = result
-                    .output
-                    .get("status")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("?");
-                let cmd = result
-                    .output
-                    .get("command")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("?");
-                format!("Verify {} ({status})", one_line(cmd))
-            }
-        }
-    }
-}
 
 fn runtime_info_summary(result: &ToolResult) -> String {
     let profile = result
@@ -2510,23 +2310,7 @@ fn runtime_info_summary(result: &ToolResult) -> String {
     format!("Runtime info: {profile} profile")
 }
 
-fn branch_race_summary(result: &ToolResult) -> String {
-    let task = result
-        .output
-        .get("task")
-        .and_then(|v| v.as_str())
-        .unwrap_or("?");
-    let hypotheses = result
-        .output
-        .get("hypotheses")
-        .and_then(|v| v.as_array())
-        .map(|a| a.len())
-        .unwrap_or(0);
-    format!(
-        "Branch race \"{}\" ({hypotheses} hypotheses)",
-        truncate_for_summary(task, 40)
-    )
-}
+
 
 // ═══════════════════════════════════════════════════════════════════════════
 // New: History, Sandbox, Package Manager

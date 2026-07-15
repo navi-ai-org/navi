@@ -104,7 +104,7 @@ impl Tool for WriteTool {
                     "Write full UTF-8 content to a single project file, creating parent directories when needed."
                 }
                 WriteToolMode::Patch => {
-                    "Apply one or more structured patches or unified diffs to project files."
+                    "Apply one or more structured patches or unified diffs to project files. Prefer `edit`/`multiedit` for single-file exact string replacements."
                 }
             },
             ToolKind::Write,

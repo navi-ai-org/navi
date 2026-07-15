@@ -440,9 +440,11 @@ fn handle_mouse_moved(app: &mut TuiApp, col: u16, row: u16) -> bool {
             || app.hovered_chat_source.take().is_some()
             || app.hover_context_usage
             || app.hover_plan_more
+            || app.hover_queued_messages
         {
             app.hover_context_usage = false;
             app.hover_plan_more = false;
+            app.hover_queued_messages = false;
             needs_redraw = true;
         }
     }
@@ -485,6 +487,7 @@ fn apply_non_image_hover(app: &mut TuiApp, hit: &HitRegion<HitAction>) -> bool {
         app.hover_index = None;
         app.hover_context_usage = false;
         app.hover_plan_more = false;
+        app.hover_queued_messages = false;
         return false;
     }
 
@@ -492,10 +495,12 @@ fn apply_non_image_hover(app: &mut TuiApp, hit: &HitRegion<HitAction>) -> bool {
     let prev_index = app.hover_index;
     let prev_usage = app.hover_context_usage;
     let prev_plan_more = app.hover_plan_more;
+    let prev_queued = app.hover_queued_messages;
 
     app.hovered_chat_source = chat_source_for_action(&hit.action);
     app.hover_context_usage = matches!(hit.action, HitAction::ContextUsage);
     app.hover_plan_more = matches!(hit.action, HitAction::ExpandPlanMore);
+    app.hover_queued_messages = matches!(hit.action, HitAction::OpenMessageQueue);
     match &hit.action {
         HitAction::QuestionOption(index) => {
             app.hover_index = Some(*index);
@@ -532,6 +537,7 @@ fn apply_non_image_hover(app: &mut TuiApp, hit: &HitRegion<HitAction>) -> bool {
         || prev_index != app.hover_index
         || prev_usage != app.hover_context_usage
         || prev_plan_more != app.hover_plan_more
+        || prev_queued != app.hover_queued_messages
 }
 
 fn chat_source_for_action(action: &HitAction) -> Option<crate::state::ChatLineSource> {
@@ -562,6 +568,9 @@ fn dispatch_hit(app: &mut TuiApp, hit: HitRegion<HitAction>) {
                 crossterm::event::KeyCode::Enter,
                 crossterm::event::KeyModifiers::NONE,
             );
+        }
+        HitAction::RemoveQueuedMessage(index) => {
+            crate::keybindings::modals::remove_queued_message_at(app, index);
         }
         HitAction::QuestionOption(index) => {
             if let Some(question) = app.pending_questions.first_mut() {

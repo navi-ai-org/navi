@@ -13,6 +13,7 @@ pub enum HitAction {
     ReopenQuestion,
     OpenMessageQueue,
     QueuedMessage(usize),
+    RemoveQueuedMessage(usize),
     QuestionOption(usize),
     QuestionText,
     QuestionDeny,

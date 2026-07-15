@@ -17,14 +17,9 @@ All compaction logic lives in `navi-core/src/compact.rs`. Configuration is sprea
 
 ## Micro-Compact
 
-`micro_compact(messages, gap_threshold_minutes)` clears the `content` of tool result messages whose `tool_name` is in the read-only set:
+`micro_compact(messages, gap_threshold_minutes)` clears the `content` of tool result messages whose `tool_name` is in the read-only set (including `read_file`, `search` / `grep` / `fs_browser`, `tool_search`, `code`, `question`, `plan`, and related inspect tools).
 
-- `read_file`
-- `list_files`
-- `grep`
-- `bash`
-
-Write tools (`write_file`, `apply_patch`) are never cleared. Cleared content is replaced with `[Old tool result content cleared]` and is not double-cleared on subsequent passes.
+Write tools (`edit`, `write_file`, `apply_patch`, …) are never cleared. Cleared content is replaced with `[Old tool result content cleared]` and is not double-cleared on subsequent passes.
 
 The gap threshold is configured by `HarnessConfig.micro_compact_gap_minutes` (default: 60). The gap is measured from the `created_at` timestamp of the last `Assistant` message to the current time. Messages without timestamps are ignored.
 

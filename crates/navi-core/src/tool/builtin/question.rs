@@ -12,14 +12,25 @@ impl Tool for QuestionTool {
     fn definition(&self) -> ToolDefinition {
         helpers::definition(
             "question",
-            "Ask the user to choose from a short list of options. Use this only when user input is needed to proceed.",
+            "Ask the user a question when input is needed to proceed.\n\
+             - Multiple choice: pass `options` (and optional multiple/custom).\n\
+             - Free-form: omit `options` and set `freeform` true (or pass title/description for long prompts).\n\
+             Prefer this over request_user_input (hidden alias).",
             ToolKind::Read,
             json!({
                 "type": "object",
                 "properties": {
                     "question": {
                         "type": "string",
-                        "description": "The question shown to the user."
+                        "description": "The question shown to the user. Also accepts free-form prompts when options are omitted."
+                    },
+                    "title": {
+                        "type": "string",
+                        "description": "Optional short title (free-form / request_user_input compatibility)."
+                    },
+                    "description": {
+                        "type": "string",
+                        "description": "Optional longer description (free-form compatibility). Used when question is empty."
                     },
                     "options": {
                         "type": "array",
@@ -38,7 +49,7 @@ impl Tool for QuestionTool {
                                 }
                             ]
                         },
-                        "description": "Options the user can choose from. Prefer concise labels with optional descriptions."
+                        "description": "Options for multiple choice. Omit for free-form text input."
                     },
                     "multiple": {
                         "type": "boolean",
@@ -46,10 +57,18 @@ impl Tool for QuestionTool {
                     },
                     "custom": {
                         "type": "boolean",
-                        "description": "When true, allow the user to type a custom answer. Defaults to false."
+                        "description": "When true, allow the user to type a custom answer alongside options. Defaults to false."
+                    },
+                    "freeform": {
+                        "type": "boolean",
+                        "description": "When true (or when options are omitted), request free-form text input instead of a fixed choice list."
+                    },
+                    "required": {
+                        "type": "boolean",
+                        "description": "Whether the user must answer before continuing (free-form). Defaults to true."
                     }
                 },
-                "required": ["question", "options"],
+                "required": [],
                 "additionalProperties": false,
             }),
         )

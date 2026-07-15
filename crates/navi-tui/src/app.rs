@@ -168,6 +168,8 @@ pub struct TuiApp {
     pub(crate) hover_context_usage: bool,
     /// Hovering the plan topbar "+N more" affordance.
     pub(crate) hover_plan_more: bool,
+    /// Hovering the composer "N queued" chip (highlights clickable queue).
+    pub(crate) hover_queued_messages: bool,
     pub(crate) theme_id: ThemeId,
     pub(crate) message_action_target: Option<usize>,
     pub(crate) selected_message_action: usize,
@@ -459,6 +461,7 @@ impl TuiApp {
             hover_index: None,
             hover_context_usage: false,
             hover_plan_more: false,
+            hover_queued_messages: false,
             theme_id,
             message_action_target: None,
             selected_message_action: 0,

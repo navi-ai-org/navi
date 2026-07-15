@@ -435,7 +435,7 @@ impl Tool for BashTool {
     fn definition(&self) -> ToolDefinition {
         helpers::definition(
             "bash",
-            "Run an ad-hoc shell command in the current project. Common git, test, build, grep, ls/find, and package-manager commands are not executed here; bash returns a native_tool_available suggestion. Use background=true and wait_ms for long-running commands. Commands using sudo open a secure password modal in the TUI — the password is never shown to the model.",
+            "Run an ad-hoc shell command in the current project. Common git, test, build, package-manager, and file-read commands (cat/sed/head/rg/ls/find) are not executed here; bash returns a native_tool_available suggestion pointing at read_file/search/package_manager. Use background=true and wait_ms for long-running commands. Commands using sudo open a secure password modal in the TUI — the password is never shown to the model. Never use bash to dump project source for inspection.",
             ToolKind::Command,
             helpers::bash_json_schema(),
         )
@@ -538,6 +538,12 @@ impl Tool for BashTool {
 }
 
 fn native_tool_suggestion(command: &str) -> Option<Value> {
+    // Multi-command scripts often chain readers (sed/cat/head) with other ops.
+    // Prefer redirecting when the *primary intent* is dumping project source.
+    if let Some(suggestion) = suggest_file_read_command(command) {
+        return Some(native_tool_error(command, suggestion));
+    }
+
     let argv = split_shell_words(command)?;
     let program = argv.first()?.as_str();
 
@@ -545,20 +551,375 @@ fn native_tool_suggestion(command: &str) -> Option<Value> {
         "cargo" => suggest_cargo(&argv[1..])?,
         "go" => suggest_go(&argv[1..])?,
         "npm" | "bun" => suggest_js_package_manager(program, &argv[1..])?,
-        "rg" | "grep" => suggest_grep(program, &argv[1..])?,
+        "rg" | "grep" | "ag" | "ack" => suggest_grep(program, &argv[1..])?,
         "ls" => suggest_list(&argv[1..]),
         "find" => suggest_find(&argv[1..]),
         _ => return None,
     };
 
-    Some(json!({
+    Some(native_tool_error(command, suggestion))
+}
+
+fn native_tool_error(command: &str, suggestion: NativeSuggestion) -> Value {
+    json!({
         "error": "native_tool_available",
-        "message": "This common shell command was not executed. Use the suggested native tool for structured output.",
+        "message": "This common shell command was not executed. Use the suggested native tool instead of dumping files via bash (keeps the TUI clean and uses structured tools).",
         "original_command": command,
         "native_tool": suggestion.tool,
         "native_input": suggestion.input,
         "recoverable": true,
-    }))
+    })
+}
+
+/// Redirect shell file readers (sed/cat/head/tail/less/…) to `read_file`.
+///
+/// Matches both simple commands and common inspection idioms used by models:
+/// `sed -n '380,560p' path`, `cat path`, `head -n 40 path`, `nl -ba path`, etc.
+fn suggest_file_read_command(command: &str) -> Option<NativeSuggestion> {
+    // For pipelines / chained commands (`cmd1; cmd2`, `a | b`), inspect each segment.
+    for segment in split_shell_command_segments(command) {
+        let Some(argv) = split_shell_words(segment) else {
+            continue;
+        };
+        if let Some(suggestion) = suggest_file_read_argv(&argv) {
+            return Some(suggestion);
+        }
+    }
+    None
+}
+
+fn split_shell_command_segments(command: &str) -> Vec<&str> {
+    let mut segments = Vec::new();
+    let mut start = 0usize;
+    let mut chars = command.char_indices().peekable();
+    let mut quote: Option<char> = None;
+    let mut escaped = false;
+    while let Some((idx, ch)) = chars.next() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        if ch == '\\' {
+            escaped = true;
+            continue;
+        }
+        if let Some(q) = quote {
+            if ch == q {
+                quote = None;
+            }
+            continue;
+        }
+        if ch == '\'' || ch == '"' {
+            quote = Some(ch);
+            continue;
+        }
+        // Split on ; | && || when not quoted.
+        if ch == ';' {
+            let piece = command[start..idx].trim();
+            if !piece.is_empty() {
+                segments.push(piece);
+            }
+            start = idx + ch.len_utf8();
+            continue;
+        }
+        if ch == '|' {
+            // || or single |
+            let is_or = chars.peek().is_some_and(|(_, n)| *n == '|');
+            let piece = command[start..idx].trim();
+            if !piece.is_empty() {
+                segments.push(piece);
+            }
+            if is_or {
+                let _ = chars.next();
+                start = idx + 2;
+            } else {
+                start = idx + 1;
+            }
+            continue;
+        }
+        if ch == '&' && chars.peek().is_some_and(|(_, n)| *n == '&') {
+            let piece = command[start..idx].trim();
+            if !piece.is_empty() {
+                segments.push(piece);
+            }
+            let _ = chars.next();
+            start = idx + 2;
+        }
+    }
+    let piece = command[start..].trim();
+    if !piece.is_empty() {
+        segments.push(piece);
+    }
+    if segments.is_empty() {
+        segments.push(command);
+    }
+    segments
+}
+
+fn suggest_file_read_argv(argv: &[String]) -> Option<NativeSuggestion> {
+    // strip env assignments: FOO=1 sed ...
+    let (program, args) = strip_leading_env_assignments(argv)?;
+
+    match program {
+        "sed" => suggest_sed_read(args),
+        "cat" | "bat" | "batcat" => suggest_cat_read(args),
+        "head" | "tail" => suggest_head_tail_read(program, args),
+        "less" | "more" | "most" => suggest_pager_read(args),
+        "nl" => suggest_nl_read(args),
+        "tac" => suggest_cat_read(args),
+        "awk" => suggest_awk_read(args),
+        // python -c "print(open('f').read())" is harder; leave for later.
+        _ => None,
+    }
+}
+
+fn strip_leading_env_assignments(argv: &[String]) -> Option<(&str, &[String])> {
+    let mut idx = 0;
+    while idx < argv.len() {
+        let tok = &argv[idx];
+        if tok.contains('=') && !tok.starts_with('-') && !tok.contains('/') {
+            // FOO=bar style assignment
+            if tok.chars().next().is_some_and(|c| c.is_ascii_alphabetic() || c == '_') {
+                idx += 1;
+                continue;
+            }
+        }
+        break;
+    }
+    let program = argv.get(idx)?.as_str();
+    Some((program, &argv[idx + 1..]))
+}
+
+fn looks_like_path(token: &str) -> bool {
+    if token.is_empty() || token == "-" {
+        return false;
+    }
+    if token.starts_with('-') {
+        return false;
+    }
+    // Paths commonly contain / or a file extension, or are relative project files.
+    token.contains('/')
+        || token.contains('.')
+        || token == "README"
+        || token == "Makefile"
+        || token == "Cargo.toml"
+        || token == "justfile"
+}
+
+fn parse_sed_range(expr: &str) -> Option<(u64, u64)> {
+    // Forms: 10,20p  |  10,20p;  |  '10,20p' already unquoted by splitter
+    let expr = expr.trim().trim_matches(';');
+    let expr = expr.strip_suffix('p').unwrap_or(expr);
+    let expr = expr.strip_suffix('P').unwrap_or(expr);
+    let (start, end) = expr.split_once(',')?;
+    let start: u64 = start.trim().parse().ok()?;
+    let end: u64 = end.trim().parse().ok()?;
+    if start == 0 || end == 0 || end < start {
+        return None;
+    }
+    Some((start, end))
+}
+
+fn suggest_sed_read(args: &[String]) -> Option<NativeSuggestion> {
+    // sed [-n] 'START,ENDp' path...
+    // Also: sed -n START,ENDp path
+    let mut quiet = false;
+    let mut range = None;
+    let mut paths = Vec::new();
+    let mut i = 0;
+    while i < args.len() {
+        let arg = &args[i];
+        if arg == "-n" || arg == "--quiet" || arg == "--silent" {
+            quiet = true;
+            i += 1;
+            continue;
+        }
+        if arg == "-e" || arg == "--expression" {
+            if let Some(expr) = args.get(i + 1) {
+                if let Some(r) = parse_sed_range(expr) {
+                    range = Some(r);
+                }
+                i += 2;
+                continue;
+            }
+        }
+        if arg == "-f" || arg == "--file" {
+            // script file — not a project source dump we can map cleanly
+            return None;
+        }
+        if arg == "-i" || arg.starts_with("-i") {
+            // in-place edit: not a read dump
+            return None;
+        }
+        if arg.starts_with('-') {
+            i += 1;
+            continue;
+        }
+        if range.is_none() {
+            if let Some(r) = parse_sed_range(arg) {
+                range = Some(r);
+                i += 1;
+                continue;
+            }
+        }
+        if looks_like_path(arg) {
+            paths.push(arg.clone());
+        }
+        i += 1;
+    }
+
+    let path = paths.first()?.clone();
+    // Only redirect classic "print line range" dumps (with or without -n).
+    if let Some((start, end)) = range {
+        return Some(NativeSuggestion {
+            tool: "read_file",
+            input: json!({
+                "path": path,
+                "start_line": start,
+                "end_line": end,
+            }),
+        });
+    }
+
+    // sed without range but with a path is ambiguous (could be transform).
+    // Only redirect when -n is present with a simple print script missing — skip.
+    let _ = quiet;
+    None
+}
+
+fn first_path_arg(args: &[String]) -> Option<String> {
+    args.iter()
+        .filter(|arg| looks_like_path(arg))
+        .find(|arg| !arg.starts_with('-'))
+        .cloned()
+}
+
+fn suggest_cat_read(args: &[String]) -> Option<NativeSuggestion> {
+    let path = first_path_arg(args)?;
+    Some(NativeSuggestion {
+        tool: "read_file",
+        input: json!({ "path": path }),
+    })
+}
+
+fn suggest_pager_read(args: &[String]) -> Option<NativeSuggestion> {
+    suggest_cat_read(args)
+}
+
+fn suggest_nl_read(args: &[String]) -> Option<NativeSuggestion> {
+    suggest_cat_read(args)
+}
+
+fn suggest_head_tail_read(program: &str, args: &[String]) -> Option<NativeSuggestion> {
+    let mut n: Option<u64> = None;
+    let mut path = None;
+    let mut i = 0;
+    while i < args.len() {
+        let arg = &args[i];
+        if arg == "-n" || arg == "--lines" {
+            if let Some(v) = args.get(i + 1) {
+                n = v.trim_start_matches('+').parse().ok();
+                i += 2;
+                continue;
+            }
+        }
+        if let Some(rest) = arg.strip_prefix("-n") {
+            if !rest.is_empty() {
+                n = rest.trim_start_matches('+').parse().ok();
+                i += 1;
+                continue;
+            }
+        }
+        // head -20 file / tail -20 file
+        if arg.starts_with('-')
+            && arg.len() > 1
+            && arg[1..].chars().all(|c| c.is_ascii_digit())
+        {
+            n = arg[1..].parse().ok();
+            i += 1;
+            continue;
+        }
+        if looks_like_path(arg) {
+            path = Some(arg.clone());
+        }
+        i += 1;
+    }
+    let path = path?;
+    if program == "head" {
+        let end = n.unwrap_or(20).max(1);
+        return Some(NativeSuggestion {
+            tool: "read_file",
+            input: json!({ "path": path, "start_line": 1, "end_line": end }),
+        });
+    }
+    // tail: without total line count we can't map exactly; still force read_file
+    // and let the model re-range. Avoid dumping via bash.
+    Some(NativeSuggestion {
+        tool: "read_file",
+        input: json!({ "path": path }),
+    })
+}
+
+fn suggest_awk_read(args: &[String]) -> Option<NativeSuggestion> {
+    // Only map trivial `{print}` / `{print $0}` file dumps.
+    let mut script = None;
+    let mut path = None;
+    let mut i = 0;
+    while i < args.len() {
+        let arg = &args[i];
+        if arg == "-f" {
+            return None;
+        }
+        if arg.starts_with('-') {
+            i += 1;
+            continue;
+        }
+        if script.is_none() {
+            script = Some(arg.clone());
+            i += 1;
+            continue;
+        }
+        if looks_like_path(arg) {
+            path = Some(arg.clone());
+        }
+        i += 1;
+    }
+    let script = script?;
+    let path = path?;
+    let compact: String = script.chars().filter(|c| !c.is_whitespace()).collect();
+    if matches!(
+        compact.as_str(),
+        "{print}" | "{print$0}" | "1" | "{print;}"
+    ) {
+        return Some(NativeSuggestion {
+            tool: "read_file",
+            input: json!({ "path": path }),
+        });
+    }
+    // NR ranges: NR>=10&&NR<=20{print}
+    if let Some((start, end)) = parse_awk_nr_range(&compact) {
+        return Some(NativeSuggestion {
+            tool: "read_file",
+            input: json!({
+                "path": path,
+                "start_line": start,
+                "end_line": end,
+            }),
+        });
+    }
+    None
+}
+
+fn parse_awk_nr_range(compact: &str) -> Option<(u64, u64)> {
+    // NR>=10&&NR<=20 or NR==10
+    if let Some(rest) = compact.strip_prefix("NR>=") {
+        let (a, rest) = rest.split_once("&&NR<=")?;
+        let start: u64 = a.parse().ok()?;
+        let end_part = rest.split('{').next()?.trim_end_matches('}');
+        let end: u64 = end_part.parse().ok()?;
+        return Some((start, end));
+    }
+    None
 }
 
 struct NativeSuggestion {
@@ -634,8 +995,12 @@ fn suggest_grep(program: &str, args: &[String]) -> Option<NativeSuggestion> {
     let pattern = values.first()?.clone();
     let path = values.get(1).cloned().unwrap_or_else(|| ".".to_string());
     Some(NativeSuggestion {
-        tool: "grep",
-        input: json!({ "pattern": pattern, "path": path }),
+        tool: "search",
+        input: json!({
+            "action": "grep",
+            "pattern": pattern,
+            "path": path,
+        }),
     })
 }
 
@@ -646,7 +1011,7 @@ fn suggest_list(args: &[String]) -> NativeSuggestion {
         .cloned()
         .unwrap_or_else(|| ".".to_string());
     NativeSuggestion {
-        tool: "fs_browser",
+        tool: "search",
         input: json!({ "action": "list", "path": path }),
     }
 }
@@ -661,7 +1026,7 @@ fn suggest_find(args: &[String]) -> NativeSuggestion {
         input["pattern"] = json!(pattern.trim_matches('*'));
     }
     NativeSuggestion {
-        tool: "fs_browser",
+        tool: "search",
         input,
     }
 }
@@ -1039,16 +1404,17 @@ mod tests {
         let suggestion =
             native_tool_suggestion("rg \"fn main\" crates/navi-core/src").expect("suggestion");
 
-        assert_eq!(suggestion["native_tool"], "grep");
+        assert_eq!(suggestion["native_tool"], "search");
+        assert_eq!(suggestion["native_input"]["action"], "grep");
         assert_eq!(suggestion["native_input"]["pattern"], "fn main");
         assert_eq!(suggestion["native_input"]["path"], "crates/navi-core/src");
     }
 
     #[test]
-    fn suggests_fs_browser_for_ls() {
+    fn suggests_search_for_ls() {
         let suggestion = native_tool_suggestion("ls -la crates").expect("suggestion");
 
-        assert_eq!(suggestion["native_tool"], "fs_browser");
+        assert_eq!(suggestion["native_tool"], "search");
         assert_eq!(
             suggestion["native_input"],
             json!({ "action": "list", "path": "crates" })
@@ -1065,5 +1431,69 @@ mod tests {
     fn leaves_ad_hoc_shell_commands_to_bash() {
         assert!(native_tool_suggestion("printf 'hello'").is_none());
         assert!(native_tool_suggestion("git diff | less").is_none());
+    }
+}
+
+#[cfg(test)]
+mod native_redirect_tests {
+    use super::*;
+
+    #[test]
+    fn sed_range_dump_redirects_to_read_file() {
+        let out = native_tool_suggestion(
+            "sed -n '380,560p' crates/navi-core/src/tool/builtin/search_tool.rs",
+        )
+        .expect("should redirect");
+        assert_eq!(out["error"], "native_tool_available");
+        assert_eq!(out["native_tool"], "read_file");
+        assert_eq!(
+            out["native_input"]["path"],
+            "crates/navi-core/src/tool/builtin/search_tool.rs"
+        );
+        assert_eq!(out["native_input"]["start_line"], 380);
+        assert_eq!(out["native_input"]["end_line"], 560);
+    }
+
+    #[test]
+    fn cat_file_redirects_to_read_file() {
+        let out = native_tool_suggestion("cat src/main.rs").expect("redirect");
+        assert_eq!(out["native_tool"], "read_file");
+        assert_eq!(out["native_input"]["path"], "src/main.rs");
+    }
+
+    #[test]
+    fn head_n_redirects_to_read_file_range() {
+        let out = native_tool_suggestion("head -n 40 crates/navi-core/src/lib.rs").expect("redirect");
+        assert_eq!(out["native_tool"], "read_file");
+        assert_eq!(out["native_input"]["start_line"], 1);
+        assert_eq!(out["native_input"]["end_line"], 40);
+    }
+
+    #[test]
+    fn chained_sed_still_redirects() {
+        let out = native_tool_suggestion(
+            "sed -n '1,120p' crates/navi-core/src/tool/builtin/search_tool.rs; echo '---'; sed -n '380,560p' crates/navi-core/src/tool/builtin/search_tool.rs",
+        )
+        .expect("redirect");
+        assert_eq!(out["native_tool"], "read_file");
+    }
+
+    #[test]
+    fn rg_redirects_to_search() {
+        let out = native_tool_suggestion("rg -n foo src").expect("redirect");
+        assert_eq!(out["native_tool"], "search");
+        assert_eq!(out["native_input"]["action"], "grep");
+        assert_eq!(out["native_input"]["pattern"], "foo");
+    }
+
+    #[test]
+    fn cargo_test_is_not_redirected() {
+        assert!(native_tool_suggestion("cargo test -p navi-core").is_none());
+    }
+
+    #[test]
+    fn sed_inplace_edit_is_not_redirected_as_read() {
+        // In-place edits should not be mapped to read_file.
+        assert!(native_tool_suggestion("sed -i 's/old/new/' src/lib.rs").is_none());
     }
 }

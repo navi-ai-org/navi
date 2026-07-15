@@ -1040,20 +1040,35 @@ pub(crate) fn handle_message_queue_key(
         KeyCode::Up => {
             app.queued_message_selected = app.queued_message_selected.saturating_sub(1);
         }
-        KeyCode::Delete | KeyCode::Backspace => {
-            let index = app.queued_message_selected;
-            if index < app.queued_user_messages.len() {
-                app.queued_user_messages.remove(index);
-            }
-            app.queued_message_selected = app
-                .queued_message_selected
-                .min(app.queued_user_messages.len().saturating_sub(1));
-            if app.queued_user_messages.is_empty() {
-                super::close_active_modal(app);
-            }
+        // Remove selected message. Accept several keys because terminals differ:
+        // Delete, Backspace, ^?, ^H, and mnemonic `d` / `x`.
+        KeyCode::Delete
+        | KeyCode::Backspace
+        | KeyCode::Char('\u{7f}')
+        | KeyCode::Char('\u{8}')
+        | KeyCode::Char('d')
+        | KeyCode::Char('x')
+            if !modifiers.contains(KeyModifiers::CONTROL)
+                && !modifiers.contains(KeyModifiers::ALT) =>
+        {
+            remove_selected_queued_message(app);
+        }
+        // Clear entire queue.
+        KeyCode::Char('D') if modifiers.contains(KeyModifiers::SHIFT) => {
+            app.queued_user_messages.clear();
+            app.queued_message_selected = 0;
+            app.queued_message_scroll = 0;
+            super::close_active_modal(app);
+        }
+        KeyCode::Char('d') if modifiers.contains(KeyModifiers::CONTROL) => {
+            remove_selected_queued_message(app);
         }
         KeyCode::Enter => open_queued_message_edit(app),
         _ => {}
+    }
+
+    if app.queued_user_messages.is_empty() {
+        return false;
     }
 
     let visible_rows = 10usize;
@@ -1063,6 +1078,32 @@ pub(crate) fn handle_message_queue_key(
     app.queued_message_selected = state.selected();
     app.queued_message_scroll = state.scroll();
     false
+}
+
+/// Remove the currently selected queued message (if any) and fix selection.
+pub(crate) fn remove_selected_queued_message(app: &mut TuiApp) {
+    let len = app.queued_user_messages.len();
+    if len == 0 {
+        return;
+    }
+    let index = app.queued_message_selected.min(len - 1);
+    app.queued_user_messages.remove(index);
+    if app.queued_user_messages.is_empty() {
+        app.queued_message_selected = 0;
+        app.queued_message_scroll = 0;
+        super::close_active_modal(app);
+        return;
+    }
+    app.queued_message_selected = index.min(app.queued_user_messages.len() - 1);
+}
+
+/// Remove a queued message by absolute index (mouse / external callers).
+pub(crate) fn remove_queued_message_at(app: &mut TuiApp, index: usize) {
+    if index >= app.queued_user_messages.len() {
+        return;
+    }
+    app.queued_message_selected = index;
+    remove_selected_queued_message(app);
 }
 
 fn open_queued_message_edit(app: &mut TuiApp) {
@@ -1089,6 +1130,15 @@ pub(crate) fn handle_queued_message_edit_key(
             app.queued_edit_text.clear();
             app.queued_edit_cursor = 0;
             super::close_active_modal(app);
+        }
+        // Delete this queued message from the editor.
+        KeyCode::Char('d') | KeyCode::Delete if modifiers.contains(KeyModifiers::CONTROL) => {
+            if let Some(index) = app.queued_edit_index.take() {
+                app.queued_edit_text.clear();
+                app.queued_edit_cursor = 0;
+                super::close_active_modal(app);
+                remove_queued_message_at(app, index);
+            }
         }
         code if is_queued_edit_save_key(code, modifiers) => {
             save_queued_message_edit(app);

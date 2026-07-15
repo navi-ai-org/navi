@@ -418,12 +418,33 @@ pub(crate) fn render_message_queue(frame: &mut Frame<'_>, app: &TuiApp, area: Re
             .queued_message_scroll
             .min(app.queued_user_messages.len());
         for index in start..(start + visible_rows).min(app.queued_user_messages.len()) {
+            let row = line_rect(rows[1], index.saturating_sub(start));
+            let main = Rect {
+                x: row.x,
+                y: row.y,
+                width: row.width.saturating_sub(4).max(1),
+                height: row.height,
+            };
             app.register_hit(
-                line_rect(rows[1], index.saturating_sub(start)),
+                main,
                 20,
                 format!("queued message {}", index + 1),
                 HitAction::QueuedMessage(index),
             );
+            if row.width > 4 {
+                let remove = Rect {
+                    x: row.x + row.width.saturating_sub(3),
+                    y: row.y,
+                    width: 3.min(row.width),
+                    height: row.height,
+                };
+                app.register_hit(
+                    remove,
+                    25,
+                    format!("remove queued message {}", index + 1),
+                    HitAction::RemoveQueuedMessage(index),
+                );
+            }
         }
     }
 
@@ -431,8 +452,10 @@ pub(crate) fn render_message_queue(frame: &mut Frame<'_>, app: &TuiApp, area: Re
         Paragraph::new(Line::from(vec![
             Span::styled("enter", Style::default().fg(text()).bg(modal_bg())),
             Span::styled(" edit  ·  ", Style::default().fg(muted()).bg(modal_bg())),
-            Span::styled("del", Style::default().fg(text()).bg(modal_bg())),
-            Span::styled(" cancel  ·  ", Style::default().fg(muted()).bg(modal_bg())),
+            Span::styled("d/del", Style::default().fg(text()).bg(modal_bg())),
+            Span::styled(" remove  ·  ", Style::default().fg(muted()).bg(modal_bg())),
+            Span::styled("D", Style::default().fg(text()).bg(modal_bg())),
+            Span::styled(" clear all  ·  ", Style::default().fg(muted()).bg(modal_bg())),
             Span::styled("ctrl+↑/↓", Style::default().fg(text()).bg(modal_bg())),
             Span::styled(" move  ·  ", Style::default().fg(muted()).bg(modal_bg())),
             Span::styled("esc", Style::default().fg(text()).bg(modal_bg())),
@@ -450,6 +473,7 @@ fn queued_message_line(
     style: Style,
 ) -> Line<'static> {
     let prefix = format!("{:>2}  ", index + 1);
+    let remove = " × ".to_string();
     let badges = if message.images.is_empty() {
         String::new()
     } else {
@@ -458,12 +482,14 @@ fn queued_message_line(
     let text_width = width
         .saturating_sub(prefix.len())
         .saturating_sub(badges.len())
+        .saturating_sub(remove.len())
         .max(1);
     let summary = queued_message_summary(&message.text, text_width);
     Line::from(vec![
         Span::styled(prefix, style),
         Span::styled(summary, style),
         Span::styled(badges, Style::default().fg(code_const()).bg(modal_bg())),
+        Span::styled(remove, Style::default().fg(muted()).bg(modal_bg())),
     ])
 }
 

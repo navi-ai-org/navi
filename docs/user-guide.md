@@ -213,14 +213,15 @@ Built-in tools are registered by `ToolExecutor` in `navi-core`:
 | Tool | Kind | Purpose |
 |---|---|---|
 | `read_file` | Read | Read UTF-8 project files, optionally by line range |
-| `write_file` | Write | Write full UTF-8 file contents |
-| `apply_patch` | Write | Apply a unified diff with `git apply` |
-| `grep` | Read | Literal text search over project files |
-| `bash` | Command | Run a shell command with timeout, background tasks, and truncation |
-| `test_runner` | Command | Run project tests with structured output (cargo/jest/vitest/bun/pytest/go) |
-| `build_runner` | Command | Build/compile with caching and structured warnings/errors |
-| `fs_browser` | Read | Browse filesystem: `list`, `tree`, `find`, `stat` |
-| `package_manager` | Write | Manage deps: `install`, `add`, `remove`, `update`, `check` (npm/bun/cargo/go) |
+| `search` | Read | Repo search/nav (`grep` / `list` / `tree` / `find` / `stat`) |
+| `edit` | Write | Exact find-and-replace (`edits[]` for multi-hunk in one file) |
+| `write_file` | Write | Create or overwrite full file contents |
+| `bash` | Command | Shell with timeout/background; common file dumps redirect to native tools |
+| `plan` / `question` | Custom | Checklist and user prompts |
+| `tool_search` | Read | Discover deferred power tools + schemas |
+| `memory` | Write | Durable memory CRUD/search |
+| `apply_patch` | Write | Optional patch format (prefer `edit` for most edits) |
+| `package_manager` | Write | Dependency install/add/remove/update (also discoverable via `tool_search`) |
 
 
 All tools execute with the project root as working directory. Relative paths are resolved against the project root, not the process CWD.

@@ -62,22 +62,25 @@ static LOOKUP: LazyLock<std::collections::HashMap<&'static str, ToolMetadata>> =
         insert(
             &mut map,
             "read",
-            ToolMetadata::reader("file", &["read", "file"]),
+            ToolMetadata::reader("file", &["read", "file", "alias"])
+                .with_exposure(crate::tool::ToolExposure::Hidden),
         );
         insert(
             &mut map,
             "read_file",
-            ToolMetadata::reader("file", &["read", "file", "alias"]),
+            ToolMetadata::reader("file", &["read", "file"]),
         );
         insert(
             &mut map,
             "view_file",
-            ToolMetadata::reader("file", &["read", "file", "alias"]),
+            ToolMetadata::reader("file", &["read", "file", "alias"])
+                .with_exposure(crate::tool::ToolExposure::Hidden),
         );
         insert(
             &mut map,
             "load_skill",
-            ToolMetadata::reader("skill", &["read", "skill", "instructions"]),
+            ToolMetadata::reader("skill", &["read", "skill", "instructions"])
+                .with_exposure(crate::tool::ToolExposure::Deferred),
         );
         insert(
             &mut map,
@@ -104,7 +107,7 @@ static LOOKUP: LazyLock<std::collections::HashMap<&'static str, ToolMetadata>> =
                 risk: crate::tool::ToolRisk::Low,
                 is_read_only: true,
                 is_concurrency_safe: true,
-                exposure: crate::tool::ToolExposure::Direct,
+                exposure: crate::tool::ToolExposure::Hidden,
                 capabilities: vec!["repo.read".to_string()],
                 tags: vec!["grep", "search", "text", "alias"]
                     .into_iter()
@@ -121,7 +124,7 @@ static LOOKUP: LazyLock<std::collections::HashMap<&'static str, ToolMetadata>> =
                 risk: crate::tool::ToolRisk::Low,
                 is_read_only: true,
                 is_concurrency_safe: true,
-                exposure: crate::tool::ToolExposure::Direct,
+                exposure: crate::tool::ToolExposure::Hidden,
                 capabilities: vec!["repo.read".to_string()],
                 tags: vec!["filesystem", "list", "tree", "find", "stat", "alias"]
                     .into_iter()
@@ -133,45 +136,42 @@ static LOOKUP: LazyLock<std::collections::HashMap<&'static str, ToolMetadata>> =
         insert(
             &mut map,
             "list_dir",
-            ToolMetadata::reader("repo", &["filesystem", "list", "directory"]),
+            ToolMetadata::reader("repo", &["filesystem", "list", "directory"])
+                .with_exposure(crate::tool::ToolExposure::Hidden),
         );
         insert(
             &mut map,
             "glob",
-            ToolMetadata::reader("repo", &["filesystem", "glob", "find"]),
+            ToolMetadata::reader("repo", &["filesystem", "glob", "find"])
+                .with_exposure(crate::tool::ToolExposure::Hidden),
         );
         insert(
             &mut map,
             "write",
-            ToolMetadata::writer("file", &["write", "edit", "patch"]),
+            ToolMetadata::writer("file", &["write", "file", "content", "alias"])
+                .with_exposure(crate::tool::ToolExposure::Hidden),
         );
         insert(
             &mut map,
             "write_file",
-            ToolMetadata::writer("file", &["write", "file", "alias"]),
+            ToolMetadata::writer("file", &["write", "file"]),
+        );
+        insert(
+            &mut map,
+            "edit",
+            ToolMetadata::writer("file", &["edit", "replace", "search_replace"]),
+        );
+        insert(
+            &mut map,
+            "multiedit",
+            ToolMetadata::writer("file", &["edit", "replace", "batch", "multiedit", "alias"])
+                .with_exposure(crate::tool::ToolExposure::Hidden),
         );
         insert(
             &mut map,
             "apply_patch",
-            ToolMetadata::writer("file", &["patch", "diff", "edit", "alias"]),
-        );
-        insert(
-            &mut map,
-            "process",
-            ToolMetadata {
-                namespace: "process".to_string(),
-                risk: crate::tool::ToolRisk::High,
-                is_read_only: false,
-                is_concurrency_safe: false,
-                exposure: crate::tool::ToolExposure::Direct,
-                capabilities: vec!["shell.exec".to_string(), "process.manage".to_string()],
-                tags: vec!["process", "command", "exec"]
-                    .into_iter()
-                    .map(|s| s.to_string())
-                    .collect(),
-                max_output_bytes: Some(65536),
-                ..ToolMetadata::default()
-            },
+            ToolMetadata::writer("file", &["patch", "diff", "alias"])
+                .with_exposure(crate::tool::ToolExposure::Hidden),
         );
         insert(
             &mut map,
@@ -181,7 +181,7 @@ static LOOKUP: LazyLock<std::collections::HashMap<&'static str, ToolMetadata>> =
                 risk: crate::tool::ToolRisk::High,
                 is_read_only: false,
                 is_concurrency_safe: false,
-                exposure: crate::tool::ToolExposure::Direct,
+                exposure: crate::tool::ToolExposure::Deferred,
                 capabilities: vec![
                     "browser.navigate".to_string(),
                     "network.external".to_string(),
@@ -220,6 +220,7 @@ static LOOKUP: LazyLock<std::collections::HashMap<&'static str, ToolMetadata>> =
                 risk: crate::tool::ToolRisk::Low,
                 is_read_only: true,
                 is_concurrency_safe: true,
+                exposure: crate::tool::ToolExposure::Deferred,
                 capabilities: vec!["repo.read".to_string(), "code.analyze".to_string()],
                 tags: vec!["code", "symbols", "analysis"]
                     .into_iter()
@@ -237,6 +238,7 @@ static LOOKUP: LazyLock<std::collections::HashMap<&'static str, ToolMetadata>> =
                 is_read_only: false,
                 is_concurrency_safe: false,
                 supports_rollback: true,
+                exposure: crate::tool::ToolExposure::Deferred,
                 capabilities: vec!["repo.write".to_string(), "code.edit".to_string()],
                 tags: vec!["code", "edit", "symbol"]
                     .into_iter()
@@ -285,7 +287,7 @@ static LOOKUP: LazyLock<std::collections::HashMap<&'static str, ToolMetadata>> =
                     risk: crate::tool::ToolRisk::Low,
                     is_read_only: true,
                     is_concurrency_safe: true,
-                    exposure: crate::tool::ToolExposure::Direct,
+                    exposure: crate::tool::ToolExposure::Deferred,
                     capabilities: vec!["repo.read".to_string(), "code.analyze".to_string()],
                     tags: vec!["ast", "symbol", "dependency", "test", "repo"]
                         .into_iter()
@@ -296,24 +298,6 @@ static LOOKUP: LazyLock<std::collections::HashMap<&'static str, ToolMetadata>> =
                 },
             );
         }
-        insert(
-            &mut map,
-            "branch_race_start",
-            ToolMetadata {
-                namespace: "orchestration".to_string(),
-                risk: crate::tool::ToolRisk::Medium,
-                is_read_only: true,
-                is_concurrency_safe: true,
-                exposure: crate::tool::ToolExposure::Deferred,
-                capabilities: vec!["orchestration.branch_race".to_string()],
-                tags: vec!["branch", "race", "hypothesis", "verifier"]
-                    .into_iter()
-                    .map(|s| s.to_string())
-                    .collect(),
-                max_output_bytes: Some(32768),
-                ..ToolMetadata::default()
-            },
-        );
         insert(
             &mut map,
             "question",
@@ -349,7 +333,8 @@ static LOOKUP: LazyLock<std::collections::HashMap<&'static str, ToolMetadata>> =
         insert(
             &mut map,
             "init_session",
-            ToolMetadata::reader("session", &["session", "init"]),
+            ToolMetadata::reader("session", &["session", "init"])
+                .with_exposure(crate::tool::ToolExposure::Deferred),
         );
         insert(
             &mut map,
@@ -359,6 +344,7 @@ static LOOKUP: LazyLock<std::collections::HashMap<&'static str, ToolMetadata>> =
                 risk: crate::tool::ToolRisk::Medium,
                 is_read_only: false,
                 is_concurrency_safe: false,
+                exposure: crate::tool::ToolExposure::Deferred,
                 capabilities: vec!["session.feature".to_string()],
                 tags: vec!["session", "feature", "verify"]
                     .into_iter()
@@ -370,7 +356,8 @@ static LOOKUP: LazyLock<std::collections::HashMap<&'static str, ToolMetadata>> =
         insert(
             &mut map,
             "current_time",
-            ToolMetadata::reader("system", &["time", "clock"]),
+            ToolMetadata::reader("system", &["time", "clock"])
+                .with_exposure(crate::tool::ToolExposure::Deferred),
         );
         insert(
             &mut map,
@@ -380,12 +367,14 @@ static LOOKUP: LazyLock<std::collections::HashMap<&'static str, ToolMetadata>> =
         insert(
             &mut map,
             "get_context_remaining",
-            ToolMetadata::reader("system", &["context", "tokens"]),
+            ToolMetadata::reader("system", &["context", "tokens"])
+                .with_exposure(crate::tool::ToolExposure::Deferred),
         );
         insert(
             &mut map,
             "request_user_input",
-            ToolMetadata::reader("interactive", &["input", "user"]),
+            ToolMetadata::reader("interactive", &["input", "user", "alias"])
+                .with_exposure(crate::tool::ToolExposure::Hidden),
         );
         insert(
             &mut map,
@@ -395,6 +384,7 @@ static LOOKUP: LazyLock<std::collections::HashMap<&'static str, ToolMetadata>> =
                 risk: crate::tool::ToolRisk::Low,
                 is_read_only: false,
                 is_concurrency_safe: true,
+                exposure: crate::tool::ToolExposure::Deferred,
                 capabilities: vec!["context.compact".to_string()],
                 tags: vec!["context", "compact"]
                     .into_iter()
@@ -406,12 +396,14 @@ static LOOKUP: LazyLock<std::collections::HashMap<&'static str, ToolMetadata>> =
         insert(
             &mut map,
             "view_image",
-            ToolMetadata::reader("file", &["image", "view"]),
+            ToolMetadata::reader("file", &["image", "view"])
+                .with_exposure(crate::tool::ToolExposure::Deferred),
         );
         insert(
             &mut map,
             "inspect_image",
-            ToolMetadata::reader("file", &["image", "inspect"]),
+            ToolMetadata::reader("file", &["image", "inspect", "alias"])
+                .with_exposure(crate::tool::ToolExposure::Hidden),
         );
         insert(
             &mut map,
@@ -421,6 +413,7 @@ static LOOKUP: LazyLock<std::collections::HashMap<&'static str, ToolMetadata>> =
                 risk: crate::tool::ToolRisk::Low,
                 is_read_only: false,
                 is_concurrency_safe: true,
+                exposure: crate::tool::ToolExposure::Deferred,
                 capabilities: vec!["memory.write".to_string()],
                 tags: vec!["memory", "note"]
                     .into_iter()
@@ -437,6 +430,7 @@ static LOOKUP: LazyLock<std::collections::HashMap<&'static str, ToolMetadata>> =
                 risk: crate::tool::ToolRisk::Low,
                 is_read_only: true,
                 is_concurrency_safe: true,
+                exposure: crate::tool::ToolExposure::Deferred,
                 capabilities: vec!["memory.read".to_string()],
                 tags: vec!["memory", "history"]
                     .into_iter()
@@ -453,6 +447,7 @@ static LOOKUP: LazyLock<std::collections::HashMap<&'static str, ToolMetadata>> =
                 risk: crate::tool::ToolRisk::High,
                 is_read_only: false,
                 is_concurrency_safe: false,
+                exposure: crate::tool::ToolExposure::Deferred,
                 capabilities: vec![
                     "network.package".to_string(),
                     "repo.write.lockfile".to_string(),
@@ -472,6 +467,7 @@ static LOOKUP: LazyLock<std::collections::HashMap<&'static str, ToolMetadata>> =
                 risk: crate::tool::ToolRisk::Medium,
                 is_read_only: false,
                 is_concurrency_safe: false,
+                exposure: crate::tool::ToolExposure::Deferred,
                 capabilities: vec!["orchestration.workflow".to_string()],
                 tags: vec!["workflow", "script"]
                     .into_iter()
@@ -490,7 +486,7 @@ static LOOKUP: LazyLock<std::collections::HashMap<&'static str, ToolMetadata>> =
                 // Shared-safe: read-only index walk.
                 is_read_only: true,
                 is_concurrency_safe: true,
-                exposure: crate::tool::ToolExposure::Direct,
+                exposure: crate::tool::ToolExposure::Deferred,
                 capabilities: vec![
                     "repo.read".to_string(),
                     "explore.structure".to_string(),
@@ -513,6 +509,7 @@ static LOOKUP: LazyLock<std::collections::HashMap<&'static str, ToolMetadata>> =
                 // Nested agent turns are exclusive: parallel subagent storms
                 // hang approvals and burn provider credits.
                 is_concurrency_safe: false,
+                exposure: crate::tool::ToolExposure::Deferred,
                 capabilities: vec!["agent.spawn".to_string()],
                 tags: vec!["agent", "subprocess"]
                     .into_iter()
@@ -554,19 +551,60 @@ static LOOKUP: LazyLock<std::collections::HashMap<&'static str, ToolMetadata>> =
         );
         insert(
             &mut map,
-            "tool_search",
-            ToolMetadata::reader("system", &["search", "discovery", "tools"])
-                .with_capability(&["tool.discovery"]),
+            "memory",
+            ToolMetadata {
+                namespace: "memory".to_string(),
+                risk: crate::tool::ToolRisk::Low,
+                is_read_only: false,
+                is_concurrency_safe: true,
+                exposure: crate::tool::ToolExposure::Direct,
+                capabilities: vec!["memory.write".to_string(), "memory.read".to_string()],
+                tags: vec!["memory", "durable", "facts"]
+                    .into_iter()
+                    .map(|s| s.to_string())
+                    .collect(),
+                ..ToolMetadata::default()
+            },
         );
         insert(
             &mut map,
-            "verifier",
-            ToolMetadata::deferred(
-                "verifier",
-                crate::tool::ToolRisk::Medium,
-                &["verifier", "build", "test", "check"],
-            )
-            .with_capability(&["verifier.run"]),
+            "set_goal",
+            ToolMetadata {
+                namespace: "goal".to_string(),
+                risk: crate::tool::ToolRisk::Medium,
+                is_read_only: false,
+                is_concurrency_safe: false,
+                exposure: crate::tool::ToolExposure::Deferred,
+                capabilities: vec!["goal.create".to_string()],
+                tags: vec!["goal", "session", "long-running"]
+                    .into_iter()
+                    .map(|s| s.to_string())
+                    .collect(),
+                ..ToolMetadata::default()
+            },
+        );
+        insert(
+            &mut map,
+            "set_session_title",
+            ToolMetadata {
+                namespace: "session".to_string(),
+                risk: crate::tool::ToolRisk::Low,
+                is_read_only: true,
+                is_concurrency_safe: true,
+                exposure: crate::tool::ToolExposure::Direct,
+                capabilities: vec!["session.title".to_string()],
+                tags: vec!["session", "title"]
+                    .into_iter()
+                    .map(|s| s.to_string())
+                    .collect(),
+                ..ToolMetadata::default()
+            },
+        );
+        insert(
+            &mut map,
+            "tool_search",
+            ToolMetadata::reader("system", &["search", "discovery", "tools"])
+                .with_capability(&["tool.discovery"]),
         );
         map
     });
@@ -595,9 +633,10 @@ mod tests {
             "glob",
             "write",
             "write_file",
+            "edit",
+            "multiedit",
             "apply_patch",
             "bash",
-            "process",
             "code",
             "code_edit",
             "code_exec",
@@ -607,7 +646,6 @@ mod tests {
             "dependency_graph_query",
             "test_discovery",
             "ownership_churn_query",
-            "branch_race_start",
             "question",
             "plan",
             "init_session",
@@ -629,7 +667,9 @@ mod tests {
             "runtime_info",
             "sandbox",
             "tool_search",
-            "verifier",
+            "memory",
+            "set_goal",
+            "set_session_title",
         ];
         for name in &tool_names {
             let meta = builtin_metadata(name, ToolKind::Read);
@@ -656,6 +696,15 @@ mod tests {
         let patch = builtin_metadata("apply_patch", ToolKind::Write);
         assert!(!patch.is_read_only);
         assert!(patch.supports_rollback);
+
+        let edit = builtin_metadata("edit", ToolKind::Write);
+        assert!(!edit.is_read_only);
+        assert!(edit.supports_rollback);
+        assert_eq!(edit.namespace, "file");
+
+        let multiedit = builtin_metadata("multiedit", ToolKind::Write);
+        assert!(!multiedit.is_read_only);
+        assert!(multiedit.supports_rollback);
     }
 
     #[test]
@@ -666,13 +715,73 @@ mod tests {
     }
 
     #[test]
+    fn core_coding_tools_are_direct_and_aliases_hidden() {
+        use crate::tool::ToolExposure;
+        for name in [
+            "read_file",
+            "search",
+            "edit",
+            "write_file",
+            "bash",
+            "plan",
+            "question",
+            "tool_search",
+            "memory",
+            "set_session_title",
+        ] {
+            let meta = builtin_metadata(name, ToolKind::Read);
+            assert_eq!(
+                meta.exposure,
+                ToolExposure::Direct,
+                "{name} should be Direct"
+            );
+        }
+        for name in [
+            "read",
+            "view_file",
+            "grep",
+            "fs_browser",
+            "list_dir",
+            "glob",
+            "write",
+            "multiedit",
+            "apply_patch",
+            "request_user_input",
+        ] {
+            let meta = builtin_metadata(name, ToolKind::Write);
+            assert_eq!(
+                meta.exposure,
+                ToolExposure::Hidden,
+                "{name} should be Hidden"
+            );
+        }
+        for name in [
+            "code",
+            "code_edit",
+            "ast_search",
+            "package_manager",
+            "repo_explore",
+            "browser",
+            "subagent",
+            "set_goal",
+        ] {
+            let meta = builtin_metadata(name, ToolKind::Read);
+            assert_eq!(
+                meta.exposure,
+                ToolExposure::Deferred,
+                "{name} should be Deferred"
+            );
+        }
+    }
+
+    #[test]
     fn deferred_tools_not_direct() {
         let meta = builtin_metadata("sleep", ToolKind::Command);
         assert_eq!(meta.exposure, crate::tool::ToolExposure::Deferred);
 
-        // repo_explore is a first-class BM25 search tool (Direct).
+        // repo_explore is power search; deferred in favor of `search` for the core loop.
         let meta2 = builtin_metadata("repo_explore", ToolKind::Read);
-        assert_eq!(meta2.exposure, crate::tool::ToolExposure::Direct);
+        assert_eq!(meta2.exposure, crate::tool::ToolExposure::Deferred);
         assert!(meta2.is_read_only);
         assert!(meta2.is_concurrency_safe);
 
