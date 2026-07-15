@@ -113,16 +113,21 @@ fn main() {
             .collect();
         model_files.sort();
         for path in &model_files {
-            let id = path
+            // Filenames must stay Windows-safe (no `:`). Model ids may contain
+            // `:` (Ollama tags like `gemma3:12b`); encode as `__` on disk and
+            // restore when embedding the catalog id.
+            let stem = path
                 .file_stem()
                 .expect("model file has no stem")
                 .to_str()
                 .expect("model file name is not valid UTF-8");
-            let dst = embedded_models_dir.join(format!("{id}.json"));
+            let id = stem.replace("__", ":");
+            let safe_name = format!("{stem}.json");
+            let dst = embedded_models_dir.join(&safe_name);
             fs::copy(path, &dst).expect("failed to copy embedded canonical model");
             println!("cargo:rerun-if-changed={}", path.display());
             model_catalog_entries.push((
-                id.to_string(),
+                id,
                 dst.to_str().expect("path is not valid UTF-8").to_string(),
             ));
         }
