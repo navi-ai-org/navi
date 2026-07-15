@@ -1,0 +1,12 @@
+{
+  "id": "codellama",
+  "vendor": "local",
+  "context_window_tokens": 16000,
+  "status": "removed",
+  "attachments": {
+    "images": false,
+    "audio": false,
+    "video": false,
+    "documents": false
+  }
+}

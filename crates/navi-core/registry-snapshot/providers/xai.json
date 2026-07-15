@@ -7,170 +7,62 @@
   "base_url": "https://api.x.ai/v1",
   "models": [
     {
-      "name": "grok-4.5",
-      "context_window_tokens": 1000000,
-      "max_output_tokens": 131072,
-      "recommended_temperature": 1.0,
-      "supports_thinking": true,
-      "supports_images": true,
-      "supports_documents": true,
+      "ref": "grok-4.5",
       "pricing": {
         "input_per_1m": 2.0,
         "output_per_1m": 6.0,
         "currency": "USD"
-      },
-      "reasoning_levels": [
-        "low",
-        "high"
-      ],
-      "default_reasoning_effort": "high"
+      }
     },
     {
-      "name": "grok-4.3",
-      "context_window_tokens": 1000000,
-      "max_output_tokens": 131072,
-      "recommended_temperature": 1.0,
-      "supports_thinking": true,
-      "supports_images": true,
-      "supports_documents": true,
+      "ref": "grok-4.3",
       "pricing": {
         "input_per_1m": 1.25,
         "output_per_1m": 2.5,
         "currency": "USD"
-      },
-      "reasoning_levels": [
-        "low",
-        "high"
-      ],
-      "default_reasoning_effort": "high"
+      }
     },
     {
-      "name": "grok-4.20",
-      "context_window_tokens": 1000000,
-      "max_output_tokens": 131072,
-      "recommended_temperature": 1.0,
-      "supports_thinking": true,
-      "supports_images": true,
-      "supports_documents": true,
-      "reasoning_levels": [
-        "low",
-        "high"
-      ],
-      "default_reasoning_effort": "high"
+      "ref": "grok-4.20",
+      "pricing": {
+        "input_per_1m": 1.25,
+        "output_per_1m": 2.5,
+        "currency": "USD",
+        "cached_input_per_1m": 0.2
+      }
     },
     {
-      "name": "grok-4",
-      "context_window_tokens": 1000000,
-      "max_output_tokens": 131072,
-      "recommended_temperature": 1.0,
-      "supports_thinking": true,
-      "supports_images": true,
-      "supports_documents": true,
-      "reasoning_levels": [
-        "low",
-        "high"
-      ],
-      "default_reasoning_effort": "high"
+      "ref": "grok-4"
     },
     {
-      "name": "grok-4-fast",
-      "context_window_tokens": 1000000,
-      "max_output_tokens": 131072,
-      "recommended_temperature": 1.0,
-      "supports_thinking": true,
-      "supports_images": true,
-      "reasoning_levels": [
-        "low",
-        "high"
-      ],
-      "default_reasoning_effort": "high"
+      "ref": "grok-4-fast"
     },
     {
-      "name": "grok-4-fast-reasoning",
-      "context_window_tokens": 1000000,
-      "max_output_tokens": 131072,
-      "recommended_temperature": 1.0,
-      "supports_thinking": true,
-      "supports_images": true,
-      "reasoning_levels": [
-        "low",
-        "high"
-      ],
-      "default_reasoning_effort": "high"
+      "ref": "grok-4-fast-reasoning"
     },
     {
-      "name": "grok-4-fast-non-reasoning",
-      "context_window_tokens": 1000000,
-      "max_output_tokens": 131072,
-      "recommended_temperature": 1.0,
-      "supports_thinking": false,
-      "supports_images": true
+      "ref": "grok-4-fast-non-reasoning"
     },
     {
-      "name": "grok-3",
-      "context_window_tokens": 1000000,
-      "max_output_tokens": 131072,
-      "recommended_temperature": 1.0,
-      "supports_thinking": true,
-      "supports_images": true,
-      "reasoning_levels": [
-        "low",
-        "high"
-      ],
-      "default_reasoning_effort": "high"
+      "ref": "grok-3"
     },
     {
-      "name": "grok-3-fast",
-      "context_window_tokens": 1000000,
-      "max_output_tokens": 131072,
-      "recommended_temperature": 1.0,
-      "supports_thinking": false,
-      "supports_images": true
+      "ref": "grok-3-fast"
     },
     {
-      "name": "grok-3-mini",
-      "context_window_tokens": 131072,
-      "max_output_tokens": 16384,
-      "recommended_temperature": 1.0,
-      "supports_thinking": true,
-      "supports_images": true,
-      "reasoning_levels": [
-        "low",
-        "high"
-      ],
-      "default_reasoning_effort": "high"
+      "ref": "grok-3-mini"
     },
     {
-      "name": "grok-3-mini-fast",
-      "context_window_tokens": 131072,
-      "max_output_tokens": 16384,
-      "recommended_temperature": 1.0,
-      "supports_thinking": false,
-      "supports_images": true
+      "ref": "grok-3-mini-fast"
     },
     {
-      "name": "grok-2-1212",
-      "context_window_tokens": 131072,
-      "max_output_tokens": 16384,
-      "recommended_temperature": 1.0,
-      "supports_thinking": false,
-      "supports_images": false
+      "ref": "grok-2-1212"
     },
     {
-      "name": "grok-2-vision-1212",
-      "context_window_tokens": 131072,
-      "max_output_tokens": 16384,
-      "recommended_temperature": 1.0,
-      "supports_thinking": false,
-      "supports_images": true
+      "ref": "grok-2-vision-1212"
     },
     {
-      "name": "grok-build-0.1",
-      "context_window_tokens": 256000,
-      "max_output_tokens": 16384,
-      "recommended_temperature": 1.0,
-      "supports_thinking": false,
-      "supports_images": true,
+      "ref": "grok-build-0.1",
       "pricing": {
         "input_per_1m": 1.0,
         "output_per_1m": 2.0,

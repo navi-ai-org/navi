@@ -15,14 +15,7 @@
   },
   "models": [
     {
-      "name": "glm-5.1",
-      "context_window_tokens": 200000,
-      "max_output_tokens": 131072,
-      "recommended_temperature": 1.0,
-      "supports_thinking": true,
-      "attachments": {
-        "images": true
-      },
+      "ref": "glm-5.1",
       "pricing": {
         "input_per_1m": 0.966,
         "output_per_1m": 3.036,
@@ -30,14 +23,7 @@
       }
     },
     {
-      "name": "glm-5",
-      "context_window_tokens": 200000,
-      "max_output_tokens": 131072,
-      "recommended_temperature": 1.0,
-      "supports_thinking": true,
-      "attachments": {
-        "images": true
-      },
+      "ref": "glm-5",
       "pricing": {
         "input_per_1m": 0.6,
         "output_per_1m": 1.92,
@@ -45,14 +31,7 @@
       }
     },
     {
-      "name": "glm-5-turbo",
-      "context_window_tokens": 200000,
-      "max_output_tokens": 131072,
-      "recommended_temperature": 1.0,
-      "supports_thinking": true,
-      "attachments": {
-        "images": true
-      },
+      "ref": "glm-5-turbo",
       "pricing": {
         "input_per_1m": 1.2,
         "output_per_1m": 4.0,
@@ -60,14 +39,7 @@
       }
     },
     {
-      "name": "glm-4.7",
-      "context_window_tokens": 200000,
-      "max_output_tokens": 131072,
-      "recommended_temperature": 1.0,
-      "supports_thinking": true,
-      "attachments": {
-        "images": true
-      },
+      "ref": "glm-4.7",
       "pricing": {
         "input_per_1m": 0.4,
         "output_per_1m": 1.75,
@@ -75,14 +47,7 @@
       }
     },
     {
-      "name": "glm-4.6",
-      "context_window_tokens": 200000,
-      "max_output_tokens": 131072,
-      "recommended_temperature": 1.0,
-      "supports_thinking": true,
-      "attachments": {
-        "images": true
-      },
+      "ref": "glm-4.6",
       "pricing": {
         "input_per_1m": 0.43,
         "output_per_1m": 1.74,
@@ -90,14 +55,7 @@
       }
     },
     {
-      "name": "glm-4.5",
-      "context_window_tokens": 128000,
-      "max_output_tokens": 98304,
-      "recommended_temperature": 1.0,
-      "supports_thinking": true,
-      "attachments": {
-        "images": true
-      },
+      "ref": "glm-4.5",
       "pricing": {
         "input_per_1m": 0.6,
         "output_per_1m": 2.2,
@@ -105,14 +63,7 @@
       }
     },
     {
-      "name": "glm-4.5-air",
-      "context_window_tokens": 128000,
-      "max_output_tokens": 98304,
-      "recommended_temperature": 1.0,
-      "supports_thinking": true,
-      "attachments": {
-        "images": true
-      },
+      "ref": "glm-4.5-air",
       "pricing": {
         "input_per_1m": 0.13,
         "output_per_1m": 0.85,
@@ -120,68 +71,28 @@
       }
     },
     {
-      "name": "glm-4.5-x",
-      "context_window_tokens": 128000,
-      "max_output_tokens": 98304,
-      "recommended_temperature": 1.0,
-      "supports_thinking": true,
-      "attachments": {
-        "images": true
-      },
-      "supports_images": true
+      "ref": "glm-4.5-x"
     },
     {
-      "name": "glm-4.5-flash",
-      "context_window_tokens": 128000,
-      "max_output_tokens": 98304,
-      "recommended_temperature": 1.0,
-      "supports_thinking": true,
-      "attachments": {
-        "images": true
-      },
-      "supports_images": true
+      "ref": "glm-4.5-flash"
     },
     {
-      "name": "glm-4-plus",
-      "context_window_tokens": 128000,
-      "max_output_tokens": 4096,
-      "recommended_temperature": 0.9,
-      "supports_thinking": false
+      "ref": "glm-4-plus"
     },
     {
-      "name": "glm-4-flash",
-      "context_window_tokens": 128000,
-      "max_output_tokens": 4096,
-      "recommended_temperature": 0.9,
-      "supports_thinking": false
+      "ref": "glm-4-flash"
     },
     {
-      "name": "glm-4-long",
-      "context_window_tokens": 1000000,
-      "max_output_tokens": 4096,
-      "recommended_temperature": 0.9,
-      "supports_thinking": false
+      "ref": "glm-4-long"
     },
     {
-      "name": "glm-4-air",
-      "context_window_tokens": 128000,
-      "max_output_tokens": 4096,
-      "recommended_temperature": 0.9,
-      "supports_thinking": false
+      "ref": "glm-4-air"
     },
     {
-      "name": "glm-4-airx",
-      "context_window_tokens": 128000,
-      "max_output_tokens": 4096,
-      "recommended_temperature": 0.9,
-      "supports_thinking": false
+      "ref": "glm-4-airx"
     },
     {
-      "name": "glm-4-0520",
-      "context_window_tokens": 128000,
-      "max_output_tokens": 4096,
-      "recommended_temperature": 0.9,
-      "supports_thinking": false
+      "ref": "glm-4-0520"
     }
   ]
 }

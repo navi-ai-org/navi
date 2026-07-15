@@ -1,0 +1,20 @@
+{
+  "id": "mistral-small-instruct",
+  "vendor": "local",
+  "family": "mistral",
+  "context_window_tokens": 32000,
+  "supports_thinking": false,
+  "attachments": {
+    "images": false,
+    "audio": false,
+    "video": false,
+    "documents": false
+  },
+  "sources": {
+    "context_window_tokens": {
+      "url": "https://docs.mistral.ai/getting-started/models/models_overview/",
+      "verified_at": "2026-07-14",
+      "note": "from official docs"
+    }
+  }
+}

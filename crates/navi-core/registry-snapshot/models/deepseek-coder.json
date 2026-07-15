@@ -1,0 +1,22 @@
+{
+  "id": "deepseek-coder",
+  "vendor": "deepseek",
+  "family": "deepseek",
+  "context_window_tokens": 16384,
+  "max_output_tokens": 4096,
+  "recommended_temperature": 0.6,
+  "supports_thinking": false,
+  "sources": {
+    "context_window_tokens": {
+      "url": "https://github.com/deepseek-ai/DeepSeek-Coder",
+      "verified_at": "2026-07-14",
+      "note": "Official DeepSeek Coder repository."
+    }
+  },
+  "attachments": {
+    "images": false,
+    "audio": false,
+    "video": false,
+    "documents": false
+  }
+}

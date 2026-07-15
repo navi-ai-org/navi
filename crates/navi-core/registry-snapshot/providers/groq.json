@@ -15,28 +15,21 @@
   },
   "models": [
     {
-      "name": "llama-3.3-70b-versatile",
-      "context_window_tokens": 131072,
-      "max_output_tokens": 32768,
-      "recommended_temperature": 0.7,
-      "supports_thinking": false
+      "ref": "llama-3.3-70b-versatile"
     },
     {
-      "name": "llama-3.1-8b-instant",
-      "context_window_tokens": 131072,
-      "max_output_tokens": 8192,
-      "recommended_temperature": 0.7,
-      "supports_thinking": false
+      "ref": "llama-3.1-8b-instant"
     },
     {
-      "name": "openai/gpt-oss-120b",
-      "context_window_tokens": 131072,
+      "ref": "gpt-oss-120b",
+      "api_name": "openai/gpt-oss-120b",
       "max_output_tokens": 32768,
       "recommended_temperature": 0.7,
       "supports_thinking": true,
       "attachments": {
         "images": true
       },
+      "status": "removed",
       "pricing": {
         "input_per_1m": 0.03,
         "output_per_1m": 0.15,
@@ -44,14 +37,15 @@
       }
     },
     {
-      "name": "openai/gpt-oss-20b",
-      "context_window_tokens": 131072,
+      "ref": "gpt-oss-20b",
+      "api_name": "openai/gpt-oss-20b",
       "max_output_tokens": 32768,
       "recommended_temperature": 0.7,
       "supports_thinking": true,
       "attachments": {
         "images": true
       },
+      "status": "removed",
       "pricing": {
         "input_per_1m": 0.029,
         "output_per_1m": 0.14,
@@ -59,11 +53,8 @@
       }
     },
     {
-      "name": "qwen/qwen3-32b",
-      "context_window_tokens": 131072,
-      "max_output_tokens": 16384,
-      "recommended_temperature": 0.6,
-      "supports_thinking": true,
+      "ref": "qwen3-32b",
+      "api_name": "qwen/qwen3-32b",
       "pricing": {
         "input_per_1m": 0.08,
         "output_per_1m": 0.28,
@@ -71,11 +62,7 @@
       }
     },
     {
-      "name": "deepseek-r1-distill-llama-70b",
-      "context_window_tokens": 131072,
-      "max_output_tokens": 16384,
-      "recommended_temperature": 0.6,
-      "supports_thinking": true,
+      "ref": "deepseek-r1-distill-llama-70b",
       "pricing": {
         "input_per_1m": 0.8,
         "output_per_1m": 0.8,
@@ -83,43 +70,20 @@
       }
     },
     {
-      "name": "moonshotai/kimi-k2-instruct",
-      "context_window_tokens": 131072,
-      "max_output_tokens": 16384,
-      "recommended_temperature": 0.7,
-      "supports_thinking": false,
-      "attachments": {
-        "images": true,
-        "documents": true
-      }
+      "ref": "kimi-k2-instruct",
+      "api_name": "moonshotai/kimi-k2-instruct"
     },
     {
-      "name": "meta-llama/llama-4-maverick-17b-128e-instruct",
-      "context_window_tokens": 131072,
-      "max_output_tokens": 16384,
-      "recommended_temperature": 0.7,
-      "supports_thinking": false,
-      "attachments": {
-        "images": true
-      }
+      "ref": "llama-4-maverick-17b-128e-instruct",
+      "api_name": "meta-llama/llama-4-maverick-17b-128e-instruct"
     },
     {
-      "name": "meta-llama/llama-4-scout-17b-16e-instruct",
-      "context_window_tokens": 131072,
-      "max_output_tokens": 16384,
-      "recommended_temperature": 0.7,
-      "supports_thinking": false,
-      "attachments": {
-        "images": true
-      }
+      "ref": "llama-4-scout-17b-16e-instruct",
+      "api_name": "meta-llama/llama-4-scout-17b-16e-instruct"
     },
     {
-      "name": "meta-llama/llama-guard-4-12b",
-      "context_window_tokens": 131072,
-      "max_output_tokens": 4096,
-      "recommended_temperature": 0.0,
-      "supports_thinking": false,
-      "supports_images": true,
+      "ref": "llama-guard-4-12b",
+      "api_name": "meta-llama/llama-guard-4-12b",
       "pricing": {
         "input_per_1m": 0.18,
         "output_per_1m": 0.18,
@@ -127,18 +91,10 @@
       }
     },
     {
-      "name": "mistral-saba-24b",
-      "context_window_tokens": 32768,
-      "max_output_tokens": 32768,
-      "recommended_temperature": 0.7,
-      "supports_thinking": false
+      "ref": "mistral-saba-24b"
     },
     {
-      "name": "gemma2-9b-it",
-      "context_window_tokens": 8192,
-      "max_output_tokens": 8192,
-      "recommended_temperature": 0.7,
-      "supports_thinking": false
+      "ref": "gemma2-9b-it"
     }
   ]
 }

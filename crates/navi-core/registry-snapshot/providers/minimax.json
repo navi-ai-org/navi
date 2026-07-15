@@ -15,106 +15,46 @@
   },
   "models": [
     {
-      "name": "MiniMax-M3",
-      "context_window_tokens": 1000000,
-      "max_output_tokens": 128000,
-      "recommended_temperature": 1.0,
-      "supports_thinking": true,
-      "supports_images": true,
-      "attachments": {
-        "images": true
-      }
+      "ref": "minimax-m3"
     },
     {
-      "name": "MiniMax-M2.7",
-      "context_window_tokens": 204800,
-      "max_output_tokens": 128000,
-      "recommended_temperature": 1.0,
-      "supports_thinking": true
+      "ref": "minimax-m2.7"
     },
     {
-      "name": "MiniMax-M2.7-highspeed",
-      "context_window_tokens": 204800,
-      "max_output_tokens": 128000,
-      "recommended_temperature": 1.0,
-      "supports_thinking": true
+      "ref": "minimax-m2.7-highspeed"
     },
     {
-      "name": "MiniMax-M2.5",
-      "context_window_tokens": 204800,
-      "max_output_tokens": 128000,
-      "recommended_temperature": 1.0,
-      "supports_thinking": true
+      "ref": "minimax-m2.5"
     },
     {
-      "name": "MiniMax-M2.5-highspeed",
-      "context_window_tokens": 204800,
-      "max_output_tokens": 128000,
-      "recommended_temperature": 1.0,
-      "supports_thinking": true
+      "ref": "minimax-m2.5-highspeed"
     },
     {
-      "name": "MiniMax-M2.1",
-      "context_window_tokens": 204800,
-      "max_output_tokens": 128000,
-      "recommended_temperature": 1.0,
-      "supports_thinking": true
+      "ref": "minimax-m2.1"
     },
     {
-      "name": "MiniMax-M2.1-highspeed",
-      "context_window_tokens": 204800,
-      "max_output_tokens": 128000,
-      "recommended_temperature": 1.0,
-      "supports_thinking": true
+      "ref": "minimax-m2.1-highspeed"
     },
     {
-      "name": "MiniMax-M2",
-      "context_window_tokens": 204800,
-      "max_output_tokens": 128000,
-      "recommended_temperature": 1.0,
-      "supports_thinking": true
+      "ref": "minimax-m2"
     },
     {
-      "name": "MiniMax-Text-01",
-      "context_window_tokens": 1000000,
-      "max_output_tokens": 128000,
-      "recommended_temperature": 1.0,
-      "supports_thinking": false
+      "ref": "minimax-text-01"
     },
     {
-      "name": "MiniMax-Text-01-456B",
-      "context_window_tokens": 1000000,
-      "max_output_tokens": 128000,
-      "recommended_temperature": 1.0,
-      "supports_thinking": false
+      "ref": "minimax-text-01-456b"
     },
     {
-      "name": "abab6.5-chat",
-      "context_window_tokens": 200000,
-      "max_output_tokens": 16384,
-      "recommended_temperature": 0.7,
-      "supports_thinking": false
+      "ref": "abab6.5-chat"
     },
     {
-      "name": "abab6.5g-chat",
-      "context_window_tokens": 200000,
-      "max_output_tokens": 8192,
-      "recommended_temperature": 0.7,
-      "supports_thinking": false
+      "ref": "abab6.5g-chat"
     },
     {
-      "name": "abab6.5s-chat",
-      "context_window_tokens": 200000,
-      "max_output_tokens": 16384,
-      "recommended_temperature": 0.7,
-      "supports_thinking": false
+      "ref": "abab6.5s-chat"
     },
     {
-      "name": "abab6.5t-chat",
-      "context_window_tokens": 200000,
-      "max_output_tokens": 8192,
-      "recommended_temperature": 0.7,
-      "supports_thinking": false
+      "ref": "abab6.5t-chat"
     }
   ]
 }

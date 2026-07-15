@@ -2,85 +2,8 @@
   "id": "mimo-anthropic-ams",
   "label": "MiMo Europe",
   "description": "Xiaomi MiMo series models via Anthropic-compatible API (Europe/Amsterdam region)",
+  "extends": "mimo-anthropic",
   "kind": "anthropic-messages",
   "api_key_env": "MIMO_API_KEY",
-  "base_url": "https://token-plan-ams.xiaomimimo.com/anthropic",
-  "request_options": {
-    "anthropic_cache_control": {
-      "type": "ephemeral"
-    }
-  },
-  "defaults": {
-    "attachments": {
-      "images": true,
-      "audio": false,
-      "video": false,
-      "documents": true
-    }
-  },
-  "models": [
-    {
-      "name": "mimo-v2.5-pro",
-      "context_window_tokens": 1100000,
-      "max_output_tokens": 131072,
-      "recommended_temperature": 1.0,
-      "supports_thinking": true,
-      "pricing": {
-        "input_per_1m": 0.435,
-        "output_per_1m": 0.87,
-        "currency": "USD"
-      },
-      "supports_images": true,
-      "attachments": {
-        "images": true,
-        "documents": true
-      }
-    },
-    {
-      "name": "mimo-v2.5",
-      "context_window_tokens": 1048576,
-      "max_output_tokens": 131072,
-      "recommended_temperature": 1.0,
-      "supports_thinking": true,
-      "supports_images": true,
-      "supports_audio": true,
-      "supports_video": true,
-      "pricing": {
-        "input_per_1m": 0.105,
-        "output_per_1m": 0.28,
-        "currency": "USD"
-      },
-      "attachments": {
-        "images": true,
-        "documents": true
-      }
-    },
-    {
-      "name": "mimo-v2-pro",
-      "context_window_tokens": 1048576,
-      "max_output_tokens": 32768,
-      "recommended_temperature": 1.0,
-      "supports_thinking": true,
-      "supports_images": true,
-      "supports_documents": true
-    },
-    {
-      "name": "mimo-v2-omni",
-      "context_window_tokens": 262144,
-      "max_output_tokens": 32768,
-      "recommended_temperature": 1.0,
-      "supports_thinking": false,
-      "supports_images": true,
-      "supports_documents": true
-    },
-    {
-      "name": "mimo-v2-flash",
-      "context_window_tokens": 262144,
-      "max_output_tokens": 8192,
-      "recommended_temperature": 1.0,
-      "supports_thinking": false,
-      "supports_images": true,
-      "supports_documents": true
-    }
-  ]
+  "base_url": "https://token-plan-ams.xiaomimimo.com/anthropic"
 }

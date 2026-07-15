@@ -1,0 +1,27 @@
+{
+  "id": "kimi-latest",
+  "vendor": "moonshot",
+  "family": "kimi",
+  "context_window_tokens": 128000,
+  "max_output_tokens": 65536,
+  "recommended_temperature": 1.0,
+  "supports_thinking": false,
+  "attachments": {
+    "images": true,
+    "audio": false,
+    "video": false,
+    "documents": true
+  },
+  "sources": {
+    "attachments": {
+      "url": "https://openrouter.ai/api/v1/models/~moonshotai/kimi-latest",
+      "verified_at": "2026-07-14",
+      "note": "auto-filled by probe from OpenRouter /api/v1/models"
+    },
+    "context_window_tokens": {
+      "url": "https://platform.moonshot.cn/",
+      "verified_at": "2026-07-14",
+      "note": "from official docs"
+    }
+  }
+}

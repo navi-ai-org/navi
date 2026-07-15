@@ -1,0 +1,22 @@
+{
+  "id": "grok-3-mini-fast",
+  "vendor": "xai",
+  "family": "grok",
+  "context_window_tokens": 131072,
+  "max_output_tokens": 16384,
+  "recommended_temperature": 1.0,
+  "supports_thinking": false,
+  "attachments": {
+    "images": true,
+    "audio": false,
+    "video": false,
+    "documents": false
+  },
+  "sources": {
+    "context_window_tokens": {
+      "url": "https://docs.x.ai/api/models",
+      "verified_at": "2026-07-14",
+      "note": "from official docs"
+    }
+  }
+}

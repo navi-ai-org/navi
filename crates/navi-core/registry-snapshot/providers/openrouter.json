@@ -7,16 +7,8 @@
   "base_url": "https://openrouter.ai/api/v1",
   "models": [
     {
-      "name": "anthropic/claude-opus-4",
-      "context_window_tokens": 200000,
-      "max_output_tokens": 32000,
-      "recommended_temperature": 1.0,
-      "supports_thinking": true,
-      "attachments": {
-        "images": true
-      },
-      "supports_images": true,
-      "supports_documents": true,
+      "ref": "claude-opus-4",
+      "api_name": "anthropic/claude-opus-4",
       "pricing": {
         "input_per_1m": 15.0,
         "output_per_1m": 75.0,
@@ -24,16 +16,9 @@
       }
     },
     {
-      "name": "anthropic/claude-sonnet-4",
+      "ref": "claude-sonnet-4",
+      "api_name": "anthropic/claude-sonnet-4",
       "context_window_tokens": 1000000,
-      "max_output_tokens": 64000,
-      "recommended_temperature": 1.0,
-      "supports_thinking": true,
-      "attachments": {
-        "images": true
-      },
-      "supports_images": true,
-      "supports_documents": true,
       "pricing": {
         "input_per_1m": 3.0,
         "output_per_1m": 15.0,
@@ -41,16 +26,8 @@
       }
     },
     {
-      "name": "openai/gpt-5.5",
-      "context_window_tokens": 1050000,
-      "max_output_tokens": 128000,
-      "recommended_temperature": 1.0,
-      "supports_thinking": true,
-      "attachments": {
-        "images": true
-      },
-      "supports_images": true,
-      "supports_documents": true,
+      "ref": "gpt-5.5",
+      "api_name": "openai/gpt-5.5",
       "pricing": {
         "input_per_1m": 5.0,
         "output_per_1m": 30.0,
@@ -58,16 +35,8 @@
       }
     },
     {
-      "name": "openai/gpt-5.4",
-      "context_window_tokens": 1050000,
-      "max_output_tokens": 128000,
-      "recommended_temperature": 1.0,
-      "supports_thinking": true,
-      "attachments": {
-        "images": true
-      },
-      "supports_images": true,
-      "supports_documents": true,
+      "ref": "gpt-5.4",
+      "api_name": "openai/gpt-5.4",
       "pricing": {
         "input_per_1m": 2.5,
         "output_per_1m": 15.0,
@@ -75,16 +44,9 @@
       }
     },
     {
-      "name": "openai/gpt-4.1",
-      "context_window_tokens": 1047576,
-      "max_output_tokens": 32768,
-      "recommended_temperature": 1.0,
+      "ref": "gpt-4.1",
+      "api_name": "openai/gpt-4.1",
       "supports_thinking": true,
-      "attachments": {
-        "images": true
-      },
-      "supports_images": true,
-      "supports_documents": true,
       "pricing": {
         "input_per_1m": 2.0,
         "output_per_1m": 8.0,
@@ -92,18 +54,8 @@
       }
     },
     {
-      "name": "google/gemini-2.5-pro",
-      "context_window_tokens": 1048576,
-      "max_output_tokens": 65536,
-      "recommended_temperature": 1.0,
-      "supports_thinking": true,
-      "attachments": {
-        "images": true
-      },
-      "supports_images": true,
-      "supports_audio": true,
-      "supports_video": true,
-      "supports_documents": true,
+      "ref": "gemini-2.5-pro",
+      "api_name": "google/gemini-2.5-pro",
       "pricing": {
         "input_per_1m": 1.25,
         "output_per_1m": 10.0,
@@ -111,18 +63,9 @@
       }
     },
     {
-      "name": "google/gemini-2.5-flash",
-      "context_window_tokens": 1048576,
+      "ref": "gemini-2.5-flash",
+      "api_name": "google/gemini-2.5-flash",
       "max_output_tokens": 65535,
-      "recommended_temperature": 1.0,
-      "supports_thinking": true,
-      "attachments": {
-        "images": true
-      },
-      "supports_images": true,
-      "supports_audio": true,
-      "supports_video": true,
-      "supports_documents": true,
       "pricing": {
         "input_per_1m": 0.3,
         "output_per_1m": 2.5,
@@ -130,15 +73,15 @@
       }
     },
     {
-      "name": "deepseek/deepseek-v4-pro",
+      "ref": "deepseek-v4-pro",
+      "api_name": "deepseek/deepseek-v4-pro",
       "context_window_tokens": 1048576,
-      "max_output_tokens": 384000,
-      "recommended_temperature": 1.0,
-      "supports_thinking": true,
-      "supports_images": false,
-      "supports_audio": false,
-      "supports_video": false,
-      "supports_documents": false,
+      "attachments": {
+        "images": false,
+        "audio": false,
+        "video": false,
+        "documents": false
+      },
       "pricing": {
         "input_per_1m": 0.435,
         "output_per_1m": 0.87,
@@ -146,15 +89,16 @@
       }
     },
     {
-      "name": "deepseek/deepseek-chat",
+      "ref": "deepseek-chat",
+      "api_name": "deepseek/deepseek-chat",
       "context_window_tokens": 131072,
       "max_output_tokens": 16000,
-      "recommended_temperature": 1.0,
-      "supports_thinking": false,
-      "supports_images": false,
-      "supports_audio": false,
-      "supports_video": false,
-      "supports_documents": false,
+      "attachments": {
+        "images": false,
+        "audio": false,
+        "video": false,
+        "documents": false
+      },
       "pricing": {
         "input_per_1m": 0.2002,
         "output_per_1m": 0.8001,
@@ -162,60 +106,38 @@
       }
     },
     {
-      "name": "x-ai/grok-4",
+      "ref": "grok-4",
+      "api_name": "x-ai/grok-4",
       "context_window_tokens": 256000,
       "max_output_tokens": 32768,
-      "recommended_temperature": 1.0,
-      "supports_thinking": true,
       "attachments": {
         "images": true,
         "audio": false,
         "video": false,
         "documents": false
       },
-      "supports_images": true,
-      "supports_audio": false,
-      "supports_video": false,
-      "supports_documents": false
+      "status": "removed"
     },
     {
-      "name": "x-ai/grok-3",
+      "ref": "grok-3",
+      "api_name": "x-ai/grok-3",
       "context_window_tokens": 131072,
       "max_output_tokens": 32768,
-      "recommended_temperature": 1.0,
-      "supports_thinking": true,
       "attachments": {
         "images": true,
         "audio": false,
         "video": false,
         "documents": false
       },
-      "supports_images": true,
-      "supports_audio": false,
-      "supports_video": false,
-      "supports_documents": false
+      "status": "removed"
     },
     {
-      "name": "meta-llama/llama-3.3-70b",
-      "context_window_tokens": 131072,
-      "max_output_tokens": 16384,
-      "recommended_temperature": 0.7,
-      "supports_thinking": false,
-      "supports_images": false,
-      "supports_audio": false,
-      "supports_video": false,
-      "supports_documents": false
+      "ref": "llama-3.3-70b",
+      "api_name": "meta-llama/llama-3.3-70b"
     },
     {
-      "name": "meta-llama/llama-4-maverick",
-      "context_window_tokens": 1048576,
-      "max_output_tokens": 16384,
-      "recommended_temperature": 0.7,
-      "supports_thinking": false,
-      "attachments": {
-        "images": true
-      },
-      "supports_images": true,
+      "ref": "llama-4-maverick",
+      "api_name": "meta-llama/llama-4-maverick",
       "pricing": {
         "input_per_1m": 0.15,
         "output_per_1m": 0.6,
@@ -223,15 +145,8 @@
       }
     },
     {
-      "name": "meta-llama/llama-4-scout",
-      "context_window_tokens": 10000000,
-      "max_output_tokens": 16384,
-      "recommended_temperature": 0.7,
-      "supports_thinking": false,
-      "attachments": {
-        "images": true
-      },
-      "supports_images": true,
+      "ref": "llama-4-scout",
+      "api_name": "meta-llama/llama-4-scout",
       "pricing": {
         "input_per_1m": 0.1,
         "output_per_1m": 0.3,
@@ -239,12 +154,11 @@
       }
     },
     {
-      "name": "mistralai/mistral-large",
+      "ref": "mistral-large",
+      "api_name": "mistralai/mistral-large",
       "context_window_tokens": 128000,
       "max_output_tokens": 32768,
       "recommended_temperature": 1.0,
-      "supports_thinking": false,
-      "supports_documents": true,
       "pricing": {
         "input_per_1m": 2.0,
         "output_per_1m": 6.0,
@@ -252,26 +166,12 @@
       }
     },
     {
-      "name": "mistralai/codestral",
-      "context_window_tokens": 256000,
-      "max_output_tokens": 32768,
-      "recommended_temperature": 1.0,
-      "supports_thinking": false,
-      "supports_images": false,
-      "supports_audio": false,
-      "supports_video": false,
-      "supports_documents": false
+      "ref": "codestral",
+      "api_name": "mistralai/codestral"
     },
     {
-      "name": "qwen/qwen3-coder",
-      "context_window_tokens": 1048576,
-      "max_output_tokens": 65536,
-      "recommended_temperature": 1.0,
-      "supports_thinking": true,
-      "supports_images": false,
-      "supports_audio": false,
-      "supports_video": false,
-      "supports_documents": false,
+      "ref": "qwen3-coder",
+      "api_name": "qwen/qwen3-coder",
       "pricing": {
         "input_per_1m": 0.22,
         "output_per_1m": 1.8,
@@ -279,15 +179,8 @@
       }
     },
     {
-      "name": "qwen/qwen3-235b-a22b",
-      "context_window_tokens": 131072,
-      "max_output_tokens": 8192,
-      "recommended_temperature": 0.7,
-      "supports_thinking": true,
-      "supports_images": false,
-      "supports_audio": false,
-      "supports_video": false,
-      "supports_documents": false,
+      "ref": "qwen3-235b-a22b",
+      "api_name": "qwen/qwen3-235b-a22b",
       "pricing": {
         "input_per_1m": 0.455,
         "output_per_1m": 1.82,
@@ -295,15 +188,15 @@
       }
     },
     {
-      "name": "qwen/qwen3-32b",
-      "context_window_tokens": 131072,
-      "max_output_tokens": 16384,
+      "ref": "qwen3-32b",
+      "api_name": "qwen/qwen3-32b",
       "recommended_temperature": 0.7,
-      "supports_thinking": true,
-      "supports_images": false,
-      "supports_audio": false,
-      "supports_video": false,
-      "supports_documents": false,
+      "attachments": {
+        "images": false,
+        "audio": false,
+        "video": false,
+        "documents": false
+      },
       "pricing": {
         "input_per_1m": 0.08,
         "output_per_1m": 0.28,
@@ -311,15 +204,15 @@
       }
     },
     {
-      "name": "z-ai/glm-4.5",
+      "ref": "glm-4.5",
+      "api_name": "z-ai/glm-4.5",
       "context_window_tokens": 131072,
-      "max_output_tokens": 98304,
-      "recommended_temperature": 1.0,
-      "supports_thinking": true,
-      "supports_images": false,
-      "supports_audio": false,
-      "supports_video": false,
-      "supports_documents": false,
+      "attachments": {
+        "images": false,
+        "audio": false,
+        "video": false,
+        "documents": false
+      },
       "pricing": {
         "input_per_1m": 0.6,
         "output_per_1m": 2.2,
@@ -327,15 +220,10 @@
       }
     },
     {
-      "name": "moonshotai/kimi-k2",
+      "ref": "kimi-k2",
+      "api_name": "moonshotai/kimi-k2",
       "context_window_tokens": 131072,
       "max_output_tokens": 32768,
-      "recommended_temperature": 1.0,
-      "supports_thinking": false,
-      "supports_images": true,
-      "supports_audio": false,
-      "supports_video": false,
-      "supports_documents": true,
       "attachments": {
         "images": true,
         "audio": false,

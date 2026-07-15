@@ -85,7 +85,15 @@ impl RegistryFetcher {
             );
         }
 
-        serde_json::from_str::<RegistryProvider>(&text)
+        // Resolve `extends` using the embedded base catalog (remote bases/ is not
+        // fetched independently). Overlay provider files from the same fetch set are
+        // not available here; region variants rely on embedded bases.
+        let bases = super::extends::base_map_from_embedded(
+            super::embedded::embedded_base_files(),
+            &[],
+        )
+        .unwrap_or_default();
+        super::extends::parse_provider_json(&text, &bases)
             .with_context(|| format!("failed to parse provider '{provider_id}' JSON"))
     }
 
@@ -171,17 +179,53 @@ pub fn load_local_registry(
     let manifest = serde_json::from_str::<RegistryManifest>(&manifest_text)
         .with_context(|| format!("failed to parse {}", manifest_path.display()))?;
 
+    let bases = super::extends::load_local_base_map(registry_dir).unwrap_or_default();
     let mut providers = Vec::new();
     for (provider_id, entry) in &manifest.providers {
         let provider_path = registry_dir.join(&entry.file);
         let provider_text = std::fs::read_to_string(&provider_path)
             .with_context(|| format!("failed to read {}", provider_path.display()))?;
-        let provider = serde_json::from_str::<RegistryProvider>(&provider_text)
+        let provider = super::extends::parse_provider_json(&provider_text, &bases)
             .with_context(|| format!("failed to parse provider '{provider_id}' JSON"))?;
         providers.push(provider);
     }
 
+    // Resolve ref-based models against the local canonical model catalog.
+    let models_dir = registry_dir.join("models");
+    let catalog = load_local_model_catalog(&models_dir).unwrap_or_default();
+    for provider in &mut providers {
+        super::resolve::resolve_provider_refs(provider, &catalog);
+    }
+
     Ok((manifest, providers))
+}
+
+/// Loads canonical models from a local `models/` directory.
+fn load_local_model_catalog(
+    models_dir: &Path,
+) -> Result<super::resolve::ModelCatalog> {
+    let mut catalog = std::collections::HashMap::new();
+    if !models_dir.is_dir() {
+        return Ok(catalog);
+    }
+    for entry in std::fs::read_dir(models_dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        if path.extension().is_some_and(|ext| ext == "json") {
+            let text = std::fs::read_to_string(&path)?;
+            let model: super::types::CanonicalModel = serde_json::from_str(&text)
+                .with_context(|| {
+                    format!("failed to parse canonical model from {}", path.display())
+                })?;
+            let id = path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or_default()
+                .to_string();
+            catalog.insert(id, model);
+        }
+    }
+    Ok(catalog)
 }
 
 /// Syncs a local `registry/` directory into the SQLite store.
@@ -287,9 +331,13 @@ pub async fn sync_registry(
         "fetching changed provider definitions"
     );
 
+    // Load the embedded canonical model catalog for resolving ref-based models.
+    let catalog = super::embedded::embedded_model_catalog().unwrap_or_default();
+
     let mut updated = 0;
     for provider_id in &to_fetch {
-        let provider = fetcher.fetch_provider(provider_id, &manifest).await?;
+        let mut provider = fetcher.fetch_provider(provider_id, &manifest).await?;
+        super::resolve::resolve_provider_refs(&mut provider, &catalog);
         let sha = &manifest.providers[*provider_id].sha256;
         // Union-merge so remote catalog refresh cannot wipe API-synced models.
         store.upsert_provider_union_models(&provider, Some(sha))?;

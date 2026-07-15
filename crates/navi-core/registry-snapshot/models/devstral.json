@@ -1,0 +1,21 @@
+{
+  "id": "devstral",
+  "vendor": "local",
+  "context_window_tokens": 32000,
+  "status": "removed",
+  "recommended_temperature": 0.0,
+  "supports_thinking": false,
+  "attachments": {
+    "images": false,
+    "audio": false,
+    "video": false,
+    "documents": false
+  },
+  "sources": {
+    "context_window_tokens": {
+      "url": "https://mistral.ai/news/devstral/",
+      "verified_at": "2026-07-14",
+      "note": "from official blog/docs"
+    }
+  }
+}

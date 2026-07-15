@@ -1,0 +1,54 @@
+{
+  "id": "mimo-anthropic",
+  "label": "MiMo (base)",
+  "description": "Shared Xiaomi MiMo Anthropic-compatible model catalog (region variants override base_url/label).",
+  "kind": "anthropic-messages",
+  "api_key_env": "MIMO_API_KEY",
+  "request_options": {
+    "anthropic_cache_control": {
+      "type": "ephemeral"
+    }
+  },
+  "defaults": {
+    "attachments": {
+      "images": true,
+      "audio": false,
+      "video": false,
+      "documents": true
+    }
+  },
+  "models": [
+    {
+      "ref": "mimo-v2.5-pro",
+      "context_window_tokens": 1100000,
+      "pricing": {
+        "input_per_1m": 0.435,
+        "output_per_1m": 0.87,
+        "currency": "USD"
+      }
+    },
+    {
+      "ref": "mimo-v2.5",
+      "supports_thinking": true,
+      "pricing": {
+        "input_per_1m": 0.105,
+        "output_per_1m": 0.28,
+        "currency": "USD"
+      }
+    },
+    {
+      "ref": "mimo-v2-pro",
+      "max_output_tokens": 32768
+    },
+    {
+      "ref": "mimo-v2-omni",
+      "max_output_tokens": 32768
+    },
+    {
+      "ref": "mimo-v2-flash",
+      "max_output_tokens": 8192,
+      "recommended_temperature": 1.0,
+      "supports_thinking": false
+    }
+  ]
+}

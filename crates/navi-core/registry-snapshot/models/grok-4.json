@@ -1,0 +1,30 @@
+{
+  "id": "grok-4",
+  "vendor": "xai",
+  "family": "grok",
+  "context_window_tokens": 256000,
+  "max_output_tokens": 131072,
+  "recommended_temperature": 1.0,
+  "supports_thinking": true,
+  "attachments": {
+    "images": true,
+    "documents": true,
+    "audio": false,
+    "video": false
+  },
+  "reasoning_levels": [
+    "low",
+    "high"
+  ],
+  "default_reasoning_effort": "high",
+  "aliases": [
+    "x-ai/grok-4"
+  ],
+  "sources": {
+    "context_window_tokens": {
+      "url": "https://docs.x.ai/api/models",
+      "verified_at": "2026-07-14",
+      "note": "from official docs"
+    }
+  }
+}

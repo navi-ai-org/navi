@@ -1,0 +1,27 @@
+{
+  "id": "deepseek-v4-flash-free",
+  "vendor": "aggregator",
+  "family": "deepseek",
+  "context_window_tokens": 1000000,
+  "max_output_tokens": 16384,
+  "recommended_temperature": 1.0,
+  "supports_thinking": true,
+  "reasoning_levels": [
+    "high",
+    "max"
+  ],
+  "default_reasoning_effort": "high",
+  "sources": {
+    "context_window_tokens": {
+      "url": "https://api-docs.deepseek.com",
+      "verified_at": "2026-07-14",
+      "note": "Official DeepSeek API documentation."
+    }
+  },
+  "attachments": {
+    "images": false,
+    "audio": false,
+    "video": false,
+    "documents": false
+  }
+}

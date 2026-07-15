@@ -1,0 +1,22 @@
+{
+  "id": "codestral-2501",
+  "vendor": "mistral",
+  "family": "codestral",
+  "context_window_tokens": 256000,
+  "max_output_tokens": 32768,
+  "recommended_temperature": 0.0,
+  "supports_thinking": false,
+  "attachments": {
+    "images": false,
+    "audio": false,
+    "video": false,
+    "documents": false
+  },
+  "sources": {
+    "context_window_tokens": {
+      "url": "https://docs.mistral.ai/getting-started/models/models_overview/",
+      "verified_at": "2026-07-14",
+      "note": "from official docs"
+    }
+  }
+}

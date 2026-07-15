@@ -1,0 +1,25 @@
+{
+  "id": "claude-3-opus-20240229",
+  "vendor": "anthropic",
+  "family": "claude",
+  "context_window_tokens": 200000,
+  "max_output_tokens": 4096,
+  "recommended_temperature": 1.0,
+  "supports_thinking": false,
+  "attachments": {
+    "images": true,
+    "documents": true
+  },
+  "sources": {
+    "context_window_tokens": {
+      "url": "https://docs.anthropic.com/en/docs/about-claude/models",
+      "verified_at": "2026-07-14",
+      "note": "from official docs"
+    },
+    "max_output_tokens": {
+      "url": "https://docs.anthropic.com/en/docs/about-claude/models",
+      "verified_at": "2026-07-14",
+      "note": "from official docs"
+    }
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "id": "glm-4-0520",
+  "vendor": "zhipu",
+  "family": "glm",
+  "context_window_tokens": 128000,
+  "max_output_tokens": 4096,
+  "recommended_temperature": 0.9,
+  "supports_thinking": false,
+  "sources": {
+    "context_window_tokens": {
+      "url": "https://open.bigmodel.cn",
+      "verified_at": "2026-07-14",
+      "note": "Official Zhipu AI BigModel platform documentation."
+    }
+  },
+  "attachments": {
+    "images": false,
+    "audio": false,
+    "video": false,
+    "documents": false
+  }
+}

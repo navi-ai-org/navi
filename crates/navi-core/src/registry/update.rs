@@ -142,7 +142,9 @@ pub fn load_registry(store: &RegistryStore) -> LoadedRegistry {
             updated_at: "1970-01-01T00:00:00Z".to_string(),
             providers: std::collections::HashMap::new(),
             transcription_providers: Default::default(),
-        },
+            coverage: Default::default(),
+            models: Default::default(),
+            },
         providers: minimal_fallback_providers(),
         source: RegistrySource::MinimalFallback,
     }
@@ -380,7 +382,9 @@ pub async fn check_registry_manifest(
                 updated_at: "1970-01-01T00:00:00Z".to_string(),
                 providers: std::collections::HashMap::new(),
                 transcription_providers: Default::default(),
-            })
+                coverage: Default::default(),
+                models: Default::default(),
+                })
         });
 
     let manifest = fetch_manifest_with_retry(fetcher, config).await?;
@@ -664,7 +668,9 @@ fn current_stored_manifest_or_embedded(store: &RegistryStore) -> RegistryManifes
                 updated_at: "1970-01-01T00:00:00Z".to_string(),
                 providers: std::collections::HashMap::new(),
                 transcription_providers: Default::default(),
-        })
+                coverage: Default::default(),
+                models: Default::default(),
+                })
         })
 }
 
@@ -828,11 +834,14 @@ mod tests {
             kind: "openai-chat-completions".to_string(),
             api_key_env: "TEST_API_KEY".to_string(),
             base_url: None,
+            extends: None,
             tool_calling_mode: None,
             aggregator: false,
             defaults: Default::default(),
             request_options: Default::default(),
             models: vec![RegistryModel {
+                model_ref: None,
+                api_name: None,
                 name: name.to_string(),
                 task_size: Some("large".to_string()),
                 context_window_tokens: Some(128_000),
@@ -883,7 +892,9 @@ mod tests {
                 updated_at: "2026-01-01T00:00:00Z".to_string(),
                 providers: std::collections::HashMap::new(),
                 transcription_providers: Default::default(),
-        },
+                coverage: Default::default(),
+                models: Default::default(),
+                },
             Some(now),
             None,
         )
@@ -899,7 +910,9 @@ mod tests {
                 updated_at: "2026-01-01T00:00:00Z".to_string(),
                 providers: std::collections::HashMap::new(),
                 transcription_providers: Default::default(),
-        },
+                coverage: Default::default(),
+                models: Default::default(),
+                },
             Some(past),
             None,
         )
@@ -960,7 +973,9 @@ mod tests {
             updated_at: "2026-01-01T00:00:00Z".to_string(),
             providers: std::collections::HashMap::new(),
             transcription_providers: Default::default(),
-        };
+            coverage: Default::default(),
+            models: Default::default(),
+            };
         manifest
             .providers
             .insert(provider.id.clone(), manifest_entry(&provider));
@@ -980,7 +995,9 @@ mod tests {
             updated_at: "2026-01-01T00:00:00Z".to_string(),
             providers: std::collections::HashMap::new(),
             transcription_providers: Default::default(),
-        };
+            coverage: Default::default(),
+            models: Default::default(),
+            };
         manifest.providers.insert(
             provider.id.clone(),
             ManifestProviderEntry {
@@ -1001,7 +1018,9 @@ mod tests {
             updated_at: "2026-01-01T00:00:00Z".to_string(),
             providers: std::collections::HashMap::new(),
             transcription_providers: Default::default(),
-        };
+            coverage: Default::default(),
+            models: Default::default(),
+            };
         manifest
             .providers
             .insert(provider.id.clone(), manifest_entry(&provider));
@@ -1104,7 +1123,9 @@ mod tests {
             updated_at: "2026-01-01T00:00:00Z".to_string(),
             providers: std::collections::HashMap::new(),
             transcription_providers: Default::default(),
-        };
+            coverage: Default::default(),
+            models: Default::default(),
+            };
         manifest
             .providers
             .insert(provider.id.clone(), manifest_entry(&provider));
@@ -1127,7 +1148,9 @@ mod tests {
             updated_at: "2026-01-01T00:00:00Z".to_string(),
             providers: std::collections::HashMap::new(),
             transcription_providers: Default::default(),
-        };
+            coverage: Default::default(),
+            models: Default::default(),
+            };
         manifest
             .providers
             .insert(provider.id.clone(), manifest_entry(&provider));
@@ -1153,7 +1176,9 @@ mod tests {
             updated_at: "2026-01-01T00:00:00Z".to_string(),
             providers: std::collections::HashMap::new(),
             transcription_providers: Default::default(),
-        };
+            coverage: Default::default(),
+            models: Default::default(),
+            };
         old_manifest
             .providers
             .insert(old_provider.id.clone(), manifest_entry(&old_provider));
@@ -1169,7 +1194,9 @@ mod tests {
             updated_at: "2026-07-03T00:00:00Z".to_string(),
             providers: std::collections::HashMap::new(),
             transcription_providers: Default::default(),
-        };
+            coverage: Default::default(),
+            models: Default::default(),
+            };
         new_manifest
             .providers
             .insert(new_provider.id.clone(), manifest_entry(&new_provider));
@@ -1194,7 +1221,9 @@ mod tests {
             updated_at: "2026-01-01T00:00:00Z".to_string(),
             providers: std::collections::HashMap::new(),
             transcription_providers: Default::default(),
-        };
+            coverage: Default::default(),
+            models: Default::default(),
+            };
         manifest
             .providers
             .insert(provider.id.clone(), manifest_entry(&provider));
@@ -1232,7 +1261,9 @@ mod tests {
             updated_at: "2026-01-01T00:00:00Z".to_string(),
             providers: std::collections::HashMap::new(),
             transcription_providers: Default::default(),
-        };
+            coverage: Default::default(),
+            models: Default::default(),
+            };
         manifest.providers.insert(
             provider.id.clone(),
             ManifestProviderEntry {
@@ -1255,7 +1286,9 @@ mod tests {
             updated_at: "2026-01-01T00:00:00Z".to_string(),
             providers: std::collections::HashMap::new(),
             transcription_providers: Default::default(),
-        };
+            coverage: Default::default(),
+            models: Default::default(),
+            };
         old_manifest
             .providers
             .insert(old_provider.id.clone(), manifest_entry(&old_provider));
@@ -1272,7 +1305,9 @@ mod tests {
             updated_at: "2026-07-03T00:00:00Z".to_string(),
             providers: std::collections::HashMap::new(),
             transcription_providers: Default::default(),
-        };
+            coverage: Default::default(),
+            models: Default::default(),
+            };
         new_manifest
             .providers
             .insert(good_provider.id.clone(), manifest_entry(&good_provider));
@@ -1304,7 +1339,9 @@ mod tests {
             updated_at: "2026-01-01T00:00:00Z".to_string(),
             providers: std::collections::HashMap::new(),
             transcription_providers: Default::default(),
-        };
+            coverage: Default::default(),
+            models: Default::default(),
+            };
         old_manifest
             .providers
             .insert(old_provider.id.clone(), manifest_entry(&old_provider));
@@ -1318,7 +1355,9 @@ mod tests {
             updated_at: "2026-07-03T00:00:00Z".to_string(),
             providers: std::collections::HashMap::new(),
             transcription_providers: Default::default(),
-        };
+            coverage: Default::default(),
+            models: Default::default(),
+            };
         new_manifest.providers.insert(
             new_provider.id.clone(),
             ManifestProviderEntry {
@@ -1351,7 +1390,9 @@ mod tests {
                 updated_at: "2026-01-01T00:00:00Z".to_string(),
                 providers: std::collections::HashMap::new(),
                 transcription_providers: Default::default(),
-        },
+                coverage: Default::default(),
+                models: Default::default(),
+                },
             Some(now),
             None,
         )
@@ -1367,7 +1408,9 @@ mod tests {
                 updated_at: "2026-01-01T00:00:00Z".to_string(),
                 providers: std::collections::HashMap::new(),
                 transcription_providers: Default::default(),
-        },
+                coverage: Default::default(),
+                models: Default::default(),
+                },
             Some(past),
             None,
         )

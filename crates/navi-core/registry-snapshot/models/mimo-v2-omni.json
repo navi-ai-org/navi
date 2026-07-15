@@ -1,0 +1,22 @@
+{
+  "id": "mimo-v2-omni",
+  "vendor": "xiaomi",
+  "family": "mimo",
+  "context_window_tokens": 262144,
+  "max_output_tokens": 131072,
+  "recommended_temperature": 1.0,
+  "supports_thinking": false,
+  "attachments": {
+    "images": true,
+    "documents": true,
+    "audio": false,
+    "video": false
+  },
+  "sources": {
+    "context_window_tokens": {
+      "url": "https://token-plan-sgp.xiaomimimo.com/anthropic",
+      "verified_at": "2026-07-14",
+      "note": "from official docs"
+    }
+  }
+}

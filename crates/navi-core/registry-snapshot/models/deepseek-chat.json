@@ -1,0 +1,25 @@
+{
+  "id": "deepseek-chat",
+  "vendor": "deepseek",
+  "family": "deepseek",
+  "context_window_tokens": 1000000,
+  "max_output_tokens": 384000,
+  "recommended_temperature": 1.0,
+  "supports_thinking": false,
+  "aliases": [
+    "deepseek/deepseek-chat"
+  ],
+  "sources": {
+    "context_window_tokens": {
+      "url": "https://api-docs.deepseek.com",
+      "verified_at": "2026-07-14",
+      "note": "From official API documentation. For compatibility, deepseek-chat maps to deepseek-v4-flash in non-thinking mode."
+    }
+  },
+  "attachments": {
+    "images": false,
+    "audio": false,
+    "video": false,
+    "documents": false
+  }
+}

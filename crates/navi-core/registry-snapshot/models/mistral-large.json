@@ -1,0 +1,25 @@
+{
+  "id": "mistral-large",
+  "vendor": "nvidia",
+  "family": "mistral",
+  "context_window_tokens": 32768,
+  "max_output_tokens": 4096,
+  "recommended_temperature": 0.7,
+  "supports_thinking": false,
+  "attachments": {
+    "images": false,
+    "audio": false,
+    "video": false,
+    "documents": false
+  },
+  "sources": {
+    "context_window_tokens": {
+      "url": "https://docs.nvidia.com/",
+      "verified_at": "2026-07-14",
+      "note": "from official Nvidia specs"
+    }
+  },
+  "aliases": [
+    "mistralai/mistral-large"
+  ]
+}

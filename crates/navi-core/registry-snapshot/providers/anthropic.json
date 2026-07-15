@@ -12,214 +12,62 @@
   },
   "models": [
     {
-      "name": "claude-opus-4",
-      "context_window_tokens": 200000,
-      "max_output_tokens": 32000,
-      "recommended_temperature": 1.0,
-      "supports_thinking": true,
-      "supports_images": true,
-      "supports_documents": true,
+      "ref": "claude-opus-4",
       "pricing": {
         "input_per_1m": 15.0,
         "output_per_1m": 75.0,
         "currency": "USD"
-      },
-      "reasoning_levels": [
-        "low",
-        "medium",
-        "high",
-        "max"
-      ],
-      "default_reasoning_effort": "high"
+      }
     },
     {
-      "name": "claude-opus-4-1-20250805",
-      "context_window_tokens": 200000,
-      "max_output_tokens": 32000,
-      "recommended_temperature": 1.0,
-      "supports_thinking": true,
-      "supports_images": true,
-      "supports_documents": true,
-      "reasoning_levels": [
-        "low",
-        "medium",
-        "high",
-        "max"
-      ],
-      "default_reasoning_effort": "high"
+      "ref": "claude-opus-4-1-20250805"
     },
     {
-      "name": "claude-opus-4-20250514",
-      "context_window_tokens": 200000,
-      "max_output_tokens": 32000,
-      "recommended_temperature": 1.0,
-      "supports_thinking": true,
-      "supports_images": true,
-      "supports_documents": true,
-      "reasoning_levels": [
-        "low",
-        "medium",
-        "high",
-        "max"
-      ],
-      "default_reasoning_effort": "high"
+      "ref": "claude-opus-4-20250514"
     },
     {
-      "name": "claude-sonnet-4",
-      "context_window_tokens": 200000,
-      "max_output_tokens": 64000,
-      "recommended_temperature": 1.0,
-      "supports_thinking": true,
-      "supports_images": true,
-      "supports_documents": true,
+      "ref": "claude-sonnet-4",
       "pricing": {
         "input_per_1m": 3.0,
         "output_per_1m": 15.0,
         "currency": "USD"
-      },
-      "reasoning_levels": [
-        "low",
-        "medium",
-        "high",
-        "max"
-      ],
-      "default_reasoning_effort": "high"
+      }
     },
     {
-      "name": "claude-sonnet-4-20250514",
-      "context_window_tokens": 200000,
-      "max_output_tokens": 64000,
-      "recommended_temperature": 1.0,
-      "supports_thinking": true,
-      "supports_images": true,
-      "supports_documents": true,
-      "reasoning_levels": [
-        "low",
-        "medium",
-        "high",
-        "max"
-      ],
-      "default_reasoning_effort": "high"
+      "ref": "claude-sonnet-4-20250514"
     },
     {
-      "name": "claude-haiku-4",
-      "context_window_tokens": 200000,
-      "max_output_tokens": 64000,
-      "recommended_temperature": 1.0,
-      "supports_thinking": true,
-      "supports_images": true,
-      "supports_documents": true,
-      "reasoning_levels": [
-        "low",
-        "medium",
-        "high",
-        "max"
-      ],
-      "default_reasoning_effort": "high"
+      "ref": "claude-haiku-4"
     },
     {
-      "name": "claude-3.7-sonnet",
-      "context_window_tokens": 200000,
-      "max_output_tokens": 64000,
-      "recommended_temperature": 1.0,
-      "supports_thinking": true,
-      "supports_images": true,
-      "supports_documents": true,
-      "reasoning_levels": [
-        "low",
-        "medium",
-        "high",
-        "max"
-      ],
-      "default_reasoning_effort": "high"
+      "ref": "claude-3.7-sonnet"
     },
     {
-      "name": "claude-3-7-sonnet-20250219",
-      "context_window_tokens": 200000,
-      "max_output_tokens": 64000,
-      "recommended_temperature": 1.0,
-      "supports_thinking": true,
-      "supports_images": true,
-      "supports_documents": true,
-      "reasoning_levels": [
-        "low",
-        "medium",
-        "high",
-        "max"
-      ],
-      "default_reasoning_effort": "high"
+      "ref": "claude-3-7-sonnet-20250219"
     },
     {
-      "name": "claude-3.5-sonnet",
-      "context_window_tokens": 200000,
-      "max_output_tokens": 8192,
-      "recommended_temperature": 1.0,
-      "supports_thinking": false,
-      "supports_images": true,
-      "supports_documents": true
+      "ref": "claude-3.5-sonnet"
     },
     {
-      "name": "claude-3-5-sonnet-20241022",
-      "context_window_tokens": 200000,
-      "max_output_tokens": 8192,
-      "recommended_temperature": 1.0,
-      "supports_thinking": false,
-      "supports_images": true,
-      "supports_documents": true
+      "ref": "claude-3-5-sonnet-20241022"
     },
     {
-      "name": "claude-3-5-sonnet-20240620",
-      "context_window_tokens": 200000,
-      "max_output_tokens": 8192,
-      "recommended_temperature": 1.0,
-      "supports_thinking": false,
-      "supports_images": true,
-      "supports_documents": true
+      "ref": "claude-3-5-sonnet-20240620"
     },
     {
-      "name": "claude-3.5-haiku",
-      "context_window_tokens": 200000,
-      "max_output_tokens": 8192,
-      "recommended_temperature": 1.0,
-      "supports_thinking": false,
-      "supports_images": true,
-      "supports_documents": true
+      "ref": "claude-3.5-haiku"
     },
     {
-      "name": "claude-3-5-haiku-20241022",
-      "context_window_tokens": 200000,
-      "max_output_tokens": 8192,
-      "recommended_temperature": 1.0,
-      "supports_thinking": false,
-      "supports_images": true,
-      "supports_documents": true
+      "ref": "claude-3-5-haiku-20241022"
     },
     {
-      "name": "claude-3-opus-20240229",
-      "context_window_tokens": 200000,
-      "max_output_tokens": 4096,
-      "recommended_temperature": 1.0,
-      "supports_thinking": false,
-      "supports_images": true,
-      "supports_documents": true
+      "ref": "claude-3-opus-20240229"
     },
     {
-      "name": "claude-3-sonnet-20240229",
-      "context_window_tokens": 200000,
-      "max_output_tokens": 4096,
-      "recommended_temperature": 1.0,
-      "supports_thinking": false,
-      "supports_images": true,
-      "supports_documents": true
+      "ref": "claude-3-sonnet-20240229"
     },
     {
-      "name": "claude-3-haiku-20240307",
-      "context_window_tokens": 200000,
-      "max_output_tokens": 4096,
-      "recommended_temperature": 1.0,
-      "supports_thinking": false,
-      "supports_images": true,
-      "supports_documents": true
+      "ref": "claude-3-haiku-20240307"
     }
   ],
   "defaults": {

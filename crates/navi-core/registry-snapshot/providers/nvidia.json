@@ -7,78 +7,56 @@
   "base_url": "https://integrate.api.nvidia.com/v1",
   "models": [
     {
-      "name": "meta/llama-3.3-70b-instruct",
-      "context_window_tokens": 66000,
-      "max_output_tokens": 8192,
-      "recommended_temperature": 0.7,
-      "supports_thinking": false
+      "ref": "llama-3.3-70b-instruct",
+      "api_name": "meta/llama-3.3-70b-instruct"
     },
     {
-      "name": "meta/llama-3.1-8b-instruct",
-      "context_window_tokens": 131072,
-      "max_output_tokens": 4096,
-      "recommended_temperature": 0.7,
-      "supports_thinking": false
+      "ref": "llama-3.1-8b-instruct",
+      "api_name": "meta/llama-3.1-8b-instruct"
     },
     {
-      "name": "mistralai/mistral-7b-instruct",
-      "context_window_tokens": 32768,
-      "max_output_tokens": 4096,
-      "recommended_temperature": 0.7,
-      "supports_thinking": false
+      "ref": "mistral-7b-instruct",
+      "api_name": "mistralai/mistral-7b-instruct"
     },
     {
-      "name": "nvidia/llama-3.1-nemotron-70b-instruct",
-      "context_window_tokens": 131072,
-      "max_output_tokens": 8192,
-      "recommended_temperature": 0.7,
-      "supports_thinking": false
+      "ref": "llama-3.1-nemotron-70b-instruct",
+      "api_name": "nvidia/llama-3.1-nemotron-70b-instruct"
     },
     {
-      "name": "qwen/qwen2.5-coder-32b-instruct",
-      "context_window_tokens": 131072,
-      "max_output_tokens": 8192,
-      "recommended_temperature": 0.7,
-      "supports_thinking": false
+      "ref": "qwen2.5-coder-32b-instruct",
+      "api_name": "qwen/qwen2.5-coder-32b-instruct"
     },
     {
-      "name": "mistralai/mixtral-8x7b-instruct",
-      "context_window_tokens": 32768,
-      "max_output_tokens": 4096,
-      "recommended_temperature": 0.7,
-      "supports_thinking": false
+      "ref": "mixtral-8x7b-instruct",
+      "api_name": "mistralai/mixtral-8x7b-instruct"
     },
     {
-      "name": "mistralai/mistral-large",
-      "context_window_tokens": 32768,
-      "max_output_tokens": 4096,
-      "recommended_temperature": 0.7,
-      "supports_thinking": false
-    },
-    {
-      "name": "deepseek-ai/deepseek-r1",
-      "context_window_tokens": 131072,
-      "max_output_tokens": 8192,
-      "recommended_temperature": 0.6,
-      "supports_thinking": true
-    },
-    {
-      "name": "microsoft/phi-4",
-      "context_window_tokens": 131072,
-      "max_output_tokens": 16384,
-      "recommended_temperature": 0.7,
-      "supports_thinking": false
-    },
-    {
-      "name": "minimaxai/minimax-m3",
-      "context_window_tokens": 1048576,
-      "max_output_tokens": 32768,
-      "recommended_temperature": 0.7,
-      "supports_thinking": false,
-      "supports_images": true,
-      "attachments": {
-        "images": true
+      "ref": "mistral-large",
+      "api_name": "mistralai/mistral-large",
+      "pricing": {
+        "input_per_1m": 2.0,
+        "output_per_1m": 6.0,
+        "currency": "USD",
+        "cached_input_per_1m": 0.2
       }
+    },
+    {
+      "ref": "deepseek-r1",
+      "api_name": "deepseek-ai/deepseek-r1",
+      "max_output_tokens": 8192
+    },
+    {
+      "ref": "phi-4",
+      "api_name": "microsoft/phi-4",
+      "pricing": {
+        "input_per_1m": 0.07,
+        "output_per_1m": 0.14,
+        "currency": "USD"
+      }
+    },
+    {
+      "ref": "minimax-m3",
+      "api_name": "minimaxai/minimax-m3"
     }
   ]
 }

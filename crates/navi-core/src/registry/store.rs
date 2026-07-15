@@ -282,6 +282,8 @@ impl RegistryStore {
             let default_effort: Option<String> = row.get(11)?;
 
             Ok(RegistryModel {
+                model_ref: None,
+                api_name: None,
                 name: name.clone(),
                 task_size: task_size_str,
                 context_window_tokens: ctx.map(|v| v as u64),
@@ -1310,12 +1312,15 @@ mod tests {
             kind: "openai-chat-completions".to_string(),
             api_key_env: "TEST_API_KEY".to_string(),
             base_url: Some("https://api.test.com/v1".to_string()),
+            extends: None,
             tool_calling_mode: None,
             aggregator: false,
             defaults: Default::default(),
             request_options: Default::default(),
             models: vec![
                 RegistryModel {
+                    model_ref: None,
+                    api_name: None,
                     name: "test-model-large".to_string(),
                     task_size: Some("large".to_string()),
                     context_window_tokens: Some(200_000),
@@ -1334,6 +1339,8 @@ mod tests {
                     pricing: None,
                 },
                 RegistryModel {
+                    model_ref: None,
+                    api_name: None,
                     name: "test-model-small".to_string(),
                     task_size: Some("small".to_string()),
                     context_window_tokens: Some(128_000),
@@ -1408,6 +1415,8 @@ mod tests {
 
         // Update with fewer models.
         provider.models = vec![RegistryModel {
+            model_ref: None,
+            api_name: None,
             name: "new-model".to_string(),
             task_size: Some("large".to_string()),
             context_window_tokens: Some(500_000),
@@ -1483,6 +1492,8 @@ mod tests {
         let mut provider = sample_provider();
         // Simulate API sync with an extra model beyond the catalog snapshot.
         provider.models.push(RegistryModel {
+            model_ref: None,
+            api_name: None,
             name: "api-only-model".to_string(),
             task_size: Some("large".to_string()),
             context_window_tokens: Some(200_000),
@@ -1535,6 +1546,7 @@ mod tests {
             kind: "anthropic-messages".to_string(),
             api_key_env: "OTHER_KEY".to_string(),
             base_url: None,
+            extends: None,
             tool_calling_mode: None,
             aggregator: false,
             defaults: Default::default(),
@@ -1573,11 +1585,14 @@ mod tests {
             kind: "openai-chat-completions".to_string(),
             api_key_env: "K".to_string(),
             base_url: None,
+            extends: None,
             tool_calling_mode: None,
             aggregator: false,
             defaults: Default::default(),
             request_options: Default::default(),
             models: vec![RegistryModel {
+                model_ref: None,
+                api_name: None,
                 name: "m".to_string(),
                 task_size: Some("small".to_string()),
                 context_window_tokens: None,
@@ -1720,11 +1735,14 @@ mod tests {
             kind: "openai-chat-completions".to_string(),
             api_key_env: "TINY_KEY".to_string(),
             base_url: None,
+            extends: None,
             tool_calling_mode: None,
             aggregator: false,
             defaults: Default::default(),
             request_options: Default::default(),
             models: vec![RegistryModel {
+                model_ref: None,
+                api_name: None,
                 name: "tiny-model".to_string(),
                 task_size: Some("small".to_string()),
                 context_window_tokens: Some(4_000),

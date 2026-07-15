@@ -11,15 +11,17 @@
 
 mod aggregator;
 mod embedded;
+mod extends;
 mod fetcher;
 mod inherit;
+mod resolve;
 mod store;
 pub mod types;
 mod update;
 
 pub use aggregator::sync_aggregator_models;
 pub use embedded::{
-    embedded_manifest, embedded_provider_schema, embedded_providers,
+    embedded_manifest, embedded_model_catalog, embedded_provider_schema, embedded_providers,
     embedded_transcription_provider_schema, embedded_transcription_providers,
 };
 pub use fetcher::{RegistryFetcher, sync_local_registry, sync_registry};
@@ -27,9 +29,11 @@ pub use inherit::{
     apply_provider_attachment_defaults_to_config_model, enrich_synced_registry_model,
     provider_registry_attachment_defaults, provider_registry_defaults,
 };
+pub use extends::{deep_merge, parse_provider_json, resolve_extends_value};
+pub use resolve::{ModelCatalog, resolve_provider_refs};
 pub use store::{LOCAL_API_SYNC_SHA, RegistryStore, registry_provider_to_config};
 pub use types::{
-    ModelCapability, ModelPricing, ModelProfileEntry, Profile, RankedModel,
+    CanonicalModel, ModelCapability, ModelPricing, ModelProfileEntry, Profile, RankedModel,
     RegistryTranscriptionModel, RegistryTranscriptionProvider, TranscriptionModelPricing,
     TranscriptionProviderKind,
 };

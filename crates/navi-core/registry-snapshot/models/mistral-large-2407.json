@@ -1,0 +1,22 @@
+{
+  "id": "mistral-large-2407",
+  "vendor": "mistral",
+  "family": "mistral",
+  "context_window_tokens": 128000,
+  "max_output_tokens": 32768,
+  "recommended_temperature": 0.7,
+  "supports_thinking": false,
+  "attachments": {
+    "images": false,
+    "audio": false,
+    "video": false,
+    "documents": true
+  },
+  "sources": {
+    "context_window_tokens": {
+      "url": "https://docs.mistral.ai/getting-started/models/models_overview/",
+      "verified_at": "2026-07-14",
+      "note": "from official docs"
+    }
+  }
+}

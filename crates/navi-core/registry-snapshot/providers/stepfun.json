@@ -15,11 +15,7 @@
   },
   "models": [
     {
-      "name": "step-3.5-flash",
-      "context_window_tokens": 262144,
-      "max_output_tokens": 65536,
-      "recommended_temperature": 1.0,
-      "supports_thinking": true,
+      "ref": "step-3.5-flash",
       "pricing": {
         "input_per_1m": 0.1,
         "output_per_1m": 0.3,
@@ -27,71 +23,31 @@
       }
     },
     {
-      "name": "step-3",
-      "context_window_tokens": 262144,
-      "max_output_tokens": 16384,
-      "recommended_temperature": 1.0,
-      "supports_thinking": false
+      "ref": "step-3"
     },
     {
-      "name": "step-2-16k",
-      "context_window_tokens": 16384,
-      "max_output_tokens": 8192,
-      "recommended_temperature": 0.7,
-      "supports_thinking": false
+      "ref": "step-2-16k"
     },
     {
-      "name": "step-2",
-      "context_window_tokens": 1000000,
-      "max_output_tokens": 8192,
-      "recommended_temperature": 0.7,
-      "supports_thinking": false
+      "ref": "step-2"
     },
     {
-      "name": "step-1-256k",
-      "context_window_tokens": 262144,
-      "max_output_tokens": 8192,
-      "recommended_temperature": 0.7,
-      "supports_thinking": false
+      "ref": "step-1-256k"
     },
     {
-      "name": "step-1-128k",
-      "context_window_tokens": 131072,
-      "max_output_tokens": 8192,
-      "recommended_temperature": 0.7,
-      "supports_thinking": false
+      "ref": "step-1-128k"
     },
     {
-      "name": "step-1-32k",
-      "context_window_tokens": 32768,
-      "max_output_tokens": 32768,
-      "recommended_temperature": 0.7,
-      "supports_thinking": false
+      "ref": "step-1-32k"
     },
     {
-      "name": "step-1-8k",
-      "context_window_tokens": 8192,
-      "max_output_tokens": 8192,
-      "recommended_temperature": 0.7,
-      "supports_thinking": false
+      "ref": "step-1-8k"
     },
     {
-      "name": "step-1v",
-      "context_window_tokens": 131072,
-      "max_output_tokens": 8192,
-      "recommended_temperature": 0.7,
-      "supports_thinking": false,
-      "attachments": {
-        "images": true
-      },
-      "supports_images": true
+      "ref": "step-1v"
     },
     {
-      "name": "step-1",
-      "context_window_tokens": 131072,
-      "max_output_tokens": 8192,
-      "recommended_temperature": 0.7,
-      "supports_thinking": false
+      "ref": "step-1"
     }
   ]
 }

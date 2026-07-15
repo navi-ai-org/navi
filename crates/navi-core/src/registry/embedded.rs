@@ -11,17 +11,36 @@ use super::types::{RegistryManifest, RegistryProvider, RegistryTranscriptionProv
 
 include!(concat!(env!("OUT_DIR"), "/embedded_registry/embedded.rs"));
 
+/// Embedded `bases/*.json` pairs used for `extends` resolution.
+pub fn embedded_base_files() -> &'static [(&'static str, &'static str)] {
+    BASE_FILES
+}
+
 /// Returns the embedded manifest, parsed from the snapshot.
 pub fn embedded_manifest() -> Result<RegistryManifest> {
     serde_json::from_str(MANIFEST_JSON).context("failed to parse embedded manifest")
 }
 
+/// Returns all embedded canonical models, parsed from the snapshot.
+pub fn embedded_model_catalog() -> Result<super::resolve::ModelCatalog> {
+    let mut catalog = std::collections::HashMap::new();
+    for (id, json) in MODEL_CATALOG_FILES {
+        let model: super::types::CanonicalModel = serde_json::from_str(json)
+            .with_context(|| format!("failed to parse embedded canonical model '{id}'"))?;
+        catalog.insert(id.to_string(), model);
+    }
+    Ok(catalog)
+}
+
 /// Returns all embedded LLM providers, parsed from the snapshot.
 pub fn embedded_providers() -> Result<Vec<RegistryProvider>> {
+    let catalog = embedded_model_catalog()?;
+    let bases = super::extends::base_map_from_embedded(BASE_FILES, PROVIDER_FILES)?;
     let mut providers = Vec::with_capacity(PROVIDER_FILES.len());
     for (id, json) in PROVIDER_FILES {
-        let provider: RegistryProvider = serde_json::from_str(json)
+        let mut provider = super::extends::parse_provider_json(json, &bases)
             .with_context(|| format!("failed to parse embedded provider '{id}'"))?;
+        super::resolve::resolve_provider_refs(&mut provider, &catalog);
         providers.push(provider);
     }
     Ok(providers)
@@ -195,7 +214,15 @@ mod tests {
         assert_eq!(gemini.defaults.attachments.audio, Some(true));
         assert_eq!(gemini.defaults.attachments.video, Some(true));
         assert_eq!(gemini.defaults.attachments.documents, Some(true));
-        assert!(model(gemini, "gemini-2.5-flash").attachments.is_empty());
+        // Canonical refs now materialize attachments onto the model entry.
+        assert_eq!(
+            model(gemini, "gemini-2.5-flash").attachments.images,
+            Some(true)
+        );
+        assert_eq!(
+            model(gemini, "gemini-2.5-flash").attachments.audio,
+            Some(true)
+        );
 
         let anthropic = provider(&providers, "anthropic");
         assert_eq!(anthropic.defaults.attachments.images, Some(true));

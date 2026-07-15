@@ -1,0 +1,32 @@
+{
+  "id": "gpt-4.1-nano",
+  "vendor": "openai",
+  "family": "gpt",
+  "context_window_tokens": 1047576,
+  "max_output_tokens": 32768,
+  "recommended_temperature": 1.0,
+  "supports_thinking": false,
+  "attachments": {
+    "images": true,
+    "audio": false,
+    "video": false,
+    "documents": false
+  },
+  "sources": {
+    "attachments": {
+      "url": "https://openrouter.ai/api/v1/models/openai/gpt-4.1-nano",
+      "verified_at": "2026-07-14",
+      "note": "auto-filled by probe from OpenRouter /api/v1/models"
+    },
+    "context_window_tokens": {
+      "url": "https://platform.openai.com/docs/models",
+      "verified_at": "2026-07-14",
+      "note": "verified context window of 1M tokens from official documentation"
+    },
+    "max_output_tokens": {
+      "url": "https://platform.openai.com/docs/models",
+      "verified_at": "2026-07-14",
+      "note": "verified output token limit of 32k"
+    }
+  }
+}

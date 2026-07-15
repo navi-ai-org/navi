@@ -173,6 +173,8 @@ fn openrouter_model_to_registry(model: &OpenRouterModel) -> RegistryModel {
     };
 
     RegistryModel {
+        model_ref: None,
+        api_name: None,
         name,
         task_size: None,
         context_window_tokens: model.context_length,
@@ -295,6 +297,7 @@ pub async fn sync_aggregator_models(
         kind: format!("{:?}", provider_config.kind).to_lowercase(),
         api_key_env: provider_config.api_key_env.clone(),
         base_url: provider_config.base_url.clone(),
+        extends: None,
         tool_calling_mode: provider_config
             .tool_calling_mode
             .map(|m| format!("{:?}", m).to_lowercase()),

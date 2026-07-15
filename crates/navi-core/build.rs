@@ -93,7 +93,76 @@ fn main() {
         }
     }
 
-    // Copy schema files.
+    // Collect and copy canonical model catalog files.
+    let models_dir = snapshot_dir.join("models");
+    let mut model_catalog_entries = Vec::new();
+    if models_dir.is_dir() {
+        let embedded_models_dir = embedded_dir.join("models");
+        fs::create_dir_all(&embedded_models_dir).expect("failed to create embedded models dir");
+        let mut model_files: Vec<_> = fs::read_dir(&models_dir)
+            .expect("failed to read registry-snapshot/models")
+            .filter_map(|e| {
+                let e = e.expect("dir entry");
+                let path = e.path();
+                if path.extension().is_some_and(|ext| ext == "json") {
+                    Some(path)
+                } else {
+                    None
+                }
+            })
+            .collect();
+        model_files.sort();
+        for path in &model_files {
+            let id = path
+                .file_stem()
+                .expect("model file has no stem")
+                .to_str()
+                .expect("model file name is not valid UTF-8");
+            let dst = embedded_models_dir.join(format!("{id}.json"));
+            fs::copy(path, &dst).expect("failed to copy embedded canonical model");
+            println!("cargo:rerun-if-changed={}", path.display());
+            model_catalog_entries.push((
+                id.to_string(),
+                dst.to_str().expect("path is not valid UTF-8").to_string(),
+            ));
+        }
+    }
+
+    // Collect and copy provider base definitions (for `extends`).
+    let bases_dir = snapshot_dir.join("bases");
+    let mut base_entries = Vec::new();
+    if bases_dir.is_dir() {
+        let embedded_bases_dir = embedded_dir.join("bases");
+        fs::create_dir_all(&embedded_bases_dir).expect("failed to create embedded bases dir");
+        let mut base_files: Vec<_> = fs::read_dir(&bases_dir)
+            .expect("failed to read registry-snapshot/bases")
+            .filter_map(|e| {
+                let e = e.expect("dir entry");
+                let path = e.path();
+                if path.extension().is_some_and(|ext| ext == "json") {
+                    Some(path)
+                } else {
+                    None
+                }
+            })
+            .collect();
+        base_files.sort();
+        for path in &base_files {
+            let id = path
+                .file_stem()
+                .expect("base file has no stem")
+                .to_str()
+                .expect("base file name is not valid UTF-8");
+            let dst = embedded_bases_dir.join(format!("{id}.json"));
+            fs::copy(path, &dst).expect("failed to copy embedded base");
+            println!("cargo:rerun-if-changed={}", path.display());
+            base_entries.push((
+                id.to_string(),
+                dst.to_str().expect("path is not valid UTF-8").to_string(),
+            ));
+        }
+    }
+
     let schema_src = snapshot_dir.join("schemas");
     if schema_src.is_dir() {
         let embedded_schema_dir = embedded_dir.join("schemas");
@@ -121,6 +190,16 @@ fn main() {
     src.push_str("];\n\n");
     src.push_str("pub const TRANSCRIPTION_PROVIDER_FILES: &[(&str, &str)] = &[\n");
     for (id, path) in &transcription_entries {
+        src.push_str(&format!("    ({id:?}, include_str!({path:?})),\n"));
+    }
+    src.push_str("];\n\n");
+    src.push_str("pub const BASE_FILES: &[(&str, &str)] = &[\n");
+    for (id, path) in &base_entries {
+        src.push_str(&format!("    ({id:?}, include_str!({path:?})),\n"));
+    }
+    src.push_str("];\n\n");
+    src.push_str("pub const MODEL_CATALOG_FILES: &[(&str, &str)] = &[\n");
+    for (id, path) in &model_catalog_entries {
         src.push_str(&format!("    ({id:?}, include_str!({path:?})),\n"));
     }
     src.push_str("];\n");
