@@ -19,6 +19,7 @@ pub(crate) enum SettingAction {
     AttachmentFallbacks,
     Providers,
     PermissionMode,
+    DesktopNotifications,
     AutoUpdate,
     CheckUpdates,
     Debug,
@@ -54,6 +55,7 @@ pub(crate) const SETTINGS_ROWS: &[SettingRow] = &[
     SettingRow::Section("System"),
     SettingRow::Action(SettingAction::Providers),
     SettingRow::Action(SettingAction::PermissionMode),
+    SettingRow::Action(SettingAction::DesktopNotifications),
     SettingRow::Action(SettingAction::MemoryHint),
     SettingRow::Section("Updates"),
     SettingRow::Action(SettingAction::AutoUpdate),
@@ -189,6 +191,15 @@ pub(crate) fn setting_display(
                 SettingValueKind::Cycle,
             )
         }
+        SettingAction::DesktopNotifications => (
+            "Desktop notifications",
+            if app.loaded_config.config.tui.desktop_notifications {
+                "on".into()
+            } else {
+                "off".into()
+            },
+            SettingValueKind::Toggle,
+        ),
         SettingAction::AutoUpdate => (
             "Auto-update",
             if app.loaded_config.config.updates.auto_update {

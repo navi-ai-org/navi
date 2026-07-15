@@ -2506,6 +2506,20 @@ fn settings_toggles_thinking_visibility() {
 }
 
 #[test]
+fn settings_toggles_desktop_notifications() {
+    let mut app = test_app("");
+    app.mode = Mode::Settings;
+    assert!(app.loaded_config.config.tui.desktop_notifications);
+    app.selected_setting = crate::settings::index_of_action(
+        crate::settings::SettingAction::DesktopNotifications,
+    );
+
+    handle_settings_key(&mut app, KeyCode::Enter);
+    assert!(!app.loaded_config.config.tui.desktop_notifications);
+    assert!(app.notification().is_some());
+}
+
+#[test]
 fn tui_preferences_load_from_config() {
     let mut config = navi_sdk::NaviConfig::default();
     config.tui.theme = "ember".to_string();

@@ -85,6 +85,7 @@ pub(crate) enum CommandAction {
     Debug,
     /// Toggle show-reasoning / thinking text in chat.
     ToggleShowReasoning,
+    ToggleDesktopNotifications,
     /// Cycle permission mode (restricted / accept-edits / auto / yolo).
     CyclePermissionMode,
     /// Open a nested hub list inside the command palette.
@@ -315,6 +316,13 @@ pub(crate) const COMMANDS: &[CommandItem] = &[
         visibility: CommandVisibility::Always,
     },
     CommandItem {
+        label: "Desktop Notifications",
+        shortcut: None,
+        action: CommandAction::ToggleDesktopNotifications,
+        hub: Some(CommandHub::HelpApp),
+        visibility: CommandVisibility::Always,
+    },
+    CommandItem {
         label: "Debug…",
         shortcut: Some("ctrl+d"),
         action: CommandAction::Debug,
@@ -479,6 +487,7 @@ fn action_keywords(action: CommandAction) -> &'static str {
         CommandAction::Settings => "preferences options config",
         CommandAction::Theme => "theme themes colors appearance dark light lain palette ui",
         CommandAction::ToggleShowReasoning => "reasoning thinking show hide thought chain",
+        CommandAction::ToggleDesktopNotifications => "desktop notifications toast notify unfocused",
         CommandAction::Debug => "debug diagnostics logs status",
         CommandAction::ReSetup => "setup wizard onboarding",
         CommandAction::InitializeProject => "init project navi config",

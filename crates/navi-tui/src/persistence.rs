@@ -90,6 +90,7 @@ pub(crate) fn sync_preferences_to_config(app: &mut TuiApp) {
     tui.compact_tool_visible_limit = app.compact_tool_visible_limit;
     tui.thinking_level = app.thinking_level.config_value().to_string();
     tui.yolo_mode = app.yolo_mode;
+    // desktop_notifications is toggled in-place on config; keep as-is.
 }
 
 pub(crate) fn save_preferences(app: &mut TuiApp) {

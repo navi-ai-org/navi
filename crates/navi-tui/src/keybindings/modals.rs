@@ -435,6 +435,20 @@ pub(crate) fn handle_settings_key(app: &mut TuiApp, code: KeyCode) -> bool {
                     );
                     save_preferences(app);
                 }
+                SettingAction::DesktopNotifications => {
+                    let enabled = !app.loaded_config.config.tui.desktop_notifications;
+                    app.loaded_config.config.tui.desktop_notifications = enabled;
+                    show_notification(
+                        app,
+                        "Settings",
+                        if enabled {
+                            "Desktop notifications when unfocused."
+                        } else {
+                            "Desktop notifications disabled."
+                        },
+                    );
+                    save_preferences(app);
+                }
                 SettingAction::CompactToolView => {
                     let pin = app
                         .selected_chat_source

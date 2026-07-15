@@ -135,6 +135,10 @@ pub struct TuiConfig {
     /// Default is false (local recap only) to avoid a provider round-trip every turn.
     #[serde(default)]
     pub llm_recap: bool,
+    /// When true, send an OS desktop notification when a turn/goal finishes
+    /// while the NAVI terminal is unfocused.
+    #[serde(default = "default_true")]
+    pub desktop_notifications: bool,
 }
 
 impl Default for TuiConfig {
@@ -149,6 +153,7 @@ impl Default for TuiConfig {
             recent_provider_ids: Vec::new(),
             recent_model_ids: Vec::new(),
             llm_recap: false,
+            desktop_notifications: true,
         }
     }
 }
