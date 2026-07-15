@@ -23,6 +23,7 @@ napi.workspace = true
 napi-derive.workspace = true
 navi-core.workspace = true
 navi-sdk = { workspace = true }
+navi-plugin-manifest.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
 

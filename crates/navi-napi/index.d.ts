@@ -193,6 +193,16 @@ export interface EngineConfig {
     subagentResearch?: BackgroundModelEntry | null;
     simpleCodeEdit?: BackgroundModelEntry | null;
   };
+  tui?: {
+    theme: string;
+    showThinking: boolean;
+    fullToolView: boolean;
+    compactToolVisibleLimit: number;
+    thinkingLevel: string;
+    yoloMode: boolean;
+    llmRecap: boolean;
+    desktopNotifications: boolean;
+  };
   updates?: {
     checkEnabled: boolean;
     autoUpdate: boolean;
@@ -230,6 +240,10 @@ export class NaviNapiEngine {
   /** Available models with per-model `effortOptions` / `effortBinary`. */
   listModels(): ModelInfo[];
   listTuiComponents(sessionId: string): string[];
+  /** Installed packages that ship a host-mediated `tui.json` extension. */
+  listTuiExtensions(): JsonValue;
+  /** Flattened palette commands from all installed `tui.json` specs. */
+  listTuiExtensionCommands(): JsonValue;
   setModel(sessionId: string, provider: string, model: string): Promise<void>;
   selectModel(providerId: string, model: string, saveTarget?: SaveTarget): ModelSelectionResult;
   setAttachmentModel(modality: string, provider: string, model: string, saveTarget?: SaveTarget): JsonValue;
@@ -297,6 +311,8 @@ export class NaviNapiEngine {
   pluginSearch(query?: string): Promise<JsonValue>;
   /** Install from local path; confirm must be true (non-interactive approval). */
   pluginInstallPath(path: string, confirm: boolean): JsonValue;
+  /** Install with explicit trust (`local-dev`|`community`|`signed`|`core`) and kind (`plugin`|`skill`|`mcp`|`integration`). */
+  pluginInstallPathWithMeta(path: string, confirm: boolean, trust?: string, kind?: string): JsonValue;
   pluginInstallMarketplace(pluginId: string, confirm: boolean): Promise<JsonValue>;
   pluginUpdatePath(path: string, force?: boolean, confirm?: boolean): JsonValue;
   pluginUpdateMarketplace(pluginId: string, force?: boolean, confirm?: boolean): Promise<JsonValue>;

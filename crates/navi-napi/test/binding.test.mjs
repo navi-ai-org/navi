@@ -42,4 +42,28 @@ test('builder creates a runtime with TypeScript tools and hooks', () => {
   assert.ok(first.effortOptions.length > 0);
   assert.equal(typeof first.effortOptions[0].value, 'string');
   assert.equal(typeof first.effortOptions[0].label, 'string');
+
+  assert.equal(typeof engine.listTuiExtensions, 'function');
+  assert.equal(typeof engine.listTuiExtensionCommands, 'function');
+  assert.equal(typeof engine.pluginInstallPathWithMeta, 'function');
+
+  const extensions = engine.listTuiExtensions();
+  assert.ok(Array.isArray(extensions), 'listTuiExtensions should return an array');
+
+  const extensionCommands = engine.listTuiExtensionCommands();
+  assert.ok(
+    Array.isArray(extensionCommands),
+    'listTuiExtensionCommands should return an array',
+  );
+
+  const config = engine.loadedConfig();
+  assert.ok(config && typeof config === 'object');
+  assert.ok(config.tui && typeof config.tui === 'object');
+  assert.equal(typeof config.tui.desktopNotifications, 'boolean');
+
+  // Invalid path should reject cleanly without crashing the binding.
+  assert.throws(
+    () => engine.pluginInstallPathWithMeta('/tmp/navi-missing-plugin-path', false),
+    /./,
+  );
 });

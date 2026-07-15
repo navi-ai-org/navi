@@ -386,6 +386,26 @@ impl NaviNapiEngine {
             .map_err(to_napi_error)
     }
 
+    /// Installed plugin packages that ship a `tui.json` extension spec.
+    #[napi]
+    pub fn list_tui_extensions(&self) -> Result<JsonValue> {
+        let list = self
+            .inner
+            .list_tui_extensions()
+            .map_err(to_napi_error)?;
+        serde_json::to_value(list).map_err(to_napi_error)
+    }
+
+    /// Flattened palette commands from all installed `tui.json` specs.
+    #[napi]
+    pub fn list_tui_extension_commands(&self) -> Result<JsonValue> {
+        let list = self
+            .inner
+            .list_tui_extension_commands()
+            .map_err(to_napi_error)?;
+        serde_json::to_value(list).map_err(to_napi_error)
+    }
+
     #[napi]
     pub async fn set_model(
         &self,
@@ -1061,6 +1081,53 @@ impl NaviNapiEngine {
         serde_json::to_value(result).map_err(to_napi_error)
     }
 
+    /// Install from a local path with explicit trust level and marketplace kind.
+    ///
+    /// `trust`: `local-dev` (default) | `community` | `signed` | `core`
+    /// `kind`: `plugin` (default) | `skill` | `mcp` | `integration`
+    #[napi]
+    pub fn plugin_install_path_with_meta(
+        &self,
+        path: String,
+        confirm: bool,
+        trust: Option<String>,
+        kind: Option<String>,
+    ) -> Result<JsonValue> {
+        use navi_plugin_manifest::{PluginCatalogKind, TrustLevel};
+        let trust = match trust.as_deref().unwrap_or("local-dev") {
+            "local-dev" | "local_dev" | "localdev" => TrustLevel::LocalDev,
+            "community" => TrustLevel::Community,
+            "signed" => TrustLevel::Signed,
+            "core" => TrustLevel::Core,
+            other => {
+                return Err(to_napi_error(anyhow::anyhow!(
+                    "invalid trust level '{other}' (expected local-dev|community|signed|core)"
+                )));
+            }
+        };
+        let kind = match kind.as_deref().unwrap_or("plugin") {
+            "plugin" => PluginCatalogKind::Plugin,
+            "skill" => PluginCatalogKind::Skill,
+            "mcp" => PluginCatalogKind::Mcp,
+            "integration" => PluginCatalogKind::Integration,
+            other => {
+                return Err(to_napi_error(anyhow::anyhow!(
+                    "invalid package kind '{other}' (expected plugin|skill|mcp|integration)"
+                )));
+            }
+        };
+        let result = self
+            .inner
+            .plugin_install_path_with_meta(
+                std::path::Path::new(&path),
+                confirm,
+                trust,
+                kind,
+            )
+            .map_err(to_napi_error)?;
+        serde_json::to_value(result).map_err(to_napi_error)
+    }
+
     #[napi]
     pub async fn plugin_install_marketplace(
         &self,
@@ -1615,6 +1682,16 @@ impl NaviNapiEngine {
                 "compaction": config.config.background_models.compaction,
                 "subagentResearch": config.config.background_models.subagent_research,
                 "simpleCodeEdit": config.config.background_models.simple_code_edit,
+            },
+            "tui": {
+                "theme": config.config.tui.theme,
+                "showThinking": config.config.tui.show_thinking,
+                "fullToolView": config.config.tui.full_tool_view,
+                "compactToolVisibleLimit": config.config.tui.compact_tool_visible_limit,
+                "thinkingLevel": config.config.tui.thinking_level,
+                "yoloMode": config.config.tui.yolo_mode,
+                "llmRecap": config.config.tui.llm_recap,
+                "desktopNotifications": config.config.tui.desktop_notifications,
             },
             "updates": {
                 "checkEnabled": config.config.updates.check_enabled,
