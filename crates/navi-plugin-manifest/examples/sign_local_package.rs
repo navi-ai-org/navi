@@ -14,7 +14,11 @@ use std::fs;
 use std::path::PathBuf;
 
 fn main() {
-    let dir = PathBuf::from(env::args().nth(1).expect("usage: sign_local_package <plugin-dir>"));
+    let dir = PathBuf::from(
+        env::args()
+            .nth(1)
+            .expect("usage: sign_local_package <plugin-dir>"),
+    );
     let wasm_path = dir.join("plugin.wasm");
     let wasm = fs::read(&wasm_path).expect("read plugin.wasm");
     let toml_path = dir.join("plugin.toml");

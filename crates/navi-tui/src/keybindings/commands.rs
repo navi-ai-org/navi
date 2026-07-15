@@ -124,7 +124,8 @@ pub(crate) fn run_selected_command(app: &mut TuiApp) -> bool {
                 }
                 None => format!("Extension command `{}`", cmd.id),
             };
-            app.messages.push(ChatMessage::new(ChatRole::Assistant, msg));
+            app.messages
+                .push(ChatMessage::new(ChatRole::Assistant, msg));
             show_notification(app, "Extension", format!("Ran {}", cmd.title));
         }
         return false;
@@ -352,7 +353,7 @@ pub(crate) fn run_selected_command(app: &mut TuiApp) -> bool {
         CommandAction::CyclePermissionMode => {
             super::global::cycle_permission_mode_for_command(app);
             super::close_all_modals(app);
-        },
+        }
     }
 
     false
@@ -369,8 +370,7 @@ fn initialize_project_config(app: &TuiApp) -> anyhow::Result<std::path::PathBuf>
             config_path.display()
         );
     }
-    std::fs::create_dir_all(&navi_dir)
-        .with_context(|| format!("create {}", navi_dir.display()))?;
+    std::fs::create_dir_all(&navi_dir).with_context(|| format!("create {}", navi_dir.display()))?;
     let model = &app.loaded_config.config.model;
     let content = format!(
         r#"# Project-local NAVI config (user-authored).

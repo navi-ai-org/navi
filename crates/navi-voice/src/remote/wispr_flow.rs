@@ -82,15 +82,16 @@ impl WisprFlowClient {
             );
         }
 
-        let parsed: WisprResponse = serde_json::from_str(&body_text).with_context(|| {
-            format!(
-                "parse wispr-flow JSON: {}",
-                truncate(&body_text, 300)
-            )
-        })?;
+        let parsed: WisprResponse = serde_json::from_str(&body_text)
+            .with_context(|| format!("parse wispr-flow JSON: {}", truncate(&body_text, 300)))?;
 
         if let Some(detail) = parsed.detail.or(parsed.message) {
-            if parsed.text.as_ref().map(|t| t.trim().is_empty()).unwrap_or(true) {
+            if parsed
+                .text
+                .as_ref()
+                .map(|t| t.trim().is_empty())
+                .unwrap_or(true)
+            {
                 bail!("wispr-flow error: {detail}");
             }
         }

@@ -55,9 +55,7 @@ pub fn routes(state: SharedState, secret: &'static str) -> BoxedFilter<(impl Rep
         .and_then(|s: SharedState| async move {
             let engine = s.engine.read().await;
             match engine.list_provider_accounts() {
-                Ok(accounts) => {
-                    Ok::<_, Infallible>(warp::reply::json(&accounts).into_response())
-                }
+                Ok(accounts) => Ok::<_, Infallible>(warp::reply::json(&accounts).into_response()),
                 Err(e) => Ok(err_resp(e.to_string(), StatusCode::INTERNAL_SERVER_ERROR)),
             }
         });
@@ -70,9 +68,7 @@ pub fn routes(state: SharedState, secret: &'static str) -> BoxedFilter<(impl Rep
         .and_then(|provider_id: String, s: SharedState| async move {
             let engine = s.engine.read().await;
             match engine.list_credential_accounts(&provider_id) {
-                Ok(accounts) => {
-                    Ok::<_, Infallible>(warp::reply::json(&accounts).into_response())
-                }
+                Ok(accounts) => Ok::<_, Infallible>(warp::reply::json(&accounts).into_response()),
                 Err(e) => Ok(err_resp(e.to_string(), StatusCode::INTERNAL_SERVER_ERROR)),
             }
         });
@@ -101,26 +97,25 @@ pub fn routes(state: SharedState, secret: &'static str) -> BoxedFilter<(impl Rep
         );
 
     // POST /credentials/:providerId/accounts/:accountId/select
-    let select_account =
-        warp::path!("credentials" / String / "accounts" / String / "select")
-            .and(warp::post())
-            .and(sf.clone())
-            .and(af.clone())
-            .and_then(
-                |provider_id: String, account_id: String, s: SharedState| async move {
-                    let engine = s.engine.read().await;
-                    match engine.select_provider_account(&provider_id, &account_id) {
-                        Ok(()) => Ok::<_, Infallible>(
-                            warp::reply::json(&serde_json::json!({
-                                "selected": true,
-                                "accountId": account_id,
-                            }))
-                            .into_response(),
-                        ),
-                        Err(e) => Ok(err_resp(e.to_string(), StatusCode::BAD_REQUEST)),
-                    }
-                },
-            );
+    let select_account = warp::path!("credentials" / String / "accounts" / String / "select")
+        .and(warp::post())
+        .and(sf.clone())
+        .and(af.clone())
+        .and_then(
+            |provider_id: String, account_id: String, s: SharedState| async move {
+                let engine = s.engine.read().await;
+                match engine.select_provider_account(&provider_id, &account_id) {
+                    Ok(()) => Ok::<_, Infallible>(
+                        warp::reply::json(&serde_json::json!({
+                            "selected": true,
+                            "accountId": account_id,
+                        }))
+                        .into_response(),
+                    ),
+                    Err(e) => Ok(err_resp(e.to_string(), StatusCode::BAD_REQUEST)),
+                }
+            },
+        );
 
     // DELETE /credentials/:providerId/accounts/:accountId
     let delete_account = warp::path!("credentials" / String / "accounts" / String)

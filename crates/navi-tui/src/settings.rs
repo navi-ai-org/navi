@@ -221,7 +221,11 @@ pub(crate) fn setting_display(
                     "off".into()
                 }
             });
-            ("Memory", short_memory_status(&status), SettingValueKind::Link)
+            (
+                "Memory",
+                short_memory_status(&status),
+                SettingValueKind::Link,
+            )
         }
     }
 }
@@ -305,12 +309,7 @@ mod tests {
         assert!(link.contains('›'), "{link}");
         assert!(!link.contains("open"), "{link}");
 
-        let model = format_setting_line(
-            "Model",
-            "mimo-v2.5-pro",
-            SettingValueKind::Link,
-            16,
-        );
+        let model = format_setting_line("Model", "mimo-v2.5-pro", SettingValueKind::Link, 16);
         assert!(model.contains("mimo-v2.5-pro"), "{model}");
         assert!(!model.contains("commandcode"), "{model}");
         assert!(!model.contains("Routing"), "{model}");

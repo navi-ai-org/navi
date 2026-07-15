@@ -65,10 +65,8 @@ impl BrowserEngineFactory for CloakBrowserEngineFactory {
             }
         };
         if !config.proxy.is_empty() {
-            hints.push(
-                "Proxy is set — CloakBrowser enables geoip when proxy is configured."
-                    .into(),
-            );
+            hints
+                .push("Proxy is set — CloakBrowser enables geoip when proxy is configured.".into());
         }
         DoctorReport {
             backend: FACTORY_ID.into(),

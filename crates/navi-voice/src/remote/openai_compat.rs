@@ -32,8 +32,8 @@ impl OpenAiAudioTranscriptionsClient {
         config: &RemoteTranscriptionConfig,
         path: &Path,
     ) -> Result<RemoteTranscribeResult> {
-        let bytes = std::fs::read(path)
-            .with_context(|| format!("read audio file {}", path.display()))?;
+        let bytes =
+            std::fs::read(path).with_context(|| format!("read audio file {}", path.display()))?;
         let filename = path
             .file_name()
             .and_then(|s| s.to_str())
@@ -46,10 +46,7 @@ impl OpenAiAudioTranscriptionsClient {
 
         if let Some(lang) = config.language.as_deref() {
             let lang = lang.trim();
-            if !lang.is_empty()
-                && !lang.eq_ignore_ascii_case("auto")
-                && lang != "und"
-            {
+            if !lang.is_empty() && !lang.eq_ignore_ascii_case("auto") && lang != "und" {
                 // OpenAI accepts ISO-639-1; strip region (en-US → en).
                 let short = lang.split(['-', '_']).next().unwrap_or(lang);
                 form = form.text("language", short.to_string());
@@ -85,20 +82,13 @@ impl OpenAiAudioTranscriptionsClient {
             );
         }
 
-        let parsed: TranscriptionResponse =
-            serde_json::from_str(&body).with_context(|| {
-                format!(
-                    "parse transcription JSON: {}",
-                    truncate(&body, 300)
-                )
-            })?;
+        let parsed: TranscriptionResponse = serde_json::from_str(&body)
+            .with_context(|| format!("parse transcription JSON: {}", truncate(&body, 300)))?;
 
         if let Some(err) = parsed.error {
             bail!(
                 "transcription API error{}: {}",
-                err.code
-                    .map(|c| format!(" ({c})"))
-                    .unwrap_or_default(),
+                err.code.map(|c| format!(" ({c})")).unwrap_or_default(),
                 err.message.unwrap_or_else(|| body.clone())
             );
         }

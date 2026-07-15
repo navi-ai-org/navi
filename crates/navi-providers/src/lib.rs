@@ -21,10 +21,6 @@ pub use navi_openai::OpenAiUsageReport;
 pub use navi_openai::OpenAiUsageWindow;
 pub use navi_openai::OpenRouterUsageReport;
 pub use navi_openai::ProviderError;
-pub use navi_openai::{
-    XAI_GROK_CLI_BASE_URL, XAI_GROK_CLI_CLIENT_MODE, XAI_GROK_CLI_CLIENT_SURFACE,
-    XAI_GROK_CLI_CLIENT_VERSION, xai_agent_id, xai_client_identifier, xai_grok_cli_client_version,
-};
 pub use navi_openai::XaiProductUsage;
 pub use navi_openai::XaiUsageReport;
 pub use navi_openai::charm_hyper_credits_report;
@@ -50,6 +46,10 @@ pub use navi_openai::xai_browser_oauth;
 pub use navi_openai::xai_device_oauth;
 pub use navi_openai::xai_oauth;
 pub use navi_openai::xai_usage_report;
+pub use navi_openai::{
+    XAI_GROK_CLI_BASE_URL, XAI_GROK_CLI_CLIENT_MODE, XAI_GROK_CLI_CLIENT_SURFACE,
+    XAI_GROK_CLI_CLIENT_VERSION, xai_agent_id, xai_client_identifier, xai_grok_cli_client_version,
+};
 
 // Convenience re-export matching navi-openai's public surface.
 pub use navi_core::ProviderId;

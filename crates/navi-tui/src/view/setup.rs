@@ -99,7 +99,9 @@ fn render_list_step(
 ) {
     clear_modal_area(frame, area);
     let width = area.width.min(72);
-    let height = (options.len() as u16 + 6).min(area.height.saturating_sub(2)).max(8);
+    let height = (options.len() as u16 + 6)
+        .min(area.height.saturating_sub(2))
+        .max(8);
     let x = area.x + area.width.saturating_sub(width) / 2;
     let y = area.y + area.height.saturating_sub(height) / 2;
     let box_area = Rect {
@@ -145,7 +147,8 @@ fn render_list_step(
             ListItem::new(Line::from(Span::styled(format!("{marker}{label}"), style))).style(style)
         })
         .collect();
-    let mut state = ListState::default().with_selected(Some(selected.min(options.len().saturating_sub(1))));
+    let mut state =
+        ListState::default().with_selected(Some(selected.min(options.len().saturating_sub(1))));
     frame.render_stateful_widget(
         List::new(items).style(Style::default().bg(modal_bg())),
         rows[1],

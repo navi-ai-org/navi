@@ -544,25 +544,19 @@ fn apply_selection_rail(line: &mut Line<'static>) {
         .insert(0, Span::styled(RAIL.to_string(), rail_style));
 }
 
-
-
 /// Extend any intentional line background (diff add/remove, etc.) to the full
 /// viewport width so color does not stop at the end of the text string.
 fn pad_code_block_bg(lines: &mut [Line<'static>], width: usize) {
     for line in lines.iter_mut() {
         // Prefer the rightmost non-default span bg (diff tint, not chat default).
-        let line_bg = line
-            .spans
-            .iter()
-            .rev()
-            .find_map(|span| {
-                let bg = span.style.bg?;
-                if bg == crate::theme::bg() || bg == Color::Reset {
-                    None
-                } else {
-                    Some(bg)
-                }
-            });
+        let line_bg = line.spans.iter().rev().find_map(|span| {
+            let bg = span.style.bg?;
+            if bg == crate::theme::bg() || bg == Color::Reset {
+                None
+            } else {
+                Some(bg)
+            }
+        });
         let Some(bg) = line_bg else {
             continue;
         };
@@ -584,10 +578,7 @@ fn streaming_tail_index(app: &TuiApp) -> Option<usize> {
         return None;
     }
     let last = app.messages.last()?;
-    if matches!(
-        last.status.as_deref(),
-        Some("receiving") | Some("thinking")
-    ) {
+    if matches!(last.status.as_deref(), Some("receiving") | Some("thinking")) {
         Some(app.messages.len().saturating_sub(1))
     } else {
         None

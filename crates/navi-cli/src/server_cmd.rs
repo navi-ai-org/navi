@@ -145,23 +145,40 @@ fn install(opts: ServerInstallOpts) -> Result<()> {
     systemctl(opts.system, &["daemon-reload"])?;
     systemctl(opts.system, &["enable", SERVICE_NAME])?;
 
-    println!("Installed systemd {} unit:", if opts.system { "system" } else { "user" });
+    println!(
+        "Installed systemd {} unit:",
+        if opts.system { "system" } else { "user" }
+    );
     println!("  unit:   {}", unit_path.display());
     println!("  env:    {}", env_path.display());
     println!("  binary: {}", bin.display());
     println!("  bind:   {}:{}", opts.bind, opts.port);
-    println!("  home:   {}  (default workspace; app can override per session)", opts.project.display());
+    println!(
+        "  home:   {}  (default workspace; app can override per session)",
+        opts.project.display()
+    );
     println!();
     println!("Secret stored in env file (mode 0600):");
     println!("  {}", env_path.display());
     println!();
     println!("Phone setup:");
     println!("  1. navi server start");
-    println!("  2. In the app → Settings: host = this machine's Tailscale IP, port {}, secret from env file", opts.port);
-    println!("  3. Pick Home (agent) or a project path in the drawer — sent as projectDir on each session");
+    println!(
+        "  2. In the app → Settings: host = this machine's Tailscale IP, port {}, secret from env file",
+        opts.port
+    );
+    println!(
+        "  3. Pick Home (agent) or a project path in the drawer — sent as projectDir on each session"
+    );
     println!();
-    println!("Start with:  navi server start{}", if opts.system { " --system" } else { "" });
-    println!("Status:      navi server status{}", if opts.system { " --system" } else { "" });
+    println!(
+        "Start with:  navi server start{}",
+        if opts.system { " --system" } else { "" }
+    );
+    println!(
+        "Status:      navi server status{}",
+        if opts.system { " --system" } else { "" }
+    );
     if !opts.system {
         println!();
         println!("Tip: keep the user service after logout:");
@@ -176,8 +193,7 @@ fn uninstall(system: bool) -> Result<()> {
 
     let unit_path = unit_file_path(system)?;
     if unit_path.exists() {
-        fs::remove_file(&unit_path)
-            .with_context(|| format!("remove {}", unit_path.display()))?;
+        fs::remove_file(&unit_path).with_context(|| format!("remove {}", unit_path.display()))?;
         println!("Removed {}", unit_path.display());
     } else {
         println!("Unit not found at {}", unit_path.display());
@@ -198,19 +214,24 @@ fn status(system: bool, loaded_config: &LoadedConfig) -> Result<()> {
     let bin = resolve_navi_server_bin();
 
     println!("NAVI remote server");
-    println!(
-        "  scope:    {}",
-        if system { "system" } else { "user" }
-    );
+    println!("  scope:    {}", if system { "system" } else { "user" });
     println!(
         "  unit:     {} {}",
         unit_path.display(),
-        if unit_path.exists() { "(installed)" } else { "(missing)" }
+        if unit_path.exists() {
+            "(installed)"
+        } else {
+            "(missing)"
+        }
     );
     println!(
         "  env:      {} {}",
         env_path.display(),
-        if env_path.exists() { "(present)" } else { "(missing)" }
+        if env_path.exists() {
+            "(present)"
+        } else {
+            "(missing)"
+        }
     );
     match &bin {
         Some(p) => println!("  binary:   {}", p.display()),
@@ -332,10 +353,7 @@ fn resolve_navi_server_bin() -> Option<PathBuf> {
         }
     }
     // 3) Common cargo targets relative to cwd
-    for rel in [
-        "target/release/navi-server",
-        "target/debug/navi-server",
-    ] {
+    for rel in ["target/release/navi-server", "target/debug/navi-server"] {
         let p = PathBuf::from(rel);
         if p.is_file() {
             return Some(p.canonicalize().unwrap_or(p));
@@ -429,7 +447,10 @@ fn render_env(secret: &str) -> String {
                 continue;
             }
             // Basic shell-safe quoting for values with spaces/special chars.
-            if val.chars().any(|c| c.is_whitespace() || "\"'\\$".contains(c)) {
+            if val
+                .chars()
+                .any(|c| c.is_whitespace() || "\"'\\$".contains(c))
+            {
                 let escaped = val.replace('\\', "\\\\").replace('"', "\\\"");
                 out.push_str(&format!("{key}=\"{escaped}\"\n"));
             } else {

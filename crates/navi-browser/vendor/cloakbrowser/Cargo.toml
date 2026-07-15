@@ -1,0 +1,9 @@
+[package]
+name = "cloakbrowser"
+version = "0.0.0"
+edition = "2021"
+description = "Stub package so the NAVI workspace resolves the optional cloakbrowser path dep in CI. Replace via [patch] with a real CloakBrowser checkout for --features browser-cloak."
+publish = false
+license = "Apache-2.0"
+
+[dependencies]

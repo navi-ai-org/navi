@@ -39,8 +39,7 @@ use navi_core::PermissionMode;
 use navi_sdk::{
     AgentEvent, BackgroundCommandSnapshot, BackgroundTaskStatus, ContentPart, LoadedConfig,
     ModelMessage, ModelOption, SessionId, SessionSnapshot, SessionSnapshotInfo,
-    SubagentTranscriptItem,
-    SubagentTranscriptKind, ToolInvocation, ToolResult,
+    SubagentTranscriptItem, SubagentTranscriptKind, ToolInvocation, ToolResult,
 };
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
@@ -280,10 +279,7 @@ fn finalize_active_assistant_preserves_streamed_text_when_turn_text_is_empty() {
         has_streamed_text,
         "streamed text should be preserved when turn text is empty"
     );
-    let has_no_response = app
-        .messages
-        .iter()
-        .any(|m| m.content == "No response.");
+    let has_no_response = app.messages.iter().any(|m| m.content == "No response.");
     assert!(
         !has_no_response,
         "should not show 'No response.' when prior model response has content"
@@ -2151,7 +2147,8 @@ fn command_palette_scroll_offset_keeps_selection_visible() {
 
     let mut app = test_app("");
     app.mode = Mode::Commands;
-    app.selected_command = crate::commands::first_selectable_command_row(&crate::commands::command_rows(&app));
+    app.selected_command =
+        crate::commands::first_selectable_command_row(&crate::commands::command_rows(&app));
     let rows = crate::commands::command_rows(&app);
     let selectable: Vec<usize> = rows
         .iter()
@@ -2496,7 +2493,8 @@ fn notification_expires_after_ttl() {
 fn settings_toggles_thinking_visibility() {
     let mut app = test_app("");
     app.mode = Mode::Settings;
-    app.selected_setting = crate::settings::index_of_action(crate::settings::SettingAction::ShowReasoning);
+    app.selected_setting =
+        crate::settings::index_of_action(crate::settings::SettingAction::ShowReasoning);
     assert!(app.show_thinking);
 
     handle_settings_key(&mut app, KeyCode::Enter);
@@ -2510,9 +2508,8 @@ fn settings_toggles_desktop_notifications() {
     let mut app = test_app("");
     app.mode = Mode::Settings;
     assert!(app.loaded_config.config.tui.desktop_notifications);
-    app.selected_setting = crate::settings::index_of_action(
-        crate::settings::SettingAction::DesktopNotifications,
-    );
+    app.selected_setting =
+        crate::settings::index_of_action(crate::settings::SettingAction::DesktopNotifications);
 
     handle_settings_key(&mut app, KeyCode::Enter);
     assert!(!app.loaded_config.config.tui.desktop_notifications);
@@ -2570,8 +2567,7 @@ fn settings_does_not_open_provider_accounts() {
 fn settings_opens_theme_picker() {
     let mut app = test_app("");
     app.mode = Mode::Settings;
-    app.selected_setting =
-        crate::settings::index_of_action(crate::settings::SettingAction::Theme);
+    app.selected_setting = crate::settings::index_of_action(crate::settings::SettingAction::Theme);
     assert_eq!(app.theme_id, crate::theme::ThemeId::Default);
 
     handle_settings_key(&mut app, KeyCode::Enter);
@@ -2600,12 +2596,10 @@ fn command_palette_root_is_short_hub_menu() {
         "root menu should stay short, got {}",
         rows.len()
     );
-    assert!(
-        rows.iter().any(|r| matches!(
-            r,
-            crate::commands::CommandRow::Item(i) if i.action == CommandAction::SwitchModel
-        ))
-    );
+    assert!(rows.iter().any(|r| matches!(
+        r,
+        crate::commands::CommandRow::Item(i) if i.action == CommandAction::SwitchModel
+    )));
     assert!(
         rows.iter().any(|r| matches!(
             r,
@@ -2615,12 +2609,10 @@ fn command_palette_root_is_short_hub_menu() {
         "root should include hubs"
     );
     // Deep actions live in hubs / search, not root.
-    assert!(
-        !rows.iter().any(|r| matches!(
-            r,
-            crate::commands::CommandRow::Item(i) if i.action == CommandAction::ToggleYolo
-        ))
-    );
+    assert!(!rows.iter().any(|r| matches!(
+        r,
+        crate::commands::CommandRow::Item(i) if i.action == CommandAction::ToggleYolo
+    )));
 }
 
 #[test]
@@ -3133,7 +3125,9 @@ fn background_subagent_keeps_activity_after_spawn_completes() {
     );
 
     assert_eq!(
-        app.subagent_activity.get("subagent-bg-1").map(String::as_str),
+        app.subagent_activity
+            .get("subagent-bg-1")
+            .map(String::as_str),
         Some("Read crates/navi-core/src/event.rs")
     );
 
@@ -3984,7 +3978,6 @@ fn build_model_rows_prepends_recent_section() {
     );
 }
 
-
 #[test]
 fn model_routing_opens_from_ctrl_b_and_tabs() {
     let mut app = test_app("");
@@ -3998,7 +3991,10 @@ fn model_routing_opens_from_ctrl_b_and_tabs() {
 
     // Right arrow advances tabs: Agents -> Attachments -> Chat -> Agents
     assert!(!handle_key(&mut app, KeyCode::Right, KeyModifiers::NONE));
-    assert_eq!(app.model_routing_tab, crate::state::ModelRoutingTab::Attachments);
+    assert_eq!(
+        app.model_routing_tab,
+        crate::state::ModelRoutingTab::Attachments
+    );
     assert!(!handle_key(&mut app, KeyCode::Right, KeyModifiers::NONE));
     assert_eq!(app.model_routing_tab, crate::state::ModelRoutingTab::Chat);
     assert!(!handle_key(&mut app, KeyCode::Right, KeyModifiers::NONE));

@@ -546,9 +546,9 @@ fn theme_pack_same_capabilities_allows_update() {
         tools_hash: "sha256:ghi".into(),
         approved_capabilities: vec!["tui_theme".into()],
         approved_at: "2026-01-01".into(),
-            trust_level: navi_plugin_manifest::TrustLevel::Community,
-            kind: navi_plugin_manifest::PluginCatalogKind::Plugin,
-        };
+        trust_level: navi_plugin_manifest::TrustLevel::Community,
+        kind: navi_plugin_manifest::PluginCatalogKind::Plugin,
+    };
     let old_m = theme_pack_v1();
     let new_m = theme_pack_v1(); // Same manifest
     let result = check_update_reconsent(&old_entry, &new_m, &old_m);
@@ -566,9 +566,9 @@ fn theme_pack_added_network_requires_reconsent() {
         tools_hash: "sha256:ghi".into(),
         approved_capabilities: vec!["tui_theme".into()],
         approved_at: "2026-01-01".into(),
-            trust_level: navi_plugin_manifest::TrustLevel::Community,
-            kind: navi_plugin_manifest::PluginCatalogKind::Plugin,
-        };
+        trust_level: navi_plugin_manifest::TrustLevel::Community,
+        kind: navi_plugin_manifest::PluginCatalogKind::Plugin,
+    };
     let old_m = theme_pack_v1();
     let new_m = theme_pack_v2_malicious();
     let result = check_update_reconsent(&old_entry, &new_m, &old_m);
@@ -592,9 +592,9 @@ fn theme_pack_added_filesystem_requires_reconsent() {
         tools_hash: "sha256:ghi".into(),
         approved_capabilities: vec!["tui_theme".into()],
         approved_at: "2026-01-01".into(),
-            trust_level: navi_plugin_manifest::TrustLevel::Community,
-            kind: navi_plugin_manifest::PluginCatalogKind::Plugin,
-        };
+        trust_level: navi_plugin_manifest::TrustLevel::Community,
+        kind: navi_plugin_manifest::PluginCatalogKind::Plugin,
+    };
     let old_m = theme_pack_v1();
     let new_m = theme_pack_v2_malicious();
     let result = check_update_reconsent(&old_entry, &new_m, &old_m);
@@ -614,9 +614,9 @@ fn theme_pack_publisher_change_blocks_update() {
         tools_hash: "sha256:ghi".into(),
         approved_capabilities: vec!["tui_theme".into()],
         approved_at: "2026-01-01".into(),
-            trust_level: navi_plugin_manifest::TrustLevel::Community,
-            kind: navi_plugin_manifest::PluginCatalogKind::Plugin,
-        };
+        trust_level: navi_plugin_manifest::TrustLevel::Community,
+        kind: navi_plugin_manifest::PluginCatalogKind::Plugin,
+    };
     let old_m = theme_pack_v1();
     let new_m = theme_pack_v2_publisher_change();
     let result = check_update_reconsent(&old_entry, &new_m, &old_m);

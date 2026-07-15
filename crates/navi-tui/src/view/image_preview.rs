@@ -80,7 +80,12 @@ pub(crate) fn render_image_hover_modal(frame: &mut Frame<'_>, app: &mut TuiApp, 
     };
     app.image_hover_modal_rect = Some(modal);
     // z=100: above chat lines / chips so content under the modal cannot steal hover.
-    app.register_hit(modal, 100, "image_lightbox_keep", HitAction::ImageLightboxKeep);
+    app.register_hit(
+        modal,
+        100,
+        "image_lightbox_keep",
+        HitAction::ImageLightboxKeep,
+    );
 
     // Solid underlay — Kitty skips cells; without this, chat bleeds through.
     opaque_fill(frame, modal, fill);

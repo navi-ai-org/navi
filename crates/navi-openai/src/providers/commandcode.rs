@@ -1236,7 +1236,7 @@ mod tests {
             thinking: ThinkingConfig::Off,
             tools: vec![],
             session_id: None,
-};
+        };
         let body = build_alpha_generate_body(&request);
         assert_eq!(body["params"]["model"], "xiaomi/mimo-v2.5-pro");
         assert_eq!(body["params"]["stream"], true);
@@ -1272,7 +1272,7 @@ mod tests {
             thinking: ThinkingConfig::Off,
             tools: vec![],
             session_id: None,
-};
+        };
 
         let body = build_alpha_generate_body(&request);
         let messages = body["params"]["messages"].as_array().unwrap();
@@ -1308,7 +1308,7 @@ mod tests {
                 ..Default::default()
             }],
             session_id: None,
-};
+        };
 
         let body = build_alpha_generate_body(&request);
         let tools = body["params"]["tools"].as_array().unwrap();
@@ -1341,7 +1341,7 @@ mod tests {
             thinking: ThinkingConfig::Off,
             tools: vec![],
             session_id: None,
-};
+        };
 
         let body = build_alpha_generate_body(&request);
         let content = body["params"]["messages"][0]["content"].as_array().unwrap();
@@ -1375,7 +1375,7 @@ mod tests {
             thinking: ThinkingConfig::Off,
             tools: vec![],
             session_id: None,
-};
+        };
 
         let body = build_alpha_generate_body(&request);
         let content = body["params"]["messages"][0]["content"].as_array().unwrap();

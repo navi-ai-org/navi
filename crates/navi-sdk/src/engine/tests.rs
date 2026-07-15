@@ -237,8 +237,14 @@ fn list_models_returns_default_models() {
         }
         if model.effort_binary {
             assert!(
-                model.effort_options.iter().any(|o| o.label == "thinking on")
-                    || model.effort_options.iter().any(|o| o.label == "thinking off"),
+                model
+                    .effort_options
+                    .iter()
+                    .any(|o| o.label == "thinking on")
+                    || model
+                        .effort_options
+                        .iter()
+                        .any(|o| o.label == "thinking off"),
                 "binary effort model {} should use thinking on/off labels",
                 model.id
             );

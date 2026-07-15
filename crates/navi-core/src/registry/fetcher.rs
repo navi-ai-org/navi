@@ -8,7 +8,9 @@ use anyhow::{Context, Result};
 use sha2::{Digest, Sha256};
 use std::path::Path;
 
-use super::types::{CanonicalModel, RegistryManifest, RegistryProvider, RegistryTranscriptionProvider};
+use super::types::{
+    CanonicalModel, RegistryManifest, RegistryProvider, RegistryTranscriptionProvider,
+};
 
 /// Base URL for the NAVI registry database on GitHub. Uses `raw.githubusercontent.com`
 /// for direct file access without the GitHub API rate limits.
@@ -88,11 +90,9 @@ impl RegistryFetcher {
         // Resolve `extends` using the embedded base catalog (remote bases/ is not
         // fetched independently). Overlay provider files from the same fetch set are
         // not available here; region variants rely on embedded bases.
-        let bases = super::extends::base_map_from_embedded(
-            super::embedded::embedded_base_files(),
-            &[],
-        )
-        .unwrap_or_default();
+        let bases =
+            super::extends::base_map_from_embedded(super::embedded::embedded_base_files(), &[])
+                .unwrap_or_default();
         super::extends::parse_provider_json(&text, &bases)
             .with_context(|| format!("failed to parse provider '{provider_id}' JSON"))
     }
@@ -109,12 +109,10 @@ impl RegistryFetcher {
             .with_context(|| format!("canonical model '{model_id}' not in manifest"))?;
 
         let url = format!("{REGISTRY_BASE_URL}/{}", entry.file);
-        let resp = self
-            .client
-            .get(&url)
-            .send()
-            .await
-            .with_context(|| format!("failed to fetch canonical model '{model_id}' from {url}"))?;
+        let resp =
+            self.client.get(&url).send().await.with_context(|| {
+                format!("failed to fetch canonical model '{model_id}' from {url}")
+            })?;
 
         let text = resp
             .error_for_status()
@@ -148,14 +146,9 @@ impl RegistryFetcher {
             .with_context(|| format!("transcription provider '{provider_id}' not in manifest"))?;
 
         let url = format!("{REGISTRY_BASE_URL}/{}", entry.file);
-        let resp = self
-            .client
-            .get(&url)
-            .send()
-            .await
-            .with_context(|| {
-                format!("failed to fetch transcription provider '{provider_id}' from {url}")
-            })?;
+        let resp = self.client.get(&url).send().await.with_context(|| {
+            format!("failed to fetch transcription provider '{provider_id}' from {url}")
+        })?;
 
         let text = resp
             .error_for_status()
@@ -175,9 +168,8 @@ impl RegistryFetcher {
             );
         }
 
-        serde_json::from_str::<RegistryTranscriptionProvider>(&text).with_context(|| {
-            format!("failed to parse transcription provider '{provider_id}' JSON")
-        })
+        serde_json::from_str::<RegistryTranscriptionProvider>(&text)
+            .with_context(|| format!("failed to parse transcription provider '{provider_id}' JSON"))
     }
 
     /// Fetches all providers listed in the manifest.
@@ -240,9 +232,7 @@ pub fn load_local_registry(
 }
 
 /// Loads canonical models from a local `models/` directory.
-fn load_local_model_catalog(
-    models_dir: &Path,
-) -> Result<super::resolve::ModelCatalog> {
+fn load_local_model_catalog(models_dir: &Path) -> Result<super::resolve::ModelCatalog> {
     let mut catalog = std::collections::HashMap::new();
     if !models_dir.is_dir() {
         return Ok(catalog);
@@ -252,8 +242,8 @@ fn load_local_model_catalog(
         let path = entry.path();
         if path.extension().is_some_and(|ext| ext == "json") {
             let text = std::fs::read_to_string(&path)?;
-            let model: super::types::CanonicalModel = serde_json::from_str(&text)
-                .with_context(|| {
+            let model: super::types::CanonicalModel =
+                serde_json::from_str(&text).with_context(|| {
                     format!("failed to parse canonical model from {}", path.display())
                 })?;
             let id = path
@@ -336,8 +326,7 @@ pub async fn sync_registry(
         // Providers filled by live API sync keep their model lists. Remote
         // catalog refresh still runs on `force` and uses union-merge so new
         // metadata can land without wiping API-discovered models.
-        let is_local_api_sync =
-            cached_sha.as_deref() == Some(crate::registry::LOCAL_API_SYNC_SHA);
+        let is_local_api_sync = cached_sha.as_deref() == Some(crate::registry::LOCAL_API_SYNC_SHA);
         if force || (!is_local_api_sync && cached_sha.as_deref() != Some(&entry.sha256)) {
             to_fetch.push(provider_id.as_str());
         }
@@ -394,9 +383,7 @@ pub async fn sync_registry(
     store.delete_canonical_models_not_in(&model_keep)?;
 
     // Prefer cached catalog (now refreshed); fall back to embedded snapshot.
-    let mut catalog = store
-        .load_canonical_model_catalog()
-        .unwrap_or_default();
+    let mut catalog = store.load_canonical_model_catalog().unwrap_or_default();
     if catalog.is_empty() {
         catalog = super::embedded::embedded_model_catalog().unwrap_or_default();
     }
@@ -442,7 +429,6 @@ pub async fn sync_registry(
         transcription_updated = tx_updated,
         "registry sync complete"
     );
-
 
     tracing::info!(
         updated = updated,

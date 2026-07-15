@@ -186,7 +186,10 @@ fn apply_update_blocking(version: &str) -> Result<()> {
                     .args([
                         "-NoProfile",
                         "-Command",
-                        &format!("Invoke-WebRequest -Uri '{INSTALL_PS1}' -OutFile '{}'", tmp.display()),
+                        &format!(
+                            "Invoke-WebRequest -Uri '{INSTALL_PS1}' -OutFile '{}'",
+                            tmp.display()
+                        ),
                     ])
                     .status()
                     .context("download install.ps1")?;
@@ -216,9 +219,7 @@ fn apply_update_blocking(version: &str) -> Result<()> {
             let status = std::process::Command::new("sh")
                 .args([
                     "-c",
-                    &format!(
-                        "curl -fsSL {INSTALL_SH} | sh -s -- --version {version}"
-                    ),
+                    &format!("curl -fsSL {INSTALL_SH} | sh -s -- --version {version}"),
                 ])
                 .status()
                 .context("spawn install.sh")?;

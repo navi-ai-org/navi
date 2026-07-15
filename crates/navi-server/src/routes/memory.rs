@@ -1,8 +1,6 @@
 //! Memory CRUD + maintenance HTTP routes.
 
-use crate::state::{
-    SharedState, err_resp, ok_json, optional_json_body, with_auth, with_state,
-};
+use crate::state::{SharedState, err_resp, ok_json, optional_json_body, with_auth, with_state};
 use navi_core::memory::{MemoryStatus, MemoryType};
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -211,9 +209,7 @@ pub fn routes(state: SharedState, secret: &'static str) -> BoxedFilter<(impl Rep
                     .unwrap_or(20);
                 let engine = s.engine.read().await;
                 match engine.memory_search(&q, limit) {
-                    Ok(results) => {
-                        Ok(warp::reply::json(&results).into_response())
-                    }
+                    Ok(results) => Ok(warp::reply::json(&results).into_response()),
                     Err(e) => Ok(err_resp(e.to_string(), StatusCode::INTERNAL_SERVER_ERROR)),
                 }
             },
@@ -381,9 +377,7 @@ pub fn routes(state: SharedState, secret: &'static str) -> BoxedFilter<(impl Rep
         .and_then(|id: String, s: SharedState| async move {
             let engine = s.engine.read().await;
             match engine.memory_read(&id) {
-                Ok(Some(entry)) => {
-                    Ok::<_, Infallible>(warp::reply::json(&entry).into_response())
-                }
+                Ok(Some(entry)) => Ok::<_, Infallible>(warp::reply::json(&entry).into_response()),
                 Ok(None) => Ok(err_resp(
                     format!("memory not found: {id}"),
                     StatusCode::NOT_FOUND,
@@ -460,10 +454,7 @@ mod tests {
     #[test]
     fn memory_type_parses_trim_and_case() {
         assert_eq!(parse_memory_type(" User ").unwrap(), MemoryType::User);
-        assert_eq!(
-            parse_memory_type("FEEDBACK").unwrap(),
-            MemoryType::Feedback
-        );
+        assert_eq!(parse_memory_type("FEEDBACK").unwrap(), MemoryType::Feedback);
         assert!(parse_memory_type("nope").is_err());
     }
 
@@ -477,10 +468,7 @@ mod tests {
             parse_memory_status(" needs_review ").unwrap(),
             MemoryStatus::NeedsReview
         );
-        assert_eq!(
-            parse_memory_status("ACTIVE").unwrap(),
-            MemoryStatus::Active
-        );
+        assert_eq!(parse_memory_status("ACTIVE").unwrap(), MemoryStatus::Active);
         assert!(parse_memory_status("stale").is_err());
     }
 }

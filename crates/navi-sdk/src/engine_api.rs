@@ -338,7 +338,8 @@ mod tests {
 
     #[test]
     fn napi_bound_matches_engine_api() {
-        let engine: std::collections::HashSet<_> = NAVI_ENGINE_API_METHODS.iter().copied().collect();
+        let engine: std::collections::HashSet<_> =
+            NAVI_ENGINE_API_METHODS.iter().copied().collect();
         let napi: std::collections::HashSet<_> = NAVI_NAPI_BOUND_METHODS.iter().copied().collect();
         let missing_in_napi: Vec<_> = engine.difference(&napi).copied().collect();
         let extra_in_napi: Vec<_> = napi.difference(&engine).copied().collect();

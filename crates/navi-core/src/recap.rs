@@ -92,7 +92,7 @@ pub async fn llm_recap(
         thinking: ThinkingConfig::Off,
         tools: vec![],
         session_id: None,
-};
+    };
 
     let response = provider.complete(request).await?;
     let cleaned = clean_recap_text(&response.text);

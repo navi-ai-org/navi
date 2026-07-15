@@ -191,7 +191,9 @@ pub fn routes(state: SharedState, secret: &'static str) -> BoxedFilter<(impl Rep
             };
             let target = parse_save_target(&body.save_target);
             match engine.set_mcp_config(mcp, target) {
-                Ok(path) => Ok::<_, Infallible>(warp::reply::json(&saved_to_json(path)).into_response()),
+                Ok(path) => {
+                    Ok::<_, Infallible>(warp::reply::json(&saved_to_json(path)).into_response())
+                }
                 Err(e) => Ok(err_resp(e.to_string(), StatusCode::BAD_REQUEST)),
             }
         });
@@ -206,7 +208,9 @@ pub fn routes(state: SharedState, secret: &'static str) -> BoxedFilter<(impl Rep
             let engine = s.engine.read().await;
             let target = parse_save_target(&body.save_target);
             match engine.set_mcp_enabled(body.enabled, target) {
-                Ok(path) => Ok::<_, Infallible>(warp::reply::json(&saved_to_json(path)).into_response()),
+                Ok(path) => {
+                    Ok::<_, Infallible>(warp::reply::json(&saved_to_json(path)).into_response())
+                }
                 Err(e) => Ok(err_resp(e.to_string(), StatusCode::BAD_REQUEST)),
             }
         });
@@ -256,20 +260,22 @@ pub fn routes(state: SharedState, secret: &'static str) -> BoxedFilter<(impl Rep
         .and(warp::query::<SaveTargetQuery>())
         .and(sf.clone())
         .and(af.clone())
-        .and_then(|id: String, query: SaveTargetQuery, s: SharedState| async move {
-            let engine = s.engine.read().await;
-            let target = parse_save_target(&query.save_target);
-            match engine.remove_mcp_server(&id, target) {
-                Ok((removed, path)) => Ok::<_, Infallible>(
-                    warp::reply::json(&serde_json::json!({
-                        "removed": removed,
-                        "savedTo": path.map(|p| p.display().to_string()),
-                    }))
-                    .into_response(),
-                ),
-                Err(e) => Ok(err_resp(e.to_string(), StatusCode::BAD_REQUEST)),
-            }
-        });
+        .and_then(
+            |id: String, query: SaveTargetQuery, s: SharedState| async move {
+                let engine = s.engine.read().await;
+                let target = parse_save_target(&query.save_target);
+                match engine.remove_mcp_server(&id, target) {
+                    Ok((removed, path)) => Ok::<_, Infallible>(
+                        warp::reply::json(&serde_json::json!({
+                            "removed": removed,
+                            "savedTo": path.map(|p| p.display().to_string()),
+                        }))
+                        .into_response(),
+                    ),
+                    Err(e) => Ok(err_resp(e.to_string(), StatusCode::BAD_REQUEST)),
+                }
+            },
+        );
 
     // ── Session MCP tools ────────────────────────────────────────────────
 
@@ -317,13 +323,10 @@ pub fn routes(state: SharedState, secret: &'static str) -> BoxedFilter<(impl Rep
         .and_then(|body: AttachmentModelBody, s: SharedState| async move {
             let engine = s.engine.read().await;
             let target = parse_save_target(&body.save_target);
-            match engine.set_attachment_model(
-                &body.modality,
-                &body.provider,
-                &body.model,
-                target,
-            ) {
-                Ok(path) => Ok::<_, Infallible>(warp::reply::json(&saved_to_json(path)).into_response()),
+            match engine.set_attachment_model(&body.modality, &body.provider, &body.model, target) {
+                Ok(path) => {
+                    Ok::<_, Infallible>(warp::reply::json(&saved_to_json(path)).into_response())
+                }
                 Err(e) => Ok(err_resp(e.to_string(), StatusCode::BAD_REQUEST)),
             }
         });
@@ -334,14 +337,18 @@ pub fn routes(state: SharedState, secret: &'static str) -> BoxedFilter<(impl Rep
         .and(warp::query::<SaveTargetQuery>())
         .and(sf.clone())
         .and(af.clone())
-        .and_then(|modality: String, query: SaveTargetQuery, s: SharedState| async move {
-            let engine = s.engine.read().await;
-            let target = parse_save_target(&query.save_target);
-            match engine.clear_attachment_model(&modality, target) {
-                Ok(path) => Ok::<_, Infallible>(warp::reply::json(&saved_to_json(path)).into_response()),
-                Err(e) => Ok(err_resp(e.to_string(), StatusCode::BAD_REQUEST)),
-            }
-        });
+        .and_then(
+            |modality: String, query: SaveTargetQuery, s: SharedState| async move {
+                let engine = s.engine.read().await;
+                let target = parse_save_target(&query.save_target);
+                match engine.clear_attachment_model(&modality, target) {
+                    Ok(path) => {
+                        Ok::<_, Infallible>(warp::reply::json(&saved_to_json(path)).into_response())
+                    }
+                    Err(e) => Ok(err_resp(e.to_string(), StatusCode::BAD_REQUEST)),
+                }
+            },
+        );
 
     // POST /routing/background  {task, provider, model, saveTarget?}
     let set_background = warp::path!("routing" / "background")
@@ -353,7 +360,9 @@ pub fn routes(state: SharedState, secret: &'static str) -> BoxedFilter<(impl Rep
             let engine = s.engine.read().await;
             let target = parse_save_target(&body.save_target);
             match engine.set_background_model(&body.task, &body.provider, &body.model, target) {
-                Ok(path) => Ok::<_, Infallible>(warp::reply::json(&saved_to_json(path)).into_response()),
+                Ok(path) => {
+                    Ok::<_, Infallible>(warp::reply::json(&saved_to_json(path)).into_response())
+                }
                 Err(e) => Ok(err_resp(e.to_string(), StatusCode::BAD_REQUEST)),
             }
         });
@@ -364,14 +373,18 @@ pub fn routes(state: SharedState, secret: &'static str) -> BoxedFilter<(impl Rep
         .and(warp::query::<SaveTargetQuery>())
         .and(sf.clone())
         .and(af.clone())
-        .and_then(|task: String, query: SaveTargetQuery, s: SharedState| async move {
-            let engine = s.engine.read().await;
-            let target = parse_save_target(&query.save_target);
-            match engine.clear_background_model(&task, target) {
-                Ok(path) => Ok::<_, Infallible>(warp::reply::json(&saved_to_json(path)).into_response()),
-                Err(e) => Ok(err_resp(e.to_string(), StatusCode::BAD_REQUEST)),
-            }
-        });
+        .and_then(
+            |task: String, query: SaveTargetQuery, s: SharedState| async move {
+                let engine = s.engine.read().await;
+                let target = parse_save_target(&query.save_target);
+                match engine.clear_background_model(&task, target) {
+                    Ok(path) => {
+                        Ok::<_, Infallible>(warp::reply::json(&saved_to_json(path)).into_response())
+                    }
+                    Err(e) => Ok(err_resp(e.to_string(), StatusCode::BAD_REQUEST)),
+                }
+            },
+        );
 
     list_skills
         .or(get_skill)

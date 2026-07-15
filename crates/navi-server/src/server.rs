@@ -357,9 +357,7 @@ impl NaviServer {
                         }))
                         .into_response(),
                     ),
-                    Ok(Err(e)) => {
-                        Ok(err_resp(e.to_string(), StatusCode::INTERNAL_SERVER_ERROR))
-                    }
+                    Ok(Err(e)) => Ok(err_resp(e.to_string(), StatusCode::INTERNAL_SERVER_ERROR)),
                     Err(e) => Ok(err_resp(
                         format!("turn task failed: {e}"),
                         StatusCode::INTERNAL_SERVER_ERROR,

@@ -912,19 +912,8 @@ fn is_destructive_git_command(program: &str) -> bool {
 
     match subcommand.as_str() {
         // Network / history rewrites / force-delete style operations.
-        "push"
-        | "rm"
-        | "reset"
-        | "clean"
-        | "rebase"
-        | "filter-branch"
-        | "filter-repo"
-        | "update-ref"
-        | "replace"
-        | "gc"
-        | "prune"
-        | "notes"
-        | "am" => true,
+        "push" | "rm" | "reset" | "clean" | "rebase" | "filter-branch" | "filter-repo"
+        | "update-ref" | "replace" | "gc" | "prune" | "notes" | "am" => true,
         // Subcommands that are only destructive with certain arguments.
         "branch" => git_has_delete_flag(program),
         "tag" => git_has_delete_flag(program),

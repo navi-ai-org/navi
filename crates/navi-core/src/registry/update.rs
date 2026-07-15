@@ -144,7 +144,7 @@ pub fn load_registry(store: &RegistryStore) -> LoadedRegistry {
             transcription_providers: Default::default(),
             coverage: Default::default(),
             models: Default::default(),
-            },
+        },
         providers: minimal_fallback_providers(),
         source: RegistrySource::MinimalFallback,
     }
@@ -213,10 +213,7 @@ fn merge_embedded_provider_updates(store: &RegistryStore) {
                 .transcription_providers
                 .get(&ep.id)
                 .map(|e| e.sha256.as_str());
-            let cached_sha = store
-                .transcription_provider_sha256(&ep.id)
-                .ok()
-                .flatten();
+            let cached_sha = store.transcription_provider_sha256(&ep.id).ok().flatten();
             let needs_update = match (&cached_sha, embedded_sha) {
                 (Some(cached), Some(embedded)) => cached != embedded,
                 (None, Some(_)) => true,
@@ -384,7 +381,7 @@ pub async fn check_registry_manifest(
                 transcription_providers: Default::default(),
                 coverage: Default::default(),
                 models: Default::default(),
-                })
+            })
         });
 
     let manifest = fetch_manifest_with_retry(fetcher, config).await?;
@@ -670,7 +667,7 @@ fn current_stored_manifest_or_embedded(store: &RegistryStore) -> RegistryManifes
                 transcription_providers: Default::default(),
                 coverage: Default::default(),
                 models: Default::default(),
-                })
+            })
         })
 }
 
@@ -894,7 +891,7 @@ mod tests {
                 transcription_providers: Default::default(),
                 coverage: Default::default(),
                 models: Default::default(),
-                },
+            },
             Some(now),
             None,
         )
@@ -912,7 +909,7 @@ mod tests {
                 transcription_providers: Default::default(),
                 coverage: Default::default(),
                 models: Default::default(),
-                },
+            },
             Some(past),
             None,
         )
@@ -975,7 +972,7 @@ mod tests {
             transcription_providers: Default::default(),
             coverage: Default::default(),
             models: Default::default(),
-            };
+        };
         manifest
             .providers
             .insert(provider.id.clone(), manifest_entry(&provider));
@@ -997,7 +994,7 @@ mod tests {
             transcription_providers: Default::default(),
             coverage: Default::default(),
             models: Default::default(),
-            };
+        };
         manifest.providers.insert(
             provider.id.clone(),
             ManifestProviderEntry {
@@ -1020,7 +1017,7 @@ mod tests {
             transcription_providers: Default::default(),
             coverage: Default::default(),
             models: Default::default(),
-            };
+        };
         manifest
             .providers
             .insert(provider.id.clone(), manifest_entry(&provider));
@@ -1125,7 +1122,7 @@ mod tests {
             transcription_providers: Default::default(),
             coverage: Default::default(),
             models: Default::default(),
-            };
+        };
         manifest
             .providers
             .insert(provider.id.clone(), manifest_entry(&provider));
@@ -1150,7 +1147,7 @@ mod tests {
             transcription_providers: Default::default(),
             coverage: Default::default(),
             models: Default::default(),
-            };
+        };
         manifest
             .providers
             .insert(provider.id.clone(), manifest_entry(&provider));
@@ -1178,7 +1175,7 @@ mod tests {
             transcription_providers: Default::default(),
             coverage: Default::default(),
             models: Default::default(),
-            };
+        };
         old_manifest
             .providers
             .insert(old_provider.id.clone(), manifest_entry(&old_provider));
@@ -1196,7 +1193,7 @@ mod tests {
             transcription_providers: Default::default(),
             coverage: Default::default(),
             models: Default::default(),
-            };
+        };
         new_manifest
             .providers
             .insert(new_provider.id.clone(), manifest_entry(&new_provider));
@@ -1223,7 +1220,7 @@ mod tests {
             transcription_providers: Default::default(),
             coverage: Default::default(),
             models: Default::default(),
-            };
+        };
         manifest
             .providers
             .insert(provider.id.clone(), manifest_entry(&provider));
@@ -1263,7 +1260,7 @@ mod tests {
             transcription_providers: Default::default(),
             coverage: Default::default(),
             models: Default::default(),
-            };
+        };
         manifest.providers.insert(
             provider.id.clone(),
             ManifestProviderEntry {
@@ -1288,7 +1285,7 @@ mod tests {
             transcription_providers: Default::default(),
             coverage: Default::default(),
             models: Default::default(),
-            };
+        };
         old_manifest
             .providers
             .insert(old_provider.id.clone(), manifest_entry(&old_provider));
@@ -1307,7 +1304,7 @@ mod tests {
             transcription_providers: Default::default(),
             coverage: Default::default(),
             models: Default::default(),
-            };
+        };
         new_manifest
             .providers
             .insert(good_provider.id.clone(), manifest_entry(&good_provider));
@@ -1341,7 +1338,7 @@ mod tests {
             transcription_providers: Default::default(),
             coverage: Default::default(),
             models: Default::default(),
-            };
+        };
         old_manifest
             .providers
             .insert(old_provider.id.clone(), manifest_entry(&old_provider));
@@ -1357,7 +1354,7 @@ mod tests {
             transcription_providers: Default::default(),
             coverage: Default::default(),
             models: Default::default(),
-            };
+        };
         new_manifest.providers.insert(
             new_provider.id.clone(),
             ManifestProviderEntry {
@@ -1392,7 +1389,7 @@ mod tests {
                 transcription_providers: Default::default(),
                 coverage: Default::default(),
                 models: Default::default(),
-                },
+            },
             Some(now),
             None,
         )
@@ -1410,7 +1407,7 @@ mod tests {
                 transcription_providers: Default::default(),
                 coverage: Default::default(),
                 models: Default::default(),
-                },
+            },
             Some(past),
             None,
         )

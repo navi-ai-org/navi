@@ -5,7 +5,7 @@ use navi_core::{McpConfig, McpServerConfig};
 use crate::app::TuiApp;
 use crate::dispatch::AsyncEvent;
 use crate::runtime::spawn_runtime_task;
-use crate::state::{ModalKind, McpLiveServer};
+use crate::state::{McpLiveServer, ModalKind};
 
 /// Open the MCP modal and kick off status (session seed + background probe).
 ///

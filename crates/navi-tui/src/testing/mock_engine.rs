@@ -401,11 +401,7 @@ impl EngineDriver for MockEngine {
         Ok(())
     }
 
-    fn clear_background_model(
-        &self,
-        _task: &str,
-        _target: NaviConfigSaveTarget,
-    ) -> Result<()> {
+    fn clear_background_model(&self, _task: &str, _target: NaviConfigSaveTarget) -> Result<()> {
         Ok(())
     }
 
@@ -433,11 +429,7 @@ impl EngineDriver for MockEngine {
         Ok(())
     }
 
-    fn clear_attachment_model(
-        &self,
-        modality: &str,
-        _target: NaviConfigSaveTarget,
-    ) -> Result<()> {
+    fn clear_attachment_model(&self, modality: &str, _target: NaviConfigSaveTarget) -> Result<()> {
         let mut guard = self.state.lock().unwrap();
         let am = &mut guard.loaded_config.config.attachment_models;
         match modality {

@@ -147,7 +147,6 @@ fn open_plugins_picker(app: &mut TuiApp) {
     crate::plugins::refresh_plugin_catalog(app);
 }
 
-
 pub(crate) fn open_model_routing(app: &mut TuiApp, tab: crate::state::ModelRoutingTab) {
     app.model_routing_tab = tab;
     app.bg_model_picker_active = false;

@@ -24,7 +24,6 @@ const MAX_WAIT_MS: u64 = 60_000;
 const OUTPUT_LIMIT_BYTES: usize = 64 * 1024;
 const MAX_PROCESSES: usize = 8;
 
-
 /// Put the child in its own process group so timeout kills the whole tree.
 #[cfg(unix)]
 fn configure_process_group(cmd: &mut tokio::process::Command) {
@@ -66,8 +65,6 @@ unsafe fn libc_setpgid_raw(pid: i32, pgid: i32) -> i32 {
     }
     unsafe { setpgid(pid, pgid) }
 }
-
-
 
 // ── ProcessManager (quota config) ─────────────────────────────────────────────
 

@@ -168,7 +168,7 @@ pub async fn run_dream_maintenance_with_options(
         thinking: ThinkingConfig::Off,
         tools: vec![],
         session_id: None,
-};
+    };
 
     let response = model_provider.complete(request).await?;
     let text = response.text;
@@ -324,7 +324,7 @@ async fn run_model_based_consolidation(
         thinking: ThinkingConfig::Off,
         tools: vec![],
         session_id: None,
-};
+    };
 
     let response = model_provider.complete(request).await?;
     let text = response.text.trim();
@@ -397,7 +397,7 @@ pub async fn run_distill_maintenance(
         thinking: ThinkingConfig::Off,
         tools: vec![],
         session_id: None,
-};
+    };
 
     let response = model_provider.complete(request).await?;
     let text = response.text;

@@ -22,6 +22,8 @@ pub mod registry;
 mod tests;
 
 use builtin::BranchRaceTool;
+#[cfg(feature = "browser")]
+use builtin::BrowserTool;
 use builtin::{
     AppendNoteTool, BashTool, CodeExecTool, ContextRemainingTool, CurrentTimeTool, HistoryOpsTool,
     InitSessionTool, MarkFeatureDoneTool, MemoryTool, NewContextWindowTool, PackageManagerTool,
@@ -29,8 +31,6 @@ use builtin::{
     RequestUserInputTool, RuntimeInfoTool, SandboxTool, SearchTool, SetGoalTool, SleepTool,
     ToolSearchTool, VerifierTool, ViewImageTool, WriteTool, builtin_metadata, truncate_tool_result,
 };
-#[cfg(feature = "browser")]
-use builtin::BrowserTool;
 #[cfg(feature = "code-vfs")]
 use builtin::{CodeEditTool, CodeReadTool};
 
@@ -273,16 +273,16 @@ impl ToolExecutor {
             config.clone(),
         );
         self.register_tool(std::sync::Arc::new(loader));
-        self.register_tool(std::sync::Arc::new(crate::tool::builtin::SkillListTool::new(
-            project_dir.clone(),
-            data_dir.clone(),
-            config.clone(),
-        )));
-        self.register_tool(std::sync::Arc::new(crate::tool::builtin::SkillGetTool::new(
-            project_dir.clone(),
-            data_dir.clone(),
-            config,
-        )));
+        self.register_tool(std::sync::Arc::new(
+            crate::tool::builtin::SkillListTool::new(
+                project_dir.clone(),
+                data_dir.clone(),
+                config.clone(),
+            ),
+        ));
+        self.register_tool(std::sync::Arc::new(
+            crate::tool::builtin::SkillGetTool::new(project_dir.clone(), data_dir.clone(), config),
+        ));
         self.register_tool(std::sync::Arc::new(
             crate::tool::builtin::SkillSaveTool::new(project_dir.clone(), data_dir.clone()),
         ));

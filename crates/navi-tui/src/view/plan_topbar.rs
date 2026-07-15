@@ -135,12 +135,7 @@ pub(crate) fn render_plan_topbar(frame: &mut Frame<'_>, app: &mut TuiApp, area: 
 
     // Whole bar is clickable to expand/collapse (like Grok's 4/4 chip).
     // "+N more" registers a higher-z hit below so it wins when clicked.
-    app.register_hit(
-        area,
-        40,
-        "toggle plan topbar",
-        HitAction::TogglePlanTopbar,
-    );
+    app.register_hit(area, 40, "toggle plan topbar", HitAction::TogglePlanTopbar);
 
     if inner.height == 0 || inner.width == 0 {
         return;
@@ -187,10 +182,10 @@ pub(crate) fn render_plan_topbar(frame: &mut Frame<'_>, app: &mut TuiApp, area: 
     let mut more_line_offset: Option<usize> = None;
 
     if plan.expanded && inner.height > 1 {
-        let show_n = visible_step_count(&plan)
-            .min(inner.height.saturating_sub(1) as usize);
+        let show_n = visible_step_count(&plan).min(inner.height.saturating_sub(1) as usize);
         // Leave room for the "+N more" row when needed.
-        let show_n = if needs_more_affordance(&plan) && show_n + 1 > inner.height.saturating_sub(1) as usize
+        let show_n = if needs_more_affordance(&plan)
+            && show_n + 1 > inner.height.saturating_sub(1) as usize
         {
             show_n.saturating_sub(1)
         } else {
@@ -238,10 +233,7 @@ pub(crate) fn render_plan_topbar(frame: &mut Frame<'_>, app: &mut TuiApp, area: 
             )];
             let used = display_width(&fit_display_width(&label, inner.width as usize));
             if used < inner.width as usize {
-                spans.push(Span::styled(
-                    " ".repeat(inner.width as usize - used),
-                    style,
-                ));
+                spans.push(Span::styled(" ".repeat(inner.width as usize - used), style));
             }
             more_line_offset = Some(lines.len());
             lines.push(Line::from(spans));

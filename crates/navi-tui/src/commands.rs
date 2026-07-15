@@ -106,7 +106,9 @@ pub(crate) struct CommandItem {
 pub(crate) enum CommandRow {
     Item(CommandItem),
     /// Host-mediated extension command from installed `tui.json`.
-    Extension { index: usize },
+    Extension {
+        index: usize,
+    },
 }
 
 impl CommandRow {
@@ -557,9 +559,7 @@ pub(crate) fn filtered_commands(app: &TuiApp) -> Vec<CommandItem> {
         .iter()
         .copied()
         .filter(|command| is_visible(command, app))
-        .filter_map(|command| {
-            command_match_score(&command, &filter).map(|score| (score, command))
-        })
+        .filter_map(|command| command_match_score(&command, &filter).map(|score| (score, command)))
         .collect();
 
     // Dedup by action (root hot keys + hub copies).
@@ -577,12 +577,10 @@ pub(crate) fn filtered_commands(app: &TuiApp) -> Vec<CommandItem> {
     // then shorter label; then alpha.
     scored.sort_by(|(sa, a), (sb, b)| {
         sa.cmp(sb)
-            .then_with(|| {
-                match (a.shortcut.is_some(), b.shortcut.is_some()) {
-                    (true, false) => std::cmp::Ordering::Less,
-                    (false, true) => std::cmp::Ordering::Greater,
-                    _ => std::cmp::Ordering::Equal,
-                }
+            .then_with(|| match (a.shortcut.is_some(), b.shortcut.is_some()) {
+                (true, false) => std::cmp::Ordering::Less,
+                (false, true) => std::cmp::Ordering::Greater,
+                _ => std::cmp::Ordering::Equal,
             })
             .then_with(|| a.label.len().cmp(&b.label.len()))
             .then_with(|| a.label.cmp(b.label))
@@ -664,11 +662,7 @@ pub(crate) fn palette_title(app: &TuiApp) -> String {
 }
 
 pub(crate) fn first_selectable_command_row(rows: &[CommandRow]) -> usize {
-    if rows.is_empty() {
-        0
-    } else {
-        0
-    }
+    if rows.is_empty() { 0 } else { 0 }
 }
 
 pub(crate) fn next_selectable_command_row(rows: &[CommandRow], current: usize) -> usize {
@@ -689,7 +683,11 @@ pub(crate) fn page_next_command_row(rows: &[CommandRow], current: usize, page: u
     (current + page).min(rows.len().saturating_sub(1))
 }
 
-pub(crate) fn page_previous_command_row(_rows: &[CommandRow], current: usize, page: usize) -> usize {
+pub(crate) fn page_previous_command_row(
+    _rows: &[CommandRow],
+    current: usize,
+    page: usize,
+) -> usize {
     current.saturating_sub(page)
 }
 
@@ -711,10 +709,7 @@ mod tests {
         let mut app = test_app("");
         app.command_filter = "m".into();
         let cmds = filtered_commands(&app);
-        assert!(
-            !cmds.is_empty(),
-            "expected matches for 'm'"
-        );
+        assert!(!cmds.is_empty(), "expected matches for 'm'");
         assert!(
             matches!(cmds[0].action, CommandAction::SwitchModel),
             "first hit for 'm' should be Model…, got {:?}",
@@ -728,7 +723,8 @@ mod tests {
         app.command_filter = "the".into();
         let cmds = filtered_commands(&app);
         assert!(
-            cmds.iter().any(|c| matches!(c.action, CommandAction::Theme)),
+            cmds.iter()
+                .any(|c| matches!(c.action, CommandAction::Theme)),
             "Theme should appear for query 'the', got: {:?}",
             cmds.iter().map(|c| c.label).collect::<Vec<_>>()
         );

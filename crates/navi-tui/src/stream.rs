@@ -64,7 +64,12 @@ pub(crate) fn start_streaming_request(app: &mut TuiApp) {
     // block_in_place only on multi_thread runtimes (unit tests may use current_thread).
     let initial_goal = {
         let store = &app.session_store;
-        let load = || store.load(&session_id).ok().and_then(|snapshot| snapshot.goal);
+        let load = || {
+            store
+                .load(&session_id)
+                .ok()
+                .and_then(|snapshot| snapshot.goal)
+        };
         match tokio::runtime::Handle::try_current() {
             Ok(h) if h.runtime_flavor() == tokio::runtime::RuntimeFlavor::MultiThread => {
                 tokio::task::block_in_place(load)

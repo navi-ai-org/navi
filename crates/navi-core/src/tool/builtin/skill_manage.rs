@@ -15,10 +15,7 @@ use crate::skills::{
 use crate::tool::{Tool, ToolDefinition, ToolInvocation, ToolKind, ToolResult};
 
 fn shared_config(config: &Arc<RwLock<NaviConfig>>) -> NaviConfig {
-    config
-        .read()
-        .unwrap_or_else(|e| e.into_inner())
-        .clone()
+    config.read().unwrap_or_else(|e| e.into_inner()).clone()
 }
 
 fn parse_string_list(value: &serde_json::Value) -> Vec<String> {
@@ -206,19 +203,28 @@ impl Tool for SkillSaveTool {
             helpers::json_schema(
                 &[
                     ("name", "Human-readable skill name (required)."),
-                    ("instructions", "Markdown instructions when the skill is active (required)."),
+                    (
+                        "instructions",
+                        "Markdown instructions when the skill is active (required).",
+                    ),
                     ("id", "Optional stable id; derived from name if omitted."),
                     ("description", "Short one-line summary."),
                     ("version", "Optional version string."),
                     ("author", "Optional author."),
                     ("tags", "Array or comma-separated tags."),
-                    ("requires", "Array or comma-separated skill ids this depends on."),
+                    (
+                        "requires",
+                        "Array or comma-separated skill ids this depends on.",
+                    ),
                     (
                         "allow_tools",
                         "Array of tool names available while this skill is active (recommended).",
                     ),
                     ("deny_tools", "Optional tool names to hide while active."),
-                    ("scope", "`user` (default, shared Desktop+TUI) or `project`."),
+                    (
+                        "scope",
+                        "`user` (default, shared Desktop+TUI) or `project`.",
+                    ),
                 ],
                 &["name", "instructions"],
             ),

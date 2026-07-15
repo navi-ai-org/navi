@@ -1082,10 +1082,7 @@ async fn event_loop(mut receiver: broadcast::Receiver<RuntimeEvent>, ctx: EventC
     }
 }
 
-async fn voice_event_loop(
-    mut receiver: broadcast::Receiver<navi_sdk::VoiceEvent>,
-    ctx: EventCtx,
-) {
+async fn voice_event_loop(mut receiver: broadcast::Receiver<navi_sdk::VoiceEvent>, ctx: EventCtx) {
     loop {
         match receiver.recv().await {
             Ok(event) => match serde_json::to_string(&event) {

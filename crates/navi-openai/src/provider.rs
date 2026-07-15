@@ -223,8 +223,9 @@ fn is_xai_platform_or_default_base_url(base_url: &str) -> bool {
 fn request_with_prefill(request: &ModelRequest, accumulated_text: &str) -> ModelRequest {
     let mut req = request.clone();
     if !accumulated_text.is_empty() {
-        req.messages
-            .push(navi_core::ModelMessage::assistant(accumulated_text.to_string()));
+        req.messages.push(navi_core::ModelMessage::assistant(
+            accumulated_text.to_string(),
+        ));
     }
     req
 }

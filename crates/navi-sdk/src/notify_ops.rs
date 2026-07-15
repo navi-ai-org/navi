@@ -57,13 +57,9 @@ impl NaviEngine {
     pub async fn check_for_update(&self) -> Result<Option<UpdateInfo>> {
         let cfg = self.loaded_config().config.updates;
         let current = current_version();
-        check_for_update(
-            current,
-            cfg.repo.as_deref(),
-            cfg.include_prerelease,
-        )
-        .await
-        .map_err(NaviError::from)
+        check_for_update(current, cfg.repo.as_deref(), cfg.include_prerelease)
+            .await
+            .map_err(NaviError::from)
     }
 
     /// Check with explicit overrides (used by CLI / tests).

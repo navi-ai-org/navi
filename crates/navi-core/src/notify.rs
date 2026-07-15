@@ -109,9 +109,7 @@ pub fn open_url(url: &str) -> anyhow::Result<()> {
         }
         "windows" => {
             // `start` is a cmd builtin; use cmd /C start "" url
-            let status = Command::new("cmd")
-                .args(["/C", "start", "", url])
-                .status();
+            let status = Command::new("cmd").args(["/C", "start", "", url]).status();
             match status {
                 Ok(s) if s.success() => Ok(()),
                 Ok(s) => anyhow::bail!("cmd start exited with {s}"),
@@ -153,9 +151,8 @@ fn notify_macos(req: &NotifyRequest) -> anyhow::Result<()> {
     // Notification Center via osascript.
     let title = escape_applescript(&req.title);
     let body = escape_applescript(&req.body);
-    let script = format!(
-        "display notification \"{body}\" with title \"{title}\" subtitle \"NAVI\""
-    );
+    let script =
+        format!("display notification \"{body}\" with title \"{title}\" subtitle \"NAVI\"");
     match Command::new("osascript").args(["-e", &script]).status() {
         Ok(s) if s.success() => Ok(()),
         Ok(s) => {

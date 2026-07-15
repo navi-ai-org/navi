@@ -137,16 +137,12 @@ impl PluginOrchestrator {
 
         // 2. Resolve trust from lockfile (path installs = LocalDev, marketplace = Community).
         let plugin_id = &manifest.plugin.id;
-        let lock_entry = self
-            .lockfile
-            .find(plugin_id)
-            .cloned()
-            .ok_or_else(|| {
-                anyhow::anyhow!(
-                    "plugin '{}' is not in the lockfile; install with `navi plugin install` first",
-                    plugin_id
-                )
-            })?;
+        let lock_entry = self.lockfile.find(plugin_id).cloned().ok_or_else(|| {
+            anyhow::anyhow!(
+                "plugin '{}' is not in the lockfile; install with `navi plugin install` first",
+                plugin_id
+            )
+        })?;
         let trust_level = lock_entry.trust_level;
 
         // 3. Validate manifest under that trust level

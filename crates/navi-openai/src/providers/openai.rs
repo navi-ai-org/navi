@@ -243,10 +243,7 @@ impl crate::provider::OpenAiProvider {
 }
 
 /// Look up registry `reasoning_levels` for the active model on this provider.
-fn reasoning_levels_for_model(
-    config: &navi_core::ProviderConfig,
-    model_name: &str,
-) -> Vec<String> {
+fn reasoning_levels_for_model(config: &navi_core::ProviderConfig, model_name: &str) -> Vec<String> {
     config
         .models
         .iter()
@@ -260,7 +257,10 @@ fn reasoning_levels_for_model(
 /// This avoids a separate title-generation completion while making naming
 /// deterministic on OpenAI-compatible providers such as Charm Hyper.
 fn requires_initial_session_title(request: &ModelRequest) -> bool {
-    request.tools.iter().any(|tool| tool.name == "set_session_title")
+    request
+        .tools
+        .iter()
+        .any(|tool| tool.name == "set_session_title")
         && !request.messages.iter().any(|message| {
             message.role == navi_core::ModelRole::Tool
                 && message.tool_name.as_deref() == Some("set_session_title")

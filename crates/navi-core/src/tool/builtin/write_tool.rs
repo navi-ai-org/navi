@@ -687,10 +687,7 @@ impl WriteTool {
         let mut total_removed = 0usize;
         for path in &files_changed {
             let old = before_by_path.get(path).map(String::as_str);
-            let new = after_by_path
-                .get(path)
-                .map(String::as_str)
-                .unwrap_or("");
+            let new = after_by_path.get(path).map(String::as_str).unwrap_or("");
             let file_diff = build_write_display_diff(path, old, new);
             let (added, removed) = count_diff_add_remove(&file_diff);
             total_added += added;
@@ -933,12 +930,7 @@ impl WriteTool {
                 "files_patched": affected.len(),
                 "affected_paths": affected,
             });
-            attach_patch_display_diff(
-                &mut output,
-                &self.project_root,
-                &affected,
-                &before_snapshot,
-            );
+            attach_patch_display_diff(&mut output, &self.project_root, &affected, &before_snapshot);
             return Ok(ToolResult {
                 invocation_id: invocation.id,
                 ok: true,
@@ -960,12 +952,7 @@ impl WriteTool {
                 "files_patched": affected.len(),
                 "affected_paths": affected,
             });
-            attach_patch_display_diff(
-                &mut output,
-                &self.project_root,
-                &affected,
-                &before_snapshot,
-            );
+            attach_patch_display_diff(&mut output, &self.project_root, &affected, &before_snapshot);
             return Ok(ToolResult {
                 invocation_id: invocation.id,
                 ok: true,
@@ -984,12 +971,7 @@ impl WriteTool {
                 "files_patched": affected.len(),
                 "affected_paths": affected,
             });
-            attach_patch_display_diff(
-                &mut output,
-                &self.project_root,
-                &affected,
-                &before_snapshot,
-            );
+            attach_patch_display_diff(&mut output, &self.project_root, &affected, &before_snapshot);
             return Ok(ToolResult {
                 invocation_id: invocation.id,
                 ok: true,

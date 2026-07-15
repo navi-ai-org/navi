@@ -74,7 +74,9 @@ pub struct ErrorResp {
 
 // ── Auth / state filters ─────────────────────────────────────────────────
 
-pub fn with_auth(secret: &'static str) -> impl Filter<Extract = (), Error = warp::Rejection> + Clone {
+pub fn with_auth(
+    secret: &'static str,
+) -> impl Filter<Extract = (), Error = warp::Rejection> + Clone {
     warp::header::exact("x-navi-secret", secret)
 }
 
@@ -183,10 +185,7 @@ mod tests {
             parse_save_target("none"),
             NaviConfigSaveTarget::None
         ));
-        assert!(matches!(
-            parse_save_target(""),
-            NaviConfigSaveTarget::Auto
-        ));
+        assert!(matches!(parse_save_target(""), NaviConfigSaveTarget::Auto));
         assert!(matches!(
             parse_save_target("auto"),
             NaviConfigSaveTarget::Auto

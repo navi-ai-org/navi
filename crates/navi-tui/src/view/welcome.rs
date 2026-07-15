@@ -25,9 +25,8 @@ pub(super) fn welcome_text(app: &TuiApp, width: usize, height: usize) -> Text<'s
     let project = project_label();
     let model = app.loaded_config.config.model.name.clone();
     let provider = selected_provider_label(app).to_string();
-    let binary_effort = crate::state::ThinkingLevel::is_binary_for_model(
-        app.models.get(app.selected_model),
-    );
+    let binary_effort =
+        crate::state::ThinkingLevel::is_binary_for_model(app.models.get(app.selected_model));
     let effort = app.thinking_level.display_label(binary_effort);
     let context = app.compact_state.usage_label(0);
     let mode = format!("{:?}", app.loaded_config.config.harness.profile).to_lowercase();
@@ -80,8 +79,8 @@ pub(super) fn welcome_text(app: &TuiApp, width: usize, height: usize) -> Text<'s
         }
 
         if let Some(status) = welcome_status_line(
-            index, &project, &provider, &model, effort, &context, &mode, &router, &tools,
-            &session, &cost,
+            index, &project, &provider, &model, effort, &context, &mode, &router, &tools, &session,
+            &cost,
         ) {
             spans.push(Span::raw("      "));
             spans.extend(status);
@@ -99,9 +98,8 @@ fn compact_welcome_text(app: &TuiApp, width: usize, height: usize) -> Text<'stat
     let project = project_label();
     let model = app.loaded_config.config.model.name.clone();
     let provider = selected_provider_label(app).to_string();
-    let binary_effort = crate::state::ThinkingLevel::is_binary_for_model(
-        app.models.get(app.selected_model),
-    );
+    let binary_effort =
+        crate::state::ThinkingLevel::is_binary_for_model(app.models.get(app.selected_model));
     let effort = app.thinking_level.display_label(binary_effort);
     let context = app.compact_state.usage_label(0);
     let session = if app.conversation_history.len() <= 1 {

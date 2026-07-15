@@ -133,8 +133,8 @@ pub use repo_intelligence::{
     search_symbols, search_text_matches,
 };
 pub use runtime::{
-    AgentRuntime, AgentRuntimeOptions, ApprovalResolver, MemoryExtractionModel,
-    PlanReviewResolver, QuestionResolver, SudoPasswordResolver, TurnCanceller,
+    AgentRuntime, AgentRuntimeOptions, ApprovalResolver, MemoryExtractionModel, PlanReviewResolver,
+    QuestionResolver, SudoPasswordResolver, TurnCanceller,
 };
 pub use runtime_components::{
     CompactionStrategy, DefaultCompactionStrategy, DefaultHarnessDriver, DefaultPromptBuilder,
@@ -144,8 +144,7 @@ pub use runtime_components::{
 pub use security::{SecurityDecision, SecurityPolicy};
 pub use session::{
     SessionId, SessionRuntime, SessionSnapshot, SessionSnapshotInfo, SessionStore,
-    SessionUsageSnapshot,
-    clean_session_title, session_title_from_events,
+    SessionUsageSnapshot, clean_session_title, session_title_from_events,
 };
 pub use session_title::{SessionTitleHandle, SessionTitleTool};
 pub use setup::{SETUP_INTERVIEW_COMPLETE_MARKER, SETUP_INTERVIEW_PROMPT};
@@ -159,10 +158,6 @@ pub use skills::{
     write_skill,
 };
 pub use tool::background::{BackgroundCommandSnapshot, BackgroundTaskStatus};
-pub use update::{
-    UpdateInfo, apply_update, check_for_update, current_version, normalize_version,
-    version_is_newer,
-};
 pub use tool::registry::{ToolRegistry, ToolSet, phases};
 pub use tool::{
     AgentProfile, ApprovalMode, ProviderBuilderFn, RepoExploreTool, SubagentTool, Tool,
@@ -172,6 +167,10 @@ pub use tool::{
 pub use trace::{
     ApprovalTrace, ToolCallTrace, TraceStore, TurnMetrics, TurnOutcome, TurnTrace, VerifierTrace,
     turn_traces_from_events,
+};
+pub use update::{
+    UpdateInfo, apply_update, check_for_update, current_version, normalize_version,
+    version_is_newer,
 };
 
 pub use background_model::{BackgroundModelResolver, ResolvedBackgroundModel};

@@ -488,10 +488,16 @@ fn apply_agent_config(
         }
     }
     // Mild observation caps — shrink context without starving multi-file work.
-    loaded_config.config.harness.observation_bytes_small =
-        loaded_config.config.harness.observation_bytes_small.min(10 * 1024);
-    loaded_config.config.harness.observation_bytes_medium =
-        loaded_config.config.harness.observation_bytes_medium.min(24 * 1024);
+    loaded_config.config.harness.observation_bytes_small = loaded_config
+        .config
+        .harness
+        .observation_bytes_small
+        .min(10 * 1024);
+    loaded_config.config.harness.observation_bytes_medium = loaded_config
+        .config
+        .harness
+        .observation_bytes_medium
+        .min(24 * 1024);
     // Native tool calling is on for these providers; skip duplicate tool-manifest prose.
     use navi_core::config::ToolPromptManifest;
     loaded_config.config.harness.tool_prompt_manifest = ToolPromptManifest::Never;
@@ -502,15 +508,10 @@ fn apply_agent_config(
         let base_url = base_url.trim().to_string();
         if !base_url.is_empty() {
             let provider_id = loaded_config.config.model.provider.clone();
-            if let Some(provider) = loaded_config
-                .config
-                .providers
-                .iter_mut()
-                .find(|p| {
-                    p.id == provider_id
-                        || canonical_provider_id(&p.id) == canonical_provider_id(&provider_id)
-                })
-            {
+            if let Some(provider) = loaded_config.config.providers.iter_mut().find(|p| {
+                p.id == provider_id
+                    || canonical_provider_id(&p.id) == canonical_provider_id(&provider_id)
+            }) {
                 provider.base_url = Some(base_url);
             } else {
                 loaded_config.config.providers.push(ProviderConfig {

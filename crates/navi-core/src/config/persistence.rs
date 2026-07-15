@@ -381,7 +381,10 @@ name = "claude-sonnet-4-20250514"
         let image = config.attachment_models.image.expect("image override");
         assert_eq!(image.provider, "openai");
         assert_eq!(image.name, "gpt-4o");
-        let document = config.attachment_models.document.expect("document override");
+        let document = config
+            .attachment_models
+            .document
+            .expect("document override");
         assert_eq!(document.provider, "anthropic");
         assert_eq!(document.name, "claude-sonnet-4-20250514");
         assert!(config.attachment_models.audio.is_none());
@@ -409,7 +412,10 @@ name = "gpt-test"
         });
         merge_from_file(&mut config, &path, ConfigSource::Project).expect("merge");
 
-        let image = config.attachment_models.image.expect("preserved image override");
+        let image = config
+            .attachment_models
+            .image
+            .expect("preserved image override");
         assert_eq!(image.provider, "xai");
         assert_eq!(image.name, "grok-2-vision");
     }

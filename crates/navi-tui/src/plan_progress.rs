@@ -75,10 +75,7 @@ pub(crate) fn sync_from_plan_tool(
 fn plan_ui_from_tool_output(result: &ToolResult) -> Option<ActivePlanUiState> {
     let obj = result.output.as_object()?;
     // Nested `plan` (get/active) or top-level create fields.
-    let plan = obj
-        .get("plan")
-        .and_then(|v| v.as_object())
-        .unwrap_or(obj);
+    let plan = obj.get("plan").and_then(|v| v.as_object()).unwrap_or(obj);
 
     let plan_id = plan
         .get("plan_id")

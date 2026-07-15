@@ -343,7 +343,11 @@ impl EngineDriver for crate::NaviEngine {
                 "{} · {} active · embeddings {}",
                 if s.enabled { "on" } else { "off" },
                 s.active_memories,
-                if s.embeddings_available { "ready" } else { "missing" }
+                if s.embeddings_available {
+                    "ready"
+                } else {
+                    "missing"
+                }
             )),
             Err(err) => Err(err),
         }

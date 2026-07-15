@@ -110,9 +110,7 @@ impl TurnContext {
 
     /// Returns a shared [`MemoryManager`] for this session when memory is enabled.
     /// Opens the underlying SQLite stores at most once per slot.
-    pub fn get_or_init_memory_manager(
-        &self,
-    ) -> Result<Option<Arc<crate::memory::MemoryManager>>> {
+    pub fn get_or_init_memory_manager(&self) -> Result<Option<Arc<crate::memory::MemoryManager>>> {
         let memory_config = self.active_config().memory;
         if !memory_config.enabled {
             return Ok(None);
@@ -282,10 +280,7 @@ async fn ensure_system_prompt(ctx: &TurnContext, messages: &mut Vec<ModelMessage
         ));
     }
     prefix.extend(rendered.developer_messages);
-    *ctx
-        .prompt_prefix
-        .lock()
-        .unwrap_or_else(|e| e.into_inner()) = Some(prefix.clone());
+    *ctx.prompt_prefix.lock().unwrap_or_else(|e| e.into_inner()) = Some(prefix.clone());
     replace_prompt_prefix(messages, prefix);
 }
 
@@ -414,10 +409,7 @@ fn build_model_request(ctx: &TurnContext, messages: &[ModelMessage]) -> ModelReq
                 // definitions() already returns name-sorted tools; re-sort only
                 // when a filter may have disordered a filtered subset (no-op
                 // when already sorted — keeps prefix-cache order stable).
-                if tools
-                    .windows(2)
-                    .any(|w| w[0].name > w[1].name)
-                {
+                if tools.windows(2).any(|w| w[0].name > w[1].name) {
                     tools.sort_by(|a, b| a.name.cmp(&b.name));
                 }
                 tools
