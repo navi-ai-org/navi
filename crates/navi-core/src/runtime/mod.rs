@@ -1170,6 +1170,12 @@ impl AgentRuntime {
                     self.loaded_config.data_dir.clone(),
                     self.shared_config.clone(),
                 );
+            } else {
+                tracing::warn!(
+                    "tool executor Arc is shared; cannot install goal tools in place \
+                     (strong_count={})",
+                    Arc::strong_count(executor)
+                );
             }
             return Ok(executor.clone());
         }

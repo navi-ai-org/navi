@@ -157,14 +157,12 @@ fn find_go_package_returns_false_for_empty_manifest() {
 async fn detect_bun_from_lockfile() {
     let tempdir = tempfile::tempdir().unwrap();
     std::fs::write(tempdir.path().join("bun.lockb"), "").unwrap();
-    let _guard = ChangeDirGuard::new(tempdir.path());
     assert_eq!(detect_package_manager(tempdir.path()).await.unwrap(), "bun");
 }
 #[tokio::test]
 async fn detect_dart_from_pubspec() {
     let tempdir = tempfile::tempdir().unwrap();
     std::fs::write(tempdir.path().join("pubspec.yaml"), "name: test").unwrap();
-    let _guard = ChangeDirGuard::new(tempdir.path());
     assert_eq!(
         detect_package_manager(tempdir.path()).await.unwrap(),
         "dart"
@@ -175,7 +173,6 @@ async fn detect_dart_from_pubspec() {
 async fn detect_npm_from_package_json() {
     let tempdir = tempfile::tempdir().unwrap();
     std::fs::write(tempdir.path().join("package.json"), "{}").unwrap();
-    let _guard = ChangeDirGuard::new(tempdir.path());
     assert_eq!(detect_package_manager(tempdir.path()).await.unwrap(), "npm");
 }
 
@@ -183,7 +180,6 @@ async fn detect_npm_from_package_json() {
 async fn detect_npm_from_lockfile() {
     let tempdir = tempfile::tempdir().unwrap();
     std::fs::write(tempdir.path().join("package-lock.json"), "{}").unwrap();
-    let _guard = ChangeDirGuard::new(tempdir.path());
     assert_eq!(detect_package_manager(tempdir.path()).await.unwrap(), "npm");
 }
 
@@ -191,7 +187,6 @@ async fn detect_npm_from_lockfile() {
 async fn detect_cargo_from_toml() {
     let tempdir = tempfile::tempdir().unwrap();
     std::fs::write(tempdir.path().join("Cargo.toml"), "[package]").unwrap();
-    let _guard = ChangeDirGuard::new(tempdir.path());
     assert_eq!(
         detect_package_manager(tempdir.path()).await.unwrap(),
         "cargo"
@@ -202,7 +197,6 @@ async fn detect_cargo_from_toml() {
 async fn detect_cargo_from_lockfile() {
     let tempdir = tempfile::tempdir().unwrap();
     std::fs::write(tempdir.path().join("Cargo.lock"), "").unwrap();
-    let _guard = ChangeDirGuard::new(tempdir.path());
     assert_eq!(
         detect_package_manager(tempdir.path()).await.unwrap(),
         "cargo"
@@ -213,7 +207,6 @@ async fn detect_cargo_from_lockfile() {
 async fn detect_go_from_mod() {
     let tempdir = tempfile::tempdir().unwrap();
     std::fs::write(tempdir.path().join("go.mod"), "module test").unwrap();
-    let _guard = ChangeDirGuard::new(tempdir.path());
     assert_eq!(detect_package_manager(tempdir.path()).await.unwrap(), "go");
 }
 
@@ -221,14 +214,12 @@ async fn detect_go_from_mod() {
 async fn detect_go_from_sum() {
     let tempdir = tempfile::tempdir().unwrap();
     std::fs::write(tempdir.path().join("go.sum"), "").unwrap();
-    let _guard = ChangeDirGuard::new(tempdir.path());
     assert_eq!(detect_package_manager(tempdir.path()).await.unwrap(), "go");
 }
 
 #[tokio::test]
 async fn detect_fails_without_manifests() {
     let tempdir = tempfile::tempdir().unwrap();
-    let _guard = ChangeDirGuard::new(tempdir.path());
     assert!(detect_package_manager(tempdir.path()).await.is_err());
 }
 
@@ -237,7 +228,6 @@ async fn detect_prefers_bun_over_npm() {
     let tempdir = tempfile::tempdir().unwrap();
     std::fs::write(tempdir.path().join("bun.lockb"), "").unwrap();
     std::fs::write(tempdir.path().join("package.json"), "{}").unwrap();
-    let _guard = ChangeDirGuard::new(tempdir.path());
     assert_eq!(detect_package_manager(tempdir.path()).await.unwrap(), "bun");
 }
 
@@ -251,7 +241,6 @@ async fn check_cargo_finds_packages_in_manifest() {
         "[dependencies]\nserde = \"1\"\ntokio = \"1\"\n",
     )
     .unwrap();
-    let _guard = ChangeDirGuard::new(tempdir.path());
 
     let result = check::check_cargo(
         tempdir.path(),
@@ -275,7 +264,6 @@ async fn check_cargo_finds_packages_in_manifest() {
 async fn check_cargo_empty_packages_checks_lock() {
     let tempdir = tempfile::tempdir().unwrap();
     std::fs::write(tempdir.path().join("Cargo.lock"), "").unwrap();
-    let _guard = ChangeDirGuard::new(tempdir.path());
 
     let result = check::check_cargo(tempdir.path(), "test", &[])
         .await
@@ -294,7 +282,6 @@ async fn check_npm_finds_packages_in_manifest() {
         r#"{"dependencies": {"express": "4", "lodash": "4"}}"#,
     )
     .unwrap();
-    let _guard = ChangeDirGuard::new(tempdir.path());
 
     let result = check::check_npm(tempdir.path(), "test", "npm", &["express".to_string()])
         .await
@@ -315,7 +302,6 @@ async fn check_npm_avoids_substring_false_positive() {
         r#"{"dependencies": {"serde_json": "1"}}"#,
     )
     .unwrap();
-    let _guard = ChangeDirGuard::new(tempdir.path());
 
     let result = check::check_npm(tempdir.path(), "test", "npm", &["serde".to_string()])
         .await
@@ -334,7 +320,6 @@ async fn check_cargo_avoids_substring_false_positive() {
         "[dependencies]\nserde_json = \"1\"\n",
     )
     .unwrap();
-    let _guard = ChangeDirGuard::new(tempdir.path());
 
     let result = check::check_cargo(tempdir.path(), "test", &["serde".to_string()])
         .await
@@ -353,7 +338,6 @@ async fn check_go_parses_require_block() {
         "module example\n\nrequire (\n\tgithub.com/acme/pkg v1.2.3\n)\n",
     )
     .unwrap();
-    let _guard = ChangeDirGuard::new(tempdir.path());
 
     let result = check::check_go(tempdir.path(), "test", &["github.com/acme/pkg".to_string()])
         .await
@@ -371,7 +355,6 @@ async fn check_dart_finds_packages_in_manifest() {
         "dependencies:\n  http: ^1.0.0\n  path: ^1.8.0\n",
     )
     .unwrap();
-    let _guard = ChangeDirGuard::new(tempdir.path());
 
     let result = check::check_dart(
         tempdir.path(),
@@ -399,7 +382,6 @@ async fn check_dart_finds_packages_in_dev_dependencies() {
         "dev_dependencies:\n  test: ^1.24.0\n",
     )
     .unwrap();
-    let _guard = ChangeDirGuard::new(tempdir.path());
 
     let result = check::check_dart(tempdir.path(), "test", &["test".to_string()])
         .await
@@ -413,7 +395,6 @@ async fn check_dart_finds_packages_in_dev_dependencies() {
 async fn check_dart_empty_packages_checks_lock() {
     let tempdir = tempfile::tempdir().unwrap();
     std::fs::write(tempdir.path().join("pubspec.lock"), "").unwrap();
-    let _guard = ChangeDirGuard::new(tempdir.path());
 
     let result = check::check_dart(tempdir.path(), "test", &[])
         .await
@@ -426,7 +407,6 @@ async fn check_dart_empty_packages_checks_lock() {
 async fn check_npm_empty_packages_checks_node_modules() {
     let tempdir = tempfile::tempdir().unwrap();
     std::fs::create_dir(tempdir.path().join("node_modules")).unwrap();
-    let _guard = ChangeDirGuard::new(tempdir.path());
 
     let result = check::check_npm(tempdir.path(), "test", "npm", &[])
         .await
@@ -450,10 +430,10 @@ fn pm_executor(root: &Path) -> crate::tool::ToolExecutor {
 }
 
 #[tokio::test]
+#[ignore = "spawns real cargo/npm/go/bun; run with --ignored in network job"]
 async fn invoke_install_dispatches_to_cargo() {
     let tempdir = tempfile::tempdir().unwrap();
     std::fs::write(tempdir.path().join("Cargo.toml"), "[package]\nname=\"t\"\n").unwrap();
-    let _guard = ChangeDirGuard::new(tempdir.path());
     let executor = pm_executor(tempdir.path());
     let result = executor
         .invoke_approved_with_event_tx(
@@ -472,10 +452,10 @@ async fn invoke_install_dispatches_to_cargo() {
 }
 
 #[tokio::test]
+#[ignore = "spawns real cargo/npm/go/bun; run with --ignored in network job"]
 async fn invoke_add_dispatches_to_cargo() {
     let tempdir = tempfile::tempdir().unwrap();
     std::fs::write(tempdir.path().join("Cargo.toml"), "[package]\nname=\"t\"\n").unwrap();
-    let _guard = ChangeDirGuard::new(tempdir.path());
     let executor = pm_executor(tempdir.path());
     let result = executor
         .invoke_approved_with_event_tx(
@@ -493,10 +473,10 @@ async fn invoke_add_dispatches_to_cargo() {
 }
 
 #[tokio::test]
+#[ignore = "spawns real cargo/npm/go/bun; run with --ignored in network job"]
 async fn invoke_remove_dispatches_to_cargo() {
     let tempdir = tempfile::tempdir().unwrap();
     std::fs::write(tempdir.path().join("Cargo.toml"), "[package]\nname=\"t\"\n").unwrap();
-    let _guard = ChangeDirGuard::new(tempdir.path());
     let executor = pm_executor(tempdir.path());
     let result = executor
         .invoke_approved_with_event_tx(
@@ -515,10 +495,10 @@ async fn invoke_remove_dispatches_to_cargo() {
 }
 
 #[tokio::test]
+#[ignore = "spawns real cargo/npm/go/bun; run with --ignored in network job"]
 async fn invoke_update_dispatches_to_cargo() {
     let tempdir = tempfile::tempdir().unwrap();
     std::fs::write(tempdir.path().join("Cargo.toml"), "[package]\nname=\"t\"\n").unwrap();
-    let _guard = ChangeDirGuard::new(tempdir.path());
     let executor = pm_executor(tempdir.path());
     let result = executor
         .invoke_approved_with_event_tx(
@@ -537,6 +517,7 @@ async fn invoke_update_dispatches_to_cargo() {
 }
 
 #[tokio::test]
+#[ignore = "spawns real package manager binary"]
 async fn invoke_check_dispatches_to_cargo() {
     let tempdir = tempfile::tempdir().unwrap();
     std::fs::write(
@@ -544,7 +525,6 @@ async fn invoke_check_dispatches_to_cargo() {
         "[dependencies]\nserde = \"1\"\n",
     )
     .unwrap();
-    let _guard = ChangeDirGuard::new(tempdir.path());
     let executor = pm_executor(tempdir.path());
     let result = executor
         .invoke_approved_with_event_tx(
@@ -561,10 +541,10 @@ async fn invoke_check_dispatches_to_cargo() {
 }
 
 #[tokio::test]
+#[ignore = "spawns real cargo/npm/go/bun; run with --ignored in network job"]
 async fn invoke_install_dispatches_to_npm() {
     let tempdir = tempfile::tempdir().unwrap();
     std::fs::write(tempdir.path().join("package.json"), "{}").unwrap();
-    let _guard = ChangeDirGuard::new(tempdir.path());
     let executor = pm_executor(tempdir.path());
     let result = executor
         .invoke_approved_with_event_tx(
@@ -584,10 +564,10 @@ async fn invoke_install_dispatches_to_npm() {
 }
 
 #[tokio::test]
+#[ignore = "spawns real cargo/npm/go/bun; run with --ignored in network job"]
 async fn invoke_install_dispatches_to_go() {
     let tempdir = tempfile::tempdir().unwrap();
     std::fs::write(tempdir.path().join("go.mod"), "module test").unwrap();
-    let _guard = ChangeDirGuard::new(tempdir.path());
     let executor = pm_executor(tempdir.path());
     let result = executor
         .invoke_approved_with_event_tx(
@@ -607,10 +587,10 @@ async fn invoke_install_dispatches_to_go() {
 }
 
 #[tokio::test]
+#[ignore = "spawns real cargo/npm/go/bun; run with --ignored in network job"]
 async fn invoke_add_dispatches_to_npm() {
     let tempdir = tempfile::tempdir().unwrap();
     std::fs::write(tempdir.path().join("package.json"), "{}").unwrap();
-    let _guard = ChangeDirGuard::new(tempdir.path());
     let executor = pm_executor(tempdir.path());
     let result = executor
         .invoke_approved_with_event_tx(
@@ -630,10 +610,10 @@ async fn invoke_add_dispatches_to_npm() {
 }
 
 #[tokio::test]
+#[ignore = "spawns real cargo/npm/go/bun; run with --ignored in network job"]
 async fn invoke_add_dispatches_to_go() {
     let tempdir = tempfile::tempdir().unwrap();
     std::fs::write(tempdir.path().join("go.mod"), "module test").unwrap();
-    let _guard = ChangeDirGuard::new(tempdir.path());
     let executor = pm_executor(tempdir.path());
     let result = executor
         .invoke_approved_with_event_tx(
@@ -653,10 +633,10 @@ async fn invoke_add_dispatches_to_go() {
 }
 
 #[tokio::test]
+#[ignore = "spawns real cargo/npm/go/bun; run with --ignored in network job"]
 async fn invoke_remove_dispatches_to_npm() {
     let tempdir = tempfile::tempdir().unwrap();
     std::fs::write(tempdir.path().join("package.json"), "{}").unwrap();
-    let _guard = ChangeDirGuard::new(tempdir.path());
     let executor = pm_executor(tempdir.path());
     let result = executor
         .invoke_approved_with_event_tx(
@@ -676,10 +656,10 @@ async fn invoke_remove_dispatches_to_npm() {
 }
 
 #[tokio::test]
+#[ignore = "spawns real cargo/npm/go/bun; run with --ignored in network job"]
 async fn invoke_remove_dispatches_to_go() {
     let tempdir = tempfile::tempdir().unwrap();
     std::fs::write(tempdir.path().join("go.mod"), "module test").unwrap();
-    let _guard = ChangeDirGuard::new(tempdir.path());
     let executor = pm_executor(tempdir.path());
     let result = executor
         .invoke_approved_with_event_tx(
@@ -699,10 +679,10 @@ async fn invoke_remove_dispatches_to_go() {
 }
 
 #[tokio::test]
+#[ignore = "spawns real cargo/npm/go/bun; run with --ignored in network job"]
 async fn invoke_update_dispatches_to_npm() {
     let tempdir = tempfile::tempdir().unwrap();
     std::fs::write(tempdir.path().join("package.json"), "{}").unwrap();
-    let _guard = ChangeDirGuard::new(tempdir.path());
     let executor = pm_executor(tempdir.path());
     let result = executor
         .invoke_approved_with_event_tx(
@@ -722,10 +702,10 @@ async fn invoke_update_dispatches_to_npm() {
 }
 
 #[tokio::test]
+#[ignore = "spawns real cargo/npm/go/bun; run with --ignored in network job"]
 async fn invoke_update_dispatches_to_go() {
     let tempdir = tempfile::tempdir().unwrap();
     std::fs::write(tempdir.path().join("go.mod"), "module test").unwrap();
-    let _guard = ChangeDirGuard::new(tempdir.path());
     let executor = pm_executor(tempdir.path());
     let result = executor
         .invoke_approved_with_event_tx(
@@ -764,10 +744,10 @@ fn pkg_output_limit_constant() {
 // ── "auto" manager detection ──────────────────────────────────────────
 
 #[tokio::test]
+#[ignore = "spawns real cargo/npm/go/bun; run with --ignored in network job"]
 async fn invoke_auto_detects_cargo() {
     let tempdir = tempfile::tempdir().unwrap();
     std::fs::write(tempdir.path().join("Cargo.toml"), "[package]\nname=\"t\"\n").unwrap();
-    let _guard = ChangeDirGuard::new(tempdir.path());
     let executor = pm_executor(tempdir.path());
     let result = executor
         .invoke_approved_with_event_tx(
@@ -789,10 +769,10 @@ async fn invoke_auto_detects_cargo() {
 // ── bun dispatch ──────────────────────────────────────────────────────
 
 #[tokio::test]
+#[ignore = "spawns real cargo/npm/go/bun; run with --ignored in network job"]
 async fn invoke_install_dispatches_to_bun() {
     let tempdir = tempfile::tempdir().unwrap();
     std::fs::write(tempdir.path().join("package.json"), "{}").unwrap();
-    let _guard = ChangeDirGuard::new(tempdir.path());
     let executor = pm_executor(tempdir.path());
     let result = executor
         .invoke_approved_with_event_tx(
@@ -812,10 +792,10 @@ async fn invoke_install_dispatches_to_bun() {
 }
 
 #[tokio::test]
+#[ignore = "spawns real cargo/npm/go/bun; run with --ignored in network job"]
 async fn invoke_add_dispatches_to_bun() {
     let tempdir = tempfile::tempdir().unwrap();
     std::fs::write(tempdir.path().join("package.json"), "{}").unwrap();
-    let _guard = ChangeDirGuard::new(tempdir.path());
     let executor = pm_executor(tempdir.path());
     let result = executor
         .invoke_approved_with_event_tx(
@@ -835,10 +815,10 @@ async fn invoke_add_dispatches_to_bun() {
 }
 
 #[tokio::test]
+#[ignore = "spawns real cargo/npm/go/bun; run with --ignored in network job"]
 async fn invoke_remove_dispatches_to_bun() {
     let tempdir = tempfile::tempdir().unwrap();
     std::fs::write(tempdir.path().join("package.json"), "{}").unwrap();
-    let _guard = ChangeDirGuard::new(tempdir.path());
     let executor = pm_executor(tempdir.path());
     let result = executor
         .invoke_approved_with_event_tx(
@@ -858,10 +838,10 @@ async fn invoke_remove_dispatches_to_bun() {
 }
 
 #[tokio::test]
+#[ignore = "spawns real cargo/npm/go/bun; run with --ignored in network job"]
 async fn invoke_update_dispatches_to_bun_empty() {
     let tempdir = tempfile::tempdir().unwrap();
     std::fs::write(tempdir.path().join("package.json"), "{}").unwrap();
-    let _guard = ChangeDirGuard::new(tempdir.path());
     let executor = pm_executor(tempdir.path());
     let result = executor
         .invoke_approved_with_event_tx(
@@ -881,10 +861,10 @@ async fn invoke_update_dispatches_to_bun_empty() {
 }
 
 #[tokio::test]
+#[ignore = "spawns real cargo/npm/go/bun; run with --ignored in network job"]
 async fn invoke_update_dispatches_to_bun_with_packages() {
     let tempdir = tempfile::tempdir().unwrap();
     std::fs::write(tempdir.path().join("package.json"), "{}").unwrap();
-    let _guard = ChangeDirGuard::new(tempdir.path());
     let executor = pm_executor(tempdir.path());
     let result = executor
         .invoke_approved_with_event_tx(
@@ -906,10 +886,10 @@ async fn invoke_update_dispatches_to_bun_with_packages() {
 // ── update with packages ──────────────────────────────────────────────
 
 #[tokio::test]
+#[ignore = "spawns real cargo/npm/go/bun; run with --ignored in network job"]
 async fn invoke_update_dispatches_to_npm_with_packages() {
     let tempdir = tempfile::tempdir().unwrap();
     std::fs::write(tempdir.path().join("package.json"), "{}").unwrap();
-    let _guard = ChangeDirGuard::new(tempdir.path());
     let executor = pm_executor(tempdir.path());
     let result = executor
         .invoke_approved_with_event_tx(
@@ -929,10 +909,10 @@ async fn invoke_update_dispatches_to_npm_with_packages() {
 }
 
 #[tokio::test]
+#[ignore = "spawns real cargo/npm/go/bun; run with --ignored in network job"]
 async fn invoke_update_dispatches_to_cargo_with_packages() {
     let tempdir = tempfile::tempdir().unwrap();
     std::fs::write(tempdir.path().join("Cargo.toml"), "[package]\nname=\"t\"\n").unwrap();
-    let _guard = ChangeDirGuard::new(tempdir.path());
     let executor = pm_executor(tempdir.path());
     let result = executor
         .invoke_approved_with_event_tx(
@@ -952,10 +932,10 @@ async fn invoke_update_dispatches_to_cargo_with_packages() {
 }
 
 #[tokio::test]
+#[ignore = "spawns real cargo/npm/go/bun; run with --ignored in network job"]
 async fn invoke_update_dispatches_to_go_with_packages() {
     let tempdir = tempfile::tempdir().unwrap();
     std::fs::write(tempdir.path().join("go.mod"), "module test").unwrap();
-    let _guard = ChangeDirGuard::new(tempdir.path());
     let executor = pm_executor(tempdir.path());
     let result = executor
         .invoke_approved_with_event_tx(
@@ -977,12 +957,12 @@ async fn invoke_update_dispatches_to_go_with_packages() {
 // ── check dispatch for npm/bun ────────────────────────────────────────
 
 #[tokio::test]
+#[ignore = "spawns real package manager binary"]
 async fn invoke_check_dispatches_to_npm() {
     let tempdir = tempfile::tempdir().unwrap();
     std::fs::write(tempdir.path().join("package.json"), "{}").unwrap();
     std::fs::create_dir(tempdir.path().join("node_modules")).unwrap();
     std::fs::create_dir_all(tempdir.path().join("node_modules/express")).unwrap();
-    let _guard = ChangeDirGuard::new(tempdir.path());
     let executor = pm_executor(tempdir.path());
     let result = executor
         .invoke_approved_with_event_tx(
@@ -999,12 +979,12 @@ async fn invoke_check_dispatches_to_npm() {
 }
 
 #[tokio::test]
+#[ignore = "spawns real package manager binary"]
 async fn invoke_check_dispatches_to_bun() {
     let tempdir = tempfile::tempdir().unwrap();
     std::fs::write(tempdir.path().join("package.json"), "{}").unwrap();
     std::fs::create_dir(tempdir.path().join("node_modules")).unwrap();
     std::fs::create_dir_all(tempdir.path().join("node_modules/express")).unwrap();
-    let _guard = ChangeDirGuard::new(tempdir.path());
     let executor = pm_executor(tempdir.path());
     let result = executor
         .invoke_approved_with_event_tx(
@@ -1021,6 +1001,7 @@ async fn invoke_check_dispatches_to_bun() {
 }
 
 #[tokio::test]
+#[ignore = "spawns real package manager binary"]
 async fn invoke_check_dispatches_to_go() {
     let tempdir = tempfile::tempdir().unwrap();
     std::fs::write(
@@ -1028,7 +1009,6 @@ async fn invoke_check_dispatches_to_go() {
         "module example\n\nrequire (\n\tgithub.com/acme/pkg v1.2.3\n)\n",
     )
     .unwrap();
-    let _guard = ChangeDirGuard::new(tempdir.path());
     let executor = pm_executor(tempdir.path());
     let result = executor
         .invoke_approved_with_event_tx(
@@ -1044,26 +1024,3 @@ async fn invoke_check_dispatches_to_go() {
     assert_eq!(result.output["manager"], "go");
 }
 
-// Helper: temporarily change working directory (thread-safe via mutex)
-use std::sync::Mutex;
-static CWD_MUTEX: Mutex<()> = Mutex::new(());
-
-struct ChangeDirGuard {
-    original: std::path::PathBuf,
-    _lock: std::sync::MutexGuard<'static, ()>,
-}
-
-impl ChangeDirGuard {
-    fn new(dir: &Path) -> Self {
-        let _lock = CWD_MUTEX.lock().unwrap();
-        let original = std::env::current_dir().unwrap();
-        std::env::set_current_dir(dir).unwrap();
-        Self { original, _lock }
-    }
-}
-
-impl Drop for ChangeDirGuard {
-    fn drop(&mut self) {
-        std::env::set_current_dir(&self.original).unwrap();
-    }
-}

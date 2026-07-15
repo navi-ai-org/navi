@@ -139,13 +139,24 @@ impl Tool for PackageManagerTool {
 async fn run_pkg(project_root: &Path, args: &[&str]) -> Result<(bool, String, String)> {
     let mut cmd = tokio::process::Command::new("bash");
     cmd.arg("-lc").arg(args.join(" ")).current_dir(project_root);
-    let output = cmd
+    // Hard cap so a hung `cargo fetch` / `npm install` cannot wedge the agent
+    // loop or the unit-test suite (tests previously waited unboundedly).
+    const PKG_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+    let child = cmd
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true)
-        .output()
-        .await
-        .context("failed to run package manager")?;
+        .output();
+    let output = match tokio::time::timeout(PKG_TIMEOUT, child).await {
+        Ok(result) => result.context("failed to run package manager")?,
+        Err(_) => {
+            anyhow::bail!(
+                "package manager command timed out after {}s: {}",
+                PKG_TIMEOUT.as_secs(),
+                args.join(" ")
+            );
+        }
+    };
 
     let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
     let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
