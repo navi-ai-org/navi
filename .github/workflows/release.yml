@@ -74,12 +74,14 @@ jobs:
         # Gate the published binary on product crates only. Binding crates
         # (napi/dart) and full workspace integration are covered by CI on main.
         # Hanging/flaky cases are #[ignore] in source — no long --skip lists.
-        timeout-minutes: 20
+        # Cold cargo+cache restore on ubuntu-latest often exceeds 20m (candle
+        # deps + multi-crate link); keep the same suite as CI test-fast.
+        timeout-minutes: 45
         run: >
           cargo test --locked --lib --bins
           -p navi-core -p navi-openai -p navi-providers
           -p navi-sdk -p navi-tui -p navi-cli -p navi-vfs -p navi-lite
-          -- --test-threads=8
+          -- --test-threads=4
   # ── Linux x64 musl (Alpine container — JS actions only work on x64) ────────
 
   build-linux-x64:
