@@ -43,7 +43,9 @@ tokio-tungstenite = { version = "0.30", default-features = false, optional = tru
 # CloakBrowser Rust client (community PR #438). Override path via:
 #   [patch] or CARGO_HOME path, or change this path after merge.
 # Local PR checkout (enrell lab). After upstream merge, switch to git/crates.io.
-cloakbrowser = { path = "vendor/cloakbrowser", optional = true }
+# version required for crates.io packaging; local path used in-tree. The
+# feature is optional and off by default (stub package is not published).
+cloakbrowser = { version = "0.0.0", path = "vendor/cloakbrowser", optional = true }
 playwright-rs = { version = "0.14", optional = true }
 
 [dev-dependencies]
