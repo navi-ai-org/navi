@@ -544,17 +544,18 @@ impl ProviderBehavior for XaiBehavior {
         )?;
 
         // Per-conversation stickiness + request correlation (Grok sampler
-        // headers). Session id doubles as conv id when NAVI has one.
+        // headers). Auxiliary model calls have no parent NAVI session, so they
+        // get a fresh id instead of sharing a process-wide `navi` bucket.
+        let req_id = crate::oauth::xai_new_request_id();
         let session = request
             .session_id
             .as_deref()
             .filter(|s| !s.is_empty())
-            .unwrap_or("navi");
+            .unwrap_or(&req_id);
         insert_header(headers, XAI_SESSION_ID_HEADER, session, "x-grok-session-id")?;
         insert_header(headers, XAI_CONV_ID_HEADER, session, "x-grok-conv-id")?;
         insert_header(headers, XAI_TURN_ID_HEADER, session, "x-grok-turn-id")?;
 
-        let req_id = crate::oauth::xai_new_request_id();
         insert_header(headers, XAI_REQ_ID_HEADER, &req_id, "x-grok-req-id")?;
         Ok(())
     }
@@ -881,6 +882,57 @@ mod tests {
                 .get("x-grok-req-id")
                 .and_then(|v| v.to_str().ok())
                 .is_some_and(|v| !v.is_empty())
+        );
+    }
+
+    #[test]
+    fn xai_oauth_background_requests_do_not_share_fallback_session() {
+        let behavior = behavior_for_provider(&ProviderId::from_config_id(ProviderId::XAI));
+        let request = ModelRequest {
+            model: "grok-4.5".into(),
+            instructions: None,
+            messages: vec![],
+            thinking: navi_core::ThinkingConfig::Off,
+            tools: vec![],
+            session_id: None,
+        };
+
+        let mut first = behavior
+            .build_headers(
+                "eyJhbGciOiJFUzI1NiIsInR5cCI6ImF0K2p3dCJ9.payload.sig",
+                Endpoint::Responses,
+            )
+            .expect("first headers");
+        behavior
+            .apply_request_headers(&mut first, &request)
+            .expect("first request headers");
+
+        let mut second = behavior
+            .build_headers(
+                "eyJhbGciOiJFUzI1NiIsInR5cCI6ImF0K2p3dCJ9.payload.sig",
+                Endpoint::Responses,
+            )
+            .expect("second headers");
+        behavior
+            .apply_request_headers(&mut second, &request)
+            .expect("second request headers");
+
+        let first_session = first
+            .get("x-grok-session-id")
+            .and_then(|value| value.to_str().ok())
+            .expect("first session id");
+        let second_session = second
+            .get("x-grok-session-id")
+            .and_then(|value| value.to_str().ok())
+            .expect("second session id");
+
+        assert_ne!(first_session, "navi");
+        assert_ne!(first_session, second_session);
+        assert_eq!(
+            first
+                .get("x-grok-conv-id")
+                .and_then(|value| value.to_str().ok()),
+            Some(first_session)
         );
     }
 

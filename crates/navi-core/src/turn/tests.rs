@@ -617,6 +617,17 @@ fn build_test_ctx(project_dir: PathBuf) -> TurnContext {
     }
 }
 
+#[test]
+fn agent_turn_request_propagates_its_session_identity() {
+    let tempdir = tempfile::tempdir().unwrap();
+    let mut ctx = build_test_ctx(tempdir.path().to_path_buf());
+    ctx.session_id = crate::SessionStore::create_id().into_inner();
+
+    let request = build_model_request(&ctx, &[ModelMessage::user("hello")]);
+
+    assert_eq!(request.session_id.as_deref(), Some(ctx.session_id.as_str()));
+}
+
 #[tokio::test]
 async fn test_ensure_system_prompt_reads_agents_md() {
     let tempdir = tempfile::tempdir().unwrap();

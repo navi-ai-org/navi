@@ -7,6 +7,8 @@ use async_stream::try_stream;
 use futures_util::StreamExt;
 use navi_core::{ContentPart, ModelRequest, ModelStream, ModelStreamEvent, ToolInvocation};
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 const COMMANDCODE_ALPHA_GENERATE: &str = "/alpha/generate";
@@ -272,20 +274,20 @@ fn is_leap(y: u64) -> bool {
 }
 
 fn uuid_v4() -> String {
+    static NEXT_COMMANDCODE_REQUEST_SEQUENCE: AtomicU64 = AtomicU64::new(1);
+
     use std::time::{SystemTime, UNIX_EPOCH};
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_nanos();
-    let a: u64 = 6364136223846793005;
-    let c: u64 = 1442695040888963407;
-    let seed = nanos as u64;
-    let r1 = seed.wrapping_mul(a).wrapping_add(c);
-    let r2 = r1.wrapping_mul(a).wrapping_add(c);
+    let pid = std::process::id();
+    let sequence = NEXT_COMMANDCODE_REQUEST_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    let digest =
+        Sha256::digest(format!("navi-commandcode-request:{pid}:{nanos}:{sequence}").as_bytes());
 
     let mut bytes = [0u8; 16];
-    bytes[..8].copy_from_slice(&r1.to_be_bytes());
-    bytes[8..].copy_from_slice(&r2.to_be_bytes());
+    bytes.copy_from_slice(&digest[..16]);
     bytes[6] = (bytes[6] & 0x0f) | 0x40;
     bytes[8] = (bytes[8] & 0x3f) | 0x80;
 
@@ -1418,5 +1420,14 @@ mod tests {
     fn detect_cli_version_falls_back_to_default() {
         let version = detect_commandcode_cli_version();
         assert!(!version.is_empty());
+    }
+
+    #[test]
+    fn commandcode_request_ids_are_unique() {
+        let ids = (0..1_024)
+            .map(|_| uuid_v4())
+            .collect::<std::collections::HashSet<_>>();
+
+        assert_eq!(ids.len(), 1_024);
     }
 }
