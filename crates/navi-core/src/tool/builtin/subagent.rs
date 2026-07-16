@@ -19,6 +19,7 @@ use crate::model::{ModelMessage, ModelProvider, ModelRole};
 use crate::prompt::PromptCache;
 use crate::runtime::ApprovalResolver;
 use crate::runtime_components::RuntimeComponents;
+use crate::session::SessionStore;
 use crate::tool::{
     Tool, ToolDefinition, ToolInvocation, ToolInvocationContext, ToolKind, ToolResult,
 };
@@ -471,6 +472,7 @@ impl SubagentTool {
         );
 
         let include_tool_prompt = self.include_tool_prompt_manifest();
+        let session_id = subagent_session_id();
         // Freeze the specialized subagent system prompt. `run_turn` always
         // calls `ensure_system_prompt`, which would otherwise rebuild the full
         // parent-agent identity and erase explorer/verifier instructions.
@@ -508,7 +510,7 @@ impl SubagentTool {
             compaction_provider: None,
             agent_mode: crate::plan_mode::AgentMode::Default,
             compaction_model_name: None,
-            session_id: "subagent".to_string(),
+            session_id,
             allowed_tool_names,
             memory_manager: Arc::new(std::sync::Mutex::new(None)),
         };
@@ -606,6 +608,7 @@ impl SubagentTool {
         let data_dir = self.data_dir.clone();
         let cancel_token = task.cancel_token.clone();
         let parent_invocation_id = invocation_id.clone();
+        let session_id = subagent_session_id();
 
         let effective_approval = resolve_approval_mode(&options);
         let allowed_tool_names_clone =
@@ -654,7 +657,7 @@ impl SubagentTool {
                 memory_injection: None,
                 compaction_provider: None,
                 compaction_model_name: None,
-                session_id: "subagent-bg".to_string(),
+                session_id,
                 agent_mode: crate::plan_mode::AgentMode::Default,
                 allowed_tool_names: allowed_tool_names_clone,
                 memory_manager: Arc::new(std::sync::Mutex::new(None)),
@@ -1181,6 +1184,13 @@ fn resolve_allowed_tool_names(
     Some(allowed)
 }
 
+/// Each nested agent is an independent provider conversation. Reusing a
+/// literal id (such as `subagent`) made Charm Hyper route unrelated agents to
+/// the same affinity/cache bucket.
+fn subagent_session_id() -> String {
+    format!("subagent-{}", SessionStore::create_id().into_inner())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1454,5 +1464,14 @@ mod tests {
             let deserialized: AgentProfile = serde_json::from_value(json).unwrap();
             assert_eq!(&deserialized, profile);
         }
+    }
+
+    #[test]
+    fn subagents_get_distinct_provider_session_ids() {
+        let first = subagent_session_id();
+        let second = subagent_session_id();
+
+        assert!(first.starts_with("subagent-session-"));
+        assert_ne!(first, second);
     }
 }
