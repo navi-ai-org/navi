@@ -2392,11 +2392,24 @@ fn view_image_summary(invocation: &ToolInvocation, result: &ToolResult) -> Strin
         .get("size_bytes")
         .and_then(|v| v.as_u64())
         .unwrap_or(0);
-    format!(
-        "View image {} ({format}, {} bytes)",
-        display_path(path),
-        size
-    )
+    let attached = result
+        .output
+        .get("image_attached")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    if attached {
+        format!(
+            "View image {} ({format}, {} bytes) — attached for model",
+            display_path(path),
+            size
+        )
+    } else {
+        format!(
+            "View image {} ({format}, {} bytes)",
+            display_path(path),
+            size
+        )
+    }
 }
 
 fn new_context_window_summary(result: &ToolResult) -> String {

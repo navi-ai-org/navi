@@ -147,6 +147,9 @@ pub struct TuiApp {
     /// Whether the terminal reports focus (DEC 1004). Used to suppress OS
     /// toasts when the user is already looking at NAVI.
     pub(crate) terminal_focused: bool,
+    /// Whether free mouse motion (`?1003`) is currently enabled. Only true
+    /// while image hover can fire — avoids multi-window CSI motion leaks.
+    pub(crate) mouse_free_motion: bool,
     pub(crate) selected_setting: usize,
     pub(crate) selected_theme: usize,
     pub(crate) theme_filter: String,
@@ -437,6 +440,7 @@ impl TuiApp {
             // Assume focused until FocusLost; terminals without focus tracking
             // never emit FocusLost, so we keep the default and avoid noisy toasts.
             terminal_focused: true,
+            mouse_free_motion: false,
             selected_setting: 0,
             selected_theme: ThemeId::ALL
                 .iter()

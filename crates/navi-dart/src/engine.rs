@@ -994,6 +994,10 @@ pub unsafe extern "C" fn navi_engine_list_saved_sessions(
 }
 
 /// Loads a persisted session by ID and reopens it in memory.
+///
+/// Rebuilds provider history via [`navi_sdk::session_request_from_snapshot`],
+/// rehydrating `view_image` attachments from disk (image bytes are not stored
+/// on `ToolCompleted` events).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn navi_engine_load_saved_session(
     engine: *mut NaviDartEngine,
@@ -1009,8 +1013,38 @@ pub unsafe extern "C" fn navi_engine_load_saved_session(
     let ctx = CallbackCtx::new(callback, user_data);
     let inner = engine.inner.clone();
     engine.runtime.spawn(async move {
-        match inner.load_saved_session_async(&sid).await {
-            Ok(snapshot) => ctx.success(&snapshot),
+        // Already live — free path for re-focusing a session.
+        if inner.session_ids().iter().any(|id| id == &sid) {
+            ctx.success(&serde_json::json!({
+                "id": sid,
+                "restored": true,
+                "already_active": true,
+            }));
+            return;
+        }
+
+        let snapshot = match inner.load_saved_session_async(&sid).await {
+            Ok(s) => s,
+            Err(e) => {
+                ctx.error(&e.to_string());
+                return;
+            }
+        };
+
+        let project = snapshot.project.clone();
+        let created_at = snapshot.created_at;
+        let updated_at = snapshot.updated_at;
+        let data_dir = inner.loaded_config().data_dir;
+        let req = navi_sdk::session_request_from_snapshot(&snapshot, Some(data_dir.as_path()));
+        match inner.start_session(req).await {
+            Ok(_) => ctx.success(&serde_json::json!({
+                "id": sid,
+                "project": project,
+                "created_at": created_at,
+                "updated_at": updated_at,
+                "restored": true,
+                "already_active": false,
+            })),
             Err(e) => ctx.error(&e.to_string()),
         }
     });

@@ -384,10 +384,21 @@ impl ModelMessage {
         tool_name: impl Into<String>,
         content: impl Into<String>,
     ) -> Self {
+        Self::tool_result_with_parts(tool_call_id, tool_name, content, Vec::new())
+    }
+
+    /// Creates a tool-result message with optional multimodal content parts
+    /// (e.g. images from `view_image` for vision-capable models).
+    pub fn tool_result_with_parts(
+        tool_call_id: impl Into<String>,
+        tool_name: impl Into<String>,
+        content: impl Into<String>,
+        content_parts: Vec<ContentPart>,
+    ) -> Self {
         Self {
             role: ModelRole::Tool,
             content: content.into(),
-            content_parts: Vec::new(),
+            content_parts,
             tool_call_id: Some(tool_call_id.into()),
             tool_name: Some(tool_name.into()),
             tool_calls: Vec::new(),

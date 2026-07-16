@@ -22,26 +22,40 @@ fn ctrl_letter(code: KeyCode, letter: char) -> bool {
     matches!(code, KeyCode::Char(c) if c.eq_ignore_ascii_case(&letter))
 }
 
-/// Match a Ctrl+letter chord across the encodings terminals actually emit.
-///
-/// Besides `Char('x') + CONTROL`, many terminals deliver the classic ASCII
-/// control byte for that letter (e.g. `'\r'` for Ctrl+M, `'\n'` for Ctrl+J,
-/// `'\t'` for Ctrl+I) with the CONTROL modifier set. Without this, shortcuts
-/// like Ctrl+M never reach their handlers and fall through as newlines.
-fn is_ctrl_chord(code: KeyCode, modifiers: KeyModifiers, letter: char) -> bool {
-    if !has_control(modifiers) {
-        return false;
-    }
-    if ctrl_letter(code, letter) {
-        return true;
-    }
-    // ASCII Ctrl+A..=Ctrl+Z → bytes 1..=26.
+/// ASCII Ctrl+A..=Ctrl+Z → bytes 1..=26.
+fn ctrl_byte_for(letter: char) -> Option<u8> {
     let upper = letter.to_ascii_uppercase();
     if !upper.is_ascii_uppercase() {
+        return None;
+    }
+    Some((upper as u8).wrapping_sub(b'@'))
+}
+
+/// Match a Ctrl+letter chord across encodings terminals actually emit.
+///
+/// 1. `Char('x'|'X') + CONTROL` — modern / Kitty-disambiguated encoding
+/// 2. ASCII control byte with CONTROL — e.g. `'\r'+CONTROL` for Ctrl+M
+/// 3. Bare ASCII control byte without CONTROL — fallback when progressive
+///    enhancement mid-session fails. Skip H/I/J/M so BS/Tab/LF/CR are safe.
+///
+/// ALT blocks all variants.
+fn is_ctrl_chord(code: KeyCode, modifiers: KeyModifiers, letter: char) -> bool {
+    if modifiers.contains(KeyModifiers::ALT) {
         return false;
     }
-    let ctrl_byte = (upper as u8).wrapping_sub(b'@');
-    matches!(code, KeyCode::Char(c) if c as u8 == ctrl_byte)
+    let Some(ctrl_byte) = ctrl_byte_for(letter) else {
+        return false;
+    };
+    let is_ctrl_char = matches!(code, KeyCode::Char(c) if c as u8 == ctrl_byte);
+
+    if has_control(modifiers) {
+        return ctrl_letter(code, letter) || is_ctrl_char;
+    }
+
+    if is_ctrl_char {
+        return !matches!(letter.to_ascii_lowercase(), 'h' | 'i' | 'j' | 'm');
+    }
+    false
 }
 
 pub(super) fn route_global_key(
@@ -49,12 +63,11 @@ pub(super) fn route_global_key(
     code: KeyCode,
     modifiers: KeyModifiers,
 ) -> KeyOutcome {
-    if !has_control(modifiers) {
-        return KeyOutcome::Ignored;
-    }
+    // Letter globals also match bare ASCII control bytes (see `is_ctrl_chord`).
+    // Non-letter chords (Ctrl+Enter, Ctrl+., Ctrl+,) still require CONTROL.
+    let control_held = has_control(modifiers);
 
-    if is_copy_selection_key(code, modifiers) {
-        // Prefer the selected chat cell (full block). Fall back to drag selection.
+    if control_held && is_copy_selection_key(code, modifiers) {
         if app.selected_chat_source.is_some() {
             crate::chat_blocks::copy_selected_block(app);
         } else if let Some(text) = selected_text(app) {
@@ -63,12 +76,11 @@ pub(super) fn route_global_key(
         return KeyOutcome::Handled;
     }
 
-    // Plain Ctrl+C quits (not Ctrl+Shift+C — that's copy above).
-    // Also accept ASCII ETX (0x03) which some terminals emit for Ctrl+C.
-    if (matches!(code, KeyCode::Char('c')) || matches!(code, KeyCode::Char('\u{3}')))
-        && !modifiers.contains(KeyModifiers::SHIFT)
-    {
-        return super::apply_ui_effect(app, UiEffect::Quit);
+    // Plain Ctrl+C quits (not Ctrl+Shift+C). Bare ETX (0x03) also quits.
+    if is_ctrl_chord(code, modifiers, 'c') && !modifiers.contains(KeyModifiers::SHIFT) {
+        if !is_copy_selection_key(code, modifiers) {
+            return super::apply_ui_effect(app, UiEffect::Quit);
+        }
     }
 
     if is_ctrl_chord(code, modifiers, 'd') {
@@ -99,15 +111,18 @@ pub(super) fn route_global_key(
         return super::apply_ui_effect(app, UiEffect::ReplaceModal(ModalKind::MessageQueue));
     }
 
-    if matches!(code, KeyCode::Char('.')) {
+    // Ctrl+. needs Kitty (or tmux extended-keys) on many terminals. Ctrl+X is
+    // a classic control character (0x18) that always works as a help fallback
+    // — same maturity pattern as Grok Build.
+    if (control_held && matches!(code, KeyCode::Char('.')))
+        || is_ctrl_chord(code, modifiers, 'x')
+    {
         crate::view::help::open_help(app);
         return KeyOutcome::Handled;
     }
 
-    // Ctrl+M — model picker. Terminals frequently encode this as:
-    //   Char('m'|'M')+CONTROL, Char('\r')+CONTROL, or Enter+CONTROL.
-    // Enter+CONTROL with non-empty input is "send" (handled below); empty
-    // composer falls through to the model picker as Ctrl+M compatibility.
+    // Ctrl+M — model picker.
+    // Bare CR without CONTROL is intentionally NOT matched.
     if is_ctrl_chord(code, modifiers, 'm') {
         super::open_model_picker(app);
         return KeyOutcome::Handled;
@@ -119,9 +134,6 @@ pub(super) fn route_global_key(
     }
 
     if is_ctrl_chord(code, modifiers, 'i') || is_ctrl_chord(code, modifiers, 'v') {
-        // Paste into the normal chat composer only. In other modes (OAuth
-        // paste, text fields, …) yield so the modal/mode handler can run.
-        // Allowed while streaming — drafts queue on submit behind the active turn.
         if app.mode != crate::state::Mode::Normal {
             return KeyOutcome::Ignored;
         }
@@ -137,7 +149,6 @@ pub(super) fn route_global_key(
                 show_notification(app, "Image", "No image found in clipboard.");
             }
             None => {
-                // Ctrl+V with no image: paste clipboard text into the composer.
                 if let Some(text) = crate::clipboard::try_read_clipboard_text() {
                     if !text.is_empty() {
                         crate::input::insert_input_text(app, &text);
@@ -149,8 +160,6 @@ pub(super) fn route_global_key(
     }
 
     if is_ctrl_chord(code, modifiers, 'o') {
-        // Providers: start OAuth. OAuth modal: reopen browser. Do not steal
-        // those for the chat-wide tool-output expand toggle.
         if matches!(
             app.mode,
             crate::state::Mode::Providers | crate::state::Mode::OAuth
@@ -197,15 +206,12 @@ pub(super) fn route_global_key(
         return KeyOutcome::Handled;
     }
 
-    if matches!(code, KeyCode::Char(',')) {
+    if control_held && matches!(code, KeyCode::Char(',')) {
         super::open_settings(app);
         return KeyOutcome::Handled;
     }
 
-    if matches!(code, KeyCode::Enter) {
-        // Ctrl+Enter: reopen question or send prompt — only in chat modes.
-        // Leave other modes (e.g. QueuedMessageEdit saves with Ctrl+Enter)
-        // to their own handlers.
+    if control_held && matches!(code, KeyCode::Enter) {
         if !matches!(
             app.mode,
             crate::state::Mode::Normal | crate::state::Mode::Setup
@@ -219,8 +225,6 @@ pub(super) fn route_global_key(
             crate::chat::submit_message(app);
             return KeyOutcome::Handled;
         }
-        // Empty composer: many terminals encode Ctrl+M as Enter+CONTROL.
-        // Treat that as open model picker rather than a silent no-op.
         super::open_model_picker(app);
         return KeyOutcome::Handled;
     }
@@ -250,7 +254,6 @@ pub(super) fn route_system_global_key(
     }
 
     if is_copy_selection_key(code, modifiers) {
-        // Prefer the selected chat cell (full block). Fall back to drag selection.
         if app.selected_chat_source.is_some() {
             crate::chat_blocks::copy_selected_block(app);
         } else if let Some(text) = selected_text(app) {
@@ -268,8 +271,6 @@ pub(super) fn route_system_global_key(
 }
 
 pub(super) fn is_copy_selection_key(code: KeyCode, modifiers: KeyModifiers) -> bool {
-    // Terminals differ: Ctrl+Shift+C may arrive as uppercase 'C' or as
-    // lowercase 'c' plus an explicit SHIFT modifier. Plain Ctrl+C must quit.
     matches!(code, KeyCode::Char('C'))
         || (matches!(code, KeyCode::Char('c')) && modifiers.contains(KeyModifiers::SHIFT))
 }
@@ -309,8 +310,6 @@ pub(super) fn set_permission_mode_for_command(app: &mut TuiApp, mode: Permission
     );
     save_preferences(app);
 
-    // Update the live engine + active session tool policies without dropping
-    // the current session (rebuild_provider would create a fresh engine).
     let engine = app.engine();
     spawn_runtime_task(async move {
         if let Err(err) = engine.set_permission_mode(mode).await {

@@ -34,6 +34,37 @@ pub struct NaviSessionRequest {
     pub initial_goal: Option<navi_core::SessionGoal>,
 }
 
+/// Build a [`NaviSessionRequest`] that reopens a saved snapshot with full
+/// provider history, including rehydrated `view_image` attachments.
+///
+/// Prefer this over starting a session with only `initial_events`: tool image
+/// bytes are not stored on [`AgentEvent::ToolCompleted`]. They are reloaded from:
+/// 1. the original project path when still present, or
+/// 2. `{data_dir}/attachments/{attachment_id}` written at view time.
+///
+/// Pass NAVI's durable app `data_dir` (from [`LoadedConfig`]) so attachments
+/// survive after the project file is deleted.
+pub fn session_request_from_snapshot(
+    snapshot: &navi_core::SessionSnapshot,
+    data_dir: Option<&std::path::Path>,
+) -> NaviSessionRequest {
+    let initial_messages = navi_core::model_messages_from_agent_events(
+        &snapshot.events,
+        Some(snapshot.project.as_path()),
+        data_dir,
+    );
+    NaviSessionRequest {
+        project_dir: Some(snapshot.project.clone()),
+        session_id: Some(snapshot.id.as_str().to_string()),
+        initial_messages,
+        initial_events: snapshot.events.clone(),
+        initial_created_at: (snapshot.created_at > 0).then_some(snapshot.created_at),
+        initial_updated_at: (snapshot.updated_at > 0).then_some(snapshot.updated_at),
+        initial_goal: snapshot.goal.clone(),
+        ..Default::default()
+    }
+}
+
 /// Summary returned after a session is started.
 ///
 /// Contains the session identifier, resolved project directory, and the

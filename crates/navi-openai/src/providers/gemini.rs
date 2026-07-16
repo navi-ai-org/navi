@@ -210,6 +210,26 @@ pub(crate) fn gemini_contents(messages: &[ModelMessage]) -> (String, Vec<Value>)
                         }
                     }],
                 }));
+                // Gemini function responses are JSON-only; attach image bytes as
+                // a follow-up user turn with inlineData parts.
+                if message.content_parts.iter().any(|p| p.is_image()) {
+                    let mut parts: Vec<Value> =
+                        vec![json!({ "text": format!("[Image attached by {function_name}]") })];
+                    for part in &message.content_parts {
+                        if let ContentPart::Image { media_type, data } = part {
+                            parts.push(json!({
+                                "inlineData": {
+                                    "mimeType": media_type,
+                                    "data": data,
+                                }
+                            }));
+                        }
+                    }
+                    contents.push(json!({
+                        "role": "user",
+                        "parts": parts,
+                    }));
+                }
             }
             ModelRole::Assistant => {
                 let mut parts: Vec<Value> = Vec::new();

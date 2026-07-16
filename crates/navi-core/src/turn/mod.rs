@@ -14,7 +14,7 @@ use crate::prompt::{PromptCache, SystemPromptInput};
 use crate::runtime_components::RuntimeComponents;
 use crate::security::SecurityDecision;
 use crate::skills::SkillManifest;
-use crate::tool::{ToolExecutor, ToolParallelism};
+use crate::tool::{ToolExecutor, ToolParallelism, take_tool_content_parts};
 use anyhow::Result;
 use futures_util::StreamExt;
 use serde_json::{Value, json};
@@ -32,7 +32,12 @@ struct ModelTurnOutput {
     harness_stop: Option<HarnessStop>,
 }
 
-type ToolExecutionResult = (crate::tool::ToolInvocation, crate::tool::ToolResult, String);
+type ToolExecutionResult = (
+    crate::tool::ToolInvocation,
+    crate::tool::ToolResult,
+    String,
+    Vec<ContentPart>,
+);
 
 pub struct TurnContext {
     pub model_provider: Arc<RwLock<Arc<dyn ModelProvider>>>,
@@ -427,12 +432,12 @@ fn rewrite_unsupported_attachments(
     ctx: &TurnContext,
     messages: &[ModelMessage],
 ) -> Vec<ModelMessage> {
-    // Fast path: no user attachments → avoid walking/rewriting every message.
+    // Fast path: no multimodal attachments on user or tool messages.
     // ModelRequest still needs an owned list, so we clone once without mapping.
-    let has_user_attachments = messages
-        .iter()
-        .any(|m| m.role == ModelRole::User && !m.content_parts.is_empty());
-    if !has_user_attachments {
+    let has_attachments = messages.iter().any(|m| {
+        matches!(m.role, ModelRole::User | ModelRole::Tool) && !m.content_parts.is_empty()
+    });
+    if !has_attachments {
         return messages.to_vec();
     }
 
@@ -444,7 +449,9 @@ fn rewrite_unsupported_attachments(
         .iter()
         .cloned()
         .map(|mut message| {
-            if message.role != ModelRole::User || message.content_parts.is_empty() {
+            if !matches!(message.role, ModelRole::User | ModelRole::Tool)
+                || message.content_parts.is_empty()
+            {
                 return message;
             }
 
@@ -463,6 +470,7 @@ fn rewrite_unsupported_attachments(
                 ) {
                     rewritten.push(part);
                 } else {
+                    // Never dump base64 into the prompt for non-vision models.
                     rewritten.push(ContentPart::Text {
                         text: unsupported_attachment_tool_instruction(kind, &part),
                     });
@@ -830,12 +838,13 @@ async fn handle_tool_calls(
                     ctx.components
                         .harness
                         .compact_tool_observation(&invocation, &result, policy);
-                immediate_results.push((invocation, result, observation));
-                for (invocation, _result, observation) in immediate_results {
-                    messages.push(ModelMessage::tool_result(
+                immediate_results.push((invocation, result, observation, Vec::new()));
+                for (invocation, _result, observation, content_parts) in immediate_results {
+                    messages.push(ModelMessage::tool_result_with_parts(
                         invocation.id,
                         invocation.tool_name,
                         observation,
+                        content_parts,
                     ));
                 }
                 let text = finalize_harness_stop(ctx, messages, stop);
@@ -853,7 +862,7 @@ async fn handle_tool_calls(
         all_results.extend(futures_util::future::join_all(tool_futures).await);
     }
 
-    for (invocation, result, observation) in all_results {
+    for (invocation, result, observation, content_parts) in all_results {
         ctx.components.hooks.on_tool_result(&result);
         let stop =
             match ctx
@@ -864,10 +873,11 @@ async fn handle_tool_calls(
                 ToolLoopDecision::Continue => None,
                 ToolLoopDecision::Stop(stop) => Some(stop),
             };
-        messages.push(ModelMessage::tool_result(
+        messages.push(ModelMessage::tool_result_with_parts(
             invocation.id,
             invocation.tool_name,
             observation,
+            content_parts,
         ));
         if let Some(summary) = manual_context_summary(&result) {
             if let Some(ref tx) = ctx.event_tx {
@@ -928,7 +938,7 @@ async fn execute_tool_call(
             ctx.components
                 .harness
                 .compact_tool_observation(&invocation, &result, policy);
-        return (invocation, result, observation);
+        return (invocation, result, observation, Vec::new());
     }
 
     // Check allowed tool names for subagent tool filtering.
@@ -948,7 +958,7 @@ async fn execute_tool_call(
                 ctx.components
                     .harness
                     .compact_tool_observation(&invocation, &result, policy);
-            return (invocation, result, observation);
+            return (invocation, result, observation, Vec::new());
         }
     }
 
@@ -961,7 +971,7 @@ async fn execute_tool_call(
             ctx.components
                 .harness
                 .compact_tool_observation(&invocation, &result, policy);
-        return (invocation, result, observation);
+        return (invocation, result, observation, Vec::new());
     }
 
     if invocation.tool_name == QUESTION_TOOL_NAME {
@@ -973,7 +983,7 @@ async fn execute_tool_call(
             ctx.components
                 .harness
                 .compact_tool_observation(&invocation, &result, policy);
-        return (invocation, result, observation);
+        return (invocation, result, observation, Vec::new());
     }
 
     let tool_ctx = crate::tool::ToolInvocationContext {
@@ -1008,8 +1018,12 @@ async fn execute_tool_call(
             ctx.components
                 .harness
                 .compact_tool_observation(&invocation, &result, policy);
-        return (invocation, result, observation);
+        return (invocation, result, observation, Vec::new());
     }
+
+    // Lift multimodal parts (e.g. view_image) before ToolCompleted/observation
+    // so base64 never enters the text transcript or event payload.
+    let content_parts = take_tool_content_parts(&mut result);
 
     if let Some(ref tx) = ctx.event_tx {
         let _ = tx.send(AgentEvent::ToolCompleted(result.clone()));
@@ -1019,7 +1033,7 @@ async fn execute_tool_call(
         .components
         .harness
         .compact_tool_observation(&invocation, &result, policy);
-    (invocation, result, observation)
+    (invocation, result, observation, content_parts)
 }
 
 /// Block after `plan(create)` until the TUI resolves the review modal.

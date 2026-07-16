@@ -588,8 +588,13 @@ pub fn compact_tool_observation(
     result: &ToolResult,
     policy: HarnessPolicy,
 ) -> String {
+    // Safety net: never serialize internal multimodal payloads into text observations.
+    let mut output_value = result.output.clone();
+    if let Some(obj) = output_value.as_object_mut() {
+        obj.remove(crate::tool::NAVI_CONTENT_PARTS_KEY);
+    }
     let output = truncate_string(
-        serde_json::to_string_pretty(&result.output).unwrap_or_else(|_| result.output.to_string()),
+        serde_json::to_string_pretty(&output_value).unwrap_or_else(|_| output_value.to_string()),
         policy.observation_max_bytes,
     );
     let status = if result.ok { "success" } else { "error" };

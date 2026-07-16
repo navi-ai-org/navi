@@ -263,25 +263,46 @@ impl Tool for RequestUserInputTool {
 
 // ── ViewImageTool ──────────────────────────────────────────────────────────
 
+/// Max bytes for images attached as multimodal content (same limit as TUI paste).
+const MAX_VIEW_IMAGE_BYTES: u64 = 10 * 1024 * 1024;
+
 pub(crate) struct ViewImageTool {
     project_root: PathBuf,
+    /// NAVI data dir — durable attachment blobs live under `attachments/`.
+    data_dir: PathBuf,
     name: &'static str,
 }
 
 impl ViewImageTool {
-    pub(crate) fn new(project_root: PathBuf) -> Self {
+    pub(crate) fn new(project_root: PathBuf, data_dir: PathBuf) -> Self {
         Self {
             project_root,
+            data_dir,
             name: "view_image",
         }
     }
 
-    pub(crate) fn inspect_image(project_root: PathBuf) -> Self {
+    pub(crate) fn inspect_image(project_root: PathBuf, data_dir: PathBuf) -> Self {
         Self {
             project_root,
+            data_dir,
             name: "inspect_image",
         }
     }
+}
+
+fn media_type_for_image_ext(ext: &str) -> Option<&'static str> {
+    Some(match ext {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "bmp" => "image/bmp",
+        "svg" => "image/svg+xml",
+        "ico" => "image/x-icon",
+        "tiff" | "tif" => "image/tiff",
+        _ => return None,
+    })
 }
 
 #[async_trait]
@@ -289,15 +310,16 @@ impl Tool for ViewImageTool {
     fn definition(&self) -> ToolDefinition {
         helpers::definition(
             self.name,
-            "Read metadata about an image file from the project. \
-Returns file format, dimensions, and size. Image content cannot be directly viewed in text mode.",
+            "Load an image from the project and attach it for visual analysis by the chat model. \
+On vision-capable models the image bytes are sent directly in the next API request. \
+Returns path, format, size, and confirmation that the image was attached.",
             ToolKind::Read,
             json!({
                 "type": "object",
                 "properties": {
                     "path": {
                         "type": "string",
-                        "description": "Project-relative path to the image file."
+                        "description": "Project-relative (or absolute) path to the image file."
                     }
                 },
                 "required": ["path"],
@@ -319,37 +341,55 @@ Returns file format, dimensions, and size. Image content cannot be directly view
             anyhow::bail!("image file not found: {}", raw_path);
         }
 
-        // Validate extension.
         let ext = full_path
             .extension()
             .and_then(|e| e.to_str())
             .map(|e| e.to_lowercase())
             .unwrap_or_default();
 
-        let valid_extensions = [
-            "png", "jpg", "jpeg", "gif", "webp", "bmp", "svg", "ico", "tiff", "tif",
-        ];
-        if !valid_extensions.contains(&ext.as_str()) {
+        let Some(media_type) = media_type_for_image_ext(&ext) else {
             anyhow::bail!(
-                "unsupported image format '.{ext}'. Supported formats: {}",
-                valid_extensions.join(", ")
+                "unsupported image format '.{ext}'. Supported formats: png, jpg, jpeg, gif, webp, bmp, svg, ico, tiff, tif"
             );
-        }
+        };
 
         let metadata = full_path
             .metadata()
             .map_err(|e| anyhow::anyhow!("failed to read image metadata: {e}"))?;
         let size_bytes = metadata.len();
+        if size_bytes > MAX_VIEW_IMAGE_BYTES {
+            anyhow::bail!(
+                "image too large ({size_bytes} bytes); max is {MAX_VIEW_IMAGE_BYTES} bytes"
+            );
+        }
 
-        Ok(helpers::ok(
-            invocation.id,
-            json!({
-                "path": raw_path,
-                "format": ext,
-                "size_bytes": size_bytes,
-                "hint": "Image files cannot be directly viewed in text mode. Send the image path to a multimodal model for visual analysis."
-            }),
-        ))
+        let bytes = std::fs::read(&full_path)
+            .map_err(|e| anyhow::anyhow!("failed to read image file: {e}"))?;
+        use base64::Engine;
+        let data = base64::engine::general_purpose::STANDARD.encode(&bytes);
+
+        // Durable copy so session restore works after the project file is gone.
+        let attachment_id = crate::attachment_store::store_bytes(&self.data_dir, &bytes, &ext)
+            .map_err(|e| anyhow::anyhow!("failed to persist image attachment: {e}"))?;
+
+        // `_navi_content_parts` is stripped by the turn loop before observations
+        // and ToolCompleted events; only the model request receives the image.
+        // `attachment_id` remains so restore can reload from `{data_dir}/attachments/`.
+        let mut output = json!({
+            "path": raw_path,
+            "format": ext,
+            "media_type": media_type,
+            "size_bytes": size_bytes,
+            "image_attached": true,
+            "attachment_id": attachment_id,
+            "message": "Image attached for multimodal analysis on the next model request.",
+        });
+        output[crate::tool::NAVI_CONTENT_PARTS_KEY] = json!([{
+            "type": "image",
+            "media_type": media_type,
+            "data": data,
+        }]);
+        Ok(helpers::ok(invocation.id, output))
     }
 }
 
@@ -776,7 +816,7 @@ mod tests {
 
     #[test]
     fn view_image_definition_has_correct_name() {
-        let tool = ViewImageTool::new(PathBuf::from("/tmp"));
+        let tool = ViewImageTool::new(PathBuf::from("/tmp"), PathBuf::from("/tmp/navi-data"));
         let def: ToolDefinition = tool.definition();
         assert_eq!(def.name, "view_image");
         assert!(matches!(def.kind, ToolKind::Read));
@@ -803,8 +843,9 @@ mod tests {
         ];
         fs::write(&img_path, minimal_png).unwrap();
 
-        let tool = ViewImageTool::new(dir.path().to_path_buf());
-        let result = tool
+        let data_dir = tempfile::tempdir().unwrap();
+        let tool = ViewImageTool::new(dir.path().to_path_buf(), data_dir.path().to_path_buf());
+        let mut result = tool
             .invoke(ToolInvocation {
                 id: "t13".into(),
                 tool_name: "view_image".into(),
@@ -817,6 +858,22 @@ mod tests {
         assert_eq!(result.output["format"], "png");
         assert_eq!(result.output["size_bytes"], minimal_png.len() as u64);
         assert_eq!(result.output["path"], "test.png");
+        assert_eq!(result.output["image_attached"], true);
+        assert_eq!(result.output["media_type"], "image/png");
+        let attachment_id = result.output["attachment_id"].as_str().unwrap();
+        assert!(!attachment_id.is_empty());
+        assert!(
+            crate::attachment_store::load_bytes(data_dir.path(), attachment_id).is_ok(),
+            "image must be persisted for restore after source deletion"
+        );
+
+        let parts = crate::tool::take_tool_content_parts(&mut result);
+        assert_eq!(parts.len(), 1);
+        assert!(parts[0].is_image());
+        assert_eq!(parts[0].media_type(), Some("image/png"));
+        assert!(parts[0].data().is_some_and(|d| !d.is_empty()));
+        // Base64 payload must not remain in the public output after take.
+        assert!(result.output.get(crate::tool::NAVI_CONTENT_PARTS_KEY).is_none());
     }
 
     #[tokio::test]
@@ -825,7 +882,8 @@ mod tests {
         let img_path = dir.path().join("test.txt");
         fs::write(&img_path, "not an image").unwrap();
 
-        let tool = ViewImageTool::new(dir.path().to_path_buf());
+        let data_dir = tempfile::tempdir().unwrap();
+        let tool = ViewImageTool::new(dir.path().to_path_buf(), data_dir.path().to_path_buf());
         let result = tool
             .invoke(ToolInvocation {
                 id: "t14".into(),
@@ -839,7 +897,8 @@ mod tests {
 
     #[tokio::test]
     async fn view_image_handles_missing_file() {
-        let tool = ViewImageTool::new(PathBuf::from("/tmp"));
+        let data_dir = tempfile::tempdir().unwrap();
+        let tool = ViewImageTool::new(PathBuf::from("/tmp"), data_dir.path().to_path_buf());
         let result = tool
             .invoke(ToolInvocation {
                 id: "t15".into(),
@@ -854,10 +913,14 @@ mod tests {
     #[tokio::test]
     async fn view_image_resolves_absolute_path() {
         let dir = tempfile::tempdir().unwrap();
+        let data_dir = tempfile::tempdir().unwrap();
         let img_path = dir.path().join("abs.png");
         fs::write(&img_path, "fake png content").unwrap();
 
-        let tool = ViewImageTool::new(PathBuf::from("/nonexistent"));
+        let tool = ViewImageTool::new(
+            PathBuf::from("/nonexistent"),
+            data_dir.path().to_path_buf(),
+        );
         let result = tool
             .invoke(ToolInvocation {
                 id: "t16".into(),
@@ -875,10 +938,11 @@ mod tests {
     async fn view_image_supports_multiple_formats() {
         for ext in &["jpg", "jpeg", "gif", "webp", "bmp", "svg", "ico"] {
             let dir = tempfile::tempdir().unwrap();
+            let data_dir = tempfile::tempdir().unwrap();
             let img_path = dir.path().join(format!("test.{ext}"));
             fs::write(&img_path, format!("fake {ext} content")).unwrap();
 
-            let tool = ViewImageTool::new(dir.path().to_path_buf());
+            let tool = ViewImageTool::new(dir.path().to_path_buf(), data_dir.path().to_path_buf());
             let result = tool
                 .invoke(ToolInvocation {
                     id: format!("t17-{ext}"),
@@ -891,6 +955,41 @@ mod tests {
             assert!(result.ok, "failed for .{ext}");
             assert_eq!(result.output["format"], *ext, "wrong format for .{ext}");
         }
+    }
+
+    #[tokio::test]
+    async fn view_image_restore_works_after_source_deleted() {
+        let dir = tempfile::tempdir().unwrap();
+        let data_dir = tempfile::tempdir().unwrap();
+        let img_path = dir.path().join("gone.png");
+        let minimal_png: &[u8] = &[
+            0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48,
+            0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x02, 0x00, 0x00,
+            0x00, 0x90, 0x77, 0x53, 0xDE, 0x00, 0x00, 0x00, 0x0C, 0x49, 0x44, 0x41, 0x54, 0x08,
+            0xD7, 0x63, 0x60, 0x60, 0x00, 0x00, 0x00, 0x02, 0x00, 0x01, 0xE5, 0x27, 0xDE, 0xFC,
+            0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
+        ];
+        fs::write(&img_path, minimal_png).unwrap();
+        let tool = ViewImageTool::new(dir.path().to_path_buf(), data_dir.path().to_path_buf());
+        let result = tool
+            .invoke(ToolInvocation {
+                id: "t18".into(),
+                tool_name: "view_image".into(),
+                input: json!({ "path": "gone.png" }),
+            })
+            .await
+            .unwrap();
+        fs::remove_file(&img_path).unwrap();
+
+        let parts = crate::session_replay::rehydrate_tool_content_parts(
+            "view_image",
+            &result,
+            Some(dir.path()),
+            Some(data_dir.path()),
+        );
+        assert_eq!(parts.len(), 1);
+        assert!(parts[0].is_image());
+        assert!(!parts[0].data().unwrap_or("").is_empty());
     }
 
     // ── NewContextWindowTool ─────────────────────────────────────────────

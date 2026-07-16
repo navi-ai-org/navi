@@ -11,6 +11,10 @@
 - Redirect common bash file dumps (`sed` / `cat` / `rg` / `ls` / …) to native tools (`read_file` / `search`)
 - Drop rustquty quality-metrics tooling from the repo
 
+## Note
+
+If you are upgrading from **0.2.3**, also read the **0.2.4** notes (WASM marketplace, browser, remote voice, skills store, bindings parity, registry, TUI hubs). Cumulative compare: https://github.com/navi-ai-org/navi/compare/v0.2.3...v0.2.5
+
 ## Bindings
 
 - `@navi-agent/napi` **0.2.5** and platform packages

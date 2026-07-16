@@ -1778,6 +1778,7 @@ fn global_ctrl_shortcuts_open_from_normal_mode() {
         (KeyCode::Char('b'), Mode::ModelRouting),
         (KeyCode::Char('q'), Mode::MessageQueue),
         (KeyCode::Char('.'), Mode::Help),
+        (KeyCode::Char('x'), Mode::Help), // classic-control fallback for Ctrl+.
         (KeyCode::Char(','), Mode::Settings),
     ];
     for &(code, expected) in cases {
@@ -1795,6 +1796,78 @@ fn global_ctrl_shortcuts_open_from_normal_mode() {
     handle_key(&mut app, KeyCode::Char('n'), KeyModifiers::CONTROL);
     assert_eq!(app.mode, Mode::Normal);
     assert!(app.input.is_empty(), "new session clears the composer");
+}
+
+#[test]
+fn global_ctrl_shortcuts_work_while_composer_has_text() {
+    let cases: &[(KeyCode, Mode)] = &[
+        (KeyCode::Char('p'), Mode::Commands),
+        (KeyCode::Char('m'), Mode::Models),
+        (KeyCode::Char('s'), Mode::Sessions),
+        (KeyCode::Char('d'), Mode::Debug),
+        (KeyCode::Char('t'), Mode::BackgroundCommands),
+        (KeyCode::Char('b'), Mode::ModelRouting),
+        (KeyCode::Char('q'), Mode::MessageQueue),
+        (KeyCode::Char('.'), Mode::Help),
+        (KeyCode::Char('x'), Mode::Help),
+        (KeyCode::Char(','), Mode::Settings),
+    ];
+    for &(code, expected) in cases {
+        let mut app = test_app("draft text still here");
+        app.input_cursor = app.input.len();
+        handle_key(&mut app, code, KeyModifiers::CONTROL);
+        assert_eq!(
+            app.mode, expected,
+            "Ctrl+{code:?} with non-empty composer should open {expected:?}, got {:?}",
+            app.mode
+        );
+        assert_eq!(app.input, "draft text still here");
+    }
+}
+
+#[test]
+fn bare_ascii_control_bytes_open_global_shortcuts() {
+    let cases: &[(char, Mode)] = &[
+        ('\u{10}', Mode::Commands),         // Ctrl+P
+        ('\u{13}', Mode::Sessions),         // Ctrl+S
+        ('\u{04}', Mode::Debug),            // Ctrl+D
+        ('\u{14}', Mode::BackgroundCommands), // Ctrl+T
+        ('\u{02}', Mode::ModelRouting),     // Ctrl+B
+        ('\u{11}', Mode::MessageQueue),     // Ctrl+Q
+        ('\u{18}', Mode::Help),             // Ctrl+X fallback
+    ];
+    for &(ch, expected) in cases {
+        let mut app = test_app("typing…");
+        app.input_cursor = app.input.len();
+        handle_key(&mut app, KeyCode::Char(ch), KeyModifiers::NONE);
+        assert_eq!(
+            app.mode, expected,
+            "bare control U+{:02X} should open {expected:?}, got {:?}",
+            ch as u32,
+            app.mode
+        );
+        assert_eq!(app.input, "typing…");
+    }
+
+    let mut app = test_app("keep");
+    handle_key(&mut app, KeyCode::Char('\r'), KeyModifiers::NONE);
+    assert_ne!(app.mode, Mode::Models, "bare CR must not open models");
+}
+
+#[test]
+fn wants_mouse_free_motion_with_pending_image() {
+    use crate::event_loop::wants_mouse_free_motion;
+    use crate::state::PendingImage;
+
+    let mut app = test_app("");
+    assert!(!wants_mouse_free_motion(&app));
+    app.pending_images.push(PendingImage {
+        media_type: "image/png".into(),
+        data: "AAAA".into(),
+        width: None,
+        height: None,
+    });
+    assert!(wants_mouse_free_motion(&app));
 }
 
 #[test]
@@ -4199,6 +4272,159 @@ fn model_routing_agents_down_arrow_moves_selection() {
     assert_eq!(app.bg_models_selected, 2);
     assert!(!handle_key(&mut app, KeyCode::Up, KeyModifiers::NONE));
     assert_eq!(app.bg_models_selected, 1);
+}
+
+#[test]
+fn next_model_index_from_recovers_when_selection_not_in_rows() {
+    use crate::providers::{ListRow, next_model_index_from, previous_model_index_from};
+
+    let rows = vec![
+        ListRow::Header {
+            label: "— Recent models —".into(),
+            description: String::new(),
+            provider_id: String::new(),
+        },
+        ListRow::Spacer,
+        ListRow::Model { index: 5 },
+        ListRow::Model { index: 7 },
+        ListRow::Header {
+            label: "Other".into(),
+            description: String::new(),
+            provider_id: String::new(),
+        },
+        ListRow::Model { index: 1 },
+    ];
+    // Stale selection 0 (not in rows) → land on first model (5), not no-op.
+    assert_eq!(next_model_index_from(0, &rows), 5);
+    assert_eq!(next_model_index_from(5, &rows), 7);
+    assert_eq!(next_model_index_from(7, &rows), 1);
+    assert_eq!(previous_model_index_from(5, &rows), 5); // already first
+    assert_eq!(previous_model_index_from(7, &rows), 5);
+}
+
+#[test]
+fn bg_model_picker_down_recovers_from_stale_zero_selection() {
+    // Regression: open forced selected=0; with Recent-first layout the first
+    // model is often not index 0, so Down found no current row and no-op'd.
+    let mut app = test_app("");
+    app.models = vec![
+        ModelOption {
+            name: "model-a".into(),
+            provider_id: "provider-a".into(),
+            provider_label: "Provider A".into(),
+            provider_description: String::new(),
+            task_size: None,
+            context_window_tokens: None,
+            supports_thinking: None,
+            reasoning_levels: Vec::new(),
+            default_reasoning_effort: None,
+        },
+        ModelOption {
+            name: "model-b".into(),
+            provider_id: "provider-b".into(),
+            provider_label: "Provider B".into(),
+            provider_description: String::new(),
+            task_size: None,
+            context_window_tokens: None,
+            supports_thinking: None,
+            reasoning_levels: Vec::new(),
+            default_reasoning_effort: None,
+        },
+        ModelOption {
+            name: "model-c".into(),
+            provider_id: "provider-b".into(),
+            provider_label: "Provider B".into(),
+            provider_description: String::new(),
+            task_size: None,
+            context_window_tokens: None,
+            supports_thinking: None,
+            reasoning_levels: Vec::new(),
+            default_reasoning_effort: None,
+        },
+    ];
+    // Skip refresh_authenticated_providers (would clear this on mock engine).
+    app.authenticated_providers.clear();
+    app.authenticated_providers
+        .insert("provider-a".into());
+    app.authenticated_providers
+        .insert("provider-b".into());
+    app.loaded_config.config.tui.recent_model_ids = vec!["provider-b:model-b".into()];
+
+    app.mode = Mode::BgModelPicker;
+    app.modal_stack.replace(Some(ModalKind::BgModelPicker));
+    app.bg_model_picker_active = true;
+    app.bg_model_picker_task = Some("memory_extraction".into());
+    // Stale open selection (pre-fix).
+    app.bg_model_picker_selected = 0;
+    app.model_scroll = 0;
+
+    let rows = build_model_rows(&app);
+    let first = first_model_index(&rows).expect("model");
+    assert_eq!(first, 1, "Recent should put model-b (index 1) first");
+    // Model 0 is in the full list but not the first row — old Down searched for
+    // index 0 and jumped mid-list, or if 0 were missing, no-op'd entirely.
+
+    assert!(!handle_key(&mut app, KeyCode::Down, KeyModifiers::NONE));
+    // After fix: missing/stale selection recovers to first, then advances.
+    // first Down from 0 → lands on first (1) via recover, next Down would go further.
+    // With selected=0 which IS in rows (provider-a model), old code found 0's
+    // position under Provider A and advanced. New recovery only when missing.
+    // Force missing selection:
+    app.bg_model_picker_selected = 99;
+    assert!(!handle_key(&mut app, KeyCode::Down, KeyModifiers::NONE));
+    assert_eq!(
+        app.bg_model_picker_selected, first,
+        "Down from missing selection must land on first model row"
+    );
+    assert!(!handle_key(&mut app, KeyCode::Down, KeyModifiers::NONE));
+    assert_ne!(
+        app.bg_model_picker_selected, first,
+        "second Down must advance past first Recent model"
+    );
+}
+
+#[test]
+fn effort_picker_arrow_moves_cursor_independent_of_current_level() {
+    use crate::state::ThinkingLevel;
+
+    let mut app = test_app("");
+    // Full effort ladder (not binary).
+    app.models = vec![ModelOption {
+        name: "thinky".into(),
+        provider_id: "p".into(),
+        provider_label: "P".into(),
+        provider_description: String::new(),
+        task_size: None,
+        context_window_tokens: None,
+        supports_thinking: Some(true),
+        reasoning_levels: vec![
+            "max".into(),
+            "high".into(),
+            "medium".into(),
+            "low".into(),
+            "off".into(),
+        ],
+        default_reasoning_effort: None,
+    }];
+    app.selected_model = 0;
+    app.thinking_level = ThinkingLevel::Medium;
+    app.selected_thinking = ThinkingLevel::Medium.index();
+    app.mode = Mode::Thinking;
+    app.modal_stack.replace(Some(ModalKind::Thinking));
+
+    // Down should move highlight even while thinking_level stays Medium until Enter.
+    // (Old render used `selected || thinking_level` and stayed stuck on Medium.)
+    assert!(!handle_key(&mut app, KeyCode::Down, KeyModifiers::NONE));
+    assert_eq!(app.selected_thinking, ThinkingLevel::Low.index());
+    assert_eq!(
+        app.thinking_level,
+        ThinkingLevel::Medium,
+        "Enter not pressed — active level unchanged"
+    );
+    assert!(!handle_key(&mut app, KeyCode::Down, KeyModifiers::NONE));
+    assert_eq!(app.selected_thinking, ThinkingLevel::Off.index());
+    assert!(!handle_key(&mut app, KeyCode::Up, KeyModifiers::NONE));
+    assert_eq!(app.selected_thinking, ThinkingLevel::Low.index());
 }
 
 #[test]

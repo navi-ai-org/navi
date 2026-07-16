@@ -414,6 +414,23 @@ fn commandcode_messages(messages: &[navi_core::ModelMessage]) -> (String, Vec<Va
                         "output": { "type": "text", "value": message.content },
                     }],
                 }));
+                // Attach view_image bytes as a follow-up multimodal user message.
+                if message.content_parts.iter().any(|p| p.is_image()) {
+                    let tool = message.tool_name.as_deref().unwrap_or("tool");
+                    let mut content = vec![json!({
+                        "type": "text",
+                        "text": format!("[Image attached by {tool}]"),
+                    })];
+                    for part in &message.content_parts {
+                        if let ContentPart::Image { media_type, data } = part {
+                            content.push(json!({
+                                "type": "image",
+                                "image": format!("data:{media_type};base64,{data}"),
+                            }));
+                        }
+                    }
+                    converted.push(json!({ "role": "user", "content": content }));
+                }
             }
         }
     }

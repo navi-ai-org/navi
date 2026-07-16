@@ -1,6 +1,7 @@
 use navi_sdk::{
-    AgentEvent, CompactState, ModelMessage, SessionSnapshot, SessionStore, SessionUsageSnapshot,
-    effective_context_window, save_global_config, session_title_from_events,
+    AgentEvent, CompactState, SessionSnapshot, SessionStore, SessionUsageSnapshot,
+    effective_context_window, model_messages_from_agent_events, save_global_config,
+    session_title_from_events,
 };
 
 use crate::app::TuiApp;
@@ -188,27 +189,12 @@ pub(crate) fn load_session(app: &mut TuiApp, snapshot: &SessionSnapshot) {
                     }
                 }
                 app.messages.push(msg);
-
-                if content_parts.is_empty() {
-                    app.conversation_history
-                        .push(ModelMessage::user(text.clone()));
-                } else {
-                    app.conversation_history.push(ModelMessage::user_multimodal(
-                        text.clone(),
-                        content_parts.clone(),
-                    ));
-                }
             }
             AgentEvent::ModelOutput { text, thinking } => {
                 app.messages.push(ChatMessage {
                     thinking_content: thinking.clone().unwrap_or_default(),
                     ..ChatMessage::new(ChatRole::Assistant, text.clone())
                 });
-                app.conversation_history
-                    .push(ModelMessage::assistant_with_thinking(
-                        text.clone(),
-                        thinking.clone(),
-                    ));
             }
             AgentEvent::ToolRequested(invocation) => {
                 tool_invocations.insert(invocation.id.clone(), invocation.clone());
@@ -234,6 +220,19 @@ pub(crate) fn load_session(app: &mut TuiApp, snapshot: &SessionSnapshot) {
         }
         app.events.push(event.clone());
     }
+
+    // Provider-facing history: include tool turns and rehydrate view_image
+    // bytes from path or durable attachment store. Keep the system prompt
+    // seeded by reset_system_context as the prefix.
+    let mut history = model_messages_from_agent_events(
+        &snapshot.events,
+        Some(app.project_dir.as_path()),
+        Some(app.loaded_config.data_dir.as_path()),
+    );
+    if let Some(system) = app.conversation_history.first().cloned() {
+        history.insert(0, system);
+    }
+    app.conversation_history = history;
 
     app.scroll_offset = 0;
     app.input.clear();

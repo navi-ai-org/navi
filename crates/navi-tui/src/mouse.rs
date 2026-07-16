@@ -8,7 +8,7 @@ use crate::notifications::{push_diagnostic, show_notification};
 use crate::plugins::{install_or_update_from_marketplace, plugin_picker_rows};
 use crate::providers::{
     ListRow, apply_model_selection, build_model_rows, first_model_index, selected_model_in_rows,
-    sync_scroll_to_selection,
+    sync_scroll_to_model_index, sync_scroll_to_selection,
 };
 use crate::render::text::display_width;
 use crate::runtime::provider_supports_oauth;
@@ -993,10 +993,10 @@ fn active_scroll_target(app: &TuiApp) -> Option<ScrollTarget> {
             // Agents tab list (and legacy agent routes modal) — wheel moves selection.
             Some(ScrollTarget::BackgroundModels)
         }
+        Mode::BgModelPicker => Some(ScrollTarget::Models),
         Mode::Normal
         | Mode::ApiKeyEntry
         | Mode::Mcp
-        | Mode::BgModelPicker
         | Mode::Extensions
         | Mode::AttachmentModels => None,
         Mode::Setup => None,
@@ -1282,10 +1282,15 @@ fn scroll_models_by(app: &mut TuiApp, delta: isize) {
     if rows.is_empty() {
         return;
     }
-    let current = selected_model_in_rows(&rows, app.selected_model).unwrap_or(0);
+    let current_selected = active_model_list_selection(app);
+    let current = selected_model_in_rows(&rows, current_selected).unwrap_or(0);
     let target = shifted_index(current, rows.len(), delta);
     select_model_near_row(app, &rows, target, delta.is_positive());
-    sync_scroll_to_selection(app, &rows, 14);
+    if app.mode == Mode::BgModelPicker {
+        sync_scroll_to_model_index(app, app.bg_model_picker_selected, &rows, 14);
+    } else {
+        sync_scroll_to_selection(app, &rows, 14);
+    }
 }
 
 fn scroll_models_to(app: &mut TuiApp, offset: usize) {
@@ -1296,6 +1301,14 @@ fn scroll_models_to(app: &mut TuiApp, offset: usize) {
     let target = offset.min(rows.len().saturating_sub(1));
     app.model_scroll = target;
     select_model_near_row(app, &rows, target, true);
+}
+
+fn active_model_list_selection(app: &TuiApp) -> usize {
+    if app.mode == Mode::BgModelPicker {
+        app.bg_model_picker_selected
+    } else {
+        app.selected_model
+    }
 }
 
 fn select_model_near_row(app: &mut TuiApp, rows: &[ListRow], row: usize, prefer_after: bool) {
@@ -1313,9 +1326,14 @@ fn select_model_near_row(app: &mut TuiApp, rows: &[ListRow], row: usize, prefer_
             .find_map(model_row_index)
             .or_else(|| rows.iter().skip(row).find_map(model_row_index))
     };
-    app.selected_model = selected
+    let resolved = selected
         .or_else(|| first_model_index(rows))
-        .unwrap_or(app.selected_model);
+        .unwrap_or_else(|| active_model_list_selection(app));
+    if app.mode == Mode::BgModelPicker {
+        app.bg_model_picker_selected = resolved;
+    } else {
+        app.selected_model = resolved;
+    }
 }
 
 fn model_row_index(row: &ListRow) -> Option<usize> {

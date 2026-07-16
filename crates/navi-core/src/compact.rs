@@ -53,6 +53,8 @@ pub fn micro_compact(messages: &mut [ModelMessage], gap_threshold_minutes: u64) 
             && !msg.content.contains("[Old tool result content cleared]")
         {
             msg.content = "[Old tool result content cleared]".to_string();
+            // Free multimodal payload (e.g. view_image base64) along with text.
+            msg.content_parts.clear();
             cleared += 1;
         }
     }

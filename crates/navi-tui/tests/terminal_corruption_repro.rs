@@ -18,13 +18,15 @@
 //!
 //! ## Fixes applied
 //!
-//! 1. `LeakedTerminalSequenceFilter` now handles OSC (`\x1b]`), SS3 (`\x1bO`),
-//!    and DCS (`\x1bP`) in addition to CSI (`\x1b[`).
-//! 2. `insert_input_char` now rejects control characters (except `\n` and `\t`).
-//! 3. `strip_terminal_control_sequences` now handles OSC and DCS sequences.
-//! 4. Kitty keyboard protocol disable uses `\x1B[>0u` (set flags to 0) in
-//!    addition to `\x1B[<u` (pop one level).
-//! 5. `Event::Resize` now sets `needs_draw = true`.
+//! 1. `LeakedTerminalSequenceFilter` handles OSC/SS3/DCS/CSI residual leaks.
+//! 2. `insert_input_char` rejects control characters (except `\n` and `\t`).
+//! 3. `strip_terminal_control_sequences` sanitizes paste.
+//! 4. Kitty progressive enhancement is **pushed** (DISAMBIGUATE|REPORT_EVENT_TYPES)
+//!    so crossterm stays aligned; parent stack cleared with `=0u` (not push0+pop).
+//! 5. `FocusGained` reasserts keyboard/mouse/paste (pop session + re-push).
+//! 6. Free mouse motion (`?1003`) only while images can hover — cuts multi-window
+//!    motion CSI leaks.
+//! 7. `Event::Resize` sets `needs_draw = true`.
 
 use std::sync::Arc;
 

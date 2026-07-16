@@ -150,6 +150,33 @@ pub struct ToolResult {
     pub output: Value,
 }
 
+/// Internal key used by tools (e.g. `view_image`) to pass multimodal content
+/// to the turn loop without putting base64 into the text observation.
+pub const NAVI_CONTENT_PARTS_KEY: &str = "_navi_content_parts";
+
+/// Extract and remove multimodal content parts from a tool result output.
+///
+/// Tools may embed a `_navi_content_parts` array (serialized [`ContentPart`]s)
+/// in their JSON output. The turn loop calls this before building observations
+/// and `ToolCompleted` events so large base64 payloads never enter the transcript.
+pub fn take_tool_content_parts(
+    result: &mut ToolResult,
+) -> Vec<crate::model::ContentPart> {
+    let Some(obj) = result.output.as_object_mut() else {
+        return Vec::new();
+    };
+    let Some(raw) = obj.remove(NAVI_CONTENT_PARTS_KEY) else {
+        return Vec::new();
+    };
+    match serde_json::from_value::<Vec<crate::model::ContentPart>>(raw) {
+        Ok(parts) => parts,
+        Err(err) => {
+            tracing::warn!(error = %err, "failed to deserialize tool content_parts");
+            Vec::new()
+        }
+    }
+}
+
 pub struct ToolExecutor {
     tools: HashMap<String, Arc<dyn Tool>>,
     validators: HashMap<String, Arc<jsonschema::Validator>>,
@@ -1048,8 +1075,9 @@ impl ToolExecutor {
         self.register(ContextRemainingTool::new(pr.clone()));
         self.register(RequestUserInputTool::new());
         self.register(SandboxTool::new(pr.clone()));
-        self.register(ViewImageTool::new(pr.clone()));
-        self.register(ViewImageTool::inspect_image(pr.clone()));
+        let data_dir = self.policy.data_dir().to_path_buf();
+        self.register(ViewImageTool::new(pr.clone(), data_dir.clone()));
+        self.register(ViewImageTool::inspect_image(pr.clone(), data_dir));
         #[cfg(feature = "browser")]
         self.register(BrowserTool::new(pr.clone()));
         self.register(NewContextWindowTool::new());

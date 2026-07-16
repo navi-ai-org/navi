@@ -429,10 +429,29 @@ pub(crate) fn anthropic_messages_with_cache_control(
             }
             ModelRole::Tool => {
                 let tool_use_id = message.tool_call_id.as_deref().unwrap_or("");
+                // Anthropic accepts images inside tool_result content blocks.
+                let content: Value = if message.content_parts.iter().any(|p| p.is_image()) {
+                    let mut blocks = vec![json!({ "type": "text", "text": message.content })];
+                    for part in &message.content_parts {
+                        if let ContentPart::Image { media_type, data } = part {
+                            blocks.push(json!({
+                                "type": "image",
+                                "source": {
+                                    "type": "base64",
+                                    "media_type": media_type,
+                                    "data": data,
+                                }
+                            }));
+                        }
+                    }
+                    Value::Array(blocks)
+                } else {
+                    Value::String(message.content.clone())
+                };
                 let mut tool_result = json!({
                     "type": "tool_result",
                     "tool_use_id": tool_use_id,
-                    "content": message.content,
+                    "content": content,
                 });
                 // Cache the last tool result.
                 if Some(index) == last_tool_index

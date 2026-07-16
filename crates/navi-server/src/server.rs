@@ -266,15 +266,10 @@ impl NaviServer {
                     }
                 };
 
-                let req = navi_sdk::NaviSessionRequest {
-                    project_dir: Some(snapshot.project.clone()),
-                    session_id: Some(snapshot.id.as_str().to_string()),
-                    initial_events: snapshot.events.clone(),
-                    initial_created_at: (snapshot.created_at > 0).then_some(snapshot.created_at),
-                    initial_updated_at: (snapshot.updated_at > 0).then_some(snapshot.updated_at),
-                    initial_goal: snapshot.goal.clone(),
-                    ..Default::default()
-                };
+                // Rebuild provider history (path first, then durable attachment store).
+                let data_dir = engine.loaded_config().data_dir;
+                let req =
+                    navi_sdk::session_request_from_snapshot(&snapshot, Some(data_dir.as_path()));
 
                 match engine.start_session(req).await {
                     Ok(info) => {
