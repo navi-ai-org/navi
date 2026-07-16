@@ -5,10 +5,17 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::task;
 
-/// Unique identifier for a session, wrapping a string id like `"session-1719612345000"`.
+/// Per-process sequence used alongside time, PID, and entropy when allocating
+/// a session id. A timestamp by itself collides when two NAVI processes start
+/// in the same millisecond.
+static NEXT_SESSION_SEQUENCE: AtomicU64 = AtomicU64::new(1);
+
+/// Unique identifier for a session, wrapping a string id like
+/// `"session-1719612345000-1234-1-a1b2c3d4e5f60708"`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionId(String);
 
@@ -321,10 +328,17 @@ impl SessionStore {
         &self.root
     }
 
-    /// Generates a new `SessionId` based on the current Unix timestamp in milliseconds.
+    /// Generates a session id that is unique across concurrent NAVI instances.
+    ///
+    /// The timestamp keeps ids naturally ordered, while the process id,
+    /// in-process sequence, and random nonce prevent two agents started in the
+    /// same millisecond from sharing a provider cache-affinity identity.
     pub fn create_id() -> SessionId {
         let millis = current_unix_millis();
-        SessionId::new(format!("session-{millis}"))
+        let pid = std::process::id();
+        let sequence = NEXT_SESSION_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+        let nonce = fastrand::u64(..);
+        SessionId::new(format!("session-{millis}-{pid}-{sequence}-{nonce:016x}"))
     }
 
     /// Serializes and saves a snapshot to disk, creating the sessions directory
@@ -1435,5 +1449,24 @@ mod tests {
             id.as_str().starts_with("session-"),
             "session id must start with 'session-'"
         );
+    }
+
+    #[test]
+    fn create_id_is_unique_for_concurrent_agent_sessions() {
+        const WORKERS: usize = 8;
+        const IDS_PER_WORKER: usize = 128;
+
+        let ids = (0..WORKERS)
+            .map(|_| {
+                std::thread::spawn(|| {
+                    (0..IDS_PER_WORKER)
+                        .map(|_| SessionStore::create_id().into_inner())
+                        .collect::<Vec<_>>()
+                })
+            })
+            .flat_map(|worker| worker.join().expect("session-id worker should not panic"))
+            .collect::<std::collections::HashSet<_>>();
+
+        assert_eq!(ids.len(), WORKERS * IDS_PER_WORKER);
     }
 }
