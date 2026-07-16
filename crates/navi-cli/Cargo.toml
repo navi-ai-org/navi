@@ -30,7 +30,7 @@ navi-plugin-broker.workspace = true
 navi-plugin-manifest.workspace = true
 navi-sdk = { workspace = true, default-features = true }
 navi-tui = { workspace = true, default-features = true }
-navi-voice = { path = "../navi-voice", default-features = false }
+navi-voice = { workspace = true, default-features = false }
 
 [features]
 # Portable release binaries default to no ORT (musl/Windows/x64 mac lack
