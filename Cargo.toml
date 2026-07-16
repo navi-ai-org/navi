@@ -55,7 +55,7 @@ homepage = "https://github.com/navi-ai-org/navi"
 readme = "README.md"
 
 [workspace.dependencies]
-copland = { path = "crates/copland" }
+copland = { version = "0.2.7", path = "crates/copland" }
 anyhow = "1"
 async-trait = "0.1"
 base64 = "0.22.1"
