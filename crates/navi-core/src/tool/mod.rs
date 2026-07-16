@@ -159,9 +159,7 @@ pub const NAVI_CONTENT_PARTS_KEY: &str = "_navi_content_parts";
 /// Tools may embed a `_navi_content_parts` array (serialized [`ContentPart`]s)
 /// in their JSON output. The turn loop calls this before building observations
 /// and `ToolCompleted` events so large base64 payloads never enter the transcript.
-pub fn take_tool_content_parts(
-    result: &mut ToolResult,
-) -> Vec<crate::model::ContentPart> {
+pub fn take_tool_content_parts(result: &mut ToolResult) -> Vec<crate::model::ContentPart> {
     let Some(obj) = result.output.as_object_mut() else {
         return Vec::new();
     };

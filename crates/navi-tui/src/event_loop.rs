@@ -142,9 +142,9 @@ fn clear_parent_keyboard_stack(w: &mut impl io::Write) -> io::Result<()> {
     write!(
         w,
         concat!(
-            "\x1B[>4;0m",           // xterm modifyOtherKeys off
+            "\x1B[>4;0m",            // xterm modifyOtherKeys off
             "\x1B[<u\x1B[<u\x1B[<u", // pop parent stack levels
-            "\x1B[=0u",             // set flags to 0 in place (sticks)
+            "\x1B[=0u",              // set flags to 0 in place (sticks)
         )
     )?;
     w.flush()

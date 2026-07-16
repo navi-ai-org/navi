@@ -85,10 +85,7 @@ pub fn model_messages_from_agent_events(
     messages
 }
 
-fn flush_pending_tool_calls(
-    messages: &mut Vec<ModelMessage>,
-    pending: &mut Vec<ToolInvocation>,
-) {
+fn flush_pending_tool_calls(messages: &mut Vec<ModelMessage>, pending: &mut Vec<ToolInvocation>) {
     if pending.is_empty() {
         return;
     }

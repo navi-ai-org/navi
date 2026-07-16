@@ -190,12 +190,10 @@ fn responses_tool_result_with_image_emits_followup_input_image() {
     assert_eq!(items[1]["role"], "user");
     let content = items[1]["content"].as_array().expect("content array");
     assert!(
-        content
-            .iter()
-            .any(|p| p["type"] == "input_image"
-                && p["image_url"]
-                    .as_str()
-                    .is_some_and(|u| u.starts_with("data:image/png;base64,"))),
+        content.iter().any(|p| p["type"] == "input_image"
+            && p["image_url"]
+                .as_str()
+                .is_some_and(|u| u.starts_with("data:image/png;base64,"))),
         "expected input_image follow-up, got {content:?}"
     );
 }

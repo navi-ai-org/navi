@@ -873,7 +873,12 @@ mod tests {
         assert_eq!(parts[0].media_type(), Some("image/png"));
         assert!(parts[0].data().is_some_and(|d| !d.is_empty()));
         // Base64 payload must not remain in the public output after take.
-        assert!(result.output.get(crate::tool::NAVI_CONTENT_PARTS_KEY).is_none());
+        assert!(
+            result
+                .output
+                .get(crate::tool::NAVI_CONTENT_PARTS_KEY)
+                .is_none()
+        );
     }
 
     #[tokio::test]
@@ -917,10 +922,7 @@ mod tests {
         let img_path = dir.path().join("abs.png");
         fs::write(&img_path, "fake png content").unwrap();
 
-        let tool = ViewImageTool::new(
-            PathBuf::from("/nonexistent"),
-            data_dir.path().to_path_buf(),
-        );
+        let tool = ViewImageTool::new(PathBuf::from("/nonexistent"), data_dir.path().to_path_buf());
         let result = tool
             .invoke(ToolInvocation {
                 id: "t16".into(),
