@@ -2,7 +2,7 @@ use crate::errors::ProviderError;
 use crate::mapping::{
     apply_thinking_to_body, chat_tool_to_json, message_to_json, reasoning_text,
     responses_input_item_to_json, responses_tool_to_json, text_delta,
-    thinking_request_for_api_with_levels, usage_from_value,
+    thinking_request_for_api_with_levels, tool_image_followup_user_message, usage_from_value,
 };
 use crate::sse::SseDecoder;
 use crate::transport::ensure_success;
@@ -380,6 +380,11 @@ pub(crate) fn chat_completions_messages(request: &ModelRequest) -> Vec<Value> {
             }
         }
         messages_json.push(mapped);
+        // Chat Completions tool messages are text-only; attach view_image
+        // (and similar) bytes as a follow-up multimodal user message.
+        if let Some(followup) = tool_image_followup_user_message(message) {
+            messages_json.push(message_to_json(&followup));
+        }
     }
     messages_json
 }

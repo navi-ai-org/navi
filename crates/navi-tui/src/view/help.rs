@@ -38,9 +38,9 @@ pub(crate) const HELP_ROWS: &[HelpRow] = &[
         detail: "Fuzzy-search every action and slash-style command, then run it.",
     },
     HelpRow::Entry {
-        key: "ctrl+.  /  ?",
+        key: "ctrl+.  /  ctrl+x  /  ?",
         label: "Open this help",
-        detail: "Keyboard shortcuts cheatsheet. ? works when the input is empty.",
+        detail: "Keyboard shortcuts cheatsheet. Ctrl+X is a classic-control fallback when Ctrl+. needs Kitty/tmux extended-keys. ? works when the input is empty.",
     },
     HelpRow::Entry {
         key: "ctrl+c",

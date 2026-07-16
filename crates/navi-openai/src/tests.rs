@@ -172,6 +172,35 @@ fn responses_messages_serialize_function_call_output() {
 }
 
 #[test]
+fn responses_tool_result_with_image_emits_followup_input_image() {
+    let msg = ModelMessage::tool_result_with_parts(
+        "call-img",
+        "view_image",
+        "image attached",
+        vec![ContentPart::Image {
+            media_type: "image/png".into(),
+            data: "abc123".into(),
+        }],
+    );
+    let items = responses_input_item_to_json(&msg);
+    assert_eq!(items.len(), 2);
+    assert_eq!(items[0]["type"], "function_call_output");
+    assert_eq!(items[0]["call_id"], "call-img");
+    assert_eq!(items[1]["type"], "message");
+    assert_eq!(items[1]["role"], "user");
+    let content = items[1]["content"].as_array().expect("content array");
+    assert!(
+        content
+            .iter()
+            .any(|p| p["type"] == "input_image"
+                && p["image_url"]
+                    .as_str()
+                    .is_some_and(|u| u.starts_with("data:image/png;base64,"))),
+        "expected input_image follow-up, got {content:?}"
+    );
+}
+
+#[test]
 fn extracts_responses_api_output_text_shortcut() {
     let value = json!({ "output_text": "done" });
     assert_eq!(extract_output_text(&value), "done");

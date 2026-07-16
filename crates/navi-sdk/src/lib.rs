@@ -43,7 +43,7 @@ pub use types::{
     NaviProviderSyncSkipped, NaviRuntimeTooling, NaviSavedSessionInfo, NaviSessionInfo,
     NaviSessionRequest, NaviSkillInfo, NaviSyncedProvider, NaviTurnRequest, NaviTurnResponse,
     NaviUsageDetail, NaviUsageLimitSnapshot, NaviUsageReport, NaviUsageWindow,
-    effort_options_for_model,
+    effort_options_for_model, session_request_from_snapshot,
 };
 
 // Re-export engine types so TUI/clients can import from navi_sdk instead of navi_core.
@@ -53,6 +53,7 @@ pub use navi_core::{AgentMode, AttachmentKind, ContentPart, ProposedPlan, Propos
 pub use navi_core::session::{
     clean_session_title, current_unix_timestamp, session_title_from_events,
 };
+pub use navi_core::{model_messages_from_agent_events, rehydrate_tool_content_parts};
 // Event/session types
 pub use navi_core::{
     AgentEvent, AgentRunState, Capability, CapabilityDecision, CapabilityGrant, CapabilityLedger,

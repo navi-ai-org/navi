@@ -15,6 +15,8 @@ The engine behind [NAVI](https://github.com/navi-ai-org/navi) — a local, agent
 | `config` | `NaviConfig` TOML schema, defaults, provider catalog, and harness profiles |
 | `tool` | `ToolExecutor`, built-in tools (`read_file`, `write_file`, `bash`, `grep`, …), and the `Tool` trait |
 | `session` | `SessionStore` persistence with secret redaction |
+| `session_replay` | Rebuild provider history from events; rehydrate `view_image` attachments |
+| `attachment_store` | Durable content-addressed blobs under `{data_dir}/attachments/` |
 | `compact` | Three-level conversation compaction: micro, auto, and session memory |
 | `credentials` | Credential store, environment resolution, and provider key lookup |
 | `event` | `AgentEvent` / `RuntimeEvent` types for streaming agent state |

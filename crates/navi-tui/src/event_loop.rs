@@ -6,7 +6,7 @@ use std::time::Duration;
 use anyhow::Result;
 use crossterm::event::{
     self, DisableBracketedPaste, EnableBracketedPaste, Event, KeyEventKind,
-    PopKeyboardEnhancementFlags,
+    KeyboardEnhancementFlags, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
 };
 use crossterm::execute;
 use crossterm::terminal::{
@@ -14,6 +14,17 @@ use crossterm::terminal::{
 };
 use ratatui::backend::Backend;
 use ratatui::prelude::{CrosstermBackend, Terminal};
+
+/// Kitty progressive-enhancement flags NAVI owns for this session.
+///
+/// Negotiate (don't fight) the protocol so the terminal and crossterm stay
+/// aligned — same solid strategy as Grok Build.
+///
+/// - `DISAMBIGUATE_ESCAPE_CODES` — Ctrl/Shift/Alt chords become unambiguous CSI-u
+/// - `REPORT_EVENT_TYPES` — Press/Repeat/Release (we only handle Press|Repeat)
+const NAVI_KEYBOARD_FLAGS: KeyboardEnhancementFlags =
+    KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
+        .union(KeyboardEnhancementFlags::REPORT_EVENT_TYPES);
 
 use crate::app::TuiApp;
 use crate::chat::submit_message;
@@ -110,63 +121,110 @@ pub fn run(app: TuiApp) -> Result<()> {
 }
 
 fn enter_terminal_modes(w: &mut impl io::Write) -> io::Result<()> {
-    reset_terminal_input_modes(w)?;
+    clear_leftover_terminal_modes(w)?;
     execute!(w, EnterAlternateScreen, EnableBracketedPaste)?;
-    disable_extended_keyboard_protocols(w)?;
+    // Re-assert after alternate-screen entry — some terminals re-apply parent
+    // Kitty flags when switching screens.
+    enable_navi_keyboard_protocol(w)?;
     enable_focus_tracking(w)?;
-    enable_mouse_capture(w)
+    // Base mouse only (no free-motion). Free-motion is synced later when images
+    // need hover — keeps multi-window sessions from leaking motion CSI.
+    enable_mouse_capture(w, false)
 }
 
-/// Aggressively disable all extended keyboard protocols that can corrupt
-/// input parsing. Terminals like Kitty, WezTerm, and Ghostty enable enhanced
-/// keyboard protocols by default or inherit them from the parent shell. When
-/// these protocols are active, key events are encoded as CSI sequences
-/// (e.g. `CSI 99;133u` for the 'c' key) that crossterm cannot parse, causing
-/// raw protocol bytes to leak into the TUI as garbage characters.
+/// Clear parent Kitty stack without the historical no-op (`>0u` then immediate pop).
 ///
-/// This function sends every known disable sequence:
-/// - `\x1B[>0u`  — set Kitty keyboard flags to 0 (full disable)
-/// - `\x1B[<u`   — pop Kitty keyboard flags (belt-and-suspenders)
-/// - `\x1B[>4;0m` — disable xterm modifyOtherKeys
-/// - `\x1B[?2004h` is NOT sent (we enable bracketed paste separately)
-fn disable_extended_keyboard_protocols(w: &mut impl io::Write) -> io::Result<()> {
-    write!(w, "\x1B[>4;0m\x1B[>0u\x1B[<u")?;
+/// Kitty progressive enhancement is a stack:
+/// - `CSI > flags u` — push
+/// - `CSI < u` / `<1u` — pop
+/// - `CSI = flags u` — set in place
+fn clear_parent_keyboard_stack(w: &mut impl io::Write) -> io::Result<()> {
+    write!(
+        w,
+        concat!(
+            "\x1B[>4;0m",           // xterm modifyOtherKeys off
+            "\x1B[<u\x1B[<u\x1B[<u", // pop parent stack levels
+            "\x1B[=0u",             // set flags to 0 in place (sticks)
+        )
+    )?;
     w.flush()
 }
 
-/// Enable terminal focus tracking (DEC 1004). When the user returns to the
-/// NAVI window, the terminal sends `FocusGained` (`\x1B[I`), which we use
-/// to re-disable extended keyboard protocols that the terminal may have
-/// re-activated while we were away.
+/// Own the Kitty keyboard protocol for this session (Grok-style negotiate).
+fn enable_navi_keyboard_protocol(w: &mut impl io::Write) -> io::Result<()> {
+    clear_parent_keyboard_stack(w)?;
+    // Emits `CSI > 3 u` for DISAMBIGUATE | REPORT_EVENT_TYPES.
+    execute!(w, PushKeyboardEnhancementFlags(NAVI_KEYBOARD_FLAGS))
+}
+
+/// Lightweight reassert on FocusGained: pop our previous push, re-push, restore
+/// paste/focus/mouse. Avoids thrashing the parent stack with a full clear every
+/// focus cycle (multi-window long sessions).
+fn reassert_terminal_input_modes(w: &mut impl io::Write, free_motion: bool) -> io::Result<()> {
+    let _ = execute!(w, PopKeyboardEnhancementFlags);
+    execute!(w, PushKeyboardEnhancementFlags(NAVI_KEYBOARD_FLAGS))?;
+    execute!(w, EnableBracketedPaste)?;
+    enable_focus_tracking(w)?;
+    enable_mouse_capture(w, free_motion)
+}
+
 fn enable_focus_tracking(w: &mut impl io::Write) -> io::Result<()> {
     write!(w, "\x1B[?1004h")?;
     w.flush()
 }
 
+fn clear_leftover_terminal_modes(w: &mut impl io::Write) -> io::Result<()> {
+    disable_mouse_capture(w)?;
+    let _ = execute!(w, DisableBracketedPaste, PopKeyboardEnhancementFlags);
+    clear_parent_keyboard_stack(w)
+}
+
 fn reset_terminal_input_modes(w: &mut impl io::Write) -> io::Result<()> {
     disable_mouse_capture(w)?;
     execute!(w, DisableBracketedPaste, PopKeyboardEnhancementFlags)?;
-    disable_extended_keyboard_protocols(w)
+    // Leave the shell in classic keyboard mode.
+    clear_parent_keyboard_stack(w)
 }
 
-/// Enable mouse clicks/scroll/drag and free motion for image-chip hover.
-fn enable_mouse_capture(w: &mut impl io::Write) -> io::Result<()> {
-    // Normal tracking: report button press/release (?1000h)
-    // Button-event tracking: report drag while a button is held (?1002h)
-    // Any-event tracking: free mouse-motion for image hover open/leave (?1003h)
-    // SGR extended coordinates: supports >223 columns/rows (?1006h)
-    //
-    // ?1003 is required so leaving `[Image N]` can close the lightbox. Motion
-    // handlers must stay cheap (only redraw when hover state actually changes).
-    write!(w, "\x1B[?1000h\x1B[?1002h\x1B[?1003h\x1B[?1006h")?;
+/// Whether free mouse motion (?1003) is useful right now.
+///
+/// Free-motion is the main multi-window leak source. Only enable it when image
+/// hover can actually fire (pending chips, chat images, or an open lightbox).
+pub(crate) fn wants_mouse_free_motion(app: &TuiApp) -> bool {
+    app.image_hover.is_some()
+        || !app.pending_images.is_empty()
+        || app.messages.iter().any(|m| !m.images.is_empty())
+}
+
+/// Enable mouse capture.
+///
+/// - Always: `?1000` press/release, `?1002` drag, `?1006` SGR coords
+/// - Optional: `?1003` free-motion for image-chip hover open/leave
+fn enable_mouse_capture(w: &mut impl io::Write, free_motion: bool) -> io::Result<()> {
+    if free_motion {
+        write!(w, "\x1B[?1000h\x1B[?1002h\x1B[?1003h\x1B[?1006h")?;
+    } else {
+        // Explicitly disable free-motion so a previous session / focus cycle
+        // does not leave ?1003 stuck on.
+        write!(w, "\x1B[?1000h\x1B[?1002h\x1B[?1003l\x1B[?1006h")?;
+    }
     w.flush()
+}
+
+/// Sync free-motion on/off when image state changes. No-ops if already correct.
+pub(crate) fn sync_mouse_free_motion(app: &mut TuiApp) -> io::Result<bool> {
+    let want = wants_mouse_free_motion(app);
+    if app.mouse_free_motion == want {
+        return Ok(false);
+    }
+    let mut stdout = io::stdout();
+    enable_mouse_capture(&mut stdout, want)?;
+    app.mouse_free_motion = want;
+    Ok(true)
 }
 
 /// Disable mouse modes defensively.
 fn disable_mouse_capture(w: &mut impl io::Write) -> io::Result<()> {
-    // Disable every common mouse mode defensively in case a previous session
-    // or a child process left the terminal in motion/focus tracking.
-    // Also disable focus tracking (?1004) here since it's a defensive reset.
     write!(
         w,
         "\x1B[?9l\x1B[?1000l\x1B[?1001l\x1B[?1002l\x1B[?1003l\x1B[?1004l\x1B[?1005l\x1B[?1006l\x1B[?1015l"
@@ -216,16 +274,25 @@ mod tests {
     use super::*;
 
     #[test]
-    fn mouse_capture_enables_drag_and_free_motion_for_hover() {
+    fn mouse_capture_base_mode_has_no_free_motion() {
         let mut out = Vec::new();
-
-        enable_mouse_capture(&mut out).expect("enable mouse capture");
+        enable_mouse_capture(&mut out, false).expect("enable mouse capture");
         let text = String::from_utf8(out).expect("utf8 escape sequences");
 
         assert!(text.contains("\x1B[?1000h"));
         assert!(text.contains("\x1B[?1002h"));
-        assert!(text.contains("\x1B[?1003h"));
         assert!(text.contains("\x1B[?1006h"));
+        // Free-motion off by default (multi-window solid path).
+        assert!(text.contains("\x1B[?1003l"));
+        assert!(!text.contains("\x1B[?1003h"));
+    }
+
+    #[test]
+    fn mouse_capture_free_motion_when_requested() {
+        let mut out = Vec::new();
+        enable_mouse_capture(&mut out, true).expect("enable free motion");
+        let text = String::from_utf8(out).expect("utf8");
+        assert!(text.contains("\x1B[?1003h"));
     }
 
     #[test]
@@ -252,7 +319,8 @@ mod tests {
         assert!(text.contains("\x1B[?1003l"));
         assert!(text.contains("\x1B[?1002l"));
         assert!(text.contains("\x1B[>4;0m"));
-        assert!(text.contains("\x1B[<u"));
+        assert!(text.contains("\x1B[<1u") || text.contains("\x1B[<u"));
+        assert!(text.contains("\x1B[=0u"));
     }
 
     #[test]
@@ -334,41 +402,70 @@ mod tests {
     }
 
     #[test]
-    fn terminal_input_reset_fully_disables_kitty_keyboard() {
+    fn terminal_input_reset_leaves_classic_keyboard_for_shell() {
         let mut out = Vec::new();
-
-        reset_terminal_input_modes(&mut out).expect("reset terminal input modes");
-        let text = String::from_utf8(out).expect("utf8 escape sequences");
-
-        // \x1B[>0u sets Kitty flags to 0 (full disable)
-        assert!(text.contains("\x1B[>0u"));
-        // \x1B[<u pops one level (belt-and-suspenders)
-        assert!(text.contains("\x1B[<u"));
+        reset_terminal_input_modes(&mut out).expect("reset");
+        let text = String::from_utf8(out).expect("utf8");
+        assert!(text.contains("\x1B[=0u"));
+        assert!(
+            !text.contains("\x1B[>0u\x1B[<u") && !text.contains("\x1B[>0u\x1B[<1u"),
+            "must not push-0 then immediate pop: {text:?}"
+        );
     }
 
     #[test]
-    fn enter_terminal_modes_disables_kitty_keyboard_on_entry() {
+    fn enter_terminal_modes_pushes_kitty_and_skips_free_motion() {
         let mut out = Vec::new();
+        enter_terminal_modes(&mut out).expect("enter");
+        let text = String::from_utf8(out).expect("utf8");
 
-        enter_terminal_modes(&mut out).expect("enter terminal modes");
-        let text = String::from_utf8(out).expect("utf8 escape sequences");
-
-        // Kitty keyboard protocol must be disabled when entering the TUI,
-        // not just on exit. Otherwise crossterm cannot parse key events
-        // encoded as CSI 99;133u and raw bytes leak into the input field.
+        // DISAMBIGUATE|REPORT_EVENT_TYPES → >3u
         assert!(
-            text.contains("\x1B[>0u"),
-            "enter_terminal_modes must disable Kitty keyboard protocol on entry"
+            text.contains("\x1B[>3u"),
+            "must PushKeyboardEnhancementFlags: {text:?}"
         );
+        assert!(text.contains("\x1B[=0u"));
+        assert!(text.contains("\x1B[>4;0m"));
+        assert!(text.contains("\x1B[?1004h"));
+        assert!(text.contains("\x1B[?1000h"));
+        // Default: free-motion off
+        assert!(
+            text.contains("\x1B[?1003l"),
+            "enter must not enable free-motion by default: {text:?}"
+        );
+    }
+
+    #[test]
+    fn reassert_pops_then_pushes_keyboard_enhancement() {
+        let mut out = Vec::new();
+        reassert_terminal_input_modes(&mut out, false).expect("reassert");
+        let text = String::from_utf8(out).expect("utf8");
+        assert!(text.contains("\x1B[<1u") || text.contains("\x1B[<u"));
+        assert!(text.contains("\x1B[>3u"));
+        assert!(text.contains("\x1B[?1004h"));
+    }
+
+    #[test]
+    fn parent_keyboard_clear_does_not_undo_itself() {
+        let mut out = Vec::new();
+        clear_parent_keyboard_stack(&mut out).expect("clear");
+        let text = String::from_utf8(out).expect("utf8");
+        assert!(text.contains("\x1B[=0u"));
+        assert!(
+            !text.contains("\x1B[>0u\x1B[<u") && !text.contains("\x1B[>0u\x1B[<1u"),
+            "clear must not push 0 and immediately pop: {text:?}"
+        );
+    }
+
+    #[test]
+    fn wants_mouse_free_motion_only_with_images() {
+        let app = crate::tests::test_app("");
+        assert!(!wants_mouse_free_motion(&app));
     }
 
     #[test]
     fn leaked_filter_does_not_swallow_bare_escape_key() {
         let mut filter = LeakedTerminalSequenceFilter::default();
-
-        // KeyCode::Esc means the user pressed Escape — it must NOT be
-        // swallowed by the filter, otherwise the next keypress would be
-        // consumed as part of a "leaked sequence".
         assert!(
             !filter.should_drop(&crossterm::event::KeyCode::Esc),
             "KeyCode::Esc is a real Escape press, not a leaked sequence"
@@ -426,6 +523,10 @@ where
         if crate::view::image_preview::poll_image_hover_close(app) {
             needs_draw = true;
         }
+
+        // Toggle ?1003 only while image hover can fire (pending/chat images or
+        // open lightbox). Avoids free-motion CSI leaks across multi-window use.
+        let _ = sync_mouse_free_motion(app);
 
         // Check for async model stream events (non-blocking)
         while let Some(event) = app.try_recv_async_event() {
@@ -497,18 +598,24 @@ where
                     needs_draw = true;
                 }
                 Event::FocusGained => {
-                    // The user returned to the NAVI window. Force a full
-                    // redraw to recover from any terminal state corruption
-                    // that happened while we were away (alternate screen
-                    // may have been partially overwritten, cursor position
-                    // may be wrong, etc).
+                    // Multi-window solid path:
+                    // 1. Re-negotiate keyboard/paste/focus/mouse (parent may
+                    //    have restored Kitty flags while unfocused).
+                    // 2. Reset leak-filter mid-sequence state.
+                    // 3. Full redraw for alternate-screen recovery.
                     app.terminal_focused = true;
                     leaked_terminal_sequence_filter.reset();
+                    let free_motion = wants_mouse_free_motion(app);
+                    app.mouse_free_motion = free_motion;
+                    let mut stdout = io::stdout();
+                    let _ = reassert_terminal_input_modes(&mut stdout, free_motion);
                     terminal.clear()?;
                     needs_draw = true;
                 }
                 Event::FocusLost => {
                     app.terminal_focused = false;
+                    // Drop in-flight leaked CSI so a partial mouse sequence
+                    // outside the window does not swallow the next real key.
                     leaked_terminal_sequence_filter.reset();
                 }
                 _ => {}

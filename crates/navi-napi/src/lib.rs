@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::sync::{Arc, OnceLock};
 
 use async_trait::async_trait;
@@ -32,8 +31,8 @@ fn install_panic_guard() {
     }));
 }
 use navi_core::{
-    AgentEvent, ContentPart, ContextPacket, ModelMessage, RuntimeComponents, ThinkingConfig,
-    ToolInvocation, ToolKind, ToolResult,
+    ContentPart, ContextPacket, RuntimeComponents, ThinkingConfig, ToolInvocation, ToolKind,
+    ToolResult,
 };
 use navi_sdk::{
     ApprovalDecision, HostToolDefinition, HostToolHandler, HostToolInvocation,
@@ -1200,20 +1199,12 @@ impl NaviNapiEngine {
         let project = snapshot.project.clone();
         let created_at = snapshot.created_at;
         let updated_at = snapshot.updated_at;
-        // Move events once — do not clone the full history for start + return.
-        let events = snapshot.events;
-        let initial_messages = initial_messages_from_events(&events);
+        // Rebuild provider history (path first, then durable attachment store).
+        let data_dir = self.inner.loaded_config().data_dir;
+        let req = navi_sdk::session_request_from_snapshot(&snapshot, Some(data_dir.as_path()));
 
         self.inner
-            .start_session(NaviSessionRequest {
-                project_dir: Some(project.clone()),
-                session_id: Some(session_id.clone()),
-                initial_messages,
-                initial_events: events,
-                initial_created_at: Some(created_at),
-                initial_updated_at: Some(updated_at),
-                ..NaviSessionRequest::default()
-            })
+            .start_session(req)
             .await
             .map_err(to_napi_error)?;
 
@@ -1936,59 +1927,6 @@ fn parse_thinking_config(value: &str) -> Result<ThinkingConfig> {
     Err(Error::from_reason(format!(
         "unsupported effort/thinking config '{value}', expected max, high, medium, low, off, or on (legacy adaptive maps to max)"
     )))
-}
-
-fn initial_messages_from_events(events: &[AgentEvent]) -> Vec<ModelMessage> {
-    let mut messages = Vec::new();
-    let mut tool_names = HashMap::new();
-
-    for event in events {
-        match event {
-            AgentEvent::UserTaskSubmitted {
-                text,
-                content_parts,
-                submitted_at: _,
-            } => {
-                if content_parts.is_empty() {
-                    messages.push(ModelMessage::user(text.clone()));
-                } else {
-                    messages.push(ModelMessage::user_multimodal(
-                        text.clone(),
-                        content_parts.clone(),
-                    ));
-                }
-            }
-            AgentEvent::ModelOutput { text, thinking } => {
-                messages.push(ModelMessage::assistant_with_thinking(
-                    text.clone(),
-                    thinking.clone(),
-                ));
-            }
-            AgentEvent::ToolRequested(invocation) => {
-                tool_names.insert(invocation.id.clone(), invocation.tool_name.clone());
-                messages.push(ModelMessage::assistant_tool_call(invocation.clone()));
-            }
-            AgentEvent::ToolCompleted(result) => {
-                let tool_name = tool_names
-                    .get(&result.invocation_id)
-                    .cloned()
-                    .unwrap_or_else(|| "tool".to_string());
-                let output = result
-                    .output
-                    .as_str()
-                    .map(ToString::to_string)
-                    .unwrap_or_else(|| result.output.to_string());
-                messages.push(ModelMessage::tool_result(
-                    result.invocation_id.clone(),
-                    tool_name,
-                    output,
-                ));
-            }
-            _ => {}
-        }
-    }
-
-    messages
 }
 
 fn build_hook_callback(handler: Function<JsonValue, UnknownReturnValue>) -> Result<JsHookCallback> {

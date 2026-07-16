@@ -1,25 +1,65 @@
-## New Features
+## Highlights
 
-- **Desktop notifications** — OS toasts when a turn/goal finishes while the terminal is unfocused (`tui.desktop_notifications`, default on)
-- **SDK / NAPI / Dart surface sync** — remaining `NaviEngine` methods bound for Tutor and mobile clients (TUI extensions, plugin install-with-meta, accounts, routing models, `memory_update`, voice events, session rewind, updates)
-- **Registry** — remote canonical model catalog sync and provider base resolution
-- **`repo_explore`** — BM25 + symbol search as a real tool (not a subagent)
-- **Model-specific effort options** exposed to SDK/NAPI clients
+Large feature release after **0.2.3**: WASM plugins + marketplace, browser automation, remote voice, modular skills, full bindings parity, registry catalog, and substantial TUI/reliability work.
 
-## Bug Fixes
+### Plugins & marketplace
 
-- **Tool timeouts no longer hang the agent** — kill the full process group on bash/process deadline, mark timed-out background tasks `ok=false`, and stop the turn from sitting on “Waiting for model”
-- **Duplicate tool error text** — failed tool cards no longer show the same error in both the header and body
-- **xAI / Grok OAuth** — match Grok CLI routing headers for subscription billing
-- **Charm Hyper prompt cache** — stop isolating cache keys per session (restore prefix hits)
-- **CI** — workflows no longer run on bare pushes to `main` (tags, PRs, and manual dispatch only)
-- TUI: usage/command palette/settings polish, MCP status, diffs, paste while streaming, subagent progress, plan progress strip
+- WASM-only plugins via `wasmtime` + host brokers (native plugin host removed)
+- Marketplace catalog, example packages, validator, signed `hello-echo`, Discord MCP package
+- Install side effects for skills and MCP (with merge confirmation)
+- Host-mediated TUI extensions via `tui.json`; WASM runtime on by default
 
-## Bindings
+### Browser
 
-- **`@navi-agent/napi` `0.2.4`** — full engine surface + `loadedConfig().tui.desktopNotifications`
-- **`navi-dart` `0.2.4`** — C ABI gap-fill for accounts, memory update, voice events, plugins, updates
-- Docker binding harness: `scripts/test-bindings-docker.sh`
+- Built-in `browser` tool (Cloak/CDP backends)
+- `navi browser status|doctor|install`; server routes and TUI hubs
+
+### Voice
+
+- Remote dictation clients: OpenAI, Groq, Wispr Flow
+- `[voice]` config + registry transcription provider catalog
+- SDK/CLI wire-up and remote doctor
+
+### Skills
+
+- Modular SQLite skill store with manage tools and CRUD APIs
+- Drop filesystem `SKILL.md` discovery and deprecated `skills.dirs`
+
+### Registry & models
+
+- Remote canonical model catalog sync and provider base resolution
+- Model-specific effort levels; remove adaptive thinking / learning tutor mode
+- xAI Grok Build OAuth routing; Charm Hyper prefix-cache restored
+
+### Tools & runtime
+
+- `repo_explore` as BM25 + symbol search (not a subagent)
+- Kill timed-out bash/process trees; background timeouts return `ok=false`
+- Harden subagents; live progress after background spawn
+
+### Sessions
+
+- Rewind history when editing a past user message
+- Persist partial model output on turn error; mid-stream prefill resume
+
+### TUI
+
+- Desktop notifications for finished unfocused jobs
+- Self-update + About modal; setup wizard (approvals + marketplace tip)
+- Plan as modal + live progress strip; Ctrl+Down jump to latest
+- Paste while streaming; image lightbox; usage/palette/settings/MCP polish
+
+### SDK / NAPI / Dart
+
+- Full engine surface for voice, memory, MCP, skills, plugins, accounts, rewind, updates
+- Docker binding verifier: `scripts/test-bindings-docker.sh`
+- `@navi-agent/napi` **0.2.4** and platform packages; `navi-dart` **0.2.4**
+
+### Performance & CI
+
+- Cut session bloat, SQLite thrash, and streaming TUI cost
+- CI no longer runs on bare pushes to `main`
+- Multi-agent tool-quality benchmark suite
 
 ## Install
 

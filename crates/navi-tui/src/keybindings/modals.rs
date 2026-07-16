@@ -7,9 +7,9 @@ use crate::mouse::copy_text_to_clipboard;
 use crate::notifications::show_notification;
 use crate::persistence::{load_session, save_current_session, save_preferences};
 use crate::providers::{
-    ListRow, apply_model_selection, build_model_rows, first_model_index,
-    model_is_available_for_selection, next_model_index, previous_model_index, rebuild_provider,
-    save_api_key_and_rebuild, selected_model_in_rows, start_provider_oauth,
+    apply_model_selection, build_model_rows, first_model_index, model_is_available_for_selection,
+    next_model_index, next_model_index_from, previous_model_index, previous_model_index_from,
+    rebuild_provider, save_api_key_and_rebuild, selected_model_in_rows, start_provider_oauth,
     sync_scroll_to_model_index, sync_scroll_to_selection,
 };
 use crate::session::{load_saved_sessions, load_session_snapshot};
@@ -349,31 +349,30 @@ fn resolve_active_question(app: &mut TuiApp, response: QuestionResponse) {
 
 pub(crate) fn handle_thinking_key(app: &mut TuiApp, code: KeyCode) -> bool {
     let options = thinking_options_for_app(app);
+    if options.is_empty() {
+        if matches!(code, KeyCode::Esc) {
+            super::close_active_modal(app);
+        }
+        return false;
+    }
     let max_idx = options.len().saturating_sub(1);
-    // Map selected_thinking (global index) onto the filtered list.
+    // Cursor is `selected_thinking` (global level index), NOT an index into
+    // `options`. Fall back to the active thinking_level when the cursor is
+    // not among the model's offered levels.
     let mut local_idx = options
         .iter()
-        .position(|l| *l == app.thinking_level)
-        .or_else(|| {
-            options
-                .get(app.selected_thinking)
-                .map(|_| app.selected_thinking.min(max_idx))
-        })
-        .unwrap_or(0);
-    // Prefer selected_thinking if it points into options by label order.
-    if let Some(sel) = options.get(app.selected_thinking) {
-        if let Some(pos) = options.iter().position(|l| l == sel) {
-            local_idx = pos;
-        }
-    }
+        .position(|l| l.index() == app.selected_thinking)
+        .or_else(|| options.iter().position(|l| *l == app.thinking_level))
+        .unwrap_or(0)
+        .min(max_idx);
 
     match code {
         KeyCode::Esc => super::close_active_modal(app),
-        KeyCode::Down => {
+        KeyCode::Down | KeyCode::Char('j') | KeyCode::Tab => {
             local_idx = (local_idx + 1).min(max_idx);
             app.selected_thinking = options[local_idx].index();
         }
-        KeyCode::Up => {
+        KeyCode::Up | KeyCode::Char('k') | KeyCode::BackTab => {
             local_idx = local_idx.saturating_sub(1);
             app.selected_thinking = options[local_idx].index();
         }
@@ -1930,12 +1929,7 @@ fn handle_background_models_list_key(app: &mut TuiApp, code: KeyCode) {
                 app.bg_model_picker_active = true;
                 app.attachment_model_picker_active = false;
                 app.bg_model_picker_task = Some(task_id.to_string());
-                app.bg_model_picker_selected = 0;
-                app.model_scroll = 0;
-                app.model_filter.clear();
-                app.model_filter_cursor = 0;
-                super::replace_modal(app, ModalKind::BgModelPicker);
-                app.refresh_authenticated_providers();
+                open_bg_model_picker(app);
             }
         }
         KeyCode::Char('d') => {
@@ -2006,12 +2000,7 @@ fn handle_attachment_models_list_key(app: &mut TuiApp, code: KeyCode) {
                 app.attachment_model_picker_active = true;
                 app.bg_model_picker_active = false;
                 app.bg_model_picker_task = Some(modality.to_string());
-                app.bg_model_picker_selected = 0;
-                app.model_scroll = 0;
-                app.model_filter.clear();
-                app.model_filter_cursor = 0;
-                super::replace_modal(app, ModalKind::BgModelPicker);
-                app.refresh_authenticated_providers();
+                open_bg_model_picker(app);
             }
         }
         KeyCode::Char('d') => {
@@ -2037,6 +2026,22 @@ fn handle_attachment_models_list_key(app: &mut TuiApp, code: KeyCode) {
         }
         _ => {}
     }
+}
+
+/// Open the shared model list used for agent routes and attachment fallbacks.
+///
+/// Selection starts on the first **model** row (often under "— Recent models —"),
+/// never raw index `0` which may be absent from the filtered/available list —
+/// that made Down a silent no-op.
+fn open_bg_model_picker(app: &mut TuiApp) {
+    app.model_scroll = 0;
+    app.model_filter.clear();
+    app.model_filter_cursor = 0;
+    app.refresh_authenticated_providers();
+    let rows = build_model_rows(app);
+    app.bg_model_picker_selected = first_model_index(&rows).unwrap_or(0);
+    sync_scroll_to_model_index(app, app.bg_model_picker_selected, &rows, 14);
+    super::replace_modal(app, ModalKind::BgModelPicker);
 }
 
 pub(crate) fn handle_extensions_hub_key(app: &mut TuiApp, code: KeyCode) -> bool {
@@ -2128,17 +2133,8 @@ pub(crate) fn handle_bg_model_picker_key(
             super::replace_modal(app, ModalKind::ModelRouting);
         }
         KeyCode::Up | KeyCode::Char('k') => {
-            if let Some(current) = rows.iter().position(|row| match row {
-                ListRow::Model { index } => *index == app.bg_model_picker_selected,
-                _ => false,
-            }) {
-                if let Some(prev) = rows.iter().take(current).rev().find_map(|row| match row {
-                    ListRow::Model { index } => Some(*index),
-                    _ => None,
-                }) {
-                    app.bg_model_picker_selected = prev;
-                }
-            }
+            app.bg_model_picker_selected =
+                previous_model_index_from(app.bg_model_picker_selected, &rows);
             sync_scroll_to_model_index(
                 app,
                 app.bg_model_picker_selected,
@@ -2147,16 +2143,40 @@ pub(crate) fn handle_bg_model_picker_key(
             );
         }
         KeyCode::Down | KeyCode::Char('j') => {
-            if let Some(current) = rows.iter().position(|row| match row {
-                ListRow::Model { index } => *index == app.bg_model_picker_selected,
-                _ => false,
-            }) {
-                if let Some(next) = rows.iter().skip(current + 1).find_map(|row| match row {
-                    ListRow::Model { index } => Some(*index),
-                    _ => None,
-                }) {
-                    app.bg_model_picker_selected = next;
+            // When selection is not in `rows` (stale 0 after open / filter),
+            // next_model_index_from lands on the first model instead of no-op.
+            app.bg_model_picker_selected =
+                next_model_index_from(app.bg_model_picker_selected, &rows);
+            sync_scroll_to_model_index(
+                app,
+                app.bg_model_picker_selected,
+                &rows,
+                VISIBLE_ROWS.into(),
+            );
+        }
+        KeyCode::PageDown => {
+            // Jump a few model rows for long catalogs.
+            for _ in 0..5 {
+                let next = next_model_index_from(app.bg_model_picker_selected, &rows);
+                if next == app.bg_model_picker_selected {
+                    break;
                 }
+                app.bg_model_picker_selected = next;
+            }
+            sync_scroll_to_model_index(
+                app,
+                app.bg_model_picker_selected,
+                &rows,
+                VISIBLE_ROWS.into(),
+            );
+        }
+        KeyCode::PageUp => {
+            for _ in 0..5 {
+                let prev = previous_model_index_from(app.bg_model_picker_selected, &rows);
+                if prev == app.bg_model_picker_selected {
+                    break;
+                }
+                app.bg_model_picker_selected = prev;
             }
             sync_scroll_to_model_index(
                 app,
@@ -2313,12 +2333,7 @@ pub(crate) fn handle_attachment_models_key(app: &mut TuiApp, code: KeyCode) -> b
                 app.attachment_model_picker_active = true;
                 app.bg_model_picker_active = false;
                 app.bg_model_picker_task = Some(modality.to_string());
-                app.bg_model_picker_selected = 0;
-                app.model_scroll = 0;
-                app.model_filter.clear();
-                app.model_filter_cursor = 0;
-                super::replace_modal(app, ModalKind::BgModelPicker);
-                app.refresh_authenticated_providers();
+                open_bg_model_picker(app);
             }
         }
         KeyCode::Char('d') => {

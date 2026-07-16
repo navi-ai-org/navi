@@ -22,6 +22,10 @@ product_packages := "-p navi-core -p navi-openai -p navi-providers -p navi-sdk -
 build:
     cargo build --workspace
 
+# Optimized binary without full release LTO cost (see [profile.release-fast] in Cargo.toml).
+build-fast:
+    cargo build --workspace --profile release-fast
+
 build-release:
     cargo build --workspace --release
 

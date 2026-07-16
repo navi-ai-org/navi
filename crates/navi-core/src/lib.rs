@@ -1,3 +1,4 @@
+pub mod attachment_store;
 pub mod benchmark;
 pub mod branch_race;
 pub mod cancel;
@@ -35,6 +36,7 @@ pub mod runtime_components;
 pub mod sandbox;
 pub mod security;
 pub mod session;
+pub mod session_replay;
 pub mod session_title;
 pub mod setup;
 pub mod skill_mining;
@@ -146,6 +148,7 @@ pub use session::{
     SessionId, SessionRuntime, SessionSnapshot, SessionSnapshotInfo, SessionStore,
     SessionUsageSnapshot, clean_session_title, session_title_from_events,
 };
+pub use session_replay::{model_messages_from_agent_events, rehydrate_tool_content_parts};
 pub use session_title::{SessionTitleHandle, SessionTitleTool};
 pub use setup::{SETUP_INTERVIEW_COMPLETE_MARKER, SETUP_INTERVIEW_PROMPT};
 pub use skill_mining::{

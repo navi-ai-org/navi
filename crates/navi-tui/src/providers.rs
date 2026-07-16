@@ -559,15 +559,13 @@ pub(crate) fn selected_model_in_rows(rows: &[ListRow], selected_model: usize) ->
     })
 }
 
-pub(crate) fn next_model_index(app: &TuiApp, rows: &[ListRow]) -> usize {
-    let Some(current) = selected_model_in_rows(rows, app.selected_model) else {
-        return rows
-            .iter()
-            .find_map(|row| match row {
-                ListRow::Model { index } => Some(*index),
-                ListRow::Header { .. } | ListRow::Spacer => None,
-            })
-            .unwrap_or(app.selected_model);
+/// Next selectable model index after `selected` in `rows`.
+///
+/// If `selected` is not currently in the list (e.g. opened as `0` while Recent
+/// starts on another index), lands on the first model row instead of no-op.
+pub(crate) fn next_model_index_from(selected: usize, rows: &[ListRow]) -> usize {
+    let Some(current) = selected_model_in_rows(rows, selected) else {
+        return first_model_index(rows).unwrap_or(selected);
     };
 
     rows.iter()
@@ -576,18 +574,13 @@ pub(crate) fn next_model_index(app: &TuiApp, rows: &[ListRow]) -> usize {
             ListRow::Model { index } => Some(*index),
             ListRow::Header { .. } | ListRow::Spacer => None,
         })
-        .unwrap_or(app.selected_model)
+        .unwrap_or(selected)
 }
 
-pub(crate) fn previous_model_index(app: &TuiApp, rows: &[ListRow]) -> usize {
-    let Some(current) = selected_model_in_rows(rows, app.selected_model) else {
-        return rows
-            .iter()
-            .find_map(|row| match row {
-                ListRow::Model { index } => Some(*index),
-                ListRow::Header { .. } | ListRow::Spacer => None,
-            })
-            .unwrap_or(app.selected_model);
+/// Previous selectable model index before `selected` in `rows`.
+pub(crate) fn previous_model_index_from(selected: usize, rows: &[ListRow]) -> usize {
+    let Some(current) = selected_model_in_rows(rows, selected) else {
+        return first_model_index(rows).unwrap_or(selected);
     };
 
     rows.iter()
@@ -597,7 +590,15 @@ pub(crate) fn previous_model_index(app: &TuiApp, rows: &[ListRow]) -> usize {
             ListRow::Model { index } => Some(*index),
             ListRow::Header { .. } | ListRow::Spacer => None,
         })
-        .unwrap_or(app.selected_model)
+        .unwrap_or(selected)
+}
+
+pub(crate) fn next_model_index(app: &TuiApp, rows: &[ListRow]) -> usize {
+    next_model_index_from(app.selected_model, rows)
+}
+
+pub(crate) fn previous_model_index(app: &TuiApp, rows: &[ListRow]) -> usize {
+    previous_model_index_from(app.selected_model, rows)
 }
 
 pub(crate) fn sync_scroll_to_selection(app: &mut TuiApp, rows: &[ListRow], visible_rows: u16) {

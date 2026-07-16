@@ -1101,9 +1101,13 @@ pub(crate) fn render_thinking_picker(frame: &mut Frame<'_>, app: &TuiApp, area: 
 
     let options = crate::keybindings::modals::thinking_options_for_app(app);
     let binary = crate::keybindings::modals::effort_is_binary_for_app(app);
+    // Cursor follows `selected_thinking` only. Do NOT fall back to
+    // `thinking_level` in the same `.position` — that kept the highlight on
+    // the current level forever while arrow keys updated selected_thinking.
     let selected_local = options
         .iter()
-        .position(|l| l.index() == app.selected_thinking || *l == app.thinking_level)
+        .position(|l| l.index() == app.selected_thinking)
+        .or_else(|| options.iter().position(|l| *l == app.thinking_level))
         .unwrap_or(0);
 
     let items = options

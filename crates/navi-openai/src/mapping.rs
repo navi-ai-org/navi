@@ -85,6 +85,35 @@ fn attachment_placeholder(kind: &str, media_type: &str, name: Option<&str>) -> S
     }
 }
 
+/// Build a synthetic user multimodal message carrying image parts from a tool result.
+///
+/// Used by Chat Completions and Responses APIs, which cannot put images inside
+/// tool/function_call_output payloads. Returns `None` when there are no images.
+pub(crate) fn tool_image_followup_user_message(message: &ModelMessage) -> Option<ModelMessage> {
+    if message.role != ModelRole::Tool {
+        return None;
+    }
+    let image_parts: Vec<ContentPart> = message
+        .content_parts
+        .iter()
+        .filter(|p| p.is_image())
+        .cloned()
+        .collect();
+    if image_parts.is_empty() {
+        return None;
+    }
+    let tool = message.tool_name.as_deref().unwrap_or("tool");
+    let mut parts = Vec::with_capacity(image_parts.len() + 1);
+    parts.push(ContentPart::Text {
+        text: format!("[Image attached by {tool}]"),
+    });
+    parts.extend(image_parts);
+    Some(ModelMessage::user_multimodal(
+        format!("[Image attached by {tool}]"),
+        parts,
+    ))
+}
+
 pub(crate) fn message_to_json(message: &ModelMessage) -> Value {
     // Pre-size the map for the common case of role + content (+ tool fields).
     let mut obj = Map::with_capacity(6);
@@ -138,11 +167,21 @@ pub(crate) fn message_to_json(message: &ModelMessage) -> Value {
 
 pub(crate) fn responses_input_item_to_json(message: &ModelMessage) -> Vec<Value> {
     if message.role == ModelRole::Tool {
-        return vec![json!({
+        let mut items = vec![json!({
             "type": "function_call_output",
             "call_id": message.tool_call_id,
             "output": message.content,
         })];
+        // Responses API does not accept images inside function_call_output;
+        // attach vision content as a follow-up user message with input_image parts.
+        if let Some(followup) = tool_image_followup_user_message(message) {
+            items.push(json!({
+                "type": "message",
+                "role": "user",
+                "content": Value::Array(content_parts_to_responses_json(&followup.content_parts)),
+            }));
+        }
+        return items;
     }
 
     if !message.tool_calls.is_empty() {

@@ -7,21 +7,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.7] - 2026-07-16
+
+Full changelog: https://github.com/navi-ai-org/navi/compare/v0.2.6...v0.2.7
+
+Reliability release focused on TUI terminal solidity (Kitty / multi-window), modal list navigation, and durable vision-tool session restore.
+
+### New Features
+
+- **Durable attachment store** — content-addressed blobs under `{data_dir}/attachments/` so `view_image` (and similar) bytes survive after the project file is deleted
+- **Session replay** — `model_messages_from_agent_events` rebuilds full provider history from events, rehydrating tool images from path or attachment store
+- **SDK `session_request_from_snapshot`** — reopen a saved session with rehydrated multimodal history
+
+### Bug Fixes
+
+- **TUI Kitty keyboard protocol** — negotiate progressive enhancement (`DISAMBIGUATE` + `REPORT_EVENT_TYPES`) instead of the no-op push-0/pop disable; `FocusGained` reasserts modes
+- **Multi-window garbage input** — free mouse motion (`?1003`) only while image hover can fire; leak filter retained as safety net
+- **Global shortcuts while typing** — Ctrl+letter works with composer draft; bare ASCII control-byte fallback; **Ctrl+X** opens Help when Ctrl+. needs Kitty
+- **Agent / attachment model pickers** — open on first available model (Recent-safe); Down recovers from stale index; PageUp/PageDown; mouse wheel on BgModelPicker
+- **Effort picker** — arrow keys move the cursor independently of the active level (highlight no longer stuck on current effort)
+- **Provider vision tool wiring** — tool-result images sent as follow-up multimodal user content for OpenAI Chat/Responses, Gemini, and CommandCode (Anthropic keeps images in tool_result blocks)
+
+### Bindings
+
+- `@navi-agent/napi` 0.2.7 and platform packages
+- `@navi-agent/navi` 0.2.7 CLI packages
+- Workspace crate versions bumped to 0.2.7
+
 ## [0.2.6] - 2026-07-15
 
 Full changelog: https://github.com/navi-ai-org/navi/compare/v0.2.5...v0.2.6
+
+Patch on top of the 0.2.4–0.2.5 agent/tooling work. For the full arc since **0.2.3** (plugins marketplace, browser, remote voice, skills rewrite, bindings parity, registry, TUI hubs), see the [0.2.4](#024---2026-07-15) and [0.2.5](#025---2026-07-15) sections below, or the GitHub compare: https://github.com/navi-ai-org/navi/compare/v0.2.3...v0.2.6
 
 ### Bug Fixes
 
 - **Edit/write path agency** — accept absolute paths (and stop hard-rejecting after path normalization); project path jail is forced only in Restricted mode (optional elsewhere via `restrict_paths_to_project`)
 - **Tool error TUI** — structured errors (`error` / `error_code` / `hint`) render as plain Code/Hint text instead of raw ` ```json ` dumps
 - **Global shortcuts** — Ctrl+M and other Ctrl+letter chords work across terminal encodings (ASCII control bytes / empty Ctrl+Enter → model picker)
+- **Registry on Windows** — model catalog filenames use `__` instead of `:` (illegal on Windows); ids restored at build time
+- **navi-lite tests** — multi-thread Tokio runtime for health mission tests that use `block_in_place`
 
 ### Performance
 
 - **Faster unit/CI graphs** — `navi-core` defaults no longer pull candle embeddings; product binaries (`navi-cli`, `navi-napi`) opt in explicitly
 - **`navi-voice` default off onnx** — avoids ort-sys download/compile on ordinary test builds
-- **Release/CI test gate** — drop full `navi-cli` bin link and `navi-voice` from unit gate; no step timeout on release tests
+- **Release/CI test gate** — drop full `navi-cli` bin link and `navi-voice` from unit gate; no step timeout on release tests; lean gate without the full sdk/tui/wasmtime graph
 - **Package manager tests** — real cargo/npm/go/bun dispatch tests ignored on gate; `run_pkg` hard-caps at 30s
 
 ### Bindings
@@ -29,56 +60,106 @@ Full changelog: https://github.com/navi-ai-org/navi/compare/v0.2.5...v0.2.6
 - `@navi-agent/napi` 0.2.6 and platform packages
 - Workspace crate versions bumped to 0.2.6
 
-### Chores
-
-- Version bump to 0.2.6
-
 ## [0.2.5] - 2026-07-15
 
 Full changelog: https://github.com/navi-ai-org/navi/compare/v0.2.4...v0.2.5
 
 ### New Features
 
-- String-replace `edit` tool (with multi-edit) as the preferred coding edit path
-- Lean Direct tool schema with deferred discovery via `tool_search`
-- Message queue: remove items, clickable/hoverable `N queued` chip, preserve input draft on drain
-- Session recap hard-capped to 3 lines
+- **String-replace `edit` tool** (with multi-edit via `edits[]`) as the preferred coding edit path
+- **Lean Direct tool schema** — small core surface listed to the model; power tools discovered via `tool_search` (Deferred/Hidden aliases)
+- **Message queue UX** — remove items, clickable/hoverable `N queued` chip, preserve input draft on drain
+- **Session recap** hard-capped to 3 lines (no full-file dumps in recap)
 
 ### Changes
 
 - Remove `process`, `verifier`, and `branch_race_start` agent tools
-- Redirect common bash file dumps (`sed`/`cat`/`rg`/`ls`) to native tools
-- Drop rustquty quality metrics tooling from the repo
+- Redirect common bash file dumps (`sed` / `cat` / `rg` / `ls` / …) to native tools (`read_file` / `search`)
+- Drop rustquty quality-metrics tooling from the repo
 
 ### Bindings
 
 - `@navi-agent/napi` 0.2.5 and platform packages
 - Workspace crate versions bumped to 0.2.5
 
-### Chores
-
-- Version bump to 0.2.5
-
 ## [0.2.4] - 2026-07-15
 
 Full changelog: https://github.com/navi-ai-org/navi/compare/v0.2.3...v0.2.4
 
-### New Features
+Large feature release after 0.2.3: WASM plugins + marketplace, browser automation, remote voice, modular skills, full bindings parity, registry catalog, and substantial TUI/reliability work (~87 commits / ~55k lines across the 0.2.3→0.2.6 window, most of it landing here).
 
-- Desktop notifications for finished unfocused jobs
-- SDK / NAPI / Dart surface sync (remaining NaviEngine methods)
-- Registry remote canonical model catalog + provider base resolution
-- `repo_explore` BM25+symbol tool
-- Model-specific effort options on list_models
+### Plugins & marketplace
 
-### Bug Fixes
+- **WASM-only plugins** (ADR path) — drop native `navi-plugin-host` / libloading path; load via `wasmtime` + host brokers (FS/HTTP/git)
+- **Marketplace** — catalog, example packages, validator, signed `hello-echo` artifact, Discord MCP package, package sidecars
+- Install side effects: apply **skill** and **MCP** config merges (with confirmation); stage marketplace kinds (`plugin` | `skill` | `mcp` | `integration`)
+- Host-mediated **TUI extensions** via `tui.json` (palette commands, phase 5)
+- WASM runtime **enabled by default** with finished E2E install path
 
-- Kill timed-out bash/process trees; background timeouts return ok=false (no hung “Waiting for model”)
-- Stop duplicating tool error strings in TUI cards
-- Grok CLI routing headers for xAI OAuth
-- Charm Hyper: stop isolating prompt cache per session
-- CI: do not run on bare main pushes
-- TUI polish: usage, palette, settings, MCP status, diffs, streaming paste, subagent progress
+### Browser & server
+
+- **`browser` tool** — headless automation (Cloak/CDP backends; `navi browser status|doctor|install`)
+- Server routes and TUI hubs for browser/plugin status
+- Vendor cloakbrowser stub so CI workspace resolves without external checkout
+
+### Voice
+
+- **Remote dictation** — OpenAI, Groq, Wispr Flow transcription clients
+- Config: `[voice]` provider/model from `config.toml`; registry catalog for remote transcription providers
+- SDK/CLI wire-up, remote doctor, cache/sync of transcription provider rows
+
+### Skills
+
+- **Modular skill store** (SQLite) with manage tools and skill CRUD APIs
+- Drop deprecated `skills.dirs` and filesystem `SKILL.md` discovery
+- NAPI/Dart/SDK surface for skill list/activate/CRUD
+
+### Registry & models
+
+- Remote **canonical model catalog** sync and provider base resolution
+- **Model-specific effort levels** (registry `reasoning_levels` → picker; remove adaptive thinking / learning tutor mode)
+- Effort wire mapping for providers; stabilize prefix cache (stop isolating Charm Hyper cache per session)
+- xAI / Grok: Grok Build OAuth routing headers, device-code UX, weekly usage bars
+
+### Tools & agent runtime
+
+- **`repo_explore`** — BM25 + symbol search as a real tool (not a subagent)
+- Kill timed-out **bash/process trees**; background timeouts return `ok=false` (no hung “Waiting for model”)
+- Harden subagents; live subagent progress after background spawn
+- Refined git guards; English-only harness/docs strings
+- Lean tool protocol / plan–goal guidance in the system prompt
+
+### Sessions & reliability
+
+- **Rewind history** when editing a past user message
+- Persist **partial model output** on turn error
+- Resume mid-stream prefill; project credentials for memory CLI
+- Cut Hyper credit burn via cache, titles, and dedicated memory model
+
+### TUI
+
+- **Desktop notifications** for finished unfocused turns/jobs (`tui.desktop_notifications`)
+- **Self-update** + About modal
+- **Setup wizard** — visual list for permission mode and marketplace tip
+- **Plan** as modal + live progress strip / topbar (not chat JSON dumps)
+- Jump to latest with Ctrl+Down; usage meter / command palette / settings / MCP status polish
+- Text and image paste while the model is streaming; image hover lightbox
+- Modal scroll fixes; reorganized modals; cleaner apply_patch diffs; numbered diff gutters
+- Yield Ctrl+O/V to Providers and OAuth modals; remove double-click cancel
+
+### SDK / NAPI / Dart
+
+- Full engine surface for voice, memory, MCP, skills, plugins, accounts, routing models, session rewind, updates
+- Close remaining `NaviEngine` gaps; Docker binding verifier (`scripts/test-bindings-docker.sh`)
+- `navi-dart` C ABI gap-fill to match SDK capabilities
+- `@navi-agent/napi` 0.2.4 + platform packages
+
+### Performance & CI
+
+- Cut session bloat, SQLite thrash, and streaming TUI cost
+- Faster PR matrix and lighter TUI harness
+- CI no longer runs on bare pushes to `main` (tags, PRs, manual)
+- Multi-agent tool-quality **benchmark suite** + token extractors (navi / OpenCode / Claude Code)
 
 ### Bindings
 
