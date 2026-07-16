@@ -48,9 +48,15 @@ concurrency:
 
 jobs:
   # ── Quality gate (must pass before multi-platform builds) ─────────────────
+  #
+  # Split fmt + per-package unit tests across runners. A single job that
+  # sequential-tests then `cargo check`s sdk/tui/cli OOMs GitHub-hosted
+  # runners (wasmtime + full product graph; cold cache can take 40m+ then
+  # kill the runner). Full navi/navi-lite binaries are still built and
+  # smoke-tested in the platform jobs below.
 
-  test:
-    name: Test (gate)
+  fmt:
+    name: Format check
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -62,30 +68,48 @@ jobs:
         with:
           components: rustfmt
 
-      - uses: Swatinem/rust-cache@v2
-        with:
-          key: release-test-gate
-          shared-key: release-test
-
       - name: Format check
         run: cargo fmt --all -- --check
 
-      - name: Core package tests (release gate)
-        # Lean unit gate: no navi-sdk/tui/cli here (those pull wasmtime + full
-        # TUI graph and OOM/cold-compile the runner). Full product binary is
-        # still compiled and smoke-tested in the multi-platform build jobs.
-        # Binding crates covered by CI. No step timeout.
-        # Run packages sequentially so peak RAM stays bounded.
-        run: |
-          set -euo pipefail
-          for p in navi-core navi-openai navi-providers navi-vfs navi-lite; do
-            echo "::group::cargo test -p $p"
-            cargo test --locked --lib --bins -p "$p" -- --test-threads=4
-            echo "::endgroup::"
-          done
-          echo "::group::cargo check product surfaces"
-          cargo check --locked -p navi-sdk -p navi-tui -p navi-cli
-          echo "::endgroup::"
+  test-pkg:
+    name: Test ${{ matrix.package }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        package:
+          - navi-core
+          - navi-openai
+          - navi-providers
+          - navi-vfs
+          - navi-lite
+    env:
+      # Cap rustc parallelism so peak RAM stays under the hosted-runner limit.
+      CARGO_BUILD_JOBS: "2"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release-test-${{ matrix.package }}
+          shared-key: release-test
+
+      - name: Unit tests
+        run: cargo test --locked --lib --bins -p "${{ matrix.package }}" -- --test-threads=2
+
+  test:
+    name: Test (gate)
+    runs-on: ubuntu-latest
+    needs: [fmt, test-pkg]
+    steps:
+      - name: Gate passed
+        run: echo "fmt + package unit tests passed"
+
   # ── Linux x64 musl (Alpine container — JS actions only work on x64) ────────
 
   build-linux-x64:
