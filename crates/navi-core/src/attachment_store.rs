@@ -82,7 +82,12 @@ pub fn load_bytes(data_dir: &Path, attachment_id: &str) -> Result<Vec<u8>> {
 }
 
 fn sanitize_ext(ext: &str) -> &'static str {
-    match ext.trim().trim_start_matches('.').to_ascii_lowercase().as_str() {
+    match ext
+        .trim()
+        .trim_start_matches('.')
+        .to_ascii_lowercase()
+        .as_str()
+    {
         "png" => "png",
         "jpg" | "jpeg" => "jpg",
         "gif" => "gif",

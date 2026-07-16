@@ -1203,10 +1203,7 @@ impl NaviNapiEngine {
         let data_dir = self.inner.loaded_config().data_dir;
         let req = navi_sdk::session_request_from_snapshot(&snapshot, Some(data_dir.as_path()));
 
-        self.inner
-            .start_session(req)
-            .await
-            .map_err(to_napi_error)?;
+        self.inner.start_session(req).await.map_err(to_napi_error)?;
 
         Ok(serde_json::json!({
             "id": session_id,

@@ -1828,13 +1828,13 @@ fn global_ctrl_shortcuts_work_while_composer_has_text() {
 #[test]
 fn bare_ascii_control_bytes_open_global_shortcuts() {
     let cases: &[(char, Mode)] = &[
-        ('\u{10}', Mode::Commands),         // Ctrl+P
-        ('\u{13}', Mode::Sessions),         // Ctrl+S
-        ('\u{04}', Mode::Debug),            // Ctrl+D
+        ('\u{10}', Mode::Commands),           // Ctrl+P
+        ('\u{13}', Mode::Sessions),           // Ctrl+S
+        ('\u{04}', Mode::Debug),              // Ctrl+D
         ('\u{14}', Mode::BackgroundCommands), // Ctrl+T
-        ('\u{02}', Mode::ModelRouting),     // Ctrl+B
-        ('\u{11}', Mode::MessageQueue),     // Ctrl+Q
-        ('\u{18}', Mode::Help),             // Ctrl+X fallback
+        ('\u{02}', Mode::ModelRouting),       // Ctrl+B
+        ('\u{11}', Mode::MessageQueue),       // Ctrl+Q
+        ('\u{18}', Mode::Help),               // Ctrl+X fallback
     ];
     for &(ch, expected) in cases {
         let mut app = test_app("typing…");
@@ -1843,8 +1843,7 @@ fn bare_ascii_control_bytes_open_global_shortcuts() {
         assert_eq!(
             app.mode, expected,
             "bare control U+{:02X} should open {expected:?}, got {:?}",
-            ch as u32,
-            app.mode
+            ch as u32, app.mode
         );
         assert_eq!(app.input, "typing…");
     }
@@ -4344,10 +4343,8 @@ fn bg_model_picker_down_recovers_from_stale_zero_selection() {
     ];
     // Skip refresh_authenticated_providers (would clear this on mock engine).
     app.authenticated_providers.clear();
-    app.authenticated_providers
-        .insert("provider-a".into());
-    app.authenticated_providers
-        .insert("provider-b".into());
+    app.authenticated_providers.insert("provider-a".into());
+    app.authenticated_providers.insert("provider-b".into());
     app.loaded_config.config.tui.recent_model_ids = vec!["provider-b:model-b".into()];
 
     app.mode = Mode::BgModelPicker;

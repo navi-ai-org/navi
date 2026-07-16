@@ -114,9 +114,7 @@ pub(super) fn route_global_key(
     // Ctrl+. needs Kitty (or tmux extended-keys) on many terminals. Ctrl+X is
     // a classic control character (0x18) that always works as a help fallback
     // — same maturity pattern as Grok Build.
-    if (control_held && matches!(code, KeyCode::Char('.')))
-        || is_ctrl_chord(code, modifiers, 'x')
-    {
+    if (control_held && matches!(code, KeyCode::Char('.'))) || is_ctrl_chord(code, modifiers, 'x') {
         crate::view::help::open_help(app);
         return KeyOutcome::Handled;
     }
