@@ -5,6 +5,7 @@ use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 #[derive(Debug)]
@@ -1211,13 +1212,16 @@ fn generate_xai_client_identifier() -> String {
 
 /// Opaque request id for `x-grok-req-id` / correlation headers.
 pub fn xai_new_request_id() -> String {
+    static NEXT_XAI_REQUEST_SEQUENCE: AtomicU64 = AtomicU64::new(1);
+
     use std::time::{SystemTime, UNIX_EPOCH};
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_nanos())
         .unwrap_or(0);
     let pid = std::process::id();
-    let digest = Sha256::digest(format!("navi-req:{pid}:{nanos}").as_bytes());
+    let sequence = NEXT_XAI_REQUEST_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    let digest = Sha256::digest(format!("navi-req:{pid}:{nanos}:{sequence}").as_bytes());
     let mut hex = String::with_capacity(32);
     for b in digest.iter().take(16) {
         hex.push(b"0123456789abcdef"[(b >> 4) as usize] as char);
