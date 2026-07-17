@@ -98,7 +98,7 @@ pub(crate) fn handle_normal_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyM
                 app.path_filter = query;
             }
         }
-        // Grok: Shift+G with empty prompt + scrolled history → go to bottom
+        // Shift+G with empty prompt + scrolled history → go to bottom
         // (must be before the generic Char insert arm).
         KeyCode::Char('G')
             if modifiers.contains(KeyModifiers::SHIFT)

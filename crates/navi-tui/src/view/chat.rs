@@ -20,7 +20,7 @@ use crate::ui::interaction::{HitAction, line_rect};
 use super::welcome::welcome_text;
 
 /// Jump scrollback to the latest message (follow the tail).
-/// Same as Grok “Go to bottom” / Shift+G / Ctrl+Down.
+/// Jump chat to the live end — Shift+G / Ctrl+Down.
 pub(crate) fn jump_to_latest(app: &mut TuiApp) {
     app.scroll_offset = 0;
     // Clear block selection so composer focus returns to the live end.
