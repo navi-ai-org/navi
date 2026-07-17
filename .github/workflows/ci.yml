@@ -2,9 +2,11 @@ name: CI
 
 # Triggers:
 # - pull_request: fast quality gate (fmt / test-fast / clippy)
-# - push of version tags (v*): same gate + full integration suite
-# - workflow_dispatch: manual full run
-# Push to main alone does NOT start CI (use a tag or open a PR).
+# - workflow_dispatch: manual full run (includes integration suite)
+#
+# Version tags (v*) do NOT run this workflow — only `.github/workflows/release.yml`
+# handles tagged releases (fmt + package tests + multi-platform builds + GH assets).
+# Push to main alone does NOT start CI (open a PR or dispatch manually).
 #
 # Fast path notes:
 # - No artificial CARGO_BUILD_JOBS cap (use all runner cores)
@@ -12,11 +14,9 @@ name: CI
 # - Skip binding crates (napi/dart) — heavy toolchains, not the shipping binary
 # - PR Test = lib+bins (test-fast) + selective goldens/smoke — not full --tests
 # - Clippy on lib/bins only (not --all-targets, which recompiles every integration harness)
-# - Full workspace integration suite runs on tags / workflow_dispatch only
+# - Full workspace integration suite runs on workflow_dispatch only
 
 on:
-  push:
-    tags: ["v*"]
   pull_request:
   workflow_dispatch:
 
@@ -82,12 +82,10 @@ jobs:
         run: cargo build -p navi-lite --bin navi-lite --locked
 
   # Full product workspace tests (integration binaries, scenarios, CLI e2e that
-  # are not ignored). Runs on version tags / manual dispatch — not every PR.
+  # are not ignored). Manual dispatch only — not every PR (tags use release.yml).
   test-full:
     name: Test (full integration)
-    if: >
-      github.event_name == 'workflow_dispatch' ||
-      (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/'))
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 40
     steps:
