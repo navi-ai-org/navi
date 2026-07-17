@@ -186,6 +186,10 @@ pub(crate) fn run_selected_command(app: &mut TuiApp) -> bool {
             copy_session_transcript(app);
             super::close_all_modals(app);
         }
+        CommandAction::CopyLastResponse => {
+            copy_last_response(app);
+            super::close_all_modals(app);
+        }
         CommandAction::ShareSession => {
             copy_session_json(app);
             super::close_all_modals(app);
@@ -388,7 +392,7 @@ name = "{name}"
     Ok(config_path)
 }
 
-fn copy_session_transcript(app: &mut TuiApp) {
+pub(crate) fn copy_session_transcript(app: &mut TuiApp) {
     let transcript = session_transcript(app);
     if transcript.trim().is_empty() {
         show_notification(app, "Session", "Nothing to copy yet.");
@@ -396,6 +400,35 @@ fn copy_session_transcript(app: &mut TuiApp) {
     }
     copy_text_to_clipboard(app, &transcript);
     show_notification(app, "Session", "Session transcript copied.");
+}
+
+pub(crate) fn copy_last_response(app: &mut TuiApp) {
+    let Some(user_index) = last_user_message_index(app) else {
+        show_notification(app, "Session", "No user message to copy from.");
+        return;
+    };
+    let text = output_since_user_message(app, user_index);
+    if text.trim().is_empty() {
+        show_notification(
+            app,
+            "Session",
+            "No assistant output after the last user message.",
+        );
+        return;
+    }
+    copy_text_to_clipboard(app, &text);
+    show_notification(app, "Session", "Last response copied.");
+}
+
+/// Copy assistant/tool output after a specific user message (until the next user turn).
+pub(crate) fn copy_response_since_user_message(app: &mut TuiApp, user_message_index: usize) {
+    let text = output_since_user_message(app, user_message_index);
+    if text.trim().is_empty() {
+        show_notification(app, "Message", "No assistant output after this message.");
+        return;
+    }
+    copy_text_to_clipboard(app, &text);
+    show_notification(app, "Message", "Response copied.");
 }
 
 fn copy_session_json(app: &mut TuiApp) {
@@ -417,7 +450,17 @@ fn copy_session_json(app: &mut TuiApp) {
     show_notification(app, "Session", "Shareable session JSON copied.");
 }
 
-fn session_transcript(app: &TuiApp) -> String {
+pub(crate) fn session_transcript(app: &TuiApp) -> String {
+    // Prefer display messages (includes tool bodies) when available; fall back
+    // to session events for sessions that only have event history.
+    let from_messages = session_transcript_from_messages(app);
+    if !from_messages.trim().is_empty() {
+        return from_messages;
+    }
+    session_transcript_from_events(app)
+}
+
+fn session_transcript_from_events(app: &TuiApp) -> String {
     let mut lines = Vec::new();
     for event in &app.events {
         match event {
@@ -445,4 +488,81 @@ fn session_transcript(app: &TuiApp) -> String {
         }
     }
     lines.join("\n\n")
+}
+
+fn session_transcript_from_messages(app: &TuiApp) -> String {
+    let mut lines = Vec::new();
+    for msg in &app.messages {
+        if let Some(block) = format_message_transcript_block(app, msg) {
+            lines.push(block);
+        }
+    }
+    lines.join("\n\n")
+}
+
+fn last_user_message_index(app: &TuiApp) -> Option<usize> {
+    app.messages
+        .iter()
+        .rposition(|message| message.role == ChatRole::User)
+}
+
+/// Assistant/tool output after `user_message_index`, stopping at the next user message.
+pub(crate) fn output_since_user_message(app: &TuiApp, user_message_index: usize) -> String {
+    let mut parts = Vec::new();
+    for (index, msg) in app.messages.iter().enumerate() {
+        if index <= user_message_index {
+            continue;
+        }
+        if msg.role == ChatRole::User {
+            break;
+        }
+        if let Some(block) = format_assistant_output_block(app, msg) {
+            parts.push(block);
+        }
+    }
+    parts.join("\n\n")
+}
+
+fn format_message_transcript_block(app: &TuiApp, msg: &ChatMessage) -> Option<String> {
+    match msg.role {
+        ChatRole::User => {
+            let text = msg.content.trim();
+            if text.is_empty() && msg.images.is_empty() {
+                return None;
+            }
+            let mut body = text.to_string();
+            if !msg.images.is_empty() {
+                if !body.is_empty() {
+                    body.push('\n');
+                }
+                body.push_str(&format!("[{} image(s)]", msg.images.len()));
+            }
+            Some(format!("User:\n{}", body.trim_end()))
+        }
+        ChatRole::Assistant => format_assistant_output_block(app, msg)
+            .map(|body| format!("Assistant:\n{}", body.trim_end())),
+    }
+}
+
+fn format_assistant_output_block(app: &TuiApp, msg: &ChatMessage) -> Option<String> {
+    use crate::render::tool::{tool_compact_text, tool_full_content};
+
+    let mut parts = Vec::new();
+    if !msg.thinking_content.trim().is_empty() && app.show_thinking {
+        parts.push(msg.thinking_content.trim().to_string());
+    }
+    if !msg.content.trim().is_empty() {
+        parts.push(msg.content.trim().to_string());
+    }
+    if let (Some(inv), Some(result)) = (&msg.tool_invocation, &msg.tool_result) {
+        if app.full_tool_view {
+            parts.push(tool_full_content(inv, result));
+        } else {
+            parts.push(tool_compact_text(inv, result));
+        }
+    } else if let Some(inv) = &msg.tool_invocation {
+        parts.push(format!("Tool: {}", inv.tool_name));
+    }
+    let text = parts.join("\n\n");
+    (!text.trim().is_empty()).then_some(text)
 }

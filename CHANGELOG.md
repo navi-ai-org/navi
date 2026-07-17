@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-07-17
+
+Full changelog: https://github.com/navi-ai-org/navi/compare/v0.3.0...v0.3.1
+
+### Bug Fixes
+
+- **TUI mouse text selection** — full mouse capture (incl. free-motion) so drag-select works; selection survives wheel; Down+Up without Drag still selects; no auto-scroll on block focus during drag start
+- **TUI composer focus restore** — click anywhere on the input panel (draft box + meta strip) restores cursor after chat block selection; keyboard Up/Down scroll by lines instead of hopping blocks
+- **Message Actions last choice** — remembers the last action (e.g. Copy session) across opens and restarts via `tui.last_message_action`
+- **Install script GitHub rate limit** — resolve latest release via HTML redirect instead of unauthenticated API (403)
+
 ## [0.3.0] - 2026-07-17
 
 Full changelog: https://github.com/navi-ai-org/navi/compare/v0.2.7...v0.3.0

@@ -86,15 +86,29 @@ pub(crate) fn clamp_line_to_block(
 }
 
 pub(crate) fn select_chat_block(app: &mut TuiApp, source: ChatLineSource) {
+    select_chat_block_with_options(app, source, true);
+}
+
+/// Focus a chat block without auto-scrolling the viewport.
+///
+/// Used when starting a text drag: scrolling before mapping the click would
+/// shift line indices under the cursor and break selection.
+pub(crate) fn select_chat_block_no_scroll(app: &mut TuiApp, source: ChatLineSource) {
+    select_chat_block_with_options(app, source, false);
+}
+
+fn select_chat_block_with_options(app: &mut TuiApp, source: ChatLineSource, ensure_visible: bool) {
     if matches!(source, ChatLineSource::None) {
         return;
     }
     app.selected_chat_source = Some(source);
-    // Keep text drag selection cleared when jumping blocks.
+    // Keep text drag selection cleared when jumping blocks (idle highlight only).
     if app.selection.as_ref().is_some_and(|s| !s.active) {
         app.selection = None;
     }
-    ensure_selected_block_visible(app);
+    if ensure_visible {
+        ensure_selected_block_visible(app);
+    }
 }
 
 pub(crate) fn clear_selected_block(app: &mut TuiApp) {
@@ -264,9 +278,7 @@ pub(crate) fn activate_selected_block(app: &mut TuiApp) {
                 .get(index)
                 .is_some_and(|m| m.role == ChatRole::User)
             {
-                app.message_action_target = Some(index);
-                app.selected_message_action = 0;
-                crate::keybindings::replace_modal(app, crate::state::ModalKind::MessageActions);
+                crate::mouse::open_message_actions(app, index);
             }
             // Assistant messages: selection alone is enough; content already visible.
         }

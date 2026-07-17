@@ -205,9 +205,10 @@ pub(crate) fn register_pending_image_hits(
                                 width: width.max(1),
                                 height: 1,
                             };
+                            // Above FocusComposer (z=100) so image chips remain clickable.
                             app.register_hit(
                                 hit,
-                                20,
+                                110,
                                 format!("preview_pending_image_{image_index}"),
                                 HitAction::PreviewPendingImage(image_index),
                             );

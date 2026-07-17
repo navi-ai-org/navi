@@ -1650,7 +1650,7 @@ pub(crate) fn render_message_actions(frame: &mut Frame<'_>, app: &TuiApp, area: 
         .collect::<Vec<_>>();
     frame.render_widget(
         List::new(items).style(Style::default().bg(modal_bg())),
-        rows[0],
+        rows[2],
     );
 
     for (index, action) in MessageAction::ALL.iter().enumerate() {

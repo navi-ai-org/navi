@@ -63,7 +63,7 @@ pub(crate) fn close_active_modal(app: &mut TuiApp) {
     app.hover_index = None;
     if was_message_actions {
         app.message_action_target = None;
-        app.selected_message_action = 0;
+        // Keep selected_message_action — last choice is restored next open.
         app.hovered_chat_source = None;
     }
     if was_oauth {
@@ -76,7 +76,7 @@ pub(crate) fn close_all_modals(app: &mut TuiApp) {
     app.mode = Mode::Normal;
     app.hover_index = None;
     app.message_action_target = None;
-    app.selected_message_action = 0;
+    // Keep selected_message_action — last Message Actions choice is a preference.
     app.hovered_chat_source = None;
     app.oauth_state = None;
 }
@@ -255,7 +255,10 @@ pub(crate) use routing::handle_key;
 // Test-only re-exports: sub-modules are private, so tests need these paths.
 // Production code uses direct `self::` paths instead.
 #[allow(unused_imports)]
-pub(crate) use commands::{handle_command_key, run_selected_command};
+pub(crate) use commands::{
+    copy_last_response, copy_response_since_user_message, copy_session_transcript,
+    handle_command_key, output_since_user_message, run_selected_command, session_transcript,
+};
 #[allow(unused_imports)]
 pub(crate) use input_modes::handle_normal_key;
 #[allow(unused_imports)]

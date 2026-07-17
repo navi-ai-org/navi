@@ -351,6 +351,12 @@ impl TuiApp {
         let theme_id = ThemeId::from_config(&loaded_config.config.tui.theme);
         let thinking_level = ThinkingLevel::from_config(&loaded_config.config.tui.thinking_level);
         let git_branch = detect_git_branch(&project_dir);
+        let selected_message_action = crate::state::MessageAction::from_config_key(
+            &loaded_config.config.tui.last_message_action,
+        )
+        .map(|action| action.index())
+        .unwrap_or(0)
+        .min(crate::state::MessageAction::ALL.len().saturating_sub(1));
 
         let mut app = Self {
             loaded_config,
@@ -468,7 +474,7 @@ impl TuiApp {
             hover_queued_messages: false,
             theme_id,
             message_action_target: None,
-            selected_message_action: 0,
+            selected_message_action,
             expanded_tool_results: HashSet::new(),
             collapsed_tool_results: HashSet::new(),
             hovered_chat_source: None,
