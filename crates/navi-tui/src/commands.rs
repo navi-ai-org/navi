@@ -518,7 +518,7 @@ fn action_keywords(action: CommandAction) -> &'static str {
         CommandAction::NewSession => "clear reset conversation",
         CommandAction::MessageQueue => "queue pending messages",
         CommandAction::RetryLast => "retry regenerate redo",
-        CommandAction::Rewind => "rewind undo restore checkpoint revert files history grok",
+        CommandAction::Rewind => "rewind undo restore checkpoint revert files history",
         CommandAction::Compact => "summarize context compress",
         CommandAction::TogglePlanMode => "plan mode planning",
         CommandAction::CopySession => "copy clipboard transcript share session full",

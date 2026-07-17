@@ -133,7 +133,7 @@ pub(crate) fn render_plan_topbar(frame: &mut Frame<'_>, app: &mut TuiApp, area: 
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    // Whole bar is clickable to expand/collapse (like Grok's 4/4 chip).
+    // Whole bar is clickable to expand/collapse (compact N/M chip).
     // "+N more" registers a higher-z hit below so it wins when clicked.
     app.register_hit(area, 40, "toggle plan topbar", HitAction::TogglePlanTopbar);
 
