@@ -1,6 +1,6 @@
 //! Plan progress topbar — sits under the project header, above the chat.
 //!
-//! Collapsed (default): one compact line with `N/M` (Grok-style `4/4 ✓`), clickable.
+//! Collapsed (default): one compact line with `N/M` (e.g. `4/4 ✓`), clickable.
 //! Expanded: checklist drops down into the space above chat.
 //! When more steps than the preview cap, a `+N more` row expands the full list.
 

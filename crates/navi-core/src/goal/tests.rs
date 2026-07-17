@@ -720,4 +720,208 @@ mod tests {
         assert!(prompt.contains("▶"));
         assert!(prompt.contains("✓"));
     }
+
+    // ── End-to-end tool path (real tools, real runtime) ────────
+
+    #[tokio::test]
+    async fn create_goal_tool_sets_runtime_and_emits_goal_updated() {
+        use crate::event::AgentEvent;
+        use crate::tool::ToolInvocationContext;
+
+        let rt = Arc::new(GoalRuntimeHandle::new(None));
+        rt.set_session_id("sess-e2e");
+        let tool = crate::goal::CreateGoalTool::new(rt.clone());
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+
+        let result = tool
+            .invoke_with_context(
+                ToolInvocation {
+                    id: "c1".into(),
+                    tool_name: "create_goal".into(),
+                    input: json!({
+                        "objective": "ship goal loop",
+                        "short_description": "goal loop",
+                    }),
+                },
+                ToolInvocationContext {
+                    event_tx: Some(tx),
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect("create_goal");
+
+        assert!(result.ok, "{:?}", result.output);
+        let goal = rt.get_goal().expect("goal set");
+        assert_eq!(goal.objective, "ship goal loop");
+        assert_eq!(goal.status, GoalStatus::Active);
+        assert!(rt.continue_if_idle().is_some());
+
+        let event = rx.try_recv().expect("GoalUpdated event");
+        assert!(matches!(
+            event,
+            AgentEvent::GoalUpdated {
+                status: GoalStatus::Active,
+                ..
+            }
+        ));
+    }
+
+    #[tokio::test]
+    async fn goal_tool_path_set_progress_complete_clear() {
+        use crate::tool::ToolInvocationContext;
+
+        let rt = Arc::new(GoalRuntimeHandle::new(None));
+        rt.set_session_id("sess-lifecycle");
+        let create = crate::goal::CreateGoalTool::new(rt.clone());
+        let checklist = crate::goal::UpdateGoalChecklistTool::new(rt.clone());
+        let update = crate::goal::UpdateGoalTool::new(rt.clone());
+        let get = crate::goal::GetGoalTool::new(rt.clone());
+        let ctx = ToolInvocationContext::default();
+
+        // set
+        let r = create
+            .invoke_with_context(
+                ToolInvocation {
+                    id: "1".into(),
+                    tool_name: "create_goal".into(),
+                    input: json!({"objective": "verify lifecycle"}),
+                },
+                ctx.clone(),
+            )
+            .await
+            .unwrap();
+        assert!(r.ok);
+
+        // checklist
+        let r = checklist
+            .invoke_with_context(
+                ToolInvocation {
+                    id: "2".into(),
+                    tool_name: "update_goal_checklist".into(),
+                    input: json!({
+                        "action": "set",
+                        "tasks": ["step one", "step two"]
+                    }),
+                },
+                ctx.clone(),
+            )
+            .await
+            .unwrap();
+        assert!(r.ok);
+
+        // verify both tasks
+        for id in [0usize, 1usize] {
+            let r = checklist
+                .invoke_with_context(
+                    ToolInvocation {
+                        id: format!("v{id}"),
+                        tool_name: "update_goal_checklist".into(),
+                        input: json!({
+                            "action": "update",
+                            "task_id": id,
+                            "status": "verified",
+                            "verification": "unit test"
+                        }),
+                    },
+                    ctx.clone(),
+                )
+                .await
+                .unwrap();
+            assert!(r.ok, "{:?}", r.output);
+        }
+
+        // complete
+        let r = update
+            .invoke_with_context(
+                ToolInvocation {
+                    id: "done".into(),
+                    tool_name: "update_goal".into(),
+                    input: json!({"action": "complete"}),
+                },
+                ctx.clone(),
+            )
+            .await
+            .unwrap();
+        assert!(r.ok, "{:?}", r.output);
+        assert_eq!(
+            rt.get_goal().unwrap().status,
+            GoalStatus::Complete
+        );
+        // terminal → no auto-continue
+        assert!(rt.continue_if_idle().is_none());
+
+        // get still returns terminal goal
+        let r = get
+            .invoke(ToolInvocation {
+                id: "g".into(),
+                tool_name: "get_goal".into(),
+                input: json!({}),
+            })
+            .await
+            .unwrap();
+        assert!(r.ok);
+        assert_eq!(r.output["status"], "complete");
+
+        // clear
+        rt.clear_goal();
+        assert!(rt.get_goal().is_none());
+        assert!(rt.continue_if_idle().is_none());
+    }
+
+    #[tokio::test]
+    async fn update_goal_pause_and_resume_toggle_auto_continue() {
+        use crate::tool::ToolInvocationContext;
+
+        let rt = Arc::new(GoalRuntimeHandle::new(None));
+        rt.set_session_id("sess-pause");
+        rt.set_objective("work".into(), None);
+        let update = crate::goal::UpdateGoalTool::new(rt.clone());
+        let ctx = ToolInvocationContext::default();
+
+        assert!(rt.continue_if_idle().is_some());
+
+        let r = update
+            .invoke_with_context(
+                ToolInvocation {
+                    id: "p".into(),
+                    tool_name: "update_goal".into(),
+                    input: json!({"action": "pause"}),
+                },
+                ctx.clone(),
+            )
+            .await
+            .unwrap();
+        assert!(r.ok);
+        assert_eq!(rt.get_goal().unwrap().status, GoalStatus::Paused);
+        assert!(rt.continue_if_idle().is_none());
+
+        let r = update
+            .invoke_with_context(
+                ToolInvocation {
+                    id: "r".into(),
+                    tool_name: "update_goal".into(),
+                    input: json!({"action": "resume"}),
+                },
+                ctx,
+            )
+            .await
+            .unwrap();
+        assert!(r.ok);
+        assert_eq!(rt.get_goal().unwrap().status, GoalStatus::Active);
+        assert!(rt.continue_if_idle().is_some());
+    }
+
+    #[test]
+    fn goal_tools_are_direct_exposure() {
+        let defs = crate::goal::goal_tool_definitions();
+        for def in defs {
+            assert_eq!(
+                def.metadata.exposure,
+                crate::tool::ToolExposure::Direct,
+                "{} should be Direct so the model always sees it",
+                def.name
+            );
+        }
+    }
 }

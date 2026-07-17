@@ -1,4 +1,4 @@
-//! Durable per-user-turn file snapshots for Grok-style rewind.
+//! Durable per-user-turn file snapshots for session rewind.
 //!
 //! Layout under `{data_dir}/sessions/{session_id}/rewind/`:
 //! ```text

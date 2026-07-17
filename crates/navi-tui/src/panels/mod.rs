@@ -197,7 +197,7 @@ pub fn register_modal_panels(app: &mut TuiApp) {
         64,
         14,
     )));
-    // Rewind checkpoints (Grok-style restore)
+    // Rewind checkpoints (restore chat + project files)
     pm.add_overlay(Box::new(ModalPanel::new(
         "rewind",
         Mode::Rewind,

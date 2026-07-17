@@ -95,6 +95,21 @@ pub trait EngineDriver: Send + Sync {
     /// Close an active in-memory session. Returns `true` when a session was removed.
     async fn close_session(&self, session_id: &str) -> Result<bool>;
 
+    /// Set or replace the active multi-turn session goal.
+    async fn set_goal(
+        &self,
+        session_id: &str,
+        objective: String,
+        token_budget: Option<i64>,
+    ) -> Result<navi_core::SessionGoal>;
+
+    /// Update goal status (pause / resume / complete / blocked / …).
+    async fn update_goal_status(
+        &self,
+        session_id: &str,
+        status: navi_core::GoalStatus,
+    ) -> Result<Option<navi_core::SessionGoal>>;
+
     /// Clears the active goal for a session.
     async fn clear_goal(&self, session_id: &str) -> Result<()>;
 
@@ -288,6 +303,23 @@ impl EngineDriver for crate::NaviEngine {
 
     async fn close_session(&self, session_id: &str) -> Result<bool> {
         crate::NaviEngine::close_session(self, session_id).await
+    }
+
+    async fn set_goal(
+        &self,
+        session_id: &str,
+        objective: String,
+        token_budget: Option<i64>,
+    ) -> Result<navi_core::SessionGoal> {
+        crate::NaviEngine::set_goal(self, session_id, objective, token_budget).await
+    }
+
+    async fn update_goal_status(
+        &self,
+        session_id: &str,
+        status: navi_core::GoalStatus,
+    ) -> Result<Option<navi_core::SessionGoal>> {
+        crate::NaviEngine::update_goal_status(self, session_id, status).await
     }
 
     async fn clear_goal(&self, session_id: &str) -> Result<()> {

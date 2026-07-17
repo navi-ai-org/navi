@@ -142,7 +142,7 @@ pub(crate) fn render_chat_area(frame: &mut Frame<'_>, app: &mut TuiApp, area: Re
         inner,
     );
 
-    // Grok-style: floating “↓ Latest” when scrolled away from the live end.
+    // Floating “↓ Latest” when scrolled away from the live end.
     render_jump_to_latest_button(frame, app, inner);
 }
 

@@ -644,7 +644,7 @@ struct ComposerMetaBuilt {
 /// Right-side composer chrome.
 /// Kept compact so it can sit on the same row as the draft.
 ///
-/// Context chip (Grok-style): default shows `3.2k / 200k`; hover reveals
+/// Context chip: default shows `3.2k / 200k`; hover reveals
 /// `(12%)` with threshold coloring.
 fn composer_meta_right(app: &TuiApp, width: usize) -> ComposerMetaBuilt {
     if !app.pending_questions.is_empty() {

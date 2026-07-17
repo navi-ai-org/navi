@@ -1,3 +1,4 @@
+use crate::event::AgentEvent;
 use crate::goal::runtime::GoalRuntimeHandle;
 use crate::goal::types::SessionGoal;
 use crate::tool::{
@@ -28,6 +29,21 @@ fn limit_short_description(value: &str) -> String {
     value.trim().chars().take(40).collect()
 }
 
+/// Notify the session event stream so runtime `record_event` fans out GoalUpdated.
+fn emit_goal_updated(context: &ToolInvocationContext, goal: &SessionGoal) {
+    if let Some(tx) = &context.event_tx {
+        let _ = tx.send(AgentEvent::GoalUpdated {
+            session_id: goal.session_id.clone(),
+            goal_id: goal.goal_id.as_str().to_string(),
+            objective: goal.objective.clone(),
+            short_description: goal.short_description.clone(),
+            status: goal.status,
+            tokens_used: goal.tokens_used,
+            token_budget: goal.token_budget,
+        });
+    }
+}
+
 // ── get_goal ─────────────────────────────────────────────────
 
 pub struct GetGoalTool {
@@ -56,7 +72,7 @@ impl GetGoalTool {
             metadata: ToolMetadata {
                 tags: vec!["goal".to_string(), "session".to_string()],
                 capabilities: vec!["goal.read".to_string()],
-                exposure: crate::tool::ToolExposure::Deferred,
+                exposure: crate::tool::ToolExposure::Direct,
                 ..ToolMetadata::default()
             },
         }
@@ -153,7 +169,7 @@ impl CreateGoalTool {
             metadata: ToolMetadata {
                 tags: vec!["goal".to_string(), "session".to_string()],
                 capabilities: vec!["goal.create".to_string()],
-                exposure: crate::tool::ToolExposure::Deferred,
+                exposure: crate::tool::ToolExposure::Direct,
                 ..ToolMetadata::default()
             },
         }
@@ -167,6 +183,15 @@ impl Tool for CreateGoalTool {
     }
 
     async fn invoke(&self, invocation: ToolInvocation) -> anyhow::Result<ToolResult> {
+        self.invoke_with_context(invocation, ToolInvocationContext::default())
+            .await
+    }
+
+    async fn invoke_with_context(
+        &self,
+        invocation: ToolInvocation,
+        context: ToolInvocationContext,
+    ) -> anyhow::Result<ToolResult> {
         let args = invocation.input.clone();
 
         let objective = args
@@ -192,6 +217,8 @@ impl Tool for CreateGoalTool {
             short_description,
             token_budget,
         );
+        self.runtime.set_auto_continue(true);
+        emit_goal_updated(&context, &goal);
 
         Ok(make_result(
             &invocation.id,
@@ -206,14 +233,6 @@ impl Tool for CreateGoalTool {
                 "message": "Goal created successfully. The agent will auto-continue working toward this goal."
             }),
         ))
-    }
-
-    async fn invoke_with_context(
-        &self,
-        invocation: ToolInvocation,
-        _context: ToolInvocationContext,
-    ) -> anyhow::Result<ToolResult> {
-        self.invoke(invocation).await
     }
 }
 
@@ -257,7 +276,7 @@ impl UpdateGoalTool {
             metadata: ToolMetadata {
                 tags: vec!["goal".to_string(), "session".to_string()],
                 capabilities: vec!["goal.update".to_string()],
-                exposure: crate::tool::ToolExposure::Deferred,
+                exposure: crate::tool::ToolExposure::Direct,
                 ..ToolMetadata::default()
             },
         }
@@ -271,6 +290,15 @@ impl Tool for UpdateGoalTool {
     }
 
     async fn invoke(&self, invocation: ToolInvocation) -> anyhow::Result<ToolResult> {
+        self.invoke_with_context(invocation, ToolInvocationContext::default())
+            .await
+    }
+
+    async fn invoke_with_context(
+        &self,
+        invocation: ToolInvocation,
+        context: ToolInvocationContext,
+    ) -> anyhow::Result<ToolResult> {
         let args = invocation.input.clone();
         let action = args.get("action").and_then(|v| v.as_str()).unwrap_or("");
 
@@ -332,8 +360,9 @@ impl Tool for UpdateGoalTool {
                         }),
                     ));
                 }
-                self.runtime
-                    .update_goal(goal_with_status(&goal, GoalStatus::Complete));
+                let updated = goal_with_status(&goal, GoalStatus::Complete);
+                self.runtime.update_goal(updated.clone());
+                emit_goal_updated(&context, &updated);
                 make_result(
                     &invocation.id,
                     true,
@@ -358,6 +387,7 @@ impl Tool for UpdateGoalTool {
                 }
                 new_goal.block_reason = Some(reason.to_string());
                 self.runtime.update_goal(new_goal.clone());
+                emit_goal_updated(&context, &new_goal);
                 make_result(
                     &invocation.id,
                     true,
@@ -375,9 +405,10 @@ impl Tool for UpdateGoalTool {
                 )
             }
             "pause" => {
-                self.runtime
-                    .update_goal(goal_with_status(&goal, GoalStatus::Paused));
+                let updated = goal_with_status(&goal, GoalStatus::Paused);
+                self.runtime.update_goal(updated.clone());
                 self.runtime.set_auto_continue(false);
+                emit_goal_updated(&context, &updated);
                 make_result(
                     &invocation.id,
                     true,
@@ -389,9 +420,10 @@ impl Tool for UpdateGoalTool {
                 )
             }
             "resume" => {
-                self.runtime
-                    .update_goal(goal_with_status(&goal, GoalStatus::Active));
+                let updated = goal_with_status(&goal, GoalStatus::Active);
+                self.runtime.update_goal(updated.clone());
                 self.runtime.set_auto_continue(true);
+                emit_goal_updated(&context, &updated);
                 make_result(
                     &invocation.id,
                     true,
@@ -409,14 +441,6 @@ impl Tool for UpdateGoalTool {
             ),
         };
         Ok(result)
-    }
-
-    async fn invoke_with_context(
-        &self,
-        invocation: ToolInvocation,
-        _context: ToolInvocationContext,
-    ) -> anyhow::Result<ToolResult> {
-        self.invoke(invocation).await
     }
 }
 
@@ -474,7 +498,7 @@ impl UpdateGoalChecklistTool {
             metadata: ToolMetadata {
                 tags: vec!["goal".to_string(), "session".to_string()],
                 capabilities: vec!["goal.update".to_string()],
-                exposure: crate::tool::ToolExposure::Deferred,
+                exposure: crate::tool::ToolExposure::Direct,
                 ..ToolMetadata::default()
             },
         }
@@ -488,6 +512,15 @@ impl Tool for UpdateGoalChecklistTool {
     }
 
     async fn invoke(&self, invocation: ToolInvocation) -> anyhow::Result<ToolResult> {
+        self.invoke_with_context(invocation, ToolInvocationContext::default())
+            .await
+    }
+
+    async fn invoke_with_context(
+        &self,
+        invocation: ToolInvocation,
+        context: ToolInvocationContext,
+    ) -> anyhow::Result<ToolResult> {
         let args = invocation.input.clone();
         let action = args.get("action").and_then(|v| v.as_str()).unwrap_or("");
 
@@ -520,7 +553,9 @@ impl Tool for UpdateGoalChecklistTool {
                 }
 
                 match self.runtime.update_checklist(tasks.clone()) {
-                    Some(goal) => make_result(
+                    Some(goal) => {
+                        emit_goal_updated(&context, &goal);
+                        make_result(
                         &invocation.id,
                         true,
                         json!({
@@ -531,7 +566,8 @@ impl Tool for UpdateGoalChecklistTool {
                             }).collect::<Vec<_>>(),
                             "message": format!("Checklist set with {} tasks. Work through each task and mark it `verified` after running tests.", goal.checklist.len())
                         }),
-                    ),
+                    )
+                    }
                     None => make_result(
                         &invocation.id,
                         false,
@@ -591,6 +627,7 @@ impl Tool for UpdateGoalChecklistTool {
                             status == super::types::TaskStatus::Verified,
                         );
                         self.runtime.update_goal(g.clone());
+                        emit_goal_updated(&context, &g);
                         make_result(
                             &invocation.id,
                             true,
@@ -617,7 +654,9 @@ impl Tool for UpdateGoalChecklistTool {
                     }
                 } else {
                     match self.runtime.update_task_status(task_id, status) {
-                        Some(g) => make_result(
+                        Some(g) => {
+                            emit_goal_updated(&context, &g);
+                            make_result(
                             &invocation.id,
                             true,
                             json!({
@@ -632,7 +671,8 @@ impl Tool for UpdateGoalChecklistTool {
                                     "Task updated. Continue working on remaining tasks."
                                 }
                             }),
-                        ),
+                        )
+                        }
                         None => make_result(
                             &invocation.id,
                             false,
@@ -648,14 +688,6 @@ impl Tool for UpdateGoalChecklistTool {
             ),
         };
         Ok(result)
-    }
-
-    async fn invoke_with_context(
-        &self,
-        invocation: ToolInvocation,
-        _context: ToolInvocationContext,
-    ) -> anyhow::Result<ToolResult> {
-        self.invoke(invocation).await
     }
 }
 

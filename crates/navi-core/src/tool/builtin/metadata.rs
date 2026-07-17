@@ -574,7 +574,7 @@ static LOOKUP: LazyLock<std::collections::HashMap<&'static str, ToolMetadata>> =
                 risk: crate::tool::ToolRisk::Medium,
                 is_read_only: false,
                 is_concurrency_safe: false,
-                exposure: crate::tool::ToolExposure::Deferred,
+                exposure: crate::tool::ToolExposure::Direct,
                 capabilities: vec!["goal.create".to_string()],
                 tags: vec!["goal", "session", "long-running"]
                     .into_iter()

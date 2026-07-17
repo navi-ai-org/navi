@@ -497,7 +497,7 @@ pub enum Mode {
     Question,
     ThemePicker,
     MessageActions,
-    /// Grok-style rewind: pick a past user prompt to restore history + files.
+    /// Rewind modal: pick a past user prompt to restore history + files.
     Rewind,
     Mcp,
     OAuth,

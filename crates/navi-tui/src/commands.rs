@@ -74,6 +74,12 @@ pub(crate) enum CommandAction {
     BackgroundModels,
     ModelRouting,
     ReSetup,
+    /// Set the current input as a multi-turn session goal (auto-continue).
+    SetGoal,
+    /// Pause auto-continuation for the active goal.
+    PauseGoal,
+    /// Resume a paused goal.
+    ResumeGoal,
     ClearGoal,
     AttachmentModels,
     TogglePlanMode,
@@ -197,6 +203,27 @@ pub(crate) const COMMANDS: &[CommandItem] = &[
         action: CommandAction::ShareSession,
         hub: Some(CommandHub::Session),
         visibility: CommandVisibility::Always,
+    },
+    CommandItem {
+        label: "Set Goal",
+        shortcut: None,
+        action: CommandAction::SetGoal,
+        hub: Some(CommandHub::Session),
+        visibility: CommandVisibility::Always,
+    },
+    CommandItem {
+        label: "Pause Goal",
+        shortcut: None,
+        action: CommandAction::PauseGoal,
+        hub: Some(CommandHub::Session),
+        visibility: CommandVisibility::WhenGoalActive,
+    },
+    CommandItem {
+        label: "Resume Goal",
+        shortcut: None,
+        action: CommandAction::ResumeGoal,
+        hub: Some(CommandHub::Session),
+        visibility: CommandVisibility::WhenGoalActive,
     },
     CommandItem {
         label: "Clear Goal",
@@ -499,6 +526,9 @@ fn action_keywords(action: CommandAction) -> &'static str {
             "copy clipboard last response output turn since user message"
         }
         CommandAction::ShareSession => "export json dump",
+        CommandAction::SetGoal => "goal set objective start auto continue",
+        CommandAction::PauseGoal => "goal pause stop auto continue",
+        CommandAction::ResumeGoal => "goal resume continue active",
         CommandAction::ClearGoal => "goal clear stop",
         CommandAction::BackgroundCommands => "shell tasks background jobs processes",
         CommandAction::ToggleYolo => "yolo unrestricted auto approve dangerous",
