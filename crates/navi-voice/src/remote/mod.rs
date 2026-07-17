@@ -125,9 +125,6 @@ mod tests {
             RemoteTranscriptionKind::parse("openai_audio_transcriptions"),
             Some(RemoteTranscriptionKind::OpenaiAudioTranscriptions)
         );
-        assert_eq!(
-            RemoteTranscriptionKind::parse("whisperflow"),
-            None
-        );
+        assert_eq!(RemoteTranscriptionKind::parse("whisperflow"), None);
     }
 }
