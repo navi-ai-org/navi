@@ -602,6 +602,81 @@ pub(crate) struct UsageUiState {
     pub remaining_credit_unit: Option<String>,
     /// Last turn in→out label (e.g. `34k→1.2k`) for the footer after each UsageReported.
     pub last_turn_label: Option<String>,
+    /// Latest cumulative usage snapshot for the model request currently being
+    /// streamed. Provider usage chunks are snapshots, not independent bills;
+    /// keeping this lets the TUI add only the newly reported portion to
+    /// session totals and cost.
+    pub request_input_tokens: u64,
+    pub request_output_tokens: u64,
+    pub request_cache_creation_tokens: u64,
+    pub request_cache_read_tokens: u64,
+    /// Conservative in-flight estimate shown only while the provider has not
+    /// completed the current request. It is intentionally kept separate from
+    /// billed session totals and cost.
+    pub estimated_request_input_tokens: Option<u64>,
+    pub estimated_request_output_bytes: usize,
+    /// Last time an account usage request was started. This rate-limits quiet
+    /// refreshes while a long-running turn is active.
+    pub last_account_refresh_at: Option<Instant>,
+}
+
+impl UsageUiState {
+    pub(crate) fn begin_request_estimate(&mut self, input_tokens: u64) {
+        self.reset_request_usage();
+        self.estimated_request_input_tokens = Some(input_tokens);
+    }
+
+    pub(crate) fn reset_request_usage(&mut self) {
+        self.request_input_tokens = 0;
+        self.request_output_tokens = 0;
+        self.request_cache_creation_tokens = 0;
+        self.request_cache_read_tokens = 0;
+        self.estimated_request_input_tokens = None;
+        self.estimated_request_output_bytes = 0;
+    }
+
+    pub(crate) fn add_estimated_output(&mut self, text: &str) {
+        self.estimated_request_output_bytes = self
+            .estimated_request_output_bytes
+            .saturating_add(text.len());
+    }
+
+    pub(crate) fn estimated_request_output_tokens(&self) -> u64 {
+        self.estimated_request_output_bytes.saturating_add(3) as u64 / 4
+    }
+
+    /// Records a provider usage snapshot and returns only the newly reported
+    /// token amounts. Zero means "not supplied" for this stream event.
+    pub(crate) fn observe_request_usage(
+        &mut self,
+        input_tokens: u64,
+        output_tokens: u64,
+        cache_creation_tokens: u64,
+        cache_read_tokens: u64,
+    ) -> (u64, u64, u64, u64) {
+        fn delta(snapshot: &mut u64, reported: u64) -> u64 {
+            if reported == 0 || reported <= *snapshot {
+                return 0;
+            }
+            let delta = reported.saturating_sub(*snapshot);
+            *snapshot = reported;
+            delta
+        }
+
+        let delta = (
+            delta(&mut self.request_input_tokens, input_tokens),
+            delta(&mut self.request_output_tokens, output_tokens),
+            delta(
+                &mut self.request_cache_creation_tokens,
+                cache_creation_tokens,
+            ),
+            delta(&mut self.request_cache_read_tokens, cache_read_tokens),
+        );
+        // The provider has supplied authoritative values for this request.
+        self.estimated_request_input_tokens = None;
+        self.estimated_request_output_bytes = 0;
+        delta
+    }
 }
 
 #[derive(Debug, Clone)]

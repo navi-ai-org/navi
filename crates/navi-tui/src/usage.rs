@@ -4,6 +4,9 @@ use crate::runtime::spawn_runtime_task;
 use crate::state::ModalKind;
 use navi_sdk::NaviUsageReport;
 
+/// Keep long-running turns observable without hammering account endpoints.
+const ACCOUNT_USAGE_REFRESH_INTERVAL: std::time::Duration = std::time::Duration::from_secs(30);
+
 pub(crate) fn open_usage_modal(app: &mut TuiApp) {
     crate::keybindings::replace_modal(app, ModalKind::Usage);
     // Apply any stream-cached Hyper balance immediately so the modal never
@@ -34,6 +37,7 @@ fn refresh_usage_inner(app: &mut TuiApp, quiet: bool) {
         return;
     }
     app.usage_state.loading = true;
+    app.usage_state.last_account_refresh_at = Some(std::time::Instant::now());
     app.usage_state.refresh_pending = false;
     if !quiet {
         app.usage_state.error = None;
@@ -44,6 +48,56 @@ fn refresh_usage_inner(app: &mut TuiApp, quiet: bool) {
         let result = engine.usage_report().await.map_err(|err| err.to_string());
         let _ = tx.send(AsyncEvent::UsageLoaded { result });
     });
+}
+
+/// Refresh account-backed usage while a turn is active (or the Usage modal is
+/// open). Stream usage is not guaranteed to arrive until a request ends, so a
+/// periodic balance poll prevents a multi-minute turn from leaving the user
+/// without any account-level signal.
+pub(crate) fn refresh_account_usage_if_due(app: &mut TuiApp) -> bool {
+    if !provider_supports_account_usage(app) || app.usage_state.loading {
+        return false;
+    }
+    let now = std::time::Instant::now();
+    if app
+        .usage_state
+        .last_account_refresh_at
+        .is_some_and(|last| now.duration_since(last) < ACCOUNT_USAGE_REFRESH_INTERVAL)
+    {
+        return false;
+    }
+    refresh_usage_quiet(app);
+    true
+}
+
+/// A completed turn should always request a fresh balance, regardless of the
+/// periodic refresh interval.
+pub(crate) fn refresh_account_usage_after_turn(app: &mut TuiApp) {
+    if provider_supports_account_usage(app) && !app.usage_state.loading {
+        refresh_usage_quiet(app);
+    }
+}
+
+fn provider_supports_account_usage(app: &TuiApp) -> bool {
+    matches!(
+        navi_sdk::canonical_provider_id(&app.loaded_config.config.model.provider),
+        "charm-hyper" | "openrouter" | "xai" | "openai" | "commandcode"
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn periodic_refresh_waits_for_the_rate_limit_interval() {
+        let mut app = crate::tests::test_app("");
+        app.is_loading = true;
+        app.usage_state.last_account_refresh_at = Some(std::time::Instant::now());
+
+        assert!(!refresh_account_usage_if_due(&mut app));
+        assert!(!app.usage_state.loading);
+    }
 }
 
 /// Pull the process-wide stream/HTTP Hypercredit cache into TUI state and

@@ -47,6 +47,12 @@ pub enum HitAction {
     ToolResult(String),
     ToolGroup(Vec<String>),
     Subagent(String),
+    /// Return keyboard focus to the main composer.
+    ///
+    /// This is a dedicated hit instead of relying on the empty-space fallback:
+    /// the fallback is intentionally shared with chat drag selection, while a
+    /// click inside the composer must always restore the input cursor.
+    FocusComposer,
     MessageAction(usize),
     ScrollTo {
         target: ScrollTarget,

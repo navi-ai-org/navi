@@ -1,7 +1,7 @@
 //! Voice / dictation support for NAVI.
 //!
 //! - Local: ONNX Nemotron streaming ASR (`feature = "onnx"`), download, doctor.
-//! - Remote: registry-backed cloud transcription (OpenAI / Groq Whisper, Wispr Flow).
+//! - Remote: registry-backed cloud transcription (OpenAI / Groq Whisper).
 
 pub mod capture;
 pub mod doctor;

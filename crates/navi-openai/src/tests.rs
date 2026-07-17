@@ -1697,6 +1697,21 @@ fn anthropic_sse_message_delta_with_usage() {
 }
 
 #[test]
+fn anthropic_sse_message_start_reports_prompt_usage() {
+    let data = r#"{"type":"message_start","message":{"usage":{"input_tokens":100,"cache_read_input_tokens":50}}}"#;
+    let events = crate::providers::anthropic::parse_anthropic_sse(data);
+
+    assert!(events.iter().any(|event| matches!(
+        event.as_ref().unwrap(),
+        ModelStreamEvent::Usage {
+            input_tokens: Some(100),
+            cache_read_tokens: Some(50),
+            ..
+        }
+    )));
+}
+
+#[test]
 fn anthropic_sse_message_delta_with_cache_usage() {
     let data = r#"{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"input_tokens":100,"output_tokens":50,"cache_creation_input_tokens":500,"cache_read_input_tokens":0}}"#;
     let events = parse_anthropic_sse(data);

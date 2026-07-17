@@ -1449,7 +1449,7 @@ impl NaviNapiEngine {
         serde_json::to_value(status).map_err(to_napi_error)
     }
 
-    /// Registry transcription providers (OpenAI / Groq / Wispr Flow, …).
+    /// Registry transcription providers (OpenAI / Groq, …).
     #[napi]
     pub fn voice_transcription_providers(&self) -> Result<JsonValue> {
         serde_json::to_value(self.inner.voice_transcription_providers()).map_err(to_napi_error)

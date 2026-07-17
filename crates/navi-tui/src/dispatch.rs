@@ -370,11 +370,15 @@ fn handle_agent_event(app: &mut TuiApp, event: AgentEvent) {
             let message = ensure_tail_model_response(app);
             message.content.push_str(&text);
             message.status = Some("receiving".to_string());
+            app.usage_state.add_estimated_output(&text);
+            update_live_usage_label(app);
         }
         AgentEvent::ModelThinkingDelta { text } => {
             let message = ensure_tail_model_response(app);
             message.thinking_content.push_str(&text);
             message.status = Some("thinking".to_string());
+            app.usage_state.add_estimated_output(&text);
+            update_live_usage_label(app);
         }
         AgentEvent::ToolRequested(invocation) => {
             if invocation.tool_name == "subagent" {
@@ -433,6 +437,10 @@ fn handle_agent_event(app: &mut TuiApp, event: AgentEvent) {
                 }
             }
             app.events.push(AgentEvent::ToolCompleted(result));
+            // The next model call after a tool has a new prompt and therefore
+            // a new cumulative usage snapshot.
+            app.usage_state
+                .begin_request_estimate(app.compact_state.total_estimated_tokens(0));
             update_active_assistant_status(app);
             app.chat_render_cache.borrow_mut().signature_hash = 0;
         }
@@ -544,28 +552,50 @@ fn handle_agent_event(app: &mut TuiApp, event: AgentEvent) {
             cache_creation_tokens,
             cache_read_tokens,
         } => {
-            // Refresh context meter every turn .
-            app.compact_state
-                .update_usage_full(input_tokens, output_tokens);
+            // Providers can emit several cumulative usage snapshots for one
+            // request. Use the full snapshot for the context meter, but add
+            // only the new portion to session totals and cost.
+            let (
+                delta_input_tokens,
+                delta_output_tokens,
+                delta_cache_creation_tokens,
+                delta_cache_read_tokens,
+            ) = app.usage_state.observe_request_usage(
+                input_tokens,
+                output_tokens,
+                cache_creation_tokens,
+                cache_read_tokens,
+            );
+            if input_tokens > 0 {
+                app.compact_state.last_input_tokens = Some(input_tokens);
+                app.compact_state.clear_unsent_bytes();
+            }
+            if output_tokens > 0 {
+                app.compact_state.last_output_tokens = Some(output_tokens);
+            }
             app.usage_state.session_input_tokens = app
                 .usage_state
                 .session_input_tokens
-                .saturating_add(input_tokens);
+                .saturating_add(delta_input_tokens);
             app.usage_state.session_output_tokens = app
                 .usage_state
                 .session_output_tokens
-                .saturating_add(output_tokens);
-            app.usage_state.last_input_tokens = Some(input_tokens);
-            app.usage_state.last_output_tokens = Some(output_tokens);
+                .saturating_add(delta_output_tokens);
+            if input_tokens > 0 {
+                app.usage_state.last_input_tokens = Some(input_tokens);
+            }
+            if output_tokens > 0 {
+                app.usage_state.last_output_tokens = Some(output_tokens);
+            }
             app.usage_state.last_turn_label = app.compact_state.turn_usage_label();
 
             // Session spend: list rates → USD (cache-aware); credit providers also track credits.
             if let Some(cost) = estimate_turn_cost_usd(
                 app,
-                input_tokens,
-                output_tokens,
-                cache_read_tokens,
-                cache_creation_tokens,
+                delta_input_tokens,
+                delta_output_tokens,
+                delta_cache_read_tokens,
+                delta_cache_creation_tokens,
             ) {
                 app.usage_state.session_cost_usd += cost;
                 app.usage_state.session_cost_known = true;
@@ -583,8 +613,8 @@ fn handle_agent_event(app: &mut TuiApp, event: AgentEvent) {
             {
                 msg.usage_label = Some(format!(
                     "{} in · {} out",
-                    format_tokens_k(input_tokens),
-                    format_tokens_k(output_tokens),
+                    format_tokens_k(app.usage_state.last_input_tokens.unwrap_or(0)),
+                    format_tokens_k(app.usage_state.last_output_tokens.unwrap_or(0)),
                 ));
             }
             // Force footer/chat redraw so the meter updates immediately.
@@ -906,6 +936,7 @@ fn handle_turn_completed(app: &mut TuiApp, res: std::result::Result<String, Stri
     }
     app.is_loading = false;
     app.loading_start = None;
+    app.usage_state.reset_request_usage();
     app.clear_stream_task();
     app.running_tools.clear();
     app.subagent_activity.clear();
@@ -967,20 +998,26 @@ fn maybe_notify_turn_completed(app: &TuiApp, assistant_text: &str) {
 /// usage or `GET /v1/credits`. Fetch after each turn so the footer/modal stay current
 /// without opening the Usage modal.
 fn maybe_refresh_account_usage_after_turn(app: &mut TuiApp) {
-    let provider_id = app.loaded_config.config.model.provider.as_str();
-    let canonical = navi_sdk::canonical_provider_id(provider_id);
-    // Keep this list tight: only providers with a cheap credits/balance endpoint.
-    if !matches!(
-        canonical,
-        "charm-hyper" | "openrouter" | "xai" | "openai" | "commandcode"
-    ) {
-        return;
+    crate::usage::refresh_account_usage_after_turn(app);
+}
+
+/// Show a clearly approximate usage label while a provider stream is active.
+/// Authoritative `UsageReported` snapshots replace this as soon as they arrive.
+fn update_live_usage_label(app: &mut TuiApp) {
+    let input = app
+        .usage_state
+        .estimated_request_input_tokens
+        .unwrap_or_else(|| app.compact_state.total_estimated_tokens(0));
+    let output = app.usage_state.estimated_request_output_tokens();
+    if let Some(message) = app.messages.last_mut()
+        && message.role == ChatRole::Assistant
+    {
+        message.usage_label = Some(format!(
+            "≈ {} in · {} out",
+            format_tokens_k(input),
+            format_tokens_k(output),
+        ));
     }
-    // Avoid stacking refreshes if the modal is already loading.
-    if app.usage_state.loading {
-        return;
-    }
-    crate::usage::refresh_usage_quiet(app);
 }
 
 /// recap after a successful turn.
@@ -1496,6 +1533,56 @@ mod tests {
         assert_eq!(msg.usage_label.as_deref(), Some("3k in · 1k out"));
         // 3000→1500: turn label keeps one decimal under 10k (1.5k).
         assert_eq!(app.usage_state.last_turn_label.as_deref(), Some("3k→1.5k"));
+    }
+
+    #[test]
+    fn cumulative_usage_snapshots_do_not_double_count_session_totals() {
+        let mut app = test_app("");
+
+        handle_async_event(
+            &mut app,
+            AsyncEvent::Agent(AgentEvent::UsageReported {
+                input_tokens: 5_000,
+                output_tokens: 200,
+                cache_creation_tokens: 0,
+                cache_read_tokens: 0,
+            }),
+        );
+        handle_async_event(
+            &mut app,
+            AsyncEvent::Agent(AgentEvent::UsageReported {
+                input_tokens: 5_000,
+                output_tokens: 450,
+                cache_creation_tokens: 0,
+                cache_read_tokens: 0,
+            }),
+        );
+
+        assert_eq!(app.usage_state.session_input_tokens, 5_000);
+        assert_eq!(app.usage_state.session_output_tokens, 450);
+        assert_eq!(app.compact_state.last_input_tokens, Some(5_000));
+        assert_eq!(app.compact_state.last_output_tokens, Some(450));
+    }
+
+    #[test]
+    fn model_delta_updates_the_in_progress_usage_estimate() {
+        let mut app = test_app("");
+        app.usage_state.begin_request_estimate(2_000);
+
+        handle_async_event(
+            &mut app,
+            AsyncEvent::Agent(AgentEvent::ModelDelta {
+                text: "12345678".into(),
+            }),
+        );
+
+        assert_eq!(app.usage_state.estimated_request_output_tokens(), 2);
+        assert_eq!(
+            app.messages
+                .last()
+                .and_then(|message| message.usage_label.as_deref()),
+            Some("≈ 2k in · 2 out")
+        );
     }
 
     #[test]

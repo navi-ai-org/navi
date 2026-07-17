@@ -2,7 +2,7 @@
 //!
 //! Engine-scoped (not per-session). Supports:
 //! - **Local** ONNX Nemotron (feature `voice-onnx`)
-//! - **Remote** registry transcription providers (OpenAI / Groq Whisper, Wispr Flow)
+//! - **Remote** registry transcription providers (OpenAI / Groq Whisper)
 //!
 //! Desktop clients push 16 kHz mono PCM for local streaming; remote path is
 //! offline file transcription (WAV) via HTTP.
@@ -266,7 +266,7 @@ impl NaviEngine {
 
     /// Transcribe a WAV file.
     ///
-    /// - **Remote** (`[voice].provider` = openai|groq|wispr-flow|…): HTTP call using
+    /// - **Remote** (`[voice].provider` = openai|groq|…): HTTP call using
     ///   registry metadata + API key (same credential resolution as LLM providers).
     /// - **Local**: Blocking ONNX Nemotron (requires `voice-onnx` feature + installed model).
     pub fn voice_transcribe_file(

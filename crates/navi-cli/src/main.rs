@@ -375,7 +375,7 @@ pub enum VoiceAction {
     Doctor,
     /// Transcribe a WAV file (local ONNX or remote provider from [voice])
     Transcribe {
-        /// Path to a WAV file (any rate; resampled to 16 kHz mono for local / Wispr Flow)
+        /// Path to a WAV file (any rate; resampled to 16 kHz mono for local / remote)
         path: String,
         /// Language prompt: auto | en-US | pt-BR | …
         #[arg(long, default_value = "auto")]

@@ -148,6 +148,16 @@ pub(crate) fn parse_anthropic_sse_with_state(
     };
 
     match value.get("type").and_then(Value::as_str) {
+        // Anthropic reports prompt/cache usage at message start, then reports
+        // the cumulative completion count in message_delta. Keeping both
+        // events lets NAVI update the context meter immediately and reconcile
+        // the final output later.
+        Some("message_start") => crate::mapping::usage_from_value_with_behavior(
+            value
+                .get("message")
+                .and_then(|message| message.get("usage")),
+            Some(&crate::providers::behavior::AnthropicBehavior),
+        ),
         Some("content_block_start") => {
             let block = value.get("content_block");
             if let Some(block_type) = block.and_then(|b| b.get("type")).and_then(Value::as_str)

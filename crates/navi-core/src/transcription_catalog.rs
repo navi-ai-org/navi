@@ -76,12 +76,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn catalog_contains_openai_groq_wispr() {
+    fn catalog_contains_openai_groq() {
         let cat = transcription_provider_catalog();
         let ids: Vec<_> = cat.iter().map(|p| p.id.as_str()).collect();
         assert!(ids.contains(&"openai"));
         assert!(ids.contains(&"groq"));
-        assert!(ids.contains(&"wispr-flow"));
     }
 
     #[test]

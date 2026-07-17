@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-07-17
+
+Full changelog: https://github.com/navi-ai-org/navi/compare/v0.2.7...v0.3.0
+
+Bug-fix and cleanup release: provider cache isolation for multi-instance, TUI mouse/scroll/focus regression fix, usage tracking overhaul, and Wispr Flow provider removal.
+
+### Bug Fixes
+
+- **Charm Hyper cache isolation** — each NAVI instance now gets a unique session-affinity identity for provider cache, preventing cache overlap when running multiple instances with the same Charm Hyper provider
+- **Fallback provider identity isolation** — fallback/secondary requests also receive isolated cache identities
+- **TUI mouse scroll regression** — restored `REPORT_EVENT_TYPES` Kitty keyboard flag; without it, some terminals stop emitting mouse wheel events as `Event::Mouse` and instead emit arrow-key sequences, causing the scroll wheel to select chat blocks instead of scrolling the viewport line-by-line
+- **TUI input focus restore** — composer hit region elevated to z=100 so clicks on the input box reliably restore cursor focus even when chat line hit regions (z=5) or "jump to latest" (z=80) overlap; `FocusComposer` action clears block selection and text drag state
+- **TUI wheel scroll cleanup** — `clear_chat_selection_for_wheel` ensures scroll wheel never leaves a scrollback block focused, preventing the "selection hopping" visual glitch
+- **Usage tracking double-count** — provider usage snapshots are now treated as cumulative (not incremental); `UsageUiState::observe_request_usage` computes deltas so session totals and cost are not inflated when a provider emits partial usage updates
+- **Usage tracking stale during long turns** — account-backed providers (charm-hyper, openrouter, xai, openai, commandcode) now refresh every 30s while a turn is active or the Usage modal is open
+- **Anthropic prompt usage at stream start** — `message_start` SSE now emits a `ModelStreamEvent::Usage` so the context meter updates immediately instead of waiting for `message_delta`
+- **In-progress usage estimate** — `ModelDelta` and `ModelThinkingDelta` update a conservative output token estimate shown separately from billed totals
+
+### Removed
+
+- **Wispr Flow voice dictation provider** — removed `wispr-flow` transcription provider from registry, `WisprFlow` variant from `TranscriptionProviderKind` / `RemoteTranscriptionKind`, `wispr_flow.rs` client, and `base64` dependency from `navi-voice`
+
 ## [0.2.7] - 2026-07-16
 
 Full changelog: https://github.com/navi-ai-org/navi/compare/v0.2.6...v0.2.7

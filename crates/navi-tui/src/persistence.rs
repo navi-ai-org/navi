@@ -141,6 +141,8 @@ pub(crate) fn load_session(app: &mut TuiApp, snapshot: &SessionSnapshot) {
     app.usage_state.last_input_tokens = None;
     app.usage_state.last_output_tokens = None;
     app.usage_state.last_turn_label = None;
+    app.usage_state.reset_request_usage();
+    app.usage_state.last_account_refresh_at = None;
     app.pending_approvals.clear();
     app.pending_questions.clear();
     app.running_tools.clear();

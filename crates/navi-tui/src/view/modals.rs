@@ -2493,6 +2493,22 @@ fn render_session_usage(lines: &mut Vec<Line<'_>>, app: &TuiApp) {
         ),
     ]));
 
+    if app.is_loading {
+        let input = app
+            .usage_state
+            .estimated_request_input_tokens
+            .unwrap_or_else(|| app.compact_state.total_estimated_tokens(0));
+        let output = app.usage_state.estimated_request_output_tokens();
+        lines.push(Line::from(vec![
+            Span::styled("  In progress", Style::default().fg(muted())),
+            Span::styled(
+                format!(" ≈ {} in · {} out", fmt(input), fmt(output)),
+                Style::default().fg(signal()),
+            ),
+            Span::styled("  estimate", Style::default().fg(ghost())),
+        ]));
+    }
+
     if let (Some(inp), Some(out)) = (
         app.usage_state.last_input_tokens,
         app.usage_state.last_output_tokens,

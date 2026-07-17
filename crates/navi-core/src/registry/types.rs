@@ -256,7 +256,7 @@ pub struct RegistryManifest {
     pub version: u32,
     pub updated_at: String,
     pub providers: std::collections::HashMap<String, ManifestProviderEntry>,
-    /// Remote speech-to-text / dictation providers (Whisper, Wispr Flow, …).
+    /// Remote speech-to-text / dictation providers (Whisper, …).
     #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
     pub transcription_providers: std::collections::HashMap<String, ManifestProviderEntry>,
     /// Coverage statistics (ignored at runtime, present in manifest v33+).
@@ -289,15 +289,12 @@ pub struct ManifestModelEntry {
 pub enum TranscriptionProviderKind {
     /// OpenAI-compatible `POST /audio/transcriptions` (multipart).
     OpenaiAudioTranscriptions,
-    /// Wispr Flow `POST /api` (JSON + base64 audio).
-    WisprFlow,
 }
 
 impl TranscriptionProviderKind {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::OpenaiAudioTranscriptions => "openai-audio-transcriptions",
-            Self::WisprFlow => "wispr-flow",
         }
     }
 
@@ -306,7 +303,6 @@ impl TranscriptionProviderKind {
             "openai-audio-transcriptions" | "openai_audio_transcriptions" => {
                 Some(Self::OpenaiAudioTranscriptions)
             }
-            "wispr-flow" | "wispr_flow" | "whisperflow" | "whisper-flow" => Some(Self::WisprFlow),
             _ => None,
         }
     }
@@ -348,7 +344,7 @@ pub struct RegistryTranscriptionProvider {
     pub label: String,
     #[serde(default)]
     pub description: String,
-    /// Wire kind string (`openai-audio-transcriptions` | `wispr-flow`).
+    /// Wire kind string (`openai-audio-transcriptions`).
     pub kind: String,
     pub api_key_env: String,
     pub base_url: String,
@@ -375,7 +371,6 @@ impl RegistryTranscriptionProvider {
         }
         match self.kind_enum() {
             Some(TranscriptionProviderKind::OpenaiAudioTranscriptions) => "/audio/transcriptions",
-            Some(TranscriptionProviderKind::WisprFlow) => "/api",
             None => "/audio/transcriptions",
         }
     }

@@ -31,6 +31,10 @@ pub(crate) fn start_streaming_request(app: &mut TuiApp) {
 
     app.is_loading = true;
     app.loading_start = Some(Instant::now());
+    // Until the provider reports authoritative usage, expose a conservative
+    // request estimate in the Usage modal. It is never billed into totals.
+    app.usage_state
+        .begin_request_estimate(app.compact_state.total_estimated_tokens(0));
     tracing::info!(
         provider = %app.loaded_config.config.model.provider,
         model = %app.loaded_config.config.model.name,
