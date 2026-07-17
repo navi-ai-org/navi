@@ -18,7 +18,7 @@ async-trait.workspace = true
 clap.workspace = true
 futures-util.workspace = true
 # Keep embeddings/VFS/plugins off — cannot use workspace inherit + default-features=false.
-navi-core = { version = "0.3.1", path = "../navi-core", default-features = false }
+navi-core = { version = "0.3.2", path = "../navi-core", default-features = false }
 navi-openai.workspace = true
 serde.workspace = true
 serde_json.workspace = true
