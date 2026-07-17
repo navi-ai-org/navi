@@ -103,7 +103,7 @@ async function main() {
     console.warn('');
     console.warn('The navi CLI may not be available. You can install it via:');
     console.warn('  cargo install navi-cli');
-    console.warn(`  curl -fsSL https://raw.githubusercontent.com/navi-ai-org/navi/main/scripts/install.sh | sh`);
+    console.warn(`  curl -fsSL https://github.com/navi-ai-org/navi/raw/refs/heads/main/scripts/install.sh | sh`);
     // Don't fail install — the user might install the binary separately
   }
 }

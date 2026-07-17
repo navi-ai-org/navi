@@ -10,7 +10,7 @@ use serde::Deserialize;
 
 const DEFAULT_REPO: &str = "navi-ai-org/navi";
 const INSTALL_SH: &str =
-    "https://raw.githubusercontent.com/navi-ai-org/navi/main/scripts/install.sh";
+    "https://github.com/navi-ai-org/navi/raw/refs/heads/main/scripts/install.sh";
 const INSTALL_PS1: &str =
     "https://raw.githubusercontent.com/navi-ai-org/navi/main/scripts/install.ps1";
 

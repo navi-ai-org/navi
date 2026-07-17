@@ -4,11 +4,15 @@
 # POSIX sh compatible (dash on Ubuntu, ash on Alpine, bash, …).
 #
 # Primary install method:
-#   curl -fsSL https://raw.githubusercontent.com/navi-ai-org/navi/main/scripts/install.sh | sh
+#   curl -fsSL https://github.com/navi-ai-org/navi/raw/refs/heads/main/scripts/install.sh | sh
+#
+# Pin version (skips "latest" lookup; useful offline / under rate limits):
+#   curl -fsSL https://github.com/navi-ai-org/navi/raw/refs/heads/main/scripts/install.sh \
+#     | sh -s -- --version 0.3.0
 #
 # Safer: pin the install script by commit and pin the release version:
 #   curl -fsSL https://raw.githubusercontent.com/navi-ai-org/navi/<commit>/scripts/install.sh \
-#     | sh -s -- --version 0.2.0
+#     | sh -s -- --version 0.3.0
 #
 # Security (what this script enforces by default):
 #   1. HTTPS only (curl/wget fail on TLS errors; no --insecure)
@@ -401,11 +405,11 @@ main() {
 NAVI installer — secure install of prebuilt binaries from GitHub Releases
 
 Usage:
-  curl -fsSL https://raw.githubusercontent.com/navi-ai-org/navi/main/scripts/install.sh | sh
+  curl -fsSL https://github.com/navi-ai-org/navi/raw/refs/heads/main/scripts/install.sh | sh
   curl -fsSL ... | sh -s -- [OPTIONS]
 
 Options:
-  --version, -v <VERSION>  Version or tag (e.g. 0.2.0 or v0.2.0). Default: latest
+  --version, -v <VERSION>  Version or tag (e.g. 0.3.0 or v0.3.0). Default: latest
   --to, -t <DIR>           Install directory (default: ~/.local/bin)
   --verify                 Require SHA-256 match (default, always on)
   --require-cosign         Fail if Sigstore/cosign verification is unavailable
@@ -414,6 +418,7 @@ Options:
 Environment:
   NAVI_VERSION   Same as --version
   NAVI_INSTALL   Same as --to
+  GH_TOKEN / GITHUB_TOKEN  Optional; used only if HTML latest-resolve fails
   NAVI_REPO      GitHub repo (default: navi-ai-org/navi)
 
 Security:

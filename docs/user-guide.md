@@ -9,7 +9,7 @@ This guide covers how to install, configure, and use NAVI as a terminal code age
 **macOS / Linux:**
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/navi-ai-org/navi/main/scripts/install.sh | sh
+curl -fsSL https://github.com/navi-ai-org/navi/raw/refs/heads/main/scripts/install.sh | sh
 ```
 
 **Windows (PowerShell):**
@@ -29,7 +29,7 @@ and CI.
 ```dockerfile
 FROM alpine:3.20
 RUN apk add --no-cache ca-certificates curl tar
-RUN curl -fsSL https://raw.githubusercontent.com/navi-ai-org/navi/main/scripts/install.sh | sh \
+RUN curl -fsSL https://github.com/navi-ai-org/navi/raw/refs/heads/main/scripts/install.sh | sh \
  && mv /root/.local/bin/navi /usr/local/bin/navi
 ENTRYPOINT ["navi"]
 ```

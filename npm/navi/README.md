@@ -36,7 +36,7 @@ If no prebuilt binary is available for your platform, the postinstall script wil
 
 ```bash
 # Shell installer (primary — no Node required)
-curl -fsSL https://raw.githubusercontent.com/navi-ai-org/navi/main/scripts/install.sh | sh
+curl -fsSL https://github.com/navi-ai-org/navi/raw/refs/heads/main/scripts/install.sh | sh
 
 # From source (development)
 cargo install --git https://github.com/navi-ai-org/navi navi-cli
