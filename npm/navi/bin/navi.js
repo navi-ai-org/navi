@@ -66,7 +66,7 @@ if (!binary) {
       'To resolve this:',
       '  1. Try reinstalling: npm install -g @navi-agent/navi',
       '  2. Or install via cargo: cargo install navi-cli',
-      '  3. Or use the shell installer: curl -fsSL https://raw.githubusercontent.com/navi-ai-org/navi/main/scripts/install.sh | sh',
+      '  3. Or use the shell installer: curl -fsSL https://github.com/navi-ai-org/navi/raw/refs/heads/main/scripts/install.sh | sh',
       '',
       `Expected package: @navi-agent/navi-${platformArch}`,
     ].join('\n'),

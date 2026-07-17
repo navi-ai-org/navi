@@ -34,7 +34,7 @@ One line. No Rust toolchain. Prebuilt binary from [GitHub Releases](https://gith
 **macOS / Linux**
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/navi-ai-org/navi/main/scripts/install.sh | sh
+curl -fsSL https://github.com/navi-ai-org/navi/raw/refs/heads/main/scripts/install.sh | sh
 ```
 
 ```bash
@@ -54,7 +54,7 @@ irm https://raw.githubusercontent.com/navi-ai-org/navi/main/scripts/install.ps1 
 **Pin a version**
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/navi-ai-org/navi/main/scripts/install.sh | sh -s -- --version 0.2.4
+curl -fsSL https://github.com/navi-ai-org/navi/raw/refs/heads/main/scripts/install.sh | sh -s -- --version 0.3.0
 ```
 
 **Homebrew**
@@ -81,7 +81,7 @@ just install-release   # or: cargo build -p navi-cli --release
 ```dockerfile
 FROM alpine:3.20
 RUN apk add --no-cache ca-certificates curl tar \
- && curl -fsSL https://raw.githubusercontent.com/navi-ai-org/navi/main/scripts/install.sh | sh \
+ && curl -fsSL https://github.com/navi-ai-org/navi/raw/refs/heads/main/scripts/install.sh | sh \
  && mv /root/.local/bin/navi /usr/local/bin/navi
 ENTRYPOINT ["navi"]
 ```
@@ -91,7 +91,7 @@ ENTRYPOINT ["navi"]
 ```bash
 # high-assurance: pin script commit + release + require cosign
 curl -fsSL https://raw.githubusercontent.com/navi-ai-org/navi/<commit-sha>/scripts/install.sh \
-  | sh -s -- --version 0.2.4 --require-cosign
+  | sh -s -- --version 0.3.0 --require-cosign
 ```
 
 </details>

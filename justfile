@@ -31,7 +31,7 @@ build-release:
 
 # Install the latest prebuilt release binary (curl installer — preferred for users).
 install-bin:
-    curl -fsSL https://raw.githubusercontent.com/navi-ai-org/navi/main/scripts/install.sh | sh
+    curl -fsSL https://github.com/navi-ai-org/navi/raw/refs/heads/main/scripts/install.sh | sh
 
 # Build from this checkout and install into cargo's bin dir (dev).
 install:
