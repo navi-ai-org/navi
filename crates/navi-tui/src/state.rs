@@ -364,7 +364,7 @@ impl MessageAction {
             Self::CopyResponse => "assistant output since this message",
             Self::Copy => "copy selected message only",
             Self::CopySession => "full session transcript",
-            Self::Revert => "move this message back to input",
+            Self::Revert => "restore files + history to this prompt",
             Self::Fork => "start new session from this point",
         }
     }
@@ -497,6 +497,8 @@ pub enum Mode {
     Question,
     ThemePicker,
     MessageActions,
+    /// Grok-style rewind: pick a past user prompt to restore history + files.
+    Rewind,
     Mcp,
     OAuth,
     BackgroundCommands,
@@ -544,6 +546,7 @@ pub(crate) enum ModalKind {
     Question,
     ThemePicker,
     MessageActions,
+    Rewind,
     Mcp,
     OAuth,
     BackgroundCommands,
@@ -586,6 +589,7 @@ impl ModalKind {
             Self::Question => Mode::Question,
             Self::ThemePicker => Mode::ThemePicker,
             Self::MessageActions => Mode::MessageActions,
+            Self::Rewind => Mode::Rewind,
             Self::Mcp => Mode::Mcp,
             Self::OAuth => Mode::OAuth,
             Self::BackgroundCommands => Mode::BackgroundCommands,

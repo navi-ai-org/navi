@@ -1591,6 +1591,93 @@ pub(crate) fn render_settings(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
     );
 }
 
+pub(crate) fn render_rewind(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
+    clear_modal_area(frame, area);
+    let block = modal_block("Rewind");
+    frame.render_widget(block, area);
+
+    let inner = area.inner(Margin {
+        horizontal: 2,
+        vertical: 1,
+    });
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(1),
+            Constraint::Length(1),
+            Constraint::Min(3),
+            Constraint::Length(1),
+        ])
+        .split(inner);
+
+    frame.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::styled(
+                "Restore chat + project files to a past prompt",
+                Style::default().fg(muted()).bg(modal_bg()),
+            ),
+        ]))
+        .style(Style::default().bg(modal_bg())),
+        rows[0],
+    );
+    frame.render_widget(Paragraph::new(""), rows[1]);
+
+    let checkpoints = crate::chat::rewind_checkpoints(app);
+    const VISIBLE: usize = 10;
+    let total = checkpoints.len();
+    let scroll = app.rewind_scroll.min(total.saturating_sub(1));
+    let visible_slice = checkpoints
+        .iter()
+        .enumerate()
+        .skip(scroll)
+        .take(VISIBLE)
+        .collect::<Vec<_>>();
+
+    let items = visible_slice
+        .iter()
+        .map(|(list_index, (_msg_idx, preview))| {
+            let selected = *list_index == app.selected_rewind;
+            let hovered = app.hover_index == Some(*list_index);
+            let style = if hovered || selected {
+                active_item_style()
+            } else {
+                inactive_item_style()
+            };
+            let ordinal = list_index + 1;
+            ListItem::new(Line::from(vec![
+                Span::styled(format!("{ordinal:>2}. "), style),
+                Span::styled(preview.clone(), style),
+            ]))
+            .style(style)
+        })
+        .collect::<Vec<_>>();
+
+    frame.render_widget(
+        List::new(items).style(Style::default().bg(modal_bg())),
+        rows[2],
+    );
+
+    for (row_offset, (list_index, _)) in visible_slice.iter().enumerate() {
+        app.register_hit(
+            line_rect(rows[2], row_offset),
+            20,
+            format!("rewind checkpoint {}", list_index + 1),
+            HitAction::RewindCheckpoint(*list_index),
+        );
+    }
+
+    let footer = if total == 0 {
+        "no prompts yet · esc close".to_string()
+    } else {
+        format!("{total} checkpoint(s) · enter restore · esc close")
+    };
+    frame.render_widget(
+        Paragraph::new(footer).style(Style::default().fg(muted()).bg(modal_bg())),
+        rows[3],
+    );
+    app.register_hit(rows[3], 20, "close rewind", HitAction::CloseModal);
+}
+
 pub(crate) fn render_message_actions(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
     clear_modal_area(frame, area);
     let block = modal_block("Message Actions");

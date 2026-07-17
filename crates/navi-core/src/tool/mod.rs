@@ -183,6 +183,8 @@ pub struct ToolExecutor {
     security: Arc<dyn ToolSecurityPolicy>,
     harness_profile: String,
     registry: ToolRegistry,
+    /// Optional session rewind store for Grok-style file restore.
+    rewind_store: Option<Arc<std::sync::Mutex<crate::rewind::RewindStore>>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -236,7 +238,21 @@ impl ToolExecutor {
             security,
             harness_profile: "medium".to_string(),
             registry: ToolRegistry::new(),
+            rewind_store: None,
         }
+    }
+
+    /// Attach a session rewind store so successful writes track dirty paths.
+    pub fn set_rewind_store(
+        &mut self,
+        store: Option<Arc<std::sync::Mutex<crate::rewind::RewindStore>>>,
+    ) {
+        self.rewind_store = store;
+    }
+
+    /// Shared handle for write tools / runtime rebind.
+    pub fn rewind_store(&self) -> Option<Arc<std::sync::Mutex<crate::rewind::RewindStore>>> {
+        self.rewind_store.clone()
     }
 
     pub fn with_security_policy(
@@ -324,6 +340,7 @@ impl ToolExecutor {
             security: Arc::new(DefaultToolSecurityPolicy),
             harness_profile: "medium".to_string(),
             registry: ToolRegistry::new(),
+            rewind_store: None,
         };
         executor.register(ReadTool::new(pr.clone()));
         executor.register(ReadTool::alias(pr.clone(), "read"));
@@ -672,6 +689,16 @@ impl ToolExecutor {
 
         let pre_execution_snapshot = if tool_kind == Some(crate::tool::ToolKind::Write) {
             let paths = self.snapshot_paths_for_invocation(&invocation);
+            // First-touch paths: capture pre-write bytes into the current rewind point.
+            if let Some(store) = &self.rewind_store {
+                if !paths.is_empty() {
+                    if let Ok(mut store) = store.lock() {
+                        if let Err(e) = store.ensure_pre_write_capture(paths.iter().cloned()) {
+                            tracing::debug!(error = %e, "rewind: pre-write capture failed");
+                        }
+                    }
+                }
+            }
             if paths.is_empty() {
                 None
             } else {
@@ -693,6 +720,29 @@ impl ToolExecutor {
                 output: json!({"error": format!("{e:#}")}),
             },
         };
+
+        // Track successful write paths for Grok-style rewind (dirty set + created).
+        if result.ok && tool_kind == Some(crate::tool::ToolKind::Write) {
+            if let Some(store) = &self.rewind_store {
+                let paths = crate::effect::extract_paths(
+                    &result,
+                    &ToolInvocation {
+                        id: inv_id.clone(),
+                        tool_name: tool_name.clone(),
+                        input: inv_input.clone(),
+                    },
+                );
+                let abs_paths: Vec<std::path::PathBuf> = paths
+                    .into_iter()
+                    .map(|p| self.policy.resolve_project_path(&p))
+                    .collect();
+                if !abs_paths.is_empty() {
+                    if let Ok(mut store) = store.lock() {
+                        store.note_written_paths(abs_paths);
+                    }
+                }
+            }
+        }
 
         // Post-execution effect check for successful write/command tools.
         if result.ok {

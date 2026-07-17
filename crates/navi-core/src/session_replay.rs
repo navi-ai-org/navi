@@ -77,6 +77,28 @@ pub fn model_messages_from_agent_events(
                     content_parts,
                 ));
             }
+            AgentEvent::AutoCompactCompleted {
+                summary,
+                kept_recent_messages,
+                ..
+            } => {
+                // Collapse prior conversation into the compact summary so restored
+                // sessions do not rehydrate the full pre-compact history.
+                flush_pending_tool_calls(&mut messages, &mut pending_tool_calls);
+                if summary.trim().is_empty() {
+                    continue;
+                }
+                let keep = *kept_recent_messages;
+                let recent = if keep == 0 || messages.is_empty() {
+                    Vec::new()
+                } else {
+                    let start = messages.len().saturating_sub(keep);
+                    messages[start..].to_vec()
+                };
+                messages.clear();
+                messages.push(crate::compact::compact_summary_user_message(summary));
+                messages.extend(recent);
+            }
             _ => {}
         }
     }
@@ -360,6 +382,36 @@ mod tests {
         assert!(parts[0].is_image());
         assert_eq!(parts[0].media_type(), Some("image/png"));
         assert!(!parts[0].data().unwrap_or("").is_empty());
+    }
+
+    #[test]
+    fn auto_compact_completed_collapses_prior_history() {
+        let events = vec![
+            AgentEvent::UserTaskSubmitted {
+                text: "old task".into(),
+                content_parts: Vec::new(),
+                submitted_at: None,
+            },
+            AgentEvent::ModelOutput {
+                text: "old reply".into(),
+                thinking: None,
+            },
+            AgentEvent::AutoCompactCompleted {
+                tokens_saved: 1000,
+                summary: "summary of prior work".into(),
+                kept_recent_messages: 0,
+            },
+            AgentEvent::UserTaskSubmitted {
+                text: "continue".into(),
+                content_parts: Vec::new(),
+                submitted_at: None,
+            },
+        ];
+        let messages = model_messages_from_agent_events(&events, None, None);
+        assert_eq!(messages.len(), 2);
+        assert!(messages[0].content.contains("summary of prior work"));
+        assert_eq!(messages[1].content, "continue");
+        assert!(!messages.iter().any(|m| m.content == "old task"));
     }
 
     #[test]

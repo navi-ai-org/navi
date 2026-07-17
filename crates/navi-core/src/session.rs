@@ -686,6 +686,10 @@ pub enum SessionCommand {
         keep_user_turns: usize,
         response_tx: tokio::sync::oneshot::Sender<Result<usize>>,
     },
+    /// Force-compact live conversation history with the session model.
+    Compact {
+        response_tx: tokio::sync::oneshot::Sender<Result<crate::compact::CompactOutcome>>,
+    },
 }
 
 /// Truncate model history so only the first `keep_user_turns` user turns remain.
@@ -756,11 +760,69 @@ impl SessionRuntime {
                         truncate_messages_to_user_turns(&mut messages, keep_user_turns);
                         let _ = response_tx.send(Ok(messages.len()));
                     }
+                    SessionCommand::Compact { response_tx } => {
+                        let result = force_compact_session_messages(&ctx, &mut messages).await;
+                        let _ = response_tx.send(result);
+                    }
                 }
             }
         });
 
         Self { submission_tx: tx }
+    }
+}
+
+/// Force-compact the live session message list using the active session model.
+async fn force_compact_session_messages(
+    ctx: &std::sync::Arc<crate::turn::TurnContext>,
+    messages: &mut Vec<crate::model::ModelMessage>,
+) -> Result<crate::compact::CompactOutcome> {
+    if let Some(ref tx) = ctx.event_tx {
+        let _ = tx.send(crate::event::AgentEvent::AutoCompactStarted);
+    }
+
+    let provider = ctx.active_model_provider();
+    let model = ctx.active_model_name();
+    let mut state = ctx.compact_state.lock().await;
+    match ctx
+        .components
+        .compaction
+        .force_compact(
+            &mut state,
+            messages,
+            provider.as_ref(),
+            &model,
+            &ctx.harness_config,
+        )
+        .await
+    {
+        Ok(Some(outcome)) => {
+            if let Some(ref tx) = ctx.event_tx {
+                let _ = tx.send(crate::event::AgentEvent::AutoCompactCompleted {
+                    tokens_saved: outcome.tokens_saved,
+                    summary: outcome.summary.clone(),
+                    kept_recent_messages: outcome.kept_recent_messages,
+                });
+            }
+            Ok(outcome)
+        }
+        Ok(None) => {
+            let reason = "nothing to compact".to_string();
+            if let Some(ref tx) = ctx.event_tx {
+                let _ = tx.send(crate::event::AgentEvent::AutoCompactFailed {
+                    reason: reason.clone(),
+                });
+            }
+            Err(anyhow::anyhow!(reason))
+        }
+        Err(e) => {
+            if let Some(ref tx) = ctx.event_tx {
+                let _ = tx.send(crate::event::AgentEvent::AutoCompactFailed {
+                    reason: e.to_string(),
+                });
+            }
+            Err(e)
+        }
     }
 }
 

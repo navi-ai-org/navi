@@ -4,6 +4,25 @@ use anyhow::Result;
 use std::collections::HashSet;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+/// Result of a successful conversation compaction.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CompactOutcome {
+    /// Estimated tokens removed from the live context.
+    pub tokens_saved: u64,
+    /// Model-produced summary that replaces older turns.
+    pub summary: String,
+    /// How many non-system conversation messages were kept after the summary.
+    pub kept_recent_messages: usize,
+}
+
+/// Build the standard post-compact user message that carries the summary.
+pub fn compact_summary_user_message(summary: &str) -> ModelMessage {
+    ModelMessage::user(format!(
+        "Here is a summary of the conversation so far:\n\n{}",
+        summary
+    ))
+}
+
 const READ_ONLY_TOOLS: &[&str] = &[
     "read_file",
     "read",
@@ -346,8 +365,33 @@ impl CompactState {
         model_provider: &dyn ModelProvider,
         model_name: &str,
         harness_config: &HarnessConfig,
-    ) -> Result<Option<u64>> {
-        if !self.should_autocompact(harness_config.autocompact_buffer_tokens) {
+    ) -> Result<Option<CompactOutcome>> {
+        self.auto_compact_inner(messages, model_provider, model_name, harness_config, false)
+            .await
+    }
+
+    /// Force compaction with the session model even when below the threshold.
+    /// Manual Compact always fully replaces conversation history (keep_ratio=0).
+    pub async fn force_compact(
+        &mut self,
+        messages: &mut Vec<ModelMessage>,
+        model_provider: &dyn ModelProvider,
+        model_name: &str,
+        harness_config: &HarnessConfig,
+    ) -> Result<Option<CompactOutcome>> {
+        self.auto_compact_inner(messages, model_provider, model_name, harness_config, true)
+            .await
+    }
+
+    async fn auto_compact_inner(
+        &mut self,
+        messages: &mut Vec<ModelMessage>,
+        model_provider: &dyn ModelProvider,
+        model_name: &str,
+        harness_config: &HarnessConfig,
+        force: bool,
+    ) -> Result<Option<CompactOutcome>> {
+        if !force && !self.should_autocompact(harness_config.autocompact_buffer_tokens) {
             return Ok(None);
         }
 
@@ -369,12 +413,21 @@ impl CompactState {
         }
 
         // KeepRatio: keep the last N% of conversation turns intact.
-        let keep_ratio = harness_config.autocompact_keep_ratio.clamp(0.0, 0.9);
+        // Forced/manual compact always fully replaces so context actually shrinks.
+        let keep_ratio = if force {
+            0.0
+        } else {
+            harness_config.autocompact_keep_ratio.clamp(0.0, 0.9)
+        };
         let total = conversation_msgs.len();
-        let keep_count = (total as f64 * keep_ratio).round() as usize;
-        // Always keep at least 2 messages (1 user + 1 assistant) and at most
-        // total - 2 (so there's something to summarize).
-        let keep_count = keep_count.clamp(2.min(total), total.saturating_sub(2).max(2.min(total)));
+        let keep_count = if force || total < 2 {
+            0
+        } else {
+            let keep_count = (total as f64 * keep_ratio).round() as usize;
+            // Always keep at least 2 messages (1 user + 1 assistant) and at most
+            // total - 2 (so there's something to summarize).
+            keep_count.clamp(2.min(total), total.saturating_sub(2).max(2.min(total)))
+        };
         let split_at = total.saturating_sub(keep_count);
 
         // Old messages → summarize. Recent messages → keep intact.
@@ -411,35 +464,51 @@ impl CompactState {
 
         match model_provider.complete(request).await {
             Ok(response) => {
-                let summary = response.text;
-                let previous_tokens = self.last_input_tokens.unwrap_or(0);
+                let summary = response.text.trim().to_string();
+                if summary.is_empty() {
+                    self.consecutive_failures += 1;
+                    anyhow::bail!("compaction model returned an empty summary");
+                }
+                let previous_tokens = self.last_input_tokens.unwrap_or_else(|| {
+                    messages
+                        .iter()
+                        .map(|message| message.content.len() as u64)
+                        .sum::<u64>()
+                        .saturating_add(3)
+                        / 4
+                });
+                let kept_recent_messages = recent_msgs.len();
 
                 // Reassemble: system + summary + recent turns kept intact.
                 messages.clear();
                 messages.extend(system_msgs);
-                messages.push(ModelMessage::user(format!(
-                    "Here is a summary of the conversation so far:\n\n{}",
-                    summary
-                )));
+                messages.push(compact_summary_user_message(&summary));
                 messages.extend(recent_msgs.iter().cloned());
 
-                self.summary = Some(summary);
+                self.summary = Some(summary.clone());
                 self.summary_message_count = messages.len();
                 self.consecutive_failures = 0;
                 self.last_input_tokens = None;
                 self.last_output_tokens = None;
+                self.clear_unsent_bytes();
                 self.compaction_count = self.compaction_count.saturating_add(1);
 
-                let tokens_saved =
-                    previous_tokens.saturating_sub(harness_config.autocompact_max_output_tokens);
+                let tokens_saved = previous_tokens
+                    .saturating_sub(estimate_messages_tokens(messages))
+                    .max(1);
                 tracing::info!(
                     tokens_saved,
                     old_turns = old_msgs.len(),
-                    kept_turns = recent_msgs.len(),
+                    kept_turns = kept_recent_messages,
+                    force,
                     "auto-compact completed"
                 );
 
-                Ok(Some(tokens_saved))
+                Ok(Some(CompactOutcome {
+                    tokens_saved,
+                    summary,
+                    kept_recent_messages,
+                }))
             }
             Err(e) => {
                 self.consecutive_failures += 1;
@@ -457,10 +526,10 @@ impl CompactState {
         &mut self,
         messages: &mut Vec<ModelMessage>,
         summary: String,
-    ) -> u64 {
+    ) -> CompactOutcome {
         let system_msgs: Vec<ModelMessage> = messages
             .iter()
-            .filter(|m| m.role == ModelRole::System)
+            .filter(|m| m.role == ModelRole::System || m.role == ModelRole::Developer)
             .cloned()
             .collect();
         let estimated_previous_tokens = self.last_input_tokens.unwrap_or_else(|| {
@@ -474,12 +543,9 @@ impl CompactState {
 
         messages.clear();
         messages.extend(system_msgs);
-        messages.push(ModelMessage::user(format!(
-            "Here is a summary of the conversation so far:\n\n{}",
-            summary
-        )));
+        messages.push(compact_summary_user_message(&summary));
 
-        self.summary = Some(summary);
+        self.summary = Some(summary.clone());
         self.summary_message_count = messages.len();
         self.consecutive_failures = 0;
         self.last_input_tokens = None;
@@ -487,8 +553,25 @@ impl CompactState {
         self.compaction_count = self.compaction_count.saturating_add(1);
         self.clear_unsent_bytes();
 
-        estimated_previous_tokens
+        let tokens_saved = estimated_previous_tokens
+            .saturating_sub(estimate_messages_tokens(messages))
+            .max(1);
+
+        CompactOutcome {
+            tokens_saved,
+            summary,
+            kept_recent_messages: 0,
+        }
     }
+}
+
+fn estimate_messages_tokens(messages: &[ModelMessage]) -> u64 {
+    messages
+        .iter()
+        .map(|message| message.content.len() as u64)
+        .sum::<u64>()
+        .saturating_add(3)
+        / 4
 }
 
 fn build_conversation_text(messages: &[ModelMessage]) -> String {
@@ -733,9 +816,11 @@ mod tests {
             ModelMessage::assistant("response"),
         ];
 
-        let tokens_saved = state.apply_manual_summary(&mut messages, "Manual summary".to_string());
+        let outcome = state.apply_manual_summary(&mut messages, "Manual summary".to_string());
 
-        assert_eq!(tokens_saved, 10_000);
+        assert!(outcome.tokens_saved >= 1);
+        assert_eq!(outcome.kept_recent_messages, 0);
+        assert_eq!(outcome.summary, "Manual summary");
         assert_eq!(messages.len(), 2);
         assert_eq!(messages[0].role, ModelRole::System);
         assert!(messages[1].content.contains("Manual summary"));

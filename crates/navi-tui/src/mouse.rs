@@ -557,6 +557,7 @@ fn apply_non_image_hover(app: &mut TuiApp, hit: &HitRegion<HitAction>) -> bool {
         HitAction::Setting(index) => app.hover_index = Some(*index),
         HitAction::ExtensionsItem(index) => app.hover_index = Some(*index),
         HitAction::MessageAction(index) => app.hover_index = Some(*index),
+        HitAction::RewindCheckpoint(index) => app.hover_index = Some(*index),
         HitAction::PluginInstallOrUpdate(index) => {
             app.hover_index = Some(*index);
         }
@@ -926,6 +927,12 @@ fn dispatch_hit(app: &mut TuiApp, hit: HitRegion<HitAction>) {
         HitAction::MessageAction(index) => {
             run_message_action(app, index);
         }
+        HitAction::RewindCheckpoint(list_index) => {
+            let checkpoints = crate::chat::rewind_checkpoints(app);
+            if let Some((message_index, _)) = checkpoints.get(list_index) {
+                run_rewind_checkpoint(app, *message_index);
+            }
+        }
         HitAction::ScrollTo { target, offset } => scroll_to(app, target, offset),
         HitAction::ScrollToBottom => {
             crate::view::chat::jump_to_latest(app);
@@ -1079,7 +1086,11 @@ pub(crate) fn run_message_action(app: &mut TuiApp, index: usize) {
         }
         crate::state::MessageAction::Revert => {
             match revert_to_user_message(app, message_index) {
-                Ok(()) => show_notification(app, "Message", "Reverted to selected message."),
+                Ok(()) => show_notification(
+                    app,
+                    "Rewind",
+                    "Restored chat and project files to this prompt.",
+                ),
                 Err(err) => push_diagnostic(app, err),
             }
             close_active_modal(app);
@@ -1117,6 +1128,7 @@ fn active_scroll_target(app: &TuiApp) -> Option<ScrollTarget> {
         Mode::MessageQueue => Some(ScrollTarget::MessageQueue),
         Mode::Help => Some(ScrollTarget::Help),
         Mode::PathMentions => Some(ScrollTarget::PathMentions),
+        Mode::Rewind => Some(ScrollTarget::Rewind),
         Mode::Settings
         | Mode::ThemePicker
         | Mode::Thinking
@@ -1296,6 +1308,13 @@ fn scroll_by(app: &mut TuiApp, target: ScrollTarget, delta: isize) {
             app.selected_path = selected;
             app.path_scroll = scroll;
         }
+        ScrollTarget::Rewind => {
+            let len = crate::chat::rewind_checkpoints(app).len();
+            let (selected, scroll) =
+                shifted_select_state(app.selected_rewind, app.rewind_scroll, len, delta, 10);
+            app.selected_rewind = selected;
+            app.rewind_scroll = scroll;
+        }
     }
 }
 
@@ -1376,7 +1395,25 @@ fn scroll_to(app: &mut TuiApp, target: ScrollTarget, offset: usize) {
             app.selected_path = offset.min(len.saturating_sub(1));
             app.path_scroll = app.selected_path.saturating_sub(11);
         }
+        ScrollTarget::Rewind => {
+            let len = crate::chat::rewind_checkpoints(app).len();
+            app.selected_rewind = offset.min(len.saturating_sub(1));
+            app.rewind_scroll = app.selected_rewind.saturating_sub(9);
+        }
     }
+}
+
+/// Apply a Rewind modal selection (message index in chat).
+pub(crate) fn run_rewind_checkpoint(app: &mut TuiApp, message_index: usize) {
+    match revert_to_user_message(app, message_index) {
+        Ok(()) => show_notification(
+            app,
+            "Rewind",
+            "Restored chat and project files to this prompt.",
+        ),
+        Err(err) => push_diagnostic(app, err),
+    }
+    close_active_modal(app);
 }
 
 fn shifted_index(current: usize, len: usize, delta: isize) -> usize {

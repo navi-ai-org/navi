@@ -625,6 +625,7 @@ fn command_palette_has_copy_session_and_last_response() {
         .collect();
     assert!(actions.contains(&CommandAction::CopySession));
     assert!(actions.contains(&CommandAction::CopyLastResponse));
+    assert!(actions.contains(&CommandAction::Rewind));
 
     // Also discoverable via search.
     app.command_hub = None;
@@ -639,6 +640,35 @@ fn command_palette_has_copy_session_and_last_response() {
         .collect();
     assert!(search_actions.contains(&CommandAction::CopySession));
     assert!(search_actions.contains(&CommandAction::CopyLastResponse));
+}
+
+#[test]
+fn command_palette_rewind_opens_checkpoint_modal() {
+    let mut app = test_app("");
+    app.messages = vec![
+        ChatMessage::new(ChatRole::User, "first prompt".to_string()),
+        ChatMessage::new(ChatRole::Assistant, "answer".to_string()),
+        ChatMessage::new(ChatRole::User, "second prompt".to_string()),
+    ];
+    app.command_hub = None;
+    app.command_filter = "rewind".into();
+    let rows = crate::commands::command_rows(&app);
+    let rewind_row = rows.iter().position(|row| {
+        matches!(
+            row,
+            crate::commands::CommandRow::Item(item) if item.action == CommandAction::Rewind
+        )
+    });
+    assert!(rewind_row.is_some(), "Rewind should be searchable");
+    app.selected_command = rewind_row.unwrap();
+    crate::keybindings::run_selected_command(&mut app);
+    assert_eq!(app.mode, Mode::Rewind);
+    let checkpoints = crate::chat::rewind_checkpoints(&app);
+    assert_eq!(checkpoints.len(), 2);
+    assert_eq!(checkpoints[0].1, "first prompt");
+    assert_eq!(checkpoints[1].1, "second prompt");
+    // Default selection is the latest checkpoint.
+    assert_eq!(app.selected_rewind, 1);
 }
 
 #[test]
@@ -972,31 +1002,34 @@ fn command_palette_new_session_uses_full_session_reset() {
     assert!(app.tool_invocations.is_empty());
 }
 
-// Flaky under load: turn task / async timing races on CI runners.
-// Hang risk: starts streaming/turn path against engine; keep ignored on CI.
-#[tokio::test]
-#[ignore = "flaky async compact palette on CI"]
-async fn command_palette_compact_submits_immediate_summary_request() {
+#[test]
+fn command_palette_compact_does_not_inject_tool_prompt() {
     let mut app = test_app("");
     app.mode = Mode::Commands;
     app.command_filter = "compact".to_string();
     app.selected_command = 0;
+    app.provider_configured = true;
     app.compact_state.context_window = 200_000;
     app.compact_state.last_input_tokens = Some(10_000);
+    // Enough history to allow compact.
+    app.conversation_history
+        .push(navi_sdk::ModelMessage::user("first"));
+    app.conversation_history
+        .push(navi_sdk::ModelMessage::assistant("second"));
 
     assert!(!run_selected_command(&mut app));
 
-    assert!(app.is_loading);
+    // Manual compact is a direct engine call (session model), not a chat prompt
+    // that asks the model to call new_context_window. Without a Tokio runtime
+    // the spawn is skipped, but we must never inject the old tool prompt.
     assert_eq!(app.mode, Mode::Normal);
     assert!(app.input.is_empty());
-    assert_eq!(app.compact_state.last_input_tokens, Some(10_000));
-    let user_message = app
-        .messages
-        .iter()
-        .find(|message| message.role == ChatRole::User)
-        .expect("compact prompt user message");
-    assert!(user_message.content.contains("new_context_window"));
-    assert!(user_message.content.contains("Do not wait"));
+    assert!(
+        !app.messages
+            .iter()
+            .any(|m| m.content.contains("new_context_window")),
+        "compact must not inject a tool-call prompt into chat"
+    );
 }
 
 #[test]

@@ -171,7 +171,22 @@ pub trait CompactionStrategy: Send + Sync {
         provider: &dyn ModelProvider,
         model: &str,
         config: &HarnessConfig,
-    ) -> Result<Option<u64>>;
+    ) -> Result<Option<compact::CompactOutcome>>;
+
+    /// Force full compaction with the session model (manual Compact).
+    async fn force_compact(
+        &self,
+        state: &mut CompactState,
+        messages: &mut Vec<ModelMessage>,
+        provider: &dyn ModelProvider,
+        model: &str,
+        config: &HarnessConfig,
+    ) -> Result<Option<compact::CompactOutcome>> {
+        // Default: same path as auto with force semantics via state.force_compact.
+        state
+            .force_compact(messages, provider, model, config)
+            .await
+    }
 }
 
 #[derive(Debug, Default)]
@@ -190,8 +205,21 @@ impl CompactionStrategy for DefaultCompactionStrategy {
         provider: &dyn ModelProvider,
         model: &str,
         config: &HarnessConfig,
-    ) -> Result<Option<u64>> {
+    ) -> Result<Option<compact::CompactOutcome>> {
         state.auto_compact(messages, provider, model, config).await
+    }
+
+    async fn force_compact(
+        &self,
+        state: &mut CompactState,
+        messages: &mut Vec<ModelMessage>,
+        provider: &dyn ModelProvider,
+        model: &str,
+        config: &HarnessConfig,
+    ) -> Result<Option<compact::CompactOutcome>> {
+        state
+            .force_compact(messages, provider, model, config)
+            .await
     }
 }
 

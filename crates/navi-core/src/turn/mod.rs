@@ -329,34 +329,29 @@ async fn maintain_context_budget(ctx: &TurnContext, messages: &mut Vec<ModelMess
     if let Some(ref tx) = ctx.event_tx {
         let _ = tx.send(AgentEvent::AutoCompactStarted);
     }
+    // Always use the session's own model — not a background/subagent provider.
+    let provider = ctx.active_model_provider();
+    let model = ctx.active_model_name();
     let mut state = ctx.compact_state.lock().await;
-    let compaction_provider: Arc<dyn ModelProvider>;
-    let compaction_model: String;
-    if let Some(ref cp) = ctx.compaction_provider {
-        compaction_provider = cp.clone();
-        compaction_model = ctx
-            .compaction_model_name
-            .clone()
-            .unwrap_or_else(|| ctx.active_model_name());
-    } else {
-        compaction_provider = ctx.active_model_provider();
-        compaction_model = ctx.active_model_name();
-    }
     match ctx
         .components
         .compaction
         .auto_compact(
             &mut state,
             messages,
-            compaction_provider.as_ref(),
-            &compaction_model,
+            provider.as_ref(),
+            &model,
             &ctx.harness_config,
         )
         .await
     {
-        Ok(Some(tokens_saved)) => {
+        Ok(Some(outcome)) => {
             if let Some(ref tx) = ctx.event_tx {
-                let _ = tx.send(AgentEvent::AutoCompactCompleted { tokens_saved });
+                let _ = tx.send(AgentEvent::AutoCompactCompleted {
+                    tokens_saved: outcome.tokens_saved,
+                    summary: outcome.summary,
+                    kept_recent_messages: outcome.kept_recent_messages,
+                });
             }
         }
         Ok(None) => {}
@@ -883,12 +878,16 @@ async fn handle_tool_calls(
             if let Some(ref tx) = ctx.event_tx {
                 let _ = tx.send(AgentEvent::AutoCompactStarted);
             }
-            let tokens_saved = {
+            let outcome = {
                 let mut state = ctx.compact_state.lock().await;
                 state.apply_manual_summary(messages, summary)
             };
             if let Some(ref tx) = ctx.event_tx {
-                let _ = tx.send(AgentEvent::AutoCompactCompleted { tokens_saved });
+                let _ = tx.send(AgentEvent::AutoCompactCompleted {
+                    tokens_saved: outcome.tokens_saved,
+                    summary: outcome.summary,
+                    kept_recent_messages: outcome.kept_recent_messages,
+                });
             }
             return Some("Context compacted.".to_string());
         }

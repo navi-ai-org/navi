@@ -79,7 +79,7 @@ After 3 consecutive auto-compact failures, the circuit breaker opens (`CircuitOp
 
 Emits:
 - `AgentEvent::AutoCompactStarted` — before the summary request
-- `AgentEvent::AutoCompactCompleted { tokens_saved }` — on success
+- `AgentEvent::AutoCompactCompleted { tokens_saved, summary, kept_recent_messages }` — on success
 - `AgentEvent::AutoCompactFailed { reason }` — on failure
 
 ## Session Memory
@@ -198,7 +198,7 @@ The TUI mirrors `CompactState` locally from events:
 
 - `UsageReported` → updates `compact_state.last_input_tokens` and populates `ChatMessage.usage_label`
 - `MicroCompactApplied` → shows notification
-- `AutoCompactCompleted` → shows notification, resets `consecutive_failures`, adds compact summary `ChatMessage` with `is_compact_summary: true`
+- `AutoCompactCompleted` → shows notification, resets `consecutive_failures`, replaces chat + provider history with the summary (`is_compact_summary: true`), and clears the context meter
 - `AutoCompactFailed` → pushes diagnostic, increments `consecutive_failures`
 
 ### Status Bar
@@ -213,7 +213,11 @@ Color coding: `MUTED` for normal, `ACCENT` for warning, `SIGNAL` for error or ci
 
 ### Compact Context Command
 
-`ctrl+p` → "Compact Context" sets `compact_state.last_input_tokens = context_window`, forcing `should_autocompact()` to return true on the next request.
+`ctrl+p` → "Compact" force-compacts the live session with the **session's own model**
+(not a subagent / background route). The engine summarizes conversation history,
+replaces the live message list, emits `AutoCompactCompleted` with the summary text,
+and the TUI clears the visible chat + `conversation_history` so the next turn stays
+compacted.
 
 ### Compact Summary Rendering
 

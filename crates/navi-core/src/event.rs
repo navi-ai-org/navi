@@ -181,6 +181,12 @@ pub enum RuntimeEventKind {
     AutoCompactCompleted {
         /// Estimated number of tokens saved by compaction.
         tokens_saved: u64,
+        /// Model-produced summary that replaced older turns.
+        #[serde(default)]
+        summary: String,
+        /// Non-system conversation messages retained after the summary.
+        #[serde(default)]
+        kept_recent_messages: usize,
     },
     /// An automatic conversation compaction has failed.
     AutoCompactFailed {
@@ -337,9 +343,15 @@ impl RuntimeEventKind {
                 Some(AgentEvent::MicroCompactApplied { messages_cleared })
             }
             RuntimeEventKind::AutoCompactStarted => Some(AgentEvent::AutoCompactStarted),
-            RuntimeEventKind::AutoCompactCompleted { tokens_saved } => {
-                Some(AgentEvent::AutoCompactCompleted { tokens_saved })
-            }
+            RuntimeEventKind::AutoCompactCompleted {
+                tokens_saved,
+                summary,
+                kept_recent_messages,
+            } => Some(AgentEvent::AutoCompactCompleted {
+                tokens_saved,
+                summary,
+                kept_recent_messages,
+            }),
             RuntimeEventKind::AutoCompactFailed { reason } => {
                 Some(AgentEvent::AutoCompactFailed { reason })
             }
@@ -574,6 +586,12 @@ pub enum AgentEvent {
     AutoCompactCompleted {
         /// Estimated tokens saved by compaction.
         tokens_saved: u64,
+        /// Model-produced summary that replaced older turns.
+        #[serde(default)]
+        summary: String,
+        /// Non-system conversation messages retained after the summary.
+        #[serde(default)]
+        kept_recent_messages: usize,
     },
     /// Automatic conversation compaction failed.
     AutoCompactFailed {

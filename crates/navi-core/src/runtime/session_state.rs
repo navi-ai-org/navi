@@ -184,6 +184,17 @@ impl SessionState {
         self.updated_at = current_unix_timestamp();
     }
 
+    /// Replace the entire event log (used after compaction so reloads stay small).
+    pub fn replace_events(&mut self, events: Vec<AgentEvent>) {
+        self.turn_sequence = events
+            .iter()
+            .filter(|event| matches!(event, AgentEvent::UserTaskSubmitted { .. }))
+            .count() as u64;
+        self.events = events;
+        self.updated_at = current_unix_timestamp();
+        self.force_update_title_from_events();
+    }
+
     /// Drop events from the `(keep_user_turns + 1)`-th `UserTaskSubmitted` onward.
     ///
     /// Used when rewinding the live session after the UI edits a past user message.
