@@ -379,6 +379,8 @@ pub struct AgentRuntime {
     plan_parser: std::sync::Mutex<crate::plan_mode::ProposedPlanParser>,
     /// Session-scoped memory manager shared with TurnContext (open once).
     memory_manager: Arc<std::sync::Mutex<Option<Arc<crate::memory::MemoryManager>>>>,
+    /// Grok-style per-turn file snapshots for rewind / Revert.
+    rewind_store: Arc<std::sync::Mutex<crate::rewind::RewindStore>>,
 }
 
 impl AgentRuntime {
@@ -408,6 +410,17 @@ impl AgentRuntime {
         let goal_service = Arc::new(GoalService::new());
         let goal_runtime = Arc::new(GoalRuntimeHandle::new(options.initial_goal.clone()));
         let goal_extension = GoalExtension::new(goal_service.clone(), goal_runtime.clone());
+
+        let rewind_sid = options
+            .session_id
+            .as_ref()
+            .map(|s| s.as_str().to_string())
+            .unwrap_or_else(|| "pending".to_string());
+        let rewind_store = Arc::new(std::sync::Mutex::new(crate::rewind::RewindStore::new(
+            &options.loaded_config.data_dir,
+            &rewind_sid,
+            &options.project_dir,
+        )));
 
         Self {
             loaded_config: options.loaded_config,
@@ -449,7 +462,27 @@ impl AgentRuntime {
             agent_mode: std::sync::RwLock::new(crate::plan_mode::AgentMode::Default),
             plan_parser: std::sync::Mutex::new(crate::plan_mode::ProposedPlanParser::new()),
             memory_manager: Arc::new(std::sync::Mutex::new(None)),
+            rewind_store,
         }
+    }
+
+    /// Shared rewind store (write tools note dirty paths through this handle).
+    pub fn rewind_store_handle(&self) -> Arc<std::sync::Mutex<crate::rewind::RewindStore>> {
+        self.rewind_store.clone()
+    }
+
+    /// Rebind rewind store to the live session id (after start_session).
+    pub fn rebind_rewind_store(&self) {
+        let sid = self.session.id().as_str().to_string();
+        let mut store = self
+            .rewind_store
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        *store = crate::rewind::RewindStore::new(
+            &self.loaded_config.data_dir,
+            &sid,
+            &self.project_dir,
+        );
     }
 
     /// Returns all agent events recorded so far.
@@ -796,6 +829,15 @@ impl AgentRuntime {
         self.session.set_runtime(session_runtime, event_rx);
 
         let id = self.session.id().clone();
+        // Bind rewind store to this session id and attach it to the tool executor.
+        self.rebind_rewind_store();
+        if let Ok(_) = self.ensure_tool_executor() {
+            if let Some(stored) = self.tool_executor.as_mut() {
+                if let Some(exec) = Arc::get_mut(stored) {
+                    exec.set_rewind_store(Some(self.rewind_store.clone()));
+                }
+            }
+        }
         // Goal lifecycle: session start + register runtime
         self.goal_extension.on_session_start(id.as_str());
         self.runtime_components.hooks.on_session_start(id.as_str());
@@ -872,6 +914,43 @@ impl AgentRuntime {
             submitted_at: Some(crate::session::current_unix_timestamp()),
         });
         self.last_user_task = task.clone();
+
+        // Grok-style pre-turn file snapshot (dirty paths only).
+        let prompt_index = self
+            .session
+            .events()
+            .iter()
+            .filter(|e| matches!(e, AgentEvent::UserTaskSubmitted { .. }))
+            .count()
+            .saturating_sub(1);
+        let captured_index = {
+            let mut store = self
+                .rewind_store
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            // Ensure store is keyed to live session id.
+            if store.root().to_string_lossy().contains("pending") {
+                *store = crate::rewind::RewindStore::new(
+                    &self.loaded_config.data_dir,
+                    self.session.id().as_str(),
+                    &self.project_dir,
+                );
+            }
+            // New turn: only count writes that happen after this capture.
+            store.clear_turn_written();
+            match store.capture_point(
+                prompt_index,
+                &task,
+                crate::session::current_unix_timestamp(),
+            ) {
+                Ok(p) => Some(p.prompt_index),
+                Err(e) => {
+                    tracing::warn!(error = %e, "rewind: failed to capture pre-turn snapshot");
+                    None
+                }
+            }
+        };
+
         // Persist immediately so sidebars list the session while the turn is
         // still running. The chat model supplies its title through the tool.
         self.persist_submitted_session();
@@ -924,6 +1003,17 @@ impl AgentRuntime {
         drop(event_rx);
         self.session.set_updated_at(current_unix_timestamp());
         let _ = self.apply_pending_session_title();
+
+        // Record paths created this turn so restore can delete them.
+        if let Some(idx) = captured_index {
+            let mut store = self
+                .rewind_store
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            if let Err(e) = store.finalize_turn_created_paths(idx) {
+                tracing::debug!(error = %e, prompt_index = idx, "rewind: finalize created_paths failed");
+            }
+        }
 
         match &result {
             Ok(text) => {
@@ -1035,14 +1125,192 @@ impl AgentRuntime {
         self.send_turn_with_parts(task, Vec::new(), None).await
     }
 
+    /// Force-compact live conversation history using the session's own model.
+    ///
+    /// Summarizes older turns, replaces the live message list, and emits
+    /// `AutoCompactStarted` / `AutoCompactCompleted` (or Failed) events.
+    pub async fn compact_now(&mut self) -> Result<crate::compact::CompactOutcome> {
+        if !self.session.started() || self.session.runtime().is_none() {
+            // No live session loop yet — compact the seed history in place.
+            self.record_event(AgentEvent::AutoCompactStarted);
+            let provider = self
+                .shared_model_provider
+                .read()
+                .unwrap_or_else(|e| e.into_inner())
+                .clone();
+            let model = self
+                .shared_model_name
+                .read()
+                .unwrap_or_else(|e| e.into_inner())
+                .clone();
+            let harness = self.loaded_config.config.harness.clone();
+            let mut state = crate::compact::CompactState::new(
+                crate::config::effective_context_window(&self.loaded_config.config),
+            );
+            match state
+                .force_compact(
+                    &mut self.initial_messages,
+                    provider.as_ref(),
+                    &model,
+                    &harness,
+                )
+                .await
+            {
+                Ok(Some(outcome)) => {
+                    self.collapse_events_after_compact(&outcome);
+                    // collapse already includes AutoCompactCompleted; also
+                    // publish for live subscribers if session wasn't recording.
+                    self.event_bus
+                        .publish(RuntimeEventKind::AutoCompactCompleted {
+                            tokens_saved: outcome.tokens_saved,
+                            summary: outcome.summary.clone(),
+                            kept_recent_messages: outcome.kept_recent_messages,
+                        });
+                    Ok(outcome)
+                }
+                Ok(None) => {
+                    let reason = "nothing to compact".to_string();
+                    self.record_event(AgentEvent::AutoCompactFailed {
+                        reason: reason.clone(),
+                    });
+                    Err(anyhow::anyhow!(reason))
+                }
+                Err(e) => {
+                    self.record_event(AgentEvent::AutoCompactFailed {
+                        reason: e.to_string(),
+                    });
+                    Err(e)
+                }
+            }
+        } else {
+            let submission_tx = self
+                .session
+                .runtime()
+                .ok_or_else(|| anyhow::anyhow!("session not started"))?
+                .submission_tx
+                .clone();
+
+            // Drain compact events from the session loop through the normal
+            // event channel so subscribers (TUI) see them live.
+            let mut event_rx = self
+                .session
+                .take_event_rx()
+                .ok_or_else(|| anyhow::anyhow!("session event stream unavailable"))?;
+
+            let (response_tx, response_rx) = tokio::sync::oneshot::channel();
+            if let Err(e) = submission_tx.send(crate::session::SessionCommand::Compact {
+                response_tx,
+            }) {
+                return Err(anyhow::anyhow!("failed to send compact command: {}", e));
+            }
+
+            let mut response_rx = response_rx;
+            let result: Result<crate::compact::CompactOutcome> = loop {
+                tokio::select! {
+                    res = &mut response_rx => {
+                        break match res {
+                            Ok(Ok(outcome)) => Ok(outcome),
+                            Ok(Err(err)) => Err(anyhow::anyhow!(err)),
+                            Err(_) => Err(anyhow::anyhow!("compact cancelled or session loop exited")),
+                        };
+                    }
+                    Some(event) = event_rx.recv() => {
+                        self.record_event(event);
+                    }
+                }
+            };
+
+            while let Ok(event) = event_rx.try_recv() {
+                self.record_event(event);
+            }
+            // SessionEventReceiver::Drop returns the channel to the session slot.
+
+            if let Ok(ref outcome) = result {
+                self.collapse_events_after_compact(outcome);
+                self.sync_initial_messages_from_compact(outcome);
+                if let Err(err) = self.snapshot_session() {
+                    tracing::warn!(error = %err, "failed to snapshot session after compact");
+                }
+            }
+
+            result
+        }
+    }
+
+    fn collapse_events_after_compact(&mut self, outcome: &crate::compact::CompactOutcome) {
+        // Rebuild a minimal event log: summary as the sole prior user turn.
+        // Keeps session reloads from resurrecting the pre-compact history.
+        let summary_event = AgentEvent::UserTaskSubmitted {
+            text: format!(
+                "Here is a summary of the conversation so far:\n\n{}",
+                outcome.summary
+            ),
+            content_parts: Vec::new(),
+            submitted_at: Some(crate::session::current_unix_timestamp()),
+        };
+        let completed = AgentEvent::AutoCompactCompleted {
+            tokens_saved: outcome.tokens_saved,
+            summary: outcome.summary.clone(),
+            // Event log is fully replaced — recent turns are not reconstructed here.
+            kept_recent_messages: 0,
+        };
+        self.session
+            .replace_events(vec![summary_event, completed]);
+    }
+
+    fn sync_initial_messages_from_compact(&mut self, outcome: &crate::compact::CompactOutcome) {
+        // Preserve any system/developer prefix already in initial_messages.
+        let prefix: Vec<_> = self
+            .initial_messages
+            .iter()
+            .filter(|m| {
+                matches!(
+                    m.role,
+                    crate::model::ModelRole::System | crate::model::ModelRole::Developer
+                )
+            })
+            .cloned()
+            .collect();
+        self.initial_messages = prefix;
+        self.initial_messages
+            .push(crate::compact::compact_summary_user_message(&outcome.summary));
+    }
+
     /// Rewind live conversation history for an edited past user message.
     ///
     /// Keeps the first `keep_user_turns` user turns (and their assistant/tool
     /// follow-ups), drops everything after, and truncates recorded session
-    /// events the same way. Caller should then `send_turn` with the new text.
+    /// events the same way. Also restores project files to the pre-turn state
+    /// of the first dropped user prompt (Grok-style rewind).
+    ///
+    /// Caller should then `send_turn` with the new text (or leave the prompt in
+    /// the input for the user to edit).
     ///
     /// `keep_user_turns = 0` keeps only system/developer preamble.
     pub async fn rewind_to_user_turns(&mut self, keep_user_turns: usize) -> Result<usize> {
+        // Restore filesystem to state before user turn `keep_user_turns` (and
+        // drop checkpoints at/after that index). Best-effort; history still rewinds.
+        let fs_summary = {
+            let mut store = self
+                .rewind_store
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            store.restore_to(keep_user_turns)
+        };
+        if !fs_summary.errors.is_empty() {
+            for err in &fs_summary.errors {
+                tracing::warn!(error = %err, "rewind: filesystem restore issue");
+            }
+        }
+        if fs_summary.total_changes() > 0 {
+            tracing::info!(
+                restored = fs_summary.restored,
+                deleted = fs_summary.deleted,
+                keep_user_turns,
+                "rewind: restored project files"
+            );
+        }
+
         if !self.session.started() || self.session.runtime().is_none() {
             // Nothing live yet — just reset seed messages/events for a clean start.
             self.session.truncate_events_to_user_turns(keep_user_turns);
@@ -1086,6 +1354,24 @@ impl AgentRuntime {
         }
 
         Ok(remaining)
+    }
+
+    /// List rewind checkpoints (user-turn snapshots) for the live session.
+    pub fn list_rewind_points(&self) -> Vec<crate::rewind::RewindPointMeta> {
+        self.rewind_store
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .load_points()
+    }
+
+    /// Filesystem restore summary from the last `restore_to` is not retained;
+    /// use [`Self::rewind_to_user_turns`] which restores as a side effect.
+    pub fn rewind_store_points_path(&self) -> std::path::PathBuf {
+        self.rewind_store
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .root()
+            .to_path_buf()
     }
 
     /// Applies a title set by the current chat model and informs live clients.
@@ -1170,6 +1456,7 @@ impl AgentRuntime {
                     self.loaded_config.data_dir.clone(),
                     self.shared_config.clone(),
                 );
+                executor.set_rewind_store(Some(self.rewind_store.clone()));
             } else {
                 tracing::warn!(
                     "tool executor Arc is shared; cannot install goal tools in place \
@@ -1202,6 +1489,7 @@ impl AgentRuntime {
             self.loaded_config.data_dir.clone(),
             self.shared_config.clone(),
         );
+        executor.set_rewind_store(Some(self.rewind_store.clone()));
 
         let executor = Arc::new_cyclic(|executor_weak| {
             let subagent = SubagentTool::new(
@@ -1861,11 +2149,15 @@ fn runtime_event_kind_from_agent_event(event: &AgentEvent) -> Option<RuntimeEven
             })
         }
         AgentEvent::AutoCompactStarted => Some(RuntimeEventKind::AutoCompactStarted),
-        AgentEvent::AutoCompactCompleted { tokens_saved } => {
-            Some(RuntimeEventKind::AutoCompactCompleted {
-                tokens_saved: *tokens_saved,
-            })
-        }
+        AgentEvent::AutoCompactCompleted {
+            tokens_saved,
+            summary,
+            kept_recent_messages,
+        } => Some(RuntimeEventKind::AutoCompactCompleted {
+            tokens_saved: *tokens_saved,
+            summary: summary.clone(),
+            kept_recent_messages: *kept_recent_messages,
+        }),
         AgentEvent::AutoCompactFailed { reason } => Some(RuntimeEventKind::AutoCompactFailed {
             reason: reason.clone(),
         }),

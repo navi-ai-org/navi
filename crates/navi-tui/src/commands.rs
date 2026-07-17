@@ -55,6 +55,8 @@ pub(crate) enum CommandAction {
     /// Copy assistant/tool output after the latest user message.
     CopyLastResponse,
     ShareSession,
+    /// Open rewind modal: pick a past user prompt and restore history + files.
+    Rewind,
     SwitchModel,
     RetryLast,
     OpenThinking,
@@ -151,6 +153,13 @@ pub(crate) const COMMANDS: &[CommandItem] = &[
         label: "Retry",
         shortcut: None,
         action: CommandAction::RetryLast,
+        hub: Some(CommandHub::Session),
+        visibility: CommandVisibility::Always,
+    },
+    CommandItem {
+        label: "Rewind…",
+        shortcut: None,
+        action: CommandAction::Rewind,
         hub: Some(CommandHub::Session),
         visibility: CommandVisibility::Always,
     },
@@ -482,6 +491,7 @@ fn action_keywords(action: CommandAction) -> &'static str {
         CommandAction::NewSession => "clear reset conversation",
         CommandAction::MessageQueue => "queue pending messages",
         CommandAction::RetryLast => "retry regenerate redo",
+        CommandAction::Rewind => "rewind undo restore checkpoint revert files history grok",
         CommandAction::Compact => "summarize context compress",
         CommandAction::TogglePlanMode => "plan mode planning",
         CommandAction::CopySession => "copy clipboard transcript share session full",

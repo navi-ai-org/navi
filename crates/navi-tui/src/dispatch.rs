@@ -686,27 +686,46 @@ fn handle_agent_event(app: &mut TuiApp, event: AgentEvent) {
             );
             app.events.push(AgentEvent::AutoCompactStarted);
         }
-        AgentEvent::AutoCompactCompleted { tokens_saved } => {
+        AgentEvent::AutoCompactCompleted {
+            tokens_saved,
+            summary,
+            kept_recent_messages,
+        } => {
+            let saved_label = if tokens_saved >= 1000 {
+                format!("{}k", tokens_saved / 1000)
+            } else {
+                tokens_saved.to_string()
+            };
             show_notification(
                 app,
                 "Compact",
-                format!("Context compacted ({}k tokens saved)", tokens_saved / 1000),
+                format!("Context compacted ({saved_label} tokens saved)"),
             );
             app.compact_state.consecutive_failures = 0;
-            if let Some(summary) = &app.compact_state.summary {
+            app.compact_state.summary = Some(summary.clone());
+            app.compact_state.last_input_tokens = None;
+            app.compact_state.last_output_tokens = None;
+            app.compact_state.clear_unsent_bytes();
+            apply_compacted_conversation_history(app, &summary, kept_recent_messages);
+            // Replace the chat UI with a compact summary card so the old
+            // history is actually gone from the display (not just the model).
+            app.messages.clear();
+            if !summary.trim().is_empty() {
                 app.messages.push(ChatMessage {
                     status: Some("compacted".to_string()),
                     is_compact_summary: true,
                     content: format!(
-                        "[Context compacted — {}k tokens saved]\n\n{}",
-                        tokens_saved / 1000,
-                        summary,
+                        "[Context compacted — {saved_label} tokens saved]\n\n{summary}"
                     ),
                     ..ChatMessage::new(ChatRole::Assistant, String::new())
                 });
             }
-            app.events
-                .push(AgentEvent::AutoCompactCompleted { tokens_saved });
+            app.chat_render_cache.borrow_mut().signature_hash = 0;
+            app.events.push(AgentEvent::AutoCompactCompleted {
+                tokens_saved,
+                summary,
+                kept_recent_messages,
+            });
         }
         AgentEvent::AutoCompactFailed { reason } => {
             push_diagnostic(app, format!("Auto-compact failed: {reason}"));
@@ -1109,6 +1128,45 @@ fn maybe_emit_session_recap(app: &mut TuiApp, assistant_text: &str) {
             suppressed: false,
         }));
     });
+}
+
+/// Rebuild provider-facing history after compaction so the next turn does not
+/// re-send the full uncompacted transcript if the session is recreated.
+fn apply_compacted_conversation_history(
+    app: &mut TuiApp,
+    summary: &str,
+    kept_recent_messages: usize,
+) {
+    use navi_sdk::ModelRole;
+
+    let prefix: Vec<ModelMessage> = app
+        .conversation_history
+        .iter()
+        .filter(|m| matches!(m.role, ModelRole::System | ModelRole::Developer))
+        .cloned()
+        .collect();
+    let conversation: Vec<ModelMessage> = app
+        .conversation_history
+        .iter()
+        .filter(|m| !matches!(m.role, ModelRole::System | ModelRole::Developer))
+        .cloned()
+        .collect();
+    let recent = if kept_recent_messages == 0 || conversation.is_empty() {
+        Vec::new()
+    } else {
+        let start = conversation
+            .len()
+            .saturating_sub(kept_recent_messages);
+        conversation[start..].to_vec()
+    };
+
+    app.conversation_history = prefix;
+    if !summary.trim().is_empty() {
+        app.conversation_history.push(ModelMessage::user(format!(
+            "Here is a summary of the conversation so far:\n\n{summary}"
+        )));
+    }
+    app.conversation_history.extend(recent);
 }
 
 /// React to setup interview completion — exit setup wizard, mark onboarding done.
@@ -1878,18 +1936,53 @@ mod tests {
     fn auto_compact_completed_resets_failures_and_adds_summary() {
         let mut app = test_app("");
         app.compact_state.consecutive_failures = 3;
-        app.compact_state.summary = Some("Previous context summary".to_string());
+        app.compact_state.last_input_tokens = Some(50_000);
+        app.messages.push(ChatMessage::new(
+            ChatRole::User,
+            "old user message".to_string(),
+        ));
+        app.conversation_history
+            .push(ModelMessage::user("old user message".to_string()));
+        app.conversation_history
+            .push(ModelMessage::assistant("old assistant reply".to_string()));
 
         handle_async_event(
             &mut app,
-            AsyncEvent::Agent(AgentEvent::AutoCompactCompleted { tokens_saved: 5000 }),
+            AsyncEvent::Agent(AgentEvent::AutoCompactCompleted {
+                tokens_saved: 5000,
+                summary: "Previous context summary".to_string(),
+                kept_recent_messages: 0,
+            }),
         );
 
         assert_eq!(app.compact_state.consecutive_failures, 0);
+        assert_eq!(
+            app.compact_state.summary.as_deref(),
+            Some("Previous context summary")
+        );
+        assert!(app.compact_state.last_input_tokens.is_none());
+        // Chat UI is cleaned — only the compact summary card remains.
+        assert_eq!(app.messages.len(), 1);
         let last = app.messages.last().unwrap();
         assert!(last.is_compact_summary);
         assert!(last.content.contains("5k tokens saved"));
         assert!(last.content.contains("Previous context summary"));
+        // Provider history is system + summary only.
+        assert!(
+            app.conversation_history
+                .iter()
+                .all(|m| matches!(m.role, navi_sdk::ModelRole::System | navi_sdk::ModelRole::User))
+        );
+        assert!(
+            app.conversation_history
+                .iter()
+                .any(|m| m.content.contains("Previous context summary"))
+        );
+        assert!(
+            !app.conversation_history
+                .iter()
+                .any(|m| m.content == "old user message")
+        );
     }
 
     #[test]

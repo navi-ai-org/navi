@@ -245,7 +245,7 @@ impl CompactionStrategy for NoopCompactionStrategy {
         _provider: &dyn ModelProvider,
         _model: &str,
         _config: &HarnessConfig,
-    ) -> Result<Option<u64>> {
+    ) -> Result<Option<navi_core::CompactOutcome>> {
         Ok(None)
     }
 }

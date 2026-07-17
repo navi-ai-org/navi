@@ -31,6 +31,7 @@ pub mod registry;
 pub mod repetition;
 pub mod replay_gate;
 pub mod repo_intelligence;
+pub mod rewind;
 pub mod runtime;
 pub mod runtime_components;
 pub mod sandbox;
@@ -58,7 +59,10 @@ pub use capability::{
     Capability, CapabilityDecision, CapabilityGrant, CapabilityLedger, CapabilityLedgerEntry,
     CapabilityScope, capabilities_from_tool_metadata,
 };
-pub use compact::{AUTO_COMPACT_THRESHOLD_PERCENT, CompactState, CompactThreshold};
+pub use compact::{
+    AUTO_COMPACT_THRESHOLD_PERCENT, CompactOutcome, CompactState, CompactThreshold,
+    compact_summary_user_message,
+};
 pub use config::{
     AttachmentModelsConfig, BackgroundModelEntry, BackgroundModelsConfig, GoalsConfig,
     HarnessProfile, LoadedConfig, McpConfig, McpServerConfig, ModelOption, ModelTaskSize,
@@ -127,6 +131,10 @@ pub use recap::{
 pub use replay_gate::{
     ReplayGateConfig, ReplayGateReport, SuperiorityGateReport, evaluate_replay_gate,
     evaluate_superiority_gate, unsafe_guarded_auto_approval_count,
+};
+pub use rewind::{
+    MAX_REWIND_BLOB_BYTES, PROMPT_PREVIEW_CHARS, RestoreSummary, RewindFileEntry, RewindPointMeta,
+    RewindStore,
 };
 pub use repo_intelligence::{
     ChurnRecord, DependencyEdge, ImportRecord, IndexedFile, RankedSymbolRecord, ReferenceRecord,

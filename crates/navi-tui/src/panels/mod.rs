@@ -197,6 +197,14 @@ pub fn register_modal_panels(app: &mut TuiApp) {
         64,
         14,
     )));
+    // Rewind checkpoints (Grok-style restore)
+    pm.add_overlay(Box::new(ModalPanel::new(
+        "rewind",
+        Mode::Rewind,
+        modals::render_rewind,
+        72,
+        16,
+    )));
     // OAuth
     pm.add_overlay(Box::new(ModalPanel::new(
         "oauth",

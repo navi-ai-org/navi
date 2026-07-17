@@ -54,6 +54,8 @@ pub enum HitAction {
     /// click inside the composer must always restore the input cursor.
     FocusComposer,
     MessageAction(usize),
+    /// Select a checkpoint row in the Rewind modal.
+    RewindCheckpoint(usize),
     ScrollTo {
         target: ScrollTarget,
         offset: usize,
@@ -109,4 +111,6 @@ pub enum ScrollTarget {
     MessageQueue,
     Help,
     PathMentions,
+    /// Rewind checkpoint list.
+    Rewind,
 }

@@ -73,7 +73,8 @@ pub use navi_core::{
 // Config/provider types
 pub use navi_core::{
     AttachmentModelsConfig, BINARY_REASONING_LEVELS, BackgroundModelEntry, BackgroundModelsConfig,
-    CompactState, CompactThreshold, CredentialStore, HarnessPolicy, HarnessProfile, LoadedConfig,
+    CompactOutcome, CompactState, CompactThreshold, CredentialStore, HarnessPolicy, HarnessProfile,
+    LoadedConfig,
     ModelOption, ModelTaskSize, NaviConfig, NotificationUrgency, NotifyRequest, PermissionMode,
     ProviderConfig, ProviderKind, ProviderModelConfig, SessionStore, ThinkingConfig, UpdateInfo,
     UpdatesConfig, effort_display_label, is_binary_effort_model, parse_reasoning_level,

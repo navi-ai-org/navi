@@ -1,21 +1,24 @@
 use crate::TuiApp;
-use crate::chat::{retry_last_response, start_new_session, submit_message};
+use crate::chat::{retry_last_response, start_new_session};
 use crate::commands::{
     CommandAction, CommandRow, clamp_command_selection, command_rows, first_selectable_command_row,
     next_selectable_command_row, page_next_command_row, page_previous_command_row,
     previous_selectable_command_row,
 };
+use crate::dispatch::AsyncEvent;
 use crate::input::{command_filter_ref, handle_text_input_key};
 use crate::mouse::copy_text_to_clipboard;
 use crate::notifications::show_notification;
 use crate::render::command_scroll_offset;
+use crate::runtime::forward_runtime_event_to_tui_for_session;
 use crate::session::session_created_at;
 use crate::state::Mode;
 use crate::state::{ChatMessage, ChatRole, ModalKind, SetupPhase};
 use anyhow::Context;
 use crossterm::event::{KeyCode, KeyModifiers};
 use navi_core::PermissionMode;
-use navi_sdk::{AgentEvent, session_title_from_events};
+use navi_sdk::{AgentEvent, NaviSessionRequest, session_title_from_events};
+use std::time::Instant;
 
 pub(crate) fn open_command_palette(app: &mut TuiApp) {
     super::replace_modal(app, ModalKind::Commands);
@@ -172,10 +175,10 @@ pub(crate) fn run_selected_command(app: &mut TuiApp) -> bool {
                     "Not enough conversation yet to compact. Continue working first.",
                 );
             } else {
-                app.input = "Compact this conversation now: write a concise multi-section summary of goals, key decisions, files changed, errors fixed, and next steps, then call the new_context_window tool with that summary. Do not wait for the context window to fill.".to_string();
-                app.input_cursor = app.input.len();
-                show_notification(app, "Compact", "Requesting conversation compaction…");
-                submit_message(app);
+                // Compact with the session model directly — not via a tool prompt
+                // or subagent. The engine summarizes and replaces live history;
+                // AutoCompactCompleted clears the TUI transcript.
+                start_session_compact(app);
             }
             super::close_all_modals(app);
         }
@@ -193,6 +196,21 @@ pub(crate) fn run_selected_command(app: &mut TuiApp) -> bool {
         CommandAction::ShareSession => {
             copy_session_json(app);
             super::close_all_modals(app);
+        }
+        CommandAction::Rewind => {
+            let checkpoints = crate::chat::rewind_checkpoints(app);
+            if checkpoints.is_empty() {
+                show_notification(
+                    app,
+                    "Rewind",
+                    "No user messages yet — send a prompt first.",
+                );
+                super::close_all_modals(app);
+            } else {
+                app.selected_rewind = checkpoints.len().saturating_sub(1);
+                app.rewind_scroll = 0;
+                super::replace_modal(app, ModalKind::Rewind);
+            }
         }
         CommandAction::SyncModels => {
             super::provider_sync::sync_models_tui(app);
@@ -565,4 +583,111 @@ fn format_assistant_output_block(app: &TuiApp, msg: &ChatMessage) -> Option<Stri
     }
     let text = parts.join("\n\n");
     (!text.trim().is_empty()).then_some(text)
+}
+
+/// Run forced context compaction with the active session model.
+///
+/// Ensures the engine session exists (seeded from current history), then calls
+/// `compact_session`. Compact events are forwarded so the TUI clears history.
+fn start_session_compact(app: &mut TuiApp) {
+    if !app.provider_configured {
+        show_notification(
+            app,
+            "Compact",
+            "No API key configured for the selected provider.",
+        );
+        return;
+    }
+
+    let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+        show_notification(
+            app,
+            "Compact",
+            "Cannot compact without a running async runtime.",
+        );
+        return;
+    };
+
+    app.is_loading = true;
+    app.loading_start = Some(Instant::now());
+    show_notification(app, "Compact", "Compacting conversation with session model…");
+
+    let engine = app.engine();
+    let session_id = app.session_id.as_str().to_string();
+    let project_dir = app.project_dir.clone();
+    let initial_messages = app.conversation_history.clone();
+    let active_skills = app.active_skills.clone();
+    let tx = app.async_sender();
+
+    app.set_stream_task(runtime.spawn(async move {
+        let result = async {
+            engine
+                .start_session(NaviSessionRequest {
+                    project_dir: Some(project_dir),
+                    session_id: Some(session_id.clone()),
+                    context_packets: Vec::new(),
+                    active_skills,
+                    initial_messages,
+                    ..NaviSessionRequest::default()
+                })
+                .await
+                .map_err(|err| format!("{err:#}"))?;
+
+            let mut events = engine
+                .subscribe_events(&session_id)
+                .map_err(|err| format!("{err:#}"))?;
+
+            let compact = engine.compact_session(&session_id);
+            tokio::pin!(compact);
+
+            let outcome = loop {
+                tokio::select! {
+                    response = &mut compact => {
+                        break response.map_err(|err| format!("{err:#}"))?;
+                    }
+                    event = events.recv() => {
+                        if let Ok(event) = event {
+                            forward_runtime_event_to_tui_for_session(event, &session_id, &tx);
+                        }
+                    }
+                }
+            };
+
+            while let Ok(event) = events.try_recv() {
+                forward_runtime_event_to_tui_for_session(event, &session_id, &tx);
+            }
+
+            // Guarantee the TUI applies cleanup even if a subscriber missed the
+            // broadcast (e.g. race on session start). apply_compacted_* is
+            // idempotent when the summary is unchanged.
+            let _ = tx.send(AsyncEvent::AgentForSession {
+                session_id: session_id.clone(),
+                event: AgentEvent::AutoCompactCompleted {
+                    tokens_saved: outcome.tokens_saved,
+                    summary: outcome.summary,
+                    kept_recent_messages: outcome.kept_recent_messages,
+                },
+            });
+
+            let _ = engine.snapshot_session(&session_id).await;
+            Ok::<(), String>(())
+        }
+        .await;
+
+        if let Err(err) = result {
+            let _ = tx.send(AsyncEvent::AgentForSession {
+                session_id: session_id.clone(),
+                event: AgentEvent::AutoCompactFailed { reason: err.clone() },
+            });
+            let _ = tx.send(AsyncEvent::TurnCompletedForSession {
+                session_id,
+                result: Err(format!("Compact failed: {err}")),
+            });
+        } else {
+            let _ = tx.send(AsyncEvent::TurnCompletedForSession {
+                session_id,
+                result: Ok(String::new()),
+            });
+        }
+    }));
 }

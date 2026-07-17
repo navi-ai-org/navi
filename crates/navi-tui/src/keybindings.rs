@@ -187,6 +187,7 @@ fn route_mode_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyModifiers) -> K
         Mode::Question => self::modals::handle_question_key(app, code, modifiers),
         Mode::ThemePicker => self::modals::handle_theme_picker_key(app, code, modifiers),
         Mode::MessageActions => self::modals::handle_message_actions_key(app, code),
+        Mode::Rewind => self::modals::handle_rewind_key(app, code),
         Mode::Mcp => self::modals::handle_mcp_key(app, code, modifiers),
         Mode::OAuth => self::modals::handle_oauth_key(app, code, modifiers),
         Mode::BackgroundCommands => self::modals::handle_background_commands_key(app, code),

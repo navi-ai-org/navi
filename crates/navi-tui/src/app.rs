@@ -176,6 +176,10 @@ pub struct TuiApp {
     pub(crate) theme_id: ThemeId,
     pub(crate) message_action_target: Option<usize>,
     pub(crate) selected_message_action: usize,
+    /// Selected row in the Rewind checkpoint modal.
+    pub(crate) selected_rewind: usize,
+    /// Scroll offset for the Rewind modal list.
+    pub(crate) rewind_scroll: usize,
     /// User force-opened tool bodies (click / pin).
     pub(crate) expanded_tool_results: HashSet<String>,
     /// User force-collapsed tool bodies (overrides auto-expand and expand-all).
@@ -475,6 +479,8 @@ impl TuiApp {
             theme_id,
             message_action_target: None,
             selected_message_action,
+            selected_rewind: 0,
+            rewind_scroll: 0,
             expanded_tool_results: HashSet::new(),
             collapsed_tool_results: HashSet::new(),
             hovered_chat_source: None,

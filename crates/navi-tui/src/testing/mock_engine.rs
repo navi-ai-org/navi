@@ -43,6 +43,7 @@ pub enum EngineCall {
         submitted: bool,
     },
     SnapshotSession(String),
+    CompactSession(String),
     ReloadWasmPlugins,
     SyncModels(NaviConfigSaveTarget),
     SyncProviderModels {
@@ -232,6 +233,22 @@ impl EngineDriver for MockEngine {
 
     async fn rewind_session(&self, _session_id: &str, keep_user_turns: usize) -> Result<usize> {
         Ok(keep_user_turns)
+    }
+
+    async fn compact_session(
+        &self,
+        session_id: &str,
+    ) -> Result<navi_sdk::CompactOutcome> {
+        self.state
+            .lock()
+            .unwrap()
+            .calls
+            .push(EngineCall::CompactSession(session_id.to_string()));
+        Ok(navi_sdk::CompactOutcome {
+            tokens_saved: 1_000,
+            summary: "Mock compact summary".to_string(),
+            kept_recent_messages: 0,
+        })
     }
 
     fn agent_mode(&self, _session_id: &str) -> Result<navi_core::plan_mode::AgentMode> {

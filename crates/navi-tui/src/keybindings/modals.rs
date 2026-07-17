@@ -142,6 +142,45 @@ pub(crate) fn handle_message_actions_key(app: &mut TuiApp, code: KeyCode) -> boo
     false
 }
 
+pub(crate) fn handle_rewind_key(app: &mut TuiApp, code: KeyCode) -> bool {
+    let checkpoints = crate::chat::rewind_checkpoints(app);
+    let len = checkpoints.len();
+    match code {
+        KeyCode::Esc => super::close_active_modal(app),
+        KeyCode::Down | KeyCode::Tab => {
+            if len > 0 {
+                app.selected_rewind = (app.selected_rewind + 1).min(len.saturating_sub(1));
+                ensure_rewind_visible(app, len);
+            }
+        }
+        KeyCode::Up => {
+            app.selected_rewind = app.selected_rewind.saturating_sub(1);
+            ensure_rewind_visible(app, len);
+        }
+        KeyCode::Enter => {
+            if let Some((message_index, _)) = checkpoints.get(app.selected_rewind) {
+                crate::mouse::run_rewind_checkpoint(app, *message_index);
+            }
+        }
+        _ => {}
+    }
+    false
+}
+
+fn ensure_rewind_visible(app: &mut TuiApp, total: usize) {
+    const VISIBLE: usize = 10;
+    if total == 0 {
+        app.rewind_scroll = 0;
+        return;
+    }
+    let selected = app.selected_rewind.min(total.saturating_sub(1));
+    if selected < app.rewind_scroll {
+        app.rewind_scroll = selected;
+    } else if selected >= app.rewind_scroll + VISIBLE {
+        app.rewind_scroll = selected + 1 - VISIBLE;
+    }
+}
+
 pub(crate) fn handle_question_key(
     app: &mut TuiApp,
     code: KeyCode,

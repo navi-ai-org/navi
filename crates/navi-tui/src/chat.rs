@@ -504,12 +504,66 @@ pub(crate) fn retry_last_response(app: &mut TuiApp) {
 pub(crate) fn revert_to_user_message(app: &mut TuiApp, message_index: usize) -> Result<(), String> {
     let prompt = user_message_text(app, message_index)?;
     ensure_safe_history_action(app)?;
+    let keep_user_turns = app
+        .messages
+        .iter()
+        .take(message_index)
+        .filter(|message| message.role == ChatRole::User)
+        .count();
     let prefix = prefix_before_user_message(app, message_index)?;
     apply_prefix(app, prefix);
     app.input = prompt;
     app.input_cursor = app.input.len();
     app.scroll_offset = 0;
+
+    // Engine: truncate live session history + restore project files (Grok-style).
+    let session_id = app.session_id.as_str().to_string();
+    let engine = app.engine();
+    crate::runtime::spawn_runtime_task(async move {
+        match engine.rewind_session(&session_id, keep_user_turns).await {
+            Ok(_) => tracing::info!(
+                keep_user_turns,
+                "TUI revert: engine rewind + filesystem restore complete"
+            ),
+            Err(err) => tracing::warn!(
+                error = %err,
+                keep_user_turns,
+                "TUI revert: engine rewind failed (UI history already truncated)"
+            ),
+        }
+    });
+    // Persist truncated UI session so reload matches (keep same session id).
+    crate::persistence::snapshot_current_session(app);
     Ok(())
+}
+
+/// User-message checkpoints for the Rewind palette modal: `(message_index, preview)`.
+pub(crate) fn rewind_checkpoints(app: &TuiApp) -> Vec<(usize, String)> {
+    app.messages
+        .iter()
+        .enumerate()
+        .filter(|(_, m)| m.role == ChatRole::User)
+        .map(|(i, m)| {
+            let preview = truncate_checkpoint_preview(&m.content, 80);
+            (i, preview)
+        })
+        .collect()
+}
+
+fn truncate_checkpoint_preview(text: &str, max_chars: usize) -> String {
+    let t = text.trim().replace('\n', " ");
+    if t.chars().count() <= max_chars {
+        return t;
+    }
+    let mut out = String::new();
+    for (i, ch) in t.chars().enumerate() {
+        if i >= max_chars.saturating_sub(1) {
+            break;
+        }
+        out.push(ch);
+    }
+    out.push('…');
+    out
 }
 
 pub(crate) fn fork_from_user_message(app: &mut TuiApp, message_index: usize) -> Result<(), String> {
