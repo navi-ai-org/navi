@@ -171,7 +171,7 @@ fn clear_parent_keyboard_stack(w: &mut impl io::Write) -> io::Result<()> {
     w.flush()
 }
 
-/// Own the Kitty keyboard protocol for this session (Grok-style negotiate).
+/// Own the Kitty keyboard protocol for this session (progressive negotiate).
 fn enable_navi_keyboard_protocol(w: &mut impl io::Write) -> io::Result<()> {
     clear_parent_keyboard_stack(w)?;
     // Emits `CSI > 3 u` for DISAMBIGUATE | REPORT_EVENT_TYPES.

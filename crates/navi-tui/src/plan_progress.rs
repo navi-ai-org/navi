@@ -127,7 +127,7 @@ fn plan_ui_from_tool_output(result: &ToolResult) -> Option<ActivePlanUiState> {
         title,
         steps,
         status,
-        // Compact topbar by default (Grok-style N/M); click expands checklist.
+        // Compact topbar by default (N/M progress); click expands checklist.
         expanded: false,
         show_all_steps: false,
         completed_at: None,

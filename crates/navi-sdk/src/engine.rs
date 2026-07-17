@@ -531,7 +531,8 @@ impl NaviEngine {
         Ok(runtime.get_goal())
     }
 
-    /// Sets a goal for a session. The goal will guide the agent across turns.
+    /// Sets a goal for a session. The goal will guide the agent across turns
+    /// (auto-continuation while status is Active).
     pub async fn set_goal(
         &self,
         session_id: &str,
@@ -540,10 +541,11 @@ impl NaviEngine {
     ) -> Result<SessionGoal> {
         let session = self.session(session_id)?;
         let runtime = session.runtime.lock().await;
+        // set_goal publishes GoalUpdated for live clients.
         Ok(runtime.set_goal(objective.into(), token_budget))
     }
 
-    /// Clears the goal for a session.
+    /// Clears the goal for a session (notifies live clients).
     pub async fn clear_goal(&self, session_id: &str) -> Result<()> {
         let session = self.session(session_id)?;
         let runtime = session.runtime.lock().await;
@@ -561,6 +563,12 @@ impl NaviEngine {
         let runtime = session.runtime.lock().await;
         if let Some(mut goal) = runtime.get_goal() {
             goal.transition_to(status);
+            if status == navi_core::GoalStatus::Paused {
+                runtime.goal_runtime().set_auto_continue(false);
+            } else if status == navi_core::GoalStatus::Active {
+                runtime.goal_runtime().set_auto_continue(true);
+            }
+            // update_goal publishes GoalUpdated for live clients.
             runtime.update_goal(goal.clone());
             Ok(Some(goal))
         } else {

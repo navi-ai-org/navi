@@ -379,7 +379,7 @@ pub struct AgentRuntime {
     plan_parser: std::sync::Mutex<crate::plan_mode::ProposedPlanParser>,
     /// Session-scoped memory manager shared with TurnContext (open once).
     memory_manager: Arc<std::sync::Mutex<Option<Arc<crate::memory::MemoryManager>>>>,
-    /// Grok-style per-turn file snapshots for rewind / Revert.
+    /// Per-turn file snapshots for rewind / Revert.
     rewind_store: Arc<std::sync::Mutex<crate::rewind::RewindStore>>,
 }
 
@@ -491,23 +491,60 @@ impl AgentRuntime {
         self.goal_runtime.get_goal()
     }
 
-    /// Sets or updates the session goal.
+    /// Sets or updates the session goal and notifies live clients.
     pub fn set_goal(
         &self,
         objective: String,
         token_budget: Option<i64>,
     ) -> crate::goal::types::SessionGoal {
-        self.goal_runtime.set_objective(objective, token_budget)
+        let goal = self.goal_runtime.set_objective(objective, token_budget);
+        self.goal_runtime.set_auto_continue(true);
+        self.publish_goal_updated(&goal);
+        goal
+    }
+
+    /// Sets or updates the session goal with a compact UI label.
+    pub fn set_goal_with_short_description(
+        &self,
+        objective: String,
+        short_description: Option<String>,
+        token_budget: Option<i64>,
+    ) -> crate::goal::types::SessionGoal {
+        let goal = self.goal_runtime.set_objective_with_short_description(
+            objective,
+            short_description,
+            token_budget,
+        );
+        self.goal_runtime.set_auto_continue(true);
+        self.publish_goal_updated(&goal);
+        goal
     }
 
     /// Clears the current session goal.
+    ///
+    /// Live UIs typically clear their chip optimistically when the user
+    /// requests clear; no terminal GoalUpdated is published (that would look
+    /// like a successful complete).
     pub fn clear_goal(&self) {
         self.goal_runtime.clear_goal();
     }
 
-    /// Updates the stored goal (used after status transitions).
+    /// Updates the stored goal (used after status transitions) and notifies clients.
     pub fn update_goal(&self, goal: crate::goal::types::SessionGoal) {
-        self.goal_runtime.update_goal(goal);
+        self.goal_runtime.update_goal(goal.clone());
+        self.publish_goal_updated(&goal);
+    }
+
+    fn publish_goal_updated(&self, goal: &crate::goal::types::SessionGoal) {
+        self.event_bus.publish(RuntimeEventKind::GoalUpdated {
+            session_id: goal.session_id.clone(),
+            goal_id: goal.goal_id.as_str().to_string(),
+            objective: goal.objective.clone(),
+            short_description: goal.short_description.clone(),
+            status: goal.status,
+            tokens_used: goal.tokens_used,
+            token_budget: goal.token_budget,
+        });
     }
 
     /// Updates the goal checklist (replaces all tasks).
@@ -915,7 +952,7 @@ impl AgentRuntime {
         });
         self.last_user_task = task.clone();
 
-        // Grok-style pre-turn file snapshot (dirty paths only).
+        // Pre-turn file snapshot (dirty paths only).
         let prompt_index = self
             .session
             .events()
@@ -1281,7 +1318,7 @@ impl AgentRuntime {
     /// Keeps the first `keep_user_turns` user turns (and their assistant/tool
     /// follow-ups), drops everything after, and truncates recorded session
     /// events the same way. Also restores project files to the pre-turn state
-    /// of the first dropped user prompt (Grok-style rewind).
+    /// of the first dropped user prompt (session rewind).
     ///
     /// Caller should then `send_turn` with the new text (or leave the prompt in
     /// the input for the user to edit).
@@ -1944,14 +1981,28 @@ impl AgentRuntime {
                     short_description.clone(),
                     *token_budget,
                 );
+                self.goal_runtime.set_auto_continue(true);
+                self.publish_goal_updated(&goal);
+            }
+            AgentEvent::GoalUpdated {
+                session_id,
+                goal_id,
+                objective,
+                short_description,
+                status,
+                tokens_used,
+                token_budget,
+            } => {
+                // Tool-side goal tools already mutated GoalRuntimeHandle; fan out
+                // to the runtime event bus so TUI/SDK subscribers stay in sync.
                 self.event_bus.publish(RuntimeEventKind::GoalUpdated {
-                    session_id: goal.session_id.clone(),
-                    goal_id: goal.goal_id.as_str().to_string(),
-                    objective: goal.objective.clone(),
-                    short_description: goal.short_description.clone(),
-                    status: goal.status,
-                    tokens_used: goal.tokens_used,
-                    token_budget: goal.token_budget,
+                    session_id: session_id.clone(),
+                    goal_id: goal_id.clone(),
+                    objective: objective.clone(),
+                    short_description: short_description.clone(),
+                    status: *status,
+                    tokens_used: *tokens_used,
+                    token_budget: *token_budget,
                 });
             }
             AgentEvent::ModelDelta { text } => {

@@ -218,6 +218,27 @@ impl EngineDriver for MockEngine {
         })
     }
 
+    async fn set_goal(
+        &self,
+        _session_id: &str,
+        objective: String,
+        token_budget: Option<i64>,
+    ) -> Result<navi_core::SessionGoal> {
+        Ok(navi_core::SessionGoal::new(
+            "mock".to_string(),
+            objective,
+            token_budget,
+        ))
+    }
+
+    async fn update_goal_status(
+        &self,
+        _session_id: &str,
+        _status: navi_core::GoalStatus,
+    ) -> Result<Option<navi_core::SessionGoal>> {
+        Ok(None)
+    }
+
     async fn clear_goal(&self, _session_id: &str) -> Result<()> {
         Ok(())
     }

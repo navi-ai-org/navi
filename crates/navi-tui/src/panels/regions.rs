@@ -44,7 +44,7 @@ impl Panel for HeaderPanel {
 }
 
 // ---------------------------------------------------------------------------
-// Plan topbar (under header, above chat — Grok-style N/M chip)
+// Plan topbar (under header, above chat — N/M progress chip)
 // ---------------------------------------------------------------------------
 
 pub struct PlanTopbarPanel;

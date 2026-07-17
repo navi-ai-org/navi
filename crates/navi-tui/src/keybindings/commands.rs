@@ -275,11 +275,75 @@ pub(crate) fn run_selected_command(app: &mut TuiApp) -> bool {
                 "Setting up again. Choose your provider.".to_string(),
             ));
         }
+        CommandAction::SetGoal => {
+            let objective = app.input.trim().to_string();
+            if objective.is_empty() {
+                show_notification(
+                    app,
+                    "Goal",
+                    "Type an objective in the composer, then run Set Goal.",
+                );
+                super::close_all_modals(app);
+            } else {
+                let session_id = app.session_id.as_str().to_string();
+                let engine = app.engine();
+                let obj = objective.clone();
+                // Optimistic UI so the chip appears immediately.
+                app.goal_state = Some(crate::state::GoalUiState {
+                    objective: objective.clone(),
+                    short_description: Some(
+                        objective.chars().take(40).collect::<String>(),
+                    ),
+                    tokens_used: 0,
+                    token_budget: None,
+                });
+                crate::runtime::spawn_runtime_task(async move {
+                    // Ensure the session exists so set_goal has a live runtime.
+                    let _ = engine
+                        .start_session(navi_sdk::NaviSessionRequest {
+                            session_id: Some(session_id.clone()),
+                            project_dir: None,
+                            ..Default::default()
+                        })
+                        .await;
+                    match engine.set_goal(&session_id, obj, None).await {
+                        Ok(_) => {}
+                        Err(err) => tracing::warn!(error = %err, "set_goal failed"),
+                    }
+                });
+                app.input.clear();
+                app.input_cursor = 0;
+                super::close_all_modals(app);
+                show_notification(app, "Goal", "Goal set — auto-continue while active.");
+            }
+        }
+        CommandAction::PauseGoal => {
+            let session_id = app.session_id.as_str().to_string();
+            let engine = app.engine();
+            crate::runtime::spawn_runtime_task(async move {
+                let _ = engine
+                    .update_goal_status(&session_id, navi_sdk::GoalStatus::Paused)
+                    .await;
+            });
+            super::close_all_modals(app);
+            show_notification(app, "Goal", "Goal paused.");
+        }
+        CommandAction::ResumeGoal => {
+            let session_id = app.session_id.as_str().to_string();
+            let engine = app.engine();
+            crate::runtime::spawn_runtime_task(async move {
+                let _ = engine
+                    .update_goal_status(&session_id, navi_sdk::GoalStatus::Active)
+                    .await;
+            });
+            super::close_all_modals(app);
+            show_notification(app, "Goal", "Goal resumed.");
+        }
         CommandAction::ClearGoal => {
             app.goal_state = None;
             let session_id = app.session_id.as_str().to_string();
             let engine = app.engine();
-            tokio::spawn(async move {
+            crate::runtime::spawn_runtime_task(async move {
                 let _ = engine.clear_goal(&session_id).await;
             });
             super::close_all_modals(app);

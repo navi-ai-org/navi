@@ -764,18 +764,35 @@ fn handle_agent_event(app: &mut TuiApp, event: AgentEvent) {
             token_budget,
         } => {
             use navi_sdk::GoalStatus;
-            app.goal_state = Some(crate::state::GoalUiState {
-                objective: objective.clone(),
-                short_description,
-                tokens_used,
-                token_budget,
-            });
-            if status == GoalStatus::Complete {
-                show_notification(app, "Goal Completed", &objective);
-                notify_job_done_if_unfocused(app, "NAVI goal completed", &objective);
-            } else if status == GoalStatus::Blocked {
-                show_notification(app, "Goal Blocked", &objective);
-                notify_job_done_if_unfocused(app, "NAVI goal blocked", &objective);
+            match status {
+                GoalStatus::Complete | GoalStatus::BudgetLimited => {
+                    // Terminal: drop the chip after a short notification.
+                    app.goal_state = None;
+                    if status == GoalStatus::Complete {
+                        show_notification(app, "Goal Completed", &objective);
+                        notify_job_done_if_unfocused(app, "NAVI goal completed", &objective);
+                    } else {
+                        show_notification(app, "Goal Budget", &objective);
+                    }
+                }
+                GoalStatus::Blocked => {
+                    app.goal_state = Some(crate::state::GoalUiState {
+                        objective: objective.clone(),
+                        short_description,
+                        tokens_used,
+                        token_budget,
+                    });
+                    show_notification(app, "Goal Blocked", &objective);
+                    notify_job_done_if_unfocused(app, "NAVI goal blocked", &objective);
+                }
+                GoalStatus::Active | GoalStatus::Paused | GoalStatus::UsageLimited => {
+                    app.goal_state = Some(crate::state::GoalUiState {
+                        objective: objective.clone(),
+                        short_description,
+                        tokens_used,
+                        token_budget,
+                    });
+                }
             }
         }
         AgentEvent::SetGoalRequested { .. } => {}

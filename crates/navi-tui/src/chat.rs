@@ -516,7 +516,7 @@ pub(crate) fn revert_to_user_message(app: &mut TuiApp, message_index: usize) -> 
     app.input_cursor = app.input.len();
     app.scroll_offset = 0;
 
-    // Engine: truncate live session history + restore project files (Grok-style).
+    // Engine: truncate live session history + restore project files.
     let session_id = app.session_id.as_str().to_string();
     let engine = app.engine();
     crate::runtime::spawn_runtime_task(async move {

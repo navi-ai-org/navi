@@ -183,7 +183,7 @@ pub struct ToolExecutor {
     security: Arc<dyn ToolSecurityPolicy>,
     harness_profile: String,
     registry: ToolRegistry,
-    /// Optional session rewind store for Grok-style file restore.
+    /// Optional session rewind store for file restore on rewind.
     rewind_store: Option<Arc<std::sync::Mutex<crate::rewind::RewindStore>>>,
 }
 
@@ -721,7 +721,7 @@ impl ToolExecutor {
             },
         };
 
-        // Track successful write paths for Grok-style rewind (dirty set + created).
+        // Track successful write paths for session rewind (dirty set + created).
         if result.ok && tool_kind == Some(crate::tool::ToolKind::Write) {
             if let Some(store) = &self.rewind_store {
                 let paths = crate::effect::extract_paths(
