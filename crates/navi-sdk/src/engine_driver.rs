@@ -52,10 +52,7 @@ pub trait EngineDriver: Send + Sync {
     async fn rewind_session(&self, session_id: &str, keep_user_turns: usize) -> Result<usize>;
 
     /// Force-compact session history with the session's own model.
-    async fn compact_session(
-        &self,
-        session_id: &str,
-    ) -> Result<navi_core::CompactOutcome>;
+    async fn compact_session(&self, session_id: &str) -> Result<navi_core::CompactOutcome>;
 
     /// Returns the current agent mode (Default or Plan).
     fn agent_mode(&self, session_id: &str) -> Result<navi_core::plan_mode::AgentMode>;
@@ -250,10 +247,7 @@ impl EngineDriver for crate::NaviEngine {
         crate::NaviEngine::rewind_session(self, session_id, keep_user_turns).await
     }
 
-    async fn compact_session(
-        &self,
-        session_id: &str,
-    ) -> Result<navi_core::CompactOutcome> {
+    async fn compact_session(&self, session_id: &str) -> Result<navi_core::CompactOutcome> {
         crate::NaviEngine::compact_session(self, session_id).await
     }
 

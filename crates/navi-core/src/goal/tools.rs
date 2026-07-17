@@ -556,17 +556,17 @@ impl Tool for UpdateGoalChecklistTool {
                     Some(goal) => {
                         emit_goal_updated(&context, &goal);
                         make_result(
-                        &invocation.id,
-                        true,
-                        json!({
-                            "updated": true,
-                            "task_count": goal.checklist.len(),
-                            "checklist": goal.checklist.iter().map(|t| {
-                                json!({"id": t.id, "description": t.description, "status": t.status.as_str()})
-                            }).collect::<Vec<_>>(),
-                            "message": format!("Checklist set with {} tasks. Work through each task and mark it `verified` after running tests.", goal.checklist.len())
-                        }),
-                    )
+                            &invocation.id,
+                            true,
+                            json!({
+                                "updated": true,
+                                "task_count": goal.checklist.len(),
+                                "checklist": goal.checklist.iter().map(|t| {
+                                    json!({"id": t.id, "description": t.description, "status": t.status.as_str()})
+                                }).collect::<Vec<_>>(),
+                                "message": format!("Checklist set with {} tasks. Work through each task and mark it `verified` after running tests.", goal.checklist.len())
+                            }),
+                        )
                     }
                     None => make_result(
                         &invocation.id,
@@ -657,21 +657,21 @@ impl Tool for UpdateGoalChecklistTool {
                         Some(g) => {
                             emit_goal_updated(&context, &g);
                             make_result(
-                            &invocation.id,
-                            true,
-                            json!({
-                                "updated": true,
-                                "task_id": task_id,
-                                "status": status.as_str(),
-                                "finished": g.finished_count(),
-                                "total": g.checklist.len(),
-                                "message": if g.is_checklist_complete() {
-                                    "All checklist tasks are finished. You can now mark the goal as complete with update_goal(complete)."
-                                } else {
-                                    "Task updated. Continue working on remaining tasks."
-                                }
-                            }),
-                        )
+                                &invocation.id,
+                                true,
+                                json!({
+                                    "updated": true,
+                                    "task_id": task_id,
+                                    "status": status.as_str(),
+                                    "finished": g.finished_count(),
+                                    "total": g.checklist.len(),
+                                    "message": if g.is_checklist_complete() {
+                                        "All checklist tasks are finished. You can now mark the goal as complete with update_goal(complete)."
+                                    } else {
+                                        "Task updated. Continue working on remaining tasks."
+                                    }
+                                }),
+                            )
                         }
                         None => make_result(
                             &invocation.id,

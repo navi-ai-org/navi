@@ -626,10 +626,7 @@ impl NaviEngine {
     ///
     /// Replaces older turns with a model-produced summary and emits compact events.
     /// Does not use a subagent or background model route.
-    pub async fn compact_session(
-        &self,
-        session_id: &str,
-    ) -> Result<navi_core::CompactOutcome> {
+    pub async fn compact_session(&self, session_id: &str) -> Result<navi_core::CompactOutcome> {
         let session = self.session(session_id)?;
         // Cancel any in-flight turn so the session loop can run compact.
         session.turn_canceller.cancel();

@@ -132,15 +132,15 @@ pub use replay_gate::{
     ReplayGateConfig, ReplayGateReport, SuperiorityGateReport, evaluate_replay_gate,
     evaluate_superiority_gate, unsafe_guarded_auto_approval_count,
 };
-pub use rewind::{
-    MAX_REWIND_BLOB_BYTES, PROMPT_PREVIEW_CHARS, RestoreSummary, RewindFileEntry, RewindPointMeta,
-    RewindStore,
-};
 pub use repo_intelligence::{
     ChurnRecord, DependencyEdge, ImportRecord, IndexedFile, RankedSymbolRecord, ReferenceRecord,
     RepoIndex, RepoIntelligenceCache, SymbolRecord, TestTarget, TextMatchRecord, build_index,
     dependency_edges, discover_tests, goto_symbol, ranked_symbol_matches, references,
     search_symbols, search_text_matches,
+};
+pub use rewind::{
+    MAX_REWIND_BLOB_BYTES, PROMPT_PREVIEW_CHARS, RestoreSummary, RewindFileEntry, RewindPointMeta,
+    RewindStore,
 };
 pub use runtime::{
     AgentRuntime, AgentRuntimeOptions, ApprovalResolver, MemoryExtractionModel, PlanReviewResolver,

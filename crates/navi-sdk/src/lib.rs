@@ -74,12 +74,11 @@ pub use navi_core::{
 pub use navi_core::{
     AttachmentModelsConfig, BINARY_REASONING_LEVELS, BackgroundModelEntry, BackgroundModelsConfig,
     CompactOutcome, CompactState, CompactThreshold, CredentialStore, HarnessPolicy, HarnessProfile,
-    LoadedConfig,
-    ModelOption, ModelTaskSize, NaviConfig, NotificationUrgency, NotifyRequest, PermissionMode,
-    ProviderConfig, ProviderKind, ProviderModelConfig, SessionStore, ThinkingConfig, UpdateInfo,
-    UpdatesConfig, effort_display_label, is_binary_effort_model, parse_reasoning_level,
-    resolve_effort_label, resolve_model_thinking_level, select_harness_policy,
-    thinking_levels_for_model,
+    LoadedConfig, ModelOption, ModelTaskSize, NaviConfig, NotificationUrgency, NotifyRequest,
+    PermissionMode, ProviderConfig, ProviderKind, ProviderModelConfig, SessionStore,
+    ThinkingConfig, UpdateInfo, UpdatesConfig, effort_display_label, is_binary_effort_model,
+    parse_reasoning_level, resolve_effort_label, resolve_model_thinking_level,
+    select_harness_policy, thinking_levels_for_model,
 };
 // Utility functions
 pub use navi_core::{

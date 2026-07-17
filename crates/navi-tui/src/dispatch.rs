@@ -1171,9 +1171,7 @@ fn apply_compacted_conversation_history(
     let recent = if kept_recent_messages == 0 || conversation.is_empty() {
         Vec::new()
     } else {
-        let start = conversation
-            .len()
-            .saturating_sub(kept_recent_messages);
+        let start = conversation.len().saturating_sub(kept_recent_messages);
         conversation[start..].to_vec()
     };
 
@@ -1985,11 +1983,10 @@ mod tests {
         assert!(last.content.contains("5k tokens saved"));
         assert!(last.content.contains("Previous context summary"));
         // Provider history is system + summary only.
-        assert!(
-            app.conversation_history
-                .iter()
-                .all(|m| matches!(m.role, navi_sdk::ModelRole::System | navi_sdk::ModelRole::User))
-        );
+        assert!(app.conversation_history.iter().all(|m| matches!(
+            m.role,
+            navi_sdk::ModelRole::System | navi_sdk::ModelRole::User
+        )));
         assert!(
             app.conversation_history
                 .iter()

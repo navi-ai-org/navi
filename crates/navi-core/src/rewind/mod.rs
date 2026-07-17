@@ -81,7 +81,11 @@ pub struct RewindStore {
 }
 
 impl RewindStore {
-    pub fn new(data_dir: impl AsRef<Path>, session_id: &str, project_root: impl AsRef<Path>) -> Self {
+    pub fn new(
+        data_dir: impl AsRef<Path>,
+        session_id: &str,
+        project_root: impl AsRef<Path>,
+    ) -> Self {
         let root = data_dir
             .as_ref()
             .join("sessions")
@@ -427,11 +431,7 @@ fn rel_path_for(project_root: &Path, abs: &Path) -> Option<String> {
         .map(|p| p.to_string_lossy().replace('\\', "/"))
 }
 
-fn capture_file_entry(
-    abs: &Path,
-    rel: &str,
-    blobs_dir: &Path,
-) -> std::io::Result<RewindFileEntry> {
+fn capture_file_entry(abs: &Path, rel: &str, blobs_dir: &Path) -> std::io::Result<RewindFileEntry> {
     if !abs.is_file() {
         return Ok(RewindFileEntry {
             rel_path: rel.to_string(),
@@ -472,7 +472,10 @@ fn append_point(path: &Path, point: &RewindPointMeta) -> std::io::Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
-    let mut f = fs::OpenOptions::new().create(true).append(true).open(path)?;
+    let mut f = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)?;
     let line = serde_json::to_string(point)
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
     writeln!(f, "{line}")?;
@@ -515,9 +518,7 @@ mod tests {
         let mut store = RewindStore::new(&data, "session-1", &project);
         store.note_written_paths([file.clone()]);
         // Pre-turn: dirty includes a.rs with v1
-        store
-            .capture_point(0, "please edit a.rs", 100)
-            .unwrap();
+        store.capture_point(0, "please edit a.rs", 100).unwrap();
 
         // Agent mutates
         fs::write(&file, b"v2-agent").unwrap();
@@ -549,7 +550,10 @@ mod tests {
 
         assert!(new_file.exists());
         let summary = store.restore_to(0);
-        assert!(!new_file.exists(), "created file must be deleted on restore");
+        assert!(
+            !new_file.exists(),
+            "created file must be deleted on restore"
+        );
         assert!(summary.deleted >= 1);
     }
 

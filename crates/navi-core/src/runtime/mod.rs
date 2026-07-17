@@ -474,15 +474,9 @@ impl AgentRuntime {
     /// Rebind rewind store to the live session id (after start_session).
     pub fn rebind_rewind_store(&self) {
         let sid = self.session.id().as_str().to_string();
-        let mut store = self
-            .rewind_store
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        *store = crate::rewind::RewindStore::new(
-            &self.loaded_config.data_dir,
-            &sid,
-            &self.project_dir,
-        );
+        let mut store = self.rewind_store.lock().unwrap_or_else(|e| e.into_inner());
+        *store =
+            crate::rewind::RewindStore::new(&self.loaded_config.data_dir, &sid, &self.project_dir);
     }
 
     /// Returns all agent events recorded so far.
@@ -961,10 +955,7 @@ impl AgentRuntime {
             .count()
             .saturating_sub(1);
         let captured_index = {
-            let mut store = self
-                .rewind_store
-                .lock()
-                .unwrap_or_else(|e| e.into_inner());
+            let mut store = self.rewind_store.lock().unwrap_or_else(|e| e.into_inner());
             // Ensure store is keyed to live session id.
             if store.root().to_string_lossy().contains("pending") {
                 *store = crate::rewind::RewindStore::new(
@@ -1043,10 +1034,7 @@ impl AgentRuntime {
 
         // Record paths created this turn so restore can delete them.
         if let Some(idx) = captured_index {
-            let mut store = self
-                .rewind_store
-                .lock()
-                .unwrap_or_else(|e| e.into_inner());
+            let mut store = self.rewind_store.lock().unwrap_or_else(|e| e.into_inner());
             if let Err(e) = store.finalize_turn_created_paths(idx) {
                 tracing::debug!(error = %e, prompt_index = idx, "rewind: finalize created_paths failed");
             }
@@ -1235,9 +1223,9 @@ impl AgentRuntime {
                 .ok_or_else(|| anyhow::anyhow!("session event stream unavailable"))?;
 
             let (response_tx, response_rx) = tokio::sync::oneshot::channel();
-            if let Err(e) = submission_tx.send(crate::session::SessionCommand::Compact {
-                response_tx,
-            }) {
+            if let Err(e) =
+                submission_tx.send(crate::session::SessionCommand::Compact { response_tx })
+            {
                 return Err(anyhow::anyhow!("failed to send compact command: {}", e));
             }
 
@@ -1291,8 +1279,7 @@ impl AgentRuntime {
             // Event log is fully replaced — recent turns are not reconstructed here.
             kept_recent_messages: 0,
         };
-        self.session
-            .replace_events(vec![summary_event, completed]);
+        self.session.replace_events(vec![summary_event, completed]);
     }
 
     fn sync_initial_messages_from_compact(&mut self, outcome: &crate::compact::CompactOutcome) {
@@ -1310,7 +1297,9 @@ impl AgentRuntime {
             .collect();
         self.initial_messages = prefix;
         self.initial_messages
-            .push(crate::compact::compact_summary_user_message(&outcome.summary));
+            .push(crate::compact::compact_summary_user_message(
+                &outcome.summary,
+            ));
     }
 
     /// Rewind live conversation history for an edited past user message.
@@ -1328,10 +1317,7 @@ impl AgentRuntime {
         // Restore filesystem to state before user turn `keep_user_turns` (and
         // drop checkpoints at/after that index). Best-effort; history still rewinds.
         let fs_summary = {
-            let mut store = self
-                .rewind_store
-                .lock()
-                .unwrap_or_else(|e| e.into_inner());
+            let mut store = self.rewind_store.lock().unwrap_or_else(|e| e.into_inner());
             store.restore_to(keep_user_turns)
         };
         if !fs_summary.errors.is_empty() {
