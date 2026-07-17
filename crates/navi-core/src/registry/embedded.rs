@@ -146,7 +146,6 @@ mod tests {
         let ids: Vec<_> = providers.iter().map(|p| p.id.as_str()).collect();
         assert!(ids.contains(&"openai"));
         assert!(ids.contains(&"groq"));
-        assert!(ids.contains(&"wispr-flow"));
     }
 
     #[test]

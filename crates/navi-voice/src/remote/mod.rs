@@ -5,22 +5,18 @@
 //! local-engine only for now.
 
 mod openai_compat;
-mod wispr_flow;
 
 use std::path::Path;
 
 use anyhow::{Context, Result, bail};
 
 pub use openai_compat::OpenAiAudioTranscriptionsClient;
-pub use wispr_flow::WisprFlowClient;
 
 /// Wire protocol for a remote transcription provider (matches registry `kind`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RemoteTranscriptionKind {
     /// `POST {base}/audio/transcriptions` multipart (OpenAI / Groq).
     OpenaiAudioTranscriptions,
-    /// Wispr Flow JSON base64 API.
-    WisprFlow,
 }
 
 impl RemoteTranscriptionKind {
@@ -29,7 +25,6 @@ impl RemoteTranscriptionKind {
             "openai-audio-transcriptions" | "openai_audio_transcriptions" => {
                 Some(Self::OpenaiAudioTranscriptions)
             }
-            "wispr-flow" | "wispr_flow" | "whisperflow" | "whisper-flow" => Some(Self::WisprFlow),
             _ => None,
         }
     }
@@ -37,7 +32,6 @@ impl RemoteTranscriptionKind {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::OpenaiAudioTranscriptions => "openai-audio-transcriptions",
-            Self::WisprFlow => "wispr-flow",
         }
     }
 }
@@ -89,14 +83,6 @@ pub async fn transcribe_file_remote(
                     )
                 })
         }
-        RemoteTranscriptionKind::WisprFlow => WisprFlowClient::transcribe(config, path)
-            .await
-            .with_context(|| {
-                format!(
-                    "wispr-flow transcription via provider '{}'",
-                    config.provider_id
-                )
-            }),
     }
 }
 
@@ -136,8 +122,12 @@ mod tests {
             Some(RemoteTranscriptionKind::OpenaiAudioTranscriptions)
         );
         assert_eq!(
+            RemoteTranscriptionKind::parse("openai_audio_transcriptions"),
+            Some(RemoteTranscriptionKind::OpenaiAudioTranscriptions)
+        );
+        assert_eq!(
             RemoteTranscriptionKind::parse("whisperflow"),
-            Some(RemoteTranscriptionKind::WisprFlow)
+            None
         );
     }
 }

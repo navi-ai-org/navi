@@ -829,7 +829,7 @@ impl Default for HistoryConfig {
 /// Voice / dictation settings (`[voice]` in config.toml).
 ///
 /// Supports **local** ONNX engines and **remote** transcription providers from
-/// the registry (OpenAI Whisper, Groq Whisper, Wispr Flow). When
+/// the registry (OpenAI Whisper, Groq Whisper). When
 /// [`Self::provider`] is empty or `"local"`, the local `engine` is used.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -837,7 +837,7 @@ pub struct VoiceConfig {
     /// Master switch — dictation remains opt-in.
     pub enabled: bool,
     /// Transcription backend: `"local"` (default) or a registry transcription
-    /// provider id (`openai`, `groq`, `wispr-flow`, …).
+    /// provider id (`openai`, `groq`, …).
     pub provider: String,
     /// Remote model id when `provider` is not local (e.g. `whisper-1`,
     /// `whisper-large-v3-turbo`). Empty → provider default from registry.

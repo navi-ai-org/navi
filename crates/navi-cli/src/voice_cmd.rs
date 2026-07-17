@@ -147,7 +147,7 @@ pub async fn handle_voice_command(
             println!();
             println!("Next: set `[voice] enabled = true` in ~/.config/navi/config.toml");
             println!("      For remote dictation, also set:");
-            println!("        provider = \"openai\"   # or groq | wispr-flow");
+            println!("        provider = \"openai\"   # or groq");
             println!("        model = \"whisper-1\"");
         }
         crate::VoiceAction::Doctor => {
@@ -266,7 +266,7 @@ pub async fn handle_voice_command(
                 bail!(
                     "local voice transcription requires the navi-cli `voice-onnx` feature \
                      (ONNX Runtime), or set [voice] provider to a remote registry provider \
-                     (openai | groq | wispr-flow)."
+                     (openai | groq)."
                 );
             }
             #[cfg(feature = "voice-onnx")]

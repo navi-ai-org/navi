@@ -124,7 +124,7 @@ pub enum VoiceEvent {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VoiceStatus {
     pub enabled: bool,
-    /// `local` or remote transcription provider id (`openai`, `groq`, `wispr-flow`, …).
+    /// `local` or remote transcription provider id (`openai`, `groq`, …).
     #[serde(default = "default_voice_provider")]
     pub provider: String,
     /// Remote model id when provider is not local.

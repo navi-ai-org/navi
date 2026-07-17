@@ -593,6 +593,8 @@ pub(crate) fn start_new_session(app: &mut TuiApp) {
     app.usage_state.last_input_tokens = None;
     app.usage_state.last_output_tokens = None;
     app.usage_state.last_turn_label = None;
+    app.usage_state.reset_request_usage();
+    app.usage_state.last_account_refresh_at = None;
     app.chat_render_cache.borrow_mut().signature_hash = 0;
 }
 

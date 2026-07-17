@@ -17,11 +17,13 @@ use ratatui::prelude::{CrosstermBackend, Terminal};
 
 /// Kitty progressive-enhancement flags NAVI owns for this session.
 ///
-/// Negotiate (don't fight) the protocol so the terminal and crossterm stay
-/// aligned — same solid strategy as Grok Build.
-///
 /// - `DISAMBIGUATE_ESCAPE_CODES` — Ctrl/Shift/Alt chords become unambiguous CSI-u
 /// - `REPORT_EVENT_TYPES` — Press/Repeat/Release (we only handle Press|Repeat)
+///
+/// Both flags are needed: without `REPORT_EVENT_TYPES`, some terminals stop
+/// sending mouse wheel events as `Event::Mouse` and instead emit them as
+/// arrow-key sequences, which makes the scroll handler select chat blocks
+/// instead of scrolling the viewport.
 const NAVI_KEYBOARD_FLAGS: KeyboardEnhancementFlags =
     KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
         .union(KeyboardEnhancementFlags::REPORT_EVENT_TYPES);
@@ -527,6 +529,15 @@ where
         // Toggle ?1003 only while image hover can fire (pending/chat images or
         // open lightbox). Avoids free-motion CSI leaks across multi-window use.
         let _ = sync_mouse_free_motion(app);
+
+        // Long-running streams do not always include a live Usage chunk. Keep
+        // account-backed providers fresh while work is active (and while the
+        // Usage modal is visible) without polling on every frame.
+        if (app.is_loading || app.mode == Mode::Usage)
+            && crate::usage::refresh_account_usage_if_due(app)
+        {
+            needs_draw = true;
+        }
 
         // Check for async model stream events (non-blocking)
         while let Some(event) = app.try_recv_async_event() {

@@ -104,6 +104,18 @@ pub(crate) fn render_input(frame: &mut Frame<'_>, app: &mut TuiApp, area: Rect) 
         return;
     }
 
+    // Make the editor a first-class interaction target.  Previously it had
+    // no hit region, so restoring composer focus after selecting a chat block
+    // depended on the generic "empty space" path in the mouse handler. That
+    // path is deliberately shared with chat text selection and is not reliable
+    // across terminal mouse-protocol changes.
+    //
+    // z=100 ensures the composer hit wins over chat line hits (z=5) and the
+    // "jump to latest" hit (z=80) when they overlap at the bottom of the chat.
+    if app.mode == crate::state::Mode::Normal {
+        app.register_hit(content, 100, "focus composer", HitAction::FocusComposer);
+    }
+
     // Draft only inside the box — no model/permission chrome mixed into the text.
     let wrap_width = (content.width as usize).saturating_sub(PROMPT_WIDTH).max(1);
 
@@ -1056,6 +1068,22 @@ mod tests {
             );
             assert!(screen.contains("hello"));
         });
+    }
+
+    #[test]
+    fn render_input_registers_a_composer_focus_hit() {
+        let mut app = crate::tests::test_app("draft");
+        app.selected_chat_source = Some(crate::state::ChatLineSource::Message(0));
+        let mut terminal = Terminal::new(TestBackend::new(48, 6)).expect("terminal");
+
+        terminal
+            .draw(|frame| render_input(frame, &mut app, Rect::new(0, 0, 48, 5)))
+            .expect("draw");
+
+        assert!(matches!(
+            app.hit_test(4, 1).map(|hit| hit.action),
+            Some(HitAction::FocusComposer)
+        ));
     }
 
     #[test]

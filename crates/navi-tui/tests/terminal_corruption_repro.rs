@@ -21,8 +21,9 @@
 //! 1. `LeakedTerminalSequenceFilter` handles OSC/SS3/DCS/CSI residual leaks.
 //! 2. `insert_input_char` rejects control characters (except `\n` and `\t`).
 //! 3. `strip_terminal_control_sequences` sanitizes paste.
-//! 4. Kitty progressive enhancement is **pushed** (DISAMBIGUATE|REPORT_EVENT_TYPES)
-//!    so crossterm stays aligned; parent stack cleared with `=0u` (not push0+pop).
+//! 4. Minimal Kitty progressive enhancement is **pushed** (DISAMBIGUATE) so
+//!    crossterm stays aligned without changing normal cursor-key behavior;
+//!    parent stack is cleared with `=0u` (not push0+pop).
 //! 5. `FocusGained` reasserts keyboard/mouse/paste (pop session + re-push).
 //! 6. Free mouse motion (`?1003`) only while images can hover — cuts multi-window
 //!    motion CSI leaks.
