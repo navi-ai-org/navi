@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-07-17
+
+Full changelog: https://github.com/navi-ai-org/navi/compare/v0.3.1...v0.3.2
+
+Session goal reliability and session rewind (history + project files), with TUI entry points and neutral product copy.
+
+### New Features
+
+- **Session rewind** — per-user-turn file snapshots under session data; **Revert to here** and command-palette **Rewind…** restore chat history and project files to a past prompt
+- **TUI goal controls** — command palette **Set Goal** / **Pause Goal** / **Resume Goal** / **Clear Goal** for multi-turn objectives with auto-continuation
+
+### Bug Fixes
+
+- **Goal tools and live UI** — `create_goal` / `update_goal` / checklist tools publish `GoalUpdated`; goal tools are Direct; SDK `set_goal` / `update_goal_status` notify clients so the goal chip and auto-continue stay in sync
+- **Goal complete gate** — checklist must be fully verified/skipped before `update_goal(complete)`; pause/resume toggle auto-continuation correctly
+
+### Changes
+
+- Neutralize product-style marketing comments in TUI/core (no user-facing API change)
+
+### Bindings
+
+- Workspace crate versions bumped to 0.3.2
+
 ## [0.3.1] - 2026-07-17
 
 Full changelog: https://github.com/navi-ai-org/navi/compare/v0.3.0...v0.3.1
@@ -311,7 +335,11 @@ Full changelog: https://github.com/navi-ai-org/navi/releases/tag/v0.1.0
 
 - Initial open-source scaffold of the NAVI agent engine and TUI
 
-[Unreleased]: https://github.com/navi-ai-org/navi/compare/v0.2.6...HEAD
+[Unreleased]: https://github.com/navi-ai-org/navi/compare/v0.3.2...HEAD
+[0.3.2]: https://github.com/navi-ai-org/navi/compare/v0.3.1...v0.3.2
+[0.3.1]: https://github.com/navi-ai-org/navi/compare/v0.3.0...v0.3.1
+[0.3.0]: https://github.com/navi-ai-org/navi/compare/v0.2.7...v0.3.0
+[0.2.7]: https://github.com/navi-ai-org/navi/compare/v0.2.6...v0.2.7
 [0.2.6]: https://github.com/navi-ai-org/navi/compare/v0.2.5...v0.2.6
 [0.2.5]: https://github.com/navi-ai-org/navi/compare/v0.2.4...v0.2.5
 [0.2.4]: https://github.com/navi-ai-org/navi/compare/v0.2.3...v0.2.4
