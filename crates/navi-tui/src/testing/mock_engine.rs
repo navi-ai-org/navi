@@ -256,10 +256,7 @@ impl EngineDriver for MockEngine {
         Ok(keep_user_turns)
     }
 
-    async fn compact_session(
-        &self,
-        session_id: &str,
-    ) -> Result<navi_sdk::CompactOutcome> {
+    async fn compact_session(&self, session_id: &str) -> Result<navi_sdk::CompactOutcome> {
         self.state
             .lock()
             .unwrap()

@@ -200,11 +200,7 @@ pub(crate) fn run_selected_command(app: &mut TuiApp) -> bool {
         CommandAction::Rewind => {
             let checkpoints = crate::chat::rewind_checkpoints(app);
             if checkpoints.is_empty() {
-                show_notification(
-                    app,
-                    "Rewind",
-                    "No user messages yet — send a prompt first.",
-                );
+                show_notification(app, "Rewind", "No user messages yet — send a prompt first.");
                 super::close_all_modals(app);
             } else {
                 app.selected_rewind = checkpoints.len().saturating_sub(1);
@@ -291,9 +287,7 @@ pub(crate) fn run_selected_command(app: &mut TuiApp) -> bool {
                 // Optimistic UI so the chip appears immediately.
                 app.goal_state = Some(crate::state::GoalUiState {
                     objective: objective.clone(),
-                    short_description: Some(
-                        objective.chars().take(40).collect::<String>(),
-                    ),
+                    short_description: Some(objective.chars().take(40).collect::<String>()),
                     tokens_used: 0,
                     token_budget: None,
                 });
@@ -674,7 +668,11 @@ fn start_session_compact(app: &mut TuiApp) {
 
     app.is_loading = true;
     app.loading_start = Some(Instant::now());
-    show_notification(app, "Compact", "Compacting conversation with session model…");
+    show_notification(
+        app,
+        "Compact",
+        "Compacting conversation with session model…",
+    );
 
     let engine = app.engine();
     let session_id = app.session_id.as_str().to_string();
@@ -741,7 +739,9 @@ fn start_session_compact(app: &mut TuiApp) {
         if let Err(err) = result {
             let _ = tx.send(AsyncEvent::AgentForSession {
                 session_id: session_id.clone(),
-                event: AgentEvent::AutoCompactFailed { reason: err.clone() },
+                event: AgentEvent::AutoCompactFailed {
+                    reason: err.clone(),
+                },
             });
             let _ = tx.send(AsyncEvent::TurnCompletedForSession {
                 session_id,

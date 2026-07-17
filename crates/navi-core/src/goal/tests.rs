@@ -844,10 +844,7 @@ mod tests {
             .await
             .unwrap();
         assert!(r.ok, "{:?}", r.output);
-        assert_eq!(
-            rt.get_goal().unwrap().status,
-            GoalStatus::Complete
-        );
+        assert_eq!(rt.get_goal().unwrap().status, GoalStatus::Complete);
         // terminal → no auto-continue
         assert!(rt.continue_if_idle().is_none());
 

@@ -183,9 +183,7 @@ pub trait CompactionStrategy: Send + Sync {
         config: &HarnessConfig,
     ) -> Result<Option<compact::CompactOutcome>> {
         // Default: same path as auto with force semantics via state.force_compact.
-        state
-            .force_compact(messages, provider, model, config)
-            .await
+        state.force_compact(messages, provider, model, config).await
     }
 }
 
@@ -217,9 +215,7 @@ impl CompactionStrategy for DefaultCompactionStrategy {
         model: &str,
         config: &HarnessConfig,
     ) -> Result<Option<compact::CompactOutcome>> {
-        state
-            .force_compact(messages, provider, model, config)
-            .await
+        state.force_compact(messages, provider, model, config).await
     }
 }
 

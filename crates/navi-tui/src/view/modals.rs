@@ -1611,12 +1611,10 @@ pub(crate) fn render_rewind(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
         .split(inner);
 
     frame.render_widget(
-        Paragraph::new(Line::from(vec![
-            Span::styled(
-                "Restore chat + project files to a past prompt",
-                Style::default().fg(muted()).bg(modal_bg()),
-            ),
-        ]))
+        Paragraph::new(Line::from(vec![Span::styled(
+            "Restore chat + project files to a past prompt",
+            Style::default().fg(muted()).bg(modal_bg()),
+        )]))
         .style(Style::default().bg(modal_bg())),
         rows[0],
     );
