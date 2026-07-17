@@ -19,7 +19,7 @@ use crate::ui::interaction::{HitAction, HitRegion, ScrollTarget};
 /// A wheel notch moves a small number of rendered chat lines. Keeping this
 /// line-based (rather than reusing keyboard block navigation) preserves smooth
 /// scrollback even when the composer is empty.
-const CHAT_WHEEL_LINES: usize = 3;
+const CHAT_WHEEL_LINES: usize = 2;
 
 fn map_mouse_to_text(app: &TuiApp, col: u16, row: u16) -> Option<(usize, usize)> {
     map_mouse_to_text_with_clamp(app, col, row, false)
@@ -162,9 +162,7 @@ fn run_secondary_chat_click(app: &mut TuiApp, action: &HitAction) {
                 .get(*index)
                 .is_some_and(|message| message.role == crate::state::ChatRole::User)
             {
-                app.message_action_target = Some(*index);
-                app.selected_message_action = 0;
-                replace_modal(app, crate::state::ModalKind::MessageActions);
+                open_message_actions(app, *index);
             }
         }
         HitAction::ToolResult(id) => {
@@ -195,16 +193,14 @@ pub(crate) fn handle_mouse(app: &mut TuiApp, mouse: MouseEvent) -> bool {
             if scroll_active_list(app, 3) {
                 return true;
             }
-            clear_chat_selection_for_wheel(app);
-            app.scroll_offset = app.scroll_offset.saturating_sub(CHAT_WHEEL_LINES);
+            scroll_chat_with_wheel(app, -(CHAT_WHEEL_LINES as isize), mouse.column, mouse.row);
             true
         }
         MouseEventKind::ScrollUp => {
             if scroll_active_list(app, -3) {
                 return true;
             }
-            clear_chat_selection_for_wheel(app);
-            app.scroll_offset = app.scroll_offset.saturating_add(CHAT_WHEEL_LINES);
+            scroll_chat_with_wheel(app, CHAT_WHEEL_LINES as isize, mouse.column, mouse.row);
             true
         }
         MouseEventKind::Down(MouseButton::Left) => {
@@ -212,6 +208,21 @@ pub(crate) fn handle_mouse(app: &mut TuiApp, mouse: MouseEvent) -> bool {
 
             if let Some(hit) = app.hit_test(mouse.column, mouse.row) {
                 if matches!(hit.action, HitAction::ScrollTo { .. }) {
+                    dispatch_hit(app, hit);
+                    return true;
+                }
+
+                // Composer click must win early: restore input focus before any
+                // chat/selection path can re-select a scrollback block.
+                if matches!(hit.action, HitAction::FocusComposer) {
+                    if app.image_hover.is_some() {
+                        crate::view::image_preview::clear_image_hover(app);
+                    }
+                    app.hover_index = None;
+                    app.hovered_chat_source = None;
+                    app.selection = None;
+                    app.pending_chat_click = None;
+                    crate::chat_blocks::clear_selected_block(app);
                     dispatch_hit(app, hit);
                     return true;
                 }
@@ -247,29 +258,31 @@ pub(crate) fn handle_mouse(app: &mut TuiApp, mouse: MouseEvent) -> bool {
                         .as_ref()
                         .zip(app.selected_chat_source.as_ref())
                         .is_some_and(|(a, b)| crate::chat_blocks::chat_sources_match(a, b));
-                    if let Some(source) = app.hovered_chat_source.clone() {
-                        crate::chat_blocks::select_chat_block(app, source);
-                    }
+                    // Map the click first — before any scroll — so the anchor
+                    // stays under the cursor.
                     if let Some(pos) = map_mouse_to_text(app, mouse.column, mouse.row) {
                         let bound = app
                             .hovered_chat_source
                             .clone()
                             .or_else(|| crate::chat_blocks::source_at_line(app, pos.0));
-                        app.selection = Some(SelectionState {
-                            start: pos,
-                            end: pos,
-                            active: true,
-                            bound_source: bound,
-                        });
+                        if let Some(source) = bound.clone() {
+                            // No auto-scroll: scrolling would remapp line indices.
+                            crate::chat_blocks::select_chat_block_no_scroll(app, source);
+                        }
+                        begin_text_selection(app, pos, bound);
                         // Defer 2nd-click actions until mouse-up so a drag can copy text.
                         if already_selected {
                             app.pending_chat_click = Some(hit.action);
                         }
                     } else if already_selected {
                         // No chat_rect (tests / unmapped): can't drag-select — run 2nd-click now.
+                        if let Some(source) = app.hovered_chat_source.clone() {
+                            crate::chat_blocks::select_chat_block_no_scroll(app, source);
+                        }
                         run_secondary_chat_click(app, &hit.action);
+                    } else if let Some(source) = app.hovered_chat_source.clone() {
+                        crate::chat_blocks::select_chat_block_no_scroll(app, source);
                     }
-                    // First click with no map: block is selected; nothing else.
                     return true;
                 }
 
@@ -294,17 +307,12 @@ pub(crate) fn handle_mouse(app: &mut TuiApp, mouse: MouseEvent) -> bool {
                 let bound = crate::chat_blocks::source_at_line(app, pos.0);
                 // Starting a text drag also selects that block (entry focus).
                 if let Some(source) = bound.clone() {
-                    crate::chat_blocks::select_chat_block(app, source);
+                    crate::chat_blocks::select_chat_block_no_scroll(app, source);
                 } else {
                     // Empty gap inside the chat viewport — deselect.
                     crate::chat_blocks::clear_selected_block(app);
                 }
-                app.selection = Some(SelectionState {
-                    start: pos,
-                    end: pos,
-                    active: true,
-                    bound_source: bound,
-                });
+                begin_text_selection(app, pos, bound);
             } else {
                 // Click completely outside chat text — clear block + drag selection.
                 app.selection = None;
@@ -313,35 +321,16 @@ pub(crate) fn handle_mouse(app: &mut TuiApp, mouse: MouseEvent) -> bool {
             true
         }
         MouseEventKind::Drag(MouseButton::Left) => {
+            // During an active text drag, never let list scrollbars / other hits
+            // steal the gesture and wipe the selection.
+            if app.selection.as_ref().is_some_and(|s| s.active) {
+                return update_active_text_drag(app, mouse.column, mouse.row);
+            }
             if let Some(hit) = app.hit_test(mouse.column, mouse.row)
                 && matches!(hit.action, HitAction::ScrollTo { .. })
             {
                 dispatch_hit(app, hit);
-                app.selection = None;
                 return true;
-            }
-            if app.selection.as_ref().map(|s| s.active).unwrap_or(false)
-                && let Some(inner) = app.chat_render_cache.borrow().chat_rect
-            {
-                if mouse.row <= inner.y {
-                    app.scroll_offset = app.scroll_offset.saturating_add(1);
-                } else if mouse.row >= inner.y + inner.height.saturating_sub(1) {
-                    app.scroll_offset = app.scroll_offset.saturating_sub(1);
-                }
-            }
-            if let Some(pos) = map_mouse_to_text_clamped(app, mouse.column, mouse.row) {
-                let bound = app
-                    .selection
-                    .as_ref()
-                    .filter(|s| s.active)
-                    .and_then(|s| s.bound_source.clone());
-                let active = app.selection.as_ref().is_some_and(|s| s.active);
-                if active {
-                    let clamped_line = crate::chat_blocks::clamp_line_to_block(app, pos.0, &bound);
-                    if let Some(selection) = &mut app.selection {
-                        selection.end = (clamped_line, pos.1);
-                    }
-                }
             }
             true
         }
@@ -351,15 +340,9 @@ pub(crate) fn handle_mouse(app: &mut TuiApp, mouse: MouseEvent) -> bool {
                 .as_ref()
                 .is_some_and(|selection| selection.active)
             {
+                // Final endpoint from release coords (works even if the terminal
+                // never sent Drag events — only Down + Up).
                 let pos = map_mouse_to_text_clamped(app, mouse.column, mouse.row);
-                // Clamp end into the bound block so partial-line drags stay valid.
-                let pos = pos.map(|(line, col)| {
-                    let bound = app.selection.as_ref().and_then(|s| s.bound_source.clone());
-                    (
-                        crate::chat_blocks::clamp_line_to_block(app, line, &bound),
-                        col,
-                    )
-                });
                 let was_drag = app.selection.as_ref().is_some_and(|s| {
                     let end = pos.unwrap_or(s.end);
                     s.start != end
@@ -394,9 +377,55 @@ pub(crate) fn handle_mouse(app: &mut TuiApp, mouse: MouseEvent) -> bool {
             }
             true
         }
-        MouseEventKind::Moved => handle_mouse_moved(app, mouse.column, mouse.row),
+        MouseEventKind::Moved => {
+            // Some terminals emit Moved (not Drag) while the button is held.
+            // Keep the active text selection alive by treating it as a drag.
+            if app.selection.as_ref().is_some_and(|s| s.active) {
+                return update_active_text_drag(app, mouse.column, mouse.row);
+            }
+            handle_mouse_moved(app, mouse.column, mouse.row)
+        }
         _ => false,
     }
+}
+
+fn begin_text_selection(
+    app: &mut TuiApp,
+    pos: (usize, usize),
+    bound: Option<crate::state::ChatLineSource>,
+) {
+    // Free-form selection across the chat viewport. We still record
+    // `bound_source` for block chrome, but drag endpoints are NOT clamped to
+    // that block — clamping made multi-line / multi-cell drags look broken
+    // (endpoint frozen at the first/last line of the block).
+    let _ = bound;
+    app.selection = Some(SelectionState {
+        start: pos,
+        end: pos,
+        active: true,
+        bound_source: None,
+    });
+}
+
+/// Extend an in-progress text selection to the line under the cursor, with
+/// edge auto-scroll when the pointer is at the chat viewport boundary.
+fn update_active_text_drag(app: &mut TuiApp, col: u16, row: u16) -> bool {
+    if !app.selection.as_ref().is_some_and(|s| s.active) {
+        return false;
+    }
+    if let Some(inner) = app.chat_render_cache.borrow().chat_rect {
+        if row <= inner.y {
+            app.scroll_offset = app.scroll_offset.saturating_add(CHAT_WHEEL_LINES);
+        } else if row >= inner.y + inner.height.saturating_sub(1) {
+            app.scroll_offset = app.scroll_offset.saturating_sub(CHAT_WHEEL_LINES);
+        }
+    }
+    if let Some(pos) = map_mouse_to_text_clamped(app, col, row) {
+        if let Some(selection) = &mut app.selection {
+            selection.end = pos;
+        }
+    }
+    true
 }
 
 fn slice_display_columns(text: &str, start_col: usize, end_col: usize) -> String {
@@ -561,10 +590,49 @@ fn chat_source_for_action(action: &HitAction) -> Option<crate::state::ChatLineSo
 /// particular, a previous click/drag must not leave a scrollback block focused
 /// while the user scrolls the chat: that made a normal wheel gesture look like
 /// selection hopping and kept the composer collapsed.
+///
+/// Exception: an *active* text drag must survive the wheel so users can select
+/// across more than one viewport page (select + scroll).
 fn clear_chat_selection_for_wheel(app: &mut TuiApp) {
     app.pending_chat_click = None;
     app.selection = None;
     crate::chat_blocks::clear_selected_block(app);
+}
+
+/// Scroll chat by `delta_lines` (+ = older / up, − = newer / down).
+///
+/// When a text selection drag is active, keep it and re-map the endpoint under
+/// the cursor after the viewport moves. Otherwise clear idle selection/block
+/// focus so wheel never hops chat cells.
+fn scroll_chat_with_wheel(app: &mut TuiApp, delta_lines: isize, col: u16, row: u16) {
+    let active_drag = app.selection.as_ref().is_some_and(|s| s.active);
+    if active_drag {
+        app.pending_chat_click = None;
+    } else {
+        clear_chat_selection_for_wheel(app);
+    }
+
+    if delta_lines >= 0 {
+        app.scroll_offset = app.scroll_offset.saturating_add(delta_lines as usize);
+    } else {
+        app.scroll_offset = app
+            .scroll_offset
+            .saturating_sub(delta_lines.unsigned_abs() as usize);
+    }
+
+    if !active_drag {
+        return;
+    }
+
+    // Remap selection end to the line now under the cursor (clamped to the
+    // bound chat block so selection cannot bleed across messages).
+    if let Some(pos) = map_mouse_to_text_clamped(app, col, row) {
+        let bound = app.selection.as_ref().and_then(|s| s.bound_source.clone());
+        let clamped_line = crate::chat_blocks::clamp_line_to_block(app, pos.0, &bound);
+        if let Some(selection) = &mut app.selection {
+            selection.end = (clamped_line, pos.1);
+        }
+    }
 }
 
 fn dispatch_hit(app: &mut TuiApp, hit: HitRegion<HitAction>) {
@@ -796,9 +864,7 @@ fn dispatch_hit(app: &mut TuiApp, hit: HitRegion<HitAction>) {
                     .get(index)
                     .is_some_and(|message| message.role == crate::state::ChatRole::User)
             {
-                app.message_action_target = Some(index);
-                app.selected_message_action = 0;
-                replace_modal(app, crate::state::ModalKind::MessageActions);
+                open_message_actions(app, index);
             }
         }
         HitAction::ToolResult(id) => {
@@ -844,8 +910,18 @@ fn dispatch_hit(app: &mut TuiApp, hit: HitRegion<HitAction>) {
             }
         }
         HitAction::FocusComposer => {
+            // Explicit restore: drop text drag + block selection + hover so
+            // the next frame expands the composer and shows the input cursor.
+            app.pending_chat_click = None;
             app.selection = None;
+            app.hovered_chat_source = None;
+            app.hover_index = None;
             crate::chat_blocks::clear_selected_block(app);
+            // Ensure Normal chat view (not a subagent drill-in) so the
+            // composer is eligible for focus again.
+            if !matches!(app.chat_view, crate::state::ChatView::Parent) {
+                app.close_subagent_view();
+            }
         }
         HitAction::MessageAction(index) => {
             run_message_action(app, index);
@@ -938,6 +1014,34 @@ fn toggle_tool_result(app: &mut TuiApp, id: &str) {
     app.chat_render_cache.borrow_mut().signature_hash = 0;
 }
 
+/// Open Message Actions for a user message, restoring the last used choice.
+pub(crate) fn open_message_actions(app: &mut TuiApp, message_index: usize) {
+    app.message_action_target = Some(message_index);
+    app.selected_message_action = last_message_action_index(app);
+    replace_modal(app, crate::state::ModalKind::MessageActions);
+}
+
+fn last_message_action_index(app: &TuiApp) -> usize {
+    let key = app.loaded_config.config.tui.last_message_action.as_str();
+    crate::state::MessageAction::from_config_key(key)
+        .map(|action| action.index())
+        .unwrap_or(0)
+        .min(crate::state::MessageAction::ALL.len().saturating_sub(1))
+}
+
+fn remember_message_action(app: &mut TuiApp, index: usize) {
+    let Some(action) = crate::state::MessageAction::ALL.get(index).copied() else {
+        return;
+    };
+    app.selected_message_action = index;
+    let key = action.config_key().to_string();
+    if app.loaded_config.config.tui.last_message_action == key {
+        return;
+    }
+    app.loaded_config.config.tui.last_message_action = key;
+    crate::persistence::save_preferences(app);
+}
+
 pub(crate) fn run_message_action(app: &mut TuiApp, index: usize) {
     let Some(action) = crate::state::MessageAction::ALL.get(index).copied() else {
         return;
@@ -947,15 +1051,30 @@ pub(crate) fn run_message_action(app: &mut TuiApp, index: usize) {
         return;
     };
 
+    // Remember the choice before closing so the next open lands on it.
+    remember_message_action(app, index);
+
     match action {
+        crate::state::MessageAction::CopyResponse => {
+            crate::keybindings::copy_response_since_user_message(app, message_index);
+            close_active_modal(app);
+        }
         crate::state::MessageAction::Copy => {
             if let Some(text) = app
                 .messages
                 .get(message_index)
                 .map(|message| message.content.clone())
             {
-                copy_text_to_clipboard(app, &text);
+                if text.trim().is_empty() {
+                    show_notification(app, "Message", "Message has no text to copy.");
+                } else {
+                    copy_text_to_clipboard(app, &text);
+                }
             }
+            close_active_modal(app);
+        }
+        crate::state::MessageAction::CopySession => {
+            crate::keybindings::copy_session_transcript(app);
             close_active_modal(app);
         }
         crate::state::MessageAction::Revert => {
@@ -1568,6 +1687,38 @@ mod tests {
     }
 
     #[test]
+    fn mouse_wheel_during_active_drag_preserves_and_extends_selection() {
+        let mut app = test_app("");
+        seed_chat_cache(
+            &mut app,
+            &[
+                "line 0", "line 1", "line 2", "line 3", "line 4", "line 5", "line 6",
+            ],
+            Rect::new(0, 0, 20, 3),
+        );
+        // Bottom page: lines 4..=6 visible. Start drag on "line 5".
+        handle_mouse(&mut app, mouse_down(0, 1));
+        assert!(app.selection.as_ref().is_some_and(|s| s.active));
+        let start = app.selection.as_ref().unwrap().start;
+        assert_eq!(start.0, 5);
+
+        // Scroll up while still dragging — must keep selection and move end
+        // to the line now under the cursor (older content).
+        handle_mouse(&mut app, mouse_scroll_up(0, 1));
+
+        let selection = app.selection.as_ref().expect("active drag survives wheel");
+        assert!(selection.active, "drag must stay active across wheel");
+        assert_eq!(selection.start, start, "anchor must not move");
+        assert_eq!(app.scroll_offset, CHAT_WHEEL_LINES);
+        // After +2 scroll, row 1 maps to line_index 5 - 2 = 3.
+        assert_eq!(selection.end.0, 3);
+        assert!(
+            selection.end.0 < selection.start.0,
+            "wheel-up during drag should extend selection toward older lines"
+        );
+    }
+
+    #[test]
     fn composer_hit_restores_focus_after_scrollback_selection() {
         let mut app = test_app("draft");
         app.messages.push(crate::state::ChatMessage::new(
@@ -1583,7 +1734,7 @@ mod tests {
         });
         app.register_hit(
             Rect::new(2, 8, 30, 2),
-            100,
+            90,
             "focus composer",
             HitAction::FocusComposer,
         );
@@ -1593,6 +1744,56 @@ mod tests {
         assert!(app.selected_chat_source.is_none());
         assert!(app.selection.is_none());
         assert!(crate::view::input::composer_is_focused(&app));
+    }
+
+    #[test]
+    fn focus_round_trip_chat_click_then_composer_click() {
+        // Click chat → scrollback focused (composer collapses).
+        // Click composer → focus restored.
+        let mut app = test_app("draft text");
+        app.messages.push(crate::state::ChatMessage::new(
+            crate::state::ChatRole::Assistant,
+            "hello world from assistant".into(),
+        ));
+        seed_chat_cache(
+            &mut app,
+            &["hello world from assistant"],
+            Rect::new(0, 0, 40, 5),
+        );
+        {
+            let mut cache = app.chat_render_cache.borrow_mut();
+            cache.line_sources = vec![crate::state::ChatLineSource::Message(0)];
+        }
+        app.register_hit(Rect::new(0, 0, 40, 5), 5, "chat", HitAction::ChatMessage(0));
+        app.register_hit(
+            Rect::new(0, 6, 40, 3),
+            90,
+            "focus composer",
+            HitAction::FocusComposer,
+        );
+
+        assert!(crate::view::input::composer_is_focused(&app));
+
+        // Click chat line.
+        handle_mouse(&mut app, mouse_down(2, 1));
+        assert_eq!(
+            app.selected_chat_source,
+            Some(crate::state::ChatLineSource::Message(0))
+        );
+        assert!(!crate::view::input::composer_is_focused(&app));
+        // End pure click.
+        handle_mouse(&mut app, mouse_up(2, 1));
+
+        // Click composer area.
+        handle_mouse(&mut app, mouse_down(2, 7));
+        assert!(
+            app.selected_chat_source.is_none(),
+            "composer click must clear chat block focus"
+        );
+        assert!(
+            crate::view::input::composer_is_focused(&app),
+            "composer click must restore input focus"
+        );
     }
 
     #[test]
@@ -1623,9 +1824,11 @@ mod tests {
         handle_mouse(&mut app, mouse_drag(4, 0));
 
         let selection = app.selection.as_ref().expect("selection");
-        assert_eq!(app.scroll_offset, 1);
+        // Edge drag scrolls by CHAT_WHEEL_LINES (2).
+        assert_eq!(app.scroll_offset, CHAT_WHEEL_LINES);
         assert_eq!(selection.start, (3, 0));
-        assert_eq!(selection.end, (1, 4));
+        // After +2 scroll, row 0 maps to line 0.
+        assert_eq!(selection.end, (0, 4));
     }
 
     #[test]
@@ -1642,9 +1845,70 @@ mod tests {
         handle_mouse(&mut app, mouse_drag(4, 2));
 
         let selection = app.selection.as_ref().expect("selection");
-        assert_eq!(app.scroll_offset, 1);
+        // Edge drag scrolls by CHAT_WHEEL_LINES toward newer content.
+        assert_eq!(app.scroll_offset, 0);
         assert_eq!(selection.start, (1, 0));
-        assert_eq!(selection.end, (3, 4));
+        // After -2 scroll (clamped to 0), row 2 maps to line 4.
+        assert_eq!(selection.end, (4, 4));
+    }
+
+    #[test]
+    fn mouse_down_up_without_drag_events_still_selects_text() {
+        // Terminals that only emit press+release (no Drag) must still select.
+        let mut app = test_app("");
+        seed_chat_cache(&mut app, &["hello world"], Rect::new(0, 0, 20, 1));
+
+        handle_mouse(&mut app, mouse_down(0, 0));
+        handle_mouse(&mut app, mouse_up(5, 0));
+
+        assert_eq!(selected_text(&app).as_deref(), Some("hello"));
+        assert!(!app.selection.as_ref().expect("selection").active);
+    }
+
+    #[test]
+    fn mouse_moved_extends_active_text_selection() {
+        let mut app = test_app("");
+        seed_chat_cache(&mut app, &["hello world"], Rect::new(0, 0, 20, 1));
+
+        handle_mouse(&mut app, mouse_down(0, 0));
+        handle_mouse(&mut app, mouse_moved(7, 0));
+
+        let selection = app.selection.as_ref().expect("selection");
+        assert!(selection.active);
+        assert_eq!(selection.start, (0, 0));
+        assert_eq!(selection.end, (0, 7));
+        assert_eq!(selected_text(&app).as_deref(), Some("hello w"));
+    }
+
+    #[test]
+    fn mouse_down_does_not_scroll_when_starting_text_selection() {
+        let mut app = test_app("");
+        seed_chat_cache(
+            &mut app,
+            &["line 0", "line 1", "line 2", "line 3", "line 4", "line 5"],
+            Rect::new(0, 0, 20, 3),
+        );
+        app.scroll_offset = 0;
+        app.messages.push(crate::state::ChatMessage::new(
+            crate::state::ChatRole::Assistant,
+            "chat".into(),
+        ));
+        // Register a chat hit that would previously call select_chat_block (scroll).
+        app.register_hit(Rect::new(0, 0, 20, 3), 5, "chat", HitAction::ChatMessage(0));
+        // Seed line sources so bound_source resolves.
+        {
+            let mut cache = app.chat_render_cache.borrow_mut();
+            cache.line_sources = vec![crate::state::ChatLineSource::Message(0); 6];
+        }
+
+        handle_mouse(&mut app, mouse_down(2, 1));
+
+        assert_eq!(
+            app.scroll_offset, 0,
+            "starting a drag must not auto-scroll the viewport"
+        );
+        assert!(app.selection.as_ref().is_some_and(|s| s.active));
+        assert_eq!(app.selection.as_ref().unwrap().start, (4, 2));
     }
 
     #[test]

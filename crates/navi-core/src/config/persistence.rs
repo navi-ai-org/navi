@@ -279,6 +279,7 @@ compact_tool_visible_limit = 8
 thinking_level = "low"
 yolo_mode = true
 desktop_notifications = false
+last_message_action = "copy_session"
 recent_provider_ids = ["openai", "anthropic"]
 recent_model_ids = ["openai:gpt-5.5", "anthropic:claude-sonnet-4-20250514"]
 "#,
@@ -295,6 +296,7 @@ recent_model_ids = ["openai:gpt-5.5", "anthropic:claude-sonnet-4-20250514"]
         assert_eq!(config.tui.thinking_level, "low");
         assert!(config.tui.yolo_mode);
         assert!(!config.tui.desktop_notifications);
+        assert_eq!(config.tui.last_message_action, "copy_session");
         assert_eq!(
             config.tui.recent_provider_ids,
             vec!["openai".to_string(), "anthropic".to_string()]

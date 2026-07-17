@@ -18,8 +18,9 @@ pub(crate) fn handle_normal_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyM
         return false;
     }
 
-    // block selection: when the prompt is empty, Up/Down/y/Enter
-    // operate on discrete scrollback entries instead of the input field.
+    // Block selection (empty prompt only): j/k navigate, y copy, Enter activate,
+    // Esc clears. Up/Down must NOT select blocks — many terminals deliver mouse
+    // wheel as arrow keys, and users expect natural line scroll either way.
     if app.input.is_empty() && modifiers.is_empty() && handle_block_selection_key(app, code) {
         return false;
     }
@@ -132,15 +133,21 @@ pub(crate) fn handle_normal_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyM
             app.input_selection = None;
         }
         KeyCode::Up if !move_input_visual_line(app, -1) => {
-            app.scroll_offset = app.scroll_offset.saturating_add(3);
+            // Viewport line scroll (same unit as mouse wheel). Clear block
+            // focus so wheel-as-keys cannot leave the composer collapsed.
+            clear_scrollback_focus_for_viewport_scroll(app);
+            app.scroll_offset = app.scroll_offset.saturating_add(2);
         }
         KeyCode::Down if !move_input_visual_line(app, 1) => {
-            app.scroll_offset = app.scroll_offset.saturating_sub(3);
+            clear_scrollback_focus_for_viewport_scroll(app);
+            app.scroll_offset = app.scroll_offset.saturating_sub(2);
         }
         KeyCode::PageUp => {
+            clear_scrollback_focus_for_viewport_scroll(app);
             app.scroll_offset = app.scroll_offset.saturating_add(15);
         }
         KeyCode::PageDown => {
+            clear_scrollback_focus_for_viewport_scroll(app);
             app.scroll_offset = app.scroll_offset.saturating_sub(15);
         }
         KeyCode::Enter if modifiers.contains(KeyModifiers::SHIFT) => {
@@ -167,25 +174,29 @@ pub(crate) fn handle_normal_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyM
 }
 
 /// Block-level scrollback selection (empty prompt only).
+///
+/// Intentionally excludes Up/Down. Arrow keys are viewport scroll (and the
+/// fallback encoding for mouse wheel on many terminals). Block navigation is
+/// j/k after a click (or j/k to enter selection from the nearest block).
 fn handle_block_selection_key(app: &mut TuiApp, code: KeyCode) -> bool {
     match code {
-        KeyCode::Up | KeyCode::Char('k') if app.selected_chat_source.is_some() => {
+        KeyCode::Char('k') if app.selected_chat_source.is_some() => {
             crate::chat_blocks::select_adjacent_block(app, -1);
             true
         }
-        KeyCode::Down | KeyCode::Char('j') if app.selected_chat_source.is_some() => {
+        KeyCode::Char('j') if app.selected_chat_source.is_some() => {
             crate::chat_blocks::select_adjacent_block(app, 1);
             true
         }
-        // First arrow with no selection: select nearest block in that direction.
-        KeyCode::Up
+        // Enter block selection with j/k when nothing is selected yet.
+        KeyCode::Char('k')
             if app.selected_chat_source.is_none()
                 && !crate::chat_blocks::chat_blocks(app).is_empty() =>
         {
             crate::chat_blocks::select_adjacent_block(app, -1);
             true
         }
-        KeyCode::Down
+        KeyCode::Char('j')
             if app.selected_chat_source.is_none()
                 && !crate::chat_blocks::chat_blocks(app).is_empty() =>
         {
@@ -206,6 +217,13 @@ fn handle_block_selection_key(app: &mut TuiApp, code: KeyCode) -> bool {
         }
         _ => false,
     }
+}
+
+/// Viewport scrolling is not block navigation. Drop scrollback focus so the
+/// composer expands again and wheel-as-keys cannot hop selection highlights.
+fn clear_scrollback_focus_for_viewport_scroll(app: &mut TuiApp) {
+    app.selection = None;
+    crate::chat_blocks::clear_selected_block(app);
 }
 
 fn handle_subagent_view_key(app: &mut TuiApp, code: KeyCode) -> bool {

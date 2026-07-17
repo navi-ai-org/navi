@@ -524,6 +524,211 @@ fn mouse_down_outside_chat_clears_selected_block() {
 }
 
 #[test]
+fn output_since_user_message_includes_following_assistant_only() {
+    let mut app = test_app("");
+    app.messages
+        .push(ChatMessage::new(ChatRole::User, "first question".into()));
+    app.messages
+        .push(ChatMessage::new(ChatRole::Assistant, "first answer".into()));
+    app.messages
+        .push(ChatMessage::new(ChatRole::User, "second question".into()));
+    app.messages.push(ChatMessage::new(
+        ChatRole::Assistant,
+        "second answer".into(),
+    ));
+    app.messages
+        .push(ChatMessage::new(ChatRole::Assistant, "more detail".into()));
+
+    let since_first = crate::keybindings::output_since_user_message(&app, 0);
+    assert!(since_first.contains("first answer"));
+    assert!(!since_first.contains("second question"));
+    assert!(!since_first.contains("second answer"));
+
+    let since_second = crate::keybindings::output_since_user_message(&app, 2);
+    assert!(since_second.contains("second answer"));
+    assert!(since_second.contains("more detail"));
+    assert!(!since_second.contains("first answer"));
+}
+
+#[test]
+fn session_transcript_includes_user_and_assistant_blocks() {
+    let mut app = test_app("");
+    app.messages
+        .push(ChatMessage::new(ChatRole::User, "hello".into()));
+    app.messages
+        .push(ChatMessage::new(ChatRole::Assistant, "world".into()));
+
+    let transcript = crate::keybindings::session_transcript(&app);
+    assert!(transcript.contains("User:\nhello"));
+    assert!(transcript.contains("Assistant:\nworld"));
+}
+
+#[test]
+fn message_actions_include_copy_response_and_session() {
+    use crate::state::MessageAction;
+    let labels: Vec<_> = MessageAction::ALL.iter().map(|a| a.label()).collect();
+    assert!(labels.contains(&"Copy response"));
+    assert!(labels.contains(&"Copy session"));
+    assert!(labels.contains(&"Copy text"));
+}
+
+#[test]
+fn message_actions_remember_last_choice() {
+    use crate::state::MessageAction;
+
+    let mut app = test_app("");
+    app.messages
+        .push(ChatMessage::new(ChatRole::User, "hello".into()));
+    // Prefer Copy session (index 2).
+    let copy_session = MessageAction::CopySession.index();
+    app.loaded_config.config.tui.last_message_action =
+        MessageAction::CopySession.config_key().to_string();
+
+    crate::mouse::open_message_actions(&mut app, 0);
+    assert_eq!(app.mode, Mode::MessageActions);
+    assert_eq!(app.selected_message_action, copy_session);
+
+    // Running another action updates the remembered preference.
+    app.selected_message_action = MessageAction::Copy.index();
+    crate::mouse::run_message_action(&mut app, MessageAction::Copy.index());
+    assert_eq!(
+        app.loaded_config.config.tui.last_message_action,
+        MessageAction::Copy.config_key()
+    );
+
+    // Next open lands on Copy text.
+    crate::mouse::open_message_actions(&mut app, 0);
+    assert_eq!(app.selected_message_action, MessageAction::Copy.index());
+}
+
+#[test]
+fn message_action_config_key_roundtrips() {
+    use crate::state::MessageAction;
+    for action in MessageAction::ALL {
+        let restored =
+            MessageAction::from_config_key(action.config_key()).expect("config key must roundtrip");
+        assert_eq!(restored, action);
+    }
+}
+
+#[test]
+fn command_palette_has_copy_session_and_last_response() {
+    let mut app = test_app("");
+    app.command_hub = Some(crate::commands::CommandHub::Session);
+    let rows = crate::commands::command_rows(&app);
+    let actions: Vec<_> = rows
+        .iter()
+        .filter_map(|row| match row {
+            crate::commands::CommandRow::Item(item) => Some(item.action),
+            _ => None,
+        })
+        .collect();
+    assert!(actions.contains(&CommandAction::CopySession));
+    assert!(actions.contains(&CommandAction::CopyLastResponse));
+
+    // Also discoverable via search.
+    app.command_hub = None;
+    app.command_filter = "copy".into();
+    let search_rows = crate::commands::command_rows(&app);
+    let search_actions: Vec<_> = search_rows
+        .iter()
+        .filter_map(|row| match row {
+            crate::commands::CommandRow::Item(item) => Some(item.action),
+            _ => None,
+        })
+        .collect();
+    assert!(search_actions.contains(&CommandAction::CopySession));
+    assert!(search_actions.contains(&CommandAction::CopyLastResponse));
+}
+
+#[test]
+fn empty_prompt_arrow_keys_scroll_by_lines_not_blocks() {
+    // Mouse wheel is often encoded as Up/Down when mouse capture is partial or
+    // the terminal falls back to classic cursor keys. Empty-prompt arrows must
+    // never hop chat blocks.
+    let mut app = test_app("");
+    app.messages
+        .push(ChatMessage::new(ChatRole::User, "first".to_string()));
+    app.messages
+        .push(ChatMessage::new(ChatRole::Assistant, "second".to_string()));
+    app.messages
+        .push(ChatMessage::new(ChatRole::User, "third".to_string()));
+    // Populate block list via render-cache line sources.
+    {
+        let mut cache = app.chat_render_cache.borrow_mut();
+        cache.lines = (0..20).map(|i| Line::from(format!("line {i}"))).collect();
+        cache.line_sources = vec![
+            ChatLineSource::Message(0),
+            ChatLineSource::Message(0),
+            ChatLineSource::Message(1),
+            ChatLineSource::Message(1),
+            ChatLineSource::Message(2),
+            ChatLineSource::Message(2),
+        ];
+        while cache.line_sources.len() < cache.lines.len() {
+            cache.line_sources.push(ChatLineSource::None);
+        }
+        cache.chat_rect = Some(Rect::new(0, 0, 40, 5));
+    }
+
+    handle_normal_key(&mut app, KeyCode::Up, KeyModifiers::NONE);
+    assert_eq!(app.scroll_offset, 2, "Up scrolls 2 lines");
+    assert!(
+        app.selected_chat_source.is_none(),
+        "Up must not select a chat block"
+    );
+
+    handle_normal_key(&mut app, KeyCode::Up, KeyModifiers::NONE);
+    assert_eq!(app.scroll_offset, 4);
+    assert!(app.selected_chat_source.is_none());
+
+    handle_normal_key(&mut app, KeyCode::Down, KeyModifiers::NONE);
+    assert_eq!(app.scroll_offset, 2);
+    assert!(app.selected_chat_source.is_none());
+}
+
+#[test]
+fn empty_prompt_jk_still_selects_chat_blocks() {
+    let mut app = test_app("");
+    app.messages
+        .push(ChatMessage::new(ChatRole::User, "first".to_string()));
+    app.messages
+        .push(ChatMessage::new(ChatRole::Assistant, "second".to_string()));
+    {
+        let mut cache = app.chat_render_cache.borrow_mut();
+        cache.lines = vec![Line::from("a"), Line::from("b")];
+        cache.line_sources = vec![ChatLineSource::Message(0), ChatLineSource::Message(1)];
+        cache.chat_rect = Some(Rect::new(0, 0, 40, 5));
+    }
+
+    // j with no selection starts from the top and moves forward.
+    handle_normal_key(&mut app, KeyCode::Char('j'), KeyModifiers::NONE);
+    assert_eq!(app.selected_chat_source, Some(ChatLineSource::Message(1)));
+
+    handle_normal_key(&mut app, KeyCode::Char('k'), KeyModifiers::NONE);
+    assert_eq!(app.selected_chat_source, Some(ChatLineSource::Message(0)));
+}
+
+#[test]
+fn empty_prompt_arrows_clear_existing_block_selection() {
+    let mut app = test_app("");
+    app.messages
+        .push(ChatMessage::new(ChatRole::User, "keep".to_string()));
+    app.selected_chat_source = Some(ChatLineSource::Message(0));
+    {
+        let mut cache = app.chat_render_cache.borrow_mut();
+        cache.lines = (0..10).map(|i| Line::from(format!("l{i}"))).collect();
+        cache.line_sources = vec![ChatLineSource::Message(0); 10];
+        cache.chat_rect = Some(Rect::new(0, 0, 40, 4));
+    }
+
+    handle_normal_key(&mut app, KeyCode::Up, KeyModifiers::NONE);
+    assert!(app.selected_chat_source.is_none());
+    assert_eq!(app.scroll_offset, 2);
+    assert!(crate::view::input::composer_is_focused(&app));
+}
+
+#[test]
 fn mouse_move_on_chat_hit_tracks_hovered_interactive_block() {
     let mut app = test_app("");
     app.messages

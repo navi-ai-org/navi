@@ -139,6 +139,10 @@ pub struct TuiConfig {
     /// while the NAVI terminal is unfocused.
     #[serde(default = "default_true")]
     pub desktop_notifications: bool,
+    /// Last Message Actions choice (stable key, e.g. `copy_session`).
+    /// Restored when reopening the message-actions modal.
+    #[serde(default)]
+    pub last_message_action: String,
 }
 
 impl Default for TuiConfig {
@@ -154,6 +158,7 @@ impl Default for TuiConfig {
             recent_model_ids: Vec::new(),
             llm_recap: false,
             desktop_notifications: true,
+            last_message_action: String::new(),
         }
     }
 }

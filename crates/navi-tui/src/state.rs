@@ -330,28 +330,72 @@ pub(crate) enum ChatLineSource {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum MessageAction {
-    Revert,
+    /// Copy assistant/tool output after this user message (until the next user turn).
+    CopyResponse,
+    /// Copy only the selected message text.
     Copy,
+    /// Copy the full session transcript.
+    CopySession,
+    Revert,
     Fork,
 }
 
 impl MessageAction {
-    pub(crate) const ALL: [Self; 3] = [Self::Revert, Self::Copy, Self::Fork];
+    pub(crate) const ALL: [Self; 5] = [
+        Self::CopyResponse,
+        Self::Copy,
+        Self::CopySession,
+        Self::Revert,
+        Self::Fork,
+    ];
 
     pub(crate) fn label(self) -> &'static str {
         match self {
-            Self::Revert => "Revert to here",
+            Self::CopyResponse => "Copy response",
             Self::Copy => "Copy text",
+            Self::CopySession => "Copy session",
+            Self::Revert => "Revert to here",
             Self::Fork => "Fork from here",
         }
     }
 
     pub(crate) fn description(self) -> &'static str {
         match self {
+            Self::CopyResponse => "assistant output since this message",
+            Self::Copy => "copy selected message only",
+            Self::CopySession => "full session transcript",
             Self::Revert => "move this message back to input",
-            Self::Copy => "copy selected message",
             Self::Fork => "start new session from this point",
         }
+    }
+
+    /// Stable config key for preference persistence (order-independent).
+    pub(crate) fn config_key(self) -> &'static str {
+        match self {
+            Self::CopyResponse => "copy_response",
+            Self::Copy => "copy_text",
+            Self::CopySession => "copy_session",
+            Self::Revert => "revert",
+            Self::Fork => "fork",
+        }
+    }
+
+    pub(crate) fn from_config_key(key: &str) -> Option<Self> {
+        match key.trim() {
+            "copy_response" => Some(Self::CopyResponse),
+            "copy_text" => Some(Self::Copy),
+            "copy_session" => Some(Self::CopySession),
+            "revert" => Some(Self::Revert),
+            "fork" => Some(Self::Fork),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn index(self) -> usize {
+        Self::ALL
+            .iter()
+            .position(|action| *action == self)
+            .unwrap_or(0)
     }
 }
 

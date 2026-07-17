@@ -52,6 +52,8 @@ pub(crate) enum CommandAction {
     NewSession,
     Sessions,
     CopySession,
+    /// Copy assistant/tool output after the latest user message.
+    CopyLastResponse,
     ShareSession,
     SwitchModel,
     RetryLast,
@@ -167,9 +169,16 @@ pub(crate) const COMMANDS: &[CommandItem] = &[
         visibility: CommandVisibility::Always,
     },
     CommandItem {
-        label: "Copy Transcript",
+        label: "Copy Session",
         shortcut: None,
         action: CommandAction::CopySession,
+        hub: Some(CommandHub::Session),
+        visibility: CommandVisibility::Always,
+    },
+    CommandItem {
+        label: "Copy Last Response",
+        shortcut: None,
+        action: CommandAction::CopyLastResponse,
         hub: Some(CommandHub::Session),
         visibility: CommandVisibility::Always,
     },
@@ -475,7 +484,10 @@ fn action_keywords(action: CommandAction) -> &'static str {
         CommandAction::RetryLast => "retry regenerate redo",
         CommandAction::Compact => "summarize context compress",
         CommandAction::TogglePlanMode => "plan mode planning",
-        CommandAction::CopySession => "copy clipboard transcript share",
+        CommandAction::CopySession => "copy clipboard transcript share session full",
+        CommandAction::CopyLastResponse => {
+            "copy clipboard last response output turn since user message"
+        }
         CommandAction::ShareSession => "export json dump",
         CommandAction::ClearGoal => "goal clear stop",
         CommandAction::BackgroundCommands => "shell tasks background jobs processes",

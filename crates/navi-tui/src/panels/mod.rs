@@ -194,8 +194,8 @@ pub fn register_modal_panels(app: &mut TuiApp) {
         "message-actions",
         Mode::MessageActions,
         modals::render_message_actions,
-        58,
-        10,
+        64,
+        14,
     )));
     // OAuth
     pm.add_overlay(Box::new(ModalPanel::new(

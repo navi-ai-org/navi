@@ -65,7 +65,7 @@ pub(crate) fn save_current_session(app: &mut TuiApp) {
     app.session_id = SessionStore::create_id();
     app.events.clear();
     app.message_action_target = None;
-    app.selected_message_action = 0;
+    // Keep selected_message_action — last Message Actions choice is a preference.
     app.expanded_tool_results.clear();
     app.collapsed_tool_results.clear();
     app.hovered_chat_source = None;
@@ -91,7 +91,7 @@ pub(crate) fn sync_preferences_to_config(app: &mut TuiApp) {
     tui.compact_tool_visible_limit = app.compact_tool_visible_limit;
     tui.thinking_level = app.thinking_level.config_value().to_string();
     tui.yolo_mode = app.yolo_mode;
-    // desktop_notifications is toggled in-place on config; keep as-is.
+    // desktop_notifications + last_message_action are toggled/updated in place.
 }
 
 pub(crate) fn save_preferences(app: &mut TuiApp) {
@@ -240,7 +240,7 @@ pub(crate) fn load_session(app: &mut TuiApp, snapshot: &SessionSnapshot) {
     app.input.clear();
     app.input_cursor = 0;
     app.message_action_target = None;
-    app.selected_message_action = 0;
+    // Keep selected_message_action — last Message Actions choice is a preference.
     app.expanded_tool_results.clear();
     app.collapsed_tool_results.clear();
     app.hovered_chat_source = None;

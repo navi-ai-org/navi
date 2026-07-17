@@ -571,7 +571,7 @@ pub(crate) fn start_new_session(app: &mut TuiApp) {
     app.tool_invocations.clear();
     app.background_commands.clear();
     app.message_action_target = None;
-    app.selected_message_action = 0;
+    // Keep selected_message_action — last Message Actions choice is a preference.
     app.expanded_tool_results.clear();
     app.collapsed_tool_results.clear();
     app.hovered_chat_source = None;

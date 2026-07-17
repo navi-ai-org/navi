@@ -5,8 +5,9 @@ use std::time::Duration;
 
 use anyhow::Result;
 use crossterm::event::{
-    self, DisableBracketedPaste, EnableBracketedPaste, Event, KeyEventKind,
-    KeyboardEnhancementFlags, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
+    self, DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
+    Event, KeyEventKind, KeyboardEnhancementFlags, PopKeyboardEnhancementFlags,
+    PushKeyboardEnhancementFlags,
 };
 use crossterm::execute;
 use crossterm::terminal::{
@@ -27,6 +28,19 @@ use ratatui::prelude::{CrosstermBackend, Terminal};
 const NAVI_KEYBOARD_FLAGS: KeyboardEnhancementFlags =
     KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
         .union(KeyboardEnhancementFlags::REPORT_EVENT_TYPES);
+
+/// True when running as an embedded multi-agent tile in NAVI Desktop.
+///
+/// Desktop owns selection via xterm.js and strips mouse/focus DEC modes on the
+/// host path. Enabling crossterm mouse capture (`?1003h`) or focus tracking
+/// (`?1004h`) here still causes hover redraw thrash and FocusGained `clear()`
+/// flashes if anything leaks — so we skip those modes entirely when embedded.
+fn is_desktop_tile() -> bool {
+    matches!(
+        std::env::var("NAVI_DESKTOP_TILE").as_deref(),
+        Ok("1") | Ok("true") | Ok("TRUE") | Ok("yes") | Ok("YES")
+    )
+}
 
 use crate::app::TuiApp;
 use crate::chat::submit_message;
@@ -128,6 +142,11 @@ fn enter_terminal_modes(w: &mut impl io::Write) -> io::Result<()> {
     // Re-assert after alternate-screen entry — some terminals re-apply parent
     // Kitty flags when switching screens.
     enable_navi_keyboard_protocol(w)?;
+    if is_desktop_tile() {
+        // Embedded xterm tiles: no mouse capture / focus reports (desktop
+        // selection + anti-flicker). Keyboard + paste still enabled above.
+        return Ok(());
+    }
     enable_focus_tracking(w)?;
     // Base mouse only (no free-motion). Free-motion is synced later when images
     // need hover — keeps multi-window sessions from leaking motion CSI.
@@ -166,6 +185,9 @@ fn reassert_terminal_input_modes(w: &mut impl io::Write, free_motion: bool) -> i
     let _ = execute!(w, PopKeyboardEnhancementFlags);
     execute!(w, PushKeyboardEnhancementFlags(NAVI_KEYBOARD_FLAGS))?;
     execute!(w, EnableBracketedPaste)?;
+    if is_desktop_tile() {
+        return Ok(());
+    }
     enable_focus_tracking(w)?;
     enable_mouse_capture(w, free_motion)
 }
@@ -200,21 +222,31 @@ pub(crate) fn wants_mouse_free_motion(app: &TuiApp) -> bool {
 
 /// Enable mouse capture.
 ///
-/// - Always: `?1000` press/release, `?1002` drag, `?1006` SGR coords
-/// - Optional: `?1003` free-motion for image-chip hover open/leave
-fn enable_mouse_capture(w: &mut impl io::Write, free_motion: bool) -> io::Result<()> {
-    if free_motion {
-        write!(w, "\x1B[?1000h\x1B[?1002h\x1B[?1003h\x1B[?1006h")?;
-    } else {
-        // Explicitly disable free-motion so a previous session / focus cycle
-        // does not leave ?1003 stuck on.
-        write!(w, "\x1B[?1000h\x1B[?1002h\x1B[?1003l\x1B[?1006h")?;
-    }
-    w.flush()
+/// Match crossterm's [`EnableMouseCapture`] set: press/release (`1000`),
+/// button-drag (`1002`), any-motion (`1003`), RXVT coords (`1015`), SGR
+/// (`1006`). Previously we disabled free-motion (`1003`) except for image
+/// hover — that broke text drag-select on terminals that only report motion
+/// under `1003`, so selection never extended past the click cell.
+///
+/// `free_motion` is kept for API compatibility with callers that still track
+/// image-hover intent; the wire modes are always the full capture set.
+fn enable_mouse_capture(w: &mut impl io::Write, _free_motion: bool) -> io::Result<()> {
+    // Prefer the crossterm command so we stay aligned with its parser
+    // expectations (includes 1015 + 1003 which our hand-rolled CSI omitted).
+    execute!(w, EnableMouseCapture)
 }
 
-/// Sync free-motion on/off when image state changes. No-ops if already correct.
+/// Sync free-motion on/off when image state changes.
+///
+/// With full mouse capture always enabled, this only tracks the flag for
+/// diagnostics / future selective mode — reasserting capture is still cheap
+/// and keeps multi-window focus recovery healthy.
 pub(crate) fn sync_mouse_free_motion(app: &mut TuiApp) -> io::Result<bool> {
+    if is_desktop_tile() {
+        // Never enable mouse capture in embedded desktop tiles.
+        app.mouse_free_motion = false;
+        return Ok(false);
+    }
     let want = wants_mouse_free_motion(app);
     if app.mouse_free_motion == want {
         return Ok(false);
@@ -227,6 +259,9 @@ pub(crate) fn sync_mouse_free_motion(app: &mut TuiApp) -> io::Result<bool> {
 
 /// Disable mouse modes defensively.
 fn disable_mouse_capture(w: &mut impl io::Write) -> io::Result<()> {
+    // Crossterm's disable, then a hard reset for any extra modes we may have
+    // inherited from a parent session.
+    let _ = execute!(w, DisableMouseCapture);
     write!(
         w,
         "\x1B[?9l\x1B[?1000l\x1B[?1001l\x1B[?1002l\x1B[?1003l\x1B[?1004l\x1B[?1005l\x1B[?1006l\x1B[?1015l"
@@ -274,27 +309,50 @@ fn install_terminal_restore_panic_hook() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
+
+    /// Serialize tests that mutate `NAVI_DESKTOP_TILE` (process-global env).
+    static DESKTOP_TILE_ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    fn with_desktop_tile_env<T>(value: Option<&str>, f: impl FnOnce() -> T) -> T {
+        let _guard = DESKTOP_TILE_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        // SAFETY: held under DESKTOP_TILE_ENV_LOCK; restored before unlock.
+        unsafe {
+            match value {
+                Some(v) => std::env::set_var("NAVI_DESKTOP_TILE", v),
+                None => std::env::remove_var("NAVI_DESKTOP_TILE"),
+            }
+        }
+        let out = f();
+        unsafe {
+            std::env::remove_var("NAVI_DESKTOP_TILE");
+        }
+        out
+    }
 
     #[test]
-    fn mouse_capture_base_mode_has_no_free_motion() {
+    fn mouse_capture_enables_full_crossterm_set() {
         let mut out = Vec::new();
         enable_mouse_capture(&mut out, false).expect("enable mouse capture");
         let text = String::from_utf8(out).expect("utf8 escape sequences");
 
+        // Matches crossterm EnableMouseCapture (needed for drag-select).
         assert!(text.contains("\x1B[?1000h"));
         assert!(text.contains("\x1B[?1002h"));
+        assert!(text.contains("\x1B[?1003h")); // any-motion — required for reliable drag
         assert!(text.contains("\x1B[?1006h"));
-        // Free-motion off by default (multi-window solid path).
-        assert!(text.contains("\x1B[?1003l"));
-        assert!(!text.contains("\x1B[?1003h"));
+        assert!(text.contains("\x1B[?1015h"));
     }
 
     #[test]
-    fn mouse_capture_free_motion_when_requested() {
+    fn mouse_capture_free_motion_flag_still_enables_capture() {
         let mut out = Vec::new();
         enable_mouse_capture(&mut out, true).expect("enable free motion");
         let text = String::from_utf8(out).expect("utf8");
         assert!(text.contains("\x1B[?1003h"));
+        assert!(text.contains("\x1B[?1002h"));
     }
 
     #[test]
@@ -416,35 +474,79 @@ mod tests {
     }
 
     #[test]
-    fn enter_terminal_modes_pushes_kitty_and_skips_free_motion() {
-        let mut out = Vec::new();
-        enter_terminal_modes(&mut out).expect("enter");
-        let text = String::from_utf8(out).expect("utf8");
+    fn enter_terminal_modes_pushes_kitty_and_enables_full_mouse_capture() {
+        with_desktop_tile_env(None, || {
+            let mut out = Vec::new();
+            enter_terminal_modes(&mut out).expect("enter");
+            let text = String::from_utf8(out).expect("utf8");
 
-        // DISAMBIGUATE|REPORT_EVENT_TYPES → >3u
-        assert!(
-            text.contains("\x1B[>3u"),
-            "must PushKeyboardEnhancementFlags: {text:?}"
-        );
-        assert!(text.contains("\x1B[=0u"));
-        assert!(text.contains("\x1B[>4;0m"));
-        assert!(text.contains("\x1B[?1004h"));
-        assert!(text.contains("\x1B[?1000h"));
-        // Default: free-motion off
-        assert!(
-            text.contains("\x1B[?1003l"),
-            "enter must not enable free-motion by default: {text:?}"
-        );
+            // DISAMBIGUATE|REPORT_EVENT_TYPES → >3u
+            assert!(
+                text.contains("\x1B[>3u"),
+                "must PushKeyboardEnhancementFlags: {text:?}"
+            );
+            assert!(text.contains("\x1B[=0u"));
+            assert!(text.contains("\x1B[>4;0m"));
+            assert!(text.contains("\x1B[?1004h"));
+            assert!(text.contains("\x1B[?1000h"));
+            // Full crossterm mouse set (drag-select needs 1002 + 1003).
+            assert!(text.contains("\x1B[?1002h"));
+            assert!(text.contains("\x1B[?1003h"));
+            assert!(text.contains("\x1B[?1006h"));
+        });
     }
 
     #[test]
     fn reassert_pops_then_pushes_keyboard_enhancement() {
-        let mut out = Vec::new();
-        reassert_terminal_input_modes(&mut out, false).expect("reassert");
-        let text = String::from_utf8(out).expect("utf8");
-        assert!(text.contains("\x1B[<1u") || text.contains("\x1B[<u"));
-        assert!(text.contains("\x1B[>3u"));
-        assert!(text.contains("\x1B[?1004h"));
+        with_desktop_tile_env(None, || {
+            let mut out = Vec::new();
+            reassert_terminal_input_modes(&mut out, false).expect("reassert");
+            let text = String::from_utf8(out).expect("utf8");
+            assert!(text.contains("\x1B[<1u") || text.contains("\x1B[<u"));
+            assert!(text.contains("\x1B[>3u"));
+            assert!(text.contains("\x1B[?1004h"));
+        });
+    }
+
+    #[test]
+    fn desktop_tile_skips_mouse_and_focus_modes() {
+        with_desktop_tile_env(Some("1"), || {
+            let mut out = Vec::new();
+            enter_terminal_modes(&mut out).expect("enter");
+            let text = String::from_utf8(out).expect("utf8");
+
+            // Keyboard + paste still negotiated.
+            assert!(
+                text.contains("\x1B[>3u"),
+                "must still push Kitty keyboard: {text:?}"
+            );
+            // No mouse capture / focus tracking — desktop xterm owns those paths.
+            assert!(
+                !text.contains("\x1B[?1003h"),
+                "must not enable any-motion mouse: {text:?}"
+            );
+            assert!(
+                !text.contains("\x1B[?1000h"),
+                "must not enable mouse press tracking: {text:?}"
+            );
+            assert!(
+                !text.contains("\x1B[?1004h"),
+                "must not enable focus tracking: {text:?}"
+            );
+        });
+    }
+
+    #[test]
+    fn desktop_tile_reassert_skips_mouse_and_focus() {
+        with_desktop_tile_env(Some("1"), || {
+            let mut out = Vec::new();
+            reassert_terminal_input_modes(&mut out, true).expect("reassert");
+            let text = String::from_utf8(out).expect("utf8");
+
+            assert!(text.contains("\x1B[>3u"));
+            assert!(!text.contains("\x1B[?1003h"));
+            assert!(!text.contains("\x1B[?1004h"));
+        });
     }
 
     #[test]

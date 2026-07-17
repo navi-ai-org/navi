@@ -104,16 +104,16 @@ pub(crate) fn render_input(frame: &mut Frame<'_>, app: &mut TuiApp, area: Rect) 
         return;
     }
 
-    // Make the editor a first-class interaction target.  Previously it had
-    // no hit region, so restoring composer focus after selecting a chat block
-    // depended on the generic "empty space" path in the mouse handler. That
-    // path is deliberately shared with chat text selection and is not reliable
-    // across terminal mouse-protocol changes.
+    // Composer is a first-class interaction target: clicks restore input focus
+    // after scrollback block selection. Register the **full panel `area`**
+    // (draft box + meta row + horizontal padding), not only the bordered
+    // content — users routinely click the meta strip / margins expecting
+    // the cursor back.
     //
-    // z=100 ensures the composer hit wins over chat line hits (z=5) and the
-    // "jump to latest" hit (z=80) when they overlap at the bottom of the chat.
+    // z=90 beats chat lines (z=5) and "jump to latest" (z=80). Meta chips
+    // (usage / queue / images) register later at z≥110 so they still win.
     if app.mode == crate::state::Mode::Normal {
-        app.register_hit(content, 100, "focus composer", HitAction::FocusComposer);
+        app.register_hit(area, 90, "focus composer", HitAction::FocusComposer);
     }
 
     // Draft only inside the box — no model/permission chrome mixed into the text.
@@ -245,9 +245,10 @@ pub(crate) fn render_input(frame: &mut Frame<'_>, app: &mut TuiApp, area: Rect) 
                     .saturating_sub(start_x.saturating_sub(meta_area.x)),
             );
             if hit_w > 0 {
+                // Above FocusComposer (z=90).
                 app.register_hit(
                     Rect::new(start_x, meta_area.y, hit_w, 1),
-                    20,
+                    110,
                     "context usage",
                     HitAction::ContextUsage,
                 );
@@ -265,7 +266,7 @@ pub(crate) fn render_input(frame: &mut Frame<'_>, app: &mut TuiApp, area: Rect) 
             if hit_w > 0 {
                 app.register_hit(
                     Rect::new(start_x, meta_area.y, hit_w, 1),
-                    22,
+                    111,
                     "open message queue",
                     HitAction::OpenMessageQueue,
                 );
@@ -276,7 +277,7 @@ pub(crate) fn render_input(frame: &mut Frame<'_>, app: &mut TuiApp, area: Rect) 
             // Precise chip geometry is approximate; whole-strip fallback is fine.
             app.register_hit(
                 meta_area,
-                5,
+                112,
                 "open update available",
                 HitAction::OpenUpdateAvailable,
             );
@@ -284,7 +285,7 @@ pub(crate) fn render_input(frame: &mut Frame<'_>, app: &mut TuiApp, area: Rect) 
         if !app.pending_questions.is_empty() {
             app.register_hit(
                 meta_area,
-                3,
+                113,
                 "reopen pending question",
                 HitAction::ReopenQuestion,
             );
@@ -1080,8 +1081,19 @@ mod tests {
             .draw(|frame| render_input(frame, &mut app, Rect::new(0, 0, 48, 5)))
             .expect("draw");
 
+        // Inner draft content.
         assert!(matches!(
             app.hit_test(4, 1).map(|hit| hit.action),
+            Some(HitAction::FocusComposer)
+        ));
+        // Border / padded box edge (must still restore focus).
+        assert!(matches!(
+            app.hit_test(1, 0).map(|hit| hit.action),
+            Some(HitAction::FocusComposer)
+        ));
+        // Meta strip row (below the draft box) — common place users click.
+        assert!(matches!(
+            app.hit_test(4, 4).map(|hit| hit.action),
             Some(HitAction::FocusComposer)
         ));
     }
