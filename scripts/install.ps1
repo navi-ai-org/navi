@@ -52,13 +52,54 @@ function Normalize-Version([string]$v) {
 
 function Get-LatestVersion {
     Write-Info "Fetching latest version..."
-    $url = "https://api.github.com/repos/$Repo/releases/latest"
+
+    # Prefer HTML redirect (no api.github.com rate limit).
+    $latestHtml = "https://github.com/$Repo/releases/latest"
     try {
-        $release = Invoke-RestMethod -Uri $url -UseBasicParsing
+        $resp = Invoke-WebRequest -Uri $latestHtml -MaximumRedirection 0 -ErrorAction SilentlyContinue
+    } catch {
+        $resp = $_.Exception.Response
+    }
+    if ($null -ne $resp) {
+        $loc = $null
+        if ($resp.Headers -and $resp.Headers.Location) {
+            $loc = [string]$resp.Headers.Location
+        } elseif ($resp.Headers -and $resp.Headers["Location"]) {
+            $loc = [string]$resp.Headers["Location"]
+        }
+        if ($loc -match '/releases/tag/([^/?#]+)$') {
+            return (Normalize-Version $Matches[1])
+        }
+    }
+    # Follow redirects fully and parse final URI (PowerShell 5+).
+    try {
+        $followed = Invoke-WebRequest -Uri $latestHtml -MaximumRedirection 5 -UseBasicParsing
+        $final = [string]$followed.BaseResponse.ResponseUri
+        if (-not $final -and $followed.BaseResponse.RequestMessage) {
+            $final = [string]$followed.BaseResponse.RequestMessage.RequestUri
+        }
+        if ($final -match '/releases/tag/([^/?#]+)$') {
+            return (Normalize-Version $Matches[1])
+        }
+    } catch {
+        # fall through to API
+    }
+
+    # API fallback (optional token for higher rate limits).
+    $url = "https://api.github.com/repos/$Repo/releases/latest"
+    $headers = @{ "User-Agent" = "navi-install" }
+    $token = $env:GH_TOKEN
+    if (-not $token) { $token = $env:GITHUB_TOKEN }
+    if ($token) {
+        $headers["Authorization"] = "Bearer $token"
+        $headers["X-GitHub-Api-Version"] = "2022-11-28"
+    }
+    try {
+        $release = Invoke-RestMethod -Uri $url -Headers $headers -UseBasicParsing
         return (Normalize-Version $release.tag_name)
     } catch {
-        Write-Err "Could not determine latest version from GitHub."
-        Write-Err "Set `$env:NAVI_VERSION explicitly."
+        Write-Err "Could not determine latest version from GitHub (API may be rate-limited)."
+        Write-Err "Workarounds: `$env:NAVI_VERSION='0.3.0'; or set GH_TOKEN for authenticated API."
         exit 1
     }
 }

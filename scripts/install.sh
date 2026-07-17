@@ -69,17 +69,60 @@ require_cmd() {
   fi
 }
 
+# Optional GitHub token for API fallback (higher rate limits).
+# Accept GH_TOKEN / GITHUB_TOKEN when set in the environment.
+github_auth_header() {
+  local token="${GH_TOKEN:-${GITHUB_TOKEN:-}}"
+  if [ -n "$token" ]; then
+    printf 'Authorization: Bearer %s' "$token"
+  fi
+}
+
 # Always use TLS-verifying clients. Never pass --insecure / --no-check-certificate.
 http_get() {
+  local url="$1"
+  local auth=""
+  case "$url" in
+    https://*) ;;
+    *) error "Refusing non-HTTPS URL: $url"; exit 1 ;;
+  esac
+  auth=$(github_auth_header)
+  if command -v curl >/dev/null 2>&1; then
+    if [ -n "$auth" ] && printf '%s' "$url" | grep -q 'api\.github\.com'; then
+      curl -fsSL --proto '=https' --tlsv1.2 \
+        -H "$auth" \
+        -H "X-GitHub-Api-Version: 2022-11-28" \
+        "$url"
+    else
+      curl -fsSL --proto '=https' --tlsv1.2 "$url"
+    fi
+  elif command -v wget >/dev/null 2>&1; then
+    if [ -n "$auth" ] && printf '%s' "$url" | grep -q 'api\.github\.com'; then
+      wget -qO- --https-only --header="$auth" "$url"
+    else
+      wget -qO- --https-only "$url"
+    fi
+  else
+    error "Neither curl nor wget found."
+    exit 1
+  fi
+}
+
+# Final URL after redirects (used for /releases/latest → /releases/tag/vX.Y.Z).
+http_effective_url() {
   local url="$1"
   case "$url" in
     https://*) ;;
     *) error "Refusing non-HTTPS URL: $url"; exit 1 ;;
   esac
   if command -v curl >/dev/null 2>&1; then
-    curl -fsSL --proto '=https' --tlsv1.2 "$url"
+    curl -fsSL --proto '=https' --tlsv1.2 -o /dev/null -w '%{url_effective}' "$url"
   elif command -v wget >/dev/null 2>&1; then
-    wget -qO- --https-only "$url"
+    # wget --server-response prints headers to stderr; take the last Location.
+    wget -q --https-only --max-redirect=10 --spider -S "$url" 2>&1 \
+      | sed -n 's/^  Location: //p' \
+      | tail -1 \
+      | tr -d '\r'
   else
     error "Neither curl nor wget found."
     exit 1
@@ -117,20 +160,41 @@ normalize_version() {
 }
 
 get_latest_version() {
-  local url="${GITHUB_API}/releases/latest"
-  local body version
-  body=$(http_get "$url") || {
-    error "Failed to query ${url}"
-    exit 1
-  }
-  version=$(printf '%s' "$body" | grep -o '"tag_name"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed -E 's/.*"([^"]+)".*/\1/')
-  version=$(normalize_version "$version")
-  if [ -z "$version" ]; then
-    error "Could not determine latest version from GitHub."
-    error "Set NAVI_VERSION or pass --version."
-    exit 1
+  local version final body url
+
+  # 1) Prefer HTML redirect (no api.github.com rate limit — unauthenticated
+  #    API is only 60 req/hour/IP and commonly 403s on shared networks).
+  #    https://github.com/OWNER/REPO/releases/latest → .../tag/vX.Y.Z
+  url="https://github.com/${REPO}/releases/latest"
+  if final=$(http_effective_url "$url" 2>/dev/null); then
+    version=$(printf '%s' "$final" | sed -n 's|.*/releases/tag/\([^/?#]*\)$|\1|p')
+    if [ -n "$version" ]; then
+      version=$(normalize_version "$version")
+      if [ -n "$version" ]; then
+        echo "$version"
+        return 0
+      fi
+    fi
   fi
-  echo "$version"
+
+  # 2) API fallback (uses GH_TOKEN / GITHUB_TOKEN when set).
+  url="${GITHUB_API}/releases/latest"
+  if body=$(http_get "$url" 2>/dev/null); then
+    version=$(printf '%s' "$body" | grep -o '"tag_name"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed -E 's/.*"([^"]+)".*/\1/')
+    version=$(normalize_version "${version:-}")
+    if [ -n "$version" ]; then
+      echo "$version"
+      return 0
+    fi
+  fi
+
+  error "Could not determine latest version from GitHub."
+  error "The GitHub API often returns 403 when rate-limited (no auth)."
+  error "Workarounds:"
+  error "  curl -fsSL …/install.sh | sh -s -- --version 0.3.0"
+  error "  GH_TOKEN=… curl -fsSL …/install.sh | sh   # authenticated API"
+  error "  export NAVI_VERSION=0.3.0"
+  exit 1
 }
 
 sha256_file() {
