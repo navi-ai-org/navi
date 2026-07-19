@@ -60,6 +60,53 @@ pub struct NaviConfig {
     /// Built-in headless browser tool (pluggable engine; CloakBrowser binding preferred).
     #[serde(default)]
     pub browser: BrowserConfig,
+    /// External ACP agent peers (JSON-RPC over stdio). Not model providers.
+    #[serde(default)]
+    pub acp: AcpConfig,
+    /// Declared ACP agents (`[[acp_agents]]`).
+    #[serde(default)]
+    pub acp_agents: Vec<AcpAgentConfig>,
+}
+
+/// ACP client integration toggle.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AcpConfig {
+    /// When false, ACP agent delegation is disabled (default).
+    pub enabled: bool,
+}
+
+/// Configuration for a single external ACP agent subprocess.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AcpAgentConfig {
+    /// Unique agent identifier (e.g. `"devin"`).
+    pub id: String,
+    /// Command to launch the ACP server (e.g. `"devin"`).
+    pub command: String,
+    /// Arguments passed to the command (e.g. `["acp"]`).
+    #[serde(default)]
+    pub args: Vec<String>,
+    /// Environment variables for the agent process.
+    #[serde(default)]
+    pub env: BTreeMap<String, String>,
+    /// Working directory for the agent process (defaults to project dir at runtime).
+    #[serde(default)]
+    pub cwd: Option<PathBuf>,
+    /// Whether this agent is enabled.
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// Env var whose value is passed as `authenticate` `_meta.api_key`.
+    #[serde(default)]
+    pub api_key_env: Option<String>,
+    /// Auth method id advertised by the agent; defaults to first advertised method.
+    #[serde(default)]
+    pub auth_method_id: Option<String>,
+    /// Auto-approve `session/request_permission` (default true for headless).
+    #[serde(default = "default_true")]
+    pub auto_approve_permissions: bool,
+    /// Request timeout in milliseconds (optional advisory).
+    #[serde(default)]
+    pub timeout_ms: Option<u64>,
 }
 
 /// Headless browser tool settings.

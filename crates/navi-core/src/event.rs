@@ -261,6 +261,21 @@ pub enum RuntimeEventKind {
         /// The new mode.
         mode: crate::plan_mode::AgentMode,
     },
+    /// Progress from an external ACP agent peer (not a model provider).
+    ///
+    /// Text deltas from ACP are also emitted as [`AssistantDelta`] when
+    /// applicable; this variant carries the full peer update for clients that
+    /// want tool/plan/permission detail from the external agent.
+    AcpPeerUpdate {
+        /// Configured ACP agent id (e.g. `"devin"`).
+        agent_id: String,
+        /// ACP session id on the external agent.
+        acp_session_id: String,
+        /// Discriminator for the update kind (`agent_message_chunk`, `tool_call`, …).
+        update_kind: String,
+        /// Full update payload as JSON.
+        update: Value,
+    },
 }
 
 impl RuntimeEventKind {

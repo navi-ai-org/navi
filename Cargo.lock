@@ -3193,6 +3193,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "navi-acp"
+version = "0.3.2"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "futures-util",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "navi-browser"
 version = "0.3.2"
 dependencies = [
@@ -3450,6 +3465,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "copland",
+ "navi-acp",
  "navi-core",
  "navi-mcp",
  "navi-plugin-api",

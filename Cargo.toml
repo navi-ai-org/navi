@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "crates/copland",
+    "crates/navi-acp",
     "crates/navi-browser",
     "crates/navi-cli",
     "crates/navi-core",
@@ -24,6 +25,7 @@ members = [
 resolver = "3"
 default-members = [
     "crates/copland",
+    "crates/navi-acp",
     "crates/navi-browser",
     "crates/navi-cli",
     "crates/navi-core",
@@ -107,6 +109,7 @@ tree-sitter-rust = "0.24.2"
 tree-sitter-typescript = "0.23.2"
 tempfile = "3"
 wiremock = "0.6"
+navi-acp = { version = "0.3.2", path = "crates/navi-acp" }
 navi-browser = { version = "0.3.2", path = "crates/navi-browser" }
 navi-core = { version = "0.3.2", path = "crates/navi-core" }
 navi-dart = { version = "0.3.2", path = "crates/navi-dart" }
