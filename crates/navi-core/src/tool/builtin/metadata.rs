@@ -574,7 +574,8 @@ static LOOKUP: LazyLock<std::collections::HashMap<&'static str, ToolMetadata>> =
                 risk: crate::tool::ToolRisk::Medium,
                 is_read_only: false,
                 is_concurrency_safe: false,
-                exposure: crate::tool::ToolExposure::Direct,
+                // Deferred power tool: discover via tool_search; keep core schema small.
+                exposure: crate::tool::ToolExposure::Deferred,
                 capabilities: vec!["goal.create".to_string()],
                 tags: vec!["goal", "session", "long-running"]
                     .into_iter()
