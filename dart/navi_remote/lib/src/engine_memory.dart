@@ -34,8 +34,6 @@ extension NaviRemoteMemory on NaviRemoteEngine {
     return _post('/memory', {
       'id': id,
       'type': type,
-      'memory_type': type,
-      'memoryType': type,
       'name': name,
       'description': description,
       'body': body,
@@ -98,7 +96,6 @@ extension NaviRemoteMemory on NaviRemoteEngine {
       'q': query,
       if (limit != null) 'limit': '$limit',
       if (sessionId != null) 'sessionId': sessionId,
-      if (sessionId != null) 'session_id': sessionId,
     });
     final json = await _get('/memory/history$q');
     return asJsonMapList(json['value'] ?? json['results'] ?? json);

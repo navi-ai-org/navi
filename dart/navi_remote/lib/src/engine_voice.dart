@@ -57,14 +57,41 @@ extension NaviRemoteVoice on NaviRemoteEngine {
   /// `WS /voice/events?secret=`.
   Stream<VoiceEvent> subscribeVoiceEvents() {
     final channel = _connectWs('/voice/events');
-    return channel.stream.map((data) {
-      try {
-        final parsed = json.decode(data as String);
-        if (parsed is Map) {
-          return VoiceEvent.fromJson(JsonMap.from(parsed));
-        }
-      } catch (_) {}
-      return VoiceEvent({});
-    });
+    late final StreamController<VoiceEvent> controller;
+    StreamSubscription? sub;
+
+    controller = StreamController<VoiceEvent>(
+      onListen: () {
+        sub = channel.stream.listen(
+          (data) {
+            try {
+              final parsed = json.decode(data as String);
+              if (parsed is Map) {
+                final event = VoiceEvent.fromJson(JsonMap.from(parsed));
+                if (!controller.isClosed) controller.add(event);
+                return;
+              }
+            } catch (_) {}
+            if (!controller.isClosed) controller.add(VoiceEvent({}));
+          },
+          onError: (Object e, StackTrace st) {
+            if (!controller.isClosed) controller.addError(e, st);
+          },
+          onDone: () {
+            if (!controller.isClosed) controller.close();
+          },
+          cancelOnError: false,
+        );
+      },
+      onCancel: () async {
+        await sub?.cancel();
+        try {
+          await channel.sink.close();
+        } catch (_) {}
+        _channels.remove(channel);
+      },
+    );
+
+    return controller.stream;
   }
 }

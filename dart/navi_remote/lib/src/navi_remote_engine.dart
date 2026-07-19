@@ -56,8 +56,34 @@ class NaviRemoteEngine {
     bool useTls = false,
     bool skipHealthCheck = false,
   }) async {
+    var cleanHost = host.trim();
+    final lowerHost = cleanHost.toLowerCase();
+    if (lowerHost.startsWith('https://')) {
+      useTls = true;
+      cleanHost = cleanHost.substring(8);
+    } else if (lowerHost.startsWith('http://')) {
+      useTls = false;
+      cleanHost = cleanHost.substring(7);
+    }
+
+    final slash = cleanHost.indexOf('/');
+    if (slash != -1) cleanHost = cleanHost.substring(0, slash);
+
+    var probeUri = Uri.tryParse('http://$cleanHost');
+    if (probeUri == null &&
+        cleanHost.contains(':') &&
+        !(cleanHost.startsWith('[') && cleanHost.endsWith(']'))) {
+      // IPv6 addresses need brackets before Uri parsing can extract host/port.
+      cleanHost = '[$cleanHost]';
+      probeUri = Uri.tryParse('http://$cleanHost');
+    }
+    if (probeUri != null && probeUri.host.isNotEmpty) {
+      cleanHost = probeUri.host;
+      if (probeUri.hasPort) port = probeUri.port;
+    }
+
     final scheme = useTls ? 'https' : 'http';
-    final baseUrl = '$scheme://$host:$port';
+    final baseUrl = '$scheme://$cleanHost:$port';
     final client = http.Client();
     final engine = NaviRemoteEngine._(baseUrl, secret, client);
 
@@ -181,11 +207,15 @@ class NaviRemoteEngine {
   // ── Turns ────────────────────────────────────────────────────
 
   /// `POST /sessions/:id/turns`.
+  /// [thinking] is the server `ThinkingConfig` wire value: a lowercase effort
+  /// string (`max` / `high` / `medium` / `low` / `off`), matching
+  /// `navi_core::ThinkingConfig` serde. Accepts [String] or a pre-built JSON
+  /// value for forward compatibility.
   Future<TurnResponse> sendTurn(
     String sessionId,
     String message, {
     List<JsonMap>? contentParts,
-    JsonMap? thinking,
+    Object? thinking,
   }) async {
     final body = <String, dynamic>{'message': message};
     // Single key only — dual snake/camel breaks serde with "duplicate field".
@@ -444,11 +474,18 @@ class NaviRemoteEngine {
   }
 
   WebSocketChannel _connectWs(String path) {
-    final wsScheme = _baseUrl.startsWith('https') ? 'wss' : 'ws';
-    final httpBase = _baseUrl.replaceFirst(RegExp(r'^https?://'), '');
-    final sep = path.contains('?') ? '&' : '?';
-    final url = '$wsScheme://$httpBase$path${sep}secret=$_secret';
-    final channel = WebSocketChannel.connect(Uri.parse(url));
+    final baseUri = Uri.parse(_baseUrl);
+    final pathUri = Uri.parse(path.startsWith('/') ? path : '/$path');
+    final wsScheme = baseUri.scheme == 'https' ? 'wss' : 'ws';
+    final uri = baseUri.replace(
+      scheme: wsScheme,
+      path: pathUri.path,
+      queryParameters: {
+        ...pathUri.queryParameters,
+        'secret': _secret,
+      },
+    );
+    final channel = WebSocketChannel.connect(uri);
     _channels.add(channel);
     return channel;
   }

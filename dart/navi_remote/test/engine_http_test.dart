@@ -238,5 +238,64 @@ void main() {
       expect(skills.single.id, 's');
       engine.dispose();
     });
+
+    test('memoryWrite sends single type key', () async {
+      final engine = engineWith((req) async {
+        expect(req.method, 'POST');
+        expect(req.url.path, '/memory');
+        final body = jsonDecode(req.body) as Map;
+        expect(body.containsKey('memory_type'), isFalse);
+        expect(body.containsKey('memoryType'), isFalse);
+        expect(body['type'], 'note');
+        return http.Response(jsonEncode({'id': 'm1'}), 201);
+      });
+      await engine.memoryWrite(
+        id: 'm1',
+        type: 'note',
+        name: 'Note',
+        description: 'desc',
+        body: 'body',
+      );
+      engine.dispose();
+    });
+
+    test('memoryHistorySearch sends single sessionId query', () async {
+      final engine = engineWith((req) async {
+        expect(req.method, 'GET');
+        expect(req.url.path, '/memory/history');
+        final q = req.url.queryParameters;
+        expect(q.containsKey('session_id'), isFalse);
+        expect(q['sessionId'], 's1');
+        return http.Response(jsonEncode({'results': []}), 200);
+      });
+      await engine.memoryHistorySearch('q', sessionId: 's1');
+      engine.dispose();
+    });
+
+    test('installPluginFromMarketplace sends single pluginId key', () async {
+      final engine = engineWith((req) async {
+        expect(req.method, 'POST');
+        expect(req.url.path, '/plugins/install/marketplace');
+        final body = jsonDecode(req.body) as Map;
+        expect(body.containsKey('plugin_id'), isFalse);
+        expect(body['pluginId'], 'p1');
+        return http.Response(jsonEncode({'id': 'p1'}), 200);
+      });
+      await engine.installPluginFromMarketplace('p1', confirm: true);
+      engine.dispose();
+    });
+
+    test('updatePluginFromMarketplace sends single pluginId key', () async {
+      final engine = engineWith((req) async {
+        expect(req.method, 'POST');
+        expect(req.url.path, '/plugins/update/marketplace');
+        final body = jsonDecode(req.body) as Map;
+        expect(body.containsKey('plugin_id'), isFalse);
+        expect(body['pluginId'], 'p2');
+        return http.Response(jsonEncode({'id': 'p2'}), 200);
+      });
+      await engine.updatePluginFromMarketplace('p2', confirm: true);
+      engine.dispose();
+    });
   });
 }

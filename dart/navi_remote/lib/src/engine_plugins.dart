@@ -33,7 +33,6 @@ extension NaviRemotePlugins on NaviRemoteEngine {
     bool confirm = false,
   }) {
     return _post('/plugins/install/marketplace', {
-      'plugin_id': pluginId,
       'pluginId': pluginId,
       'confirm': confirm,
     });
@@ -59,7 +58,6 @@ extension NaviRemotePlugins on NaviRemoteEngine {
     bool confirm = false,
   }) {
     return _post('/plugins/update/marketplace', {
-      'plugin_id': pluginId,
       'pluginId': pluginId,
       'force': force,
       'confirm': confirm,
