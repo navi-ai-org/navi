@@ -95,6 +95,12 @@ impl NaviConfig {
         if other.browser != BrowserConfig::default() {
             self.browser = other.browser;
         }
+        if other.acp != crate::config::types::AcpConfig::default() {
+            self.acp = other.acp;
+        }
+        if !other.acp_agents.is_empty() {
+            self.acp_agents = other.acp_agents;
+        }
         crate::config::providers::merge_provider_configs(&mut self.providers, other.providers);
         self.plugins.extend(other.plugins);
         self.wasm_plugins.extend(other.wasm_plugins);
@@ -192,9 +198,17 @@ fn merge_from_file(
                 "ignoring [[wasm_plugins]] from project config (installed plugins auto-load from data_dir/plugins)"
             );
         }
+        if file_config.acp.enabled || !file_config.acp_agents.is_empty() {
+            tracing::warn!(
+                path = %path.display(),
+                "ignoring [acp]/[[acp_agents]] from project config (use global ~/.config/navi/config.toml)"
+            );
+        }
         file_config.plugins.clear();
         file_config.mcp = crate::config::types::McpConfig::default();
         file_config.wasm_plugins.clear();
+        file_config.acp = crate::config::types::AcpConfig::default();
+        file_config.acp_agents.clear();
     }
     config.merge(file_config);
     Ok(Some(path.to_path_buf()))

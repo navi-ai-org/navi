@@ -46,6 +46,8 @@ mod tests {
             voice: VoiceConfig::default(),
             updates: UpdatesConfig::default(),
             browser: BrowserConfig::default(),
+            acp: AcpConfig::default(),
+            acp_agents: Vec::new(),
         };
 
         let mut project = NaviConfig {
@@ -95,6 +97,8 @@ mod tests {
             voice: VoiceConfig::default(),
             updates: UpdatesConfig::default(),
             browser: BrowserConfig::default(),
+            acp: AcpConfig::default(),
+            acp_agents: Vec::new(),
         };
         project.plugins.clear();
         project.mcp = McpConfig::default();
@@ -134,6 +138,37 @@ timeout_ms = 1000
         assert!(config.mcp.enabled);
         assert_eq!(config.mcp.servers[0].id, "memory");
         assert_eq!(config.mcp.servers[0].tool_prefix.as_deref(), Some("mem"));
+    }
+
+    #[test]
+    fn parses_acp_agents_config() {
+        let config: NaviConfig = toml::from_str(
+            r#"
+[acp]
+enabled = true
+
+[[acp_agents]]
+id = "devin"
+command = "devin"
+args = ["acp"]
+api_key_env = "DEVIN_API_KEY"
+auth_method_id = "devin-browser"
+auto_approve_permissions = true
+enabled = true
+"#,
+        )
+        .expect("acp config parses");
+
+        assert!(config.acp.enabled);
+        assert_eq!(config.acp_agents.len(), 1);
+        let agent = &config.acp_agents[0];
+        assert_eq!(agent.id, "devin");
+        assert_eq!(agent.command, "devin");
+        assert_eq!(agent.args, vec!["acp"]);
+        assert_eq!(agent.api_key_env.as_deref(), Some("DEVIN_API_KEY"));
+        assert_eq!(agent.auth_method_id.as_deref(), Some("devin-browser"));
+        assert!(agent.auto_approve_permissions);
+        assert!(agent.enabled);
     }
 
     #[test]

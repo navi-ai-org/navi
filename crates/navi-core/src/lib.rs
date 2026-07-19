@@ -64,17 +64,18 @@ pub use compact::{
     compact_summary_user_message,
 };
 pub use config::{
-    AttachmentModelsConfig, BackgroundModelEntry, BackgroundModelsConfig, GoalsConfig,
-    HarnessProfile, LoadedConfig, McpConfig, McpServerConfig, ModelOption, ModelTaskSize,
-    NaviConfig, PermissionMode, PluginConfig, ProviderConfig, ProviderKind, ProviderModelConfig,
-    ProviderRequestOptions, SecurityConfig, ToolCallingMode, ToolPromptManifest, UpdatesConfig,
-    VoiceConfig, WasmPluginConfig, available_model_options, billable_input_split,
-    canonical_provider_id, default_request_options_for, effective_context_window,
-    effective_tool_calling_mode, estimate_token_cost_usd, estimate_token_cost_usd_with_cache,
-    is_free_model_name, model_cache_list_pricing, model_can_run_publicly, model_list_pricing,
-    model_supports_attachment, provider_catalog, provider_credit_unit, provider_request_model_name,
-    provider_uses_credits, resolve_provider_config, save_global_config, save_project_config,
-    set_registry_store, usd_to_provider_credits,
+    AcpAgentConfig, AcpConfig, AttachmentModelsConfig, BackgroundModelEntry,
+    BackgroundModelsConfig, GoalsConfig, HarnessProfile, LoadedConfig, McpConfig, McpServerConfig,
+    ModelOption, ModelTaskSize, NaviConfig, PermissionMode, PluginConfig, ProviderConfig,
+    ProviderKind, ProviderModelConfig, ProviderRequestOptions, SecurityConfig, ToolCallingMode,
+    ToolPromptManifest, UpdatesConfig, VoiceConfig, WasmPluginConfig, available_model_options,
+    billable_input_split, canonical_provider_id, default_request_options_for,
+    effective_context_window, effective_tool_calling_mode, estimate_token_cost_usd,
+    estimate_token_cost_usd_with_cache, is_free_model_name, model_cache_list_pricing,
+    model_can_run_publicly, model_list_pricing, model_supports_attachment, provider_catalog,
+    provider_credit_unit, provider_request_model_name, provider_uses_credits,
+    resolve_provider_config, save_global_config, save_project_config, set_registry_store,
+    usd_to_provider_credits,
 };
 pub use context::{ContextPacket, ContextSource};
 pub use credentials::{
