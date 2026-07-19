@@ -19,10 +19,8 @@ pub(super) fn definition(
     ToolDefinition::new(name, description, kind, input_schema)
 }
 
-/// Creates a tool definition with rich metadata.
-/// Currently unused but retained for tool authors who want to specify metadata
-/// directly in their definition() method rather than relying on the builtin_metadata registry.
-#[allow(dead_code)]
+/// Creates a tool definition with rich metadata specified directly in `definition()`,
+/// rather than relying only on the `builtin_metadata` registry.
 pub(super) fn definition_with_meta(
     name: &str,
     description: &str,
@@ -136,14 +134,22 @@ pub(super) fn ok(invocation_id: String, output: Value) -> ToolResult {
 }
 
 pub(super) fn versioned<T: Serialize>(output: T) -> Value {
-    let mut value = serde_json::to_value(output).expect("tool output serializes");
-    if let Value::Object(ref mut object) = value {
-        object.insert(
-            "schema_version".to_string(),
-            json!(SPECIALIZED_SCHEMA_VERSION),
-        );
+    match serde_json::to_value(output) {
+        Ok(mut value) => {
+            if let Value::Object(ref mut object) = value {
+                object.insert(
+                    "schema_version".to_string(),
+                    json!(SPECIALIZED_SCHEMA_VERSION),
+                );
+            }
+            value
+        }
+        Err(err) => json!({
+            "schema_version": SPECIALIZED_SCHEMA_VERSION,
+            "status": "error",
+            "error": format!("failed to serialize tool output: {err}"),
+        }),
     }
-    value
 }
 
 pub(super) fn tool_error(

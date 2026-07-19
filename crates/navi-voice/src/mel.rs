@@ -99,6 +99,7 @@ impl MelFrontend {
             }
             // realfft may require exclusive ownership of input buffer
             let mut frame = input.clone();
+            // Invariant: plan is built for N_FFT and `frame` is always N_FFT samples.
             self.fft_plan
                 .process_with_scratch(&mut frame, &mut output, &mut scratch)
                 .expect("FFT plan size matches N_FFT");

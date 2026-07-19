@@ -130,7 +130,9 @@ impl AutoMemoryStore {
     pub fn open(db_path: &Path) -> Result<Self> {
         if let Some(parent) = db_path.parent() {
             if !parent.exists() {
-                std::fs::create_dir_all(parent)?;
+                std::fs::create_dir_all(parent).with_context(|| {
+                    format!("Failed to create auto-memory directory: {:?}", parent)
+                })?;
             }
         }
 
@@ -147,7 +149,10 @@ impl AutoMemoryStore {
     }
 
     fn init_schema(&self) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| anyhow::anyhow!("auto-memory lock poisoned: {e}"))?;
         conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS memories (
                 id          TEXT PRIMARY KEY,
@@ -192,7 +197,10 @@ impl AutoMemoryStore {
 
     /// Inserts or replaces a memory. Returns the stored entry.
     pub fn upsert(&self, entry: &MemoryEntry) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| anyhow::anyhow!("auto-memory lock poisoned: {e}"))?;
         conn.execute(
             "INSERT OR REPLACE INTO memories
                 (id, type, name, description, body, embedding, confidence, status,
@@ -219,7 +227,10 @@ impl AutoMemoryStore {
     /// Stores an embedding (pre-computed) for a memory entry.
     pub fn set_embedding(&self, id: &str, embedding: &[f32]) -> Result<()> {
         let bytes: Vec<u8> = embedding.iter().flat_map(|f| f.to_le_bytes()).collect();
-        let conn = self.conn.lock().unwrap();
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| anyhow::anyhow!("auto-memory lock poisoned: {e}"))?;
         conn.execute(
             "UPDATE memories SET embedding = ?1 WHERE id = ?2",
             params![bytes, id],
@@ -229,7 +240,10 @@ impl AutoMemoryStore {
 
     /// Retrieves a single memory by id.
     pub fn get(&self, id: &str) -> Result<Option<MemoryEntry>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| anyhow::anyhow!("auto-memory lock poisoned: {e}"))?;
         let mut stmt = conn.prepare(
             "SELECT id, type, name, description, body, confidence, status,
                     evidence, created_at, updated_at, last_seen, expires_at
@@ -245,7 +259,10 @@ impl AutoMemoryStore {
 
     /// Lists all memories, optionally filtered by status.
     pub fn list(&self, status_filter: Option<MemoryStatus>) -> Result<Vec<MemorySummary>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| anyhow::anyhow!("auto-memory lock poisoned: {e}"))?;
 
         let mut sql = String::from(
             "SELECT id, type, name, description, confidence, status, updated_at
@@ -297,7 +314,10 @@ impl AutoMemoryStore {
 
     /// Returns all active memories with embeddings (for cosine similarity search).
     pub fn list_with_embeddings(&self) -> Result<Vec<(MemorySummary, Vec<f32>)>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| anyhow::anyhow!("auto-memory lock poisoned: {e}"))?;
         let mut stmt = conn.prepare(
             "SELECT id, type, name, description, confidence, status, updated_at, embedding
              FROM memories WHERE status = 'active' AND embedding IS NOT NULL
@@ -307,9 +327,10 @@ impl AutoMemoryStore {
         let rows = stmt
             .query_map([], |row| {
                 let blob: Vec<u8> = row.get(7)?;
+                // chunks_exact(4) always yields a 4-byte slice.
                 let embedding: Vec<f32> = blob
                     .chunks_exact(4)
-                    .map(|chunk| f32::from_le_bytes(chunk.try_into().unwrap()))
+                    .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
                     .collect();
                 Ok((
                     MemorySummary {
@@ -336,7 +357,10 @@ impl AutoMemoryStore {
     /// This is the fallback when embeddings are not available.
     pub fn search_text(&self, query: &str, limit: usize) -> Result<Vec<MemorySummary>> {
         let pattern = format!("%{}%", query.to_lowercase());
-        let conn = self.conn.lock().unwrap();
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| anyhow::anyhow!("auto-memory lock poisoned: {e}"))?;
         let mut stmt = conn.prepare(
             "SELECT id, type, name, description, confidence, status, updated_at
              FROM memories
@@ -395,7 +419,10 @@ impl AutoMemoryStore {
     /// Updates the status of a memory (e.g. active → obsolete).
     pub fn set_status(&self, id: &str, status: MemoryStatus) -> Result<()> {
         let now = now_iso();
-        let conn = self.conn.lock().unwrap();
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| anyhow::anyhow!("auto-memory lock poisoned: {e}"))?;
         conn.execute(
             "UPDATE memories SET status = ?1, updated_at = ?2 WHERE id = ?3",
             params![status.as_str(), now, id],
@@ -412,7 +439,10 @@ impl AutoMemoryStore {
         body: Option<&str>,
     ) -> Result<()> {
         let now = now_iso();
-        let conn = self.conn.lock().unwrap();
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| anyhow::anyhow!("auto-memory lock poisoned: {e}"))?;
 
         let mut sets = vec!["updated_at = ?1".to_string()];
         let mut param_idx = 2usize;
@@ -460,14 +490,20 @@ impl AutoMemoryStore {
 
     /// Deletes a memory permanently.
     pub fn delete(&self, id: &str) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| anyhow::anyhow!("auto-memory lock poisoned: {e}"))?;
         conn.execute("DELETE FROM memories WHERE id = ?1", params![id])?;
         Ok(())
     }
 
     /// Counts active memories.
     pub fn count_active(&self) -> Result<usize> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| anyhow::anyhow!("auto-memory lock poisoned: {e}"))?;
         let count: i64 = conn.query_row(
             "SELECT COUNT(*) FROM memories WHERE status = 'active'",
             [],
@@ -481,7 +517,10 @@ impl AutoMemoryStore {
     /// Marks memories as obsolete if their `last_seen` is older than the given
     /// number of days. Returns the count of memories marked obsolete.
     pub fn mark_stale(&self, stale_days: u32) -> Result<usize> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| anyhow::anyhow!("auto-memory lock poisoned: {e}"))?;
         let now = now_iso();
         // Simple heuristic: if last_seen starts with a date older than stale_days
         // from now, mark as needs_review. We use a simple string comparison since
@@ -502,7 +541,10 @@ impl AutoMemoryStore {
     /// (case-insensitive). The older one is marked obsolete and the newer
     /// one's confidence is bumped. Returns the count of duplicates merged.
     pub fn deduplicate(&self) -> Result<usize> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| anyhow::anyhow!("auto-memory lock poisoned: {e}"))?;
 
         // Find groups of duplicates: same type + same lower(description)
         let mut stmt = conn.prepare(
@@ -547,7 +589,10 @@ impl AutoMemoryStore {
 
     /// Returns all active memories that do not have an embedding stored.
     pub fn list_without_embeddings(&self) -> Result<Vec<MemorySummary>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| anyhow::anyhow!("auto-memory lock poisoned: {e}"))?;
         let mut stmt = conn.prepare(
             "SELECT id, type, name, description, confidence, status, updated_at
              FROM memories
@@ -577,7 +622,10 @@ impl AutoMemoryStore {
 
     /// Returns the full text of a memory (for embedding generation).
     pub fn get_memory_text(&self, id: &str) -> Result<Option<String>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| anyhow::anyhow!("auto-memory lock poisoned: {e}"))?;
         let result = conn.query_row(
             "SELECT name, description, body FROM memories WHERE id = ?1",
             params![id],
@@ -658,7 +706,10 @@ impl AutoMemoryStore {
 
     /// Lists all active memories with full body text, for model-based consolidation.
     pub fn list_full_entries(&self) -> Result<Vec<MemoryEntry>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| anyhow::anyhow!("auto-memory lock poisoned: {e}"))?;
         let mut stmt = conn.prepare(
             "SELECT id, type, name, description, body, confidence, status,
                     evidence, created_at, updated_at, last_seen, expires_at
@@ -675,7 +726,10 @@ impl AutoMemoryStore {
     /// Applies a consolidation action from the model: mark a memory obsolete.
     pub fn mark_obsolete(&self, id: &str) -> Result<()> {
         let now = now_iso();
-        let conn = self.conn.lock().unwrap();
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| anyhow::anyhow!("auto-memory lock poisoned: {e}"))?;
         conn.execute(
             "UPDATE memories SET status = 'obsolete', updated_at = ?1 WHERE id = ?2",
             params![now, id],
@@ -691,7 +745,10 @@ impl AutoMemoryStore {
         confidence: Option<f64>,
     ) -> Result<()> {
         let now = now_iso();
-        let conn = self.conn.lock().unwrap();
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| anyhow::anyhow!("auto-memory lock poisoned: {e}"))?;
         if let Some(b) = body {
             conn.execute(
                 "UPDATE memories SET body = ?1, updated_at = ?2 WHERE id = ?3",
@@ -711,7 +768,10 @@ impl AutoMemoryStore {
 
     /// Reads the current session checkpoint text. Returns empty string if none.
     pub fn read_checkpoint(&self) -> Result<String> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| anyhow::anyhow!("auto-memory lock poisoned: {e}"))?;
         let result = conn.query_row(
             "SELECT value FROM session_checkpoint WHERE key = 'current'",
             [],
@@ -727,7 +787,10 @@ impl AutoMemoryStore {
     /// Writes the session checkpoint text, replacing any previous content.
     pub fn write_checkpoint(&self, content: &str) -> Result<()> {
         let now = now_iso();
-        let conn = self.conn.lock().unwrap();
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| anyhow::anyhow!("auto-memory lock poisoned: {e}"))?;
         conn.execute(
             "INSERT OR REPLACE INTO session_checkpoint (key, value, updated_at)
              VALUES ('current', ?1, ?2)",
@@ -741,7 +804,10 @@ impl AutoMemoryStore {
     /// Appends a note to the session notes table.
     pub fn append_note(&self, content: &str) -> Result<()> {
         let now = now_iso();
-        let conn = self.conn.lock().unwrap();
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| anyhow::anyhow!("auto-memory lock poisoned: {e}"))?;
         conn.execute(
             "INSERT INTO session_notes (content, created_at) VALUES (?1, ?2)",
             params![content.trim(), now],
@@ -751,7 +817,10 @@ impl AutoMemoryStore {
 
     /// Reads all session notes, oldest first.
     pub fn read_notes(&self) -> Result<String> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| anyhow::anyhow!("auto-memory lock poisoned: {e}"))?;
         let mut stmt = conn.prepare("SELECT content FROM session_notes ORDER BY id ASC")?;
         let rows: Vec<String> = stmt
             .query_map([], |row| row.get(0))?
@@ -762,7 +831,10 @@ impl AutoMemoryStore {
 
     /// Clears all session notes.
     pub fn clear_notes(&self) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| anyhow::anyhow!("auto-memory lock poisoned: {e}"))?;
         conn.execute("DELETE FROM session_notes", [])?;
         Ok(())
     }

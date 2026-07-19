@@ -56,7 +56,7 @@ impl NaviEngine {
             });
         })
         .await
-        .map_err(|e| NaviError::Config(e.to_string()))
+        .map_err(|e| NaviError::Config(format!("device OAuth for '{provider_id}' failed: {e}")))
     }
 
     /// Convenience OAuth without progress callback (still blocks until complete).

@@ -74,7 +74,7 @@ impl NaviEngine {
             loaded.data_dir.clone(),
             &loaded.config.memory,
         )
-        .map_err(|e| NaviError::Config(e.to_string()))
+        .map_err(|e| NaviError::Config(format!("open memory manager: {e}")))
     }
 
     /// Status of the auto-memory / history system for this project.
@@ -92,7 +92,7 @@ impl NaviEngine {
         let sessions = manager
             .history
             .list_sessions()
-            .map_err(|e| NaviError::Config(e.to_string()))?;
+            .map_err(|e| NaviError::Config(format!("list memory history sessions: {e}")))?;
         let (
             last_session_id,
             rebuild_count,
@@ -335,7 +335,7 @@ impl NaviEngine {
         manager
             .history
             .search_history(query, session_id, limit)
-            .map_err(|e| NaviError::Config(e.to_string()))
+            .map_err(|e| NaviError::Config(format!("search memory history: {e}")))
     }
 
     /// Run model-based dream consolidation.
@@ -362,7 +362,7 @@ impl NaviEngine {
             },
         )
         .await
-        .map_err(|e| NaviError::Config(e.to_string()))?;
+        .map_err(|e| NaviError::Config(format!("memory dream maintenance failed: {e}")))?;
 
         let (marked_stale, duplicates_merged, remaining_active) =
             if let Some(ref am) = result.auto_memory_report {
@@ -400,7 +400,7 @@ impl NaviEngine {
             &model_name,
         )
         .await
-        .map_err(|e| NaviError::Config(e.to_string()))
+        .map_err(|e| NaviError::Config(format!("memory distill maintenance failed: {e}")))
     }
 
     /// Manually run checkpoint writer for the latest (or temporary) session.
@@ -410,7 +410,7 @@ impl NaviEngine {
         let sessions = manager
             .history
             .list_sessions()
-            .map_err(|e| NaviError::Config(e.to_string()))?;
+            .map_err(|e| NaviError::Config(format!("list memory history sessions: {e}")))?;
         let session_id = if let Some(s) = sessions.first() {
             s.id.clone()
         } else {
@@ -419,7 +419,9 @@ impl NaviEngine {
         let events = manager
             .history
             .get_recent_events(&session_id, None)
-            .map_err(|e| NaviError::Config(e.to_string()))?;
+            .map_err(|e| {
+                NaviError::Config(format!("load recent history for '{session_id}': {e}"))
+            })?;
         let messages = history_to_model_messages(&events);
         let provider = build_provider_for_project_config(&loaded, &self.inner.project_dir)?;
         let model_name = loaded.config.model.name.clone();
@@ -431,7 +433,11 @@ impl NaviEngine {
             &model_name,
         )
         .await
-        .map_err(|e| NaviError::Config(e.to_string()))?;
+        .map_err(|e| {
+            NaviError::Config(format!(
+                "memory checkpoint writer for '{session_id}' failed: {e}"
+            ))
+        })?;
         Ok(session_id)
     }
 
@@ -442,14 +448,16 @@ impl NaviEngine {
         let sessions = manager
             .history
             .list_sessions()
-            .map_err(|e| NaviError::Config(e.to_string()))?;
+            .map_err(|e| NaviError::Config(format!("list memory history sessions: {e}")))?;
         let session_id = sessions.first().map(|s| s.id.clone()).ok_or_else(|| {
             NaviError::Config("no session in history — cannot build rebuild preview".into())
         })?;
         let events = manager
             .history
             .get_recent_events(&session_id, None)
-            .map_err(|e| NaviError::Config(e.to_string()))?;
+            .map_err(|e| {
+                NaviError::Config(format!("load recent history for '{session_id}': {e}"))
+            })?;
         let messages = history_to_model_messages(&events);
         let context_window = effective_context_window(&loaded.config);
         Ok(build_rebuild_context(

@@ -135,7 +135,8 @@ impl PlanStore {
     }
 
     fn init_schema(&self) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        // Recover from poisoned mutex so a prior panic does not brick the store.
+        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
         conn.execute_batch(
             r#"
             CREATE TABLE IF NOT EXISTS plans (
@@ -197,7 +198,7 @@ impl PlanStore {
     pub fn upsert(&self, plan: &Plan) -> Result<()> {
         let steps_json = serde_json::to_string(&plan.steps)?;
         let comments_json = serde_json::to_string(&plan.comments)?;
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
         conn.execute(
             r#"
             INSERT INTO plans (
@@ -233,7 +234,7 @@ impl PlanStore {
     }
 
     pub fn get(&self, plan_id: &str) -> Result<Option<Plan>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
         let mut stmt = conn.prepare(
             r#"
             SELECT id, project_id, session_id, title, description, body_markdown,
@@ -251,7 +252,7 @@ impl PlanStore {
         filter_status: Option<&str>,
         limit: usize,
     ) -> Result<Vec<Plan>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
         let limit = limit.min(MAX_PLANS) as i64;
         let mut plans = Vec::new();
         if let Some(status) = filter_status {

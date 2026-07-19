@@ -34,7 +34,8 @@ pub struct PlanReviewState {
     pub comment_cursor: usize,
     pub prompt_draft: String,
     pub prompt_cursor: usize,
-    #[allow(dead_code)]
+    /// Project scope from the plan; retained for multi-project review / store IO.
+    #[allow(dead_code)] // not read by current modal UI; kept for plan identity
     pub project_id: String,
 }
 

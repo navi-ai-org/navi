@@ -60,13 +60,17 @@ async fn download_nemotron(
 
     if force && paths.engine_dir.exists() {
         // Remove previous install (keep parent models/ root).
-        for entry in fs::read_dir(&paths.engine_dir)? {
-            let entry = entry?;
+        for entry in fs::read_dir(&paths.engine_dir)
+            .with_context(|| format!("read model dir {}", paths.engine_dir.display()))?
+        {
+            let entry = entry.with_context(|| {
+                format!("read entry in model dir {}", paths.engine_dir.display())
+            })?;
             let p = entry.path();
             if p.is_dir() {
-                fs::remove_dir_all(&p)?;
+                fs::remove_dir_all(&p).with_context(|| format!("remove dir {}", p.display()))?;
             } else {
-                fs::remove_file(&p)?;
+                fs::remove_file(&p).with_context(|| format!("remove file {}", p.display()))?;
             }
         }
     }
@@ -89,7 +93,8 @@ async fn download_nemotron(
     for (expected_hash, rel) in &entries {
         let dest = paths.engine_dir.join(rel);
         if let Some(parent) = dest.parent() {
-            fs::create_dir_all(parent)?;
+            fs::create_dir_all(parent)
+                .with_context(|| format!("create dir {}", parent.display()))?;
         }
         if dest.is_file() && !force {
             let actual = file_sha256(&dest)?;
@@ -180,14 +185,15 @@ async fn download_file(
     }
     let total = response.content_length();
     if let Some(parent) = dest.parent() {
-        fs::create_dir_all(parent)?;
+        fs::create_dir_all(parent).with_context(|| format!("create dir {}", parent.display()))?;
     }
     let mut file = fs::File::create(dest).with_context(|| format!("create {}", dest.display()))?;
     let mut stream = response.bytes_stream();
     let mut downloaded = 0u64;
     while let Some(chunk) = stream.next().await {
         let chunk = chunk.context("read download chunk")?;
-        file.write_all(&chunk)?;
+        file.write_all(&chunk)
+            .with_context(|| format!("write download chunk to {}", dest.display()))?;
         downloaded += chunk.len() as u64;
         if let Some(cb) = progress {
             cb(downloaded, total, relative);

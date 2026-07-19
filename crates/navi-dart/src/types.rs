@@ -13,7 +13,8 @@ thread_local! {
 
 pub(crate) fn set_last_error(msg: &str) {
     LAST_ERROR.with(|e| {
-        *e.lock().unwrap() = CString::new(msg).ok();
+        // Recover from poison so a prior panic on this thread cannot brick error reporting.
+        *e.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = CString::new(msg).ok();
     });
 }
 
@@ -22,7 +23,7 @@ pub(crate) fn set_last_error(msg: &str) {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn navi_last_error() -> *const c_char {
     LAST_ERROR.with(|e| {
-        let lock = e.lock().unwrap();
+        let lock = e.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         match lock.as_ref() {
             Some(cstr) => cstr.as_ptr(),
             None => ptr::null(),

@@ -129,7 +129,7 @@ fn generate_from_traces(
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        std::fs::write(path, export_jsonl(&rows))?;
+        std::fs::write(path, export_jsonl(&rows)?)?;
     }
 
     println!(

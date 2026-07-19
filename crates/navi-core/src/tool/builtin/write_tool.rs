@@ -1153,7 +1153,9 @@ fn apply_structured_symbol_replacement_fallback(
     match candidates.len() {
         0 => Ok(None),
         1 => {
-            let candidate = candidates.pop().expect("one candidate");
+            let candidate = candidates
+                .pop()
+                .context("internal error: expected one symbol replacement candidate")?;
             fs::write(&candidate.path, candidate.content)
                 .with_context(|| format!("failed to write {}", candidate.path.display()))?;
             Ok(Some(1))
@@ -1536,7 +1538,10 @@ fn parse_structured_patch(patch: &str) -> Result<Vec<StructuredOp>> {
                 if next.starts_with("*** ") {
                     break;
                 }
-                let line = peek_iter.next().expect("peeked line exists");
+                // Invariant: `peek()` returned Some, so `next()` cannot be None.
+                let line = peek_iter
+                    .next()
+                    .context("internal error: peeked add-file line missing")?;
                 let Some(content) = line.strip_prefix('+') else {
                     bail!("add file lines must start with `+` for {path}");
                 };
@@ -1565,7 +1570,10 @@ fn parse_structured_patch(patch: &str) -> Result<Vec<StructuredOp>> {
                 {
                     break;
                 }
-                let line = peek_iter.next().expect("peeked line exists");
+                // Invariant: `peek()` returned Some, so `next()` cannot be None.
+                let line = peek_iter
+                    .next()
+                    .context("internal error: peeked update line missing")?;
                 if let Some(target) = line.strip_prefix("*** Move to: ") {
                     move_to = Some(target.to_string());
                     continue;
@@ -1579,9 +1587,11 @@ fn parse_structured_patch(patch: &str) -> Result<Vec<StructuredOp>> {
                         {
                             break;
                         }
-                        hunk.push(parse_hunk_line(
-                            peek_iter.next().expect("peeked line exists"),
-                        )?);
+                        // Invariant: `peek()` returned Some, so `next()` cannot be None.
+                        let hunk_line = peek_iter
+                            .next()
+                            .context("internal error: peeked hunk line missing")?;
+                        hunk.push(parse_hunk_line(hunk_line)?);
                     }
                     hunks.push(hunk);
                     continue;

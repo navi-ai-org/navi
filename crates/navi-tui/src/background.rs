@@ -184,7 +184,10 @@ pub(crate) fn clamp_background_selection(app: &mut TuiApp) {
 }
 
 /// Stops the background poller task if running.
-#[allow(dead_code)]
+///
+/// Kept as a shared teardown helper for session close / future UI controls;
+/// callers may also abort `bg_poll_task` inline (e.g. new session).
+#[allow(dead_code)] // public helper reserved for explicit poller teardown
 pub(crate) fn stop_background_poller(app: &mut TuiApp) {
     if let Some(task) = app.bg_poll_task.take() {
         task.abort();

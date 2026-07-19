@@ -38,7 +38,7 @@ impl Tool for CurrentTimeTool {
     async fn invoke(&self, invocation: ToolInvocation) -> Result<ToolResult> {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .expect("system time before epoch");
+            .context("system clock is before Unix epoch")?;
         let unix_secs = now.as_secs();
 
         // Format as ISO 8601 UTC.
@@ -135,13 +135,16 @@ impl Tool for SleepTool {
 // ── ContextRemainingTool ───────────────────────────────────────────────────
 
 pub(crate) struct ContextRemainingTool {
-    #[allow(dead_code)]
-    project_root: PathBuf,
+    /// Reserved for future project-scoped context accounting; currently unused
+    /// because the model passes window/used tokens explicitly in the tool input.
+    _project_root: PathBuf,
 }
 
 impl ContextRemainingTool {
     pub(crate) fn new(project_root: PathBuf) -> Self {
-        Self { project_root }
+        Self {
+            _project_root: project_root,
+        }
     }
 }
 

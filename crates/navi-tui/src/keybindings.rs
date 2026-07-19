@@ -155,7 +155,11 @@ pub(crate) fn open_model_routing(app: &mut TuiApp, tab: crate::state::ModelRouti
     replace_modal(app, ModalKind::ModelRouting);
 }
 
-#[allow(dead_code)]
+/// Open the dedicated Extensions hub modal (Skills / Plugins / MCP).
+///
+/// Palette currently deep-links those items via hubs; this entrypoint stays
+/// for direct open (mouse/panels) and future shortcuts.
+#[allow(dead_code)] // dedicated hub modal entry; palette uses OpenHub for now
 pub(crate) fn open_extensions_hub(app: &mut TuiApp) {
     app.selected_extensions_item = 0;
     replace_modal(app, ModalKind::Extensions);

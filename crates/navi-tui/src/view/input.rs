@@ -470,12 +470,9 @@ fn composer_activity_status(app: &TuiApp) -> (String, ratatui::style::Color) {
 }
 
 fn running_tools_status(app: &TuiApp) -> String {
-    if app.running_tools.len() == 1 {
-        let (id, invocation) = app
-            .running_tools
-            .iter()
-            .next()
-            .expect("running_tools non-empty");
+    if app.running_tools.len() == 1
+        && let Some((id, invocation)) = app.running_tools.iter().next()
+    {
         if let Some(activity) = app.subagent_activity.get(id) {
             let detail = activity.trim();
             if !detail.is_empty() {

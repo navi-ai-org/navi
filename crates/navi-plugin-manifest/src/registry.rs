@@ -146,7 +146,9 @@ impl ToolRegistry {
         };
 
         self.tools.push(tool);
-        Ok(self.tools.last().unwrap())
+        // Index is valid: we just pushed.
+        let idx = self.tools.len() - 1;
+        Ok(&self.tools[idx])
     }
 
     /// Get all registered tools.

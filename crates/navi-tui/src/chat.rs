@@ -303,6 +303,7 @@ pub(crate) fn ensure_tail_model_response(app: &mut TuiApp) -> &mut ChatMessage {
         message.thinking_content.clear();
         app.messages.push(message);
     }
+    // Invariant: the empty-branch above always pushes before this access.
     app.messages
         .last_mut()
         .expect("placeholder was just pushed")

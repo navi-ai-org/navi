@@ -156,7 +156,7 @@ impl WasmPluginTool {
 
         let fs_read = Arc::new(move |path: &str| -> String {
             if let Some(ref broker) = fs_clone {
-                let mut broker = broker.lock().unwrap();
+                let mut broker = broker.lock().unwrap_or_else(|e| e.into_inner());
                 match broker.read_project_file(&plugin_id, &tool_name, "fs_read", path) {
                     Ok(result) => serde_json::json!({
                         "content": result.content,
@@ -174,7 +174,7 @@ impl WasmPluginTool {
         let tool_name2 = self.tool_name.clone();
         let fs_list = Arc::new(move |path: &str| -> String {
             if let Some(ref broker) = fs_clone2 {
-                let mut broker = broker.lock().unwrap();
+                let mut broker = broker.lock().unwrap_or_else(|e| e.into_inner());
                 match broker.list_project_dir(&plugin_id2, &tool_name2, "fs_read", path) {
                     Ok(entries) => serde_json::json!({"entries": entries}).to_string(),
                     Err(e) => serde_json::json!({"error": e.to_string()}).to_string(),
@@ -187,7 +187,7 @@ impl WasmPluginTool {
         let http_clone = http.clone();
         let http_request = Arc::new(move |input: &str| -> String {
             if let Some(ref broker) = http_clone {
-                let broker = broker.lock().unwrap();
+                let broker = broker.lock().unwrap_or_else(|e| e.into_inner());
                 // Parse the input JSON to extract method, url, body
                 let parsed: serde_json::Value = match serde_json::from_str(input) {
                     Ok(v) => v,
@@ -269,7 +269,7 @@ impl WasmPluginTool {
         let git_clone = git.clone();
         let git_status = Arc::new(move || -> String {
             if let Some(ref broker) = git_clone {
-                let broker = broker.lock().unwrap();
+                let broker = broker.lock().unwrap_or_else(|e| e.into_inner());
                 match broker.status() {
                     Ok(status) => {
                         serde_json::json!({"raw": status.raw, "entries": status.entries.len()})
@@ -285,7 +285,7 @@ impl WasmPluginTool {
         let git_clone2 = git.clone();
         let git_diff = Arc::new(move || -> String {
             if let Some(ref broker) = git_clone2 {
-                let broker = broker.lock().unwrap();
+                let broker = broker.lock().unwrap_or_else(|e| e.into_inner());
                 match broker.diff() {
                     Ok(diff) => serde_json::json!({"diff": diff}).to_string(),
                     Err(e) => serde_json::json!({"error": e.to_string()}).to_string(),

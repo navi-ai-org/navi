@@ -372,7 +372,6 @@ impl NaviPanelContext {
     }
 
     /// Get mutable access to TuiApp. Safe within the single-threaded render loop.
-    #[allow(dead_code)]
     // Intentional: context holds `*mut TuiApp` so panels can mutate app state from
     // an immutable PanelContext borrow during the single-threaded render/event loop.
     #[allow(clippy::mut_from_ref)]
@@ -426,12 +425,6 @@ impl ModalPanel {
         }
     }
 
-    #[allow(dead_code)]
-    pub fn with_z(mut self, z: i16) -> Self {
-        self.z = z;
-        self
-    }
-
     fn is_current_mode(&self, app: &TuiApp) -> bool {
         app.mode == self.mode
     }
@@ -447,6 +440,7 @@ impl Panel for ModalPanel {
     }
 
     fn render(&mut self, frame: &mut Frame, area: Rect, ctx: &dyn PanelContext) {
+        // Invariant: navi-tui only registers panels against NaviPanelContext.
         let navi_ctx = ctx
             .as_any()
             .downcast_ref::<NaviPanelContext>()
@@ -459,6 +453,7 @@ impl Panel for ModalPanel {
     }
 
     fn handle_key(&self, _key: &KeyEvent, ctx: &dyn PanelContext) -> KeyOutcome {
+        // Invariant: navi-tui only registers panels against NaviPanelContext.
         let navi_ctx = ctx
             .as_any()
             .downcast_ref::<NaviPanelContext>()
@@ -538,6 +533,7 @@ impl Panel for ModalPanelMut {
     }
 
     fn render(&mut self, frame: &mut Frame, area: Rect, ctx: &dyn PanelContext) {
+        // Invariant: navi-tui only registers panels against NaviPanelContext.
         let navi_ctx = ctx
             .as_any()
             .downcast_ref::<NaviPanelContext>()
@@ -554,6 +550,7 @@ impl Panel for ModalPanelMut {
     }
 
     fn handle_key(&self, _key: &KeyEvent, ctx: &dyn PanelContext) -> KeyOutcome {
+        // Invariant: navi-tui only registers panels against NaviPanelContext.
         let navi_ctx = ctx
             .as_any()
             .downcast_ref::<NaviPanelContext>()
@@ -603,9 +600,10 @@ impl Panel for PluginPanelAdapter {
     }
 
     fn render(&mut self, frame: &mut Frame, area: Rect, ctx: &dyn PanelContext) {
+        // Recover from poison: single-threaded TUI never contends this mutex.
         self.inner
             .lock()
-            .expect("PluginPanelAdapter mutex poisoned")
+            .unwrap_or_else(|e| e.into_inner())
             .render(frame, area, ctx);
     }
 
@@ -614,31 +612,28 @@ impl Panel for PluginPanelAdapter {
         // TuiComponent::handle_key takes &mut self. The Mutex lets us
         // get &mut access. This is safe because the TUI event loop is
         // single-threaded — the mutex is never contended.
-        let mut inner = self
-            .inner
-            .lock()
-            .expect("PluginPanelAdapter mutex poisoned");
+        let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         inner.handle_key(key, ctx)
     }
 
     fn preferred_size(&self) -> PanelSize {
         self.inner
             .lock()
-            .expect("PluginPanelAdapter mutex poisoned")
+            .unwrap_or_else(|e| e.into_inner())
             .preferred_size()
     }
 
     fn is_visible(&self) -> bool {
         self.inner
             .lock()
-            .expect("PluginPanelAdapter mutex poisoned")
+            .unwrap_or_else(|e| e.into_inner())
             .is_visible()
     }
 
     fn z_order(&self) -> i16 {
         self.inner
             .lock()
-            .expect("PluginPanelAdapter mutex poisoned")
+            .unwrap_or_else(|e| e.into_inner())
             .z_order()
     }
 }

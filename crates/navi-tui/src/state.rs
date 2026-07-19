@@ -508,7 +508,8 @@ pub enum Mode {
     /// Unified model routing (Chat / Agents / Attachments).
     ModelRouting,
     /// Extensions hub (Skills / Plugins / MCP).
-    #[allow(dead_code)]
+    /// Constructed via [`ModalKind::Extensions`]; palette often uses OpenHub instead.
+    #[allow(dead_code)] // dedicated hub mode; palette prefers OpenHub deep-links
     Extensions,
     Setup,
     AttachmentModels,
@@ -552,13 +553,13 @@ pub(crate) enum ModalKind {
     BackgroundCommands,
     BackgroundCommandOutput,
     /// Legacy standalone agent-routes modal (superseded by [`Self::ModelRouting`]).
-    #[allow(dead_code)]
+    #[allow(dead_code)] // retained for mode map / migration from old routing UI
     BackgroundModels,
     BgModelPicker,
     ModelRouting,
     Extensions,
     /// Legacy standalone attachment modal (superseded by [`Self::ModelRouting`]).
-    #[allow(dead_code)]
+    #[allow(dead_code)] // retained for mode map / migration from old attachment UI
     AttachmentModels,
     MessageQueue,
     QueuedMessageEdit,
@@ -751,7 +752,6 @@ pub(crate) struct QuestionUiState {
 
 /// Live MCP connection snapshot for the TUI modal (probed on open/refresh).
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub struct McpLiveServer {
     pub id: String,
     pub enabled: bool,

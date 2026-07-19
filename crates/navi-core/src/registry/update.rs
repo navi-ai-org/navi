@@ -758,9 +758,14 @@ async fn fetch_transcription_with_retry(
             }
         }
     }
-    Err(last_err.unwrap()).with_context(|| {
-        format!("failed to fetch transcription provider '{provider_id}' after retries")
-    })
+    let err = last_err.ok_or_else(|| {
+        anyhow::anyhow!(
+            "failed to fetch transcription provider '{provider_id}' after retries (no error recorded)"
+        )
+    })?;
+    Err(err).context(format!(
+        "failed to fetch transcription provider '{provider_id}' after retries"
+    ))
 }
 
 async fn fetch_manifest_with_retry(
@@ -782,7 +787,10 @@ async fn fetch_manifest_with_retry(
             }
         }
     }
-    Err(last_err.unwrap()).context("failed to fetch registry manifest after retries")
+    let err = last_err.ok_or_else(|| {
+        anyhow::anyhow!("failed to fetch registry manifest after retries (no error recorded)")
+    })?;
+    Err(err).context("failed to fetch registry manifest after retries")
 }
 
 async fn fetch_provider_with_retry(
@@ -806,7 +814,12 @@ async fn fetch_provider_with_retry(
             }
         }
     }
-    Err(last_err.unwrap()).context(format!(
+    let err = last_err.ok_or_else(|| {
+        anyhow::anyhow!(
+            "failed to fetch provider '{provider_id}' after retries (no error recorded)"
+        )
+    })?;
+    Err(err).context(format!(
         "failed to fetch provider '{provider_id}' after retries"
     ))
 }

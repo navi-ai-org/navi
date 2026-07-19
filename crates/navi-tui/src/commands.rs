@@ -28,7 +28,6 @@ impl CommandHub {
         }
     }
 
-    #[allow(dead_code)]
     pub(crate) fn detail(self) -> &'static str {
         match self {
             Self::Session => "sessions, queue, compact, export",
@@ -124,14 +123,6 @@ pub(crate) enum CommandRow {
 impl CommandRow {
     pub(crate) fn is_selectable(&self) -> bool {
         true
-    }
-
-    #[allow(dead_code)]
-    pub(crate) fn item(self) -> Option<CommandItem> {
-        match self {
-            Self::Item(item) => Some(item),
-            Self::Extension { .. } => None,
-        }
     }
 }
 

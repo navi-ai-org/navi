@@ -64,7 +64,9 @@ pub enum HitAction {
     ScrollToBottom,
     /// Hover/click the composer context-usage chip (`3 / 200k` → show %).
     ContextUsage,
-    #[allow(dead_code)]
+    /// Remove a pending composer image chip (matched in mouse hit handling;
+    /// construction is registered when image-remove controls are drawn).
+    #[allow(dead_code)] // hit-action reserved; remove-chip registration is incremental
     RemoveImage(usize),
     /// Hover/preview a pending composer image (0-based index into `pending_images`).
     PreviewPendingImage(usize),

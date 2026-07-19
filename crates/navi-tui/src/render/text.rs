@@ -21,10 +21,10 @@ pub(crate) fn wrap_spans_to_width(
             let char_width = ch.width().unwrap_or(0);
             if current_width > 0 && current_width + char_width > max_width {
                 if !chunk.is_empty() {
-                    lines
-                        .last_mut()
-                        .expect("at least one output line")
-                        .push(Span::styled(std::mem::take(&mut chunk), style));
+                    // Invariant: `lines` starts as `vec![Vec::new()]` and only grows.
+                    if let Some(line) = lines.last_mut() {
+                        line.push(Span::styled(std::mem::take(&mut chunk), style));
+                    }
                 }
                 lines.push(Vec::new());
                 current_width = 0;
@@ -33,10 +33,10 @@ pub(crate) fn wrap_spans_to_width(
             current_width += char_width;
         }
         if !chunk.is_empty() {
-            lines
-                .last_mut()
-                .expect("at least one output line")
-                .push(Span::styled(chunk, style));
+            // Invariant: `lines` starts as `vec![Vec::new()]` and only grows.
+            if let Some(line) = lines.last_mut() {
+                line.push(Span::styled(chunk, style));
+            }
         }
     }
 

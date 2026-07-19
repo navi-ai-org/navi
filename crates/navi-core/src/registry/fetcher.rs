@@ -30,7 +30,15 @@ impl RegistryFetcher {
             .timeout(std::time::Duration::from_secs(FETCH_TIMEOUT_SECS))
             .user_agent("navi-registry-fetcher/1.0")
             .build()
-            .expect("failed to build HTTP client");
+            .unwrap_or_else(|err| {
+                // Builder fails only for rare TLS/backend misconfig; fall back so
+                // registry sync still attempts with a default client.
+                tracing::warn!(
+                    error = %err,
+                    "failed to build registry HTTP client with custom settings; using default client"
+                );
+                reqwest::Client::new()
+            });
         Self { client }
     }
 

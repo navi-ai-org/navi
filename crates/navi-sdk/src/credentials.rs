@@ -40,7 +40,7 @@ where
             navi_providers::openai_browser_oauth(credential_store.clone(), provider_id, on_started)
                 .await
                 .map(|_| None)
-                .map_err(|err| anyhow::anyhow!(err))
+                .map_err(|err| anyhow::anyhow!("openai browser OAuth failed: {err}"))
         }
         "commandcode" => navi_providers::commandcode_browser_oauth(
             credential_store.clone(),
@@ -49,7 +49,7 @@ where
         )
         .await
         .map(Some)
-        .map_err(|err| anyhow::anyhow!(err)),
+        .map_err(|err| anyhow::anyhow!("commandcode browser OAuth failed: {err}")),
         "github-copilot" => navi_providers::github_copilot_device_oauth(
             credential_store.clone(),
             provider_id,
@@ -57,11 +57,11 @@ where
         )
         .await
         .map(|_| None)
-        .map_err(|err| anyhow::anyhow!(err)),
+        .map_err(|err| anyhow::anyhow!("github-copilot device OAuth failed: {err}")),
         "xai" => navi_providers::xai_oauth(credential_store.clone(), provider_id, on_started)
             .await
             .map(|_| None)
-            .map_err(|err| anyhow::anyhow!(err)),
+            .map_err(|err| anyhow::anyhow!("xai OAuth failed: {err}")),
         other => bail!("device OAuth is not supported for provider '{other}'"),
     }
 }
@@ -106,7 +106,7 @@ pub async fn commandcode_usage_data(
         .ok_or_else(|| anyhow::anyhow!("missing stored Command Code credential"))?;
     navi_providers::commandcode_fetch_usage_data(&api_key)
         .await
-        .map_err(|err| anyhow::anyhow!(err))
+        .map_err(|err| anyhow::anyhow!("fetch Command Code usage data failed: {err}"))
 }
 
 pub async fn commandcode_remote_models(credential_store: &CredentialStore) -> Result<Vec<String>> {
@@ -115,5 +115,5 @@ pub async fn commandcode_remote_models(credential_store: &CredentialStore) -> Re
         .ok_or_else(|| anyhow::anyhow!("missing stored Command Code credential"))?;
     navi_providers::commandcode_list_models(&api_key)
         .await
-        .map_err(|err| anyhow::anyhow!(err))
+        .map_err(|err| anyhow::anyhow!("list Command Code remote models failed: {err}"))
 }

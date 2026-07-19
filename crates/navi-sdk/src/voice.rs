@@ -167,7 +167,7 @@ impl NaviEngine {
                 options: self.voice_install_options(),
             },
         )
-        .map_err(|e| NaviError::Config(e.to_string()))
+        .map_err(|e| NaviError::Config(format!("voice doctor diagnostics failed: {e}")))
     }
 
     fn voice_doctor_remote(&self, voice: &VoiceConfig) -> Result<DoctorReport> {
@@ -251,7 +251,7 @@ impl NaviEngine {
 
         download_engine(&data_dir, &options, engine, force, Some(progress))
             .await
-            .map_err(|e| NaviError::Config(e.to_string()))
+            .map_err(|e| NaviError::Config(format!("download voice engine failed: {e}")))
     }
 
     /// Subscribe to engine-global voice events (partials, final, errors).
@@ -288,9 +288,12 @@ impl NaviEngine {
             .as_mut()
             .ok_or_else(|| NaviError::Config("voice engine not loaded".into()))?;
         engine.set_language(&lang);
-        engine
-            .transcribe_wav(path.as_ref())
-            .map_err(|e| NaviError::Config(e.to_string()))
+        engine.transcribe_wav(path.as_ref()).map_err(|e| {
+            NaviError::Config(format!(
+                "local voice transcription of {} failed: {e}",
+                path.as_ref().display()
+            ))
+        })
     }
 
     /// Async remote transcription (preferred from async contexts).
@@ -315,7 +318,12 @@ impl NaviEngine {
         let remote_cfg = self.resolve_remote_transcription_config(language)?;
         let result = transcribe_file_remote(&remote_cfg, path.as_ref())
             .await
-            .map_err(|e| NaviError::Config(e.to_string()))?;
+            .map_err(|e| {
+                NaviError::Config(format!(
+                    "remote voice transcription of {} failed: {e}",
+                    path.as_ref().display()
+                ))
+            })?;
         Ok(TranscribeResult {
             text: result.text,
             token_ids: Vec::new(),
@@ -334,7 +342,12 @@ impl NaviEngine {
             return handle.block_on(async move {
                 let result = transcribe_file_remote(&remote_cfg, &path)
                     .await
-                    .map_err(|e| NaviError::Config(e.to_string()))?;
+                    .map_err(|e| {
+                        NaviError::Config(format!(
+                            "remote voice transcription of {} failed: {e}",
+                            path.display()
+                        ))
+                    })?;
                 Ok(TranscribeResult {
                     text: result.text,
                     token_ids: Vec::new(),
@@ -348,7 +361,12 @@ impl NaviEngine {
         rt.block_on(async move {
             let result = transcribe_file_remote(&remote_cfg, &path)
                 .await
-                .map_err(|e| NaviError::Config(e.to_string()))?;
+                .map_err(|e| {
+                    NaviError::Config(format!(
+                        "remote voice transcription of {} failed: {e}",
+                        path.display()
+                    ))
+                })?;
             Ok(TranscribeResult {
                 text: result.text,
                 token_ids: Vec::new(),
@@ -456,7 +474,7 @@ impl NaviEngine {
             .ok_or_else(|| NaviError::Config("voice engine not loaded".into()))?;
         let delta = engine
             .push_audio(samples)
-            .map_err(|e| NaviError::Config(e.to_string()))?;
+            .map_err(|e| NaviError::Config(format!("voice push_audio failed: {e}")))?;
         if !delta.is_empty() {
             let partial = engine.partial_text();
             rt.emit(VoiceEvent::Partial { text: partial });
@@ -478,7 +496,7 @@ impl NaviEngine {
             .ok_or_else(|| NaviError::Config("voice engine not loaded".into()))?;
         let _ = engine
             .flush()
-            .map_err(|e| NaviError::Config(e.to_string()))?;
+            .map_err(|e| NaviError::Config(format!("voice stream flush failed: {e}")))?;
         let text = engine.partial_text();
         rt.active = false;
         rt.emit(VoiceEvent::Final { text: text.clone() });

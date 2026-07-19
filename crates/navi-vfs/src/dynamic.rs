@@ -22,15 +22,17 @@ static CACHE: LazyLock<Mutex<Vec<(LangId, LoadedGrammar)>>> =
 
 struct LoadedGrammar {
     /// Keep the library alive; dropping it would unmap the Language's data.
-    #[allow(dead_code)]
-    library: Library,
+    /// Prefixed with `_` because it is only held for its Drop side effect.
+    _library: Library,
     language: Language,
 }
 
 /// Return the tree-sitter `Language` for `lang`, loading the corresponding
 /// `.so` on first access.
 pub(crate) fn load_language(lang: LangId) -> Result<Language> {
-    let mut cache = CACHE.lock().unwrap();
+    let mut cache = CACHE
+        .lock()
+        .map_err(|e| anyhow::anyhow!("grammar cache lock poisoned: {e}"))?;
 
     // Fast path — already loaded.
     if let Some(entry) = cache.iter().find(|(id, _)| *id == lang) {
@@ -39,8 +41,15 @@ pub(crate) fn load_language(lang: LangId) -> Result<Language> {
 
     // Slow path — load from disk.
     let (library, language) = load_from_disk(lang)?;
-    cache.push((lang, LoadedGrammar { library, language }));
-    Ok(cache.last().unwrap().1.language.clone())
+    let language_clone = language.clone();
+    cache.push((
+        lang,
+        LoadedGrammar {
+            _library: library,
+            language,
+        },
+    ));
+    Ok(language_clone)
 }
 
 /// Construct the path to the compiled grammar shared library.

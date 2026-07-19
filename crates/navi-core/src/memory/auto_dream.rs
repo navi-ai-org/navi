@@ -40,19 +40,20 @@ const DREAM_LOCK_FILE: &str = "dream.lock";
 static HELD_LOCKS: Mutex<Option<HashSet<PathBuf>>> = Mutex::new(None);
 
 fn is_lock_held(lock_path: &Path) -> bool {
-    let mut guard = HELD_LOCKS.lock().unwrap();
+    // Recover from poison: lock-tracking state is non-critical; prefer progress.
+    let mut guard = HELD_LOCKS.lock().unwrap_or_else(|e| e.into_inner());
     let set = guard.get_or_insert_with(HashSet::new);
     set.contains(lock_path)
 }
 
 fn mark_lock_held(lock_path: PathBuf) {
-    let mut guard = HELD_LOCKS.lock().unwrap();
+    let mut guard = HELD_LOCKS.lock().unwrap_or_else(|e| e.into_inner());
     let set = guard.get_or_insert_with(HashSet::new);
     set.insert(lock_path);
 }
 
 fn mark_lock_released(lock_path: &Path) {
-    let mut guard = HELD_LOCKS.lock().unwrap();
+    let mut guard = HELD_LOCKS.lock().unwrap_or_else(|e| e.into_inner());
     if let Some(set) = guard.as_mut() {
         set.remove(lock_path);
     }
@@ -112,7 +113,12 @@ impl AutoDreamState {
             .unwrap_or(0);
         if let Some(parent) = self.last_dream_path().parent() {
             if !parent.exists() {
-                fs::create_dir_all(parent)?;
+                fs::create_dir_all(parent).with_context(|| {
+                    format!(
+                        "Failed to create memory root for last_dream_at: {:?}",
+                        parent
+                    )
+                })?;
             }
         }
         fs::write(self.last_dream_path(), now.to_string()).with_context(|| {

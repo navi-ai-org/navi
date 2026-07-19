@@ -20,17 +20,6 @@ use crate::view::terminal_graphics::{self, lightbox_cells};
 /// the user can move onto the image without the preview vanishing mid-path.
 pub(crate) const IMAGE_HOVER_CLOSE_GRACE: Duration = Duration::from_millis(180);
 
-/// Height of the legacy attachment strip (kept for layout callers that still reserve space).
-#[allow(dead_code)]
-pub(crate) const IMAGE_PREVIEW_HEIGHT: u16 = 0;
-
-/// Composer strip is no longer used — images show as `[Image N]` chips in the input.
-#[allow(dead_code)]
-pub(crate) fn render_image_previews(frame: &mut Frame<'_>, app: &mut TuiApp, area: Rect) -> Rect {
-    let _ = (frame, app);
-    Rect { height: 0, ..area }
-}
-
 /// Floating hover modal for an `[Image N]` chip (composer or chat).
 ///
 /// - **Kitty / Sixel / iTerm2:** large lightbox (~90%×80% of the content area)

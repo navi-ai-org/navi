@@ -134,7 +134,8 @@ const TEST_SIGNING_KEY_BYTES: [u8; 32] = [0x42; 32];
 /// Sign a manifest with the deterministic test key.
 pub fn sign_plugin_manifest_for_tests(manifest: &mut PluginManifest, wasm_bytes: &[u8]) {
     let signing_key = SigningKey::from_bytes(&TEST_SIGNING_KEY_BYTES);
-    sign_plugin_manifest(manifest, wasm_bytes, &signing_key);
+    // Test helper: hashes from compute_* always form a valid bundle.
+    sign_plugin_manifest(manifest, wasm_bytes, &signing_key).expect("sign plugin for tests");
 }
 
 /// Sign a manifest and populate `wasm_hash`, `public_key`, and `signature`.
@@ -142,7 +143,7 @@ pub fn sign_plugin_manifest(
     manifest: &mut PluginManifest,
     wasm_bytes: &[u8],
     signing_key: &SigningKey,
-) {
+) -> Result<(), String> {
     manifest.plugin.wasm_hash = compute_wasm_hash(wasm_bytes);
     let capabilities_hash = capabilities_hash_from_manifest(manifest);
     let tools_hash = tools_hash_from_manifest(manifest);
@@ -153,11 +154,11 @@ pub fn sign_plugin_manifest(
         BASE64.encode(verifying_key.to_bytes())
     ));
 
-    let message = hash_bundle_message(&manifest.plugin.wasm_hash, &capabilities_hash, &tools_hash)
-        .expect("valid hashes for signing");
+    let message = hash_bundle_message(&manifest.plugin.wasm_hash, &capabilities_hash, &tools_hash)?;
 
     let signature = signing_key.sign(&message);
     manifest.plugin.signature = format!("ed25519:{}", BASE64.encode(signature.to_bytes()));
+    Ok(())
 }
 
 fn hash_bundle_message(
@@ -327,7 +328,7 @@ mod tests {
             tools: vec![],
         };
         let (signing_key, _) = generate_keypair();
-        sign_plugin_manifest(&mut manifest, wasm, &signing_key);
+        sign_plugin_manifest(&mut manifest, wasm, &signing_key).unwrap();
         verify_plugin_signature(&manifest, wasm, TrustLevel::Community).unwrap();
     }
 

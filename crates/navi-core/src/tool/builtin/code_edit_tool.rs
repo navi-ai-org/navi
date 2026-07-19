@@ -208,7 +208,9 @@ fn resolve_unique_symbol_target(policy: &SecurityPolicy, selector: &str) -> Resu
     match matches.len() {
         0 => bail!("symbol `{selector}` not found in project; pass `path` to code_edit"),
         1 => {
-            let (path, source, _) = matches.pop().expect("one match");
+            let (path, source, _) = matches
+                .pop()
+                .context("internal error: expected exactly one symbol match")?;
             Ok(SymbolTarget { path, source })
         }
         _ => {
