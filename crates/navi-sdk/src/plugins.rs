@@ -84,10 +84,15 @@ impl NaviEngine {
         }
         let lock = Lockfile::load(&aggregate_lockfile_path(&plugin_dir)).unwrap_or_default();
         let mut out = Vec::new();
-        for entry in fs::read_dir(&plugin_dir)
-            .map_err(|e| NaviError::Config(format!("read plugins dir: {e}")))?
-        {
-            let entry = entry.map_err(|e| NaviError::Config(e.to_string()))?;
+        for entry in fs::read_dir(&plugin_dir).map_err(|e| {
+            NaviError::Config(format!("read plugins dir {}: {e}", plugin_dir.display()))
+        })? {
+            let entry = entry.map_err(|e| {
+                NaviError::Config(format!(
+                    "read plugins dir entry under {}: {e}",
+                    plugin_dir.display()
+                ))
+            })?;
             let path = entry.path();
             if !path.is_dir() {
                 continue;
@@ -96,8 +101,12 @@ impl NaviEngine {
             if !manifest_path.is_file() {
                 continue;
             }
-            let content =
-                fs::read_to_string(&manifest_path).map_err(|e| NaviError::Config(e.to_string()))?;
+            let content = fs::read_to_string(&manifest_path).map_err(|e| {
+                NaviError::Config(format!(
+                    "read plugin manifest {}: {e}",
+                    manifest_path.display()
+                ))
+            })?;
             if let Ok(manifest) = parse_manifest(&content) {
                 let lock_meta = lock.find(&manifest.plugin.id);
                 out.push(PluginInfo {
@@ -129,9 +138,14 @@ impl NaviEngine {
         if !manifest_path.is_file() {
             return Err(NaviError::Config(format!("plugin '{plugin_id}' not found")));
         }
-        let content =
-            fs::read_to_string(&manifest_path).map_err(|e| NaviError::Config(e.to_string()))?;
-        let manifest = parse_manifest(&content).map_err(|e| NaviError::Config(e.to_string()))?;
+        let content = fs::read_to_string(&manifest_path).map_err(|e| {
+            NaviError::Config(format!(
+                "read plugin manifest {}: {e}",
+                manifest_path.display()
+            ))
+        })?;
+        let manifest = parse_manifest(&content)
+            .map_err(|e| NaviError::Config(format!("parse plugin.toml for '{plugin_id}': {e}")))?;
         let plugins_root = installed_plugins_dir(&loaded.data_dir);
         let lock = Lockfile::load(&aggregate_lockfile_path(&plugins_root)).unwrap_or_default();
         let lock_meta = lock.find(&manifest.plugin.id);
@@ -157,7 +171,7 @@ impl NaviEngine {
         let registry = self.plugin_registry_url();
         let catalog = navi_plugin_manifest::fetch_catalog(&registry)
             .await
-            .map_err(|e| NaviError::Config(e.to_string()))?;
+            .map_err(|e| NaviError::Config(format!("fetch plugin marketplace catalog: {e}")))?;
         let hits = search_catalog(&catalog, query.unwrap_or(""));
         Ok(hits
             .into_iter()
@@ -235,14 +249,17 @@ impl NaviEngine {
         let registry = self.plugin_registry_url();
         let catalog = navi_plugin_manifest::fetch_catalog(&registry)
             .await
-            .map_err(|e| NaviError::Config(e.to_string()))?;
-        let entry = navi_plugin_manifest::find_catalog_entry(&catalog, plugin_id)
-            .map_err(|e| NaviError::Config(e.to_string()))?;
+            .map_err(|e| NaviError::Config(format!("fetch plugin marketplace catalog: {e}")))?;
+        let entry = navi_plugin_manifest::find_catalog_entry(&catalog, plugin_id).map_err(|e| {
+            NaviError::Config(format!("find marketplace plugin '{plugin_id}': {e}"))
+        })?;
         let kind = entry.kind;
         let staging = navi_plugin_manifest::plugin_staging_dir(&loaded.data_dir, plugin_id);
         navi_plugin_manifest::stage_plugin_from_catalog(&registry, entry, &staging)
             .await
-            .map_err(|e| NaviError::Config(e.to_string()))?;
+            .map_err(|e| {
+                NaviError::Config(format!("stage marketplace plugin '{plugin_id}': {e}"))
+            })?;
         self.plugin_install_path_with_meta(&staging, true, TrustLevel::Community, kind)
     }
 
@@ -258,9 +275,19 @@ impl NaviEngine {
         let lockfile = Lockfile::load(&aggregate_lockfile_path(&plugins_root)).unwrap_or_default();
         // Peek id from manifest path before full validate (trust from existing lock entry).
         let peek = {
-            let content = fs::read_to_string(path.join("plugin.toml"))
-                .map_err(|e| NaviError::Config(e.to_string()))?;
-            parse_manifest(&content).map_err(|e| NaviError::Config(e.to_string()))?
+            let manifest_path = path.join("plugin.toml");
+            let content = fs::read_to_string(&manifest_path).map_err(|e| {
+                NaviError::Config(format!(
+                    "read plugin manifest {}: {e}",
+                    manifest_path.display()
+                ))
+            })?;
+            parse_manifest(&content).map_err(|e| {
+                NaviError::Config(format!(
+                    "parse plugin.toml at {}: {e}",
+                    manifest_path.display()
+                ))
+            })?
         };
         let old_entry = lockfile.find(&peek.plugin.id).cloned();
         let trust = old_entry
@@ -282,10 +309,17 @@ impl NaviEngine {
         }
 
         let old_manifest_path = installed_dir.join("plugin.toml");
-        let old_content =
-            fs::read_to_string(&old_manifest_path).map_err(|e| NaviError::Config(e.to_string()))?;
-        let old_manifest =
-            parse_manifest(&old_content).map_err(|e| NaviError::Config(e.to_string()))?;
+        let old_content = fs::read_to_string(&old_manifest_path).map_err(|e| {
+            NaviError::Config(format!(
+                "read installed plugin manifest {}: {e}",
+                old_manifest_path.display()
+            ))
+        })?;
+        let old_manifest = parse_manifest(&old_content).map_err(|e| {
+            NaviError::Config(format!(
+                "parse installed plugin.toml for '{plugin_id}': {e}"
+            ))
+        })?;
         let old_entry = old_entry.ok_or_else(|| {
             NaviError::Config(format!(
                 "plugin '{plugin_id}' has no lockfile entry; reinstall"
@@ -344,14 +378,19 @@ impl NaviEngine {
         let registry = self.plugin_registry_url();
         let catalog = navi_plugin_manifest::fetch_catalog(&registry)
             .await
-            .map_err(|e| NaviError::Config(e.to_string()))?;
-        let entry = navi_plugin_manifest::find_catalog_entry(&catalog, plugin_id)
-            .map_err(|e| NaviError::Config(e.to_string()))?;
+            .map_err(|e| NaviError::Config(format!("fetch plugin marketplace catalog: {e}")))?;
+        let entry = navi_plugin_manifest::find_catalog_entry(&catalog, plugin_id).map_err(|e| {
+            NaviError::Config(format!("find marketplace plugin '{plugin_id}': {e}"))
+        })?;
         let kind = entry.kind;
         let staging = navi_plugin_manifest::plugin_staging_dir(&loaded.data_dir, plugin_id);
         navi_plugin_manifest::stage_plugin_from_catalog(&registry, entry, &staging)
             .await
-            .map_err(|e| NaviError::Config(e.to_string()))?;
+            .map_err(|e| {
+                NaviError::Config(format!(
+                    "stage marketplace plugin '{plugin_id}' for update: {e}"
+                ))
+            })?;
         let mut result = self.plugin_update_path(&staging, force, confirm)?;
         // Marketplace updates keep Community trust and catalog kind.
         result.kind = catalog_kind_label(kind).to_string();
@@ -411,11 +450,20 @@ fn load_and_validate_manifest(
             path.display()
         )));
     }
-    let manifest_content =
-        fs::read_to_string(&manifest_path).map_err(|e| NaviError::Config(e.to_string()))?;
-    let manifest =
-        parse_manifest(&manifest_content).map_err(|e| NaviError::Config(e.to_string()))?;
-    validate(&manifest, trust).map_err(|e| NaviError::Config(e.to_string()))?;
+    let manifest_content = fs::read_to_string(&manifest_path).map_err(|e| {
+        NaviError::Config(format!(
+            "read plugin manifest {}: {e}",
+            manifest_path.display()
+        ))
+    })?;
+    let manifest = parse_manifest(&manifest_content).map_err(|e| {
+        NaviError::Config(format!(
+            "parse plugin.toml at {}: {e}",
+            manifest_path.display()
+        ))
+    })?;
+    validate(&manifest, trust)
+        .map_err(|e| NaviError::Config(format!("validate plugin at {}: {e}", path.display())))?;
     let wasm_path = path.join(&manifest.plugin.entry);
     if !wasm_path.exists() {
         return Err(NaviError::Config(format!(
@@ -423,7 +471,8 @@ fn load_and_validate_manifest(
             wasm_path.display()
         )));
     }
-    let wasm_bytes = fs::read(&wasm_path).map_err(|e| NaviError::Config(e.to_string()))?;
+    let wasm_bytes = fs::read(&wasm_path)
+        .map_err(|e| NaviError::Config(format!("read WASM binary {}: {e}", wasm_path.display())))?;
     let actual_hash = compute_wasm_hash(&wasm_bytes);
     if actual_hash != manifest.plugin.wasm_hash {
         return Err(NaviError::Config(format!(
@@ -446,8 +495,13 @@ fn install_files(
         fs::remove_dir_all(&plugin_dir)
             .map_err(|e| NaviError::Config(format!("remove existing plugin: {e}")))?;
     }
-    copy_dir_recursive(source_path, &plugin_dir)
-        .map_err(|e| NaviError::Config(format!("copy plugin: {e}")))?;
+    copy_dir_recursive(source_path, &plugin_dir).map_err(|e| {
+        NaviError::Config(format!(
+            "copy plugin from {} to {}: {e}",
+            source_path.display(),
+            plugin_dir.display()
+        ))
+    })?;
     Ok(plugin_dir)
 }
 

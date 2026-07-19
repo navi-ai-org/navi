@@ -2211,7 +2211,10 @@ fn mermaid_line_spans(raw_line: &str) -> Vec<Span<'static>> {
             .map(|c| c.len_utf8())
             .sum::<usize>();
         if token_len == 0 {
-            let ch = rest.chars().next().unwrap();
+            // `rest` is non-empty (loop guard) and has no alnum/_/- prefix token.
+            let Some(ch) = rest.chars().next() else {
+                break;
+            };
             let w = ch.len_utf8();
             spans.push(Span::styled(
                 rest[..w].to_string(),

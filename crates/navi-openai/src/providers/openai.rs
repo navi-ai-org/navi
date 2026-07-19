@@ -356,13 +356,14 @@ fn parse_tool_arguments(arguments: &str) -> Value {
 /// Developer context blocks are mapped to `system` for OpenAI-compat providers
 /// that only accept classic roles.
 pub(crate) fn chat_completions_messages(request: &ModelRequest) -> Vec<Value> {
-    let has_instructions = request.instructions.as_ref().is_some_and(|s| !s.is_empty());
+    let instructions = request.instructions.as_ref().filter(|s| !s.is_empty());
+    let has_instructions = instructions.is_some();
     let mut messages_json: Vec<Value> =
         Vec::with_capacity(request.messages.len().saturating_add(1));
-    if has_instructions {
+    if let Some(content) = instructions {
         messages_json.push(json!({
             "role": "system",
-            "content": request.instructions.as_ref().expect("checked above"),
+            "content": content,
         }));
     }
     for message in &request.messages {

@@ -4,14 +4,16 @@ use regex::Regex;
 use std::collections::HashSet;
 use std::sync::LazyLock;
 
+// Compile-time-constant patterns: Regex::new only fails on invalid syntax, which
+// these static patterns do not have. Panic-on-init is intentional (fail fast).
 static ID_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^[a-z0-9][a-z0-9\-_]{1,63}$").unwrap());
+    LazyLock::new(|| Regex::new(r"^[a-z0-9][a-z0-9\-_]{1,63}$").expect("valid ID_RE"));
 
 static CAP_ID_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^[a-z0-9][a-z0-9\-_]*$").unwrap());
+    LazyLock::new(|| Regex::new(r"^[a-z0-9][a-z0-9\-_]*$").expect("valid CAP_ID_RE"));
 
 static TOOL_ID_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^[a-z0-9][a-z0-9\-_]*$").unwrap());
+    LazyLock::new(|| Regex::new(r"^[a-z0-9][a-z0-9\-_]*$").expect("valid TOOL_ID_RE"));
 
 /// Validate a manifest against all rules.
 /// Trust level determines which rules apply.

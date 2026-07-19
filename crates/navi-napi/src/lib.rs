@@ -12,6 +12,9 @@ use napi_derive::napi;
 fn runtime() -> &'static tokio::runtime::Runtime {
     static RT: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
     RT.get_or_init(|| {
+        // Invariant: the N-API module cannot operate without a Tokio reactor.
+        // `Runtime::new` only fails on OS resource exhaustion (threads/FDs), which is
+        // unrecoverable here — `OnceLock::get_or_init` cannot propagate `Result`.
         tokio::runtime::Runtime::new().expect("failed to create Tokio runtime for navi-napi")
     })
 }

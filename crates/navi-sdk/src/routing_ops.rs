@@ -81,7 +81,12 @@ impl NaviEngine {
             "audio" => loaded.config.attachment_models.audio = Some(entry),
             "video" => loaded.config.attachment_models.video = Some(entry),
             "document" => loaded.config.attachment_models.document = Some(entry),
-            _ => unreachable!(),
+            // Invariant: `normalize_modality` only returns keys handled above.
+            other => {
+                return Err(NaviError::Config(format!(
+                    "internal error: unexpected attachment modality '{other}'"
+                )));
+            }
         }
         let saved = self.save_loaded_config(&loaded, save_target)?;
         self.replace_loaded_config(loaded);
@@ -101,7 +106,12 @@ impl NaviEngine {
             "audio" => loaded.config.attachment_models.audio = None,
             "video" => loaded.config.attachment_models.video = None,
             "document" => loaded.config.attachment_models.document = None,
-            _ => unreachable!(),
+            // Invariant: `normalize_modality` only returns keys handled above.
+            other => {
+                return Err(NaviError::Config(format!(
+                    "internal error: unexpected attachment modality '{other}'"
+                )));
+            }
         }
         let saved = self.save_loaded_config(&loaded, save_target)?;
         self.replace_loaded_config(loaded);
@@ -146,7 +156,12 @@ impl NaviEngine {
             "subagent_research" => loaded.config.background_models.subagent_research = Some(entry),
             "simple_code_edit" => loaded.config.background_models.simple_code_edit = Some(entry),
             "default" => loaded.config.background_models.default = Some(entry),
-            _ => unreachable!(),
+            // Invariant: `normalize_bg_task` only returns keys handled above.
+            other => {
+                return Err(NaviError::Config(format!(
+                    "internal error: unexpected background task '{other}'"
+                )));
+            }
         }
         let saved = self.save_loaded_config(&loaded, save_target)?;
         self.replace_loaded_config(loaded);
@@ -169,7 +184,12 @@ impl NaviEngine {
             "subagent_research" => loaded.config.background_models.subagent_research = None,
             "simple_code_edit" => loaded.config.background_models.simple_code_edit = None,
             "default" => loaded.config.background_models.default = None,
-            _ => unreachable!(),
+            // Invariant: `normalize_bg_task` only returns keys handled above.
+            other => {
+                return Err(NaviError::Config(format!(
+                    "internal error: unexpected background task '{other}'"
+                )));
+            }
         }
         let saved = self.save_loaded_config(&loaded, save_target)?;
         self.replace_loaded_config(loaded);

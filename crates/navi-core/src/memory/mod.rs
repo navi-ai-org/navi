@@ -33,7 +33,7 @@ pub use memory_store::{MemoryStore, write_atomic};
 pub use rebuild_context::build_rebuild_context;
 pub use schemas::SessionCheckpoint;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use std::path::PathBuf;
 
 /// Orchestrates the memory system components (SQLite stores + history).
@@ -53,17 +53,31 @@ impl MemoryManager {
         config: &crate::config::MemoryConfig,
     ) -> Result<Self> {
         let store = MemoryStore::new(project_dir, data_dir.clone(), &config.root);
-        store.ensure_initialized()?;
+        store
+            .ensure_initialized()
+            .context("Failed to initialize memory store")?;
 
         let resolved_sqlite_path =
             memory_store::resolve_memory_path(&config.history.sqlite_path, &store.memory_root);
-        let history = HistoryStore::new(&resolved_sqlite_path)?;
+        let history = HistoryStore::new(&resolved_sqlite_path).with_context(|| {
+            format!("Failed to open history store at {:?}", resolved_sqlite_path)
+        })?;
 
         let auto_memory_db = store.memory_root.join("memories.db");
-        let auto_memory = AutoMemoryStore::open(&auto_memory_db)?;
+        let auto_memory = AutoMemoryStore::open(&auto_memory_db).with_context(|| {
+            format!(
+                "Failed to open auto-memory database at {:?}",
+                auto_memory_db
+            )
+        })?;
 
         let global_memory_db = data_dir.join("memory").join("global-memory.db");
-        let global_memory = GlobalMemoryStore::open(&global_memory_db)?;
+        let global_memory = GlobalMemoryStore::open(&global_memory_db).with_context(|| {
+            format!(
+                "Failed to open global memory database at {:?}",
+                global_memory_db
+            )
+        })?;
 
         Ok(Self {
             store,

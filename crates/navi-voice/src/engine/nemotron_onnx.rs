@@ -352,7 +352,7 @@ impl NemotronOnnxEngine {
 fn extract_3d_f32(value: &ort::value::DynValue) -> Result<Array3<f32>> {
     let (shape, data) = value
         .try_extract_tensor::<f32>()
-        .map_err(|e| anyhow::anyhow!("{e}"))?;
+        .map_err(|e| anyhow::anyhow!("extract 3D f32 tensor: {e}"))?;
     let dims = shape.as_ref();
     if dims.len() != 3 {
         bail!("expected 3D tensor, got {dims:?}");
@@ -367,7 +367,7 @@ fn extract_3d_f32(value: &ort::value::DynValue) -> Result<Array3<f32>> {
 fn extract_4d_f32(value: &ort::value::DynValue) -> Result<Array4<f32>> {
     let (shape, data) = value
         .try_extract_tensor::<f32>()
-        .map_err(|e| anyhow::anyhow!("{e}"))?;
+        .map_err(|e| anyhow::anyhow!("extract 4D f32 tensor: {e}"))?;
     let dims = shape.as_ref();
     if dims.len() != 4 {
         bail!("expected 4D tensor, got {dims:?}");
@@ -387,14 +387,14 @@ fn extract_4d_f32(value: &ort::value::DynValue) -> Result<Array4<f32>> {
 fn extract_1d_i64(value: &ort::value::DynValue) -> Result<Array1<i64>> {
     let (_shape, data) = value
         .try_extract_tensor::<i64>()
-        .map_err(|e| anyhow::anyhow!("{e}"))?;
+        .map_err(|e| anyhow::anyhow!("extract 1D i64 tensor: {e}"))?;
     Ok(Array1::from_vec(data.to_vec()))
 }
 
 fn extract_scalar_i64(value: &ort::value::DynValue) -> Result<i64> {
     let (_shape, data) = value
         .try_extract_tensor::<i64>()
-        .map_err(|e| anyhow::anyhow!("{e}"))?;
+        .map_err(|e| anyhow::anyhow!("extract scalar i64 tensor: {e}"))?;
     data.first().copied().context("empty i64 tensor")
 }
 

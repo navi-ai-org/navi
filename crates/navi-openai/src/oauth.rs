@@ -1629,7 +1629,7 @@ async fn commandcode_get_json(
     let url = format!("{}{}", commandcode_api_base_url(), endpoint);
     let response = client
         .get(url)
-        .headers(commandcode_headers(api_key))
+        .headers(commandcode_headers(api_key)?)
         .send()
         .await
         .map_err(|err| err.to_string())?;
@@ -1641,13 +1641,14 @@ async fn commandcode_get_json(
     response.json().await.map_err(|err| err.to_string())
 }
 
-fn commandcode_headers(api_key: &str) -> reqwest::header::HeaderMap {
+fn commandcode_headers(api_key: &str) -> std::result::Result<reqwest::header::HeaderMap, String> {
     use reqwest::header::{AUTHORIZATION, CONTENT_TYPE, HeaderMap, HeaderValue, USER_AGENT};
 
     let mut headers = HeaderMap::new();
     headers.insert(
         AUTHORIZATION,
-        HeaderValue::from_str(&format!("Bearer {api_key}")).expect("valid auth header"),
+        HeaderValue::from_str(&format!("Bearer {api_key}"))
+            .map_err(|err| format!("invalid commandcode auth header: {err}"))?,
     );
     headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
     headers.insert(
@@ -1658,7 +1659,7 @@ fn commandcode_headers(api_key: &str) -> reqwest::header::HeaderMap {
         "x-command-code-version",
         HeaderValue::from_static(COMMANDCODE_CLI_VERSION),
     );
-    headers
+    Ok(headers)
 }
 
 fn commandcode_endpoint_with_params(

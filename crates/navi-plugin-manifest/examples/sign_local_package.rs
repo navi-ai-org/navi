@@ -12,20 +12,23 @@ use navi_plugin_manifest::{
 use std::env;
 use std::fs;
 use std::path::PathBuf;
+use std::process::ExitCode;
 
-fn main() {
+fn run() -> Result<(), String> {
     let dir = PathBuf::from(
         env::args()
             .nth(1)
-            .expect("usage: sign_local_package <plugin-dir>"),
+            .ok_or_else(|| "usage: sign_local_package <plugin-dir>".to_string())?,
     );
     let wasm_path = dir.join("plugin.wasm");
-    let wasm = fs::read(&wasm_path).expect("read plugin.wasm");
+    let wasm = fs::read(&wasm_path)
+        .map_err(|e| format!("read plugin.wasm at {}: {e}", wasm_path.display()))?;
     let toml_path = dir.join("plugin.toml");
 
     let mut manifest = if toml_path.is_file() {
-        let content = fs::read_to_string(&toml_path).expect("read plugin.toml");
-        parse_manifest(&content).expect("parse plugin.toml")
+        let content = fs::read_to_string(&toml_path)
+            .map_err(|e| format!("read plugin.toml at {}: {e}", toml_path.display()))?;
+        parse_manifest(&content).map_err(|e| format!("parse plugin.toml: {e}"))?
     } else {
         PluginManifest {
             plugin: PluginMeta {
@@ -55,11 +58,24 @@ fn main() {
     };
 
     sign_plugin_manifest_for_tests(&mut manifest, &wasm);
-    let out = toml::to_string_pretty(&manifest).expect("serialize");
-    fs::write(&toml_path, out).expect("write plugin.toml");
+    let out =
+        toml::to_string_pretty(&manifest).map_err(|e| format!("serialize signed manifest: {e}"))?;
+    fs::write(&toml_path, out)
+        .map_err(|e| format!("write plugin.toml at {}: {e}", toml_path.display()))?;
     println!(
         "signed {} (hash={})",
         toml_path.display(),
         manifest.plugin.wasm_hash
     );
+    Ok(())
+}
+
+fn main() -> ExitCode {
+    match run() {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(err) => {
+            eprintln!("error: {err}");
+            ExitCode::FAILURE
+        }
+    }
 }

@@ -202,7 +202,10 @@ pub fn resolve_symbol(path: &Path, source: &str, selector: &str) -> Result<CodeS
         .collect::<Vec<_>>();
     match matches.len() {
         0 => bail!("symbol `{selector}` not found"),
-        1 => Ok(matches.into_iter().next().expect("one match")),
+        1 => Ok(matches
+            .into_iter()
+            .next()
+            .context("internal error: expected exactly one symbol match")?),
         _ => bail!(
             "symbol `{selector}` is ambiguous; use a symbol id from symbols_overview/find_symbol"
         ),

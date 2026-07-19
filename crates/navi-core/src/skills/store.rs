@@ -24,8 +24,10 @@ impl SkillStore {
         let path = data_dir.join("skills.sqlite");
         let conn = Connection::open(&path)
             .with_context(|| format!("failed to open skill store at {}", path.display()))?;
-        conn.pragma_update(None, "journal_mode", "WAL")?;
-        conn.pragma_update(None, "foreign_keys", "ON")?;
+        conn.pragma_update(None, "journal_mode", "WAL")
+            .context("set skills.sqlite journal_mode=WAL")?;
+        conn.pragma_update(None, "foreign_keys", "ON")
+            .context("enable skills.sqlite foreign_keys")?;
         let store = Self {
             conn: Mutex::new(conn),
             path,
@@ -74,7 +76,8 @@ impl SkillStore {
             CREATE INDEX IF NOT EXISTS idx_skills_scope ON skills(scope);
             CREATE INDEX IF NOT EXISTS idx_skills_project ON skills(project_key);
             "#,
-        )?;
+        )
+        .context("init skills.sqlite schema")?;
         Ok(())
     }
 

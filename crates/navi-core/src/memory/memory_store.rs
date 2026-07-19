@@ -152,7 +152,8 @@ impl MemoryStore {
     /// Initializes the memory root directory if it does not exist.
     pub fn ensure_initialized(&self) -> Result<()> {
         if !self.memory_root.exists() {
-            fs::create_dir_all(&self.memory_root)?;
+            fs::create_dir_all(&self.memory_root)
+                .with_context(|| format!("Failed to create memory root: {:?}", self.memory_root))?;
         }
         Ok(())
     }

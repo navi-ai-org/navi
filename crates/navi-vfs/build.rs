@@ -111,7 +111,8 @@ const GRAMMARS: &[Grammar] = &[
 ];
 
 fn main() {
-    let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
+    // OUT_DIR is always set by Cargo when invoking build scripts.
+    let out_dir = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR is set by Cargo"));
     let cargo_home = cargo_home();
 
     // Ensure build-deps pull sources into the registry before we compile them.

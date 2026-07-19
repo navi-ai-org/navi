@@ -411,7 +411,9 @@ pub async fn run_distill_maintenance(
                 .unwrap_or(std::path::Path::new("."))
                 .join("sops");
             if !sops_dir.exists() {
-                std::fs::create_dir_all(&sops_dir)?;
+                std::fs::create_dir_all(&sops_dir).with_context(|| {
+                    format!("Failed to create SOPs directory: {}", sops_dir.display())
+                })?;
             }
             // Append timestamp to filename to avoid concurrent write collisions
             let timestamp = SystemTime::now()
@@ -424,7 +426,8 @@ pub async fn run_distill_maintenance(
                 format!("{}_{}", filename, timestamp)
             };
             let sop_path = sops_dir.join(safe_name);
-            crate::memory::memory_store::write_atomic(&sop_path, &content)?;
+            crate::memory::memory_store::write_atomic(&sop_path, &content)
+                .with_context(|| format!("Failed to write SOP artifact: {}", sop_path.display()))?;
         }
     }
 

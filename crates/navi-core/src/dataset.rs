@@ -3,6 +3,7 @@
 use crate::eval::{EvalCase, eval_case_from_trace};
 use crate::security::redact_secrets;
 use crate::trace::{TurnOutcome, TurnTrace};
+use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -118,11 +119,12 @@ pub fn traces_to_eval_candidates(traces: &[TurnTrace]) -> Vec<EvalCase> {
     traces.iter().filter_map(eval_case_from_trace).collect()
 }
 
-pub fn export_jsonl(rows: &[DatasetRow]) -> String {
-    rows.iter()
-        .map(|row| serde_json::to_string(row).expect("dataset row serializes"))
-        .collect::<Vec<_>>()
-        .join("\n")
+pub fn export_jsonl(rows: &[DatasetRow]) -> Result<String> {
+    let mut lines = Vec::with_capacity(rows.len());
+    for row in rows {
+        lines.push(serde_json::to_string(row).context("failed to serialize dataset row to JSON")?);
+    }
+    Ok(lines.join("\n"))
 }
 
 fn outcome_label(outcome: &TurnOutcome) -> String {
@@ -144,7 +146,7 @@ mod tests {
         trace.outcome = TurnOutcome::Failed("no".to_string());
 
         let rows = trace_to_dataset_rows(&trace);
-        let jsonl = export_jsonl(&rows);
+        let jsonl = export_jsonl(&rows).expect("export");
 
         assert!(!jsonl.contains("sk-1234567890"));
         assert!(jsonl.contains("negative_example"));

@@ -134,8 +134,7 @@ pub struct SubagentTool {
     config: Arc<RwLock<NaviConfig>>,
     /// Kept for constructor API stability. Nested turns use a fresh cache so
     /// parent session prefix-cache keys are not poisoned by subagent prompts.
-    #[allow(dead_code)]
-    prompt_cache: Arc<PromptCache>,
+    _prompt_cache: Arc<PromptCache>,
     components: RuntimeComponents,
     background_tasks: tokio::sync::Mutex<HashMap<String, Arc<SubagentBackgroundTask>>>,
     next_task_id: AtomicU64,
@@ -167,7 +166,7 @@ impl SubagentTool {
             model_name,
             harness_config,
             config,
-            prompt_cache,
+            _prompt_cache: prompt_cache,
             components,
             background_tasks: tokio::sync::Mutex::new(HashMap::new()),
             next_task_id: AtomicU64::new(1),

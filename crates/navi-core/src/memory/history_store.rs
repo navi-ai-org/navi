@@ -24,7 +24,9 @@ impl HistoryStore {
     pub fn new(db_path: &Path) -> Result<Self> {
         if let Some(parent) = db_path.parent() {
             if !parent.exists() {
-                std::fs::create_dir_all(parent)?;
+                std::fs::create_dir_all(parent).with_context(|| {
+                    format!("Failed to create history-store directory: {:?}", parent)
+                })?;
             }
         }
 
@@ -42,7 +44,10 @@ impl HistoryStore {
     }
 
     fn init_schema(&self) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| anyhow::anyhow!("history-store lock poisoned: {e}"))?;
 
         conn.execute(
             "CREATE TABLE IF NOT EXISTS sessions (
@@ -110,7 +115,10 @@ impl HistoryStore {
 
     /// Logs a session start.
     pub fn record_session_start(&self, session_id: &str, project_id: &str) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| anyhow::anyhow!("history-store lock poisoned: {e}"))?;
         let now = self.get_now_rfc3339();
         conn.execute(
             "INSERT OR IGNORE INTO sessions (id, project_id, started_at, metadata_json)
@@ -122,7 +130,10 @@ impl HistoryStore {
 
     /// Logs a session end.
     pub fn record_session_end(&self, session_id: &str) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| anyhow::anyhow!("history-store lock poisoned: {e}"))?;
         let now = self.get_now_rfc3339();
         conn.execute(
             "UPDATE sessions SET ended_at = ?2 WHERE id = ?1",
@@ -133,7 +144,10 @@ impl HistoryStore {
 
     /// Gets count of events for a session and event type.
     pub fn get_event_count(&self, session_id: &str, event_type: &str) -> Result<i64> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| anyhow::anyhow!("history-store lock poisoned: {e}"))?;
         let count: i64 = conn.query_row(
             "SELECT COUNT(id) FROM events WHERE session_id = ?1 AND event_type = ?2",
             params![session_id, event_type],
@@ -144,7 +158,10 @@ impl HistoryStore {
 
     /// Gets count of checkpoints for a session.
     pub fn get_checkpoint_count(&self, session_id: &str) -> Result<i64> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| anyhow::anyhow!("history-store lock poisoned: {e}"))?;
         let count: i64 = conn.query_row(
             "SELECT COUNT(id) FROM checkpoints WHERE session_id = ?1",
             params![session_id],
@@ -155,7 +172,10 @@ impl HistoryStore {
 
     /// Gets count of rebuilds for a session.
     pub fn get_rebuild_count(&self, session_id: &str) -> Result<i64> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| anyhow::anyhow!("history-store lock poisoned: {e}"))?;
         let count: i64 = conn.query_row(
             "SELECT COUNT(id) FROM rebuilds WHERE session_id = ?1",
             params![session_id],
@@ -166,7 +186,10 @@ impl HistoryStore {
 
     /// Gets the timestamp of the last checkpoint for a session.
     pub fn get_last_checkpoint_time(&self, session_id: &str) -> Result<Option<String>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| anyhow::anyhow!("history-store lock poisoned: {e}"))?;
         let mut stmt = conn.prepare(
             "SELECT created_at FROM checkpoints WHERE session_id = ?1 ORDER BY id DESC LIMIT 1",
         )?;
@@ -192,7 +215,10 @@ impl HistoryStore {
         token_estimate: Option<i64>,
         metadata: Option<&serde_json::Value>,
     ) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| anyhow::anyhow!("history-store lock poisoned: {e}"))?;
         let now = self.get_now_rfc3339();
 
         // Compute sequence
@@ -240,7 +266,10 @@ impl HistoryStore {
         utilization: f64,
         checkpoint_path: &str,
     ) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| anyhow::anyhow!("history-store lock poisoned: {e}"))?;
         let now = self.get_now_rfc3339();
         conn.execute(
             "INSERT INTO checkpoints (session_id, checkpoint_number, utilization, checkpoint_path, created_at, metadata_json)
@@ -258,7 +287,10 @@ impl HistoryStore {
         new_cycle: i64,
         injected_context: &str,
     ) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| anyhow::anyhow!("history-store lock poisoned: {e}"))?;
         let now = self.get_now_rfc3339();
         let injected_redacted = crate::security::redact_secrets(injected_context);
         conn.execute(
@@ -276,7 +308,10 @@ impl HistoryStore {
         session_id: Option<&str>,
         limit: Option<i64>,
     ) -> Result<Vec<HistoryEvent>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| anyhow::anyhow!("history-store lock poisoned: {e}"))?;
         let limit_val = limit.unwrap_or(50);
         let like_query = format!("%{}%", query);
 
@@ -326,7 +361,10 @@ impl HistoryStore {
         session_id: &str,
         limit: Option<i64>,
     ) -> Result<Vec<HistoryEvent>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| anyhow::anyhow!("history-store lock poisoned: {e}"))?;
         let limit_val = limit.unwrap_or(50);
         let mut stmt = conn.prepare(
             "SELECT id, session_id, sequence, event_type, role, content, tool_name, tool_input_json, tool_output, token_estimate, created_at, metadata_json 
@@ -364,7 +402,10 @@ impl HistoryStore {
 
     /// Retrieves a single event by ID.
     pub fn get_event(&self, event_id: i64) -> Result<Option<HistoryEvent>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| anyhow::anyhow!("history-store lock poisoned: {e}"))?;
         let mut stmt = conn.prepare(
             "SELECT id, session_id, sequence, event_type, role, content, tool_name, tool_input_json, tool_output, token_estimate, created_at, metadata_json 
              FROM events 
@@ -396,7 +437,10 @@ impl HistoryStore {
 
     /// Returns a list of all session summaries/IDs logged in history.
     pub fn list_sessions(&self) -> Result<Vec<SessionSummary>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| anyhow::anyhow!("history-store lock poisoned: {e}"))?;
         let mut stmt = conn.prepare(
             "SELECT id, project_id, started_at, ended_at, metadata_json FROM sessions ORDER BY started_at DESC"
         )?;
@@ -419,7 +463,10 @@ impl HistoryStore {
     /// Performs diagnostic checks on the database health and structure.
     pub fn doctor_check(&self) -> Result<Vec<String>> {
         let mut logs = Vec::new();
-        let conn = self.conn.lock().unwrap();
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| anyhow::anyhow!("history-store lock poisoned: {e}"))?;
         logs.push("DB connection is open.".to_string());
 
         let tables = vec!["sessions", "events", "checkpoints", "rebuilds"];

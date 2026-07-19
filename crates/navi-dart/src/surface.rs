@@ -12,8 +12,7 @@ use navi_core::{
     SudoPasswordResponse, TaskStatus,
 };
 use navi_sdk::{
-    MemoryStatus, MemoryType, NaviConfigSaveTarget, NotificationUrgency, NotifyRequest,
-    PermissionMode, VoiceConfigUpdate,
+    MemoryStatus, MemoryType, NotificationUrgency, NotifyRequest, PermissionMode, VoiceConfigUpdate,
 };
 use serde_json::json;
 
@@ -1319,12 +1318,6 @@ pub unsafe extern "C" fn navi_engine_set_auto_update(
             -1
         }
     }
-}
-
-// Avoid unused-import warnings if NotifyRequest fields differ across versions.
-#[allow(dead_code)]
-fn _save_target_default() -> NaviConfigSaveTarget {
-    NaviConfigSaveTarget::Auto
 }
 
 // ── Surface gap-fill (SDK parity) ──────────────────────────────────

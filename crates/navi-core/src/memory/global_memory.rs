@@ -28,7 +28,9 @@ impl GlobalMemoryStore {
     pub fn open(db_path: &Path) -> Result<Self> {
         if let Some(parent) = db_path.parent() {
             if !parent.exists() {
-                std::fs::create_dir_all(parent)?;
+                std::fs::create_dir_all(parent).with_context(|| {
+                    format!("Failed to create global-memory directory: {:?}", parent)
+                })?;
             }
         }
 
@@ -45,7 +47,10 @@ impl GlobalMemoryStore {
     }
 
     fn init_schema(&self) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| anyhow::anyhow!("global-memory lock poisoned: {e}"))?;
         conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS global_memories (
                 id          TEXT PRIMARY KEY,
@@ -69,7 +74,10 @@ impl GlobalMemoryStore {
 
     /// Reads all active global memories and renders them as a markdown string.
     pub fn read_index(&self) -> Result<String> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| anyhow::anyhow!("global-memory lock poisoned: {e}"))?;
         let mut stmt = conn.prepare(
             "SELECT name, type, description, confidence
              FROM global_memories
@@ -101,7 +109,10 @@ impl GlobalMemoryStore {
     /// This is used by the dream maintenance to apply consolidated output.
     /// Parses the markdown into individual entries.
     pub fn write_from_markdown(&self, markdown: &str) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| anyhow::anyhow!("global-memory lock poisoned: {e}"))?;
         // Clear existing active memories
         conn.execute("DELETE FROM global_memories", [])?;
 
@@ -140,7 +151,10 @@ impl GlobalMemoryStore {
 
     /// Counts active global memories.
     pub fn count_active(&self) -> Result<usize> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| anyhow::anyhow!("global-memory lock poisoned: {e}"))?;
         let count: i64 = conn.query_row(
             "SELECT COUNT(*) FROM global_memories WHERE status = 'active'",
             [],
@@ -152,7 +166,10 @@ impl GlobalMemoryStore {
     /// Marks memories as obsolete if their `last_seen` is older than the given
     /// number of days.
     pub fn mark_stale(&self, stale_days: u32) -> Result<usize> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| anyhow::anyhow!("global-memory lock poisoned: {e}"))?;
         let now = crate::memory::auto_memory::now_iso();
         let cutoff = crate::memory::auto_memory::stale_iso_cutoff(stale_days);
         let count = conn.execute(

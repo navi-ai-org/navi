@@ -337,7 +337,7 @@ pub(crate) fn apply_thinking_to_body(
 }
 
 /// Build a thinking request without registry labels (tests / fallbacks).
-#[allow(dead_code)] // unit tests construct bodies via this helper
+#[cfg(test)]
 pub(crate) fn thinking_request_for_api(
     thinking: navi_core::ThinkingConfig,
     api_kind: OpenAiApiKind,

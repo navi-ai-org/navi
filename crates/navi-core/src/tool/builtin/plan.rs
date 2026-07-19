@@ -15,22 +15,46 @@ static PLAN_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64
 /// Built-in tool for creating and managing work plans with checklist tracking.
 pub(crate) struct PlanTool {
     policy: SecurityPolicy,
-    store: PlanStore,
+    /// Opened at construction. If both data_dir and temp fallback fail, invoke
+    /// returns a structured error instead of panicking.
+    store: Result<PlanStore, String>,
 }
 
 impl PlanTool {
     pub(crate) fn new(policy: SecurityPolicy) -> Self {
-        let store = PlanStore::open_default(policy.data_dir()).unwrap_or_else(|_| {
-            // Fallback: in-memory is not available; open a temp path under data_dir.
-            PlanStore::open(&policy.data_dir().join("plans.sqlite")).expect("open plan store")
-        });
-        // Best-effort one-time migration of legacy JSON plans.
-        let _ = store.migrate_json_dir(&policy.data_dir().join("plans"));
+        let store = match PlanStore::open_default(policy.data_dir()) {
+            Ok(store) => Ok(store),
+            Err(err) => {
+                // open_default already targets data_dir/plans.sqlite; retrying the
+                // same path cannot help. Fall back to a process-scoped temp DB so
+                // tool registration never panics on an unwritable data_dir.
+                let fallback = std::env::temp_dir()
+                    .join(format!("navi-plans-fallback-{}.sqlite", std::process::id()));
+                tracing::warn!(
+                    error = %err,
+                    path = %fallback.display(),
+                    "failed to open plan store under data_dir; trying temp fallback"
+                );
+                PlanStore::open(&fallback).map_err(|fallback_err| {
+                    format!(
+                        "failed to open plan store under data_dir ({err}) and temp fallback ({fallback_err})"
+                    )
+                })
+            }
+        };
+        if let Ok(ref store) = store {
+            // Best-effort one-time migration of legacy JSON plans.
+            let _ = store.migrate_json_dir(&policy.data_dir().join("plans"));
+        }
         Self { policy, store }
     }
 
     fn project_id(&self) -> String {
         project_hash(self.policy.project_root())
+    }
+
+    fn store(&self) -> Result<&PlanStore, &str> {
+        self.store.as_ref().map_err(|msg| msg.as_str())
     }
 }
 
@@ -183,14 +207,30 @@ impl Tool for PlanTool {
     async fn invoke(&self, invocation: ToolInvocation) -> Result<ToolResult> {
         let action = helpers::required_string(&invocation.input, "action")?.to_string();
         let project_id = self.project_id();
+        let store = match self.store() {
+            Ok(store) => store,
+            Err(msg) => {
+                return Ok(ToolResult {
+                    invocation_id: invocation.id,
+                    ok: false,
+                    output: helpers::tool_error(
+                        "plan_store_unavailable",
+                        msg,
+                        true,
+                        Some("Ensure the NAVI data directory is writable and retry."),
+                        None,
+                    ),
+                });
+            }
+        };
 
         match action.as_str() {
-            "create" => action_create(&invocation, &self.store, &project_id),
-            "update" => action_update(&invocation, &self.store),
-            "complete_step" => action_complete_step(&invocation, &self.store),
-            "get" => action_get(&invocation, &self.store),
-            "list" => action_list(&invocation, &self.store, &project_id),
-            "active" => action_active(&self.store, &project_id),
+            "create" => action_create(&invocation, store, &project_id),
+            "update" => action_update(&invocation, store),
+            "complete_step" => action_complete_step(&invocation, store),
+            "get" => action_get(&invocation, store),
+            "list" => action_list(&invocation, store, &project_id),
+            "active" => action_active(store, &project_id),
             _ => Ok(ToolResult {
                 invocation_id: invocation.id,
                 ok: false,

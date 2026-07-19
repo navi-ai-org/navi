@@ -1003,7 +1003,7 @@ impl AgentRuntime {
                 res = &mut response_rx => {
                     break match res {
                         Ok(Ok(text)) => Ok(text),
-                        Ok(Err(err)) => Err(anyhow::anyhow!(err)),
+                        Ok(Err(err)) => Err(anyhow::anyhow!("turn failed: {err}")),
                         Err(_) => Err(anyhow::anyhow!("turn cancelled or panicked")),
                     };
                 }
@@ -1235,7 +1235,7 @@ impl AgentRuntime {
                     res = &mut response_rx => {
                         break match res {
                             Ok(Ok(outcome)) => Ok(outcome),
-                            Ok(Err(err)) => Err(anyhow::anyhow!(err)),
+                            Ok(Err(err)) => Err(anyhow::anyhow!("compact failed: {err}")),
                             Err(_) => Err(anyhow::anyhow!("compact cancelled or session loop exited")),
                         };
                     }
@@ -1461,7 +1461,8 @@ impl AgentRuntime {
         }
     }
 
-    #[cfg_attr(not(test), allow(dead_code))]
+    /// Test-only accessor; production code uses `self.session_store` directly.
+    #[cfg(test)]
     pub(crate) fn session_store(&self) -> &SessionStore {
         &self.session_store
     }

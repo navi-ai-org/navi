@@ -66,7 +66,8 @@ pub fn load_tui_extension_from_dir(plugin_dir: &Path) -> Result<Option<TuiExtens
     if !path.is_file() {
         return Ok(None);
     }
-    let bytes = fs::read(&path).map_err(|e| NaviError::Config(e.to_string()))?;
+    let bytes = fs::read(&path)
+        .map_err(|e| NaviError::Config(format!("read tui.json {}: {e}", path.display())))?;
     Ok(Some(parse_tui_extension_spec(&bytes)?))
 }
 
@@ -77,8 +78,15 @@ pub fn list_installed_tui_extensions(data_dir: &Path) -> Result<Vec<InstalledTui
         return Ok(Vec::new());
     }
     let mut out = Vec::new();
-    for entry in fs::read_dir(&root).map_err(|e| NaviError::Config(e.to_string()))? {
-        let entry = entry.map_err(|e| NaviError::Config(e.to_string()))?;
+    for entry in fs::read_dir(&root)
+        .map_err(|e| NaviError::Config(format!("read plugins dir {}: {e}", root.display())))?
+    {
+        let entry = entry.map_err(|e| {
+            NaviError::Config(format!(
+                "read plugins dir entry under {}: {e}",
+                root.display()
+            ))
+        })?;
         let path = entry.path();
         if !path.is_dir() {
             continue;

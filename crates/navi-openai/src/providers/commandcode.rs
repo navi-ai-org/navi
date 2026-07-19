@@ -34,7 +34,7 @@ impl crate::provider::OpenAiProvider {
             let full_url = format!("{}{}", commandcode_api_base(&base_url), url);
 
             let cli_version = detect_commandcode_cli_version();
-            let headers = build_commandcode_headers(&api_key, &cli_version);
+            let headers = build_commandcode_headers(&api_key, &cli_version)?;
 
             let response = client
                 .post(full_url)
@@ -112,13 +112,16 @@ fn commandcode_api_base(base_url: &str) -> String {
         .to_string()
 }
 
-fn build_commandcode_headers(api_key: &str, cli_version: &str) -> reqwest::header::HeaderMap {
+fn build_commandcode_headers(
+    api_key: &str,
+    cli_version: &str,
+) -> Result<reqwest::header::HeaderMap, ProviderError> {
     use reqwest::header::{AUTHORIZATION, CONTENT_TYPE, HeaderMap, HeaderValue};
 
     let mut headers = HeaderMap::new();
     headers.insert(
         AUTHORIZATION,
-        HeaderValue::from_str(&format!("Bearer {api_key}")).expect("valid auth header"),
+        HeaderValue::from_str(&format!("Bearer {api_key}"))?,
     );
     headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
     headers.insert(
@@ -126,19 +129,16 @@ fn build_commandcode_headers(api_key: &str, cli_version: &str) -> reqwest::heade
         HeaderValue::from_static("application/json, text/event-stream"),
     );
     let ua = format!("{DEFAULT_CLI_USER_AGENT}/{cli_version}");
-    headers.insert(
-        "User-Agent",
-        HeaderValue::from_str(&ua).expect("valid user-agent"),
-    );
+    headers.insert("User-Agent", HeaderValue::from_str(&ua)?);
     headers.insert(
         "x-command-code-version",
-        HeaderValue::from_str(cli_version).expect("valid cli version"),
+        HeaderValue::from_str(cli_version)?,
     );
     headers.insert(
         "x-session-id",
-        HeaderValue::from_str(&format!("navi-{}", uuid_v4())).expect("valid session id"),
+        HeaderValue::from_str(&format!("navi-{}", uuid_v4()))?,
     );
-    headers
+    Ok(headers)
 }
 
 fn build_alpha_generate_body(request: &ModelRequest) -> Value {
@@ -496,7 +496,7 @@ fn detect_git_context() -> (bool, String, String, String, Vec<String>) {
     )
 }
 
-#[allow(dead_code)]
+#[cfg(test)]
 fn parse_commandcode_sse(data: &str) -> Vec<Result<ModelStreamEvent>> {
     parse_commandcode_sse_with_state(data, &mut CommandCodeTextAccumulator::default())
 }
@@ -645,20 +645,21 @@ impl CommandCodeTextAccumulator {
         let mut events = Vec::new();
 
         loop {
-            if let Some(active) = &self.active_tool_call {
+            if let Some(active) = self.active_tool_call.take() {
                 let end_tag = active.end_tag.clone();
                 if let Some(end) = find_ascii_case_insensitive(&self.pending, &end_tag) {
                     let block = self.pending[..end].to_string();
                     self.pending.drain(..end + end_tag.len());
-                    let active = self.active_tool_call.take().expect("active tool call");
                     events.extend(self.parse_tool_call_block(&block, active.tool_name.as_deref()));
                     continue;
                 }
 
                 if final_chunk {
                     let block = std::mem::take(&mut self.pending);
-                    let active = self.active_tool_call.take().expect("active tool call");
                     events.extend(self.parse_tool_call_block(&block, active.tool_name.as_deref()));
+                } else {
+                    // Incomplete tool-call block — restore state for the next chunk.
+                    self.active_tool_call = Some(active);
                 }
                 break;
             }
