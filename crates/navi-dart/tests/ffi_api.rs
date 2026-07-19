@@ -10,14 +10,17 @@
 use std::ffi::{CStr, CString, c_void};
 use std::os::raw::c_char;
 use std::ptr;
-use std::sync::Mutex;
+use std::sync::mpsc::{self, Receiver, SyncSender};
+use std::time::Duration;
 
 use navi_dart::*;
 
 // ── Test helpers ───────────────────────────────────────────────────
-
-/// Shared storage for capturing callback results in tests.
-static CALLBACK_RESULT: Mutex<Option<CallbackResult>> = Mutex::new(None);
+//
+// Async FFI callbacks must NOT share one process-global slot: cargo runs this
+// binary with multiple threads, and callbacks from different engines race.
+// Each call site owns an [`AsyncProbe`] channel and passes its sender as
+// `user_data` so results cannot cross-contaminate.
 
 #[derive(Debug, Clone)]
 enum CallbackResult {
@@ -25,42 +28,70 @@ enum CallbackResult {
     Error(String),
 }
 
-/// Rust callback that stores the result in `CALLBACK_RESULT`.
-unsafe extern "C" fn test_callback(
-    result_json: *const c_char,
-    error: *const c_char,
-    _user_data: *mut c_void,
-) {
-    let mut lock = CALLBACK_RESULT.lock().unwrap();
-    if !result_json.is_null() {
-        let json = unsafe { CStr::from_ptr(result_json) }
-            .to_str()
-            .unwrap()
-            .to_string();
-        *lock = Some(CallbackResult::Success(json));
-    } else if !error.is_null() {
-        let msg = unsafe { CStr::from_ptr(error) }
-            .to_str()
-            .unwrap()
-            .to_string();
-        *lock = Some(CallbackResult::Error(msg));
+/// Per-call async callback capture (parallel-safe).
+struct AsyncProbe {
+    tx: SyncSender<CallbackResult>,
+    rx: Receiver<CallbackResult>,
+}
+
+impl AsyncProbe {
+    fn new() -> Self {
+        let (tx, rx) = mpsc::sync_channel(8);
+        Self { tx, rx }
+    }
+
+    /// Pointer stable for the lifetime of `self` (stack-pin the probe).
+    fn user_data(&self) -> *mut c_void {
+        &self.tx as *const SyncSender<CallbackResult> as *mut c_void
+    }
+
+    /// Wait up to `timeout` for the next callback result.
+    fn wait_timeout(&self, timeout: Duration) -> Option<CallbackResult> {
+        self.rx.recv_timeout(timeout).ok()
+    }
+
+    fn wait(&self) -> Option<CallbackResult> {
+        self.wait_timeout(Duration::from_secs(30))
+    }
+
+    /// Non-blocking take (for sync callbacks that fire before return).
+    fn try_take(&self) -> Option<CallbackResult> {
+        self.rx.try_recv().ok()
     }
 }
 
-/// Event callback that stores events. Returns 0 (continue).
-static EVENT_RESULTS: Mutex<Vec<String>> = Mutex::new(Vec::new());
+/// Rust callback that delivers into the [`AsyncProbe`] behind `user_data`.
+unsafe extern "C" fn test_callback(
+    result_json: *const c_char,
+    error: *const c_char,
+    user_data: *mut c_void,
+) {
+    if user_data.is_null() {
+        return;
+    }
+    // SAFETY: caller passes `AsyncProbe::user_data()` for a live probe.
+    let tx = unsafe { &*(user_data as *const SyncSender<CallbackResult>) };
+    if !result_json.is_null() {
+        let json = unsafe { CStr::from_ptr(result_json) }
+            .to_str()
+            .unwrap_or("")
+            .to_string();
+        let _ = tx.send(CallbackResult::Success(json));
+    } else if !error.is_null() {
+        let msg = unsafe { CStr::from_ptr(error) }
+            .to_str()
+            .unwrap_or("")
+            .to_string();
+        let _ = tx.send(CallbackResult::Error(msg));
+    }
+}
 
+/// Event callback used only for subscription handle lifecycle (no asserts on
+/// content). Returns 0 (continue).
 unsafe extern "C" fn test_event_callback(
-    event_json: *const c_char,
+    _event_json: *const c_char,
     _user_data: *mut c_void,
 ) -> i32 {
-    if !event_json.is_null() {
-        let json = unsafe { CStr::from_ptr(event_json) }
-            .to_str()
-            .unwrap()
-            .to_string();
-        EVENT_RESULTS.lock().unwrap().push(json);
-    }
     0
 }
 
@@ -74,45 +105,56 @@ fn free_c(ptr: *const c_char) {
     }
 }
 
-fn take_result() -> Option<CallbackResult> {
-    CALLBACK_RESULT.lock().unwrap().take()
-}
-
-// Wait briefly for async callback to complete.
-fn wait_for_callback() {
-    for _ in 0..600 {
-        std::thread::sleep(std::time::Duration::from_millis(50));
-        if CALLBACK_RESULT.lock().unwrap().is_some() {
-            return;
-        }
-    }
-}
-
 // ── Tests ──────────────────────────────────────────────────────────
 
-/// Disables remote registry update checks for the duration of the test
-/// process. This prevents network fetches that cause timeouts and high
-/// resource usage in test environments.
-static REGISTRY_UPDATE_DISABLED: std::sync::Once = std::sync::Once::new();
+/// Isolate NAVI config/data dirs and disable remote registry for the test
+/// process. Without this, engines load the developer's real
+/// `~/.config/navi` (e.g. `charm-hyper` without a key) and `start_session`
+/// fails under parallel suite load in ways that are environment-dependent.
+static TEST_ENV_READY: std::sync::Once = std::sync::Once::new();
 
 fn disable_registry_update() {
-    REGISTRY_UPDATE_DISABLED.call_once(|| {
-        // SAFETY: This is set once before any test creates an engine, and no
-        // other code in the test process reads or writes this variable concurrently.
+    TEST_ENV_READY.call_once(|| {
+        let base = tempfile::tempdir()
+            .expect("test isolation tempdir")
+            .keep();
+        let data = base.join("data");
+        let config = base.join("config");
+        let home = base.join("home");
+        std::fs::create_dir_all(&data).expect("data dir");
+        std::fs::create_dir_all(&config).expect("config dir");
+        std::fs::create_dir_all(&home).expect("home dir");
+        // SAFETY: set once before any engine is built; no concurrent readers.
         unsafe {
             std::env::set_var("NAVI_NO_REGISTRY_UPDATE", "1");
+            std::env::set_var("XDG_DATA_HOME", &data);
+            std::env::set_var("XDG_CONFIG_HOME", &config);
+            std::env::set_var("HOME", &home);
         }
     });
 }
 
-/// Seed a dummy provider key so start_session works without host credentials.
+/// Seed a dummy OpenAI key and select that model so start_session works
+/// without host credentials or the developer's preferred provider.
 fn seed_test_api_key(engine: *mut NaviDartEngine) {
     let provider = c("openai");
     let key = c("sk-test-key-not-real-docker");
     let rc = unsafe { navi_engine_set_provider_api_key(engine, provider, key) };
     assert_eq!(rc, 0, "seed dummy openai api key");
-    free_c(provider);
     free_c(key);
+
+    // Point the engine at OpenAI so start_session does not require whatever
+    // provider the host config prefers (e.g. charm-hyper).
+    let model = c("gpt-5.5");
+    let save = c("none");
+    let probe = AsyncProbe::new();
+    unsafe {
+        navi_engine_select_model(engine, provider, model, save, test_callback, probe.user_data());
+    }
+    free_c(provider);
+    free_c(model);
+    free_c(save);
+    let _ = probe.wait_timeout(Duration::from_secs(5));
 }
 
 #[test]
@@ -333,18 +375,14 @@ fn async_start_session_calls_callback() {
 
     seed_test_api_key(engine);
 
-    // Clear any previous result
-    let _ = take_result();
-
+    let probe = AsyncProbe::new();
     let request_json = c("{}");
     unsafe {
-        navi_engine_start_session(engine, request_json, test_callback, ptr::null_mut());
+        navi_engine_start_session(engine, request_json, test_callback, probe.user_data());
     }
     free_c(request_json);
 
-    // Wait for async callback
-    wait_for_callback();
-    let result = take_result();
+    let result = probe.wait();
     assert!(result.is_some(), "callback should have been called");
     match result.unwrap() {
         CallbackResult::Success(json) => {
@@ -370,17 +408,15 @@ fn async_start_session_with_bad_json_calls_error() {
 
     seed_test_api_key(engine);
 
-    let _ = take_result();
-
     // Invalid JSON should still succeed (default is used)
+    let probe = AsyncProbe::new();
     let bad_json = c("{invalid");
     unsafe {
-        navi_engine_start_session(engine, bad_json, test_callback, ptr::null_mut());
+        navi_engine_start_session(engine, bad_json, test_callback, probe.user_data());
     }
     free_c(bad_json);
 
-    wait_for_callback();
-    let result = take_result();
+    let result = probe.wait();
     assert!(result.is_some());
     // Should still succeed since default NaviSessionRequest is used on parse failure
     match result.unwrap() {
@@ -403,16 +439,14 @@ fn cancel_turn_on_nonexistent_session_calls_error() {
     let engine = unsafe { navi_engine_new(dir) };
     assert!(!engine.is_null());
 
-    let _ = take_result();
-
+    let probe = AsyncProbe::new();
     let session_id = c("nonexistent-session-id");
     unsafe {
-        navi_engine_cancel_turn(engine, session_id, test_callback, ptr::null_mut());
+        navi_engine_cancel_turn(engine, session_id, test_callback, probe.user_data());
     }
     free_c(session_id);
 
-    wait_for_callback();
-    let result = take_result();
+    let result = probe.wait();
     assert!(result.is_some());
     match result.unwrap() {
         CallbackResult::Error(e) => assert!(e.contains("not found"), "error: {e}"),
@@ -433,16 +467,14 @@ fn start_session_then_close_session() {
 
     seed_test_api_key(engine);
 
-    let _ = take_result();
-
     // Start session
+    let start = AsyncProbe::new();
     let request_json = c(r#"{"sessionId":"test-session-1"}"#);
     unsafe {
-        navi_engine_start_session(engine, request_json, test_callback, ptr::null_mut());
+        navi_engine_start_session(engine, request_json, test_callback, start.user_data());
     }
     free_c(request_json);
-    wait_for_callback();
-    let result = take_result();
+    let result = start.wait();
     assert!(matches!(result, Some(CallbackResult::Success(_))));
 
     // Session IDs should now contain our session
@@ -453,14 +485,13 @@ fn start_session_then_close_session() {
     unsafe { navi_string_free(ids_ptr) };
 
     // Close session
-    let _ = take_result();
+    let close = AsyncProbe::new();
     let session_id = c("test-session-1");
     unsafe {
-        navi_engine_close_session(engine, session_id, test_callback, ptr::null_mut());
+        navi_engine_close_session(engine, session_id, test_callback, close.user_data());
     }
     free_c(session_id);
-    wait_for_callback();
-    let result = take_result();
+    let result = close.wait();
     assert!(matches!(result, Some(CallbackResult::Success(_))));
 
     // Session IDs should be empty again
@@ -482,14 +513,13 @@ fn null_session_id_calls_error_callback() {
     let engine = unsafe { navi_engine_new(dir) };
     assert!(!engine.is_null());
 
-    let _ = take_result();
-
+    let probe = AsyncProbe::new();
     unsafe {
-        navi_engine_cancel_turn(engine, ptr::null(), test_callback, ptr::null_mut());
+        navi_engine_cancel_turn(engine, ptr::null(), test_callback, probe.user_data());
     }
 
     // Should be called synchronously (before spawn)
-    let result = take_result();
+    let result = probe.try_take().or_else(|| probe.wait_timeout(Duration::from_secs(1)));
     assert!(result.is_some());
     match result.unwrap() {
         CallbackResult::Error(e) => assert!(e.contains("session_id")),
@@ -531,24 +561,25 @@ fn async_get_goal_on_new_session_returns_null() {
     seed_test_api_key(engine);
 
     // Start a session first
-    let _ = take_result();
+    let start = AsyncProbe::new();
     let request = c(r#"{"sessionId":"goal-test"}"#);
     unsafe {
-        navi_engine_start_session(engine, request, test_callback, ptr::null_mut());
+        navi_engine_start_session(engine, request, test_callback, start.user_data());
     }
     free_c(request);
-    wait_for_callback();
-    let _ = take_result(); // consume start_session result
+    assert!(
+        matches!(start.wait(), Some(CallbackResult::Success(_))),
+        "start_session should succeed"
+    );
 
     // Get goal should return null (no goal set)
-    let _ = take_result();
+    let goal = AsyncProbe::new();
     let session_id = c("goal-test");
     unsafe {
-        navi_engine_get_goal(engine, session_id, test_callback, ptr::null_mut());
+        navi_engine_get_goal(engine, session_id, test_callback, goal.user_data());
     }
     free_c(session_id);
-    wait_for_callback();
-    let result = take_result();
+    let result = goal.wait();
     assert!(result.is_some());
     match result.unwrap() {
         CallbackResult::Success(json) => {
@@ -681,11 +712,11 @@ fn parse_save_target_variants() {
 #[test]
 fn callback_ctx_success_and_error() {
     use navi_dart::CallbackCtx;
-    let _ = take_result();
 
-    let ctx = CallbackCtx::new(test_callback, ptr::null_mut());
+    let probe = AsyncProbe::new();
+    let ctx = CallbackCtx::new(test_callback, probe.user_data());
     ctx.success(&serde_json::json!({"ok": true}));
-    let result = take_result().unwrap();
+    let result = probe.try_take().expect("sync success callback");
     match result {
         CallbackResult::Success(json) => {
             let v: serde_json::Value = serde_json::from_str(&json).unwrap();
@@ -695,7 +726,7 @@ fn callback_ctx_success_and_error() {
     }
 
     ctx.error("test error message");
-    let result = take_result().unwrap();
+    let result = probe.try_take().expect("sync error callback");
     match result {
         CallbackResult::Error(msg) => assert_eq!(msg, "test error message"),
         _ => panic!("expected error"),
@@ -705,11 +736,11 @@ fn callback_ctx_success_and_error() {
 #[test]
 fn callback_ctx_success_str() {
     use navi_dart::CallbackCtx;
-    let _ = take_result();
 
-    let ctx = CallbackCtx::new(test_callback, ptr::null_mut());
+    let probe = AsyncProbe::new();
+    let ctx = CallbackCtx::new(test_callback, probe.user_data());
     ctx.success_str("null");
-    let result = take_result().unwrap();
+    let result = probe.try_take().expect("sync success_str callback");
     match result {
         CallbackResult::Success(json) => assert_eq!(json, "null"),
         _ => panic!("expected success"),
@@ -798,23 +829,21 @@ fn voice_subscribe_and_rewind_session_surface() {
     unsafe { navi_event_subscription_free(sub) };
 
     // Start session then rewind
-    let _ = take_result();
+    let start = AsyncProbe::new();
     let request = c(r#"{"sessionId":"rewind-test"}"#);
     unsafe {
-        navi_engine_start_session(engine, request, test_callback, ptr::null_mut());
+        navi_engine_start_session(engine, request, test_callback, start.user_data());
     }
     free_c(request);
-    wait_for_callback();
-    assert!(matches!(take_result(), Some(CallbackResult::Success(_))));
+    assert!(matches!(start.wait(), Some(CallbackResult::Success(_))));
 
-    let _ = take_result();
+    let rewind = AsyncProbe::new();
     let sid = c("rewind-test");
     unsafe {
-        navi_engine_rewind_session(engine, sid, 0, test_callback, ptr::null_mut());
+        navi_engine_rewind_session(engine, sid, 0, test_callback, rewind.user_data());
     }
     free_c(sid);
-    wait_for_callback();
-    let result = take_result();
+    let result = rewind.wait();
     assert!(
         matches!(result, Some(CallbackResult::Success(_))),
         "rewind should succeed: {result:?}"
