@@ -592,6 +592,65 @@ impl RegistryStore {
         self.upsert_provider_with_sha256(&merged, sha256)
     }
 
+    /// Re-apply canonical model catalog metadata onto every cached provider model.
+    ///
+    /// Fixes stale rows written by API sync sibling inheritance (e.g. grok-4.5
+    /// wrongly holding grok-4.3's 1M context / low+high efforts) without wiping
+    /// API-discovered model names or changing provider `sha256` markers.
+    ///
+    /// Returns the number of model rows touched by the UPDATE.
+    pub fn rehydrate_provider_models_from_catalog(&self) -> Result<usize> {
+        let catalog = self.load_canonical_model_catalog().unwrap_or_default();
+        if catalog.is_empty() {
+            return Ok(0);
+        }
+
+        let mut updated = 0usize;
+        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let mut stmt = conn.prepare(
+            "UPDATE models SET
+                context_window_tokens = COALESCE(?1, context_window_tokens),
+                max_output_tokens = COALESCE(?2, max_output_tokens),
+                recommended_temperature = COALESCE(?3, recommended_temperature),
+                supports_thinking = COALESCE(?4, supports_thinking),
+                reasoning_levels = CASE
+                    WHEN ?5 = '[]' THEN reasoning_levels
+                    ELSE ?5
+                END,
+                default_reasoning_effort = COALESCE(?6, default_reasoning_effort)
+             WHERE lower(name) = lower(?7)",
+        )?;
+
+        for (id, canonical) in &catalog {
+            let levels_json =
+                serde_json::to_string(&canonical.reasoning_levels).unwrap_or_else(|_| "[]".into());
+            let mut names = vec![id.clone()];
+            names.extend(canonical.aliases.iter().cloned());
+            // Dedup names (id may equal an alias).
+            names.sort();
+            names.dedup();
+            for name in names {
+                updated += stmt.execute(params![
+                    canonical.context_window_tokens.map(|v| v as i64),
+                    canonical.max_output_tokens.map(|v| v as i64),
+                    canonical.recommended_temperature,
+                    canonical.supports_thinking.map(|v| v as i64),
+                    levels_json,
+                    canonical.default_reasoning_effort,
+                    name,
+                ])?;
+            }
+        }
+
+        if updated > 0 {
+            tracing::info!(
+                models_updated = updated,
+                "rehydrated provider model metadata from canonical catalog"
+            );
+        }
+        Ok(updated)
+    }
+
     /// Upserts a provider with its SHA-256 hash for diff-based sync.
     pub fn upsert_provider_with_sha256(
         &self,
@@ -1683,6 +1742,97 @@ mod tests {
         assert!(loaded.contains_key("api-only-model"));
         assert!(loaded.contains_key("test-model-large"));
         assert!(loaded.contains_key("test-model-small"));
+    }
+
+    #[test]
+    fn rehydrate_from_catalog_fixes_stale_context_and_efforts() {
+        let store = RegistryStore::open_memory().expect("open");
+
+        // Canonical truth: grok-4.5 is 500k with low/medium/high.
+        let mut catalog_model = crate::registry::types::CanonicalModel {
+            id: "grok-4.5".into(),
+            vendor: Some("xai".into()),
+            family: Some("grok".into()),
+            label: None,
+            description: None,
+            context_window_tokens: Some(500_000),
+            max_output_tokens: Some(131_072),
+            recommended_temperature: Some(1.0),
+            supports_thinking: Some(true),
+            reasoning_levels: vec!["low".into(), "medium".into(), "high".into()],
+            default_reasoning_effort: Some("medium".into()),
+            attachments: Default::default(),
+            capabilities: Vec::new(),
+            status: Some("active".into()),
+            aliases: Vec::new(),
+        };
+        store
+            .upsert_canonical_model("grok-4.5", &catalog_model, Some("canon-sha"))
+            .expect("upsert canonical");
+
+        // Stale API-sync row: wrong 1M / low+high inherited from sibling.
+        let provider = RegistryProvider {
+            id: "xai".into(),
+            label: "xAI".into(),
+            description: String::new(),
+            kind: "openai-responses".into(),
+            api_key_env: "XAI_API_KEY".into(),
+            base_url: Some("https://api.x.ai/v1".into()),
+            extends: None,
+            tool_calling_mode: None,
+            aggregator: false,
+            defaults: Default::default(),
+            request_options: Default::default(),
+            models: vec![RegistryModel {
+                model_ref: None,
+                api_name: None,
+                name: "grok-4.5".into(),
+                task_size: None,
+                context_window_tokens: Some(1_000_000),
+                max_output_tokens: None,
+                recommended_temperature: None,
+                supports_thinking: Some(true),
+                reasoning_levels: vec!["low".into(), "high".into()],
+                default_reasoning_effort: Some("high".into()),
+                supports_attachments: None,
+                supports_images: Some(true),
+                supports_audio: None,
+                supports_video: None,
+                supports_documents: None,
+                attachments: Default::default(),
+                capabilities: Vec::new(),
+                pricing: None,
+            }],
+        };
+        store
+            .upsert_provider_with_sha256(&provider, Some(LOCAL_API_SYNC_SHA))
+            .expect("api sync upsert");
+
+        let n = store
+            .rehydrate_provider_models_from_catalog()
+            .expect("rehydrate");
+        assert!(n >= 1);
+
+        let models = store.load_provider_models("xai").expect("load");
+        let grok = models.get("grok-4.5").expect("grok-4.5 present");
+        assert_eq!(grok.context_window_tokens, Some(500_000));
+        assert_eq!(
+            grok.reasoning_levels,
+            vec![
+                "low".to_string(),
+                "medium".to_string(),
+                "high".to_string()
+            ]
+        );
+        assert_eq!(grok.default_reasoning_effort.as_deref(), Some("medium"));
+        assert_eq!(grok.max_output_tokens, Some(131_072));
+        // API sync marker must survive rehydrate.
+        assert_eq!(
+            store.provider_sha256("xai").unwrap().as_deref(),
+            Some(LOCAL_API_SYNC_SHA)
+        );
+
+        let _ = &mut catalog_model; // silence unused mut if any
     }
 
     #[test]

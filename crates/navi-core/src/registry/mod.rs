@@ -27,7 +27,8 @@ pub use embedded::{
 pub use extends::{deep_merge, parse_provider_json, resolve_extends_value};
 pub use fetcher::{RegistryFetcher, sync_local_registry, sync_registry};
 pub use inherit::{
-    apply_provider_attachment_defaults_to_config_model, enrich_synced_registry_model,
+    apply_canonical_metadata, apply_provider_attachment_defaults_to_config_model,
+    enrich_synced_registry_model, enrich_synced_registry_model_with_catalog,
     provider_registry_attachment_defaults, provider_registry_defaults,
 };
 pub use resolve::{ModelCatalog, resolve_provider_refs};

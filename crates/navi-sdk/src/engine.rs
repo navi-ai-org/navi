@@ -1632,15 +1632,26 @@ impl NaviEngine {
                     // Critical: `/models` only returns ids. New SKUs (e.g. grok-4.5)
                     // must inherit vision/context from provider defaults + family
                     // siblings already in the cache — never write bare NULL rows.
+                    // When a canonical catalog entry exists, it overrides sibling
+                    // guesses for context_window / reasoning_levels / effort.
                     if let Some(ref store) = self.inner.registry_store {
                         let existing = store.load_provider_models(&provider.id).unwrap_or_default();
+                        let catalog = store
+                            .load_canonical_model_catalog()
+                            .unwrap_or_default();
+                        let catalog_ref = if catalog.is_empty() {
+                            None
+                        } else {
+                            Some(&catalog)
+                        };
                         let mut merged: Vec<RegistryModel> = models
                             .iter()
                             .map(|name| {
-                                navi_core::registry::enrich_synced_registry_model(
+                                navi_core::registry::enrich_synced_registry_model_with_catalog(
                                     name,
                                     &existing,
                                     &provider.id,
+                                    catalog_ref,
                                 )
                             })
                             .collect();
@@ -1651,11 +1662,14 @@ impl NaviEngine {
                             merged.iter().map(|m| m.name.to_lowercase()).collect();
                         for (name, _cached) in &existing {
                             if !api_names.contains(&name.to_lowercase()) {
-                                merged.push(navi_core::registry::enrich_synced_registry_model(
-                                    name,
-                                    &existing,
-                                    &provider.id,
-                                ));
+                                merged.push(
+                                    navi_core::registry::enrich_synced_registry_model_with_catalog(
+                                        name,
+                                        &existing,
+                                        &provider.id,
+                                        catalog_ref,
+                                    ),
+                                );
                             }
                         }
 
