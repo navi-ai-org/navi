@@ -392,7 +392,7 @@ fn composer_activity_line(app: &TuiApp, width: usize) -> Option<Line<'static>> {
     let diamond = crate::render::status::running_diamond(elapsed_ms);
 
     // Target shape (when room allows):
-    //   ◆ Thinking · 7s (esc to interrupt) · (1.2k tok ↓  340 tok ↑  ·  avg 42 t/s)
+    //   ◆ Thinking · 7s (esc to interrupt) · (avg 42 t/s)
     let mut spans: Vec<Span<'static>> = vec![
         Span::styled(
             diamond,
@@ -407,7 +407,7 @@ fn composer_activity_line(app: &TuiApp, width: usize) -> Option<Line<'static>> {
     ];
 
     let interrupt_hint = " (esc to interrupt)";
-    let details = activity_detail_hints(app, elapsed_ms);
+    let details = activity_detail_hints(app);
     let full_details = if details.is_empty() {
         String::new()
     } else {
@@ -455,73 +455,12 @@ fn composer_activity_line(app: &TuiApp, width: usize) -> Option<Line<'static>> {
 
 /// Compact right-side hints for the live activity line.
 ///
-/// Example: `1.2k tok ↓  340 tok ↑  ·  avg 42 t/s`
-fn activity_detail_hints(app: &TuiApp, elapsed_ms: u64) -> String {
-    let (input, output) = activity_token_counts(app);
-    let mut parts = Vec::new();
-    if input > 0 || output > 0 {
-        parts.push(format!(
-            "{} tok ↓  {} tok ↑",
-            format_activity_tokens(input),
-            format_activity_tokens(output)
-        ));
-    }
-    if let Some(rate) = activity_avg_tokens_per_sec(output, elapsed_ms) {
-        parts.push(format!("avg {} t/s", format_activity_rate(rate)));
-    }
-    parts.join("  ·  ")
-}
-
-/// Prefer authoritative request usage snapshots; fall back to live estimates.
-fn activity_token_counts(app: &TuiApp) -> (u64, u64) {
-    let usage = &app.usage_state;
-    let input = if usage.request_input_tokens > 0 {
-        usage.request_input_tokens
-    } else {
-        usage
-            .estimated_request_input_tokens
-            .unwrap_or_else(|| app.compact_state.total_estimated_tokens(0))
-    };
-    let output = if usage.request_output_tokens > 0 {
-        usage.request_output_tokens
-    } else {
-        usage.estimated_request_output_tokens()
-    };
-    (input, output)
-}
-
-/// Average generation speed for the current request (output tokens / elapsed).
-fn activity_avg_tokens_per_sec(output_tokens: u64, elapsed_ms: u64) -> Option<f64> {
-    if output_tokens == 0 || elapsed_ms < 250 {
-        return None;
-    }
-    let secs = elapsed_ms as f64 / 1_000.0;
-    if secs <= 0.0 {
-        return None;
-    }
-    Some(output_tokens as f64 / secs)
-}
-
-fn format_activity_tokens(tokens: u64) -> String {
-    if tokens >= 1_000_000 {
-        let value = tokens as f64 / 1_000_000.0;
-        if value >= 10.0 {
-            format!("{value:.0}M")
-        } else {
-            format!("{value:.1}M")
-        }
-    } else if tokens >= 1_000 {
-        let value = tokens as f64 / 1_000.0;
-        if tokens % 1_000 == 0 {
-            format!("{}k", tokens / 1_000)
-        } else if value >= 10.0 {
-            format!("{value:.0}k")
-        } else {
-            format!("{value:.1}k")
-        }
-    } else {
-        tokens.to_string()
-    }
+/// Example: `avg 42 t/s` — generation rate since the first streamed delta.
+fn activity_detail_hints(app: &TuiApp) -> String {
+    app.usage_state
+        .stream_avg_tokens_per_sec()
+        .map(|rate| format!("avg {} t/s", format_activity_rate(rate)))
+        .unwrap_or_default()
 }
 
 fn format_activity_rate(rate: f64) -> String {
@@ -1357,10 +1296,11 @@ mod tests {
     fn composer_activity_line_uses_thinking_content() {
         let mut app = crate::tests::test_app("");
         app.is_loading = true;
-        // Fixed elapsed so avg t/s is deterministic (1.5s → 900 out / 1.5 = 600 t/s).
-        app.loading_start = Some(Instant::now() - Duration::from_millis(1_500));
-        app.usage_state.request_input_tokens = 1_400;
-        app.usage_state.request_output_tokens = 900;
+        // Total turn time is long (includes idle wait), but stream rate uses
+        // stream_started_at only: 900 stream tokens over 1.5s → 600 t/s.
+        app.loading_start = Some(Instant::now() - Duration::from_secs(60));
+        app.usage_state.stream_started_at = Some(Instant::now() - Duration::from_millis(1_500));
+        app.usage_state.stream_output_bytes = 900 * 4; // ~900 tokens via bytes/4 estimate
         app.messages.push(ChatMessage {
             status: Some("thinking".to_string()),
             thinking_content: "step by step".to_string(),
@@ -1371,12 +1311,28 @@ mod tests {
         let text = line_text(&line);
         assert!(text.contains("Thinking"));
         assert!(text.contains("esc to interrupt"));
-        assert!(text.contains("1.4k tok ↓"), "expected input tokens, got {text}");
-        assert!(text.contains("900 tok ↑"), "expected output tokens, got {text}");
-        assert!(text.contains("avg 600 t/s"), "expected avg throughput, got {text}");
+        assert!(text.contains("avg 600 t/s"), "expected stream throughput, got {text}");
+        assert!(!text.contains("tok ↓"));
+        assert!(!text.contains("tok ↑"));
         assert!(!text.contains("ctrl+o"));
         assert!(!text.contains("alt+t"));
-        assert!(!text.contains("c ·") && !text.ends_with('c'));
+    }
+
+    #[test]
+    fn composer_activity_line_hides_rate_before_stream_starts() {
+        let mut app = crate::tests::test_app("");
+        app.is_loading = true;
+        // Waiting for model — long idle time, no streamed text yet.
+        app.loading_start = Some(Instant::now() - Duration::from_secs(30));
+        app.messages.push(ChatMessage {
+            status: Some("thinking".to_string()),
+            ..ChatMessage::new(ChatRole::Assistant, String::new())
+        });
+
+        let line = composer_activity_line(&app, 120).expect("activity line");
+        let text = line_text(&line);
+        assert!(text.contains("Thinking") || text.contains("Waiting for model"));
+        assert!(!text.contains("t/s"), "rate must not use idle wall time: {text}");
     }
 
     #[test]
@@ -1384,8 +1340,8 @@ mod tests {
         let mut app = crate::tests::test_app("");
         app.is_loading = true;
         app.loading_start = Some(Instant::now());
-        app.usage_state.request_input_tokens = 1_400;
-        app.usage_state.request_output_tokens = 900;
+        app.usage_state.stream_started_at = Some(Instant::now() - Duration::from_millis(1_500));
+        app.usage_state.stream_output_bytes = 900 * 4;
         app.messages.push(ChatMessage {
             status: Some("thinking".to_string()),
             thinking_content: "step by step".to_string(),
@@ -1396,28 +1352,37 @@ mod tests {
         let text = line_text(&line);
         assert!(text.contains("Thinking"));
         assert!(text.contains("0s"));
-        // Token/rate details may be dropped when there is no room.
-        assert!(!text.contains("tok ↑"));
+        // Rate detail may be dropped when there is no room.
         assert!(!text.contains("t/s"));
     }
 
     #[test]
-    fn format_activity_tokens_uses_k_and_m_suffixes() {
-        assert_eq!(format_activity_tokens(900), "900");
-        assert_eq!(format_activity_tokens(1_000), "1k");
-        assert_eq!(format_activity_tokens(1_400), "1.4k");
-        assert_eq!(format_activity_tokens(12_400), "12k");
-        assert_eq!(format_activity_tokens(1_500_000), "1.5M");
+    fn stream_avg_tokens_per_sec_uses_stream_clock_not_turn_clock() {
+        let mut app = crate::tests::test_app("");
+        // No stream yet.
+        assert_eq!(app.usage_state.stream_avg_tokens_per_sec(), None);
+
+        app.usage_state.stream_started_at = Some(Instant::now() - Duration::from_millis(1_500));
+        app.usage_state.stream_output_bytes = 900 * 4;
+        assert_eq!(
+            app.usage_state
+                .stream_avg_tokens_per_sec()
+                .map(|v| (v * 10.0).round() / 10.0),
+            Some(600.0)
+        );
     }
 
     #[test]
-    fn activity_avg_tokens_per_sec_uses_output_over_elapsed() {
-        assert_eq!(activity_avg_tokens_per_sec(0, 1_000), None);
-        assert_eq!(activity_avg_tokens_per_sec(100, 100), None);
-        assert_eq!(
-            activity_avg_tokens_per_sec(900, 1_500).map(|v| (v * 10.0).round() / 10.0),
-            Some(600.0)
-        );
+    fn add_estimated_output_starts_stream_clock() {
+        let mut app = crate::tests::test_app("");
+        assert!(app.usage_state.stream_started_at.is_none());
+        app.usage_state.add_estimated_output("hello world");
+        assert!(app.usage_state.stream_started_at.is_some());
+        assert!(app.usage_state.stream_output_bytes > 0);
+        // Empty deltas must not reset or advance counters.
+        let bytes = app.usage_state.stream_output_bytes;
+        app.usage_state.add_estimated_output("");
+        assert_eq!(app.usage_state.stream_output_bytes, bytes);
     }
 
     #[test]

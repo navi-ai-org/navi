@@ -664,6 +664,13 @@ pub(crate) struct UsageUiState {
     /// billed session totals and cost.
     pub estimated_request_input_tokens: Option<u64>,
     pub estimated_request_output_bytes: usize,
+    /// First streamed model delta for the current request (thinking or text).
+    /// Throughput uses this clock so idle wait before first token is excluded.
+    pub stream_started_at: Option<Instant>,
+    /// Bytes of streamed model text (thinking + content) for the current
+    /// request. Kept independent of billed usage snapshots so avg t/s keeps
+    /// reflecting generation speed after provider usage arrives.
+    pub stream_output_bytes: usize,
     /// Last time an account usage request was started. This rate-limits quiet
     /// refreshes while a long-running turn is active.
     pub last_account_refresh_at: Option<Instant>,
@@ -682,16 +689,52 @@ impl UsageUiState {
         self.request_cache_read_tokens = 0;
         self.estimated_request_input_tokens = None;
         self.estimated_request_output_bytes = 0;
+        self.stream_started_at = None;
+        self.stream_output_bytes = 0;
     }
 
     pub(crate) fn add_estimated_output(&mut self, text: &str) {
+        if text.is_empty() {
+            return;
+        }
+        if self.stream_started_at.is_none() {
+            self.stream_started_at = Some(Instant::now());
+        }
         self.estimated_request_output_bytes = self
             .estimated_request_output_bytes
             .saturating_add(text.len());
+        self.stream_output_bytes = self.stream_output_bytes.saturating_add(text.len());
     }
 
     pub(crate) fn estimated_request_output_tokens(&self) -> u64 {
         self.estimated_request_output_bytes.saturating_add(3) as u64 / 4
+    }
+
+    /// Estimated tokens delivered by the live stream (thinking + content).
+    pub(crate) fn stream_output_tokens(&self) -> u64 {
+        self.stream_output_bytes.saturating_add(3) as u64 / 4
+    }
+
+    /// Average generation rate since the first streamed delta.
+    ///
+    /// Uses streamed text only — not total turn wall time, and not billed
+    /// usage snapshots (which can arrive before/after generation phases).
+    pub(crate) fn stream_avg_tokens_per_sec(&self) -> Option<f64> {
+        let start = self.stream_started_at?;
+        let tokens = self.stream_output_tokens();
+        if tokens == 0 {
+            return None;
+        }
+        let elapsed_ms = start.elapsed().as_millis() as u64;
+        // Ignore the first ~100ms so a single token does not spike the meter.
+        if elapsed_ms < 100 {
+            return None;
+        }
+        let secs = elapsed_ms as f64 / 1_000.0;
+        if secs <= 0.0 {
+            return None;
+        }
+        Some(tokens as f64 / secs)
     }
 
     /// Records a provider usage snapshot and returns only the newly reported
