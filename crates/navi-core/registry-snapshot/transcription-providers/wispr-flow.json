@@ -1,0 +1,22 @@
+{
+  "id": "wispr-flow",
+  "label": "Wispr Flow",
+  "description": "Wispr Flow speech-to-text REST API (context-aware dictation)",
+  "kind": "wispr-flow",
+  "api_key_env": "WISPR_FLOW_API_KEY",
+  "base_url": "https://platform-api.wisprflow.ai/api/v1/dash",
+  "transcription_path": "/api",
+  "default_model": "flow",
+  "supports_streaming": false,
+  "models": [
+    {
+      "name": "flow",
+      "label": "Flow (default)",
+      "description": "Wispr Flow production speech-to-text (model selected by the service)",
+      "languages": [],
+      "sample_rate_hz": 16000,
+      "max_duration_seconds": 360,
+      "max_file_bytes": 26214400
+    }
+  ]
+}
