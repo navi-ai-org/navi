@@ -234,6 +234,27 @@ pub(super) fn route_global_key(
         return outcome;
     }
 
+    // Alt+T toggles thinking/reasoning text visibility (advertised on the
+    // live activity line while a turn is running).
+    if modifiers.contains(KeyModifiers::ALT)
+        && !modifiers.contains(KeyModifiers::CONTROL)
+        && matches!(code, KeyCode::Char('t') | KeyCode::Char('T'))
+    {
+        app.show_thinking = !app.show_thinking;
+        app.chat_render_cache.borrow_mut().signature_hash = 0;
+        show_notification(
+            app,
+            "Reasoning",
+            if app.show_thinking {
+                "Thinking text visible."
+            } else {
+                "Thinking text hidden."
+            },
+        );
+        save_preferences(app);
+        return KeyOutcome::Handled;
+    }
+
     KeyOutcome::Ignored
 }
 

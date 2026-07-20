@@ -124,6 +124,11 @@ pub(crate) const HELP_ROWS: &[HelpRow] = &[
         detail: "Toggle expand-all vs smart defaults without closing a tool you just opened.",
     },
     HelpRow::Entry {
+        key: "alt+t",
+        label: "Show / hide thinking",
+        detail: "Toggle reasoning text visibility in chat (also available as Show Reasoning).",
+    },
+    HelpRow::Entry {
         key: "shift+tab",
         label: "Cycle permission mode",
         detail: "Restricted → Accept edits → Auto → … for tool approvals.",

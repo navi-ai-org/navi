@@ -348,7 +348,7 @@ pub(crate) const COMMANDS: &[CommandItem] = &[
     },
     CommandItem {
         label: "Show Reasoning",
-        shortcut: None,
+        shortcut: Some("alt+t"),
         action: CommandAction::ToggleShowReasoning,
         hub: Some(CommandHub::HelpApp),
         visibility: CommandVisibility::Always,
