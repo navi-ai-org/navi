@@ -707,15 +707,15 @@ fn handle_agent_event(app: &mut TuiApp, event: AgentEvent) {
             app.compact_state.last_output_tokens = None;
             app.compact_state.clear_unsent_bytes();
             apply_compacted_conversation_history(app, &summary, kept_recent_messages);
-            // Replace the chat UI with a compact summary card so the old
-            // history is actually gone from the display (not just the model).
-            app.messages.clear();
+            // Keep prior chat visible and append the compact summary as normal
+            // assistant output, separated by a plain divider so the model text
+            // is readable mid-session (not a hard UI wipe / error).
             if !summary.trim().is_empty() {
                 app.messages.push(ChatMessage {
                     status: Some("compacted".to_string()),
                     is_compact_summary: true,
                     content: format!(
-                        "[Context compacted — {saved_label} tokens saved]\n\n{summary}"
+                        "--------\n[Context compacted — {saved_label} tokens saved]\n\n{summary}"
                     ),
                     ..ChatMessage::new(ChatRole::Assistant, String::new())
                 });
@@ -1976,12 +1976,19 @@ mod tests {
             Some("Previous context summary")
         );
         assert!(app.compact_state.last_input_tokens.is_none());
-        // Chat UI is cleaned — only the compact summary card remains.
-        assert_eq!(app.messages.len(), 1);
+        // Chat keeps prior turns and appends the compact summary with a divider.
+        assert!(app.messages.len() >= 2);
         let last = app.messages.last().unwrap();
         assert!(last.is_compact_summary);
+        assert!(last.content.contains("--------"));
         assert!(last.content.contains("5k tokens saved"));
         assert!(last.content.contains("Previous context summary"));
+        // Older chat lines remain visible (not wiped).
+        assert!(
+            app.messages
+                .iter()
+                .any(|m| m.content == "old user message")
+        );
         // Provider history is system + summary only.
         assert!(app.conversation_history.iter().all(|m| matches!(
             m.role,

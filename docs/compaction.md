@@ -11,9 +11,9 @@ All compaction logic lives in `navi-core/src/compact.rs`. Configuration is sprea
 | Level | Trigger | Mechanism | Data Loss |
 |---|---|---|---|
 | Micro-compact | Time gap > 60 min since last assistant message | Clears read-only tool result content in-place | Tool output text only |
-| Auto-compact | `input_tokens + buffer >= context_window` | Summarizes full conversation via model, replaces messages with system + summary | Full conversation replaced by summary |
+| Auto-compact | Context usage ≥ **80%** of the window (or `input + buffer >= window`) | Summarizes conversation via the **session chat model**, replaces older turns with system + summary (+ optional recent keep ratio) | Older turns replaced by summary |
 | Session memory | Session end with compact summary | Saves summary to `<data_dir>/memory/<project_hash>.json`, injected on next session | None (additive) |
-| Long-horizon project memory | Context utilization crosses checkpoint/rebuild thresholds | Stores checkpoint, notes, project memory, and history under `<data_dir>/memory/projects/<project_hash>/` | None (additive/rebuild context replaces live messages only) |
+| Long-horizon rebuild (fallback) | Context still ≥ **95%** after auto-compact (or circuit open) | Rebuilds live messages from checkpoint/history memory under `<data_dir>/memory/projects/<project_hash>/` | Live messages replaced by rebuild context |
 
 ## Micro-Compact
 
@@ -27,7 +27,14 @@ Emits `AgentEvent::MicroCompactApplied { messages_cleared }`.
 
 ## Auto-Compact
 
-`CompactState::auto_compact()` is called when `should_autocompact()` returns true — that is, when `input_tokens + autocompact_buffer_tokens >= context_window` and the circuit breaker is not open.
+`CompactState::auto_compact()` runs in `maintain_context_budget` **before** long-horizon memory rebuild. It fires when `should_autocompact()` is true:
+
+- context usage ≥ `AUTO_COMPACT_THRESHOLD_PERCENT` (**80%** of `context_window`, including unsent preflight), or
+- `last_input_tokens + autocompact_buffer_tokens >= context_window`
+
+and the circuit breaker is not open.
+
+The summary request uses the **active session model/provider** (not a separate background model), so the compact text is produced by the same chat model. After a successful compact, the agent loop continues the current turn with the reduced history.
 
 ### Summarization
 
@@ -67,7 +74,8 @@ Constants:
 
 | Constant | Value | Purpose |
 |---|---|---|
-| `AUTOCOMPACT_BUFFER_TOKENS` | 13,000 | Triggers auto-compact when `input + buffer >= window` |
+| `AUTO_COMPACT_THRESHOLD_PERCENT` | 80 | Primary trigger: compact when usage ≥ 80% of the window |
+| `AUTOCOMPACT_BUFFER_TOKENS` | 13,000 | Hard ceiling: compact when `input + buffer >= window` |
 | `WARNING_THRESHOLD_BUFFER_TOKENS` | 20,000 | Warning threshold for remaining tokens |
 | `ERROR_THRESHOLD_BUFFER_TOKENS` | 20,000 | Error threshold for remaining tokens |
 | `MAX_OUTPUT_TOKENS_FOR_SUMMARY` | 20,000 | Max output tokens for the summary request |
@@ -178,6 +186,8 @@ navi memory dream --apply
 | `max_memory_entries` | 3 | Number of recent summaries to inject |
 | `enabled` | true | Enable long-horizon checkpoint/rebuild memory |
 | `root` | `memory/projects` | Data-dir-relative base directory for per-project long-horizon memory |
+| `checkpoint_thresholds` | `[0.20, 0.45, 0.70]` | Utilization levels that write durable checkpoints |
+| `rebuild_threshold` | **0.95** | Last-resort rebuild after auto-compact (must stay above 80%) |
 
 Example `.navi/config.toml`:
 
@@ -186,6 +196,7 @@ Example `.navi/config.toml`:
 session_memory_enabled = true
 max_memory_entries = 5
 root = "memory/projects"
+rebuild_threshold = 0.95
 
 [harness]
 micro_compact_gap_minutes = 30
@@ -198,7 +209,7 @@ The TUI mirrors `CompactState` locally from events:
 
 - `UsageReported` → updates `compact_state.last_input_tokens` and populates `ChatMessage.usage_label`
 - `MicroCompactApplied` → shows notification
-- `AutoCompactCompleted` → shows notification, resets `consecutive_failures`, replaces chat + provider history with the summary (`is_compact_summary: true`), and clears the context meter
+- `AutoCompactCompleted` → shows notification, resets `consecutive_failures`, updates provider history, and **appends** the compact summary as normal assistant output after a `--------` divider (prior chat stays visible; `is_compact_summary: true`)
 - `AutoCompactFailed` → pushes diagnostic, increments `consecutive_failures`
 
 ### Status Bar
@@ -216,15 +227,21 @@ Color coding: `MUTED` for normal, `ACCENT` for warning, `SIGNAL` for error or ci
 `ctrl+p` → "Compact" force-compacts the live session with the **session's own model**
 (not a subagent / background route). The engine summarizes conversation history,
 replaces the live message list, emits `AutoCompactCompleted` with the summary text,
-and the TUI clears the visible chat + `conversation_history` so the next turn stays
-compacted.
+and the TUI appends the summary to the visible chat while rewriting `conversation_history`
+so the next turn stays compacted.
 
 ### Compact Summary Rendering
 
-Messages with `is_compact_summary: true` are rendered with a special header:
+Messages with `is_compact_summary: true` are rendered with a special header and the
+summary body (including a plain `--------` divider above the compact text):
 
 ```
  ◈ compacted ────────────────────────────────────────
+--------
+[Context compacted — 12k tokens saved]
+
+## Primary Request and Intent
+...
 ```
 
 ## Turn Flow
@@ -232,6 +249,7 @@ Messages with `is_compact_summary: true` are rendered with a special header:
 Each iteration of the turn loop in `navi-core/src/turn.rs` runs compaction before sending a request to the model:
 
 1. **Micro-compact** — clears stale tool results if the time gap exceeds the threshold
-2. **Auto-compact** — summarizes the conversation if the context threshold is reached
-3. **Model request** — sends the (possibly compacted) messages to the provider
-4. **Usage update** — on `ModelStreamEvent::Usage`, updates `CompactState.last_input_tokens` via `AgentEvent::UsageReported`
+2. **Auto-compact** — summarizes with the session model at ≥80% usage (or hard buffer ceiling)
+3. **Memory checkpoints / rebuild fallback** — writes checkpoints; only rebuilds near ~95% if context is still full
+4. **Model request** — continues the active task with the (possibly compacted) messages
+5. **Usage update** — on `ModelStreamEvent::Usage`, updates `CompactState.last_input_tokens` via `AgentEvent::UsageReported`

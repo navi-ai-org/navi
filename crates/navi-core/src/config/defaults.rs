@@ -101,7 +101,9 @@ impl Default for MemoryConfig {
             enabled: true,
             root: "memory/projects".to_string(),
             checkpoint_thresholds: vec![0.20, 0.45, 0.70],
-            rebuild_threshold: 0.85,
+            // Above auto-compact (80%) so model summarization runs first;
+            // rebuild is a last-resort fallback near the hard ceiling.
+            rebuild_threshold: 0.95,
             injected_context_token_budget: 65000,
             dream_interval_days: 1,
             distill_interval_days: 30,

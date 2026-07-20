@@ -655,7 +655,7 @@ async fn test_full_continuity_session_rebuild() {
         enabled: true,
         root: "memory/projects".to_string(),
         checkpoint_thresholds: vec![0.20, 0.45, 0.70],
-        rebuild_threshold: 0.85,
+        rebuild_threshold: 0.95,
         injected_context_token_budget: 65000,
         dream_interval_days: 7,
         distill_interval_days: 30,
@@ -856,15 +856,15 @@ None.
         3
     );
 
-    // 5. Cross 90% (900 tokens) -> triggers 85% rebuild!
+    // 5. Cross 96% (960 tokens) -> triggers 95% rebuild fallback.
     {
         let mut state = turn_ctx.compact_state.lock().await;
-        state.last_input_tokens = Some(900);
+        state.last_input_tokens = Some(960);
     }
     let triggered = evaluate_memory_triggers(&turn_ctx, &mut messages)
         .await
         .unwrap();
-    assert!(triggered, "Should trigger rebuild at 90%");
+    assert!(triggered, "Should trigger rebuild at 96%");
 
     // Verify rebuild event count
     assert_eq!(

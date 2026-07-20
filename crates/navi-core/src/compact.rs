@@ -86,7 +86,7 @@ pub const ERROR_THRESHOLD_BUFFER_TOKENS: u64 = 20_000;
 pub const MAX_OUTPUT_TOKENS_FOR_SUMMARY: u64 = 20_000;
 pub const MAX_CONSECUTIVE_FAILURES: u32 = 3;
 /// auto-compact when context usage reaches this percent of the window.
-pub const AUTO_COMPACT_THRESHOLD_PERCENT: u8 = 85;
+pub const AUTO_COMPACT_THRESHOLD_PERCENT: u8 = 80;
 
 /// Context usage severity level used to trigger compact warnings and errors.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -285,7 +285,7 @@ impl CompactState {
         if self.context_window == 0 {
             return false;
         }
-        // compact near 85% of the window (includes unsent preflight).
+        // compact near 80% of the window (includes unsent preflight).
         let used = self.total_estimated_tokens(0);
         let pct = (used as f64 / self.context_window as f64) * 100.0;
         if pct >= f64::from(self.auto_compact_threshold_percent) {
@@ -777,16 +777,25 @@ mod tests {
     }
 
     #[test]
-    fn compact_state_autocompact_at_eighty_five_percent() {
-        // 170k / 200k = 85% triggers even when buffer would not.
+    fn compact_state_autocompact_at_eighty_percent() {
+        // 160k / 200k = 80% triggers even when buffer would not.
         let state = CompactState {
-            last_input_tokens: Some(170_000),
+            last_input_tokens: Some(160_000),
             context_window: 200_000,
-            auto_compact_threshold_percent: 85,
+            auto_compact_threshold_percent: 80,
             ..Default::default()
         };
         assert!(state.should_autocompact(0));
-        assert_eq!(state.context_window_usage(0), 85);
+        assert_eq!(state.context_window_usage(0), 80);
+
+        // Just under threshold does not fire without the hard buffer ceiling.
+        let below = CompactState {
+            last_input_tokens: Some(159_000),
+            context_window: 200_000,
+            auto_compact_threshold_percent: 80,
+            ..Default::default()
+        };
+        assert!(!below.should_autocompact(0));
     }
 
     #[test]

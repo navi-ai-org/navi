@@ -428,7 +428,7 @@ NAVI implements a three-level conversation compaction system:
 | Level | Trigger | Mechanism | Data Loss |
 |---|---|---|---|
 | Micro-compact | Time gap > 60 min since last assistant message | Clears read-only tool result content in-place | Tool output text only |
-| Auto-compact | `input_tokens + buffer >= context_window` | Summarizes full conversation via model, replaces messages with system + summary | Full conversation replaced by summary |
+| Auto-compact | Context usage ≥ **80%** of the window (or `input + buffer >= window`) | Summarizes via the **session chat model**, keeps recent turns by keep-ratio | Older turns replaced by summary |
 | Session memory | Session end with compact summary | Saves summary to `<data_dir>/memory/<project_hash>.json`, injected on next session | None (additive) |
 
 ### Micro-Compact
@@ -437,9 +437,9 @@ NAVI implements a three-level conversation compaction system:
 
 ### Auto-Compact
 
-`CompactState::auto_compact()` is called when `input_tokens + autocompact_buffer_tokens >= context_window` and the circuit breaker is not open.
+`CompactState::auto_compact()` runs before each model request when usage is ≥ 80% of the context window (or when `input_tokens + autocompact_buffer_tokens >= context_window`) and the circuit breaker is not open. Long-horizon memory rebuild is a last-resort fallback at ~95% after auto-compact has already been attempted.
 
-The conversation is serialized to text and sent to the model with a prompt that produces a 9-section summary:
+The conversation is serialized to text and sent to the **session model** with a prompt that produces a 9-section summary:
 
 1. Primary Request and Intent
 2. Key Technical Concepts
@@ -451,7 +451,7 @@ The conversation is serialized to text and sent to the model with a prompt that 
 8. Current Work
 9. Next Step (Optional)
 
-After 3 consecutive failures, the circuit breaker opens. No further auto-compact attempts are made.
+After success, the turn continues with the compacted history. The TUI appends the summary as normal assistant output after a `--------` divider (does not wipe the visible chat). After 3 consecutive failures, the circuit breaker opens.
 
 ### Session Memory
 

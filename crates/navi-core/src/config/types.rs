@@ -843,7 +843,9 @@ fn default_checkpoint_thresholds() -> Vec<f64> {
     vec![0.20, 0.45, 0.70]
 }
 fn default_rebuild_threshold() -> f64 {
-    0.85
+    // Keep above AUTO_COMPACT_THRESHOLD_PERCENT (80%) so auto-compact is the
+    // primary recovery path; rebuild is a near-ceiling fallback.
+    0.95
 }
 fn default_injected_context_token_budget() -> usize {
     65000
