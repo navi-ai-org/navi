@@ -19,6 +19,24 @@ use super::types::{
 /// hash as permission to replace the list.
 pub const LOCAL_API_SYNC_SHA: &str = "local-api-sync";
 
+
+/// Removes `registry.db` plus SQLite sidecar files (`-wal`, `-shm`, `-journal`).
+fn remove_registry_db_files(db_path: &Path) {
+    let path_str = db_path.as_os_str().to_string_lossy();
+    for suffix in ["", "-wal", "-shm", "-journal"] {
+        let path = Path::new(&format!("{path_str}{suffix}")).to_path_buf();
+        match std::fs::remove_file(&path) {
+            Ok(()) => tracing::info!(path = %path.display(), "removed broken registry DB file"),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+            Err(err) => tracing::warn!(
+                path = %path.display(),
+                error = %err,
+                "failed to remove broken registry DB file"
+            ),
+        }
+    }
+}
+
 /// SQLite-backed registry store.
 ///
 /// Thread-safe via internal `Mutex<Connection>` — registry operations are
@@ -33,12 +51,47 @@ impl RegistryStore {
     /// On first run (empty database), seeds the cache from the embedded registry
     /// snapshot so the provider catalog is immediately available without a
     /// network fetch.
+    ///
+    /// If an existing database is unreadable (corrupt file, truncated WAL/SHM,
+    /// or SQLite disk I/O errors on open), the broken files are removed and a
+    /// fresh cache is recreated from the embedded snapshot. Callers that need
+    /// the remote catalog should follow up with `sync_registry`.
     pub fn open(data_dir: &Path) -> Result<Self> {
         std::fs::create_dir_all(data_dir)
             .with_context(|| format!("failed to create data dir {}", data_dir.display()))?;
         let db_path = data_dir.join("registry.db");
-        let conn = Connection::open(&db_path)
+        match Self::open_at_path(&db_path) {
+            Ok(store) => Ok(store),
+            Err(first_err) => {
+                tracing::warn!(
+                    error = %first_err,
+                    path = %db_path.display(),
+                    "registry DB unreadable; recreating cache from embedded snapshot"
+                );
+                remove_registry_db_files(&db_path);
+                Self::open_at_path(&db_path).with_context(|| {
+                    format!(
+                        "failed to open registry DB at {} after recreate (original error: {first_err})",
+                        db_path.display()
+                    )
+                })
+            }
+        }
+    }
+
+    fn open_at_path(db_path: &Path) -> Result<Self> {
+        let conn = Connection::open(db_path)
             .with_context(|| format!("failed to open registry DB at {}", db_path.display()))?;
+
+        // Fail fast on truncated/corrupt caches before schema init. SQLite can
+        // open a header-only file and only error later on the first query.
+        conn.query_row("PRAGMA schema_version", [], |row| row.get::<_, i64>(0))
+            .with_context(|| {
+                format!(
+                    "registry DB at {} failed integrity probe",
+                    db_path.display()
+                )
+            })?;
 
         // WAL mode for concurrent reads, faster writes.
         conn.pragma_update(None, "journal_mode", "WAL")?;
@@ -48,30 +101,35 @@ impl RegistryStore {
             conn: Mutex::new(conn),
         };
         store.init_schema()?;
+        store.seed_if_empty()?;
+        Ok(store)
+    }
 
+    /// Seeds providers/manifest/transcription catalog when the cache is empty.
+    fn seed_if_empty(&self) -> Result<()> {
         // Seed from the embedded snapshot if the cache is empty.
-        if store.is_empty()? {
+        if self.is_empty()? {
             if let Ok(providers) = super::embedded::embedded_providers() {
                 tracing::info!(
                     providers = providers.len(),
                     "seeding registry cache from embedded snapshot"
                 );
-                store.replace_all(&providers)?;
+                self.replace_all(&providers)?;
             }
             if let Ok(manifest) = super::embedded::embedded_manifest() {
-                let _ = store.save_manifest_meta(&manifest);
+                let _ = self.save_manifest_meta(&manifest);
                 // Also persist the full manifest JSON so load_cached_registry
                 // and check_registry_manifest can find it.
                 let manifest_json = serde_json::to_string(&manifest).ok();
                 if let Some(json) = manifest_json {
-                    let _ = store.meta_set("registry_manifest_json", &json);
+                    let _ = self.meta_set("registry_manifest_json", &json);
                 }
                 // Seed canonical model catalog with hashes from the embedded
                 // manifest so remote sync can skip unchanged models.
                 if let Ok(catalog) = super::embedded::embedded_model_catalog() {
                     for (id, model) in catalog {
                         let sha = manifest.models.get(&id).map(|e| e.sha256.as_str());
-                        let _ = store.upsert_canonical_model(&id, &model, sha);
+                        let _ = self.upsert_canonical_model(&id, &model, sha);
                     }
                 }
             }
@@ -79,10 +137,9 @@ impl RegistryStore {
 
         // Always ensure transcription providers are seeded (may be empty on
         // DBs created before STT catalog support).
-        store.seed_transcription_from_embedded_if_empty()?;
-        store.seed_canonical_models_from_embedded_if_empty()?;
-
-        Ok(store)
+        self.seed_transcription_from_embedded_if_empty()?;
+        self.seed_canonical_models_from_embedded_if_empty()?;
+        Ok(())
     }
 
     /// Opens an in-memory database (for testing).
@@ -2106,5 +2163,22 @@ mod tests {
         assert!(store.load_pricing(model_id).unwrap().is_none());
         let ranked = store.query_models_by_profile("cheap_general").unwrap();
         assert!(ranked.is_empty());
+    }
+
+    #[test]
+    fn open_recreates_corrupt_on_disk_registry_db() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let db_path = dir.path().join("registry.db");
+        // Non-SQLite payload that fails on open with "file is not a database".
+        std::fs::write(&db_path, b"not a sqlite database").expect("write corrupt db");
+        std::fs::write(dir.path().join("registry.db-wal"), []).expect("wal");
+        std::fs::write(dir.path().join("registry.db-shm"), vec![0u8; 32_768]).expect("shm");
+
+        let store = RegistryStore::open(dir.path()).expect("open should recreate");
+        assert!(
+            !store.is_empty().expect("is_empty"),
+            "recreated store should be seeded from embedded snapshot"
+        );
+        assert!(db_path.exists(), "registry.db should exist after recreate");
     }
 }
