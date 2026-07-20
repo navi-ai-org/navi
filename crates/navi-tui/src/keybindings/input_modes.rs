@@ -76,6 +76,9 @@ pub(crate) fn handle_normal_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyM
                 delete_input_previous_space_word(app)
             }
             KeyCode::Delete | KeyCode::Char('d') => delete_input_next_hump(app),
+            // Alt+T is a global toggle for thinking visibility — leave it
+            // for route_global_key rather than treating it as text input.
+            KeyCode::Char('t') | KeyCode::Char('T') => return false,
             _ => return false,
         }
         return false;

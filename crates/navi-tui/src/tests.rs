@@ -1709,6 +1709,19 @@ fn ctrl_o_toggles_full_tool_view() {
 }
 
 #[test]
+fn alt_t_toggles_thinking_visibility() {
+    let mut app = test_app("");
+    app.show_thinking = true;
+
+    handle_key(&mut app, KeyCode::Char('t'), KeyModifiers::ALT);
+    assert!(!app.show_thinking);
+    assert!(app.notification().is_some());
+
+    handle_key(&mut app, KeyCode::Char('T'), KeyModifiers::ALT);
+    assert!(app.show_thinking);
+}
+
+#[test]
 fn ctrl_o_in_provider_modal_does_not_toggle_full_tool_view() {
     let mut app = test_app("");
     app.mode = Mode::Commands;

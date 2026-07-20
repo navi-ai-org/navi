@@ -388,21 +388,150 @@ fn composer_activity_line(app: &TuiApp, width: usize) -> Option<Line<'static>> {
         .unwrap_or(0);
     let (status, color) = composer_activity_status(app);
     let elapsed = format_activity_elapsed(elapsed_ms);
-    let suffix = format!(" · {elapsed}");
     // diamond pulse while a turn is running — no corner trail.
     let diamond = crate::render::status::running_diamond(elapsed_ms);
-    let status_width = width.saturating_sub(display_width(diamond) + display_width(&suffix) + 2);
-    let status = fit_display_width(&status, status_width.max(1));
 
-    Some(Line::from(vec![
+    // Target shape (when room allows):
+    //   ◆ Thinking · 7s (esc to interrupt) · (1.2k tok ↓  340 tok ↑  ·  avg 42 t/s)
+    let mut spans: Vec<Span<'static>> = vec![
         Span::styled(
             diamond,
             Style::default().fg(color).add_modifier(Modifier::BOLD),
         ),
         Span::styled(" ", Style::default().fg(ghost())),
-        Span::styled(status, Style::default().fg(text())),
-        Span::styled(suffix, Style::default().fg(code_number())),
-    ]))
+        Span::styled(status.clone(), Style::default().fg(text())),
+        Span::styled(
+            format!(" · {elapsed}"),
+            Style::default().fg(code_number()),
+        ),
+    ];
+
+    let interrupt_hint = " (esc to interrupt)";
+    let details = activity_detail_hints(app, elapsed_ms);
+    let full_details = if details.is_empty() {
+        String::new()
+    } else {
+        format!(" · ({details})")
+    };
+    let used = spans_display_width(&spans);
+    let remaining = width.saturating_sub(used);
+
+    if !full_details.is_empty()
+        && remaining >= display_width(interrupt_hint) + display_width(&full_details)
+    {
+        spans.push(Span::styled(
+            interrupt_hint,
+            Style::default().fg(ghost()),
+        ));
+        spans.push(Span::styled(full_details, Style::default().fg(ghost())));
+    } else if remaining >= display_width(interrupt_hint) {
+        spans.push(Span::styled(
+            interrupt_hint,
+            Style::default().fg(ghost()),
+        ));
+    } else {
+        // Narrow: keep core status + elapsed only, soft-trim if needed.
+        let plain = spans_to_text(&spans);
+        let trimmed = fit_display_width(&plain, width.max(1));
+        return Some(Line::from(vec![Span::styled(
+            trimmed,
+            Style::default().fg(text()),
+        )]));
+    }
+
+    // Soft-trim if we still overflow after layout math (wide glyphs / edge widths).
+    let total = spans_display_width(&spans);
+    if total > width && width > 1 {
+        let plain = spans_to_text(&spans);
+        let trimmed = fit_display_width(&plain, width);
+        return Some(Line::from(vec![Span::styled(
+            trimmed,
+            Style::default().fg(text()),
+        )]));
+    }
+
+    Some(Line::from(spans))
+}
+
+/// Compact right-side hints for the live activity line.
+///
+/// Example: `1.2k tok ↓  340 tok ↑  ·  avg 42 t/s`
+fn activity_detail_hints(app: &TuiApp, elapsed_ms: u64) -> String {
+    let (input, output) = activity_token_counts(app);
+    let mut parts = Vec::new();
+    if input > 0 || output > 0 {
+        parts.push(format!(
+            "{} tok ↓  {} tok ↑",
+            format_activity_tokens(input),
+            format_activity_tokens(output)
+        ));
+    }
+    if let Some(rate) = activity_avg_tokens_per_sec(output, elapsed_ms) {
+        parts.push(format!("avg {} t/s", format_activity_rate(rate)));
+    }
+    parts.join("  ·  ")
+}
+
+/// Prefer authoritative request usage snapshots; fall back to live estimates.
+fn activity_token_counts(app: &TuiApp) -> (u64, u64) {
+    let usage = &app.usage_state;
+    let input = if usage.request_input_tokens > 0 {
+        usage.request_input_tokens
+    } else {
+        usage
+            .estimated_request_input_tokens
+            .unwrap_or_else(|| app.compact_state.total_estimated_tokens(0))
+    };
+    let output = if usage.request_output_tokens > 0 {
+        usage.request_output_tokens
+    } else {
+        usage.estimated_request_output_tokens()
+    };
+    (input, output)
+}
+
+/// Average generation speed for the current request (output tokens / elapsed).
+fn activity_avg_tokens_per_sec(output_tokens: u64, elapsed_ms: u64) -> Option<f64> {
+    if output_tokens == 0 || elapsed_ms < 250 {
+        return None;
+    }
+    let secs = elapsed_ms as f64 / 1_000.0;
+    if secs <= 0.0 {
+        return None;
+    }
+    Some(output_tokens as f64 / secs)
+}
+
+fn format_activity_tokens(tokens: u64) -> String {
+    if tokens >= 1_000_000 {
+        let value = tokens as f64 / 1_000_000.0;
+        if value >= 10.0 {
+            format!("{value:.0}M")
+        } else {
+            format!("{value:.1}M")
+        }
+    } else if tokens >= 1_000 {
+        let value = tokens as f64 / 1_000.0;
+        if tokens % 1_000 == 0 {
+            format!("{}k", tokens / 1_000)
+        } else if value >= 10.0 {
+            format!("{value:.0}k")
+        } else {
+            format!("{value:.1}k")
+        }
+    } else {
+        tokens.to_string()
+    }
+}
+
+fn format_activity_rate(rate: f64) -> String {
+    if rate >= 100.0 {
+        format!("{rate:.0}")
+    } else if rate >= 10.0 {
+        format!("{rate:.0}")
+    } else {
+        format!("{rate:.1}")
+    }
 }
 
 /// Activity label driven by real agent state (approvals, tools, stream status).
@@ -917,7 +1046,7 @@ mod tests {
     use super::*;
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
-    use std::time::Instant;
+    use std::time::{Duration, Instant};
 
     use crate::state::ChatMessage;
     use crate::theme::{ThemeId, with_palette};
@@ -1228,15 +1357,67 @@ mod tests {
     fn composer_activity_line_uses_thinking_content() {
         let mut app = crate::tests::test_app("");
         app.is_loading = true;
-        app.loading_start = Some(Instant::now());
+        // Fixed elapsed so avg t/s is deterministic (1.5s → 900 out / 1.5 = 600 t/s).
+        app.loading_start = Some(Instant::now() - Duration::from_millis(1_500));
+        app.usage_state.request_input_tokens = 1_400;
+        app.usage_state.request_output_tokens = 900;
         app.messages.push(ChatMessage {
             status: Some("thinking".to_string()),
             thinking_content: "step by step".to_string(),
             ..ChatMessage::new(ChatRole::Assistant, String::new())
         });
 
-        let line = composer_activity_line(&app, 80).expect("activity line");
-        assert!(line_text(&line).contains("Thinking"));
+        let line = composer_activity_line(&app, 120).expect("activity line");
+        let text = line_text(&line);
+        assert!(text.contains("Thinking"));
+        assert!(text.contains("esc to interrupt"));
+        assert!(text.contains("1.4k tok ↓"), "expected input tokens, got {text}");
+        assert!(text.contains("900 tok ↑"), "expected output tokens, got {text}");
+        assert!(text.contains("avg 600 t/s"), "expected avg throughput, got {text}");
+        assert!(!text.contains("ctrl+o"));
+        assert!(!text.contains("alt+t"));
+        assert!(!text.contains("c ·") && !text.ends_with('c'));
+    }
+
+    #[test]
+    fn composer_activity_line_keeps_core_status_on_narrow_width() {
+        let mut app = crate::tests::test_app("");
+        app.is_loading = true;
+        app.loading_start = Some(Instant::now());
+        app.usage_state.request_input_tokens = 1_400;
+        app.usage_state.request_output_tokens = 900;
+        app.messages.push(ChatMessage {
+            status: Some("thinking".to_string()),
+            thinking_content: "step by step".to_string(),
+            ..ChatMessage::new(ChatRole::Assistant, String::new())
+        });
+
+        let line = composer_activity_line(&app, 24).expect("activity line");
+        let text = line_text(&line);
+        assert!(text.contains("Thinking"));
+        assert!(text.contains("0s"));
+        // Token/rate details may be dropped when there is no room.
+        assert!(!text.contains("tok ↑"));
+        assert!(!text.contains("t/s"));
+    }
+
+    #[test]
+    fn format_activity_tokens_uses_k_and_m_suffixes() {
+        assert_eq!(format_activity_tokens(900), "900");
+        assert_eq!(format_activity_tokens(1_000), "1k");
+        assert_eq!(format_activity_tokens(1_400), "1.4k");
+        assert_eq!(format_activity_tokens(12_400), "12k");
+        assert_eq!(format_activity_tokens(1_500_000), "1.5M");
+    }
+
+    #[test]
+    fn activity_avg_tokens_per_sec_uses_output_over_elapsed() {
+        assert_eq!(activity_avg_tokens_per_sec(0, 1_000), None);
+        assert_eq!(activity_avg_tokens_per_sec(100, 100), None);
+        assert_eq!(
+            activity_avg_tokens_per_sec(900, 1_500).map(|v| (v * 10.0).round() / 10.0),
+            Some(600.0)
+        );
     }
 
     #[test]
