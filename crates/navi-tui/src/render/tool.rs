@@ -206,7 +206,13 @@ pub(crate) fn tool_compact_text(invocation: &ToolInvocation, result: &ToolResult
     };
 
     if !result.ok {
-        if let Some(error) = tool_error_message(&result.output) {
+        // Bash already embeds sticky failure bits in its summary (`Run … · 4p/1f · test`).
+        // Don't append a second `· signal` from the generic error path.
+        let bash_already_signaled = invocation.tool_name == "bash"
+            && shell_failure_header_bits(&result.output).is_some();
+        if bash_already_signaled {
+            // nothing extra
+        } else if let Some(error) = tool_error_message(&result.output) {
             // Prefer a short, high-signal failure reason over repeating "Bash failed".
             let short = one_line(error);
             if short.eq_ignore_ascii_case("bash failed")
@@ -1022,6 +1028,7 @@ fn append_plain_stream_capped(content: &mut String, text: &str, max_lines: usize
 }
 
 /// Keep the failure signal: prefer lines around FAILED / panic / assertion, else tail.
+/// Cargo recompile / file-lock noise is collapsed into a single build-log note.
 fn append_relevant_shell_excerpt(
     content: &mut String,
     stdout: &str,
@@ -1040,7 +1047,36 @@ fn append_relevant_shell_excerpt(
         return;
     }
 
-    let focus = lines.iter().position(|line| {
+    let noise = |line: &str| -> bool {
+        let t = line.trim();
+        t.starts_with("Blocking waiting for file lock")
+            || t.starts_with("Compiling ")
+            || t.starts_with("    Compiling ")
+            || t.starts_with("   Compiling ")
+            || t.starts_with("    Finished ")
+            || t.starts_with("   Finished ")
+            || t.starts_with("     Running unittests")
+            || t.starts_with("    Running unittests")
+            || t.contains("target/debug/deps/")
+            || t.starts_with("note: run with `RUST_BACKTRACE")
+    };
+
+    let noise_count = lines.iter().filter(|l| noise(l)).count();
+    let signal_lines: Vec<&str> = lines.iter().copied().filter(|l| !noise(l)).collect();
+
+    if noise_count > 0 {
+        content.push_str(&format!(
+            "Build log: {noise_count} compile/lock lines omitted\n"
+        ));
+    }
+
+    let focus_pool = if signal_lines.is_empty() {
+        &lines
+    } else {
+        &signal_lines
+    };
+
+    let focus = focus_pool.iter().position(|line| {
         let lower = line.to_ascii_lowercase();
         lower.contains("failed")
             || lower.contains("panicked")
@@ -1053,29 +1089,26 @@ fn append_relevant_shell_excerpt(
     let (start, end) = if let Some(idx) = focus {
         let half = max_lines / 3;
         let start = idx.saturating_sub(half);
-        let end = (start + max_lines).min(lines.len());
+        let end = (start + max_lines).min(focus_pool.len());
         let start = end.saturating_sub(max_lines);
         (start, end)
     } else {
-        let end = lines.len();
+        let end = focus_pool.len();
         let start = end.saturating_sub(max_lines);
         (start, end)
     };
 
     if start > 0 {
-        content.push_str(&format!(
-            "… ({} earlier lines omitted)\n",
-            start
-        ));
+        content.push_str(&format!("… ({start} earlier lines omitted)\n"));
     }
-    for line in &lines[start..end] {
+    for line in &focus_pool[start..end] {
         content.push_str(line);
         content.push('\n');
     }
-    if end < lines.len() {
+    if end < focus_pool.len() {
         content.push_str(&format!(
             "… ({} later lines omitted — expand tool or ctrl+o)\n",
-            lines.len() - end
+            focus_pool.len() - end
         ));
     }
 }
@@ -1621,12 +1654,103 @@ fn bash_summary(invocation: &ToolInvocation, result: &ToolResult) -> String {
             format!("Run {cmd} ({status} · {elapsed_str})")
         }
     } else {
+        // Prefer a sticky failure signal in the header for failed runs so the
+        // card reads `Run cargo test · foo::bar · left 3 ≠ right 6` instead of
+        // only `exit 101` (body still has the full dump).
+        if !result.ok {
+            let mut parts = vec![format!("Run {cmd}")];
+            if let Some(status) = result
+                .output
+                .get("status")
+                .and_then(|v| v.as_i64())
+                .or_else(|| result.output.get("exit_code").and_then(|v| v.as_i64()))
+            {
+                parts.push(format!("exit {status}"));
+            }
+            if let Some(signal) = shell_failure_header_bits(&result.output) {
+                parts.extend(signal);
+            }
+            return parts.join(" · ");
+        }
+
         let mut summary = format!("Run {cmd}");
         if let Some(status) = result.output.get("status").and_then(|v| v.as_i64()) {
             summary.push_str(&format!(" (exit {status})"));
         }
         summary
     }
+}
+
+/// Compact multi-bit failure signal for bash tool headers.
+///
+/// Returns ordered fragments like `["4p/1f", "scroll…offset", "3 ≠ 6"]` so the
+/// header can join them without burying the command.
+fn shell_failure_header_bits(output: &Value) -> Option<Vec<String>> {
+    let obj = output.as_object()?;
+    let summary = shell_failure_summary(obj)?;
+    let mut bits = Vec::new();
+
+    // Counts from `Summary: FAILED. 4 passed; 1 failed; …`
+    if let Some(line) = summary.lines().find(|l| l.trim_start().starts_with("Summary:")) {
+        let rest = line.trim_start().trim_start_matches("Summary:").trim();
+        let passed = extract_count(rest, "passed");
+        let failed = extract_count(rest, "failed");
+        if let (Some(p), Some(f)) = (passed, failed) {
+            bits.push(format!("{p}p/{f}f"));
+        } else if rest.to_ascii_lowercase().contains("failed") {
+            bits.push(truncate_for_summary(rest, 28));
+        }
+    }
+
+    if let Some(failed) = summary.lines().find_map(|l| {
+        l.trim()
+            .strip_prefix("Failed:")
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+    }) {
+        // Prefer short test leaf name when path-like.
+        let leaf = failed.rsplit("::").next().unwrap_or(failed);
+        bits.push(truncate_for_summary(leaf, 36));
+    }
+
+    if let Some(assert) = summary.lines().find_map(|l| {
+        l.trim()
+            .strip_prefix("Assert:")
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+    }) {
+        // Prefer `left X ≠ right Y` form; drop the "left/right" words if long.
+        let compact = assert
+            .replace("left ", "")
+            .replace("right ", "")
+            .replace("≠", "≠");
+        bits.push(truncate_for_summary(compact.trim(), 24));
+    }
+
+    if bits.is_empty() {
+        None
+    } else {
+        Some(bits)
+    }
+}
+
+fn extract_count(text: &str, label: &str) -> Option<u64> {
+    // Match `4 passed` / `1 failed` (cargo test result line).
+    let needle = format!(" {label}");
+    let lower = text.to_ascii_lowercase();
+    let label_l = label.to_ascii_lowercase();
+    let idx = lower.find(&format!(" {label_l}"))?;
+    let before = &text[..idx];
+    before
+        .split(|c: char| !c.is_ascii_digit())
+        .filter(|s| !s.is_empty())
+        .next_back()
+        .and_then(|n| n.parse().ok())
+        .or_else(|| {
+            // also allow `FAILED. 4 passed` without leading space edge cases
+            let _ = needle;
+            None
+        })
 }
 
 fn grep_summary(invocation: &ToolInvocation, result: &ToolResult) -> String {
@@ -2864,6 +2988,11 @@ fn append_numbered_source_lines(content: &mut String, text: &str, start_line: u3
 
 /// One-line high-signal failure reason for compact tool headers.
 fn shell_failure_signal(output: &Value) -> Option<String> {
+    // Prefer multi-bit header fragments when available (counts + test + assert).
+    if let Some(bits) = shell_failure_header_bits(output) {
+        return Some(bits.join(" · "));
+    }
+
     let obj = output.as_object()?;
     if let Some(summary) = shell_failure_summary(obj) {
         // First non-empty line of the sticky summary, flattened.
@@ -3497,12 +3626,56 @@ test result: FAILED. 4 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out
         );
         assert!(text.starts_with("Run "), "{text}");
         assert!(
-            text.contains("foo::bar") || text.contains("FAILED") || text.contains("exit"),
+            text.contains("bar") || text.contains("FAILED") || text.contains("0p/1f") || text.contains("exit"),
             "header should carry a high-signal failure reason: {text}"
         );
         assert!(
             !text.contains("error: Bash failed"),
             "must not append generic Bash failed: {text}"
+        );
+        // Counts + leaf test name when available.
+        assert!(
+            text.contains("0p/1f") || text.contains("bar"),
+            "expected sticky bits in header: {text}"
+        );
+    }
+
+    #[test]
+    fn bash_failure_body_collapses_cargo_compile_noise() {
+        let mut noisy = String::new();
+        for i in 0..20 {
+            noisy.push_str(&format!("   Compiling crate{i} v0.1.0\n"));
+        }
+        noisy.push_str("Blocking waiting for file lock on artifact directory\n");
+        noisy.push_str("test foo::bar ... FAILED\n");
+        noisy.push_str("assertion `left == right` failed\n");
+        noisy.push_str("  left: 1\n");
+        noisy.push_str(" right: 2\n");
+        noisy.push_str("test result: FAILED. 0 passed; 1 failed; 0 ignored\n");
+        // Pad so the body takes the "long stream" excerpt path.
+        for i in 0..40 {
+            noisy.push_str(&format!("padding line {i}\n"));
+        }
+
+        let content = tool_body_content(
+            &invocation("bash", json!({ "command": "cargo test" })),
+            &err_result(json!({
+                "status": 101,
+                "stdout": noisy,
+                "stderr": ""
+            })),
+        );
+        assert!(
+            content.contains("Build log:") || content.contains("compile/lock"),
+            "expected cargo noise collapse, got:\n{content}"
+        );
+        assert!(
+            content.contains("foo::bar") || content.contains("Failed:"),
+            "expected failure signal retained, got:\n{content}"
+        );
+        assert!(
+            !content.contains("Compiling crate5") || content.contains("omitted"),
+            "raw compile spam should be reduced:\n{content}"
         );
     }
 

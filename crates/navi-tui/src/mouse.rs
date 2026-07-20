@@ -8,7 +8,6 @@ use crate::notifications::{push_diagnostic, show_notification};
 use crate::plugins::{install_or_update_from_marketplace, plugin_picker_rows};
 use crate::providers::{
     ListRow, apply_model_selection, build_model_rows, first_model_index, selected_model_in_rows,
-    sync_scroll_to_model_index, sync_scroll_to_selection,
 };
 use crate::render::text::display_width;
 use crate::runtime::provider_supports_oauth;
@@ -1142,7 +1141,7 @@ fn active_scroll_target(app: &TuiApp) -> Option<ScrollTarget> {
         | Mode::About
         | Mode::UpdateAvailable => None,
         Mode::BackgroundModels | Mode::ModelRouting => {
-            // Agents tab list (and legacy agent routes modal) — wheel moves selection.
+            // Agents tab list (and legacy agent routes modal).
             Some(ScrollTarget::BackgroundModels)
         }
         Mode::BgModelPicker => Some(ScrollTarget::Models),
@@ -1159,8 +1158,8 @@ fn active_scroll_target(app: &TuiApp) -> Option<ScrollTarget> {
 fn scroll_by(app: &mut TuiApp, target: ScrollTarget, delta: isize) {
     match target {
         ScrollTarget::Commands => {
-            // Move selection (and scroll) like other lists — wheel on a short
-            // root palette must still change selected_command when max_scroll is 0.
+            // Viewport scroll first. Selection only moves when it leaves the
+            // visible window (short lists keep selection stable under the wheel).
             let rows = crate::commands::command_rows(app);
             let len = rows.len();
             let (selected, scroll) =
@@ -1252,20 +1251,16 @@ fn scroll_by(app: &mut TuiApp, target: ScrollTarget, delta: isize) {
                 return;
             }
             let len = 5usize; // BG_MODEL_TASKS length
-            if delta.is_positive() {
-                app.bg_models_selected = (app.bg_models_selected + delta as usize).min(len - 1);
-            } else {
-                app.bg_models_selected =
-                    app.bg_models_selected.saturating_sub(delta.unsigned_abs());
-            }
-            // Keep selection in view (same window size as keyboard clamp).
             let visible_tasks = 4usize;
-            if app.bg_models_selected < app.bg_models_scroll {
-                app.bg_models_scroll = app.bg_models_selected;
-            } else if app.bg_models_selected >= app.bg_models_scroll + visible_tasks {
-                app.bg_models_scroll = app.bg_models_selected.saturating_sub(visible_tasks - 1);
-            }
-            app.bg_models_scroll = app.bg_models_scroll.min(len.saturating_sub(visible_tasks));
+            let (selected, scroll) = shifted_select_state(
+                app.bg_models_selected,
+                app.bg_models_scroll,
+                len,
+                delta,
+                visible_tasks,
+            );
+            app.bg_models_selected = selected;
+            app.bg_models_scroll = scroll;
         }
         ScrollTarget::BackgroundCommandOutput => {
             app.bg_command_output_follow = false;
@@ -1416,17 +1411,6 @@ pub(crate) fn run_rewind_checkpoint(app: &mut TuiApp, message_index: usize) {
     close_active_modal(app);
 }
 
-fn shifted_index(current: usize, len: usize, delta: isize) -> usize {
-    if len == 0 {
-        return 0;
-    }
-    if delta.is_positive() {
-        current.saturating_add(delta as usize).min(len - 1)
-    } else {
-        current.saturating_sub(delta.unsigned_abs())
-    }
-}
-
 fn shifted_scroll(current: usize, len: usize, visible_rows: usize, delta: isize) -> usize {
     let max_scroll = len.saturating_sub(visible_rows);
     if delta.is_positive() {
@@ -1436,6 +1420,11 @@ fn shifted_scroll(current: usize, len: usize, visible_rows: usize, delta: isize)
     }
 }
 
+/// Mouse-wheel list navigation: scroll the viewport, not the selection.
+///
+/// Keyboard PageUp/PageDown still use selection-first paging. Wheel should feel
+/// like a scrollbar: the list moves under the cursor, and selection only
+/// follows when it would leave the visible window.
 fn shifted_select_state(
     selected: usize,
     scroll: usize,
@@ -1444,13 +1433,7 @@ fn shifted_select_state(
     visible_rows: usize,
 ) -> (usize, usize) {
     let mut state = SelectListState::new(selected, scroll);
-    if delta.is_positive() {
-        state.page_next(len, delta as usize);
-    } else {
-        state.page_previous(delta.unsigned_abs());
-    }
-    state.sync_scroll(visible_rows);
-    state.clamp_scroll(len, visible_rows);
+    state.scroll_viewport(len, visible_rows, delta);
     (state.selected(), state.scroll())
 }
 
@@ -1459,14 +1442,31 @@ fn scroll_models_by(app: &mut TuiApp, delta: isize) {
     if rows.is_empty() {
         return;
     }
-    let current_selected = active_model_list_selection(app);
-    let current = selected_model_in_rows(&rows, current_selected).unwrap_or(0);
-    let target = shifted_index(current, rows.len(), delta);
-    select_model_near_row(app, &rows, target, delta.is_positive());
-    if app.mode == Mode::BgModelPicker {
-        sync_scroll_to_model_index(app, app.bg_model_picker_selected, &rows, 14);
+    let visible_rows = 14usize;
+    let max_scroll = rows.len().saturating_sub(visible_rows);
+    if delta.is_positive() {
+        app.model_scroll = app
+            .model_scroll
+            .saturating_add(delta as usize)
+            .min(max_scroll);
     } else {
-        sync_scroll_to_selection(app, &rows, 14);
+        app.model_scroll = app
+            .model_scroll
+            .saturating_sub(delta.unsigned_abs());
+    }
+
+    // Keep the selected model on-screen without hopping selection by delta.
+    let current_selected = active_model_list_selection(app);
+    if let Some(selected_row) = selected_model_in_rows(&rows, current_selected) {
+        let last_visible = app
+            .model_scroll
+            .saturating_add(visible_rows.saturating_sub(1))
+            .min(rows.len().saturating_sub(1));
+        if selected_row < app.model_scroll {
+            select_model_near_row(app, &rows, app.model_scroll, true);
+        } else if selected_row > last_visible {
+            select_model_near_row(app, &rows, last_visible, false);
+        }
     }
 }
 
@@ -1682,14 +1682,67 @@ mod tests {
 
         handle_mouse(&mut app, mouse_scroll_down(4, 3));
 
-        // Root palette is short (fits one page): selection still moves; scroll may stay 0.
-        assert!(
-            app.selected_command > 0,
-            "wheel over Commands must move selection"
+        // Short root palette fits one page: wheel is viewport-first, so selection
+        // stays put when there is no overflow. Chat must not move either.
+        assert_eq!(
+            app.selected_command, 0,
+            "wheel over a short Commands list must not jump selection"
         );
+        assert_eq!(app.command_scroll, 0);
         assert_eq!(
             app.scroll_offset, 12,
             "chat scroll must not move while a modal list is active"
+        );
+    }
+
+    #[test]
+    fn mouse_wheel_scrolls_list_viewport_without_jumping_selection() {
+        use navi_sdk::{SessionId, SessionSnapshotInfo};
+        use std::path::PathBuf;
+
+        let mut app = test_app("");
+        replace_modal(&mut app, crate::state::ModalKind::Sessions);
+        app.saved_sessions = (0..30)
+            .map(|i| SessionSnapshotInfo {
+                id: SessionId::new(format!("session-{i}")),
+                title: Some(format!("Session {i}")),
+                project: PathBuf::from("/tmp/test-project"),
+                created_at: i as u64,
+                updated_at: i as u64,
+            })
+            .collect();
+        // Sessions wheel uses visible_rows=10. Keep selection mid-window so the
+        // first wheel step advances scroll without leaving the visible range.
+        app.selected_session = 5;
+        app.session_scroll = 0;
+        app.scroll_offset = 9;
+
+        handle_mouse(&mut app, mouse_scroll_down(4, 3));
+
+        // delta = +3: viewport advances; selection remains while still visible
+        // (window is 3..=12, selected 5 is still inside).
+        assert_eq!(app.session_scroll, 3);
+        assert_eq!(app.selected_session, 5);
+        assert_eq!(app.scroll_offset, 9);
+
+        // Scroll far enough that the old selection leaves the window
+        // (scroll > 5 → selection is pulled up to the new top).
+        handle_mouse(&mut app, mouse_scroll_down(4, 3)); // scroll 6
+        assert_eq!(app.session_scroll, 6);
+        assert_eq!(
+            app.selected_session, 6,
+            "selection follows only once it would leave the visible window"
+        );
+        handle_mouse(&mut app, mouse_scroll_down(4, 3));
+        handle_mouse(&mut app, mouse_scroll_down(4, 3));
+        assert!(
+            app.session_scroll >= 10,
+            "viewport should keep advancing, got {}",
+            app.session_scroll
+        );
+        assert_eq!(
+            app.selected_session, app.session_scroll,
+            "selection tracks the top of the window after leaving it"
         );
     }
 
@@ -1999,29 +2052,42 @@ mod tests {
 
     #[test]
     fn mouse_move_after_wheel_does_not_restore_list_scroll_to_hovered_item() {
+        use navi_sdk::{SessionId, SessionSnapshotInfo};
+        use std::path::PathBuf;
+
+        // Use a long Sessions list so the wheel actually advances the viewport.
+        // (Short Command palettes have max_scroll=0 under viewport-first scrolling.)
         let mut app = test_app("");
-        replace_modal(&mut app, crate::state::ModalKind::Commands);
-        app.selected_command = 0;
-        app.command_scroll = 0;
+        replace_modal(&mut app, crate::state::ModalKind::Sessions);
+        app.saved_sessions = (0..30)
+            .map(|i| SessionSnapshotInfo {
+                id: SessionId::new(format!("session-{i}")),
+                title: Some(format!("Session {i}")),
+                project: PathBuf::from("/tmp/test-project"),
+                created_at: i as u64,
+                updated_at: i as u64,
+            })
+            .collect();
+        app.selected_session = 5;
+        app.session_scroll = 0;
+        // Hit region for the first visible row (index 0) — still under the
+        // cursor after the viewport moves; hover must not snap scroll back.
         app.register_hit(
             Rect::new(2, 3, 12, 1),
             20,
-            "command first row",
-            HitAction::Command(0),
+            "session first row",
+            HitAction::Session(0),
         );
 
         handle_mouse(&mut app, mouse_scroll_down(4, 3));
-        let scrolled = app.command_scroll;
-        let selected_after_scroll = app.selected_command;
-        assert!(
-            selected_after_scroll > 0,
-            "wheel must move selection before hover"
-        );
+        let scrolled = app.session_scroll;
+        let selected_after_scroll = app.selected_session;
+        assert!(scrolled > 0, "wheel must advance viewport before hover");
         handle_mouse(&mut app, mouse_moved(4, 3));
 
         // Hover highlighting must not snap selection/scroll back to the row under the cursor.
-        assert_eq!(app.command_scroll, scrolled);
-        assert_eq!(app.selected_command, selected_after_scroll);
+        assert_eq!(app.session_scroll, scrolled);
+        assert_eq!(app.selected_session, selected_after_scroll);
     }
 
     #[test]

@@ -449,18 +449,29 @@ fn style_interactive_lines(
     _width: usize,
 ) {
     for (line, source) in lines.iter_mut().zip(sources.iter()) {
-        let Some((_hovered, block_selected, _action_selected, _soft_card)) =
+        let Some((hovered, block_selected, _action_selected, _soft_card)) =
             interactive_state(app, source)
         else {
             continue;
         };
 
-        // Block selection: Recap-style left rail only — no solid fill, no hover wash.
-        // Diamonds already mark tools; message hover fill is intentionally disabled.
+        // Recap-style left rail only — no solid fill / selection_bg wash.
+        // Selected wins over hover so the active block stays accent-bright.
         if block_selected {
-            apply_selection_rail(line);
+            apply_block_rail(line, BlockRailTone::Selected);
+        } else if hovered {
+            apply_block_rail(line, BlockRailTone::Hovered);
         }
     }
+}
+
+/// Visual weight for the chat block rail (selection vs pointer hover).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BlockRailTone {
+    /// Active block selection — accent rail for clear click feedback.
+    Selected,
+    /// Pointer over a block that is not selected — muted rail affordance.
+    Hovered,
 }
 
 /// Returns (hovered, block_selected, action_selected, soft_card).
@@ -502,13 +513,20 @@ fn interactive_state(app: &TuiApp, source: &ChatLineSource) -> Option<(bool, boo
     Some((hovered, block_selected, action_selected, soft_card))
 }
 
-/// Recap-style vertical rail on the left of a selected block.
+/// Recap-style vertical rail on the left of a hovered/selected block.
 /// Keeps original text colors; no full-width selection_bg fill.
-fn apply_selection_rail(line: &mut Line<'static>) {
+fn apply_block_rail(line: &mut Line<'static>, tone: BlockRailTone) {
     // Thin continuous bar (Recap). `│` is one cell wide everywhere.
     const RAIL: &str = "│";
-    // Muted like Recap — selection is the rail alone, not a fill + fg wipe.
-    let rail_style = Style::default().fg(muted()).bg(bg());
+    // Selected uses accent so click feedback is obvious; hover stays muted so
+    // it reads as affordance without competing with the active selection.
+    let mut rail_style = match tone {
+        BlockRailTone::Selected => Style::default().fg(accent()).bg(bg()),
+        BlockRailTone::Hovered => Style::default().fg(muted()).bg(bg()),
+    };
+    if matches!(tone, BlockRailTone::Selected) {
+        rail_style = rail_style.add_modifier(Modifier::BOLD);
+    }
     let chat_bg = bg();
 
     // Drop solid panel/selection fills so the rail is the only selection
@@ -1016,8 +1034,8 @@ mod tests {
     #[test]
     fn selected_block_uses_left_rail_not_selection_bg() {
         use crate::state::ChatLineSource;
-        use crate::theme::{ThemeId, selection_bg, with_palette};
-        use ratatui::style::Color;
+        use crate::theme::{ThemeId, accent, selection_bg, with_palette};
+        use ratatui::style::{Color, Modifier};
 
         with_palette(&ThemeId::Lain.palette(), || {
             let mut app = crate::tests::test_app("");
@@ -1037,15 +1055,16 @@ mod tests {
             super::style_interactive_lines(&mut lines, &sources, &app, 40);
 
             let line = &lines[0];
+            let rail = line.spans.first().expect("rail span");
+            assert_eq!(rail.content.as_ref(), "│", "expected left rail");
+            assert_eq!(
+                rail.style.fg,
+                Some(accent()),
+                "selected rail should use accent for clear click feedback"
+            );
             assert!(
-                line.spans
-                    .first()
-                    .is_some_and(|s| s.content.as_ref() == "│"),
-                "expected left rail, got {:?}",
-                line.spans
-                    .iter()
-                    .map(|s| s.content.as_ref())
-                    .collect::<Vec<_>>()
+                rail.style.add_modifier.contains(Modifier::BOLD),
+                "selected rail should be bold"
             );
             let bad = selection_bg();
             for span in &line.spans {
@@ -1065,6 +1084,81 @@ mod tests {
                     );
                 }
             }
+        });
+    }
+
+    #[test]
+    fn hovered_block_uses_muted_rail_without_selection_bg() {
+        use crate::state::ChatLineSource;
+        use crate::theme::{ThemeId, muted, selection_bg, with_palette};
+        use ratatui::style::Modifier;
+
+        with_palette(&ThemeId::Lain.palette(), || {
+            let mut app = crate::tests::test_app("");
+            app.messages.push(ChatMessage::new(
+                ChatRole::Assistant,
+                "hello hover".to_string(),
+            ));
+            app.hovered_chat_source = Some(ChatLineSource::Message(0));
+
+            let mut lines = vec![ratatui::prelude::Line::from(vec![
+                ratatui::prelude::Span::styled(
+                    "  hello hover",
+                    ratatui::style::Style::default().fg(crate::theme::text()),
+                ),
+            ])];
+            let sources = vec![ChatLineSource::Message(0)];
+            super::style_interactive_lines(&mut lines, &sources, &app, 40);
+
+            let line = &lines[0];
+            let rail = line.spans.first().expect("rail span");
+            assert_eq!(rail.content.as_ref(), "│", "expected hover rail");
+            assert_eq!(
+                rail.style.fg,
+                Some(muted()),
+                "hover rail should stay muted so it does not compete with selection"
+            );
+            assert!(
+                !rail.style.add_modifier.contains(Modifier::BOLD),
+                "hover rail should not be bold"
+            );
+            let bad = selection_bg();
+            for span in &line.spans {
+                assert_ne!(
+                    span.style.bg,
+                    Some(bad),
+                    "hover must not paint selection_bg on {:?}",
+                    span.content.as_ref()
+                );
+            }
+        });
+    }
+
+    #[test]
+    fn selected_rail_wins_over_hover_on_same_block() {
+        use crate::state::ChatLineSource;
+        use crate::theme::{ThemeId, accent, with_palette};
+
+        with_palette(&ThemeId::Lain.palette(), || {
+            let mut app = crate::tests::test_app("");
+            app.messages.push(ChatMessage::new(
+                ChatRole::User,
+                "both states".to_string(),
+            ));
+            app.selected_chat_source = Some(ChatLineSource::Message(0));
+            app.hovered_chat_source = Some(ChatLineSource::Message(0));
+
+            let mut lines = vec![ratatui::prelude::Line::from(vec![
+                ratatui::prelude::Span::styled(
+                    "  both states",
+                    ratatui::style::Style::default().fg(crate::theme::text()),
+                ),
+            ])];
+            let sources = vec![ChatLineSource::Message(0)];
+            super::style_interactive_lines(&mut lines, &sources, &app, 40);
+
+            let rail = lines[0].spans.first().expect("rail span");
+            assert_eq!(rail.style.fg, Some(accent()), "selection must win over hover");
         });
     }
 }

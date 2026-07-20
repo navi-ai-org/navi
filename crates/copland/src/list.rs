@@ -53,6 +53,39 @@ impl SelectListState {
         self.selected = self.selected.saturating_sub(amount);
     }
 
+    /// Scroll the viewport without treating the wheel as "jump N selected items".
+    ///
+    /// Selection only moves when it would leave the visible window after the
+    /// scroll, so short lists still keep a sensible selection while long lists
+    /// behave like a normal scrollbar.
+    pub fn scroll_viewport(&mut self, len: usize, visible_rows: usize, delta: isize) {
+        let visible_rows = visible_rows.max(1);
+        if len == 0 {
+            self.selected = 0;
+            self.scroll = 0;
+            return;
+        }
+
+        let max_scroll = len.saturating_sub(visible_rows);
+        if delta.is_positive() {
+            self.scroll = self.scroll.saturating_add(delta as usize).min(max_scroll);
+        } else {
+            self.scroll = self.scroll.saturating_sub(delta.unsigned_abs());
+        }
+
+        let last_visible = self
+            .scroll
+            .saturating_add(visible_rows.saturating_sub(1))
+            .min(len.saturating_sub(1));
+        if self.selected < self.scroll {
+            self.selected = self.scroll;
+        } else if self.selected > last_visible {
+            self.selected = last_visible;
+        } else {
+            self.selected = self.selected.min(len - 1);
+        }
+    }
+
     pub fn sync_scroll(&mut self, visible_rows: usize) {
         let visible_rows = visible_rows.max(1);
         if self.selected < self.scroll {
@@ -153,5 +186,34 @@ mod tests {
 
         assert_eq!(scrollbar_offset_for_row(area, 100, 10, 0), 0);
         assert_eq!(scrollbar_offset_for_row(area, 100, 10, 9), 90);
+    }
+
+    #[test]
+    fn scroll_viewport_moves_offset_without_jumping_selection() {
+        let mut state = SelectListState::new(2, 0);
+
+        // Selection stays put while it remains on-screen.
+        state.scroll_viewport(20, 5, 2);
+        assert_eq!(state.scroll(), 2);
+        assert_eq!(state.selected(), 2);
+
+        // Selection is pulled into the new window only when it would leave it.
+        state.scroll_viewport(20, 5, 3);
+        assert_eq!(state.scroll(), 5);
+        assert_eq!(state.selected(), 5);
+    }
+
+    #[test]
+    fn scroll_viewport_clamps_to_max_offset() {
+        let mut state = SelectListState::new(0, 0);
+        state.scroll_viewport(10, 4, 100);
+        assert_eq!(state.scroll(), 6);
+        // Selection is pulled into the new window once it would leave it.
+        assert_eq!(state.selected(), 6);
+
+        state.scroll_viewport(10, 4, -100);
+        assert_eq!(state.scroll(), 0);
+        // Selection follows back into the visible window (last_visible = 3).
+        assert_eq!(state.selected(), 3);
     }
 }

@@ -272,10 +272,19 @@ export class NaviNapiEngine {
   selectProviderAccount(providerId: string, accountId: string): JsonValue;
   deleteProviderAccount(providerId: string, accountId: string): boolean;
   providerSupportsDeviceOauth(providerId: string): boolean;
-  /** Device/browser OAuth; onStarted gets { verificationUri, userCode }. Returns optional secondary token. */
+  /**
+   * Device/browser OAuth. Blocks until complete; returns optional secondary token.
+   *
+   * `onStarted` is a napi-rs ThreadsafeFunction with CalleeHandled errors:
+   * Node-style error-first `(err, info)`, not a single `info` argument.
+   * Treating the first arg as the payload leaves URI/code empty.
+   */
   startDeviceOauth(
     providerId: string,
-    onStarted?: (info: { verificationUri: string; userCode: string }) => void
+    onStarted?: (
+      err: Error | null,
+      info?: { verificationUri: string; userCode: string },
+    ) => void
   ): Promise<string | null>;
   /** Device OAuth without a progress callback. */
   startDeviceOauthSimple(providerId: string): Promise<string | null>;
