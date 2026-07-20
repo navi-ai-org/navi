@@ -4,6 +4,12 @@ use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
 const MAX_TOOL_RENDER_LINES: usize = 5000;
+/// Soft cap for auto-expanded shell failure bodies (sticky summary stays full).
+const MAX_SHELL_FAILURE_BODY_LINES: usize = 48;
+/// Soft cap for success shell dumps when the user expands them.
+const MAX_SHELL_SUCCESS_BODY_LINES: usize = 80;
+/// Preferred command width in compact tool headers (full command still in body).
+const COMPACT_COMMAND_CHARS: usize = 72;
 
 fn truncate_to_lines(text: &str, max_lines: usize) -> &str {
     let mut count = 0;
@@ -47,9 +53,9 @@ pub(crate) fn tool_running_text(invocation: &ToolInvocation) -> String {
                 .and_then(|v| v.as_bool())
                 .unwrap_or(false);
             if bg {
-                format!("Run {} (background…)", one_line(command))
+                format!("Run {} (background…)", compact_command(command))
             } else {
-                format!("Run {}", one_line(command))
+                format!("Run {}", compact_command(command))
             }
         }
         "read" | "read_file" | "view_file" => {
@@ -201,7 +207,21 @@ pub(crate) fn tool_compact_text(invocation: &ToolInvocation, result: &ToolResult
 
     if !result.ok {
         if let Some(error) = tool_error_message(&result.output) {
-            text.push_str(&format!(" · error: {}", one_line(error)));
+            // Prefer a short, high-signal failure reason over repeating "Bash failed".
+            let short = one_line(error);
+            if short.eq_ignore_ascii_case("bash failed")
+                || short.eq_ignore_ascii_case("command failed")
+            {
+                if let Some(signal) = shell_failure_signal(&result.output) {
+                    text.push_str(&format!(" · {signal}"));
+                } else {
+                    text.push_str(&format!(" · error: {short}"));
+                }
+            } else {
+                text.push_str(&format!(" · error: {short}"));
+            }
+        } else if let Some(signal) = shell_failure_signal(&result.output) {
+            text.push_str(&format!(" · {signal}"));
         } else {
             text.push_str(" · error");
         }
@@ -252,10 +272,15 @@ fn formatted_tool_output(invocation: &ToolInvocation, result: &ToolResult) -> Op
         content.push_str("\n\n");
         if let Some(file_content) = obj.get("content").and_then(|v| v.as_str()) {
             let language = language_for_path(path);
+            let start_line = obj
+                .get("start_line")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(1)
+                .max(1);
             content.push_str(&format!("```{language}\n"));
             let truncated_content = truncate_to_lines(file_content, MAX_TOOL_RENDER_LINES);
-            content.push_str(truncated_content);
-            if !truncated_content.ends_with('\n') {
+            append_numbered_source_lines(&mut content, truncated_content, start_line as u32);
+            if !content.ends_with('\n') {
                 content.push('\n');
             }
             if truncated_content.len() < file_content.len() {
@@ -307,8 +332,14 @@ fn formatted_tool_output(invocation: &ToolInvocation, result: &ToolResult) -> Op
             render_named_structured_output("Code output", result, &mut content);
         }
     } else if invocation.tool_name == "bash" {
-        // shell body: raw stdout/stderr only. Header card already
-        // shows the command; skip "Command completed" / "Stdout:" chrome.
+        // Header may truncate long pipelines; always surface the full command
+        // once in the body when it was compacted, then streams.
+        if let Some(command) = invocation.input.get("command").and_then(|v| v.as_str()) {
+            let flat = one_line(command);
+            if compact_command(command) != flat {
+                content.push_str(&format!("$ {flat}\n\n"));
+            }
+        }
         append_shell_streams(obj, &mut content);
     } else if invocation.tool_name == "grep" {
         content.push_str("Found matches:\n\n");
@@ -532,6 +563,12 @@ fn render_tool_error_body(
         .and_then(|v| v.as_str())
         .is_some_and(|s| !s.trim().is_empty());
     let has_streams = has_stdout || has_stderr;
+    let is_shellish = invocation.tool_name == "bash"
+        || has_streams
+        || matches!(
+            invocation.tool_name.as_str(),
+            "test_runner" | "build_runner" | "process" | "verifier"
+        );
 
     // Extra non-envelope keys (framework, path, suggestions, problems, …).
     let extra_keys: Vec<&str> = obj
@@ -541,17 +578,59 @@ fn render_tool_error_body(
         .collect();
     let has_extra = !extra_keys.is_empty();
 
-    // Repeat Error: only when the body has more context below it. Pure
-    // envelope errors stay header-only to avoid double-printing the message.
-    let should_repeat_error = has_streams || has_extra;
-    if should_repeat_error {
-        if let Some(error) = error {
-            content.push_str(&format!("Error: {error}\n"));
-        } else {
-            content.push_str(&format!(
-                "Error: {} failed\n",
-                humanize_tool_name(&invocation.tool_name)
-            ));
+    // Shell failures: sticky high-signal summary first (counts, failed test,
+    // assert, location). Generic "Error: Bash failed" is demoted so the wall
+    // of cargo output no longer competes with the real signal.
+    //
+    // Keep pure timeout/envelope-only failures header-only (no body), matching
+    // non-shell tools — avoids double-printing the same error string.
+    if is_shellish {
+        let has_sticky = shell_failure_summary(obj).is_some();
+        let should_show_command = has_sticky || has_streams || has_extra || error_code.is_some() || hint.is_some();
+        if should_show_command
+            && let Some(command) = invocation
+                .input
+                .get("command")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty())
+        {
+            // Prefer full command only when the header had to compact it.
+            let flat = one_line(command);
+            if compact_command(command) != flat || has_sticky || has_streams {
+                content.push_str(&format!("$ {flat}\n"));
+            }
+        }
+        if let Some(summary) = shell_failure_summary(obj) {
+            content.push_str(&summary);
+            if !summary.ends_with('\n') {
+                content.push('\n');
+            }
+            content.push('\n');
+        } else if (has_streams || has_extra)
+            && let Some(error) = error
+        {
+            // Streams/extra context: show a non-generic error lead-in.
+            let short = one_line(error);
+            if !short.eq_ignore_ascii_case("bash failed")
+                && !short.eq_ignore_ascii_case("command failed")
+            {
+                content.push_str(&format!("Error: {short}\n"));
+            }
+        }
+        // else: empty streams + only error envelope → leave body empty (header has it).
+    } else {
+        // Non-shell: repeat Error only when the body has more context below it.
+        // Pure envelope errors stay header-only to avoid double-printing.
+        let should_repeat_error = has_streams || has_extra;
+        if should_repeat_error {
+            if let Some(error) = error {
+                content.push_str(&format!("Error: {error}\n"));
+            } else {
+                content.push_str(&format!(
+                    "Error: {} failed\n",
+                    humanize_tool_name(&invocation.tool_name)
+                ));
+            }
         }
     }
 
@@ -563,8 +642,8 @@ fn render_tool_error_body(
         content.push_str(&format!("Hint: {hint}\n"));
     }
 
-    if invocation.tool_name == "bash" || has_streams {
-        append_shell_streams(obj, &mut content);
+    if is_shellish {
+        append_shell_streams_capped(obj, &mut content, MAX_SHELL_FAILURE_BODY_LINES);
     }
 
     if has_extra {
@@ -868,6 +947,14 @@ fn append_json_section(content: &mut String, title: &str, value: &Value) {
 /// Shell/tool stream body: plain text, no labels or code fences.
 /// Non-zero exit codes get a single `exit N` line above the streams.
 fn append_shell_streams(obj: &serde_json::Map<String, Value>, content: &mut String) {
+    append_shell_streams_capped(obj, content, MAX_SHELL_SUCCESS_BODY_LINES)
+}
+
+fn append_shell_streams_capped(
+    obj: &serde_json::Map<String, Value>,
+    content: &mut String,
+    max_lines: usize,
+) {
     let stdout = obj.get("stdout").and_then(|v| v.as_str()).unwrap_or("");
     let stderr = obj.get("stderr").and_then(|v| v.as_str()).unwrap_or("");
     let exit_code = obj
@@ -875,13 +962,31 @@ fn append_shell_streams(obj: &serde_json::Map<String, Value>, content: &mut Stri
         .and_then(|v| v.as_i64())
         .or_else(|| obj.get("status").and_then(|v| v.as_i64()));
 
+    // Prefer the sticky summary (already printed above) over a second exit line
+    // when we already extracted a failure summary for the body.
+    let already_has_summary = content.lines().any(|line| {
+        let t = line.trim();
+        t.starts_with("Summary:")
+            || t.starts_with("Failed:")
+            || t.starts_with("Assert:")
+            || t.starts_with("At:")
+    });
     if let Some(code) = exit_code
         && code != 0
+        && !already_has_summary
     {
         content.push_str(&format!("exit {code}\n"));
     }
 
-    append_plain_stream(content, stdout);
+    // Prefer failure-relevant tail when streams are long (cargo dumps often bury
+    // the panic at the end after recompile noise).
+    let combined_lines = stdout.lines().count() + stderr.lines().count();
+    if combined_lines > max_lines {
+        append_relevant_shell_excerpt(content, stdout, stderr, max_lines);
+        return;
+    }
+
+    append_plain_stream_capped(content, stdout, max_lines);
     if !stderr.is_empty() {
         if !content.is_empty() && !content.ends_with('\n') {
             content.push('\n');
@@ -890,23 +995,87 @@ fn append_shell_streams(obj: &serde_json::Map<String, Value>, content: &mut Stri
         if !stdout.is_empty() && !content.ends_with("\n\n") {
             content.push('\n');
         }
-        append_plain_stream(content, stderr);
+        let remaining = max_lines.saturating_sub(content.lines().count().max(1));
+        append_plain_stream_capped(content, stderr, remaining.max(12));
     }
 }
 
 fn append_plain_stream(content: &mut String, text: &str) {
+    append_plain_stream_capped(content, text, MAX_TOOL_RENDER_LINES)
+}
+
+fn append_plain_stream_capped(content: &mut String, text: &str, max_lines: usize) {
     if text.is_empty() {
         return;
     }
-    let truncated = truncate_to_lines(text, MAX_TOOL_RENDER_LINES);
+    let truncated = truncate_to_lines(text, max_lines);
     content.push_str(truncated);
     if !truncated.ends_with('\n') {
         content.push('\n');
     }
     if truncated.len() < text.len() {
         content.push_str(&format!(
-            "… (truncated, {} lines total)\n",
+            "… (truncated, {} lines total — expand tool or ctrl+o)\n",
             text.lines().count()
+        ));
+    }
+}
+
+/// Keep the failure signal: prefer lines around FAILED / panic / assertion, else tail.
+fn append_relevant_shell_excerpt(
+    content: &mut String,
+    stdout: &str,
+    stderr: &str,
+    max_lines: usize,
+) {
+    let mut lines: Vec<&str> = Vec::new();
+    lines.extend(stdout.lines());
+    if !stderr.is_empty() {
+        if !stdout.is_empty() {
+            lines.push("");
+        }
+        lines.extend(stderr.lines());
+    }
+    if lines.is_empty() {
+        return;
+    }
+
+    let focus = lines.iter().position(|line| {
+        let lower = line.to_ascii_lowercase();
+        lower.contains("failed")
+            || lower.contains("panicked")
+            || lower.contains("assertion")
+            || lower.contains("error:")
+            || lower.contains("left:")
+            || lower.contains("right:")
+    });
+
+    let (start, end) = if let Some(idx) = focus {
+        let half = max_lines / 3;
+        let start = idx.saturating_sub(half);
+        let end = (start + max_lines).min(lines.len());
+        let start = end.saturating_sub(max_lines);
+        (start, end)
+    } else {
+        let end = lines.len();
+        let start = end.saturating_sub(max_lines);
+        (start, end)
+    };
+
+    if start > 0 {
+        content.push_str(&format!(
+            "… ({} earlier lines omitted)\n",
+            start
+        ));
+    }
+    for line in &lines[start..end] {
+        content.push_str(line);
+        content.push('\n');
+    }
+    if end < lines.len() {
+        content.push_str(&format!(
+            "… ({} later lines omitted — expand tool or ctrl+o)\n",
+            lines.len() - end
         ));
     }
 }
@@ -1431,6 +1600,7 @@ fn bash_summary(invocation: &ToolInvocation, result: &ToolResult) -> String {
         .get("command")
         .and_then(|v| v.as_str())
         .unwrap_or("command");
+    let cmd = compact_command(command);
     let is_background = result.output.get("background").and_then(|v| v.as_bool()) == Some(true);
 
     if is_background {
@@ -1445,19 +1615,13 @@ fn bash_summary(invocation: &ToolInvocation, result: &ToolResult) -> String {
             .and_then(|v| v.as_u64())
             .unwrap_or(0);
         let elapsed_str = crate::background::format_duration_ms(elapsed);
-        let mut summary = format!("Run {} ({} · {})", one_line(command), status, elapsed_str);
         if let Some(exit_code) = result.output.get("exit_code").and_then(|v| v.as_i64()) {
-            summary = format!(
-                "Run {} ({} · exit {} · {})",
-                one_line(command),
-                status,
-                exit_code,
-                elapsed_str
-            );
+            format!("Run {cmd} ({status} · exit {exit_code} · {elapsed_str})")
+        } else {
+            format!("Run {cmd} ({status} · {elapsed_str})")
         }
-        summary
     } else {
-        let mut summary = format!("Run {}", one_line(command));
+        let mut summary = format!("Run {cmd}");
         if let Some(status) = result.output.get("status").and_then(|v| v.as_i64()) {
             summary.push_str(&format!(" (exit {status})"));
         }
@@ -2648,6 +2812,221 @@ fn one_line(value: &str) -> String {
     value.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
+/// Compact shell command for one-line tool headers.
+///
+/// Prefers the head of long pipelines (`cmd1 && cmd2…`) so the primary command
+/// stays visible; full command is always available in the expanded body.
+fn compact_command(command: &str) -> String {
+    let flat = one_line(command);
+    if flat.chars().count() <= COMPACT_COMMAND_CHARS {
+        return flat;
+    }
+
+    // Prefer first pipeline segment when joined with && / || / ;
+    let head = flat
+        .split_once("&&")
+        .or_else(|| flat.split_once("||"))
+        .or_else(|| flat.split_once(';'))
+        .map(|(left, _)| left.trim())
+        .unwrap_or(flat.as_str());
+
+    if head.chars().count() <= COMPACT_COMMAND_CHARS && head.len() < flat.len() {
+        return format!("{head} …");
+    }
+    truncate_for_summary(&flat, COMPACT_COMMAND_CHARS)
+}
+
+/// Emit source lines with a fixed 4-wide line-number gutter (`  217|code`).
+///
+/// For single-line full-file reads starting at line 1 (the common short snippet),
+/// skip the gutter so tiny files stay as plain fenced source.
+fn append_numbered_source_lines(content: &mut String, text: &str, start_line: u32) {
+    let line_count = text.lines().count();
+    let start = start_line.max(1);
+    // Tiny whole-file snippets: keep the classic unnumbered fence body.
+    if start == 1 && line_count <= 3 {
+        content.push_str(text);
+        if !text.is_empty() && !text.ends_with('\n') {
+            content.push('\n');
+        }
+        return;
+    }
+
+    let mut num = start;
+    for line in text.lines() {
+        content.push_str(&format!("{num:>4}|{line}\n"));
+        num = num.saturating_add(1);
+    }
+    if text.ends_with('\n') && !content.ends_with('\n') {
+        content.push('\n');
+    }
+}
+
+/// One-line high-signal failure reason for compact tool headers.
+fn shell_failure_signal(output: &Value) -> Option<String> {
+    let obj = output.as_object()?;
+    if let Some(summary) = shell_failure_summary(obj) {
+        // First non-empty line of the sticky summary, flattened.
+        let line = summary
+            .lines()
+            .map(str::trim)
+            .find(|l| !l.is_empty())
+            .unwrap_or("");
+        if line.is_empty() {
+            return None;
+        }
+        // Prefer the failed test name when available.
+        if let Some(failed) = summary.lines().find_map(|l| {
+            l.trim()
+                .strip_prefix("Failed:")
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+        }) {
+            return Some(truncate_for_summary(failed, 56));
+        }
+        if let Some(assert) = summary.lines().find_map(|l| {
+            l.trim()
+                .strip_prefix("Assert:")
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+        }) {
+            return Some(truncate_for_summary(assert, 56));
+        }
+        let flat = one_line(line)
+            .trim_start_matches("Summary:")
+            .trim()
+            .to_string();
+        return Some(truncate_for_summary(&flat, 56));
+    }
+
+    let exit = obj
+        .get("exit_code")
+        .and_then(|v| v.as_i64())
+        .or_else(|| obj.get("status").and_then(|v| v.as_i64()))
+        .filter(|c| *c != 0)?;
+    Some(format!("exit {exit}"))
+}
+
+/// Multi-line sticky summary for shell/test failures (shown above stream body).
+fn shell_failure_summary(obj: &serde_json::Map<String, Value>) -> Option<String> {
+    let stdout = obj.get("stdout").and_then(|v| v.as_str()).unwrap_or("");
+    let stderr = obj.get("stderr").and_then(|v| v.as_str()).unwrap_or("");
+    let combined = if stderr.is_empty() {
+        stdout.to_string()
+    } else if stdout.is_empty() {
+        stderr.to_string()
+    } else {
+        format!("{stdout}\n{stderr}")
+    };
+    if combined.trim().is_empty() {
+        return None;
+    }
+
+    let mut out = String::new();
+
+    // cargo / rustc style: `test result: FAILED. 4 passed; 1 failed; …`
+    if let Some(result_line) = combined.lines().rev().find(|l| {
+        let t = l.trim();
+        t.starts_with("test result:") || t.starts_with("error: test failed")
+    }) {
+        let t = result_line.trim();
+        if t.starts_with("test result:") {
+            out.push_str(&format!("Summary: {}\n", one_line(t.trim_start_matches("test result:").trim())));
+        } else {
+            out.push_str(&format!("Summary: {}\n", one_line(t)));
+        }
+    } else if let Some(code) = obj
+        .get("exit_code")
+        .and_then(|v| v.as_i64())
+        .or_else(|| obj.get("status").and_then(|v| v.as_i64()))
+        .filter(|c| *c != 0)
+    {
+        out.push_str(&format!("Summary: exit {code}\n"));
+    }
+
+    // First failed test name: `test foo::bar ... FAILED`
+    if let Some(failed_test) = combined.lines().find_map(|line| {
+        let t = line.trim();
+        if let Some(rest) = t.strip_prefix("test ") {
+            if rest.contains("FAILED") {
+                let name = rest
+                    .split_whitespace()
+                    .next()
+                    .unwrap_or("")
+                    .trim_end_matches("...");
+                if !name.is_empty() {
+                    return Some(name.to_string());
+                }
+            }
+        }
+        // `failures:` block list line
+        None
+    }) {
+        out.push_str(&format!("Failed: {failed_test}\n"));
+    } else if let Some(failed_test) = combined.lines().find_map(|line| {
+        // `---- foo::bar stdout ----`
+        let t = line.trim();
+        t.strip_prefix("---- ")
+            .and_then(|r| r.strip_suffix(" stdout ----"))
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string())
+    }) {
+        out.push_str(&format!("Failed: {failed_test}\n"));
+    }
+
+    // Assertion / left-right pair — prefer the pair when both exist so we
+    // don't print a generic "assertion failed" plus left/right.
+    let mut left = None;
+    let mut right = None;
+    for line in combined.lines() {
+        let t = line.trim();
+        if let Some(v) = t.strip_prefix("left:") {
+            left = Some(v.trim().to_string());
+        } else if let Some(v) = t.strip_prefix("right:") {
+            right = Some(v.trim().to_string());
+        }
+    }
+    if let (Some(l), Some(r)) = (&left, &right) {
+        out.push_str(&format!("Assert: left {l} ≠ right {r}\n"));
+    } else if let Some(assert) = combined.lines().find_map(|line| {
+        let t = line.trim();
+        if t.contains("assertion") && t.contains("failed") {
+            Some(one_line(t))
+        } else {
+            None
+        }
+    }) {
+        out.push_str(&format!("Assert: {assert}\n"));
+    }
+
+    // panick location: `panicked at path:line:col:`
+    if let Some(at) = combined.lines().find_map(|line| {
+        let t = line.trim();
+        if let Some(idx) = t.find("panicked at ") {
+            let rest = &t[idx + "panicked at ".len()..];
+            let loc = rest.split_whitespace().next().unwrap_or(rest);
+            let loc = loc.trim_end_matches(':');
+            if !loc.is_empty() {
+                return Some(loc.to_string());
+            }
+        }
+        // `--> path:line:col` rustc style
+        if let Some(rest) = t.trim_start().strip_prefix("--> ") {
+            return Some(one_line(rest));
+        }
+        None
+    }) {
+        out.push_str(&format!("At: {at}\n"));
+    }
+
+    if out.is_empty() {
+        None
+    } else {
+        Some(out)
+    }
+}
+
 fn display_path(path: &str) -> String {
     let path_ref = Path::new(path);
     if path_ref.is_absolute()
@@ -2663,7 +3042,7 @@ fn truncate_for_summary(value: &str, max_chars: usize) -> String {
     if value.chars().count() <= max_chars {
         value.to_string()
     } else {
-        let truncated: String = value.chars().take(max_chars).collect();
+        let truncated: String = value.chars().take(max_chars.saturating_sub(1)).collect();
         format!("{truncated}…")
     }
 }
@@ -3025,6 +3404,137 @@ mod tests {
         let label = tool_running_text(&inv);
         assert!(label.starts_with("Run "), "{label}");
         assert!(label.contains("npm test"), "{label}");
+    }
+
+    #[test]
+    fn compact_command_keeps_head_of_pipeline() {
+        let long = "cargo test -p copland --lib list -- --test-threads=4 && cargo test -p navi-tui --lib render -- --test-threads=4";
+        let compact = compact_command(long);
+        assert!(compact.contains("cargo test -p copland"), "{compact}");
+        assert!(
+            compact.contains('…') || compact.chars().count() <= COMPACT_COMMAND_CHARS + 2,
+            "should truncate: {compact}"
+        );
+        assert!(
+            !compact.contains("navi-tui") || compact.ends_with('…'),
+            "second segment should be elided: {compact}"
+        );
+    }
+
+    #[test]
+    fn bash_failure_body_surfaces_sticky_test_summary() {
+        let stdout = "\
+running 5 tests
+test list::tests::ok_one ... ok
+test list::tests::scrollviewportclampstomaxoffset ... FAILED
+
+failures:
+
+---- list::tests::scrollviewportclampstomaxoffset stdout ----
+thread 'list::tests::scrollviewportclampstomaxoffset' panicked at crates/copland/src/list.rs:217:9:
+assertion `left == right` failed
+  left: 3
+ right: 6
+
+failures:
+    list::tests::scrollviewportclampstomaxoffset
+
+test result: FAILED. 4 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out
+";
+        let content = tool_body_content(
+            &invocation(
+                "bash",
+                json!({
+                    "command": "cargo test -p copland --lib list -- --test-threads=4 && cargo test -p navi-tui --lib"
+                }),
+            ),
+            &err_result(json!({
+                "status": 101,
+                "stdout": stdout,
+                "stderr": ""
+            })),
+        );
+
+        assert!(
+            content.contains("Summary:"),
+            "expected sticky summary, got:\n{content}"
+        );
+        assert!(
+            content.contains("Failed: list::tests::scrollviewportclampstomaxoffset")
+                || content.contains("scrollviewportclampstomaxoffset"),
+            "expected failed test name, got:\n{content}"
+        );
+        assert!(
+            content.contains("left") && content.contains("right"),
+            "expected assert left/right, got:\n{content}"
+        );
+        assert!(
+            content.contains("crates/copland/src/list.rs:217") || content.contains("At:"),
+            "expected panic location, got:\n{content}"
+        );
+        // Generic wall-of-text chrome should not lead with "Error: Bash failed".
+        assert!(
+            !content.starts_with("Error: Bash failed"),
+            "generic bash failed should not lead body:\n{content}"
+        );
+        // Full command should be available when header truncates.
+        assert!(
+            content.contains("cargo test -p copland")
+                || content.contains("$ cargo test"),
+            "expected command context, got:\n{content}"
+        );
+    }
+
+    #[test]
+    fn bash_compact_header_prefers_failure_signal_over_generic_error() {
+        let text = tool_compact_text(
+            &invocation("bash", json!({ "command": "cargo test -p copland" })),
+            &err_result(json!({
+                "status": 101,
+                "stdout": "test foo::bar ... FAILED\ntest result: FAILED. 0 passed; 1 failed; 0 ignored\n",
+                "stderr": ""
+            })),
+        );
+        assert!(text.starts_with("Run "), "{text}");
+        assert!(
+            text.contains("foo::bar") || text.contains("FAILED") || text.contains("exit"),
+            "header should carry a high-signal failure reason: {text}"
+        );
+        assert!(
+            !text.contains("error: Bash failed"),
+            "must not append generic Bash failed: {text}"
+        );
+    }
+
+    #[test]
+    fn read_file_body_numbers_source_lines_from_start() {
+        let content = tool_body_content(
+            &invocation(
+                "read_file",
+                json!({ "path": "crates/copland/src/list.rs", "start_line": 216, "end_line": 219 }),
+            ),
+            &ok_result(json!({
+                "path": "crates/copland/src/list.rs",
+                "start_line": 216,
+                "end_line": 219,
+                "total_lines": 300,
+                "content": "        Ok(())\n    }\n}\nfn extra() {}\n"
+            })),
+        );
+        assert!(
+            content.contains("View crates/copland/src/list.rs")
+                || content.contains("View list.rs")
+                || content.contains("list.rs"),
+            "path context missing:\n{content}"
+        );
+        assert!(
+            content.contains(" 216|") || content.contains("216|"),
+            "expected numbered gutter starting at 216:\n{content}"
+        );
+        assert!(
+            content.contains(" 219|") || content.contains("219|") || content.contains(" 218|"),
+            "expected subsequent numbered lines:\n{content}"
+        );
     }
 
     #[test]

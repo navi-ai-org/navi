@@ -386,13 +386,15 @@ fn composer_activity_line(app: &TuiApp, width: usize) -> Option<Line<'static>> {
         .loading_start
         .map(|start| start.elapsed().as_millis() as u64)
         .unwrap_or(0);
-    let (status, color) = composer_activity_status(app);
+    let (status, color) = composer_activity_status(app, elapsed_ms);
     let elapsed = format_activity_elapsed(elapsed_ms);
     // diamond pulse while a turn is running — no corner trail.
     let diamond = crate::render::status::running_diamond(elapsed_ms);
 
     // Target shape (when room allows):
     //   ◆ Thinking · 7s (esc to interrupt) · (avg 42 t/s)
+    // Long idle wait escalates copy so a multi-minute hang is obvious:
+    //   ◆ Still waiting for model · 2m10s (esc to cancel) · (no tokens yet)
     let mut spans: Vec<Span<'static>> = vec![
         Span::styled(
             diamond,
@@ -406,8 +408,12 @@ fn composer_activity_line(app: &TuiApp, width: usize) -> Option<Line<'static>> {
         ),
     ];
 
-    let interrupt_hint = " (esc to interrupt)";
-    let details = activity_detail_hints(app);
+    let interrupt_hint = if is_long_model_wait(app, elapsed_ms) {
+        " (esc to cancel)"
+    } else {
+        " (esc to interrupt)"
+    };
+    let details = activity_detail_hints(app, elapsed_ms);
     let full_details = if details.is_empty() {
         String::new()
     } else {
@@ -455,12 +461,41 @@ fn composer_activity_line(app: &TuiApp, width: usize) -> Option<Line<'static>> {
 
 /// Compact right-side hints for the live activity line.
 ///
-/// Example: `avg 42 t/s` — generation rate since the first streamed delta.
-fn activity_detail_hints(app: &TuiApp) -> String {
-    app.usage_state
-        .stream_avg_tokens_per_sec()
-        .map(|rate| format!("avg {} t/s", format_activity_rate(rate)))
-        .unwrap_or_default()
+/// Examples:
+/// - `avg 42 t/s` — generation rate since the first streamed delta
+/// - `no tokens yet` / `still waiting` — long idle before the first stream byte
+fn activity_detail_hints(app: &TuiApp, elapsed_ms: u64) -> String {
+    if let Some(rate) = app.usage_state.stream_avg_tokens_per_sec() {
+        return format!("avg {} t/s", format_activity_rate(rate));
+    }
+
+    // No stream evidence yet — surface idle wait so 6m+ hangs don't look "fine".
+    if !app.pending_approvals.is_empty()
+        || !app.pending_questions.is_empty()
+        || !app.running_tools.is_empty()
+        || background_subagent_status(app).is_some()
+    {
+        return String::new();
+    }
+
+    if elapsed_ms >= 90_000 {
+        "still waiting · try esc, then retry".to_string()
+    } else if elapsed_ms >= 30_000 {
+        "no tokens yet".to_string()
+    } else {
+        String::new()
+    }
+}
+
+/// True when the turn is idle-waiting on the model (no tools/approvals/stream yet)
+/// for long enough that the UI should escalate copy.
+fn is_long_model_wait(app: &TuiApp, elapsed_ms: u64) -> bool {
+    elapsed_ms >= 30_000
+        && app.usage_state.stream_started_at.is_none()
+        && app.pending_approvals.is_empty()
+        && app.pending_questions.is_empty()
+        && app.running_tools.is_empty()
+        && background_subagent_status(app).is_none()
 }
 
 fn format_activity_rate(rate: f64) -> String {
@@ -475,7 +510,10 @@ fn format_activity_rate(rate: f64) -> String {
 
 /// Activity label driven by real agent state (approvals, tools, stream status).
 /// Avoids time-based phase claims that don't match what the model is doing.
-fn composer_activity_status(app: &TuiApp) -> (String, ratatui::style::Color) {
+///
+/// `elapsed_ms` is only used to escalate the idle "waiting for model" copy after
+/// a long hang — it never invents a fake phase (connecting/streaming) without evidence.
+fn composer_activity_status(app: &TuiApp, elapsed_ms: u64) -> (String, ratatui::style::Color) {
     if !app.pending_approvals.is_empty() {
         let label = if app.pending_approvals.len() == 1 {
             let id = &app.pending_approvals[0].id;
@@ -529,6 +567,11 @@ fn composer_activity_status(app: &TuiApp) -> (String, ratatui::style::Color) {
                 ("Thinking".to_string(), code_operator())
             } else if active.is_some_and(|message| !message.content.trim().is_empty()) {
                 ("Streaming response".to_string(), accent())
+            } else if app.usage_state.stream_started_at.is_some() {
+                ("Streaming response".to_string(), accent())
+            } else if elapsed_ms >= 60_000 {
+                // Multi-minute idle wait — escalate so it doesn't look healthy.
+                ("Still waiting for model".to_string(), code_const())
             } else {
                 // No tokens yet — honest wait, not false-specific "checking tools".
                 ("Waiting for model".to_string(), code_operator())
@@ -1333,6 +1376,36 @@ mod tests {
         let text = line_text(&line);
         assert!(text.contains("Thinking") || text.contains("Waiting for model"));
         assert!(!text.contains("t/s"), "rate must not use idle wall time: {text}");
+        assert!(
+            text.contains("no tokens yet") || text.contains("esc to cancel"),
+            "long idle wait should escalate copy: {text}"
+        );
+    }
+
+    #[test]
+    fn composer_activity_line_escalates_after_minute_idle() {
+        let mut app = crate::tests::test_app("");
+        app.is_loading = true;
+        app.loading_start = Some(Instant::now() - Duration::from_secs(95));
+        app.messages.push(ChatMessage {
+            status: Some("thinking".to_string()),
+            ..ChatMessage::new(ChatRole::Assistant, String::new())
+        });
+
+        let line = composer_activity_line(&app, 140).expect("activity line");
+        let text = line_text(&line);
+        assert!(
+            text.contains("Still waiting for model"),
+            "expected escalated wait label, got {text}"
+        );
+        assert!(
+            text.contains("esc to cancel"),
+            "long hang should suggest cancel: {text}"
+        );
+        assert!(
+            text.contains("still waiting") || text.contains("retry"),
+            "expected recovery hint, got {text}"
+        );
     }
 
     #[test]

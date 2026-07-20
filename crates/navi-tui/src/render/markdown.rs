@@ -1933,8 +1933,17 @@ fn semantic_token_style(token: &str, fallback: Color) -> Style {
 
     if matches!(
         lower.as_str(),
-        "error" | "errors" | "failed" | "failure" | "panic" | "denied"
-    ) || is_rust_error_code(core)
+        "error"
+            | "errors"
+            | "failed"
+            | "failure"
+            | "panic"
+            | "panicked"
+            | "denied"
+            | "assert"
+            | "assertion"
+    ) || core.eq_ignore_ascii_case("FAILED")
+        || is_rust_error_code(core)
     {
         return Style::default().fg(red()).add_modifier(Modifier::BOLD);
     }
