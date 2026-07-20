@@ -6,7 +6,10 @@
 
 use std::collections::HashMap;
 
-use super::types::{RegistryAttachments, RegistryModel, RegistryProviderDefaults};
+use super::resolve::ModelCatalog;
+use super::types::{
+    CanonicalModel, RegistryAttachments, RegistryModel, RegistryProviderDefaults,
+};
 use crate::config::providers::{
     canonical_provider_id, model_attachment_family_candidates, model_attachment_name_candidates,
 };
@@ -54,10 +57,33 @@ pub fn provider_registry_defaults(provider_id: &str) -> RegistryProviderDefaults
 /// 1. exact (or case-insensitive) cache hit
 /// 2. family siblings already in the cache (`grok-4.5` ← `grok-4` / `grok-4.3`)
 /// 3. provider attachment defaults (xAI images=true, …)
+///
+/// Prefer [`enrich_synced_registry_model_with_catalog`] when a canonical model
+/// catalog is available so sibling inheritance cannot overwrite official
+/// context windows / reasoning levels for known SKUs.
 pub fn enrich_synced_registry_model(
     name: &str,
     existing: &HashMap<String, RegistryModel>,
     provider_id: &str,
+) -> RegistryModel {
+    enrich_synced_registry_model_with_catalog(name, existing, provider_id, None)
+}
+
+/// Like [`enrich_synced_registry_model`], then overlays missing fields from the
+/// canonical model catalog (`models/<id>.json`). Canonical metadata wins over
+/// family-sibling guesses when the local cache row is empty *or* when we are
+/// filling gaps for a bare `/models` id that only inherited a sibling's values.
+///
+/// When `catalog` is present and contains an exact/alias match, catalog values
+/// for context window, reasoning levels, default effort, thinking support, and
+/// max output **replace** sibling-inherited values so stale family defaults
+/// (e.g. grok-4.3's 1M / low+high) cannot stick on a newer SKU that has its
+/// own catalog entry (grok-4.5: 500k / low+medium+high).
+pub fn enrich_synced_registry_model_with_catalog(
+    name: &str,
+    existing: &HashMap<String, RegistryModel>,
+    provider_id: &str,
+    catalog: Option<&ModelCatalog>,
 ) -> RegistryModel {
     let defaults = provider_registry_attachment_defaults(provider_id);
     let mut model = lookup_existing(name, existing).unwrap_or_else(|| bare_model(name));
@@ -67,8 +93,81 @@ pub fn enrich_synced_registry_model(
         inherit_missing_fields(&mut model, donor);
     }
 
+    if let Some(catalog) = catalog
+        && let Some(canonical) = lookup_canonical(name, catalog)
+    {
+        apply_canonical_metadata(&mut model, canonical);
+    }
+
     apply_attachment_defaults(&mut model, &defaults);
     model
+}
+
+/// Overlay authoritative canonical-model fields onto a provider model row.
+///
+/// Unlike [`inherit_missing_fields`], this **replaces** context window,
+/// reasoning levels, default effort, thinking support, and max output when the
+/// canonical entry has them set. Sibling inheritance is only a fallback for
+/// unknown SKUs; known catalog models must not keep a donor's wrong numbers.
+pub fn apply_canonical_metadata(target: &mut RegistryModel, canonical: &CanonicalModel) {
+    if canonical.context_window_tokens.is_some() {
+        target.context_window_tokens = canonical.context_window_tokens;
+    }
+    if canonical.max_output_tokens.is_some() {
+        target.max_output_tokens = canonical.max_output_tokens;
+    }
+    if canonical.recommended_temperature.is_some() {
+        target.recommended_temperature = canonical.recommended_temperature;
+    }
+    if canonical.supports_thinking.is_some() {
+        target.supports_thinking = canonical.supports_thinking;
+    }
+    if !canonical.reasoning_levels.is_empty() {
+        target.reasoning_levels = canonical.reasoning_levels.clone();
+    }
+    if canonical.default_reasoning_effort.is_some() {
+        target.default_reasoning_effort = canonical.default_reasoning_effort.clone();
+    }
+    if !canonical.capabilities.is_empty() {
+        target.capabilities = canonical.capabilities.clone();
+    }
+
+    // Attachments: fill gaps only (provider overrides / explicit false keep).
+    if target.supports_images.is_none() && target.attachments.images.is_none() {
+        target.supports_images = canonical.attachments.images;
+        target.attachments.images = canonical.attachments.images;
+    }
+    if target.supports_audio.is_none() && target.attachments.audio.is_none() {
+        target.supports_audio = canonical.attachments.audio;
+        target.attachments.audio = canonical.attachments.audio;
+    }
+    if target.supports_video.is_none() && target.attachments.video.is_none() {
+        target.supports_video = canonical.attachments.video;
+        target.attachments.video = canonical.attachments.video;
+    }
+    if target.supports_documents.is_none() && target.attachments.documents.is_none() {
+        target.supports_documents = canonical.attachments.documents;
+        target.attachments.documents = canonical.attachments.documents;
+    }
+}
+
+fn lookup_canonical<'a>(name: &str, catalog: &'a ModelCatalog) -> Option<&'a CanonicalModel> {
+    if let Some(c) = catalog.get(name) {
+        return Some(c);
+    }
+    let lower = name.to_ascii_lowercase();
+    if let Some((_, c)) = catalog
+        .iter()
+        .find(|(id, _)| id.to_ascii_lowercase() == lower)
+    {
+        return Some(c);
+    }
+    // Alias match (e.g. provider id `x-ai/grok-4` → canonical `grok-4`).
+    catalog.values().find(|c| {
+        c.aliases
+            .iter()
+            .any(|a| a.eq_ignore_ascii_case(name) || a.eq_ignore_ascii_case(&lower))
+    })
 }
 
 /// Fill `None` modality flags on a config-layer model from provider defaults.
@@ -291,6 +390,69 @@ mod tests {
         assert_eq!(enriched.supports_images, Some(true));
         assert_eq!(enriched.context_window_tokens, Some(1_000_000));
         assert_eq!(enriched.supports_thinking, Some(true));
+    }
+
+    #[test]
+    fn canonical_catalog_overrides_sibling_context_and_efforts() {
+        // Stale cache: grok-4.5 wrongly inherited grok-4.3's 1M / low+high.
+        let mut existing = HashMap::new();
+        let mut sibling = model("grok-4.3", Some(true), Some(1_000_000));
+        sibling.reasoning_levels = vec!["low".into(), "high".into()];
+        sibling.default_reasoning_effort = Some("high".into());
+        existing.insert("grok-4.3".into(), sibling);
+
+        let mut stale = model("grok-4.5", Some(true), Some(1_000_000));
+        stale.reasoning_levels = vec!["low".into(), "high".into()];
+        stale.default_reasoning_effort = Some("high".into());
+        existing.insert("grok-4.5".into(), stale);
+
+        let mut catalog = ModelCatalog::new();
+        catalog.insert(
+            "grok-4.5".into(),
+            CanonicalModel {
+                id: "grok-4.5".into(),
+                vendor: Some("xai".into()),
+                family: Some("grok".into()),
+                label: None,
+                description: None,
+                context_window_tokens: Some(500_000),
+                max_output_tokens: Some(131_072),
+                recommended_temperature: Some(1.0),
+                supports_thinking: Some(true),
+                reasoning_levels: vec!["low".into(), "medium".into(), "high".into()],
+                default_reasoning_effort: Some("medium".into()),
+                attachments: RegistryAttachments {
+                    images: Some(true),
+                    documents: Some(true),
+                    audio: Some(false),
+                    video: Some(false),
+                },
+                capabilities: Vec::new(),
+                status: Some("active".into()),
+                aliases: Vec::new(),
+            },
+        );
+
+        let enriched = enrich_synced_registry_model_with_catalog(
+            "grok-4.5",
+            &existing,
+            "xai",
+            Some(&catalog),
+        );
+        assert_eq!(enriched.context_window_tokens, Some(500_000));
+        assert_eq!(
+            enriched.reasoning_levels,
+            vec![
+                "low".to_string(),
+                "medium".to_string(),
+                "high".to_string()
+            ]
+        );
+        assert_eq!(
+            enriched.default_reasoning_effort.as_deref(),
+            Some("medium")
+        );
+        assert_eq!(enriched.max_output_tokens, Some(131_072));
     }
 
     #[test]

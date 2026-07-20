@@ -105,6 +105,12 @@ pub fn load_registry(store: &RegistryStore) -> LoadedRegistry {
         // (different SHA-256) than what's in the cache.
         merge_embedded_provider_updates(store);
 
+        // Correct stale context/effort rows left by API-sync sibling inheritance
+        // using the canonical model catalog (models/<id>.json).
+        if let Err(err) = store.rehydrate_provider_models_from_catalog() {
+            tracing::warn!(error = %err, "failed to rehydrate models from canonical catalog");
+        }
+
         // Reload after merging so the returned registry reflects updates.
         if let Some(reloaded) = load_cached_registry(store) {
             tracing::info!(
@@ -174,9 +180,15 @@ fn merge_embedded_provider_updates(store: &RegistryStore) {
         let cached_sha = store.provider_sha256(id).ok().flatten();
 
         let needs_update = match (&cached_sha, embedded_sha) {
-            // API/model sync marker — keep local model list; do not reseed
-            // from the embedded snapshot on every catalog load.
-            (Some(cached), _) if cached == crate::registry::LOCAL_API_SYNC_SHA => false,
+            // API/model sync marker: keep LOCAL_API_SYNC_SHA, but still
+            // union-merge when the embedded catalog for this provider changed
+            // so context/efforts can be corrected without wiping API-only SKUs.
+            (Some(cached), Some(embedded))
+                if cached == crate::registry::LOCAL_API_SYNC_SHA =>
+            {
+                let key = format!("api_sync_catalog_sha:{id}");
+                store.meta_get(&key).ok().flatten().as_deref() != Some(embedded)
+            }
             (Some(cached), Some(embedded)) => cached != embedded,
             // Missing sha usually means a partial/legacy API sync. Only seed
             // when the cache has zero models for this provider.
@@ -192,15 +204,29 @@ fn merge_embedded_provider_updates(store: &RegistryStore) {
             continue;
         }
 
+        let preserve_api_sync =
+            cached_sha.as_deref() == Some(crate::registry::LOCAL_API_SYNC_SHA);
+        let sha_to_write = if preserve_api_sync {
+            Some(crate::registry::LOCAL_API_SYNC_SHA)
+        } else {
+            embedded_sha
+        };
+
         // Prefer union-merge so a smaller embedded snapshot cannot wipe
         // models discovered via provider APIs (OpenRouter etc.).
-        if let Err(err) = store.upsert_provider_union_models(ep, embedded_sha) {
+        if let Err(err) = store.upsert_provider_union_models(ep, sha_to_write) {
             tracing::warn!(
                 provider = id,
                 error = %err,
                 "failed to upsert embedded provider update"
             );
         } else {
+            if preserve_api_sync
+                && let Some(embedded) = embedded_sha
+            {
+                let key = format!("api_sync_catalog_sha:{id}");
+                let _ = store.meta_set(&key, embedded);
+            }
             updated += 1;
         }
     }
