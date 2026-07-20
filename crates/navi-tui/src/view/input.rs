@@ -481,7 +481,16 @@ fn activity_detail_hints(app: &TuiApp, elapsed_ms: u64) -> String {
     if elapsed_ms >= 90_000 {
         "still waiting · try esc, then retry".to_string()
     } else if elapsed_ms >= 30_000 {
-        "no tokens yet".to_string()
+        if app.queued_user_messages.is_empty() {
+            "no tokens yet · type to queue".to_string()
+        } else {
+            format!(
+                "no tokens yet · {} queued",
+                app.queued_user_messages.len()
+            )
+        }
+    } else if !app.queued_user_messages.is_empty() {
+        format!("{} queued", app.queued_user_messages.len())
     } else {
         String::new()
     }
@@ -671,7 +680,28 @@ fn input_lines(app: &TuiApp, width: usize) -> (Vec<Line<'static>>, usize, usize)
     let text_style = Style::default().fg(text());
 
     if app.input.is_empty() {
-        return (vec![Line::from("")], 0, 0);
+        // Empty draft: show a soft placeholder so loading vs idle is obvious.
+        // Messages still queue with ctrl+enter while a turn is active.
+        let placeholder = if app.is_loading && app.provider_configured {
+            if app.queued_user_messages.is_empty() {
+                "Type to queue (ctrl+enter) · esc cancels turn"
+            } else {
+                "Type to queue another message (ctrl+enter)"
+            }
+        } else {
+            ""
+        };
+        if placeholder.is_empty() {
+            return (vec![Line::from("")], 0, 0);
+        }
+        return (
+            vec![Line::from(vec![Span::styled(
+                placeholder.to_string(),
+                Style::default().fg(ghost()).add_modifier(Modifier::ITALIC),
+            )])],
+            0,
+            0,
+        );
     }
 
     let cursor = app.input_cursor.min(app.input.len());
@@ -821,7 +851,16 @@ fn composer_meta_right(app: &TuiApp, width: usize) -> ComposerMetaBuilt {
         crate::state::ThinkingLevel::is_binary_for_model(app.models.get(app.selected_model));
     let thinking = app.thinking_level.display_label(binary_effort);
     let pending = app.input.len();
-    let context = if app.hover_context_usage {
+    // During long idle waits, hide the context meter so the activity line
+    // (status + elapsed) owns visual weight — tokens only matter mid-stream.
+    let suppress_context_meter = app.is_loading
+        && app.usage_state.stream_started_at.is_none()
+        && app.pending_approvals.is_empty()
+        && app.pending_questions.is_empty()
+        && app.running_tools.is_empty();
+    let context = if suppress_context_meter {
+        String::new()
+    } else if app.hover_context_usage {
         app.compact_state.usage_label_with_percent(pending)
     } else {
         app.compact_state.usage_label_compact(pending)
@@ -833,6 +872,7 @@ fn composer_meta_right(app: &TuiApp, width: usize) -> ComposerMetaBuilt {
     // Wide: `model (thinking) · [◆ credits] · context · permission`
     // Medium: `model · permission`
     // Narrow: permission only (or model if no permission room).
+    // Long idle wait: prefer model + permission only (no context chip noise).
     if width >= 56 {
         let model_label = format!("{model} ({thinking})");
         spans.push(Span::styled(model_label, Style::default().fg(muted())));
@@ -840,20 +880,22 @@ fn composer_meta_right(app: &TuiApp, width: usize) -> ComposerMetaBuilt {
             spans.push(Span::styled(" · ", Style::default().fg(ghost())));
             spans.push(Span::styled(hc, Style::default().fg(signal())));
         }
-        spans.push(Span::styled(" · ", Style::default().fg(ghost())));
-        let start = spans_display_width(&spans);
-        let chip_w = display_width(&context);
-        spans.push(Span::styled(
-            context,
-            Style::default()
-                .fg(context_color)
-                .add_modifier(if app.hover_context_usage {
-                    Modifier::BOLD
-                } else {
-                    Modifier::empty()
-                }),
-        ));
-        context_range = Some((start, chip_w));
+        if !context.is_empty() {
+            spans.push(Span::styled(" · ", Style::default().fg(ghost())));
+            let start = spans_display_width(&spans);
+            let chip_w = display_width(&context);
+            spans.push(Span::styled(
+                context,
+                Style::default()
+                    .fg(context_color)
+                    .add_modifier(if app.hover_context_usage {
+                        Modifier::BOLD
+                    } else {
+                        Modifier::empty()
+                    }),
+            ));
+            context_range = Some((start, chip_w));
+        }
         if permission_w > 0 {
             spans.push(Span::styled(" · ", Style::default().fg(ghost())));
             spans.extend(permission);
@@ -1377,8 +1419,36 @@ mod tests {
         assert!(text.contains("Thinking") || text.contains("Waiting for model"));
         assert!(!text.contains("t/s"), "rate must not use idle wall time: {text}");
         assert!(
-            text.contains("no tokens yet") || text.contains("esc to cancel"),
+            text.contains("no tokens yet")
+                || text.contains("esc to cancel")
+                || text.contains("type to queue"),
             "long idle wait should escalate copy: {text}"
+        );
+    }
+
+    #[test]
+    fn empty_input_while_loading_shows_queue_placeholder() {
+        let mut app = crate::tests::test_app("");
+        app.is_loading = true;
+        app.provider_configured = true;
+        let (lines, _, _) = input_lines(&app, 80);
+        let text = line_text(&lines[0]);
+        assert!(
+            text.contains("queue") || text.contains("ctrl+enter"),
+            "expected queue placeholder while loading, got {text:?}"
+        );
+    }
+
+    #[test]
+    fn composer_meta_hides_context_meter_during_idle_wait() {
+        let mut app = crate::tests::test_app("");
+        app.is_loading = true;
+        app.provider_configured = true;
+        // No stream yet → suppress context chip on wide meta strip.
+        let built = composer_meta_right(&app, 80);
+        assert!(
+            built.context_range.is_none(),
+            "context meter should hide during idle wait"
         );
     }
 
