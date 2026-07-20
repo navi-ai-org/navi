@@ -31,7 +31,8 @@
     "kind": {
       "type": "string",
       "enum": [
-        "openai-audio-transcriptions"
+        "openai-audio-transcriptions",
+        "wispr-flow"
       ],
       "description": "HTTP protocol used for transcription"
     },

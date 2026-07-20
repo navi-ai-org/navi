@@ -205,11 +205,33 @@ dart-test:
 
 # Sync the embedded registry snapshot from the remote navi-registry database repo.
 # After running this, rebuild navi to embed the updated snapshot.
+#
+# Uses the GitHub tarball (not `git archive --remote`, which GitHub rejects with HTTP 422).
 sync-registry-snapshot:
-    @echo "Fetching latest registry from navi-ai-org/navi-registry..."
-    git archive --remote=https://github.com/navi-ai-org/navi-registry.git main manifest.json providers models bases schemas transcription-providers | tar -x -C crates/navi-core/registry-snapshot/
-    @echo "Registry snapshot updated (providers + canonical models + schemas). Rebuild navi to embed it."
-    @echo "  cargo check -p navi-core"
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "Fetching latest registry from navi-ai-org/navi-registry..."
+    tmp="$(mktemp -d)"
+    trap 'rm -rf "$tmp"' EXIT
+    curl -fsSL "https://codeload.github.com/navi-ai-org/navi-registry/tar.gz/refs/heads/main" \
+        | tar -xz -C "$tmp"
+    src="$(find "$tmp" -maxdepth 1 -type d -name 'navi-registry-*' | head -n1)"
+    if [[ -z "$src" || ! -f "$src/manifest.json" ]]; then
+        echo "error: registry tarball missing manifest.json" >&2
+        exit 1
+    fi
+    dest="crates/navi-core/registry-snapshot"
+    # Replace tracked snapshot trees so removals (e.g. deleted providers) apply.
+    rm -rf "$dest/providers" "$dest/models" "$dest/bases" "$dest/schemas" "$dest/transcription-providers"
+    mkdir -p "$dest"
+    cp "$src/manifest.json" "$dest/manifest.json"
+    for dir in providers models bases schemas transcription-providers; do
+        if [[ -d "$src/$dir" ]]; then
+            cp -a "$src/$dir" "$dest/$dir"
+        fi
+    done
+    echo "Registry snapshot updated (providers + canonical models + schemas). Rebuild navi to embed it."
+    echo "  cargo check -p navi-core"
 
 # ─── Brand / demo GIF ─────────────────────────────────────────────────────────
 

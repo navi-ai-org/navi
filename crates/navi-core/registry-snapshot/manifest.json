@@ -1,20 +1,20 @@
 {
-  "version": 33,
-  "updated_at": "2026-07-14T23:20:54Z",
+  "version": 34,
+  "updated_at": "2026-07-15T04:44:38Z",
   "coverage": {
-    "models_total": 404,
+    "models_total": 392,
     "models_with_pricing": 198,
-    "models_with_attachments": 404,
-    "models_with_modern_attachments": 404,
+    "models_with_attachments": 392,
+    "models_with_modern_attachments": 392,
     "models_legacy_attachments_only": 0,
     "models_missing_context_window": 0,
     "models_unverified_200k": 0,
-    "models_with_sources": 394,
-    "models_with_thinking": 236,
-    "models_with_ref": 404,
+    "models_with_sources": 382,
+    "models_with_thinking": 224,
+    "models_with_ref": 392,
     "canonical_models": 264,
     "models_by_status": {
-      "active": 363,
+      "active": 351,
       "deprecated": 0,
       "removed": 41,
       "preview": 0
@@ -358,11 +358,11 @@
       "sha256": "62bbd629bb03a4e0cf74f15fd6eae5180432c3e49631381bbad6ca9a68debad7"
     },
     "gemma3:12b": {
-      "file": "models/gemma3__12b.json",
+      "file": "models/gemma3:12b.json",
       "sha256": "86202f82fafd5309494f0f1ae1ee1b5262de93ea93b7ef188a6dc17b071a95e4"
     },
     "gemma3:27b": {
-      "file": "models/gemma3__27b.json",
+      "file": "models/gemma3:27b.json",
       "sha256": "08170db1a52e8be3a495ee94008bc918c295f0edf48e8f033b0fdc4bbc442287"
     },
     "glm-4-0520": {
@@ -866,7 +866,7 @@
       "sha256": "578ad9a1958a34d16def375b5726621121858c8a77efa8ec29b4a68f88775aa8"
     },
     "nemotron-3-ultra-550b-a55b:free": {
-      "file": "models/nemotron-3-ultra-550b-a55b__free.json",
+      "file": "models/nemotron-3-ultra-550b-a55b:free.json",
       "sha256": "8d6947accd453dfbf5408800f0fbf34b5474be85072db3542b47ea5e1f29a51d"
     },
     "nemotron-3-ultra-free": {
@@ -962,15 +962,15 @@
       "sha256": "17449fc8020cb9e9129564e2b373c3ceaa9b8b980670f92dc5c1e6e227d3b314"
     },
     "qwen2.5-coder:14b": {
-      "file": "models/qwen2.5-coder__14b.json",
+      "file": "models/qwen2.5-coder:14b.json",
       "sha256": "d8140ab8d6c99149b08f3e9252fb846eae6c59c41d8ef6dc7a2c6e32122d7be7"
     },
     "qwen2.5-coder:32b": {
-      "file": "models/qwen2.5-coder__32b.json",
+      "file": "models/qwen2.5-coder:32b.json",
       "sha256": "c2439adee47e7ac1572e5e4ccf878dbcc893a19e631f6fb7f0ac5c31d6176629"
     },
     "qwen2.5-coder:7b": {
-      "file": "models/qwen2.5-coder__7b.json",
+      "file": "models/qwen2.5-coder:7b.json",
       "sha256": "86522f7324e5901285fd70f3ee3fa9607c0754e3b542103818c0aebea5468cd5"
     },
     "qwen3": {
@@ -1119,11 +1119,6 @@
       "sha256": "2294954880a0320f91eadf68dbd3aea2bd059f42c655e84d44c48111daff6ccf",
       "model_count": 12
     },
-    "hcnsec": {
-      "file": "providers/hcnsec.json",
-      "sha256": "d28b8ac36d5b783b4ac5a049ec53527c7ca1b3be2f4c6cbef9c574b57dd7d255",
-      "model_count": 12
-    },
     "llamacpp": {
       "file": "providers/llamacpp.json",
       "sha256": "f3ff610d2cfdeb3fcc99c6f285cc6dc6e725f18d2a90b2439a886e8c2000d5be",
@@ -1233,6 +1228,11 @@
       "file": "transcription-providers/openai.json",
       "sha256": "441f83fe5395177f7b72f5f8103d0e66ce4965939c99dee390490de08c63f3bb",
       "model_count": 3
+    },
+    "wispr-flow": {
+      "file": "transcription-providers/wispr-flow.json",
+      "sha256": "faa44a7a8d9d1fabc13160ebd8afeda7e6ee89098e341b4e4adff3c99cee878e",
+      "model_count": 1
     }
   }
 }
