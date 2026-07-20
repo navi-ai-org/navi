@@ -405,8 +405,8 @@ fn format_message_clock(sent_at: Option<std::time::SystemTime>) -> String {
     format!("{hour12}:{minute:02} {ampm}")
 }
 
-/// Style user prose while keeping `[Image N]` chips as solid highlighted spans
-/// (same look as the composer input).
+/// Style user prose as plain text (no markdown colors). Keep `[Image N]` chips
+/// as solid highlighted spans (same look as the composer input).
 fn style_user_line_with_image_tags(line: &str, fallback: Color) -> Vec<Span<'static>> {
     let mut spans = Vec::new();
     let mut idx = 0usize;
@@ -432,20 +432,14 @@ fn style_user_line_with_image_tags(line: &str, fallback: Color) -> Vec<Span<'sta
             }
         }
 
-        // Take the next run of non-tag text as one unit for markdown inline styling.
+        // Plain text only — user prompts must not pick up markdown/code colors.
         let next_tag = rest.find("[Image ").unwrap_or(rest.len());
         let chunk = &rest[..next_tag];
         if !chunk.is_empty() {
-            spans.extend(
-                inline_text_spans(chunk, fallback)
-                    .into_iter()
-                    .map(|mut span| {
-                        if span.style.bg.is_none() {
-                            span.style = span.style.bg(panel());
-                        }
-                        span
-                    }),
-            );
+            spans.push(Span::styled(
+                chunk.to_string(),
+                Style::default().fg(fallback).bg(panel()),
+            ));
             idx += chunk.len();
         } else {
             // Avoid infinite loop on a bare '[' that is not an image tag.
@@ -2703,6 +2697,52 @@ mod tests {
         assert!(first.starts_with('›') || first.starts_with("› "));
         assert!(!first.contains("AM") && !first.contains("PM"));
         assert!(first.contains("hello world"));
+    }
+
+    #[test]
+    fn user_prompt_body_is_plain_no_markdown_colors() {
+        // Backticks / bold / italic must not recolor user prompts — only the
+        // › prefix stays accented; body is plain theme text.
+        let lines =
+            render_user_message_lines("use `bash` and **bold** plus *italic*", 80, None);
+        assert!(!lines.is_empty());
+        let body_spans: Vec<_> = lines[0]
+            .spans
+            .iter()
+            .filter(|s| {
+                let c = s.content.as_ref();
+                !c.starts_with('›') && !c.trim().is_empty() && !c.chars().all(|ch| ch == ' ')
+            })
+            .collect();
+        assert!(
+            !body_spans.is_empty(),
+            "expected body spans with user text"
+        );
+        let expected = text_color_for_user();
+        for span in body_spans {
+            assert_eq!(
+                span.style.fg,
+                Some(expected),
+                "user body span {:?} should be plain text color, got {:?}",
+                span.content.as_ref(),
+                span.style.fg
+            );
+            assert!(
+                !span.style.add_modifier.contains(Modifier::BOLD)
+                    && !span.style.add_modifier.contains(Modifier::ITALIC),
+                "user body must not inherit markdown modifiers: {:?}",
+                span.content.as_ref()
+            );
+        }
+        // Full string still visible including markdown punctuation.
+        let full: String = lines[0]
+            .spans
+            .iter()
+            .map(|s| s.content.as_ref())
+            .collect();
+        assert!(full.contains("`bash`"));
+        assert!(full.contains("**bold**"));
+        assert!(full.contains("*italic*"));
     }
 
     #[test]
