@@ -177,7 +177,7 @@ pub(crate) fn run_selected_command(app: &mut TuiApp) -> bool {
             } else {
                 // Compact with the session model directly — not via a tool prompt
                 // or subagent. The engine summarizes and replaces live history;
-                // AutoCompactCompleted clears the TUI transcript.
+                // AutoCompactCompleted appends the summary to the TUI chat.
                 start_session_compact(app);
             }
             super::close_all_modals(app);

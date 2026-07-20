@@ -301,10 +301,11 @@ fn replace_prompt_prefix(messages: &mut Vec<ModelMessage>, prefix: Vec<ModelMess
 
 async fn maintain_context_budget(ctx: &TurnContext, messages: &mut Vec<ModelMessage>) {
     let _ = sync_messages_to_history(ctx, messages).await;
-    if let Ok(true) = evaluate_memory_triggers(ctx, messages).await {
-        return;
-    }
 
+    // Micro-compact and auto-compact run *before* long-horizon memory rebuild.
+    // Previously rebuild short-circuited this path at ~85% usage, emitted a hard
+    // Error event ("physical context rebuild"), and skipped model summarization —
+    // so the turn never recovered and the compact text never appeared in chat.
     let cleared = ctx
         .components
         .compaction
@@ -322,47 +323,50 @@ async fn maintain_context_budget(ctx: &TurnContext, messages: &mut Vec<ModelMess
         let state = ctx.compact_state.lock().await;
         state.should_autocompact(ctx.harness_config.autocompact_buffer_tokens)
     };
-    if !should_autocompact {
-        return;
+    if should_autocompact {
+        if let Some(ref tx) = ctx.event_tx {
+            let _ = tx.send(AgentEvent::AutoCompactStarted);
+        }
+        // Always use the session's own model — not a background/subagent provider.
+        let provider = ctx.active_model_provider();
+        let model = ctx.active_model_name();
+        let mut state = ctx.compact_state.lock().await;
+        match ctx
+            .components
+            .compaction
+            .auto_compact(
+                &mut state,
+                messages,
+                provider.as_ref(),
+                &model,
+                &ctx.harness_config,
+            )
+            .await
+        {
+            Ok(Some(outcome)) => {
+                if let Some(ref tx) = ctx.event_tx {
+                    let _ = tx.send(AgentEvent::AutoCompactCompleted {
+                        tokens_saved: outcome.tokens_saved,
+                        summary: outcome.summary,
+                        kept_recent_messages: outcome.kept_recent_messages,
+                    });
+                }
+            }
+            Ok(None) => {}
+            Err(e) => {
+                if let Some(ref tx) = ctx.event_tx {
+                    let _ = tx.send(AgentEvent::AutoCompactFailed {
+                        reason: e.to_string(),
+                    });
+                }
+            }
+        }
     }
 
-    if let Some(ref tx) = ctx.event_tx {
-        let _ = tx.send(AgentEvent::AutoCompactStarted);
-    }
-    // Always use the session's own model — not a background/subagent provider.
-    let provider = ctx.active_model_provider();
-    let model = ctx.active_model_name();
-    let mut state = ctx.compact_state.lock().await;
-    match ctx
-        .components
-        .compaction
-        .auto_compact(
-            &mut state,
-            messages,
-            provider.as_ref(),
-            &model,
-            &ctx.harness_config,
-        )
-        .await
-    {
-        Ok(Some(outcome)) => {
-            if let Some(ref tx) = ctx.event_tx {
-                let _ = tx.send(AgentEvent::AutoCompactCompleted {
-                    tokens_saved: outcome.tokens_saved,
-                    summary: outcome.summary,
-                    kept_recent_messages: outcome.kept_recent_messages,
-                });
-            }
-        }
-        Ok(None) => {}
-        Err(e) => {
-            if let Some(ref tx) = ctx.event_tx {
-                let _ = tx.send(AgentEvent::AutoCompactFailed {
-                    reason: e.to_string(),
-                });
-            }
-        }
-    }
+    // Checkpoints + rebuild fallback. After a successful auto-compact,
+    // token usage is reset so rebuild will not fire. Rebuild only acts when
+    // context is still critically full (e.g. auto-compact failed).
+    let _ = evaluate_memory_triggers(ctx, messages).await;
 }
 
 fn build_model_request(ctx: &TurnContext, messages: &[ModelMessage]) -> ModelRequest {
@@ -1582,10 +1586,13 @@ pub(crate) async fn evaluate_memory_triggers(
         }
     }
 
-    // 2. Rebuild threshold
+    // 2. Rebuild threshold — last-resort fallback when auto-compact did not
+    // reclaim enough budget (or the circuit breaker is open). Never emit a hard
+    // Error: rebuild is recovery, not a turn failure, and the agent loop should
+    // continue the active task with the rebuilt prompt.
     if percentage >= memory_config.rebuild_threshold {
         tracing::info!(
-            "Rebuild threshold reached ({}% >= {}%)",
+            "Rebuild threshold reached ({}% >= {}%) — applying long-horizon context rebuild fallback",
             percentage * 100.0,
             memory_config.rebuild_threshold * 100.0
         );
@@ -1626,10 +1633,16 @@ pub(crate) async fn evaluate_memory_triggers(
             state.clear_unsent_bytes();
         }
 
+        // Surface as a compact-style recovery notice so the TUI/chat show
+        // continuity instead of a red error that looks like a hard failure.
         if let Some(ref tx) = ctx.event_tx {
-            let _ = tx.send(AgentEvent::Error {
-                message: "Context limit approached. Initiated physical context rebuild cycle."
-                    .to_string(),
+            let _ = tx.send(AgentEvent::AutoCompactCompleted {
+                tokens_saved: 1,
+                summary: format!(
+                    "Context was near the model limit. Session history was rebuilt from long-horizon memory.\n\n{}",
+                    boot_context
+                ),
+                kept_recent_messages: 0,
             });
         }
 
