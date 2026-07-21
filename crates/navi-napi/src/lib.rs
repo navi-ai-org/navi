@@ -34,9 +34,7 @@ fn install_panic_guard() {
         default_hook(info);
     }));
 }
-use navi_core::{
-    ContentPart, ContextPacket, ThinkingConfig, ToolInvocation, ToolKind, ToolResult,
-};
+use navi_core::{ContentPart, ContextPacket, ThinkingConfig, ToolInvocation, ToolKind, ToolResult};
 use navi_sdk::{
     ApprovalDecision, HostToolDefinition, HostToolHandler, HostToolInvocation, NaviAcpTurnRequest,
     NaviConfigSaveTarget, NaviEngineBuilder, NaviModelSelectionRequest, NaviPromptProfile,
@@ -396,11 +394,7 @@ impl NaviNapiEngine {
             },
             Some(Either::B(opts)) => parse_session_request(opts)?,
         };
-        let info = self
-            .inner
-            .start_session(req)
-            .await
-            .map_err(to_napi_error)?;
+        let info = self.inner.start_session(req).await.map_err(to_napi_error)?;
         Ok(session_info_to_js(info))
     }
 
@@ -2238,9 +2232,7 @@ fn parse_session_request(opts: JsSessionRequest) -> Result<NaviSessionRequest> {
         .initial_messages
         .unwrap_or_default()
         .into_iter()
-        .map(|v| {
-            serde_json::from_value::<navi_core::ModelMessage>(v).map_err(to_napi_error)
-        })
+        .map(|v| serde_json::from_value::<navi_core::ModelMessage>(v).map_err(to_napi_error))
         .collect::<Result<Vec<_>>>()?;
     let initial_events = opts
         .initial_events
@@ -2265,9 +2257,7 @@ fn parse_session_request(opts: JsSessionRequest) -> Result<NaviSessionRequest> {
     })
 }
 
-fn parse_loaded_config_payload(
-    value: JsonValue,
-) -> anyhow::Result<navi_sdk::LoadedConfig> {
+fn parse_loaded_config_payload(value: JsonValue) -> anyhow::Result<navi_sdk::LoadedConfig> {
     let default_data_dir = navi_sdk::LoadedConfig::default().data_dir;
     // Full envelope: { config, dataDir?, globalConfigPath?, projectConfigPath? }
     if value.get("config").is_some()
@@ -2355,7 +2345,11 @@ fn provider_from_upsert(provider: JsProviderUpsert) -> anyhow::Result<ProviderCo
     if provider.id.trim().is_empty() {
         return Err(anyhow::anyhow!("provider id must not be empty"));
     }
-    let kind = match provider.kind.as_deref().unwrap_or("openai-chat-completions") {
+    let kind = match provider
+        .kind
+        .as_deref()
+        .unwrap_or("openai-chat-completions")
+    {
         "openai-responses" | "openai_responses" | "responses" => ProviderKind::OpenAiResponses,
         "openai-chat-completions" | "openai_chat_completions" | "chat" | "ollama" => {
             ProviderKind::OpenAiChatCompletions

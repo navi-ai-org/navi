@@ -402,10 +402,7 @@ fn composer_activity_line(app: &TuiApp, width: usize) -> Option<Line<'static>> {
         ),
         Span::styled(" ", Style::default().fg(ghost())),
         Span::styled(status.clone(), Style::default().fg(text())),
-        Span::styled(
-            format!(" · {elapsed}"),
-            Style::default().fg(code_number()),
-        ),
+        Span::styled(format!(" · {elapsed}"), Style::default().fg(code_number())),
     ];
 
     let interrupt_hint = if is_long_model_wait(app, elapsed_ms) {
@@ -425,16 +422,10 @@ fn composer_activity_line(app: &TuiApp, width: usize) -> Option<Line<'static>> {
     if !full_details.is_empty()
         && remaining >= display_width(interrupt_hint) + display_width(&full_details)
     {
-        spans.push(Span::styled(
-            interrupt_hint,
-            Style::default().fg(ghost()),
-        ));
+        spans.push(Span::styled(interrupt_hint, Style::default().fg(ghost())));
         spans.push(Span::styled(full_details, Style::default().fg(ghost())));
     } else if remaining >= display_width(interrupt_hint) {
-        spans.push(Span::styled(
-            interrupt_hint,
-            Style::default().fg(ghost()),
-        ));
+        spans.push(Span::styled(interrupt_hint, Style::default().fg(ghost())));
     } else {
         // Narrow: keep core status + elapsed only, soft-trim if needed.
         let plain = spans_to_text(&spans);
@@ -484,10 +475,7 @@ fn activity_detail_hints(app: &TuiApp, elapsed_ms: u64) -> String {
         if app.queued_user_messages.is_empty() {
             "no tokens yet · type to queue".to_string()
         } else {
-            format!(
-                "no tokens yet · {} queued",
-                app.queued_user_messages.len()
-            )
+            format!("no tokens yet · {} queued", app.queued_user_messages.len())
         }
     } else if !app.queued_user_messages.is_empty() {
         format!("{} queued", app.queued_user_messages.len())
@@ -1396,7 +1384,10 @@ mod tests {
         let text = line_text(&line);
         assert!(text.contains("Thinking"));
         assert!(text.contains("esc to interrupt"));
-        assert!(text.contains("avg 600 t/s"), "expected stream throughput, got {text}");
+        assert!(
+            text.contains("avg 600 t/s"),
+            "expected stream throughput, got {text}"
+        );
         assert!(!text.contains("tok ↓"));
         assert!(!text.contains("tok ↑"));
         assert!(!text.contains("ctrl+o"));
@@ -1417,7 +1408,10 @@ mod tests {
         let line = composer_activity_line(&app, 120).expect("activity line");
         let text = line_text(&line);
         assert!(text.contains("Thinking") || text.contains("Waiting for model"));
-        assert!(!text.contains("t/s"), "rate must not use idle wall time: {text}");
+        assert!(
+            !text.contains("t/s"),
+            "rate must not use idle wall time: {text}"
+        );
         assert!(
             text.contains("no tokens yet")
                 || text.contains("esc to cancel")

@@ -4,13 +4,11 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use mlua::{Lua, LuaOptions, StdLib, Table, Value as LuaValue};
-use serde_json::{json, Value as JsonValue};
+use serde_json::{Value as JsonValue, json};
 use tokio::sync::mpsc::UnboundedSender;
 
-use super::policy::{intersect_agent_policy, AgentPolicyOpts, RunPolicy};
-use super::types::{
-    AgentBackendResult, AgentRequest, WorkflowErrorCode, AGENT_RESULT_MAX_BYTES,
-};
+use super::policy::{AgentPolicyOpts, RunPolicy, intersect_agent_policy};
+use super::types::{AGENT_RESULT_MAX_BYTES, AgentBackendResult, AgentRequest, WorkflowErrorCode};
 use super::{AgentJob, WorkflowHostError};
 use crate::cancel::CancelToken;
 
@@ -80,7 +78,12 @@ pub fn run_lua_workflow(input: LuaRunInput) -> Result<LuaRunOutcome, WorkflowHos
     if let Err(err) = lua.load(&input.script).set_name("workflow").exec() {
         let msg = err.to_string();
         let code = classify_load_error(&msg);
-        return Ok(outcome_err(&host, code, msg, Some("Fix Lua syntax or remove forbidden APIs.")));
+        return Ok(outcome_err(
+            &host,
+            code,
+            msg,
+            Some("Fix Lua syntax or remove forbidden APIs."),
+        ));
     }
 
     let result_lua = match call_entrypoint(&lua, &host) {
@@ -202,10 +205,8 @@ fn inject_args(lua: &Lua, args: &JsonValue) -> Result<(), WorkflowHostError> {
     let data_c = data.clone();
     mt.set(
         "__index",
-        lua.create_function(move |_, (_t, key): (Table, LuaValue)| {
-            data_c.get::<LuaValue>(key)
-        })
-        .map_err(map_lua_err)?,
+        lua.create_function(move |_, (_t, key): (Table, LuaValue)| data_c.get::<LuaValue>(key))
+            .map_err(map_lua_err)?,
     )
     .map_err(map_lua_err)?;
     mt.set(
@@ -469,9 +470,10 @@ fn resolve_deferred(lua: &Lua, host: &HostState, value: LuaValue) -> mlua::Resul
         LuaValue::Table(t) => {
             if let Ok(id) = t.get::<i64>("__wf_pending") {
                 let rx = {
-                    let mut deferred = host.deferred.lock().map_err(|e| {
-                        mlua::Error::RuntimeError(format!("deferred lock: {e}"))
-                    })?;
+                    let mut deferred = host
+                        .deferred
+                        .lock()
+                        .map_err(|e| mlua::Error::RuntimeError(format!("deferred lock: {e}")))?;
                     let pos = deferred.iter().position(|d| d.id == id as u64);
                     match pos {
                         Some(i) => deferred.remove(i).response,

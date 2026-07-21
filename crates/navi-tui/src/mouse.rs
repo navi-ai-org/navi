@@ -1450,9 +1450,7 @@ fn scroll_models_by(app: &mut TuiApp, delta: isize) {
             .saturating_add(delta as usize)
             .min(max_scroll);
     } else {
-        app.model_scroll = app
-            .model_scroll
-            .saturating_sub(delta.unsigned_abs());
+        app.model_scroll = app.model_scroll.saturating_sub(delta.unsigned_abs());
     }
 
     // Keep the selected model on-screen without hopping selection by delta.

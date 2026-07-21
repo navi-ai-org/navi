@@ -1984,11 +1984,7 @@ mod tests {
         assert!(last.content.contains("5k tokens saved"));
         assert!(last.content.contains("Previous context summary"));
         // Older chat lines remain visible (not wiped).
-        assert!(
-            app.messages
-                .iter()
-                .any(|m| m.content == "old user message")
-        );
+        assert!(app.messages.iter().any(|m| m.content == "old user message"));
         // Provider history is system + summary only.
         assert!(app.conversation_history.iter().all(|m| matches!(
             m.role,

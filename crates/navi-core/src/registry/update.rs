@@ -183,9 +183,7 @@ fn merge_embedded_provider_updates(store: &RegistryStore) {
             // API/model sync marker: keep LOCAL_API_SYNC_SHA, but still
             // union-merge when the embedded catalog for this provider changed
             // so context/efforts can be corrected without wiping API-only SKUs.
-            (Some(cached), Some(embedded))
-                if cached == crate::registry::LOCAL_API_SYNC_SHA =>
-            {
+            (Some(cached), Some(embedded)) if cached == crate::registry::LOCAL_API_SYNC_SHA => {
                 let key = format!("api_sync_catalog_sha:{id}");
                 store.meta_get(&key).ok().flatten().as_deref() != Some(embedded)
             }
@@ -204,8 +202,7 @@ fn merge_embedded_provider_updates(store: &RegistryStore) {
             continue;
         }
 
-        let preserve_api_sync =
-            cached_sha.as_deref() == Some(crate::registry::LOCAL_API_SYNC_SHA);
+        let preserve_api_sync = cached_sha.as_deref() == Some(crate::registry::LOCAL_API_SYNC_SHA);
         let sha_to_write = if preserve_api_sync {
             Some(crate::registry::LOCAL_API_SYNC_SHA)
         } else {
@@ -221,9 +218,7 @@ fn merge_embedded_provider_updates(store: &RegistryStore) {
                 "failed to upsert embedded provider update"
             );
         } else {
-            if preserve_api_sync
-                && let Some(embedded) = embedded_sha
-            {
+            if preserve_api_sync && let Some(embedded) = embedded_sha {
                 let key = format!("api_sync_catalog_sha:{id}");
                 let _ = store.meta_set(&key, embedded);
             }

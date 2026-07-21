@@ -4,8 +4,8 @@
 //! tool surface or prompt, without forking the agent loop.
 
 use navi_core::{
-    DefaultPromptBuilder, PermissionMode, PromptBuilder, PromptCache, RenderedPrompt, SecurityConfig,
-    SystemPromptInput,
+    DefaultPromptBuilder, PermissionMode, PromptBuilder, PromptCache, RenderedPrompt,
+    SecurityConfig, SystemPromptInput,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
@@ -245,13 +245,7 @@ mod tests {
     fn filter_chat_only_keeps_nothing() {
         let registered = vec!["bash".into(), "vault_read".into()];
         let hosts = HashSet::new();
-        let kept = filter_tool_names(
-            &registered,
-            NaviToolProfile::ChatOnly,
-            &hosts,
-            &[],
-            &[],
-        );
+        let kept = filter_tool_names(&registered, NaviToolProfile::ChatOnly, &hosts, &[], &[]);
         assert!(kept.is_empty());
     }
 

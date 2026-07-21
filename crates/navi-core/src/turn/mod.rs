@@ -232,9 +232,7 @@ async fn ensure_system_prompt(ctx: &TurnContext, messages: &mut Vec<ModelMessage
 
     // In Plan mode, allow explore + plan-file writes + plan/question tools.
     if ctx.agent_mode.restricts_tools() {
-        tools.retain(|t| {
-            crate::plan_mode::is_tool_allowed_in_plan_mode_named(&t.name, t.kind)
-        });
+        tools.retain(|t| crate::plan_mode::is_tool_allowed_in_plan_mode_named(&t.name, t.kind));
     }
 
     let input = SystemPromptInput {

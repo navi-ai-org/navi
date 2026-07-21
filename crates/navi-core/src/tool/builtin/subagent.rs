@@ -481,7 +481,9 @@ impl SubagentTool {
             if let Some(scope) = write_scope_from_options(&options) {
                 let mut policy = executor.policy().clone();
                 policy = policy.with_write_scope(scope);
-                let names = allowed_tool_names.clone().unwrap_or_else(|| executor.tool_names());
+                let names = allowed_tool_names
+                    .clone()
+                    .unwrap_or_else(|| executor.tool_names());
                 Arc::new(executor.fork_with_policy_and_tools(policy, &names))
             } else {
                 executor
@@ -1160,9 +1162,7 @@ impl Default for SubagentOptions {
     }
 }
 
-fn write_scope_from_options(
-    options: &SubagentOptions,
-) -> Option<crate::security::WritePathScope> {
+fn write_scope_from_options(options: &SubagentOptions) -> Option<crate::security::WritePathScope> {
     // Only install a write scope when the caller explicitly set workflow fields.
     if options.write_allow.is_none()
         && options.path_deny.is_none()
@@ -1270,7 +1270,7 @@ mod tests {
             tools: Some(vec!["read".to_string(), "search".to_string()]),
             approval: ApprovalMode::ReadOnly,
             max_tokens: Some(4096),
-                    ..Default::default()
+            ..Default::default()
         };
         let json = serde_json::to_value(&opts).unwrap();
         let deserialized: SubagentOptions = serde_json::from_value(json).unwrap();

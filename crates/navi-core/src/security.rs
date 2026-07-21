@@ -219,7 +219,11 @@ impl SecurityPolicy {
             .replace('\\', "/");
         let rel = rel.trim_start_matches("./");
 
-        if scope.path_deny.iter().any(|d| write_scope_path_matches(d, rel)) {
+        if scope
+            .path_deny
+            .iter()
+            .any(|d| write_scope_path_matches(d, rel))
+        {
             return Some(SecurityDecision::Deny(format!(
                 "path `{rel}` is denied by workflow path_deny"
             )));
@@ -1212,7 +1216,10 @@ fn paths_equal(a: &Path, b: &Path) -> bool {
     if a == b {
         return true;
     }
-    match (normalize_existing_or_parent(a), normalize_existing_or_parent(b)) {
+    match (
+        normalize_existing_or_parent(a),
+        normalize_existing_or_parent(b),
+    ) {
         (Ok(aa), Ok(bb)) => aa == bb,
         _ => false,
     }

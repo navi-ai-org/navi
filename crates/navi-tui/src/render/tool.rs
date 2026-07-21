@@ -209,8 +209,8 @@ pub(crate) fn tool_compact_text(invocation: &ToolInvocation, result: &ToolResult
     if !result.ok {
         // Bash already embeds sticky failure bits in its summary (`Run … · 4p/1f · test`).
         // Don't append a second `· signal` from the generic error path.
-        let bash_already_signaled = invocation.tool_name == "bash"
-            && shell_failure_header_bits(&result.output).is_some();
+        let bash_already_signaled =
+            invocation.tool_name == "bash" && shell_failure_header_bits(&result.output).is_some();
         if bash_already_signaled {
             // nothing extra
         } else if let Some(error) = tool_error_message(&result.output) {
@@ -593,7 +593,8 @@ fn render_tool_error_body(
     // non-shell tools — avoids double-printing the same error string.
     if is_shellish {
         let has_sticky = shell_failure_summary(obj).is_some();
-        let should_show_command = has_sticky || has_streams || has_extra || error_code.is_some() || hint.is_some();
+        let should_show_command =
+            has_sticky || has_streams || has_extra || error_code.is_some() || hint.is_some();
         if should_show_command
             && let Some(command) = invocation
                 .input
@@ -1692,7 +1693,10 @@ fn shell_failure_header_bits(output: &Value) -> Option<Vec<String>> {
     let mut bits = Vec::new();
 
     // Counts from `Summary: FAILED. 4 passed; 1 failed; …`
-    if let Some(line) = summary.lines().find(|l| l.trim_start().starts_with("Summary:")) {
+    if let Some(line) = summary
+        .lines()
+        .find(|l| l.trim_start().starts_with("Summary:"))
+    {
         let rest = line.trim_start().trim_start_matches("Summary:").trim();
         let passed = extract_count(rest, "passed");
         let failed = extract_count(rest, "failed");
@@ -1728,11 +1732,7 @@ fn shell_failure_header_bits(output: &Value) -> Option<Vec<String>> {
         bits.push(truncate_for_summary(compact.trim(), 24));
     }
 
-    if bits.is_empty() {
-        None
-    } else {
-        Some(bits)
-    }
+    if bits.is_empty() { None } else { Some(bits) }
 }
 
 fn extract_count(text: &str, label: &str) -> Option<u64> {
@@ -3104,7 +3104,10 @@ fn shell_failure_summary(obj: &serde_json::Map<String, Value>) -> Option<String>
     }) {
         let t = result_line.trim();
         if t.starts_with("test result:") {
-            out.push_str(&format!("Summary: {}\n", one_line(t.trim_start_matches("test result:").trim())));
+            out.push_str(&format!(
+                "Summary: {}\n",
+                one_line(t.trim_start_matches("test result:").trim())
+            ));
         } else {
             out.push_str(&format!("Summary: {}\n", one_line(t)));
         }
@@ -3193,11 +3196,7 @@ fn shell_failure_summary(obj: &serde_json::Map<String, Value>) -> Option<String>
         out.push_str(&format!("At: {at}\n"));
     }
 
-    if out.is_empty() {
-        None
-    } else {
-        Some(out)
-    }
+    if out.is_empty() { None } else { Some(out) }
 }
 
 fn display_path(path: &str) -> String {
@@ -3652,8 +3651,7 @@ test result: FAILED. 4 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out
         );
         // Full command should be available when header truncates.
         assert!(
-            content.contains("cargo test -p copland")
-                || content.contains("$ cargo test"),
+            content.contains("cargo test -p copland") || content.contains("$ cargo test"),
             "expected command context, got:\n{content}"
         );
     }
@@ -3670,7 +3668,10 @@ test result: FAILED. 4 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out
         );
         assert!(text.starts_with("Run "), "{text}");
         assert!(
-            text.contains("bar") || text.contains("FAILED") || text.contains("0p/1f") || text.contains("exit"),
+            text.contains("bar")
+                || text.contains("FAILED")
+                || text.contains("0p/1f")
+                || text.contains("exit"),
             "header should carry a high-signal failure reason: {text}"
         );
         assert!(

@@ -1141,10 +1141,8 @@ mod tests {
 
         with_palette(&ThemeId::Lain.palette(), || {
             let mut app = crate::tests::test_app("");
-            app.messages.push(ChatMessage::new(
-                ChatRole::User,
-                "both states".to_string(),
-            ));
+            app.messages
+                .push(ChatMessage::new(ChatRole::User, "both states".to_string()));
             app.selected_chat_source = Some(ChatLineSource::Message(0));
             app.hovered_chat_source = Some(ChatLineSource::Message(0));
 
@@ -1158,7 +1156,11 @@ mod tests {
             super::style_interactive_lines(&mut lines, &sources, &app, 40);
 
             let rail = lines[0].spans.first().expect("rail span");
-            assert_eq!(rail.style.fg, Some(accent()), "selection must win over hover");
+            assert_eq!(
+                rail.style.fg,
+                Some(accent()),
+                "selection must win over hover"
+            );
         });
     }
 }

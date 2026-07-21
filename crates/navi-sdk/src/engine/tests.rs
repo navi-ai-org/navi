@@ -1147,10 +1147,17 @@ fn plugin_install_requires_confirm() {
 
 // ── SDK refactor host embedding surface (docs/sdk-refactor) ─────────────
 
-use crate::host_tool::{HostToolDefinition, HostToolHandler, HostToolInvocation, SdkHostTool, SdkHostToolResult};
-use crate::profiles::{NaviPromptProfile, NaviSecurityProfile, NaviToolProfile, ProfilePromptBuilder};
+use crate::host_tool::{
+    HostToolDefinition, HostToolHandler, HostToolInvocation, SdkHostTool, SdkHostToolResult,
+};
+use crate::profiles::{
+    NaviPromptProfile, NaviSecurityProfile, NaviToolProfile, ProfilePromptBuilder,
+};
 use async_trait::async_trait;
-use navi_core::{PermissionMode, PromptBuilder, PromptCache, SecurityDecision, SecurityPolicy, SystemPromptInput, ToolKind};
+use navi_core::{
+    PermissionMode, PromptBuilder, PromptCache, SecurityDecision, SecurityPolicy,
+    SystemPromptInput, ToolKind,
+};
 use serde_json::json;
 
 struct OkHostHandler;
@@ -1196,11 +1203,13 @@ fn injected_data_dir_is_used_for_durable_state() {
     engine
         .set_provider_api_key("test-provider", "sk-test")
         .expect("set key");
-    assert!(data.join("credentials.toml").exists() || data.join("credentials").exists() || {
-        // Some builds store credentials.toml directly
-        let status = engine.credential_status("test-provider").expect("status");
-        status.configured || status.source.is_some()
-    });
+    assert!(
+        data.join("credentials.toml").exists() || data.join("credentials").exists() || {
+            // Some builds store credentials.toml directly
+            let status = engine.credential_status("test-provider").expect("status");
+            status.configured || status.source.is_some()
+        }
+    );
 }
 
 #[tokio::test]
@@ -1270,10 +1279,12 @@ async fn session_request_from_snapshot_reopens_history() {
         .expect("reopen");
     assert_eq!(info.id, "reopen-src");
     let reopened = engine.snapshot_session(&info.id).await.expect("snap2");
-    let has = reopened.events.iter().any(|e| matches!(
-        e,
-        AgentEvent::UserTaskSubmitted { text, .. } if text.contains("persist me")
-    ));
+    let has = reopened.events.iter().any(|e| {
+        matches!(
+            e,
+            AgentEvent::UserTaskSubmitted { text, .. } if text.contains("persist me")
+        )
+    });
     assert!(has, "reopened session must retain history");
 }
 
@@ -1300,16 +1311,15 @@ async fn host_tools_only_profile_hides_bash_and_edit() {
         .start_session(NaviSessionRequest::default())
         .await
         .expect("start");
-    let tools = engine
-        .list_session_tools(&session.id)
-        .await
-        .expect("tools");
+    let tools = engine.list_session_tools(&session.id).await.expect("tools");
     assert!(
         tools.iter().any(|t| t == "vault_write"),
         "host tool must remain: {tools:?}"
     );
     assert!(
-        !tools.iter().any(|t| t == "bash" || t == "edit" || t == "write_file"),
+        !tools
+            .iter()
+            .any(|t| t == "bash" || t == "edit" || t == "write_file"),
         "code-agent builtins must be hidden: {tools:?}"
     );
     assert_eq!(engine.tool_profile(), NaviToolProfile::HostToolsOnly);
@@ -1338,10 +1348,7 @@ async fn chat_only_profile_exposes_no_tools() {
         .start_session(NaviSessionRequest::default())
         .await
         .expect("start");
-    let tools = engine
-        .list_session_tools(&session.id)
-        .await
-        .expect("tools");
+    let tools = engine.list_session_tools(&session.id).await.expect("tools");
     assert!(tools.is_empty(), "chat_only must offer no tools: {tools:?}");
 }
 
@@ -1438,7 +1445,9 @@ async fn compact_session_returns_outcome_on_seeded_history() {
     let mut events = Vec::new();
     for i in 0..12 {
         messages.push(navi_core::ModelMessage::user(format!("user turn {i}")));
-        messages.push(navi_core::ModelMessage::assistant(format!("assistant turn {i}")));
+        messages.push(navi_core::ModelMessage::assistant(format!(
+            "assistant turn {i}"
+        )));
         events.push(AgentEvent::UserTaskSubmitted {
             text: format!("user turn {i}"),
             content_parts: Vec::new(),
@@ -1529,7 +1538,11 @@ fn upsert_provider_openai_compat_and_select_model() {
     // Unreachable base URL must not crash status/list
     let _ = engine.credential_status("ollama-local").expect("status");
     let models = engine.list_models();
-    assert!(models.iter().any(|m| m.provider_id == "ollama-local" && m.name == "llama3"));
+    assert!(
+        models
+            .iter()
+            .any(|m| m.provider_id == "ollama-local" && m.name == "llama3")
+    );
 }
 
 #[test]
