@@ -135,6 +135,14 @@ pub(crate) fn active_plan_from_store_plan(
 
 /// Open review from PlanProposed event (tag path — non-blocking legacy).
 pub(crate) fn open_plan_review_from_proposed(app: &mut TuiApp, title: String, steps: Vec<String>) {
+    // Convert numbered steps into a minimal markdown body for the review UI.
+    let mut body = String::new();
+    if !title.is_empty() {
+        body.push_str(&format!("# {title}\n\n"));
+    }
+    for (i, step) in steps.iter().enumerate() {
+        body.push_str(&format!("{}. {}\n", i + 1, step));
+    }
     let plan = Plan {
         id: format!("proposed-{}", navi_core::plan_store::now_ms()),
         title: title.clone(),
@@ -150,7 +158,7 @@ pub(crate) fn open_plan_review_from_proposed(app: &mut TuiApp, title: String, st
         status: PlanStatus::Proposed,
         created_at: navi_core::plan_store::now_ms(),
         updated_at: navi_core::plan_store::now_ms(),
-        body_markdown: String::new(),
+        body_markdown: body,
         comments: Vec::new(),
         project_id: String::new(),
         session_id: app.session_id.as_str().to_string(),
@@ -173,6 +181,13 @@ pub(crate) fn open_plan_review_from_request(
         open_plan_review(app, plan, request.id);
         return;
     }
+    let body_markdown = if !request.body_markdown.trim().is_empty() {
+        request.body_markdown.clone()
+    } else if !request.plan_file_path.is_empty() {
+        navi_core::read_plan_file(std::path::Path::new(&request.plan_file_path)).unwrap_or_default()
+    } else {
+        String::new()
+    };
     let plan = Plan {
         id: request.plan_id.clone(),
         title: request.title.clone(),
@@ -189,7 +204,7 @@ pub(crate) fn open_plan_review_from_request(
         status: PlanStatus::Proposed,
         created_at: navi_core::plan_store::now_ms(),
         updated_at: navi_core::plan_store::now_ms(),
-        body_markdown: String::new(),
+        body_markdown,
         comments: Vec::new(),
         project_id: String::new(),
         session_id: app.session_id.as_str().to_string(),

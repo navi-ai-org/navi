@@ -737,7 +737,7 @@ impl QuestionResponse {
     }
 }
 
-/// Interactive plan review requested after `plan(action=create)`.
+/// Interactive plan review requested after `plan(action=submit|create)`.
 /// The turn **blocks** until the user resolves it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PlanReviewRequest {
@@ -748,6 +748,12 @@ pub struct PlanReviewRequest {
     pub title: String,
     pub description: String,
     pub steps: Vec<String>,
+    /// Full markdown design doc (primary content for review UI).
+    #[serde(default)]
+    pub body_markdown: String,
+    /// On-disk plan file path (Claude Code-style artifact).
+    #[serde(default)]
+    pub plan_file_path: String,
 }
 
 /// User decision from the plan review modal.

@@ -230,9 +230,11 @@ async fn ensure_system_prompt(ctx: &TurnContext, messages: &mut Vec<ModelMessage
     let memory_injection = combined_memory_injection(ctx).await;
     let mut tools = ctx.tool_executor.definitions();
 
-    // In Plan mode, filter to read-only tools only.
+    // In Plan mode, allow explore + plan-file writes + plan/question tools.
     if ctx.agent_mode.restricts_tools() {
-        tools.retain(|t| crate::plan_mode::is_tool_allowed_in_plan_mode(t.kind));
+        tools.retain(|t| {
+            crate::plan_mode::is_tool_allowed_in_plan_mode_named(&t.name, t.kind)
+        });
     }
 
     let input = SystemPromptInput {
@@ -268,21 +270,43 @@ async fn ensure_system_prompt(ctx: &TurnContext, messages: &mut Vec<ModelMessage
     // request, even if memory, skill or external-context state changes later.
     let mut prefix = Vec::with_capacity(2 + rendered.developer_messages.len());
     prefix.push(ModelMessage::system(rendered.instructions));
-    // In Plan mode, inject a developer message instructing the model to
-    // propose a plan via <proposed_plan> tags instead of executing.
+    // In Plan mode, inject instructions for markdown plan-file workflow.
     if ctx.agent_mode.restricts_tools() {
-        prefix.push(ModelMessage::developer(
-            "You are in Plan mode (host-restricted).\n\
-             - Only read-only tools are available. Do NOT write files or run commands.\n\
-             - Propose work with XML only (not the `plan` tool):\n\
-             <proposed_plan title=\"Plan title\">\n\
-             1. Step one\n\
-             2. Step two\n\
-             </proposed_plan>\n\
-             - Do not call plan(action='create') in this mode; the host presents the proposal for review.\n\
-             - After the user approves and leaves Plan mode, implement in normal mode."
-                .to_string(),
-        ));
+        let plan_path = ctx
+            .tool_executor
+            .policy()
+            .plan_file_path()
+            .unwrap_or_else(|| {
+                crate::plan_store::session_plan_file_path(&ctx.data_dir, &ctx.session_id)
+            });
+        let plan_exists = plan_path.is_file();
+        let file_info = if plan_exists {
+            format!(
+                "A plan file already exists at `{}`. Read it and edit incrementally with `edit` or rewrite with `write_file` / plan(action='write').",
+                plan_path.display()
+            )
+        } else {
+            format!(
+                "No plan file yet. Create it at `{}` using write_file or plan(action='write', plan='...markdown...').",
+                plan_path.display()
+            )
+        };
+        prefix.push(ModelMessage::developer(format!(
+            "Plan mode is active. The user does not want execution yet — do NOT edit project files, \
+run non-readonly tools, change configs, or make commits. This supersedes other instructions.\n\
+\n\
+## Plan file\n\
+{file_info}\n\
+This is the ONLY path you may write. Build the plan as a **markdown design document** (not JSON).\n\
+\n\
+## Workflow\n\
+1. Explore with read-only tools (search, read_file, …).\n\
+2. Draft/update the plan file incrementally (Context, Approach, Files to modify with paths, Verification).\n\
+3. Use `question` for requirements/approach clarifications — not to ask \"is this plan okay?\".\n\
+4. When the plan is ready for approval, call plan(action='submit') (reads the plan file; empty args are fine).\n\
+\n\
+Your turn should end with either `question` or plan(action='submit'). After approval the host exits plan mode and you implement."
+        )));
     }
     prefix.extend(rendered.developer_messages);
     *ctx.prompt_prefix.lock().unwrap_or_else(|e| e.into_inner()) = Some(prefix.clone());
@@ -1083,12 +1107,27 @@ async fn wait_for_plan_review(
         })
         .unwrap_or_default();
 
+    let body_markdown = created
+        .output
+        .get("body_markdown")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let plan_file_path = created
+        .output
+        .get("plan_file_path")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+
     let request = crate::event::PlanReviewRequest {
         id: invocation.id.clone(),
         plan_id: plan_id.clone(),
         title,
         description,
         steps,
+        body_markdown,
+        plan_file_path,
     };
 
     let answer_rx = ctx.plan_review_resolver.register(invocation.id.clone());
@@ -1124,13 +1163,25 @@ async fn wait_for_plan_review(
                 obj.insert("decision".into(), json!(decision));
                 obj.insert("comments".into(), json!(comments_json));
                 obj.insert("freeform".into(), json!(resp.freeform));
+                // On approve, re-surface the markdown so the model has the plan after mode exit.
+                if matches!(resp.decision, crate::event::PlanReviewDecision::Approve) {
+                    if let Some(path) = obj
+                        .get("plan_file_path")
+                        .and_then(|v| v.as_str())
+                        .map(std::path::PathBuf::from)
+                    {
+                        if let Some(md) = crate::plan_store::read_plan_file(&path) {
+                            obj.insert("body_markdown".into(), json!(md));
+                        }
+                    }
+                }
                 obj.insert(
                     "message".into(),
                     json!(match resp.decision {
                         crate::event::PlanReviewDecision::Approve =>
-                            "User approved the plan. Proceed with implementation.",
+                            "User approved the plan. You are now in normal mode — implement the plan. Use the body_markdown / plan file as the source of truth.",
                         crate::event::PlanReviewDecision::RequestChanges =>
-                            "User requested changes to the plan. Revise based on comments.",
+                            "User requested changes to the plan. Revise the plan file based on comments, then submit again.",
                         crate::event::PlanReviewDecision::Quit =>
                             "User abandoned the plan. Do not implement it.",
                     }),

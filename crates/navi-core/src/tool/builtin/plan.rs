@@ -2,10 +2,13 @@ use anyhow::Result;
 use async_trait::async_trait;
 use serde_json::{Value, json};
 use std::hash::{Hash, Hasher};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use super::helpers;
-use crate::plan_store::{MAX_PLANS, MAX_STEPS, Plan, PlanStatus, PlanStep, PlanStore, now_ms};
+use crate::plan_store::{
+    MAX_PLANS, MAX_STEPS, Plan, PlanStatus, PlanStep, PlanStore, now_ms, project_plan_file_path,
+    read_plan_file, title_from_markdown, write_plan_file,
+};
 use crate::security::SecurityPolicy;
 use crate::tool::{Tool, ToolDefinition, ToolInvocation, ToolKind, ToolResult};
 
@@ -56,46 +59,46 @@ impl PlanTool {
     fn store(&self) -> Result<&PlanStore, &str> {
         self.store.as_ref().map_err(|msg| msg.as_str())
     }
+
+    /// Session plan file when set by plan mode; otherwise project-scoped fallback.
+    fn plan_file_path(&self) -> PathBuf {
+        self.policy
+            .plan_file_path()
+            .unwrap_or_else(|| project_plan_file_path(self.policy.data_dir(), &self.project_id()))
+    }
 }
 
 #[async_trait]
 impl Tool for PlanTool {
     fn definition(&self) -> ToolDefinition {
-        // Schema shape follows CreatePlan + agentic post-training norms:
-        // models reliably emit markdown plan bodies and/or todos[{id,content}], and often
-        // omit nested {description} objects. Multi-action CRUD is kept, but create accepts
-        // those familiar shapes so frontier models don't bounce on empty_steps.
+        // Markdown design-doc is the source of truth (Claude Code style).
+        // steps/todos remain optional for progress tracking after approval.
         helpers::definition(
             "plan",
-            "Create and track a concise work plan (checklist). Not for one-line fixes. \
-             Not the same as set_goal. In Plan mode, emit <proposed_plan> XML instead of create.\n\
+            "Create, draft, and track a work plan. Source of truth is a **markdown design doc**, \
+             not a JSON checklist. Not for one-line fixes. Not the same as set_goal.\n\
              \n\
-             Prefer create with BOTH a short title and concrete steps (or todos). \
-             The host may show a review UI before execution depending on configuration; \
-             do not assume a blocking modal always appears.\n\
+             Preferred (markdown):\n\
+             {\"action\":\"write\",\"plan\":\"# Title\\n\\n## Context\\n...\\n\\n## Approach\\n...\\n\\n\
+## Files\\n- path — change\\n\\n## Verification\\ncommand\\n\"}\n\
+             Then when ready for user approval:\n\
+             {\"action\":\"submit\"}  (reads the plan file; do not re-pass the whole body)\n\
              \n\
              Actions:\n\
-             - create: REQUIRED content = steps[] OR todos[] OR plan/body markdown. \
-               Title alone is not enough.\n\
-             - update / complete_step / get / list / active: manage and read plans.\n\
+             - write: save markdown to the plan file (incremental drafting; no review modal).\n\
+             - submit | create: finalize for user review (reads plan file if body omitted).\n\
+             - update / complete_step / get / list / active: manage after approval.\n\
              \n\
-             Preferred create:\n\
-             {\"action\":\"create\",\"title\":\"Add footer meter\",\n\
-              \"steps\":[\"Read usage state\",\"Wire footer label\",\"Test meter\"]}\n\
-             \n\
-             Markdown/todos alias:\n\
-             {\"action\":\"create\",\"plan\":\"# Title\\n\\nApproach...\\n\",\n\
-              \"todos\":[{\"id\":\"wire-ui\",\"content\":\"Wire footer label\"}]}\n\
-             \n\
-             Do NOT call create with only {\"action\":\"create\",\"title\":\"...\"}.",
+             Plan structure: Context, Approach (recommended only), Files to modify with paths, \
+             Verification. Keep it scannable. Avoid JSON step arrays as the primary content.",
             ToolKind::Read,
             json!({
                 "type": "object",
                 "properties": {
                     "action": {
                         "type": "string",
-                        "enum": ["create", "update", "complete_step", "get", "list", "active"],
-                        "description": "Operation to perform. Use create to finalize a plan for user review."
+                        "enum": ["write", "submit", "create", "update", "complete_step", "get", "list", "active"],
+                        "description": "write = draft markdown to the plan file; submit/create = present for user review; others manage progress."
                     },
                     "plan_id": {
                         "type": "string",
@@ -103,15 +106,15 @@ impl Tool for PlanTool {
                     },
                     "title": {
                         "type": "string",
-                        "description": "Short plan title. Optional if plan/body markdown starts with # heading or steps exist."
+                        "description": "Short plan title. Optional if markdown starts with # heading."
                     },
                     "description": {
                         "type": "string",
-                        "description": "High-level summary (non-checklist prose)."
+                        "description": "Optional short summary (prefer full markdown in plan)."
                     },
                     "plan": {
                         "type": "string",
-                        "description": "CreatePlan-style markdown body. First line may be '# Title'. Bullet/numbered lists become steps when steps/todos omitted."
+                        "description": "Markdown design doc body (preferred). Sections: Context, Approach, Files, Verification."
                     },
                     "body": {
                         "type": "string",
@@ -131,8 +134,7 @@ impl Tool for PlanTool {
                     },
                     "steps": {
                         "type": "array",
-                        "description": "Checklist steps for create/update. Each item may be a string OR an object with description|content|title|text. Prefer 3–12 concrete steps.",
-                        "minItems": 1,
+                        "description": "Optional checklist for progress tracking. Prefer markdown body; steps are derived from lists when omitted.",
                         "items": {
                             "anyOf": [
                                 { "type": "string", "minLength": 1 },
@@ -154,8 +156,7 @@ impl Tool for PlanTool {
                     },
                     "todos": {
                         "type": "array",
-                        "description": "CreatePlan/TodoWrite-compatible alias for steps. Items: string or {id, content|description}.",
-                        "minItems": 1,
+                        "description": "Alias for steps (TodoWrite-compatible).",
                         "items": {
                             "anyOf": [
                                 { "type": "string", "minLength": 1 },
@@ -224,9 +225,13 @@ impl Tool for PlanTool {
             }
         };
 
+        let plan_file = self.plan_file_path();
         match action.as_str() {
-            "create" => action_create(&invocation, store, &project_id),
-            "update" => action_update(&invocation, store),
+            "write" => action_write(&invocation, store, &project_id, &plan_file),
+            "submit" | "create" => {
+                action_submit(&invocation, store, &project_id, &plan_file)
+            }
+            "update" => action_update(&invocation, store, &plan_file),
             "complete_step" => action_complete_step(&invocation, store),
             "get" => action_get(&invocation, store),
             "list" => action_list(&invocation, store, &project_id),
@@ -238,7 +243,7 @@ impl Tool for PlanTool {
                     "unknown_plan_action",
                     format!("unknown plan action: {action}"),
                     true,
-                    Some("Use create, update, complete_step, get, list, or active."),
+                    Some("Use write, submit, create, update, complete_step, get, list, or active."),
                     None,
                 ),
             }),
@@ -248,35 +253,182 @@ impl Tool for PlanTool {
 
 // ── Actions ────────────────────────────────────────────────────────────────
 
-fn action_create(
+/// Draft markdown to the plan file without opening review.
+fn action_write(
     invocation: &ToolInvocation,
     store: &PlanStore,
     project_id: &str,
+    plan_file: &Path,
 ) -> Result<ToolResult> {
-    let parsed = parse_create_payload(&invocation.input)?;
-
-    if parsed.steps.is_empty() {
+    let mut body = first_nonempty_string(
+        &invocation.input,
+        &["plan", "body", "body_markdown", "content"],
+    )
+    .unwrap_or_default();
+    if body.trim().is_empty() {
         return Ok(ToolResult {
             invocation_id: invocation.id.clone(),
             ok: false,
             output: helpers::tool_error(
-                "empty_steps",
-                "a plan must have at least one step",
+                "empty_plan",
+                "plan markdown body is required for write",
                 true,
                 Some(
-                    "Provide steps (array of strings or {description}), \
-                     todos ([{id,content}]), or a markdown plan/body with a checklist. \
-                     Example: {\"action\":\"create\",\"title\":\"…\",\
-                     \"steps\":[\"Step one\",\"Step two\"]}",
+                    "Pass plan=\"# Title\\n\\n## Context\\n...\\n## Approach\\n...\\n\
+                     ## Files\\n...\\n## Verification\\n...\"",
                 ),
                 None,
             ),
         });
     }
 
+    // Ensure a top-level heading if the model omitted one.
+    if markdown_title(&body).is_none() {
+        if let Some(title) = helpers::optional_string(&invocation.input, "title") {
+            if !title.trim().is_empty() {
+                body = format!("# {}\n\n{}", title.trim(), body.trim_start());
+            }
+        }
+    }
+
+    write_plan_file(plan_file, &body)?;
+
+    let title = helpers::optional_string(&invocation.input, "title")
+        .filter(|t| !t.trim().is_empty())
+        .unwrap_or_else(|| title_from_markdown(&body));
+    let steps = {
+        let mut s = steps_from_markdown(&body);
+        if s.is_empty() {
+            s.push(PlanStep {
+                description: "Implement the approved plan".into(),
+                completed: false,
+                notes: String::new(),
+            });
+        }
+        s
+    };
+
+    // Keep a single in-progress draft row (latest proposed for this project).
+    let now = now_ms();
+    let existing = store
+        .list(project_id, Some("proposed"), 1)?
+        .into_iter()
+        .next();
+    let plan = if let Some(mut plan) = existing {
+        plan.title = title;
+        plan.body_markdown = body.clone();
+        plan.steps = steps;
+        plan.updated_at = now;
+        plan.status = PlanStatus::Proposed;
+        plan
+    } else {
+        let seq = PLAN_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        Plan {
+            id: format!("plan-{now}-{seq}"),
+            title,
+            description: helpers::optional_string(&invocation.input, "description")
+                .unwrap_or_default(),
+            steps,
+            status: PlanStatus::Proposed,
+            created_at: now,
+            updated_at: now,
+            body_markdown: body.clone(),
+            comments: Vec::new(),
+            project_id: project_id.to_string(),
+            session_id: String::new(),
+        }
+    };
+    store.upsert(&plan)?;
+
+    Ok(helpers::ok(
+        invocation.id.clone(),
+        json!({
+            "schema_version": helpers::SPECIALIZED_SCHEMA_VERSION,
+            "plan_id": plan.id,
+            "title": plan.title,
+            "plan_file_path": plan_file.display().to_string(),
+            "body_chars": body.chars().count(),
+            "needs_review": false,
+            "message": format!(
+                "Plan markdown written to {}. Continue editing the file or call plan(action='submit') when ready for review.",
+                plan_file.display()
+            ),
+        }),
+    ))
+}
+
+/// Present plan for user review (ExitPlanMode-style). Reads the plan file when body omitted.
+fn action_submit(
+    invocation: &ToolInvocation,
+    store: &PlanStore,
+    project_id: &str,
+    plan_file: &Path,
+) -> Result<ToolResult> {
+    let mut parsed = parse_create_payload(&invocation.input)?;
+
+    // Claude Code ExitPlanMode: plan content comes from disk if not in args.
+    if parsed.body_markdown.trim().is_empty() {
+        if let Some(from_disk) = read_plan_file(plan_file) {
+            parsed.body_markdown = from_disk;
+            if parsed.title == "Plan" || parsed.title.is_empty() {
+                parsed.title = title_from_markdown(&parsed.body_markdown);
+            }
+            if parsed.steps.is_empty() {
+                parsed.steps = steps_from_markdown(&parsed.body_markdown);
+            }
+        }
+    }
+
+    // If the model wrote via write_file but store has an active draft, merge.
+    if parsed.body_markdown.trim().is_empty() {
+        if let Some(active) = store.active(project_id)? {
+            if !active.body_markdown.trim().is_empty() {
+                parsed.body_markdown = active.body_markdown;
+                if parsed.title.is_empty() || parsed.title == "Plan" {
+                    parsed.title = active.title;
+                }
+                if parsed.steps.is_empty() {
+                    parsed.steps = active.steps;
+                }
+            }
+        }
+    }
+
+    if parsed.body_markdown.trim().is_empty() && parsed.steps.is_empty() {
+        let hint = format!(
+            "Write a markdown plan first: plan(action='write', plan='...') or \
+             write_file(path='{}', content='...'), then plan(action='submit').",
+            plan_file.display()
+        );
+        return Ok(ToolResult {
+            invocation_id: invocation.id.clone(),
+            ok: false,
+            output: helpers::tool_error(
+                "empty_plan",
+                "no plan markdown found",
+                true,
+                Some(hint.as_str()),
+                None,
+            ),
+        });
+    }
+
+    if parsed.steps.is_empty() {
+        // Markdown design docs often have no checklist; keep one execution step.
+        parsed.steps.push(PlanStep {
+            description: "Implement the approved plan".into(),
+            completed: false,
+            notes: String::new(),
+        });
+    }
+
+    // Persist markdown to the plan file so review/approve share one artifact.
+    if !parsed.body_markdown.trim().is_empty() {
+        let _ = write_plan_file(plan_file, &parsed.body_markdown);
+    }
+
     let now = now_ms();
     let seq = PLAN_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    // Proposed until the user reviews in the TUI modal.
     let plan = Plan {
         id: format!("plan-{now}-{seq}"),
         title: parsed.title,
@@ -300,6 +452,8 @@ fn action_create(
             "plan_id": plan.id,
             "title": plan.title,
             "description": plan.description,
+            "body_markdown": plan.body_markdown,
+            "plan_file_path": plan_file.display().to_string(),
             "steps": plan.steps.iter().map(|s| json!({
                 "description": s.description,
                 "completed": s.completed,
@@ -309,15 +463,19 @@ fn action_create(
             "status": format!("{}", plan.status),
             "needs_review": true,
             "message": format!(
-                "Plan '{}' created with {} steps. Awaiting user review.",
+                "Plan '{}' ready for user review ({}).",
                 plan.title,
-                plan.steps.len()
+                plan_file.display()
             ),
         }),
     ))
 }
 
-fn action_update(invocation: &ToolInvocation, store: &PlanStore) -> Result<ToolResult> {
+fn action_update(
+    invocation: &ToolInvocation,
+    store: &PlanStore,
+    plan_file: &Path,
+) -> Result<ToolResult> {
     let plan_id = required_plan_id(invocation)?;
     let mut plan = store
         .get(&plan_id)?
@@ -329,7 +487,16 @@ fn action_update(invocation: &ToolInvocation, store: &PlanStore) -> Result<ToolR
     if let Some(desc) = helpers::optional_string(&invocation.input, "description") {
         plan.description = desc;
     }
-    if invocation.input.get("steps").is_some() {
+    if let Some(body) =
+        first_nonempty_string(&invocation.input, &["plan", "body", "body_markdown", "content"])
+    {
+        plan.body_markdown = body;
+        let _ = write_plan_file(plan_file, &plan.body_markdown);
+        if plan.steps.is_empty() {
+            plan.steps = steps_from_markdown(&plan.body_markdown);
+        }
+    }
+    if invocation.input.get("steps").is_some() || invocation.input.get("todos").is_some() {
         let steps = parse_steps(&invocation.input)?;
         plan.steps = steps;
     }
@@ -346,6 +513,7 @@ fn action_update(invocation: &ToolInvocation, store: &PlanStore) -> Result<ToolR
             "schema_version": helpers::SPECIALIZED_SCHEMA_VERSION,
             "plan_id": plan.id,
             "title": plan.title,
+            "plan_file_path": plan_file.display().to_string(),
             "steps_count": plan.steps.len(),
             "completed_steps": plan.steps.iter().filter(|s| s.completed).count(),
             "status": format!("{}", plan.status),
@@ -800,6 +968,7 @@ fn plan_to_json(plan: &Plan) -> Value {
         "plan_id": plan.id,
         "title": plan.title,
         "description": plan.description,
+        "body_markdown": plan.body_markdown,
         "status": format!("{}", plan.status),
         "steps": steps_json,
         "steps_total": plan.steps.len(),
@@ -972,7 +1141,60 @@ mod tests {
         let inv = make_invocation("c2e", json!({ "action": "create" }));
         let result = tool.invoke(inv).await.unwrap();
         assert!(!result.ok);
-        assert_eq!(result.output["error_code"], "empty_steps");
+        assert_eq!(result.output["error_code"], "empty_plan");
+    }
+
+    #[tokio::test]
+    async fn write_then_submit_reads_plan_file() {
+        let (policy, _td) = temp_policy();
+        let tool = PlanTool::new(policy);
+        let md = "# Range picker\n\n## Context\nNeed episode ranges.\n\n## Approach\nAdd De/Até inputs.\n\n## Files\n- `src/ui.tsx` — inputs\n\n## Verification\ncargo test\n";
+        let write = make_invocation(
+            "w1",
+            json!({
+                "action": "write",
+                "plan": md,
+            }),
+        );
+        let result = tool.invoke(write).await.unwrap();
+        assert!(result.ok, "{:?}", result.output);
+        assert_eq!(result.output["needs_review"], false);
+        assert!(result.output["plan_file_path"].as_str().unwrap().ends_with(".md"));
+
+        // submit without body — should read the file
+        let submit = make_invocation("s1", json!({ "action": "submit" }));
+        let result = tool.invoke(submit).await.unwrap();
+        assert!(result.ok, "{:?}", result.output);
+        assert_eq!(result.output["needs_review"], true);
+        assert_eq!(result.output["title"], "Range picker");
+        let body = result.output["body_markdown"].as_str().unwrap();
+        assert!(body.contains("## Context"));
+        assert!(body.contains("src/ui.tsx"));
+    }
+
+    #[tokio::test]
+    async fn create_markdown_design_doc_without_list_steps() {
+        let (policy, _td) = temp_policy();
+        let tool = PlanTool::new(policy);
+        let inv = make_invocation(
+            "c-md",
+            json!({
+                "action": "create",
+                "plan": "# Auth rewrite\n\n## Context\nSessions are fragile.\n\n## Approach\nUse JWT in httpOnly cookies.\n\n## Files\n- `auth.rs` — token mint\n\n## Verification\ncargo test -p navi-core\n"
+            }),
+        );
+        let result = tool.invoke(inv).await.unwrap();
+        assert!(result.ok, "{:?}", result.output);
+        assert_eq!(result.output["title"], "Auth rewrite");
+        assert!(
+            result.output["body_markdown"]
+                .as_str()
+                .unwrap()
+                .contains("JWT")
+        );
+        // Derived checklist or synthetic execution step
+        assert!(result.output["steps_count"].as_u64().unwrap() >= 1);
+        assert_eq!(result.output["needs_review"], true);
     }
 
     #[tokio::test]

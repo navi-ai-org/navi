@@ -1,7 +1,11 @@
 //! SQLite-backed plan persistence (reviewable work plans).
 //!
-//! Replaces the per-plan JSON files under `data_dir/plans/<project>/` with a
-//! single SQLite database so plans survive restarts and support line comments.
+//! The **source of truth for plan content** is a markdown file under
+//! `{data_dir}/plans/` (Claude Code-style design doc). SQLite holds metadata,
+//! checklist steps derived from the markdown, review comments, and status.
+//!
+//! Legacy per-plan JSON under `data_dir/plans/<project>/*.json` is still
+//! imported once via [`PlanStore::migrate_json_dir`].
 
 use anyhow::{Context, Result};
 use rusqlite::{Connection, OptionalExtension, params};
@@ -15,6 +19,97 @@ use std::time::{SystemTime, UNIX_EPOCH};
 pub const MAX_PLANS: usize = 20;
 /// Maximum steps per plan.
 pub const MAX_STEPS: usize = 50;
+
+/// Root directory for on-disk markdown plan files: `{data_dir}/plans`.
+pub fn plans_dir(data_dir: &Path) -> PathBuf {
+    data_dir.join("plans")
+}
+
+/// Sanitize a session id for use as a filename stem.
+pub fn sanitize_plan_slug(raw: &str) -> String {
+    let mut out = String::with_capacity(raw.len());
+    for ch in raw.chars() {
+        if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
+            out.push(ch);
+        } else {
+            out.push('_');
+        }
+    }
+    let trimmed = out.trim_matches('_');
+    if trimmed.is_empty() {
+        "session".to_string()
+    } else {
+        trimmed.chars().take(80).collect()
+    }
+}
+
+/// Session-scoped plan markdown path: `{data_dir}/plans/{session}.md`.
+pub fn session_plan_file_path(data_dir: &Path, session_id: &str) -> PathBuf {
+    plans_dir(data_dir).join(format!("{}.md", sanitize_plan_slug(session_id)))
+}
+
+/// Project-scoped fallback plan path: `{data_dir}/plans/{project_id}/plan.md`.
+pub fn project_plan_file_path(data_dir: &Path, project_id: &str) -> PathBuf {
+    plans_dir(data_dir)
+        .join(sanitize_plan_slug(project_id))
+        .join("plan.md")
+}
+
+/// Whether `path` is under the agent-writable plans directory.
+pub fn is_under_plans_dir(data_dir: &Path, path: &Path) -> bool {
+    let plans = plans_dir(data_dir);
+    path.starts_with(&plans)
+}
+
+/// Read plan markdown from disk. Returns `None` if missing or empty.
+pub fn read_plan_file(path: &Path) -> Option<String> {
+    let content = fs::read_to_string(path).ok()?;
+    if content.trim().is_empty() {
+        None
+    } else {
+        Some(content)
+    }
+}
+
+/// Write plan markdown to disk (creates parent directories).
+pub fn write_plan_file(path: &Path, markdown: &str) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("create plan file dir {}", parent.display()))?;
+    }
+    fs::write(path, markdown)
+        .with_context(|| format!("write plan file {}", path.display()))?;
+    Ok(())
+}
+
+/// Extract a short title from markdown (`# Heading` or first non-empty line).
+pub fn title_from_markdown(body: &str) -> String {
+    for line in body.lines() {
+        let t = line.trim();
+        if t.is_empty() {
+            continue;
+        }
+        if let Some(rest) = t.strip_prefix("# ") {
+            let title = rest.trim();
+            if !title.is_empty() {
+                return truncate_plan_title(title);
+            }
+        }
+        return truncate_plan_title(t.trim_start_matches('#').trim());
+    }
+    "Plan".to_string()
+}
+
+fn truncate_plan_title(s: &str) -> String {
+    let t = s.trim();
+    if t.chars().count() <= 80 {
+        t.to_string()
+    } else {
+        let mut out: String = t.chars().take(79).collect();
+        out.push('…');
+        out
+    }
+}
 
 /// A work plan with checklist steps.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -343,8 +438,17 @@ pub fn now_ms() -> u64 {
 }
 
 /// Build display lines for the review modal (stable line indices for comments).
+///
+/// Markdown body is the primary view (design-doc style). Checklist steps are
+/// only rendered when there is no markdown body.
 pub fn plan_view_lines(plan: &Plan) -> Vec<String> {
     let mut lines = Vec::new();
+    if !plan.body_markdown.trim().is_empty() {
+        for line in plan.body_markdown.lines() {
+            lines.push(line.to_string());
+        }
+        return lines;
+    }
     if !plan.title.is_empty() {
         lines.push(plan.title.clone());
         lines.push(String::new());
@@ -354,14 +458,6 @@ pub fn plan_view_lines(plan: &Plan) -> Vec<String> {
             lines.push(para.to_string());
         }
         lines.push(String::new());
-    }
-    if !plan.body_markdown.trim().is_empty() {
-        for line in plan.body_markdown.lines() {
-            lines.push(line.to_string());
-        }
-        if !plan.steps.is_empty() {
-            lines.push(String::new());
-        }
     }
     for (i, step) in plan.steps.iter().enumerate() {
         let mark = if step.completed { "✓" } else { "•" };
@@ -485,5 +581,41 @@ mod tests {
         );
         assert!(fb.contains("rename"));
         assert!(fb.contains("request_changes"));
+    }
+
+    #[test]
+    fn view_lines_prefer_markdown_body() {
+        let plan = Plan {
+            id: "p".into(),
+            title: "ignored title when body present".into(),
+            description: "ignored".into(),
+            steps: vec![PlanStep {
+                description: "should not appear".into(),
+                completed: false,
+                notes: String::new(),
+            }],
+            status: PlanStatus::Proposed,
+            created_at: 0,
+            updated_at: 0,
+            body_markdown: "# Real Plan\n\n## Context\n\nDo the thing.\n".into(),
+            comments: Vec::new(),
+            project_id: String::new(),
+            session_id: String::new(),
+        };
+        let lines = plan_view_lines(&plan);
+        assert_eq!(lines[0], "# Real Plan");
+        assert!(lines.iter().any(|l| l.contains("Context")));
+        assert!(!lines.iter().any(|l| l.contains("should not appear")));
+    }
+
+    #[test]
+    fn plan_file_roundtrip() {
+        let dir = tempdir().unwrap();
+        let path = session_plan_file_path(dir.path(), "sess/with:weird");
+        write_plan_file(&path, "# Hello\n\nBody\n").unwrap();
+        let read = read_plan_file(&path).unwrap();
+        assert!(read.contains("# Hello"));
+        assert!(is_under_plans_dir(dir.path(), &path));
+        assert_eq!(title_from_markdown(&read), "Hello");
     }
 }

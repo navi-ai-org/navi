@@ -119,9 +119,14 @@ pub use model_router::{ModelRoute, ModelRouteRole, ModelRouter, ModelScorecard};
 pub use notify::{NotificationUrgency, NotifyRequest, notify_desktop, open_url};
 pub use operational_memory::{MemoryScope, OperationalMemoryEntry, OperationalMemoryStore};
 pub use patch::PatchProposal;
-pub use plan_mode::{AgentMode, ProposedPlan, ProposedPlanParser, is_tool_allowed_in_plan_mode};
+pub use plan_mode::{
+    AgentMode, ProposedPlan, ProposedPlanParser, is_tool_allowed_in_plan_mode,
+    is_tool_allowed_in_plan_mode_named,
+};
 pub use plan_store::{
     Plan, PlanLineComment, PlanStatus, PlanStep, PlanStore, format_plan_feedback, plan_view_lines,
+    project_plan_file_path, read_plan_file, session_plan_file_path, title_from_markdown,
+    write_plan_file,
 };
 pub use prompt::{PromptCache, RenderedPrompt, SystemPromptInput, SystemPromptRenderer};
 pub use provider_id::ProviderId;

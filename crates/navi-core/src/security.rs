@@ -2,11 +2,13 @@ use crate::config::{PermissionMode, SecurityConfig};
 use crate::effect::{BlastRadius, EffectAnalyzer, PostDecision};
 use crate::event::{AgentEvent, ApprovalRequest, SubagentTranscriptItem};
 use crate::patch::PatchProposal;
+use crate::plan_store::{is_under_plans_dir, plans_dir};
 use crate::session::ProjectMemory;
 use crate::tool::{ToolDefinition, ToolInvocation, ToolKind, ToolResult};
 use anyhow::{Context, Result};
 use serde_json::Value;
 use std::path::{Component, Path, PathBuf};
+use std::sync::{Arc, RwLock};
 
 /// Optional write-path envelope for workflow workers (never widens past project
 /// policy). When set, write tools are restricted to `write_allow` paths,
@@ -19,6 +21,14 @@ pub struct WritePathScope {
     pub create_dirs: bool,
 }
 
+/// Shared plan-mode gate (cloned with the policy; mutations are visible to all clones).
+#[derive(Debug, Clone, Default)]
+struct PlanModeGate {
+    active: bool,
+    /// Absolute path of the session plan markdown file (only writable path in plan mode).
+    plan_file: Option<PathBuf>,
+}
+
 /// Validates tool invocations against security constraints: path restrictions,
 /// blocked commands, `.git` protection, and NAVI private storage.
 #[derive(Debug, Clone)]
@@ -28,6 +38,8 @@ pub struct SecurityPolicy {
     config: SecurityConfig,
     /// When set (workflow workers), additional write-path gate on top of base rules.
     write_scope: Option<WritePathScope>,
+    /// Plan mode: only the designated plan file may be written; other writes denied.
+    plan_mode: Arc<RwLock<PlanModeGate>>,
 }
 
 /// The outcome of a security validation check.
@@ -67,6 +79,7 @@ impl SecurityPolicy {
                 .with_context(|| format!("failed to resolve {}", data_dir.display()))?,
             config,
             write_scope: None,
+            plan_mode: Arc::new(RwLock::new(PlanModeGate::default())),
         })
     }
 
@@ -74,6 +87,43 @@ impl SecurityPolicy {
     pub fn with_write_scope(mut self, scope: WritePathScope) -> Self {
         self.write_scope = Some(scope);
         self
+    }
+
+    /// Enable/disable plan mode and set the only writable plan markdown path.
+    /// Shared across policy clones via interior mutability.
+    pub fn set_plan_mode(&self, active: bool, plan_file: Option<PathBuf>) {
+        let mut gate = self.plan_mode.write().unwrap_or_else(|e| e.into_inner());
+        gate.active = active;
+        gate.plan_file = plan_file.map(|p| normalize_existing_or_parent(&p).unwrap_or(p));
+    }
+
+    /// Whether plan mode is currently active on this policy.
+    pub fn plan_mode_active(&self) -> bool {
+        self.plan_mode
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .active
+    }
+
+    /// Absolute path of the session plan file (if set).
+    pub fn plan_file_path(&self) -> Option<PathBuf> {
+        self.plan_mode
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .plan_file
+            .clone()
+    }
+
+    fn is_plan_file_path(&self, path: &Path) -> bool {
+        let gate = self.plan_mode.read().unwrap_or_else(|e| e.into_inner());
+        if let Some(ref plan_file) = gate.plan_file {
+            if paths_equal(path, plan_file) {
+                return true;
+            }
+        }
+        // Also allow any markdown under data_dir/plans when plan mode is active
+        // so write_file can create the file before normalize has a parent.
+        gate.active && is_under_plans_dir(&self.data_dir, path) && is_markdown_path(path)
     }
 
     /// Validates a file path, checking project restrictions, `.git` protection,
@@ -84,9 +134,27 @@ impl SecurityPolicy {
             return SecurityDecision::Deny(format!("failed to resolve {}", path.display()));
         };
 
+        // Plan markdown under data_dir/plans is agent-owned (like Claude Code plan files).
+        if is_under_plans_dir(&self.data_dir, &path) && is_markdown_path(&path) {
+            if write {
+                if self.plan_mode_active() {
+                    if self.is_plan_file_path(&path) {
+                        return SecurityDecision::Allow;
+                    }
+                    return SecurityDecision::Deny(
+                        "in plan mode you may only edit the session plan file".into(),
+                    );
+                }
+                // Outside plan mode, plan-file writes still go through approval.
+                return SecurityDecision::NeedsApproval(SecurityRisk::Write);
+            }
+            return SecurityDecision::Allow;
+        }
+
         if self.paths_restricted_to_project()
             && !path.starts_with(&self.project_root)
             && !path.starts_with(self.data_dir.join("plugins"))
+            && !(is_under_plans_dir(&self.data_dir, &path))
         {
             return SecurityDecision::Deny(format!(
                 "path {} is outside project {}",
@@ -114,6 +182,13 @@ impl SecurityPolicy {
                 "writes to git metadata are blocked: {}",
                 path.display()
             ));
+        }
+
+        // In plan mode, project writes are denied (only the plan file is writable).
+        if write && self.plan_mode_active() && !self.is_plan_file_path(&path) {
+            return SecurityDecision::Deny(
+                "plan mode is read-only for the project; write only the plan markdown file".into(),
+            );
         }
 
         // Deny list: block reads of wasteful/sensitive paths.
@@ -616,7 +691,21 @@ impl SecurityPolicy {
     }
 
     fn is_data_dir_private_path(&self, path: &Path) -> bool {
-        path.starts_with(&self.data_dir) && !path.starts_with(self.data_dir.join("plugins"))
+        if !path.starts_with(&self.data_dir) {
+            return false;
+        }
+        if path.starts_with(self.data_dir.join("plugins")) {
+            return false;
+        }
+        // Markdown plan files under data_dir/plans are agent-writable artifacts.
+        if is_under_plans_dir(&self.data_dir, path) && is_markdown_path(path) {
+            return false;
+        }
+        // Allow the plans root directory itself (mkdir / list).
+        if path == plans_dir(&self.data_dir) {
+            return false;
+        }
+        true
     }
 
     /// Whether `program` should be treated as a guarded command.
@@ -1111,6 +1200,22 @@ fn contains_component(path: &Path, needle: &str) -> bool {
         Component::Normal(value) => value == needle,
         _ => false,
     })
+}
+
+fn is_markdown_path(path: &Path) -> bool {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| e.eq_ignore_ascii_case("md"))
+}
+
+fn paths_equal(a: &Path, b: &Path) -> bool {
+    if a == b {
+        return true;
+    }
+    match (normalize_existing_or_parent(a), normalize_existing_or_parent(b)) {
+        (Ok(aa), Ok(bb)) => aa == bb,
+        _ => false,
+    }
 }
 
 pub(crate) fn extract_shell_write_targets(command: &str) -> Vec<String> {
@@ -2548,6 +2653,33 @@ mod tests {
             matches!(decision, SecurityDecision::Deny(_)),
             "NAVI data dir must be denied, got: {decision:?}"
         );
+    }
+
+    #[test]
+    fn plan_mode_allows_only_session_plan_markdown() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let project = tempdir.path().join("project");
+        let data = tempdir.path().join("data");
+        std::fs::create_dir_all(&project).expect("project");
+        std::fs::create_dir_all(data.join("plans")).expect("plans");
+        let policy = policy(project.clone(), data.clone());
+        let plan_file = data.join("plans").join("sess.md");
+        std::fs::write(&plan_file, "# draft\n").expect("seed plan");
+        policy.set_plan_mode(true, Some(plan_file.clone()));
+
+        assert_eq!(
+            policy.validate_path(&plan_file, true),
+            SecurityDecision::Allow
+        );
+        assert!(matches!(
+            policy.validate_path(project.join("src/main.rs").as_path(), true),
+            SecurityDecision::Deny(_)
+        ));
+        // Other private data stays denied.
+        assert!(matches!(
+            policy.validate_path(data.join("sessions/x.json").as_path(), false),
+            SecurityDecision::Deny(_)
+        ));
     }
 
     #[test]

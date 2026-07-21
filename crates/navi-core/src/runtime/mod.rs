@@ -599,13 +599,26 @@ impl AgentRuntime {
         *self.agent_mode.read().unwrap_or_else(|e| e.into_inner())
     }
 
-    /// Enters Plan mode. Only read-only tools will be available, and the
-    /// model is instructed to propose a plan via `<proposed_plan>` tags.
+    /// Enters Plan mode. Exploration tools + the session plan markdown file are
+    /// available; project writes and commands are blocked.
     pub fn enter_plan_mode(&self) {
         *self.agent_mode.write().unwrap_or_else(|e| e.into_inner()) =
             crate::plan_mode::AgentMode::Plan;
         *self.plan_parser.lock().unwrap_or_else(|e| e.into_inner()) =
             crate::plan_mode::ProposedPlanParser::new();
+
+        let plan_path = crate::plan_store::session_plan_file_path(
+            &self.loaded_config.data_dir,
+            self.session.id().as_str(),
+        );
+        if let Some(parent) = plan_path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        if let Some(exec) = self.tool_executor.as_ref() {
+            exec.policy()
+                .set_plan_mode(true, Some(plan_path.clone()));
+        }
+
         self.event_bus.publish(RuntimeEventKind::AgentModeChanged {
             session_id: self.session.id().as_str().to_string(),
             mode: crate::plan_mode::AgentMode::Plan,
@@ -616,6 +629,9 @@ impl AgentRuntime {
     pub fn exit_plan_mode(&self) {
         *self.agent_mode.write().unwrap_or_else(|e| e.into_inner()) =
             crate::plan_mode::AgentMode::Default;
+        if let Some(exec) = self.tool_executor.as_ref() {
+            exec.policy().set_plan_mode(false, None);
+        }
         self.event_bus.publish(RuntimeEventKind::AgentModeChanged {
             session_id: self.session.id().as_str().to_string(),
             mode: crate::plan_mode::AgentMode::Default,
@@ -1562,6 +1578,17 @@ impl AgentRuntime {
             )));
             executor
         });
+        // If plan mode was entered before the executor existed, re-apply the gate.
+        if self.agent_mode() == crate::plan_mode::AgentMode::Plan {
+            let plan_path = crate::plan_store::session_plan_file_path(
+                &self.loaded_config.data_dir,
+                self.session.id().as_str(),
+            );
+            executor
+                .policy()
+                .set_plan_mode(true, Some(plan_path));
+        }
+
         self.tool_executor = Some(executor.clone());
         Ok(executor)
     }
