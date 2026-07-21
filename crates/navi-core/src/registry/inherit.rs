@@ -7,9 +7,7 @@
 use std::collections::HashMap;
 
 use super::resolve::ModelCatalog;
-use super::types::{
-    CanonicalModel, RegistryAttachments, RegistryModel, RegistryProviderDefaults,
-};
+use super::types::{CanonicalModel, RegistryAttachments, RegistryModel, RegistryProviderDefaults};
 use crate::config::providers::{
     canonical_provider_id, model_attachment_family_candidates, model_attachment_name_candidates,
 };
@@ -433,25 +431,14 @@ mod tests {
             },
         );
 
-        let enriched = enrich_synced_registry_model_with_catalog(
-            "grok-4.5",
-            &existing,
-            "xai",
-            Some(&catalog),
-        );
+        let enriched =
+            enrich_synced_registry_model_with_catalog("grok-4.5", &existing, "xai", Some(&catalog));
         assert_eq!(enriched.context_window_tokens, Some(500_000));
         assert_eq!(
             enriched.reasoning_levels,
-            vec![
-                "low".to_string(),
-                "medium".to_string(),
-                "high".to_string()
-            ]
+            vec!["low".to_string(), "medium".to_string(), "high".to_string()]
         );
-        assert_eq!(
-            enriched.default_reasoning_effort.as_deref(),
-            Some("medium")
-        );
+        assert_eq!(enriched.default_reasoning_effort.as_deref(), Some("medium"));
         assert_eq!(enriched.max_output_tokens, Some(131_072));
     }
 

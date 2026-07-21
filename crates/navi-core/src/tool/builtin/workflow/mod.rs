@@ -11,31 +11,31 @@ mod tests;
 
 pub use backends::{SubagentBridgeBackend, WorkerProbeBackend};
 pub use policy::{
+    AgentPolicyOpts, EffectiveAgentPolicy, MAX_AGENTS_CEILING, MAX_PARALLEL_CEILING, RunPolicy,
     clamp_max_agents, clamp_max_parallel, default_run_policy, intersect_agent_policy,
-    AgentPolicyOpts, EffectiveAgentPolicy, RunPolicy, MAX_AGENTS_CEILING, MAX_PARALLEL_CEILING,
 };
 pub use types::{
-    AgentBackendResult, AgentRequest, WorkflowErrorCode, WorkflowRunStatus, WorkflowStats,
-    AGENT_RESULT_MAX_BYTES, DEFAULT_MAX_AGENTS, DEFAULT_MAX_PARALLEL, DEFAULT_MAX_SCRIPT_BYTES,
-    DEFAULT_RUN_TIMEOUT_MS, NESTED_WORKFLOW_TOOLS,
+    AGENT_RESULT_MAX_BYTES, AgentBackendResult, AgentRequest, DEFAULT_MAX_AGENTS,
+    DEFAULT_MAX_PARALLEL, DEFAULT_MAX_SCRIPT_BYTES, DEFAULT_RUN_TIMEOUT_MS, NESTED_WORKFLOW_TOOLS,
+    WorkflowErrorCode, WorkflowRunStatus, WorkflowStats,
 };
 
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::time::Instant;
 
 use anyhow::Result;
 use async_trait::async_trait;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use tokio::sync::Semaphore;
 
 use self::journal::WorkflowJournal;
-use self::runtime::{run_lua_workflow, LuaRunInput};
+use self::runtime::{LuaRunInput, run_lua_workflow};
 use self::types::*;
 use super::helpers;
 use crate::cancel::CancelToken;
 use crate::config::WorkflowConfig;
-use crate::security::{redact_secrets, SecurityPolicy};
+use crate::security::{SecurityPolicy, redact_secrets};
 use crate::tool::{
     Tool, ToolDefinition, ToolInvocation, ToolInvocationContext, ToolKind, ToolResult,
 };
@@ -136,7 +136,9 @@ impl AgentBackend for PolicyAgentBackend {
                 return AgentBackendResult {
                     ok: false,
                     output: json!({"error": "policy_denied", "tool": banned}),
-                    error: Some(format!("worker must not receive orchestration tool {banned}")),
+                    error: Some(format!(
+                        "worker must not receive orchestration tool {banned}"
+                    )),
                 };
             }
         }
@@ -571,7 +573,12 @@ impl Tool for WorkflowTool {
         enum WaitKind {
             Cancelled,
             TimedOut,
-            Lua(Result<Result<runtime::LuaRunOutcome, WorkflowHostError>, tokio::sync::oneshot::error::RecvError>),
+            Lua(
+                Result<
+                    Result<runtime::LuaRunOutcome, WorkflowHostError>,
+                    tokio::sync::oneshot::error::RecvError,
+                >,
+            ),
         }
         let wait = tokio::select! {
             biased;
@@ -582,16 +589,19 @@ impl Tool for WorkflowTool {
         let finish = match wait {
             WaitKind::Cancelled => {
                 cancel_token.cancel();
-                let _ = tokio::time::timeout(std::time::Duration::from_secs(5), job_loop_handle).await;
+                let _ =
+                    tokio::time::timeout(std::time::Duration::from_secs(5), job_loop_handle).await;
                 Finish::Cancelled
             }
             WaitKind::TimedOut => {
                 cancel_token.cancel();
-                let _ = tokio::time::timeout(std::time::Duration::from_secs(5), job_loop_handle).await;
+                let _ =
+                    tokio::time::timeout(std::time::Duration::from_secs(5), job_loop_handle).await;
                 Finish::TimedOut
             }
             WaitKind::Lua(outcome) => {
-                let _ = tokio::time::timeout(std::time::Duration::from_secs(30), job_loop_handle).await;
+                let _ =
+                    tokio::time::timeout(std::time::Duration::from_secs(30), job_loop_handle).await;
                 match outcome {
                     Ok(Ok(o)) => Finish::Lua(o),
                     Ok(Err(e)) => Finish::Err(e),

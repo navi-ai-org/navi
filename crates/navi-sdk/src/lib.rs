@@ -38,16 +38,16 @@ pub use engine_driver::EngineDriver;
 pub use host_tool::{
     HostToolDefinition, HostToolHandler, HostToolInvocation, SdkHostTool, SdkHostToolResult,
 };
-pub use profiles::{
-    NaviPromptProfile, NaviSecurityProfile, NaviToolProfile, ProfilePromptBuilder,
-    assistant_system_prompt, filter_tool_names,
-};
 /// Deprecated: use [`start_provider_device_oauth`] instead.
 pub use navi_providers::github_copilot_device_oauth;
 pub use navi_providers::{
     format_hypercredits, hyper_base_url, hypercredits_to_usd, peek_hypercredit_balance,
     set_hypercredit_balance, set_hypercredit_balance_authoritative, take_hypercredit_balance,
     usd_to_hypercredits,
+};
+pub use profiles::{
+    NaviPromptProfile, NaviSecurityProfile, NaviToolProfile, ProfilePromptBuilder,
+    assistant_system_prompt, filter_tool_names,
 };
 pub use tooling::reload_wasm_plugins_on_executor;
 pub use tooling::{build_provider_for_config, build_provider_for_project_config};

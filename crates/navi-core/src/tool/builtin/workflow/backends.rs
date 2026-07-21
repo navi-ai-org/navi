@@ -12,11 +12,9 @@ use std::sync::{Arc, Weak};
 use async_trait::async_trait;
 use serde_json::json;
 
-use super::policy::EffectiveAgentPolicy;
-use super::types::{
-    AgentBackendResult, AgentRequest, NESTED_WORKFLOW_TOOLS,
-};
 use super::AgentBackend;
+use super::policy::EffectiveAgentPolicy;
+use super::types::{AgentBackendResult, AgentRequest, NESTED_WORKFLOW_TOOLS};
 use crate::security::{SecurityDecision, SecurityPolicy};
 use crate::tool::{ToolExecutor, ToolInvocation, ToolResult};
 
@@ -55,11 +53,7 @@ impl WorkerProbeBackend {
         self
     }
 
-    pub fn with_inflight(
-        mut self,
-        in_flight: Arc<AtomicUsize>,
-        peak: Arc<AtomicUsize>,
-    ) -> Self {
+    pub fn with_inflight(mut self, in_flight: Arc<AtomicUsize>, peak: Arc<AtomicUsize>) -> Self {
         self.in_flight = Some(in_flight);
         self.peak_in_flight = Some(peak);
         self
@@ -183,12 +177,13 @@ pub fn probe_worker_capabilities(
 }
 
 fn scoped_policy(base: &SecurityPolicy, effective: &EffectiveAgentPolicy) -> SecurityPolicy {
-    base.clone().with_write_scope(crate::security::WritePathScope {
-        write_allow: effective.write_allow.clone(),
-        path_deny: effective.path_deny.clone(),
-        create_files: effective.create_files,
-        create_dirs: effective.create_dirs,
-    })
+    base.clone()
+        .with_write_scope(crate::security::WritePathScope {
+            write_allow: effective.write_allow.clone(),
+            path_deny: effective.path_deny.clone(),
+            create_files: effective.create_files,
+            create_dirs: effective.create_dirs,
+        })
 }
 
 fn probe_worker_capabilities_inner(
@@ -209,8 +204,14 @@ fn probe_worker_capabilities_inner(
     out.registered_tools = exec.tool_names();
     out.registered_tools.sort();
 
-    out.can_write_file = exec.tool_names().iter().any(|t| t == "write_file" || t == "write");
-    out.can_edit = exec.tool_names().iter().any(|t| t == "edit" || t == "multiedit");
+    out.can_write_file = exec
+        .tool_names()
+        .iter()
+        .any(|t| t == "write_file" || t == "write");
+    out.can_edit = exec
+        .tool_names()
+        .iter()
+        .any(|t| t == "edit" || t == "multiedit");
     out.can_bash = exec.tool_names().iter().any(|t| t == "bash");
     out.can_subagent = out.registered_tools.iter().any(|t| t == "subagent");
     out.can_workflow = out.registered_tools.iter().any(|t| t == "workflow");
@@ -250,7 +251,8 @@ fn probe_worker_capabilities_inner(
         };
         match exec.validate(&inv) {
             SecurityDecision::Deny(reason) => {
-                out.policy_denials.push(format!("write_file {path}: {reason}"));
+                out.policy_denials
+                    .push(format!("write_file {path}: {reason}"));
                 out.write_path_denied.push(path.clone());
             }
             SecurityDecision::Allow | SecurityDecision::NeedsApproval(_) => {

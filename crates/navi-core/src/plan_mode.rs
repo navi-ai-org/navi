@@ -273,10 +273,7 @@ pub fn is_tool_allowed_in_plan_mode(kind: ToolKind) -> bool {
 pub fn is_tool_allowed_in_plan_mode_named(name: &str, kind: ToolKind) -> bool {
     match kind {
         ToolKind::Read => true,
-        ToolKind::Write => matches!(
-            name,
-            "write_file" | "edit" | "multiedit" | "write"
-        ),
+        ToolKind::Write => matches!(name, "write_file" | "edit" | "multiedit" | "write"),
         ToolKind::Custom => matches!(name, "plan" | "question"),
         ToolKind::Command => false,
     }
@@ -405,14 +402,32 @@ mod tests {
 
     #[test]
     fn plan_mode_allows_read_plan_write_and_question() {
-        assert!(is_tool_allowed_in_plan_mode_named("read_file", ToolKind::Read));
+        assert!(is_tool_allowed_in_plan_mode_named(
+            "read_file",
+            ToolKind::Read
+        ));
         assert!(is_tool_allowed_in_plan_mode_named("search", ToolKind::Read));
         assert!(is_tool_allowed_in_plan_mode_named("plan", ToolKind::Read));
-        assert!(is_tool_allowed_in_plan_mode_named("write_file", ToolKind::Write));
+        assert!(is_tool_allowed_in_plan_mode_named(
+            "write_file",
+            ToolKind::Write
+        ));
         assert!(is_tool_allowed_in_plan_mode_named("edit", ToolKind::Write));
-        assert!(is_tool_allowed_in_plan_mode_named("question", ToolKind::Custom));
-        assert!(!is_tool_allowed_in_plan_mode_named("bash", ToolKind::Command));
-        assert!(!is_tool_allowed_in_plan_mode_named("subagent", ToolKind::Command));
-        assert!(!is_tool_allowed_in_plan_mode_named("apply_patch", ToolKind::Write));
+        assert!(is_tool_allowed_in_plan_mode_named(
+            "question",
+            ToolKind::Custom
+        ));
+        assert!(!is_tool_allowed_in_plan_mode_named(
+            "bash",
+            ToolKind::Command
+        ));
+        assert!(!is_tool_allowed_in_plan_mode_named(
+            "subagent",
+            ToolKind::Command
+        ));
+        assert!(!is_tool_allowed_in_plan_mode_named(
+            "apply_patch",
+            ToolKind::Write
+        ));
     }
 }

@@ -228,9 +228,7 @@ impl Tool for PlanTool {
         let plan_file = self.plan_file_path();
         match action.as_str() {
             "write" => action_write(&invocation, store, &project_id, &plan_file),
-            "submit" | "create" => {
-                action_submit(&invocation, store, &project_id, &plan_file)
-            }
+            "submit" | "create" => action_submit(&invocation, store, &project_id, &plan_file),
             "update" => action_update(&invocation, store, &plan_file),
             "complete_step" => action_complete_step(&invocation, store),
             "get" => action_get(&invocation, store),
@@ -487,9 +485,10 @@ fn action_update(
     if let Some(desc) = helpers::optional_string(&invocation.input, "description") {
         plan.description = desc;
     }
-    if let Some(body) =
-        first_nonempty_string(&invocation.input, &["plan", "body", "body_markdown", "content"])
-    {
+    if let Some(body) = first_nonempty_string(
+        &invocation.input,
+        &["plan", "body", "body_markdown", "content"],
+    ) {
         plan.body_markdown = body;
         let _ = write_plan_file(plan_file, &plan.body_markdown);
         if plan.steps.is_empty() {
@@ -1159,7 +1158,12 @@ mod tests {
         let result = tool.invoke(write).await.unwrap();
         assert!(result.ok, "{:?}", result.output);
         assert_eq!(result.output["needs_review"], false);
-        assert!(result.output["plan_file_path"].as_str().unwrap().ends_with(".md"));
+        assert!(
+            result.output["plan_file_path"]
+                .as_str()
+                .unwrap()
+                .ends_with(".md")
+        );
 
         // submit without body — should read the file
         let submit = make_invocation("s1", json!({ "action": "submit" }));

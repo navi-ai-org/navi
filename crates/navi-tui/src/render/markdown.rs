@@ -2703,8 +2703,7 @@ mod tests {
     fn user_prompt_body_is_plain_no_markdown_colors() {
         // Backticks / bold / italic must not recolor user prompts — only the
         // › prefix stays accented; body is plain theme text.
-        let lines =
-            render_user_message_lines("use `bash` and **bold** plus *italic*", 80, None);
+        let lines = render_user_message_lines("use `bash` and **bold** plus *italic*", 80, None);
         assert!(!lines.is_empty());
         let body_spans: Vec<_> = lines[0]
             .spans
@@ -2714,10 +2713,7 @@ mod tests {
                 !c.starts_with('›') && !c.trim().is_empty() && !c.chars().all(|ch| ch == ' ')
             })
             .collect();
-        assert!(
-            !body_spans.is_empty(),
-            "expected body spans with user text"
-        );
+        assert!(!body_spans.is_empty(), "expected body spans with user text");
         let expected = text_color_for_user();
         for span in body_spans {
             assert_eq!(
@@ -2735,11 +2731,7 @@ mod tests {
             );
         }
         // Full string still visible including markdown punctuation.
-        let full: String = lines[0]
-            .spans
-            .iter()
-            .map(|s| s.content.as_ref())
-            .collect();
+        let full: String = lines[0].spans.iter().map(|s| s.content.as_ref()).collect();
         assert!(full.contains("`bash`"));
         assert!(full.contains("**bold**"));
         assert!(full.contains("*italic*"));

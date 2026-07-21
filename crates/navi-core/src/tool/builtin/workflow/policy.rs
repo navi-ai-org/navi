@@ -91,13 +91,12 @@ pub fn default_run_policy() -> RunPolicy {
     RunPolicy {
         profile: "explorer".into(),
         approval: "read_only".into(),
-        tools: DEFAULT_READ_TOOLS.iter().map(|s| (*s).to_string()).collect(),
+        tools: DEFAULT_READ_TOOLS
+            .iter()
+            .map(|s| (*s).to_string())
+            .collect(),
         path_allow: vec!["**".into()],
-        path_deny: vec![
-            ".git".into(),
-            ".git/**".into(),
-            "**/.git/**".into(),
-        ],
+        path_deny: vec![".git".into(), ".git/**".into(), "**/.git/**".into()],
         create_files: false,
         create_dirs: false,
         write_allow: vec![],
@@ -114,10 +113,7 @@ pub fn clamp_max_agents(value: usize) -> usize {
 
 /// Intersect agent opts with run policy (AND / set intersection). Never widens.
 pub fn intersect_agent_policy(run: &RunPolicy, opts: &AgentPolicyOpts) -> EffectiveAgentPolicy {
-    let profile = opts
-        .profile
-        .clone()
-        .unwrap_or_else(|| run.profile.clone());
+    let profile = opts.profile.clone().unwrap_or_else(|| run.profile.clone());
 
     // Tools: opts ∩ run, then strip orchestration.
     let base_tools = opts.tools.clone().unwrap_or_else(|| run.tools.clone());
@@ -281,7 +277,11 @@ mod policy_tests {
         run.tools.push("subagent".into());
         run.tools.push("workflow".into());
         let opts = AgentPolicyOpts {
-            tools: Some(vec!["read_file".into(), "subagent".into(), "workflow".into()]),
+            tools: Some(vec![
+                "read_file".into(),
+                "subagent".into(),
+                "workflow".into(),
+            ]),
             ..Default::default()
         };
         let eff = intersect_agent_policy(&run, &opts);

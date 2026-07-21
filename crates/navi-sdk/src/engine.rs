@@ -20,7 +20,8 @@ use std::sync::{Arc, RwLock};
 use tokio::sync::{Mutex as AsyncMutex, broadcast};
 
 use crate::profiles::{
-    NaviPromptProfile, NaviSecurityProfile, NaviToolProfile, ProfilePromptBuilder, filter_tool_names,
+    NaviPromptProfile, NaviSecurityProfile, NaviToolProfile, ProfilePromptBuilder,
+    filter_tool_names,
 };
 use crate::tooling::{
     build_local_tooling, build_provider_for_project_config, list_models_for_provider,
@@ -469,10 +470,9 @@ impl NaviEngine {
         // The active chat model names the session through this cheap local tool;
         // never create a second background completion merely to generate a title.
         let session_title_handle = SessionTitleHandle::new();
-        let install_code_agent_extras = matches!(
-            self.inner.tool_profile,
-            NaviToolProfile::CodeAgent
-        ) && self.inner.allow_tools.is_empty();
+        let install_code_agent_extras =
+            matches!(self.inner.tool_profile, NaviToolProfile::CodeAgent)
+                && self.inner.allow_tools.is_empty();
 
         // Skip title/skill tooling when the host does not want a code-agent surface.
         // (AgentRuntime may re-register some of these; we re-filter after start.)
@@ -1898,9 +1898,7 @@ impl NaviEngine {
                     // guesses for context_window / reasoning_levels / effort.
                     if let Some(ref store) = self.inner.registry_store {
                         let existing = store.load_provider_models(&provider.id).unwrap_or_default();
-                        let catalog = store
-                            .load_canonical_model_catalog()
-                            .unwrap_or_default();
+                        let catalog = store.load_canonical_model_catalog().unwrap_or_default();
                         let catalog_ref = if catalog.is_empty() {
                             None
                         } else {

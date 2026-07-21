@@ -115,9 +115,7 @@ static TEST_ENV_READY: std::sync::Once = std::sync::Once::new();
 
 fn disable_registry_update() {
     TEST_ENV_READY.call_once(|| {
-        let base = tempfile::tempdir()
-            .expect("test isolation tempdir")
-            .keep();
+        let base = tempfile::tempdir().expect("test isolation tempdir").keep();
         let data = base.join("data");
         let config = base.join("config");
         let home = base.join("home");
@@ -149,7 +147,14 @@ fn seed_test_api_key(engine: *mut NaviDartEngine) {
     let save = c("none");
     let probe = AsyncProbe::new();
     unsafe {
-        navi_engine_select_model(engine, provider, model, save, test_callback, probe.user_data());
+        navi_engine_select_model(
+            engine,
+            provider,
+            model,
+            save,
+            test_callback,
+            probe.user_data(),
+        );
     }
     free_c(provider);
     free_c(model);
@@ -519,7 +524,9 @@ fn null_session_id_calls_error_callback() {
     }
 
     // Should be called synchronously (before spawn)
-    let result = probe.try_take().or_else(|| probe.wait_timeout(Duration::from_secs(1)));
+    let result = probe
+        .try_take()
+        .or_else(|| probe.wait_timeout(Duration::from_secs(1)));
     assert!(result.is_some());
     match result.unwrap() {
         CallbackResult::Error(e) => assert!(e.contains("session_id")),

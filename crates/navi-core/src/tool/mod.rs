@@ -217,8 +217,7 @@ const EXCLUSIVE_BATCH_TOOL_NAMES: &[&str] = &[
     "plan", "question",
     // Nested model turns: serialize so parallel spawn storms cannot hang the
     // parent batch or thrash provider quotas.
-    "subagent",
-    "workflow",
+    "subagent", "workflow",
     // repo_explore is BM25+symbols (shared-safe); not exclusive.
 ];
 

@@ -77,8 +77,7 @@ pub fn write_plan_file(path: &Path, markdown: &str) -> Result<()> {
         fs::create_dir_all(parent)
             .with_context(|| format!("create plan file dir {}", parent.display()))?;
     }
-    fs::write(path, markdown)
-        .with_context(|| format!("write plan file {}", path.display()))?;
+    fs::write(path, markdown).with_context(|| format!("write plan file {}", path.display()))?;
     Ok(())
 }
 

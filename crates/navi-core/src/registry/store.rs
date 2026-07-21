@@ -19,7 +19,6 @@ use super::types::{
 /// hash as permission to replace the list.
 pub const LOCAL_API_SYNC_SHA: &str = "local-api-sync";
 
-
 /// Removes `registry.db` plus SQLite sidecar files (`-wal`, `-shm`, `-journal`).
 fn remove_registry_db_files(db_path: &Path) {
     let path_str = db_path.as_os_str().to_string_lossy();
@@ -1875,11 +1874,7 @@ mod tests {
         assert_eq!(grok.context_window_tokens, Some(500_000));
         assert_eq!(
             grok.reasoning_levels,
-            vec![
-                "low".to_string(),
-                "medium".to_string(),
-                "high".to_string()
-            ]
+            vec!["low".to_string(), "medium".to_string(), "high".to_string()]
         );
         assert_eq!(grok.default_reasoning_effort.as_deref(), Some("medium"));
         assert_eq!(grok.max_output_tokens, Some(131_072));

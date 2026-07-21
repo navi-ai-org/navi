@@ -1,8 +1,8 @@
 //! Acceptance tests for workflow tool (Must rows in docs/workflow-tool-lua-spec.md §11).
 
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use serde_json::json;
@@ -19,8 +19,8 @@ fn temp_policy() -> (tempfile::TempDir, SecurityPolicy) {
     let data = dir.path().join("data");
     std::fs::create_dir_all(&project).unwrap();
     std::fs::create_dir_all(&data).unwrap();
-    let policy =
-        SecurityPolicy::new(project, data, crate::config::SecurityConfig::default()).expect("policy");
+    let policy = SecurityPolicy::new(project, data, crate::config::SecurityConfig::default())
+        .expect("policy");
     (dir, policy)
 }
 
@@ -91,10 +91,7 @@ async fn t3_oversized_script_rejected() {
     )
     .await;
     assert!(!r.ok);
-    assert_eq!(
-        r.output["error"]["code"].as_str(),
-        Some("script_too_large")
-    );
+    assert_eq!(r.output["error"]["code"].as_str(), Some("script_too_large"));
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -170,7 +167,9 @@ async fn l3_require_and_io_sandbox() {
     assert!(!r.ok, "{:?}", r.output);
     let code = r.output["error"]["code"].as_str().unwrap_or("");
     assert!(
-        code == "sandbox_violation" || code == "script_runtime_error" || code == "script_parse_error",
+        code == "sandbox_violation"
+            || code == "script_runtime_error"
+            || code == "script_parse_error",
         "code={code} out={:?}",
         r.output
     );
@@ -280,7 +279,13 @@ async fn h3_parallel_two_arg_rejected() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn h4_parallel_preserves_order() {
     let (_dir, policy) = temp_policy();
-    let tool = tool_with_mock(policy, MockAgentBackend { delay_ms: 20, ..Default::default() });
+    let tool = tool_with_mock(
+        policy,
+        MockAgentBackend {
+            delay_ms: 20,
+            ..Default::default()
+        },
+    );
     let r = run(
         &tool,
         json!({
@@ -507,10 +512,16 @@ async fn p1_default_worker_no_write_tools() {
     let reg = res["registered_tools"].as_array().unwrap();
     let names: Vec<&str> = reg.iter().filter_map(|t| t.as_str()).collect();
     assert!(
-        names.iter().any(|t| *t == "read_file" || *t == "search" || *t == "read"),
+        names
+            .iter()
+            .any(|t| *t == "read_file" || *t == "search" || *t == "read"),
         "expected read tools registered: {names:?}"
     );
-    assert!(!names.iter().any(|t| *t == "write_file" || *t == "edit" || *t == "bash"));
+    assert!(
+        !names
+            .iter()
+            .any(|t| *t == "write_file" || *t == "edit" || *t == "bash")
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -543,7 +554,10 @@ async fn p2_write_allow_single_file() {
     let wa = res["write_allow"].as_array().unwrap();
     assert_eq!(wa, &vec![json!("src/a.rs")]);
     // Real ToolExecutor::validate Deny for paths outside write_allow.
-    let denials = res["policy_denials"].as_array().cloned().unwrap_or_default();
+    let denials = res["policy_denials"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
     let denial_text = denials
         .iter()
         .filter_map(|v| v.as_str())
@@ -586,7 +600,10 @@ async fn p3_create_files_false_blocks_create() {
     let res = &r.output["result"];
     assert_eq!(res["create_files"], false);
     assert_eq!(res["create_new_file_allowed"], false, "{res:?}");
-    let denials = res["policy_denials"].as_array().cloned().unwrap_or_default();
+    let denials = res["policy_denials"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
     let denial_text = denials
         .iter()
         .filter_map(|v| v.as_str())
@@ -625,7 +642,10 @@ async fn p4_path_deny_wins() {
     .await;
     assert!(r.ok, "{:?}", r.output);
     let res = &r.output["result"];
-    let denials = res["policy_denials"].as_array().cloned().unwrap_or_default();
+    let denials = res["policy_denials"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
     let denial_text = denials
         .iter()
         .filter_map(|v| v.as_str())
@@ -686,7 +706,10 @@ fn p6_intersection_unit() {
     let (_dir, policy) = temp_policy();
     let probe = super::backends::probe_worker_capabilities(&policy, &eff);
     assert!(!probe.can_bash, "{probe:?}");
-    assert!(!probe.registered_tools.iter().any(|t| t == "bash"), "{probe:?}");
+    assert!(
+        !probe.registered_tools.iter().any(|t| t == "bash"),
+        "{probe:?}"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -717,7 +740,10 @@ async fn p7_implementer_empty_write_allow() {
     assert_eq!(res["create_files"], false);
     assert_eq!(res["create_new_file_allowed"], false);
     let reg = res["registered_tools"].as_array().unwrap();
-    assert!(!reg.iter().any(|t| t.as_str() == Some("write_file") || t.as_str() == Some("edit")));
+    assert!(
+        !reg.iter()
+            .any(|t| t.as_str() == Some("write_file") || t.as_str() == Some("edit"))
+    );
 }
 
 #[test]
@@ -735,16 +761,8 @@ fn production_constructor_is_subagent_bridge() {
 async fn r1_run_id_unique() {
     let (_dir, policy) = temp_policy();
     let tool = tool_with_mock(policy, MockAgentBackend::default());
-    let r1 = run(
-        &tool,
-        json!({"script": "function workflow() return 1 end"}),
-    )
-    .await;
-    let r2 = run(
-        &tool,
-        json!({"script": "function workflow() return 2 end"}),
-    )
-    .await;
+    let r1 = run(&tool, json!({"script": "function workflow() return 1 end"})).await;
+    let r2 = run(&tool, json!({"script": "function workflow() return 2 end"})).await;
     assert_ne!(r1.output["run_id"], r2.output["run_id"]);
 }
 
@@ -764,14 +782,16 @@ async fn r2_journal_under_data_dir_workflows() {
     assert!(path.starts_with(&data.join("workflows")));
     assert!(path.ends_with("journal.jsonl"));
     assert!(path.exists());
-    assert!(path
-        .parent()
-        .unwrap()
-        .join("meta.json")
-        .exists());
+    assert!(path.parent().unwrap().join("meta.json").exists());
     // Ensure not under project .navi
     let project_navi = dir.path().join("project").join(".navi");
-    assert!(!project_navi.exists() || std::fs::read_dir(&project_navi).map(|d| d.count()).unwrap_or(0) == 0);
+    assert!(
+        !project_navi.exists()
+            || std::fs::read_dir(&project_navi)
+                .map(|d| d.count())
+                .unwrap_or(0)
+                == 0
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -844,11 +864,7 @@ async fn r6_no_journal_under_project_navi() {
     let (dir, policy) = temp_policy();
     let project = dir.path().join("project");
     let tool = tool_with_mock(policy, MockAgentBackend::default());
-    let _ = run(
-        &tool,
-        json!({"script": "function workflow() return 1 end"}),
-    )
-    .await;
+    let _ = run(&tool, json!({"script": "function workflow() return 1 end"})).await;
     let navi = project.join(".navi");
     assert!(
         !navi.exists(),
@@ -915,7 +931,11 @@ fn description_contains_section_12_bullets() {
     let d = workflow_tool_description();
     assert!(d.contains("function workflow()"), "entrypoint example");
     assert!(d.contains("parallel"), "parallel builtin");
-    assert!(d.contains("zero-arg") || d.contains("zero-arg functions") || d.contains("array of zero-arg"));
+    assert!(
+        d.contains("zero-arg")
+            || d.contains("zero-arg functions")
+            || d.contains("array of zero-arg")
+    );
     assert!(d.contains("read-only") || d.contains("read-only"));
     assert!(d.contains("write_allow"));
     assert!(d.contains("16") && d.contains("1000"));

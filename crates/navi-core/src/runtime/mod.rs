@@ -615,8 +615,7 @@ impl AgentRuntime {
             let _ = std::fs::create_dir_all(parent);
         }
         if let Some(exec) = self.tool_executor.as_ref() {
-            exec.policy()
-                .set_plan_mode(true, Some(plan_path.clone()));
+            exec.policy().set_plan_mode(true, Some(plan_path.clone()));
         }
 
         self.event_bus.publish(RuntimeEventKind::AgentModeChanged {
@@ -1584,9 +1583,7 @@ impl AgentRuntime {
                 &self.loaded_config.data_dir,
                 self.session.id().as_str(),
             );
-            executor
-                .policy()
-                .set_plan_mode(true, Some(plan_path));
+            executor.policy().set_plan_mode(true, Some(plan_path));
         }
 
         self.tool_executor = Some(executor.clone());
