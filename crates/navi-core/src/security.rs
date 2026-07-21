@@ -134,7 +134,7 @@ impl SecurityPolicy {
             return SecurityDecision::Deny(format!("failed to resolve {}", path.display()));
         };
 
-        // Plan markdown under data_dir/plans is agent-owned (like Claude Code plan files).
+        // Plan markdown under data_dir/plans is an agent-owned artifact.
         if is_under_plans_dir(&self.data_dir, &path) && is_markdown_path(&path) {
             if write {
                 if self.plan_mode_active() {

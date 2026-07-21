@@ -751,7 +751,7 @@ pub struct PlanReviewRequest {
     /// Full markdown design doc (primary content for review UI).
     #[serde(default)]
     pub body_markdown: String,
-    /// On-disk plan file path (Claude Code-style artifact).
+    /// On-disk plan markdown file path.
     #[serde(default)]
     pub plan_file_path: String,
 }

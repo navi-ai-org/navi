@@ -135,7 +135,7 @@ The directory contains:
 
 ## Dream Maintenance
 
-Dream maintenance is an offline memory synthesis pass inspired by Claude's managed-agent Dreams. It reads the existing SQLite auto-memory index, global memory, checkpoint, notes, and recent session history, then asks the selected model to produce a separate reviewed memory store.
+Dream maintenance is an offline memory synthesis pass. It reads the existing SQLite auto-memory index, global memory, checkpoint, notes, and recent session history, then asks the selected model to produce a separate reviewed memory store.
 
 By default, dreams do not modify active memory. NAVI writes each dream result under:
 
