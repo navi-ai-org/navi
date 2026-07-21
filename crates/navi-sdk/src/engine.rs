@@ -14,20 +14,24 @@ use navi_core::{
 };
 use navi_mcp::{LoadedMcpServers, McpServerInfo, load_configured_mcp_servers};
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 use tokio::sync::{Mutex as AsyncMutex, broadcast};
 
+use crate::profiles::{
+    NaviPromptProfile, NaviSecurityProfile, NaviToolProfile, ProfilePromptBuilder, filter_tool_names,
+};
 use crate::tooling::{
     build_local_tooling, build_provider_for_project_config, list_models_for_provider,
 };
 use crate::types::{
     NaviConfigSaveTarget, NaviModelInfo, NaviModelSelectionRequest, NaviModelSelectionResult,
     NaviProviderAccountInfo, NaviProviderCredentialStatus, NaviProviderSyncFailure,
-    NaviProviderSyncReport, NaviProviderSyncSkipped, NaviSavedSessionInfo, NaviSessionInfo,
-    NaviSessionRequest, NaviSkillInfo, NaviSyncedProvider, NaviTurnRequest, NaviTurnResponse,
-    NaviUsageDetail, NaviUsageLimitSnapshot, NaviUsageReport, NaviUsageWindow,
+    NaviProviderSyncReport, NaviProviderSyncSkipped, NaviProviderUpsertResult,
+    NaviSavedSessionInfo, NaviSessionInfo, NaviSessionRequest, NaviSkillInfo, NaviSyncedProvider,
+    NaviTurnRequest, NaviTurnResponse, NaviUsageDetail, NaviUsageLimitSnapshot, NaviUsageReport,
+    NaviUsageWindow,
 };
 
 /// Builder for constructing a [`NaviEngine`] with custom configuration.
@@ -46,8 +50,19 @@ use crate::types::{
 pub struct NaviEngineBuilder {
     project_dir: PathBuf,
     loaded_config: Option<LoadedConfig>,
+    /// Optional durable data directory override (sessions, credentials, plugins).
+    data_dir: Option<PathBuf>,
     host_tools: Vec<Arc<dyn navi_core::Tool>>,
     runtime_components: RuntimeComponents,
+    tool_profile: NaviToolProfile,
+    allow_tools: Vec<String>,
+    deny_tools: Vec<String>,
+    prompt_profile: NaviPromptProfile,
+    security_profile: NaviSecurityProfile,
+    /// Explicit permission mode override (applied after security profile).
+    permission_mode: Option<navi_core::PermissionMode>,
+    /// When true, a custom `prompt` component was set and profile should not replace it.
+    prompt_overridden: bool,
 }
 
 impl NaviEngineBuilder {
@@ -60,14 +75,69 @@ impl NaviEngineBuilder {
         Self {
             project_dir: project_dir.into(),
             loaded_config: None,
+            data_dir: None,
             host_tools: Vec::new(),
             runtime_components: RuntimeComponents::default(),
+            tool_profile: NaviToolProfile::default(),
+            allow_tools: Vec::new(),
+            deny_tools: Vec::new(),
+            prompt_profile: NaviPromptProfile::default(),
+            security_profile: NaviSecurityProfile::default(),
+            permission_mode: None,
+            prompt_overridden: false,
         }
     }
 
     /// Overrides the loaded config instead of loading from the project directory.
     pub fn loaded_config(mut self, loaded_config: LoadedConfig) -> Self {
         self.loaded_config = Some(loaded_config);
+        self
+    }
+
+    /// Points durable NAVI state (sessions, credentials, plugins, registry) at
+    /// an app-controlled directory. Applied after config load / `loaded_config`.
+    pub fn data_dir(mut self, data_dir: impl Into<PathBuf>) -> Self {
+        self.data_dir = Some(data_dir.into());
+        self
+    }
+
+    /// Selects which built-in tools the model may see.
+    ///
+    /// See [`NaviToolProfile`]: `code_agent` (default), `host_tools_only`, `chat_only`.
+    pub fn tool_profile(mut self, profile: NaviToolProfile) -> Self {
+        self.tool_profile = profile;
+        self
+    }
+
+    /// Restrict offered tools to this allowlist (when non-empty), applied after the profile.
+    pub fn allow_tools(mut self, names: impl IntoIterator<Item = impl Into<String>>) -> Self {
+        self.allow_tools = names.into_iter().map(Into::into).collect();
+        self
+    }
+
+    /// Always omit these tool names from the model schema.
+    pub fn deny_tools(mut self, names: impl IntoIterator<Item = impl Into<String>>) -> Self {
+        self.deny_tools = names.into_iter().map(Into::into).collect();
+        self
+    }
+
+    /// Selects the base system prompt identity (`code_agent` or `assistant`).
+    pub fn prompt_profile(mut self, profile: NaviPromptProfile) -> Self {
+        self.prompt_profile = profile;
+        self
+    }
+
+    /// Applies a host security posture (`code_agent` or `host_app`).
+    ///
+    /// `host_app` forces restricted permission mode so write tools stay approval-gated.
+    pub fn security_profile(mut self, profile: NaviSecurityProfile) -> Self {
+        self.security_profile = profile;
+        self
+    }
+
+    /// Sets permission mode at build time (overrides profile default when set).
+    pub fn permission_mode(mut self, mode: navi_core::PermissionMode) -> Self {
+        self.permission_mode = Some(mode);
         self
     }
 
@@ -80,6 +150,7 @@ impl NaviEngineBuilder {
     /// Replaces all runtime components used by sessions created from this engine.
     pub fn runtime_components(mut self, runtime_components: RuntimeComponents) -> Self {
         self.runtime_components = runtime_components;
+        self.prompt_overridden = true;
         self
     }
 
@@ -98,6 +169,7 @@ impl NaviEngineBuilder {
     /// Replaces the system prompt builder component.
     pub fn prompt(mut self, prompt: Arc<dyn navi_core::PromptBuilder>) -> Self {
         self.runtime_components.prompt = prompt;
+        self.prompt_overridden = true;
         self
     }
 
@@ -116,10 +188,31 @@ impl NaviEngineBuilder {
     /// Builds the [`NaviEngine`]. Loads config from the project directory if not
     /// overridden via [`loaded_config`](Self::loaded_config).
     pub fn build(self) -> Result<NaviEngine> {
-        let loaded_config = match self.loaded_config {
+        let mut loaded_config = match self.loaded_config {
             Some(config) => config,
             None => navi_core::NaviConfig::load(&self.project_dir)?,
         };
+
+        if let Some(data_dir) = self.data_dir {
+            loaded_config.data_dir = data_dir;
+        }
+
+        self.security_profile
+            .apply(&mut loaded_config.config.security);
+        if let Some(mode) = self.permission_mode {
+            loaded_config.config.security.permission_mode = mode;
+        }
+
+        let mut runtime_components = self.runtime_components;
+        if !self.prompt_overridden {
+            runtime_components.prompt = Arc::new(ProfilePromptBuilder::new(self.prompt_profile));
+        }
+
+        let host_tool_names: HashSet<String> = self
+            .host_tools
+            .iter()
+            .map(|t| t.definition().name.clone())
+            .collect();
 
         // Initialize the registry store, load the active registry, and set it as the
         // catalog source so provider_catalog() uses the cache or embedded snapshot.
@@ -157,7 +250,13 @@ impl NaviEngineBuilder {
                 project_dir: self.project_dir,
                 loaded_config: RwLock::new(loaded_config),
                 host_tools: self.host_tools,
-                runtime_components: self.runtime_components,
+                host_tool_names,
+                tool_profile: self.tool_profile,
+                allow_tools: self.allow_tools,
+                deny_tools: self.deny_tools,
+                prompt_profile: self.prompt_profile,
+                security_profile: self.security_profile,
+                runtime_components,
                 sessions: RwLock::new(HashMap::new()),
                 registry_store,
                 voice: std::sync::Mutex::new(crate::voice::VoiceRuntime::new()),
@@ -188,6 +287,32 @@ fn normalize_plugin_policy_name(name: &str) -> String {
     name.trim().to_ascii_lowercase().replace('-', "_")
 }
 
+/// Apply host tool profile + allow/deny lists to a session's tool executor.
+fn apply_tool_profile_filter(
+    executor: &mut navi_core::ToolExecutor,
+    profile: NaviToolProfile,
+    host_tool_names: &HashSet<String>,
+    allow_tools: &[String],
+    deny_tools: &[String],
+) {
+    let registered = executor.tool_names();
+    let keep = filter_tool_names(
+        &registered,
+        profile,
+        host_tool_names,
+        allow_tools,
+        deny_tools,
+    );
+    if keep.len() == registered.len() {
+        let keep_set: HashSet<&str> = keep.iter().map(|s| s.as_str()).collect();
+        if registered.iter().all(|n| keep_set.contains(n.as_str())) {
+            return;
+        }
+    }
+    let keep_set: HashSet<String> = keep.into_iter().collect();
+    executor.retain_tools(|name| keep_set.contains(name));
+}
+
 /// The main NAVI engine handle. Clone-safe (wraps `Arc` internally).
 ///
 /// Provides session lifecycle, model management, credential management,
@@ -201,6 +326,12 @@ pub(crate) struct NaviEngineInner {
     pub(crate) project_dir: PathBuf,
     loaded_config: RwLock<LoadedConfig>,
     host_tools: Vec<Arc<dyn navi_core::Tool>>,
+    host_tool_names: HashSet<String>,
+    tool_profile: NaviToolProfile,
+    allow_tools: Vec<String>,
+    deny_tools: Vec<String>,
+    prompt_profile: NaviPromptProfile,
+    security_profile: NaviSecurityProfile,
     runtime_components: RuntimeComponents,
     sessions: RwLock<HashMap<String, Arc<NaviSession>>>,
     registry_store: Option<Arc<RegistryStore>>,
@@ -338,39 +469,83 @@ impl NaviEngine {
         // The active chat model names the session through this cheap local tool;
         // never create a second background completion merely to generate a title.
         let session_title_handle = SessionTitleHandle::new();
-        executor.register_tool(Arc::new(SessionTitleTool::new(
-            session_title_handle.clone(),
-        )));
+        let install_code_agent_extras = matches!(
+            self.inner.tool_profile,
+            NaviToolProfile::CodeAgent
+        ) && self.inner.allow_tools.is_empty();
+
+        // Skip title/skill tooling when the host does not want a code-agent surface.
+        // (AgentRuntime may re-register some of these; we re-filter after start.)
+        if install_code_agent_extras {
+            executor.register_tool(Arc::new(SessionTitleTool::new(
+                session_title_handle.clone(),
+            )));
+        }
         let shared_provider = Arc::new(std::sync::RwLock::new(provider.clone()));
         let shared_model = Arc::new(std::sync::RwLock::new(
             loaded_config.config.model.name.clone(),
         ));
         let shared_config = Arc::new(std::sync::RwLock::new(loaded_config.config.clone()));
         let prompt_cache = Arc::new(navi_core::PromptCache::new());
-        executor.register_skill_loader(
-            project_dir.clone(),
-            loaded_config.data_dir.clone(),
-            shared_config.clone(),
-        );
-        tool_executor.tool_executor = Arc::new_cyclic(|weak_exec| {
-            let subagent = navi_core::SubagentTool::new(
-                weak_exec.clone(),
-                shared_provider.clone(),
+        if install_code_agent_extras {
+            executor.register_skill_loader(
                 project_dir.clone(),
                 loaded_config.data_dir.clone(),
-                shared_model.clone(),
-                loaded_config.config.harness.clone(),
                 shared_config.clone(),
-                prompt_cache.clone(),
-                runtime_components.clone(),
             );
-            executor.register_tool(Arc::new(subagent));
-            // Deterministic BM25+symbol search — no nested model turn.
-            executor.register_tool(Arc::new(navi_core::RepoExploreTool::new(
-                project_dir.clone(),
-            )));
-            executor
-        });
+        }
+
+        // Apply host tool profile while we uniquely own the executor (before Arc).
+        apply_tool_profile_filter(
+            &mut executor,
+            self.inner.tool_profile,
+            &self.inner.host_tool_names,
+            &self.inner.allow_tools,
+            &self.inner.deny_tools,
+        );
+
+        tool_executor.tool_executor = if install_code_agent_extras {
+            Arc::new_cyclic(|weak_exec| {
+                let subagent = navi_core::SubagentTool::new(
+                    weak_exec.clone(),
+                    shared_provider.clone(),
+                    project_dir.clone(),
+                    loaded_config.data_dir.clone(),
+                    shared_model.clone(),
+                    loaded_config.config.harness.clone(),
+                    shared_config.clone(),
+                    prompt_cache.clone(),
+                    runtime_components.clone(),
+                );
+                executor.register_tool(Arc::new(subagent));
+                // Deterministic BM25+symbol search — no nested model turn.
+                executor.register_tool(Arc::new(navi_core::RepoExploreTool::new(
+                    project_dir.clone(),
+                )));
+                // Workflow multi-agent orchestration via real nested subagent turns.
+                let workflow_policy = navi_core::SecurityPolicy::new(
+                    project_dir.clone(),
+                    loaded_config.data_dir.clone(),
+                    loaded_config.config.security.clone(),
+                )
+                .unwrap_or_else(|_| {
+                    navi_core::SecurityPolicy::new(
+                        project_dir.clone(),
+                        loaded_config.data_dir.clone(),
+                        navi_core::SecurityConfig::default(),
+                    )
+                    .expect("security policy")
+                });
+                executor.register_tool(Arc::new(navi_core::WorkflowTool::with_subagent_bridge(
+                    workflow_policy,
+                    loaded_config.config.workflow.clone(),
+                    weak_exec.clone(),
+                )));
+                executor
+            })
+        } else {
+            Arc::new(executor)
+        };
 
         let runtime_tool_executor = tool_executor.tool_executor;
         let tui_components = tool_executor.tui_components;
@@ -392,9 +567,25 @@ impl NaviEngine {
             runtime_components: Some(runtime_components),
             session_title_handle: Some(session_title_handle),
             memory_extraction_model,
+            skip_auto_tool_bootstrap: !install_code_agent_extras,
         });
         let events = runtime.stream_events();
         let session_id = runtime.start_session()?;
+        // AgentRuntime may re-register goal/skill tools on start; re-apply host
+        // tool profile so chat_only / host_tools_only stay effective.
+        if let Some(exec) = runtime.tool_executor() {
+            let registered = exec.tool_names();
+            let keep = filter_tool_names(
+                &registered,
+                self.inner.tool_profile,
+                &self.inner.host_tool_names,
+                &self.inner.allow_tools,
+                &self.inner.deny_tools,
+            );
+            let keep_set: HashSet<String> = keep.into_iter().collect();
+            drop(exec);
+            runtime.retain_tools(|name| keep_set.contains(name));
+        }
         let approval_resolver = runtime.approval_resolver();
         let question_resolver = runtime.question_resolver();
         let plan_review_resolver = runtime.plan_review_resolver();
@@ -632,6 +823,77 @@ impl NaviEngine {
         session.turn_canceller.cancel();
         let mut runtime = session.runtime.lock().await;
         runtime.compact_now().await.map_err(NaviError::from)
+    }
+
+    /// Tool names registered for an active session after profile filtering.
+    pub async fn list_session_tools(&self, session_id: &str) -> Result<Vec<String>> {
+        let session = self.session(session_id)?;
+        let runtime = session.runtime.lock().await;
+        let Some(executor) = runtime.tool_executor() else {
+            return Ok(Vec::new());
+        };
+        Ok(executor.tool_names())
+    }
+
+    /// Active host tool profile for this engine.
+    pub fn tool_profile(&self) -> NaviToolProfile {
+        self.inner.tool_profile
+    }
+
+    /// Active prompt profile for this engine.
+    pub fn prompt_profile(&self) -> NaviPromptProfile {
+        self.inner.prompt_profile
+    }
+
+    /// Active security profile for this engine.
+    pub fn security_profile(&self) -> NaviSecurityProfile {
+        self.inner.security_profile
+    }
+
+    /// Reopen a saved session snapshot with full provider history.
+    ///
+    /// Prefer this over hand-rolling `initial_messages` / `initial_events`.
+    /// Attachment bytes are rehydrated from the project path or `{data_dir}/attachments/`.
+    pub async fn start_session_from_snapshot(
+        &self,
+        snapshot: &SessionSnapshot,
+    ) -> Result<NaviSessionInfo> {
+        let data_dir = self.loaded_config().data_dir;
+        let request = crate::session_request_from_snapshot(snapshot, Some(data_dir.as_path()));
+        self.start_session(request).await
+    }
+
+    /// Insert or update a custom OpenAI-compatible (or other) provider in config.
+    ///
+    /// Unreachable base URLs do not crash build or list; credential resolution
+    /// and model selection still work offline.
+    pub fn upsert_provider(
+        &self,
+        provider: ProviderConfig,
+        save_target: NaviConfigSaveTarget,
+    ) -> Result<NaviProviderUpsertResult> {
+        if provider.id.trim().is_empty() {
+            return Err(NaviError::Config("provider id must not be empty".into()));
+        }
+        let mut loaded_config = self.loaded_config();
+        let id = provider.id.clone();
+        if let Some(existing) = loaded_config
+            .config
+            .providers
+            .iter_mut()
+            .find(|p| p.id == id)
+        {
+            *existing = provider;
+        } else {
+            loaded_config.config.providers.push(provider);
+        }
+        let saved_to = self.save_loaded_config(&loaded_config, save_target)?;
+        self.replace_loaded_config(loaded_config.clone());
+        Ok(NaviProviderUpsertResult {
+            provider_id: id,
+            loaded_config,
+            saved_to,
+        })
     }
 
     /// Returns the current agent mode (Default or Plan).

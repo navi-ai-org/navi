@@ -17,12 +17,15 @@
 pub const NAVI_ENGINE_API_METHODS: &[&str] = &[
     // Session lifecycle
     "start_session",
+    "start_session_from_snapshot",
     "send_turn",
     "cancel_turn",
     "rewind_session",
+    "compact_session",
     "close_session",
     "snapshot_session",
     "session_ids",
+    "list_session_tools",
     // Goal management
     "get_goal",
     "set_goal",
@@ -59,6 +62,7 @@ pub const NAVI_ENGINE_API_METHODS: &[&str] = &[
     "provider_supports_device_oauth",
     "start_device_oauth",
     "start_device_oauth_simple",
+    "upsert_provider",
     "usage_report",
     // Skills
     "list_skills",
@@ -75,6 +79,10 @@ pub const NAVI_ENGINE_API_METHODS: &[&str] = &[
     "upsert_mcp_server",
     "remove_mcp_server",
     "set_mcp_config",
+    // ACP peers
+    "list_acp_agents",
+    "delegate_acp_turn",
+    "delegate_acp_turn_simple",
     // Events
     "subscribe_events",
     // TUI panels
@@ -142,9 +150,12 @@ pub const NAVI_ENGINE_API_METHODS: &[&str] = &[
     "delete_saved_session_async",
     "rename_saved_session",
     "rename_saved_session_async",
-    // Permissions
+    // Permissions / host profiles
     "get_permission_mode",
     "set_permission_mode",
+    "tool_profile",
+    "prompt_profile",
+    "security_profile",
     // WASM plugins
     "reload_wasm_plugins",
     // Config
@@ -168,12 +179,15 @@ pub const NAVI_ENGINE_API_METHODS: &[&str] = &[
 pub const NAVI_NAPI_BOUND_METHODS: &[&str] = &[
     // Session lifecycle
     "start_session",
+    "start_session_from_snapshot",
     "send_turn",
     "cancel_turn",
     "rewind_session",
+    "compact_session",
     "close_session",
     "snapshot_session",
     "session_ids",
+    "list_session_tools",
     // Goal management
     "get_goal",
     "set_goal",
@@ -210,6 +224,7 @@ pub const NAVI_NAPI_BOUND_METHODS: &[&str] = &[
     "provider_supports_device_oauth",
     "start_device_oauth",
     "start_device_oauth_simple",
+    "upsert_provider",
     "usage_report",
     // Skills
     "list_skills",
@@ -226,6 +241,10 @@ pub const NAVI_NAPI_BOUND_METHODS: &[&str] = &[
     "upsert_mcp_server",
     "remove_mcp_server",
     "set_mcp_config",
+    // ACP peers
+    "list_acp_agents",
+    "delegate_acp_turn",
+    "delegate_acp_turn_simple",
     // Events
     "subscribe_events",
     // TUI panels
@@ -293,9 +312,12 @@ pub const NAVI_NAPI_BOUND_METHODS: &[&str] = &[
     "delete_saved_session_async",
     "rename_saved_session",
     "rename_saved_session_async",
-    // Permissions
+    // Permissions / host profiles
     "get_permission_mode",
     "set_permission_mode",
+    "tool_profile",
+    "prompt_profile",
+    "security_profile",
     // WASM plugins
     "reload_wasm_plugins",
     // Config

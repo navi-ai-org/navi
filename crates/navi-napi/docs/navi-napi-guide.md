@@ -136,11 +136,22 @@ const engine = new NaviNapiEngine('/path/to/project');
 
 ### Builder Pattern
 
-The builder gives you full control over host tools and lifecycle hooks before
-the engine is created:
+The builder gives you full control over host tools, profiles, data dir, and
+lifecycle hooks before the engine is created:
 
 ```ts
 const builder = new NaviNapiEngineBuilder('/path/to/project');
+
+// App-owned durable state (sessions, credentials, plugins)
+builder.dataDir('/path/to/app/navi-data');
+// Or inject a full config payload (invalid config fails at build with a clear error)
+// builder.loadedConfig({ model: { provider: 'openai', name: 'gpt-5.5' }, dataDir: '...' });
+
+// Embedding without code-agent tools
+builder.toolProfile('host_tools_only'); // or 'chat_only' | 'code_agent'
+builder.promptProfile('assistant');     // non-code system prompt
+builder.securityProfile('host_app');    // restricted writes / approvals
+// builder.permissionMode('restricted');
 
 // Register host tools (optional, see Host Tools section)
 builder.hostTool(definition, handler);
@@ -157,6 +168,19 @@ builder.onSessionEnd((payload) => { /* ... */ });
 const engine = builder.build();
 ```
 
+**Ollama / OpenAI-compatible provider:**
+
+```ts
+engine.upsertProvider({
+  id: 'ollama',
+  label: 'Ollama',
+  kind: 'openai-chat-completions',
+  baseUrl: 'http://localhost:11434/v1',
+  models: ['llama3'],
+}, 'none');
+engine.selectModel('ollama', 'llama3', 'none');
+```
+
 ---
 
 ## Sessions
@@ -168,11 +192,31 @@ const engine = builder.build();
 const session = await engine.startSession();
 // session => { id: string, projectDir: string, model: string, provider: string }
 
-// Or provide your own session ID
+// Or provide your own session ID (legacy two-arg form)
 const session = await engine.startSession('my-custom-session-id');
+
+// Full NaviSessionRequest surface
+const session = await engine.startSessionWithRequest({
+  sessionId: 'story-42',
+  projectDir: '/vault/story',
+  activeSkills: ['roleplay'],
+  initialMessages: [/* ModelMessage JSON */],
+  initialEvents: [/* AgentEvent JSON */],
+  initialGoal: null,
+});
+
+// Reopen a saved snapshot with full history + attachment rehydration
+const session = await engine.startSessionFromSnapshot(JSON.parse(snapshotJson));
 ```
 
 The returned `SessionInfo` tells you the resolved model and provider for this session.
+
+### Compaction
+
+```ts
+const outcome = await engine.compactSession(sessionId);
+// { tokensSaved, summary, keptRecentMessages }
+```
 
 ### Closing a Session
 

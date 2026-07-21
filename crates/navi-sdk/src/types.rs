@@ -365,6 +365,14 @@ pub struct NaviModelSelectionResult {
     pub provider_configured: bool,
 }
 
+/// Result of inserting or updating a custom provider entry.
+#[derive(Debug, Clone)]
+pub struct NaviProviderUpsertResult {
+    pub provider_id: String,
+    pub loaded_config: LoadedConfig,
+    pub saved_to: Option<PathBuf>,
+}
+
 /// Metadata for a previously saved session, suitable for listing in a UI.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

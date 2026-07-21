@@ -82,8 +82,58 @@ export type ContentPart =
 export type HostToolHandler = (invocation: HostToolInvocation) => Promise<HostToolResult | JsonValue>;
 export type HookHandler = (payload: HookPayload) => void;
 
+/** Full session seed surface (camelCase). All fields optional. */
+export interface StartSessionRequest {
+  sessionId?: string | null;
+  projectDir?: string | null;
+  contextPackets?: ContextPacket[];
+  activeSkills?: string[];
+  initialMessages?: JsonValue[];
+  initialEvents?: JsonValue[];
+  initialCreatedAt?: number | null;
+  initialUpdatedAt?: number | null;
+  initialGoal?: JsonValue | null;
+}
+
+/** Custom OpenAI-compatible provider upsert (e.g. Ollama). */
+export interface ProviderUpsert {
+  id: string;
+  label?: string | null;
+  description?: string | null;
+  /** `openai-chat-completions` (default) or `openai-responses`. */
+  kind?: string | null;
+  baseUrl?: string | null;
+  apiKeyEnv?: string | null;
+  models?: string[];
+}
+
+/** Tool profile for host embeddings. */
+export type ToolProfile = 'code_agent' | 'host_tools_only' | 'chat_only';
+/** Prompt profile for host embeddings. */
+export type PromptProfile = 'code_agent' | 'assistant';
+/** Security posture for host embeddings. */
+export type SecurityProfile = 'code_agent' | 'host_app';
+
 export class NaviNapiEngineBuilder {
   constructor(projectDir: string);
+  /** Durable app data dir (sessions, credentials, plugins, registry). */
+  dataDir(path: string): void;
+  /**
+   * Inject config: bare `NaviConfig` JSON, or
+   * `{ config, dataDir?, globalConfigPath?, projectConfigPath? }`.
+   * Invalid payloads fail at `build()` with a clear error (no panic).
+   */
+  loadedConfig(config: JsonValue): void;
+  /** `code_agent` | `host_tools_only` | `chat_only` */
+  toolProfile(profile: ToolProfile | string): void;
+  allowTools(names: string[]): void;
+  denyTools(names: string[]): void;
+  /** `code_agent` | `assistant` */
+  promptProfile(profile: PromptProfile | string): void;
+  /** `code_agent` | `host_app` (restricted writes) */
+  securityProfile(profile: SecurityProfile | string): void;
+  /** `restricted` | `accept-edits` | `auto` | `yolo` */
+  permissionMode(mode: string): void;
   onSessionStart(handler: HookHandler): void;
   onTurnStart(handler: HookHandler): void;
   onToolCall(handler: HookHandler): void;
@@ -223,7 +273,35 @@ export interface ActiveSessions {
 
 export class NaviNapiEngine {
   constructor(projectDir: string);
-  startSession(sessionId?: string | null, projectDir?: string | null): Promise<SessionInfo>;
+  /**
+   * Start a session. Prefer a full request object; string first-arg form
+   * (`sessionId`, optional `projectDir`) is kept for backward compatibility.
+   */
+  startSession(
+    request?: string | StartSessionRequest | null,
+    projectDir?: string | null,
+  ): Promise<SessionInfo>;
+  /** Full `NaviSessionRequest` surface. */
+  startSessionWithRequest(request: StartSessionRequest): Promise<SessionInfo>;
+  /**
+   * Reopen a saved session snapshot JSON with full history.
+   * Attachment bytes rehydrate from project path or `{dataDir}/attachments/`.
+   */
+  startSessionFromSnapshot(snapshot: JsonValue): Promise<SessionInfo>;
+  /** Force-compact history; returns `{ tokensSaved, summary, keptRecentMessages }`. */
+  compactSession(sessionId: string): Promise<JsonValue>;
+  /** Tool names after host tool-profile filtering. */
+  listSessionTools(sessionId: string): Promise<string[]>;
+  toolProfile(): string;
+  promptProfile(): string;
+  securityProfile(): string;
+  /** Upsert OpenAI-compatible provider (Ollama, local proxies, …). */
+  upsertProvider(provider: ProviderUpsert, saveTarget?: SaveTarget): JsonValue;
+  /** Configured ACP external agents (not model providers). */
+  listAcpAgents(): JsonValue;
+  /** Delegate a turn to an ACP peer: `{ agentId, prompt, cwd?, sessionId? }`. */
+  delegateAcpTurn(request: JsonValue): Promise<JsonValue>;
+  delegateAcpTurnSimple(agentId: string, prompt: string): Promise<JsonValue>;
   sendTurn(sessionId: string, message: string, options?: TurnOptions): Promise<TurnResponse>;
   snapshotSession(sessionId: string): Promise<string>;
   closeSession(sessionId: string): Promise<boolean>;

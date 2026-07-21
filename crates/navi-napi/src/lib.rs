@@ -6,6 +6,7 @@ use napi::threadsafe_function::{
     ThreadsafeFunction, ThreadsafeFunctionCallMode, UnknownReturnValue,
 };
 use napi_derive::napi;
+// `Either` is used by startSession for string | request-object overloads.
 
 /// Global Tokio runtime used by synchronous N-API constructors so that
 /// `tokio::spawn` calls inside `NaviEngineBuilder::build()` find a reactor.
@@ -34,13 +35,14 @@ fn install_panic_guard() {
     }));
 }
 use navi_core::{
-    ContentPart, ContextPacket, RuntimeComponents, ThinkingConfig, ToolInvocation, ToolKind,
-    ToolResult,
+    ContentPart, ContextPacket, ThinkingConfig, ToolInvocation, ToolKind, ToolResult,
 };
 use navi_sdk::{
-    ApprovalDecision, HostToolDefinition, HostToolHandler, HostToolInvocation,
-    NaviConfigSaveTarget, NaviEngineBuilder, NaviModelSelectionRequest, NaviSessionRequest,
-    NaviTurnRequest, QuestionResponse, RuntimeEvent, SdkHostTool, SdkHostToolResult,
+    ApprovalDecision, HostToolDefinition, HostToolHandler, HostToolInvocation, NaviAcpTurnRequest,
+    NaviConfigSaveTarget, NaviEngineBuilder, NaviModelSelectionRequest, NaviPromptProfile,
+    NaviSecurityProfile, NaviSessionRequest, NaviToolProfile, NaviTurnRequest, ProviderConfig,
+    ProviderKind, ProviderModelConfig, QuestionResponse, RuntimeEvent, SdkHostTool,
+    SdkHostToolResult,
 };
 use serde_json::{Value as JsonValue, json};
 use tokio::sync::{Mutex as AsyncMutex, broadcast};
@@ -93,11 +95,47 @@ pub struct NaviNapiVoiceEventStream {
     receiver: AsyncMutex<broadcast::Receiver<navi_sdk::VoiceEvent>>,
 }
 
+#[napi(object)]
+#[derive(Clone, Default)]
+pub struct JsSessionRequest {
+    pub session_id: Option<String>,
+    pub project_dir: Option<String>,
+    pub context_packets: Option<Vec<JsonValue>>,
+    pub active_skills: Option<Vec<String>>,
+    pub initial_messages: Option<Vec<JsonValue>>,
+    pub initial_events: Option<Vec<JsonValue>>,
+    pub initial_created_at: Option<i64>,
+    pub initial_updated_at: Option<i64>,
+    pub initial_goal: Option<JsonValue>,
+}
+
+#[napi(object)]
+#[derive(Clone, Default)]
+pub struct JsProviderUpsert {
+    pub id: String,
+    pub label: Option<String>,
+    pub description: Option<String>,
+    /// `openai-chat-completions` (default) or `openai-responses`.
+    pub kind: Option<String>,
+    pub base_url: Option<String>,
+    pub api_key_env: Option<String>,
+    /// Optional model names to seed the provider catalog (e.g. Ollama tags).
+    pub models: Option<Vec<String>>,
+}
+
 #[napi]
 pub struct NaviNapiEngineBuilder {
     project_dir: String,
     hooks: JsHookCallbacks,
     host_tools: Vec<Arc<dyn navi_core::Tool>>,
+    data_dir: Option<String>,
+    loaded_config_json: Option<JsonValue>,
+    tool_profile: Option<String>,
+    allow_tools: Option<Vec<String>>,
+    deny_tools: Option<Vec<String>>,
+    prompt_profile: Option<String>,
+    security_profile: Option<String>,
+    permission_mode: Option<String>,
 }
 
 #[derive(Clone, Default)]
@@ -129,7 +167,65 @@ impl NaviNapiEngineBuilder {
             project_dir,
             hooks: JsHookCallbacks::default(),
             host_tools: Vec::new(),
+            data_dir: None,
+            loaded_config_json: None,
+            tool_profile: None,
+            allow_tools: None,
+            deny_tools: None,
+            prompt_profile: None,
+            security_profile: None,
+            permission_mode: None,
         }
+    }
+
+    /// Durable app data directory (sessions, credentials, plugins, registry).
+    #[napi(js_name = "dataDir")]
+    pub fn data_dir(&mut self, path: String) {
+        self.data_dir = Some(path);
+    }
+
+    /// Inject a config payload mapping to `LoadedConfig` / `NaviConfig`.
+    ///
+    /// Accepts either `{ config, dataDir?, globalConfigPath?, projectConfigPath? }`
+    /// or a bare `NaviConfig` object. Invalid payloads fail at `build()` with a
+    /// clear error (no panic).
+    #[napi(js_name = "loadedConfig")]
+    pub fn loaded_config(&mut self, config: JsonValue) {
+        self.loaded_config_json = Some(config);
+    }
+
+    /// Tool profile: `code_agent` | `host_tools_only` | `chat_only`.
+    #[napi(js_name = "toolProfile")]
+    pub fn tool_profile(&mut self, profile: String) {
+        self.tool_profile = Some(profile);
+    }
+
+    #[napi(js_name = "allowTools")]
+    pub fn allow_tools(&mut self, names: Vec<String>) {
+        self.allow_tools = Some(names);
+    }
+
+    #[napi(js_name = "denyTools")]
+    pub fn deny_tools(&mut self, names: Vec<String>) {
+        self.deny_tools = Some(names);
+    }
+
+    /// Prompt profile: `code_agent` | `assistant`.
+    #[napi(js_name = "promptProfile")]
+    pub fn prompt_profile(&mut self, profile: String) {
+        self.prompt_profile = Some(profile);
+    }
+
+    /// Security profile: `code_agent` | `host_app`.
+    #[napi(js_name = "securityProfile")]
+    pub fn security_profile(&mut self, profile: String) {
+        self.security_profile = Some(profile);
+    }
+
+    /// Permission mode: `restricted` | `accept-edits` | `auto` | `yolo`.
+    #[napi(js_name = "permissionMode")]
+    pub fn permission_mode(&mut self, mode: String) {
+        self.permission_mode = Some(mode);
     }
 
     #[napi(js_name = "onSessionStart")]
@@ -210,13 +306,55 @@ impl NaviNapiEngineBuilder {
     #[napi]
     pub fn build(&mut self) -> Result<NaviNapiEngine> {
         let mut builder = NaviEngineBuilder::from_project(self.project_dir.clone());
-        let mut components = RuntimeComponents::default();
-        if !self.hooks.is_empty() {
-            components.hooks = Arc::new(JsSessionHooks {
-                callbacks: self.hooks.clone(),
-            });
+
+        if let Some(cfg_json) = self.loaded_config_json.take() {
+            let loaded = parse_loaded_config_payload(cfg_json).map_err(to_napi_error)?;
+            builder = builder.loaded_config(loaded);
         }
-        builder = builder.runtime_components(components);
+        if let Some(dir) = self.data_dir.take() {
+            builder = builder.data_dir(dir);
+        }
+        if let Some(profile) = self.tool_profile.take() {
+            let p = NaviToolProfile::parse(&profile).ok_or_else(|| {
+                to_napi_error(anyhow::anyhow!(
+                    "invalid tool profile `{profile}`; expected code_agent, host_tools_only, or chat_only"
+                ))
+            })?;
+            builder = builder.tool_profile(p);
+        }
+        if let Some(names) = self.allow_tools.take() {
+            builder = builder.allow_tools(names);
+        }
+        if let Some(names) = self.deny_tools.take() {
+            builder = builder.deny_tools(names);
+        }
+        if let Some(profile) = self.prompt_profile.take() {
+            let p = NaviPromptProfile::parse(&profile).ok_or_else(|| {
+                to_napi_error(anyhow::anyhow!(
+                    "invalid prompt profile `{profile}`; expected code_agent or assistant"
+                ))
+            })?;
+            builder = builder.prompt_profile(p);
+        }
+        if let Some(profile) = self.security_profile.take() {
+            let p = NaviSecurityProfile::parse(&profile).ok_or_else(|| {
+                to_napi_error(anyhow::anyhow!(
+                    "invalid security profile `{profile}`; expected code_agent or host_app"
+                ))
+            })?;
+            builder = builder.security_profile(p);
+        }
+        if let Some(mode) = self.permission_mode.take() {
+            let pm = parse_permission_mode_str(&mode).map_err(to_napi_error)?;
+            builder = builder.permission_mode(pm);
+        }
+
+        if !self.hooks.is_empty() {
+            // Use hooks() only — runtime_components() would wipe prompt profile.
+            builder = builder.hooks(Arc::new(JsSessionHooks {
+                callbacks: self.hooks.clone(),
+            }));
+        }
         for tool in self.host_tools.drain(..) {
             builder = builder.host_tool(tool);
         }
@@ -238,27 +376,176 @@ impl NaviNapiEngine {
         Ok(Self { inner })
     }
 
+    /// Start a session. Prefer a full request object; two-arg form is kept for
+    /// backward compatibility (`sessionId`, `projectDir`).
     #[napi]
     pub async fn start_session(
         &self,
-        session_id: Option<String>,
+        request: Option<Either<String, JsSessionRequest>>,
         project_dir: Option<String>,
+    ) -> Result<JsSessionInfo> {
+        let req = match request {
+            None => NaviSessionRequest {
+                project_dir: project_dir.map(std::path::PathBuf::from),
+                ..NaviSessionRequest::default()
+            },
+            Some(Either::A(session_id)) => NaviSessionRequest {
+                session_id: Some(session_id),
+                project_dir: project_dir.map(std::path::PathBuf::from),
+                ..NaviSessionRequest::default()
+            },
+            Some(Either::B(opts)) => parse_session_request(opts)?,
+        };
+        let info = self
+            .inner
+            .start_session(req)
+            .await
+            .map_err(to_napi_error)?;
+        Ok(session_info_to_js(info))
+    }
+
+    /// Full `NaviSessionRequest` surface (camelCase options object).
+    #[napi(js_name = "startSessionWithRequest")]
+    pub async fn start_session_with_request(
+        &self,
+        request: JsSessionRequest,
     ) -> Result<JsSessionInfo> {
         let info = self
             .inner
-            .start_session(NaviSessionRequest {
+            .start_session(parse_session_request(request)?)
+            .await
+            .map_err(to_napi_error)?;
+        Ok(session_info_to_js(info))
+    }
+
+    /// Reopen a saved snapshot JSON with full history + attachment rehydration.
+    #[napi(js_name = "startSessionFromSnapshot")]
+    pub async fn start_session_from_snapshot(&self, snapshot: JsonValue) -> Result<JsSessionInfo> {
+        let snapshot: navi_core::SessionSnapshot =
+            serde_json::from_value(snapshot).map_err(to_napi_error)?;
+        let info = self
+            .inner
+            .start_session_from_snapshot(&snapshot)
+            .await
+            .map_err(to_napi_error)?;
+        Ok(session_info_to_js(info))
+    }
+
+    /// Force-compact session history (same path as Rust `compact_session`).
+    #[napi(js_name = "compactSession")]
+    pub async fn compact_session(&self, session_id: String) -> Result<JsonValue> {
+        let outcome = self
+            .inner
+            .compact_session(&session_id)
+            .await
+            .map_err(to_napi_error)?;
+        Ok(json!({
+            "tokensSaved": outcome.tokens_saved,
+            "summary": outcome.summary,
+            "keptRecentMessages": outcome.kept_recent_messages,
+        }))
+    }
+
+    /// Tool names visible on an active session after profile filtering.
+    #[napi(js_name = "listSessionTools")]
+    pub async fn list_session_tools(&self, session_id: String) -> Result<Vec<String>> {
+        self.inner
+            .list_session_tools(&session_id)
+            .await
+            .map_err(to_napi_error)
+    }
+
+    #[napi(js_name = "toolProfile")]
+    pub fn tool_profile(&self) -> String {
+        self.inner.tool_profile().as_str().to_string()
+    }
+
+    #[napi(js_name = "promptProfile")]
+    pub fn prompt_profile(&self) -> String {
+        self.inner.prompt_profile().as_str().to_string()
+    }
+
+    #[napi(js_name = "securityProfile")]
+    pub fn security_profile(&self) -> String {
+        self.inner.security_profile().as_str().to_string()
+    }
+
+    /// Upsert a custom OpenAI-compatible provider (e.g. Ollama at localhost).
+    #[napi(js_name = "upsertProvider")]
+    pub fn upsert_provider(
+        &self,
+        provider: JsProviderUpsert,
+        save_target: Option<String>,
+    ) -> Result<JsonValue> {
+        let cfg = provider_from_upsert(provider).map_err(to_napi_error)?;
+        let result = self
+            .inner
+            .upsert_provider(cfg, parse_save_target(save_target.as_deref()))
+            .map_err(to_napi_error)?;
+        Ok(json!({
+            "providerId": result.provider_id,
+            "savedTo": result.saved_to.map(|p| p.display().to_string()),
+        }))
+    }
+
+    /// List configured ACP external agents (not model providers).
+    #[napi(js_name = "listAcpAgents")]
+    pub fn list_acp_agents(&self) -> Result<JsonValue> {
+        serde_json::to_value(self.inner.list_acp_agents()).map_err(to_napi_error)
+    }
+
+    /// Delegate a turn to an ACP peer. Options: `{ agentId, prompt, cwd?, sessionId? }`.
+    #[napi(js_name = "delegateAcpTurn")]
+    pub async fn delegate_acp_turn(&self, request: JsonValue) -> Result<JsonValue> {
+        let agent_id = request
+            .get("agentId")
+            .or_else(|| request.get("agent_id"))
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| to_napi_error(anyhow::anyhow!("delegateAcpTurn requires agentId")))?
+            .to_string();
+        let prompt = request
+            .get("prompt")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| to_napi_error(anyhow::anyhow!("delegateAcpTurn requires prompt")))?
+            .to_string();
+        let cwd = request
+            .get("cwd")
+            .and_then(|v| v.as_str())
+            .map(std::path::PathBuf::from);
+        let session_id = request
+            .get("sessionId")
+            .or_else(|| request.get("session_id"))
+            .and_then(|v| v.as_str())
+            .map(str::to_string);
+        let response = self
+            .inner
+            .delegate_acp_turn(NaviAcpTurnRequest {
+                agent_id,
+                prompt,
+                cwd,
                 session_id,
-                project_dir: project_dir.map(std::path::PathBuf::from),
-                ..NaviSessionRequest::default()
             })
             .await
             .map_err(to_napi_error)?;
-        Ok(JsSessionInfo {
-            id: info.id,
-            project_dir: info.project_dir.display().to_string(),
-            model: info.model,
-            provider: info.provider,
-        })
+        serde_json::to_value(response).map_err(to_napi_error)
+    }
+
+    /// Simple ACP delegate: agent id + prompt only.
+    #[napi(js_name = "delegateAcpTurnSimple")]
+    pub async fn delegate_acp_turn_simple(
+        &self,
+        agent_id: String,
+        prompt: String,
+    ) -> Result<JsonValue> {
+        let result = self
+            .inner
+            .delegate_acp_turn_simple(&agent_id, prompt)
+            .await
+            .map_err(to_napi_error)?;
+        Ok(json!({
+            "stopReason": format!("{:?}", result.stop_reason),
+            "text": result.text,
+        }))
     }
 
     #[napi]
@@ -1917,6 +2204,189 @@ fn parse_save_target(value: Option<&str>) -> NaviConfigSaveTarget {
         Some("none") => NaviConfigSaveTarget::None,
         _ => NaviConfigSaveTarget::Auto,
     }
+}
+
+fn session_info_to_js(info: navi_sdk::NaviSessionInfo) -> JsSessionInfo {
+    JsSessionInfo {
+        id: info.id,
+        project_dir: info.project_dir.display().to_string(),
+        model: info.model,
+        provider: info.provider,
+    }
+}
+
+fn parse_permission_mode_str(mode: &str) -> anyhow::Result<navi_sdk::PermissionMode> {
+    match mode {
+        "restricted" => Ok(navi_sdk::PermissionMode::Restricted),
+        "accept-edits" | "accept_edits" => Ok(navi_sdk::PermissionMode::AcceptEdits),
+        "auto" => Ok(navi_sdk::PermissionMode::Auto),
+        "yolo" => Ok(navi_sdk::PermissionMode::Yolo),
+        _ => Err(anyhow::anyhow!(
+            "invalid permission mode: {mode}; expected restricted, accept-edits, auto, or yolo"
+        )),
+    }
+}
+
+fn parse_session_request(opts: JsSessionRequest) -> Result<NaviSessionRequest> {
+    let context_packets = opts
+        .context_packets
+        .unwrap_or_default()
+        .into_iter()
+        .map(parse_context_packet)
+        .collect::<Result<Vec<_>>>()?;
+    let initial_messages = opts
+        .initial_messages
+        .unwrap_or_default()
+        .into_iter()
+        .map(|v| {
+            serde_json::from_value::<navi_core::ModelMessage>(v).map_err(to_napi_error)
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let initial_events = opts
+        .initial_events
+        .unwrap_or_default()
+        .into_iter()
+        .map(|v| serde_json::from_value::<navi_core::AgentEvent>(v).map_err(to_napi_error))
+        .collect::<Result<Vec<_>>>()?;
+    let initial_goal = match opts.initial_goal {
+        Some(v) => Some(serde_json::from_value(v).map_err(to_napi_error)?),
+        None => None,
+    };
+    Ok(NaviSessionRequest {
+        session_id: opts.session_id,
+        project_dir: opts.project_dir.map(std::path::PathBuf::from),
+        context_packets,
+        active_skills: opts.active_skills.unwrap_or_default(),
+        initial_messages,
+        initial_events,
+        initial_created_at: opts.initial_created_at.map(|n| n as u64),
+        initial_updated_at: opts.initial_updated_at.map(|n| n as u64),
+        initial_goal,
+    })
+}
+
+fn parse_loaded_config_payload(
+    value: JsonValue,
+) -> anyhow::Result<navi_sdk::LoadedConfig> {
+    let default_data_dir = navi_sdk::LoadedConfig::default().data_dir;
+    // Full envelope: { config, dataDir?, globalConfigPath?, projectConfigPath? }
+    if value.get("config").is_some()
+        || value.get("dataDir").is_some()
+        || value.get("data_dir").is_some()
+    {
+        let config_val = value
+            .get("config")
+            .cloned()
+            .unwrap_or_else(|| value.clone());
+        // If the top-level object has config-like fields but no nested config,
+        // treat the whole object as NaviConfig when dataDir is the only extra.
+        let config: navi_sdk::NaviConfig = if value.get("config").is_some() {
+            serde_json::from_value(config_val)
+                .map_err(|e| anyhow::anyhow!("invalid loadedConfig.config: {e}"))?
+        } else {
+            // Strip host-only keys then parse remaining as NaviConfig.
+            let mut bare = value.clone();
+            if let Some(obj) = bare.as_object_mut() {
+                obj.remove("dataDir");
+                obj.remove("data_dir");
+                obj.remove("globalConfigPath");
+                obj.remove("global_config_path");
+                obj.remove("projectConfigPath");
+                obj.remove("project_config_path");
+            }
+            serde_json::from_value(bare)
+                .map_err(|e| anyhow::anyhow!("invalid loadedConfig payload: {e}"))?
+        };
+        let data_dir = value
+            .get("dataDir")
+            .or_else(|| value.get("data_dir"))
+            .and_then(|v| v.as_str())
+            .map(std::path::PathBuf::from)
+            .unwrap_or(default_data_dir);
+        let global_config_path = value
+            .get("globalConfigPath")
+            .or_else(|| value.get("global_config_path"))
+            .and_then(|v| v.as_str())
+            .map(std::path::PathBuf::from);
+        let project_config_path = value
+            .get("projectConfigPath")
+            .or_else(|| value.get("project_config_path"))
+            .and_then(|v| v.as_str())
+            .map(std::path::PathBuf::from);
+        return Ok(navi_sdk::LoadedConfig {
+            config,
+            global_config_path,
+            project_config_path,
+            data_dir,
+        });
+    }
+    // Bare NaviConfig
+    let config: navi_sdk::NaviConfig = serde_json::from_value(value)
+        .map_err(|e| anyhow::anyhow!("invalid loadedConfig payload: {e}"))?;
+    Ok(navi_sdk::LoadedConfig {
+        config,
+        global_config_path: None,
+        project_config_path: None,
+        data_dir: default_data_dir,
+    })
+}
+
+fn provider_model_entry(name: String) -> ProviderModelConfig {
+    ProviderModelConfig {
+        name,
+        task_size: None,
+        context_window_tokens: None,
+        max_output_tokens: None,
+        recommended_temperature: None,
+        supports_thinking: None,
+        reasoning_levels: Vec::new(),
+        default_reasoning_effort: None,
+        supports_images: None,
+        supports_audio: None,
+        supports_video: None,
+        supports_documents: None,
+        tool_prompt_manifest: None,
+        pricing_input_per_1m: None,
+        pricing_output_per_1m: None,
+    }
+}
+
+fn provider_from_upsert(provider: JsProviderUpsert) -> anyhow::Result<ProviderConfig> {
+    if provider.id.trim().is_empty() {
+        return Err(anyhow::anyhow!("provider id must not be empty"));
+    }
+    let kind = match provider.kind.as_deref().unwrap_or("openai-chat-completions") {
+        "openai-responses" | "openai_responses" | "responses" => ProviderKind::OpenAiResponses,
+        "openai-chat-completions" | "openai_chat_completions" | "chat" | "ollama" => {
+            ProviderKind::OpenAiChatCompletions
+        }
+        other => {
+            return Err(anyhow::anyhow!(
+                "unsupported provider kind `{other}`; use openai-chat-completions or openai-responses"
+            ));
+        }
+    };
+    let models = provider
+        .models
+        .unwrap_or_default()
+        .into_iter()
+        .map(provider_model_entry)
+        .collect();
+    Ok(ProviderConfig {
+        id: provider.id.clone(),
+        label: provider.label.unwrap_or_else(|| provider.id.clone()),
+        description: provider.description.unwrap_or_default(),
+        kind,
+        api_key_env: provider.api_key_env.unwrap_or_else(|| {
+            format!(
+                "{}_API_KEY",
+                provider.id.to_ascii_uppercase().replace('-', "_")
+            )
+        }),
+        base_url: provider.base_url,
+        models,
+        ..Default::default()
+    })
 }
 
 fn parse_thinking_config(value: &str) -> Result<ThinkingConfig> {

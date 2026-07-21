@@ -10,6 +10,7 @@ mod mcp_ops;
 mod memory_ops;
 mod notify_ops;
 mod plugins;
+mod profiles;
 mod routing_ops;
 mod tooling;
 mod tui_extensions;
@@ -37,6 +38,10 @@ pub use engine_driver::EngineDriver;
 pub use host_tool::{
     HostToolDefinition, HostToolHandler, HostToolInvocation, SdkHostTool, SdkHostToolResult,
 };
+pub use profiles::{
+    NaviPromptProfile, NaviSecurityProfile, NaviToolProfile, ProfilePromptBuilder,
+    assistant_system_prompt, filter_tool_names,
+};
 /// Deprecated: use [`start_provider_device_oauth`] instead.
 pub use navi_providers::github_copilot_device_oauth;
 pub use navi_providers::{
@@ -50,9 +55,9 @@ pub use types::{
     NaviConfigSaveTarget, NaviEffortOption, NaviError, NaviMissingCredentialError, NaviModelInfo,
     NaviModelSelectionRequest, NaviModelSelectionResult, NaviProviderAccountInfo,
     NaviProviderCredentialStatus, NaviProviderSyncFailure, NaviProviderSyncReport,
-    NaviProviderSyncSkipped, NaviRuntimeTooling, NaviSavedSessionInfo, NaviSessionInfo,
-    NaviSessionRequest, NaviSkillInfo, NaviSyncedProvider, NaviTurnRequest, NaviTurnResponse,
-    NaviUsageDetail, NaviUsageLimitSnapshot, NaviUsageReport, NaviUsageWindow,
+    NaviProviderSyncSkipped, NaviProviderUpsertResult, NaviRuntimeTooling, NaviSavedSessionInfo,
+    NaviSessionInfo, NaviSessionRequest, NaviSkillInfo, NaviSyncedProvider, NaviTurnRequest,
+    NaviTurnResponse, NaviUsageDetail, NaviUsageLimitSnapshot, NaviUsageReport, NaviUsageWindow,
     effort_options_for_model, session_request_from_snapshot,
 };
 
