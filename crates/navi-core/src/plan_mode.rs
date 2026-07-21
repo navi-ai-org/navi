@@ -1,13 +1,14 @@
-//! Plan Mode — a collaboration phase where the agent proposes a plan before execution.
+//! Plan Mode — a collaboration phase where the agent designs a plan before execution.
 //!
-//! Inspired by Codex's Plan Mode, this separates the "think and plan" phase
-//! from the "execute" phase. In Plan mode:
-//! - Only read-only tools are available (read_file, grep, fs_browser, ast_search, etc.)
-//! - The model emits `<proposed_plan>` tags in its text stream
-//! - The parser extracts the plan in real-time
-//! - When the turn completes, a `PlanProposed` event is emitted
-//! - The UI shows a confirmation popup: "Implement this plan?"
-//! - If confirmed, a Goal with checklist is created and the mode switches to Default
+//! Inspired by Claude Code / Codex plan mode:
+//! - Read-only tools for exploration
+//! - The session plan file (`{data_dir}/plans/{session}.md`) is the only writable path
+//! - The model builds a **markdown design doc** (context, approach, files, verification)
+//! - `plan(action='submit')` (or `create`) presents the plan for user review
+//! - After approval the host exits plan mode and the agent implements
+//!
+//! Legacy: `<proposed_plan>` XML tags are still parsed for compatibility, but
+//! markdown plan files are preferred.
 
 use crate::tool::ToolKind;
 use serde::{Deserialize, Serialize};
@@ -259,10 +260,27 @@ fn parse_plan_steps(body: &str) -> Vec<String> {
         .collect()
 }
 
-/// Returns true if a tool kind is allowed in Plan mode.
-/// Only read-only and search tools are permitted.
+/// Returns true if a tool is allowed in Plan mode.
+///
+/// - All **Read** tools (explore the codebase)
+/// - **Write** tools only for the session plan file (enforced by [`SecurityPolicy`])
+/// - `plan` (draft/submit markdown plan) and `question` (clarify requirements)
+/// - Commands and other custom tools are denied
 pub fn is_tool_allowed_in_plan_mode(kind: ToolKind) -> bool {
-    matches!(kind, ToolKind::Read)
+    is_tool_allowed_in_plan_mode_named("", kind)
+}
+
+/// Name-aware plan-mode allowlist (preferred).
+pub fn is_tool_allowed_in_plan_mode_named(name: &str, kind: ToolKind) -> bool {
+    match kind {
+        ToolKind::Read => true,
+        ToolKind::Write => matches!(
+            name,
+            "write_file" | "edit" | "multiedit" | "write"
+        ),
+        ToolKind::Custom => matches!(name, "plan" | "question"),
+        ToolKind::Command => false,
+    }
 }
 
 #[cfg(test)]
@@ -387,10 +405,15 @@ mod tests {
     }
 
     #[test]
-    fn only_read_tools_allowed_in_plan_mode() {
-        assert!(is_tool_allowed_in_plan_mode(ToolKind::Read));
-        assert!(!is_tool_allowed_in_plan_mode(ToolKind::Write));
-        assert!(!is_tool_allowed_in_plan_mode(ToolKind::Command));
-        assert!(!is_tool_allowed_in_plan_mode(ToolKind::Custom));
+    fn plan_mode_allows_read_plan_write_and_question() {
+        assert!(is_tool_allowed_in_plan_mode_named("read_file", ToolKind::Read));
+        assert!(is_tool_allowed_in_plan_mode_named("search", ToolKind::Read));
+        assert!(is_tool_allowed_in_plan_mode_named("plan", ToolKind::Read));
+        assert!(is_tool_allowed_in_plan_mode_named("write_file", ToolKind::Write));
+        assert!(is_tool_allowed_in_plan_mode_named("edit", ToolKind::Write));
+        assert!(is_tool_allowed_in_plan_mode_named("question", ToolKind::Custom));
+        assert!(!is_tool_allowed_in_plan_mode_named("bash", ToolKind::Command));
+        assert!(!is_tool_allowed_in_plan_mode_named("subagent", ToolKind::Command));
+        assert!(!is_tool_allowed_in_plan_mode_named("apply_patch", ToolKind::Write));
     }
 }

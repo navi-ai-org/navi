@@ -730,6 +730,55 @@ If a single test exceeds 500MB or hangs for more than 60 seconds, it is a bug an
 - Keep engine APIs small, serializable, and stable.
 - Keep TUI as a powerful frontend, not the product boundary.
 
+## Commits
+
+Every commit **must** include a **minimal changelog** in the message body so history is reviewable without reading the full diff.
+
+### Format
+
+```text
+type(scope): short imperative summary
+
+### Added
+- Concrete outcome for users or developers (not a file list)
+
+### Changed
+- …
+
+### Fixed
+- …
+
+### Removed
+- …
+```
+
+### Rules
+
+- **Subject**: conventional commit (`feat`, `fix`, `refactor`, `docs`, `chore`, `test`, …) with a narrow scope when useful (`core`, `tui`, `sdk`, `napi`, …).
+- **Body**: at least one bullet under the matching section(s). Omit empty sections.
+- Prefer **outcomes** (“Plan mode writes a markdown design doc under `{data_dir}/plans/`”) over inventory (“touched plan.rs”).
+- One logical change per commit when practical; the changelog should match what this commit ships.
+- Do **not** use only a one-line subject for non-trivial work — the changelog bullets are required.
+- Optional: mirror user-facing bullets into `CHANGELOG.md` `[Unreleased]` when cutting a release is near; commit messages remain the day-to-day source of truth for agents.
+
+### Examples
+
+Good:
+
+```text
+feat(core): markdown plan files for plan mode
+
+### Changed
+- Plan mode uses a session markdown file as the plan source of truth (Claude Code-style design doc)
+- `plan` tool prefers write/submit over JSON step arrays; review UI renders markdown
+```
+
+Bad (subject only, no changelog):
+
+```text
+feat(core): improve plan tool
+```
+
 ## Gotchas
 
 - The worktree may be dirty; do not revert changes you did not make.

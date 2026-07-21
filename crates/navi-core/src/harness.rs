@@ -268,17 +268,17 @@ fn build_system_prompt_inner(
             "- Default: act directly — inspect → edit → verify. Do not create a plan or goal for a\n",
             "  localized fix (one failing test, one obvious file, one-line change).\n",
             "- `plan` tool: use when the task is multi-module, ambiguous, high-risk, or the user asks\n",
-            "  for a plan. Create with title + concrete steps (or todos). Track progress with\n",
-            "  `plan(action='complete_step')`; update on scope change; verify when all steps are done.\n",
+            "  for a plan. Prefer a **markdown design doc** (Context, Approach, Files, Verification)\n",
+            "  via plan(action='write') then plan(action='submit'), not a JSON step array.\n",
+            "  After approval, track progress with plan(action='complete_step') if useful.\n",
             "  Do not open a plan only to organize work you can finish in one short pass.\n",
             "- `set_goal` / goal checklist: use only for long-running thread goals that need\n",
             "  auto-continue, token budget, or verified checklist gates. Not a synonym for `plan`.\n",
             "  Do not maintain both a plan checklist and a goal checklist for the same work unless\n",
             "  the user explicitly wants both.\n",
-            "- Plan mode (host-restricted, read-only tools): propose work with XML only —\n",
-            "  <proposed_plan title=\"...\"> numbered steps </proposed_plan>. Do not call\n",
-            "  `plan(action='create')` while Plan mode is active; the host handles review.\n",
-            "  After approval, implement in normal mode (optionally tracking with `plan` if useful).\n",
+            "- Plan mode (host-restricted): explore read-only; the only writable path is the session\n",
+            "  plan markdown file. Draft with write_file/edit or plan(action='write'); when ready,\n",
+            "  plan(action='submit') for user review. After approval, implement in normal mode.\n",
             "\n",
             "Core tools (always available in the schema):\n",
             "- search, read_file, edit, write_file, bash, plan, question, tool_search, memory,\n",
@@ -1153,7 +1153,8 @@ mod tests {
         assert!(prompt.contains("`plan` tool"));
         assert!(prompt.contains("`set_goal`"));
         assert!(prompt.contains("Not a synonym for `plan`") || prompt.contains("Not a synonym"));
-        assert!(prompt.contains("<proposed_plan"));
+        assert!(prompt.contains("markdown design doc") || prompt.contains("plan markdown"));
+        assert!(prompt.contains("submit") || prompt.contains("Plan mode"));
         assert!(prompt.contains("Auto-memory:"));
     }
 
