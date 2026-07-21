@@ -21,27 +21,86 @@ navi-sdk (NaviEngine)
 ## Engine Construction
 
 ```rust
-use navi_sdk::{NaviEngineBuilder, NaviEngine};
+use navi_sdk::{
+    NaviEngineBuilder, NaviEngine, NaviToolProfile, NaviPromptProfile, NaviSecurityProfile,
+};
 
 // From a project directory (loads config, providers, plugins, MCP)
 let engine = NaviEngineBuilder::from_project(".")
     .build()
     .expect("engine");
 
-// With explicit config
+// With explicit config + app-owned durable data dir
 let engine = NaviEngineBuilder::from_project(".")
     .loaded_config(loaded_config)
+    .data_dir("/path/to/app/navi-data")
     .build()
     .expect("engine");
 
-// With host tools
+// Host embedding without code-agent tools (vault / chat apps)
 let engine = NaviEngineBuilder::from_project(".")
+    .tool_profile(NaviToolProfile::HostToolsOnly) // or ChatOnly
+    .prompt_profile(NaviPromptProfile::Assistant)
+    .security_profile(NaviSecurityProfile::HostApp) // restricted writes
     .host_tool(Arc::new(MyTool))
     .build()
     .expect("engine");
 ```
 
 `from_project` returns a builder (not `Result`). Config is loaded from defaults, global config, and project config on `build()`. The selected provider is resolved from the catalog plus user overrides. Credentials are resolved from environment variables first, then the credential store.
+
+### Host tool profiles
+
+| Profile | Model-visible tools |
+|---|---|
+| `code_agent` (default) | Full project bash/edit/read surface |
+| `host_tools_only` | Only tools registered via `host_tool` |
+| `chat_only` | No tools |
+
+Optional `allow_tools` / `deny_tools` further restrict names after the profile.
+
+### Prompt profiles
+
+| Profile | System identity |
+|---|---|
+| `code_agent` (default) | Terminal autonomous code agent |
+| `assistant` | Non-code creative/conversational assistant |
+
+Skills still attach on top of either base profile via `active_skills` / `set_session_skills`.
+
+### Security profiles
+
+| Profile | Default posture |
+|---|---|
+| `code_agent` | Existing config-driven permission mode |
+| `host_app` | `Restricted` — write-kind tools need approval; YOLO is opt-in via `permission_mode` |
+
+### OpenAI-compatible provider upsert (e.g. Ollama)
+
+```rust
+engine.upsert_provider(ProviderConfig {
+    id: "ollama".into(),
+    label: "Ollama".into(),
+    kind: ProviderKind::OpenAiChatCompletions,
+    base_url: Some("http://localhost:11434/v1".into()),
+    api_key_env: "OLLAMA_API_KEY".into(),
+    models: vec![/* … */],
+    ..Default::default()
+}, NaviConfigSaveTarget::None)?;
+engine.select_model(NaviModelSelectionRequest {
+    provider_id: "ollama".into(),
+    model: "llama3".into(),
+    save_target: NaviConfigSaveTarget::None,
+})?;
+```
+
+Unreachable base URLs do not crash engine build; list/status still work.
+
+### Snapshot reopen
+
+Prefer `session_request_from_snapshot` / `start_session_from_snapshot` over hand-rolled
+`initial_messages` / `initial_events`. Attachments rehydrate from the project path or
+`{data_dir}/attachments/{id}`.
 
 ## Session Lifecycle
 
@@ -50,15 +109,25 @@ Session-scoped operations require a `session_id` parameter:
 ```rust
 use navi_sdk::NaviSessionRequest;
 
-// Start a session
+// Start a session (full seed: messages, events, skills, goal, timestamps)
 let info = engine.start_session(NaviSessionRequest {
     project_dir: None,       // defaults to engine's project
     session_id: None,        // auto-generate
     context_packets: vec![],
     active_skills: vec![],
     initial_messages: vec![],
+    initial_events: vec![],
+    initial_created_at: None,
+    initial_updated_at: None,
+    initial_goal: None,
 }).await?;
 let session_id = info.id;
+
+// Or reopen a saved snapshot with full history
+// let info = engine.start_session_from_snapshot(&snapshot).await?;
+
+// Manual compact (same path as TUI Compact)
+// let outcome = engine.compact_session(&session_id).await?;
 
 // Send a turn (user message -> response)
 let response = engine.send_turn(NaviTurnRequest {
