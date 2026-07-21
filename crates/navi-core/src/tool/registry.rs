@@ -119,6 +119,19 @@ impl ToolRegistry {
         self.tools.retain(|name, _| !name.starts_with(prefix));
     }
 
+    /// Keep only tools whose names satisfy `pred`.
+    pub fn retain_tools<F>(&mut self, mut pred: F)
+    where
+        F: FnMut(&str) -> bool,
+    {
+        self.tools.retain(|name, _| pred(name));
+    }
+
+    /// Remove all registered tools.
+    pub fn clear(&mut self) {
+        self.tools.clear();
+    }
+
     /// Looks up a tool by name.
     pub fn get(&self, name: &str) -> Option<&RegisteredTool> {
         self.tools.get(name)

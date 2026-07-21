@@ -82,6 +82,15 @@ pub struct SubagentOptions {
     /// Maximum tokens for the subagent response.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_tokens: Option<usize>,
+    /// Workflow write-path envelope (when set, forks executor with WritePathScope).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub write_allow: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path_deny: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub create_files: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub create_dirs: Option<bool>,
 }
 
 impl Default for ApprovalMode {
@@ -93,7 +102,7 @@ impl Default for ApprovalMode {
 const MAX_BACKGROUND_SUBAGENTS: usize = 8;
 /// Nested agent spawners must not be available inside subagents.
 /// `repo_explore` is now BM25+symbols (cheap) and is allowed for subagents.
-const NESTED_AGENT_TOOLS: &[&str] = &["subagent"];
+const NESTED_AGENT_TOOLS: &[&str] = &["subagent", "workflow"];
 /// Tool names considered to be "write" operations for ReadOnly mode.
 const READONLY_DENIED_TOOLS: &[&str] = &[
     "write",
@@ -422,6 +431,7 @@ impl Tool for SubagentTool {
                     profile,
                     options,
                     context.event_tx,
+                    context.cancel_token,
                 )
                 .await;
         }
@@ -433,6 +443,7 @@ impl Tool for SubagentTool {
             profile,
             options,
             context.event_tx,
+            context.cancel_token,
         )
         .await
     }
@@ -447,6 +458,7 @@ impl SubagentTool {
         profile: Option<String>,
         options: SubagentOptions,
         parent_event_tx: Option<mpsc::UnboundedSender<AgentEvent>>,
+        parent_cancel: Option<CancelToken>,
     ) -> Result<ToolResult> {
         let executor = self
             .tool_executor
@@ -461,6 +473,19 @@ impl SubagentTool {
         let effective_approval = resolve_approval_mode(&options);
         let allowed_tool_names =
             resolve_allowed_tool_names(&executor, &options, effective_approval);
+
+        // When workflow write scope is present, fork a worker executor with
+        // WritePathScope so write_allow / path_deny / create_files are enforced
+        // by SecurityPolicy on every write tool call (not just prompt text).
+        let tool_executor: Arc<crate::tool::ToolExecutor> =
+            if let Some(scope) = write_scope_from_options(&options) {
+                let mut policy = executor.policy().clone();
+                policy = policy.with_write_scope(scope);
+                let names = allowed_tool_names.clone().unwrap_or_else(|| executor.tool_names());
+                Arc::new(executor.fork_with_policy_and_tools(policy, &names))
+            } else {
+                executor
+            };
 
         let (mut messages, event_tx, _approval_handle, resolver) = self.prepare_subagent_context(
             &invocation_id,
@@ -477,9 +502,12 @@ impl SubagentTool {
         // parent-agent identity and erase explorer/verifier instructions.
         let (instructions, prompt_prefix) = freeze_specialized_prompt(&messages);
 
+        // Prefer parent cancel (workflow/tool cancel) so nested turns stop.
+        let cancel_token = parent_cancel.unwrap_or_else(CancelToken::new);
+
         let sub_ctx = TurnContext {
             model_provider: Arc::new(RwLock::new(provider)),
-            tool_executor: executor,
+            tool_executor,
             project_dir: self.project_dir.clone(),
             data_dir: self.data_dir.clone(),
             model_name: Arc::new(RwLock::new(model)),
@@ -503,7 +531,7 @@ impl SubagentTool {
             instructions,
             prompt_prefix,
             components: self.components.clone(),
-            cancel_token: CancelToken::new(),
+            cancel_token,
             config: self.config.clone(),
             memory_injection: None,
             compaction_provider: None,
@@ -552,6 +580,7 @@ impl SubagentTool {
         profile: Option<String>,
         options: SubagentOptions,
         parent_event_tx: Option<mpsc::UnboundedSender<AgentEvent>>,
+        parent_cancel: Option<CancelToken>,
     ) -> Result<ToolResult> {
         let executor = match self.tool_executor.upgrade() {
             Some(ex) => ex,
@@ -583,6 +612,8 @@ impl SubagentTool {
         let (result_tx, result_rx) = tokio::sync::oneshot::channel::<String>();
         let started = Instant::now();
 
+        // Link parent cancel into the background task token when provided.
+        let task_cancel = parent_cancel.unwrap_or_else(CancelToken::new);
         let task = Arc::new(SubagentBackgroundTask {
             task_id: task_id.clone(),
             prompt: prompt.clone(),
@@ -591,7 +622,7 @@ impl SubagentTool {
             state: std::sync::Mutex::new(SubagentBgState::running()),
             started_at: started,
             result_rx: tokio::sync::Mutex::new(Some(result_rx)),
-            cancel_token: CancelToken::new(),
+            cancel_token: task_cancel,
         });
         tasks.insert(task_id.clone(), task.clone());
 
@@ -613,6 +644,18 @@ impl SubagentTool {
         let allowed_tool_names_clone =
             resolve_allowed_tool_names(&executor, &options, effective_approval);
 
+        let tool_executor: Arc<crate::tool::ToolExecutor> =
+            if let Some(scope) = write_scope_from_options(&options) {
+                let mut policy = executor.policy().clone();
+                policy = policy.with_write_scope(scope);
+                let names = allowed_tool_names_clone
+                    .clone()
+                    .unwrap_or_else(|| executor.tool_names());
+                Arc::new(executor.fork_with_policy_and_tools(policy, &names))
+            } else {
+                executor
+            };
+
         tokio::spawn(async move {
             let (mut messages, event_tx, _approval_handle, resolver) =
                 Self::build_subagent_context_static(
@@ -628,7 +671,7 @@ impl SubagentTool {
 
             let sub_ctx = TurnContext {
                 model_provider,
-                tool_executor: executor,
+                tool_executor,
                 project_dir,
                 data_dir,
                 model_name,
@@ -1109,8 +1152,31 @@ impl Default for SubagentOptions {
             tools: None,
             approval: ApprovalMode::Inherit,
             max_tokens: None,
+            write_allow: None,
+            path_deny: None,
+            create_files: None,
+            create_dirs: None,
         }
     }
+}
+
+fn write_scope_from_options(
+    options: &SubagentOptions,
+) -> Option<crate::security::WritePathScope> {
+    // Only install a write scope when the caller explicitly set workflow fields.
+    if options.write_allow.is_none()
+        && options.path_deny.is_none()
+        && options.create_files.is_none()
+        && options.create_dirs.is_none()
+    {
+        return None;
+    }
+    Some(crate::security::WritePathScope {
+        write_allow: options.write_allow.clone().unwrap_or_default(),
+        path_deny: options.path_deny.clone().unwrap_or_default(),
+        create_files: options.create_files.unwrap_or(false),
+        create_dirs: options.create_dirs.unwrap_or(false),
+    })
 }
 
 /// Resolves the effective approval mode from a profile preference cascade.
@@ -1204,6 +1270,7 @@ mod tests {
             tools: Some(vec!["read".to_string(), "search".to_string()]),
             approval: ApprovalMode::ReadOnly,
             max_tokens: Some(4096),
+                    ..Default::default()
         };
         let json = serde_json::to_value(&opts).unwrap();
         let deserialized: SubagentOptions = serde_json::from_value(json).unwrap();

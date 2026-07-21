@@ -48,6 +48,7 @@ mod tests {
             browser: BrowserConfig::default(),
             acp: AcpConfig::default(),
             acp_agents: Vec::new(),
+            workflow: WorkflowConfig::default(),
         };
 
         let mut project = NaviConfig {
@@ -99,6 +100,7 @@ mod tests {
             browser: BrowserConfig::default(),
             acp: AcpConfig::default(),
             acp_agents: Vec::new(),
+            workflow: WorkflowConfig::default(),
         };
         project.plugins.clear();
         project.mcp = McpConfig::default();

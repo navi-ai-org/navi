@@ -461,23 +461,6 @@ static LOOKUP: LazyLock<std::collections::HashMap<&'static str, ToolMetadata>> =
         );
         insert(
             &mut map,
-            "workflow",
-            ToolMetadata {
-                namespace: "orchestration".to_string(),
-                risk: crate::tool::ToolRisk::Medium,
-                is_read_only: false,
-                is_concurrency_safe: false,
-                exposure: crate::tool::ToolExposure::Deferred,
-                capabilities: vec!["orchestration.workflow".to_string()],
-                tags: vec!["workflow", "script"]
-                    .into_iter()
-                    .map(|s| s.to_string())
-                    .collect(),
-                ..ToolMetadata::default()
-            },
-        );
-        insert(
-            &mut map,
             "repo_explore",
             ToolMetadata {
                 namespace: "repo".to_string(),
@@ -512,6 +495,23 @@ static LOOKUP: LazyLock<std::collections::HashMap<&'static str, ToolMetadata>> =
                 exposure: crate::tool::ToolExposure::Deferred,
                 capabilities: vec!["agent.spawn".to_string()],
                 tags: vec!["agent", "subprocess"]
+                    .into_iter()
+                    .map(|s| s.to_string())
+                    .collect(),
+                ..ToolMetadata::default()
+            },
+        );
+        insert(
+            &mut map,
+            "workflow",
+            ToolMetadata {
+                namespace: "agent".to_string(),
+                risk: crate::tool::ToolRisk::High,
+                is_read_only: false,
+                is_concurrency_safe: false,
+                exposure: crate::tool::ToolExposure::Direct,
+                capabilities: vec!["agent.workflow".to_string(), "agent.spawn".to_string()],
+                tags: vec!["agent", "workflow", "lua", "orchestration"]
                     .into_iter()
                     .map(|s| s.to_string())
                     .collect(),

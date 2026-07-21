@@ -66,6 +66,41 @@ pub struct NaviConfig {
     /// Declared ACP agents (`[[acp_agents]]`).
     #[serde(default)]
     pub acp_agents: Vec<AcpAgentConfig>,
+    /// Multi-agent Lua workflow tool settings.
+    #[serde(default)]
+    pub workflow: WorkflowConfig,
+}
+
+/// Built-in `workflow` tool (sandboxed Lua multi-agent orchestration).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct WorkflowConfig {
+    /// When false, the `workflow` tool refuses to start.
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// Default concurrent worker limit (clamped to ceiling 64).
+    pub max_parallel: usize,
+    /// Default max agents per run (clamped to ceiling 5000).
+    pub max_agents: usize,
+    /// Maximum Lua script size in bytes.
+    pub max_script_bytes: usize,
+    /// Wall-clock timeout for an entire workflow run (ms).
+    pub run_timeout_ms: u64,
+    /// When true, require explicit session/product opt-in before running.
+    pub require_opt_in: bool,
+}
+
+impl Default for WorkflowConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            max_parallel: 16,
+            max_agents: 1000,
+            max_script_bytes: 64 * 1024,
+            run_timeout_ms: 1_800_000,
+            require_opt_in: false,
+        }
+    }
 }
 
 /// ACP client integration toggle.

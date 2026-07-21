@@ -25,6 +25,7 @@ mod search_tool;
 mod skill_manage;
 mod skill_tool;
 mod subagent;
+mod workflow;
 mod write_tool;
 
 pub(super) use goal::SetGoalTool;
@@ -60,4 +61,8 @@ pub(super) use search_tool::SearchTool;
 pub(super) use skill_manage::{SkillDeleteTool, SkillGetTool, SkillListTool, SkillSaveTool};
 pub(super) use skill_tool::SkillTool;
 pub use subagent::{AgentProfile, ApprovalMode, ProviderBuilderFn, SubagentTool};
+pub use workflow::{
+    AgentBackend, MockAgentBackend, PolicyAgentBackend, SubagentBridgeBackend, WorkerProbeBackend,
+    WorkflowTool, workflow_tool_description,
+};
 pub(super) use write_tool::WriteTool;

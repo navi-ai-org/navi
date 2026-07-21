@@ -8,6 +8,17 @@ use anyhow::{Context, Result};
 use serde_json::Value;
 use std::path::{Component, Path, PathBuf};
 
+/// Optional write-path envelope for workflow workers (never widens past project
+/// policy). When set, write tools are restricted to `write_allow` paths,
+/// `path_deny` always wins, and `create_files`/`create_dirs` gate new paths.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct WritePathScope {
+    pub write_allow: Vec<String>,
+    pub path_deny: Vec<String>,
+    pub create_files: bool,
+    pub create_dirs: bool,
+}
+
 /// Validates tool invocations against security constraints: path restrictions,
 /// blocked commands, `.git` protection, and NAVI private storage.
 #[derive(Debug, Clone)]
@@ -15,6 +26,8 @@ pub struct SecurityPolicy {
     project_root: PathBuf,
     data_dir: PathBuf,
     config: SecurityConfig,
+    /// When set (workflow workers), additional write-path gate on top of base rules.
+    write_scope: Option<WritePathScope>,
 }
 
 /// The outcome of a security validation check.
@@ -53,7 +66,14 @@ impl SecurityPolicy {
             data_dir: normalize_existing_or_parent(&data_dir)
                 .with_context(|| format!("failed to resolve {}", data_dir.display()))?,
             config,
+            write_scope: None,
         })
+    }
+
+    /// Returns a clone with a workflow worker write-path scope applied.
+    pub fn with_write_scope(mut self, scope: WritePathScope) -> Self {
+        self.write_scope = Some(scope);
+        self
     }
 
     /// Validates a file path, checking project restrictions, `.git` protection,
@@ -105,10 +125,56 @@ impl SecurityPolicy {
         }
 
         if write {
+            if let Some(decision) = self.validate_write_scope(&path) {
+                return decision;
+            }
             SecurityDecision::NeedsApproval(SecurityRisk::Write)
         } else {
             SecurityDecision::Allow
         }
+    }
+
+    /// Enforces optional workflow write_allow / path_deny / create_files scope.
+    fn validate_write_scope(&self, path: &Path) -> Option<SecurityDecision> {
+        let scope = self.write_scope.as_ref()?;
+        let rel = path
+            .strip_prefix(&self.project_root)
+            .unwrap_or(path)
+            .to_string_lossy()
+            .replace('\\', "/");
+        let rel = rel.trim_start_matches("./");
+
+        if scope.path_deny.iter().any(|d| write_scope_path_matches(d, rel)) {
+            return Some(SecurityDecision::Deny(format!(
+                "path `{rel}` is denied by workflow path_deny"
+            )));
+        }
+        if scope.write_allow.is_empty() {
+            return Some(SecurityDecision::Deny(
+                "workflow write_allow is empty; writes are denied".into(),
+            ));
+        }
+        if !scope
+            .write_allow
+            .iter()
+            .any(|a| write_scope_path_matches(a, rel))
+        {
+            return Some(SecurityDecision::Deny(format!(
+                "path `{rel}` is not in workflow write_allow"
+            )));
+        }
+        let exists = path.exists();
+        if !exists && path.extension().is_some() && !scope.create_files {
+            return Some(SecurityDecision::Deny(format!(
+                "create_files=false; cannot create `{rel}`"
+            )));
+        }
+        if !exists && path.extension().is_none() && !scope.create_dirs && !scope.create_files {
+            return Some(SecurityDecision::Deny(format!(
+                "create_dirs/create_files=false; cannot create `{rel}`"
+            )));
+        }
+        None
     }
 
     /// Validates all paths in a patch proposal.
@@ -585,6 +651,11 @@ impl SecurityPolicy {
         }
     }
 
+    /// Returns the optional workflow write-path scope, if any.
+    pub fn write_scope(&self) -> Option<&WritePathScope> {
+        self.write_scope.as_ref()
+    }
+
     /// Returns a copy of the invocation with security-visible path fields made
     /// absolute under the project root.
     pub fn normalize_invocation_paths(&self, invocation: &ToolInvocation) -> ToolInvocation {
@@ -1008,6 +1079,31 @@ fn git_subcommand_is(program: &str, candidates: &[&str]) -> bool {
         .skip(primary_idx + 1)
         .find(|token| !token.starts_with('-') && *token != "--")
         .is_some_and(|token| candidates.iter().any(|candidate| candidate == token))
+}
+
+/// Glob-ish match for workflow write_allow / path_deny (relative path strings).
+fn write_scope_path_matches(pattern: &str, path: &str) -> bool {
+    let pattern = pattern.trim().trim_start_matches("./").replace('\\', "/");
+    let path = path.trim().trim_start_matches("./").replace('\\', "/");
+    if pattern.is_empty() {
+        return false;
+    }
+    if pattern == "**" || pattern == "*" {
+        return true;
+    }
+    if let Some(prefix) = pattern.strip_suffix("/**") {
+        return path == prefix || path.starts_with(&format!("{prefix}/"));
+    }
+    if let Some(prefix) = pattern.strip_suffix("/*") {
+        if path == prefix {
+            return true;
+        }
+        if let Some(rest) = path.strip_prefix(&format!("{prefix}/")) {
+            return !rest.contains('/');
+        }
+        return false;
+    }
+    pattern == path || path.starts_with(&format!("{pattern}/"))
 }
 
 fn contains_component(path: &Path, needle: &str) -> bool {
@@ -2973,6 +3069,77 @@ mod tests {
         assert_eq!(
             policy.validate_mcp_server("any-server"),
             SecurityDecision::Allow
+        );
+    }
+
+    #[test]
+    fn write_path_scope_denies_outside_write_allow() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let project = tempdir.path().join("project");
+        let data = tempdir.path().join("data");
+        std::fs::create_dir_all(&project).expect("project");
+        std::fs::create_dir_all(&data).expect("data");
+        let policy = SecurityPolicy::new(project, data, SecurityConfig::default())
+            .expect("policy")
+            .with_write_scope(WritePathScope {
+                write_allow: vec!["src/a.rs".into()],
+                path_deny: vec![],
+                create_files: true,
+                create_dirs: false,
+            });
+        let outside = policy.validate_path(Path::new("src/b.rs"), true);
+        assert!(
+            matches!(outside, SecurityDecision::Deny(ref m) if m.contains("write_allow")),
+            "{outside:?}"
+        );
+        let allowed = policy.validate_path(Path::new("src/a.rs"), true);
+        assert!(
+            !matches!(allowed, SecurityDecision::Deny(_)),
+            "src/a.rs should pass write_allow: {allowed:?}"
+        );
+    }
+
+    #[test]
+    fn write_path_scope_path_deny_wins() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let project = tempdir.path().join("project");
+        let data = tempdir.path().join("data");
+        std::fs::create_dir_all(&project).expect("project");
+        std::fs::create_dir_all(&data).expect("data");
+        let policy = SecurityPolicy::new(project, data, SecurityConfig::default())
+            .expect("policy")
+            .with_write_scope(WritePathScope {
+                write_allow: vec!["src/a.rs".into()],
+                path_deny: vec!["src/a.rs".into()],
+                create_files: true,
+                create_dirs: false,
+            });
+        let decision = policy.validate_path(Path::new("src/a.rs"), true);
+        assert!(
+            matches!(decision, SecurityDecision::Deny(ref m) if m.contains("path_deny")),
+            "{decision:?}"
+        );
+    }
+
+    #[test]
+    fn write_path_scope_create_files_false_denies_new_file() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let project = tempdir.path().join("project");
+        let data = tempdir.path().join("data");
+        std::fs::create_dir_all(&project).expect("project");
+        std::fs::create_dir_all(&data).expect("data");
+        let policy = SecurityPolicy::new(project, data, SecurityConfig::default())
+            .expect("policy")
+            .with_write_scope(WritePathScope {
+                write_allow: vec!["src/new_file.rs".into()],
+                path_deny: vec![],
+                create_files: false,
+                create_dirs: false,
+            });
+        let decision = policy.validate_path(Path::new("src/new_file.rs"), true);
+        assert!(
+            matches!(decision, SecurityDecision::Deny(ref m) if m.contains("create_files")),
+            "{decision:?}"
         );
     }
 }

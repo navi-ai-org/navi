@@ -34,7 +34,11 @@ use builtin::{
 #[cfg(feature = "code-vfs")]
 use builtin::{CodeEditTool, CodeReadTool};
 
-pub use builtin::{AgentProfile, ApprovalMode, ProviderBuilderFn, RepoExploreTool, SubagentTool};
+pub use builtin::{
+    AgentBackend, AgentProfile, ApprovalMode, MockAgentBackend, PolicyAgentBackend,
+    ProviderBuilderFn, RepoExploreTool, SubagentBridgeBackend, SubagentTool, WorkerProbeBackend,
+    WorkflowTool, workflow_tool_description,
+};
 pub use metadata::{ToolExposure, ToolMetadata, ToolRisk, capabilities};
 pub use registry::{ToolRegistry, ToolSet, phases};
 
@@ -214,6 +218,7 @@ const EXCLUSIVE_BATCH_TOOL_NAMES: &[&str] = &[
     // Nested model turns: serialize so parallel spawn storms cannot hang the
     // parent batch or thrash provider quotas.
     "subagent",
+    "workflow",
     // repo_explore is BM25+symbols (shared-safe); not exclusive.
 ];
 
@@ -510,6 +515,26 @@ impl ToolExecutor {
         n
     }
 
+    /// Keep only tools whose names satisfy `pred`. Removes matching entries from
+    /// the live tool map, validators, invalid-schema cache, and registry.
+    pub fn retain_tools<F>(&mut self, mut pred: F)
+    where
+        F: FnMut(&str) -> bool,
+    {
+        self.tools.retain(|n, _| pred(n));
+        self.validators.retain(|n, _| pred(n));
+        self.invalid_schemas.retain(|n, _| pred(n));
+        self.registry.retain_tools(|n| pred(n));
+    }
+
+    /// Remove every registered tool (model schema becomes empty).
+    pub fn clear_tools(&mut self) {
+        self.tools.clear();
+        self.validators.clear();
+        self.invalid_schemas.clear();
+        self.registry.clear();
+    }
+
     pub fn unregister_plugin_tools(&mut self) {
         self.tools.retain(|n, _| !n.starts_with("plugin__"));
         self.validators.retain(|n, _| !n.starts_with("plugin__"));
@@ -534,6 +559,30 @@ impl ToolExecutor {
             return SecurityDecision::Deny(format!("unknown `{}`", inv.tool_name));
         };
         self.security.validate_tool(&self.policy, &def, inv)
+    }
+
+    /// Clone this executor with a different security policy and only the named
+    /// tools (used by workflow workers for write_allow / path gates).
+    pub fn fork_with_policy_and_tools(
+        &self,
+        policy: SecurityPolicy,
+        allowed_tool_names: &[String],
+    ) -> Self {
+        let mut forked = Self::empty_with_security_policy(policy, self.security.clone());
+        forked.harness_profile = self.harness_profile.clone();
+        forked.rewind_store = self.rewind_store.clone();
+        for name in allowed_tool_names {
+            if let Some(tool) = self.tools.get(name) {
+                forked.register_tool(tool.clone());
+            }
+        }
+        // Always strip nested orchestration on worker forks.
+        forked.retain_tools(|n| n != "subagent" && n != "workflow");
+        forked
+    }
+
+    pub fn policy(&self) -> &SecurityPolicy {
+        &self.policy
     }
 
     pub async fn invoke(&self, invocation: ToolInvocation) -> ToolResult {
@@ -1130,6 +1179,12 @@ impl ToolExecutor {
         self.register(BrowserTool::new(pr.clone()));
         self.register(NewContextWindowTool::new());
         self.register(ToolSearchTool::new(Arc::new(self.registry.clone())));
+        // Workflow uses mock backend by default; runtime/SDK replace with a
+        // real AgentBackend when wiring live subagent turns.
+        self.register(WorkflowTool::new(
+            self.policy.clone(),
+            crate::config::WorkflowConfig::default(),
+        ));
     }
 }
 
