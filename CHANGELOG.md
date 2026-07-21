@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.3] - 2026-07-21
+
+Full changelog: https://github.com/navi-ai-org/navi/compare/v0.3.2...v0.3.3
+
+Plan mode as markdown design docs, Lua multi-agent workflow tool, host-customizable SDK profiles, ACP peer client, and TUI activity/wait polish.
+
+### New Features
+
+- **Markdown plan mode** — session plan file under `{data_dir}/plans/`; `plan(write)` / `plan(submit)` with markdown design-doc review (context, approach, files, verification)
+- **Lua workflow tool** — multi-agent orchestration under hard caps, non-widening write policy, cancel/timeout, journals under `{data_dir}/workflows/`
+- **SDK host profiles** — tool/prompt/security profiles, data_dir/config builder injection, full startSession seed, snapshot reopen, compactSession, OpenAI-compat provider upsert, ACP list/delegate bindings
+- **ACP client** — generic ACP client for external agent peer turns
+- **TUI activity line** — token usage and average tokens/s while streaming
+
+### Bug Fixes
+
+- **Auto-compact** — runs at 80% context before long-horizon rebuild; keeps chat summary visible
+- **TUI** — plain-text user prompts; viewport wheel scroll; sticky shell failures; clearer wait status; avg t/s measured from stream start
+- **Registry** — recreate corrupt `registry.db` on open; prefer canonical model context and effort levels; embedded snapshot sync (v34)
+- **Tests / Dart** — stop PTY smoke hangs and races; harden Dart WebSocket/URL and stop duplicate snake/camel keys
+
+### Changes
+
+- **AGENTS.md** — short agent constitution (≤200 lines); domain detail in `docs/`
+- Prefer `Result`/context over production panics across crates
+- Strip third-party product attribution from internal comments
+
+### Bindings
+
+- Workspace crate versions bumped to 0.3.3
+
 ## [0.3.2] - 2026-07-17
 
 Full changelog: https://github.com/navi-ai-org/navi/compare/v0.3.1...v0.3.2
@@ -335,7 +366,8 @@ Full changelog: https://github.com/navi-ai-org/navi/releases/tag/v0.1.0
 
 - Initial open-source scaffold of the NAVI agent engine and TUI
 
-[Unreleased]: https://github.com/navi-ai-org/navi/compare/v0.3.2...HEAD
+[Unreleased]: https://github.com/navi-ai-org/navi/compare/v0.3.3...HEAD
+[0.3.3]: https://github.com/navi-ai-org/navi/compare/v0.3.2...v0.3.3
 [0.3.2]: https://github.com/navi-ai-org/navi/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/navi-ai-org/navi/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/navi-ai-org/navi/compare/v0.2.7...v0.3.0
