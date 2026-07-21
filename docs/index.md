@@ -10,7 +10,7 @@ NAVI is an opinionated, extensible code agent with a terminal UI, built in Rust.
 ## SDK & Integration
 
 - [SDK Agents Guide](sdk-agents.md) — Embedding NAVI in other applications, engine API, runtime events, host tools, approval flow, provider setup, and auto-memory API.
-- [AGENTS.md](../AGENTS.md) — Full technical reference for agents working on the NAVI codebase: architecture, crates, runtime flow, configuration, providers, tools, security, sessions, plugins, skills, MCP, memory, and testing.
+- [AGENTS.md](../AGENTS.md) — Short constitution for agents working in this repo (boundary, non-negotiables, security, validate, commits). Domain detail lives in the topic guides below — not in AGENTS.md.
 
 ## Topic Guides
 

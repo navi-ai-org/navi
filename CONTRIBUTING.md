@@ -118,7 +118,7 @@ navi/
 │   ├── navi-sdk/          # Public embedding facade
 │   └── navi-tui/          # Terminal UI
 ├── docs/                  # Technical documentation
-├── AGENTS.md              # Agent development guide
+├── AGENTS.md              # Short agent constitution (≤200 lines)
 └── README.md              # Project overview
 ```
 
@@ -128,7 +128,7 @@ navi/
 - **[docs/index.md](../docs/index.md)** — Documentation hub with links to all guides
 - **[docs/user-guide.md](../docs/user-guide.md)** — Installation, configuration, providers, tools, security
 - **[docs/sdk-agents.md](../docs/sdk-agents.md)** — SDK embedding, engine API, runtime events
-- **AGENTS.md** — Technical reference for agents working on the codebase
+- **AGENTS.md** — Short constitution for agents (boundary, non-negotiables, validate, commits); domain detail in `docs/`
 
 ## Reporting Issues
 
