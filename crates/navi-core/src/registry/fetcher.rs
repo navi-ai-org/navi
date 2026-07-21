@@ -254,11 +254,15 @@ fn load_local_model_catalog(models_dir: &Path) -> Result<super::resolve::ModelCa
                 serde_json::from_str(&text).with_context(|| {
                     format!("failed to parse canonical model from {}", path.display())
                 })?;
-            let id = path
-                .file_stem()
-                .and_then(|s| s.to_str())
-                .unwrap_or_default()
-                .to_string();
+            // Prefer JSON `id` (may contain `:`). Filenames use `__` for Windows.
+            let id = if !model.id.is_empty() {
+                model.id.clone()
+            } else {
+                path.file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or_default()
+                    .replace("__", ":")
+            };
             catalog.insert(id, model);
         }
     }
