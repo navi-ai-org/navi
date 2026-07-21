@@ -156,6 +156,7 @@ async fn headless_runtime_executes_read_tools_and_continues() {
         runtime_components: None,
         session_title_handle: None,
         memory_extraction_model: None,
+        skip_auto_tool_bootstrap: false,
     });
 
     let response = runtime
@@ -217,6 +218,7 @@ async fn runtime_session_lifecycle_streams_events_and_snapshots() {
         runtime_components: None,
         session_title_handle: None,
         memory_extraction_model: None,
+        skip_auto_tool_bootstrap: false,
     });
 
     let mut events = runtime.stream_events();
@@ -330,6 +332,7 @@ async fn runtime_registers_goal_tools_on_provided_executor() {
         runtime_components: None,
         session_title_handle: None,
         memory_extraction_model: None,
+        skip_auto_tool_bootstrap: false,
     });
 
     let response = runtime
@@ -388,6 +391,7 @@ async fn runtime_uses_requested_session_id_once() {
         runtime_components: None,
         session_title_handle: None,
         memory_extraction_model: None,
+        skip_auto_tool_bootstrap: false,
     });
 
     let first_id = runtime.start_session().expect("start first session");
@@ -432,6 +436,7 @@ async fn active_session_uses_replaced_model_provider_on_next_turn() {
         runtime_components: None,
         session_title_handle: None,
         memory_extraction_model: None,
+        skip_auto_tool_bootstrap: false,
     });
 
     runtime.start_session().expect("start session");
@@ -509,6 +514,7 @@ async fn dropped_turn_future_does_not_poison_session_event_stream() {
         runtime_components: None,
         session_title_handle: None,
         memory_extraction_model: None,
+        skip_auto_tool_bootstrap: false,
     });
 
     runtime.start_session().expect("start session");

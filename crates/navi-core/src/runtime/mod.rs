@@ -321,6 +321,10 @@ pub struct AgentRuntimeOptions {
     /// Explicit model for automatic durable-memory extraction. `None` means
     /// extraction is disabled rather than silently billing the chat model.
     pub memory_extraction_model: Option<MemoryExtractionModel>,
+    /// When true, skip auto-registering goal tools and skill loaders on the
+    /// provided tool executor. Used by host tool profiles (`chat_only`,
+    /// `host_tools_only`) so the host's filtered tool set is preserved.
+    pub skip_auto_tool_bootstrap: bool,
 }
 
 /// Provider selection for the opt-in per-turn memory extractor.
@@ -369,6 +373,8 @@ pub struct AgentRuntime {
     session_title_handle: SessionTitleHandle,
     /// User-selected model for asynchronous automatic memory extraction.
     memory_extraction_model: Option<MemoryExtractionModel>,
+    /// When true, do not auto-register goal/skill tools on the provided executor.
+    skip_auto_tool_bootstrap: bool,
     /// Whether a user message is pending (set when send_turn is called
     /// while the runtime is busy with auto-continuation).
     pending_user_input: std::sync::atomic::AtomicBool,
@@ -458,6 +464,7 @@ impl AgentRuntime {
             last_user_task: String::new(),
             session_title_handle: options.session_title_handle.unwrap_or_default(),
             memory_extraction_model: options.memory_extraction_model,
+            skip_auto_tool_bootstrap: options.skip_auto_tool_bootstrap,
             pending_user_input: std::sync::atomic::AtomicBool::new(false),
             agent_mode: std::sync::RwLock::new(crate::plan_mode::AgentMode::Default),
             plan_parser: std::sync::Mutex::new(crate::plan_mode::ProposedPlanParser::new()),
@@ -1470,16 +1477,18 @@ impl AgentRuntime {
     fn ensure_tool_executor(&mut self) -> Result<Arc<ToolExecutor>> {
         if let Some(executor) = self.tool_executor.as_mut() {
             if let Some(executor) = Arc::get_mut(executor) {
-                Self::register_goal_tools_on_executor(
-                    executor,
-                    self.goal_runtime.clone(),
-                    self.loaded_config.config.goals.enabled,
-                );
-                executor.register_skill_loader(
-                    self.project_dir.clone(),
-                    self.loaded_config.data_dir.clone(),
-                    self.shared_config.clone(),
-                );
+                if !self.skip_auto_tool_bootstrap {
+                    Self::register_goal_tools_on_executor(
+                        executor,
+                        self.goal_runtime.clone(),
+                        self.loaded_config.config.goals.enabled,
+                    );
+                    executor.register_skill_loader(
+                        self.project_dir.clone(),
+                        self.loaded_config.data_dir.clone(),
+                        self.shared_config.clone(),
+                    );
+                }
                 executor.set_rewind_store(Some(self.rewind_store.clone()));
             } else {
                 tracing::warn!(
@@ -1515,6 +1524,20 @@ impl AgentRuntime {
         );
         executor.set_rewind_store(Some(self.rewind_store.clone()));
 
+        let workflow_config = self.loaded_config.config.workflow.clone();
+        let workflow_policy = SecurityPolicy::new(
+            self.project_dir.clone(),
+            self.loaded_config.data_dir.clone(),
+            self.loaded_config.config.security.clone(),
+        )
+        .unwrap_or_else(|_| {
+            SecurityPolicy::new(
+                self.project_dir.clone(),
+                self.loaded_config.data_dir.clone(),
+                crate::config::SecurityConfig::default(),
+            )
+            .expect("default security policy")
+        });
         let executor = Arc::new_cyclic(|executor_weak| {
             let subagent = SubagentTool::new(
                 executor_weak.clone(),
@@ -1530,6 +1553,13 @@ impl AgentRuntime {
             executor.register_tool(Arc::new(subagent));
             // BM25 + symbol index — cheap, no nested agent.
             executor.register_tool(Arc::new(RepoExploreTool::new(self.project_dir.clone())));
+            // Production workflow: each agent() is a real nested subagent turn
+            // with policy-intersected tool allowlists (own max_parallel semaphore).
+            executor.register_tool(Arc::new(crate::tool::WorkflowTool::with_subagent_bridge(
+                workflow_policy.clone(),
+                workflow_config.clone(),
+                executor_weak.clone(),
+            )));
             executor
         });
         self.tool_executor = Some(executor.clone());
@@ -1553,6 +1583,26 @@ impl AgentRuntime {
     /// Returns the configured tool executor, if any.
     pub fn tool_executor(&self) -> Option<Arc<ToolExecutor>> {
         self.tool_executor.clone()
+    }
+
+    /// Keep only tools whose names satisfy `pred` on the live session executor.
+    ///
+    /// Used by host tool profiles after start (goal/skill tools may re-register).
+    /// No-ops when the executor Arc is shared.
+    pub fn retain_tools<F>(&mut self, pred: F)
+    where
+        F: FnMut(&str) -> bool,
+    {
+        if let Some(exec) = self.tool_executor.as_mut() {
+            if let Some(e) = Arc::get_mut(exec) {
+                e.retain_tools(pred);
+            } else {
+                tracing::warn!(
+                    strong_count = Arc::strong_count(exec),
+                    "cannot retain tools; tool executor Arc is shared"
+                );
+            }
+        }
     }
 
     /// Returns the session-local handle used by the title tool. SDK tooling

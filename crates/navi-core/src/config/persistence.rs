@@ -95,6 +95,9 @@ impl NaviConfig {
         if other.browser != BrowserConfig::default() {
             self.browser = other.browser;
         }
+        if other.workflow != crate::config::types::WorkflowConfig::default() {
+            self.workflow = other.workflow;
+        }
         if other.acp != crate::config::types::AcpConfig::default() {
             self.acp = other.acp;
         }

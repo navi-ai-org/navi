@@ -109,6 +109,7 @@ tree-sitter-rust = "0.24.2"
 tree-sitter-typescript = "0.23.2"
 tempfile = "3"
 wiremock = "0.6"
+mlua = { version = "0.10", default-features = false, features = ["lua54", "vendored", "serialize"] }
 navi-acp = { version = "0.3.2", path = "crates/navi-acp" }
 navi-browser = { version = "0.3.2", path = "crates/navi-browser" }
 navi-core = { version = "0.3.2", path = "crates/navi-core" }

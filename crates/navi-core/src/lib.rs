@@ -152,7 +152,7 @@ pub use runtime_components::{
     DefaultToolSecurityPolicy, HarnessDriver, NoopSessionHooks, PermissiveSecurityPolicy,
     PromptBuilder, RuntimeComponents, SessionHooks, ToolSecurityPolicy,
 };
-pub use security::{SecurityDecision, SecurityPolicy};
+pub use security::{SecurityDecision, SecurityPolicy, WritePathScope};
 pub use session::{
     SessionId, SessionRuntime, SessionSnapshot, SessionSnapshotInfo, SessionStore,
     SessionUsageSnapshot, clean_session_title, session_title_from_events,
@@ -172,9 +172,10 @@ pub use skills::{
 pub use tool::background::{BackgroundCommandSnapshot, BackgroundTaskStatus};
 pub use tool::registry::{ToolRegistry, ToolSet, phases};
 pub use tool::{
-    AgentProfile, ApprovalMode, ProviderBuilderFn, RepoExploreTool, SubagentTool, Tool,
-    ToolDefinition, ToolExecutor, ToolExposure, ToolInvocation, ToolKind, ToolMetadata, ToolResult,
-    ToolRisk, capabilities,
+    AgentBackend, AgentProfile, ApprovalMode, MockAgentBackend, PolicyAgentBackend,
+    ProviderBuilderFn, RepoExploreTool, SubagentBridgeBackend, SubagentTool, Tool, ToolDefinition,
+    ToolExecutor, ToolExposure, ToolInvocation, ToolKind, ToolMetadata, ToolResult, ToolRisk,
+    WorkerProbeBackend, WorkflowTool, capabilities, workflow_tool_description,
 };
 pub use trace::{
     ApprovalTrace, ToolCallTrace, TraceStore, TurnMetrics, TurnOutcome, TurnTrace, VerifierTrace,

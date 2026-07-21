@@ -177,6 +177,7 @@ pub(crate) fn tool_compact_text(invocation: &ToolInvocation, result: &ToolResult
         // ── Repo Explore & Subagent ───────────────────────────────────────
         "repo_explore" => repo_explore_summary(invocation, result),
         "subagent" => subagent_summary(invocation, result),
+        "workflow" => workflow_summary(invocation, result),
 
         // ── Planning & Session ────────────────────────────────────────────
         "plan" => plan_summary(invocation, result),
@@ -2306,6 +2307,49 @@ fn subagent_summary(invocation: &ToolInvocation, result: &ToolResult) -> String 
             truncate_for_summary(prompt, 40),
             crate::background::format_duration_ms(elapsed)
         )
+    }
+}
+
+fn workflow_summary(_invocation: &ToolInvocation, result: &ToolResult) -> String {
+    let status = result
+        .output
+        .get("status")
+        .and_then(|v| v.as_str())
+        .unwrap_or(if result.ok { "completed" } else { "failed" });
+    let run_id = result
+        .output
+        .get("run_id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("?");
+    let agents = result
+        .output
+        .get("stats")
+        .and_then(|s| s.get("agents_started"))
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    let elapsed = result
+        .output
+        .get("stats")
+        .and_then(|s| s.get("elapsed_ms"))
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    if result.ok {
+        format!(
+            "Workflow {run_id} · {status} · {agents} agents · {}",
+            crate::background::format_duration_ms(elapsed)
+        )
+    } else {
+        let err = result
+            .output
+            .get("error")
+            .and_then(|e| {
+                e.get("code")
+                    .and_then(|c| c.as_str())
+                    .or_else(|| e.as_str())
+            })
+            .or_else(|| result.output.get("message").and_then(|m| m.as_str()))
+            .unwrap_or("error");
+        format!("Workflow {run_id} · {status} · {err}")
     }
 }
 
